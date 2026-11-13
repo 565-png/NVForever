@@ -9,9 +9,16 @@
 //!   people's movement and the parity checks are untouched: only the player moves this way.
 //! - **How**: each axis of the ground velocity rides a critically damped spring
 //!   ([`crate::ease::Spring`]) towards the keys' velocity: about [`START_SECONDS`] to
-//!   reach a new speed, [`STOP_SECONDS`] to glide to a stop or to brake before turning
-//!   back. From rest the spring starts gently, speeds up and settles without overshoot;
-//!   solved exactly per step, it is the same at any physics tick rate.
+//!   reach a new speed, walking or running, and [`STOP_SECONDS`] to glide down to a twentieth
+//!   of it, after which the last of the glide creeps out slowly (a run's glide is about
+//!   130 units, two metres); braking before a turn back takes the stopping time. From rest
+//!   the spring starts gently, speeds up and settles without overshoot; solved exactly
+//!   per step, it is the same at any physics tick rate. [design: the owner's playtest of
+//!   2026-11-13, "slow the movement inertia down, the come-to-stop movement on the end
+//!   must be very slow for the last small distance"; 0.12 s and 0.2 s before.]
+//! - **Inertia weight** ([`WEIGHTS`], the settings page's dropdown): every time here, and
+//!   the weapon's and the crouch's (nvforever `view_sway.rs`, `crouch_eye.rs`), times
+//!   this: 0.5 twice as quick, 2 twice as slow.
 //! - **The air keeps its own rules** (`fnv_phys::air`, the game's measured air control):
 //!   off the ground and swimming the keys' velocity goes to the controller as before, and
 //!   the spring follows what the character does, so a landing carries the air speed into
@@ -24,10 +31,14 @@
 use crate::ease::{omega_for, Spring};
 use bevy::prelude::*;
 
-/// Seconds to reach a new, faster speed from rest (95%).
-pub const START_SECONDS: f32 = 0.12;
-/// Seconds to glide to a stop, or to brake before a turn back (95%).
-pub const STOP_SECONDS: f32 = 0.2;
+/// Seconds to reach a new, faster speed from rest (95%), at inertia weight 1.
+pub const START_SECONDS: f32 = 0.5;
+/// Seconds to glide down to 5% of the speed, or to brake before a turn back (95%), at
+/// inertia weight 1.
+pub const STOP_SECONDS: f32 = 0.9;
+/// The inertia weights the settings page offers, by name: how many times the times
+/// above (and the weapon's and the crouch's) are taken [design: the owner, 2026-11-13].
+pub const WEIGHTS: [(f32, &str); 4] = [(0.5, "0.5 - 100% faster"), (1.0, "1 - normal speed"), (1.5, "1.5 - 1.5x slower"), (2.0, "2 - 2x slower")];
 /// Ground speed below which a glide no longer plays the movement clips, units/s.
 pub const GLIDE_CLIP_SPEED: f32 = 30.0;
 /// A move in one frame this far across the ground (units) is a placement, not motion:
@@ -35,8 +46,19 @@ pub const GLIDE_CLIP_SPEED: f32 = 30.0;
 const PLACED_DISTANCE: f32 = 500.0;
 /// Within this of the keys' velocity (units/s) and slower to change than [`SNAP_RATE`]
 /// (units/s²), the spring is the keys' velocity exactly.
-const SNAP_SPEED: f32 = 0.5;
-const SNAP_RATE: f32 = 5.0;
+const SNAP_SPEED: f32 = 0.3;
+const SNAP_RATE: f32 = 3.0;
+
+/// The inertia weight of a name or a number (`"1.5"`, or the name the page shows).
+pub fn weight_by_name(s: &str) -> Option<f32> {
+    let s = s.trim();
+    WEIGHTS.iter().find(|(w, name)| *name == s || s.parse::<f32>().is_ok_and(|v| (v - w).abs() < 1e-3)).map(|(w, _)| *w)
+}
+
+/// The name the page shows for an inertia weight (the nearest offered).
+pub fn weight_name(weight: f32) -> &'static str {
+    WEIGHTS.iter().min_by(|a, b| (a.0 - weight).abs().total_cmp(&(b.0 - weight).abs())).map_or("1 - normal speed", |(_, n)| n)
+}
 
 /// What a start or a stop took, for the log (a smoke check).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -53,6 +75,8 @@ pub enum Report {
 pub struct MovementInertia {
     /// The "Movement inertia" switch (on by default).
     pub on: bool,
+    /// The "Inertia weight" dropdown ([`WEIGHTS`]; 1 by default).
+    pub weight: f32,
     /// Horizontal velocity (game x, y), units/s, and its rate of change.
     axes: [Spring; 2],
     /// The keys' velocity at the last step.
@@ -73,7 +97,7 @@ pub struct MovementInertia {
 
 impl Default for MovementInertia {
     fn default() -> Self {
-        MovementInertia { on: true, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None }
+        MovementInertia { on: true, weight: 1.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None }
     }
 }
 
@@ -155,7 +179,7 @@ impl MovementInertia {
         let want = key[0].hypot(key[1]);
         // Faster the same way: starting; slower, or against the way it goes: braking.
         let starting = want > speed && key[0] * v[0] + key[1] * v[1] >= 0.0;
-        let omega = omega_for(if starting { START_SECONDS } else { STOP_SECONDS });
+        let omega = omega_for(self.weight.max(0.1) * if starting { START_SECONDS } else { STOP_SECONDS });
         for (s, k) in self.axes.iter_mut().zip(key) {
             s.step(k, omega, dt);
         }
@@ -236,29 +260,65 @@ mod tests {
         assert!(first[1] > 0.0 && first[1] < 0.2 * RUN, "a gentle first step: {first:?}");
         let v = steps(&mut m, [0.0, RUN], START_SECONDS - DT, DT);
         assert!(v[1] > 0.93 * RUN && v[1] <= RUN, "{v:?}");
-        let v = steps(&mut m, [0.0, RUN], 0.5, DT);
+        let v = steps(&mut m, [0.0, RUN], 1.5, DT);
         assert_eq!(v, [0.0, RUN], "then exactly the keys' speed");
     }
 
     #[test]
-    fn glides_to_a_stop_and_ends_at_rest() {
+    fn walking_has_inertia_too() {
+        let walk = 86.8;
         let mut m = MovementInertia::default();
-        steps(&mut m, [RUN, 0.0], 1.0, DT);
+        let v = steps(&mut m, [0.0, walk], 0.1, DT);
+        assert!(v[1] < 0.3 * walk, "not at walking speed at once: {v:?}");
+        steps(&mut m, [0.0, walk], 2.0, DT);
+        let v = steps(&mut m, [0.0, 0.0], 0.3, DT);
+        assert!(v[1] > 0.3 * walk, "still walking on after letting go: {v:?}");
+    }
+
+    #[test]
+    fn glides_to_a_stop_creeping_at_the_end_and_ends_at_rest() {
+        let mut m = MovementInertia::default();
+        steps(&mut m, [RUN, 0.0], 2.0, DT);
         let v = m.step([0.0, 0.0], false, DT);
-        assert!(v[0] > 0.9 * RUN, "still moving just after the key is let go: {v:?}");
+        assert!(v[0] > 0.95 * RUN, "still moving just after the key is let go: {v:?}");
         let v = steps(&mut m, [0.0, 0.0], STOP_SECONDS - DT, DT);
         assert!(v[0] > 0.0 && v[0] < 0.07 * RUN, "{v:?}");
+        // The last of it creeps: still moving half a second later, slowly.
         let v = steps(&mut m, [0.0, 0.0], 0.5, DT);
+        assert!(v[0] > 0.3 && v[0] < 0.02 * RUN, "{v:?}");
+        let v = steps(&mut m, [0.0, 0.0], 2.0, DT);
         assert_eq!(v, [0.0, 0.0], "at rest exactly");
+    }
+
+    #[test]
+    fn the_weight_scales_the_times() {
+        let to_95 = |weight: f32| {
+            let mut m = MovementInertia { weight, ..default() };
+            let mut t = 0.0;
+            while m.step([0.0, RUN], false, DT / 4.0)[1] < 0.95 * RUN {
+                t += DT / 4.0;
+            }
+            t
+        };
+        let one = to_95(1.0);
+        assert!((one - START_SECONDS).abs() < 0.01, "{one}");
+        for (w, _) in WEIGHTS {
+            assert!((to_95(w) - w * one).abs() < 0.01, "{w}: {}", to_95(w));
+        }
+        assert_eq!(weight_by_name("1.5"), Some(1.5));
+        assert_eq!(weight_by_name("2 - 2x slower"), Some(2.0));
+        assert_eq!(weight_by_name("3"), None);
+        assert_eq!(weight_name(0.5), "0.5 - 100% faster");
+        assert_eq!(weight_name(1.0), "1 - normal speed");
     }
 
     #[test]
     fn turning_back_brakes_first_and_never_overshoots() {
         let mut m = MovementInertia::default();
-        steps(&mut m, [0.0, RUN], 1.0, DT);
+        steps(&mut m, [0.0, RUN], 2.0, DT);
         let mut last = RUN;
         let mut crossed = false;
-        for _ in 0..120 {
+        for _ in 0..300 {
             let v = m.step([0.0, -RUN], false, DT);
             assert!(v[1] <= last + 1e-3, "braking and then speeding up the other way only: {last} then {}", v[1]);
             assert!(v[1] >= -RUN - 1e-3, "never faster than asked: {v:?}");
@@ -297,19 +357,20 @@ mod tests {
     #[test]
     fn starts_and_glides_are_timed_for_the_log() {
         let mut m = MovementInertia::default();
-        steps(&mut m, [0.0, RUN], 1.0, DT);
-        steps(&mut m, [0.0, 0.0], 1.0, DT);
+        steps(&mut m, [0.0, RUN], 2.0, DT);
+        steps(&mut m, [0.0, 0.0], 4.0, DT);
         let [Report::Started { seconds, speed }, Report::Stopped { seconds: stop, distance, speed: from }] = m.reports[..] else {
             panic!("{:?}", m.reports);
         };
-        assert!(seconds > 0.09 && seconds < 0.15 && speed == RUN, "{seconds} {speed}");
-        // A critically damped glide from v covers 2v/ω.
+        assert!((seconds - START_SECONDS).abs() < 0.03 && speed == RUN, "{seconds} {speed}");
+        // A critically damped glide from v covers 2v/ω: about 130 units from a run.
         let glide = 2.0 * RUN / omega_for(STOP_SECONDS);
-        assert!((distance - glide).abs() < 1.0 && stop > STOP_SECONDS && stop < 0.6 && from == RUN, "{distance} against {glide} in {stop}");
+        assert!((distance - glide).abs() < 1.0 && (120.0..140.0).contains(&distance), "{distance} against {glide}");
+        assert!(stop > 1.5 * STOP_SECONDS && stop < 3.0 && from == RUN, "{stop} {from}");
         // Let go before full speed: no start reported, the glide still is.
         let mut m = MovementInertia::default();
-        steps(&mut m, [0.0, RUN], 0.05, DT);
-        steps(&mut m, [0.0, 0.0], 1.0, DT);
+        steps(&mut m, [0.0, RUN], 0.2, DT);
+        steps(&mut m, [0.0, 0.0], 4.0, DT);
         assert!(matches!(m.reports[..], [Report::Stopped { .. }]), "{:?}", m.reports);
     }
 
@@ -317,7 +378,7 @@ mod tests {
     fn the_clips_follow_a_glide_and_the_keys_otherwise() {
         let mut m = MovementInertia::default();
         // Heading north; running north.
-        steps(&mut m, [0.0, RUN], 1.0, DT);
+        steps(&mut m, [0.0, RUN], 2.0, DT);
         assert_eq!(m.clip_intent(1.0, 0.0, false, 0.0), (1.0, 0.0, false), "the keys while they agree");
         m.step([0.0, 0.0], false, DT);
         let (f, r, walk) = m.clip_intent(0.0, 0.0, true, 0.0);
@@ -335,7 +396,7 @@ mod tests {
         m.on = false;
         assert_eq!(m.clip_intent(0.0, 0.0, false, 0.0), (0.0, 0.0, false));
         m.on = true;
-        steps(&mut m, [0.0, 0.0], 1.0, DT);
+        steps(&mut m, [0.0, 0.0], 3.0, DT);
         assert_eq!(m.clip_intent(0.0, 0.0, false, 0.0), (0.0, 0.0, false));
     }
 }

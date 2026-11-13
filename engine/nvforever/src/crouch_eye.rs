@@ -37,9 +37,9 @@ pub struct CrouchEye {
 
 impl CrouchEye {
     /// One frame of `dt` seconds: `sneaking` asked for, the clip asked for fading in over
-    /// `fade_in` seconds, the easing `on` or not, the rig drawn at `scale`. The height to
-    /// add to the arms rig, units (up).
-    pub fn update(&mut self, sneaking: bool, fade_in: f32, on: bool, scale: f32, dt: f32) -> f32 {
+    /// `fade_in` seconds, the easing `on` or not, its times × `slowness` (the inertia
+    /// weight), the rig drawn at `scale`. The height to add to the arms rig, units (up).
+    pub fn update(&mut self, sneaking: bool, fade_in: f32, on: bool, slowness: f32, scale: f32, dt: f32) -> f32 {
         let want = usize::from(sneaking);
         if self.clips.is_none() {
             // The first frame: settled in the stance the game starts in.
@@ -65,7 +65,7 @@ impl CrouchEye {
         let total = clips[0] + clips[1];
         let down = if total > 0.0 { clips[1] / total } else { want as f32 };
         if on {
-            let seconds = if sneaking { DOWN_SECONDS } else { UP_SECONDS };
+            let seconds = slowness.max(0.1) * if sneaking { DOWN_SECONDS } else { UP_SECONDS };
             self.eased.retarget(want as f32, seconds, 1.0);
             self.eased.step(dt);
         } else {
@@ -93,7 +93,7 @@ mod tests {
     fn run(c: &mut CrouchEye, sneaking: bool, frames: usize) -> Vec<f32> {
         (0..frames)
             .map(|_| {
-                let lift = c.update(sneaking, DEFAULT_FADE, true, 1.0, DT);
+                let lift = c.update(sneaking, DEFAULT_FADE, true, 1.0, 1.0, DT);
                 let clips = c.clips.unwrap();
                 let down = clips[1] / (clips[0] + clips[1]);
                 SNEAK_EYE_DROP * down - lift
@@ -104,11 +104,11 @@ mod tests {
     #[test]
     fn settled_it_adds_nothing() {
         let mut c = CrouchEye::default();
-        assert_eq!(c.update(false, DEFAULT_FADE, true, 1.0, DT), 0.0);
+        assert_eq!(c.update(false, DEFAULT_FADE, true, 1.0, 1.0, DT), 0.0);
         let mut c = CrouchEye::default();
-        assert_eq!(c.update(true, DEFAULT_FADE, true, 1.0, DT), 0.0, "a crouched start stays crouched");
+        assert_eq!(c.update(true, DEFAULT_FADE, true, 1.0, 1.0, DT), 0.0, "a crouched start stays crouched");
         run(&mut c, false, 60);
-        assert!(c.update(false, DEFAULT_FADE, true, 1.0, DT).abs() < 1e-5);
+        assert!(c.update(false, DEFAULT_FADE, true, 1.0, 1.0, DT).abs() < 1e-5);
     }
 
     #[test]
@@ -145,18 +145,37 @@ mod tests {
     }
 
     #[test]
+    fn the_inertia_weight_scales_the_time() {
+        let down_in = |slowness: f32| {
+            let mut c = CrouchEye::default();
+            c.update(false, DEFAULT_FADE, true, slowness, 1.0, DT);
+            let mut frames = 0;
+            loop {
+                c.update(true, DEFAULT_FADE, true, slowness, 1.0, DT);
+                frames += 1;
+                if c.share() >= 1.0 {
+                    return frames as f32 * DT;
+                }
+            }
+        };
+        assert!((down_in(1.0) - DOWN_SECONDS).abs() <= DT);
+        assert!((down_in(2.0) - 2.0 * DOWN_SECONDS).abs() <= DT);
+        assert!((down_in(0.5) - 0.5 * DOWN_SECONDS).abs() <= DT);
+    }
+
+    #[test]
     fn off_it_follows_the_clips_and_scales_with_the_body() {
         let mut c = CrouchEye::default();
-        c.update(false, DEFAULT_FADE, false, 1.0, DT);
+        c.update(false, DEFAULT_FADE, false, 1.0, 1.0, DT);
         for _ in 0..30 {
-            assert_eq!(c.update(true, DEFAULT_FADE, false, 1.0, DT), 0.0);
+            assert_eq!(c.update(true, DEFAULT_FADE, false, 1.0, 1.0, DT), 0.0);
         }
         let mut a = CrouchEye::default();
         let mut b = CrouchEye::default();
-        a.update(false, DEFAULT_FADE, true, 1.0, DT);
-        b.update(false, DEFAULT_FADE, true, 0.5, DT);
-        let x = a.update(true, DEFAULT_FADE, true, 1.0, DT);
-        let y = b.update(true, DEFAULT_FADE, true, 0.5, DT);
+        a.update(false, DEFAULT_FADE, true, 1.0, 1.0, DT);
+        b.update(false, DEFAULT_FADE, true, 1.0, 0.5, DT);
+        let x = a.update(true, DEFAULT_FADE, true, 1.0, 1.0, DT);
+        let y = b.update(true, DEFAULT_FADE, true, 1.0, 0.5, DT);
         assert!((y - 0.5 * x).abs() < 1e-5 && x != 0.0);
     }
 }

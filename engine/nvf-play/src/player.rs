@@ -388,6 +388,26 @@ impl Plugin for PlayerPlugin {
                 slider: None,
             },
         );
+        crate::settings::add_choice_list(
+            app,
+            crate::settings::Setting {
+                key: "inertia-weight",
+                group: crate::pause::GROUP_MENUS,
+                label: "Inertia weight",
+                note: "How heavy the movement feels: the times your character takes to get going and to glide to a stop, the weapon takes to follow a turn or a step, and the view takes to crouch, all times this. 0.5 is twice as quick, 2 twice as slow.",
+                get: |_| false,
+                set: |_, _| {},
+                slider: None,
+            },
+            crate::settings::ChoiceList {
+                names: |_| crate::inertia::WEIGHTS.iter().map(|(_, n)| n.to_string()).collect(),
+                chosen: |w| crate::inertia::weight_name(w.resource::<crate::inertia::MovementInertia>().weight).to_string(),
+                pick: inertia_weight_pick,
+                save: |w| format!("{}", w.resource::<crate::inertia::MovementInertia>().weight),
+                load: inertia_weight_pick,
+                ask_keep: false,
+            },
+        );
         crate::settings::add_setting(
             app,
             crate::settings::Setting {
@@ -400,6 +420,17 @@ impl Plugin for PlayerPlugin {
                 slider: None,
             },
         );
+    }
+}
+
+/// The "Inertia weight" dropdown's choice, by its name or its number.
+fn inertia_weight_pick(w: &mut World, name: &str) -> bool {
+    match crate::inertia::weight_by_name(name) {
+        Some(weight) => {
+            w.resource_mut::<crate::inertia::MovementInertia>().weight = weight;
+            true
+        }
+        None => false,
     }
 }
 

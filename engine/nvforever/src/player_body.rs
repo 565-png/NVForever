@@ -1129,7 +1129,7 @@ fn report(mut exit: MessageReader<AppExit>, body: Res<PlayerBody>) {
             m.sway.peak_lag.x.to_degrees(),
             m.sway.peak_lag.y.to_degrees(),
             m.sway.peak_dip,
-            m.sway.peak_lift_dip,
+            m.sway.peak_lift_dip.max(0.0) + 0.0,
             if body.weapon_weight_sway { "on" } else { "off" }
         );
         let (head, pivot) = m.head.pivot_rms();
@@ -2717,6 +2717,7 @@ fn drive_body(
             sneaking: stance == Stance::Sneak,
             airborne: m.falling,
             heft: crate::view_sway::heft(weight),
+            slowness: inertia.as_deref().map_or(1.0, |i| i.weight),
             on: state.weapon_sway && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         })
     });
@@ -2742,7 +2743,8 @@ fn drive_body(
         let fade_in = f.clip(&mut ctx, ClipKey::Idle(stance, limping)).map_or(DEFAULT_FADE, |c| c.fade());
         let on = inertia.as_deref().is_some_and(|i| i.on) && stance != Stance::Swim && idles.held.is_none();
         let was = m.crouch.share();
-        at[2] += m.crouch.update(stance == Stance::Sneak, fade_in, on, root.scale.z, dt);
+        let slowness = inertia.as_deref().map_or(1.0, |i| i.weight);
+        at[2] += m.crouch.update(stance == Stance::Sneak, fade_in, on, slowness, root.scale.z, dt);
         if on && ((was < 1.0 && m.crouch.share() >= 1.0) || (was > 0.0 && m.crouch.share() <= 0.0)) {
             info!("player view: {} (eased crouch)", if m.crouch.share() >= 1.0 { "crouched" } else { "standing" });
         }

@@ -124,9 +124,13 @@ solved exactly per frame, so alike at any frame rate): it follows a change slowl
 first, faster, then settles without overshoot, and its own motion never jumps. The view
 itself turns exactly as the mouse says.
 
-- Turn lag: the arms chase the view: a steady turn leaves them behind by the turn rate ×
-  0.11 s, at most 5° sideways and 3.5° up or down, the weapon tilting a little into the
-  lag; when the view stops they carry on, slow down and come to rest on it.
+- Turn lag: the head turns first and the body with the arms follows (the owner's
+  playtest of 2026-11-13: "the human body rotates its head first, then the lower body
+  catches up"): a steady turn leaves the arms behind by the turn rate × 0.3 s, shown at
+  most 12° sideways and 6° up or down, the weapon tilting a little into the lag; a quick
+  flick keeps them at the limit a moment, then they carry on, slow down and come to rest
+  on the view, never swinging past it (a 90° flick: back in about a second). 0.11 s, 5°
+  and 3.5° before that playtest, which "whipped" the gun round with the view.
 - Bob: a dip at each footfall and one sideways swing a stride, at the phase of the
   movement clips (the footstep keys), growing with the ground speed to a run's
   (300 units/s): 0.9 units down, 0.6 across, 1.2° of tilt. Sneaking 60 %, down the sights
@@ -159,9 +163,13 @@ The original's player is at full speed from the first loop and stops dead (physi
 §6.3). With the "Movement inertia" switch (key `movement-inertia`, `--no-movement-inertia`,
 on by default) [design]:
 
-- On the ground the player's velocity rides a critically damped spring towards the
-  keys' velocity: 95 % of a new, faster speed in 0.12 s, a glide to a stop (or the brake
-  before a turn back) in 0.2 s (`engine/nvf-play/src/inertia.rs`, applied in
+- On the ground the player's velocity, walking or running, rides a critically damped
+  spring towards the keys' velocity: 95 % of a new, faster speed in 0.5 s, down to 5 % of
+  it in 0.9 s when the keys are let go (or the brake before a turn back), the last of the
+  glide creeping out slowly; a run glides about 130 units, two metres (0.12 s and 0.2 s
+  before the owner's playtest of 2026-11-13: "slow the movement inertia down, the
+  come-to-stop movement on the end must be very slow for the last small distance")
+  (`engine/nvf-play/src/inertia.rs`, applied in
   `player::step` before the character controller, so `fnv_phys`, people and the parity
   checks are untouched). The air keeps the game's air control; the landing speed
   profile (physics.md §6.4.1) is left out: a landing lands into the inertia.
@@ -172,6 +180,11 @@ on by default) [design]:
   ease-out, instead of the clips' straight 0.2 s cross-fade: the arms rig is moved by the
   difference (`engine/nvforever/src/crouch_eye.rs`), so settled in either stance nothing
   changes.
+- **Inertia weight** (a dropdown, key `inertia-weight`: 0.5 - 100% faster, 1 - normal
+  speed, 1.5 - 1.5x slower, 2 - 2x slower; 1 by default): every time above, the weapon's
+  springs (§1.4a) and the crouch's times, times this [design: the owner, 2026-11-13].
+- The settings page lists these under Gameplay › Inertia: Movement inertia, Inertia
+  weight, Weapon sway, Weapon weight in the sway (settings-page.md).
 
 ### 1.4a.1 The camera's bob: first person yes, third person no (owner, 2026-11-07)
 
