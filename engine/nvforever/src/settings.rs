@@ -191,9 +191,21 @@ pub fn register(app: &mut App) {
                 key: "weapon-sway",
                 group: GROUP_PICTURE,
                 label: "Weapon sway",
-                note: "On: in first person the arms and weapon lag behind a turn and bob as you walk and run. Off: they stay still in the view. (--no-weapon-sway)",
+                note: "On: in first person the arms and weapon lag behind a turn and a change of pace, bob as you walk and run, dip as you jump and land, and drift with your breath when you stand still. Off: they stay still in the view. (--no-weapon-sway)",
                 get: |w| w.resource::<PlayerBody>().weapon_sway,
                 set: |w, on| w.resource_mut::<PlayerBody>().weapon_sway = on,
+                slider: None,
+            },
+        );
+        add_setting(
+            app,
+            Setting {
+                key: "weapon-weight-sway",
+                group: GROUP_PICTURE,
+                label: "Weapon weight in the sway",
+                note: "On: with Weapon sway on, heavier weapons swing slower and further when you turn, move, jump and breathe, up to half as much again for the heaviest. Off: every weapon sways alike. (--weapon-weight-sway)",
+                get: |w| w.resource::<PlayerBody>().weapon_weight_sway,
+                set: |w, on| w.resource_mut::<PlayerBody>().weapon_weight_sway = on,
                 slider: None,
             },
         );

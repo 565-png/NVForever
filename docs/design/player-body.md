@@ -117,19 +117,61 @@ decode` of the clips and `_1stperson\skeleton.nif`]. The executable names
 view by code [hypothesis; the values are not known]. NVForever's sway
 (`engine/nvforever/src/view_sway.rs`) [design, constants tuned by eye]:
 
-- Turn lag: the arms keep their aim and catch the view up with a 0.11 s time constant,
-  at most 5° sideways and 3.5° up or down, the weapon tilting a little into the lag.
+Since the movement-inertia work (owner, 2026-11-13: the gun "moves with the direction
+using a ramp curve - slow start, ramps up to a faster movement then smoothly slows") the
+weapon hangs from the view on critically damped springs (`nvf_play::ease::Spring`,
+solved exactly per frame, so alike at any frame rate): it follows a change slowly at
+first, faster, then settles without overshoot, and its own motion never jumps. The view
+itself turns exactly as the mouse says.
+
+- Turn lag: the arms chase the view: a steady turn leaves them behind by the turn rate ×
+  0.11 s, at most 5° sideways and 3.5° up or down, the weapon tilting a little into the
+  lag; when the view stops they carry on, slow down and come to rest on it.
 - Bob: a dip at each footfall and one sideways swing a stride, at the phase of the
   movement clips (the footstep keys), growing with the ground speed to a run's
   (300 units/s): 0.9 units down, 0.6 across, 1.2° of tilt. Sneaking 60 %, down the sights
   20 % (the turn lag 35 %), none in the air.
-- Starting, stopping and strafing leave the weapon a little behind (at most 1.2 units)
-  and lean it into a strafe (1.5° at a run).
+- Movement lag: a sprung hand pushed by the body's acceleration (spring rate 10/s):
+  starting, stopping, strafing and turning while running leave the weapon a little behind
+  (a sudden change of 344 units/s would peak at 2 units; shown at most 1.2) and a steady
+  pace brings it back; it leans into a strafe (1.5° at a run).
+- Jumps and landings: the same hand pushed by the vertical acceleration (12/s): a
+  take-off dips the weapon about 1 unit, it rides about half a unit high through the
+  fall, and a landing dips it again, more the harder the landing (shown at most 2
+  units); the muzzle tips 0.6° per unit of dip.
+- Breathing: standing still (below 20 units/s, on the ground) a figure of eight 0.18
+  units wide and half as high every 4 s, fading in over 0.8 s; 35 % down the sights and
+  sneaking.
+- Weapon weight (a switch, off by default: `--weapon-weight-sway`, "Weapon weight in the
+  sway", key `weapon-weight-sway`): a weapon in hand of up to 3 lb sways as above; from
+  20 lb its springs are 1.5 × slower and its sway, limits and breathing 1.5 × larger,
+  smoothly between (`view_sway::heft`, the WEAP record's weight) [design, the owner].
 - It turns and moves `Bip01 Translate` about the eye in the view's frame, after the
   clips are blended, so the camera does not move; it fades out (0.15 s) under the
   Pip-Boy, while an idle drives the view and in third person.
 - A switch, on by default: `--no-weapon-sway`, "Weapon sway" on the settings page (key
-  `weapon-sway`). The exit summary gives the most turn lag and the deepest bob.
+  `weapon-sway`). The exit summary gives the most turn lag, the deepest bob and the
+  deepest jump or landing dip.
+
+### 1.4a.2 Movement inertia and the eased crouch (owner, 2026-11-13)
+
+The original's player is at full speed from the first loop and stops dead (physics.md
+§6.3). With the "Movement inertia" switch (key `movement-inertia`, `--no-movement-inertia`,
+on by default) [design]:
+
+- On the ground the player's velocity rides a critically damped spring towards the
+  keys' velocity: 95 % of a new, faster speed in 0.12 s, a glide to a stop (or the brake
+  before a turn back) in 0.2 s (`engine/nvf-play/src/inertia.rs`, applied in
+  `player::step` before the character controller, so `fnv_phys`, people and the parity
+  checks are untouched). The air keeps the game's air control; the landing speed
+  profile (physics.md §6.4.1) is left out: a landing lands into the inertia.
+- While the body glides with no key held, or brakes against the keys, the movement
+  clips follow the way it slides (walking or running as it last moved); detection,
+  power attacks and scripts still read the keys.
+- First person: the view sinks into a crouch over 0.35 s and rises over 0.4 s on a cubic
+  ease-out, instead of the clips' straight 0.2 s cross-fade: the arms rig is moved by the
+  difference (`engine/nvforever/src/crouch_eye.rs`), so settled in either stance nothing
+  changes.
 
 ### 1.4a.1 The camera's bob: first person yes, third person no (owner, 2026-11-07)
 

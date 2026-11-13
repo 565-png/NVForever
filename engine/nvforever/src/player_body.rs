@@ -789,6 +789,8 @@ struct Motion {
     lower_told: bool,
     /// How far the gun is on its way up to the eye (0–1, not eased; `iron_sights::step`).
     sights_share: f32,
+    /// The first-person view's eased crouch (`crouch_eye.rs`).
+    crouch: crate::crouch_eye::CrouchEye,
 }
 
 impl Motion {
@@ -839,6 +841,7 @@ impl Default for Motion {
             sights_told: false,
             lower_told: false,
             sights_share: 0.0,
+            crouch: crate::crouch_eye::CrouchEye::default(),
         }
     }
 }
@@ -850,6 +853,9 @@ pub struct PlayerBody {
     /// Sway and bob the first-person arms and weapon (`view_sway.rs`; off with
     /// `--no-weapon-sway`, the settings page).
     pub weapon_sway: bool,
+    /// Heavier weapons sway slower and further (`view_sway.rs`; on with
+    /// `--weapon-weight-sway`, the settings page; off by default).
+    pub weapon_weight_sway: bool,
     /// Bob the first-person camera while walking (`head_bob.rs`; off with
     /// `--no-head-bob`, the settings page).
     pub head_bob: bool,
@@ -978,6 +984,8 @@ pub struct PlayerBodyPlugin {
     pub first_person_body: bool,
     /// Not `--no-weapon-sway`.
     pub weapon_sway: bool,
+    /// `--weapon-weight-sway`.
+    pub weapon_weight_sway: bool,
     /// Not `--no-head-bob`.
     pub head_bob: bool,
     /// Not `--no-weapon-lower`.
@@ -989,7 +997,7 @@ pub struct PlayerBodyPlugin {
 impl Plugin for PlayerBodyPlugin {
     fn build(&self, app: &mut App) {
         // Furniture (`furniture.rs`) says what the body plays before it is posed.
-        app.insert_resource(PlayerBody { first_person_body: self.first_person_body, weapon_sway: self.weapon_sway, head_bob: self.head_bob, weapon_lower: self.weapon_lower, true_iron_sights: self.true_iron_sights, ..default() })
+        app.insert_resource(PlayerBody { first_person_body: self.first_person_body, weapon_sway: self.weapon_sway, weapon_weight_sway: self.weapon_weight_sway, head_bob: self.head_bob, weapon_lower: self.weapon_lower, true_iron_sights: self.true_iron_sights, ..default() })
             .init_resource::<crate::furniture::BodyOverride>()
             .init_resource::<crate::furniture::PlayerUse>()
             .init_resource::<crate::weapon_lower::Ahead>()
@@ -1115,7 +1123,15 @@ fn report(mut exit: MessageReader<AppExit>, body: Res<PlayerBody>) {
     if exit.read().next().is_some() {
         let m = &body.motion;
         info!("player body summary: {} falls (the jump loop), {} landings", m.falls, m.landings);
-        info!("player body summary: weapon sway {}, most turn lag {:.2} degrees sideways and {:.2} up or down, deepest bob {:.2} units", if body.weapon_sway { "on" } else { "off" }, m.sway.peak_lag.x.to_degrees(), m.sway.peak_lag.y.to_degrees(), m.sway.peak_dip);
+        info!(
+            "player body summary: weapon sway {}, most turn lag {:.2} degrees sideways and {:.2} up or down, deepest bob {:.2} units, deepest jump or landing dip {:.2} units, weapon weight {}",
+            if body.weapon_sway { "on" } else { "off" },
+            m.sway.peak_lag.x.to_degrees(),
+            m.sway.peak_lag.y.to_degrees(),
+            m.sway.peak_dip,
+            m.sway.peak_lift_dip,
+            if body.weapon_weight_sway { "on" } else { "off" }
+        );
         let (head, pivot) = m.head.pivot_rms();
         info!("player body summary: head bob {}, deepest first-person dip {:.2} units; third-person pivot over {} frames moved {pivot:.3} units a frame (rms) against the head's {head:.3}, pivot/head {:.2}", if body.head_bob { "on" } else { "off" }, m.head.peak_dip, m.head.frames, pivot / head.max(1e-3));
         info!("player body summary: weapon lowering {}, lowered {} times, most {:.2}", if body.weapon_lower { "on" } else { "off" }, m.lower.times, m.lower.peak);
@@ -2319,7 +2335,7 @@ fn drive_body(
     mut transforms: Query<&mut Transform>,
     mut visibility: Query<&mut Visibility>,
     mut anim: ResMut<WeaponAnim>,
-    (furniture, mut idles, mut seat, pip, cams, first_fov, limbs, (death, knock), (zoom, combat, mut true_sights, scope, mut lens3d, lens_sway), (ahead, mut lunge, s1st, vats)): (
+    (furniture, mut idles, mut seat, pip, cams, first_fov, limbs, (death, knock), (zoom, combat, mut true_sights, scope, mut lens3d, lens_sway), (ahead, mut lunge, s1st, vats, inertia)): (
         Res<crate::furniture::BodyOverride>,
         ResMut<PlayerIdles>,
         ResMut<nvf_play::furniture::PlayerSeat>,
@@ -2329,7 +2345,7 @@ fn drive_body(
         Option<Res<nvf_play::combat::PlayerLimbs>>,
         (Res<crate::death_cam::DeathCam>, Res<crate::player_knockdown::PlayerKnockdown>),
         (Option<Res<nvf_play::aim_zoom::AimZoom>>, Option<Res<nvf_play::combat::Combat>>, Option<ResMut<nvf_play::aim_zoom::TrueSights>>, Option<Res<nvf_play::aim_zoom::Scope>>, Option<ResMut<nvf_play::aim_zoom::Scope3d>>, Option<Res<nvf_play::aim_zoom::LensSway>>),
-        (Res<crate::weapon_lower::Ahead>, ResMut<nvf_play::player::Lunge>, Option<Res<nvf_play::console::ShowFirstPerson>>, Option<Res<nvf_play::vats_mode::VatsMode>>),
+        (Res<crate::weapon_lower::Ahead>, ResMut<nvf_play::player::Lunge>, Option<Res<nvf_play::console::ShowFirstPerson>>, Option<Res<nvf_play::vats_mode::VatsMode>>, Option<Res<nvf_play::inertia::MovementInertia>>),
     ),
     mut driven: ResMut<nvf_play::player::ViewDriven>,
 ) {
@@ -2376,6 +2392,8 @@ fn drive_body(
 
     // What the character is doing.
     let (grounded, swimming, ground_gap) = phys.player.as_ref().map_or((true, false, None), |c| (c.grounded, c.swimming, c.ground_gap));
+    // The body's vertical velocity in the air, for the weapon's jump and landing.
+    let vertical = phys.player.as_ref().filter(|c| !c.grounded && !c.swimming).map_or(0.0, |c| c.vertical_speed);
     let stance = if swimming {
         Stance::Swim
     } else if control.sneak {
@@ -2383,7 +2401,14 @@ fn drive_body(
     } else {
         Stance::Stand
     };
-    let (forward, right, fast) = if d.auto_walk > 0.0 { (1.0, 0.0, true) } else { (intent.forward, intent.right, !intent.walk) };
+    // The movement clips: the keys', or with movement inertia the way the body glides
+    // once the keys are let go or brakes against them (`nvf_play::inertia`).
+    let (forward, right, fast) = if d.auto_walk > 0.0 {
+        (1.0, 0.0, true)
+    } else {
+        let (f, r, walk) = inertia.as_deref().map_or((intent.forward, intent.right, intent.walk), |i| i.clip_intent(intent.forward, intent.right, intent.walk, player.heading));
+        (f, r, !walk)
+    };
     let feet = player.feet;
     if dt > 0.0 {
         let step = m.last_feet.map_or(Vec2::ZERO, |l| Vec2::new(feet[0] - l[0], feet[1] - l[1]) / dt);
@@ -2677,6 +2702,8 @@ fn drive_body(
         seat.hold = Some(h.feet);
     }
     let pipboy = (pip.on_arm() && pip.warming.is_none()).then_some(pip.clip_time);
+    // A heavier weapon in the hand sways slower and further, with its switch on.
+    let weight = combat.as_deref().filter(|_| state.weapon_weight_sway && m.hands.in_hand).and_then(|c| c.forms.weapons.get(&c.player_weapon()?)).map_or(0.0, |w| w.weight);
     // The arms sway in first person by themselves: not under the Pip-Boy or an idle.
     let sway = body.first.as_ref().map_or(SwayPose::NONE, |f| {
         m.sway.update(SwayInput {
@@ -2684,10 +2711,12 @@ fn drive_body(
             heading: player.heading,
             pitch: player.pitch,
             velocity: m.velocity,
+            vertical,
             phase: f.animator.phase,
             sights: control.aiming,
             sneaking: stance == Stance::Sneak,
             airborne: m.falling,
+            heft: crate::view_sway::heft(weight),
             on: state.weapon_sway && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         })
     });
@@ -2705,6 +2734,18 @@ fn drive_body(
             on: state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         });
         at = [at[0] + o.x, at[1] + o.y, at[2] + o.z];
+    }
+    // With movement inertia the first-person view sinks into a crouch and rises from it
+    // on an ease-out curve instead of the clips' straight cross-fade (`crouch_eye.rs`).
+    let limping = limbs.as_deref().is_some_and(|l| l.limping());
+    if let Some(f) = body.first.as_mut() {
+        let fade_in = f.clip(&mut ctx, ClipKey::Idle(stance, limping)).map_or(DEFAULT_FADE, |c| c.fade());
+        let on = inertia.as_deref().is_some_and(|i| i.on) && stance != Stance::Swim && idles.held.is_none();
+        let was = m.crouch.share();
+        at[2] += m.crouch.update(stance == Stance::Sneak, fade_in, on, root.scale.z, dt);
+        if on && ((was < 1.0 && m.crouch.share() >= 1.0) || (was > 0.0 && m.crouch.share() <= 0.0)) {
+            info!("player view: {} (eased crouch)", if m.crouch.share() >= 1.0 { "crouched" } else { "standing" });
+        }
     }
     // Lowered against a wall or a friend ahead (`weapon_lower.rs`): a drawn weapon, not
     // fists; aiming, the trigger, an attack or a reload bring it up.

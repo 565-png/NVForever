@@ -825,6 +825,37 @@ expect = [
 ]
 
 [[scenario]]
+name = "movement-inertia"
+source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs, engine/nvforever/src/crouch_eye.rs, view_sway.rs; docs/design/player-body.md §1.4a.2): the player speeds up over a moment and glides to a stop, the first-person view eases into a crouch and out, the weapon dips on a jump and a landing"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/ease.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/crouch_eye.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak,12:sneak,14:jump" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 17
+expect = [
+  { re = 'movement inertia: up to [\d.]+ units/s in (?P<n>[\d.]+)s', range = [0.08, 0.25], label = "from standing to speed in about 0.12 s" },
+  { re = 'movement inertia: glided (?P<n>[\d.]+) units', range = [12, 45], label = "letting go of the key glides the player on (2 × speed / the spring rate)" },
+  { re = 'movement inertia: glided [\d.]+ units in (?P<n>[\d.]+)s', range = [0.2, 0.8], label = "and the glide comes to rest" },
+  { text = "player view: crouched (eased crouch)", label = "the view eases down into the crouch" },
+  { text = "player view: standing (eased crouch)", label = "and up out of it" },
+  { re = 'player body summary: weapon sway on, .*deepest jump or landing dip (?P<n>[\d.]+) units', range = [0.3, 2.01], label = "the jump dips the weapon, within the 2 unit limit" },
+]
+
+[[scenario]]
+name = "movement-inertia-off"
+source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs): with --no-movement-inertia the player starts and stops at once, as the original"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/crouch_eye.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--no-movement-inertia"]
+run_seconds = 13
+expect = [
+  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
+  { re = 'movement inertia: (up to|glided)', count = 0, label = "no start or glide under inertia" },
+  { re = 'eased crouch', count = 0, label = "the crouch follows the clips" },
+]
+
+[[scenario]]
 name = "graphics-glow-switches"
 source = "docs/spec-notes/world.md §6 \"HDR and bloom\", \"Eye adaptation\" (owner 2026-10-25: the HDR effects as settings switches): the settings page's Eye adaptation and Neon glow switches, and the light glow (HDR) they need, change while the game runs, without a rendering error"
 areas = ["renderer", "graphics", "settings"]

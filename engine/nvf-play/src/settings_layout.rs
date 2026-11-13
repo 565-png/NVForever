@@ -73,7 +73,11 @@ pub const SECTIONS: &[Section] = &[
     section("Gameplay", Some("Saving"), &["autosave-travel", "autosave-fast-travel", "autosave-wait", "autosave-sleep", "autosave-scripts"]),
     section("Gameplay", Some("Dialogue"), &["menu-pause", "dialogue-goodbye-hint", "dialogue-look", "dialogue-recentre", "dialogue-zoom", "lip-sync"]),
     section("Gameplay", Some("Reports"), &["send-reports", "reports-delete"]),
-    section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-sway", "head-bob", "weapon-lower", "field-of-view"]),
+    section(
+        "Gameplay",
+        Some("Camera"),
+        &["detached-camera", "true-iron-sights", "first-person-body", "weapon-sway", "weapon-weight-sway", "head-bob", "movement-inertia", "weapon-lower", "field-of-view"],
+    ),
     section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "ui-scale"]),
     section(
         "Display",
@@ -306,9 +310,11 @@ mod tests {
     /// Every row the registry can hold today (upstream main 9af0a4552 and f4015fae8, with #1966's
     /// quality and enhanced rows, #2014's counter rows, the two VATS rows and #2198's Upscaler
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
-    /// FSR library row), by the group it registers with.
-    const KNOWN: [(&str, &str); 107] = [
+    /// FSR library row, and the movement inertia and weapon weight rows), by the group it
+    /// registers with.
+    const KNOWN: [(&str, &str); 109] = [
         ("detached-camera", "Gameplay"),
+        ("movement-inertia", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
         ("reload-slows", "Gameplay"),
@@ -355,6 +361,7 @@ mod tests {
         ("monitor", "Display"),
         ("first-person-body", "Display"),
         ("weapon-sway", "Display"),
+        ("weapon-weight-sway", "Display"),
         ("head-bob", "Display"),
         ("weapon-lower", "Display"),
         ("sun-shadows", "Display"),

@@ -375,6 +375,19 @@ impl Plugin for PlayerPlugin {
                     .after(crate::phys::PhysSystems),
             )
             .add_systems(Update, crate::control::place_camera.in_set(PlaySet::Physics).after(log_status));
+        app.init_resource::<crate::inertia::MovementInertia>();
+        crate::settings::add_setting(
+            app,
+            crate::settings::Setting {
+                key: "movement-inertia",
+                group: crate::pause::GROUP_MENUS,
+                label: "Movement inertia",
+                note: "On: your character speeds up over a moment when you start to move, glides to a stop when you let go and brakes before turning back, and in first person the view sinks into a crouch and rises from it smoothly. Off: full speed at once and an instant stop, as in the original.",
+                get: |w| w.resource::<crate::inertia::MovementInertia>().on,
+                set: |w, on| w.resource_mut::<crate::inertia::MovementInertia>().on = on,
+                slider: None,
+            },
+        );
         crate::settings::add_setting(
             app,
             crate::settings::Setting {
@@ -1109,7 +1122,7 @@ fn step(
     (limbs, pace, perk_pace, reload_pace, stat_pace): Paces,
     (turbo, mut load): (Option<Res<crate::script::PlayerTimeScale>>, Option<ResMut<crate::phys_load::PhysLoad>>),
     (mut seat, mut landed): (ResMut<crate::furniture::PlayerSeat>, MessageWriter<crate::rumble::Landed>),
-    (mut blocks, noclip): (Option<ResMut<crate::blocking::ActorBlocks>>, Res<NoClip>),
+    (mut blocks, noclip, mut inertia): (Option<ResMut<crate::blocking::ActorBlocks>>, Res<NoClip>, ResMut<crate::inertia::MovementInertia>),
     (mut falls, mut fell, mut lunge): (Option<ResMut<crate::falls::Falls>>, MessageWriter<crate::falls::Fell>, ResMut<Lunge>),
 ) {
     if *state.get() != PlayState::Playing {
@@ -1152,6 +1165,7 @@ fn step(
         p.prev_feet = at;
         p.player_lift.reset();
         player.feet = at;
+        inertia.reset();
         return;
     }
     if noclip.0 && phys.player.is_some() {
@@ -1184,6 +1198,7 @@ fn step(
             player.placed = None;
         }
         p.player_lift.reset();
+        inertia.reset();
         let alpha = (p.stepper.accumulated / dt).clamp(0.0, 1.0);
         player.feet = lerp3(p.prev_feet, c.feet, alpha);
         return;
@@ -1213,6 +1228,7 @@ fn step(
     let dt = p.world.params.dt;
     let n = p.stepper.advance(&p.world.params, time.delta_secs());
     let c = p.player.as_mut().expect("placed");
+    inertia.check_placed(c.feet);
     // The clip's travel owed, spread over this frame's steps (none: kept for the next).
     let carry = if n > 0 { lunge.owed.map(|o| o / (n as f32 * dt)) } else { [0.0; 2] };
     if n > 0 {
@@ -1253,11 +1269,15 @@ fn step(
             // Speed Mult and the body armour's class, as people's (`StatSpeed`).
             let k = k * stat_pace.as_deref().map_or(1.0, |p| p.0);
             let [x, y] = velocity(&intent, player.heading, *speeds);
+            let key = [x * k, y * k];
+            // On the ground the velocity speeds up and slows down (`crate::inertia`); in
+            // the air the controller's own rules take the keys' velocity.
+            let [x, y] = if inertia.on && c.grounded { inertia.step(key, intent.walk, dt) } else { key };
             // An attack's clip carries the player (`Lunge`).
             if lunge.carrying && lunge.from.is_none() {
                 lunge.from = Some(c.feet);
             }
-            [x * k + carry[0], y * k + carry[1], 0.0]
+            [x + carry[0], y + carry[1], 0.0]
         };
         // A blow's knockback pushes the player back (`crate::combat::Knockback`), walking,
         // swimming or not, so it never waits to push later (review of #1219).
@@ -1329,6 +1349,15 @@ fn step(
         let was_swimming = c.swimming;
         let was_footing = crate::phys::step_lift::footing(c);
         let s = p.world.move_character(c, CharacterInput { velocity: go, jump: intent.jump && i == 0, vertical: vz, view });
+        if inertia.on {
+            // A landing lands into the inertia, not the game's landing speed profile.
+            c.since_landing = None;
+        }
+        if !inertia.on || !c.grounded || c.swimming || d.auto_walk > 0.0 {
+            // Off the ground, in the water or switched off: the spring takes what the
+            // character did, so the ground picks up from there.
+            inertia.follow(c.velocity);
+        }
         // The drawn body and view climb steps and bumps smoothly (`phys::step_lift`).
         let moved = (c.feet[0] - p.prev_feet[0]).hypot(c.feet[1] - p.prev_feet[1]);
         p.player_lift.step(c.feet[2] - p.prev_feet[2], moved, was_footing && crate::phys::step_lift::footing(c), dt);
@@ -1371,6 +1400,13 @@ fn step(
     if let Some(from) = lunge.from.filter(|_| !lunge.carrying) {
         lunge.from = None;
         info!("player: lunge done: {:.0} units from where it started", (c.feet[0] - from[0]).hypot(c.feet[1] - from[1]));
+    }
+    inertia.end_frame(c.feet, c.grounded && !c.swimming);
+    for r in std::mem::take(&mut inertia.reports) {
+        match r {
+            crate::inertia::Report::Started { seconds, speed } => info!("movement inertia: up to {speed:.0} units/s in {seconds:.2}s"),
+            crate::inertia::Report::Stopped { seconds, distance, speed } => info!("movement inertia: glided {distance:.1} units in {seconds:.2}s from {speed:.0} units/s"),
+        }
     }
     let alpha = (p.stepper.accumulated / dt).clamp(0.0, 1.0);
     player.feet = lerp3(p.prev_feet, c.feet, alpha);
