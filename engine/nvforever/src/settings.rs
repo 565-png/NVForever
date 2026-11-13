@@ -215,7 +215,7 @@ pub fn register(app: &mut App) {
                 key: "head-bob",
                 group: GROUP_PICTURE,
                 label: "Head bob",
-                note: "On: in first person the view dips with each step as you walk and run. Off: it stays level. (--no-head-bob)",
+                note: "On: in first person the view dips with each step as you walk and run, lags a little as you speed up or slow down, and dips as you take off and land. Off: it stays level. (--no-head-bob)",
                 get: |w| w.resource::<PlayerBody>().head_bob,
                 set: |w, on| w.resource_mut::<PlayerBody>().head_bob = on,
                 slider: None,

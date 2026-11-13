@@ -9,13 +9,13 @@
 //!   people's movement and the parity checks are untouched: only the player moves this way.
 //! - **How**: each axis of the ground velocity rides a critically damped spring
 //!   ([`crate::ease::Spring`]) towards the keys' velocity: about [`START_SECONDS`] to
-//!   reach a new speed, walking or running, and [`STOP_SECONDS`] to glide down to a twentieth
-//!   of it, after which the last of the glide creeps out slowly (a run's glide is about
-//!   130 units, two metres); braking before a turn back takes the stopping time. From rest
-//!   the spring starts gently, speeds up and settles without overshoot; solved exactly
-//!   per step, it is the same at any physics tick rate. [design: the owner's playtest of
-//!   2026-11-13, "slow the movement inertia down, the come-to-stop movement on the end
-//!   must be very slow for the last small distance"; 0.12 s and 0.2 s before.]
+//!   reach a new speed, walking or running, and [`STOP_SECONDS`] (half that) to glide down
+//!   to a twentieth of it, after which the last of the glide eases out (a run's glide is
+//!   about 36 units, half a metre); braking before a turn back takes the stopping time.
+//!   From rest the spring starts gently, speeds up and settles without overshoot; solved
+//!   exactly per step, it is the same at any physics tick rate. [design: the owner's
+//!   playtests of 2026-11-13: first "slow the movement inertia down", then "stopping feels
+//!   like … sliding on ice - make the stop time 2x speed of the start one".]
 //! - **Inertia weight** ([`WEIGHTS`], the settings page's dropdown): every time here, and
 //!   the weapon's and the crouch's (nvforever `view_sway.rs`, `crouch_eye.rs`), times
 //!   this: 0.5 twice as quick, 2 twice as slow.
@@ -34,8 +34,10 @@ use bevy::prelude::*;
 /// Seconds to reach a new, faster speed from rest (95%), at inertia weight 1.
 pub const START_SECONDS: f32 = 0.5;
 /// Seconds to glide down to 5% of the speed, or to brake before a turn back (95%), at
-/// inertia weight 1.
-pub const STOP_SECONDS: f32 = 0.9;
+/// inertia weight 1: half the start [design: the owner's second playtest, 2026-11-13,
+/// "stopping feels like the character is sliding on ice - make the stop time 2x speed of
+/// the start one"; 0.9 s before].
+pub const STOP_SECONDS: f32 = 0.25;
 /// The inertia weights the settings page offers, by name: how many times the times
 /// above (and the weapon's and the crouch's) are taken [design: the owner, 2026-11-13].
 pub const WEIGHTS: [(f32, &str); 4] = [(0.5, "0.5 - 100% faster"), (1.0, "1 - normal speed"), (1.5, "1.5 - 1.5x slower"), (2.0, "2 - 2x slower")];
@@ -271,7 +273,7 @@ mod tests {
         let v = steps(&mut m, [0.0, walk], 0.1, DT);
         assert!(v[1] < 0.3 * walk, "not at walking speed at once: {v:?}");
         steps(&mut m, [0.0, walk], 2.0, DT);
-        let v = steps(&mut m, [0.0, 0.0], 0.3, DT);
+        let v = steps(&mut m, [0.0, 0.0], 0.1, DT);
         assert!(v[1] > 0.3 * walk, "still walking on after letting go: {v:?}");
     }
 
@@ -283,8 +285,8 @@ mod tests {
         assert!(v[0] > 0.95 * RUN, "still moving just after the key is let go: {v:?}");
         let v = steps(&mut m, [0.0, 0.0], STOP_SECONDS - DT, DT);
         assert!(v[0] > 0.0 && v[0] < 0.07 * RUN, "{v:?}");
-        // The last of it creeps: still moving half a second later, slowly.
-        let v = steps(&mut m, [0.0, 0.0], 0.5, DT);
+        // The last of it eases out: still moving a moment later, slowly.
+        let v = steps(&mut m, [0.0, 0.0], 0.15, DT);
         assert!(v[0] > 0.3 && v[0] < 0.02 * RUN, "{v:?}");
         let v = steps(&mut m, [0.0, 0.0], 2.0, DT);
         assert_eq!(v, [0.0, 0.0], "at rest exactly");
@@ -363,10 +365,11 @@ mod tests {
             panic!("{:?}", m.reports);
         };
         assert!((seconds - START_SECONDS).abs() < 0.03 && speed == RUN, "{seconds} {speed}");
-        // A critically damped glide from v covers 2v/ω: about 130 units from a run.
+        // A critically damped glide from v covers 2v/ω: about 36 units from a run.
         let glide = 2.0 * RUN / omega_for(STOP_SECONDS);
-        assert!((distance - glide).abs() < 1.0 && (120.0..140.0).contains(&distance), "{distance} against {glide}");
-        assert!(stop > 1.5 * STOP_SECONDS && stop < 3.0 && from == RUN, "{stop} {from}");
+        assert!((distance - glide).abs() < 1.0 && (30.0..45.0).contains(&distance), "{distance} against {glide}");
+        assert!(stop > 1.5 * STOP_SECONDS && stop < 1.0 && from == RUN, "{stop} {from}");
+        assert!((STOP_SECONDS * 2.0 - START_SECONDS).abs() < 1e-6, "stopping takes half the start (the owner)");
         // Let go before full speed: no start reported, the glide still is.
         let mut m = MovementInertia::default();
         steps(&mut m, [0.0, RUN], 0.2, DT);

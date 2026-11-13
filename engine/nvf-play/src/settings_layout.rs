@@ -73,10 +73,10 @@ pub const SECTIONS: &[Section] = &[
     section("Gameplay", Some("Saving"), &["autosave-travel", "autosave-fast-travel", "autosave-wait", "autosave-sleep", "autosave-scripts"]),
     section("Gameplay", Some("Dialogue"), &["menu-pause", "dialogue-goodbye-hint", "dialogue-look", "dialogue-recentre", "dialogue-zoom", "lip-sync"]),
     section("Gameplay", Some("Reports"), &["send-reports", "reports-delete"]),
-    section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "head-bob", "weapon-lower", "field-of-view"]),
+    section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-lower", "field-of-view"]),
     // How heavy the body and the weapon feel [design: the owner, 2026-11-13: "move the
     // player inertia under its own category and move there all the associated settings"].
-    section("Gameplay", Some("Inertia"), &["movement-inertia", "inertia-weight", "weapon-sway", "weapon-weight-sway"]),
+    section("Gameplay", Some("Inertia"), &["movement-inertia", "inertia-weight", "weapon-sway", "weapon-weight-sway", "head-bob"]),
     section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "ui-scale"]),
     section(
         "Display",
@@ -456,7 +456,7 @@ mod tests {
         assert!(keys(&list, &l, "Tweaks").is_empty(), "an empty tab is still a tab");
         let at = |k: &str| l.placement_of(list.iter().position(|s| s.key == k).unwrap()).unwrap().path();
         assert_eq!(at("menu-pause"), "Gameplay > Dialogue");
-        assert_eq!(at("head-bob"), "Gameplay > Camera");
+        assert_eq!(at("head-bob"), "Gameplay > Inertia");
         assert_eq!(at("hud-red"), "Display > Interface");
         assert_eq!(at("sky-clock"), "Graphics > World");
         assert_eq!(at("quality"), "Graphics > Quality");
@@ -473,7 +473,7 @@ mod tests {
         // No lip sync, no player body; no head tracking, foot IK or sky clock at all.
         let list = registry(&[("difficulty", "Gameplay"), ("menu-pause", "Gameplay"), ("head-bob", "Display"), ("god-mode", "Debug")]);
         let l = resolve_layout(&list);
-        assert_eq!(keys(&list, &l, "Gameplay"), ["[Game]", "difficulty", "[Dialogue]", "menu-pause", "[Camera]", "head-bob"]);
+        assert_eq!(keys(&list, &l, "Gameplay"), ["[Game]", "difficulty", "[Dialogue]", "menu-pause", "[Inertia]", "head-bob"]);
         assert!(keys(&list, &l, "Graphics").is_empty());
         // A hidden row hides its heading when it is the section's only one, and keeps its place.
         let hidden = list.iter().position(|s| s.key == "menu-pause").unwrap();

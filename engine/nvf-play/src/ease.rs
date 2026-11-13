@@ -6,7 +6,9 @@
 //!   towards a new target it starts slowly, speeds up and settles without overshooting
 //!   (an S-curve); it keeps its rate across a change of target, so a reversal never pops.
 //!   The exact solution makes it the same at any frame or tick rate.
-//! - [`EaseOut`]: a cubic ease-out over a set time: fast at first, settling softly. A new
+//! - [`EaseOut`]: a quartic ease-out over a set time: fast at first, settling softly, its
+//!   last quarter barely moving (cubic until the owner's playtest of 2026-11-13: "slow
+//!   down the last bit of crouching and standing up"). A new
 //!   target starts a new curve from where the value is, for the share of the full time the
 //!   distance left needs.
 
@@ -62,13 +64,20 @@ pub fn ease_out_cubic(u: f32) -> f32 {
     1.0 - v * v * v
 }
 
+/// Quartic ease-out of `u` in 0–1: starts at four times the average speed and creeps in
+/// at the end.
+pub fn ease_out_quart(u: f32) -> f32 {
+    let v = 1.0 - u.clamp(0.0, 1.0);
+    1.0 - v * v * v * v
+}
+
 /// Smooth 0–1 ramp of `x` between `lo` and `hi` (Hermite smoothstep).
 pub fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
     let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
-/// A value moved along cubic ease-out curves towards targets ([`ease_out_cubic`]).
+/// A value moved along quartic ease-out curves towards targets ([`ease_out_quart`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct EaseOut {
     pub value: f32,
@@ -107,7 +116,7 @@ impl EaseOut {
         self.value = if self.duration <= 0.0 || self.elapsed >= self.duration {
             self.to
         } else {
-            self.from + (self.to - self.from) * ease_out_cubic(self.elapsed / self.duration)
+            self.from + (self.to - self.from) * ease_out_quart(self.elapsed / self.duration)
         };
         self.value
     }
@@ -189,6 +198,9 @@ mod tests {
         // Over half the way in the first quarter of the time; little left for the last.
         assert!(ease_out_cubic(0.25) > 0.5);
         assert!(1.0 - ease_out_cubic(0.9) < 0.002);
+        // The quartic leaves less for the end still.
+        assert!(1.0 - ease_out_quart(0.8) < 1.0 - ease_out_cubic(0.8));
+        assert_eq!(ease_out_quart(1.0), 1.0);
     }
 
     #[test]

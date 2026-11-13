@@ -11,16 +11,38 @@
 //!   sideways once a stride, in step with the movement clip the arms rig plays (the
 //!   footfall phase of `view_sway`), growing with the ground speed up to a run's, less
 //!   sneaking, little down the sights, none in the air. A switch of the settings page
-//!   (`head-bob`, `--no-head-bob`).
+//!   (`head-bob`, `--no-head-bob`), under Gameplay › Inertia.
+//! - **Inertia** [design: the owner's playtest of 2026-11-13, "we should add inertia to
+//!   it"]: the head rides critically damped springs (`nvf_play::ease::Spring`, exact per
+//!   frame): the stride's bob goes through one ([`BOB_SETTLE_SECONDS`]) so it rounds off
+//!   rather than following the clip rigidly; the body's acceleration leaves the head a
+//!   little behind as it speeds up and lets it lean on as it slows ([`LAG_PEAK_PER_SPEED`]);
+//!   the vertical acceleration dips it at a take-off and a landing, more for a harder
+//!   landing ([`LAND_PEAK_PER_SPEED`]). Only the camera's place moves: its rotation stays
+//!   the mouse's. Every spring's time is × the inertia weight.
 //! - **Third person**: the pivot's height above the feet is the head's, smoothed by two
 //!   first-order lags of [`PIVOT_SECONDS`] each: a stride's rise and fall (about 1.7 a
 //!   second at a run) is cut to about an eighth, and crouching or standing up still
 //!   lowers or raises the camera, 90 % of the way in a second.
 
-use bevy::math::Vec3;
+use bevy::math::{Vec2, Vec3};
+use nvf_play::ease::{omega_for, Spring};
 
 /// The ground speed (units per second) at which the bob is full: about a run.
 const FULL_SPEED: f32 = 300.0;
+/// The stride's bob follows its curve through a spring settling in this long (95%).
+pub const BOB_SETTLE_SECONDS: f32 = 0.12;
+/// The head's lag from the body's acceleration: the spring rate (1/s), the most offset a
+/// sudden change of ground speed would give (units per unit/s) and the most shown (units).
+const LAG_OMEGA: f32 = 9.0;
+pub const LAG_PEAK_PER_SPEED: f32 = 0.003;
+const MAX_LAG: f32 = 1.5;
+/// Take-offs and landings: the spring rate (1/s), the most dip for a sudden change of
+/// vertical speed (units per unit/s: about 1.2 for a standing jump's 291 units/s), the
+/// most shown (units).
+const LAND_OMEGA: f32 = 10.0;
+pub const LAND_PEAK_PER_SPEED: f32 = 0.004;
+const MAX_LAND: f32 = 3.0;
 /// The full bob: the dip at each footfall and the sideways swing, units.
 pub const DIP: f32 = 1.6;
 pub const SWING: f32 = 0.5;
@@ -48,6 +70,12 @@ pub struct BobInput {
     pub sights: bool,
     pub sneaking: bool,
     pub airborne: bool,
+    /// Ground velocity in the view's frame (x right, y ahead), units/s.
+    pub velocity: Vec2,
+    /// The body's vertical velocity off the ground (up), units/s; 0 on it.
+    pub vertical: f32,
+    /// The inertia weight: the springs' times × this.
+    pub slowness: f32,
     /// The bob shows at all (first person, the switch on, nothing else driving the view).
     pub on: bool,
 }
@@ -57,6 +85,15 @@ pub struct BobInput {
 pub struct HeadBob {
     amount: f32,
     gain: f32,
+    /// The bob after its spring (view frame: x right, z up), the head's lag (x right, y
+    /// ahead) and its dip, and what pushed them last frame.
+    bob: [Spring; 2],
+    lag: [Spring; 2],
+    land: Spring,
+    last_velocity: Option<Vec2>,
+    last_vertical: f32,
+    /// The deepest take-off or landing dip shown since the start (for the exit summary).
+    pub peak_land: f32,
     /// The third-person pivot's two lags (head height above the feet).
     pivot: Option<(f32, f32)>,
     /// The deepest dip shown since the start (for the exit summary).
@@ -79,13 +116,36 @@ impl HeadBob {
         self.amount += (target - self.amount) * follow(FOLLOW_SECONDS);
         let share = self.gain * self.amount * if i.sights { SIGHTS } else { 1.0 } * if i.sneaking { SNEAK } else { 1.0 };
         let a = std::f32::consts::TAU * (i.phase - crate::view_sway::FOOTFALL_PHASE);
-        // Down at each footfall (twice a cycle), across once a cycle.
-        let dip = -DIP * 0.5 * (1.0 + (2.0 * a).cos()) * share;
-        let swing = SWING * a.sin() * share;
+        // Down at each footfall (twice a cycle), across once a cycle, through the spring.
+        let slow = i.slowness.max(0.1);
+        let w = omega_for(BOB_SETTLE_SECONDS * slow);
+        self.bob[0].step(SWING * a.sin() * share, w, dt);
+        self.bob[1].step(-DIP * 0.5 * (1.0 + (2.0 * a).cos()) * share, w, dt);
+        let (swing, dip) = (self.bob[0].value, self.bob[1].value);
         self.peak_dip = self.peak_dip.max(-dip);
-        // The view's right: heading clockwise from +y.
+        // The head's own weight, pushed by the body's acceleration.
+        let accel = match (self.last_velocity, dt > 0.0) {
+            (Some(v), true) => (i.velocity - v) / dt,
+            _ => Vec2::ZERO,
+        };
+        self.last_velocity = Some(i.velocity);
+        let up_accel = if dt > 0.0 { (i.vertical - self.last_vertical) / dt } else { 0.0 };
+        self.last_vertical = i.vertical;
+        let lag_w = LAG_OMEGA / slow;
+        for (s, a) in self.lag.iter_mut().zip([accel.x, accel.y]) {
+            s.step(pushed(a, lag_w, LAG_PEAK_PER_SPEED), lag_w, dt);
+        }
+        let land_w = LAND_OMEGA / slow;
+        self.land.step(pushed(up_accel, land_w, LAND_PEAK_PER_SPEED), land_w, dt);
+        let calm = self.gain * if i.sights { 0.5 } else { 1.0 };
+        let lag = Vec2::new(self.lag[0].value, self.lag[1].value);
+        let lag = if lag.length() > 1e-6 { lag * (soft(lag.length(), MAX_LAG) / lag.length()) * calm } else { Vec2::ZERO };
+        let land = soft(self.land.value, MAX_LAND) * calm;
+        self.peak_land = self.peak_land.max(-land);
+        // The view's right and ahead: heading clockwise from +y.
         let right = Vec3::new(i.heading.cos(), -i.heading.sin(), 0.0);
-        right * swing + Vec3::Z * dip
+        let ahead = Vec3::new(i.heading.sin(), i.heading.cos(), 0.0);
+        right * (swing + lag.x) + ahead * lag.y + Vec3::Z * (dip + land)
     }
 
     /// The third-person pivot's height above the feet this frame, from the head's.
@@ -122,6 +182,18 @@ impl HeadBob {
     }
 }
 
+/// The target of a spring of rate `omega` pushed by `accel`, scaled so a sudden change `Δ`
+/// of the velocity behind it peaks at `peak_per_speed × Δ` (the impulse response of a
+/// critically damped spring peaks at `1/(ω e)`).
+fn pushed(accel: f32, omega: f32, peak_per_speed: f32) -> f32 {
+    -peak_per_speed * std::f32::consts::E * accel / omega
+}
+
+/// `x` towards `max` and never past it, smoothly.
+fn soft(x: f32, max: f32) -> f32 {
+    max * (x / max).tanh()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,7 +201,54 @@ mod tests {
     const DT: f32 = 1.0 / 60.0;
 
     fn input(speed: f32, phase: f32) -> BobInput {
-        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, on: true }
+        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, velocity: Vec2::ZERO, vertical: 0.0, slowness: 1.0, on: true }
+    }
+
+    #[test]
+    fn the_head_lags_behind_a_start_and_comes_back_at_a_steady_pace() {
+        let mut b = HeadBob::default();
+        let mut most = 0.0f32;
+        for f in 0..120 {
+            // The body speeds up over half a second (`nvf_play::inertia`), heading north.
+            let v = 344.0 * (f as f32 / 30.0).min(1.0);
+            let o = b.first_person(BobInput { velocity: Vec2::new(0.0, v), ..input(0.0, 0.0) });
+            most = most.min(o.y);
+        }
+        assert!((-MAX_LAG..-0.2).contains(&most), "behind while speeding up: {most}");
+        let mut o = Vec3::ONE;
+        for _ in 0..120 {
+            o = b.first_person(BobInput { velocity: Vec2::new(0.0, 344.0), ..input(0.0, 0.0) });
+        }
+        assert!(o.y.abs() < 1e-2, "back over the feet at a steady pace: {o}");
+    }
+
+    /// A jump's vertical speeds frame by frame and the landing: the deepest dip after it.
+    fn landing_dip(land_speed: f32, slowness: f32) -> (f32, usize) {
+        let mut b = HeadBob::default();
+        let (g, up) = (686.7f32, 290.9f32);
+        let mut vz = up;
+        while vz > -land_speed {
+            b.first_person(BobInput { vertical: vz, airborne: true, slowness, ..input(0.0, 0.0) });
+            vz -= g * DT;
+        }
+        let mut deepest = (0.0f32, 0);
+        for f in 0..60 {
+            let z = b.first_person(BobInput { slowness, ..input(0.0, 0.0) }).z;
+            if z < deepest.0 {
+                deepest = (z, f);
+            }
+        }
+        deepest
+    }
+
+    #[test]
+    fn a_landing_dips_the_view_more_the_harder_it_is() {
+        let (hop, at) = landing_dip(291.0, 1.0);
+        let (fall, _) = landing_dip(800.0, 1.0);
+        assert!(hop < -0.3 && hop > -MAX_LAND, "{hop}");
+        assert!(fall < hop - 0.3 && fall >= -MAX_LAND, "{fall} against {hop}");
+        let (_, slow_at) = landing_dip(291.0, 2.0);
+        assert!(slow_at > at, "twice the inertia weight, a slower dip: frame {slow_at} against {at}");
     }
 
     #[test]

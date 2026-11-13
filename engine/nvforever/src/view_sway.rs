@@ -22,10 +22,21 @@
 //! solved exactly per frame, so the same at any frame rate): it starts to follow a change
 //! slowly, speeds up and settles without overshoot, and its own motion never jumps.
 //!
-//! - **Turn lag**: the weapon chases the view: a steady turn leaves it behind by the turn
-//!   rate × [`CHASE_SECONDS`], up to [`MAX_LAG_YAW`] and [`MAX_LAG_PITCH`]; when the view
-//!   stops it carries on, slows and comes to rest on it. A sideways lag tilts the weapon a
-//!   little. The view itself turns exactly as the mouse says.
+//! - **Turn lag**: the head turns first and the arms follow. The lag is driven by how fast
+//!   the view turns, not by how far it has turned (as Source's `CalcViewModelLag` and the
+//!   spring setups of Overwatch-style first-person animation do; research of 2026-11-13):
+//!   the turn rate is smoothed (built up over [`RATE_RISE_SECONDS`], let go over
+//!   [`RATE_FALL_SECONDS`]), a steady turn asks for a lag of rate × [`CHASE_SECONDS`] that
+//!   bends smoothly towards [`MAX_LAG_YAW`] / [`MAX_LAG_PITCH`] (a tanh, never a hard
+//!   stop), and the arms follow that on a slow critically damped spring
+//!   ([`FOLLOW_SECONDS`]). So a fast turn builds the lag up gently instead of throwing the
+//!   arms to the limit, the lag never exceeds the limit, and the moment the view stops
+//!   the arms start back, without waiting, and come to rest on the view without swinging
+//!   past it. A sideways lag tilts the weapon a little. The view itself turns exactly as
+//!   the mouse says. [design: the owner's playtests of 2026-11-13: the gun "reaches max
+//!   sway quickly and then slowly returns", "there is a visible delay … the gun should
+//!   never stop and wait", "limit the range … but slow it down deliberately so there is
+//!   visible weight".]
 //! - **Movement lag**: the weapon is held as by a sprung hand, pushed by the body's
 //!   acceleration: starting, stopping, strafing and turning while running leave it a
 //!   little behind, and it comes back while the pace holds. It leans into a strafe.
@@ -47,20 +58,23 @@
 //! beside it under `Bip01 Looking`) and the view stay where they were.
 
 use bevy::math::{Quat, Vec2, Vec3};
-use nvf_play::ease::{smoothstep, Spring};
+use nvf_play::ease::{omega_for, smoothstep, Spring};
 
-/// Seconds the arms lag behind a steady turn (turn rate × this is the lag), at inertia
-/// weight 1: the head turns first and the body with the arms follows [design: the owner's
-/// playtest of 2026-11-13, "the human body rotates its head first, then the lower body
-/// catches up"; 0.11 s, 5° and 3.5° before].
-pub const CHASE_SECONDS: f32 = 0.3;
-/// Most the arms fall behind a turn: sideways and up or down, radians.
-pub const MAX_LAG_YAW: f32 = 12.0 * std::f32::consts::PI / 180.0;
-pub const MAX_LAG_PITCH: f32 = 6.0 * std::f32::consts::PI / 180.0;
-/// The turn spring's state is held within this (radians): beyond what a turn of the view
-/// can leave behind in practice; the arms are shown within the limits above whatever
-/// it holds, so a bigger flick keeps them at the limit for longer before they follow.
-const MAX_HELD_LAG: f32 = std::f32::consts::FRAC_PI_2;
+/// The lag a slow, steady turn asks for: turn rate × this (seconds); × the weapon's weight.
+pub const CHASE_SECONDS: f32 = 0.12;
+/// The most lag a turn asks for: sideways and up or down, radians; × the weapon's weight
+/// (12° and 6° in the second build, 5° and 3.5° in the first).
+pub const MAX_LAG_YAW: f32 = 6.0 * std::f32::consts::PI / 180.0;
+pub const MAX_LAG_PITCH: f32 = 4.0 * std::f32::consts::PI / 180.0;
+/// The turn rate the lag follows is smoothed: built up with this time constant and let go
+/// with this one (seconds; × the inertia weight and the weapon's weight).
+pub const RATE_RISE_SECONDS: f32 = 0.12;
+pub const RATE_FALL_SECONDS: f32 = 0.05;
+/// The arms reach 95% of the lag asked for in this long (a critically damped spring;
+/// × the inertia weight and the weapon's weight): the visible weight.
+pub const FOLLOW_SECONDS: f32 = 0.45;
+/// Turn rates beyond this (radians/s, about 690°/s) count as this.
+const MAX_TURN_RATE: f32 = 12.0;
 /// A change of the view's angles bigger than this in one frame (radians) is a jump (a
 /// teleport, an idle letting go), not a turn.
 const VIEW_JUMP: f32 = 1.0;
@@ -164,11 +178,11 @@ impl SwayPose {
 #[derive(Debug, Clone, Default)]
 pub struct ViewSway {
     last: Option<(f32, f32)>,
-    /// The weapon's way relative to the view's (heading, pitch: arms − view, radians) on
-    /// its springs, and the weapon's own turn rate (radians/s).
+    /// The view's smoothed turn rate (heading, pitch; radians/s), and the arms' way
+    /// relative to the view's (arms − view, radians) on their springs.
+    rate: Vec2,
     turn: [Spring; 2],
-    turn_rate: Vec2,
-    /// How far the arms are shown behind the view (the turn springs, held in the limits).
+    /// How far the arms are behind the view.
     lag: Vec2,
     /// The hand's offset from the body's acceleration (view frame, x right, y ahead) and
     /// from its vertical acceleration (up), and the velocities they were last pushed from.
@@ -217,40 +231,30 @@ impl ViewSway {
         let slow = heft * i.slowness.max(0.1);
         self.gain += (f32::from(u8::from(i.on)) - self.gain) * follow(FADE_SECONDS);
 
-        // Turn lag: the view turned at `rate` this frame; the weapon chases it on a spring
-        // that lags a steady turn by `rate × CHASE_SECONDS`. A jump of the view (a
-        // teleport, an idle letting go) is not a turn: the weapon goes with it.
+        // Turn lag: from how fast the view turns this frame. A jump of the view (a
+        // teleport, an idle letting go) is not a turn: the arms go with it.
         let mut rate = Vec2::ZERO;
         if let (Some((h, p)), true) = (self.last, dt > 0.0) {
             let d = Vec2::new(angle_diff(i.heading, h), i.pitch - p);
             if d.length() < VIEW_JUMP {
-                rate = d / dt;
+                rate = (d / dt).clamp(Vec2::splat(-MAX_TURN_RATE), Vec2::splat(MAX_TURN_RATE));
             }
         }
         self.last = Some((i.heading, i.pitch));
-        let chase = CHASE_SECONDS * slow;
-        let omega = 2.0 / chase;
         let limit = Vec2::new(MAX_LAG_YAW, MAX_LAG_PITCH) * heft;
+        let chase = CHASE_SECONDS * heft;
+        let omega = omega_for(FOLLOW_SECONDS * slow);
         for k in 0..2 {
-            let s = &mut self.turn[k];
-            // The spring holds the lag; its rate is the weapon's turn less the view's.
-            s.rate = self.turn_rate[k] - rate[k];
-            s.step(-rate[k] * chase, omega, dt);
-            if s.value.abs() > MAX_HELD_LAG {
-                s.value = s.value.clamp(-MAX_HELD_LAG, MAX_HELD_LAG);
-                if s.rate * s.value > 0.0 {
-                    s.rate = 0.0;
-                }
-            }
-            // Never so fast back towards the view that the spring would swing past it once
-            // the view holds still (a critically damped spring crosses its rest only when
-            // it starts faster than ω × the distance towards it).
-            if s.rate * s.value < 0.0 && s.rate.abs() > omega * s.value.abs() {
-                s.rate = -omega * s.value;
-            }
-            self.turn_rate[k] = s.rate + rate[k];
+            // The smoothed rate: slow to build, quick to let go.
+            let rising = rate[k].abs() > self.rate[k].abs() && rate[k] * self.rate[k] >= 0.0;
+            let tau = slow * if rising { RATE_RISE_SECONDS } else { RATE_FALL_SECONDS };
+            self.rate[k] += (rate[k] - self.rate[k]) * follow(tau);
+            // The lag it asks for, bent smoothly towards the limit; the arms follow on the
+            // spring (bounded by what it follows, so never past the limit or the view).
+            let want = -soft_clamp(self.rate[k] * chase, limit[k]);
+            self.turn[k].step(want, omega, dt);
         }
-        self.lag = Vec2::new(soft_clamp(self.turn[0].value, limit.x), soft_clamp(self.turn[1].value, limit.y));
+        self.lag = Vec2::new(self.turn[0].value, self.turn[1].value);
 
         // The sprung hand, pushed by the body's acceleration across the ground and up.
         let accel = match (self.last_velocity, dt > 0.0) {
@@ -351,7 +355,8 @@ mod tests {
     fn turning_right_leaves_the_arms_to_the_left_and_they_catch_up() {
         let mut s = ViewSway::default();
         settle(&mut s, input(0.0, Vec2::ZERO, 0.0), 60);
-        // A steady turn to the right at 0.3 rad/s: a lag of rate × the chase time.
+        // A steady turn to the right at 0.3 rad/s: the lag it asks for, bent towards the
+        // limit.
         let mut h = 0.0;
         let mut p = SwayPose::NONE;
         for _ in 0..180 {
@@ -360,35 +365,39 @@ mod tests {
         }
         let ahead = p.rotation * Vec3::Y;
         assert!(ahead.x < -0.01, "the weapon points left of the view: {ahead:?}");
-        assert!((s.turn[0].value + 0.3 * CHASE_SECONDS).abs() < 2e-3, "{}", s.turn[0].value);
+        let want = -soft_clamp(0.3 * CHASE_SECONDS, MAX_LAG_YAW);
+        assert!((s.turn[0].value - want).abs() < 1e-3, "{} against {want}", s.turn[0].value);
         let p = settle(&mut s, input(h, Vec2::ZERO, 0.0), 240);
         assert!(p.rotation.angle_between(Quat::IDENTITY) < 1e-3, "back on the view: {p:?}");
     }
 
     #[test]
-    fn the_weapon_starts_slowly_and_comes_to_rest_without_swinging_past() {
+    fn the_lag_builds_up_gently_and_starts_back_as_soon_as_the_view_stops() {
         let mut s = ViewSway::default();
         settle(&mut s, input(0.0, Vec2::ZERO, 0.0), 60);
-        // The view starts turning at once; the weapon's own turn builds up.
+        // The view starts turning at once; the lag builds up, never in a jump.
         let mut h = 0.0;
-        let mut rates = Vec::new();
+        let mut lags = Vec::new();
         for _ in 0..30 {
             h += 0.5 / 60.0;
             s.update(input(h, Vec2::ZERO, 0.0));
-            rates.push(s.turn_rate.x);
+            lags.push(-s.turn[0].value);
         }
-        assert!(rates[0] < 0.25 * 0.5, "a slow start: {}", rates[0]);
-        assert!(rates.windows(2).all(|w| w[1] >= w[0] - 1e-5), "then faster: {rates:?}");
-        // The view stops; the weapon carries on without a jerk (its turn changes little
-        // from frame to frame), never goes past the view and comes to rest on it.
-        let mut last = s.turn_rate.x;
+        let full = soft_clamp(0.5 * CHASE_SECONDS, MAX_LAG_YAW);
+        assert!(lags[0] < 0.02 * full, "a gentle start: {} of {full}", lags[0]);
+        assert!(lags.windows(2).all(|w| w[1] >= w[0] - 1e-6), "then more: {lags:?}");
+        // The view stops: the arms turn back within a few frames (no waiting at the
+        // limit), never past the view, and rest on it.
+        let mut after = Vec::new();
         for _ in 0..240 {
             s.update(input(h, Vec2::ZERO, 0.0));
             assert!(s.turn[0].value <= 1e-6, "past the view: {}", s.turn[0].value);
-            assert!((s.turn_rate.x - last).abs() < 0.05, "a jerk: {last} then {}", s.turn_rate.x);
-            last = s.turn_rate.x;
+            after.push(-s.turn[0].value);
         }
-        assert!(s.turn_rate.x.abs() < 1e-3 && s.turn[0].value.abs() < 1e-3);
+        let peak = after.iter().enumerate().fold((0, 0.0f32), |m, (i, &v)| if v > m.1 { (i, v) } else { m }).0;
+        assert!(peak <= 9, "back on its way within 0.15 s: the most lag at frame {peak}");
+        assert!(after[peak..].windows(2).all(|w| w[1] <= w[0] + 1e-6), "then steadily back");
+        assert!(after.last().unwrap().abs() < 1e-3);
     }
 
     #[test]
@@ -415,11 +424,12 @@ mod tests {
         let mut s = ViewSway::default();
         let mut h = 0.0;
         s.update(input(h, Vec2::ZERO, 0.0));
-        for _ in 0..30 {
+        for _ in 0..60 {
             h += 0.3;
             s.update(input(h, Vec2::ZERO, 0.0));
+            assert!(s.lag.x.abs() <= MAX_LAG_YAW + 1e-6, "{}", s.lag.x);
         }
-        assert!(s.lag.x.abs() <= MAX_LAG_YAW + 1e-6 && s.lag.x.abs() > MAX_LAG_YAW * 0.9, "{}", s.lag.x);
+        assert!(s.lag.x.abs() > MAX_LAG_YAW * 0.9, "{}", s.lag.x);
     }
 
     #[test]
@@ -510,11 +520,12 @@ mod tests {
         assert_eq!(heft(HEAVY_WEAPON), MOST_HEFT);
         assert_eq!(heft(40.0), MOST_HEFT);
         assert!(heft(11.5) > 1.2 && heft(11.5) < 1.3);
+        // A slow turn, where the lag asked for is still rate × the chase time.
         let steady = |heft: f32| {
             let mut s = ViewSway::default();
             let mut h = 0.0;
-            for _ in 0..120 {
-                h += 0.2 / 60.0;
+            for _ in 0..240 {
+                h += 0.05 / 60.0;
                 s.update(SwayInput { heft, ..input(h, Vec2::ZERO, 0.0) });
             }
             s.turn[0].value
@@ -523,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn a_flick_leaves_the_arms_well_behind_and_they_take_their_time_to_follow() {
+    fn a_flick_moves_the_arms_smoothly_within_the_limit_and_they_follow_with_weight() {
         // The view turns 90° in 0.15 s, then holds: the head first, the arms after.
         let flick = |slowness: f32| {
             let mut s = ViewSway::default();
@@ -534,17 +545,18 @@ mod tests {
                 h += std::f32::consts::FRAC_PI_2 / 9.0;
                 s.update(i(h));
             }
-            let behind = s.lag.x;
+            let mut most = s.lag.x.abs();
             let mut frames = 0;
-            while s.lag.x.abs() > 0.05 * MAX_LAG_YAW {
+            while frames < 30 || s.lag.x.abs() > 0.05 * MAX_LAG_YAW {
                 s.update(i(h));
+                most = most.max(s.lag.x.abs());
                 frames += 1;
             }
-            (behind, frames as f32 / 60.0)
+            (most, frames as f32 / 60.0)
         };
-        let (behind, back) = flick(1.0);
-        assert!(behind.abs() > 0.8 * MAX_LAG_YAW, "well behind the view: {}°", behind.to_degrees());
-        assert!(back > 0.4 && back < 1.5, "and back on it after a while: {back} s");
+        let (most, back) = flick(1.0);
+        assert!(most > 0.3 * MAX_LAG_YAW && most <= MAX_LAG_YAW, "a visible lag within the limit: {}°", most.to_degrees());
+        assert!(back > 0.4 && back < 1.5, "back on the view after a while: {back} s");
         // It never swings past the view on the way back.
         let mut s = ViewSway::default();
         settle(&mut s, input(0.0, Vec2::ZERO, 0.0), 30);
@@ -558,7 +570,7 @@ mod tests {
             assert!(s.turn[0].value <= 1e-6, "past the view: {}", s.turn[0].value);
         }
         let (_, slow) = flick(2.0);
-        assert!(slow > 1.6 * back, "twice the inertia weight, about twice as long: {slow} against {back}");
+        assert!(slow > 1.4 * back, "twice the inertia weight, longer: {slow} against {back}");
     }
 
     #[test]

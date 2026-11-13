@@ -10,7 +10,7 @@
 //!
 //! This keeps the clips as they are and moves the arms rig (camera node, arms and weapon
 //! together) by the difference between where the clips' cross-fade has the eye and where
-//! a cubic ease-out (`nvf_play::ease::EaseOut`) would: about [`DOWN_SECONDS`] down and
+//! a quartic ease-out (`nvf_play::ease::EaseOut`) would: about [`DOWN_SECONDS`] down and
 //! [`UP_SECONDS`] up, fast at first and settling softly. A crouch pressed again on the way
 //! turns back from where the view is. Settled in either stance the difference is nothing,
 //! so a mistake in the model of the cross-fade only ever shows during the move.
@@ -21,9 +21,11 @@ use nvf_play::ease::EaseOut;
 /// How far the sneak clips lower the first-person camera node, units at scale 1 (118 up
 /// standing, 78 crouched) [observed: animation.md §9.5].
 pub const SNEAK_EYE_DROP: f32 = 40.0;
-/// Seconds to sink all the way into a crouch, and to rise from one.
-pub const DOWN_SECONDS: f32 = 0.35;
-pub const UP_SECONDS: f32 = 0.4;
+/// Seconds to sink all the way into a crouch, and to rise from one, at inertia weight 1
+/// (0.35 s and 0.4 s on a cubic curve before the owner's playtest of 2026-11-13: "slow
+/// down the last bit of crouching and standing up").
+pub const DOWN_SECONDS: f32 = 0.5;
+pub const UP_SECONDS: f32 = 0.55;
 
 /// The crouch's state across frames.
 #[derive(Debug, Clone, Default)]

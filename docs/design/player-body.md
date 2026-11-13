@@ -126,11 +126,18 @@ itself turns exactly as the mouse says.
 
 - Turn lag: the head turns first and the body with the arms follows (the owner's
   playtest of 2026-11-13: "the human body rotates its head first, then the lower body
-  catches up"): a steady turn leaves the arms behind by the turn rate × 0.3 s, shown at
-  most 12° sideways and 6° up or down, the weapon tilting a little into the lag; a quick
-  flick keeps them at the limit a moment, then they carry on, slow down and come to rest
-  on the view, never swinging past it (a 90° flick: back in about a second). 0.11 s, 5°
-  and 3.5° before that playtest, which "whipped" the gun round with the view.
+  catches up"). Driven by the view's turn **rate**, not the angle turned (as Source's
+  `CalcViewModelLag` and spring-based first-person rigs: a research pass of the same
+  day): the rate is smoothed (built up over 0.12 s, let go over 0.05 s), asks for a lag of
+  rate × 0.12 s bent towards 6° sideways and 4° up or down by a tanh, and the arms
+  follow it on a critically damped spring reaching 95 % in 0.45 s. A fast turn builds the
+  lag up gently, the arms never pass the limit, and when the view stops they start back
+  at once (no waiting at the limit) and rest on the view without swinging past it; the
+  weapon tilts a little into the lag. History: 0.11 s, 5° and 3.5° on an angle-driven
+  spring in the first build ("whips" with the view); 0.3 s and 12°/6° in the second,
+  where a fast turn reached the limit at once and stayed there before returning (the
+  owner: "reaches max sway and then slowly returns", "the gun should never stop and
+  wait", "limit the range … but slow it down deliberately").
 - Bob: a dip at each footfall and one sideways swing a stride, at the phase of the
   movement clips (the footstep keys), growing with the ground speed to a run's
   (300 units/s): 0.9 units down, 0.6 across, 1.2° of tilt. Sneaking 60 %, down the sights
@@ -165,10 +172,11 @@ on by default) [design]:
 
 - On the ground the player's velocity, walking or running, rides a critically damped
   spring towards the keys' velocity: 95 % of a new, faster speed in 0.5 s, down to 5 % of
-  it in 0.9 s when the keys are let go (or the brake before a turn back), the last of the
-  glide creeping out slowly; a run glides about 130 units, two metres (0.12 s and 0.2 s
-  before the owner's playtest of 2026-11-13: "slow the movement inertia down, the
-  come-to-stop movement on the end must be very slow for the last small distance")
+  it in 0.25 s (half the start) when the keys are let go (or the brake before a turn
+  back), the last of the glide easing out; a run glides about 36 units, half a metre.
+  History, all the owner's playtests of 2026-11-13: 0.12 s / 0.2 s (felt like nothing),
+  then 0.5 s / 0.9 s (stopping "feels like … sliding on ice"), then the stop at half the
+  start
   (`engine/nvf-play/src/inertia.rs`, applied in
   `player::step` before the character controller, so `fnv_phys`, people and the parity
   checks are untouched). The air keeps the game's air control; the landing speed
@@ -176,15 +184,17 @@ on by default) [design]:
 - While the body glides with no key held, or brakes against the keys, the movement
   clips follow the way it slides (walking or running as it last moved); detection,
   power attacks and scripts still read the keys.
-- First person: the view sinks into a crouch over 0.35 s and rises over 0.4 s on a cubic
-  ease-out, instead of the clips' straight 0.2 s cross-fade: the arms rig is moved by the
-  difference (`engine/nvforever/src/crouch_eye.rs`), so settled in either stance nothing
-  changes.
+- First person: the view sinks into a crouch over 0.5 s and rises over 0.55 s on a
+  quartic ease-out (its last quarter barely moving; 0.35 s / 0.4 s cubic before the
+  owner's "slow down the last bit"), instead of the clips' straight 0.2 s cross-fade: the
+  arms rig is moved by the difference (`engine/nvforever/src/crouch_eye.rs`), so settled
+  in either stance nothing changes.
 - **Inertia weight** (a dropdown, key `inertia-weight`: 0.5 - 100% faster, 1 - normal
   speed, 1.5 - 1.5x slower, 2 - 2x slower; 1 by default): every time above, the weapon's
-  springs (§1.4a) and the crouch's times, times this [design: the owner, 2026-11-13].
+  springs (§1.4a), the head bob's (§1.4a.1) and the crouch's times, times this [design:
+  the owner, 2026-11-13].
 - The settings page lists these under Gameplay › Inertia: Movement inertia, Inertia
-  weight, Weapon sway, Weapon weight in the sway (settings-page.md).
+  weight, Weapon sway, Weapon weight in the sway, Head bob (settings-page.md).
 
 ### 1.4a.1 The camera's bob: first person yes, third person no (owner, 2026-11-07)
 
@@ -200,8 +210,16 @@ tuned by eye]:
   phase, growing with the ground speed to a run's; sneaking 60 %, down the sights 25 %,
   none in the air, under the Pip-Boy or while an idle drives the view. The arms' own bob
   (§1.4a) comes on top. A switch registered in the settings page's Display group and
-  shown under Gameplay › Camera (`head-bob`, `--no-head-bob`; settings-page.md), on by
-  default.
+  shown under Gameplay › Inertia (Gameplay › Camera until 2026-11-13; `head-bob`,
+  `--no-head-bob`; settings-page.md), on by default.
+- Head inertia (owner's playtest of 2026-11-13: "we should add inertia to it"): the
+  stride's bob passes through a critically damped spring settling in 0.12 s, so it
+  rounds off; the body's acceleration leaves the head behind as it speeds up and lets it
+  lean on as it slows (spring 9/s; a sudden change of 344 units/s would peak at 1 unit,
+  shown at most 1.5); take-offs and landings dip it (spring 10/s, about 1.2 units for a
+  standing jump's landing, more for a harder one, shown at most 3). Only the camera's
+  place moves, never its rotation; halved down the sights; the springs' times × the
+  inertia weight. The exit summary gives the deepest take-off or landing dip.
 - Third person: the pivot's height above the feet is the head's through two
   first-order lags of 0.25 s: a run's stride bob is cut to about an eighth, a crouch
   still lowers the camera (90 % in a second); a change over 40 units in a frame goes

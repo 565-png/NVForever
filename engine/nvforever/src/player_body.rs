@@ -1134,6 +1134,7 @@ fn report(mut exit: MessageReader<AppExit>, body: Res<PlayerBody>) {
         );
         let (head, pivot) = m.head.pivot_rms();
         info!("player body summary: head bob {}, deepest first-person dip {:.2} units; third-person pivot over {} frames moved {pivot:.3} units a frame (rms) against the head's {head:.3}, pivot/head {:.2}", if body.head_bob { "on" } else { "off" }, m.head.peak_dip, m.head.frames, pivot / head.max(1e-3));
+        info!("player body summary: head inertia, deepest take-off or landing dip {:.2} units", m.head.peak_land.max(0.0) + 0.0);
         info!("player body summary: weapon lowering {}, lowered {} times, most {:.2}", if body.weapon_lower { "on" } else { "off" }, m.lower.times, m.lower.peak);
     }
 }
@@ -2732,6 +2733,9 @@ fn drive_body(
             sights: control.aiming,
             sneaking: stance == Stance::Sneak,
             airborne: m.falling,
+            velocity: m.velocity,
+            vertical,
+            slowness: inertia.as_deref().map_or(1.0, |i| i.weight),
             on: state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         });
         at = [at[0] + o.x, at[1] + o.y, at[2] + o.z];
