@@ -220,3 +220,5 @@ plus eight authored controls); focused library/unit-test strict lint passed.
 Broader release/live checks remain unrun. This supplies no sink transaction,
 restoration, local-map provider/recipient/projection or native parity.
 Contract: [UI trait external-write serials](spec-notes/ui-trait-write-serial.md).
+
+Signed BC5 DDS ingestion: legacy BC5S/ATI2 decoding and a separate NIF normal-map texture role are prepared for review ([spec](spec-notes/dds-bc5.md), #2589). Historical bounded CPU evidence is separate; current-main build/lint/CI and rendered qualification are pending. Native pixel/filtering parity remains unqualified.
