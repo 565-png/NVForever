@@ -105,6 +105,9 @@ note covers the whole census, fire refraction and actors.
   only the field disposes of its cloak assets. Changes publish the plain source again
   and the field re-derives its copy; active fades refresh while their source changes.
   Idle actors still avoid material work.
+  [design, #2557; `stealth_field::ActorDrawing::sync`, `restore`] Removing the last
+  child also invalidates its former owner's hierarchy. A transferred part restores
+  its plain source and releases its old cloak copy before the new actor cloaks it.
   [design, #2557; `actor_materials::Posing::pose`] Material animation writes its private
   plain source, including stored glow/UV resets when a track ends during a cloak.
   Uncloaking restores that source directly. Cached poses are associated with their

@@ -174,6 +174,7 @@ struct ActorDrawing<'w, 's> {
     fields: ResMut<'w, ActorFields>,
     fading: Query<'w, 's, (Entity, &'static nvf_play::fade::Fading)>,
     children: Query<'w, 's, &'static Children>,
+    removed_children: RemovedComponents<'w, 's, Children>,
     parents: Query<'w, 's, &'static ChildOf>,
     #[allow(clippy::type_complexity)]
     meshes: ParamSet<'w, 's, (
@@ -201,6 +202,13 @@ impl ActorDrawing<'_, '_> {
         // their ancestors. Idle actors never walk descendants or access materials.
         let mut dirty = HashSet::new();
         for e in &self.meshes.p0() {
+            dirty.insert(e);
+            dirty.extend(self.parents.iter_ancestors(e));
+        }
+        // [documented: Bevy 0.20.1, bevy_ecs/src/relationship/mod.rs] Losing the last
+        // child removes Children. [design, #2557] Dirty that former owner too:
+        // Changed<Children> misses it during a transfer.
+        for e in self.removed_children.read() {
             dirty.insert(e);
             dirty.extend(self.parents.iter_ancestors(e));
         }
@@ -874,10 +882,16 @@ mod tests {
         app.world_mut().entity_mut(holder).insert(ChildOf(b));
         app.update();
         assert!(refracts(&app, part));
+        assert!(app.world().resource::<ActorFields>().0[&a].originals.is_empty());
+        assert_eq!(app.world().get::<MaterialOverride>(part).unwrap().source, original);
+        let transferred_copy = worn(&app, part);
+        assert_ne!(transferred_copy, copy);
         assert!(!app.world().resource::<Assets<NifMaterial>>().contains(copy.id()));
         app.world_mut().entity_mut(holder).remove::<ChildOf>();
         app.update();
         assert_eq!(worn(&app, part), original);
+        assert!(!app.world().resource::<Assets<NifMaterial>>().contains(transferred_copy.id()));
+        assert!(app.world().get::<MaterialOverride>(part).is_none());
         assert!(app.world().resource::<ActorFields>().0.values().all(|f| f.originals.is_empty()));
     }
 
