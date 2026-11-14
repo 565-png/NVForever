@@ -34,18 +34,21 @@ Audio and Controls, observed in the original's pause menu, 2026-11-09].
 | Gameplay | Inertia | `movement-inertia`, `inertia-weight`, `weapon-sway`, `weapon-weight-sway`, `head-bob` |
 | Display | Screen | `resolution`, `borderless`, `monitor`, `display-sync`, `frame-cap`, `ui-scale` |
 | Display | Interface | `hud-colour`, `hud-red`, `hud-green`, `hud-blue`, `pipboy-colour`, `pipboy-red`, `pipboy-green`, `pipboy-blue`, `language`, `dynamic-crosshair`, `crosshair-style`, `sneak-gauges` |
-| Display | Performance | `fps-counter`, `fps-counter-fps`, `fps-counter-low`, `fps-counter-graph`, `fps-counter-split`, `fps-counter-cpu`, `fps-counter-gpu`, `fps-counter-vram`, `fps-counter-ram`, `fps-counter-loaded` |
+| Display | Performance | `fps-counter`, `fps-counter-fps`, `fps-counter-low`, `fps-counter-graph`, `fps-counter-split`, `fps-counter-cpu`, `fps-counter-gpu`, `fps-counter-vram`, `fps-counter-ram`, `fps-counter-loaded`, `fps-counter-upscaling` |
 | Audio | (none) | `volume-master`, `volume-music`, `volume-footstep`, `volume-voice`, `volume-effects`, `volume-radio`, `music`, `voice`, `reverb`, `voice-reverb` |
 | Controls | (none) | the Controls tab's own rows (§4), then `button-style`, `aim-assist`, `aim-slowdown`, `aim-lock` |
 | Graphics | Quality | `quality` (#1966; only when the install has its preset files: docs/spec-notes/quality-presets.md) |
-| Graphics | Picture | `enhanced` (#1966), `grade`, `sun-shadows`, `upscaler`, `upscaler-quality`, `dlss-model`, `fsr-library`, `anti-aliasing`, `shadow-filter`, `ambient-occlusion`, `fine-shadows`, `bloom`, `glow`, `eye-adaptation`, `neon-glow`, `sharpen`, `anisotropic`, `light-shafts`, `water-reflections`, `water-mirror` |
+| Graphics | Picture | `enhanced` (#1966), `grade`, `sun-shadows`, `upscaler`, `upscaler-quality`, `dlss-model`, `fsr-library`, `frame-generation`, `frame-generation-frames`, `anti-aliasing`, `latency-reduction`, `shadow-filter`, `ambient-occlusion`, `fine-shadows`, `bloom`, `glow`, `eye-adaptation`, `neon-glow`, `sharpen`, `anisotropic`, `light-shafts`, `water-reflections`, `water-mirror` |
 | Graphics | Distance | `distant-lod`, `grass`, `object-distance`, `actor-distance`, `item-distance`, `shadow-distance`, `grass-distance` |
 | Graphics | World | `head-tracking`, `foot-ik`, `sky-clock` |
 | Tweaks | (none) | none named yet |
 | Debug | (none) | `overlay`, `hit-markers`, `god-mode`, `navmesh`, `scope-3d` |
 
-The table names every row the registry can hold, 100 with #1966's `quality` and `enhanced`
-and #2014's nine `fps-counter-*` rows (`KNOWN` in `settings_layout.rs`); a test keeps
+The table names every row the registry can hold [documented: `settings_layout.rs::SECTIONS`],
+109 with #1966's `quality` and `enhanced`,
+#2014's nine `fps-counter-*` rows, #2242's `fps-counter-upscaling` and #2317's
+`frame-generation-frames` (`KNOWN` in
+`settings_layout.rs`); a test keeps
 it so (`settings_layout.rs`, `the_table_names_each_key_once_in_one_of_the_tabs`). The
 original puts the HUD and Pip-Boy colours and the crosshair in its Display category
 [observed: #1953], hence Interface there.
@@ -156,6 +159,21 @@ it centrally, also by a name in another case (`settings: <key> <name> not taken:
 so the dropdown, Left/Right, Defaults' fallback by index and the `NVF_PLAY_TEST_SETTINGS` aid
 cannot take it. Loading the INI does not go through that check: a stored choice out of reach
 still loads, so a request survives a run in which it cannot be met.
+
+**A choice that is an action** [design: #2250]: a list's `names` may hold a choice that does
+something instead of being kept, as Reports' "Delete them now" does (`reports/delete.rs`).
+The Upscaler row lists `Download DLSS...` (shown as "Download DLSS…", or "Downloading DLSS…
+n%" while its download runs) while DLSS is out of reach only because its files are missing
+(`upscaler::Unavailable::FilesMissing`, Windows with Vulkan) and no download installed them
+this session. Its `pick` asks for nvforever's `dlss_download` dialog (over the page as the
+hand report's form is, `pause::FormOver`) and leaves `Graphics::upscaler` as it is. The row
+marks it as an action (`set_choice_action`): `settings::pick` hands it to the list's `pick` and
+then neither owns the row nor writes the INI, so a run whose command line set another upscaler
+does not write that over the stored choice (`KeptRows`); the log says `settings: upscaler
+Download DLSS... (an action; nothing kept)`, or `... not taken` where it is not offered. The
+test aids name it `upscaler=Download DLSS...`. The dialog and its test aid
+`NVF_PLAY_TEST_DLSS_DOWNLOAD` are described in docs/dlss.md and
+`engine/nvforever/src/dlss_download/`.
 
 **A list that took over from an older row** [design: #2198's play-test]: the Upscaler and
 Upscaling mode rows replaced the one `fsr-upscaling` row. `set_older_key` lets a list read
