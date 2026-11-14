@@ -62,6 +62,12 @@ files, DLSS upscaling keeps working and **Download DLSS…** stays offered for t
 generation files. Accepting again adds only files the folder lacks; a differing existing file
 is refused. Restart after adding the files to make frame generation available.
 
+[design: `dlss/mod.rs`, `dlss_download/mod.rs`] Beside the dimmed DLSS Frame Generation
+choice, missing files read "Files missing: Download DLSS… on the Upscaler row" while that
+download is offered. After a successful download they read "Restart to use DLSS Frame
+Generation". Otherwise they read "The DLSS Frame Generation files are missing". The download
+choice checks for missing files at most once a second, refreshing when its download phase changes.
+
 The files go into the `dlss` folder beside `nvforever.exe` (or the folder `NVF_DLSS_DIR`
 names), never into the game folder. The game downloads only when you choose Download DLSS…
 and accept: there are no automatic updates and no checks in the background.

@@ -1180,7 +1180,7 @@ fn upscaler_chosen(world: &World) -> String {
 /// missing (`dlss_download`: picking it opens its dialog; #2250).
 fn upscaler_names(world: &World) -> Vec<String> {
     let mut names: Vec<String> = UPSCALERS.iter().map(|(name, _)| (*name).to_string()).collect();
-    if crate::dlss_download::offered(dlss_files_missing(world)) {
+    if dlss_download_offered(world) {
         names.push(crate::dlss_download::CHOICE.to_string());
     }
     names
@@ -1190,7 +1190,7 @@ fn upscaler_names(world: &World) -> Vec<String> {
 /// (`Graphics::upscaler`) as it is.
 fn pick_upscaler(world: &mut World, name: &str) -> bool {
     if crate::dlss_download::is_choice(name) {
-        if !crate::dlss_download::offered(dlss_files_missing(world)) {
+        if !dlss_download_offered(world) {
             return false;
         }
         crate::dlss_download::ask(world);
@@ -1297,20 +1297,8 @@ fn dlss_reason(world: &World) -> Option<crate::upscaler::Unavailable> {
 
 /// [design] Offer the download for missing upscaling or frame generation files, without
 /// changing the upscaler's availability (`dlss::FILES` remains its four-file requirement).
-fn dlss_files_missing(world: &World) -> bool {
-    download_files_missing(dlss_reason(world), || {
-        crate::dlss::download::target_folder().is_ok_and(|folder| crate::dlss::download::DOWNLOAD_FILES.iter().any(|file| !folder.join(file.name).is_file()))
-    })
-}
-
-/// [design] Other upscaler refusals keep their reason; missing files can be fetched when
-/// upscaling already works, or when the files only need a restart.
-fn download_files_missing(reason: Option<crate::upscaler::Unavailable>, missing: impl FnOnce() -> bool) -> bool {
-    match reason {
-        Some(crate::upscaler::Unavailable::FilesMissing) => true,
-        None => missing(),
-        _ => false,
-    }
+pub(crate) fn dlss_download_offered(world: &World) -> bool {
+    crate::dlss_download::offered(dlss_reason(world))
 }
 
 fn upscaler_unavailable(world: &World, name: &str) -> Option<String> {
@@ -1788,19 +1776,11 @@ mod fsr_settings_tests {
     }
 
     #[test]
-    fn download_dlss_is_offered_for_missing_frame_generation_without_disabling_upscaling() {
-        use crate::dlss::download::DOWNLOAD_FILES;
-        let root = std::env::temp_dir().join(format!("nvf-download-offer-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
-        std::fs::create_dir(&root).unwrap();
-        let missing = || DOWNLOAD_FILES.iter().any(|file| !root.join(file.name).is_file());
-        for file in &DOWNLOAD_FILES[..4] {
-            std::fs::write(root.join(file.name), b"test fixture").unwrap();
-        }
+    fn missing_frame_generation_does_not_disable_upscaling() {
         for session in [READY, STOCK] {
             let mut app = rows_app();
             app.insert_resource(UpscalerStatus::new(session));
             assert_eq!(dlss_unavailable(app.world()), None, "the four-file upscaler remains available");
-            assert!(download_files_missing(dlss_reason(app.world()), missing), "frame generation still missing: {session:?}");
             let u = row(&app, UPSCALER_KEY);
             assert!(nvf_play::settings::pick(app.world_mut(), u, "DLSS"));
             let request = requested(&app);
@@ -1813,15 +1793,6 @@ mod fsr_settings_tests {
                 assert!(status.restart_pending());
             }
         }
-        for file in &DOWNLOAD_FILES[4..] {
-            std::fs::write(root.join(file.name), b"test fixture").unwrap();
-        }
-        assert!(!download_files_missing(None, missing), "all eight present: no offer");
-        assert!(download_files_missing(Some(Unavailable::FilesMissing), missing));
-        for reason in [Unavailable::NotWindows, Unavailable::NotVulkan, Unavailable::UpdaterInFolder, Unavailable::GpuNotSupported] {
-            assert!(!download_files_missing(Some(reason), || panic!("no folder check for other refusals")));
-        }
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

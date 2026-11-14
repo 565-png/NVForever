@@ -5,7 +5,7 @@
 //!
 //! - **The choice** [design: #2250]: "Download DLSS…" is a choice of the Upscaler row while
 //!   any of the eight upscaling or frame generation files are missing (Windows with Vulkan,
-//!   `settings::dlss_files_missing`) and no download has installed them this session.
+//!   [`offered`]) and no download has installed them this session.
 //!   Picking it opens the dialog and changes nothing in the row; while a
 //!   download runs it reads "Downloading DLSS… n%" and picking it shows the dialog again.
 //! - **Licence first** [design: the maintainer's condition on #2250]: the dialog shows NVIDIA's
@@ -39,6 +39,8 @@ mod dialog;
 use bevy::prelude::*;
 use crate::dlss::download::{self, Phase};
 use fnv_util::words::{tr, trf};
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 /// NVIDIA's licence for the downloaded files, as it comes in their archive
 /// (`streamline-sdk-v2.14.16.zip`, `bin/x64/nvngx_dlss.license.txt`): NVIDIA's text, not under
@@ -83,16 +85,47 @@ pub(crate) fn is_choice(name: &str) -> bool {
     name.eq_ignore_ascii_case(CHOICE) || name == CHOICE_WORDS
 }
 
-/// [design] The choice is offered on Windows, with any of the eight files missing, and no
-/// download that installed them this session (the status may still say missing for a second).
-fn offer(windows: bool, files_missing: bool, last: Option<&Phase>) -> bool {
-    windows && files_missing && !matches!(last, Some(Phase::Done(_)))
+/// [design] One shared probe per second across the menu's choice lists and hints. A changed
+/// download phase discards the previous probe, including when the install finishes.
+#[derive(Default)]
+struct OfferCache {
+    phase: Option<Phase>,
+    missing: Option<(Instant, bool)>,
 }
 
-/// Whether the Upscaler row offers Download DLSS… now, while any upscaling or frame generation
-/// file is missing (`settings::dlss_files_missing`).
-pub(crate) fn offered(files_missing: bool) -> bool {
-    offer(cfg!(windows), files_missing, download::current().map(|h| h.progress().phase).as_ref())
+impl OfferCache {
+    fn offered(&mut self, windows: bool, reason: Option<crate::upscaler::Unavailable>, phase: Option<Phase>, now: Instant, probe: impl FnOnce() -> bool) -> bool {
+        if self.phase != phase {
+            self.phase = phase;
+            self.missing = None;
+        }
+        // [design] Refusals the download cannot mend and a completed install never touch disk.
+        if !windows || !matches!(reason, None | Some(crate::upscaler::Unavailable::FilesMissing)) || matches!(self.phase, Some(Phase::Done(_))) {
+            return false;
+        }
+        if let Some((checked, missing)) = self.missing {
+            if now.saturating_duration_since(checked) < Duration::from_secs(1) {
+                return missing;
+            }
+        }
+        let missing = probe();
+        self.missing = Some((now, missing));
+        missing
+    }
+}
+
+static OFFER_CACHE: Mutex<OfferCache> = Mutex::new(OfferCache { phase: None, missing: None });
+
+/// [design] Offer the download on Windows while any of the eight files is missing and the
+/// loader has no other refusal, unless a download installed them this session.
+pub(crate) fn offered(reason: Option<crate::upscaler::Unavailable>) -> bool {
+    OFFER_CACHE.lock().unwrap_or_else(PoisonError::into_inner).offered(cfg!(windows), reason, download::current().map(|h| h.progress().phase), Instant::now(), || {
+        download::target_folder().is_ok_and(|folder| files_missing(&folder))
+    })
+}
+
+fn files_missing(folder: &std::path::Path) -> bool {
+    download::DOWNLOAD_FILES.iter().any(|file| !folder.join(file.name).is_file())
 }
 
 /// The share of the archive's bytes fetched, in percent (0 until the directory was read).
@@ -334,15 +367,56 @@ mod tests {
 
     #[test]
     fn the_choice_is_offered_only_while_the_files_are_missing_on_windows() {
-        assert!(offer(true, true, None));
-        assert!(offer(true, true, Some(&Phase::Failed(download::Failure::Http(404)))), "after a failure: try again");
-        assert!(offer(true, true, Some(&Phase::Cancelled)));
-        assert!(offer(true, true, Some(&Phase::Connecting)), "while it runs: the dialog again");
-        assert!(!offer(true, true, Some(&Phase::Done(PathBuf::from("dlss")))), "installed: a restart, not another download");
-        assert!(!offer(true, false, None), "the files are there, or DLSS is out of reach for another reason");
-        assert!(!offer(false, true, None), "Windows only");
+        use crate::upscaler::Unavailable;
+        let mut cache = OfferCache::default();
+        let now = Instant::now();
+        for phase in [None, Some(Phase::Failed(download::Failure::Http(404))), Some(Phase::Cancelled), Some(Phase::Connecting)] {
+            assert!(cache.offered(true, None, phase, now, || true), "missing files: offer or retry");
+        }
+        for reason in [Unavailable::NotWindows, Unavailable::NotVulkan, Unavailable::UpdaterInFolder, Unavailable::SignatureRejected, Unavailable::StreamlineRefused, Unavailable::DeviceUnsuitable, Unavailable::GpuNotSupported, Unavailable::EvaluateFailed, Unavailable::FsrUnsupported] {
+            assert!(!cache.offered(true, Some(reason), None, now, || panic!("no probe for another refusal")));
+        }
+        assert!(!cache.offered(false, None, None, now, || panic!("Windows only")));
+        assert!(!cache.offered(true, Some(Unavailable::FilesMissing), Some(Phase::Done(PathBuf::from("dlss"))), now, || panic!("installed: no probe")));
+        assert!(cache.missing.is_none(), "Done discards the cached probe");
+        assert!(!cache.offered(true, Some(Unavailable::FilesMissing), None, now, || false), "all eight present even if the loader still needs a restart");
         assert!(is_choice("Download DLSS...") && is_choice("download dlss...") && is_choice("Download DLSS…"));
         assert!(!is_choice("DLSS") && !is_choice("Download"));
+    }
+
+    #[test]
+    fn the_offer_caches_the_probe_until_a_second_or_a_phase_change() {
+        let mut cache = OfferCache::default();
+        let now = Instant::now();
+        assert!(cache.offered(true, None, None, now, || true));
+        assert!(cache.offered(true, Some(crate::upscaler::Unavailable::FilesMissing), None, now + Duration::from_millis(999), || panic!("reuse the probe")));
+        assert!(!cache.offered(true, None, None, now + Duration::from_secs(1), || false), "files appeared");
+        assert!(!cache.offered(true, None, None, now + Duration::from_millis(1999), || panic!("cache present files too")));
+        assert!(cache.offered(true, None, None, now + Duration::from_secs(2), || true), "files disappeared");
+        assert!(!cache.offered(true, None, Some(Phase::Installing), now + Duration::from_secs(2), || false), "phase changes discard the probe immediately");
+        assert!(cache.offered(true, None, Some(Phase::Failed(download::Failure::Http(404))), now + Duration::from_secs(2), || true), "a failure also discards it");
+        assert!(!cache.offered(true, None, Some(Phase::Done(PathBuf::from("dlss"))), now + Duration::from_secs(3), || panic!("Done skips even an expired probe")));
+        assert!(cache.missing.is_none(), "the cached missing result is discarded on Done");
+    }
+
+    #[test]
+    fn the_offer_checks_all_eight_files_for_ready_and_missing_loaders() {
+        let root = std::env::temp_dir().join(format!("nvf-download-offer-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&root).unwrap();
+        let now = Instant::now();
+        for file in download::DOWNLOAD_FILES {
+            std::fs::write(root.join(file.name), b"test fixture").unwrap();
+        }
+        for reason in [None, Some(crate::upscaler::Unavailable::FilesMissing)] {
+            assert!(!OfferCache::default().offered(true, reason, None, now, || files_missing(&root)));
+            for file in download::DOWNLOAD_FILES {
+                let path = root.join(file.name);
+                std::fs::remove_file(&path).unwrap();
+                assert!(OfferCache::default().offered(true, reason, None, now, || files_missing(&root)), "{} missing", file.name);
+                std::fs::write(path, b"test fixture").unwrap();
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
