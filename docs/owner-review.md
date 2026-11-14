@@ -219,11 +219,11 @@ the spec it links to.
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
 - **Rigid headgear frame detection (#2529).** [design, #2529] Choose bone-local axes
-  when a rigid head mesh's bounds straddle skeleton Z=0 and their centre aligns at
-  least 0.9 with bone-local up (`BONE_LOCAL_HEAD_ALIGNMENT`); otherwise retain the
-  skeleton-axis rule. This fixes Oliver's supplied +X cap layout without naming a
-  model. Keep this conservative geometry rule, or require explicit model-frame
-  metadata for ambiguous mod meshes? ([actors §1.2](spec-notes/actors.md#12-meshes))
+  when a rigid head part's combined authored bounds straddle skeleton Z=0 and their
+  centre aligns at least 0.9 with bone-local up (`BONE_LOCAL_HEAD_ALIGNMENT`);
+  otherwise retain the skeleton-axis rule. This fixes Oliver's supplied +X cap layout
+  without naming a model. Keep this conservative geometry rule, or require explicit
+  model-frame metadata for ambiguous mod meshes? ([actors §1.2](spec-notes/actors.md#12-meshes))
 
 - **NPC conversations go on past a Goodbye line that links on (#2451).** [hypothesis,
   #2451] The editor's documentation says a Goodbye line ends a conversation between

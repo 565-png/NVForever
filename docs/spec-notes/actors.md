@@ -104,12 +104,17 @@ actor meshes`]:
   [design: `engine/nvf-assets/src/actor.rs::spawn_parts`, `rigid_local`] The cap already
   hangs from `Bip01 Head`; the old unconditional inverse-bind correction turns its
   +X offset sideways at the bind pose. This is a frame-selection error, not a missing
-  parent. [design, #2529] `rigid_shape_local` now keeps root * shape for an unskinned
-  head mesh when its authored bounds straddle skeleton Z=0 and their centre's unit
-  direction aligns with bone-local up by at least `BONE_LOCAL_HEAD_ALIGNMENT` (0.9).
+  parent. [design, #2529] `rigid_part_frame` chooses one frame per part using combined
+  bounds of its unskinned, non-cap shapes, with root * shape applied to each vertex.
+  Hidden shapes contribute so visibility changes do not change the frame. It keeps
+  root * shape for every rigid shape when those bounds straddle skeleton Z=0 and their
+  centre's unit direction aligns with bone-local up by at least
+  `BONE_LOCAL_HEAD_ALIGNMENT` (0.9). Splitting geometry into material submeshes keeps
+  the same placement, including each shape's authored transform.
   Bone-local up is inverse bind linear transform times skeleton +Z, normalized.
-  Other layouts, empty/nonfinite geometry and singular bind transforms keep the old
-  rule. The bone-local shape inherits the head's full animated transform, including
+  Other layouts, empty combined geometry, missing position attributes, any nonfinite
+  rigid vertex and singular bind transforms keep the old rule for the whole part.
+  The bone-local part inherits the head's full animated transform, including
   head tracking and dialogue turns, at spawn and equipment changes; skinned shapes
   and creatures use their existing paths. [hypothesis] The geometry test identifies
   this layout in other rigid hats, but asymmetric meshes can be ambiguous. Owner
