@@ -137,6 +137,12 @@ pub struct OtherState {
     pub jip10: crate::nvse_jip10::Jip10State,
     /// JIP batch 14's effects, primitives, models, VATS, fuses and frequencies (`nvse_jip14`).
     pub jip14: crate::nvse_jip14::Jip14State,
+    /// The unlisted JIP commands' locks, switches and lights (`nvse_unlisted`).
+    pub unlisted: crate::nvse_unlisted::UnlistedState,
+    /// The New Game flag of the unlisted commands' batch 1 (`nvse_unlisted2`).
+    pub unlisted2: crate::nvse_unlisted2::Unlisted2State,
+    /// SUP's cached JSON files (`nvse_json`).
+    pub json: crate::nvse_json::JsonState,
     /// JIP batch 11's actor overrides and engine requests (`nvse_jip11`).
     pub jip11: crate::nvse_jip11::Jip11State,
     /// JIP batch 13's physics view, requests and follows (`nvse_jip13`).
@@ -374,6 +380,17 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // reference otherwise [observed: GetCrosshairRefEx gives 00000000].
         "getcrosshairref" => XVal::Ref(g.senses.crosshair_ref.map_or(0, |r| r.0)),
         "getcrosshairrefex" => XVal::Ref(g.senses.crosshair_far.map_or(0, |r| r.0)),
+        // `MinRange MaxRange`: the first object with collision the crosshair's ray meets
+        // between the two distances, out to 50000 units [documented: ObjectUnderReticle];
+        // the terrain is no object and no ray (a headless run) none [hypothesis].
+        "objectunderreticle" => {
+            let (min, max) = (num(args, 0, 0.0).max(0.0) as f32, (num(args, 1, 0.0) as f32).min(crate::functions::senses::RETICLE_REACH));
+            let hit = g.senses.reticle.as_ref().filter(|_| max > min).and_then(|r| {
+                let at = |d: f32| [r.start[0] + r.dir[0] * d, r.start[1] + r.dir[1] * d, r.start[2] + r.dir[2] * d];
+                crate::ray::cast_hit(at(min), at(max), crate::ray::CastKind::World)
+            });
+            XVal::Ref(hit.and_then(|h| h.form).unwrap_or(0))
+        }
         // [documented: GetCurrentObjective] the active quest's first objective shown and
         // not done [hypothesis: which objective counts as current], else -1 [hypothesis].
         "getcurrentobjective" => {
@@ -565,7 +582,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             zero
         }
-        "getplayercontrolsdisabledalt" | "getplayercontrolsdisabledaltex" => {
+        // GPCDEx answers as the Ex form [observed: #2430 probe, script_functions.py].
+        "getplayercontrolsdisabledalt" | "getplayercontrolsdisabledaltex" | "gpcdex" => {
             let how = num(args, 0, 0.0) as i64;
             let which = alt_groups(name.ends_with("ex"), args.get(1..).unwrap_or(&[]), [true; 7], [false; 7]);
             let mut locked = [false; 7];

@@ -10471,17 +10471,17 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_P
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-68375,4800,8700"]
 run_seconds = 17
 order = [[
-  { re = 'pause menu: rows 2-10 of \d+ shown', label = "a notch of the wheel shows the next row" },
-  { re = 'pause menu: rows 3-11 of \d+ shown' },
-  { re = 'pause menu: rows 4-12 of \d+ shown' },
-  { re = 'pause menu: rows 3-11 of \d+ shown', label = "a notch up shows the row before again" },
+  { re = 'pause menu: rows 2-13 of \d+ shown', label = "a notch of the wheel shows the next row (a window of 12 lines, #2377)" },
+  { re = 'pause menu: rows 3-14 of \d+ shown' },
+  { re = 'pause menu: rows 4-15 of \d+ shown' },
+  { re = 'pause menu: rows 3-14 of \d+ shown', label = "a notch up shows the row before again" },
 ]]
 
 
 [[scenario]]
 name = "settings-scroll-headings"
 source = "#1953: the mouse wheel moves the window of a tab with headings (Gameplay) as of one without, the chosen row brought into the window (the top row once the chosen one leaves it) and the window not pulled back to the chosen row's heading; a notch up moves it back one line"
-note = "Gameplay's first lines: [Game], difficulty, hardcore, kill-camera, vats-style, vats-slowdown, reload-slows, UsePipBoy, [Saving], the autosave rows; the window is nine lines"
+note = "Gameplay's first lines: [Game], difficulty, hardcore, kill-camera, vats-style, vats-slowdown, reload-slows, UsePipBoy, [Saving], the five autosave rows, [Dialogue] (line 15); the window is twelve lines (#2377), and a heading on its last line is drawn with its first row in the next window, so the window from line 4 draws lines 4-14"
 areas = ["settings"]
 paths = ["engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/settings_layout.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:18", NVF_PLAY_TEST_SETTINGS = "11:tab:Gameplay", NVF_PLAY_TEST_PAUSE_MENU = "12:wheel-down,12.3:wheel-down,12.6:wheel-down,13.5:inspect,14:wheel-up,15:inspect" }
@@ -10489,16 +10489,18 @@ args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 20
 order = [[
   "pause menu: tab Gameplay; selected difficulty",
-  { re = 'pause menu: rows 2-10 of \d+ shown', label = "a notch of the wheel shows the next line" },
-  { re = 'pause menu: rows 3-11 of \d+ shown' },
-  { re = 'pause menu: rows 4-12 of \d+ shown', label = "three notches, three lines down" },
-  { re = 'pause menu: inspect: Gameplay, keys on the rows, selected kill-camera, lines 4-12 of \d+', label = "the window stays moved, the chosen row its top row" },
-  { re = 'pause menu: rows 3-11 of \d+ shown', label = "a notch up moves it back one line" },
-  { re = 'pause menu: inspect: Gameplay, keys on the rows, selected kill-camera, lines 3-11 of \d+', label = "the chosen row still in the window" },
+  { re = 'pause menu: rows 2-13 of \d+ shown', label = "a notch of the wheel shows the next line" },
+  { re = 'pause menu: rows 3-14 of \d+ shown' },
+  { re = 'pause menu: rows 4-15 of \d+ shown', label = "three notches, three lines down" },
+  { re = 'pause menu: inspect: Gameplay, keys on the rows, selected kill-camera, lines 4-14 of \d+', label = "the window stays moved, the chosen row its top row ([Dialogue] on its last line left for the next window)" },
+  "pause menu: inspect: window 12 lines, 11 drawn",
+  { re = 'pause menu: rows 3-14 of \d+ shown', label = "a notch up moves it back one line" },
+  { re = 'pause menu: inspect: Gameplay, keys on the rows, selected kill-camera, lines 3-14 of \d+', label = "the chosen row still in the window" },
+  "pause menu: inspect: window 12 lines, 12 drawn",
 ]]
 forbid = [
   { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
-  { re = 'pause menu: rows 1-9 of \d+ shown', label = "the window is never pulled back to the top (to the chosen row's heading)" },
+  { re = 'pause menu: rows 1-12 of \d+ shown', label = "the window is never pulled back to the top (to the chosen row's heading)" },
   { re = 'nvf_play::settings: settings: [a-zA-Z][\w-]* \S', label = "scrolling changes no setting" },
 ]
 
@@ -10618,6 +10620,9 @@ expect = [
   { text = "pause menu: tab Tweaks; selected none", label = "the empty Tweaks tab opens on no row" },
   { text = "pause menu: inspect: Tweaks, keys on the rows, selected none, lines 0-0 of 0", label = "it lists nothing" },
   { re = 'pause menu: inspect: words Search \| Changed \| Gameplay \| Display \| Audio \| Controls \| Graphics \| Tweaks \| Debug \| No settings here\.', label = "the rail and the empty tab's words" },
+  { text = "pause menu: settings window of 12 lines", count = 1, label = "the window's lines worked out from the layout, once (#2377)" },
+  { re = 'pause menu: settings list (\d+) wide from \d+ in a view \d+ wide, band \d+-\d+', label = "the list's width from the view, logged (#2377)" },
+  "pause menu: inspect: window 12 lines, 0 drawn",
 ]
 order = [[
   "settings layout: tabs Gameplay",
@@ -10632,6 +10637,42 @@ order = [[
   "pause menu: tab Tweaks; selected none",
 ]]
 forbid = [{ re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" }]
+
+[[scenario]]
+name = "settings-layout-ultrawide"
+source = "#2377: at 3440x1440 (a view 2293 units wide) the settings list is as wide as it may be (1300 units), centred in the room left of the rail, the window twelve lines"
+note = "the window must open at 3440x1440 (a monitor that size); a smaller one gives a narrower view and list, which the second line then misses. Opt-in: runs only with NVF_SMOKE_ULTRAWIDE set (any value) on a machine with such a monitor; elsewhere the unit test `the_settings_page_fits_the_view` covers the 2293-unit view"
+requires = ["NVF_SMOKE_ULTRAWIDE"]
+areas = ["settings"]
+paths = ["engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_view.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_PLAY_TEST_SETTINGS = "11:page,12:tab:Graphics", NVF_PLAY_TEST_PAUSE_MENU = "13:inspect" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--size", "3440x1440"]
+run_seconds = 17
+expect = [
+  { text = "pause menu: settings window of 12 lines", count = 1 },
+  { re = 'pause menu: settings list 1300 wide from \d+ in a view 2293 wide, band \d+-\d+', label = "the list capped at 1300 units in a 21:9 view" },
+  { re = 'pause menu: inspect: Graphics, keys on the rows, selected \S+, lines 1-1[12] of \d+', label = "twelve lines (less a heading left for the next window)" },
+]
+forbid = [{ re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" }]
+
+[[scenario]]
+name = "settings-note-budget"
+source = "#2377: every settings note within the budget (200 characters, no command-line switch) once every row is registered, and two lines at the page's width in a 16:9 view once the pause menu's fonts are loaded; the rows' labels and values laid out at that width, a row whose text had to be cut logged"
+note = "`cut to fit` is reported, not failed: a row cut there is drawn with \"...\" and logs `settings: text of `<key>` cut to fit: ...`"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/settings.rs", "engine/nvf-play/src/pause.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/quality.rs", "lang/"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:page,12:tab:Graphics" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 15
+expect = [
+  { re = 'settings: \d+ notes checked, 0 over the budget \(200 characters\)', count = 1, label = "every registered note within 200 characters, no switch in it (at the start)" },
+  { re = 'settings: \d+ notes checked, 0 over the budget \(200 characters, two lines\)', count = 1, label = "and two lines at the page's 16:9 width (once the pause menu's fonts are loaded)" },
+  { re = 'settings: \d+ rows laid out, \d+ cut to fit', count = 1, label = "the rows' labels and values laid out at that width" },
+]
+forbid = [
+  { re = 'settings: note of `\S+` over the budget:', label = "no note over the budget" },
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
+]
 
 [[scenario]]
 name = "settings-headings"
@@ -16606,6 +16647,49 @@ expect = [
 ]
 
 [[scenario]]
+name = "modlist-blue-moon"
+kind = "tool"
+source = "issue #2275: a real mod list's extender scripts as the game builds them at start (fnvtool ext report, h9x000's #2273), read straight from its Mod Organizer 2 profile (--mo2-profile)"
+areas = ["scripts", "extender", "mods"]
+paths = ["crates/fnv-game/src/source_compile.rs", "crates/fnv-script/src/compile/", "crates/fnv-script/src/table.rs", "crates/fnvtool/src/ext_cmd.rs", "crates/fnvtool/src/mo2_args.rs", "crates/fnv-install/src/mo2.rs", "schemas/script/functions.json", "tools/smoke/expected/modlist-blue-moon.toml"]
+requires = ["NVF_MODLIST_BLUE_MOON"]
+note = "NVF_MODLIST_BLUE_MOON: the folder of the Blue Moon profile on this machine (<MO2 instance>\\profiles\\1 - A Blue Moon 2.0; the owner's). Plugins come from the instance's mods by modlist.txt priority and its game folder's Data; {data} is only the data folder argument"
+commands = [["ext", "report", "{data}", "--mo2-profile", "{env:NVF_MODLIST_BLUE_MOON}", "--schema", "schemas/fnv"]]
+# The totals live in expected/modlist-blue-moon.toml: a branch that makes more units
+# compile lowers units_kept_bytes there; a rise fails this run.
+expect_file = "expected/modlist-blue-moon.toml"
+manual = "a rise: compare the report's per_plugin failed lists with main's; a drop: write the new summary into expected/modlist-blue-moon.toml"
+
+[[scenario]]
+name = "modlist-begin-again"
+kind = "tool"
+source = "issue #2335: the Begin Again mod list (Tale of Two Wastelands, MO2 game TTW, 203 plugins) as modlist-blue-moon reads Blue Moon: its extender scripts as the game builds them at start (fnvtool ext report), from its Mod Organizer 2 profile"
+areas = ["scripts", "extender", "mods"]
+paths = ["crates/fnv-game/src/source_compile.rs", "crates/fnv-script/src/compile/", "crates/fnv-script/src/decode.rs", "crates/fnv-script/src/table.rs", "crates/fnv-script/data/encodings.json", "crates/fnvtool/src/ext_cmd.rs", "crates/fnvtool/src/mo2_args.rs", "crates/fnv-install/src/mo2.rs", "schemas/script/functions.json", "tools/smoke/expected/modlist-begin-again.toml"]
+requires = ["NVF_MODLIST_BEGIN_AGAIN"]
+note = "NVF_MODLIST_BEGIN_AGAIN: the folder of the Begin Again profile on this machine (<MO2 instance>\\profiles\\Begin Again; the owner's). Plugins come from the instance's mods by modlist.txt priority (the Fallout 3 masters from the TTW mod) and its game folder's Data; {data} is only the data folder argument"
+commands = [["ext", "report", "{data}", "--mo2-profile", "{env:NVF_MODLIST_BEGIN_AGAIN}", "--schema", "schemas/fnv"]]
+# The totals live in expected/modlist-begin-again.toml: a branch that makes more units
+# compile lowers units_kept_bytes there; a rise fails this run.
+expect_file = "expected/modlist-begin-again.toml"
+manual = "a rise: compare the report's per_plugin failed lists with main's; a drop: write the new summary into expected/modlist-begin-again.toml"
+
+[[scenario]]
+name = "modlist-high-dry"
+kind = "tool"
+source = "issue #2275: a second real mod list's extender scripts as the game builds them at start (fnvtool ext report), read straight from its Mod Organizer 2 profile (--mo2-profile)"
+areas = ["scripts", "extender", "mods"]
+paths = ["crates/fnv-game/src/source_compile.rs", "crates/fnv-script/src/compile/", "crates/fnv-script/src/table.rs", "crates/fnv-script/src/unit.rs", "crates/fnv-script/data/encodings.json", "crates/fnvtool/src/ext_cmd.rs", "crates/fnvtool/src/mo2_args.rs", "crates/fnv-install/src/mo2.rs", "schemas/script/functions.json", "tools/smoke/expected/modlist-high-dry.toml"]
+requires = ["NVF_MODLIST_HIGH_DRY"]
+note = "NVF_MODLIST_HIGH_DRY: the folder of the High and Dry profile on this machine (<MO2 instance>\\profiles\\1 - Normal; the owner's). Plugins come from the instance's mods by modlist.txt priority and its game folder's Data; {data} is only the data folder argument"
+commands = [["ext", "report", "{data}", "--mo2-profile", "{env:NVF_MODLIST_HIGH_DRY}", "--schema", "schemas/fnv"]]
+# The totals live in expected/modlist-high-dry.toml: a branch that makes more units
+# compile lowers units_kept_bytes there; a rise fails this run.
+expect_file = "expected/modlist-high-dry.toml"
+manual = "a rise: compare the report's per_plugin failed lists with main's; a drop: write the new summary into expected/modlist-high-dry.toml"
+
+
+[[scenario]]
 name = "mq-old-world-blues"
 kind = "tool"
 source = "headless add-on walkthrough crates/fnv-game/walkthrough/old-world-blues.actions.json: Old World Blues from the drive-in satellite through the Think Tank, X-2, X-8, X-13, the Forbidden Zone and the Think Tank talked down, the end slides to NVDLC03MQ05 100"
@@ -21700,11 +21784,11 @@ order = [[
 
 [[scenario]]
 name = "tiles-hud-notices"
-source = "[design] T12 leftovers (docs/spec-notes/hud.md §14.11): corner-messages and quest-messages with [UI] TileMenus=HUDMainMenu: the hand-built queues' lines drawn from Messages' code-made copies (*:0 bracket, *:1 text at x 130 y 5 depth 2, *:2 icon [observed]) and QuestReminder's (the banner and the objectives with their boxes at the hand-built places), the hand-built areas hidden"
+source = "[design] T12 leftovers (docs/spec-notes/hud.md §14.11; read with JIP's GetUIFloatAlt, whose `*:N` counts from the last child as the observed paths were read, #2298): corner-messages and quest-messages with [UI] TileMenus=HUDMainMenu: the hand-built queues' lines drawn from Messages' code-made copies (*:0 bracket, *:1 text at x 130 y 5 depth 2, *:2 icon [observed]) and QuestReminder's (the banner and the objectives with their boxes at the hand-built places), the hand-built areas hidden"
 note = "45 s as quest-messages: the add-ons' six quest notices queue before VCG02's completed line, which comes on screen at about 41 s; the corner messages at 1 s as corner-messages, the quest lines as quest-messages; the console's read at 15 s comes after both shots"
 areas = ["ui", "hud", "corner-messages", "quest-messages"]
 paths = ["engine/nvf-play/src/tiles/notices.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvf-play/src/corner_messages.rs", "engine/nvf-play/src/quest_messages.rs"]
-env = { NVF_PLAY_TEST_TILE_MENUS = "HUDMainMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "1:message:FactionReminderNCR,1.1:message:AbilityWellRestedStartMsg,3:objective:VCG02:3,9:objective_done:VCG02:3,9.1:objective:VCG02:5", NVF_PLAY_TEST_CONSOLE = "15:PrintC \"tiles notices %g %g %g %g\", (GetUIFloat \"HUDMainMenu/Messages/*:1/x\"), (GetUIFloat \"HUDMainMenu/Messages/*:1/depth\"), (GetUIFloat \"HUDMainMenu/Messages/*:0/width\"), (GetUIFloat \"HUDMainMenu/Subtitles/*:0/x\");15.4:close", NVF_PLAY_TEST_SHOTS = "5:tiles_hud_notices_banner.png,12.5:tiles_hud_notices_objectives.png" }
+env = { NVF_PLAY_TEST_TILE_MENUS = "HUDMainMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "1:message:FactionReminderNCR,1.1:message:AbilityWellRestedStartMsg,3:objective:VCG02:3,9:objective_done:VCG02:3,9.1:objective:VCG02:5", NVF_PLAY_TEST_CONSOLE = "15:PrintC \"tiles notices %g %g %g %g\", (GetUIFloatAlt \"HUDMainMenu/Messages/*:1/x\"), (GetUIFloatAlt \"HUDMainMenu/Messages/*:1/depth\"), (GetUIFloatAlt \"HUDMainMenu/Messages/*:0/width\"), (GetUIFloatAlt \"HUDMainMenu/Subtitles/*:0/x\");15.4:close", NVF_PLAY_TEST_SHOTS = "5:tiles_hud_notices_banner.png,12.5:tiles_hud_notices_objectives.png" }
 args = ["--cell", "GSHouseInterior03", "--play", "--no-voice"]
 run_seconds = 45
 order = [[
@@ -22616,6 +22700,19 @@ expect = [
 ]
 
 [[scenario]]
+name = "nif-blocks-player"
+source = "issue #2335: the player's nodes in the NIF block mirror. 360Movement.esp (Begin Again list) reads `Player.GetNifBlockTranslation \"Bip01 NonAccum\"` every frame; the player's third-person body is no ActorRig, so the mirror had no tree for it and every call gave ar_Null"
+areas = ["scripts", "actors"]
+paths = ["crates/fnv-game/src/nif_blocks.rs", "engine/nvforever/src/nif_mirror.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "11:PrintC \"nvf player first %g\", (Ar_Size (Player.GetChildBlocks \"\"));12:PrintC \"nvf player nonaccum %g\", (Ar_Size (Player.GetNifBlockTranslation \"Bip01 NonAccum\"));12.5:PrintC \"nvf player blocks %g\", (Ar_Size (Player.GetChildBlocks \"\"))" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 15
+expect = [
+  { re = 'script: print "nvf player nonaccum 3"', label = "the player's Bip01 NonAccum translation is three numbers" },
+  { re = 'script: print "nvf player blocks [1-9][0-9]*"', label = "the player's skeleton nodes are in the mirror" },
+]
+
+[[scenario]]
 name = "player-script-sequence-pose-release-owned"
 source = "[design: player-script-sequence-pose-aid.md] Optional actual post-propagation first/third rig observation using two externally authored owned KFs and a declared numeric manifest. NOT RUN; no native or pixel comparison."
 areas = ["scripts", "player"]
@@ -22632,6 +22729,22 @@ expect = [
   { text = "sequence pose aid: PASS phase=released", count = 1, label = "request and high tag retire and the underlying pose remains" },
   { text = "sequence pose aid: FAIL", count = 0, label = "manifest, rig identity and numeric observations stay valid" },
 ]
+
+[[scenario]]
+name = "unlisted-attach-light"
+source = "#2318 (docs/spec-notes/ext-unlisted-commands.md §2.1): JIP's AttachLight puts a lit node under a node of Ringo's drawn model (1), the node shows among the head's children, RemoveLight takes it away again"
+areas = ["scripts", "actors"]
+paths = ["crates/fnv-game/src/nvse_unlisted.rs", "engine/nvforever/src/nif_mirror.rs"]
+env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "9:RingoRef.MoveTo player 0 200 0;11:PrintC \"nvf head %g\", (Ar_Size (RingoRef.GetChildBlocks \"Bip01 Head\"));12:PrintC \"nvf light %g\", (RingoRef.AttachLight \"Bip01 Head\" Fire420 0 0 10);13:PrintC \"nvf head lit %g\", (Ar_Size (RingoRef.GetChildBlocks \"Bip01 Head\"));14:RingoRef.RemoveLight \"Bip01 Head\";15:PrintC \"nvf head after %g\", (Ar_Size (RingoRef.GetChildBlocks \"Bip01 Head\"))" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 18
+expect = [
+  { re = 'script: print "nvf light 1"', label = "AttachLight on the head gives 1" },
+  { re = "nif mirror: light 00004477 on 00104C7D's Bip01 Head, radius [1-9]", label = "the engine draws Fire420's light under Ringo's head" },
+  { re = 'script: print "nvf head lit [1-9][0-9]*"', label = "the head's children read with the light's node" },
+  { re = 'script: print "nvf head after [0-9]+"', label = "RemoveLight leaves the head readable" },
+]
+
 [[scenario]]
 name = "knvse-anim-replace"
 source = "N5 slice 2 (docs/design/knvse-anim.md): SetActorAnimationPath with a standing-stance file replaces that move in the actor's own copy of its set; taking it back restores the shared set"
@@ -22644,6 +22757,36 @@ expect = [
   { re = 'script: print "nvf set 1"', label = "the file is there: the setter gives 1" },
   { re = 'anim paths: 00104C7D plays 1 replaced move', label = "Ringo plays from his own set with Idle replaced" },
   { re = 'script: print "nvf unset 1"', label = "taking it back gives 1" },
+]
+
+[[scenario]]
+name = "knvse-player-sequences"
+source = "kNVSE on the player (docs/design/knvse-anim.md §5): PlayAnimationPath's and ActivateAnim's sequences are requests the player's rigs play beside locomotion (script_sequences.rs, #2395); DeactivateAnim takes each back"
+areas = ["scripts", "player"]
+paths = ["crates/fnv-game/src/nvse_anim.rs", "engine/nvforever/src/script_sequences.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "9:player.PlayAnimationPath \"characters/_male/idleanims/specialidle_nvopen_benny_smoking.kf\";9.5:player.ActivateAnim \"characters/_male/idleanims/eatidle.kf\";10:close;13:player.DeactivateAnim \"characters/_male/idleanims/eatidle.kf\";player.DeactivateAnim \"characters/_male/idleanims/specialidle_nvopen_benny_smoking.kf\";13.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 16
+expect = [
+  { re = 'script sequence: player (first|third) "characters/_male/idleanims/specialidle_nvopen_benny_smoking[.]kf", priority', label = "PlayAnimationPath's sequence is played on the player" },
+  { re = 'script sequence: player (first|third) "characters/_male/idleanims/eatidle[.]kf", priority', label = "ActivateAnim's sequence is played on the player" },
+  { text = "could not load; not rendered", count = 0, label = "both clips load" },
+]
+
+[[scenario]]
+name = "knvse-npc-sequences"
+source = "kNVSE on NPCs (docs/design/knvse-anim.md §5): PlayAnimationPath starts the sequence on the actor's idle slot (idles::play_npc_sequences) and DeactivateAnim stops it; a conditional SetActorAnimationPath applies while its condition holds (anim_paths.rs, Game::anim_overrides_now) and is taken off when it no longer does"
+areas = ["scripts", "actors"]
+paths = ["crates/fnv-game/src/nvse_anim.rs", "crates/fnv-game/src/nvse_anim_folders.rs", "engine/nvforever/src/idles.rs", "engine/nvforever/src/anim_paths.rs"]
+env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "9:RingoRef.MoveTo player 0 200 0;11:RingoRef.PlayAnimationPath \"characters/_male/idleanims/specialidle_nvopen_benny_smoking.kf\";11.5:close;14:RingoRef.DeactivateAnim \"characters/_male/idleanims/specialidle_nvopen_benny_smoking.kf\";14.5:close;15:player.SetAV Strength 9;PrintC \"nvf cond %g\", (RingoRef.SetActorAnimationPath 0 1 \"characters/_male/locomotion/mtidle.kf\" 1 ({} => (player.GetAV Strength) > 5));15.5:close;18:player.SetAV Strength 2;18.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 21
+expect = [
+  { re = 'anim sequence: 00104C7D plays characters/_male/idleanims/specialidle_nvopen_benny_smoking[.]kf [(]once[)]', label = "PlayAnimationPath starts the sequence on Ringo" },
+  { re = "anim sequence: 00104C7D's characters/_male/idleanims/specialidle_nvopen_benny_smoking[.]kf stops", label = "DeactivateAnim stops it" },
+  { re = 'script: print "nvf cond 1"', label = "the conditional path is taken" },
+  { re = 'anim paths: 00104C7D plays 1 replaced move', label = "the condition holds: Ringo plays the replaced Idle" },
+  { re = 'anim paths: 00104C7D plays its shared set again', label = "the condition fails: the shared set returns" },
 ]
 
 [[scenario]]
@@ -23273,6 +23416,29 @@ expect = [
   { text = "pause menu: mods page closed", label = "Back leaves the page" },
 ]
 order = [["pause menu: mods page", "tiles: MCM's trigger clicked", "tiles: MCM's window is open", "pause menu: mods page closed"]]
+
+[[scenario]]
+name = "pause-mods-page-set-value"
+source = "issue #2298 (docs/spec-notes/mcm.md; crates/fnv-ui/src/tree.rs, xml.rs; crates/fnv-game/src/ui_functions.rs; engine/nvf-play/src/tiles/mod.rs, input.rs): on the pause menu's Mods page the pointer chooses a mod in MCM's list and a click on one of its toggle options sets the value through MCM's own round trip (MCM writes _Value and _NewValue, the mod's MenuMode 1013 block takes it and sets _Reset, the page shows it) [documented: MCM Guide v6, New Values]"
+note = "needs MCM and Just Assorted Mods (JustAssortedMods.esp; masters FalloutNV and DLC) in Data, as pause-mods-page-jam. Just Mods is the list's only line, at (338, 188) in interface units; its first option, Enable Dynamic Crosshair, a check box (type 5), at (600, 190), clicked twice: Just Assorted Mods keeps the setting in its INI (SetModINI), so a run starts from whatever the last left, and both values must follow the first click. The mod log's MCM line says the option's _value after each; pause_mods.png shows the page"
+areas = ["ui", "menus", "scripts"]
+paths = ["engine/nvf-play/src/tiles/mods.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/mod.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/xml.rs", "crates/fnv-ui/src/input.rs", "crates/fnv-game/src/ui_functions.rs"]
+env = { NVF_PLAY_TEST_MOD_LOG = "1", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_PAUSE = "16:30", NVF_PLAY_TEST_PAUSE_MENU = "17:mods,25.5:shot,27:back", NVF_PLAY_TEST_POINTER = "19:338:188,19.5:338:188:click,21:600:190,21.5:600:190:click,23:600:190:click,24.5:900:900" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm", "ClassicPack.esm", "MercenaryPack.esm", "TribalPack.esm", "CaravanPack.esm", "The Mod Configuration Menu.esp", "JustAssortedMods.esp"]
+run_seconds = 32
+expect = [
+  { text = "tiles: clicked StartMenu/MCM/MCM_ModList/Mod1", label = "the pointer clicks Just Mods' line" },
+  { text = "tiles: clicked StartMenu/MCM/MCM_Options/Option1", label = "and then the first option" },
+  { re = "MCM's list: _selected 1, .*MCM _ActiveMod 11,", label = "MCM chooses Just Mods (load index 11) from the click" },
+  { re = "_AltInput 0;", label = "MCM takes the pointer, not a controller" },
+]
+order = [
+  [{ re = 'Option1 "Enable Dynamic Crosshair" x \S+ y \S+ visible 1 title y \S+ _type 5 _value [01] shown "[01]"', label = "the page fills in: the check box" },
+   { re = "MCM _ActiveOption 1, _Value [01], _NewValue 0,", label = "the click: MCM wrote the option and its flipped value (its _NewValue is set and taken by the mod within one frame, so the line shows it cleared)" },
+   { re = 'Option1 "Enable Dynamic Crosshair" x \S+ y \S+ visible 1 title y \S+ _type 5 _value 0 shown "0"', label = "the mod took a value and the page shows the box off" }],
+  [{ re = "MCM _ActiveOption 1, _Value [01], _NewValue 0,", label = "the click" },
+   { re = 'Option1 "Enable Dynamic Crosshair" x \S+ y \S+ visible 1 title y \S+ _type 5 _value 1 shown "1"', label = "and the box on, one of the two clicks each" }],
+]
 
 [[scenario]]
 name = "travel-skip-sun-shadows"
@@ -27858,6 +28024,44 @@ order = [[
   { text = "player controls: all enabled", label = "the greeting's result script gives the controls back" },
 ]]
 forbid = [{ text = "EDE1Ref: does not talk", label = "ED-E has a greeting to say" }]
+
+[[scenario]]
+name = "mccarran-boyd-one-body"
+source = "issue #2461 (owner): after the Silus interrogation Lt. Carrie Boyd (LieutenantBoydREF 0x000F0678, CampMCTermInt02) was drawn twice, one body in the room and one outside the door, and the one in the room talked as the other. The scene's records: Silus's GREETING (INFO 0x000F1873) MoveTo's her to BoydExitREF 0x000FA73E (325, 719); the assassin trick's line (INFO 0x000F2DDE) MoveTo's her to XMarker 0x000FB4E1 (467, 1386) by the room's door and its end script sets bBoydEnter, so VFreeformMcCarran2BoydPatrolReturn walks her to her linked ref 0x000FA73D (296, 1665) in the room; the trigger 0x000FA742 there starts the POW2Int exchange with Silus, whose last line sets bBoydExit, and VFreeformMcCarran2BoydPatrolExit walks her back to BoydExitREF. One body per reference throughout (engine/nvforever/src/residents.rs drawn_twice, nav.rs show_actor)"
+note = "the player stands in the interrogation room; Silus's greeting is said at 3 s and the trick's line at 8 s (as the dialogue would, conditions not required). The census is taken at exit; the warnings name a body spawned and lost before it was found"
+areas = ["ai", "actors"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/nav.rs", "crates/fnv-ai/src/carry.rs", "crates/fnv-game/src/functions/refs.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "3:info:0x000F1873:SilusREF,8:info:0x000F2DDE:SilusREF" }
+args = ["--cell", "CampMCTermInt02", "--pos=340,1690,18690", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 90
+expect = [
+  { re = 'LieutenantBoydREF: put at \(325, 719, \d+\) in .* by a script \(MoveTo\)', label = "Silus's greeting puts Boyd at BoydExitREF" },
+  { re = 'LieutenantBoydREF: put at \(467, 1386, \d+\) in .* by a script \(MoveTo\)', label = "the trick's line puts Boyd by the room's door" },
+  { re = 'actor bodies summary: (?P<n>\d+) references drawn by more than one body', range = [0, 0], label = "one body per reference at the end (Boyd not drawn twice)" },
+]
+forbid = [
+  { re = 'actor bodies: LieutenantBoydREF', label = "Boyd drawn by two bodies" },
+  { re = 'that body is not taken away', label = "a body spawned and not yet found was left behind" },
+  { re = 'bodies under the world root when its body was looked for', label = "two bodies of one reference under the world root" },
+]
+
+[[scenario]]
+name = "mccarran-vms08-markers"
+source = "issue #2464 (owner): I Put a Spell on You's marker for Lt. Boyd pointed outside. VMS08 objective 20 (\"Ask around about suspicious activity at Camp McCarran\") has three targets [documented: the QUST 0x000E790F QSTA/CTDA records, read with fnvtool esm decode]: LieutenantBoydREF 0x000F0678 in CampMCTermInt02 (GetDead 0), SupplyOfficerContrerasREF 0x000E5517 in CampMCTermInt04, the Supply Shack (bAskedContreras 0, GetDead 0), and CorporalSterlingRef 0x000F570E outdoors (bAskedSterling 0, GetDead 0). With the player beside Capt. Curtis in the Terminal Building all three are marked: Boyd at herself, the other two at the first door of the way to them, both leading out of the building (engine/nvf-play/src/compass.rs quest_mark_at)"
+note = "the player stands beside CaptainCurtisREF (976, -288, 18240); the objective is shown and the quest made active by the console at 6 s"
+areas = ["hud", "quests"]
+paths = ["engine/nvf-play/src/compass.rs", "crates/fnv-game/src/quest_targets.rs", "engine/nvf-play/src/pipboy/data.rs"]
+env = { NVF_PLAY_TEST_CONSOLE = "6:setobjectivedisplayed VMS08 20 1;6.5:forceactivequest VMS08;7:close" }
+args = ["--cell", "CampMCTermInt02", "--pos=900,-288,18250", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { re = 'quest targets: VMS08 objective 20 target 0x000F0678 LieutenantBoydREF marked', label = "Boyd is marked" },
+  { re = 'quest targets: VMS08 objective 20 target 0x000E5517 SupplyOfficerContrerasREF marked', label = "Contreras is marked" },
+  { re = 'quest targets: VMS08 objective 20 target 0x000F570E CorporalSterlingRef marked', label = "Sterling is marked" },
+  { re = 'compass: quest target 0x000F0678 placed at \([-\d]+, [-\d]+, [-\d]+\) itself', label = "Boyd's mark is Boyd herself (same interior)" },
+  { re = 'compass: quest target 0x000E5517 placed at .* at door ', label = "Contreras's mark is at a door (another interior)" },
+  { re = 'compass: quest target 0x000F570E placed at .* at door ', label = "Sterling's mark is at a door (outdoors)" },
+]
 
 [[scenario]]
 name = "weathers-key-freed"

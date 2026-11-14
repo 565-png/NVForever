@@ -598,7 +598,7 @@ pub fn get_dead_count(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, Strin
 
 /// The factions and ranks the records give an actor: its base's `SNAM` list, or its
 /// template's with the template flag "Factions" (docs/spec-notes/factions.md §2).
-fn base_factions<'d>(g: &'d Game, r: FormId) -> &'d [(FormId, i8)] {
+pub(crate) fn base_factions<'d>(g: &'d Game, r: FormId) -> &'d [(FormId, i8)] {
     base_of(g, r).map_or(&[], |b| g.data.base_factions_at(b, g.pick_seed(r), g.leveled_at(r)))
 }
 
@@ -704,7 +704,7 @@ pub fn get_is_race(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
 
 pub fn get_is_class(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
-    yes(g.traits_def(r).and_then(|d| d.class) == Some(a.form(0)?))
+    yes(g.traits_class(r) == Some(a.form(0)?))
 }
 
 macro_rules! flag {

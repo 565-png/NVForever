@@ -521,6 +521,12 @@ fn cacheui_anh_and_the_small_plugins() {
     // The plugin's header version (1.34 here): TTW calls a plugin below 1.3 an
     // unconverted Fallout 3 mod.
     assert_eq!(q(&mut g, "array_var a\narray_var r\nlet a := TTW_GetPlugins\nlet r := a[0]\nSetFunctionValue r[1]"), n(f64::from(1.34f32)));
+    // TTW's radio fix: a switch the engine's radio reads.
+    assert!(!g.small.ttw_radio_fix);
+    q(&mut g, "TTW_EnableRadioFix 1");
+    assert!(g.small.ttw_radio_fix);
+    q(&mut g, "TTW_EnableRadioFix 0");
+    assert!(!g.small.ttw_radio_fix);
     // TTW's gene projector is the race menu, NVForever's character creator.
     q(&mut g, "TTW_ShowGeneProjector");
     assert_eq!(g.open_menu_code(), Some(fnv_game::game::menus::RACE));
@@ -531,6 +537,25 @@ fn cacheui_anh_and_the_small_plugins() {
     g.close_menu();
     q(&mut g, "SetWorldspaceMapBounds TestWorld -10 20 30 -40");
     assert_eq!(g.world_map_bounds(FormId(WORLD)), Some([-10, 20, 30, -40]));
+}
+
+#[test]
+fn a_lambda_writes_its_makers_variables() {
+    // [documented: Lambda, its variables are its maker's; the High and Dry session's repro,
+    // #2275] Called in the run that made it, then again from the run's variables.
+    let f = fixture();
+    let mut g = game(&f);
+    let src = "int c\nref f\nint x\nBegin Function { }\nlet c := 1\nlet f := ({x} => c += x)\nCall f 10\nCall f 5\nSetFunctionValue c\nEnd\n";
+    assert_eq!(g.run_query(src, Default::default()).unwrap(), n(16.0));
+    let src = "int c\nref f\nint x\nBegin Function { }\nlet f := ({x} => x * 2)\nlet c := Call f 10\nSetFunctionValue c\nEnd\n";
+    assert_eq!(g.run_query(src, Default::default()).unwrap(), n(20.0));
+}
+
+#[test]
+fn format_k_prints_the_keys_name() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(q(&mut g, "SetFunctionValue (sv_Construct \"%k\" 18)"), s("E"));
 }
 
 #[test]

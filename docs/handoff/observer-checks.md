@@ -1899,6 +1899,20 @@ Fallout Behavior, Weapon Drawn, Continue During Combat).
      "visible" 0`, reading ArrowUp, ArrowDown and Option36 before and after in one script;
      and `5 23 24 "_enable" 1` reading Mod23 and SubMenu1.
 
+## Added 2026-11-12 (the versions the built-in extender plugins report)
+
+119. **What do GetPluginVersion and IsDLLLoaded answer for the plugins NVForever builds
+    but never read a version of?** (P2; ext-version.md §5, §6.) NVForever now reports SUP,
+    JIP PP LN, AnhNVSE, NX, UIO, CacheUI and hNVSE as installed, the first five at a
+    placeholder version (9999) because no page names one and none was read [design]. With
+    each plugin installed, one runtime query per name: `GetPluginVersion "SUP NVSE Plugin"`,
+    `"JIP PP LN"`, `"AnhNVSE"`, `"Extensions for NVSE"`, `"UI Organizer Plugin"`, `"CUI"`,
+    `"hNVSE"`; and for the plugins whose registered name no page gives (ITR, One111,
+    ppNVSE, vheyes-nvse), the name each prints in `nvse.log` and its version. In the same
+    run `IsDLLLoaded` with each plugin's file name without `.dll`, for
+    `fnv_game::nvse_plugins::DLLS`, which still lists only the five plugins of the first
+    probe install.
+
 ## Added 2026-11-12 (created actors' editor location, issue #2278)
 
 120. **Where is a created actor's editor location?** (P2; crates/fnv-ai/src/goal.rs
@@ -2147,3 +2161,16 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      which of INFO 0015B6D1-0015B6D4 are said, by whom, and when the inner door
      HVOuterLockedDoor opens; or watch Jason Bright's speech at REPCONN (are parts 5-9,
      INFO 000CD8A9 and after, said after part 4, 0008D401?).
+
+## Added 2026-11-14 (power-armour footfalls, PR #2430)
+
+140. **What sounds at a power-armour wearer's footfalls?** (P3; audio.md §10.1.) The data
+     has `FSTArmorPowerWalkL`/`R` beside the ground's `FST<material>` sets, and no record
+     links them to anything [observed]; the Power audio template's run sound
+     (`FOLArmorPowerRun`) names `fx\fol\powerarmor_walkrun\`, a folder no archive of
+     the base game, its DLCs or the Blue Moon list holds [observed: archive listings,
+     2026-11-14]. NVForever plays the ground's footstep and the template's `(Armor)`
+     rustle and nothing for the missing folder. Walk and run in T-45d power armour on
+     dirt and on concrete, first and third person, and record which SOUN records play
+     at each footfall (the sound log): does `FSTArmorPowerWalkL`/`R` play, instead of
+     or beside the ground's step, and does anything play for the run rustle?
