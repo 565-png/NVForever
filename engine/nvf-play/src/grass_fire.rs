@@ -867,8 +867,7 @@ mod tests {
     #[test]
     fn the_wind_drives_the_fire() {
         // A line of grass both ways from the start; wind towards +x.
-        let mut f = Fires::default();
-        f.wind = [1.0, 0.0];
+        let mut f = Fires { wind: [1.0, 0.0], ..Fires::default() };
         f.add_fuel((0, 0), (-12..=12).map(|x| ((x, 0), 0.0)));
         f.ignite([32.0, 32.0, 0.0], ITEM, None).unwrap();
         run(&mut f, 6.0);
