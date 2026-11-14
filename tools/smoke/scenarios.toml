@@ -2000,6 +2000,7 @@ areas = ["combat"]
 paths = ["engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs", "crates/fnv-ai/src/alert.rs", "engine/nvforever/src/attack_anims.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:combat:0x000F573F:player,3:combat:0x0013E5BB:player" }
 args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--npc-packages", "000F573F,0013E5BB"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 30
 expect = [
   { re = 'npc combat summary.*?(?P<n>\d+) blows', range = [15, 25], label = "about 20 blows in the npc combat summary", known_failing = "main 2026-10-23 (origin/main cd54601d+, 13 blows): the add-ons' load message boxes hold the game for about 8 s of the 30 (list 7 W4: 12 and 14 on its branch)" },
@@ -3216,6 +3217,7 @@ areas = ["corner-messages", "hud"]
 paths = ["engine/nvf-play/src/corner_messages.rs", "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/script_events.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "1:message:FactionReminderNCR,1.1:message:AbilityWellRestedStartMsg" }
 args = ["--cell", "GSHouseInterior03", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 20
 order = [[
   'corner message: "You are still dressed as a member of the NCR." for 2 s, icon glow_message_vaultboy_ncr.dds',
@@ -3368,6 +3370,7 @@ areas = ["chargen", "menus"]
 paths = ["engine/nvf-play/src/chargen.rs", "engine/nvf-play/src/chargen/lists.rs", "crates/fnv-game/src/chargen.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1048,8:menu:1048", NVF_PLAY_TEST_CHARGEN = "5:pick:Guns,5.1:pick:Speech,5.2:pick:Survival,6:done,10:reset,10.1:done,10.2:pick:Lockpick,10.3:pick:Medicine,10.4:pick:Repair,11:done" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 14
 order = [[
   "done, tag skills: Guns, Speech, Survival",
@@ -3383,6 +3386,7 @@ areas = ["chargen", "menus"]
 paths = ["engine/nvf-play/src/chargen.rs", "engine/nvf-play/src/chargen/lists.rs", "engine/nvf-play/src/chargen/name.rs", "engine/nvf-play/src/chargen/draw.rs", "crates/fnv-game/src/chargen.rs", "engine/nvf-play/src/tiles/trait_menu.rs", "engine/nvf-play/src/tiles/selection_menu.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1051,8:menu:1048,13:menu:1084", NVF_PLAY_TEST_CHARGEN = "5:clear,5.1:done,5.2:type:Courier Six,6:done,10:pick:Lockpick,10.1:done,10.2:pick:Guns,10.3:pick:Speech,10.4:pick:Survival,10.5:pick:Lockpick,10.6:pick:Survival,11:done,15:pick:Four Eyes,15.2:pick:Early Bird,15.4:pick:Wild Wasteland,16:done" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 20
 order = [[
   "Ok refused: no name",
@@ -3534,6 +3538,7 @@ areas = ["chargen", "menus", "scripts"]
 paths = ["crates/fnv-game/src/functions/ui.rs", "crates/fnv-game/src/revision.rs", "engine/nvf-play/src/chargen/lists.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "3:activate:0x001164A3,3.1:button:1" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 14
 order = [[
   { re = 'revision: keeps the S\.P\.E\.C\.I\.A\.L\. \(\d+ points, not 40\) on the attributes page', label = "SetSPECIALPoints keeps the player's attributes" },
@@ -3551,6 +3556,7 @@ areas = ["chargen", "vigor", "menus"]
 paths = ["engine/nvf-play/src/chargen/vigor*", "engine/nvf-play/src/chargen.rs", "engine/nvforever/src/vigor_view.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1074", NVF_PLAY_TEST_VIGOR = "2:click:LookInside_Btn:0,4.5:raise,4.6:raise,4.7:done,5.5:page:review,8:select:luck,8.1:raise,8.2:raise:L,8.3:raise:endurance,8.5:click:P1_RT_Btn:0" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 20
 expect = [
   "Done refused: points still to give out",
@@ -3567,6 +3573,7 @@ areas = ["chargen", "vigor", "menus", "ui-sounds"]
 paths = ["engine/nvf-play/src/chargen/vigor*", "engine/nvf-play/src/ui_sounds.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1074", NVF_PLAY_TEST_VIGOR = "2:click:LookInside_Btn:0,4.5:raise,4.6:raise,4.7:done,5.5:page:review,8:select:luck,8.1:raise,8.15:lower,8.2:raise:L,8.3:raise:endurance,8.4:raise:L,8.5:click:P1_RT_Btn:0" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 20
 expect = [
   "ui sounds: vigor tester category changed: OBJBookSpecialPageTurn",
@@ -3586,6 +3593,7 @@ areas = ["vigor", "streaming", "render"]
 paths = ["engine/nvforever/src/world.rs", "engine/nvf-play/src/chargen/vigor*", "engine/nvforever/src/vigor_view.rs"]
 env = { NVF_PLAY_TEST_UPLOAD_BYTES = "2000000", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1074", NVF_PLAY_TEST_SHOTS = "6" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 9
 expect = [
   "test aid NVF_PLAY_TEST_UPLOAD_BYTES: 2000000 bytes sent to the GPU a frame while playing",
@@ -4338,6 +4346,7 @@ paths = ["engine/nvforever/src/object_anims.rs", "engine/nvforever/src/actor_gro
 note = "the gecko hunters 0x00165185-0x00165187 and the geckos 0x00157B3D/E are disabled at 1 s: since creatures spring traps (8f2b0f92) a hunter walked into the other trap 0x0015834C, a second group sound, and they killed the player"
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "1:call:0x00165185:Disable,1:call:0x00165186:Disable,1:call:0x00165187:Disable,1:call:0x00157B3D:Disable,1:call:0x00157B3E:Disable,11:var:0x0002012B:trapbearskillreq01:0,15:activate:0x00165495,15.1:button:1" }
 args = ["--play", "--pos=-68124,-17000,9100", "--hour", "12", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 20
 expect = [
   { text = "playgroup: 0x00165495 passes the sound key TRPBearFire of Forward at 0.033 s", count = 1 },
@@ -4367,6 +4376,7 @@ areas = ["traps", "scripts"]
 paths = ["engine/nvf-play/src/script_trigger.rs", "engine/nvf-play/src/phys/prepare.rs", "crates/fnv-game/src/traps.rs"]
 env = { NVF_PLAY_TEST_SCRIPT = "1:call:0x00165185:Disable,1:call:0x00165186:Disable,1:call:0x00165187:Disable,1:call:0x00157B3D:Disable,1:call:0x00157B3E:Disable,11:var:0x0002012B:trapbearskillreq01:0,15:activate:0x00165495,15.1:button:1,17:moveto:player:0x0015834D" }
 args = ["--play", "--pos=-68124,-17000,9100", "--hour", "12", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 22
 expect = [
   { re = 'script: trigger 0x0015834D has 1 trigger volume\(s\) in its model', label = "the bear trap's model box is its trigger" },
@@ -4400,6 +4410,7 @@ areas = ["traps", "scripts", "combat"]
 paths = ["engine/nvf-play/src/script_trigger.rs", "crates/fnv-game/src/traps.rs", "crates/fnv-sim/src/refs.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "11:var:0x0002012B:trapplateskillreq:0,17:activate:0x00139521,17.1:button:1,21:moveto:player:0x00139522,25:moveto:player:0x00139521" }
 args = ["--cell", "NiptonHouse8Paranoid", "--play", "--hour", "12", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 29
 expect = [
   { re = 'script: message .*"[^"]*disarm[^"]*"', label = "the second tripwire is disarmed" },
@@ -4836,6 +4847,7 @@ areas = ["hacking", "terminal", "quest-messages", "corner-messages", "hud"]
 paths = ["engine/nvf-play/src/corner_messages.rs", "engine/nvf-play/src/quest_messages.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TERMINAL = "30:science:25,31:open:000D74D5,33:wrong,34:brackets,35:symbol,36:wrong,37:right,41:item:0,43:power", NVF_PLAY_TEST_SCRIPT = "35:objective:VCG02:3" }
 args = ["--cell", "BisonSteve01", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 52
 order = [[
   { text = "quest message: Talk to Sunny Smiles in the Prospector Saloon.", label = "the line pushed while the terminal is open" },
@@ -5998,6 +6010,7 @@ areas = ["aid", "actor-values", "perks", "menus"]
 paths = ["crates/fnv-game/src/books.rs", "crates/fnv-sim/src/forms.rs", "engine/nvf-play/src/aid.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "0003403E:2", NVF_PLAY_TEST_SCRIPT = "10:perk:Comprehension", NVF_PLAY_TEST_DROP = "6:0003403E:use,14:0003403E:use" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 22
 # The house's start-up message boxes can hold the inventory shut for about 2 s after the
 # first read is asked for (seen 2026-10-30): the perk comes 4 s after it, so the first
@@ -6163,19 +6176,21 @@ manual = "the frame at 20 s shows the ITEMS page clearly on the screen, under th
 
 [[scenario]]
 name = "no-messages"
-source = "engine/nvf-play/src/script.rs module doc: --no-messages closes message boxes that ask nothing at once; the twelve add-on start-up boxes of a Goodsprings start are such boxes"
+source = "engine/nvf-play/src/script.rs module doc: --no-messages answers message boxes that ask nothing with OK; a script's never opens (fnv_game GameConfig::answer_ok_boxes); the twelve add-on start-up boxes of a Goodsprings start are such boxes"
+note = "since 2026-11-14 the add-on boxes are answered as the scripts show them and never open (no MenuMode 1001 frame): the count moved from 'closed message box' to 'answered message box', and no box is left to close"
 areas = ["scripts", "menus"]
 # No `paths`: script.rs and main.rs change on most branches; run with --area or --only.
 paths = []
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--no-messages"]
 run_seconds = 35
 order = [[
-  "--no-messages: message boxes without a choice close at once",
+  "--no-messages: message boxes without a choice close at once; scripts' never open",
   "message box shown: Classic Pack items added to inventory.",
-  "--no-messages: closed message box",
+  "--no-messages: answered message box",
 ]]
 expect = [
-  { text = "--no-messages: closed message box", min = 12 },
+  { text = "--no-messages: answered message box", min = 12 },
+  { text = "--no-messages: closed message box", max = 0, label = "no add-on box opened, so none was left to close" },
 ]
 
 # ------------------------------------------------------------------ karma and crime (docs/spec-notes/crime-karma.md)
@@ -7335,6 +7350,7 @@ areas = ["messages", "menus"]
 paths = ["crates/fnv-game/src/functions/misc.rs", "engine/nvf-play/src/script_hud.rs", "engine/nvf-play/src/script_events.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.5", NVF_PLAY_TEST_SCRIPT = "3:activate:scripted:GSChemistrySetScript,6:activate:scripted:GSBrokenSMGScript" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 12
 order = [[
   { re = 'script: message GSChemistrySetMsg .* \(hidden by their conditions: \[1, 2\]\)' },
@@ -8015,6 +8031,7 @@ areas = ["save", "scripts"]
 paths = ["engine/nvf-play/src/save.rs", "crates/fnv-game/src/functions/misc.rs"]
 env = { NVFOREVER_HOME = "save-box-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "20:MessageBoxEx \"nvf answered box|Ok\";20.3:close;24:save nvf-after-box;25:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 27
 expect = [
   { re = 'script: menu 1001 .*answered', label = "the box is answered" },
@@ -8174,6 +8191,7 @@ areas = ["save"]
 paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/script.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs", "crates/fnv-game/src/game.rs", "crates/fnv-sim/src/world.rs"]
 env = { NVFOREVER_HOME = "save-refused-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--play", "--load", "smoke-refused", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 12
 expect = [
   { re = 'load: --load smoke-refused: .*unsupported snapshot format "fnv\.game\.state/2"; opening the main menu', count = 1, label = "the save is refused and the main menu opens instead" },
@@ -8192,6 +8210,7 @@ areas = ["save"]
 paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/script.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs"]
 env = { NVFOREVER_HOME = "save-refused-home", NVF_PLAY_TEST_LOAD_FAILS_LATE = "1", NVF_PLAY_TEST_HANDOFF_EXIT = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--play", "--load", "smoke-good", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 90
 ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its main menu is in"
 expect = [
@@ -8590,6 +8609,7 @@ areas = ["save"]
 paths = ["engine/nvforever/src/handoff.rs", "engine/nvf-play/src/save.rs", "engine/nvf-play/src/main_menu.rs"]
 env = { NVFOREVER_HOME = "handoff-refused-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = '20:load C:\Windows\win.ini', NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 90
 ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its main menu is in"
 expect = [
@@ -8612,6 +8632,7 @@ areas = ["save"]
 paths = ["engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs", "engine/nvf-play/src/main_menu.rs"]
 env = { NVFOREVER_HOME = "bad-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--play", "--load", 'C:\Windows\win.ini']
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 12
 expect = [
   { re = 'load: --load .*win\.ini.*; opening the main menu', count = 1, label = "the file is not loaded and the main menu opens instead" },
@@ -8966,6 +8987,7 @@ areas = ["pipboy", "combat"]
 paths = ["engine/nvf-play/src/pipboy/item_mod.rs", "crates/fnv-combat/src/data.rs", "crates/fnv-actor/src/records.rs"]
 env = { NVF_PLAY_TEST_TILE_MENUS = "", NVFOREVER_HOME = "pipboy-item-mod-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:call:player:AddItem:Weap10mmPistol:1,9.3:call:player:EquipItem:Weap10mmPistol,9.6:call:player:AddItem:ModNV10mmPistolExtMags:1", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=items,13.5:tab=0,15:mod=open,16:mod=down,18:mod=use,18.6:mod=use,19.2:mod=use,20:close", NVF_PLAY_TEST_SHOTS = "17:pipboy_item_mod.png" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 25
 expect = [
   { re = 'pipboy items: 10mm Pistol Mod X\)(?! \(dim)', label = "Mod X) bright: the player carries a mod that fits" },
@@ -11616,6 +11638,7 @@ areas = ["chargen", "menus", "actors"]
 paths = ["engine/nvf-play/src/creator.rs", "engine/nvf-play/src/creator/**", "crates/fnv-actor/src/creator.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-play/src/control.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1036", NVF_PLAY_TEST_CREATOR = "9:next:Sex,9.5:next:Origin,10:prev:Hair style,10.5:set:Skin Shade Dark / Light:0.2,11:set:Nose - short / long:0.9,11.5:next:Eye colour,12:random,12.5:undo,13:tab:face,14:orbit:60:15,15.5:zoom:0.7,15.6:pan:3:-2,17:tab:basics,18.5:zoom:0.35,20.5:tab:hair,22.5:done", NVF_PLAY_TEST_SHOTS = "8.5:creator_open.png,12:creator_changed.png,13.8:creator_face_tab.png,15.2:creator_orbit.png,16.7:creator_pan_zoom.png,18.2:creator_body.png,19.8:creator_body_zoomed.png,21.8:creator_hair_tab.png" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 30
 order = [[
   "creator: open on Male Caucasian (115 sliders, 4 races",
@@ -11824,6 +11847,7 @@ areas = ["chargen", "menus", "controls"]
 paths = ["engine/nvf-play/src/creator.rs", "engine/nvf-play/src/player.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "8", NVF_PLAY_TEST_SHOTS = "103:opening_creator_103.png,106:opening_creator_106.png" }
 args = ["--play", "--new-game", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 130
 order = [[
   "script: menu 1036 open",
@@ -11862,6 +11886,7 @@ areas = ["combat", "knockouts"]
 paths = ["crates/fnv-game/src/unconscious.rs", "crates/fnv-game/src/combat.rs", "engine/nvf-play/src/knockouts.rs", "engine/nvforever/src/knockouts.rs", "engine/nvforever/src/ragdoll.rs", "engine/nvforever/src/deaths.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:call:SunnyRef:SetActorRefEssential:1,3:moveto:SunnyRef:player:0:300:0,3:moveto:RingoRef:player:0:600:0,6:combat:RingoRef:player,40:call:RingoRef:StopCombat", NVF_PLAY_TEST_HIT = "6:SunnyRef:1000" }
 args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 60
 order = [[
   "knockout: Sunny Smiles … knocked out (essential)",
@@ -11940,6 +11965,7 @@ areas = ["combat", "knockouts"]
 paths = ["crates/fnv-game/src/unconscious.rs", "crates/fnv-game/src/combat.rs", "crates/fnv-game/src/functions/actor.rs", "engine/nvf-play/src/knockouts.rs", "engine/nvforever/src/knockouts.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:EasyPeteRef:player:0:300:0", NVF_PLAY_TEST_HIT = "6:EasyPeteRef:1:WeapNVBoxingGloves,7:EasyPeteRef:1:WeapNVBoxingGloves" }
 args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 85
 expect = [
   { re = 'test aid: the player hits \S+ for 1 with \S+', count = 2, label = "two hits with the gloves" },
@@ -13294,6 +13320,7 @@ areas = ["scripts", "console", "inventory"]
 paths = ["crates/fnv-sim/src/world.rs", "crates/fnv-sim/src/forms.rs", "crates/fnv-game/src/functions/player.rs", "crates/fnv-game/src/functions/items.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/model.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "14:player.additem 00014E13 1;14.3:player.equipitem 00014E13;14.6:player.getequipped 00014E13;15:setpccanusepowerarmor 1;15.3:player.equipitem 00014E13;15.6:player.getequipped 00014E13;16:close" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 22
 expect = [
   { re = 'message box shown: You lack the specialized training needed to move in Power Armor', label = "the game's refusal message" },
@@ -15490,6 +15517,7 @@ areas = ["console", "scripts"]
 paths = ["crates/fnv-script/src/vm.rs", "engine/nvf-play/src/console.rs"]
 env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "10:MessageEx \"nvf corner %g\", 7;10.5:DebugPrint \"nvf hidden\";11:SetDebugMode 1;11.5:DebugPrint \"nvf shown\";12:MessageBoxEx \"nvf box|Ok|Cancel\"" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 16
 expect = [
   { re = 'script: message .*"nvf corner 7"', label = "MessageEx shows its formatted text" },
@@ -21809,6 +21837,7 @@ areas = ["ui", "hud", "corner-messages", "quest-messages"]
 paths = ["engine/nvf-play/src/tiles/notices.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvf-play/src/corner_messages.rs", "engine/nvf-play/src/quest_messages.rs"]
 env = { NVF_PLAY_TEST_TILE_MENUS = "HUDMainMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "1:message:FactionReminderNCR,1.1:message:AbilityWellRestedStartMsg,3:objective:VCG02:3,9:objective_done:VCG02:3,9.1:objective:VCG02:5", NVF_PLAY_TEST_CONSOLE = "15:PrintC \"tiles notices %g %g %g %g\", (GetUIFloatAlt \"HUDMainMenu/Messages/*:1/x\"), (GetUIFloatAlt \"HUDMainMenu/Messages/*:1/depth\"), (GetUIFloatAlt \"HUDMainMenu/Messages/*:0/width\"), (GetUIFloatAlt \"HUDMainMenu/Subtitles/*:0/x\");15.4:close", NVF_PLAY_TEST_SHOTS = "5:tiles_hud_notices_banner.png,12.5:tiles_hud_notices_objectives.png" }
 args = ["--cell", "GSHouseInterior03", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 45
 order = [[
   'tiles: Messages text "You are still dressed as a member of the NCR."',
@@ -21893,6 +21922,7 @@ paths = [
 ]
 env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "24:MessageBoxEx \"nvf lifetime|Ok\";24.2:PrintC \"nvf message width %g\", (GetUIFloat \"MessageMenu/_MinMenuWidth\");26:PrintC \"nvf message closed %g\", (GetUIFloat \"MessageMenu/_MinMenuWidth\")" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 29
 expect = [
   { re = 'ui: built MessageMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', label = "the message menu builds from its indexed file" },
@@ -21954,6 +21984,7 @@ paths = [
 ]
 env = { NVF_PLAY_TEST_TILE_MENUS = "SleepWaitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_WAIT = "10:open", NVF_PLAY_TEST_POINTER = "11:1100:457,11.5:1100:457:click,12:1100:457:click,12.5:1100:457:click,13:1165:457:click,13.5:1165:457:click,14:off", NVF_PLAY_TEST_SHOTS = "14.5:tiles_sleep_wait.png", NVF_PLAY_TEST_KEYS = "15.5:w" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--size", "1280x720"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 35
 expect = [
   { re = 'tiles: \[UI\] TileMenus=SleepWaitMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): SleepWaitMenu drawn from tiles', label = "the switch is read from the test aid" },
@@ -23141,6 +23172,7 @@ areas = ["ui", "menus", "fonts"]
 paths = ["engine/nvf-play/src/interface.rs", "engine/nvf-play/src/terminal/screen.rs", "engine/nvf-play/src/creator/view.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "24:MessageBoxEx \"NVF box without buttons\";24.2:close", NVF_PLAY_TEST_SHOTS = "24.6:font_glyph_baseline.png" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--size", "1280x720"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 27
 expect = [
   "message box shown: NVF box without buttons",
@@ -27570,6 +27602,7 @@ areas = ["activation", "hud"]
 paths = ["engine/nvf-play/src/activate.rs", "engine/nvf-play/src/reticle.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00153FCE", NVF_PLAY_TEST_SCRIPT = "8:call:0x00153FCE:SetDestroyed:0", NVF_PLAY_TEST_ACTIVATE = "12" }
 args = ["--cell", "HooverDamIntPowerPlant01b", "--play", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
 run_seconds = 20
 order = [[
   "script: test aid calls SetDestroyed on …",
