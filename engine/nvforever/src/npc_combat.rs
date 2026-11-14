@@ -1816,7 +1816,9 @@ pub(crate) fn fight(
                             f.stats.flees += 1;
                             let side = battle.side_of(g, id);
                             battle.sides[side].flights += 1;
-                            if check.rating <= 0 {
+                            // A coward the ratios alone would not send off says so.
+                            let by_ratio = check.personal || check.group_ratio.is_some_and(|r| fnv_game::combat_style::flees(r, check.threshold, fighter.confidence_mod));
+                            if check.rating <= 0 && !by_ratio {
                                 info!("npc combat: {me_name} flees from {target_name}: its confidence is Cowardly (health {health:.0} of {full:.0})");
                             } else {
                                 let (kind, ratio) = if check.personal { ("personal survival", check.personal_ratio) } else { ("group", check.group_ratio) };
