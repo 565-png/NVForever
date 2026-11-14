@@ -102,3 +102,42 @@ the target. The Gun Runners' kiosk (`nv_gunrun_kiosk.nif`, one static body on la
 VendortronRef 0x000F2EAA), so it could not be talked to [observed: fnvtool collide objects,
 #1602]. [hypothesis: by the layer's name; sight and blast cover pass the layer too.] Shots
 and the player still stop at it, and PlaceAtReticle's far ray stops at it.
+
+**Helipad ladder targeting diagnostics (#2528).** [design:
+`engine/nvf-play/src/activate.rs::find_target`, `activate/pick.rs::choose`]
+Activation considers visible render bounds before the first collision surface as
+well as the collision hit. A model without collision can therefore still be picked;
+this path does not use the base record's OBND. [design:
+`engine/nvforever/src/world.rs::is_marker`, `engine/nvf-assets/src/model.rs`]
+There is no blanket exclusion for an `effects` model path, although marker paths,
+permanently hidden shapes and helper shapes can be excluded from rendering. These
+code paths alone do not establish which geometry a particular model supplies.
+
+[documented: supplied writer brief for #2528, round w2] The upper endpoint is REFR
+`00164C63`, base `0016A1CD`, using
+`effects\forcefieldfx\forcefieldrightimpact02.nif` at scale 0.15, at
+(67939.5, 19439.3, 5028); the lower endpoint is `00164C64` at
+(67942.7, 19400.5, 4663.6). The supplied upper-to-lower arrival is near
+(68084, 19354, 4806). No model/collision inspection or game run was performed for
+this diagnostic addition.
+
+[design: `tools/smoke/scenarios.toml`] The four scenarios
+`helipad-ladder-top-crosshair`, `helipad-ladder-top-direct`,
+`helipad-ladder-bottom-crosshair` and `helipad-ladder-bottom-direct` separate E on
+the actual activation target from the script aid's explicit-reference hand
+activation. They require reciprocal teleport outcomes and exterior travel; the top
+scenarios also check the supplied lower landing within five units on each axis.
+[hypothesis, #2528] Their standing spots and downward view angles are provisional
+until a game run confirms the walkable floor and the small activation surface.
+
+[design: `activate.rs::find_target`, `reticle.rs::Prompt::of`,
+`nvf-play/src/console.rs`, `fnv-game/src/nvse_other.rs`, `nvse_jg6.rs`]
+Existing target/reticle logs identify the chosen activation reference and displayed
+action. Before activation the scenarios also print `GetCrosshairRef`, its base
+(`GetBaseObject`) and reference XATO (`GetRefActivationPromptOverride`). The script
+query currently receives the first collision candidate, before the final bounds
+choice, so its reference can differ from the activation target; a zero query is
+also diagnostic. XATO is the reference override, not necessarily the displayed
+action, which the reticle log records separately. Compare both traces when the
+crosshair scenario fails instead of inferring a picking failure from open/close
+text alone.
