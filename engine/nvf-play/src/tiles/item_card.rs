@@ -54,11 +54,34 @@ fn show(ui: &mut Ui, root: &str, card: &str, value: Option<&str>) {
     set(ui, root, card, "_Value", Value::Str(value.unwrap_or_default().to_string()));
 }
 
+/// [design, #2502] Suppress only ammo's heading, saving the menu's visibility on
+/// its title tile until a non-ammo or empty selection restores it.
+fn effects_heading(ui: &mut Ui, root: &str, ammo: bool) {
+    const SAVED: &str = "_NVF_AmmoEffectsTitleVisible";
+    const ADDED: &str = "_NVF_AmmoEffectsTitleAddedVisible";
+    let Some(title) = ui.find_tile(&format!("{root}/{EFFECTS}/CI_TitleText")) else { return };
+    if ammo {
+        if ui.tile(title).get(SAVED).is_none() && ui.tile(title).get(ADDED).is_none() {
+            if let Some(visible) = ui.tile(title).get("visible").cloned() {
+                ui.set_trait(title, SAVED, visible);
+            } else {
+                ui.set_trait(title, ADDED, Value::Num(1.0));
+            }
+        }
+        ui.set_trait(title, "visible", Value::Num(0.0));
+    } else if let Some(visible) = ui.tile(title).get(SAVED).cloned() {
+        ui.set_trait(title, "visible", visible);
+        ui.remove_trait(title, SAVED);
+    } else if ui.tile(title).get(ADDED).is_some() {
+        ui.remove_trait(title, "visible");
+        ui.remove_trait(title, ADDED);
+    }
+}
+
 /// Write what the cards under `root` show of `info`, or the empty state with `None`. Every
 /// card is written, so nothing stays of the item before.
 pub fn write(ui: &mut Ui, root: &str, info: Option<&Info>) {
-    // Keep the file's heading for other items; ammo needs only its lines [design, #2502].
-    set(ui, root, &format!("{EFFECTS}/CI_TitleText"), "visible", Value::Num(if info.is_some_and(|i| i.ammo_effects) { 0.0 } else { 1.0 }));
+    effects_heading(ui, root, info.is_some_and(|i| i.ammo_effects));
     let Some(i) = info else {
         for card in CARDS.into_iter().chain([EFFECTS]) {
             show(ui, root, card, None);
@@ -131,6 +154,11 @@ mod tests {
     }
 
     fn ui() -> Ui {
+        ui_with_heading_visibility(Some(1.0))
+    }
+
+    fn ui_with_heading_visibility(visible: Option<f64>) -> Ui {
+        let visible = visible.map(|v| format!("<visible>{v}</visible>")).unwrap_or_default();
         let cards: String = [
             card("DAMInfo", "<alpha>0</alpha>"),
             card("DamageThresholdInfo", ""),
@@ -140,7 +168,7 @@ mod tests {
             card("StrengthReqInfo", "<alpha>0</alpha>"),
             card("ConditionInfo", r#"<image name="CNDArrows"><y>17</y><height>16</height></image>"#),
             card("AmmoInfo", ""),
-            card("EffectsInfo", r#"<text name="CI_TitleText"><visible>1</visible></text>"#),
+            card("EffectsInfo", &format!(r#"<text name="CI_TitleText">{visible}</text>"#)),
         ]
         .concat();
         let xml = format!(r#"<menu name="M"><rect name="D"><user1>40</user1>{cards}</rect></menu>"#);
@@ -188,6 +216,29 @@ mod tests {
         write(&mut ui, ROOT, None);
         ui.update();
         assert_eq!(at(&ui, "EffectsInfo/visible"), 0.0);
+    }
+
+    #[test]
+    fn ammo_heading_preserves_hidden_or_absent_menu_visibility() {
+        for visible in [Some(0.0), None] {
+            let mut ui = ui_with_heading_visibility(visible);
+            let path = format!("{ROOT}/EffectsInfo/CI_TitleText/visible");
+            let aid = Info { effects: Some("Test aid +1".into()), ..Info::default() };
+            let ammo = Info { effects: Some("Test damage x0.80".into()), ammo_effects: true, ..Info::default() };
+            write(&mut ui, ROOT, Some(&aid));
+            ui.update();
+            assert_eq!(ui.get_float(&path), visible, "non-ammo before selecting ammo");
+            for next in [Some(&aid), None, Some(&aid)] {
+                for _ in 0..2 {
+                    write(&mut ui, ROOT, Some(&ammo));
+                    ui.update();
+                    assert_eq!(ui.get_float(&path), Some(0.0));
+                }
+                write(&mut ui, ROOT, next);
+                ui.update();
+                assert_eq!(ui.get_float(&path), visible, "restore the menu's visibility after ammo");
+            }
+        }
     }
 
     #[test]

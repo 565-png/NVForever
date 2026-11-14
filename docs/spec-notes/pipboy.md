@@ -2141,11 +2141,15 @@ still need runtime checks after this review revision.
   barter and container cards and to `tiles/item_card.rs::write`, including the
   default tile ITEMS page. Hand-built cards get a row per line because their
   text helper draws one line. Tile cards use the multiline effect value and
-  hide only its title text for ammo, restoring it for other items.
+  hide only its title text for ammo, saving its prior visibility on that title
+  tile. Non-ammo and empty selections restore that value (including a hidden
+  title), or remove the code-created visibility trait if the menu omitted it.
+  Non-ammo selections before ammo leave the menu's title visibility untouched.
 - [design / file refs] Synthetic tests `pipboy::items::tests::ammo_` cover all
   three operations, FULL/fallback labels, RCIL order, missing IDs and cards with
   and without effects. `tiles::item_card::tests::ammo_` checks the text, first
-  free row, hidden heading and selection cleanup.
+  free row, hidden heading and selection cleanup, including custom menus with
+  initially hidden or absent title visibility.
 - [documented: #2502 round-w2 writer brief, fnvtool esm decode, FalloutNV.esm,
   main session 2026-11-14] `Ammo357MagnumHollowPoint` (0x0013E43C) references
   AMEF 0x00157B54 ("Damage Bonus", Multiply 1.75) and 0x00157B56
