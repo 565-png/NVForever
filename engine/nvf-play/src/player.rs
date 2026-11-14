@@ -375,7 +375,7 @@ impl Plugin for PlayerPlugin {
                     .after(crate::phys::PhysSystems),
             )
             .add_systems(Update, crate::control::place_camera.in_set(PlaySet::Physics).after(log_status));
-        app.init_resource::<crate::inertia::MovementInertia>();
+        app.init_resource::<crate::inertia::MovementInertia>().add_systems(Update, crate::inertia::follow_weapon);
         crate::settings::add_setting(
             app,
             crate::settings::Setting {
@@ -386,6 +386,19 @@ impl Plugin for PlayerPlugin {
                 switches: "--no-movement-inertia",
                 get: |w| w.resource::<crate::inertia::MovementInertia>().on,
                 set: |w, on| w.resource_mut::<crate::inertia::MovementInertia>().on = on,
+                slider: None,
+            },
+        );
+        crate::settings::add_setting(
+            app,
+            crate::settings::Setting {
+                key: "weapon-weight-handling",
+                group: crate::pause::GROUP_MENUS,
+                label: "Weapon weight in handling",
+                note: "On: with Movement inertia on, heavier weapons take longer to draw, put away, aim and bring back from a reload, up to half as long again; the lightest are a little quicker. Off: every weapon alike.",
+                switches: "--no-weapon-weight-handling",
+                get: |w| w.resource::<crate::inertia::MovementInertia>().weapon_handling,
+                set: |w, on| w.resource_mut::<crate::inertia::MovementInertia>().weapon_handling = on,
                 slider: None,
             },
         );

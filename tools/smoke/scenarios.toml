@@ -863,6 +863,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "movement-inertia-trace-combat"
+source = "owner 2026-11-14 (engine/nvforever/src/player_body.rs MotionTrace; eighth playtest): a frame-by-frame trace of the first-person gun looking down and up (pitch offset), firing (eased view kick, fire clip restarts), reloading, and a hard landing from a drop, for finding steps and choppy moves (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-combat.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,13:fire,13.1:fire,13.3:fire,13.4:fire,13.6:fire,13.7:fire,13.9:fire,14:fire,18:reload", NVF_PLAY_TEST_LOOK = "6:0:0,6.5:0:-35,7:0:-70,8:0:-70,8.5:0:-35,9:0:0,9.5:0:35,10:0:70,11:0:70,11.5:0:35,12:0:0", NVF_PLAY_TEST_SCRIPT = "24:call:player:SetPos:Z:9150" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 30
+expect = [
+  { re = 'motion trace: writing', label = "the trace is written" },
+  { re = 'combat: kick: shot', label = "the gun fired" },
+  { re = 'reload at x', label = "the gun reloaded" },
+  { re = 'player view: landed at (\d{4}|[89]\d\d) units/s', label = "a hard landing from the drop" },
+  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
+]
+
+[[scenario]]
 name = "movement-inertia-off"
 source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs): with --no-movement-inertia the player starts and stops at once, as the original"
 areas = ["player-body"]
@@ -2415,12 +2431,12 @@ order = [[
 [[scenario]]
 name = "ammo-swap-in-spin-up"
 source = "#1613: the minigun with five 5mm and five armour-piercing rounds, Ammo Swap 0.05 s into the spin-up: a reload into the armour-piercing ones, those five shots, then a click on the next pull; the plain rounds stay carried"
-note = "the plain rounds are never fired: the swap comes before the first shot and nothing swaps back, so five shots in all, not ten. The trigger is held from 6 to 16 s; the pull at 17 s is the one that clicks"
+note = "the plain rounds are never fired: the swap comes before the first shot and nothing swaps back, so five shots in all, not ten. The trigger is held from 9 to 19 s; the pull at 20 s is the one that clicks (3 s later than first written: with movement inertia and Weapon weight in handling the 30 lb minigun was not drawn yet at 6 s, tech/movement-inertia)"
 areas = ["combat"]
 paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/attack.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "0000433F", NVF_PLAY_TEST_GIVE = "0006B53D:5,0013E43F:5", NVF_PLAY_TEST_CONTROL = "3:weapon,6:fire,6.05:swap,16:fire,17:fire,17.4:fire", NVF_PLAY_TEST_CONSOLE = "24:player.getitemcount 0006B53D;player.getitemcount 0013E43F;24.4:close" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "0000433F", NVF_PLAY_TEST_GIVE = "0006B53D:5,0013E43F:5", NVF_PLAY_TEST_CONTROL = "3:weapon,9:fire,9.05:swap,19:fire,20:fire,20.4:fire", NVF_PLAY_TEST_CONSOLE = "27:player.getitemcount 0006B53D;player.getitemcount 0013E43F;27.4:close" }
 args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--pitch", "60", "--play", "--hour", "12", "--no-voice", "--no-messages"]
-run_seconds = 28
+run_seconds = 31
 expect = [
   "combat: ammo swapped to Ammo5mmArmorPiercing",
   { re = 'combat: reloaded 5, magazine 5\b', count = 1, label = "one reload takes the five armour-piercing rounds" },
@@ -10601,6 +10617,7 @@ expect = [
   "settings layout: detached-camera -> Gameplay > Camera",
   "settings layout: movement-inertia -> Gameplay > Advanced Inertia",
   "settings layout: inertia-weight -> Gameplay > Advanced Inertia",
+  "settings layout: weapon-weight-handling -> Gameplay > Advanced Inertia",
   "settings layout: head-bob -> Gameplay > Advanced Inertia",
   "settings layout: breathing-camera -> Gameplay > Advanced Inertia",
   "settings layout: resolution -> Display > Screen",

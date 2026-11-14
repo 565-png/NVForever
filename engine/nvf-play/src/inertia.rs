@@ -65,8 +65,50 @@ pub const CROUCH_UP_SECONDS: f32 = 1.1;
 pub const MOVE_FADE_SECONDS: f32 = 0.45;
 /// The first-person landing clip (the view dips and stands up again) takes this many times
 /// its own length (× the inertia weight), its place along the settling curve: the dip comes
-/// about as fast as the clip's own, the standing up after it slowly and to a soft end.
+/// about as fast as the clip's own, the standing up after it slowly and to a soft end. A
+/// hop's landing (up to [`LANDING_SOFT_SPEED`]) takes the first, a hard one (from
+/// [`LANDING_HARD_SPEED`]) the second, smoothly between ([`land_stretch`]) [design: the
+/// owner's eighth playtest, 2026-11-14, "fall-scaled landing"].
 pub const LAND_STRETCH: f32 = 1.8;
+pub const HARD_LAND_STRETCH: f32 = 3.2;
+/// After a reload, a jam or an attack the first-person arms go back to the hold over this
+/// long (× the inertia weight × the weapon's handling), along the settling curve; the clips
+/// themselves start at once and the arms ease across the step to them [design: the owner's
+/// eighth playtest, 2026-11-14: "try improving reloads with springs"].
+pub const RELOAD_OUT_SECONDS: f32 = 0.4;
+pub const ATTACK_OUT_SECONDS: f32 = 0.3;
+/// With movement inertia the view's kick of a shot comes over this long (95 %; × the
+/// inertia weight): most of it at once, the rest softly (`crate::combat`). The climb is the
+/// same, only spread over a few frames [design: the owner's eighth playtest, 2026-11-14:
+/// "fast start, slow end … the jump is not instant to the next recoil point"].
+pub const KICK_EASE_SECONDS: f32 = 0.1;
+/// How many times its base times the first-person hands take to draw, put away and aim a
+/// weapon of `weight` (pounds) and to come back from its reload: light ones (1 lb and under)
+/// 0.85, a pistol of about 3 lb 1, from 20 lb 1.5, smoothly between [design: the owner's
+/// eighth playtest, 2026-11-14, "weapon weight slows handling"; the 10mm pistol the earlier
+/// times were tuned with weighs 3].
+pub fn handling(weight: f32) -> f32 {
+    use crate::ease::smoothstep;
+    0.85 + 0.15 * smoothstep(0.5, 3.0, weight) + 0.5 * smoothstep(3.0, 20.0, weight)
+}
+
+/// A hard landing pushes the view and the hands this many times as hard as its speed alone
+/// would (from [`LANDING_HARD_SPEED`]; a hop's push, below [`LANDING_SOFT_SPEED`], is as
+/// it was), so a long drop lands heavily [design: the owner's eighth playtest, 2026-11-14].
+pub const HARD_LANDING_GAIN: f32 = 1.6;
+
+/// A take-off's or a landing's push (a change of vertical speed, units/s) as the view's
+/// and the hands' springs take it ([`HARD_LANDING_GAIN`]).
+pub fn hard_landing(push: f32) -> f32 {
+    push * (1.0 + (HARD_LANDING_GAIN - 1.0) * crate::ease::smoothstep(LANDING_SOFT_SPEED, LANDING_HARD_SPEED, push.abs()))
+}
+
+/// How many times its own length the first-person landing clip takes for a landing at
+/// `fall_speed` (units/s), before the inertia weight.
+pub fn land_stretch(fall_speed: f32) -> f32 {
+    LAND_STRETCH + (HARD_LAND_STRETCH - LAND_STRETCH) * crate::ease::smoothstep(LANDING_SOFT_SPEED, LANDING_HARD_SPEED, fall_speed)
+}
+
 /// Landing compression: landings slower than the first fall speed (units/s) keep their
 /// speed, from the second on they lose [`LANDING_MOST_LOST`] of it, smoothly between.
 pub const LANDING_SOFT_SPEED: f32 = 350.0;
@@ -110,6 +152,10 @@ pub struct MovementInertia {
     pub on: bool,
     /// The "Inertia weight" dropdown ([`WEIGHTS`]; 1 by default).
     pub weight: f32,
+    /// The "Weapon weight in handling" switch (on by default) and the weapon in hand's
+    /// [`handling`] (1 with the switch off), kept by [`follow_weapon`].
+    pub weapon_handling: bool,
+    pub handling: f32,
     /// Horizontal velocity (game x, y), units/s, and its rate of change.
     axes: [Spring; 2],
     /// The keys' velocity at the last step.
@@ -130,7 +176,7 @@ pub struct MovementInertia {
 
 impl Default for MovementInertia {
     fn default() -> Self {
-        MovementInertia { on: true, weight: 1.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None }
+        MovementInertia { on: true, weight: 1.0, weapon_handling: true, handling: 1.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None }
     }
 }
 
@@ -138,6 +184,12 @@ impl MovementInertia {
     /// At rest, switched on or off.
     pub fn switched(on: bool) -> MovementInertia {
         MovementInertia { on, ..default() }
+    }
+
+    /// How many times their base times the first-person hands take (the inertia weight ×
+    /// the weapon's handling).
+    pub fn hands(&self) -> f32 {
+        self.weight.max(0.1) * self.handling.max(0.1)
     }
 
     /// The ground velocity now (game x, y), units/s.
@@ -282,6 +334,18 @@ impl MovementInertia {
     }
 }
 
+
+/// Keep [`MovementInertia::handling`] on the weapon the player holds (or is drawing).
+pub fn follow_weapon(mut inertia: ResMut<MovementInertia>, combat: Option<Res<crate::combat::Combat>>) {
+    let weight = combat.as_deref().and_then(|c| c.forms.weapons.get(&c.player_weapon()?).map(|w| w.weight));
+    let handling = match (inertia.weapon_handling, weight) {
+        (true, Some(w)) => handling(w),
+        _ => 1.0,
+    };
+    if (inertia.handling - handling).abs() > 1e-4 {
+        inertia.handling = handling;
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +482,20 @@ mod tests {
         steps(&mut m, [0.0, RUN], 0.2, DT);
         steps(&mut m, [0.0, 0.0], 4.0, DT);
         assert!(matches!(m.reports[..], [Report::Stopped { .. }]), "{:?}", m.reports);
+    }
+
+    #[test]
+    fn heavy_weapons_handle_slower_and_hard_landings_take_longer() {
+        assert!((handling(0.5) - 0.85).abs() < 1e-4);
+        assert!((handling(3.0) - 1.0).abs() < 1e-4, "the 10mm pistol keeps the tuned times");
+        assert!((handling(20.0) - 1.5).abs() < 1e-4);
+        assert!(handling(7.0) > 1.0 && handling(7.0) < handling(15.0));
+        assert_eq!(land_stretch(290.0), LAND_STRETCH, "a hop's landing as before");
+        assert_eq!(land_stretch(2000.0), HARD_LAND_STRETCH);
+        assert_eq!(hard_landing(291.0), 291.0, "a hop pushes as before");
+        assert!((hard_landing(-1200.0) + 1200.0 * HARD_LANDING_GAIN).abs() < 1e-2);
+        let m = MovementInertia { weight: 2.0, handling: 1.5, ..default() };
+        assert_eq!(m.hands(), 3.0);
     }
 
     #[test]

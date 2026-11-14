@@ -766,6 +766,10 @@ struct Motion {
     speed: f32,
     last_feet: Option<[f32; 3]>,
     airborne: f32,
+    /// The fastest the character fell in this flight, and at the last landing (units/s):
+    /// a harder landing stands up slower (`nvf_play::inertia::land_stretch`).
+    fall_speed: f32,
+    landed_speed: f32,
     /// Playing the jump loop: in the air long enough, with the ground far below
     /// ([`FALL_GAP`]); kept until the character is on the ground again.
     falling: bool,
@@ -846,6 +850,8 @@ impl Default for Motion {
             speed: 0.0,
             last_feet: None,
             airborne: 0.0,
+            fall_speed: 0.0,
+            landed_speed: 0.0,
             falling: false,
             falls: 0,
             landings: 0,
@@ -1728,6 +1734,10 @@ struct Frame {
     /// With movement inertia: how many times its own length the first-person landing clip
     /// takes (`nvf_play::inertia::LAND_STRETCH` × the weight).
     land_stretch: Option<f32>,
+    /// With movement inertia: how many times their base times the hands take to draw, put
+    /// away, aim and come back from a reload or an attack (the inertia weight × the
+    /// weapon's handling, `nvf_play::inertia::MovementInertia::hands`).
+    hands_pace: Option<f32>,
     dt: f32,
     stance: Stance,
     dirs: Option<[(Dir, f32); 2]>,
@@ -1979,8 +1989,15 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
             }
             if !going {
                 // At the attack's rate: the weapon's multipliers and the Modify Attack Speed
-                // perks, as combat times the shot.
-                let l = rig.animator.restart(&c.clip, TAG_ATTACK, aim_w[0].1, Mode::Once, ATTACK_FADE);
+                // perks, as combat times the shot. With movement inertia in first person the
+                // clip starts at once and the arms ease across the jump back to its start
+                // (`Animator::smooth_jump`): its kick shows whole, with no snap between shots
+                // [design: the owner's eighth playtest, 2026-11-14, "the jump is not instant to
+                // the next recoil point"].
+                let l = rig.animator.restart(&c.clip, TAG_ATTACK, aim_w[0].1, Mode::Once, if first_inertia { 0.0 } else { ATTACK_FADE });
+                if first_inertia {
+                    rig.animator.smooth_jump();
+                }
                 rig.animator.layers[l].rate = f.attack_rate;
                 debug!("player {:?} rig: {} moves the weapon's {:?}", rig.view, c.path, rig.animator.extra_driven(&c.clip));
                 // The attack's own up and down forms keep the body bent with the pitch while
@@ -2011,8 +2028,13 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
             // A round follows straight on from the opening clip or the last round: no
             // fade back through the held pose [hypothesis: the clips are made to chain,
             // the opening's end and the round's `Hit` close to its start pose].
-            let fade = if f.reload_round_now { 0.0 } else { c.fade() };
+            let fade = if f.reload_round_now || first_inertia { 0.0 } else { c.fade() };
             let layer = rig.animator.restart(&c.clip, TAG_RELOAD, 1.0, Mode::Once, fade);
+            // With movement inertia in first person the arms ease into the reload as across a
+            // loop's seam: the clip plays whole from its start, the step to it dies away.
+            if first_inertia {
+                rig.animator.smooth_jump();
+            }
             // At the player's reload rate, as the cycle times it (Agility, Rapid Reload).
             rig.animator.layers[layer].rate = f.reload_rate;
             info!("player {:?} rig: {} moves the weapon's {:?} (reload at x{:.2})", rig.view, c.path, rig.animator.extra_driven(&c.clip), f.reload_rate);
@@ -2022,7 +2044,10 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     // reload is [observed: the clips sit beside the reload clips in both rigs' folders].
     if f.hands.in_hand && f.jam_now {
         if let Some(c) = f.jam.and_then(|j| rig.clip(ctx, ClipKey::Reload(f.stance, f.prefix, j))) {
-            rig.animator.restart(&c.clip, TAG_RELOAD, 1.0, Mode::Once, c.fade());
+            rig.animator.restart(&c.clip, TAG_RELOAD, 1.0, Mode::Once, if first_inertia { 0.0 } else { c.fade() });
+            if first_inertia {
+                rig.animator.smooth_jump();
+            }
             debug!("player {:?} rig: jam clip {}", rig.view, c.path);
         }
     }
@@ -2077,6 +2102,15 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
         // hand-over was a second movement.
         if let (true, TAG_EQUIP, Some(t)) = (first_inertia, l.tag, f.move_fade) {
             l.fade_out = t;
+        }
+        // A reload, a jam or an attack ending: the arms go back to the hold slowly, along
+        // the settling curve, the heavier the weapon the slower (`Frame::hands_pace`).
+        if let (true, Some(pace)) = (first_inertia, f.hands_pace) {
+            if l.tag == TAG_RELOAD {
+                l.fade_out = nvf_play::inertia::RELOAD_OUT_SECONDS * pace;
+            } else if (TAG_ATTACK..TAG_ATTACK + 3).contains(&l.tag) {
+                l.fade_out = nvf_play::inertia::ATTACK_OUT_SECONDS * pace;
+            }
         }
     }
     // A draw or a holster with movement inertia: the clip is played along the settling
@@ -2624,7 +2658,7 @@ fn drive_body(
         Option<Res<nvf_play::combat::PlayerLimbs>>,
         (Res<crate::death_cam::DeathCam>, Res<crate::player_knockdown::PlayerKnockdown>),
         (Option<Res<nvf_play::aim_zoom::AimZoom>>, Option<Res<nvf_play::combat::Combat>>, Option<ResMut<nvf_play::aim_zoom::TrueSights>>, Option<Res<nvf_play::aim_zoom::Scope>>, Option<ResMut<nvf_play::aim_zoom::Scope3d>>, Option<Res<nvf_play::aim_zoom::LensSway>>),
-        (Res<crate::weapon_lower::Ahead>, ResMut<nvf_play::player::Lunge>, Option<Res<nvf_play::console::ShowFirstPerson>>, Option<Res<nvf_play::vats_mode::VatsMode>>, Option<Res<nvf_play::inertia::MovementInertia>>, ResMut<PlayerBlows>),
+        (Res<crate::weapon_lower::Ahead>, ResMut<nvf_play::player::Lunge>, Option<Res<nvf_play::console::ShowFirstPerson>>, Option<Res<nvf_play::vats_mode::VatsMode>>, Option<Res<nvf_play::inertia::MovementInertia>>, Option<ResMut<PlayerBlows>>),
     ),
     mut driven: ResMut<nvf_play::player::ViewDriven>,
 ) {
@@ -2714,6 +2748,15 @@ fn drive_body(
     let was_falling = m.falling;
     m.falling = m.airborne > 0.0 && (m.falling || (m.airborne >= AIRBORNE_LOOP && ground_gap.is_none_or(|g| g > FALL_GAP)));
     let landing = was_falling && airborne_before >= AIRBORNE_LAND && m.airborne == 0.0;
+    if m.airborne > 0.0 {
+        m.fall_speed = m.fall_speed.max(-vertical);
+    } else {
+        if landing {
+            m.landed_speed = m.fall_speed;
+            info!("player view: landed at {:.0} units/s", m.landed_speed);
+        }
+        m.fall_speed = 0.0;
+    }
     m.falls += u32::from(m.falling && !was_falling);
     m.landings += u32::from(landing);
     if m.falling != was_falling {
@@ -2811,7 +2854,7 @@ fn drive_body(
     let (draw_t, away_t) = timing_rig.transitions(&mut ctx, stance, prefix);
     // The Equip Speed perks (Quick Draw): the draw and holster take 1 ÷ the rate as long;
     // with movement inertia they are slower still (`nvf_play::inertia::EQUIP_PACE`).
-    let equip_pace = inertia.as_deref().filter(|i| i.on).map_or(1.0, |i| nvf_play::inertia::EQUIP_PACE / i.weight.max(0.1));
+    let equip_pace = inertia.as_deref().filter(|i| i.on).map_or(1.0, |i| nvf_play::inertia::EQUIP_PACE / i.hands());
     let eq = if anim.equip_rate > 0.0 { anim.equip_rate } else { 1.0 } * equip_pace;
     // With movement inertia the clip is played along the settling curve (`Frame::equip_at`):
     // the weapon changes hands when the curve reaches the clip's own moment for it.
@@ -2944,10 +2987,11 @@ fn drive_body(
     }
     let frame = Frame {
         inertia: inertia.as_deref().is_some_and(|i| i.on),
-        aim_fade: inertia.as_deref().filter(|i| i.on).map(|i| i.weight.max(0.1) * if control.aiming { nvf_play::inertia::AIM_IN_SECONDS } else { nvf_play::inertia::AIM_OUT_SECONDS }),
+        aim_fade: inertia.as_deref().filter(|i| i.on).map(|i| i.hands() * if control.aiming { nvf_play::inertia::AIM_IN_SECONDS } else { nvf_play::inertia::AIM_OUT_SECONDS }),
         stance_fade,
         move_fade: inertia.as_deref().filter(|i| i.on).map(|i| i.weight.max(0.1) * nvf_play::inertia::MOVE_FADE_SECONDS),
-        land_stretch: inertia.as_deref().filter(|i| i.on).map(|i| i.weight.max(0.1) * nvf_play::inertia::LAND_STRETCH),
+        land_stretch: inertia.as_deref().filter(|i| i.on).map(|i| i.weight.max(0.1) * nvf_play::inertia::land_stretch(m.landed_speed)),
+        hands_pace: inertia.as_deref().filter(|i| i.on).map(|i| i.hands()),
         equip_at,
         dt,
         stance,
@@ -3029,7 +3073,7 @@ fn drive_body(
     // a heavier gun (`view_sway.rs`); thrown and melee weapons have none.
     let kick = if attack_now && matches!(prefix, "1hp" | "2hr" | "2ha" | "2hh" | "2hl") { 0.7 + 0.6 * nvf_play::ease::smoothstep(2.0, 20.0, gun_weight) } else { 0.0 };
     // The blows taken since last frame, as one punch (already in the view's frame).
-    let punch = std::mem::take(&mut blows.punch);
+    let punch = blows.as_deref_mut().map_or(Vec3::ZERO, |b| std::mem::take(&mut b.punch));
     // The arms' field of view: the console's `fov` can ask for another first-person field
     // of view; otherwise the settings page's (`--viewmodel-fov`). The sway, tuned at the
     // original's 55°, is scaled against the arms' size for it, so it looks the same size at
@@ -3142,7 +3186,7 @@ fn drive_body(
             (s, crate::iron_sights::ease(s))
         }
         (true, Some(i)) => {
-            let w = i.weight.max(0.1);
+            let w = i.hands();
             let v = m.sights.step(aimed, dt, nvf_play::inertia::AIM_IN_SECONDS * w, nvf_play::inertia::AIM_OUT_SECONDS * w);
             (if m.sights.is_up() { 1.0 } else if m.sights.is_down() { 0.0 } else { v.clamp(1e-4, 1.0 - 1e-4) }, v)
         }

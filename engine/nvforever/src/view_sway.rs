@@ -125,8 +125,22 @@ const AHEAD_TIP: f32 = 1.2 * std::f32::consts::PI / 180.0;
 const LIFT_OMEGA: f32 = 4.0;
 /// (0.004 and 2 until the fifth playtest, "jumping is not noticeable".)
 const LIFT_PEAK_PER_SPEED: f32 = 0.008;
-const MAX_LIFT: f32 = 3.5;
+/// (3.5 until the eighth playtest's "fall-scaled landing": hard landings were held to
+/// about a hop's.)
+const MAX_LIFT: f32 = 6.0;
 const LIFT_TIP: f32 = 1.0 * std::f32::consts::PI / 180.0;
+/// The gun with the view's pitch: looking straight down it comes up by `PITCH_DOWN_RAISE`
+/// and back towards the eye by `PITCH_DOWN_BACK` (units), its muzzle a little up; looking
+/// straight up it drops by `PITCH_UP_DROP` and goes out by `PITCH_UP_OUT`, the muzzle a
+/// little down; with the sine of the pitch between; none down the sights [design: the
+/// owner's eighth playtest, 2026-11-14: "pitch offset for the gun"; held arms are not
+/// bolted to the eyes].
+const PITCH_DOWN_RAISE: f32 = 1.4;
+const PITCH_DOWN_BACK: f32 = 1.8;
+const PITCH_UP_DROP: f32 = 1.0;
+const PITCH_UP_OUT: f32 = 0.6;
+const PITCH_DOWN_TIP: f32 = 2.5 * std::f32::consts::PI / 180.0;
+const PITCH_UP_TIP: f32 = 1.5 * std::f32::consts::PI / 180.0;
 /// Tilt into a strafe at a run's sideways speed, radians, reached through a spring
 /// settling in this long (seconds; × the inertia weight).
 const STRAFE_ROLL: f32 = 1.5 * std::f32::consts::PI / 180.0;
@@ -381,7 +395,7 @@ impl ViewSway {
         }
         // Up and down only a take-off and a landing push: a free fall moves the body and the
         // hand alike (`nvf_play::ease::carried_push`).
-        let push = carried_push(self.last_vertical, i.vertical, i.gravity, dt);
+        let push = nvf_play::inertia::hard_landing(carried_push(self.last_vertical, i.vertical, i.gravity, dt));
         self.last_vertical = i.vertical;
         let lift_omega = LIFT_OMEGA / slow;
         self.lift.step_delta(push, pre, lift_omega, LIFT_PEAK_PER_SPEED * heft, dt);
@@ -459,7 +473,11 @@ impl ViewSway {
         // Heading grows clockwise, a turn about +z anticlockwise: arms behind a turn to
         // the right point left of it. A dip, a lag behind and a trailing raise tip the
         // muzzle down.
-        let tip = lag.y + (lift + aim) * LIFT_TIP + hand.y * AHEAD_TIP + kick_up;
+        // The view's pitch (up positive): down raises the gun and draws it in, up lowers it.
+        let s = i.pitch.sin();
+        let (down, up) = ((-s).max(0.0) * g * (1.0 - a), s.max(0.0) * g * (1.0 - a));
+        let pitch_offset = Vec3::new(0.0, -PITCH_DOWN_BACK * down + PITCH_UP_OUT * up, PITCH_DOWN_RAISE * down - PITCH_UP_DROP * up);
+        let tip = lag.y + (lift + aim) * LIFT_TIP + hand.y * AHEAD_TIP + kick_up + PITCH_DOWN_TIP * down - PITCH_UP_TIP * up;
         let turn = Quat::from_rotation_z(-lag.x + kick_side) * Quat::from_rotation_x(tip);
         let a = std::f32::consts::TAU * (i.phase - FOOTFALL_PHASE);
         // Down at each footfall (twice a cycle), across once a cycle.
@@ -468,7 +486,7 @@ impl ViewSway {
         let roll = lag.x * LAG_ROLL + BOB_ROLL * swing * bob_share + self.lean.value * sway_share;
         let b = std::f32::consts::TAU * self.breath_phase;
         let breath = Vec2::new(b.sin(), 0.5 * (2.0 * b).sin()) * BREATH_WIDTH * breath_share;
-        let offset = Vec3::new(BOB_SWAY * swing * bob_share + hand.x + breath.x, hand.y + back, dip + lift + aim + breath.y + hand.y.min(0.0) * AHEAD_DROP);
+        let offset = Vec3::new(BOB_SWAY * swing * bob_share + hand.x + breath.x, hand.y + back, dip + lift + aim + breath.y + hand.y.min(0.0) * AHEAD_DROP) + pitch_offset;
         self.peak_lag = self.peak_lag.max(lag.abs());
         self.peak_dip = self.peak_dip.max(-dip);
         self.peak_lift_dip = self.peak_lift_dip.max(-lift);
@@ -490,6 +508,16 @@ mod tests {
             p = s.update(i);
         }
         p
+    }
+
+    #[test]
+    fn looking_down_raises_the_gun_and_up_lowers_it_but_not_down_the_sights() {
+        let at = |pitch: f32, sights: bool| settle(&mut ViewSway::default(), SwayInput { pitch, sights, ..input(0.0, Vec2::ZERO, 0.0) }, 600).offset;
+        let (level, down, up) = (at(0.0, false), at(-1.2, false), at(1.2, false));
+        assert!(down.z > level.z + 1.0 && down.y < level.y - 1.0, "down: {down} against {level}");
+        assert!(up.z < level.z - 0.5 && up.y > level.y, "up: {up} against {level}");
+        let sighted = at(-1.2, true) - at(0.0, true);
+        assert!(sighted.length() < 0.05, "down the sights the gun stays on the eye: {sighted}");
     }
 
     #[test]

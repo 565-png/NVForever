@@ -740,6 +740,10 @@ struct Args {
     /// settings page.
     #[arg(long, requires = "play")]
     no_movement_inertia: bool,
+    /// With movement inertia every weapon draws, aims and reloads alike, whatever it weighs
+    /// (nvf_play::inertia::handling); a switch of the settings page, on by default.
+    #[arg(long, requires = "play")]
+    no_weapon_weight_handling: bool,
     /// Heavier weapons sway slower and further in first person (view_sway.rs); a switch of
     /// the settings page, off by default.
     #[arg(long, requires = "play")]
@@ -1734,7 +1738,9 @@ fn main() -> AppExit {
             app.add_plugins(vigor_view::VigorViewPlugin);
             app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, weapon_weight_sway: args.weapon_weight_sway, head_bob: !args.no_head_bob, breathing_camera: !args.no_breathing_camera, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin));
             app.insert_resource(nvf_play::aim_zoom::Scope3d { on: args.scope_3d, lens: false });
-            app.insert_resource(nvf_play::inertia::MovementInertia::switched(!args.no_movement_inertia));
+            let mut inertia = nvf_play::inertia::MovementInertia::switched(!args.no_movement_inertia);
+            inertia.weapon_handling = !args.no_weapon_weight_handling;
+            app.insert_resource(inertia);
             app.add_plugins(decals::DecalsPlugin);
             app.add_plugins(knockouts::KnockoutsPlugin);
             // The stress tests' samples (NVF_PLAY_TEST_SAMPLE; nothing without it).

@@ -169,7 +169,13 @@ itself turns exactly as the mouse says.
   place along the settling curve over 1.8 × its length × the inertia weight
   (`inertia::LAND_STRETCH`): the dip comes as fast as before (0.3 s), the standing up
   takes 0.7 s and slows to its end (seventh playtest: "make landing after jumping
-  smoother - the little stand up to normal position after the camera dips").
+  smoother - the little stand up to normal position after the camera dips"). Since the
+  eighth ("fall-scaled landing") the stretch grows with the fall speed, 1.8 up to 350
+  units/s (a hop) to 3.2 from 900 (`inertia::land_stretch`), and a hard landing pushes the
+  head's and the hand's springs up to 1.6 × as hard (`inertia::hard_landing`; the most
+  shown 9 and 6 units, were 5 and 3.5): a hop lands as before, a drop at about 1,000
+  units/s dips the view about 13 units and the gun 6 and stands up over 1.3 s (trace,
+  smoke `movement-inertia-trace-combat`).
 - **The settling curve** (seventh playtest: "we should not have any linear curves -
   everything should be a smooth spring with a slow finish"): `anim_blend::settle`, a
   critically damped spring's step response made to end at 1 (`1 - (1 + 6x)e^(-6x)`,
@@ -209,6 +215,13 @@ itself turns exactly as the mouse says.
   and the gun went down and came up again (seventh playtest: "starts pulling out the
   gun then quickly retracts it and pulls it out quickly again"). An equip clip leaving
   takes the movement clips' 0.45 s.
+- **Weapon weight in handling** (a switch, on by default: `--no-weapon-weight-handling`,
+  key `weapon-weight-handling`; eighth playtest: "weapon weight slows handling"): with
+  movement inertia the draw, the holster, the aim (and its zoom) and the hand-back after a
+  reload or an attack take `inertia::handling` of the WEAP record's weight times as long:
+  0.85 for 1 lb and under, 1 for a 3 lb pistol (the 10mm pistol the times were tuned
+  with), 1.5 from 20 lb, smoothly between. The sway's springs keep their own weight
+  switch (Weapon weight in the sway, below).
 - Loop seams of the arms' clips (sixth playtest: "small hitching" in the idle): the trace
   showed the hand turning back in one frame each time the idle looped (every 2.46 s with
   a 10mm pistol). With movement inertia the first-person animator smooths its seams by
@@ -220,7 +233,25 @@ itself turns exactly as the mouse says.
   `2ha`, `2hh`, `2hl`) sets springs (16/s) moving that peak at 1.2 units back, 1.6° up
   and up to 0.5° aside, for strength 0.7 (light) to 1.3 (20 lb and over); rapid fire
   builds to a plateau (shown at most 3 units, 5°); 60 % down the sights. The view's own
-  kick is the game's, unchanged.
+  kick is the game's size, but with movement inertia it comes in over 0.1 s (× the
+  inertia weight; `inertia::KICK_EASE_SECONDS`, `combat::ease_kick`): an exponential,
+  most of it the first frames, the rest softly, so the view no longer jumps to each
+  shot's new point in one frame (eighth playtest: "fast start, slow end … the jump is not
+  instant to the next recoil point"); the climb is the same. The fire clip starts again
+  at once at each shot and the arms ease across the step back to its start
+  (`Animator::smooth_jump`, the loop seams' inertialization below): its kick shows whole,
+  with no snap between shots.
+- Reloads (eighth playtest: "try improving reloads with springs"): with movement inertia
+  a reload's, a jam's and each round's clip starts at once and the arms ease across the
+  step to it as across a loop seam (the clip's own motion untouched); at its end the arms
+  go back to the hold over 0.4 s along the settling curve (an attack's over 0.3 s; both ×
+  the inertia weight × the handling below). The trace of a 10mm pistol reload: no step at its start or end,
+  the hand settling back onto the hold over about 0.7 s.
+- The gun with the view's pitch (eighth playtest): looking straight down the gun comes up
+  1.4 units and back 1.8 towards the eye, its muzzle 2.5° up; looking straight up it drops
+  1 unit and goes out 0.6, the muzzle 1.5° down; with the sine of the pitch between, none
+  down the sights (the share fades with the sights' spring), so the arms are not bolted
+  to the eyes.
 - Blows taken (owner: "damage screenshake"): each hit on the player sets the hand's
   springs moving down, back and aside by turns (stronger for a bigger share of health);
   the camera's place gets the same on the head's springs (§1.4a.1); its rotation never.
@@ -279,8 +310,8 @@ on by default) [design]:
   springs (§1.4a), the head bob's (§1.4a.1) and the crouch's times, times this [design:
   the owner, 2026-11-13].
 - The settings page lists these under Gameplay › Advanced Inertia: Movement inertia,
-  Weapon sway, Weapon weight in the sway, Head bob, Breathing camera, and Inertia weight
-  last (settings-page.md).
+  Weapon sway, Weapon weight in the sway, Weapon weight in handling, Head bob, Breathing
+  camera, and Inertia weight last (settings-page.md).
 
 ### 1.4a.1 The camera's bob: first person yes, third person no (owner, 2026-11-07)
 

@@ -211,6 +211,7 @@ fn neutral_frame(dt: f32) -> Frame {
         stance_fade: None,
         move_fade: None,
         land_stretch: None,
+        hands_pace: None,
         equip_at: None,
         dt,
         stance: Stance::Stand,

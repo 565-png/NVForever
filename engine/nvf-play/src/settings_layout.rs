@@ -77,7 +77,7 @@ pub const SECTIONS: &[Section] = &[
     // How heavy the body and the weapon feel [design: the owner, 2026-11-13: "move the
     // player inertia under its own category and move there all the associated settings";
     // its name and the weight's place below the switches, the fourth playtest].
-    section("Gameplay", Some("Advanced Inertia"), &["movement-inertia", "weapon-sway", "weapon-weight-sway", "head-bob", "breathing-camera", "inertia-weight"]),
+    section("Gameplay", Some("Advanced Inertia"), &["movement-inertia", "weapon-sway", "weapon-weight-sway", "weapon-weight-handling", "head-bob", "breathing-camera", "inertia-weight"]),
     section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "ui-scale"]),
     section(
         "Display",
@@ -314,10 +314,11 @@ mod tests {
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
     /// field of view row, and the movement inertia, inertia weight, weapon weight and breathing
     /// camera rows), by the group it registers with.
-    const KNOWN: [(&str, &str); 114] = [
+    const KNOWN: [(&str, &str); 115] = [
         ("detached-camera", "Gameplay"),
         ("movement-inertia", "Gameplay"),
         ("inertia-weight", "Gameplay"),
+        ("weapon-weight-handling", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
         ("reload-slows", "Gameplay"),

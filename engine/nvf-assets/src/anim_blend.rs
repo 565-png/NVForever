@@ -216,6 +216,8 @@ pub struct Animator {
     seams: Option<Seams>,
     /// A looped clip, or the synced phase, wrapped round in the last [`Self::advance`].
     wrapped: bool,
+    /// The pose jumps at the next [`Self::advance`] for another reason ([`Self::smooth_jump`]).
+    jumped: bool,
     /// The last [`Self::advance`]'s seconds.
     last_dt: f32,
 }
@@ -341,7 +343,7 @@ impl Animator {
     pub fn new(skel: Arc<PreparedSkeleton>, nodes: Vec<Entity>, accum_root: Option<&str>) -> Animator {
         let held = accum_root.and_then(|r| clip_target(&skel, r)).into_iter().collect();
         let locals = skel.locals.clone();
-        Animator { skel, nodes, layers: Vec::new(), phase: 0.0, locals, extra: Vec::new(), held, rest: Vec::new(), extra_rest: None, scratch: Vec::new(), seams: None, wrapped: false, last_dt: 0.0 }
+        Animator { skel, nodes, layers: Vec::new(), phase: 0.0, locals, extra: Vec::new(), held, rest: Vec::new(), extra_rest: None, scratch: Vec::new(), seams: None, wrapped: false, jumped: false, last_dt: 0.0 }
     }
 
     /// Smooth the seams of looping clips: at a wrap the pose carries on and eases onto the
@@ -352,6 +354,13 @@ impl Animator {
             (Some(s), None) => self.seams = Some(Seams { omega: 4.743_864_6 / s.max(1e-3), ..Seams::default() }),
             (None, _) => self.seams = None,
         }
+    }
+
+    /// The pose jumps at the next [`Self::advance`] (a clip started again from its start, a
+    /// fire clip at each shot): with [`Self::smooth_seams`] on it eases across the jump as
+    /// across a loop's seam, the new clip's own motion on top; otherwise nothing.
+    pub fn smooth_jump(&mut self) {
+        self.jumped = self.seams.is_some();
     }
 
     /// Replace the nodes outside the skeleton that clips drive by name (none: an empty
@@ -600,7 +609,7 @@ impl Animator {
     pub fn advance(&mut self, dt: f32, sync_rate: f32) {
         let (mut len_sum, mut w_sum) = (0.0, 0.0);
         self.last_dt = dt;
-        self.wrapped = false;
+        self.wrapped = std::mem::take(&mut self.jumped);
         for l in &mut self.layers {
             // A shown looping clip about to wrap round (for `smooth_seams`).
             let len = l.clip.length();
@@ -903,6 +912,34 @@ mod tests {
         new.pose();
         assert_eq!(new.locals[2].translation, Vec3::new(10.0, 0.0, 0.0));
         assert_eq!(new.layers[0].time, old.layers[0].time);
+    }
+
+    #[test]
+    fn a_clip_started_again_eases_across_its_jump_when_asked() {
+        // A fire clip that kicks from 0 to 1 over its 0.2 seconds, started again from its
+        // start every 0.15 seconds, as by rapid fire.
+        let fire = |smooth: bool| {
+            let mut a = animator();
+            a.smooth_seams(smooth.then_some(0.1));
+            use fnv_nif::anim::{Key, KeyKind, Keys};
+            let key = |time: f32, x: f32| Key { time, value: [x, 0.0, 0.0], forward: [0.0; 3], backward: [0.0; 3], tbc: [0.0; 3] };
+            let base = clip(&[("A", [0.0, 0.0, 0.0], 30)], 0.2);
+            let kick = TransformTrack { translation: Channel::Keys(Keys { kind: KeyKind::Linear, keys: vec![key(0.0, 0.0), key(0.2, 1.0)] }), rotation: Channel::Static(None), euler: None, scale: Channel::Static(None), per_cycle: None };
+            let x = Arc::new(Clip { tracks: vec![("A".to_string(), Arc::new(kick))], ..(*base).clone() });
+            let mut xs = Vec::new();
+            for frame in 0..60 {
+                if frame % 9 == 0 {
+                    a.restart(&x, 70, 1.0, Mode::Once, 0.0);
+                    a.smooth_jump();
+                }
+                a.advance(1.0 / 60.0, 1.0);
+                a.pose();
+                xs.push(a.locals[2].translation.x);
+            }
+            xs.windows(2).skip(1).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max)
+        };
+        assert!(fire(false) > 0.6, "each start snaps back: {}", fire(false));
+        assert!(fire(true) < 0.15, "eased across: {}", fire(true));
     }
 
     #[test]

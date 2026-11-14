@@ -43,7 +43,8 @@ const MAX_LAG: f32 = 1.5;
 const LAND_OMEGA: f32 = 4.0;
 /// (0.004 and 3 until the fifth playtest, "jumping is not noticeable".)
 pub const LAND_PEAK_PER_SPEED: f32 = 0.007;
-const MAX_LAND: f32 = 5.0;
+/// (5 until the eighth playtest's "fall-scaled landing".)
+const MAX_LAND: f32 = 9.0;
 /// The body's velocities are smoothed over this long (seconds) before their changes push
 /// the head (`nvf_play::ease::Pushed`): a take-off or a landing never jolts the view.
 const PUSH_SMOOTH_SECONDS: f32 = 0.12;
@@ -186,7 +187,7 @@ impl HeadBob {
         // The head's own weight, pushed by the body's acceleration (below).
         let took_off = i.vertical > 0.0 && self.last_vertical <= 0.0;
         // Only a take-off and a landing push the head: a free fall moves it with the body.
-        let push = nvf_play::ease::carried_push(self.last_vertical, i.vertical, i.gravity, dt);
+        let push = nvf_play::inertia::hard_landing(nvf_play::ease::carried_push(self.last_vertical, i.vertical, i.gravity, dt));
         self.last_vertical = i.vertical;
         // Out of breath: running winds, walking and standing recover, jumps take breath.
         let wind = if !i.airborne && i.speed > WINDED_SPEED {
