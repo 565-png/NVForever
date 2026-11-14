@@ -644,6 +644,9 @@ pub struct BoundClip {
     /// whoever plays the clip moves the actor by [`BoundClip::travel`] instead. Set by
     /// [`BoundClip::carried`].
     pub carried: Option<Vec2>,
+    /// [hypothesis, #2352] A darting move's drawn root stays at this starting x/y;
+    /// [design] unlike `carried`, this gives no travel to the actor. See actors.md §8.2.
+    pub hold_xy: Option<Vec2>,
     /// The tracks whose node the skeleton lacks: (node name, track, priority). A player
     /// with nodes of its own beyond the skeleton's drives those it has by name
     /// ([`BlendPlayer::add_part_node`]: a creature part's `Buzzsawblad`, which Mister
@@ -659,6 +662,10 @@ pub struct BoundClip {
 /// bites brought them to 37 units of their target for the next, against the original's
 /// median 133 (smoke combat-dogs, npc-behaviour-compare.md §3); actors.md §8.13].
 pub const CARRY_MIN: f32 = 100.0;
+
+/// [design, #2352] Hold a move's root x/y when its peak ground excursion exceeds this
+/// multiple of its net cycle travel. Uses `Clip::root_reach`'s 61 samples, at load only.
+pub const ROOT_EXCURSION_RATIO: f32 = 1.5;
 
 /// The rotation [`BoundClip::root_track`] takes out of a clip's accumulation-root track
 /// `tt`: its start rotation when `clip` has no `Bip01 NonAccum` track (the root's track
@@ -694,7 +701,21 @@ impl BoundClip {
             .filter(|(_, (n, _))| node(n).is_none())
             .map(|(k, (n, t))| (n.clone(), t.clone(), clip.priorities.get(k).copied().unwrap_or(0)))
             .collect();
-        BoundClip { clip, tracks, root, root_track, carried: None, unbound: Arc::new(unbound) }
+        BoundClip { clip, tracks, root, root_track, carried: None, hold_xy: None, unbound: Arc::new(unbound) }
+    }
+
+    /// [hypothesis, #2352] Remove a back-and-forth move's full horizontal excursion
+    /// from its pose. [design] Call only for locomotion moves; actor motion and clip
+    /// speed still use their existing rules (docs/spec-notes/actors.md §8.2).
+    pub fn locomotion(mut self) -> BoundClip {
+        if self.root_track.is_none() {
+            return self;
+        }
+        let (Some(start), Some(end)) = (self.clip.root_ground(0.0), self.clip.root_ground(self.clip.length())) else { return self };
+        if self.clip.root_reach() > ROOT_EXCURSION_RATIO * (end - start).length() {
+            self.hold_xy = Some(start);
+        }
+        self
     }
 
     /// This clip carrying its actor ([`BoundClip::carried`]), when its root travels
@@ -1038,7 +1059,14 @@ impl BlendPlayer {
                         match bc.carried {
                             // Its travel is the actor's: all of it out of the pose.
                             Some(at) => (t.x, t.y) = (at.x, at.y),
-                            None => t -= per_cycle * phase,
+                            None => {
+                                t -= per_cycle * phase;
+                                // [hypothesis, #2352] A dart stays drawn at its actor;
+                                // [design] keep the ordinary vertical correction.
+                                if let Some(at) = bc.hold_xy {
+                                    (t.x, t.y) = (at.x, at.y);
+                                }
+                            }
                         }
                         t.z -= start_z;
                     }
@@ -1957,6 +1985,41 @@ mod tests {
         // A track whose node the skeleton lacks is dropped; the idle drives no root.
         assert_eq!((idle.tracks.len(), idle.root, idle.root_track), (1, Some(1), None));
         assert_eq!(walk.time_at(0.25), 0.25);
+    }
+
+    #[test]
+    fn darting_locomotion_holds_xy_without_carrying_the_actor() {
+        let (mut player, ix) = player();
+        for (peak, net, held) in [(240.0, 100.0, true), (-240.0, -100.0, true), (150.0, 100.0, false), (149.0, 100.0, false), (8.0, 0.0, true), (0.0, 0.0, false)] {
+            // [design, #2352] Synthetic sideways dart with a nonzero start and z bob.
+            let y_share = if held { 0.25 } else { 0.0 };
+            let keys = Keys {
+                kind: KeyKind::Linear,
+                keys: [(0.0, [12.0, -7.0, 20.0]), (0.5, [12.0 + peak, -7.0 + peak * y_share, 26.0]), (1.0, [12.0 + net, -7.0 + net * y_share, 22.0])]
+                    .map(|(time, value)| Key { time, value, forward: [0.0; 3], backward: [0.0; 3], tbc: [0.0; 3] }).to_vec(),
+            };
+            let c = clip(1.0, vec![("Bip01", track(Channel::Keys(keys), Channel::Static(None)))]);
+            let speed = c.root_speed();
+            let bc = Arc::new(BoundClip::bind(c, &ix).locomotion());
+            assert_eq!(bc.hold_xy, held.then_some(Vec2::new(12.0, -7.0)));
+            assert_eq!(bc.carried, None);
+            assert_eq!(bc.travel(0.0, 0.5), Vec2::ZERO);
+            assert_eq!(bc.clip.root_speed(), speed);
+            for phase in [0.0, 0.25, 0.5, 0.75, 0.999] {
+                player.layers[0] = Some(Layer { clip: bc.clone(), phase, weight: 1.0 });
+                let mut out = Vec::new();
+                player.sample(&mut out);
+                let t = out.iter().find(|(i, _)| *i == 1).unwrap().1.translation;
+                if held {
+                    assert!((t.truncate() - Vec2::new(12.0, -7.0)).length() < 1e-3, "{phase}: {t:?}");
+                } else if phase == 0.5 {
+                    assert!((t.x - (12.0 + peak - net * phase)).abs() < 1e-3);
+                }
+                if phase == 0.5 {
+                    assert!((t.z - 5.0).abs() < 1e-3, "vertical correction stays linear");
+                }
+            }
+        }
     }
 
     #[test]

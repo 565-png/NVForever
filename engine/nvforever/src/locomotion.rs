@@ -12,7 +12,7 @@ use bevy::tasks::{ComputeTaskPool, ParallelSliceMut};
 use fnv_actor::locomotion::{choose, direction, hurt_move_in, wrap01, Blend, Body, Choice, ClipInfo, LocomotionSet, Move, Slot, HURT_FOLDER, RATE_MAX, RATE_MIN};
 use fnv_nav::follow::{heading_delta, SPOT_TURN_RATE, SPOT_TURN_START};
 use nvf_assets::actor::{bind_clip, clip_binding, ClipSource, PreparedSkeleton};
-use nvf_assets::anim_play::{BlendPlayer, BoundClip, Layer};
+use nvf_assets::anim_play::{BlendPlayer, BoundClip, Layer, MAX_LAYERS};
 use std::collections::BTreeMap;
 use std::f32::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
@@ -230,7 +230,7 @@ impl ClipSet {
             let path = format!("meshes\\{p}");
             let Some(clip) = ctx.clip(&path) else { continue };
             let info = ClipInfo::from_parts(clip.start, clip.stop, &clip.text_keys, clip.accum_track());
-            set.clips.insert(m, SetClip { bound: Arc::new(bind_clip(skel, clip)), info, path });
+            set.clips.insert(m, SetClip { bound: Arc::new(bind_move(skel, clip, m)), info, path });
             n += 1;
         }
         (set, n)
@@ -327,7 +327,7 @@ impl ClipSet {
                 if unbound.is_empty() { String::new() } else { format!(", unbound {unbound:?}") },
                 if adding.is_empty() { String::new() } else { format!(", rotation adding up per cycle {adding:?}") }
             ));
-            set.clips.insert(m, SetClip { bound: Arc::new(bind_clip(skel, clip)), info, path });
+            set.clips.insert(m, SetClip { bound: Arc::new(bind_move(skel, clip, m)), info, path });
         }
         (set, report)
     }
@@ -370,7 +370,7 @@ impl ClipSet {
                 let info = ClipInfo::from_parts(clip.start, clip.stop, &clip.text_keys, clip.accum_track());
                 found.retain(|(f, _)| *f != m);
                 found.push((m, format!("{} {stem} {:.1}u/s", m.group(), info.speed)));
-                set.clips.insert(m, SetClip { bound: Arc::new(bind_clip(skel, clip)), info, path: path.clone() });
+                set.clips.insert(m, SetClip { bound: Arc::new(bind_move(skel, clip, m)), info, path: path.clone() });
             }
         }
         if found.is_empty() {
@@ -381,6 +381,13 @@ impl ClipSet {
         let line = format!("{folder} {what}: {} of {} moves from hurt\\: {}", moves.len(), set.clips.len(), moves.join("; "));
         Some((set, line))
     }
+}
+
+/// [design, #2352] Apply the dart correction only to moving clips, including script
+/// replacements and hurt/weapon sets (`ClipSet` loaders).
+fn bind_move(skel: &PreparedSkeleton, clip: Arc<nvf_assets::anim_play::Clip>, mv: Move) -> BoundClip {
+    let bound = bind_clip(skel, clip);
+    if mv.is_moving() { bound.locomotion() } else { bound }
 }
 
 /// A weapon stance's movement clips bound to one skeleton
@@ -484,59 +491,47 @@ pub struct Locomotion {
     pub armed_on: bool,
     /// The clip files logged while armed ([`Locomotion::armed_clip_news`]).
     armed_logged: Vec<String>,
-    /// The idle under the movement clips ([`UNDER_LAYER`]): creatures only.
+    /// [design, #2352] The idle under movement and upper clips ([`UNDER_LAYER`]): creatures only.
     pub idle_under: bool,
     under: Under,
     /// Times "moves with no movement clip" was logged for this actor (once).
     clipless_logged: u8,
 }
 
-/// [`Locomotion::layers`]' slot for the set's idle laid under a movement clip, at a
-/// priority below every track ([`UNDER_PRIORITY`]): it drives only what the clips over it
-/// leave, the nodes the movement clip has no track for [observed: the bloatfly's
-/// `mtidle.kf` drives its wings (`Bip01 L/R UpperArm`, `Forearm`, priority 45) and head,
-/// its `mtforward.kf`, `mtfastforward.kf` and side clips neither (kf_layer_survey,
-/// 2026-10-23), so the wings stood still in their bind pose while it flew; hypothesis:
-/// the original keeps the idle under the movement clips, as the player body does,
-/// animation.md §9.4]. Only while the idle drives a node the movement clip does not, and
-/// only on creatures ([`Locomotion::idle_under`]) [design: people's `mtidle.kf` drives
-/// the pauldrons and twist bones their movement clips leave, posed for the idle's arms;
-/// their bind pose suits a swinging arm better].
+/// [design, #2352] Slot for the creature set's idle below movement, stance, aim,
+/// attack and special-idle clips, only on bones those clips omit. The accumulation
+/// root is excluded. [documented: issue #2352] The supplied bloatfly survey names
+/// wing tracks in `mtidle.kf` that its move, aim and attack clips omit.
+/// [hypothesis] The original keeps those bones animating from its idle; observer
+/// check 141 asks for a capture. [design] People retain their existing layering.
 pub const UNDER_LAYER: usize = 6;
 /// The under-laid idle's track priority: below every clip's (clips' priorities are small
 /// non-negative numbers [observed]) and above `anim_play`'s undriven-root identity.
 pub const UNDER_PRIORITY: i32 = i32::MIN + 1;
 
-/// The idle under the movement clips: the idle clip it was made from (by address), the
-/// idle with its tracks at [`UNDER_PRIORITY`] (without the accumulation root), the
-/// movement clip last checked and whether the idle drives a node that clip does not, and
-/// the idle's own phase, which runs on while another clip plays.
+/// [design, #2352] Cached filtered idle, keyed by its source and every other active
+/// clip's address, plus the idle's independent phase (`Locomotion::step`).
 #[derive(Default)]
 struct Under {
     idle: usize,
     clip: Option<Arc<BoundClip>>,
-    checked: usize,
+    checked: [usize; MAX_LAYERS],
     needed: bool,
     phase: f32,
 }
 
-/// `idle` with every track at [`UNDER_PRIORITY`], without the accumulation root (whose
-/// motion is the movement clip's, or held at the identity).
-fn under_clip(idle: &BoundClip) -> BoundClip {
+/// [design, #2352] `idle` at `UNDER_PRIORITY`, excluding its accumulation root and
+/// all bones or part nodes driven by `others`.
+fn under_clip(idle: &BoundClip, others: &[Option<&BoundClip>; MAX_LAYERS]) -> BoundClip {
     BoundClip {
         clip: idle.clip.clone(),
-        tracks: idle.tracks.iter().filter(|(i, _, _)| Some(*i) != idle.root).map(|(i, t, _)| (*i, t.clone(), UNDER_PRIORITY)).collect(),
+        tracks: idle.tracks.iter().filter(|(i, _, _)| Some(*i) != idle.root && !others.iter().flatten().any(|c| c.tracks.iter().any(|(j, _, _)| i == j))).map(|(i, t, _)| (*i, t.clone(), UNDER_PRIORITY)).collect(),
         root: None,
         root_track: None,
         carried: None,
-        unbound: Arc::new(idle.unbound.iter().map(|(n, t, _)| (n.clone(), t.clone(), UNDER_PRIORITY)).collect()),
+        hold_xy: None,
+        unbound: Arc::new(idle.unbound.iter().filter(|(n, _, _)| !others.iter().flatten().any(|c| c.unbound.iter().any(|(m, _, _)| n.eq_ignore_ascii_case(m)))).map(|(n, t, _)| (n.clone(), t.clone(), UNDER_PRIORITY)).collect()),
     }
-}
-
-/// Whether `idle` drives a node (other than the accumulation root) that `other` has no
-/// track for.
-fn drives_more(idle: &BoundClip, other: &BoundClip) -> bool {
-    idle.tracks.iter().any(|(i, _, _)| Some(*i) != idle.root && !other.tracks.iter().any(|(j, _, _)| j == i))
 }
 
 impl Locomotion {
@@ -772,28 +767,31 @@ impl Locomotion {
                 player.layers[0] = Some(Layer { clip: clip.clone(), phase, weight: jw });
             }
         }
-        player.layers[UNDER_LAYER] = self.under_layer();
+        player.layers[UNDER_LAYER] = None;
     }
 
-    /// The set's idle under the movement clip ([`UNDER_LAYER`]): while a clip other than
-    /// the idle plays (or fades out) and the idle drives a node it does not.
-    fn under_layer(&mut self) -> Option<Layer> {
+    /// [design, #2352] The creature's idle under movement, aim, attack and special
+    /// idles, after those layers are assembled: only bones none of those clips drive.
+    /// [hypothesis] Original-game layering remains to be checked (observer check 141).
+    fn under_layer(&mut self, layers: &[Option<Layer>; MAX_LAYERS]) -> Option<Layer> {
         if !self.idle_under {
             return None;
         }
         let idle = self.set.clips.get(&Move::Idle)?.bound.clone();
-        let other = [Some(self.blend.cur.mv), self.blend.prev.map(|p| p.mv)].into_iter().flatten().find(|m| *m != Move::Idle)?;
-        let moving = self.set.clips.get(&other).or_else(|| self.prev_set.as_ref().and_then(|s| s.clips.get(&other)))?.bound.clone();
-        let key = Arc::as_ptr(&idle) as usize;
-        if self.under.idle != key || self.under.clip.is_none() {
-            self.under.idle = key;
-            self.under.clip = Some(Arc::new(under_clip(&idle)));
-            self.under.checked = 0;
+        let others: [Option<&BoundClip>; MAX_LAYERS] = std::array::from_fn(|k| {
+            layers[k].as_ref().filter(|l| k != UNDER_LAYER && l.weight.is_finite() && l.weight > 0.0 && !Arc::ptr_eq(&l.clip, &idle)).map(|l| l.clip.as_ref())
+        });
+        let checked = others.map(|c| c.map_or(0, |c| c as *const BoundClip as usize));
+        if checked.iter().all(|k| *k == 0) {
+            return None;
         }
-        let checked = Arc::as_ptr(&moving) as usize;
-        if self.under.checked != checked {
+        let key = Arc::as_ptr(&idle) as usize;
+        if self.under.idle != key || self.under.clip.is_none() || self.under.checked != checked {
+            self.under.idle = key;
+            let clip = under_clip(&idle, &others);
+            self.under.needed = !clip.tracks.is_empty() || !clip.unbound.is_empty();
+            self.under.clip = Some(Arc::new(clip));
             self.under.checked = checked;
-            self.under.needed = drives_more(&idle, &moving);
         }
         self.under.needed.then(|| Layer { clip: self.under.clip.clone().expect("made above"), phase: self.under.phase, weight: 1.0 })
     }
@@ -1024,7 +1022,6 @@ fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32,
     }
     cost.turn_frames += u64::from(lo.blend.cur.mv.is_turn());
     lo.layers(player);
-    cost.under_frames += u64::from(player.layers[UNDER_LAYER].is_some());
     let drawn = crate::attack_anims::drawn(weapon.as_deref());
     if let Some(w) = weapon.as_mut() {
         if !w.hold {
@@ -1084,6 +1081,8 @@ fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32,
     if let Some(t) = talk {
         t.layers(player);
     }
+    player.layers[UNDER_LAYER] = lo.under_layer(&player.layers);
+    cost.under_frames += u64::from(player.layers[UNDER_LAYER].is_some());
     let layers = player.layers.iter().flatten().count() as u64;
     cost.layer_frames += layers;
     cost.blend_frames += u64::from(layers > 1);
@@ -1495,7 +1494,7 @@ mod tests {
         let clip = nvf_assets::anim_play::Clip {
             name: String::new(), start: 0.0, stop: 1.0, frequency: 1.0, cycle_type: 0, tracks: Vec::new(), priorities: Vec::new(), skipped: 0, accum_root: None, text_keys: Vec::new(), visibility: Vec::new(), emitters: Vec::new(), materials: Vec::new(), free: Vec::new(), free_visibility: Vec::new(), lights: Vec::new(),
         };
-        Arc::new(BoundClip { clip: Arc::new(clip), tracks: vec![(0, track, 30)], root: None, root_track: None, carried: None, unbound: Default::default() })
+        Arc::new(BoundClip { clip: Arc::new(clip), tracks: vec![(0, track, 30)], root: None, root_track: None, carried: None, hold_xy: None, unbound: Default::default() })
     }
 
     /// One frame of `secs`: (tracks sampled so far, frames held so far, frames at the
@@ -1600,12 +1599,95 @@ mod tests {
         // Infos only (no bound tracks are needed to choose and blend).
         let bound = Arc::new(BoundClip { clip: Arc::new(nvf_assets::anim_play::Clip {
             name: String::new(), start: 0.0, stop: 1.0, frequency: 1.0, cycle_type: 0, tracks: Vec::new(), priorities: Vec::new(), skipped: 0, accum_root: None, text_keys: Vec::new(), visibility: Vec::new(), emitters: Vec::new(), materials: Vec::new(), free: Vec::new(), free_visibility: Vec::new(), lights: Vec::new(),
-        }), tracks: Vec::new(), root: None, root_track: None, carried: None, unbound: Default::default() });
+        }), tracks: Vec::new(), root: None, root_track: None, carried: None, hold_xy: None, unbound: Default::default() });
         let mut s = ClipSet::default();
         for (m, duration, speed) in [(Move::Idle, 4.0, 0.0), (Move::Forward, 1.2, 85.26), (Move::Backward, 1.133, 67.44), (Move::TurnLeft, 1.0, 0.0), (Move::TurnRight, 1.0, 0.0)] {
             s.clips.insert(m, SetClip { bound: bound.clone(), info: ClipInfo { duration, speed, foot_phase: 0.3, blend_time: 0.2 }, path: format!("mt{}.kf", m.group()) });
         }
         Arc::new(s)
+    }
+
+    // [design, #2352] Synthetic idle: an animated wing (node 1), head (0), and root
+    // (2). The other clips drive the head; no game tracks are used.
+    fn wing_idle_set() -> Arc<ClipSet> {
+        use fnv_nif::anim::{Channel, Key, KeyKind, Keys};
+        let mut idle = Arc::try_unwrap(death_clip(1.0)).unwrap();
+        let mut wing = (*idle.tracks[0].1).clone();
+        wing.translation = Channel::Keys(Keys {
+            kind: KeyKind::Linear,
+            keys: [(0.0, [2.0, 0.0, 0.0]), (0.5, [6.0, 0.0, 0.0]), (1.0, [2.0, 0.0, 0.0])]
+                .map(|(time, value)| Key { time, value, forward: [0.0; 3], backward: [0.0; 3], tbc: [0.0; 3] }).to_vec(),
+        });
+        idle.tracks.push((1, Arc::new(wing), 45));
+        idle.tracks.push((2, idle.tracks[0].1.clone(), 30));
+        idle.root = Some(2);
+        let mut s = (*set()).clone();
+        let c = s.clips.get_mut(&Move::Idle).unwrap();
+        c.bound = Arc::new(idle);
+        c.info.duration = 1.0;
+        s.clips.get_mut(&Move::Forward).unwrap().bound = death_clip(3.0);
+        Arc::new(s)
+    }
+
+    #[test]
+    fn creature_idle_under_aim_attack_and_special_idle_only_drives_missing_bones() {
+        for slot in [2, crate::attack_anims::ATTACK_LAYER, crate::idles::IDLE_LAYER + 1] {
+            for moving in [false, true] {
+                let mut lo = Locomotion::new(wing_idle_set(), 0.0);
+                lo.idle_under = true;
+                if moving {
+                    lo.blend = Blend::new(Move::Forward, 0.0);
+                    lo.velocity = [0.0, 85.26];
+                }
+                let mut player = BlendPlayer::new(vec![Entity::PLACEHOLDER; 3], Arc::new(vec![Transform::IDENTITY; 3]));
+                lo.step(0.25);
+                lo.layers(&mut player);
+                let mut upper = Arc::try_unwrap(death_clip(9.0)).unwrap();
+                upper.tracks[0].2 = 60;
+                player.layers[slot] = Some(Layer { clip: Arc::new(upper), phase: 0.0, weight: 1.0 });
+                let under = lo.under_layer(&player.layers).expect("idle under an upper clip");
+                assert_eq!(under.phase, 0.25);
+                assert_eq!(under.clip.tracks.iter().map(|(i, _, _)| *i).collect::<Vec<_>>(), [1]);
+                assert!(under.clip.root.is_none());
+                let cached = under.clip.clone();
+                player.layers[UNDER_LAYER] = Some(under);
+                assert!(Arc::ptr_eq(&cached, &lo.under_layer(&player.layers).unwrap().clip));
+                let mut out = Vec::new();
+                player.sample(&mut out);
+                assert_eq!(out.iter().find(|(i, _)| *i == 0).unwrap().1.translation.x, 9.0);
+                assert_eq!(out.iter().find(|(i, _)| *i == 1).unwrap().1.translation.x, 4.0);
+                lo.step(0.25);
+                lo.layers(&mut player);
+                assert_eq!(lo.under_layer(&player.layers).unwrap().phase, 0.5);
+            }
+        }
+    }
+
+    #[test]
+    fn creature_idle_under_layer_gates_and_refreshes_for_upper_clip_changes() {
+        let mut lo = Locomotion::new(wing_idle_set(), 0.0);
+        let mut layers: [Option<Layer>; MAX_LAYERS] = Default::default();
+        layers[2] = Some(Layer { clip: death_clip(9.0), phase: 0.0, weight: 1.0 });
+        assert!(lo.under_layer(&layers).is_none(), "people have no under-layer");
+        lo.idle_under = true;
+        let old = lo.under_layer(&layers).unwrap().clip;
+        let mut upper = Arc::try_unwrap(death_clip(8.0)).unwrap();
+        upper.tracks.push((1, upper.tracks[0].1.clone(), 60));
+        layers[4] = Some(Layer { clip: Arc::new(upper), phase: 0.0, weight: 1.0 });
+        assert!(lo.under_layer(&layers).is_none(), "all non-root idle bones are driven");
+        for weight in [0.0, f32::NAN] {
+            layers[4].as_mut().unwrap().weight = weight;
+            let next = lo.under_layer(&layers).unwrap().clip;
+            assert!(!Arc::ptr_eq(&old, &next));
+            assert_eq!(next.tracks.len(), 1);
+        }
+        layers = Default::default();
+        assert!(lo.under_layer(&layers).is_none());
+        layers[2] = Some(Layer { clip: death_clip(9.0), phase: 0.0, weight: 1.0 });
+        let mut no_idle = (*lo.set).clone();
+        no_idle.clips.remove(&Move::Idle);
+        lo.set = Arc::new(no_idle);
+        assert!(lo.under_layer(&layers).is_none(), "sets without Idle get no fallback");
     }
 
     /// `base` with the clips of `moves` (move, file) put in, at the same infos.

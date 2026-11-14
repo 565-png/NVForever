@@ -2174,3 +2174,20 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      dirt and on concrete, first and third person, and record which SOUN records play
      at each footfall (the sound log): does `FSTArmorPowerWalkL`/`R` play, instead of
      or beside the ground's step, and does anything play for the run rustle?
+
+## Added 2026-11-14 (bloatfly side clips and combat wings, #2352)
+
+141. **Do bloatfly side darts move the actor, and do wings beat under combat clips?**
+     (P2; #2352, actors.md §§8.2–8.3.) [documented: supplied issue #2352 clip-root
+     survey] `mtleft.kf`/`mtright.kf` reach 225/243 units sideways before returning
+     to net travel 100. [hypothesis] NVForever provisionally removes the full drawn
+     root x/y excursion for moves past a 1.5 peak/net ratio; whether the original
+     moves the actor by that root is unknown. [design] Capture a bloatfly fighting
+     for about 20 seconds, including sideways movement, aim, firing and hover/special
+     idle. Record its actor x/y and body position frame by frame through a side dart:
+     does the actor follow the outward and return root motion, or does the body stay
+     at the actor while it strafes? Also compare wing beats during ordinary idle,
+     forward flight, aim, attack and hover, especially bones absent from the upper
+     clip. [hypothesis] NVForever keeps the set's idle on bones the active clips omit;
+     confirm whether those beats continue and whether their phase restarts on a
+     transition. Record clip names/times with the capture where available.
