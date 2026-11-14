@@ -1200,7 +1200,7 @@ at random, Say Once a Day), and a response is timed in one place
   deleted or dead stops its line [hypothesis]. IsTalking is 1 while a line is said.
 - A Say or SayTo on a speaker already talking takes over at once, for the same topic or
   another: nothing is queued and the call is not ignored [observed: campaigns o30_say,
-  o30b_say, 2026-11-08 (#1858 batch o30), the Strip Gatekeeper VFSSecuritronGreeterREF with
+  o30b_say, 2026-11-14 (#1858 batch o30), the Strip Gatekeeper VFSSecuritronGreeterREF with
   the gate volumes disabled, IsTalking read every game loop]. One line said alone keeps
   IsTalking on for its file's length plus about 4.9 s (Halt, 4.35 s: 9.21 s; Kill lines
   1.1-2.9 s: 5.2-6.2 s). Halt and Halt again 1 s later: 10.23 s (= 1 + 9.21; ignored

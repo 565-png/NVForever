@@ -2197,7 +2197,7 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      0x00084257 and 0x00084258 by the entrance)? Ours since #2420: shown sprung, fires
      once.
 
-## Added 2026-11-08 (observer batch o30: Say / SayTo on a speaker already talking, #1858)
+## Added 2026-11-14 (observer batch o30: Say / SayTo on a speaker already talking, #1858)
 
 Answered for the talking state (scripts.md §7.7): a Say or SayTo on a speaker that is
 already talking takes over at once, same topic or another; nothing is queued or ignored
