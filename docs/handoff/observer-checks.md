@@ -2177,7 +2177,7 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
 
 ## Added 2026-11-14 (bloatfly side clips and combat wings, #2352)
 
-141. **Do bloatfly side darts move the actor, and do wings beat under combat clips?**
+144. **Do bloatfly side darts move the actor, and do wings beat under combat clips?**
      (P2; #2352, actors.md §§8.2–8.3.) [documented: supplied issue #2352 clip-root
      survey] `mtleft.kf`/`mtright.kf` reach 225/243 units sideways before returning
      to net travel 100. [hypothesis] NVForever provisionally removes the full drawn
