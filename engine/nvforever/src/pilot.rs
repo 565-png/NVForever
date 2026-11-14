@@ -1236,6 +1236,12 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 w.tried.push((door, lock));
                 (w.follower, w.door_since) = (None, None);
                 return Walked::Going;
+            } else if w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, door, feet) {
+                // Not locked, but opened from elsewhere: the Fort's Securitron Vault hatch
+                // opens from the weather station's console ("Insert the Platinum Chip"),
+                // whose script names the hatch.
+                w.door_since = Some(p.now);
+                return Walked::Going;
             } else if w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) {
                 p.finding("door", format!("door {door:08X} on the way, not locked, did not open in {LOCKED_SECS:.0} s: walks on as if it had"));
                 f.door_opened();
