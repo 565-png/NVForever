@@ -4,6 +4,11 @@
 //! model merged into one mesh, drawn with [`GrassMaterial`] (grass.wesl), which sways the
 //! plants in the wind and lowers them into the ground beyond the grass distance.
 //! Facts, sources and confidence tags: docs/spec-notes/grass.md.
+//!
+//! Grass fires (`nvf_play::grass_fire`, docs/design/grass-fire.md): the patches each
+//! cell's plants stand on are the fires' fuel ([`GrassCtx::spawn`]), and every grass
+//! material reads the fires' burn map ([`GrassBurn`]), which blackens and then sinks the
+//! plants of the patches that burn (grass.wesl, "Burning").
 
 use crate::fade::CellFade;
 use crate::world::{bevy_to_game, WorldData};
@@ -21,6 +26,7 @@ use fnv_nif::NifFile;
 use fnv_world::grass::{load_grass, place, texture_grasses, Grass, GrassSettings, Plant};
 use fnv_world::land::{load_land, Land, LandParts};
 use fnv_world::CELL_SIZE;
+use nvf_play::grass_fire::GrassFires;
 use nvf_assets::model::ModelCtx;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -59,6 +65,24 @@ pub struct GrassParams {
 pub struct GrassSway {
     #[uniform(100)]
     pub params: GrassParams,
+    /// The grass fires' burn map ([`GrassBurn`]), read by the vertex and fragment shaders.
+    #[texture(101)]
+    pub burn: Handle<Image>,
+}
+
+/// The grass fires' burn map as a texture: one texel per patch, wrapping
+/// (`nvf_play::grass_fire`, module notes), copied from the fires when it changes
+/// (`crate::grass_fire_fx`). All zero (nothing burnt) without fires.
+#[derive(Resource)]
+pub struct GrassBurn(pub Handle<Image>);
+
+impl FromWorld for GrassBurn {
+    fn from_world(world: &mut World) -> Self {
+        use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+        let n = nvf_play::grass_fire::MAP as u32;
+        let image = Image::new_fill(Extent3d { width: n, height: n, depth_or_array_layers: 1 }, TextureDimension::D2, &[0], TextureFormat::R8Unorm, RenderAssetUsages::default());
+        GrassBurn(world.resource_mut::<Assets<Image>>().add(image))
+    }
 }
 
 impl MaterialExtension for GrassSway {
@@ -183,6 +207,8 @@ pub struct GrassCtx<'w> {
     config: Res<'w, GrassConfig>,
     cache: ResMut<'w, GrassCache>,
     materials: ResMut<'w, Assets<GrassMaterial>>,
+    burn: Res<'w, GrassBurn>,
+    fires: Option<ResMut<'w, GrassFires>>,
 }
 
 pub struct GrassPlugin(pub GrassConfig);
@@ -193,6 +219,7 @@ impl Plugin for GrassPlugin {
         app.add_plugins(MaterialPlugin::<GrassMaterial>::default())
             .insert_resource(self.0)
             .init_resource::<GrassCache>()
+            .init_resource::<GrassBurn>()
             .add_systems(Update, (wind.after(crate::sky::update_sky), cull.after(crate::world::stream)))
             // Before the fades are applied, so the new meshes get their cell's range.
             .add_systems(Update, grow_owed.after(crate::world::stream).before(crate::fade::fade_cells).before(cull));
@@ -317,7 +344,7 @@ impl GrassCtx<'_> {
         let made = match g.model.as_deref().map(model_path) {
             None => Err("no model".to_string()),
             // A panic reading a broken file counts as an error: that grass is not drawn.
-            Some(path) => nvf_assets::guard::guarded(|| load_model(&path, models, &mut self.materials, params)).map_err(|e| format!("{path}: {e}")),
+            Some(path) => nvf_assets::guard::guarded(|| load_model(&path, models, &mut self.materials, params, &self.burn.0)).map_err(|e| format!("{path}: {e}")),
         };
         let made = match made {
             Ok(m) => Some(Arc::new(m)),
@@ -360,13 +387,24 @@ impl GrassCtx<'_> {
             return;
         }
         self.cache.plants_generated += plants.len();
+        let origin = Vec3::new(grid.0 as f32 * CELL_SIZE, grid.1 as f32 * CELL_SIZE, 0.0);
+        // The patches the plants stand on are the grass fires' fuel, at the lowest plant's
+        // ground.
+        if let Some(fires) = self.fires.as_deref_mut() {
+            let mut patches: HashMap<nvf_play::grass_fire::Key, f32> = HashMap::new();
+            for p in &plants {
+                let at = origin + Vec3::from_array(p.position);
+                let z = patches.entry(nvf_play::grass_fire::key(at.x, at.y)).or_insert(at.z);
+                *z = z.min(at.z);
+            }
+            fires.fires.add_fuel(grid, patches);
+        }
         // By quadrant and type: smaller meshes to cull and to leave out beyond the distance.
         let mut groups: HashMap<(usize, usize), Vec<&Plant>> = HashMap::new();
         for p in &plants {
             let q = usize::from(p.position[0] >= CELL_SIZE / 2.0) + 2 * usize::from(p.position[1] >= CELL_SIZE / 2.0);
             groups.entry((q, p.kind)).or_default().push(p);
         }
-        let origin = Vec3::new(grid.0 as f32 * CELL_SIZE, grid.1 as f32 * CELL_SIZE, 0.0);
         for ((_, kind), group) in groups {
             let Some(model) = self.model(kind, models) else { continue };
             let fit_to_slope = self.cache.types[kind].fit_to_slope;
@@ -476,7 +514,7 @@ fn affine(t: &fnv_nif::scene::Transform) -> Affine3A {
 /// shapes whose texture is named by a TallGrassShaderProperty and which are cut out by a
 /// NiAlphaProperty alpha test [observed: grass.md §2]; the general model loader
 /// (`nvf_assets::model`) reads neither that property's texture nor the vertex alpha.
-fn load_model(path: &str, models: &mut ModelCtx, materials: &mut Assets<GrassMaterial>, params: GrassParams) -> Result<GrassModel, String> {
+fn load_model(path: &str, models: &mut ModelCtx, materials: &mut Assets<GrassMaterial>, params: GrassParams, burn: &Handle<Image>) -> Result<GrassModel, String> {
     let bytes = models.data.read(path).ok_or("not in any archive")?;
     let schema = models.data.schema.clone();
     let file = NifFile::parse(&bytes, Some(&schema)).map_err(|e| e.to_string())?;
@@ -560,7 +598,7 @@ fn load_model(path: &str, models: &mut ModelCtx, materials: &mut Assets<GrassMat
                 reflectance: 0.0,
                 ..default()
             },
-            extension: GrassSway { params },
+            extension: GrassSway { params, burn: burn.clone() },
         });
         shapes.push(GrassShape {
             positions: md.positions.iter().map(|p| to_model.transform_point3(Vec3::from_array(*p))).collect(),
