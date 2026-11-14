@@ -372,10 +372,18 @@ copying them by hand; the manual way stays ([dlss.md](../dlss.md)).
   never is.
 - **Four-file folders.** The Upscaler row keeps Download DLSS… offered while any of the
   eight files is missing, including when upscaling is ready or only needs a restart
-  (`settings::dlss_files_missing`). Upscaling still needs only `dlss::FILES`, the first four;
-  frame generation needs `dlss::FG_FILES`, the other four. The dimmed Frame generation DLSS
-  choice points to Download DLSS… in the Upscaler row. A second download checks all eight and
-  adds only the missing four, leaving the existing matching files in place (`install::place`).
+  (`settings::dlss_download_offered` / `dlss_download::offered`). The all-eight-file probe is
+  shared by choices and hints, cached for one second, and discarded when the download phase
+  changes. Other loader refusals and a download completed this session suppress the offer
+  before probing. If the folder cannot be resolved, only the loader's `FilesMissing` reason
+  retains the offer; choosing it lets the download dialog report the folder error.
+  Upscaling still needs only `dlss::FILES`, the first four; frame generation needs
+  `dlss::FG_FILES`, the other four. A second download checks all eight and adds only the
+  missing four, leaving the existing matching files in place (`install::place`).
+- **Missing-file hints.** The dimmed Frame generation DLSS choice uses three states
+  (`dlss::frame_generation_unavailable`): "Files missing: Download DLSS… on the Upscaler row"
+  while the download is offered; "Restart to use DLSS Frame Generation" after a download
+  completed this session; otherwise "The DLSS Frame Generation files are missing".
 - **The install guard first.** `fnv_install::guard_write(path, None)` checks the target,
   its parent and the staging folder before anything is created or cleaned up, then checks
   file destinations before writing or moving them. `None` still checks the game install

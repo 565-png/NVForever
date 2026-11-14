@@ -90,11 +90,12 @@ pub(crate) fn is_choice(name: &str) -> bool {
 #[derive(Default)]
 struct OfferCache {
     phase: Option<Phase>,
-    missing: Option<(Instant, bool)>,
+    // [design] Cache an unresolved folder as None, separately from files being present.
+    missing: Option<(Instant, Option<bool>)>,
 }
 
 impl OfferCache {
-    fn offered(&mut self, windows: bool, reason: Option<crate::upscaler::Unavailable>, phase: Option<Phase>, now: Instant, probe: impl FnOnce() -> bool) -> bool {
+    fn offered(&mut self, windows: bool, reason: Option<crate::upscaler::Unavailable>, phase: Option<Phase>, now: Instant, probe: impl FnOnce() -> Option<bool>) -> bool {
         if self.phase != phase {
             self.phase = phase;
             self.missing = None;
@@ -105,22 +106,55 @@ impl OfferCache {
         }
         if let Some((checked, missing)) = self.missing {
             if now.saturating_duration_since(checked) < Duration::from_secs(1) {
-                return missing;
+                return missing.unwrap_or(reason == Some(crate::upscaler::Unavailable::FilesMissing));
             }
         }
         let missing = probe();
         self.missing = Some((now, missing));
-        missing
+        // [design] Preserve the loader's missing-files offer when resolving the folder fails;
+        // the download dialog will report the folder error. Working DLSS needs no offer.
+        missing.unwrap_or(reason == Some(crate::upscaler::Unavailable::FilesMissing))
     }
 }
 
 static OFFER_CACHE: Mutex<OfferCache> = Mutex::new(OfferCache { phase: None, missing: None });
 
+#[cfg(test)]
+thread_local! {
+    static TEST_OFFER_PROBE: std::cell::RefCell<Option<(OfferCache, Option<bool>)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// [design] A scoped probe and private cache for menu tests, restored even on panic.
+/// Some(true/false) injects missing/present files; None injects a folder-resolution error.
+#[cfg(test)]
+pub(crate) struct TestOfferProbe(Option<(OfferCache, Option<bool>)>);
+
+#[cfg(test)]
+impl TestOfferProbe {
+    pub(crate) fn new(missing: Option<bool>) -> Self {
+        Self(TEST_OFFER_PROBE.with(|probe| probe.replace(Some((OfferCache::default(), missing)))))
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestOfferProbe {
+    fn drop(&mut self) {
+        TEST_OFFER_PROBE.with(|probe| probe.replace(self.0.take()));
+    }
+}
+
 /// [design] Offer the download on Windows while any of the eight files is missing and the
-/// loader has no other refusal, unless a download installed them this session.
+/// loader has no other refusal, unless a download installed them this session. If the folder
+/// cannot be resolved, retain an offer only for the loader's FilesMissing reason.
 pub(crate) fn offered(reason: Option<crate::upscaler::Unavailable>) -> bool {
-    OFFER_CACHE.lock().unwrap_or_else(PoisonError::into_inner).offered(cfg!(windows), reason, download::current().map(|h| h.progress().phase), Instant::now(), || {
-        download::target_folder().is_ok_and(|folder| files_missing(&folder))
+    let phase = download::current().map(|h| h.progress().phase);
+    let now = Instant::now();
+    #[cfg(test)]
+    if let Some(offered) = TEST_OFFER_PROBE.with(|probe| probe.borrow_mut().as_mut().map(|(cache, missing)| cache.offered(cfg!(windows), reason, phase.clone(), now, || *missing))) {
+        return offered;
+    }
+    OFFER_CACHE.lock().unwrap_or_else(PoisonError::into_inner).offered(cfg!(windows), reason, phase, now, || {
+        download::target_folder().ok().map(|folder| files_missing(&folder))
     })
 }
 
@@ -371,7 +405,7 @@ mod tests {
         let mut cache = OfferCache::default();
         let now = Instant::now();
         for phase in [None, Some(Phase::Failed(download::Failure::Http(404))), Some(Phase::Cancelled), Some(Phase::Connecting)] {
-            assert!(cache.offered(true, None, phase, now, || true), "missing files: offer or retry");
+            assert!(cache.offered(true, None, phase, now, || Some(true)), "missing files: offer or retry");
         }
         for reason in [Unavailable::NotWindows, Unavailable::NotVulkan, Unavailable::UpdaterInFolder, Unavailable::SignatureRejected, Unavailable::StreamlineRefused, Unavailable::DeviceUnsuitable, Unavailable::GpuNotSupported, Unavailable::EvaluateFailed, Unavailable::FsrUnsupported] {
             assert!(!cache.offered(true, Some(reason), None, now, || panic!("no probe for another refusal")));
@@ -379,7 +413,7 @@ mod tests {
         assert!(!cache.offered(false, None, None, now, || panic!("Windows only")));
         assert!(!cache.offered(true, Some(Unavailable::FilesMissing), Some(Phase::Done(PathBuf::from("dlss"))), now, || panic!("installed: no probe")));
         assert!(cache.missing.is_none(), "Done discards the cached probe");
-        assert!(!cache.offered(true, Some(Unavailable::FilesMissing), None, now, || false), "all eight present even if the loader still needs a restart");
+        assert!(!cache.offered(true, Some(Unavailable::FilesMissing), None, now, || Some(false)), "all eight present even if the loader still needs a restart");
         assert!(is_choice("Download DLSS...") && is_choice("download dlss...") && is_choice("Download DLSS…"));
         assert!(!is_choice("DLSS") && !is_choice("Download"));
     }
@@ -388,15 +422,36 @@ mod tests {
     fn the_offer_caches_the_probe_until_a_second_or_a_phase_change() {
         let mut cache = OfferCache::default();
         let now = Instant::now();
-        assert!(cache.offered(true, None, None, now, || true));
+        assert!(cache.offered(true, None, None, now, || Some(true)));
         assert!(cache.offered(true, Some(crate::upscaler::Unavailable::FilesMissing), None, now + Duration::from_millis(999), || panic!("reuse the probe")));
-        assert!(!cache.offered(true, None, None, now + Duration::from_secs(1), || false), "files appeared");
+        assert!(!cache.offered(true, None, None, now + Duration::from_secs(1), || Some(false)), "files appeared");
         assert!(!cache.offered(true, None, None, now + Duration::from_millis(1999), || panic!("cache present files too")));
-        assert!(cache.offered(true, None, None, now + Duration::from_secs(2), || true), "files disappeared");
-        assert!(!cache.offered(true, None, Some(Phase::Installing), now + Duration::from_secs(2), || false), "phase changes discard the probe immediately");
-        assert!(cache.offered(true, None, Some(Phase::Failed(download::Failure::Http(404))), now + Duration::from_secs(2), || true), "a failure also discards it");
+        assert!(cache.offered(true, None, None, now + Duration::from_secs(2), || Some(true)), "files disappeared");
+        assert!(!cache.offered(true, None, Some(Phase::Installing), now + Duration::from_secs(2), || Some(false)), "phase changes discard the probe immediately");
+        assert!(cache.offered(true, None, Some(Phase::Failed(download::Failure::Http(404))), now + Duration::from_secs(2), || Some(true)), "a failure also discards it");
         assert!(!cache.offered(true, None, Some(Phase::Done(PathBuf::from("dlss"))), now + Duration::from_secs(3), || panic!("Done skips even an expired probe")));
         assert!(cache.missing.is_none(), "the cached missing result is discarded on Done");
+    }
+
+    #[test]
+    fn an_unresolved_folder_preserves_only_the_loaders_missing_files_offer() {
+        use crate::upscaler::Unavailable::FilesMissing;
+        let now = Instant::now();
+        // [design] Exercise both initial reasons and both directions of a reason change
+        // while the resolution error is cached; never consult or change the environment.
+        for reason in [None, Some(FilesMissing)] {
+            let mut cache = OfferCache::default();
+            assert_eq!(cache.offered(true, reason, None, now, || None), reason.is_some());
+            for current in [Some(FilesMissing), None, Some(FilesMissing)] {
+                assert_eq!(cache.offered(true, current, None, now + Duration::from_millis(999), || panic!("reuse the resolution error")), current.is_some());
+            }
+            assert!(!cache.offered(true, Some(FilesMissing), None, now + Duration::from_secs(1), || Some(false)), "resolution recovered: all files present");
+            assert!(cache.offered(true, None, None, now + Duration::from_secs(2), || Some(true)), "resolution recovered: missing frame generation files");
+        }
+        let mut cache = OfferCache::default();
+        assert!(cache.offered(true, Some(FilesMissing), None, now, || None));
+        assert!(!cache.offered(true, None, Some(Phase::Connecting), now, || Some(false)), "phase changes also discard a cached resolution error");
+        assert!(!cache.offered(true, Some(FilesMissing), Some(Phase::Done(PathBuf::from("dlss"))), now, || panic!("Done still skips probing")));
     }
 
     #[test]
@@ -408,11 +463,11 @@ mod tests {
             std::fs::write(root.join(file.name), b"test fixture").unwrap();
         }
         for reason in [None, Some(crate::upscaler::Unavailable::FilesMissing)] {
-            assert!(!OfferCache::default().offered(true, reason, None, now, || files_missing(&root)));
+            assert!(!OfferCache::default().offered(true, reason, None, now, || Some(files_missing(&root))));
             for file in download::DOWNLOAD_FILES {
                 let path = root.join(file.name);
                 std::fs::remove_file(&path).unwrap();
-                assert!(OfferCache::default().offered(true, reason, None, now, || files_missing(&root)), "{} missing", file.name);
+                assert!(OfferCache::default().offered(true, reason, None, now, || Some(files_missing(&root))), "{} missing", file.name);
                 std::fs::write(path, b"test fixture").unwrap();
             }
         }
