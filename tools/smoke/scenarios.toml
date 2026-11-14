@@ -28367,7 +28367,10 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos
 run_seconds = 80
 expect = [
   { re = 'grass fire 1: started at .* by the player with .*\(00044B30\)', label = "the Flamer's burn lights the grass where its flame lands" },
-  { re = 'grass fire fx: flame model meshes.mps.mpsfiresmall01.nif: ', label = "the flame model is loaded" },
+  { re = 'grass fire fx: model meshes.mps.mpsfiresmall01.nif: ', label = "the small flame model is loaded" },
+  { re = 'grass fire fx: model meshes.mps.mpsfiremed01.nif: ', label = "the larger flame model is loaded" },
+  { re = 'particles: born in meshes.mps.mpsfiremed01.nif: \S+ [1-9]', label = "the larger flames emit" },
+  { re = 'grass fire fx summary: .* (?P<n>\d+) smoke, (?P<m>\d+) lights', range = [1, 1000], label = "burnt-out patches smoulder" },
   { re = 'particles: born in meshes.mps.mpsfiresmall01.nif: \S+ [1-9]', label = "the flames emit their particles" },
   { re = 'grass fire: EasyPeteRef \(00104C80\) caught fire from fire 1', label = "Easy Pete, put in the fire's path, catches fire" },
   { re = 'grass fire: the player caught fire', count = 0, label = "the player in god mode takes no burn" },

@@ -86,10 +86,16 @@ Code: `engine/nvf-play/src/grass_fire.rs` (the model, the ignition, the actors),
   squares. Only the folded landscape draw reads it (every quadrant on a GPU with bindless
   textures, the usual case); a quadrant's layers past the sixth, drawn blended over it,
   cover the mark.
-- **Flames**: the base game's small fire particle system (`mps\mpsfiresmall01.nif`, the
-  one fire effects add on as an add-on node; the ambient `fxfiresmall01.nif` holds no
-  particle system or shape of its own and drew nothing) on each burning patch, turned and sized at random (0.7–1.2), at most 150 at once; it
-  shrinks away over 0.8 s when its patch burns out.
+- **Flames** (grass_fire_fx.rs) [owner 2026-11-14: the first version looked "a bit
+  sparse"; flames should start small and grow]: each patch that catches gets two small
+  particle fires (`mps\mpsfiresmall01.nif`) at random spots and, on about a third of the
+  patches, a larger one (`mps\mpsfiremed01.nif`). Each starts at 15% of its size and grows
+  to it over 2 s (its particles' size, a size factor on the model's emitter added for
+  this, `particles::ModelEmitter::size`, and its spray), and dies down over 1.2 s when its
+  patch burns out. About one patch in six has a flickering orange light (at most 16).
+  Half the burnt-out patches smoulder (`mps\mpssmokesmall01.nif`) for 5 s. At most 420
+  flame and smoke models at once. (The ambient `fxfiresmall01.nif` holds no particle
+  system or shape of its own and drew nothing.)
 
 ## 7. Not done (yet)
 

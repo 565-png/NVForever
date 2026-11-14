@@ -461,7 +461,10 @@ fn shade_colour(shade: f32) -> f32 {
 /// normals are not used: most point sideways or down, which under the sun would leave
 /// the plants nearly unlit, and the game's grass is evenly lit [observed; hypothesis,
 /// grass.md §5]. UV_1 is (sway weight, height above the plant's foot), which grass.wesl
-/// uses for the wind and the fade.
+/// uses for the wind and the fade. The colour's alpha (the colour itself is opaque) holds
+/// the way from the vertex to its plant's foot ([`pack_foot`]): the whole plant reads the
+/// grass fires' burn map at its foot, so it chars and sinks as one (grass.wesl,
+/// "Burning").
 fn merged_mesh(shape: &GrassShape, plants: &[&Plant], fit_to_slope: bool) -> (Mesh, Vec3, Vec3) {
     let n = shape.positions.len() * plants.len();
     let (mut pos, mut nor, mut uv, mut uv_b, mut col) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
@@ -480,7 +483,7 @@ fn merged_mesh(shape: &GrassShape, plants: &[&Plant], fit_to_slope: bool) -> (Me
             uv.push(shape.uvs[i]);
             let c = shape.colors[i];
             uv_b.push([c[3], (w.z - p.position[2]).max(0.0)]);
-            col.push([c[0] * shade, c[1] * shade, c[2] * shade, 1.0]);
+            col.push([c[0] * shade, c[1] * shade, c[2] * shade, pack_foot(p.position[0] - w.x, p.position[1] - w.y)]);
         }
         idx.extend(shape.indices.iter().map(|i| first + i));
     }
@@ -492,6 +495,14 @@ fn merged_mesh(shape: &GrassShape, plants: &[&Plant], fit_to_slope: bool) -> (Me
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
     mesh.insert_indices(Indices::U32(idx));
     (mesh, lo, hi)
+}
+
+/// The way from a vertex to its plant's foot (game x, y, units), rounded to whole units and
+/// kept within ±1023, as one number: (x + 1024) × 2048 + (y + 1024), below 2²² so a 32-bit
+/// float holds it exactly (grass.wesl `foot_of` unpacks it).
+fn pack_foot(dx: f32, dy: f32) -> f32 {
+    let q = |v: f32| (v.round().clamp(-1023.0, 1023.0) + 1024.0) as u32;
+    (q(dx) * 2048 + q(dy)) as f32
 }
 
 /// Archive path of a GRAS model: `meshes\...`, lower case.
@@ -620,6 +631,14 @@ mod tests {
 
     fn plant(position: [f32; 3], normal: [f32; 3]) -> Plant {
         Plant { kind: 0, position, normal, yaw: 0.0, scale: [1.0, 2.0], shade: 1.0 }
+    }
+
+    #[test]
+    fn the_way_to_the_foot_packs_exactly() {
+        let unpack = |v: f32| ((v / 2048.0).floor() - 1024.0, v - (v / 2048.0).floor() * 2048.0 - 1024.0);
+        assert_eq!(unpack(pack_foot(-37.4, 112.6)), (-37.0, 113.0));
+        assert_eq!(unpack(pack_foot(0.0, 0.0)), (0.0, 0.0));
+        assert_eq!(unpack(pack_foot(5000.0, -5000.0)), (1023.0, -1023.0));
     }
 
     #[test]

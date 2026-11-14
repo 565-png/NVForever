@@ -70,6 +70,15 @@ const BURN_MAP: i32 = 512;
 // How dark burnt grass gets (a factor on its colour) [chosen].
 const CHARRED: f32 = 0.05;
 
+// A vertex's plant's foot (Bevy world space): the vertex colour's alpha holds the way
+// there, game x and y packed as (x + 1024) × 2048 + (y + 1024) (grass.rs `pack_foot`).
+fn foot_of(world: vec3<f32>, packed: f32) -> vec3<f32> {
+    let qx = floor(packed / 2048.0);
+    let qy = packed - qx * 2048.0;
+    // Game (x, y) is Bevy (x, -z).
+    return world + vec3<f32>(qx - 1024.0, 0.0, -(qy - 1024.0));
+}
+
 // The burn map's value at a point (Bevy world space): game (x, y) is Bevy (x, -z)
 // (nvforever world.rs `bevy_to_game`).
 fn burn_at(world: vec3<f32>) -> f32 {
@@ -107,8 +116,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
     var world = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0)).xyz;
 
-    // Where the plant stands, before the wind moves it.
-    let burn = burn_at(world);
+    // At the plant's foot, so the whole plant chars and sinks as one.
+    var foot = world;
+    @if(VERTEX_COLORS) foot = foot_of(world, vertex.color.a);
+    let burn = burn_at(foot);
     @if(VERTEX_UVS_B) world = deform(world, vertex.uv_b, grass.wind, grass.motion, globals.time, view.world_position.xyz, burn);
     @if(VERTEX_UVS_B) out.uv_b = vertex.uv_b;
 
@@ -140,7 +151,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     }
     @if(!PREPASS_PIPELINE && VERTEX_NORMALS) out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
 
-    @if(VERTEX_COLORS) out.color = vec4<f32>(vertex.color.rgb * mix(1.0, CHARRED, saturate(burn * 2.0)), vertex.color.a);
+    // Opaque: the alpha held the way to the foot.
+    @if(VERTEX_COLORS) out.color = vec4<f32>(vertex.color.rgb * mix(1.0, CHARRED, saturate(burn * 2.0)), 1.0);
     @if(VERTEX_OUTPUT_INSTANCE_INDEX) out.instance_index = vertex.instance_index;
     @if(VISIBILITY_RANGE_DITHER) out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(
         vertex.instance_index, world_from_local[3]);
