@@ -4218,7 +4218,7 @@ expect = [
 [[scenario]]
 name = "bloatfly-combat-layers"
 source = "[design, #2352] docs/spec-notes/actors.md sections 8.2-8.3: darting moves stay at the actor; creatures keep their idle on bones omitted by movement, aim, attack and special-idle clips"
-note = "[design] Reuses bloatfly-holds-distance's combat setup and record identities; combat starts at 6 s and lasts about 20 s. Frames at 10, 18 and 25 s support manual wing/body comparison. [hypothesis] Original root-driven actor displacement awaits observer check 144"
+note = "[design] Reuses bloatfly-holds-distance's combat setup and record identities; combat starts at 6 s and lasts about 20 s. Frames at 10, 18 and 25 s support manual wing/body comparison. [hypothesis] Original root-driven actor displacement awaits observer check 147"
 areas = ["combat", "creatures", "animation"]
 paths = ["engine/nvforever/src/locomotion.rs", "engine/nvf-assets/src/anim_play.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "2:call:VERGSCoyote1REF:Disable,2.1:call:VERGSCoyote2REF:Disable,2.2:call:VERGSCoyote3REF:Disable,2.3:call:VERGSCoyote4REF:Disable,2.4:call:VERGSCoyote5REF:Disable,2.5:call:VERGSCoyote6REF:Disable,3:call:0x00122CCA:PlaceAtMe:CrBloatFly:1,6:combat:0xFF000000:player", NVF_PLAY_TEST_SHOTS = "10:bloatfly_layers_10.png,18:bloatfly_layers_18.png,25:bloatfly_layers_25.png" }

@@ -503,7 +503,7 @@ pub struct Locomotion {
 /// root is excluded. [documented: issue #2352] The supplied bloatfly survey names
 /// wing tracks in `mtidle.kf` that its move, aim and attack clips omit.
 /// [hypothesis] The original keeps those bones animating from its idle; observer
-/// check 144 asks for a capture. [design] People retain their existing layering.
+/// check 147 asks for a capture. [design] People retain their existing layering.
 /// [design, #2352] Fallback priority: below ordinary clip tracks and above
 /// `anim_play`'s undriven-root identity.
 pub const UNDER_PRIORITY: i32 = i32::MIN + 1;
@@ -782,7 +782,7 @@ impl Locomotion {
 
     /// [design, #2352] The creature's idle under movement, aim, attack and special
     /// idles, after those layers are assembled: only bones none of those clips drive.
-    /// [hypothesis] Original-game layering remains to be checked (observer check 144).
+    /// [hypothesis] Original-game layering remains to be checked (observer check 147).
     fn under_layer(&mut self, player: &mut BlendPlayer) -> Option<Layer> {
         player.pose_only_mask = None;
         if !self.idle_under {
