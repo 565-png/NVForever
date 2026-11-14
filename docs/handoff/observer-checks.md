@@ -2174,3 +2174,13 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      dirt and on concrete, first and third person, and record which SOUN records play
      at each footfall (the sound log): does `FSTArmorPowerWalkL`/`R` play, instead of
      or beside the ground's step, and does anything play for the run rustle?
+     **Answered for NPCs 2026-11-14** (#2541; Blue Moon sandbox stock game, save
+     nvfairport on concrete, `IsSoundPlaying <rec> <actor>` sampled on 130 frames)
+     [observed]: Doc Mitchell walking in ArmorPowerT45d read FSTArmorPowerL 49 and R 95
+     frames beside FSTConcSolidWalkL 59 and R 95; without armour only the ground step;
+     LvlNCRHeavyTrooper (ArmorPowerNCRSalvaged, Heavy but not Power Armor) FSTArmorL/R
+     beside the ground step; FSTArmorPowerWalkL/R never; standing still nothing. So the
+     armour's footfall plays beside the ground's step, power armour's by the Power Armor
+     flag and heavy armour's by Heavy, and IsSoundPlaying sees the game's own footsteps.
+     Still open: the player (an unattended run could not walk the player), first
+     person, running, dirt, medium armour.
