@@ -11856,10 +11856,10 @@ order = [[{ re = 'GetDead on .*>> 1\.00' }, { re = 'resurrect: 0x00104C7D \(GSRi
 [[scenario]]
 name = "grab-corpse"
 source = "docs/spec-notes/grab.md §1 (quests have the player carry corpses with Grab, Z: VMS18CarlyleStClairREF into the dumpster, ProperBurialCorpseref into the grave): Ringo killed in the gas station is picked up with Z by his ragdoll and carried 6 s while the view turns 180°, past the time limit after which a moving ragdoll is held at rest counted from its start (3 s until 2026-11-11, 8 s since, engine/nvforever/src/ragdoll.rs MAX_AWAKE); it is not held at rest while carried, so it is dropped when Z comes up, away from where it lay, and comes to rest"
-note = "#1154: the player stands 80 units south of Ringo (-y), where the back room leaves the half turn free: 135-182 units in 3 runs of 2026-11-01; from the east (+x) the wall or counter stopped the swing at 41-118 units"
+note = "#1154: the player stands south of Ringo (-y), where the back room leaves the half turn free: 135-182 units in 3 runs of 2026-11-01 at 80 units; from the east (+x) the wall or counter stopped the swing at 41-118 units. 40 units since 2026-11-14: grab reaches 150 units (activate::pick::REACH); at 80 the corpse lay 138-158 units off depending on how it fell (true joint limits, #2370), out of reach in some runs, and at 60 138-146; at 40 it is 136 away in 3 runs of 3, dropped 133 units away, so neither end of a range is within 13 units"
 areas = ["grab", "physics", "ragdoll"]
 paths = ["engine/nvf-play/src/grab.rs", "crates/fnv-phys/src/grab.rs", "crates/fnv-phys/src/ragdoll.rs", "engine/nvforever/src/ragdoll.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00104C7D", NVF_PLAY_TEST_CONSOLE = "1:00104C7D.killactor;10:player.moveto 00104C7D 0 -80 0;10.5:close", NVF_PLAY_TEST_GRAB = "13:z:6:180:at=00104C7D" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00104C7D", NVF_PLAY_TEST_CONSOLE = "1:00104C7D.killactor;10:player.moveto 00104C7D 0 -40 0;10.5:close", NVF_PLAY_TEST_GRAB = "13:z:6:180:at=00104C7D" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm"]
 run_seconds = 30
 expect = [
