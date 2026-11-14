@@ -726,6 +726,10 @@ struct Args {
     /// (head_bob.rs); a switch of the settings page.
     #[arg(long, requires = "play")]
     no_head_bob: bool,
+    /// No breathing camera: the first-person view does not rise and fall with the breath
+    /// (head_bob.rs); a switch of the settings page.
+    #[arg(long, requires = "play")]
+    no_breathing_camera: bool,
     /// No movement inertia: full speed at once and an instant stop, and the first-person
     /// view drops into a crouch with the clips (nvf_play::inertia); a switch of the
     /// settings page.
@@ -1723,7 +1727,7 @@ fn main() -> AppExit {
             app.add_plugins(creator_view::CreatorViewPlugin { light_scale: args.light_scale });
             // The Vigor Tester's machine: its camera and lights, the room behind it.
             app.add_plugins(vigor_view::VigorViewPlugin);
-            app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, weapon_weight_sway: args.weapon_weight_sway, head_bob: !args.no_head_bob, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin));
+            app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, weapon_weight_sway: args.weapon_weight_sway, head_bob: !args.no_head_bob, breathing_camera: !args.no_breathing_camera, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin));
             app.insert_resource(nvf_play::aim_zoom::Scope3d { on: args.scope_3d, lens: false });
             app.insert_resource(nvf_play::inertia::MovementInertia::switched(!args.no_movement_inertia));
             app.add_plugins(decals::DecalsPlugin);

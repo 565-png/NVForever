@@ -130,7 +130,9 @@ itself turns exactly as the mouse says.
   `CalcViewModelLag` and spring-based first-person rigs: a research pass of the same
   day): the rate is smoothed (built up over 0.12 s, let go over 0.05 s), asks for a lag of
   rate × 0.12 s bent towards 6° sideways and 4° up or down by a tanh, and the arms
-  follow it on a critically damped spring reaching 95 % in 0.45 s. A fast turn builds the
+  follow it on a critically damped spring reaching 95 % in 0.45 s, and back in 0.28 s
+  dropping any outward swing (fourth playtest: "still a lot of delay … for the gun to
+  start to recover"). A fast turn builds the
   lag up gently, the arms never pass the limit, and when the view stops they start back
   at once (no waiting at the limit) and rest on the view without swinging past it; the
   weapon tilts a little into the lag. History: 0.11 s, 5° and 3.5° on an angle-driven
@@ -142,14 +144,22 @@ itself turns exactly as the mouse says.
   movement clips (the footstep keys), growing with the ground speed to a run's
   (300 units/s): 0.9 units down, 0.6 across, 1.2° of tilt. Sneaking 60 %, down the sights
   20 % (the turn lag 35 %), none in the air.
-- Movement lag: a sprung hand pushed by the body's acceleration (spring rate 10/s):
-  starting, stopping, strafing and turning while running leave the weapon a little behind
-  (a sudden change of 344 units/s would peak at 2 units; shown at most 1.2) and a steady
-  pace brings it back; it leans into a strafe (1.5° at a run).
-- Jumps and landings: the same hand pushed by the vertical acceleration (12/s): a
-  take-off dips the weapon about 1 unit, it rides about half a unit high through the
-  fall, and a landing dips it again, more the harder the landing (shown at most 2
-  units); the muzzle tips 0.6° per unit of dip.
+- Movement lag: a sprung hand pushed by the body's acceleration (spring rate 4.5/s; 10/s
+  until the fourth playtest, "the gun slides to the sides too quick"): starting,
+  stopping, strafing and turning while running leave the weapon a little behind (a
+  sudden change of 344 units/s would peak at 1.7 units; shown at most 1.2) and a steady
+  pace brings it back; behind it also drops half a unit per unit and tips the muzzle
+  1.2° per unit ("a bit of inertia to front and back movement"); it leans into a strafe
+  (1.5° at a run) on a spring settling in 0.6 s.
+- Jumps and landings: the same hand pushed by the vertical acceleration (7/s; 12/s
+  before, now softer): a take-off dips the weapon about 1.2 units, it rides about a unit
+  high through the fall, and a landing dips it again, more the harder the landing
+  (shown at most 2 units); the muzzle tips 1° per unit of dip.
+- Aiming and blocking: raising the gun (8 units, smoothed by a spring settling in 0.25 s:
+  the true iron sights' share where they run, else the aim or block clip asked for)
+  pushes a spring (8/s): the gun trails low on the way up, high on the way down, and
+  settles in place (shown at most 1.5 units). The clips are not changed; the true iron
+  sights' own time is × the inertia weight.
 - Breathing: standing still (below 20 units/s, on the ground) a figure of eight 0.18
   units wide and half as high every 4 s, fading in over 0.8 s; 35 % down the sights and
   sneaking.
@@ -184,17 +194,19 @@ on by default) [design]:
 - While the body glides with no key held, or brakes against the keys, the movement
   clips follow the way it slides (walking or running as it last moved); detection,
   power attacks and scripts still read the keys.
-- First person: the view sinks into a crouch over 0.5 s and rises over 0.55 s on a
-  quartic ease-out (its last quarter barely moving; 0.35 s / 0.4 s cubic before the
-  owner's "slow down the last bit"), instead of the clips' straight 0.2 s cross-fade: the
+- First person: the view sinks into a crouch over 1.0 s and rises over 1.1 s on a
+  quartic ease-out (its last quarter barely moving; 0.35 s / 0.4 s cubic at first, then
+  0.5 s / 0.55 s after "slow down the last bit", then doubled: "make the 2x slower crouch
+  and stand up speed the default"), instead of the clips' straight 0.2 s cross-fade: the
   arms rig is moved by the difference (`engine/nvforever/src/crouch_eye.rs`), so settled
   in either stance nothing changes.
-- **Inertia weight** (a dropdown, key `inertia-weight`: 0.5 - 100% faster, 1 - normal
-  speed, 1.5 - 1.5x slower, 2 - 2x slower; 1 by default): every time above, the weapon's
+- **Inertia weight** (a dropdown, key `inertia-weight`: 0.5, 1, 1.5, 2; 1 by default; the
+  last row of the section): every time above, the weapon's
   springs (§1.4a), the head bob's (§1.4a.1) and the crouch's times, times this [design:
   the owner, 2026-11-13].
-- The settings page lists these under Gameplay › Inertia: Movement inertia, Inertia
-  weight, Weapon sway, Weapon weight in the sway, Head bob (settings-page.md).
+- The settings page lists these under Gameplay › Advanced Inertia: Movement inertia,
+  Weapon sway, Weapon weight in the sway, Head bob, Breathing camera, and Inertia weight
+  last (settings-page.md).
 
 ### 1.4a.1 The camera's bob: first person yes, third person no (owner, 2026-11-07)
 
@@ -205,12 +217,14 @@ bobbed; the third-person camera's pivot was the walking body's head bone, which 
 and falls with each stride. Now (`engine/nvforever/src/head_bob.rs`) [design, constants
 tuned by eye]:
 
-- First person: the whole arms rig (camera node, arms and weapon together) dips 1.6
-  units at each footfall and swings 0.5 across once a stride, at the movement clip's
+- First person: the whole arms rig (camera node, arms and weapon together) dips 3
+  units at each footfall and swings 1 across once a stride (1.6 and 0.5 until the
+  owner's fourth playtest, "there is no headbob even with it on": the log showed a
+  1.5-unit dip, about 2 cm), at the movement clip's
   phase, growing with the ground speed to a run's; sneaking 60 %, down the sights 25 %,
   none in the air, under the Pip-Boy or while an idle drives the view. The arms' own bob
   (§1.4a) comes on top. A switch registered in the settings page's Display group and
-  shown under Gameplay › Inertia (Gameplay › Camera until 2026-11-13; `head-bob`,
+  shown under Gameplay › Advanced Inertia (Gameplay › Camera until 2026-11-13; `head-bob`,
   `--no-head-bob`; settings-page.md), on by default.
 - Head inertia (owner's playtest of 2026-11-13: "we should add inertia to it"): the
   stride's bob passes through a critically damped spring settling in 0.12 s, so it
@@ -220,6 +234,12 @@ tuned by eye]:
   standing jump's landing, more for a harder one, shown at most 3). Only the camera's
   place moves, never its rotation; halved down the sights; the springs' times × the
   inertia weight. The exit summary gives the deepest take-off or landing dip.
+- Breathing camera (owner, 2026-11-13: "camera moves on its own to simulate breathing -
+  smooth, slow and only a little"; its own switch, `breathing-camera`,
+  `--no-breathing-camera`, on by default): the whole arms rig rises and falls 0.5 units
+  (about 7 mm) once every 4.5 s on a sine, with 0.15 units forward and back a quarter
+  breath behind; all of it standing still, 40 % moving, half down the sights, none in the
+  air or under the Pip-Boy, fading over a second. Position only.
 - Third person: the pivot's height above the feet is the head's through two
   first-order lags of 0.25 s: a run's stride bob is cut to about an eighth, a crouch
   still lowers the camera (90 % in a second); a change over 40 units in a frame goes

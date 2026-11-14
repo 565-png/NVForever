@@ -791,6 +791,8 @@ struct Motion {
     sights_share: f32,
     /// The first-person view's eased crouch (`crouch_eye.rs`).
     crouch: crate::crouch_eye::CrouchEye,
+    /// The true iron sights could run last frame (the sway's raise follows their share).
+    sights_ran: bool,
 }
 
 impl Motion {
@@ -842,6 +844,7 @@ impl Default for Motion {
             lower_told: false,
             sights_share: 0.0,
             crouch: crate::crouch_eye::CrouchEye::default(),
+            sights_ran: false,
         }
     }
 }
@@ -859,6 +862,9 @@ pub struct PlayerBody {
     /// Bob the first-person camera while walking (`head_bob.rs`; off with
     /// `--no-head-bob`, the settings page).
     pub head_bob: bool,
+    /// The first-person camera rises and falls with the breath (`head_bob.rs`; off with
+    /// `--no-breathing-camera`, the settings page).
+    pub breathing_camera: bool,
     /// Lower the first-person weapon against a wall or a friendly actor close ahead
     /// (`weapon_lower.rs`; off with `--no-weapon-lower`, the settings page).
     pub weapon_lower: bool,
@@ -988,6 +994,8 @@ pub struct PlayerBodyPlugin {
     pub weapon_weight_sway: bool,
     /// Not `--no-head-bob`.
     pub head_bob: bool,
+    /// Not `--no-breathing-camera`.
+    pub breathing_camera: bool,
     /// Not `--no-weapon-lower`.
     pub weapon_lower: bool,
     /// Not `--no-true-iron-sights`.
@@ -997,7 +1005,7 @@ pub struct PlayerBodyPlugin {
 impl Plugin for PlayerBodyPlugin {
     fn build(&self, app: &mut App) {
         // Furniture (`furniture.rs`) says what the body plays before it is posed.
-        app.insert_resource(PlayerBody { first_person_body: self.first_person_body, weapon_sway: self.weapon_sway, weapon_weight_sway: self.weapon_weight_sway, head_bob: self.head_bob, weapon_lower: self.weapon_lower, true_iron_sights: self.true_iron_sights, ..default() })
+        app.insert_resource(PlayerBody { first_person_body: self.first_person_body, weapon_sway: self.weapon_sway, weapon_weight_sway: self.weapon_weight_sway, head_bob: self.head_bob, breathing_camera: self.breathing_camera, weapon_lower: self.weapon_lower, true_iron_sights: self.true_iron_sights, ..default() })
             .init_resource::<crate::furniture::BodyOverride>()
             .init_resource::<crate::furniture::PlayerUse>()
             .init_resource::<crate::weapon_lower::Ahead>()
@@ -1134,7 +1142,7 @@ fn report(mut exit: MessageReader<AppExit>, body: Res<PlayerBody>) {
         );
         let (head, pivot) = m.head.pivot_rms();
         info!("player body summary: head bob {}, deepest first-person dip {:.2} units; third-person pivot over {} frames moved {pivot:.3} units a frame (rms) against the head's {head:.3}, pivot/head {:.2}", if body.head_bob { "on" } else { "off" }, m.head.peak_dip, m.head.frames, pivot / head.max(1e-3));
-        info!("player body summary: head inertia, deepest take-off or landing dip {:.2} units", m.head.peak_land.max(0.0) + 0.0);
+        info!("player body summary: head inertia, deepest take-off or landing dip {:.2} units; breathing camera {}, highest rise {:.2} units", m.head.peak_land.max(0.0) + 0.0, if body.breathing_camera { "on" } else { "off" }, m.head.peak_breath.max(0.0) + 0.0);
         info!("player body summary: weapon lowering {}, lowered {} times, most {:.2}", if body.weapon_lower { "on" } else { "off" }, m.lower.times, m.lower.peak);
     }
 }
@@ -2730,6 +2738,9 @@ fn drive_body(
             airborne: m.falling,
             heft: crate::view_sway::heft(weight),
             slowness: inertia.as_deref().map_or(1.0, |i| i.weight),
+            // How far the gun is up to aim or block: the true iron sights' own share
+            // while they ran last frame, else the aim or block clip asked for.
+            raised: if m.sights_ran { crate::iron_sights::ease(m.sights_share) } else { f32::from(u8::from(control.aiming && m.hands.in_hand)) },
             on: state.weapon_sway && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         })
     });
@@ -2747,6 +2758,7 @@ fn drive_body(
             velocity: m.velocity,
             vertical,
             slowness: inertia.as_deref().map_or(1.0, |i| i.weight),
+            breathing: state.breathing_camera && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
             on: state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         });
         at = [at[0] + o.x, at[1] + o.y, at[2] + o.z];
@@ -2802,7 +2814,10 @@ fn drive_body(
         f.use_lens = lens_aim;
     }
     let sights_can = !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none() && combat.as_deref().is_some_and(|c| c.sight_fov().is_some()) && (lens_aim || (state.true_iron_sights && body.first.as_ref().is_some_and(|f| f.sighting.is_some())));
-    m.sights_share = if sights_can { crate::iron_sights::step(m.sights_share, zoom.as_deref().is_some_and(|z| z.aimed), dt) } else { 0.0 };
+    // The gun's way up to the eye takes the inertia weight's share of its time too.
+    let sights_dt = dt / inertia.as_deref().map_or(1.0, |i| i.weight).max(0.1);
+    m.sights_share = if sights_can { crate::iron_sights::step(m.sights_share, zoom.as_deref().is_some_and(|z| z.aimed), sights_dt) } else { 0.0 };
+    m.sights_ran = sights_can;
     let sights_in = Some(m.sights_share).filter(|s| *s > 0.0);
     // The view's direction in the arms rig's own frame (turned by the heading only); a 3D
     // scope's sway turns the gun off it (`scope_view.rs`).

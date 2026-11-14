@@ -43,9 +43,22 @@ const MAX_LAG: f32 = 1.5;
 const LAND_OMEGA: f32 = 10.0;
 pub const LAND_PEAK_PER_SPEED: f32 = 0.004;
 const MAX_LAND: f32 = 3.0;
-/// The full bob: the dip at each footfall and the sideways swing, units.
-pub const DIP: f32 = 1.6;
-pub const SWING: f32 = 0.5;
+/// The full bob: the dip at each footfall and the sideways swing, units (1.6 and 0.5
+/// until the owner's fourth playtest of 2026-11-13: "there is no headbob even with it on -
+/// add a slight headbob, smooth"; the log showed a 1.5-unit dip, about 2 cm).
+pub const DIP: f32 = 3.0;
+pub const SWING: f32 = 1.0;
+/// The breathing camera [design: the owner, 2026-11-13, "camera moves on its own to
+/// simulate breathing - smooth, slow and only a little"]: a rise and fall of this much
+/// (units, about 7 mm) once in this long (seconds), with a twentieth of a unit forward and
+/// back, all of it standing still and this share while moving, fading over this long.
+pub const BREATH_RISE: f32 = 0.5;
+pub const BREATH_SECONDS: f32 = 4.5;
+const BREATH_AHEAD: f32 = 0.15;
+const BREATH_MOVING: f32 = 0.4;
+const BREATH_FADE_SECONDS: f32 = 1.0;
+/// Below this ground speed (units/s) the body counts as still for the breath.
+const STILL_SPEED: f32 = 20.0;
 /// Share of the bob down the sights and sneaking.
 const SIGHTS: f32 = 0.25;
 const SNEAK: f32 = 0.6;
@@ -78,6 +91,9 @@ pub struct BobInput {
     pub slowness: f32,
     /// The bob shows at all (first person, the switch on, nothing else driving the view).
     pub on: bool,
+    /// The breathing camera shows (first person, its own switch, nothing else driving
+    /// the view).
+    pub breathing: bool,
 }
 
 /// The bob's state across frames.
@@ -94,6 +110,10 @@ pub struct HeadBob {
     last_vertical: f32,
     /// The deepest take-off or landing dip shown since the start (for the exit summary).
     pub peak_land: f32,
+    /// The breath: where in its cycle (0–1), how much shows, and the most rise shown.
+    breath_phase: f32,
+    breath: f32,
+    pub peak_breath: f32,
     /// The third-person pivot's two lags (head height above the feet).
     pivot: Option<(f32, f32)>,
     /// The deepest dip shown since the start (for the exit summary).
@@ -142,10 +162,22 @@ impl HeadBob {
         let lag = if lag.length() > 1e-6 { lag * (soft(lag.length(), MAX_LAG) / lag.length()) * calm } else { Vec2::ZERO };
         let land = soft(self.land.value, MAX_LAND) * calm;
         self.peak_land = self.peak_land.max(-land);
+        // Breathing: a slow, small rise and fall, a little forward with it.
+        let breath_target = if !i.breathing || i.airborne {
+            0.0
+        } else {
+            (if i.speed < STILL_SPEED { 1.0 } else { BREATH_MOVING }) * if i.sights { 0.5 } else { 1.0 }
+        };
+        self.breath += (breath_target - self.breath) * follow(BREATH_FADE_SECONDS);
+        self.breath_phase = (self.breath_phase + dt / BREATH_SECONDS).fract();
+        let b = std::f32::consts::TAU * self.breath_phase;
+        let rise = BREATH_RISE * b.sin() * self.breath;
+        let lean = BREATH_AHEAD * (b - std::f32::consts::FRAC_PI_2).sin() * self.breath;
+        self.peak_breath = self.peak_breath.max(rise);
         // The view's right and ahead: heading clockwise from +y.
         let right = Vec3::new(i.heading.cos(), -i.heading.sin(), 0.0);
         let ahead = Vec3::new(i.heading.sin(), i.heading.cos(), 0.0);
-        right * (swing + lag.x) + ahead * lag.y + Vec3::Z * (dip + land)
+        right * (swing + lag.x) + ahead * (lag.y + lean) + Vec3::Z * (dip + land + rise)
     }
 
     /// The third-person pivot's height above the feet this frame, from the head's.
@@ -201,7 +233,26 @@ mod tests {
     const DT: f32 = 1.0 / 60.0;
 
     fn input(speed: f32, phase: f32) -> BobInput {
-        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, velocity: Vec2::ZERO, vertical: 0.0, slowness: 1.0, on: true }
+        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, velocity: Vec2::ZERO, vertical: 0.0, slowness: 1.0, on: true, breathing: false }
+    }
+
+    #[test]
+    fn the_breathing_camera_rises_and_falls_slowly_and_only_a_little() {
+        let mut b = HeadBob::default();
+        let zs: Vec<f32> = (0..(12.0 / DT) as usize).map(|_| b.first_person(BobInput { breathing: true, ..input(0.0, 0.0) }).z).collect();
+        // After it has faded in: up and down by about its rise, once per breath.
+        let late = &zs[(4.0 / DT) as usize..];
+        let (lo, hi) = late.iter().fold((f32::MAX, f32::MIN), |(l, h), z| (l.min(*z), h.max(*z)));
+        assert!(hi > 0.8 * BREATH_RISE && hi <= BREATH_RISE + 1e-4 && lo < -0.8 * BREATH_RISE, "{lo} {hi}");
+        let tops = late.windows(3).filter(|w| w[1] > w[0] && w[1] >= w[2]).count();
+        assert_eq!(tops, ((late.len() as f32 * DT) / BREATH_SECONDS).round() as usize, "one rise a breath");
+        // Smooth: no frame moves it more than a sliver.
+        assert!(zs.windows(2).all(|w| (w[1] - w[0]).abs() < 0.02));
+        // Off: nothing.
+        let mut b = HeadBob::default();
+        for _ in 0..600 {
+            assert!(b.first_person(input(0.0, 0.0)).length() < 1e-6);
+        }
     }
 
     #[test]

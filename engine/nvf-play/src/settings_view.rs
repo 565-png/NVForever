@@ -712,7 +712,7 @@ mod tests {
         let l = resolve_layout(&list);
         let vis = Visibility::default();
         let g = project(&l, &list, SettingsScope::Tab("Gameplay"), vis, &NONE);
-        assert_eq!(names(&list, &g), ["[Game]", "difficulty", "hardcore", "[Saving]", "autosave-travel", "autosave-wait", "[Dialogue]", "menu-pause", "[Inertia]", "head-bob"]);
+        assert_eq!(names(&list, &g), ["[Game]", "difficulty", "hardcore", "[Saving]", "autosave-travel", "autosave-wait", "[Dialogue]", "menu-pause", "[Advanced Inertia]", "head-bob"]);
         // The colour's sliders only for Custom, the HUD's alone.
         let d = |colours| names(&list, &project(&l, &list, SettingsScope::Tab("Display"), Visibility { colours, ..vis }, &NONE));
         assert_eq!(d([false, false]), ["[Interface]", "hud-colour"]);
@@ -758,7 +758,7 @@ mod tests {
         assert_eq!(to("autosave-wait", 1), Some(("menu-pause".into(), Some("Dialogue"))));
         assert_eq!(to("menu-pause", -1), Some(("autosave-travel".into(), Some("Saving"))));
         assert_eq!(to("head-bob", 1), Some(("difficulty".into(), Some("Game"))), "round the end");
-        assert_eq!(to("difficulty", -1), Some(("head-bob".into(), Some("Inertia"))));
+        assert_eq!(to("difficulty", -1), Some(("head-bob".into(), Some("Advanced Inertia"))));
         // A tab without headings is one section: its first row; an empty one, nothing.
         let debug = project(&l, &list, SettingsScope::Tab("Debug"), Visibility::default(), &NONE);
         assert_eq!(step_heading(&debug, Some(k("god-mode")), 1), Some((k("god-mode"), None)));

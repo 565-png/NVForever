@@ -224,6 +224,18 @@ pub fn register(app: &mut App) {
         add_setting(
             app,
             Setting {
+                key: "breathing-camera",
+                group: GROUP_PICTURE,
+                label: "Breathing camera",
+                note: "On: in first person the view rises and falls slowly and slightly with your breath, most when you stand still. Off: it stays still. (--no-breathing-camera)",
+                get: |w| w.resource::<PlayerBody>().breathing_camera,
+                set: |w, on| w.resource_mut::<PlayerBody>().breathing_camera = on,
+                slider: None,
+            },
+        );
+        add_setting(
+            app,
+            Setting {
                 key: "weapon-lower",
                 group: GROUP_PICTURE,
                 label: "Lower weapon near walls",

@@ -40,7 +40,7 @@ pub const START_SECONDS: f32 = 0.5;
 pub const STOP_SECONDS: f32 = 0.25;
 /// The inertia weights the settings page offers, by name: how many times the times
 /// above (and the weapon's and the crouch's) are taken [design: the owner, 2026-11-13].
-pub const WEIGHTS: [(f32, &str); 4] = [(0.5, "0.5 - 100% faster"), (1.0, "1 - normal speed"), (1.5, "1.5 - 1.5x slower"), (2.0, "2 - 2x slower")];
+pub const WEIGHTS: [(f32, &str); 4] = [(0.5, "0.5"), (1.0, "1"), (1.5, "1.5"), (2.0, "2")];
 /// Ground speed below which a glide no longer plays the movement clips, units/s.
 pub const GLIDE_CLIP_SPEED: f32 = 30.0;
 /// A move in one frame this far across the ground (units) is a placement, not motion:
@@ -59,7 +59,7 @@ pub fn weight_by_name(s: &str) -> Option<f32> {
 
 /// The name the page shows for an inertia weight (the nearest offered).
 pub fn weight_name(weight: f32) -> &'static str {
-    WEIGHTS.iter().min_by(|a, b| (a.0 - weight).abs().total_cmp(&(b.0 - weight).abs())).map_or("1 - normal speed", |(_, n)| n)
+    WEIGHTS.iter().min_by(|a, b| (a.0 - weight).abs().total_cmp(&(b.0 - weight).abs())).map_or("1", |(_, n)| n)
 }
 
 /// What a start or a stop took, for the log (a smoke check).
@@ -308,10 +308,10 @@ mod tests {
             assert!((to_95(w) - w * one).abs() < 0.01, "{w}: {}", to_95(w));
         }
         assert_eq!(weight_by_name("1.5"), Some(1.5));
-        assert_eq!(weight_by_name("2 - 2x slower"), Some(2.0));
+        assert_eq!(weight_by_name("2"), Some(2.0));
         assert_eq!(weight_by_name("3"), None);
-        assert_eq!(weight_name(0.5), "0.5 - 100% faster");
-        assert_eq!(weight_name(1.0), "1 - normal speed");
+        assert_eq!(weight_name(0.5), "0.5");
+        assert_eq!(weight_name(1.0), "1");
     }
 
     #[test]

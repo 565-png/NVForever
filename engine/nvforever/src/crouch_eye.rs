@@ -22,10 +22,11 @@ use nvf_play::ease::EaseOut;
 /// standing, 78 crouched) [observed: animation.md §9.5].
 pub const SNEAK_EYE_DROP: f32 = 40.0;
 /// Seconds to sink all the way into a crouch, and to rise from one, at inertia weight 1
-/// (0.35 s and 0.4 s on a cubic curve before the owner's playtest of 2026-11-13: "slow
-/// down the last bit of crouching and standing up").
-pub const DOWN_SECONDS: f32 = 0.5;
-pub const UP_SECONDS: f32 = 0.55;
+/// (0.35 s and 0.4 s on a cubic curve at first; 0.5 s and 0.55 s quartic after "slow down
+/// the last bit of crouching and standing up"; doubled after the owner's fourth playtest
+/// of 2026-11-13: "make the 2x slower crouch and stand up speed the default").
+pub const DOWN_SECONDS: f32 = 1.0;
+pub const UP_SECONDS: f32 = 1.1;
 
 /// The crouch's state across frames.
 #[derive(Debug, Clone, Default)]
@@ -109,7 +110,7 @@ mod tests {
         assert_eq!(c.update(false, DEFAULT_FADE, true, 1.0, 1.0, DT), 0.0);
         let mut c = CrouchEye::default();
         assert_eq!(c.update(true, DEFAULT_FADE, true, 1.0, 1.0, DT), 0.0, "a crouched start stays crouched");
-        run(&mut c, false, 60);
+        run(&mut c, false, 90);
         assert!(c.update(false, DEFAULT_FADE, true, 1.0, 1.0, DT).abs() < 1e-5);
     }
 
@@ -117,12 +118,12 @@ mod tests {
     fn the_view_sinks_fast_at_first_and_settles_softly_in_its_time() {
         let mut c = CrouchEye::default();
         run(&mut c, false, 10);
-        let drop = run(&mut c, true, 60);
+        let drop = run(&mut c, true, 90);
         let steps: Vec<f32> = std::iter::once(drop[0]).chain(drop.windows(2).map(|w| w[1] - w[0])).collect();
         assert!(steps.iter().all(|s| *s >= -1e-4), "only down: {drop:?}");
         assert!(steps.windows(2).all(|w| w[1] <= w[0] + 1e-3), "never faster than before: {steps:?}");
-        // Faster than the clips' straight 0.2 s at first, and a soft arrival.
-        assert!(drop[2] > SNEAK_EYE_DROP * 3.0 / 12.0, "{drop:?}");
+        // Faster at first than a straight line over the same time, and a soft arrival.
+        assert!(drop[2] > 3.0 * SNEAK_EYE_DROP * DT / DOWN_SECONDS, "{drop:?}");
         let done = (DOWN_SECONDS / DT).round() as usize;
         assert!((drop[done] - SNEAK_EYE_DROP).abs() < 0.05, "down in time: {}", drop[done]);
         assert!(drop[done - 3] > SNEAK_EYE_DROP - 0.5, "softly: {}", drop[done - 3]);
@@ -132,8 +133,8 @@ mod tests {
     #[test]
     fn standing_up_takes_longer_and_a_change_of_mind_turns_back_smoothly() {
         let mut c = CrouchEye::default();
-        run(&mut c, true, 60);
-        let up = run(&mut c, false, 60);
+        run(&mut c, true, 90);
+        let up = run(&mut c, false, 90);
         let done = (UP_SECONDS / DT).round() as usize;
         assert!(up[done - 3] > 0.0 && up[done].abs() < 0.05, "{up:?}");
         // Halfway down, back up: no jump in height.

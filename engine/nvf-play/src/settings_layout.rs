@@ -75,8 +75,9 @@ pub const SECTIONS: &[Section] = &[
     section("Gameplay", Some("Reports"), &["send-reports", "reports-delete"]),
     section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-lower", "field-of-view"]),
     // How heavy the body and the weapon feel [design: the owner, 2026-11-13: "move the
-    // player inertia under its own category and move there all the associated settings"].
-    section("Gameplay", Some("Inertia"), &["movement-inertia", "inertia-weight", "weapon-sway", "weapon-weight-sway", "head-bob"]),
+    // player inertia under its own category and move there all the associated settings";
+    // its name and the weight's place below the switches, the fourth playtest].
+    section("Gameplay", Some("Advanced Inertia"), &["movement-inertia", "weapon-sway", "weapon-weight-sway", "head-bob", "breathing-camera", "inertia-weight"]),
     section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "ui-scale"]),
     section(
         "Display",
@@ -311,8 +312,9 @@ mod tests {
     /// quality and enhanced rows, #2014's counter rows, the two VATS rows and #2198's Upscaler
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
     /// FSR library row, #2242's upscaling counter row and #2317's Generated frames row, and the
-    /// movement inertia, inertia weight and weapon weight rows), by the group it registers with.
-    const KNOWN: [(&str, &str); 112] = [
+    /// movement inertia, inertia weight, weapon weight and breathing camera rows), by the group
+    /// it registers with.
+    const KNOWN: [(&str, &str); 113] = [
         ("detached-camera", "Gameplay"),
         ("movement-inertia", "Gameplay"),
         ("inertia-weight", "Gameplay"),
@@ -364,6 +366,7 @@ mod tests {
         ("weapon-sway", "Display"),
         ("weapon-weight-sway", "Display"),
         ("head-bob", "Display"),
+        ("breathing-camera", "Display"),
         ("weapon-lower", "Display"),
         ("sun-shadows", "Display"),
         ("grass", "Display"),
@@ -459,7 +462,7 @@ mod tests {
         assert!(keys(&list, &l, "Tweaks").is_empty(), "an empty tab is still a tab");
         let at = |k: &str| l.placement_of(list.iter().position(|s| s.key == k).unwrap()).unwrap().path();
         assert_eq!(at("menu-pause"), "Gameplay > Dialogue");
-        assert_eq!(at("head-bob"), "Gameplay > Inertia");
+        assert_eq!(at("head-bob"), "Gameplay > Advanced Inertia");
         assert_eq!(at("hud-red"), "Display > Interface");
         assert_eq!(at("sky-clock"), "Graphics > World");
         assert_eq!(at("quality"), "Graphics > Quality");
@@ -476,7 +479,7 @@ mod tests {
         // No lip sync, no player body; no head tracking, foot IK or sky clock at all.
         let list = registry(&[("difficulty", "Gameplay"), ("menu-pause", "Gameplay"), ("head-bob", "Display"), ("god-mode", "Debug")]);
         let l = resolve_layout(&list);
-        assert_eq!(keys(&list, &l, "Gameplay"), ["[Game]", "difficulty", "[Dialogue]", "menu-pause", "[Inertia]", "head-bob"]);
+        assert_eq!(keys(&list, &l, "Gameplay"), ["[Game]", "difficulty", "[Dialogue]", "menu-pause", "[Advanced Inertia]", "head-bob"]);
         assert!(keys(&list, &l, "Graphics").is_empty());
         // A hidden row hides its heading when it is the section's only one, and keeps its place.
         let hidden = list.iter().position(|s| s.key == "menu-pause").unwrap();
