@@ -676,7 +676,7 @@ tracks that are not transforms) on `Fallout - Meshes.bsa` and `Update.bsa`.
     applied to NPC weapon parts. A state change logs `npc weapon part: <actor> <node>
     hidden/shown` once per model target, independent of the number of shapes below it.
     Original-game parity of the persistent state and reset rule is [hypothesis];
-    observer check 141 covers it. Synthetic regressions are in `weapons.rs` and
+    observer check 142 covers it. Synthetic regressions are in `weapons.rs` and
     `attack_anims.rs`, with the game smoke `npc-launcher-round`.
 
 ### 9.8 The moving parts of a weapon [observed unless tagged]
