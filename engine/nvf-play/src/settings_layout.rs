@@ -73,7 +73,7 @@ pub const SECTIONS: &[Section] = &[
     section("Gameplay", Some("Saving"), &["autosave-travel", "autosave-fast-travel", "autosave-wait", "autosave-sleep", "autosave-scripts"]),
     section("Gameplay", Some("Dialogue"), &["menu-pause", "dialogue-goodbye-hint", "dialogue-look", "dialogue-recentre", "dialogue-zoom", "lip-sync"]),
     section("Gameplay", Some("Reports"), &["send-reports", "reports-delete"]),
-    section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-lower", "field-of-view"]),
+    section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-lower", "field-of-view", "viewmodel-field-of-view"]),
     // How heavy the body and the weapon feel [design: the owner, 2026-11-13: "move the
     // player inertia under its own category and move there all the associated settings";
     // its name and the weight's place below the switches, the fourth playtest].
@@ -311,10 +311,10 @@ mod tests {
     /// Every row the registry can hold today (upstream main 9af0a4552 and f4015fae8, with #1966's
     /// quality and enhanced rows, #2014's counter rows, the two VATS rows and #2198's Upscaler
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
-    /// FSR library row, #2242's upscaling counter row and #2317's Generated frames row, and the
-    /// movement inertia, inertia weight, weapon weight and breathing camera rows), by the group
-    /// it registers with.
-    const KNOWN: [(&str, &str); 113] = [
+    /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
+    /// field of view row, and the movement inertia, inertia weight, weapon weight and breathing
+    /// camera rows), by the group it registers with.
+    const KNOWN: [(&str, &str); 114] = [
         ("detached-camera", "Gameplay"),
         ("movement-inertia", "Gameplay"),
         ("inertia-weight", "Gameplay"),
@@ -373,6 +373,7 @@ mod tests {
         ("distant-lod", "Display"),
         ("grade", "Display"),
         ("field-of-view", "Display"),
+        ("viewmodel-field-of-view", "Display"),
         ("ui-scale", "Display"),
         ("fps-counter", "Display"),
         ("fps-counter-fps", "Display"),

@@ -187,6 +187,19 @@ pub const MOST_HEFT: f32 = 1.5;
 /// `e`, for a spring's peak: a sudden change `Δ` of what drives it peaks at `Δ·k/(ω e)`.
 const E: f32 = std::f32::consts::E;
 
+/// The pose `p` made `share` as large across the view (x and z, and its turn), keeping
+/// its depth: the arms are drawn `k` times as big across the view for the viewmodel field
+/// of view (`player_body::place_lens`), which would make every sway, recoil and dip `k`
+/// times as big on the screen too. The sway is tuned at the original's 55°; `share` (the
+/// tuned field of view's `k` over the chosen one's) keeps it the size it was tuned to at
+/// any viewmodel field of view [design: the viewmodel field of view slider, 2026-11-14].
+pub fn rescale(p: SwayPose, share: f32) -> SwayPose {
+    if (share - 1.0).abs() < 1e-6 {
+        return p;
+    }
+    SwayPose { rotation: Quat::from_scaled_axis(p.rotation.to_scaled_axis() * share), offset: Vec3::new(p.offset.x * share, p.offset.y, p.offset.z * share) }
+}
+
 /// How much slower and larger a weapon of `weight` pounds sways: 1 up to
 /// [`LIGHT_WEAPON`], [`MOST_HEFT`] from [`HEAVY_WEAPON`], smoothly between.
 pub fn heft(weight: f32) -> f32 {
@@ -822,6 +835,16 @@ mod tests {
             low = low.min(s.update(SwayInput { drawn: 1.0, ..input(0.0, Vec2::ZERO, 0.0) }).offset.z);
         }
         assert!(low < -0.2, "trails low as it comes up: {low}");
+    }
+
+    #[test]
+    fn a_rescaled_pose_keeps_its_depth_and_scales_across_and_its_turn() {
+        let p = SwayPose { rotation: Quat::from_rotation_z(0.1) * Quat::from_rotation_x(0.04), offset: Vec3::new(1.0, -2.0, 0.5) };
+        assert_eq!(rescale(p, 1.0), p);
+        let half = rescale(p, 0.5);
+        assert_eq!(half.offset, Vec3::new(0.5, -2.0, 0.25));
+        assert!((half.rotation.to_scaled_axis() - p.rotation.to_scaled_axis() * 0.5).length() < 1e-5);
+        assert_eq!(rescale(SwayPose::NONE, 0.5), SwayPose::NONE);
     }
 
     #[test]

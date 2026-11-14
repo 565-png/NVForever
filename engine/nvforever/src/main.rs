@@ -43,7 +43,6 @@ mod actors;
 mod attack_anims;
 mod authored_pose;
 mod cell_buffer;
-mod clutter_pose;
 mod cell_resets;
 mod alert;
 mod anim_sounds;
@@ -140,6 +139,7 @@ mod residents;
 mod resurrect;
 mod appearance;
 mod script_look;
+mod script_sequences;
 mod ripples;
 mod settings;
 mod iron_sights;
@@ -410,6 +410,12 @@ struct Args {
     /// horizontal) [hypothesis; docs/spec-notes/camera.md].
     #[arg(long, default_value_t = 75.0)]
     fov: f32,
+    /// The field of view the first-person arms and weapon are drawn with, degrees as --fov
+    /// counts them (fDefault1stPersonFOV, default 55; `player_body::FIRST_PERSON_FOV`):
+    /// smaller draws them bigger and closer, larger smaller and further off. The world's
+    /// view stays as --fov sets it.
+    #[arg(long, default_value_t = player_body::FIRST_PERSON_FOV)]
+    viewmodel_fov: f32,
     /// Added to the z of --pos (e.g. the eye height above a captured player position).
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
     eye_height: f32,
