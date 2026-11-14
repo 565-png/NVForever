@@ -56,6 +56,12 @@ pub mod combat;
 pub mod combat_group;
 pub mod combat_lines;
 pub mod combat_style;
+mod combat_style_session;
+#[cfg(test)]
+mod combat_style_session_tests;
+#[cfg(test)]
+#[path = "../tests/common/mod.rs"]
+mod common;
 pub mod companion_wheel;
 pub mod coop;
 pub mod cond;
@@ -90,6 +96,8 @@ mod handler_diagnostics_tests;
 pub mod nvse;
 pub mod nvse_ttw;
 pub mod nvse_unlisted;
+pub mod nvse_unlisted2;
+pub mod nvse_json;
 pub mod delayed;
 pub mod nvse_refs;
 pub mod nvse_misc;

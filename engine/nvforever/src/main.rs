@@ -409,6 +409,12 @@ struct Args {
     /// horizontal) [hypothesis; docs/spec-notes/camera.md].
     #[arg(long, default_value_t = 75.0)]
     fov: f32,
+    /// The field of view the first-person arms and weapon are drawn with, degrees as --fov
+    /// counts them (fDefault1stPersonFOV, default 55; `player_body::FIRST_PERSON_FOV`):
+    /// smaller draws them bigger and closer, larger smaller and further off. The world's
+    /// view stays as --fov sets it.
+    #[arg(long, default_value_t = player_body::FIRST_PERSON_FOV)]
+    viewmodel_fov: f32,
     /// Added to the z of --pos (e.g. the eye height above a captured player position).
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
     eye_height: f32,
@@ -1806,6 +1812,7 @@ fn main() -> AppExit {
         app.init_resource::<anim_objects::AnimObjects>()
             .add_systems(Startup, anim_objects::read)
             .add_systems(Update, anim_objects::hold.after(idles::drive))
+            .add_systems(Update, idles::play_npc_sequences.after(idles::drive))
             .add_systems(Last, anim_objects::report);
     }
     app.init_resource::<idles::PlayerIdles>();

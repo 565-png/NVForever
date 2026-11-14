@@ -573,6 +573,9 @@ pub struct FormChanges {
     /// SetEssential on actor bases.
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub essential: BTreeMap<FormId, bool>,
+    /// SetClass: actor base → its class in place of the record's (`Game::traits_class`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub classes: BTreeMap<FormId, FormId>,
     /// SetActorFullName: base → the message whose title is the new name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub names: BTreeMap<FormId, FormId>,
@@ -1314,6 +1317,8 @@ pub struct Game<'a> {
     pub(crate) nx: crate::nvse_nx::NxVars,
     /// TempCloneForm's clones and their originals (`crate::nvse_data`).
     pub(crate) clones: std::collections::HashMap<FormId, FormId>,
+    /// Effective CSTY edits and copy-time raw clone values; session only.
+    pub(crate) combat_style_edits: crate::combat_style_session::CombatStyleEdits,
     pub(crate) clone_seq: u32,
     /// Lines for the console: what scripts print (PrintC, Print …) and script errors;
     /// the engine's console takes them each frame.
@@ -1656,6 +1661,12 @@ pub struct Game<'a> {
     /// Actors whose race or sex changed since the engine last took them
     /// ([`Game::take_appearance_changes`], `crate::appearance`). Not saved.
     pub appearance_changes: Vec<crate::appearance::AppearanceChange>,
+    /// ShowOff's BaseCopyFaceGenFrom: an NPC base whose look comes from another for the
+    /// session (`crate::appearance`). Not saved [documented: CopyFaceGenFrom, other NPCs'
+    /// changes "will not be saved"].
+    pub face_from_base: std::collections::BTreeMap<FormId, FormId>,
+    /// Inside [`Game::came_through_start_menu`]: MenuMode blocks for any menu run too.
+    start_frames: bool,
     /// The perks' choice list open for an activation (`crate::activate_choices`). Not
     /// saved.
     pub activate_menu: Option<crate::activate_choices::ActivateMenu>,
@@ -2353,6 +2364,7 @@ impl<'a> Game<'a> {
             compiled_paths: std::collections::HashMap::new(),
             compiled_origins: Default::default(),
             console_sources: Default::default(),
+            combat_style_edits: Default::default(),
             sr: Default::default(),
             lambda_ids: Default::default(),
             handlers: Vec::new(),
@@ -2494,6 +2506,8 @@ impl<'a> Game<'a> {
             level_news: Vec::new(),
             resurrections: Vec::new(),
             appearance_changes: Vec::new(),
+            face_from_base: std::collections::BTreeMap::new(),
+            start_frames: false,
             activate_menu: None,
             perk_acts: Vec::new(),
             challenge_queue: Default::default(),
@@ -2635,6 +2649,8 @@ impl<'a> Game<'a> {
     /// "New Game" menu starts is a separate input, scripts.md §8]; the placed actors that
     /// start as corpses are dead ([`Game::lay_out_corpses`]).
     pub fn new_game(&mut self) {
+        // IsNewGame (`crate::nvse_unlisted2`): until a save is loaded.
+        self.other.unlisted2.new_game = true;
         // Placed corpses (Base Health 0) lie dead from the start.
         self.lay_out_corpses();
         let start: Vec<FormId> = self.data.quests.values().filter(|q| q.start_enabled()).map(|q| q.form).collect();
@@ -4099,6 +4115,7 @@ impl<'a> Game<'a> {
         if self.toggles.scripts_off {
             return;
         }
+        let any = self.start_frames;
         let subject = Some(Value::Num(code as f64));
         let data = self.data;
         let wants = |script: FormId| {
@@ -4108,6 +4125,12 @@ impl<'a> Game<'a> {
                         Some([Arg::Int(c), ..]) => *c as f64,
                         Some([Arg::Enum(c), ..]) => *c as f64,
                         Some([Arg::Float(c), ..]) => *c,
+                        // A MenuMode block for any menu runs under the start menu before a
+                        // game, where nothing else runs it [documented: MenuMode, no
+                        // argument "ANY menu"; hypothesis: under the original's main menu
+                        // too, as Enhanced Movement registers its NewGame handler from
+                        // such a block on GetGameRestarted, #2275].
+                        None | Some([]) if any => return b.event == event::MENU_MODE,
                         _ => return false,
                     };
                     b.event == event::MENU_MODE && c == code as f64
@@ -4126,14 +4149,14 @@ impl<'a> Game<'a> {
             if page {
                 self.mark_page_run(InstKey::Quest { quest: q }, Some(script));
             }
-            self.run_blocks(InstKey::Quest { quest: q }, script, event::MENU_MODE, subject, RunCtx { quest: Some(q), ..Default::default() }, true);
+            self.run_blocks(InstKey::Quest { quest: q }, script, event::MENU_MODE, subject, RunCtx { quest: Some(q), ..Default::default() }, !any);
         }
         for r in self.active_refs() {
             let Some(script) = self.ref_script(r).filter(|s| wants(*s)) else { continue };
             if page {
                 self.mark_page_run(InstKey::Ref { reference: r }, Some(script));
             }
-            self.run_blocks(InstKey::Ref { reference: r }, script, event::MENU_MODE, subject, RunCtx { self_ref: Some(r), ..Default::default() }, true);
+            self.run_blocks(InstKey::Ref { reference: r }, script, event::MENU_MODE, subject, RunCtx { self_ref: Some(r), ..Default::default() }, !any);
         }
     }
 
@@ -4172,14 +4195,17 @@ impl<'a> Game<'a> {
     /// first pause after loading (job mcm976e, menu-xml.md §10.1), and the mod adds it only
     /// from its own MenuMode 1013 block after half a second; the main menu is the only
     /// start menu before that]. `frames` page frames of `dt` seconds ([`Game::page_tick`]);
-    /// no shipped script has such a block, so the plain game is unchanged [observed:
-    /// fnvtool script decompile of the masters]. NVForever runs it once when a game starts.
+    /// no shipped script has a `MenuMode 1013` block [observed: fnvtool script decompile
+    /// of the masters]. MenuMode blocks for any menu run in these frames too (side_blocks),
+    /// the masters' included. NVForever runs it once when a game starts.
     pub fn came_through_start_menu(&mut self, frames: u32, dt: f64) {
         let keep = self.cfg.frame_seconds;
         self.cfg.frame_seconds = dt;
+        self.start_frames = true;
         for _ in 0..frames {
             self.page_tick(menus::START);
         }
+        self.start_frames = false;
         self.cfg.frame_seconds = keep;
     }
 
@@ -6031,6 +6057,7 @@ impl<'a> Game<'a> {
         if let Some((reference, base)) = unsupported {
             return Err(format!("saving reference {reference} of temporary cloned base {base} is not supported yet"));
         }
+        self.log_combat_style_snapshot_loss();
         Ok(snapshot)
     }
 
@@ -6283,6 +6310,43 @@ fn effect_from(effects: &[ActiveEffect], id: u32, from: usize) -> Option<usize> 
     effects[from..].iter().position(|e| e.id == id).map(|i| from + i).or_else(|| effects[..from].iter().position(|e| e.id == id))
 }
 
+/// Bound diagnostic text before escaping; never print private path-shaped inputs.
+fn call_context_text(text: &str, scalars: usize) -> String {
+    if text.contains(['\\', '/', ':']) {
+        return "<path-like text>".into();
+    }
+    text.chars().take(scalars).flat_map(char::escape_default).collect()
+}
+
+#[cfg(test)]
+mod call_context_tests {
+    use super::call_context_text;
+    #[test]
+    fn text_is_bounded_escaped_and_private_paths_are_redacted() {
+        assert_eq!(call_context_text("a\nb\0c", 4), "a\\nb\\u{0}");
+        let unicode = "\u{1f980}".repeat(1000);
+        let bounded = call_context_text(&unicode, 3);
+        assert_eq!(bounded, "\\u{1f980}".repeat(3));
+        assert!(bounded.len() <= 30);
+        for path in ["X:\\redacted\\file.txt", "/redacted/file.txt", "relative\\redacted.txt"] {
+            assert_eq!(call_context_text(path, 192), "<path-like text>");
+        }
+        // These public instance keys contain only numeric IDs, not source text.
+        use super::{FormId, InstKey};
+        for key in [
+            InstKey::Ref { reference: FormId(1) },
+            InstKey::Quest { quest: FormId(2) },
+            InstKey::Item { holder: FormId(3), item: FormId(4) },
+            InstKey::Effect { id: 5 },
+            InstKey::Challenge { challenge: FormId(6) },
+        ] {
+            let text = format!("{key:?}");
+            assert!(text.len() < 128);
+            assert!(!text.contains(['/', '\\']));
+        }
+    }
+}
+
 /// The host the VM runs against for one script run.
 struct Exec<'g, 'a> {
     game: &'g mut Game<'a>,
@@ -6296,6 +6360,26 @@ impl Exec<'_, '_> {
         match self.locals {
             Locals::Instance(k) => Some(k),
             Locals::Temp(_) => None,
+        }
+    }
+
+    /// Shallow metadata only: no receiver reevaluation or recursive IR formatting.
+    fn no_reference_receiver<'s>(&'s self, call: &fnv_script::ir::XCall) -> (&'static str, Option<u16>, Option<u32>, Option<&'s str>) {
+        use fnv_script::ir::XExpr;
+        match call.on.as_deref() {
+            Some(XExpr::Var { var, .. }) => match var.var {
+                VarSlot::Local { index, .. } if var.on.is_none() =>
+                    ("local", None, Some(u32::from(index)), self.unit.unit.var(u32::from(index)).map(|v|v.name.as_str())),
+                VarSlot::Local { index, .. } => ("remote_local", var.on.map(|r|r.0), Some(u32::from(index)), None),
+                VarSlot::Global { global } => ("global", Some(global.0), None, None),
+            },
+            Some(XExpr::Ref { r }) => match self.unit.unit.slot(*r) {
+                Some(RefSlot::Local(index)) => ("reference_local", Some(r.0), Some(index), self.unit.unit.var(index).map(|v|v.name.as_str())),
+                _ => ("reference_slot", Some(r.0), None, None),
+            },
+            Some(XExpr::Call { .. }) => ("call", None, None, None),
+            Some(_) => ("computed", None, None, None),
+            None => ("implicit", None, None, None),
         }
     }
 
@@ -6475,6 +6559,26 @@ impl Host for Exec<'_, '_> {
             in_condition: false,
         };
         Ok(self.game.call_function(&ctx, args))
+    }
+
+    fn no_reference_call(&mut self, name: &str, on: Option<Value>, call: &fnv_script::ir::XCall) {
+        let (shape, reference_slot, local_index, variable) = self.no_reference_receiver(call);
+        let (receiver_kind, receiver_form, receiver_number_bits) = match on {
+            Some(Value::Ref(id)) => ("ref", Some(id), None),
+            Some(Value::Num(number)) => ("number", None, Some(number.to_bits())),
+            None => ("implicit", None, None),
+        };
+        let opcode = match &call.func { fnv_script::ir::FuncId::Opcode(code) => Some(*code), _ => None };
+        tracing::warn!(target: "fnv_game::call_context",
+            frame = self.game.frame, unit = %call_context_text(self.unit.shared_key(), 192),
+            plugin = %call_context_text(&self.unit.unit.plugin, 96), command = %call_context_text(name, 64),
+            opcode = ?opcode, receiver_kind, receiver_form = ?receiver_form, receiver_number_bits = ?receiver_number_bits,
+            receiver_shape = shape, reference_slot = ?reference_slot, local_index = ?local_index,
+            variable = %variable.map(|v|call_context_text(v, 96)).unwrap_or_default(), argument_count = call.args.len(),
+            quest = ?self.ctx.quest.map(|f|f.0), self_reference = ?self.ctx.self_ref.map(|f|f.0), action_reference = ?self.ctx.action_ref.map(|f|f.0),
+            instance = ?self.inst_key(), udf_caller_script = ?self.game.udf.last().and_then(|frame|frame.caller).map(|f|f.0),
+            source_location = "unavailable: decoded IR has no source spans", registrar = "unavailable",
+            "script null-reference call context");
     }
 
     fn skipped(&mut self, what: &VmError) {
