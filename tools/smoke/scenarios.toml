@@ -28317,3 +28317,58 @@ order = [[
 expect = [
   { re = 'far script summary: (?P<n>\d+) GameMode runs of residents out of the loaded cells', range = [1, 100000], label = "scripts of residents out of the loaded cells ran" },
 ]
+
+
+[[scenario]]
+name = "pipboy-ammo-effects"
+source = "[design, #2502] docs/spec-notes/pipboy.md, Ammo effect card lines: the hand-built ITEMS > Ammo card shows each RCIL effect below WG/VAL and clears them when a round without effects is selected. [documented: #2502 round-w2 writer brief, fnvtool esm decode, FalloutNV.esm, main session 2026-11-14] Ammo357MagnumHollowPoint has Damage Bonus Multiply 1.75 and Dam. Thresh. Increase Multiply 3.0; Ammo357Magnum has no RCIL."
+note = "[design / file refs] As perk-jury-rigging, RemoveAllItems at 11 s clears the starting kit before AddItem. menu/model.rs::sort_rows puts .357 Magnum Round before .357 Magnum, Hollow Point; Down selects the latter, Up returns. pipboy/items.rs::draw logs Info with an escaped newline. [hypothesis] Timing follows neighbouring Pip-Boy scenarios, pending runtime smoke."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "crates/fnv-combat/src/data.rs", "docs/spec-notes/pipboy.md"]
+env = { NVFOREVER_HOME = "", NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "11:call:player:RemoveAllItems,11.3:call:player:AddItem:Ammo357MagnumHollowPoint:24,11.6:call:player:AddItem:Ammo357Magnum:24", NVF_PLAY_TEST_PIPBOY = "15:open,16:page=items,17:tab=4,18:key=down,20:key=up,22:close", NVF_PLAY_TEST_SHOTS = "19:pipboy_ammo_effects.png,21:pipboy_ammo_no_effects.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 25
+expect = [
+  "pipboy: ITEMS Ammo",
+  { re = 'pipboy items: \.357 Magnum, Hollow Point selected: .*effects: Some\("Damage Bonus x1\.75\\nDam\. Thresh\. Increase x3\.00"\), ammo_effects: true', label = "hollow point: both FULL labels, exact multipliers and RCIL order" },
+  { re = 'pipboy items: \.357 Magnum Round selected: .*effects: None, ammo_effects: true', label = "ordinary round: no effect lines" },
+  { re = 'tiles: InventoryMenu page from tiles:', count = 0, label = "the hand-built card path is exercised" },
+  { re = 'pipboy items: \.357 Magnum Round selected: .*effects: Some', count = 0, label = "ordinary round never retains the hollow-point effects" },
+]
+order = [[
+  "pipboy: ITEMS Ammo",
+  { re = 'pipboy items: \.357 Magnum Round selected: .*effects: None, ammo_effects: true' },
+  "test aid: pipboy Key(Down)",
+  { re = 'pipboy items: \.357 Magnum, Hollow Point selected: .*effects: Some\("Damage Bonus x1\.75\\nDam\. Thresh\. Increase x3\.00"\)' },
+  "test aid: pipboy Key(Up)",
+  { re = 'pipboy items: \.357 Magnum Round selected: .*effects: None, ammo_effects: true' },
+]]
+
+[[scenario]]
+name = "tiles-items-ammo-effects"
+source = "[design, #2502] docs/spec-notes/pipboy.md, Ammo effect card lines: the default tile ITEMS > Ammo card shows both hollow-point effects and clears them on the ordinary round. [documented: #2502 round-w2 writer brief, fnvtool esm decode, FalloutNV.esm, main session 2026-11-14] Ammo357MagnumHollowPoint RCIL 0x00157B54 and 0x00157B56 supply Damage Bonus Multiply 1.75 and Dam. Thresh. Increase Multiply 3.0; Ammo357Magnum has no RCIL."
+note = "[design / file refs] Same setup and keyboard steps as pipboy-ammo-effects. As tiles-pipboy-default, empty NVFOREVER_HOME and no tile override select the default menus. inventory_menu.rs::describe logs the selected row and item_card.rs::describe logs visible values, preserving a literal newline between effects. Require only two WG/VAL figures after Up. [hypothesis] Timing pending runtime smoke; logs do not prove pixels, screenshots are supplied for review."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/tiles/item_card.rs", "engine/nvf-play/src/tiles/item_menu.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "crates/fnv-combat/src/data.rs", "docs/spec-notes/pipboy.md"]
+env = { NVFOREVER_HOME = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "11:call:player:RemoveAllItems,11.3:call:player:AddItem:Ammo357MagnumHollowPoint:24,11.6:call:player:AddItem:Ammo357Magnum:24", NVF_PLAY_TEST_PIPBOY = "15:open,16:page=items,17:tab=4,18:key=down,20:key=up,22:close", NVF_PLAY_TEST_SHOTS = "19:tiles_items_ammo_effects.png,21:tiles_items_ammo_no_effects.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 25
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=StatsMenu,InventoryMenu,RepairMenu,ItemModMenu,MapMenu,QuantityMenu \(from default\):', label = "the default tile path is exercised" },
+  "pipboy: ITEMS Ammo",
+  { re = 'tiles: InventoryMenu page from tiles: 2 rows, "\.357 Magnum, Hollow Point \(24\)" selected, tab 4, .*figures: [^\r\n]*, Damage Bonus x1\.75$', label = "hollow point: first effect with its exact FULL label and multiplier, no heading" },
+  { re = '^Dam\. Thresh\. Increase x3\.00, device$', label = "hollow point: second effect with its exact FULL label and multiplier" },
+  { re = 'tiles: InventoryMenu page from tiles: 2 rows, "\.357 Magnum Round \(24\)" selected, tab 4, .*figures: [^,\r\n]+, [^,\r\n]+, device$', label = "ordinary round: only WG and VAL, no effect block" },
+  { text = "pipboy items: ", count = 0, label = "the tile card draws without the hand-built body" },
+  { text = "InventoryMenu drawn by hand", count = 0, label = "the tile card does not fall back" },
+  { re = 'tiles: InventoryMenu page from tiles: .*"\.357 Magnum Round \(24\)" selected, tab 4, .*figures: .*(Damage Bonus|Dam\. Thresh\. Increase)', count = 0, label = "ordinary round never retains the hollow-point effects" },
+]
+order = [[
+  "pipboy: ITEMS Ammo",
+  { re = 'tiles: InventoryMenu page from tiles: 2 rows, "\.357 Magnum Round \(24\)" selected, tab 4, .*figures: [^,\r\n]+, [^,\r\n]+, device$' },
+  "test aid: pipboy Key(Down)",
+  { re = 'tiles: InventoryMenu page from tiles: 2 rows, "\.357 Magnum, Hollow Point \(24\)" selected, tab 4, .*figures: [^\r\n]*, Damage Bonus x1\.75$' },
+  { re = '^Dam\. Thresh\. Increase x3\.00, device$' },
+  "test aid: pipboy Key(Up)",
+  { re = 'tiles: InventoryMenu page from tiles: 2 rows, "\.357 Magnum Round \(24\)" selected, tab 4, .*figures: [^,\r\n]+, [^,\r\n]+, device$' },
+]]

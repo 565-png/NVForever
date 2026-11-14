@@ -2146,3 +2146,16 @@ still need runtime checks after this review revision.
   three operations, FULL/fallback labels, RCIL order, missing IDs and cards with
   and without effects. `tiles::item_card::tests::ammo_` checks the text, first
   free row, hidden heading and selection cleanup.
+- [documented: #2502 round-w2 writer brief, fnvtool esm decode, FalloutNV.esm,
+  main session 2026-11-14] `Ammo357MagnumHollowPoint` (0x0013E43C) references
+  AMEF 0x00157B54 ("Damage Bonus", Multiply 1.75) and 0x00157B56
+  ("Dam. Thresh. Increase", Multiply 3.0); `Ammo357Magnum` (0x0008ED02)
+  has no RCIL. [design, #2502] Smoke scenarios `pipboy-ammo-effects` and
+  `tiles-items-ammo-effects` give both rounds and select each on ITEMS > Ammo,
+  requiring `Damage Bonus x1.75` and `Dam. Thresh. Increase x3.00` in order,
+  then no effects after returning to the ordinary round. The former uses the
+  hand-built page; the latter uses the default tile menus without an override.
+  [design / file refs] They read existing selected-card logs from
+  `pipboy/items.rs::draw` and `tiles/inventory_menu.rs::describe`; screenshots
+  accompany both selections for visual review. Log checks verify card text
+  and selection cleanup; layout still needs the runtime screenshots.
