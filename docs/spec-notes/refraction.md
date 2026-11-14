@@ -137,7 +137,7 @@ note covers the whole census, fire refraction and actors.
   drawn plain while its menus are on the model (owner choice, 2026-10-23).
 - [hypothesis] The existing strength/period above provisionally apply to other actors
   too. Visual parity and the cave Nightkin/nightstalker question from #2557 remain
-  observer check 141 (`docs/handoff/observer-checks.md`). [design, #2557] Smoke:
+  observer check 145 (`docs/handoff/observer-checks.md`). [design, #2557] Smoke:
   `nightkin-stealth-field`; player regressions: `aid-stealth-boy`,
   `stealth-boy-refraction`, `stealth-boy-pipboy`.
 
