@@ -14,6 +14,9 @@ use fnv_script::FunctionTable;
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde_json::{json, Value as Json};
 
+#[path = "common/inline_call_source_bridge.rs"]
+mod inline_call_source_bridge_tests;
+
 // ---- plugin builders ------------------------------------------------------------
 
 fn sub(sig: &[u8; 4], data: Vec<u8>) -> Subrecord {
@@ -4940,6 +4943,3 @@ set TestGlobal to TestNpcREF.GetItemCount r * 10 + TestNpcREF.GetItemCount TestW
 
 #[path = "common/jip_callback_clock.rs"]
 mod jip_callback_clock_tests;
-
-#[path = "common/inline_call_source_bridge.rs"]
-mod inline_call_source_bridge_tests;

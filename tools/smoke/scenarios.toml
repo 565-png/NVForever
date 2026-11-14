@@ -177,6 +177,26 @@ cmd = ["python", "-m", "unittest", "discover", "-s", "tools/release/tests"]
 # ------------------------------------------------------------------ renderer, sky, image space
 
 [[scenario]]
+name = "vanilla-inline-call-operands"
+source = "[hypothesis: docs/spec-notes/vanilla-inline-call-operands.md] Authored scalar QueryJob exercises ordinary and grouped call operands with actual game dispatch; no Auto-loader/native/pixel or named-mod acceptance. NOT RUN."
+areas = ["scripts"]
+paths = ["crates/fnv-script/src/compile/gen.rs", "crates/fnv-script/src/compile/gen/x.rs", "crates/fnv-script/src/compile/lex.rs", "tools/smoke/fixtures/vanilla-inline-call-operands.steps.json", "tools/smoke/fixtures/vanilla-inline-call-owned.gek"]
+env = { NVFOREVER_HOME = "{env:NVF_PLAY_TEST_INLINE_SOURCE_HOME}", NVF_PLAY_TEST_QUERIES = "{repo}/tools/smoke/fixtures/vanilla-inline-call-operands.steps.json", NVF_PLAY_TEST_QUERIES_AT = "7" }
+requires = ["NVF_PLAY_TEST_INLINE_SOURCE_HOME"]
+note = "UNRUN: seed only a dedicated writable HOME/mods/NVSE/user_defined_functions/NVFInlineOperands/owned_self_distance.gek from tools/smoke/fixtures/vanilla-inline-call-owned.gek; never point HOME at the repository fixture folder. No installed Data writes. See spec for contract."
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
+run_seconds = 12
+ends = "run log: the game exited normally"
+expect = [
+  { re = 'script: print "nvf inline ordinary distance 0"', count = 1, label = "ordinary public self-distance neighbor returns zero" },
+  { re = 'script: print "nvf inline grouped receiver 1"', count = 1, label = "grouped receiver condition takes its authored true branch" },
+  { re = 'script: print "nvf inline grouped set 98"', count = 1, label = "grouped call preserves surrounding Set subtraction" },
+  { re = 'script: print "nvf inline mixed precedence 20"', count = 1, label = "vanilla outer OR-before-AND precedence is preserved" },
+  { re = 'script: print "nvf inline compiled call 1"', count = 1, label = "CompileScript plus Call reaches the post-target return sentinel" },
+  { re = 'query job: vanilla-inline-call-operands: 5 steps, 5 rows, 0 errors, written to ', count = 1, label = "five actual game query dispatches finish without errors" },
+]
+
+[[scenario]]
 name = "memory-budget-capped"
 source = "#1170: the asset caches' keep limits follow the machine's RAM and the GPU's memory budget (VK_EXT_memory_budget); with the test aids capping the GPU budget at 512 MB, the limits go to their least (30 s, 128 per cache) and the flight over Goodsprings uses over 85 % of it (this process's use of the device-local heaps, VK_EXT_memory_budget), which presses the caches (they keep the least, 30 s and 128)"
 areas = ["renderer"]
@@ -23669,6 +23689,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "fort-slave-packs-not-floating"
+source = "issue #2439 (owner): at the Fort two slave backpacks hung in the sky with no NPC near. They are placed references of NVSlaveBackpack (0x0013732C, 0x0013732D; ARMO 0x00127C6A, Non-Playable, no world model MOD2) 565 and 913 units above the ground; their biped model was drawn at the reference. Armour only ever worn has no world look now (fnv_world::placed::worn_only; engine/nvforever/src/world.rs spawn_model)"
+note = "the owner's spot on the rise west of the camp, looking south-east at 17:00 as in the report's screenshot; frames in target/smoke (fort_packs.png). The two backpack slaves (LvlFortSlaveBackpack 0x00154414, 0x00154415) still wear theirs"
+areas = ["world"]
+paths = ["crates/fnv-world/src/placed.rs", "engine/nvforever/src/world.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_LOOK = "6:120:5", NVF_PLAY_TEST_SHOTS = "14:fort_packs.png", NVF_PLAY_TEST_CONSOLE = "12:00154414.getitemcount 00127C6A;00154415.getitemcount 00127C6A;12.5:close" }
+args = ["--world", "WastelandNV", "--pos=89242,46819,8095", "--play", "--hour", "17", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = [
+  { re = 'world: 0x0013732C NVSlaveBackpack: armour only ever worn', label = "the lower floating pack is not drawn on its own" },
+  { re = 'world: 0x0013732D NVSlaveBackpack: armour only ever worn', label = "the upper floating pack is not drawn on its own" },
+  { re = 'console: GetItemCount on 0x0015441[45] >> 1\.00', count = 2, label = "both backpack slaves still carry their pack" },
+]
+
+[[scenario]]
 name = "rs-charlie-door-and-tripwire"
 source = "issue #2420 (owner): in Ranger Station Charlie the door on the left was drawn shut, would not open and let the player through, and the tripwire behind it looked armed again on every pass. The door (OffDoorSmR02a 0x000CD068), the tripwire (0x00084246) and its shotgun come in with CharlieEnableParentREF (0x00126F4E, enabled by the station's trigger script): drawn at run time (nvf_play::script_draw), the door had no DoorRig, so it stayed drawn shut while it opened and its collision swung away; the wire's script plays Forward and then activates itself, which asks an Open sequence its model lacks, and that ask was what it showed when drawn again (fnv_game anims not_in_model)"
 note = "the destroyed interior (RSCharlieNVDESTROYED), god mode; the test aid enables the parent at 10 s as the trigger script does, puts the player on the wire at 12 s (it fires the shotgun once), moves the player to the entrance and back onto the wire (a fresh cell build: drawn again), then opens the door"
@@ -28343,21 +28378,19 @@ expect = [
 
 
 [[scenario]]
-name = "vanilla-inline-call-operands"
-source = "[hypothesis: docs/spec-notes/vanilla-inline-call-operands.md] Authored scalar QueryJob exercises ordinary and grouped call operands with actual game dispatch; no Auto-loader/native/pixel or named-mod acceptance. NOT RUN."
-areas = ["scripts"]
-paths = ["crates/fnv-script/src/compile/gen.rs", "crates/fnv-script/src/compile/gen/x.rs", "crates/fnv-script/src/compile/lex.rs", "tools/smoke/fixtures/vanilla-inline-call-operands.steps.json", "tools/smoke/fixtures/vanilla-inline-call-owned.gek"]
-env = { NVFOREVER_HOME = "{env:NVF_PLAY_TEST_INLINE_SOURCE_HOME}", NVF_PLAY_TEST_QUERIES = "{repo}/tools/smoke/fixtures/vanilla-inline-call-operands.steps.json", NVF_PLAY_TEST_QUERIES_AT = "7" }
-requires = ["NVF_PLAY_TEST_INLINE_SOURCE_HOME"]
-note = "UNRUN: seed only a dedicated writable HOME/mods/NVSE/user_defined_functions/NVFInlineOperands/owned_self_distance.gek from tools/smoke/fixtures/vanilla-inline-call-owned.gek; never point HOME at the repository fixture folder. No installed Data writes. See spec for contract."
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
-run_seconds = 12
-ends = "run log: the game exited normally"
+name = "script-physical-wheel-delivery"
+source = "[hypothesis: engineering input bridge] docs/spec-notes/script-wheel-input.md: authored public JIP handlers observe physical wheel264/265; no MCM navigation model"
+note = "Manual opt-in only: set NVF_SCRIPT_WHEEL_MANUAL=1, focus the primary game window after loading, roll the wheel up then wait and roll down during the24second run. Do not use synthetic Tap/Hold codes as physical input proof. This checks delivery to actual published script callbacks, not native per-notch parity, pane focus or left-list selection. The scenario and authored scripts are unrun."
+areas = ["input", "scripts"]
+paths = ["engine/nvf-play/src/script_input.rs", "engine/nvf-play/src/script_input_wheel_tests.rs", "crates/fnv-game/src/script_input.rs", "crates/fnv-game/src/jip_events.rs", "docs/spec-notes/script-wheel-input.md", "tools/smoke/fixtures/script-wheel-home/"]
+requires = ["NVF_SCRIPT_WHEEL_MANUAL"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/script-wheel-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
 expect = [
-  { re = 'script: print "nvf inline ordinary distance 0"', count = 1, label = "ordinary public self-distance neighbor returns zero" },
-  { re = 'script: print "nvf inline grouped receiver 1"', count = 1, label = "grouped receiver condition takes its authored true branch" },
-  { re = 'script: print "nvf inline grouped set 98"', count = 1, label = "grouped call preserves surrounding Set subtraction" },
-  { re = 'script: print "nvf inline mixed precedence 20"', count = 1, label = "vanilla outer OR-before-AND precedence is preserved" },
-  { re = 'script: print "nvf inline compiled call 1"', count = 1, label = "CompileScript plus Call reaches the post-target return sentinel" },
-  { re = 'query job: vanilla-inline-call-operands: 5 steps, 5 rows, 0 errors, written to ', count = 1, label = "five actual game query dispatches finish without errors" },
+  { text = 'script: print "nvf wheel up handler 1"', count = 1, label = "wheel-up callback registration succeeds" },
+  { text = 'script: print "nvf wheel down handler 1"', count = 1, label = "wheel-down callback registration succeeds" },
+  { text = 'script: print "nvf physical wheel edge 264"', min = 1, label = "actual physical up reaches its public script handler" },
+  { text = 'script: print "nvf physical wheel edge 265"', min = 1, label = "actual physical down reaches its public script handler" },
 ]
+manual = "Keep the primary game window focused; scroll up and down after loading. This manual scenario has no selection or scroll-offset expectation and provides no GPU/native visual comparison."
