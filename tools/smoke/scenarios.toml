@@ -28317,3 +28317,49 @@ order = [[
 expect = [
   { re = 'far script summary: (?P<n>\d+) GameMode runs of residents out of the loaded cells', range = [1, 100000], label = "scripts of residents out of the loaded cells ran" },
 ]
+
+[[scenario]]
+name = "mq-fort-gear-returned"
+kind = "tool"
+source = "[documented: #2534 owner brief, fnvtool decode/decompile and headless run, main session 2026-11-14] Entrance confiscation followed by Caesar's bunker task and the weather-station guard's GREETING 0015BCA2 / Topic000 INFO 0015BCA1. [design] Regression chain in crates/fnv-game/walkthrough/fort-gear-returned.actions.json."
+areas = ["quests", "scripts", "dialogue", "inventory"]
+paths = ["crates/fnv-game/walkthrough/fort-gear-returned.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/items.rs", "crates/fnv-game/src/functions/quest.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/fort-gear-returned.actions.json"]]
+expect = [
+  { json = "observations.?label=pistol before confiscation.count", equals = 1, label = "one test pistol carried initially" },
+  { json = "observations.?label=pistol on player after confiscation.count", equals = 0, label = "pistol taken from the player" },
+  { json = "observations.?label=pistol in storage after confiscation.count", equals = 1, label = "pistol held in remote storage" },
+  { json = "observations.?label=weather guard greets.info", equals = "0x0015BCA2", label = "the return greeting is selected" },
+  { json = "observations.?label=weather guard returns equipment.info", equals = "0x0015BCA1", label = "the return choice runs its result scripts" },
+  { json = "observations.?label=pistol on player after return.count", equals = 1, label = "pistol returned to the player" },
+  { json = "observations.?label=pistol in storage after return.count", equals = 0, label = "pistol removed from storage" },
+  { json = "observations.?label=quest after return.running", equals = false, label = "equipment quest stopped after return" },
+  { json = "observations.?label=quest after return.var.bFortEquipmentStored", equals = 0, label = "stored flag cleared" },
+  { json = "observations.?label=quest after return.var.bGimme", equals = 0, label = "return flag cleared" },
+  { json = "steps.*.error", count = 0, label = "no action fails" },
+  { json = "given_errors.*", count = 0, label = "no setup fails" },
+]
+manual = "[design, #2534] Inspect the labeled counts and result scripts on failure; fort-gear-returned isolates the engine quest/inventory bridge without the dialogue chain."
+
+[[scenario]]
+name = "fort-gear-returned"
+source = "[documented: #2534 owner brief, fnvtool decode/decompile, main session 2026-11-14] FortEquipmentConfiscationQuest (00164762, script 00164763, delay 0.1) returns NVCCPlayerStorageREF's items when bFortEquipmentStored and bGimme are 1, clears both flags and stops. Storage REFR 00139B6B is persistent in Cottonwood Cove."
+note = "[design, #2534] Stay in Goodsprings with Cottonwood Cove unloaded. Stop the equipment quest, clear only the test pistol from both inventories, give one pistol and confiscate weapons into remote storage. Read 0/1, seed the return flags and start the quest, then close the console so GameMode can run. Read 1/0 and the stopped quest/reset flags after the return. This isolates the quest and shared inventory; mq-fort-gear-returned covers the dialogue result scripts."
+areas = ["quests", "scripts", "inventory", "console"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/console.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/pipboy/items.rs", "crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/items.rs", "crates/fnv-game/src/functions/quest.rs", "crates/fnv-sim/src/world.rs", "crates/fnv-sim/src/refs.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "8:StopQuest FortEquipmentConfiscationQuest;player.RemoveItem Weap10mmPistol 9999;NVCCPlayerStorageREF.RemoveItem Weap10mmPistol 9999;player.AddItem Weap10mmPistol 1;player.RemoveAllTypedItems NVCCPlayerStorageREF 1 0 40;player.GetItemCount Weap10mmPistol;NVCCPlayerStorageREF.GetItemCount Weap10mmPistol;9:set FortEquipmentConfiscationQuest.bFortEquipmentStored to 1;set FortEquipmentConfiscationQuest.bGimme to 1;StartQuest FortEquipmentConfiscationQuest;GetQuestRunning FortEquipmentConfiscationQuest;9.5:close;14:player.GetItemCount Weap10mmPistol;NVCCPlayerStorageREF.GetItemCount Weap10mmPistol;GetQuestRunning FortEquipmentConfiscationQuest;sqv FortEquipmentConfiscationQuest;14.5:close" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 22
+order = [[
+  { re = 'console: GetItemCount on player >> 0\.00', label = "pistol confiscated from player" },
+  { re = 'console: GetItemCount on NVCCPlayerStorageREF >> 1\.00', label = "remote storage holds the pistol" },
+  { re = 'console: GetQuestRunning >> 1\.00', label = "return quest started while console holds GameMode" },
+  { re = 'console: GetItemCount on player >> 1\.00', label = "quest returned the pistol to the played inventory" },
+  { re = 'console: GetItemCount on NVCCPlayerStorageREF >> 0\.00', label = "remote storage emptied" },
+  { re = 'console: GetQuestRunning >> 0\.00', label = "return quest stopped" },
+]]
+expect = [
+  { re = 'console: +bFortEquipmentStored = 0(?:\.0+)?$', label = "stored flag reset" },
+  { re = 'console: +bGimme = 0(?:\.0+)?$', label = "return flag reset" },
+]
+manual = "[design, #2534] If this passes but the reported conversation fails, run the full guard conversation in-game and inspect INFO begin/end execution and open menus; no engine cause was established by source inspection."
