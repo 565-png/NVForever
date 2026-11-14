@@ -118,7 +118,7 @@ actor meshes`]:
   head tracking and dialogue turns, at spawn and equipment changes; skinned shapes
   and creatures use their existing paths. [hypothesis] The geometry test identifies
   this layout in other rigid hats, but asymmetric meshes can be ambiguous. Owner
-  review tracks the threshold; observer check 141 asks for original-game parity.
+  review tracks the threshold; observer check 143 asks for original-game parity.
 - A rigid part on **another bone is in that bone's own axes**: an ordinary child, node
   transforms kept, no rotation added. Over the worn models of every ARMO in the ten
   masters (498 models, placed or not; `fnvtool actor meshes`, `armor_rigid_bones`), 61
