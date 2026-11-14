@@ -4938,5 +4938,8 @@ set TestGlobal to TestNpcREF.GetItemCount r * 10 + TestNpcREF.GetItemCount TestW
     assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 10.0, "the clone counted, the weapon not");
 }
 
+#[path = "common/jip_callback_clock.rs"]
+mod jip_callback_clock_tests;
+
 #[path = "common/inline_call_source_bridge.rs"]
 mod inline_call_source_bridge_tests;
