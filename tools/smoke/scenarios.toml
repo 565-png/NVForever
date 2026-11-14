@@ -28317,3 +28317,24 @@ order = [[
 expect = [
   { re = 'far script summary: (?P<n>\d+) GameMode runs of residents out of the loaded cells', range = [1, 100000], label = "scripts of residents out of the loaded cells ran" },
 ]
+
+
+[[scenario]]
+name = "vanilla-inline-call-operands"
+source = "[hypothesis: docs/spec-notes/vanilla-inline-call-operands.md] Authored scalar QueryJob exercises ordinary and grouped call operands with actual game dispatch; no Auto-loader/native/pixel or named-mod acceptance. NOT RUN."
+areas = ["scripts"]
+paths = ["crates/fnv-script/src/compile/gen.rs", "crates/fnv-script/src/compile/gen/x.rs", "crates/fnv-script/src/compile/lex.rs", "tools/smoke/fixtures/vanilla-inline-call-operands.steps.json", "tools/smoke/fixtures/vanilla-inline-call-owned.gek"]
+env = { NVFOREVER_HOME = "{env:NVF_PLAY_TEST_INLINE_SOURCE_HOME}", NVF_PLAY_TEST_QUERIES = "{repo}/tools/smoke/fixtures/vanilla-inline-call-operands.steps.json", NVF_PLAY_TEST_QUERIES_AT = "7" }
+requires = ["NVF_PLAY_TEST_INLINE_SOURCE_HOME"]
+note = "UNRUN: seed only a dedicated writable HOME/mods/NVSE/user_defined_functions/NVFInlineOperands/owned_self_distance.gek from tools/smoke/fixtures/vanilla-inline-call-owned.gek; never point HOME at the repository fixture folder. No installed Data writes. See spec for contract."
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
+run_seconds = 12
+ends = "run log: the game exited normally"
+expect = [
+  { re = 'script: print "nvf inline ordinary distance 0"', count = 1, label = "ordinary public self-distance neighbor returns zero" },
+  { re = 'script: print "nvf inline grouped receiver 1"', count = 1, label = "grouped receiver condition takes its authored true branch" },
+  { re = 'script: print "nvf inline grouped set 98"', count = 1, label = "grouped call preserves surrounding Set subtraction" },
+  { re = 'script: print "nvf inline mixed precedence 20"', count = 1, label = "vanilla outer OR-before-AND precedence is preserved" },
+  { re = 'script: print "nvf inline compiled call 1"', count = 1, label = "CompileScript plus Call reaches the post-target return sentinel" },
+  { re = 'query job: vanilla-inline-call-operands: 5 steps, 5 rows, 0 errors, written to ', count = 1, label = "five actual game query dispatches finish without errors" },
+]

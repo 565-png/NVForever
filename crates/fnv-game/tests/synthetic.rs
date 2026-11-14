@@ -4937,3 +4937,6 @@ set TestGlobal to TestNpcREF.GetItemCount r * 10 + TestNpcREF.GetItemCount TestW
     g.run_source(src, Default::default()).expect("runs");
     assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 10.0, "the clone counted, the weapon not");
 }
+
+#[path = "common/inline_call_source_bridge.rs"]
+mod inline_call_source_bridge_tests;
