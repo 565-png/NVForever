@@ -23666,6 +23666,26 @@ order = [[
 ]]
 
 [[scenario]]
+name = "rs-charlie-door-and-tripwire"
+source = "issue #2420 (owner): in Ranger Station Charlie the door on the left was drawn shut, would not open and let the player through, and the tripwire behind it looked armed again on every pass. The door (OffDoorSmR02a 0x000CD068), the tripwire (0x00084246) and its shotgun come in with CharlieEnableParentREF (0x00126F4E, enabled by the station's trigger script): drawn at run time (nvf_play::script_draw), the door had no DoorRig, so it stayed drawn shut while it opened and its collision swung away; the wire's script plays Forward and then activates itself, which asks an Open sequence its model lacks, and that ask was what it showed when drawn again (fnv_game anims not_in_model)"
+note = "the destroyed interior (RSCharlieNVDESTROYED), god mode; the test aid enables the parent at 10 s as the trigger script does, puts the player on the wire at 12 s (it fires the shotgun once), moves the player to the entrance and back onto the wire (a fresh cell build: drawn again), then opens the door"
+areas = ["traps", "doors", "scripts"]
+paths = ["engine/nvf-play/src/script_draw.rs", "engine/nvforever/src/doors.rs", "engine/nvforever/src/object_anims.rs", "crates/fnv-game/src/anims.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "10:call:0x00126F4E:Enable,12:moveto:player:0x00084246,16:moveto:player:0x00084249,19:moveto:player:0x00084246,23:activate:0x000CD068", NVF_PLAY_TEST_CONSOLE = "26:000CD068.getopenstate;26.5:close" }
+args = ["--cell", "RSCharlieNVDESTROYED", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 29
+order = [[
+  { text = "door: 0x000CD068 drawn at run time, posed as a door", label = "the door enabled with its parent is drawn as a door" },
+  { re = 'script: activate parent 0x00084246 sets off 0x00084247', label = "the wire fires the shotgun" },
+  { re = 'playgroup: 0x00084246 drawn again, shows Forward at its end', label = "drawn again after the moves, the wire shows itself sprung, not armed" },
+  { re = 'door 0x000CD068 opening', label = "the door opens" },
+  { re = 'console: GetOpenState on 0x000CD068 >> 1\.00', label = "and is open" },
+]]
+expect = [
+  { re = 'script: activate parent 0x00084246 sets off', count = 1, label = "the wire goes off once" },
+]
+
+[[scenario]]
 name = "script-move-dynamic-clutter"
 source = "issue #1311: SetPos on a reference whose collision is one dynamic body (clutter, dropped or placed items) snapped back at once, the settle write-back copying the body's old pose over the move; console moves were never seen (the tick cleared Game::turned first)"
 note = "A bottle (0x0010A1F6) placed by the console at the player in Goodsprings, moved sideways 3 s later to x = -68150 with SetPos; GetPos x half a second and two seconds later reads the new x"
