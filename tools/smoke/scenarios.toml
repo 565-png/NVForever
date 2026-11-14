@@ -45,6 +45,7 @@ untimed = [
   "NVF_PLAY_AIDS_FROM_SCRIPTS", "NVF_PLAY_TEST_HELD_GRENADE",
   "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
   "NVF_PLAY_TEST_MELEE_KNOCKBACK",
+  "NVF_PLAY_TEST_ACTIVATION_SWEEP",
   "NVF_PLAY_TEST_RAGDOLL_FAIL",
 ]
 
@@ -28320,18 +28321,17 @@ expect = [
 
 [[scenario]]
 name = "helipad-ladder-top-crosshair"
-source = "[documented: writer brief #2528 round w2] Hoover Dam helipad ladder endpoints 00164C63/00164C64 and top-to-bottom arrival near (68084,19354,4806); [design: docs/spec-notes/cells-refs.md section 5] isolate crosshair picking from direct hand activation"
-note = "[hypothesis, #2528] Top standing point/pitch need a game run; GOTO settles on the floor and LOOK faces the supplied endpoint. E activates whatever the actual activation target is. [design: activate.rs::find_target] Target/reticle logs show the chosen ref and displayed prompt; PrintC additionally logs the collision-query ref, base and XATO, which may differ from a bounds-picked target. Separate launches keep travel from one path from masking the other."
+source = "[documented: writer brief #2528 round w3] Hoover Dam helipad ladder endpoints 00164C63/00164C64 and top-to-bottom arrival near (68084,19354,4806); [design: docs/spec-notes/cells-refs.md section 5] isolate crosshair picking from direct hand activation"
+note = "[design, #2528; fnv-world transform.rs::ref_rotation] Eight OBND corners transformed by position + 0.15 * Rx(1.601) Ry(-0.287) Rz(-1.562) * local give world min (67903.61,19374.57,5009.27), max (67927.56,19444.40,5183.48): 82.48 above deck z5101. OBND does not establish actual render/collision geometry or a deck opening. [documented: supplied w3 brief] OBND (-1037,-109,0)..(112,-84,445), rotation (-1.601,0.287,1.562), position (67939.5,19439.3,5028). [observed: supplied main-session run 2026-11-14 22:50] Old top look hit STAT 0012CE4B/base 0012CE4A. [hypothesis, #2528] Three standing spots may settle on different surfaces. [design: test_aid/activation_sweep.rs] Each spot sweeps heading +/-30 and pitches 0/-30/-60/-85; each look logs actual feet/view, GetCrosshairRef/base/type, target/base/type, drawn prompt and hit DOOR refs within 400 of the ladder. Finish all 36 looks, replay first successful view and press E on its current target; no explicit-ref activation. Misses and unrelated doors remain diagnostics."
 areas = ["activation", "hud"]
-paths = ["engine/nvf-play/src/activate.rs", "engine/nvf-play/src/activate/pick.rs", "engine/nvf-play/src/reticle.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/script_events.rs", "engine/nvf-play/src/activate/outcome.rs", "engine/nvforever/src/world.rs", "engine/nvf-assets/src/model.rs", "crates/fnv-sim/src/refs.rs", "crates/fnv-sim/src/world.rs", "docs/spec-notes/cells-refs.md"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOTO = "1:67900:19440:5101", NVF_PLAY_TEST_LOOK = "4:91:-60", NVF_PLAY_TEST_CONSOLE = "6:PrintC \"helipad crosshair ref %i\", (GetCrosshairRef);PrintC \"helipad crosshair base %i xato [%z]\", ((GetCrosshairRef).GetBaseObject), ((GetCrosshairRef).GetRefActivationPromptOverride);6.5:close", NVF_PLAY_TEST_ACTIVATE = "8" }
+paths = ["engine/nvf-play/src/test_aid.rs", "engine/nvf-play/src/test_aid/activation_sweep.rs", "engine/nvf-play/src/activate.rs", "engine/nvf-play/src/activate/pick.rs", "engine/nvf-play/src/reticle.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/script_events.rs", "engine/nvf-play/src/activate/outcome.rs", "engine/nvforever/src/world.rs", "engine/nvf-assets/src/model.rs", "crates/fnv-sim/src/refs.rs", "crates/fnv-sim/src/world.rs", "docs/spec-notes/cells-refs.md"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_ACTIVATION_SWEEP = "00164C63|67900:19440:5101:91,67915:19385:5101:24,67950:19440:5101:266" }
 args = ["--play", "--pos=67900,19440,5101", "--hour", "12", "--no-voice", "--no-messages"]
-run_seconds = 22
+run_seconds = 65
 expect = [
-  { re = 'console: helipad crosshair ref [0-9A-F]{8}$', label = "top crosshair: collision-query reference logged before activation, including zero when nothing collides" },
-  { re = 'console: helipad crosshair base [0-9A-F]{8} xato \[.*\]$', label = "top crosshair: collision-query base and reference prompt logged" },
-  { re = 'target 0x00164C63 .*by (?:Collision|Bounds)', label = "top crosshair: the ladder itself is the activation target" },
-  { text = "reticle: prompt \"Use Ladder\"", label = "top crosshair: the ladder reference supplies its displayed action" },
+  { re = 'activation sweep: look=\d+ spot=\d+ feet=\([^)]+\) yaw=[\d.]+ pitch=-?[\d.]+ GetCrosshairRef=0x[0-9A-F]{8} base=0x[0-9A-F]{8} type=\S+ target=0x[0-9A-F]{8} target_base=0x[0-9A-F]{8} target_type=\S+ prompt=.* nearby_DOOR_collision=\S+ nearby_DOOR_target=\S+ nearby_DOOR_far=\S+$', count = 36, label = "top crosshair: every look records collision query, selected target, drawn prompt and nearby hit doors" },
+  { text = "activation sweep: complete looks=36 replay=first-success press=E", label = "top crosshair: sweep completes before replaying a successful view" },
+  { re = 'activation sweep: look=.* target=0x00164C63 ', label = "top crosshair: the ladder itself is the activation target" },
   { re = '(?:activate 0x00164C63 .*Teleported \{ to_door: 0x00164C64|script: \S+ activated by \S+: .*"result":"teleported".*"to_door":"0x00164C64")', label = "top crosshair: activation teleports to the reciprocal ladder rather than toggling a door" },
   { re = '(?:script: travel to None / Some\(\d+\) at \[|travel to worldspace [0-9A-F]{8} .*: feet \()', label = "top crosshair: exterior travel is requested" },
   { re = '(?:script: travel to None / Some\(\d+\) at \[|travel to worldspace [0-9A-F]{8} .*: feet \()(?P<n>-?\d+(?:\.\d+)?)', range = [68079, 68089], label = "top crosshair: arrival x is near the supplied lower landing" },
@@ -28339,7 +28339,7 @@ expect = [
   { re = '(?:script: travel to None / Some\(\d+\) at \[|travel to worldspace [0-9A-F]{8} .*: feet \()-?\d+(?:\.\d+)?, -?\d+(?:\.\d+)?, (?P<n>-?\d+(?:\.\d+)?)', range = [4801, 4811], label = "top crosshair: arrival z is near the supplied lower landing" },
 ]
 order = [[
-  { re = 'console: helipad crosshair base [0-9A-F]{8} xato \[.*\]$', label = "top crosshair: diagnostics before activation" },
+  { re = 'activation sweep: complete looks=36 replay=first-success press=E', label = "top crosshair: diagnostics before activation" },
   { re = '(?:activate 0x00164C63 .*Teleported \{ to_door: 0x00164C64|script: \S+ activated by \S+: .*"result":"teleported".*"to_door":"0x00164C64")', label = "top crosshair: reciprocal teleport after diagnostics" },
   { re = '(?:script: travel to None / Some\(\d+\) at \[|travel to worldspace [0-9A-F]{8} .*: feet \()', label = "top crosshair: exterior travel after teleport" },
 ]]

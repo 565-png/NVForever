@@ -121,23 +121,70 @@ code paths alone do not establish which geometry a particular model supplies.
 (68084, 19354, 4806). No model/collision inspection or game run was performed for
 this diagnostic addition.
 
-[design: `tools/smoke/scenarios.toml`] The four scenarios
-`helipad-ladder-top-crosshair`, `helipad-ladder-top-direct`,
-`helipad-ladder-bottom-crosshair` and `helipad-ladder-bottom-direct` separate E on
-the actual activation target from the script aid's explicit-reference hand
-activation. They require reciprocal teleport outcomes and exterior travel; the top
-scenarios also check the supplied lower landing within five units on each axis.
-[hypothesis, #2528] Their standing spots and downward view angles are provisional
-until a game run confirms the walkable floor and the small activation surface.
+[observed: main-session run supplied in writer brief #2528 round w3,
+2026-11-14 22:50, logs `ov15/smoke-2528/*.log`] The bottom crosshair and both direct
+activation scenarios passed. The old top crosshair look from (67900,19440,5101)
+hit REFR `0012CE4B`, base STAT `0012CE4A` (`NVHooverDamObservationDeck`),
+instead of the ladder. This run did not show the reported open/close prompt.
 
-[design: `activate.rs::find_target`, `reticle.rs::Prompt::of`,
-`nvf-play/src/console.rs`, `fnv-game/src/nvse_other.rs`, `nvse_jg6.rs`]
-Existing target/reticle logs identify the chosen activation reference and displayed
-action. Before activation the scenarios also print `GetCrosshairRef`, its base
-(`GetBaseObject`) and reference XATO (`GetRefActivationPromptOverride`). The script
-query currently receives the first collision candidate, before the final bounds
-choice, so its reference can differ from the activation target; a zero query is
-also diagnostic. XATO is the reference override, not necessarily the displayed
-action, which the reticle log records separately. Compare both traces when the
-crosshair scenario fails instead of inferring a picking failure from open/close
-text alone.
+**Transformed envelope.** [documented: supplied writer brief #2528 rounds w2/w3]
+The top base OBND is (-1037,-109,0)..(112,-84,445), rotation
+(-1.601,0.287,1.562) radians, scale 0.15, position (67939.5,19439.3,5028).
+[design: `crates/fnv-world/src/transform.rs::ref_rotation`,
+`engine/nvforever/src/world.rs::ref_affine`] Transforming all eight corners with
+`world = position + 0.15 * Rx(1.601) * Ry(-0.287) * Rz(-1.562) * local`
+gives the world AABB min **(67903.61,19374.57,5009.27)** and max
+**(67927.56,19444.40,5183.48)**. Thus the rotated OBND reaches **82.48 units
+above** the supplied standing deck surface z5101, although the reference origin
+is 73 units below it. OBND is an envelope, not proof that render or collision
+vertices occupy its upper corners; activation uses mesh bounds instead.
+[documented: supplied w3 brief] The deck base OBND is
+(-2038,-1168,-5121)..(1966,4559,777), with its reference at
+(66887.1,19683.6,4580), z rotation 0.255. [design: limits of these inputs]
+Neither OBND describes holes or triangles. Whether the ladder lies in a deck
+opening cannot be established from these supplied facts. The missing evidence is
+STAT `0012CE4A`'s collision surface/opening around x67904..67928,
+y19375..19444, z5101, and base `0016A1CD`'s actual transformed render bounds;
+no game data was inspected for this change.
+
+**Occlusion remains unchanged.** [design: `activate.rs::find_target`,
+`activate/pick.rs::{door_behind,choose}`] The first collision limits render-bound
+entry distances even when that collision reference is not activatable. Before
+bounds selection, a usable DOOR collider within `DOOR_SLACK` (16 units) behind
+an unusable first collision can replace it, which also moves the bounds limit
+to that collider. Only the first different collision reference behind the face
+is considered for that exception. XTEL does not bypass either limit. Therefore
+a DOOR with XTEL whose eligible bounds lie wholly behind a floor cannot be
+picked through that floor by the bounds fallback. It can still win through the
+16-unit door-collider exception. If no such collider qualifies, looking straight
+down through the floor cannot select the buried door. The transformed OBND above
+does not prove that the actual top ladder geometry is wholly buried.
+
+**Sweep and activation checks.** [design: `tools/smoke/scenarios.toml`,
+`engine/nvf-play/src/test_aid/activation_sweep.rs`, `reticle.rs::draw`]
+`helipad-ladder-top-crosshair` now uses three configured standing spots, three
+headings per spot (toward the reference, plus/minus 30 degrees), and pitches
+0/-30/-60/-85 degrees: 36 looks, one stable `activation sweep: look=...` line each.
+Each line records actual feet/view, `GetCrosshairRef` and its base/type, selected
+activation target and base/type, and the drawn action/name (`prompt=None` when
+hidden or absent). Nearby DOOR hits are reported with ref/base/distance if within
+400 units of the ladder, for the collision query, selected target, and far query;
+`none` explicitly records a miss. This captures unchanged prompts as well as
+changes. After every look finishes, the first successful pose is replayed and
+AutoActivate presses E on the current target; no explicit-reference activation
+is queued. If every look misses, no E press is scheduled. The scenario still
+requires ladder targeting and reciprocal teleport/exterior travel/arrival, and
+forbids toggling the ladder; individual misses or other prompts are diagnostic.
+[hypothesis, #2528] New standing spots can settle on unexpected surfaces, so the
+actual feet are logged rather than assuming z5101.
+
+[design: `activate.rs::find_target`, `fnv-game/src/nvse_other.rs`]
+`GetCrosshairRef` is populated from the first collision candidate before the
+16-unit exception and render-bounds choice, so it may differ from the actual
+activation target. [documented: offline GECK wiki GetCrosshairRef,
+https://geckwiki.com/index.php?title=GetCrosshairRef, snapshot 2026-10-28]
+The documented query includes non-activatable references and ignores objects
+without collision. [design: `tools/smoke/scenarios.toml`] The unchanged
+`helipad-ladder-top-direct`, `helipad-ladder-bottom-crosshair` and
+`helipad-ladder-bottom-direct` scenarios retain their separate E/direct paths;
+their console XATO diagnostic is an override, not necessarily the drawn prompt.
