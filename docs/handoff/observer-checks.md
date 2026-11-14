@@ -2174,3 +2174,14 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      dirt and on concrete, first and third person, and record which SOUN records play
      at each footfall (the sound log): does `FSTArmorPowerWalkL`/`R` play, instead of
      or beside the ground's step, and does anything play for the run rustle?
+
+## Added 2026-11-14 (the Fort's placed slave backpacks, #2439)
+
+142. **Are the Fort's two placed slave backpacks drawn, and where?** (P3; #2439,
+     simulation.md §3.) References 0x0013732C and 0x0013732D (NVSlaveBackpack, ARMO
+     0x00127C6A: Non-Playable, no ground model MOD2) are placed at (92047, 45622, 8260)
+     and (92159, 45555, 8608), by the blacksmith's grinding wheel, 565 and 913 units above
+     the ground [observed: the data]. Ours draws neither since #2439. To check: stand at
+     (89242, 46819, 8095) at 17:00, look south-east over the camp; are two backpacks in
+     the sky, on the ground by the grinding wheel, or nowhere? `prid 0013732C` then
+     `getpos z` and `getdisabled`.
