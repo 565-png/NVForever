@@ -139,6 +139,23 @@ pub fn pipboy_ease(t: f32) -> f32 {
     e * e * (3.0 - 2.0 * e)
 }
 
+/// Where the Pip-Boy clip is shown at `t` seconds into it with movement inertia: eased into
+/// its hold at the `Hit` key and out of it, so the arm settles there and sets off from rest
+/// (a cubic with the clip's own speed at the far ends, none at the hold); without, the clip
+/// stopped dead at the hold with the arm still moving about 28 units/s, and set off at that
+/// speed [design: the owner's tenth playtest, 2026-11-14: "PipBoy jitters a lot also"; the
+/// motion trace]. The time spent is the clip's own.
+pub fn pipboy_clip_time(t: f32) -> f32 {
+    use nvf_play::pipboy::{CLIP_SECONDS, HOLD_SECONDS};
+    let out = |x: f32| x + x * x - x * x * x;
+    if t <= HOLD_SECONDS {
+        HOLD_SECONDS * out((t / HOLD_SECONDS).clamp(0.0, 1.0))
+    } else {
+        let down = CLIP_SECONDS - HOLD_SECONDS;
+        HOLD_SECONDS + down * (1.0 - out((1.0 - (t - HOLD_SECONDS) / down).clamp(0.0, 1.0)))
+    }
+}
+
 /// How much bigger the arms are drawn so that they look as through a view of `arms_fov`
 /// (the game's degrees across 4:3) inside the view's own vertical field of view
 /// `view_vfov` (radians): the ratio of the two views' half-widths.
@@ -1088,7 +1105,7 @@ impl MotionTrace {
                 match std::fs::File::create(&path) {
                     Ok(f) => {
                         let mut w = std::io::BufWriter::new(f);
-                        let _ = std::io::Write::write_all(&mut w, b"t,dt,heading,pitch,eye_x,eye_y,eye_z,hand_x,hand_y,hand_z,hand_rx,hand_ry,hand_rz,sway_x,sway_y,sway_z,sway_yaw,sway_pitch,sway_roll,sights,aiming,falling,sneaking,speed,drawn\n");
+                        let _ = std::io::Write::write_all(&mut w, b"t,dt,heading,pitch,eye_x,eye_y,eye_z,hand_x,hand_y,hand_z,hand_rx,hand_ry,hand_rz,sway_x,sway_y,sway_z,sway_yaw,sway_pitch,sway_roll,sights,aiming,falling,sneaking,speed,drawn,feet_z,airborne,lhand_x,lhand_y,lhand_z,lens\n");
                         info!("motion trace: writing {path}");
                         self.file = Some(w);
                     }
@@ -1100,16 +1117,17 @@ impl MotionTrace {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn write(&mut self, t: f64, dt: f32, player: &Player, eye: Option<Vec3>, hand: Option<(Vec3, Vec3)>, sway: SwayPose, flags: (f32, bool, bool, bool, f32, bool)) {
+    fn write(&mut self, t: f64, dt: f32, player: &Player, eye: Option<Vec3>, hand: Option<(Vec3, Vec3)>, sway: SwayPose, flags: (f32, bool, bool, bool, f32, bool), airborne: f32, left: Option<Vec3>, lens: f32) {
         let Some(w) = self.file.as_mut() else { return };
         let e = eye.unwrap_or(Vec3::NAN);
         let (h, r) = hand.unwrap_or((Vec3::NAN, Vec3::NAN));
+        let l = left.unwrap_or(Vec3::NAN);
         let (yaw, pitch, roll) = sway.rotation.to_euler(EulerRot::ZXY);
         let (sights, aiming, falling, sneaking, speed, drawn) = flags;
         let b = |v: bool| u8::from(v);
         let line = format!(
-            "{t:.5},{dt:.5},{:.5},{:.5},{:.3},{:.3},{:.3},{:.4},{:.4},{:.4},{:.6},{:.6},{:.6},{:.4},{:.4},{:.4},{yaw:.5},{pitch:.5},{roll:.5},{sights:.4},{},{},{},{speed:.1},{}\n",
-            player.heading, player.pitch, e.x, e.y, e.z, h.x, h.y, h.z, r.x, r.y, r.z, sway.offset.x, sway.offset.y, sway.offset.z, b(aiming), b(falling), b(sneaking), b(drawn)
+            "{t:.5},{dt:.5},{:.5},{:.5},{:.3},{:.3},{:.3},{:.4},{:.4},{:.4},{:.6},{:.6},{:.6},{:.4},{:.4},{:.4},{yaw:.5},{pitch:.5},{roll:.5},{sights:.4},{},{},{},{speed:.1},{},{:.3},{airborne:.3},{:.4},{:.4},{:.4},{lens:.5}\n",
+            player.heading, player.pitch, e.x, e.y, e.z, h.x, h.y, h.z, r.x, r.y, r.z, sway.offset.x, sway.offset.y, sway.offset.z, b(aiming), b(falling), b(sneaking), b(drawn), player.feet[2], l.x, l.y, l.z
         );
         let _ = std::io::Write::write_all(w, line.as_bytes());
     }
@@ -1938,15 +1956,17 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     }
     let mut expected_speed = 0.0;
     let main_dir = f.dirs.map(|w| if w[0].1 >= w[1].1 { w[0].0 } else { w[1].0 });
-    // A crouched jump in first person keeps the crouch: the weapons' jump clips stand the
-    // body up (only the unarmed ones have sneaking variants), which drew the view up 40
-    // units mid-jump and back down after it [design: the owner's fifth playtest,
-    // 2026-11-14: "jumping from crouch … looks like the character stands and then jumps"].
+    // A crouched jump in first person keeps the crouch: no jump clip, and the crouched walk
+    // plays on through the air. The weapons' jump clips stand the body up, and so does the
+    // unarmed sneaking one (the eye 118 units over the feet instead of 78), which drew the
+    // view up mid-jump and back down after it; and dropping the walk for the idle after
+    // 0.15 s in the air lifted the eye 9 units on a hop off a slope [design: the owner's
+    // fifth playtest, 2026-11-14: "jumping from crouch … looks like the character stands and
+    // then jumps"; tenth: "sometimes still"; the trace `movement-inertia-trace-crouch-jump`].
     let first_inertia = f.inertia && rig.view == View::First;
     let keep_crouch = first_inertia && f.stance == Stance::Sneak;
-    let air_clip = |c: &ClipInfo| !(keep_crouch && !c.path.to_ascii_lowercase().contains("sneak"));
-    if f.airborne >= AIRBORNE_LOOP {
-        if let Some(c) = rig.clip(ctx, ClipKey::Jump(f.stance, f.drawn, main_dir, false)).filter(|c| air_clip(c)) {
+    if f.airborne >= AIRBORNE_LOOP && !keep_crouch {
+        if let Some(c) = rig.clip(ctx, ClipKey::Jump(f.stance, f.drawn, main_dir, false)) {
             want.push((c, TAG_JUMP, 1.0, Mode::Loop));
         }
     } else if let Some(w) = f.dirs {
@@ -1965,8 +1985,8 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
             want.push((c, TAG_TURN, 1.0, Mode::Loop));
         }
     }
-    if f.landing {
-        if let Some(c) = rig.clip(ctx, ClipKey::Jump(f.stance, f.drawn, main_dir, true)).filter(|c| air_clip(c)) {
+    if f.landing && !keep_crouch {
+        if let Some(c) = rig.clip(ctx, ClipKey::Jump(f.stance, f.drawn, main_dir, true)) {
             rig.animator.restart(&c.clip, TAG_LAND, 1.0, Mode::Once, c.fade());
         }
     }
@@ -2230,7 +2250,7 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     if let Some((c, t)) = &pipboy {
         let i = a.want(&c.clip, TAG_PIPBOY, 1.0, Mode::Once, 0.0);
         let l = &mut a.layers[i];
-        (l.rate, l.time) = (0.0, *t);
+        (l.rate, l.time) = (0.0, if f.inertia { pipboy_clip_time(*t) } else { *t });
     }
     a.end();
     // Movement clips play at the speed the character actually moves [hypothesis: the
@@ -2777,7 +2797,6 @@ fn drive_body(
     let (grounded, swimming, ground_gap) = phys.player.as_ref().map_or((true, false, None), |c| (c.grounded, c.swimming, c.ground_gap));
     // The body's vertical velocity in the air, for the weapon's jump and landing.
     let vertical = phys.player.as_ref().filter(|c| !c.grounded && !c.swimming).map_or(0.0, |c| c.vertical_speed);
-    let gravity = phys.world.params.gravity;
     let stance = if swimming {
         Stance::Swim
     } else if control.sneak {
@@ -3161,7 +3180,6 @@ fn drive_body(
             pitch: player.pitch,
             velocity: m.velocity,
             vertical,
-            gravity,
             phase: f.animator.phase,
             sights: control.aiming,
             sneaking: stance == Stance::Sneak,
@@ -3200,7 +3218,6 @@ fn drive_body(
             airborne: m.falling,
             velocity: m.velocity,
             vertical,
-            gravity,
             slowness: inertia.as_deref().map_or(1.0, |i| i.weight),
             breathing: state.breathing_camera && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
             kick,
@@ -3297,6 +3314,7 @@ fn drive_body(
     let first_eye = first.map(|(e, _)| e);
     // The arms and the weapon are drawn as through the first-person view, narrower than
     // the world's, and narrower still while the Pip-Boy shows.
+    let mut lens_k = 1.0;
     if let (Some(f), Some(eye)) = (body.first.as_ref(), first_eye) {
         let vfov = cams.single().ok().and_then(|p| match p {
             Projection::Perspective(p) => Some(p.fov),
@@ -3313,6 +3331,7 @@ fn drive_body(
         };
         let forward = Vec3::from_array(nvf_play::space::look_dir(player.heading, player.pitch));
         place_lens(f, eye, forward, k, &mut transforms);
+        lens_k = k;
     }
     match first.and_then(|(_, v)| v) {
         Some(v) => {
@@ -3346,6 +3365,10 @@ fn drive_body(
     player.body_eye = eye.map(|e| e.to_array());
     // Test aid: one line a frame of the first-person motion (`MotionTrace`).
     if trace.wanted() {
+        let left = body.first.as_ref().and_then(|f| {
+            let bone = |n: &str| f.animator.skel.by_name.get(n).copied();
+            Some(Vec3::from(f.animator.model_space(bone("Bip01 L Hand")?).translation) - Vec3::from(f.animator.model_space(bone("Camera1st")?).translation))
+        });
         let hand = body.first.as_ref().and_then(|f| {
             let bone = |n: &str| f.animator.skel.by_name.get(n).copied();
             let (h, c) = (f.animator.model_space(bone("Bip01 R Hand")?), f.animator.model_space(bone("Camera1st")?));
@@ -3353,7 +3376,7 @@ fn drive_body(
             let turn = rot(c).inverse() * rot(h);
             Some((Vec3::from(h.translation) - Vec3::from(c.translation), turn.to_scaled_axis()))
         });
-        trace.write(time.elapsed_secs_f64(), dt, &player, eye, hand, sway, (m.sights_share, control.aiming, m.falling, stance == Stance::Sneak, m.speed, m.hands.phase == WeaponPhase::Drawn));
+        trace.write(time.elapsed_secs_f64(), dt, &player, eye, hand, sway, (m.sights_share, control.aiming, m.falling, stance == Stance::Sneak, m.speed, m.hands.phase == WeaponPhase::Drawn), m.airborne, left, lens_k);
     }
     state.head_eye = third_eye.filter(|_| third_view).map(|e| e.to_array());
     // The third-person pivot: the head's height above the feet without the stride's
@@ -3477,6 +3500,24 @@ fn drive_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pip_boy_clip_settles_into_its_hold_and_sets_off_from_rest() {
+        use nvf_play::pipboy::{CLIP_SECONDS, HOLD_SECONDS};
+        let speed = |t: f32| (pipboy_clip_time(t + 1e-3) - pipboy_clip_time(t - 1e-3)) / 2e-3;
+        assert_eq!(pipboy_clip_time(0.0), 0.0);
+        assert!((pipboy_clip_time(HOLD_SECONDS) - HOLD_SECONDS).abs() < 1e-6);
+        assert!((pipboy_clip_time(CLIP_SECONDS) - CLIP_SECONDS).abs() < 1e-5);
+        assert!((speed(1e-3) - 1.0).abs() < 0.02, "starts at the clip's own speed: {}", speed(1e-3));
+        assert!(speed(HOLD_SECONDS - 1e-3).abs() < 0.03 && speed(HOLD_SECONDS + 1e-3).abs() < 0.03, "at rest at the hold");
+        assert!((speed(CLIP_SECONDS - 2e-3) - 1.0).abs() < 0.03, "ends at the clip's own speed");
+        let mut last = 0.0;
+        for i in 1..=100 {
+            let t = pipboy_clip_time(CLIP_SECONDS * i as f32 / 100.0);
+            assert!(t >= last, "never backwards");
+            last = t;
+        }
+    }
 
     #[test]
     fn hidden_pose_cleanup_restores_transforms_visibility_and_only_its_own_culling() {

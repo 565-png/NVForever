@@ -943,6 +943,45 @@ expect = [
 ]
 
 [[scenario]]
+name = "movement-inertia-trace-crouch-jump"
+source = "owner 2026-11-14 (engine/nvforever/src/player_body.rs MotionTrace; tenth playtest: \"when crouched and walking forward and pressing jump, the character sometimes still does the weird stand/jump movement\"): a frame-by-frame trace of crouched jumps while walking ahead, with the rifle out and with it put away, for finding the eye rising off the feet (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-crouch-jump.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,7:sneak,10:jump,12.4:jump,14.9:jump,17.2:jump,20:weapon,24:jump,26.5:jump,29:jump", NVF_PLAY_TEST_MOVE = "9:1:0,19:0:0,23:1:0,31:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 33
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the crouched jumps is written" },
+  { re = 'player body summary: weapon sway on', label = "the crouched jumps: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-still-mouse"
+source = "owner 2026-11-14 (engine/nvforever/src/view_sway.rs TURN_KNEE; tenth playtest: \"the idle weapon/hand animation micro jitters a lot, when I aim down sights it jitters more visibly\"): a frame-by-frame trace of a resting hand's mouse twitches (single counts of about 0.023 degrees, back and forth) with the rifle held and down its sights; the arms should stay on the view (sway_yaw near 0; tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/view_sway.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-still-mouse.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,13:aim", NVF_PLAY_TEST_LOOK = "8.9:0:0,9.036:-0.023:0,9.076:-0.046:0,9.100:-0.069:0,9.138:-0.092:0,9.203:-0.100:0,9.225:-0.077:0,9.266:-0.100:0,9.291:-0.077:0,9.314:-0.100:0,9.381:-0.100:0,9.430:-0.077:0,9.452:-0.100:0,9.475:-0.100:0,9.509:-0.100:0,9.556:-0.077:0,9.604:-0.100:0,9.629:-0.100:0,9.668:-0.100:0,9.716:-0.100:0,9.761:-0.077:0,9.820:-0.054:0,9.869:-0.031:0,9.907:-0.054:0,9.967:-0.077:0,9.991:-0.054:0,10.037:-0.031:0,10.094:-0.008:0,10.144:-0.031:0,10.170:-0.008:0,10.198:0.015:0,10.226:0.038:0,10.267:0.015:0,10.325:0.038:0,10.362:0.061:0,10.412:0.084:0,10.435:0.061:0,10.503:0.084:0,10.557:0.061:0,10.581:0.084:0,10.633:0.100:0,10.667:0.100:0,10.731:0.100:0,10.753:0.100:0,10.790:0.077:0,10.835:0.054:0,10.893:0.031:0,10.950:0.054:0,10.990:0.077:0,11.014:0.100:0,11.054:0.100:0,11.118:0.100:0,11.181:0.100:0,11.237:0.100:0,11.291:0.100:0,11.359:0.077:0,11.383:0.054:0,11.415:0.031:0,11.435:0.008:0,11.468:-0.015:0,11.496:0.008:0,11.546:0.031:0,11.614:0.008:0,11.657:0.031:0,11.696:0.054:0,11.722:0.077:0,11.745:0.054:0,11.814:0.077:0,11.842:0.100:0,11.892:0.077:0,11.912:0.054:0,11.959:0.077:0,12.010:0.054:0,12.073:0.077:0,12.101:0.100:0,12.169:0.100:0,12.212:0.077:0,12.275:0.100:0,12.319:0.100:0,12.343:0.077:0,12.400:0.100:0,12.444:0.077:0,12.490:0.054:0,12.558:0.077:0,12.585:0.054:0,12.643:0.077:0,12.712:0.054:0,12.767:0.077:0,12.813:0.054:0,12.850:0.031:0,12.897:0.054:0,12.949:0.031:0,13.009:0.054:0,13.066:0.031:0,13.096:0.054:0,13.134:0.031:0,13.203:0.054:0,13.247:0.031:0,13.302:0.054:0,13.344:0.077:0,13.412:0.100:0,13.436:0.077:0,13.467:0.054:0,13.504:0.077:0,13.555:0.054:0,13.599:0.077:0,13.659:0.054:0,13.721:0.031:0,13.786:0.008:0,13.830:-0.015:0,13.872:0.008:0,13.896:0.031:0,13.940:0.008:0,13.996:-0.015:0,14.065:-0.038:0,14.093:-0.015:0,14.153:-0.038:0,14.204:-0.015:0,14.257:0.008:0,14.285:-0.015:0,14.306:-0.038:0,14.352:-0.061:0,14.394:-0.084:0,14.455:-0.100:0,14.476:-0.100:0,14.511:-0.100:0,14.569:-0.077:0,14.602:-0.054:0,14.664:-0.077:0,14.729:-0.054:0,14.794:-0.031:0,14.856:-0.054:0,14.902:-0.077:0,14.966:-0.100:0,15.016:-0.100:0,15.045:-0.077:0,15.096:-0.100:0,15.144:-0.077:0,15.198:-0.054:0,15.257:-0.077:0,15.321:-0.100:0,15.354:-0.077:0,15.376:-0.100:0,15.421:-0.100:0,15.479:-0.100:0,15.521:-0.100:0,15.576:-0.077:0,15.621:-0.054:0,15.667:-0.077:0,15.722:-0.054:0,15.788:-0.077:0,15.850:-0.100:0,15.891:-0.077:0,15.933:-0.100:0,15.986:-0.077:0,16.010:-0.054:0,16.069:-0.077:0,16.136:-0.054:0,16.163:-0.077:0,16.232:-0.100:0,16.289:-0.100:0,16.329:-0.077:0,16.357:-0.100:0,16.385:-0.077:0,16.455:-0.054:0,16.492:-0.077:0,16.530:-0.100:0,16.586:-0.100:0,16.623:-0.077:0,16.665:-0.100:0,16.704:-0.077:0,16.749:-0.100:0,16.775:-0.100:0,16.844:-0.100:0,16.868:-0.077:0,16.890:-0.100:0,16.923:-0.100:0,16.984:-0.077:0,17.025:-0.054:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 19
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the still mouse is written" },
+  { re = 'player body summary: weapon sway on', label = "the still mouse: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-pipboy"
+source = "owner 2026-11-14 (engine/nvforever/src/player_body.rs MotionTrace; tenth playtest: \"PipBoy jitters a lot also\"): a frame-by-frame trace of the Pip-Boy brought up, held, and put away, with the rifle out (lhand_* is the left hand against the camera node, lens the arms' magnification; tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-pipboy.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon", NVF_PLAY_TEST_PIPBOY = "9:open,16:close" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 21
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the Pip-Boy is written" },
+  { re = 'player body summary: weapon sway on', label = "the Pip-Boy: the run reached its end" },
+]
+
+[[scenario]]
 name = "movement-inertia-off"
 source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs): with --no-movement-inertia the player starts and stops at once, as the original"
 areas = ["player-body"]

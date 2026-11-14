@@ -149,7 +149,16 @@ itself turns exactly as the mouse says.
   mouse movement reactions"). The first of the two 0.3 s springs had held up to 14 times
   the limit during a fast flick, which the tanh hid while it drained: about 0.2 s of
   standing still at the limit. The trace after: the arms start back within 0.05 s of the
-  view stopping and are on it about 0.5 s later.
+  view stopping and are on it about 0.5 s later. Since the tenth playtest ("the idle
+  weapon/hand animation micro jitters a lot, when I aim down sights it jitters more
+  visibly") a slow averaged rate asks for less: the lag is × `r² / (r² + 0.1²)` of the
+  averaged rate `r` (radians/s; `view_sway::TURN_KNEE`). A hand resting on the mouse sends
+  single counts now and then, and the arms had swum against the view up to 0.05° with them
+  (about 1.7 px at 2160 lines: trace `movement-inertia-trace-still-mouse`, the tenth build);
+  now 0.001°. A flick is as before; a slow 8°/s turn lags 0.7° instead of 1°. Screenshots
+  50 ms apart held still (aimed, Pip-Boy up; with and without DLSS, at Goodsprings'
+  x = -71680 and indoors near the origin) moved at most 0.02 px: the drawing itself does
+  not shake.
 - Bob: a dip at each footfall and one sideways swing a stride, at the phase of the
   movement clips (the footstep keys), growing with the ground speed to a run's
   (300 units/s): 0.9 units down, 0.6 across, 1.2° of tilt. Sneaking 60 %, down the sights
@@ -168,10 +177,18 @@ itself turns exactly as the mouse says.
 - Jumps and landings: the same hand pushed by a take-off and a landing (4/s; 12/s, 7/s
   and 5.5/s before, softer each time): each dips the weapon about 2.3 units, more the
   harder the landing (shown at most 3.5 units; 2 before the fifth playtest, "jumping is
-  not noticeable"); the muzzle tips 1° per unit of dip. A free fall pushes nothing
-  (`nvf_play::ease::carried_push` takes gravity's share out of the change of speed while
-  in the air): the body and the hand fall alike, and with the softer springs the fall's
-  steady push had kept growing.
+  not noticeable"); the muzzle tips 1° per unit of dip. Only a take-off (leaving the
+  ground going up) and a landing push (`nvf_play::ease::carried_push`): in the air the
+  body and the hand fall alike, and with the softer springs the fall's steady push had
+  kept growing. Until the tenth playtest gravity's share was taken out of each change of
+  speed in the air instead; a fall not quite free (down a slope's face, about 10% under
+  gravity) still pushed, and walking off a slope counted its whole speed as a push.
+- In the air the muzzle tips down 6° (tenth playtest: "when jumping the muzzle of the gun
+  should point more towards the ground, but only the muzzle if possible"), turning about
+  the grip (`view_sway::GRIP_PIVOT`, the right hand's place in the view, about 10 right,
+  15.7 ahead and 14.6 down) so the gun's back end stays put; from the take-off (rising
+  faster than 100 units/s) or once in the air, on two springs of 0.15 s each (× the
+  weights), none down the sights.
 - The first-person landing clip (it moves `Camera1st`: the view dips about 6 units and
   stands up again, the standing up in 0.4 s at the clip's own pace [observed: the motion
   trace; the head's own landing spring gives 2 of the 8 units]) is played by its
@@ -324,8 +341,19 @@ on by default) [design]:
 - A crouched jump in first person stays crouched: the weapons' jump and landing clips
   stand the body up (only the unarmed ones have sneaking variants), which drew the view
   40 units up mid-jump and back down after ("looks like the character stands and then
-  jumps", the fifth playtest); while sneaking with movement inertia on, the first-person
-  rig plays only sneaking jump clips.
+  jumps", the fifth playtest). While sneaking with movement inertia on, the first-person
+  rig plays no jump or landing clip, and the crouched walk plays on through the air. The
+  fifth build kept the sneaking jump clips, but the unarmed one stands the view up too
+  (the eye 118 units over the feet instead of 78), and dropping the walk for the idle
+  0.15 s into the air lifted it 9 units ("sometimes still", the tenth playtest; trace
+  `movement-inertia-trace-crouch-jump`). A drop off a ledge still eases the view down
+  over it (physics' step lift, `nvf_play::phys::step_lift`), up to about 10 units behind.
+- The Pip-Boy with movement inertia on: its clip is played into its hold at the `Hit` key
+  (0.33 s) and out of it along a cubic that keeps the clip's own speed at the far ends and
+  has none at the hold (`player_body::pipboy_clip_time`), in the clip's own time. Held at
+  the key as it was, the arm stopped dead still moving about 28 units/s and set off at
+  speed going down (tenth playtest: "PipBoy jitters a lot also"; trace
+  `movement-inertia-trace-pipboy`: held up, the arm does not move at all).
 - While the body glides with no key held, or brakes against the keys, the movement
   clips follow the way it slides (walking or running as it last moved); detection,
   power attacks and scripts still read the keys.

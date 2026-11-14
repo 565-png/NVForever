@@ -89,6 +89,13 @@ pub const TURN_WEIGHT: f32 = 1.2;
 /// between the mouse stop and the hands returning": the first of two 0.3 s springs held
 /// up to 14 times the limit, which the limit hid while it drained, about 0.2 s].
 const TURN_AVERAGE_SECONDS: f32 = 0.06;
+/// A turn slower than this (radians/s, about 6°/s, after the averaging) asks for less lag
+/// than its rate would, and a still hand's twitches on the mouse almost none: the lag is
+/// × `r² / (r² + KNEE²)` of the averaged rate `r` [design: the owner's tenth playtest,
+/// 2026-11-14: "the idle weapon/hand animation micro jitters a lot, when I aim down sights it
+/// jitters more visibly"; a resting hand's mouse counts set the arms swimming against the view
+/// (about 0.9 px at 2160 lines, a simulation of 25 counts a second), 0.02 px with the knee].
+const TURN_KNEE: f32 = 0.1;
 /// Turn rates beyond this (radians/s, about 690°/s) count as this.
 const MAX_TURN_RATE: f32 = 12.0;
 /// A change of the view's angles bigger than this in one frame (radians) is a jump (a
@@ -158,6 +165,19 @@ const AHEAD_WALK_DROP: f32 = 0.5;
 const AHEAD_FULL_SPEED: f32 = 150.0;
 /// (Each of the two springs takes 0.6 of it, so the pair arrives in about that time.)
 const AHEAD_SECONDS: f32 = 0.6;
+/// Off the ground the muzzle tips down by this (radians), turning about the grip
+/// ([`GRIP_PIVOT`]) so the gun's back end stays where it is; full while in the air (or
+/// rising faster than [`JUMP_TIP_RISE`] units/s, from the take-off), on two springs in a
+/// row each settling in [`JUMP_TIP_SECONDS`] (× the weight), none down the sights [design:
+/// the owner's tenth playtest, 2026-11-14: "when jumping the muzzle of the gun should point
+/// more towards the ground, but only the muzzle if possible"].
+const JUMP_TIP: f32 = 6.0 * std::f32::consts::PI / 180.0;
+const JUMP_TIP_RISE: f32 = 100.0;
+const JUMP_TIP_SECONDS: f32 = 0.15;
+/// Where the right hand holds a gun in the view's frame (x right, y ahead, z up; units from
+/// the eye) [observed: the motion trace's `Bip01 R Hand` against `Camera1st`, varmint rifle
+/// held, about (10, 15.7, -14.6)].
+const GRIP_PIVOT: Vec3 = Vec3::new(10.0, 15.7, -14.6);
 /// A reload brings the gun down and turns it over to work on it: the most drop (units),
 /// muzzle tip down and roll (radians), and the move in towards the middle (units), on two
 /// springs in a row each settling in [`RELOAD_SECONDS`] (× the weight); the reload clip
@@ -267,9 +287,6 @@ pub struct SwayInput {
     pub velocity: Vec2,
     /// The body's vertical velocity off the ground (units/s, up); 0 on it and swimming.
     pub vertical: f32,
-    /// The fall's acceleration (units/s², `fnv_phys` `PhysParams::gravity`): its share of
-    /// the vertical velocity's change is no push.
-    pub gravity: f32,
     /// Where the movement clips are in their cycle (0–1).
     pub phase: f32,
     pub sights: bool,
@@ -298,7 +315,7 @@ pub struct SwayInput {
 
 impl Default for SwayInput {
     fn default() -> Self {
-        SwayInput { dt: 0.0, heading: 0.0, pitch: 0.0, velocity: Vec2::ZERO, vertical: 0.0, gravity: 0.0, phase: 0.0, sights: false, sneaking: false, airborne: false, heft: 1.0, slowness: 1.0, raised: 0.0, drawn: 0.0, kick: 0.0, punch: Vec3::ZERO, exertion: 0.0, reloading: 0.0, on: false }
+        SwayInput { dt: 0.0, heading: 0.0, pitch: 0.0, velocity: Vec2::ZERO, vertical: 0.0, phase: 0.0, sights: false, sneaking: false, airborne: false, heft: 1.0, slowness: 1.0, raised: 0.0, drawn: 0.0, kick: 0.0, punch: Vec3::ZERO, exertion: 0.0, reloading: 0.0, on: false }
     }
 }
 
@@ -334,6 +351,8 @@ pub struct ViewSway {
     /// (0–1 of the full).
     ahead: [Spring; 2],
     reload: [Spring; 2],
+    /// Off the ground's muzzle tip (0–1 of the full), on two springs in a row.
+    jump_tip: [Spring; 2],
     /// How far the gun is raised (smoothed), its speed last frame (units/s), and its lag.
     raise: Spring,
     draw: Spring,
@@ -422,7 +441,9 @@ impl ViewSway {
             // moment the turn eases). (Bending each frame's rate before averaging lost most
             // of an uneven turn: the sixth playtest's trace.)
             self.turn_pre[k].step(-rate[k] * chase, average, dt);
-            let want = gentle_limit(self.turn_pre[k].value, limit[k]);
+            let asked = self.turn_pre[k].value;
+            let r = asked.abs() / chase.max(1e-6);
+            let want = gentle_limit(asked * r * r / (r * r + TURN_KNEE * TURN_KNEE), limit[k]);
             self.turn[k].step(want, omega, dt);
         }
         self.lag = Vec2::new(self.turn[0].value, self.turn[1].value);
@@ -438,7 +459,7 @@ impl ViewSway {
         }
         // Up and down only a take-off and a landing push: a free fall moves the body and the
         // hand alike (`nvf_play::ease::carried_push`).
-        let push = nvf_play::inertia::hard_landing(carried_push(self.last_vertical, i.vertical, i.gravity, dt));
+        let push = nvf_play::inertia::hard_landing(carried_push(self.last_vertical, i.vertical));
         self.last_vertical = i.vertical;
         let lift_omega = LIFT_OMEGA / slow;
         self.lift.step_delta(push, pre, lift_omega, LIFT_PEAK_PER_SPEED * heft, dt);
@@ -528,6 +549,12 @@ impl ViewSway {
         let first = self.reload[0].value;
         self.reload[1].step(first, reload_w, dt);
         let reload = self.reload[1].value * g;
+        let jump_w = omega_for(JUMP_TIP_SECONDS * slow);
+        let off_ground = i.airborne || i.vertical > JUMP_TIP_RISE;
+        self.jump_tip[0].step(f32::from(u8::from(off_ground)), jump_w, dt);
+        let first = self.jump_tip[0].value;
+        self.jump_tip[1].step(first, jump_w, dt);
+        let jump_tip = Quat::from_rotation_x(-JUMP_TIP * self.jump_tip[1].value * g * (1.0 - a));
         // The view's pitch (up positive): down raises the gun and draws it in, up lowers it.
         let s = i.pitch.sin();
         let (down, up) = ((-s).max(0.0) * g * (1.0 - a), s.max(0.0) * g * (1.0 - a));
@@ -545,7 +572,10 @@ impl ViewSway {
         self.peak_lag = self.peak_lag.max(lag.abs());
         self.peak_dip = self.peak_dip.max(-dip);
         self.peak_lift_dip = self.peak_lift_dip.max(-lift);
-        SwayPose { rotation: turn * Quat::from_rotation_y(roll), offset }
+        // The jump's tip turns about the grip: the turn about the eye and a move that puts
+        // the grip back.
+        let base = turn * Quat::from_rotation_y(roll);
+        SwayPose { rotation: base * jump_tip, offset: offset + base * (GRIP_PIVOT - jump_tip * GRIP_PIVOT) }
     }
 }
 
@@ -584,6 +614,22 @@ mod tests {
         let (still, reloading) = (pose(Vec2::ZERO, 0.0), pose(Vec2::ZERO, 1.0));
         assert!(reloading.offset.z < still.offset.z - 1.0, "down for the reload");
         assert!(reloading.rotation.angle_between(still.rotation) > 0.1, "turned over");
+    }
+
+    #[test]
+    fn in_the_air_the_muzzle_tips_down_about_the_grip() {
+        // No take-off push: the body is already in the air at a steady fall.
+        let pose = |airborne: bool| settle(&mut ViewSway::default(), SwayInput { airborne, ..input(0.0, Vec2::ZERO, 0.0) }, 600);
+        let (ground, air) = (pose(false), pose(true));
+        let ahead = |p: SwayPose| (p.rotation * Vec3::Y).z;
+        assert!(ahead(air) < ahead(ground) - 0.08, "the muzzle points lower in the air: {} against {}", ahead(air), ahead(ground));
+        let grip = |p: SwayPose| p.rotation * GRIP_PIVOT + p.offset;
+        assert!(grip(air).distance(grip(ground)) < 0.05, "the grip stays put: {} against {}", grip(air), grip(ground));
+        let muzzle = |p: SwayPose| p.rotation * (GRIP_PIVOT + Vec3::Y * 30.0) + p.offset;
+        assert!(muzzle(air).z < muzzle(ground).z - 2.5, "the muzzle goes down: {} against {}", muzzle(air), muzzle(ground));
+        // Down the sights none.
+        let sighted = |airborne: bool| settle(&mut ViewSway::default(), SwayInput { airborne, sights: true, ..input(0.0, Vec2::ZERO, 0.0) }, 600);
+        assert!((ahead(sighted(true)) - ahead(sighted(false))).abs() < 1e-3);
     }
 
     #[test]
@@ -627,10 +673,28 @@ mod tests {
         }
         let ahead = p.rotation * Vec3::Y;
         assert!(ahead.x < -0.01, "the weapon points left of the view: {ahead:?}");
-        let want = -gentle_limit(0.3 * CHASE_SECONDS, MAX_LAG_YAW);
+        let want = -gentle_limit(0.3 * CHASE_SECONDS * 0.09 / (0.09 + TURN_KNEE * TURN_KNEE), MAX_LAG_YAW);
         assert!((s.turn[0].value - want).abs() < 1e-3, "{} against {want}", s.turn[0].value);
         let p = settle(&mut s, input(h, Vec2::ZERO, 0.0), 240);
         assert!(p.rotation.angle_between(Quat::IDENTITY) < 1e-3, "back on the view: {p:?}");
+    }
+
+    #[test]
+    fn a_resting_hands_mouse_twitches_leave_the_arms_on_the_view() {
+        // Single mouse counts (a thousandth of a radian × a sensitivity of 0.4) now and then,
+        // back and forth, as a hand resting on the mouse sends them.
+        let mut s = ViewSway::default();
+        settle(&mut s, input(0.0, Vec2::ZERO, 0.0), 60);
+        let (mut h, mut most) = (0.0f32, 0.0f32);
+        for i in 0..600u32 {
+            if i % 7 == 0 {
+                h += if (i / 7) % 3 == 0 { -0.0004 } else { 0.0004 };
+            }
+            s.update(input(h, Vec2::ZERO, 0.0));
+            most = most.max(s.turn[0].value.abs());
+        }
+        // A thousandth of a degree; without the knee about 0.02°.
+        assert!(most < 2e-5, "the arms stay with the view: {most}");
     }
 
     #[test]
@@ -733,7 +797,7 @@ mod tests {
         let up = (2.0f32 * g * 61.6).sqrt();
         let mut s = ViewSway::default();
         let dt = 1.0 / 60.0;
-        let air = |vz: f32| SwayInput { vertical: vz, gravity: g, airborne: true, ..input(0.0, Vec2::ZERO, 0.0) };
+        let air = |vz: f32| SwayInput { vertical: vz, airborne: true, ..input(0.0, Vec2::ZERO, 0.0) };
         settle(&mut s, input(0.0, Vec2::ZERO, 0.0), 60);
         let mut take_off = 0.0f32;
         let mut top = f32::MIN;
@@ -774,7 +838,9 @@ mod tests {
         let mut air = ViewSway::default();
         let a = settle(&mut free, input(0.0, v, FOOTFALL_PHASE), 240).offset.z;
         let b = settle(&mut sights, SwayInput { sights: true, ..input(0.0, v, FOOTFALL_PHASE) }, 240).offset.z;
-        let c = settle(&mut air, SwayInput { airborne: true, ..input(0.0, v, FOOTFALL_PHASE) }, 240).offset.z;
+        // In the air: no dip where the gun is held (the jump's tip turns it about the grip).
+        let c = settle(&mut air, SwayInput { airborne: true, ..input(0.0, v, FOOTFALL_PHASE) }, 240);
+        let c = (c.rotation * GRIP_PIVOT + c.offset).z - GRIP_PIVOT.z;
         assert!(b > a * 0.5 && b < 0.0, "{a} {b}");
         assert!(c.abs() < 1e-3, "{c}");
     }

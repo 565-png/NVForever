@@ -158,15 +158,22 @@ impl Pushed {
     }
 }
 
-/// The change of a body's vertical velocity that pushes what it carries (head, hands): the
-/// change from `last` to `now` (units/s, up; 0 on the ground), less gravity's own share
-/// over `dt` while it falls freely (both in the air): gravity moves the body and what it
-/// carries alike, so only a take-off and a landing push [design: the seventh playtest's
-/// tests: counting the fall as a push lifted the view and the gun over 2 units through
-/// every jump, more the softer the spring].
-pub fn carried_push(last: f32, now: f32, gravity: f32, dt: f32) -> f32 {
-    let falling = last != 0.0 && now != 0.0;
-    now - last + if falling { gravity * dt.max(0.0) } else { 0.0 }
+/// The change of a body's vertical velocity that pushes what it carries (head, hands), from
+/// `last` to `now` (units/s, up; 0 on the ground): a take-off (leaving the ground going up)
+/// and a landing (back on it). In the air nothing pushes: gravity moves the body and what it
+/// carries alike [design: the seventh playtest's tests: counting the fall as a push lifted
+/// the view and the gun over 2 units through every jump, more the softer the spring]; a fall
+/// that is not quite free (sliding down a slope's face, about 10% under gravity) was taken
+/// for a push while gravity's share was subtracted instead, and lifted the view 10 units off
+/// a crouch over a short drop [design: the tenth playtest's trace, "the weird stand/jump
+/// movement"]. Leaving the ground going down (walking off an edge or a slope) is no push
+/// either: the body was already going down with the ground, whose speed is not counted.
+pub fn carried_push(last: f32, now: f32) -> f32 {
+    match (last == 0.0, now == 0.0) {
+        (true, false) => now.max(0.0),
+        (false, true) => -last,
+        _ => 0.0,
+    }
 }
 
 /// Cubic ease-out of `u` in 0–1: starts at three times the average speed and arrives with
@@ -381,9 +388,10 @@ mod tests {
     #[test]
     fn a_free_fall_pushes_nothing_and_a_take_off_and_a_landing_do() {
         let (g, dt) = (686.7, 1.0 / 60.0);
-        assert_eq!(carried_push(0.0, 291.0, g, dt), 291.0, "the take-off");
-        assert!(carried_push(100.0, 100.0 - g * dt, g, dt).abs() < 1e-3, "falling freely");
-        assert_eq!(carried_push(-291.0, 0.0, g, dt), 291.0, "the landing");
+        assert_eq!(carried_push(0.0, 291.0), 291.0, "the take-off");
+        assert!(carried_push(100.0, 100.0 - g * dt) == 0.0, "falling freely");
+        assert_eq!(carried_push(-291.0, 0.0), 291.0, "the landing");
+        assert_eq!(carried_push(0.0, -60.0), 0.0, "walking off a slope");
         // The same push given as changes as given as a velocity.
         let (mut a, mut b) = (Pushed::default(), Pushed::default());
         let (pre, w) = (omega_for(0.1), 6.0);

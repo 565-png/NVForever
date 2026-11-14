@@ -112,8 +112,6 @@ pub struct BobInput {
     pub velocity: Vec2,
     /// The body's vertical velocity off the ground (up), units/s; 0 on it.
     pub vertical: f32,
-    /// The fall's acceleration (units/s²): its share of the velocity's change is no push.
-    pub gravity: f32,
     /// The inertia weight: the springs' times × this.
     pub slowness: f32,
     /// The bob shows at all (first person, the switch on, nothing else driving the view).
@@ -187,7 +185,7 @@ impl HeadBob {
         // The head's own weight, pushed by the body's acceleration (below).
         let took_off = i.vertical > 0.0 && self.last_vertical <= 0.0;
         // Only a take-off and a landing push the head: a free fall moves it with the body.
-        let push = nvf_play::inertia::hard_landing(nvf_play::ease::carried_push(self.last_vertical, i.vertical, i.gravity, dt));
+        let push = nvf_play::inertia::hard_landing(nvf_play::ease::carried_push(self.last_vertical, i.vertical));
         self.last_vertical = i.vertical;
         // Out of breath: running winds, walking and standing recover, jumps take breath.
         let wind = if !i.airborne && i.speed > WINDED_SPEED {
@@ -288,7 +286,7 @@ mod tests {
     const DT: f32 = 1.0 / 60.0;
 
     fn input(speed: f32, phase: f32) -> BobInput {
-        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, velocity: Vec2::ZERO, vertical: 0.0, gravity: 686.7, slowness: 1.0, on: true, breathing: false, kick: 0.0, punch: Vec3::ZERO }
+        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, velocity: Vec2::ZERO, vertical: 0.0, slowness: 1.0, on: true, breathing: false, kick: 0.0, punch: Vec3::ZERO }
     }
 
     #[test]
