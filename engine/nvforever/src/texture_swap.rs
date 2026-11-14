@@ -135,7 +135,7 @@ impl Swapping<'_, '_> {
                         (_, Some(f)) => f.original().id(),
                         (Some(f), None) => f.original.id(),
                         // [design, #2557] Texture copies must not inherit the cloak.
-                        (None, None) => drawing.filter(|d| d.copy == mat.0).map_or(mat.id(), |d| d.source.id()),
+                        (None, None) => nvf_assets::nif_material::plain_material(&mat.0, drawing).id(),
                     };
                     let original = swapped.original.get(&own).copied().unwrap_or(own);
                     if !targets.contains(&original) && name.is_none_or(|n| !same_shape(&n.0, shape)) {

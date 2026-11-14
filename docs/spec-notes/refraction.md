@@ -96,16 +96,25 @@ note covers the whole census, fire refraction and actors.
   Shared source materials are never changed. Each actor's value is checked each frame;
   its hierarchy/materials are revisited only on activation, hierarchy/material-handle
   changes, or a pending material asset. New weapons and outfits therefore cloak even
-  while the value stays constant. [design, #2557; `nif_material::MaterialOverride`,
-  `nvf_play::fade::step`, `texture_swap::Swapping`] The cloak publishes its underlying
-  plain material for fades and texture swaps: their copies and restoration handles
-  never inherit the temporary cloak. Active fades refresh their derived cloak while
-  they change the plain fade copy; idle actors still avoid material work.
-  [design, #2557; `actor_materials::ActorMaterials::restored_pose`,
-  `stealth_field::ActorDrawing::restore`] Material animation writes the owned cloak
-  in place. Uncloaking reapplies its cached glow/UV pose to a private plain material,
-  preserving constant animation values on the restoration frame and following frames
-  without changing shared model materials. Logs name the actor's base EDID and reference:
+  while the value stays constant. [design, #2557; `nif_material::plain_material`,
+  `MaterialOverride`, `nvf_play::fade::step`, `texture_swap::Swapping`,
+  `effect_shaders::AlphaDrawing`, `nif_mirror::mirror_game`] The cloak is a derived
+  top layer. Every material consumer resolves its underlying plain source before
+  reading, cloning or saving a restoration handle. Fades, actor alpha, texture swaps,
+  effect-shader holes and extender material edits therefore retain plain materials;
+  only the field disposes of its cloak assets. Changes publish the plain source again
+  and the field re-derives its copy; active fades refresh while their source changes.
+  Idle actors still avoid material work.
+  [design, #2557; `actor_materials::Posing::pose`] Material animation writes its private
+  plain source, including stored glow/UV resets when a track ends during a cloak.
+  Uncloaking restores that source directly. Cached poses are associated with their
+  plain handle, so replacements receive constant animation values without mutating
+  shared model materials.
+  [design, #2557; `effect_shaders::cover`] Overlay coverage uses the resolved source
+  and caches its handle and cloak status. Cloaked meshes suppress overlays; removing
+  the cloak invalidates that coverage and rebuilds overlays on the next Update,
+  including when the uncloak shader starts in the restoration frame.
+  Logs name the actor's base EDID and reference:
   `stealth field: <EDID> 0x<refid> on (Chameleon <value>)` / `... off`.
 - [documented: issue #2557, supplied FalloutNV.esm record facts] CrSuperMutantNightkin
   (CREA 0x0007EA29) carries CrNightkinSCRIPT (SCPT 0x0007EA22), which adds

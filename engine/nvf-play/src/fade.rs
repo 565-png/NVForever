@@ -201,7 +201,7 @@ fn step(
             }
             // [design, #2557] The field may discard its override when we replace it.
             // Both the fade's copy and its restoration handle start from plain material.
-            None => drawing.filter(|d| d.copy == mat.0).map_or_else(|| mat.0.clone(), |d| d.source.clone()),
+            None => nvf_assets::nif_material::plain_material(&mat.0, drawing).clone(),
         };
         let Some(mut m) = materials.get(&copy).cloned() else { continue };
         let base = m.base.base_color.alpha();
