@@ -77,7 +77,7 @@ note covers the whole census, fire refraction and actors.
   outline: an alpha-tested part keeps its cut, a blended part (hair) is cut at alpha 0.5
   [hypothesis].
 
-## 5. The Stealth Boy's field on the player
+## 5. The Stealth Boy's field on actors
 
 - While the player's Chameleon is 1 or more, every mesh of the player's body and
   first-person arms is drawn refracting, a screen shift of 0.03 per unit of tilt (strength
@@ -87,8 +87,32 @@ note covers the whole census, fire refraction and actors.
   and has not been compared with game frames]. Nothing of the body's colour is drawn:
   the body shows as a bent outline of what lies behind it. This replaces the earlier
   blended copy at 30 % opacity tinted blue (aid-items.md §2).
-- Built: `stealth_field.rs`. Not built: other actors under Chameleon (Nightkin cast
-  `StealthBoyInvisibilitySpell`): their meshes are not changed.
+- [design, #2557] `engine/nvforever/src/stealth_field.rs` also draws every loaded
+  living actor with Chameleon >= 1 using the same material copies, under its `ActorRig`
+  visual root (`actors.rs`): body, outfit and carried weapons. The threshold follows
+  `fnv_game::detection`; Invisibility alone does not enable this rendering, as the
+  existing player path checks only Chameleon. Copies are restored when Chameleon drops
+  below 1, the actor dies, its visual root unloads, or a part leaves its hierarchy.
+  Shared source materials are never changed. Each actor's value is checked each frame;
+  its hierarchy/materials are revisited only on activation, hierarchy/material-handle
+  changes, or a pending material asset. New weapons and outfits therefore cloak even
+  while the value stays constant. Material animation (`actor_materials::Posing`) writes
+  owned copies in place so uncloaking restores a plain material. Logs name the actor's base EDID and reference:
+  `stealth field: <EDID> 0x<refid> on (Chameleon <value>)` / `... off`.
+- [documented: issue #2557, supplied FalloutNV.esm record facts] CrSuperMutantNightkin
+  (CREA 0x0007EA29) carries CrNightkinSCRIPT (SCPT 0x0007EA22), which adds
+  StealthBoyInvisibilitySpell (SPEL 0x0007E474) on load, removes it during an attack,
+  adds it again out of combat while alive, and removes it on death. Its StealthBoyInvis
+  effect (MGEF 0x00043E95) supplies Chameleon 95 with no effect shader. Jacobstown
+  Nightkin (0x0013AFDC) have no cloak script; the renderer has no base-specific exception.
+- [design: `stealth_field.rs`, `pipboy_arm.rs`] The player's body/arms path, rendering
+  parameters and logs are unchanged. Only the player's Pip-Boy screen and glare are
+  drawn plain while its menus are on the model (owner choice, 2026-10-23).
+- [hypothesis] The existing strength/period above provisionally apply to other actors
+  too. Visual parity and the cave Nightkin/nightstalker question from #2557 remain
+  observer check 141 (`docs/handoff/observer-checks.md`). [design, #2557] Smoke:
+  `nightkin-stealth-field`; player regressions: `aid-stealth-boy`,
+  `stealth-boy-refraction`, `stealth-boy-pipboy`.
 
 ## 6. How it is drawn
 

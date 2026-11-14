@@ -100,6 +100,7 @@ pub struct Posing<'w, 's> {
     shapes: Query<'w, 's, DrivenShape>,
     materials: ResMut<'w, Assets<NifMaterial>>,
     refs: Query<'w, 's, &'static RefVisual>,
+    fields: Option<Res<'w, crate::stealth_field::ActorFields>>,
     found: Local<'s, Vec<Entity>>,
     frame: Local<'s, u32>,
 }
@@ -149,7 +150,9 @@ impl Posing<'_, '_> {
                 None => driven,
             };
             slot.last = driven.any().then_some((look, driven));
-            if fading || faded || slot.mine.as_ref().is_some_and(|m| m.id() == current.id()) {
+            // [design, #2557] The actor field owns this copy until uncloaking.
+            let cloaked = self.fields.as_ref().is_some_and(|fields| fields.owns(slot.entity, &current.0));
+            if fading || faded || cloaked || slot.mine.as_ref().is_some_and(|m| m.id() == current.id()) {
                 if let Some(mut m) = self.materials.get_mut(&current.0) {
                     pose_material(&mut m, &look, write, true);
                 }

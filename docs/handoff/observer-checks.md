@@ -2174,3 +2174,18 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      dirt and on concrete, first and third person, and record which SOUN records play
      at each footfall (the sound log): does `FSTArmorPowerWalkL`/`R` play, instead of
      or beside the ground's step, and does anything play for the run rustle?
+
+## Added 2026-11-14 (actor stealth fields, #2557)
+
+141. **How do cloaked Nightkin and nightstalkers look and change state?** (P2; #2557,
+     refraction.md section 5.) [observed: owner's 2026-11-14 REPCONN playtest, issue #2557
+     comment] Nightkin there were drawn plain even as their uncloak sound/effect played.
+     [design, #2557] NVForever now refracts loaded living actors at Chameleon >= 1,
+     restoring the body, outfit and weapon when the value drops or the actor dies.
+     [hypothesis] The player's existing 0.03 screen shift and 2 s shimmer provisionally
+     apply to other actors. To check in the original: at REPCONN and in the caves near
+     Jacobstown, record the outline, weapon and outfit while cloaked, during an attack,
+     after combat and on death; compare the bend/shimmer to a player's Stealth Boy.
+     Check that Jacobstown's residents stay plain. Also record whether nightstalkers
+     cloak, which encountered variant does so, and under what conditions; the owner's
+     comment leaves that uncertain, and no nightstalker record facts were supplied.
