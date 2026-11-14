@@ -305,7 +305,7 @@ attacked. A StartCombat on the player, who has not hit the actor and whom it wou
 alone otherwise (no grudge, no hostility by its records), is the actor's own: no ally
 takes it up and it sends no alarm (`Game::unprovoked_scripted_fight`; log `provocation:
 …'s allies stay out of its fight against the player: a script started it …`)
-[hypothesis: Assistance answers an ally being attacked; observer-checks.md question 140].
+[hypothesis: Assistance answers an ally being attacked; observer-checks.md question 141].
 The case: the Silver Rush intro ends with `VFSVanGraffCustomerREF.startcombat player`
 (INFO 0012423E); the customer (Cowardly, Unaggressive, Helps Nobody) is meant to run out
 on his OnStartCombat flee package, and his script's OnHit player alone sets the Van

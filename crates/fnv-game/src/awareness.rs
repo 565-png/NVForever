@@ -1135,7 +1135,7 @@ impl Game<'_> {
     /// (`crate::provocation` module notes, "Assistance") [hypothesis: Assistance answers
     /// an ally being attacked; the Silver Rush intro's customer, whose StartCombat makes
     /// him run out and whose OnHit player alone sets the Van Graffs against the player,
-    /// FalloutNV.esm SCPT 0x0012424C, #2520; observer-checks.md question 140].
+    /// FalloutNV.esm SCPT 0x0012424C, #2520; observer-checks.md question 141].
     pub fn unprovoked_scripted_fight(&mut self, actor: FormId, foe: FormId) -> bool {
         if foe != FormId::PLAYER_REF || !self.awareness.forced.contains(&(actor, foe)) || self.provocations.holds(actor, foe) {
             return false;
