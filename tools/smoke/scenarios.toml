@@ -28148,3 +28148,22 @@ order = [[
 expect = [
   { re = 'far script summary: (?P<n>\d+) GameMode runs of residents out of the loaded cells', range = [1, 100000], label = "scripts of residents out of the loaded cells ran" },
 ]
+
+
+[[scenario]]
+name = "script-physical-wheel-delivery"
+source = "[hypothesis: engineering input bridge] docs/spec-notes/script-wheel-input.md: authored public JIP handlers observe physical wheel264/265; no MCM navigation model"
+note = "Manual opt-in only: set NVF_SCRIPT_WHEEL_MANUAL=1, focus the primary game window after loading, roll the wheel up then wait and roll down during the24second run. Do not use synthetic Tap/Hold codes as physical input proof. This checks delivery to actual published script callbacks, not native per-notch parity, pane focus or left-list selection. The scenario and authored scripts are unrun."
+areas = ["input", "scripts"]
+paths = ["engine/nvf-play/src/script_input.rs", "engine/nvf-play/src/script_input_wheel_tests.rs", "crates/fnv-game/src/script_input.rs", "crates/fnv-game/src/jip_events.rs", "docs/spec-notes/script-wheel-input.md", "tools/smoke/fixtures/script-wheel-home/"]
+requires = ["NVF_SCRIPT_WHEEL_MANUAL"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/script-wheel-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
+expect = [
+  { text = 'script: print "nvf wheel up handler 1"', count = 1, label = "wheel-up callback registration succeeds" },
+  { text = 'script: print "nvf wheel down handler 1"', count = 1, label = "wheel-down callback registration succeeds" },
+  { text = 'script: print "nvf physical wheel edge 264"', min = 1, label = "actual physical up reaches its public script handler" },
+  { text = 'script: print "nvf physical wheel edge 265"', min = 1, label = "actual physical down reaches its public script handler" },
+]
+manual = "Keep the primary game window focused; scroll up and down after loading. This manual scenario has no selection or scroll-offset expectation and provides no GPU/native visual comparison."
