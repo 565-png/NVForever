@@ -752,10 +752,13 @@ pub struct Layer {
     pub weight: f32,
 }
 
-/// How many clips a [`BlendPlayer`] blends at once: locomotion 0 and 1, weapon or stance
-/// 2 and 3, idles and attacks 4 and 5, the idle under the movement 6, a robot's
+/// [design: BlendPlayer] Regular clip slots: locomotion 0 and 1, weapon or stance
+/// 2 and 3, idles and attacks 4 and 5, spare 6, a robot's
 /// `Talking` 7 (nvforever's `talk_clips.rs`).
 pub const MAX_LAYERS: usize = 8;
+
+/// [design, #2352] One additional slot belongs exclusively to the pose blender.
+const MAX_POSE_LAYERS: usize = MAX_LAYERS + 1;
 
 /// The priority of the identity a clip gives an accumulation root it does not drive: below
 /// every track, so any clip that drives the root wins.
@@ -806,7 +809,7 @@ impl Mix {
 /// priority down, each priority group takes its summed weight, at most what is left of 1,
 /// shared by weight within the group; the rest goes to `bind`.
 fn blend_by_priority(c: &mut [Contrib], bind: Transform) -> Transform {
-    // Highest priority first (insertion sort: at most MAX_LAYERS entries).
+    // [design: BlendPlayer::add] Highest priority first, at most MAX_POSE_LAYERS entries.
     for i in 1..c.len() {
         let mut j = i;
         while j > 0 && c[j - 1].p < c[j].p {
@@ -850,7 +853,7 @@ fn finite_or_zero(v: Vec3) -> Vec3 {
     }
 }
 
-/// Poses a skeleton from up to [`MAX_LAYERS`] weighted clips (docs/spec-notes/actors.md
+/// Poses a skeleton from weighted clips (docs/spec-notes/actors.md
 /// §8.3 and §9.4): per node, the clips that drive it are blended by track priority and
 /// weight (translations and scales lerped, rotations nlerped along the shorter arc), with
 /// any weight left over going to the node's bind transform; a node no clip drives any
@@ -865,7 +868,10 @@ pub struct BlendPlayer {
     /// The nodes' local bind transforms.
     pub bind: Arc<Vec<Transform>>,
     pub layers: [Option<Layer>; MAX_LAYERS],
-    contribs: Vec<([Contrib; MAX_LAYERS], u8)>,
+    /// [design, #2352] Transform fallback consumed only by the pose blender, outside
+    /// the layers enumerated for sounds, events, materials and other controllers.
+    pub pose_only: Option<Layer>,
+    contribs: Vec<([Contrib; MAX_POSE_LAYERS], u8)>,
     touched: Vec<usize>,
     /// Nodes posed in the previous call, and a per-node flag for this call's.
     posed: Vec<usize>,
@@ -878,7 +884,7 @@ pub struct BlendPlayer {
     /// What the last pose was made from, when [`Self::pose_held`] made it.
     posed_from: Option<PosedFrom>,
     /// Each slot's whole cycles of the clip playing in it ([`Loops`]).
-    loops: [Loops; MAX_LAYERS],
+    loops: [Loops; MAX_POSE_LAYERS],
     /// Nodes beyond the skeleton's ([`Self::add_part_node`]): name and node index (in
     /// `nodes`), driven by the layers' [`BoundClip::unbound`] tracks of that name.
     part_nodes: Vec<(String, usize)>,
@@ -906,10 +912,10 @@ struct Loops {
 
 impl Loops {
     /// Follow every slot's layer as it stands at this sample.
-    fn follow_all(loops: &mut [Loops; MAX_LAYERS], layers: &[Option<Layer>; MAX_LAYERS]) {
+    fn follow_all<const N: usize>(loops: &mut [Loops; N], layers: &[Option<Layer>; N]) {
         let held = |l: &Loops, layer: &Layer| l.clip.as_ref().is_some_and(|c| Arc::ptr_eq(c, &layer.clip));
         // A clip new to its slot that another slot held at the last sample: its state there.
-        let mut carry: [Option<(f32, i64)>; MAX_LAYERS] = [None; MAX_LAYERS];
+        let mut carry: [Option<(f32, i64)>; N] = [None; N];
         for (k, layer) in layers.iter().enumerate() {
             if let Some(l) = layer.as_ref().filter(|l| !held(&loops[k], l)) {
                 carry[k] = loops.iter().find(|o| held(o, l)).map(|o| (o.phase, o.cycles));
@@ -944,14 +950,14 @@ impl Loops {
 /// What a [`BlendPlayer`]'s pose is made from, besides its bind transforms.
 #[derive(Debug, Clone)]
 struct PosedFrom {
-    layers: [Option<Layer>; MAX_LAYERS],
+    layers: [Option<Layer>; MAX_POSE_LAYERS],
     rest_changes: u32,
 }
 
 /// Whether layers and rest poses as they stand now give the pose made from `from`: the
 /// same clips (the same `Arc`, whatever their contents) at exactly the same phases and
 /// weights in the same slots. Without a pose made yet they do not.
-fn pose_stands(from: Option<&PosedFrom>, layers: &[Option<Layer>; MAX_LAYERS], rest_changes: u32) -> bool {
+fn pose_stands<'a>(from: Option<&PosedFrom>, layers: impl IntoIterator<Item = &'a Option<Layer>>, rest_changes: u32) -> bool {
     let same = |a: &Option<Layer>, b: &Option<Layer>| match (a, b) {
         (None, None) => true,
         (Some(a), Some(b)) => Arc::ptr_eq(&a.clip, &b.clip) && a.phase.to_bits() == b.phase.to_bits() && a.weight.to_bits() == b.weight.to_bits(),
@@ -967,7 +973,8 @@ impl BlendPlayer {
             nodes,
             bind,
             layers: Default::default(),
-            contribs: vec![([CONTRIB_NONE; MAX_LAYERS], 0); n],
+            pose_only: None,
+            contribs: vec![([CONTRIB_NONE; MAX_POSE_LAYERS], 0); n],
             touched: Vec::with_capacity(n),
             posed: Vec::with_capacity(n),
             driven: vec![false; n],
@@ -977,6 +984,11 @@ impl BlendPlayer {
             loops: Default::default(),
             part_nodes: Vec::new(),
         }
+    }
+
+    /// [design, #2352] Include the isolated fallback only when sampling or caching poses.
+    fn pose_layers(&self) -> [Option<Layer>; MAX_POSE_LAYERS] {
+        std::array::from_fn(|k| if k < MAX_LAYERS { self.layers[k].clone() } else { self.pose_only.clone() })
     }
 
     /// Add a node that is not the skeleton's (a named node inside one of the actor's
@@ -992,7 +1004,7 @@ impl BlendPlayer {
         self.nodes.push(entity);
         Arc::make_mut(&mut self.bind).resize(i, Transform::IDENTITY);
         Arc::make_mut(&mut self.bind).push(rest);
-        self.contribs.push(([CONTRIB_NONE; MAX_LAYERS], 0));
+        self.contribs.push(([CONTRIB_NONE; MAX_POSE_LAYERS], 0));
         self.driven.push(false);
         self.part_nodes.push((name.to_string(), i));
     }
@@ -1025,7 +1037,7 @@ impl BlendPlayer {
         if *n == 0 {
             self.touched.push(i);
         }
-        if (*n as usize) < MAX_LAYERS {
+        if (*n as usize) < MAX_POSE_LAYERS {
             slots[*n as usize] = c;
             *n += 1;
         }
@@ -1038,7 +1050,7 @@ impl BlendPlayer {
         out.clear();
         self.posed_from = None;
         let mut sampled = 0;
-        let layers = std::mem::take(&mut self.layers);
+        let layers: [Option<Layer>; MAX_POSE_LAYERS] = std::array::from_fn(|k| if k < MAX_LAYERS { self.layers[k].take() } else { self.pose_only.take() });
         Loops::follow_all(&mut self.loops, &layers);
         // A weight or phase that is not a finite number (a clip of no length divided by)
         // gives no layer or the cycle's start, never NaN bones.
@@ -1093,7 +1105,9 @@ impl BlendPlayer {
                 self.add(root, Contrib { t: Vec3::ZERO, r: Quat::IDENTITY, s: 1.0, w, p: UNDRIVEN_ROOT_PRIORITY });
             }
         }
-        self.layers = layers;
+        for (k, layer) in layers.into_iter().enumerate() {
+            if k < MAX_LAYERS { self.layers[k] = layer; } else { self.pose_only = layer; }
+        }
         for k in 0..self.touched.len() {
             let i = self.touched[k];
             let rest = self.rest_of(i);
@@ -1150,11 +1164,11 @@ impl BlendPlayer {
     /// the bones [`Self::pose`] would have left. The nodes checked are those it would
     /// write; the caller's own writes do not count as changes on its next run.
     pub fn pose_held(&mut self, scratch: &mut Vec<(usize, Transform)>, transforms: &mut Query<&mut Transform>) -> Option<usize> {
-        if pose_stands(self.posed_from.as_ref(), &self.layers, self.rest_changes) && !self.nodes_written(transforms) {
+        if pose_stands(self.posed_from.as_ref(), self.layers.iter().chain(std::iter::once(&self.pose_only)), self.rest_changes) && !self.nodes_written(transforms) {
             return None;
         }
         let n = self.pose(scratch, transforms);
-        self.posed_from = Some(PosedFrom { layers: self.layers.clone(), rest_changes: self.rest_changes });
+        self.posed_from = Some(PosedFrom { layers: self.pose_layers(), rest_changes: self.rest_changes });
         Some(n)
     }
 
@@ -1170,11 +1184,11 @@ impl BlendPlayer {
     /// [`Self::pose_held`] apart from writing, as [`Self::sample_into`]: `written` is
     /// [`Self::written_since`], asked before (it reads the transforms).
     pub fn sample_held_into(&mut self, written: bool, scratch: &mut Vec<(usize, Transform)>, out: &mut Vec<(Entity, Transform)>) -> Option<usize> {
-        if pose_stands(self.posed_from.as_ref(), &self.layers, self.rest_changes) && !written {
+        if pose_stands(self.posed_from.as_ref(), self.layers.iter().chain(std::iter::once(&self.pose_only)), self.rest_changes) && !written {
             return None;
         }
         let n = self.sample_into(scratch, out);
-        self.posed_from = Some(PosedFrom { layers: self.layers.clone(), rest_changes: self.rest_changes });
+        self.posed_from = Some(PosedFrom { layers: self.pose_layers(), rest_changes: self.rest_changes });
         Some(n)
     }
 
@@ -1612,7 +1626,7 @@ mod tests {
     #[test]
     fn a_pose_stands_only_while_what_makes_it_does() {
         let (a, b) = (on_node_0(1.0), on_node_0(1.0));
-        let mut layers: [Option<Layer>; MAX_LAYERS] = Default::default();
+        let mut layers: [Option<Layer>; MAX_POSE_LAYERS] = Default::default();
         layers[0] = Some(Layer { clip: a, phase: 0.999, weight: 1.0 });
         let from = PosedFrom { layers: layers.clone(), rest_changes: 3 };
         assert!(pose_stands(Some(&from), &layers, 3));
@@ -1620,7 +1634,7 @@ mod tests {
         assert!(!pose_stands(None, &layers, 3));
         // A rest pose changed.
         assert!(!pose_stands(Some(&from), &layers, 4));
-        let with = |f: &dyn Fn(&mut [Option<Layer>; MAX_LAYERS])| {
+        let with = |f: &dyn Fn(&mut [Option<Layer>; MAX_POSE_LAYERS])| {
             let mut l = layers.clone();
             f(&mut l);
             pose_stands(Some(&from), &l, 3)
@@ -1636,6 +1650,32 @@ mod tests {
         assert!(!with(&|l| l[2] = Some(Layer { clip: b.clone(), phase: 0.0, weight: 1.0 })));
         assert!(!with(&|l| l[0] = None));
         assert!(!with(&|l| l.swap(0, 1)));
+    }
+
+    #[test]
+    fn pose_only_fallback_is_sampled_and_invalidates_held_poses() {
+        // [design, #2352] Synthetic fallback outside regular controller/event layers.
+        let mut p = BlendPlayer::new(vec![Entity::PLACEHOLDER], Arc::new(vec![Transform::IDENTITY]));
+        let layer = |x, phase| Some(Layer { clip: on_node_0(x), phase, weight: 1.0 });
+        p.pose_only = layer(7.0, 0.9);
+        assert!(p.layers.iter().all(Option::is_none));
+        let (mut scratch, mut out) = (Vec::new(), Vec::new());
+        assert_eq!(p.sample_held_into(false, &mut scratch, &mut out), Some(1));
+        assert_eq!(out.last().unwrap().1.translation.x, 7.0);
+        assert_eq!(p.sample_held_into(false, &mut scratch, &mut out), None);
+        p.pose_only.as_mut().unwrap().phase = 0.1;
+        assert_eq!(p.sample_held_into(false, &mut scratch, &mut out), Some(1));
+        assert_eq!(p.loops[MAX_LAYERS].cycles, 1);
+        p.pose_only = layer(8.0, 0.1);
+        assert_eq!(p.sample_held_into(false, &mut scratch, &mut out), Some(1));
+        assert_eq!(out.last().unwrap().1.translation.x, 8.0);
+        p.pose_only.as_mut().unwrap().weight = 0.5;
+        assert_eq!(p.sample_held_into(false, &mut scratch, &mut out), Some(1));
+        assert_eq!(out.last().unwrap().1.translation.x, 4.0);
+        p.pose_only = None;
+        assert_eq!(p.sample_held_into(false, &mut scratch, &mut out), Some(0));
+        assert_eq!(out.last().unwrap().1, Transform::IDENTITY);
+        assert!(p.layers.iter().all(Option::is_none));
     }
 
     #[test]

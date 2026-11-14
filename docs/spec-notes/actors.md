@@ -1169,13 +1169,18 @@ All rules here are engine choices unless tagged otherwise. Layer 6 replaces the 
   Idle clip in the current set, it keeps that idle running on bones and part nodes
   none of the other active clips drive, excluding the accumulation root. The idle's
   own phase runs on; its filtered tracks have `UNDER_PRIORITY`, below other tracks.
-  [design, #2352] The cached fallback has no material tracks, so filling an omitted
-  bone cannot override special-idle materials (`material_anim::actor_material_values`).
-  Its bone-mask cache follows all active clip identities, ignoring zero or nonfinite
-  weights and the unfiltered Idle clip itself. [design, #2352] The material-free source
-  `Arc<Clip>` is cached separately for the current idle and shared across bone-mask
-  rebuilds, preserving sound-key playback identity in `anim_sounds::actor_keys` when
-  upper clips start or end. [documented: issue #2352, supplied wing-track
+  [design, #2352] The fallback occupies `BlendPlayer::pose_only`, separate from
+  regular layers and consumed only by the pose blender (including its cycle tracking
+  and held-pose cache). Its Clip view copies timing only: no text/sound/event keys,
+  materials, visibility, emitters, lights or free-controller tracks. Filling an omitted
+  bone therefore cannot become an event source or override special-idle materials
+  (`material_anim::actor_material_values`). Its bound transform mask follows all
+  active clip identities, ignoring zero or nonfinite weights and the real Idle itself.
+  [design, #2352] `anim_sounds::actor_sound_sources` keeps one sound owner for that
+  idle: an audible regular Idle layer, otherwise the real Idle source at its continuing
+  phase while the pose fallback is active. The pose-only view never supplies keys;
+  upper-clip/mask changes preserve the real Idle's source identity and sound timeline.
+  [documented: issue #2352, supplied wing-track
   survey] `mtidle.kf` drives the bloatfly's wing bones (`Bip01 L/R UpperArm`,
   `Forearm`, priority 45); its movement, aim, attack and hover clips omit them.
   [hypothesis] The original keeps these bones animating from its idle (observer

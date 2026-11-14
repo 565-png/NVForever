@@ -491,22 +491,21 @@ pub struct Locomotion {
     pub armed_on: bool,
     /// The clip files logged while armed ([`Locomotion::armed_clip_news`]).
     armed_logged: Vec<String>,
-    /// [design, #2352] The idle under movement and upper clips ([`UNDER_LAYER`]): creatures only.
+    /// [design, #2352] The idle under movement and upper clips ([`BlendPlayer::pose_only`]): creatures only.
     pub idle_under: bool,
     under: Under,
     /// Times "moves with no movement clip" was logged for this actor (once).
     clipless_logged: u8,
 }
 
-/// [design, #2352] Slot for the creature set's idle below movement, stance, aim,
+/// [design, #2352] The creature set's pose-only idle below movement, stance, aim,
 /// attack and special-idle clips, only on bones those clips omit. The accumulation
 /// root is excluded. [documented: issue #2352] The supplied bloatfly survey names
 /// wing tracks in `mtidle.kf` that its move, aim and attack clips omit.
 /// [hypothesis] The original keeps those bones animating from its idle; observer
 /// check 141 asks for a capture. [design] People retain their existing layering.
-pub const UNDER_LAYER: usize = 6;
-/// The under-laid idle's track priority: below every clip's (clips' priorities are small
-/// non-negative numbers [observed]) and above `anim_play`'s undriven-root identity.
+/// [design, #2352] Fallback priority: below ordinary clip tracks and above
+/// `anim_play`'s undriven-root identity.
 pub const UNDER_PRIORITY: i32 = i32::MIN + 1;
 
 /// [design, #2352] Cached filtered idle, keyed by its source and every other active
@@ -514,8 +513,8 @@ pub const UNDER_PRIORITY: i32 = i32::MIN + 1;
 #[derive(Default)]
 struct Under {
     idle: usize,
-    /// [design, #2352] Material-free source shared across bone-mask rebuilds so
-    /// `anim_sounds::actor_keys` retains its playback identity.
+    /// [design, #2352] Timing-only view shared across bone-mask rebuilds.
+    /// Sound ownership stays with the real Idle source, never this view.
     source: Option<Arc<nvf_assets::anim_play::Clip>>,
     clip: Option<Arc<BoundClip>>,
     checked: [usize; MAX_LAYERS],
@@ -524,8 +523,8 @@ struct Under {
 }
 
 /// [design, #2352] `idle` at `UNDER_PRIORITY`, excluding its accumulation root and
-/// all bones or part nodes driven by `others`. The shared material-free `source`
-/// cannot override upper-layer materials (`material_anim::actor_material_values`).
+/// all bones or part nodes driven by `others`. The timing-only `source`
+/// is isolated in `BlendPlayer::pose_only`, outside every non-pose consumer.
 fn under_clip(idle: &BoundClip, source: Arc<nvf_assets::anim_play::Clip>, others: &[Option<&BoundClip>; MAX_LAYERS]) -> BoundClip {
     BoundClip {
         clip: source,
@@ -771,7 +770,7 @@ impl Locomotion {
                 player.layers[0] = Some(Layer { clip: clip.clone(), phase, weight: jw });
             }
         }
-        player.layers[UNDER_LAYER] = None;
+        player.pose_only = None;
     }
 
     /// [design, #2352] The creature's idle under movement, aim, attack and special
@@ -783,7 +782,7 @@ impl Locomotion {
         }
         let idle = self.set.clips.get(&Move::Idle)?.bound.clone();
         let others: [Option<&BoundClip>; MAX_LAYERS] = std::array::from_fn(|k| {
-            layers[k].as_ref().filter(|l| k != UNDER_LAYER && l.weight.is_finite() && l.weight > 0.0 && !Arc::ptr_eq(&l.clip, &idle)).map(|l| l.clip.as_ref())
+            layers[k].as_ref().filter(|l| l.weight.is_finite() && l.weight > 0.0 && !Arc::ptr_eq(&l.clip, &idle)).map(|l| l.clip.as_ref())
         });
         let checked = others.map(|c| c.map_or(0, |c| c as *const BoundClip as usize));
         if checked.iter().all(|k| *k == 0) {
@@ -792,9 +791,16 @@ impl Locomotion {
         let key = Arc::as_ptr(&idle) as usize;
         if self.under.idle != key || self.under.clip.is_none() || self.under.checked != checked {
             if self.under.idle != key || self.under.source.is_none() {
-                let mut source = (*idle.clip).clone();
-                source.materials.clear();
-                self.under.source = Some(Arc::new(source));
+                let c = &idle.clip;
+                // [design, #2352] Copy timing only: all controller/event payloads
+                // start empty, including future fields that must be chosen here.
+                self.under.source = Some(Arc::new(nvf_assets::anim_play::Clip {
+                    name: String::new(), start: c.start, stop: c.stop, frequency: c.frequency,
+                    cycle_type: c.cycle_type, tracks: Vec::new(), priorities: Vec::new(),
+                    skipped: 0, accum_root: None, text_keys: Vec::new(), visibility: Vec::new(),
+                    emitters: Vec::new(), materials: Vec::new(), free: Vec::new(),
+                    free_visibility: Vec::new(), lights: Vec::new(),
+                }));
             }
             self.under.idle = key;
             let clip = under_clip(&idle, self.under.source.clone().expect("made above"), &others);
@@ -803,6 +809,13 @@ impl Locomotion {
             self.under.checked = checked;
         }
         self.under.needed.then(|| Layer { clip: self.under.clip.clone().expect("made above"), phase: self.under.phase, weight: 1.0 })
+    }
+
+    /// [design, #2352] The real Idle's source and continuing phase. Pose fallback
+    /// masks and timing-only views never become sound/event identities.
+    pub(crate) fn idle_timeline(&self) -> Option<(&Arc<nvf_assets::anim_play::Clip>, f32)> {
+        self.idle_under.then_some(())?;
+        Some((&self.set.clips.get(&Move::Idle)?.bound.clip, self.under.phase))
     }
 
     /// The jump clip of the actor's set that plays now (the loop in the air, the landing
@@ -864,7 +877,7 @@ pub struct ActorAnimCost {
     pub blend_frames: u64,
     /// Frames in which an actor's clip was a turn on the spot, summed over actors.
     pub turn_frames: u64,
-    /// Frames in which an actor's idle was laid under another clip ([`UNDER_LAYER`]),
+    /// Frames in which an actor's idle was laid under another clip ([`BlendPlayer::pose_only`]),
     /// summed over actors.
     pub under_frames: u64,
     /// Frames in which an actor moved (at least `STAND_SPEED`) with no movement clip
@@ -963,6 +976,7 @@ type ActorAnimItem<'w, 's> = bevy::ecs::query::QueryItem<'w, 's, ActorAnimParts>
 fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32, scratch: &mut Vec<(usize, Transform)>, out: &mut Vec<(Entity, Transform)>, cost: &mut ActorAnimCost) {
     let (lo, player, weapon, dying, flinch, seated, idle, pose, creature, name, talk) = item;
     let (flinch, seated, idle, name, talk) = (*flinch, *seated, *idle, *name, *talk);
+    player.pose_only = None;
     if let Some(d) = dying.as_mut() {
         // Dead: the death pose to its end and held; without one the pose stays (and
         // whoever has the bones now, a ragdoll, has written them).
@@ -1090,9 +1104,9 @@ fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32,
     if let Some(t) = talk {
         t.layers(player);
     }
-    player.layers[UNDER_LAYER] = lo.under_layer(&player.layers);
-    cost.under_frames += u64::from(player.layers[UNDER_LAYER].is_some());
-    let layers = player.layers.iter().flatten().count() as u64;
+    player.pose_only = lo.under_layer(&player.layers);
+    cost.under_frames += u64::from(player.pose_only.is_some());
+    let layers = player.layers.iter().flatten().count() as u64 + u64::from(player.pose_only.is_some());
     cost.layer_frames += layers;
     cost.blend_frames += u64::from(layers > 1);
     cost.tracks += player.sample_into(scratch, out) as u64;
@@ -1518,10 +1532,13 @@ mod tests {
     #[test]
     fn a_finished_death_pose_is_not_sampled_again() {
         let clip = death_clip(9.0);
-        let (mut world, id, _, bone) = corpse(&clip);
+        let (mut world, id, actor, bone) = corpse(&clip);
+        // [design, #2352] A living fallback must be discarded on the death path too.
+        world.get_mut::<BlendPlayer>(actor).unwrap().pose_only = Some(Layer { clip: death_clip(3.0), phase: 0.0, weight: 1.0 });
         let posed = Transform::from_xyz(9.0, 0.0, 0.0);
         // Playing: a pose a frame; the frame it reaches its end, the last.
         assert_eq!(frame(&mut world, id, 0.4), (1, 0, 0, 1));
+        assert!(world.get::<BlendPlayer>(actor).unwrap().pose_only.is_none());
         assert_eq!(frame(&mut world, id, 0.4), (2, 0, 0, 2));
         assert_eq!(frame(&mut world, id, 0.4), (3, 0, 1, 3));
         assert_eq!(*world.get::<Transform>(bone).unwrap(), posed);
@@ -1659,7 +1676,7 @@ mod tests {
                 assert_eq!(under.clip.tracks.iter().map(|(i, _, _)| *i).collect::<Vec<_>>(), [1]);
                 assert!(under.clip.root.is_none());
                 let cached = under.clip.clone();
-                player.layers[UNDER_LAYER] = Some(under);
+                player.pose_only = Some(under);
                 assert!(Arc::ptr_eq(&cached, &lo.under_layer(&player.layers).unwrap().clip));
                 let mut out = Vec::new();
                 player.sample(&mut out);
@@ -1674,8 +1691,8 @@ mod tests {
 
     #[test]
     fn creature_idle_under_special_idle_keeps_its_materials_and_animates_missing_bones() {
-        use fnv_nif::anim::{Channel, ValueTrack};
-        use nvf_assets::anim_play::{MaterialTarget, MaterialTrack};
+        use fnv_nif::anim::{BoolTrack, Channel, ValueTrack};
+        use nvf_assets::anim_play::{EmitterTrack, LightTarget, LightTrack, MaterialTarget, MaterialTrack, OwnCycle};
         use nvf_assets::material_anim::actor_material_values;
 
         // [design, #2352] Synthetic equal-priority materials compete while the special
@@ -1689,7 +1706,22 @@ mod tests {
         };
         let mut set = (*wing_idle_set()).clone();
         let idle = &mut set.clips.get_mut(&Move::Idle).unwrap().bound;
-        Arc::make_mut(&mut Arc::get_mut(idle).unwrap().clip).materials.push(material(0.0));
+        let bound_idle = Arc::get_mut(idle).unwrap();
+        let track = bound_idle.tracks[0].1.clone();
+        let source = Arc::make_mut(&mut bound_idle.clip);
+        source.materials.push(material(0.0));
+        // [design, #2352] Populate every non-pose payload with synthetic controllers
+        // so a future clone-and-strip fallback cannot silently retain one.
+        let shows = BoolTrack { value: Some(false), keys: Vec::new() };
+        let cycle = OwnCycle { start: 0.0, stop: 1.0, frequency: 1.0, phase: 0.0, cycle_type: 0 };
+        source.tracks.push(("SyntheticWing".into(), track.clone()));
+        source.priorities.push(45);
+        source.text_keys.push((0.1, "Sound: SyntheticBuzz".into()));
+        source.visibility.push(("SyntheticPanel".into(), 20, shows.clone()));
+        source.free_visibility.push(("SyntheticPanel".into(), shows.clone(), cycle));
+        source.free.push(("SyntheticWing".into(), track, cycle));
+        source.emitters.push(EmitterTrack { system: "SyntheticEmitter".into(), priority: 20, rate: None, active: Some(shows) });
+        source.lights.push(LightTrack { light: "SyntheticLight".into(), target: LightTarget::Dimmer, values: material(0.0).values });
         let set = Arc::new(set);
         for slot in [crate::idles::IDLE_LAYER, crate::idles::IDLE_LAYER + 1] {
             for moving in [false, true] {
@@ -1712,8 +1744,17 @@ mod tests {
                 }
 
                 let under = lo.under_layer(&player.layers).expect("idle fills the omitted wing");
-                assert!(under.clip.clip.materials.is_empty());
-                player.layers[UNDER_LAYER] = Some(under);
+                let view = &under.clip.clip;
+                assert!(view.materials.is_empty());
+                assert!(view.text_keys.is_empty());
+                assert!(view.visibility.is_empty());
+                assert!(view.free_visibility.is_empty());
+                assert!(view.emitters.is_empty());
+                assert!(view.lights.is_empty());
+                assert!(view.free.is_empty());
+                assert!(view.tracks.is_empty());
+                assert!(view.priorities.is_empty());
+                player.pose_only = Some(under);
                 let mut materials = Vec::new();
                 actor_material_values(&player, &mut materials);
                 assert_eq!(materials, [("SyntheticPanel", MaterialTarget::Alpha, [1.0; 3], 1.0)]);
@@ -1742,7 +1783,7 @@ mod tests {
             layers[4].as_mut().unwrap().weight = weight;
             let next = lo.under_layer(&layers).unwrap().clip;
             assert!(!Arc::ptr_eq(&old, &next));
-            assert!(Arc::ptr_eq(&old.clip, &next.clip), "bone-mask changes keep sound playback identity");
+            assert!(Arc::ptr_eq(&old.clip, &next.clip), "bone-mask changes share the timing-only view");
             assert_eq!(next.tracks.len(), 1);
         }
         layers = Default::default();
@@ -1750,7 +1791,7 @@ mod tests {
         layers[2] = Some(Layer { clip: death_clip(9.0), phase: 0.0, weight: 1.0 });
         lo.set = wing_idle_set();
         let next = lo.under_layer(&layers).unwrap().clip;
-        assert!(!Arc::ptr_eq(&old.clip, &next.clip), "a different idle refreshes the material-free source");
+        assert!(!Arc::ptr_eq(&old.clip, &next.clip), "a different idle refreshes the timing-only view");
         let mut no_idle = (*lo.set).clone();
         no_idle.clips.remove(&Move::Idle);
         lo.set = Arc::new(no_idle);
