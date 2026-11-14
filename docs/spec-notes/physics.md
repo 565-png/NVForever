@@ -2399,7 +2399,7 @@ threshold or sits in its gap until a jump.
   on both terrain and a static floor;
   `actors_walk_navmesh_grade_slopes_below_the_cone_face_angle` covers 46/47/48/49°
   ramps at walk/run speeds. Original actors blocking these walls remains [hypothesis];
-  observer check 141 asks for that measurement.
+  observer check 144 asks for that measurement.
 - **Step-up clearance (#2511)** [design: `step_up_move`]: when the bare downward cast
   misses or only finds level ground without a rise, retry with the horizontal sweep's
   wall gap (at least the numerical skin). This fallback must meet a crest off the flat

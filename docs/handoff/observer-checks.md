@@ -2177,7 +2177,7 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
 
 ## Added 2026-11-14 (actors at thin walls, #2511)
 
-141. **Which thin walls can a person-sized actor and a small creature cross?** (P2;
+144. **Which thin walls can a person-sized actor and a small creature cross?** (P2;
      #2511, physics.md §6.9.2.) [design] NVForever uses a 56° actor slope limit, below
      the cone face's roughly 57.7°, to cross a 24-unit zero-thickness wall and block
      25/26/28, with the same 24-unit step height for people and small creatures.
