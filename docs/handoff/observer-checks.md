@@ -2196,3 +2196,18 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      anything explode on a second pass (the bottle-cap mine 0x0008424C, the frag mines
      0x00084257 and 0x00084258 by the entrance)? Ours since #2420: shown sprung, fires
      once.
+
+## Added 2026-11-08 (observer batch o30: Say / SayTo on a speaker already talking, #1858)
+
+Answered for the talking state (scripts.md §7.7): a Say or SayTo on a speaker that is
+already talking takes over at once, same topic or another; nothing is queued or ignored
+[observed: o30_say, o30b_say]. Open:
+
+144. **Do the voice and the subtitle restart with each call, as the talking state does?**
+    (P2; the Strip gate's every-frame SayTo, scripts.md §7.7.) Needs the game in front (its
+    sound and subtitles stop without focus), so the owner: stand in the gate kill zone at
+    the Freeside -> Strip gate (VFSVegasAnnihilationVolumeREF, FreesideWorld near
+    -6362, -9779) without a passport, in god mode (`tgm`), for about 30 s. Is one Gatekeeper
+    line heard and shown at a time, each to its end, or does the voice stutter and the
+    subtitle flicker? The campaign `o30c_say` (tools/capture/observe) does the same by
+    script with shots, if run with the window in front.
