@@ -716,9 +716,9 @@ fn character_jump_apex() {
     assert!(rise <= h + 0.01 && h - rise <= g * dt * dt / 8.0 + 0.01, "apex {rise}");
 }
 
-/// The physics rates the game offers (`nvf_play::phys_rate`), and 152 (the owner's
-/// variable-refresh cap at 160 Hz).
-const RATES: [f32; 5] = [60.0, 120.0, 144.0, 152.0, 240.0];
+/// The physics rates the game offers (`nvf_play::phys_rate`, at most 160), and 152 (the
+/// owner's variable-refresh cap at 160 Hz). Nothing above 160 is offered or tested.
+const RATES: [f32; 5] = [60.0, 120.0, 144.0, 152.0, 160.0];
 
 /// Steps of `hz` a second in `secs` seconds.
 fn steps_in(secs: f32, hz: f32) -> usize {
