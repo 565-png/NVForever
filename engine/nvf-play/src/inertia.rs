@@ -41,6 +41,11 @@ pub const STOP_SECONDS: f32 = 0.25;
 /// The inertia weights the settings page offers, by name: how many times the times
 /// above (and the weapon's and the crouch's) are taken [design: the owner, 2026-11-13].
 pub const WEIGHTS: [(f32, &str); 4] = [(0.5, "0.5"), (1.0, "1"), (1.5, "1.5"), (2.0, "2")];
+/// Drawing and putting away a weapon play at this share of their speed (÷ the inertia
+/// weight), so a switch has weight; the game's readiness waits for the slower clip
+/// [design: the owner's sixth playtest, 2026-11-14, "weapon switching/holstering: way too
+/// fast"; 0.6 measured 0.62 s for a 10mm pistol's draw, still too quick].
+pub const EQUIP_PACE: f32 = 0.45;
 /// Landing compression: landings slower than the first fall speed (units/s) keep their
 /// speed, from the second on they lose [`LANDING_MOST_LOST`] of it, smoothly between.
 pub const LANDING_SOFT_SPEED: f32 = 350.0;

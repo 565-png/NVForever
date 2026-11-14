@@ -64,8 +64,14 @@ pub struct Layer {
     pub target: f32,
     /// The fade, 0 to 1: how much of a bone the layer's priority takes from those below.
     pub ease: f32,
-    /// Seconds to fade in (ease 0 to 1); fading out takes [`DEFAULT_FADE`].
+    /// Seconds to fade in (ease 0 to 1).
     pub fade_in: f32,
+    /// Seconds to fade out ([`DEFAULT_FADE`] unless the caller sets it).
+    pub fade_out: f32,
+    /// The fade is taken through a smootherstep (no speed at either end) instead of
+    /// straight: two layers of a priority crossing over with the same time then share the
+    /// bones by that same eased curve (nvforever's aim, eased with its true iron sights).
+    pub smooth: bool,
     /// Playback speed multiplier (Loop and Once).
     pub rate: f32,
     seen: bool,
@@ -74,6 +80,16 @@ pub struct Layer {
 }
 
 impl Layer {
+    /// The fade as the blend takes it: straight, or through a smootherstep ([`Self::smooth`]).
+    pub fn shown_ease(&self) -> f32 {
+        if self.smooth {
+            let t = self.ease.clamp(0.0, 1.0);
+            t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+        } else {
+            self.ease
+        }
+    }
+
     /// The time within the clip the layer samples, given the animator's phase.
     pub fn sample_time(&self, phase: f32) -> f32 {
         let c = &self.clip;
@@ -149,6 +165,115 @@ pub struct Animator {
     /// The clip whose end gives the extra nodes their rest poses ([`Self::set_extra_rest`]).
     extra_rest: Option<Arc<Clip>>,
     scratch: Vec<Contribution>,
+    /// Loop seams smoothed ([`Self::smooth_seams`]); `None`: the pose as the clips give it.
+    seams: Option<Seams>,
+    /// A looped clip, or the synced phase, wrapped round in the last [`Self::advance`].
+    wrapped: bool,
+    /// The last [`Self::advance`]'s seconds.
+    last_dt: f32,
+}
+
+/// Inertialization of loop seams [design: the owner's sixth playtest, 2026-11-14: "the
+/// idle gun holding animation does not look smooth, small hitching in it"; the trace showed
+/// the first-person hand's motion turning back in one frame each time the idle clip looped
+/// (its last keys do not run on into its first): Daniel Holden's inertialization,
+/// theorangeduck.com]. When a loop wraps, the pose carries on from where it was going for
+/// that frame; the difference to the clips' pose (an offset, and its rate) then dies away on
+/// a critically damped spring, so the seam's jump and its turn of direction become one
+/// smooth curve. Translation and rotation; scale is the clips'.
+#[derive(Debug, Clone, Default)]
+struct Seams {
+    omega: f32,
+    /// The pose shown last frame and its rates (translation, rotation as scaled axis per s).
+    shown: Vec<Transform>,
+    vel_t: Vec<Vec3>,
+    vel_r: Vec<Vec3>,
+    /// The clips' pose last frame.
+    raw: Vec<Transform>,
+    /// The offsets dying away (translation, rotation as scaled axis) and their rates.
+    off_t: Vec<(Vec3, Vec3)>,
+    off_r: Vec<(Vec3, Vec3)>,
+    /// An offset was set at a wrap last frame; its rate is set this frame, once the clips'
+    /// rate after the seam is known.
+    pending: bool,
+    active: bool,
+}
+
+/// `dt` seconds of a critically damped spring at rest `0` (value, rate), exact.
+fn decay(v: Vec3, r: Vec3, omega: f32, dt: f32) -> (Vec3, Vec3) {
+    let b = r + omega * v;
+    let k = (-omega * dt).exp();
+    ((v + b * dt) * k, (b - omega * (v + b * dt)) * k)
+}
+
+/// The rotation taking `b` to `a`, as a scaled axis (the shorter way).
+fn rot_diff(a: Quat, b: Quat) -> Vec3 {
+    let mut d = a * b.inverse();
+    if d.w < 0.0 {
+        d = -d;
+    }
+    d.to_scaled_axis()
+}
+
+impl Seams {
+    /// Take the clips' pose `raw` after `dt` seconds (`wrapped`: a loop wrapped round in
+    /// them) and give the pose to show in its place.
+    // The loops walk the node index through several arrays of the same length at once.
+    #[allow(clippy::needless_range_loop)]
+    fn smooth(&mut self, raw: &mut [Transform], wrapped: bool, dt: f32) {
+        let n = raw.len();
+        if self.shown.len() != n {
+            // The first pose, or the skeleton changed: start from the clips'.
+            *self = Seams { omega: self.omega, shown: raw.to_vec(), vel_t: vec![Vec3::ZERO; n], vel_r: vec![Vec3::ZERO; n], raw: raw.to_vec(), off_t: vec![(Vec3::ZERO, Vec3::ZERO); n], off_r: vec![(Vec3::ZERO, Vec3::ZERO); n], ..Seams::default() };
+            return;
+        }
+        if dt <= 0.0 {
+            raw.copy_from_slice(&self.shown);
+            return;
+        }
+        if wrapped {
+            // Carry on from where the pose was going; the clips' pose jumped: offset it.
+            for i in 0..n {
+                let s = self.shown[i];
+                let t = s.translation + self.vel_t[i] * dt;
+                let q = (Quat::from_scaled_axis(self.vel_r[i] * dt) * s.rotation).normalize();
+                self.off_t[i] = (t - raw[i].translation, Vec3::ZERO);
+                self.off_r[i] = (rot_diff(q, raw[i].rotation), Vec3::ZERO);
+            }
+            (self.pending, self.active) = (true, true);
+        } else if self.active {
+            for i in 0..n {
+                if self.pending {
+                    // The offsets' rates: the pose's own rate less the clips' after the seam.
+                    let rt = (raw[i].translation - self.raw[i].translation) / dt;
+                    let rr = rot_diff(raw[i].rotation, self.raw[i].rotation) / dt;
+                    self.off_t[i].1 = self.vel_t[i] - rt;
+                    self.off_r[i].1 = self.vel_r[i] - rr;
+                }
+                self.off_t[i] = decay(self.off_t[i].0, self.off_t[i].1, self.omega, dt);
+                self.off_r[i] = decay(self.off_r[i].0, self.off_r[i].1, self.omega, dt);
+            }
+            self.pending = false;
+        }
+        let clips = raw.to_vec();
+        if self.active {
+            let mut most = 0.0f32;
+            for i in 0..n {
+                raw[i].translation += self.off_t[i].0;
+                raw[i].rotation = (Quat::from_scaled_axis(self.off_r[i].0) * raw[i].rotation).normalize();
+                most = most.max(self.off_t[i].0.length()).max(self.off_r[i].0.length() * 10.0);
+            }
+            if !self.pending && most < 1e-5 {
+                self.active = false;
+            }
+        }
+        for i in 0..n {
+            self.vel_t[i] = (raw[i].translation - self.shown[i].translation) / dt;
+            self.vel_r[i] = rot_diff(raw[i].rotation, self.shown[i].rotation) / dt;
+        }
+        self.shown.copy_from_slice(raw);
+        self.raw = clips;
+    }
 }
 
 /// Where `clip` leaves the node named `name` at its end (`bind` fills what the track
@@ -169,7 +294,17 @@ impl Animator {
     pub fn new(skel: Arc<PreparedSkeleton>, nodes: Vec<Entity>, accum_root: Option<&str>) -> Animator {
         let held = accum_root.and_then(|r| clip_target(&skel, r)).into_iter().collect();
         let locals = skel.locals.clone();
-        Animator { skel, nodes, layers: Vec::new(), phase: 0.0, locals, extra: Vec::new(), held, rest: Vec::new(), extra_rest: None, scratch: Vec::new() }
+        Animator { skel, nodes, layers: Vec::new(), phase: 0.0, locals, extra: Vec::new(), held, rest: Vec::new(), extra_rest: None, scratch: Vec::new(), seams: None, wrapped: false, last_dt: 0.0 }
+    }
+
+    /// Smooth the seams of looping clips: at a wrap the pose carries on and eases onto the
+    /// clips' over about `seconds` (95%); `None` leaves the pose as the clips give it.
+    pub fn smooth_seams(&mut self, seconds: Option<f32>) {
+        match (seconds, self.seams.as_mut()) {
+            (Some(s), Some(seams)) => seams.omega = 4.743_864_6 / s.max(1e-3),
+            (Some(s), None) => self.seams = Some(Seams { omega: 4.743_864_6 / s.max(1e-3), ..Seams::default() }),
+            (None, _) => self.seams = None,
+        }
     }
 
     /// Replace the nodes outside the skeleton that clips drive by name (none: an empty
@@ -336,6 +471,8 @@ impl Animator {
             target: weight,
             ease,
             fade_in,
+            fade_out: DEFAULT_FADE,
+            smooth: false,
             rate: 1.0,
             seen: true,
             leaving: false,
@@ -412,9 +549,17 @@ impl Animator {
     /// faded out are dropped.
     pub fn advance(&mut self, dt: f32, sync_rate: f32) {
         let (mut len_sum, mut w_sum) = (0.0, 0.0);
+        self.last_dt = dt;
+        self.wrapped = false;
         for l in &mut self.layers {
+            // A shown looping clip about to wrap round (for `smooth_seams`).
+            let len = l.clip.length();
+            if matches!(l.mode, Mode::Loop) && l.ease > 0.0 && len > 0.0 && l.clip.cycle_type == 0 {
+                let next = l.time + dt * l.rate * l.clip.frequency;
+                self.wrapped |= (next / len).floor() != (l.time / len).floor();
+            }
             if l.leaving {
-                l.ease = (l.ease - dt / DEFAULT_FADE).max(0.0);
+                l.ease = if l.fade_out <= 0.0 { 0.0 } else { (l.ease - dt / l.fade_out).max(0.0) };
             } else {
                 let up = if l.fade_in <= 0.0 { f32::INFINITY } else { dt / l.fade_in };
                 l.ease = (l.ease + up).min(1.0);
@@ -431,7 +576,9 @@ impl Animator {
         }
         self.layers.retain(|l| l.ease > 0.0 || !l.leaving);
         if w_sum > 1e-6 && len_sum > 1e-6 {
-            self.phase = (self.phase + dt * sync_rate * w_sum / len_sum).rem_euclid(1.0);
+            let next = self.phase + dt * sync_rate * w_sum / len_sum;
+            self.wrapped |= next >= 1.0;
+            self.phase = next.rem_euclid(1.0);
         }
     }
 
@@ -443,8 +590,9 @@ impl Animator {
             if l.ease <= 0.0 {
                 continue;
             }
+            let ease = l.shown_ease();
             for &(bone, track, priority) in &l.bound {
-                self.scratch.push(Contribution { bone, priority, weight: l.weight * l.ease, ease: l.ease, layer: li as u16, track });
+                self.scratch.push(Contribution { bone, priority, weight: l.weight * ease, ease, layer: li as u16, track });
             }
         }
         self.scratch.sort_unstable_by_key(|c| (c.bone, Reverse(c.priority)));
@@ -515,6 +663,11 @@ impl Animator {
                 self.locals[bone] = posed;
             }
         }
+        if let Some(s) = self.seams.as_mut() {
+            s.smooth(&mut self.locals, self.wrapped, self.last_dt);
+            // A pose asked for again without time passing is not a second seam.
+            self.wrapped = false;
+        }
     }
 
     /// Node `i`'s local transform from the layers `pick` accepts alone, at their times,
@@ -525,7 +678,7 @@ impl Animator {
         let (mut t, mut q, mut s, mut sum) = (Vec3::ZERO, Vec4::ZERO, 0.0f32, 0.0f32);
         let mut first: Option<Vec4> = None;
         for l in self.layers.iter().filter(|l| l.ease > 0.0 && pick(l)) {
-            let w = (l.weight * l.ease).max(1e-4);
+            let w = (l.weight * l.shown_ease()).max(1e-4);
             for &(_, track, _) in l.bound.iter().filter(|b| b.0 as usize == i) {
                 let track = &l.clip.tracks[track as usize].1;
                 let time = l.sample_time(self.phase);
@@ -675,6 +828,76 @@ mod tests {
         new.pose();
         assert_eq!(new.locals[2].translation, Vec3::new(10.0, 0.0, 0.0));
         assert_eq!(new.layers[0].time, old.layers[0].time);
+    }
+
+    #[test]
+    fn a_smoothed_loop_seam_carries_on_and_eases_onto_the_clip() {
+        // A loop that runs from 0 up to 1 over a second and starts again at 0: a jump and a
+        // turn of direction at every wrap.
+        let saw = |smooth: Option<f32>| {
+            let mut a = animator();
+            a.smooth_seams(smooth);
+            use fnv_nif::anim::{Key, KeyKind, Keys};
+            let key = |time: f32, x: f32| Key { time, value: [x, 0.0, 0.0], forward: [0.0; 3], backward: [0.0; 3], tbc: [0.0; 3] };
+            let base = clip(&[("A", [0.0, 0.0, 0.0], 30)], 1.0);
+            let ramp = TransformTrack { translation: Channel::Keys(Keys { kind: KeyKind::Linear, keys: vec![key(0.0, 0.0), key(1.0, 1.0)] }), rotation: Channel::Static(None), euler: None, scale: Channel::Static(None), per_cycle: None };
+            let x = Arc::new(Clip { tracks: vec![("A".to_string(), Arc::new(ramp))], ..(*base).clone() });
+            let mut xs = Vec::new();
+            for _ in 0..180 {
+                a.begin();
+                a.want(&x, 0, 1.0, Mode::Loop, 0.0);
+                a.end();
+                a.advance(1.0 / 60.0, 1.0);
+                a.pose();
+                xs.push(a.locals[2].translation.x);
+            }
+            xs
+        };
+        let raw = saw(None);
+        let biggest_raw = raw.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        assert!(biggest_raw > 0.9, "the clip itself jumps back at the seam: {biggest_raw}");
+        let smooth = saw(Some(0.25));
+        let biggest = smooth.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        assert!(biggest < 0.1, "no jump when smoothed: {biggest}");
+        // Half a second after each seam the pose is the clip's again.
+        for (k, (s, r)) in smooth.iter().zip(&raw).enumerate() {
+            if k % 60 >= 45 && k > 60 {
+                assert!((s - r).abs() < 0.02, "frame {k}: {s} against {r}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_smooth_crossover_shares_the_bones_by_one_eased_curve() {
+        let mut a = animator();
+        let x = clip(&[("A", [0.0, 0.0, 0.0], 30)], 1.0);
+        let y = clip(&[("A", [1.0, 0.0, 0.0], 30)], 1.0);
+        a.begin();
+        a.want(&x, 0, 1.0, Mode::Loop, 0.0);
+        a.end();
+        a.advance(0.1, 1.0);
+        // Cross over to y over 0.4 s, both smooth, the leaving one over the same time.
+        a.begin();
+        a.want(&y, 0, 1.0, Mode::Loop, 0.4);
+        a.end();
+        for l in &mut a.layers {
+            (l.smooth, l.fade_out) = (true, 0.4);
+        }
+        let mut shares = Vec::new();
+        for _ in 0..8 {
+            a.advance(0.05, 1.0);
+            a.pose();
+            shares.push(a.locals[2].translation.x);
+            a.begin();
+            a.want(&y, 0, 1.0, Mode::Loop, 0.4);
+            a.end();
+        }
+        // y's share follows the smootherstep of the time: slow at both ends, half at 0.2 s.
+        let smoother = |t: f32| t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+        for (k, s) in shares.iter().enumerate() {
+            let t = (k + 1) as f32 * 0.05 / 0.4;
+            assert!((s - smoother(t)).abs() < 1e-3, "{k}: {s} against {}", smoother(t));
+        }
     }
 
     #[test]

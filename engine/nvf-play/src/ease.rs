@@ -57,6 +57,34 @@ impl Spring {
     }
 }
 
+/// A spring pushed by the changes of a velocity: the velocity is first smoothed by a
+/// short spring, whose own rate is then the (smooth) acceleration that pushes the second,
+/// so a sudden change of the velocity (a take-off, a landing, a start) never jolts the
+/// output's speed (Daniel Holden's "double spring"). A change `Δ` held peaks the output at
+/// about `peak_per_speed × Δ` (less the shorter the pre-smoothing is against the spring).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Pushed {
+    pre: Spring,
+    pub out: Spring,
+    started: bool,
+}
+
+impl Pushed {
+    /// `dt` seconds with the velocity at `velocity`: smoothed with rate `pre_omega`, its
+    /// acceleration pushes the output's spring of rate `omega`.
+    pub fn step(&mut self, velocity: f32, pre_omega: f32, omega: f32, peak_per_speed: f32, dt: f32) -> f32 {
+        if !self.started {
+            // The first frame: already at that velocity, nothing pushed.
+            self.pre = Spring { value: velocity, rate: 0.0 };
+            self.started = true;
+        }
+        self.pre.step(velocity, pre_omega, dt);
+        let accel = self.pre.rate;
+        self.out.step(-peak_per_speed * std::f32::consts::E * accel / omega.max(1e-3), omega, dt);
+        self.out.value
+    }
+}
+
 /// Cubic ease-out of `u` in 0–1: starts at three times the average speed and arrives with
 /// none.
 pub fn ease_out_cubic(u: f32) -> f32 {
@@ -224,6 +252,27 @@ mod tests {
         // The same target again leaves the curve alone.
         e.retarget(0.0, 0.4, 1.0);
         assert_eq!(e.step(0.1), 0.0);
+    }
+
+    #[test]
+    fn a_pushed_spring_takes_a_sudden_change_without_a_jolt_and_settles() {
+        let mut p = Pushed::default();
+        let dt = 1.0 / 120.0;
+        let (pre, w) = (omega_for(0.08), 10.0);
+        p.step(0.0, pre, w, 0.01, dt);
+        let mut rates = Vec::new();
+        let mut most = 0.0f32;
+        for _ in 0..240 {
+            // The velocity jumps to 300 and stays.
+            most = most.min(p.step(300.0, pre, w, 0.01, dt));
+            rates.push(p.out.rate);
+        }
+        assert!(most < -0.5 && most > -3.5, "pushed back by the change: {most}");
+        // No jolt: pushed straight by the change, the output's speed would jump at once to
+        // about peak × ω × e × Δ; smoothed first, its first frame is a small part of that.
+        let unsmoothed = 0.01 * w * std::f32::consts::E * 300.0;
+        assert!(rates[0].abs() < 0.2 * unsmoothed, "{} against {unsmoothed}", rates[0]);
+        assert!(p.out.value.abs() < 0.01, "settled while the velocity holds: {}", p.out.value);
     }
 
     #[test]

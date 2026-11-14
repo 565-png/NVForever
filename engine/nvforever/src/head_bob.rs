@@ -26,7 +26,7 @@
 //!   lowers or raises the camera, 90 % of the way in a second.
 
 use bevy::math::{Vec2, Vec3};
-use nvf_play::ease::{omega_for, Spring};
+use nvf_play::ease::{omega_for, Pushed, Spring};
 
 /// The ground speed (units per second) at which the bob is full: about a run.
 const FULL_SPEED: f32 = 300.0;
@@ -44,13 +44,16 @@ const LAND_OMEGA: f32 = 8.0;
 /// (0.004 and 3 until the fifth playtest, "jumping is not noticeable".)
 pub const LAND_PEAK_PER_SPEED: f32 = 0.007;
 const MAX_LAND: f32 = 5.0;
+/// The body's velocities are smoothed over this long (seconds) before their changes push
+/// the head (`nvf_play::ease::Pushed`): a take-off or a landing never jolts the view.
+const PUSH_SMOOTH_SECONDS: f32 = 0.08;
 /// The full bob: the dip at each footfall and the sideways swing, units (1.6 and 0.5
 /// until the owner's fourth playtest of 2026-11-13: "there is no headbob even with it on -
 /// add a slight headbob, smooth"; the log showed a 1.5-unit dip, about 2 cm).
 /// (3 and 1 in the fourth build, still "no headbobbing or it is way too little" at the
-/// fifth playtest: now about 7 cm and 2.5 cm.)
-pub const DIP: f32 = 5.0;
-pub const SWING: f32 = 1.8;
+/// fifth playtest: now about 7.5 cm and 2.7 cm, 5% over the fifth build's, the sixth.)
+pub const DIP: f32 = 5.25;
+pub const SWING: f32 = 1.89;
 /// The breathing camera [design: the owner, 2026-11-13, "camera moves on its own to
 /// simulate breathing - smooth, slow and only a little"; 0.5 units, "almost not
 /// noticeable", at the fifth playtest]: a rise and fall of this much (units, about 1.7 cm)
@@ -126,9 +129,8 @@ pub struct HeadBob {
     /// The bob after its spring (view frame: x right, z up), the head's lag (x right, y
     /// ahead) and its dip, and what pushed them last frame.
     bob: [Spring; 2],
-    lag: [Spring; 2],
-    land: Spring,
-    last_velocity: Option<Vec2>,
+    lag: [Pushed; 2],
+    land: Pushed,
     last_vertical: f32,
     /// The deepest take-off or landing dip shown since the start (for the exit summary).
     pub peak_land: f32,
@@ -168,13 +170,7 @@ impl HeadBob {
         self.bob[1].step(-DIP * 0.5 * (1.0 + (2.0 * a).cos()) * share, w, dt);
         let (swing, dip) = (self.bob[0].value, self.bob[1].value);
         self.peak_dip = self.peak_dip.max(-dip);
-        // The head's own weight, pushed by the body's acceleration.
-        let accel = match (self.last_velocity, dt > 0.0) {
-            (Some(v), true) => (i.velocity - v) / dt,
-            _ => Vec2::ZERO,
-        };
-        self.last_velocity = Some(i.velocity);
-        let up_accel = if dt > 0.0 { (i.vertical - self.last_vertical) / dt } else { 0.0 };
+        // The head's own weight, pushed by the body's acceleration (below).
         let took_off = i.vertical > 0.0 && self.last_vertical <= 0.0;
         self.last_vertical = i.vertical;
         // Out of breath: running winds, walking and standing recover, jumps take breath.
@@ -188,19 +184,21 @@ impl HeadBob {
         self.exertion = (self.exertion + wind + if took_off { JUMP_BREATH } else { 0.0 }).clamp(0.0, 1.0);
         self.peak_exertion = self.peak_exertion.max(self.exertion);
         // A shot nudges the head back and a blow jolts it: the springs set moving.
-        self.lag[0].rate += i.punch.x * PUNCH_SPEED;
-        self.lag[1].rate += i.punch.y * PUNCH_SPEED - i.kick * SHOT_NUDGE;
-        self.land.rate += i.punch.z * PUNCH_SPEED;
+        self.lag[0].out.rate += i.punch.x * PUNCH_SPEED;
+        self.lag[1].out.rate += i.punch.y * PUNCH_SPEED - i.kick * SHOT_NUDGE;
+        self.land.out.rate += i.punch.z * PUNCH_SPEED;
         let lag_w = LAG_OMEGA / slow;
-        for (s, a) in self.lag.iter_mut().zip([accel.x, accel.y]) {
-            s.step(pushed(a, lag_w, LAG_PEAK_PER_SPEED), lag_w, dt);
+        // The velocities through a short spring first: a sudden change never jolts the view.
+        let pre = omega_for(PUSH_SMOOTH_SECONDS * slow);
+        for (s, v) in self.lag.iter_mut().zip([i.velocity.x, i.velocity.y]) {
+            s.step(v, pre, lag_w, LAG_PEAK_PER_SPEED, dt);
         }
         let land_w = LAND_OMEGA / slow;
-        self.land.step(pushed(up_accel, land_w, LAND_PEAK_PER_SPEED), land_w, dt);
+        self.land.step(i.vertical, pre, land_w, LAND_PEAK_PER_SPEED, dt);
         let calm = self.gain * if i.sights { 0.5 } else { 1.0 };
-        let lag = Vec2::new(self.lag[0].value, self.lag[1].value);
+        let lag = Vec2::new(self.lag[0].out.value, self.lag[1].out.value);
         let lag = if lag.length() > 1e-6 { lag * (soft(lag.length(), MAX_LAG) / lag.length()) * calm } else { Vec2::ZERO };
-        let land = soft(self.land.value, MAX_LAND) * calm;
+        let land = soft(self.land.out.value, MAX_LAND) * calm;
         self.peak_land = self.peak_land.max(-land);
         // Breathing: a slow, small rise and fall, a little forward with it.
         let breath_target = if !i.breathing || i.airborne {
@@ -260,13 +258,6 @@ impl HeadBob {
         self.pivot = None;
         self.last = None;
     }
-}
-
-/// The target of a spring of rate `omega` pushed by `accel`, scaled so a sudden change `Δ`
-/// of the velocity behind it peaks at `peak_per_speed × Δ` (the impulse response of a
-/// critically damped spring peaks at `1/(ω e)`).
-fn pushed(accel: f32, omega: f32, peak_per_speed: f32) -> f32 {
-    -peak_per_speed * std::f32::consts::E * accel / omega
 }
 
 /// `x` towards `max` and never past it, smoothly.

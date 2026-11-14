@@ -63,7 +63,7 @@
 //! beside it under `Bip01 Looking`) and the view stay where they were.
 
 use bevy::math::{Quat, Vec2, Vec3};
-use nvf_play::ease::{omega_for, smoothstep, Spring};
+use nvf_play::ease::{omega_for, smoothstep, Pushed, Spring};
 
 /// The lag a slow, steady turn asks for: turn rate × this (seconds); × the weapon's weight.
 pub const CHASE_SECONDS: f32 = 0.12;
@@ -102,6 +102,10 @@ pub const FOOTFALL_PHASE: f32 = 0.33;
 /// moving side to side … the gun slides to the sides too quick"), the most offset it
 /// shows for a sudden change of velocity, units per unit/s, and the most offset at all.
 const MOVE_OMEGA: f32 = 4.5;
+/// The body's velocities are smoothed over this long (seconds, 95%) before their changes
+/// push the hand (`nvf_play::ease::Pushed`), so a sudden change never jolts it [design: the
+/// sixth playtest's trace: a take-off threw the gun 3.5 units within two frames].
+const PUSH_SMOOTH_SECONDS: f32 = 0.08;
 const MOVE_PEAK_PER_SPEED: f32 = 0.005;
 const MAX_MOVE_LAG: f32 = 1.2;
 /// Going forward or back: the hand's lag along the view also drops it this much (units
@@ -130,6 +134,10 @@ const STRAFE_ROLL_SECONDS: f32 = 0.6;
 /// way and settles into place [design: the owner, "add inertia to aiming and melee
 /// blocking and return to their normal position"; the clips are not changed].
 const AIM_TRAVEL: f32 = 8.0;
+/// How much of the aim's raise pushes the lag: none since the sixth playtest (the aim's
+/// eased cross-over with the true iron sights carries its weight; the push added a second
+/// movement).
+const AIM_SHARE: f32 = 0.0;
 const AIM_RAMP_SECONDS: f32 = 0.25;
 const AIM_OMEGA: f32 = 8.0;
 const AIM_PEAK_PER_SPEED: f32 = 0.04;
@@ -249,10 +257,9 @@ pub struct ViewSway {
     lag: Vec2,
     /// The hand's offset from the body's acceleration (view frame, x right, y ahead) and
     /// from its vertical acceleration (up), and the velocities they were last pushed from.
-    hand: [Spring; 2],
-    lift: Spring,
-    last_velocity: Option<Vec2>,
-    last_vertical: f32,
+    hand: [Pushed; 2],
+    lift: Pushed,
+   last_vertical: f32,
     /// The strafe's tilt on its spring (radians).
     lean: Spring,
     /// How far the gun is raised (smoothed), its speed last frame (units/s), and its lag.
@@ -327,28 +334,27 @@ impl ViewSway {
             // The lag this frame's turn asks for, bent smoothly towards the limit; the arms
             // follow it (bounded by what they follow, so never past the limit, and back
             // towards the view from the moment the turn eases).
-            let want = -soft_clamp(rate[k] * chase, limit[k]);
-            self.turn_pre[k].step(want, omega, dt);
-            let pre = self.turn_pre[k].value;
-            self.turn[k].step(pre, omega, dt);
+            // The first spring averages the turn as it is (uneven frames, a mouse's bursts);
+            // the limit bends that average, and the second spring follows it. (Bending each
+            // frame's rate first lost most of an uneven turn: the sixth playtest's trace.)
+            self.turn_pre[k].step(-rate[k] * chase, omega, dt);
+            let want = soft_clamp(self.turn_pre[k].value, limit[k]);
+            self.turn[k].step(want, omega, dt);
         }
         self.lag = Vec2::new(self.turn[0].value, self.turn[1].value);
 
-        // The sprung hand, pushed by the body's acceleration across the ground and up.
-        let accel = match (self.last_velocity, dt > 0.0) {
-            (Some(v), true) => (i.velocity - v) / dt,
-            _ => Vec2::ZERO,
-        };
-        self.last_velocity = Some(i.velocity);
+        // The sprung hand, pushed by the body's acceleration across the ground and up. The
+        // velocities go first through a short spring (`nvf_play::ease::Pushed`), so a
+        // sudden change (a take-off, a landing) pushes the hand smoothly, without a jolt.
+        let pre = omega_for(PUSH_SMOOTH_SECONDS * slow);
         let move_omega = MOVE_OMEGA / slow;
         let move_peak = MOVE_PEAK_PER_SPEED * heft;
-        for (s, a) in self.hand.iter_mut().zip([accel.x, accel.y]) {
-            s.step(pushed_target(a, move_omega, move_peak), move_omega, dt);
+        for (s, v) in self.hand.iter_mut().zip([i.velocity.x, i.velocity.y]) {
+            s.step(v, pre, move_omega, move_peak, dt);
         }
-        let up_accel = if dt > 0.0 { (i.vertical - self.last_vertical) / dt } else { 0.0 };
         self.last_vertical = i.vertical;
         let lift_omega = LIFT_OMEGA / slow;
-        self.lift.step(pushed_target(up_accel, lift_omega, LIFT_PEAK_PER_SPEED * heft), lift_omega, dt);
+        self.lift.step(i.vertical, pre, lift_omega, LIFT_PEAK_PER_SPEED * heft, dt);
         // The strafe's tilt follows the sideways speed on its own spring.
         let lean_target = STRAFE_ROLL * (i.velocity.x / FULL_BOB_SPEED).clamp(-1.0, 1.0);
         self.lean.step(lean_target, omega_for(STRAFE_ROLL_SECONDS * slow), dt);
@@ -358,15 +364,18 @@ impl ViewSway {
         let ramp = omega_for(AIM_RAMP_SECONDS * slow);
         self.raise.step(i.raised.clamp(0.0, 1.0), ramp, dt);
         self.draw.step(i.drawn.clamp(0.0, 1.0), ramp, dt);
-        let raise_speed = if dt > 0.0 { ((self.raise.value - before) * AIM_TRAVEL + (self.draw.value - drawn_before) * DRAW_TRAVEL) / dt } else { 0.0 };
+        // Aiming's own share is left out (AIM_SHARE): its trail and settle made a second
+        // movement after the gun reached the eye (the sixth playtest's trace); the aim's
+        // eased cross-over is its inertia now.
+        let raise_speed = if dt > 0.0 { ((self.raise.value - before) * AIM_TRAVEL * AIM_SHARE + (self.draw.value - drawn_before) * DRAW_TRAVEL) / dt } else { 0.0 };
         let raise_accel = if dt > 0.0 { (raise_speed - self.raise_speed) / dt } else { 0.0 };
         self.raise_speed = raise_speed;
         let aim_omega = AIM_OMEGA / slow;
         self.aim_lag.step(pushed_target(raise_accel, aim_omega, AIM_PEAK_PER_SPEED * heft), aim_omega, dt);
         // A blow taken jolts the hand: its springs set moving, then they settle.
-        self.hand[0].rate += i.punch.x * PUNCH_SPEED;
-        self.hand[1].rate += i.punch.y * PUNCH_SPEED;
-        self.lift.rate += i.punch.z * PUNCH_SPEED;
+        self.hand[0].out.rate += i.punch.x * PUNCH_SPEED;
+        self.hand[1].out.rate += i.punch.y * PUNCH_SPEED;
+        self.lift.out.rate += i.punch.z * PUNCH_SPEED;
         // Recoil: each shot sets the recoil springs moving (from rest a spring set moving
         // at v peaks at v / (ω e)), back, up and a little aside, then they settle.
         let recoil_omega = RECOIL_OMEGA / slow;
@@ -403,10 +412,10 @@ impl ViewSway {
         let kick_side = soft_clamp(self.recoil[2].value, MAX_RECOIL_UP) * recoil_share;
         self.peak_recoil = self.peak_recoil.max(-back);
         let lag = self.lag * sway_share;
-        let lift = soft_clamp(self.lift.value, MAX_LIFT * heft) * sway_share;
+        let lift = soft_clamp(self.lift.out.value, MAX_LIFT * heft) * sway_share;
         // The raise's lag is the act of aiming itself: not calmed down the sights.
         let aim = soft_clamp(self.aim_lag.value, MAX_AIM_LAG * heft) * g;
-        let hand = Vec2::new(self.hand[0].value, self.hand[1].value);
+        let hand = Vec2::new(self.hand[0].out.value, self.hand[1].out.value);
         let most = MAX_MOVE_LAG * heft;
         let hand = if hand.length() > 1e-6 { hand * (soft_clamp(hand.length(), most) / hand.length()) } else { Vec2::ZERO };
         let hand = hand * sway_share;
@@ -732,22 +741,18 @@ mod tests {
     }
 
     #[test]
-    fn raising_the_gun_to_aim_trails_low_and_settles_in_place() {
+    fn raising_the_gun_to_aim_adds_no_movement_of_its_own() {
+        // The aim's eased cross-over is its whole motion: the sway adds no trail and no
+        // settle after it (the sixth playtest: "2 different movements").
         let mut s = ViewSway::default();
-        settle(&mut s, input(0.0, Vec2::ZERO, 0.0), 60);
-        let mut low = 0.0f32;
-        for _ in 0..30 {
-            low = low.min(s.update(SwayInput { raised: 1.0, ..input(0.0, Vec2::ZERO, 0.0) }).offset.z);
+        settle(&mut s, input(0.0, Vec2::ZERO, 0.0), 600);
+        let mut most = 0.0f32;
+        for _ in 0..60 {
+            let p = s.update(SwayInput { raised: 1.0, ..input(0.0, Vec2::ZERO, 0.0) });
+            most = most.max(p.offset.z.abs());
         }
-        assert!((-MAX_AIM_LAG - BREATH_WIDTH..-0.3).contains(&low), "trails below on the way up: {low}");
-        let p = settle(&mut s, SwayInput { raised: 1.0, sights: true, ..input(0.0, Vec2::ZERO, 0.0) }, 240);
-        assert!(p.offset.z.abs() < 0.1, "settled: {p:?}");
-        // And on the way down it trails above.
-        let mut high = 0.0f32;
-        for _ in 0..30 {
-            high = high.max(s.update(input(0.0, Vec2::ZERO, 0.0)).offset.z);
-        }
-        assert!(high > 0.3, "{high}");
+        assert!(most <= 0.5 * BREATH_WIDTH + 1e-3, "only the breathing moves it: {most}");
+        const { assert!(AIM_SHARE == 0.0) };
     }
 
     #[test]

@@ -128,9 +128,10 @@ itself turns exactly as the mouse says.
   playtest of 2026-11-13: "the human body rotates its head first, then the lower body
   catches up"). Driven by the view's turn **rate**, not the angle turned (as Source's
   `CalcViewModelLag` and spring-based first-person rigs: a research pass of the same
-  day): each frame's turn asks for a lag of rate × 0.12 s bent towards 6° sideways and
-  4° up or down by a tanh, and the arms follow it through two critically damped springs
-  in a row, each at 0.6 × 0.35 s, one constant rate out and back (Daniel Holden's
+  day): each frame's turn asks for a lag of rate × 0.12 s; a first spring averages that,
+  a tanh bends the average towards 6° sideways and 4° up or down, and a second spring
+  follows it (bending each frame's rate first lost most of an uneven turn: a 90° flick
+  traced at 0.7°, now 5.6°); both springs at 0.6 × 0.35 s, one constant rate out and back (Daniel Holden's
   "double spring": the pair also smooths the acceleration, which a lone spring jumps at
   each uneven mouse frame; second research pass, 2026-11-14). A fast turn builds the lag
   up gently, the arms never pass the limit, and when the view stops they start back at
@@ -151,17 +152,34 @@ itself turns exactly as the mouse says.
   pace brings it back; behind it also drops half a unit per unit and tips the muzzle
   1.2° per unit ("a bit of inertia to front and back movement"); it leans into a strafe
   (1.5° at a run) on a spring settling in 0.6 s.
+- The hand's and the head's pushes take the body's velocities through a short spring
+  first (0.08 s; `nvf_play::ease::Pushed`), whose rate is the acceleration that pushes:
+  a take-off threw the gun 3.5 units within two frames (peak 39 units/s), now 22.
 - Jumps and landings: the same hand pushed by the vertical acceleration (7/s; 12/s
   before, now softer): a take-off dips the weapon about 2.3 units, it rides about two
   units high through the fall, and a landing dips it again, more the harder the
   landing (shown at most 3.5 units; 2 before the fifth playtest, "jumping is not
   noticeable"); the muzzle tips 1° per unit of dip.
-- Aiming, blocking and switching: raising the gun (8 units) and drawing or putting it
-  away (6 units), each smoothed by a spring settling in 0.25 s (the true iron sights'
-  share where they run, else the aim or block clip asked for; a weapon out and drawn in
-  the hand), push a spring (8/s): the gun trails low on the way up, high on the way
-  down, and settles in place (shown at most 1.5 units). The clips are not changed; the
-  true iron sights' own time is × the inertia weight.
+- Aiming and blocking (sixth playtest: "points the gun and then put it to the eye level
+  in 2 different movements"; a motion trace showed the 0.35 s blend ending, the sights
+  clip's own rise carrying on for 0.25 s, and the sway's aim lag adding a settle bump):
+  the aim and block clips now cross over on an eased curve (`anim_blend::Layer::smooth`,
+  a smootherstep, the leaving clip over the same time) of 0.5 s in and 0.45 s out, and
+  the true iron sights move over exactly those times on the same curve, so going down
+  the sights and back is one motion each; the aim adds no lag of its own any more. All
+  × the inertia weight. The clips are not changed.
+- Weapon switching: drawing and putting away (6 units, smoothed by a spring settling in
+  0.25 s) push a spring (8/s): the gun trails and settles (shown at most 1.5 units); the
+  draw and holster clips play at 0.45 of their speed ÷ the inertia weight
+  (`inertia::EQUIP_PACE`; "way too fast", the sixth playtest), and the game's readiness
+  waits for them.
+- Loop seams of the arms' clips (sixth playtest: "small hitching" in the idle): the trace
+  showed the hand turning back in one frame each time the idle looped (every 2.46 s with
+  a 10mm pistol). With movement inertia the first-person animator smooths its seams by
+  inertialization (`anim_blend` `Seams`, Daniel Holden's technique): at a wrap the pose
+  carries on where it was going and the difference dies away on a critically damped
+  spring over 0.3 s (× the inertia weight). The trace after: the hand's worst jolt at
+  idle 4 × the background, was 77 ×.
 - Recoil on the gun (owner, 2026-11-14): each shot of a gun or launcher (`1hp`, `2hr`,
   `2ha`, `2hh`, `2hl`) sets springs (16/s) moving that peak at 1.2 units back, 1.6° up
   and up to 0.5° aside, for strength 0.7 (light) to 1.3 (20 lb and over); rapid fire
@@ -236,7 +254,7 @@ and falls with each stride. Now (`engine/nvforever/src/head_bob.rs`) [design, co
 tuned by eye]:
 
 - First person: the whole arms rig (camera node, arms and weapon together) dips 5
-  units (about 7 cm) at each footfall and swings 1.8 across once a stride (1.6 and 0.5
+  units (about 7.5 cm; 5 until the sixth playtest, "increase headbob by 5%") at each footfall and swings 1.89 across once a stride (1.6 and 0.5
   until the owner's fourth playtest, "there is no headbob even with it on": the log
   showed a 1.5-unit dip, about 2 cm; 3 and 1 in the fourth build, "way too little" at
   the fifth), at the movement clip's

@@ -47,13 +47,26 @@ pub const SIGHTS_IN_SECONDS: f32 = 0.35;
 /// Seconds for the gun to go back down when Block is let go [design].
 pub const SIGHTS_OUT_SECONDS: f32 = 0.3;
 
+/// With movement inertia the gun takes this long up to the eye and down from it (× the
+/// inertia weight), the same time as the aim clips' eased cross-over, so the move is one
+/// motion that also takes in the sights clip's own settling [design: the owner's sixth
+/// playtest, 2026-11-14: "points the gun and then put it to the eye level in 2 different
+/// movements"; the trace showed the sights clip rising for 0.25 s after a 0.35 s blend].
+pub const INERTIA_IN_SECONDS: f32 = 0.5;
+pub const INERTIA_OUT_SECONDS: f32 = 0.45;
+
 /// The share of the way (0–1, not eased) after `dt` seconds, going up while `aimed`.
 pub fn step(share: f32, aimed: bool, dt: f32) -> f32 {
+    step_over(share, aimed, dt, SIGHTS_IN_SECONDS, SIGHTS_OUT_SECONDS)
+}
+
+/// [`step`] taking `up` seconds to come up and `down` to go down.
+pub fn step_over(share: f32, aimed: bool, dt: f32, up: f32, down: f32) -> f32 {
     let dt = dt.clamp(0.0, 0.25);
     if aimed {
-        (share + dt / SIGHTS_IN_SECONDS).min(1.0)
+        (share + dt / up.max(1e-3)).min(1.0)
     } else {
-        (share - dt / SIGHTS_OUT_SECONDS).max(0.0)
+        (share - dt / down.max(1e-3)).max(0.0)
     }
 }
 

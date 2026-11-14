@@ -985,6 +985,58 @@ impl PlayerBody {
     }
 }
 
+/// Seconds the first-person arms take to ease onto a looping clip again after its seam
+/// (95%; × the inertia weight) [design: the owner's sixth playtest, 2026-11-14, the idle's
+/// hitch every 2.5 s].
+const SEAM_SECONDS: f32 = 0.3;
+
+/// Test aid `NVF_PLAY_TEST_MOTION_TRACE=<file>`: one CSV line a frame of the first-person
+/// motion, for finding hitches and two-step moves by numbers: time, frame time, view
+/// heading and pitch, the eye (game space), the right hand from the camera node in the
+/// arms rig's model space and its turn from the camera node's (scaled axis; the clips'
+/// turn (yaw, pitch, roll), the true iron sights' share, aiming, falling, sneaking, the
+/// ground speed and a weapon out.
+#[derive(Default)]
+struct MotionTrace {
+    file: Option<std::io::BufWriter<std::fs::File>>,
+    tried: bool,
+}
+
+impl MotionTrace {
+    fn wanted(&mut self) -> bool {
+        if !self.tried {
+            self.tried = true;
+            if let Ok(path) = std::env::var("NVF_PLAY_TEST_MOTION_TRACE") {
+                match std::fs::File::create(&path) {
+                    Ok(f) => {
+                        let mut w = std::io::BufWriter::new(f);
+                        let _ = std::io::Write::write_all(&mut w, b"t,dt,heading,pitch,eye_x,eye_y,eye_z,hand_x,hand_y,hand_z,hand_rx,hand_ry,hand_rz,sway_x,sway_y,sway_z,sway_yaw,sway_pitch,sway_roll,sights,aiming,falling,sneaking,speed,drawn\n");
+                        info!("motion trace: writing {path}");
+                        self.file = Some(w);
+                    }
+                    Err(e) => warn!("NVF_PLAY_TEST_MOTION_TRACE: {path}: {e}"),
+                }
+            }
+        }
+        self.file.is_some()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write(&mut self, t: f64, dt: f32, player: &Player, eye: Option<Vec3>, hand: Option<(Vec3, Vec3)>, sway: SwayPose, flags: (f32, bool, bool, bool, f32, bool)) {
+        let Some(w) = self.file.as_mut() else { return };
+        let e = eye.unwrap_or(Vec3::NAN);
+        let (h, r) = hand.unwrap_or((Vec3::NAN, Vec3::NAN));
+        let (yaw, pitch, roll) = sway.rotation.to_euler(EulerRot::ZXY);
+        let (sights, aiming, falling, sneaking, speed, drawn) = flags;
+        let b = |v: bool| u8::from(v);
+        let line = format!(
+            "{t:.5},{dt:.5},{:.5},{:.5},{:.3},{:.3},{:.3},{:.4},{:.4},{:.4},{:.6},{:.6},{:.6},{:.4},{:.4},{:.4},{yaw:.5},{pitch:.5},{roll:.5},{sights:.4},{},{},{},{speed:.1},{}\n",
+            player.heading, player.pitch, e.x, e.y, e.z, h.x, h.y, h.z, r.x, r.y, r.z, sway.offset.x, sway.offset.y, sway.offset.z, b(aiming), b(falling), b(sneaking), b(drawn)
+        );
+        let _ = std::io::Write::write_all(w, line.as_bytes());
+    }
+}
+
 /// Blows the player took since the body was last posed, as one punch (view frame: x
 /// right, y ahead, z up): the arms and the camera's place jolt and settle on their springs
 /// (`view_sway.rs`, `head_bob.rs`) [design: the owner, 2026-11-14, "damage screenshake";
@@ -1617,6 +1669,11 @@ struct Frame {
     /// In first person, keep a crouch through a jump: no standing jump or landing clip
     /// while sneaking (movement inertia on; [`pose_rig`]).
     crouch_air: bool,
+    /// With movement inertia: the aim and block clips cross over this long (seconds),
+    /// eased, the same time and curve as the true iron sights' move to the eye, so going
+    /// down the sights is one motion [design: the owner's sixth playtest, 2026-11-14: "points
+    /// the gun and then put it to the eye level in 2 different movements"].
+    aim_fade: Option<f32>,
     dt: f32,
     stance: Stance,
     dirs: Option<[(Dir, f32); 2]>,
@@ -1918,11 +1975,22 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     let a = &mut rig.animator;
     a.begin();
     let covered = special.covers();
+    let is_aim = |tag: u32| (TAG_AIM..TAG_AIM + 3).contains(&tag);
     for (c, tag, w, mode) in want.iter().filter(|_| !covered) {
-        let fade = if *tag == TAG_HOLSTER { 0.0 } else { c.fade() };
+        let fade = match f.aim_fade {
+            _ if *tag == TAG_HOLSTER => 0.0,
+            Some(t) if is_aim(*tag) => t,
+            _ => c.fade(),
+        };
         let l = a.want(&c.clip, *tag, *w, *mode, fade);
         if *tag == TAG_EQUIP {
             a.layers[l].rate = f.equip_rate;
+        }
+    }
+    // The aim and block layers, coming and going, cross over by one eased curve.
+    if let Some(t) = f.aim_fade {
+        for l in a.layers.iter_mut().filter(|l| is_aim(l.tag)) {
+            (l.smooth, l.fade_out) = (true, t);
         }
     }
     // Clips that play once to their end once started: landing, attack, reload.
@@ -2380,7 +2448,7 @@ fn drive_weapon_emitters(state: Res<PlayerBody>, mut emitters: Query<&mut crate:
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn drive_body(
     mut commands: Commands,
-    (time, turbo, sim, mut told_scale): (Res<Time>, Option<Res<nvf_play::script::PlayerTimeScale>>, Option<Res<nvf_play::sim::SimState>>, Local<Option<f32>>),
+    (time, turbo, sim, mut told_scale, mut trace): (Res<Time>, Option<Res<nvf_play::script::PlayerTimeScale>>, Option<Res<nvf_play::sim::SimState>>, Local<Option<f32>>, Local<MotionTrace>),
     d: Res<PlayWorld>,
     intent: Res<MoveIntent>,
     control: Res<PlayerControl>,
@@ -2587,8 +2655,10 @@ fn drive_body(
         _ => &mut body.third,
     };
     let (draw_t, away_t) = timing_rig.transitions(&mut ctx, stance, prefix);
-    // The Equip Speed perks (Quick Draw): the draw and holster take 1 ÷ the rate as long.
-    let eq = if anim.equip_rate > 0.0 { anim.equip_rate } else { 1.0 };
+    // The Equip Speed perks (Quick Draw): the draw and holster take 1 ÷ the rate as long;
+    // with movement inertia they are slower still (`nvf_play::inertia::EQUIP_PACE`).
+    let equip_pace = inertia.as_deref().filter(|i| i.on).map_or(1.0, |i| nvf_play::inertia::EQUIP_PACE / i.weight.max(0.1));
+    let eq = if anim.equip_rate > 0.0 { anim.equip_rate } else { 1.0 } * equip_pace;
     let quick = |t: fnv_actor::player_clips::Transition| fnv_actor::player_clips::Transition { length: t.length / eq, switch_at: t.switch_at / eq };
     let (draw_t, away_t) = (quick(draw_t), quick(away_t));
     let want_out = control.weapon_out && stance != Stance::Swim;
@@ -2688,6 +2758,7 @@ fn drive_body(
     }
     let frame = Frame {
         crouch_air: inertia.as_deref().is_some_and(|i| i.on),
+        aim_fade: inertia.as_deref().filter(|i| i.on).map(|i| i.weight.max(0.1) * if control.aiming { crate::iron_sights::INERTIA_IN_SECONDS } else { crate::iron_sights::INERTIA_OUT_SECONDS }),
         dt,
         stance,
         dirs: direction_weights(forward, right),
@@ -2717,7 +2788,7 @@ fn drive_body(
         reload_round_now,
         reload_rate: if anim.reload_rate > 0.0 { anim.reload_rate } else { 1.0 },
         attack_rate: if anim.attack_rate > 0.0 { anim.attack_rate } else { 1.0 },
-        equip_rate: if anim.equip_rate > 0.0 { anim.equip_rate } else { 1.0 },
+        equip_rate: eq,
         spin_now,
         wind_now,
     };
@@ -2865,9 +2936,17 @@ fn drive_body(
         f.use_lens = lens_aim;
     }
     let sights_can = !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none() && combat.as_deref().is_some_and(|c| c.sight_fov().is_some()) && (lens_aim || (state.true_iron_sights && body.first.as_ref().is_some_and(|f| f.sighting.is_some())));
-    // The gun's way up to the eye takes the inertia weight's share of its time too.
-    let sights_dt = dt / inertia.as_deref().map_or(1.0, |i| i.weight).max(0.1);
-    m.sights_share = if sights_can { crate::iron_sights::step(m.sights_share, zoom.as_deref().is_some_and(|z| z.aimed), sights_dt) } else { 0.0 };
+    // With movement inertia the gun's way up to the eye takes the aim clips' cross-over time
+    // (`Frame::aim_fade`), × the inertia weight.
+    let aimed = zoom.as_deref().is_some_and(|z| z.aimed);
+    m.sights_share = match (sights_can, inertia.as_deref().filter(|i| i.on)) {
+        (false, _) => 0.0,
+        (true, None) => crate::iron_sights::step(m.sights_share, aimed, dt),
+        (true, Some(i)) => {
+            let w = i.weight.max(0.1);
+            crate::iron_sights::step_over(m.sights_share, aimed, dt, crate::iron_sights::INERTIA_IN_SECONDS * w, crate::iron_sights::INERTIA_OUT_SECONDS * w)
+        }
+    };
     m.sights_ran = sights_can;
     let sights_in = Some(m.sights_share).filter(|s| *s > 0.0);
     // The view's direction in the arms rig's own frame (turned by the heading only); a 3D
@@ -2887,6 +2966,11 @@ fn drive_body(
         info!("true iron sights: {}", if m.sights_told { "the sights are on the eye" } else { "off the eye" });
     }
     let first = Posed { root: Transform { translation: Vec3::from_array(at), rotation: Quat::from_rotation_z(-held), ..root }, look_pitch: pitch, special: &idles.first, pipboy, sway, sights };
+    // With movement inertia the arms' looping clips have their seams smoothed (the idle's
+    // hand turned back in one frame at each loop; `nvf_assets::anim_blend` `Seams`).
+    if let Some(f) = body.first.as_mut() {
+        f.animator.smooth_seams(inertia.as_deref().filter(|i| i.on).map(|i| SEAM_SECONDS * i.weight.max(0.1)));
+    }
     let first = body.first.as_mut().and_then(|f| pose_rig(f, &frame, &events, first, &mut ctx, &mut transforms));
     let first_eye = first.map(|(e, _)| e);
     // The arms and the weapon are drawn as through the first-person view, narrower than
@@ -2939,6 +3023,17 @@ fn drive_body(
         Some(e)
     });
     player.body_eye = eye.map(|e| e.to_array());
+    // Test aid: one line a frame of the first-person motion (`MotionTrace`).
+    if trace.wanted() {
+        let hand = body.first.as_ref().and_then(|f| {
+            let bone = |n: &str| f.animator.skel.by_name.get(n).copied();
+            let (h, c) = (f.animator.model_space(bone("Bip01 R Hand")?), f.animator.model_space(bone("Camera1st")?));
+            let rot = |a: Affine3A| a.to_scale_rotation_translation().1;
+            let turn = rot(c).inverse() * rot(h);
+            Some((Vec3::from(h.translation) - Vec3::from(c.translation), turn.to_scaled_axis()))
+        });
+        trace.write(time.elapsed_secs_f64(), dt, &player, eye, hand, sway, (m.sights_share, control.aiming, m.falling, stance == Stance::Sneak, m.speed, m.hands.phase == WeaponPhase::Drawn));
+    }
     state.head_eye = third_eye.filter(|_| third_view).map(|e| e.to_array());
     // The third-person pivot: the head's height above the feet without the stride's
     // rise and fall (`head_bob.rs`).
