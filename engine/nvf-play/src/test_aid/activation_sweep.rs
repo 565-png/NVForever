@@ -92,7 +92,7 @@ fn prepare(time: AidTime, mut sweep: ResMut<ActivationSweep>, mut player: ResMut
         return;
     }
     if let Some(view) = sweep.views.get(sweep.next).copied() {
-        if sweep.next % (YAWS.len() * PITCHES.len()) == 0 {
+        if sweep.next.is_multiple_of(YAWS.len() * PITCHES.len()) {
             phys.place_player(view.feet, 60.0, 1000.0);
             player.feet = phys.player.as_ref().unwrap().feet;
         }
