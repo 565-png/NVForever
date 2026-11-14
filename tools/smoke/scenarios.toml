@@ -15089,12 +15089,12 @@ order = [[
 [[scenario]]
 name = "ragdoll-kill-and-corpse-hit"
 source = "#2218 (owner's playtest): actors killed by grenade rifle rounds stood upright, dead, instead of falling; a blast kill sends more than one hit on the actor in a frame (the round's impact and its blast, or several blasts), and engine/nvforever/src/deaths.rs read only the last, which landed on the corpse and did not kill"
-note = "Chet in the general store is killed by a test-aid hit at 6 s and hit again on his corpse in the same frame; the base game alone"
+note = "Chet in the general store is killed by a test-aid hit at 6 s and hit again on his corpse in the same frame; the base game alone. 20 s: a corpse may move for up to 8 s and then eases to a stop (docs/spec-notes/ragdoll.md), so at 14 s it was still moving at the exit"
 areas = ["ragdoll", "combat"]
 paths = ["engine/nvforever/src/ragdoll.rs", "engine/nvforever/src/deaths.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_HIT = "6:0x00104C79:1000,6:0x00104C79:5" }
 args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm"]
-run_seconds = 14
+run_seconds = 20
 expect = [
   { re = 'combat: .* 0x00104C79 killed', label = "the first hit kills Chet" },
   { re = 'ragdoll: actor 00104C79 at rest at .*, trunk (?P<h>-?\d+) units over its lowest bone', range = [-1000, 35], label = "Chet falls and comes to rest lying down, not standing" },
