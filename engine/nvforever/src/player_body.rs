@@ -985,6 +985,32 @@ impl PlayerBody {
     }
 }
 
+/// Blows the player took since the body was last posed, as one punch (view frame: x
+/// right, y ahead, z up): the arms and the camera's place jolt and settle on their springs
+/// (`view_sway.rs`, `head_bob.rs`) [design: the owner, 2026-11-14, "damage screenshake";
+/// the camera's rotation is never shaken].
+#[derive(Resource, Default)]
+struct PlayerBlows {
+    punch: Vec3,
+    count: u32,
+}
+
+/// A blow of `share` (the part of the player's health it took) as a punch: down and back,
+/// a little aside by turns.
+fn blow_punch(share: f32, n: u32) -> Vec3 {
+    let strength = 0.6 + 1.4 * (share.max(0.0) * 4.0).min(1.0);
+    let side = if n.is_multiple_of(2) { 1.0 } else { -1.0 } * (0.3 + 0.2 * ((n as f32 * 7.31).sin()).abs());
+    Vec3::new(side, -0.4, -1.0) * strength
+}
+
+fn collect_blows(mut hits: MessageReader<nvf_play::combat::ActorHit>, mut blows: ResMut<PlayerBlows>) {
+    for h in hits.read().filter(|h| h.form_id == FormId::PLAYER_REF.0 && h.share > 0.0) {
+        blows.count = blows.count.wrapping_add(1);
+        let p = blow_punch(h.share, blows.count);
+        blows.punch += p;
+    }
+}
+
 pub struct PlayerBodyPlugin {
     /// `--first-person-body`.
     pub first_person_body: bool,
@@ -1010,6 +1036,8 @@ impl Plugin for PlayerBodyPlugin {
             .init_resource::<crate::furniture::PlayerUse>()
             .init_resource::<crate::weapon_lower::Ahead>()
             .init_resource::<WarmPose>()
+            .init_resource::<PlayerBlows>()
+            .add_systems(Update, collect_blows.in_set(nvf_play::player::BodySet).before(drive_body))
             .add_systems(Update, (restore_warm_pose, crate::furniture::drive_player, ensure_body, crate::weapon_lower::sense, drive_body, drive_weapon_emitters, shade_light, draw_warm_pose).chain().in_set(nvf_play::player::BodySet))
             .add_systems(PostUpdate, near_shade_casters.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
             .add_systems(Last, report);
@@ -1143,6 +1171,7 @@ fn report(mut exit: MessageReader<AppExit>, body: Res<PlayerBody>) {
         let (head, pivot) = m.head.pivot_rms();
         info!("player body summary: head bob {}, deepest first-person dip {:.2} units; third-person pivot over {} frames moved {pivot:.3} units a frame (rms) against the head's {head:.3}, pivot/head {:.2}", if body.head_bob { "on" } else { "off" }, m.head.peak_dip, m.head.frames, pivot / head.max(1e-3));
         info!("player body summary: head inertia, deepest take-off or landing dip {:.2} units; breathing camera {}, highest rise {:.2} units", m.head.peak_land.max(0.0) + 0.0, if body.breathing_camera { "on" } else { "off" }, m.head.peak_breath.max(0.0) + 0.0);
+        info!("player body summary: most gun recoil back {:.2} units, most out of breath {:.2}", m.sway.peak_recoil.max(0.0) + 0.0, m.head.peak_exertion);
         info!("player body summary: weapon lowering {}, lowered {} times, most {:.2}", if body.weapon_lower { "on" } else { "off" }, m.lower.times, m.lower.peak);
     }
 }
@@ -1585,6 +1614,9 @@ fn build_rig(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &
 
 /// What both rigs play this frame.
 struct Frame {
+    /// In first person, keep a crouch through a jump: no standing jump or landing clip
+    /// while sneaking (movement inertia on; [`pose_rig`]).
+    crouch_air: bool,
     dt: f32,
     stance: Stance,
     dirs: Option<[(Dir, f32); 2]>,
@@ -1731,8 +1763,14 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     }
     let mut expected_speed = 0.0;
     let main_dir = f.dirs.map(|w| if w[0].1 >= w[1].1 { w[0].0 } else { w[1].0 });
+    // A crouched jump in first person keeps the crouch: the weapons' jump clips stand the
+    // body up (only the unarmed ones have sneaking variants), which drew the view up 40
+    // units mid-jump and back down after it [design: the owner's fifth playtest,
+    // 2026-11-14: "jumping from crouch … looks like the character stands and then jumps"].
+    let keep_crouch = f.crouch_air && rig.view == View::First && f.stance == Stance::Sneak;
+    let air_clip = |c: &ClipInfo| !(keep_crouch && !c.path.to_ascii_lowercase().contains("sneak"));
     if f.airborne >= AIRBORNE_LOOP {
-        if let Some(c) = rig.clip(ctx, ClipKey::Jump(f.stance, f.drawn, main_dir, false)) {
+        if let Some(c) = rig.clip(ctx, ClipKey::Jump(f.stance, f.drawn, main_dir, false)).filter(|c| air_clip(c)) {
             want.push((c, TAG_JUMP, 1.0, Mode::Loop));
         }
     } else if let Some(w) = f.dirs {
@@ -1752,7 +1790,7 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
         }
     }
     if f.landing {
-        if let Some(c) = rig.clip(ctx, ClipKey::Jump(f.stance, f.drawn, main_dir, true)) {
+        if let Some(c) = rig.clip(ctx, ClipKey::Jump(f.stance, f.drawn, main_dir, true)).filter(|c| air_clip(c)) {
             rig.animator.restart(&c.clip, TAG_LAND, 1.0, Mode::Once, c.fade());
         }
     }
@@ -2355,7 +2393,7 @@ fn drive_body(
     mut transforms: Query<&mut Transform>,
     mut visibility: Query<&mut Visibility>,
     mut anim: ResMut<WeaponAnim>,
-    (furniture, mut idles, mut seat, pip, cams, first_fov, limbs, (death, knock), (zoom, combat, mut true_sights, scope, mut lens3d, lens_sway), (ahead, mut lunge, s1st, vats, inertia)): (
+    (furniture, mut idles, mut seat, pip, cams, first_fov, limbs, (death, knock), (zoom, combat, mut true_sights, scope, mut lens3d, lens_sway), (ahead, mut lunge, s1st, vats, inertia, mut blows)): (
         Res<crate::furniture::BodyOverride>,
         ResMut<PlayerIdles>,
         ResMut<nvf_play::furniture::PlayerSeat>,
@@ -2365,7 +2403,7 @@ fn drive_body(
         Option<Res<nvf_play::combat::PlayerLimbs>>,
         (Res<crate::death_cam::DeathCam>, Res<crate::player_knockdown::PlayerKnockdown>),
         (Option<Res<nvf_play::aim_zoom::AimZoom>>, Option<Res<nvf_play::combat::Combat>>, Option<ResMut<nvf_play::aim_zoom::TrueSights>>, Option<Res<nvf_play::aim_zoom::Scope>>, Option<ResMut<nvf_play::aim_zoom::Scope3d>>, Option<Res<nvf_play::aim_zoom::LensSway>>),
-        (Res<crate::weapon_lower::Ahead>, ResMut<nvf_play::player::Lunge>, Option<Res<nvf_play::console::ShowFirstPerson>>, Option<Res<nvf_play::vats_mode::VatsMode>>, Option<Res<nvf_play::inertia::MovementInertia>>),
+        (Res<crate::weapon_lower::Ahead>, ResMut<nvf_play::player::Lunge>, Option<Res<nvf_play::console::ShowFirstPerson>>, Option<Res<nvf_play::vats_mode::VatsMode>>, Option<Res<nvf_play::inertia::MovementInertia>>, ResMut<PlayerBlows>),
     ),
     mut driven: ResMut<nvf_play::player::ViewDriven>,
 ) {
@@ -2649,6 +2687,7 @@ fn drive_body(
         }
     }
     let frame = Frame {
+        crouch_air: inertia.as_deref().is_some_and(|i| i.on),
         dt,
         stance,
         dirs: direction_weights(forward, right),
@@ -2723,7 +2762,13 @@ fn drive_body(
     }
     let pipboy = (pip.on_arm() && pip.warming.is_none()).then_some(pip.clip_time);
     // A heavier weapon in the hand sways slower and further, with its switch on.
-    let weight = combat.as_deref().filter(|_| state.weapon_weight_sway && m.hands.in_hand).and_then(|c| c.forms.weapons.get(&c.player_weapon()?)).map_or(0.0, |w| w.weight);
+    let gun_weight = combat.as_deref().filter(|_| m.hands.in_hand).and_then(|c| c.forms.weapons.get(&c.player_weapon()?)).map_or(0.0, |w| w.weight);
+    let weight = if state.weapon_weight_sway { gun_weight } else { 0.0 };
+    // A shot of a gun or launcher this frame: its recoil on the gun's springs, stronger for
+    // a heavier gun (`view_sway.rs`); thrown and melee weapons have none.
+    let kick = if attack_now && matches!(prefix, "1hp" | "2hr" | "2ha" | "2hh" | "2hl") { 0.7 + 0.6 * nvf_play::ease::smoothstep(2.0, 20.0, gun_weight) } else { 0.0 };
+    // The blows taken since last frame, as one punch (already in the view's frame).
+    let punch = std::mem::take(&mut blows.punch);
     // The arms sway in first person by themselves: not under the Pip-Boy or an idle.
     let sway = body.first.as_ref().map_or(SwayPose::NONE, |f| {
         m.sway.update(SwayInput {
@@ -2741,6 +2786,10 @@ fn drive_body(
             // How far the gun is up to aim or block: the true iron sights' own share
             // while they ran last frame, else the aim or block clip asked for.
             raised: if m.sights_ran { crate::iron_sights::ease(m.sights_share) } else { f32::from(u8::from(control.aiming && m.hands.in_hand)) },
+            drawn: f32::from(u8::from(m.hands.in_hand && m.hands.phase == WeaponPhase::Drawn)),
+            kick,
+            punch,
+            exertion: m.head.exertion(),
             on: state.weapon_sway && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         })
     });
@@ -2759,6 +2808,8 @@ fn drive_body(
             vertical,
             slowness: inertia.as_deref().map_or(1.0, |i| i.weight),
             breathing: state.breathing_camera && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
+            kick,
+            punch,
             on: state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         });
         at = [at[0] + o.x, at[1] + o.y, at[2] + o.z];

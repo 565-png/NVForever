@@ -1388,8 +1388,12 @@ fn step(
         let was_footing = crate::phys::step_lift::footing(c);
         let s = p.world.move_character(c, CharacterInput { velocity: go, jump: intent.jump && i == 0, vertical: vz, view });
         if inertia.on {
-            // A landing lands into the inertia, not the game's landing speed profile.
+            // A landing lands into the inertia, not the game's landing speed profile; a
+            // hard one takes speed out of it.
             c.since_landing = None;
+            if let Some(speed) = s.landed_speed {
+                inertia.land(speed);
+            }
         }
         if !inertia.on || !c.grounded || c.swimming || d.auto_walk > 0.0 {
             // Off the ground, in the water or switched off: the spring takes what the

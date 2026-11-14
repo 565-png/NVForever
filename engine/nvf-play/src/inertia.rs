@@ -41,6 +41,11 @@ pub const STOP_SECONDS: f32 = 0.25;
 /// The inertia weights the settings page offers, by name: how many times the times
 /// above (and the weapon's and the crouch's) are taken [design: the owner, 2026-11-13].
 pub const WEIGHTS: [(f32, &str); 4] = [(0.5, "0.5"), (1.0, "1"), (1.5, "1.5"), (2.0, "2")];
+/// Landing compression: landings slower than the first fall speed (units/s) keep their
+/// speed, from the second on they lose [`LANDING_MOST_LOST`] of it, smoothly between.
+pub const LANDING_SOFT_SPEED: f32 = 350.0;
+pub const LANDING_HARD_SPEED: f32 = 900.0;
+pub const LANDING_MOST_LOST: f32 = 0.6;
 /// Ground speed below which a glide no longer plays the movement clips, units/s.
 pub const GLIDE_CLIP_SPEED: f32 = 30.0;
 /// A move in one frame this far across the ground (units) is a placement, not motion:
@@ -210,6 +215,18 @@ impl MovementInertia {
         self.forget_timing();
     }
 
+    /// A landing at `fall_speed` (units/s, down): a hard one takes speed out of the
+    /// ground velocity, which the spring then builds up again [design: the owner,
+    /// 2026-11-14, "landing compression"]. A hop (about 290 units/s) takes none.
+    pub fn land(&mut self, fall_speed: f32) {
+        let hard = crate::ease::smoothstep(LANDING_SOFT_SPEED, LANDING_HARD_SPEED, fall_speed);
+        let keep = 1.0 - LANDING_MOST_LOST * hard;
+        for s in &mut self.axes {
+            s.value *= keep;
+            s.rate = 0.0;
+        }
+    }
+
     /// After a frame's steps.
     pub fn end_frame(&mut self, feet: [f32; 3], grounded: bool) {
         self.last_feet = Some(feet);
@@ -375,6 +392,18 @@ mod tests {
         steps(&mut m, [0.0, RUN], 0.2, DT);
         steps(&mut m, [0.0, 0.0], 4.0, DT);
         assert!(matches!(m.reports[..], [Report::Stopped { .. }]), "{:?}", m.reports);
+    }
+
+    #[test]
+    fn a_hard_landing_takes_speed_and_it_builds_up_again() {
+        let mut m = MovementInertia::default();
+        m.follow([0.0, RUN]);
+        m.land(290.0);
+        assert_eq!(m.velocity(), [0.0, RUN], "a hop keeps its speed");
+        m.land(LANDING_HARD_SPEED);
+        assert!((m.velocity()[1] - RUN * (1.0 - LANDING_MOST_LOST)).abs() < 1e-3);
+        let v = steps(&mut m, [0.0, RUN], 2.0, DT);
+        assert_eq!(v, [0.0, RUN], "back up to speed");
     }
 
     #[test]
