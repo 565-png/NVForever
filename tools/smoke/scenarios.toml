@@ -23669,6 +23669,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "fort-slave-packs-not-floating"
+source = "issue #2439 (owner): at the Fort two slave backpacks hung in the sky with no NPC near. They are placed references of NVSlaveBackpack (0x0013732C, 0x0013732D; ARMO 0x00127C6A, Non-Playable, no world model MOD2) 565 and 913 units above the ground; their biped model was drawn at the reference. Armour only ever worn has no world look now (fnv_world::placed::worn_only; engine/nvforever/src/world.rs spawn_model)"
+note = "the owner's spot on the rise west of the camp, looking south-east at 17:00 as in the report's screenshot; frames in target/smoke (fort_packs.png). The two backpack slaves (LvlFortSlaveBackpack 0x00154414, 0x00154415) still wear theirs"
+areas = ["world"]
+paths = ["crates/fnv-world/src/placed.rs", "engine/nvforever/src/world.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_LOOK = "6:120:5", NVF_PLAY_TEST_SHOTS = "14:fort_packs.png", NVF_PLAY_TEST_CONSOLE = "12:00154414.getitemcount 00127C6A;00154415.getitemcount 00127C6A;12.5:close" }
+args = ["--world", "WastelandNV", "--pos=89242,46819,8095", "--play", "--hour", "17", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = [
+  { re = 'world: 0x0013732C NVSlaveBackpack: armour only ever worn', label = "the lower floating pack is not drawn on its own" },
+  { re = 'world: 0x0013732D NVSlaveBackpack: armour only ever worn', label = "the upper floating pack is not drawn on its own" },
+  { re = 'console: GetItemCount on 0x0015441[45] >> 1\.00', count = 2, label = "both backpack slaves still carry their pack" },
+]
+
+[[scenario]]
 name = "rs-charlie-door-and-tripwire"
 source = "issue #2420 (owner): in Ranger Station Charlie the door on the left was drawn shut, would not open and let the player through, and the tripwire behind it looked armed again on every pass. The door (OffDoorSmR02a 0x000CD068), the tripwire (0x00084246) and its shotgun come in with CharlieEnableParentREF (0x00126F4E, enabled by the station's trigger script): drawn at run time (nvf_play::script_draw), the door had no DoorRig, so it stayed drawn shut while it opened and its collision swung away; the wire's script plays Forward and then activates itself, which asks an Open sequence its model lacks, and that ask was what it showed when drawn again (fnv_game anims not_in_model)"
 note = "the destroyed interior (RSCharlieNVDESTROYED), god mode; the test aid enables the parent at 10 s as the trigger script does, puts the player on the wire at 12 s (it fires the shotgun once), moves the player to the entrance and back onto the wire (a fresh cell build: drawn again), then opens the door"
