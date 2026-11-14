@@ -12,7 +12,7 @@ advance animation time. They do not specify the first interval, delayed-call
 intervals, nested-call inheritance, or session-transfer timing. These citations
 were read by the source author on 2026-11-14; no native implementation was used.
 
-[observed: public source at
+[documented: pinned public source at
 [576d3963 Game](https://github.com/LootJunkieAzza/NVForever/blob/576d39630287845c598914d17ddffd71eebbef28/crates/fnv-game/src/game.rs),
 [JIP dispatch](https://github.com/LootJunkieAzza/NVForever/blob/576d39630287845c598914d17ddffd71eebbef28/crates/fnv-game/src/jip_events.rs),
 and [clock functions](https://github.com/LootJunkieAzza/NVForever/blob/576d39630287845c598914d17ddffd71eebbef28/crates/fnv-game/src/functions/misc.rs)]
@@ -37,7 +37,7 @@ clocks, callback filtering and normal function-result bookkeeping remain on
 their existing paths. No global override, serialized clock field, opcode change,
 actor-value special case or script-name matching is introduced.
 
-[observed: authored source controls in
+[documented: authored control source in
 `crates/fnv-game/tests/common/jip_callback_clock.rs`, registered by the existing
 `synthetic` integration target] Six controls exercise compiled OnHit callbacks
 and Game::tick; independent subjects/delays and nested reads; paused menus;
