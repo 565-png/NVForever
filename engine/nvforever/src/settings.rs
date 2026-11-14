@@ -1295,9 +1295,22 @@ fn dlss_reason(world: &World) -> Option<crate::upscaler::Unavailable> {
     }
 }
 
-/// DLSS is out of reach only because its files are missing: what Download DLSS… mends.
+/// [design] Offer the download for missing upscaling or frame generation files, without
+/// changing the upscaler's availability (`dlss::FILES` remains its four-file requirement).
 fn dlss_files_missing(world: &World) -> bool {
-    dlss_reason(world) == Some(crate::upscaler::Unavailable::FilesMissing)
+    download_files_missing(dlss_reason(world), || {
+        crate::dlss::download::target_folder().is_ok_and(|folder| crate::dlss::download::DOWNLOAD_FILES.iter().any(|file| !folder.join(file.name).is_file()))
+    })
+}
+
+/// [design] Other upscaler refusals keep their reason; missing files can be fetched when
+/// upscaling already works, or when the files only need a restart.
+fn download_files_missing(reason: Option<crate::upscaler::Unavailable>, missing: impl FnOnce() -> bool) -> bool {
+    match reason {
+        Some(crate::upscaler::Unavailable::FilesMissing) => true,
+        None => missing(),
+        _ => false,
+    }
 }
 
 fn upscaler_unavailable(world: &World, name: &str) -> Option<String> {
@@ -1625,7 +1638,8 @@ mod fsr_settings_tests {
         assert!(settings.index(LEGACY_KEY).is_none(), "the older row is no row of its own");
         let upscalers = settings.choices(u).expect("a native dropdown");
         let qualities = settings.choices(q).expect("a native dropdown");
-        assert_eq!((upscalers.names)(app.world()), ["Off", "FSR 3.1", "DLSS"]);
+        // [design] The download may follow these three; its missing-file rule is tested below.
+        assert_eq!((upscalers.names)(app.world())[..3], ["Off", "FSR 3.1", "DLSS"]);
         assert_eq!((qualities.names)(app.world()), ["Native AA", "Quality", "Balanced", "Performance", "Ultra Performance"]);
         assert_eq!(settings.older_key(u), Some(LEGACY_KEY));
         assert_eq!(chosen(&app), ("Off".to_string(), "Quality".to_string()), "off, the quality kept at Quality");
@@ -1759,10 +1773,8 @@ mod fsr_settings_tests {
         assert!(app.world().contains_resource::<Asked>(), "the dialog asked for");
         assert_eq!(requested(&app), UpscalerChoice::Off, "the request unchanged");
         assert_eq!(upscaler_chosen(app.world()), "Off");
-        // Any other reason, or DLSS in reach: no download offered.
+        // Other refusals: no download offered. Ready/restart can still lack frame generation.
         for session in [
-            READY,
-            STOCK,
             Session { streamline_loaded: false, dlss: DlssState::Unavailable(Unavailable::NotVulkan), fsr: None },
             Session { streamline_loaded: false, dlss: DlssState::Unavailable(Unavailable::UpdaterInFolder), fsr: None },
             Session { streamline_loaded: false, dlss: DlssState::Unavailable(Unavailable::GpuNotSupported), fsr: None },
@@ -1773,6 +1785,43 @@ mod fsr_settings_tests {
             assert!(!pick_upscaler(app.world_mut(), CHOICE), "{session:?}");
             assert!(!app.world().contains_resource::<Asked>());
         }
+    }
+
+    #[test]
+    fn download_dlss_is_offered_for_missing_frame_generation_without_disabling_upscaling() {
+        use crate::dlss::download::DOWNLOAD_FILES;
+        let root = std::env::temp_dir().join(format!("nvf-download-offer-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&root).unwrap();
+        let missing = || DOWNLOAD_FILES.iter().any(|file| !root.join(file.name).is_file());
+        for file in &DOWNLOAD_FILES[..4] {
+            std::fs::write(root.join(file.name), b"test fixture").unwrap();
+        }
+        for session in [READY, STOCK] {
+            let mut app = rows_app();
+            app.insert_resource(UpscalerStatus::new(session));
+            assert_eq!(dlss_unavailable(app.world()), None, "the four-file upscaler remains available");
+            assert!(download_files_missing(dlss_reason(app.world()), missing), "frame generation still missing: {session:?}");
+            let u = row(&app, UPSCALER_KEY);
+            assert!(nvf_play::settings::pick(app.world_mut(), u, "DLSS"));
+            let request = requested(&app);
+            assert!(request.is_dlss());
+            let mut status = app.world_mut().resource_mut::<UpscalerStatus>();
+            status.update(request);
+            if session.streamline_loaded {
+                assert_eq!(status.effective(), request, "upscaling still draws with only its four files");
+            } else {
+                assert!(status.restart_pending());
+            }
+        }
+        for file in &DOWNLOAD_FILES[4..] {
+            std::fs::write(root.join(file.name), b"test fixture").unwrap();
+        }
+        assert!(!download_files_missing(None, missing), "all eight present: no offer");
+        assert!(download_files_missing(Some(Unavailable::FilesMissing), missing));
+        for reason in [Unavailable::NotWindows, Unavailable::NotVulkan, Unavailable::UpdaterInFolder, Unavailable::GpuNotSupported] {
+            assert!(!download_files_missing(Some(reason), || panic!("no folder check for other refusals")));
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

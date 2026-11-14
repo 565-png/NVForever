@@ -400,6 +400,36 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_folder_with_the_first_four_gets_only_the_frame_generation_files() {
+        let root = scratch("add-frame-generation");
+        let target = root.join("dlss");
+        fs::create_dir(&target).unwrap();
+        // [design] Use the real names/order and small, independently pinned fixture bytes.
+        let data: Vec<&[u8]> = super::super::DOWNLOAD_FILES.iter().map(|file| file.name.as_bytes()).collect();
+        let names_and_data: Vec<_> = super::super::DOWNLOAD_FILES.iter().zip(&data).map(|(file, bytes)| (file.name, *bytes)).collect();
+        let files = listed(&names_and_data);
+        for (file, bytes) in files[..4].iter().zip(&data) {
+            fs::write(target.join(file.name), bytes).unwrap();
+        }
+        let mut staging = staged(&target, &files, &data);
+        verify_staged(&staging, &files, &|_| Ok(())).unwrap();
+        let mut moves = Vec::new();
+        place(&mut staging, &files, &target, &mut |from, to| {
+            moves.push(to.file_name().unwrap().to_string_lossy().into_owned());
+            move_new(from, to)
+        })
+        .unwrap();
+        drop(staging);
+        assert_eq!(moves, files[4..].iter().map(|file| file.name).collect::<Vec<_>>());
+        assert_eq!(listing(&target).len(), 8);
+        for (file, bytes) in files.iter().zip(&data) {
+            assert_eq!(fs::read(target.join(file.name)).unwrap(), *bytes);
+        }
+        assert_eq!(listing(&root), ["dlss"], "no staging folder left");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn a_folder_with_other_bytes_or_the_updater_is_left_as_it_is() {
         let files = listed(&[("a.dll", A), ("b.dll", B)]);
         for (label, name, bytes) in [("conflict", "b.dll", &b"the player's own build"[..]), ("updater", "NVNGX_Update.EXE", &b"exe"[..])] {

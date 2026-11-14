@@ -214,7 +214,7 @@ pub(crate) fn frame_generation_unavailable() -> Option<&'static str> {
         3 => Some("Needs hardware-accelerated GPU scheduling"),
         4 => Some("Needs a newer NVIDIA driver"),
         5 => Some("Not on this GPU"),
-        _ => Some("The DLSS Frame Generation files are missing"),
+        _ => Some("DLSS Frame Generation files missing: choose Download DLSS… in the Upscaler row, then restart"),
     }
 }
 

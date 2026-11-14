@@ -1,4 +1,5 @@
-//! Download DLSS... (#2250): the four DLSS files fetched from NVIDIA's own Streamline release,
+//! Download DLSS... (#2250, #2409): the eight DLSS upscaling and frame generation files
+//! fetched from NVIDIA's own Streamline release,
 //! checked and installed in the DLSS folder, on the player's click and only after the player
 //! accepted NVIDIA's licence. The settings' dialog is the caller; this module is the work
 //! behind it. `docs/design/dlss-upscaling.md`, "Download", says it for readers.
@@ -7,11 +8,11 @@
 //!   [`LicenceAccepted`], which only [`LicenceAccepted::by_player`] makes, called by the
 //!   dialog's accept button. Nothing here touches the network without one.
 //! - **One source**: [`ASSET_URL`], the official asset of NVIDIA-RTX/Streamline's v2.14.16
-//!   release, pinned with its size [`ASSET_SIZE`]. Only the four entries are fetched, by HTTP
+//!   release, pinned with its size [`ASSET_SIZE`]. Only the eight entries are fetched, by HTTP
 //!   range requests (`fetch.rs`): the archive's end for its directory, then each entry's bytes.
 //! - **Pins** (`files.rs`): each file's entry, size and SHA-256. A file whose bytes differ from
-//!   its pin is never kept; the interposer's signature check and the NGX runtime's NVIDIA
-//!   signature check (`security.rs`) run on the staged files before anything is moved.
+//!   its pin is never kept; the interposer's signature check and both NGX runtimes' NVIDIA
+//!   signature checks (`security.rs`) run on the staged files before anything is moved.
 //! - **Nothing written unless all pass** (`install.rs`): the files are unpacked into a staging
 //!   folder beside the DLSS folder, on the same volume, and moved in only when every check
 //!   passed; on a failure or cancel the staging folder is removed. A DLSS folder that holds

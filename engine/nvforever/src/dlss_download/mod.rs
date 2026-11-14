@@ -4,9 +4,9 @@
 //! `crate::dlss::download`; `docs/dlss.md` says it for players.
 //!
 //! - **The choice** [design: #2250]: "Download DLSS…" is a choice of the Upscaler row while
-//!   DLSS is held out of reach because its files are missing (`upscaler::Unavailable::
-//!   FilesMissing`, which only Windows with Vulkan reaches) and no download has installed them
-//!   this session. Picking it opens the dialog and changes nothing in the row; while a
+//!   any of the eight upscaling or frame generation files are missing (Windows with Vulkan,
+//!   `settings::dlss_files_missing`) and no download has installed them this session.
+//!   Picking it opens the dialog and changes nothing in the row; while a
 //!   download runs it reads "Downloading DLSS… n%" and picking it shows the dialog again.
 //! - **Licence first** [design: the maintainer's condition on #2250]: the dialog shows NVIDIA's
 //!   licence, the file that comes with the downloaded files in NVIDIA's archive
@@ -19,7 +19,7 @@
 //!   NVIDIA's marks.
 //!
 //! Test aid `NVF_PLAY_TEST_DLSS_DOWNLOAD=<item>[,…]` (only with `--data` / `NVFOREVER_DATA`):
-//! `clear` at the start deletes the four
+//! `clear` at the start deletes the eight
 //! listed files from the DLSS folder, only when `NVF_DLSS_DIR` names a folder whose name
 //! starts with `smoke-dlss-` (never another file, never another folder); `accept` presses I
 //! accept a second after the licence is shown; `cancel` presses Cancel there instead;
@@ -83,14 +83,14 @@ pub(crate) fn is_choice(name: &str) -> bool {
     name.eq_ignore_ascii_case(CHOICE) || name == CHOICE_WORDS
 }
 
-/// The rule for offering the choice: on Windows, with DLSS's files missing, and no download
-/// that installed them this session (the status may still say missing for a second after).
+/// [design] The choice is offered on Windows, with any of the eight files missing, and no
+/// download that installed them this session (the status may still say missing for a second).
 fn offer(windows: bool, files_missing: bool, last: Option<&Phase>) -> bool {
     windows && files_missing && !matches!(last, Some(Phase::Done(_)))
 }
 
-/// Whether the Upscaler row offers Download DLSS… now, `files_missing` being DLSS's reason
-/// (`upscaler::Unavailable::FilesMissing`).
+/// Whether the Upscaler row offers Download DLSS… now, while any upscaling or frame generation
+/// file is missing (`settings::dlss_files_missing`).
 pub(crate) fn offered(files_missing: bool) -> bool {
     offer(cfg!(windows), files_missing, download::current().map(|h| h.progress().phase).as_ref())
 }
