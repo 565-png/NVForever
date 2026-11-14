@@ -127,6 +127,64 @@ activation scenarios passed. The old top crosshair look from (67900,19440,5101)
 hit REFR `0012CE4B`, base STAT `0012CE4A` (`NVHooverDamObservationDeck`),
 instead of the ladder. This run did not show the reported open/close prompt.
 
+**The lower back-to-back pair.** [documented: supplied writer brief #2528 round w4,
+fnvtool ESM decode of FalloutNV.esm] The teleporting lower ladder `00164C64`
+(base `VHDExteriorLadder`) is at (67942.66,19400.51,4663.61), z rotation 3.442
+radians. A second REFR, **`00164C65`**, is at (67941.33,19400.33,4664.01),
+z rotation 0.300 radians. Its base DOOR `00060730`, `UtlHallBgEndSewerExLad01`,
+has FULL **Ladder** and the same ladder model as `VHDExteriorLadder`, SNAM
+`00077B3E`, ANAM `000205F6`, FNAM 0. The plain reference has **no XTEL, XATO,
+XESP or reference flags**. These are two nearly coincident ladders rotated
+approximately 180 degrees apart, not two views of the same teleport reference.
+
+[documented: supplied writer brief #2528 round w4] The ladder model's OBND spans
+local x **-36..1**. [design: `fnv-world/src/transform.rs::ref_rotation`; inference
+from the supplied bounds and rotations] Under `Rz(-z)`, the negative-X side of
+`00164C65` points approximately **(-0.955,+0.296)** in world XY (west-northwest);
+`00164C64` points **(+0.955,-0.296)** (east-southeast). Thus their bodies extend
+mostly onto opposite sides of their origins. [hypothesis, #2528] Treating that
+body side as the exposed approach face makes the plain ladder face the northern
+landing approach and the teleporting ladder face the opposite approach. OBND
+does not prove front-face normals or which side the original offers; check 146
+below requests both approaches.
+
+[observed: main-session run supplied in writer brief #2528 round w4,
+2026-11-14 23:14, logs `ov15/smoke-2528b/*.log`] All four helipad scenarios passed.
+From the deck (spots 1/2), only original sweep looks **11 and 23**, pitch **-60**
+degrees and yaw **121 / 54** degrees respectively, selected upper `00164C63`;
+other deck looks hit deck STAT reference `0012CE4B` or nothing. This demonstrates
+narrow targeting among the sampled deck views, not a measured angular boundary.
+At spot 3, settled feet z **4802**, original looks **25-27** instead selected
+**`00164C65`** and drew **Open / Ladder**. The reported open/close behavior thus
+matches a distinct plain door at the lower ladder, rather than the teleporting
+upper endpoint.
+
+[design: `activate.rs::{describe,find_target}`, `activate/pick.rs::choose`,
+`reticle.rs::Prompt::of`, `activate/outcome.rs::prompt`,
+`crates/fnv-sim/src/world.rs` door activation] The picker selects the nearest
+eligible collision/render-bound candidate within its occlusion limit; XTEL gives
+no priority over another named DOOR. The supplied sweep establishes that the
+landing ray selects the plain member. Its absent XTEL makes `describe` offer
+Open/Close rather than Travel, its FULL supplies Ladder, and absent XATO leaves
+the action unchanged. Default activation toggles that reference's open state.
+[hypothesis, #2528] The opposite body-side placement explains why the plain member
+wins from the landing; exact surface ordering cannot be proved from OBND alone.
+Whether the original offers this plain door or suppresses it is still unknown.
+
+**No documented animation-based exclusion.** [documented: offline GECK wiki,
+snapshot 2026-10-28, [Door](https://geckwiki.com/index.php?title=Door),
+[Activate](https://geckwiki.com/index.php?title=Activate),
+[SetMinimalUse](https://geckwiki.com/index.php?title=SetMinimalUse)] Door describes
+animating doors playing their animation and load doors teleporting; Activate
+lists opening as a door's default player activation. Door's Minimal Use flag
+concerns NPC shortcuts, and SetMinimalUse sets that flag. The snapshot has no
+separate Minimal Use page (title lookup followed by full-text search). None of
+these pages specifies hiding a prompt or refusing activation when a non-teleport
+door's model has no open/close animation. [design, #2528] No engine rule changes
+on that basis. [hypothesis, #2528] Retaining the ordinary non-teleport toggle for
+this ladder is provisional pending original-game prompt/result evidence in
+[observer check 146](../handoff/observer-checks.md#added-2026-11-14-helipad-ladder-pair-2528).
+
 **Transformed envelope.** [documented: supplied writer brief #2528 rounds w2/w3]
 The top base OBND is (-1037,-109,0)..(112,-84,445), rotation
 (-1.601,0.287,1.562) radians, scale 0.15, position (67939.5,19439.3,5028).
@@ -162,9 +220,15 @@ does not prove that the actual top ladder geometry is wholly buried.
 
 **Sweep and activation checks.** [design: `tools/smoke/scenarios.toml`,
 `engine/nvf-play/src/test_aid/activation_sweep.rs`, `reticle.rs::draw`]
-`helipad-ladder-top-crosshair` now uses three configured standing spots, three
-headings per spot (toward the reference, plus/minus 30 degrees), and pitches
-0/-30/-60/-85 degrees: 36 looks, one stable `activation sweep: look=...` line each.
+`helipad-ladder-top-crosshair` uses three configured standing spots and three
+headings per spot (the configured heading, plus/minus 30 degrees), at pitch
+-60 degrees: **9 looks**, one stable `activation sweep: look=...` line each.
+[design, #2528] The prior 65-second scenario budget exceeded this round's
+60-second limit, so redundant pitches were removed and the budget reduced to
+38 seconds, keeping the prior allowance beyond the one-second look cadence.
+The retained original looks 11/23/27 become 3/6/7, preserving the two successful
+deck views and a plain-ladder view from the landing. [design:
+`test_aid/activation_sweep.rs::sample`]
 Each line records actual feet/view, `GetCrosshairRef` and its base/type, selected
 activation target and base/type, and the drawn action/name (`prompt=None` when
 hidden or absent). Nearby DOOR hits are reported with ref/base/distance if within
@@ -175,8 +239,8 @@ AutoActivate presses E on the current target; no explicit-reference activation
 is queued. If every look misses, no E press is scheduled. The scenario still
 requires ladder targeting and reciprocal teleport/exterior travel/arrival, and
 forbids toggling the ladder; individual misses or other prompts are diagnostic.
-[hypothesis, #2528] New standing spots can settle on unexpected surfaces, so the
-actual feet are logged rather than assuming z5101.
+[design, #2528] Actual feet remain logged rather than assuming z5101;
+the supplied run settled spot 3 below the deck, as recorded above.
 
 [design: `activate.rs::find_target`, `fnv-game/src/nvse_other.rs`]
 `GetCrosshairRef` is populated from the first collision candidate before the

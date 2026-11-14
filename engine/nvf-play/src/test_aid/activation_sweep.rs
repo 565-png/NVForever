@@ -1,6 +1,6 @@
 //! Activation diagnostics [design, #2528; docs/spec-notes/cells-refs.md §5].
 //! `NVF_PLAY_TEST_ACTIVATION_SWEEP=<target hex>|<x>:<y>:<z>:<heading deg>,...`
-//! sweeps three yaws and four pitches at each supplied standing spot, on the world
+//! sweeps three yaws at pitch -60 degrees at each supplied standing spot, on the world
 //! aids' clock. It logs every look, then replays the first successful view and presses
 //! E through AutoActivate. It never queues activation of an explicit reference.
 
@@ -16,7 +16,7 @@ use fnv_sim::FormId;
 
 // Sweep coverage and settling times [design, #2528]; not original-game rules.
 const YAWS: [f32; 3] = [-30.0, 0.0, 30.0];
-const PITCHES: [f32; 4] = [0.0, -30.0, -60.0, -85.0];
+const PITCHES: [f32; 1] = [-60.0];
 const SETTLE: f32 = 0.5;
 const DOOR_RADIUS: f32 = 400.0;
 const ENV: &str = "NVF_PLAY_TEST_ACTIVATION_SWEEP";
@@ -168,9 +168,9 @@ mod tests {
     #[test]
     fn sweep_covers_every_spot_yaw_and_pitch() {
         let sweep = ActivationSweep::parse("123|1:2:3:90,4:5:6:0,7:8:9:270").unwrap();
-        assert_eq!(sweep.views.len(), 36);
-        for (spot, chunk) in sweep.views.chunks(12).enumerate() {
-            for (yaw, group) in chunk.chunks(4).enumerate() {
+        assert_eq!(sweep.views.len(), 3 * YAWS.len() * PITCHES.len());
+        for (spot, chunk) in sweep.views.chunks(YAWS.len() * PITCHES.len()).enumerate() {
+            for (yaw, group) in chunk.chunks(PITCHES.len()).enumerate() {
                 for (pitch, view) in group.iter().enumerate() {
                     assert_eq!(view.feet, [[1., 2., 3.], [4., 5., 6.], [7., 8., 9.]][spot]);
                     assert!((view.heading.to_degrees() - ([90., 0., 270.][spot] + YAWS[yaw])).abs() < 0.001);

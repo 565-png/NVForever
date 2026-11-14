@@ -2174,3 +2174,35 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      dirt and on concrete, first and third person, and record which SOUN records play
      at each footfall (the sound log): does `FSTArmorPowerWalkL`/`R` play, instead of
      or beside the ground's step, and does anything play for the run rustle?
+
+## Added 2026-11-14 (helipad ladder pair, #2528)
+
+146. **Which helipad ladder faces are usable, and can the upper endpoint be targeted
+     from the deck?** (P2; #2528, cells-refs.md §5.) [documented: supplied writer
+     brief #2528 round w4, fnvtool ESM decode of FalloutNV.esm] The nearly coincident
+     lower pair is teleporting `00164C64` (`VHDExteriorLadder`) at
+     (67942.66,19400.51,4663.61), z rotation 3.442, and plain `00164C65` (DOOR
+     `00060730`, `UtlHallBgEndSewerExLad01`, FULL Ladder) at
+     (67941.33,19400.33,4664.01), z rotation 0.300, with no XTEL/XATO/XESP or
+     reference flags. [observed: supplied main-session run 2026-11-14 23:14,
+     `ov15/smoke-2528b/*.log`] Ours at spot 3, feet near (67950,19440,4802),
+     selected plain `00164C65` at yaw 236, pitches 0/-30/-60, drawing Open / Ladder.
+     [hypothesis, #2528] Ours retains ordinary non-teleport Open/Close toggling for
+     that member; whether the original offers it at all is unknown. To check:
+     approach this face from that landing and the opposite face from the south
+     (the separate lower smoke approach is near (67942.7,19320.5,4806)). Record
+     actual feet/view, targeted reference (distinguish the two IDs), prompt or its
+     absence, and the result of pressing E twice: travel, visible movement, sound,
+     state-only toggle or nothing. Does the plain back-to-back ladder have a prompt
+     and activation, and does the opposite face select the teleporting member?
+
+     [observed: same supplied run] Only original sweep looks 11/23 on the deck
+     targeted upper `00164C63`: from (67900,19440,5101) yaw 121, pitch -60, and
+     (67915,19385,5101) yaw 54, pitch -60. Other sampled deck looks hit deck STAT
+     `0012CE4B` or nothing. To check in the original: try these views and small
+     yaw/pitch changes, and look straight down from the deck near the upper
+     endpoint (67939.5,19439.3,5028). Record target ID, exact prompt/absence and E
+     result, with actual feet and view. Is the top usable from the deck, only from
+     a narrow angle, or not there at all? Compare with activating the lower
+     teleporting member as a control. [design, #2528] Do not infer original
+     behavior from NVForever's successful teleport smoke scenarios.
