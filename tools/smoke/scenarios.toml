@@ -23563,8 +23563,8 @@ args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "
 run_seconds = 36
 expect = [
   { re = 'console: PlaceAtMe on player >> 0xFF000000', label = "the child is placed" },
-  { re = '(?i)npc combat: FortChildCM \S*ff000000 flees from the player', label = "the child flees at once, unhurt" },
-  { re = '(?i)npc combat: FortChildCM \S*ff000000 (swings at|opens fire|fires a burst|power attack|rushes|throws|charges|goes on its combo|turns to fight)', max = 0, label = "the child never attacks or turns to fight" },
+  { re = 'npc combat: (FortChildCM )?0xFF000000 flees from the player', label = "the child flees at once, unhurt" },
+  { re = 'npc combat: (FortChildCM )?0xFF000000 (swings at|opens fire|fires a burst|power attack|rushes|throws|charges|goes on its combo|turns to fight)', max = 0, label = "the child never attacks or turns to fight" },
 ]
 
 [[scenario]]
