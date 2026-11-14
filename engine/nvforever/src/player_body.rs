@@ -1025,6 +1025,9 @@ impl PlayerBody {
 /// (95%; × the inertia weight) [design: the owner's sixth playtest, 2026-11-14, the idle's
 /// hitch every 2.5 s].
 const SEAM_SECONDS: f32 = 0.3;
+/// With movement inertia, the share of a draw's or a holster's time (along its settling
+/// curve) after which its clip hands the arms over to what follows (`pose_rig`).
+const EQUIP_HANDOVER_FROM: f32 = 0.35;
 
 /// Test aid `NVF_PLAY_TEST_MOTION_TRACE=<file>`: one CSV line a frame of the first-person
 /// motion, for finding hitches and two-step moves by numbers: time, frame time, view
@@ -1831,16 +1834,27 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     for ev in events {
         match ev {
             // At the Equip Speed perks' rate (Quick Draw), as the hands time it.
+            // With movement inertia in first person the clip shows at once and the arms ease
+            // across the step to its first pose (`Animator::smooth_jump`); its share is then
+            // the hand-over's (`EQUIP_HANDOVER_FROM`).
             HandEvent::StartDraw => {
                 if let Some(c) = &draw {
-                    let l = rig.animator.restart(&c.clip, TAG_EQUIP, 1.0, Mode::Once, c.fade());
+                    let warped = f.inertia && rig.view == View::First && f.equip_at.is_some();
+                    let l = rig.animator.restart(&c.clip, TAG_EQUIP, 1.0, Mode::Once, if warped { 0.0 } else { c.fade() });
                     rig.animator.layers[l].rate = f.equip_rate;
+                    if warped {
+                        rig.animator.smooth_jump();
+                    }
                 }
             }
             HandEvent::StartHolster => {
                 if let Some(c) = &put_away {
-                    let l = rig.animator.restart(&c.clip, TAG_EQUIP, 1.0, Mode::Once, c.fade());
+                    let warped = f.inertia && rig.view == View::First && f.equip_at.is_some();
+                    let l = rig.animator.restart(&c.clip, TAG_EQUIP, 1.0, Mode::Once, if warped { 0.0 } else { c.fade() });
                     rig.animator.layers[l].rate = f.equip_rate;
+                    if warped {
+                        rig.animator.smooth_jump();
+                    }
                 }
             }
             HandEvent::ToHand => rig.animator.cut(TAG_HOLSTER),
@@ -1927,7 +1941,9 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     // the draw clip (which outranks it): when the draw ends the hold is already there.
     // Asked for only after it, it was still fading in as the draw clip faded out, and the
     // arms-down idle showed through: the gun went down and came up again (seventh playtest).
-    if (f.hands.in_hand && f.hands.phase != WeaponPhase::Drawing) || (first_inertia && f.hands.phase == WeaponPhase::Drawing) {
+    // Putting the weapon away the arms go to the arms-down pose under the clip instead (below).
+    let holding = if first_inertia { f.hands.phase == WeaponPhase::Drawing || (f.hands.in_hand && f.hands.phase != WeaponPhase::Holstering) } else { f.hands.in_hand && f.hands.phase != WeaponPhase::Drawing };
+    if holding {
         if f.aiming && blocks(f.prefix) {
             if let Some(c) = rig.clip(ctx, ClipKey::Block(f.stance, f.prefix)) {
                 want.push((c, TAG_AIM, 1.0, Mode::Loop));
@@ -1964,7 +1980,9 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
             }
         }
     }
-    if !f.hands.in_hand {
+    // With movement inertia in first person the arms-down pose is under the put-away clip all
+    // through it, so the clip hands over to it as it ends (below).
+    if !f.hands.in_hand || (first_inertia && f.hands.phase == WeaponPhase::Holstering) {
         if let Some(c) = &holster {
             want.push((c.clone(), TAG_HOLSTER, 1.0, Mode::Once));
         }
@@ -2189,6 +2207,19 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     let carried = if matches!(f.prefix, "h2h" | "1hm" | "2hm") { a.layers.iter().rev().find(|l| l.tag == TAG_ATTACK && !l.finished()).map(|l| (l.clip.clone(), l.time)) } else { None };
     let carried = carried.filter(|(c, _)| c.root_reach() > nvf_assets::anim_play::CARRY_MIN);
     a.advance(f.dt, rate);
+    // A draw or a holster with movement inertia: over the last part of its time the clip
+    // hands the arms over to what follows (the hold, the arms down) along the settling
+    // curve while it still slows to its end, so the two are one motion. Played to its end
+    // first and then faded out, its last pose (3 units off the hold for a 10mm pistol) made
+    // a second movement after the arms had nearly stopped [design: the owner's ninth
+    // playtest, 2026-11-14: "they slow down but then the animation speeds up"; the trace].
+    if let (true, Some(at)) = (first_inertia, f.equip_at) {
+        let x = nvf_play::ease::settle_inv(at.clamp(0.0, 1.0));
+        let over = nvf_play::ease::settle(((x - EQUIP_HANDOVER_FROM) / (1.0 - EQUIP_HANDOVER_FROM)).clamp(0.0, 1.0));
+        for l in a.layers.iter_mut().filter(|l| l.tag == TAG_EQUIP && !l.is_leaving()) {
+            (l.ease, l.smooth) = (1.0 - over, false);
+        }
+    }
     rig.carry = carried.and_then(|(c, from)| Some(c.root_travel(from, a.layers.iter().find(|l| l.tag == TAG_ATTACK && Arc::ptr_eq(&l.clip, &c))?.time)));
     // The attack clip passing its `Eject` key: the casing leaves now (combat throws it).
     rig.ejected = match (before, attack_time(a), &rig.attack_eject) {
@@ -3101,10 +3132,18 @@ fn drive_body(
             // How far the gun is up to aim or block: the true iron sights' own share
             // while they ran last frame, else the aim or block clip asked for.
             raised: if m.sights_ran { m.sights_eased } else { f32::from(u8::from(control.aiming && m.hands.in_hand)) },
-            drawn: f32::from(u8::from(m.hands.in_hand && m.hands.phase == WeaponPhase::Drawn)),
+            // How far the weapon is drawn: with movement inertia the draw's and the holster's
+            // own progress, so their trail moves with the clip; a step at the draw's end
+            // dipped the gun 1.4 units after the clip had settled (ninth playtest's trace).
+            drawn: match (equip_at, m.hands.phase) {
+                (Some(at), WeaponPhase::Drawing) => at,
+                (Some(at), WeaponPhase::Holstering) => 1.0 - at,
+                _ => f32::from(u8::from(m.hands.in_hand && m.hands.phase == WeaponPhase::Drawn)),
+            },
             kick,
             punch,
             exertion: m.head.exertion(),
+            reloading: f32::from(u8::from(f.animator.layers.iter().any(|l| l.tag == TAG_RELOAD && !l.finished() && !l.is_leaving()))),
             on: state.weapon_sway && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         })
     });

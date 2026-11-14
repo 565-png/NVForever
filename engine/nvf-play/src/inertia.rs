@@ -81,7 +81,15 @@ pub const ATTACK_OUT_SECONDS: f32 = 0.3;
 /// inertia weight): most of it at once, the rest softly (`crate::combat`). The climb is the
 /// same, only spread over a few frames [design: the owner's eighth playtest, 2026-11-14:
 /// "fast start, slow end … the jump is not instant to the next recoil point"].
-pub const KICK_EASE_SECONDS: f32 = 0.1;
+pub const KICK_EASE_SECONDS: f32 = 0.16;
+/// With movement inertia this share of each shot's view kick settles back down again,
+/// over this long (95 %; × the inertia weight) on a critically damped spring: the gun
+/// rises and comes back down a little instead of the whole kick staying in the view
+/// [design: the owner's ninth playtest, 2026-11-14: "make the gun smoothly return down a
+/// bit so the recoil does not just force the whole camera up. Also make the end of the
+/// recoil smoother - slower ending" (the rise was 0.1 s)].
+pub const KICK_BACK_SHARE: f32 = 0.4;
+pub const KICK_BACK_SECONDS: f32 = 0.6;
 /// How many times its base times the first-person hands take to draw, put away and aim a
 /// weapon of `weight` (pounds) and to come back from its reload: light ones (1 lb and under)
 /// 0.85, a pistol of about 3 lb 1, from 20 lb 1.5, smoothly between [design: the owner's

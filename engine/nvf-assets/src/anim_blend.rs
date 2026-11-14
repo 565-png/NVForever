@@ -118,6 +118,11 @@ impl Layer {
     /// coming in it follows the curve; going out it follows the curve's mirror, so two
     /// layers of a priority crossing over the same time share the bones by the curve
     /// itself, quick at first and slow at the end.
+    /// Fading out (no longer wanted).
+    pub fn is_leaving(&self) -> bool {
+        self.leaving
+    }
+
     pub fn shown_ease(&self) -> f32 {
         match (self.smooth, self.leaving) {
             (false, _) => self.ease,

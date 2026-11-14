@@ -140,7 +140,16 @@ itself turns exactly as the mouse says.
   ("whips" with the view); 0.3 s and 12°/6° in the second (reached the limit at once,
   then "waited"); a rate filter with separate build and release times and separate out
   and back springs in the third and fourth ("transitions between different spring
-  values … quick ramps in speed and a delay", the fifth playtest).
+  values … quick ramps in speed and a delay", the fifth playtest). Since the ninth
+  playtest ("there is still a delay between the mouse stop and the player hands
+  returning … make the curve continuous so the hand never reach the maximum point"): the
+  lag asked for is rate × 0.15 s, the first spring only averages it over 0.06 s, the limit
+  is `x / (1 + |x| / limit)` (no flat top: a faster turn always asks a little more), and
+  the second spring takes 0.4 s × 1.2 (`view_sway::TURN_WEIGHT`, the owner's "1.2x for
+  mouse movement reactions"). The first of the two 0.3 s springs had held up to 14 times
+  the limit during a fast flick, which the tanh hid while it drained: about 0.2 s of
+  standing still at the limit. The trace after: the arms start back within 0.05 s of the
+  view stopping and are on it about 0.5 s later.
 - Bob: a dip at each footfall and one sideways swing a stride, at the phase of the
   movement clips (the footstep keys), growing with the ground speed to a run's
   (300 units/s): 0.9 units down, 0.6 across, 1.2° of tilt. Sneaking 60 %, down the sights
@@ -209,7 +218,16 @@ itself turns exactly as the mouse says.
   draw and holster clips take 1 / 0.45 of their time × the inertia weight
   (`inertia::EQUIP_PACE`; "way too fast", the sixth playtest), played by their place
   along the settling curve (`Frame::equip_at`), and the game's readiness waits for them
-  (the moment the weapon changes hands is found through the curve's inverse). The hold
+  (the moment the weapon changes hands is found through the curve's inverse). Over the
+  last 65 % of that time the clip hands the arms over to the pose that follows (the hold
+  after a draw, the arms down after a holster, which is under the put-away clip all
+  through it) along the settling curve, while it still slows (`EQUIP_HANDOVER_FROM`); the
+  clip starts at once, the arms easing across the step to its first pose; the trail push
+  follows the draw's own progress. Played out first and faded after, the draw's last pose
+  (3 units off the hold) made a second movement once the arms had nearly stopped, the
+  holster ended in a snap onto the arms-down pose, and the step at the draw's end pushed
+  the gun 1.4 units down and back (ninth playtest: "they slow down but then the animation
+  speeds up and player character grabs the gun quickly"; the trace). The hold
   clip is asked for through the draw, under the draw clip: asked for only after it, it
   was still fading in while the draw clip faded out, the arms-down idle showed through
   and the gun went down and came up again (seventh playtest: "starts pulling out the
@@ -230,14 +248,21 @@ itself turns exactly as the mouse says.
   spring over 0.3 s (× the inertia weight). The trace after: the hand's worst jolt at
   idle 4 × the background, was 77 ×.
 - Recoil on the gun (owner, 2026-11-14): each shot of a gun or launcher (`1hp`, `2hr`,
-  `2ha`, `2hh`, `2hl`) sets springs (16/s) moving that peak at 1.2 units back, 1.6° up
+  `2ha`, `2hh`, `2hl`) sets springs (11/s; 16/s until the ninth playtest, "slower
+  ending") moving that peak at 1.2 units back, 1.6° up
   and up to 0.5° aside, for strength 0.7 (light) to 1.3 (20 lb and over); rapid fire
   builds to a plateau (shown at most 3 units, 5°); 60 % down the sights. The view's own
-  kick is the game's size, but with movement inertia it comes in over 0.1 s (× the
+  kick is the game's size, but with movement inertia it comes in over 0.16 s (0.1 s in the
+  eighth build; × the
   inertia weight; `inertia::KICK_EASE_SECONDS`, `combat::ease_kick`): an exponential,
   most of it the first frames, the rest softly, so the view no longer jumps to each
   shot's new point in one frame (eighth playtest: "fast start, slow end … the jump is not
-  instant to the next recoil point"); the climb is the same. The fire clip starts again
+  instant to the next recoil point"), and 40 % of each kick then settles back down on a
+  critically damped spring over 0.6 s (× the inertia weight; `inertia::KICK_BACK_SHARE`,
+  `combat::ease_back`): it starts gently while the kick still rises and ends slowly, so the
+  gun rises and comes back down a little (ninth playtest: "make the gun smoothly return
+  down a bit so the recoil does not just force the whole camera up"); with movement
+  inertia the climb is 60 % of the original's. The fire clip starts again
   at once at each shot and the arms ease across the step back to its start
   (`Animator::smooth_jump`, the loop seams' inertialization below): its kick shows whole,
   with no snap between shots.
@@ -246,7 +271,14 @@ itself turns exactly as the mouse says.
   step to it as across a loop seam (the clip's own motion untouched); at its end the arms
   go back to the hold over 0.4 s along the settling curve (an attack's over 0.3 s; both ×
   the inertia weight × the handling below). The trace of a 10mm pistol reload: no step at its start or end,
-  the hand settling back onto the hold over about 0.7 s.
+  the hand settling back onto the hold over about 0.7 s. Since the ninth playtest
+  ("reloads - do not see any difference") the sway also leans the gun over for the reload:
+  down 1.6 units, in 0.8, the muzzle 5° down and 9° of roll, on two springs in a row of
+  0.3 s each (× the weight), out again as the reload ends.
+- Walking ahead (ninth playtest: "make the gun point to the ground more when walking
+  forward, just a bit"): the muzzle tips down 3° and the gun drops 0.5 units, full from
+  150 units/s ahead, on two springs settling in about 0.6 s; none down the sights or
+  backing up.
 - The gun with the view's pitch (eighth playtest): looking straight down the gun comes up
   1.4 units and back 1.8 towards the eye, its muzzle 2.5° up; looking straight up it drops
   1 unit and goes out 0.6, the muzzle 1.5° down; with the sine of the pitch between, none

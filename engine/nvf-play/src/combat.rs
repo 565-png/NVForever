@@ -1197,6 +1197,10 @@ pub struct Combat {
     /// The view's kick still to come (pitch, heading; radians): with movement inertia a
     /// shot's kick comes over a moment instead of in one frame ([`ease_kick`]).
     kick_left: [f32; 2],
+    /// The share of the kicks the view settles back down by (pitch, heading; radians), and
+    /// how far it has, on springs ([`ease_back`]).
+    kick_back_goal: [f32; 2],
+    kick_back: [crate::ease::Spring; 2],
     /// The spent-ammo items' own rolls (docs/spec-notes/spent-ammo-items.md), so they
     /// leave the shots' rolls as they were.
     spent_rng: SplitMix,
@@ -2134,6 +2138,8 @@ fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
         kick_rng: SplitMix(5),
         kick_just_settled: false,
         kick_left: [0.0; 2],
+        kick_back_goal: [0.0; 2],
+        kick_back: [crate::ease::Spring::default(); 2],
         spent_rng: SplitMix(4),
     });
 }
@@ -2843,6 +2849,45 @@ fn ease_kick(player: &mut Player, left: [f32; 2], seconds: Option<f32>, dt: f32)
     rest
 }
 
+/// Settle the view back down by the kicks' returning share `goal` (pitch, heading; radians)
+/// on critically damped springs over `seconds` (95 %): it starts gently while the kick
+/// still rises, and ends slowly. Without `seconds` (movement inertia off) nothing returns
+/// and what was still to return is dropped.
+fn ease_back(player: &mut Player, goal: &mut [f32; 2], back: &mut [crate::ease::Spring; 2], seconds: Option<f32>, dt: f32) {
+    let Some(s) = seconds else {
+        *goal = [0.0; 2];
+        *back = [crate::ease::Spring::default(); 2];
+        return;
+    };
+    if *goal == [0.0; 2] {
+        return;
+    }
+    let omega = crate::ease::omega_for(s);
+    for k in 0..2 {
+        let before = back[k].value;
+        back[k].step(goal[k], omega, dt);
+        let d = back[k].value - before;
+        if k == 0 {
+            player.pitch = (player.pitch - d).clamp(-MAX_PITCH, MAX_PITCH);
+        } else {
+            player.heading -= d;
+        }
+    }
+    // Settled: what has returned is spent.
+    if (0..2).all(|k| (goal[k] - back[k].value).abs() < 2e-5 && back[k].rate.abs() < 1e-4) {
+        for k in 0..2 {
+            let rest = goal[k] - back[k].value;
+            if k == 0 {
+                player.pitch = (player.pitch - rest).clamp(-MAX_PITCH, MAX_PITCH);
+            } else {
+                player.heading -= rest;
+            }
+        }
+        *goal = [0.0; 2];
+        *back = [crate::ease::Spring::default(); 2];
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn fire(
     time: Res<Time>,
@@ -2869,6 +2914,8 @@ pub(crate) fn fire(
     let kick_seconds = inertia.as_deref().filter(|i| i.on).map(|i| crate::inertia::KICK_EASE_SECONDS * i.weight.max(0.1));
     let pending = std::mem::take(&mut c.kick_left);
     c.kick_left = ease_kick(&mut player, pending, kick_seconds, dt);
+    let back_seconds = inertia.as_deref().filter(|i| i.on).map(|i| crate::inertia::KICK_BACK_SECONDS * i.weight.max(0.1));
+    ease_back(&mut player, &mut c.kick_back_goal, &mut c.kick_back, back_seconds, dt);
     // Where the gun points: the view, turned by a 3D scope's sway (the view itself sways
     // otherwise).
     let gun_dir = lens_sway.as_deref().map_or_else(|| player.look_dir(), |s| s.look_dir(player.heading, player.pitch));
@@ -3273,6 +3320,11 @@ pub(crate) fn fire(
                     let left = c.kick_left;
                     c.kick_left = ease_kick(&mut player, [kick.pitch_deg.to_radians(), kick.yaw_deg.to_radians()], kick_seconds, dt);
                     c.kick_left = [c.kick_left[0] + left[0], c.kick_left[1] + left[1]];
+                    // A share of it the view then settles back down by (movement inertia).
+                    if kick_seconds.is_some() {
+                        c.kick_back_goal[0] += crate::inertia::KICK_BACK_SHARE * kick.pitch_deg.to_radians();
+                        c.kick_back_goal[1] += crate::inertia::KICK_BACK_SHARE * kick.yaw_deg.to_radians();
+                    }
                     info!(
                         "combat: kick: shot {} in a row, bloom {:.2}, crosshair cone now {:.2} deg, view up {:.2} deg, sideways {:.2} deg",
                         c.kick.burst,

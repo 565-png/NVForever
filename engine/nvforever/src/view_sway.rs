@@ -66,7 +66,7 @@ use bevy::math::{Quat, Vec2, Vec3};
 use nvf_play::ease::{carried_push, omega_for, smoothstep, Pushed, Spring};
 
 /// The lag a slow, steady turn asks for: turn rate × this (seconds); × the weapon's weight.
-pub const CHASE_SECONDS: f32 = 0.12;
+pub const CHASE_SECONDS: f32 = 0.15;
 /// The most lag a turn asks for: sideways and up or down, radians; × the weapon's weight
 /// (12° and 6° in the second build, 5° and 3.5° in the first).
 pub const MAX_LAG_YAW: f32 = 6.0 * std::f32::consts::PI / 180.0;
@@ -77,10 +77,18 @@ pub const MAX_LAG_PITCH: f32 = 4.0 * std::f32::consts::PI / 180.0;
 /// transitions between different spring values … quick ramps in speed and a delay";
 /// before, a smoothing of the rate with separate build and release times fed a spring
 /// with separate out and back times]. × the inertia weight and the weapon's weight.
-pub const FOLLOW_SECONDS: f32 = 0.5;
-/// Each of the two springs in a row (see `ViewSway::update`) takes this share of
-/// [`FOLLOW_SECONDS`], so the pair arrives in about that time.
-const DOUBLE_SPRING_SHARE: f32 = 0.6;
+/// One spring since the ninth playtest (two of 0.3 s in a row before).
+pub const FOLLOW_SECONDS: f32 = 0.4;
+/// The turn lag's own weight on top of the inertia weight [design: the owner's ninth
+/// playtest, 2026-11-14: "increase the default weight just for mouse movement reactions to
+/// 1.2x the current values"].
+pub const TURN_WEIGHT: f32 = 1.2;
+/// The turn's rate is averaged over about this long (95 %) before the limit bends it: long
+/// enough to even out a mouse's uneven frames, short enough that nothing of a fast turn is
+/// held back once the view stops [design: the ninth playtest, "there is still a delay
+/// between the mouse stop and the hands returning": the first of two 0.3 s springs held
+/// up to 14 times the limit, which the limit hid while it drained, about 0.2 s].
+const TURN_AVERAGE_SECONDS: f32 = 0.06;
 /// Turn rates beyond this (radians/s, about 690°/s) count as this.
 const MAX_TURN_RATE: f32 = 12.0;
 /// A change of the view's angles bigger than this in one frame (radians) is a jump (a
@@ -141,6 +149,25 @@ const PITCH_UP_DROP: f32 = 1.0;
 const PITCH_UP_OUT: f32 = 0.6;
 const PITCH_DOWN_TIP: f32 = 2.5 * std::f32::consts::PI / 180.0;
 const PITCH_UP_TIP: f32 = 1.5 * std::f32::consts::PI / 180.0;
+/// Walking ahead the muzzle tips down by this (radians) and the gun drops by this (units),
+/// full from [`AHEAD_FULL_SPEED`] (units/s, a brisk walk) and none down the sights, on
+/// springs settling in [`AHEAD_SECONDS`] [design: the owner's ninth playtest, 2026-11-14:
+/// "make the gun point to the ground more when walking forward, just a bit"].
+const AHEAD_WALK_TIP: f32 = 3.0 * std::f32::consts::PI / 180.0;
+const AHEAD_WALK_DROP: f32 = 0.5;
+const AHEAD_FULL_SPEED: f32 = 150.0;
+/// (Each of the two springs takes 0.6 of it, so the pair arrives in about that time.)
+const AHEAD_SECONDS: f32 = 0.6;
+/// A reload brings the gun down and turns it over to work on it: the most drop (units),
+/// muzzle tip down and roll (radians), and the move in towards the middle (units), on two
+/// springs in a row each settling in [`RELOAD_SECONDS`] (× the weight); the reload clip
+/// plays on top [design: the owner's ninth playtest, 2026-11-14: "reloads - do not see any
+/// difference"; the eighth build only smoothed the clip's start and end].
+const RELOAD_DROP: f32 = 1.6;
+const RELOAD_TIP: f32 = 5.0 * std::f32::consts::PI / 180.0;
+const RELOAD_ROLL: f32 = 9.0 * std::f32::consts::PI / 180.0;
+const RELOAD_IN: f32 = 0.8;
+const RELOAD_SECONDS: f32 = 0.3;
 /// Tilt into a strafe at a run's sideways speed, radians, reached through a spring
 /// settling in this long (seconds; × the inertia weight).
 const STRAFE_ROLL: f32 = 1.5 * std::f32::consts::PI / 180.0;
@@ -172,7 +199,8 @@ const DRAW_TRAVEL: f32 = 6.0;
 const RECOIL_BACK: f32 = 1.2;
 const RECOIL_UP: f32 = 1.6 * std::f32::consts::PI / 180.0;
 const RECOIL_SIDE: f32 = 0.5 * std::f32::consts::PI / 180.0;
-const RECOIL_OMEGA: f32 = 16.0;
+/// (16 until the ninth playtest: "make the end of the recoil smoother - slower ending".)
+const RECOIL_OMEGA: f32 = 11.0;
 const MAX_RECOIL_BACK: f32 = 3.0;
 const MAX_RECOIL_UP: f32 = 5.0 * std::f32::consts::PI / 180.0;
 const SIGHTS_RECOIL: f32 = 0.6;
@@ -262,13 +290,15 @@ pub struct SwayInput {
     pub punch: Vec3,
     /// How out of breath the player is (0–1; nvforever `head_bob::HeadBob::exertion`).
     pub exertion: f32,
+    /// A reload (or a jam) is playing (0 or 1).
+    pub reloading: f32,
     /// Whether the arms may sway at all this frame.
     pub on: bool,
 }
 
 impl Default for SwayInput {
     fn default() -> Self {
-        SwayInput { dt: 0.0, heading: 0.0, pitch: 0.0, velocity: Vec2::ZERO, vertical: 0.0, gravity: 0.0, phase: 0.0, sights: false, sneaking: false, airborne: false, heft: 1.0, slowness: 1.0, raised: 0.0, drawn: 0.0, kick: 0.0, punch: Vec3::ZERO, exertion: 0.0, on: false }
+        SwayInput { dt: 0.0, heading: 0.0, pitch: 0.0, velocity: Vec2::ZERO, vertical: 0.0, gravity: 0.0, phase: 0.0, sights: false, sneaking: false, airborne: false, heft: 1.0, slowness: 1.0, raised: 0.0, drawn: 0.0, kick: 0.0, punch: Vec3::ZERO, exertion: 0.0, reloading: 0.0, on: false }
     }
 }
 
@@ -300,6 +330,10 @@ pub struct ViewSway {
    last_vertical: f32,
     /// The strafe's tilt on its spring (radians).
     lean: Spring,
+    /// Walking ahead's tip of the muzzle, and a reload's lean, each on two springs in a row
+    /// (0–1 of the full).
+    ahead: [Spring; 2],
+    reload: [Spring; 2],
     /// How far the gun is raised (smoothed), its speed last frame (units/s), and its lag.
     raise: Spring,
     draw: Spring,
@@ -325,6 +359,13 @@ pub struct ViewSway {
     pub peak_lag: Vec2,
     pub peak_dip: f32,
     pub peak_lift_dip: f32,
+}
+
+/// `x` towards `max` and never past it, by a curve that keeps rising (`x / (1 + |x| / max)`:
+/// half of `max` at `max`, nine tenths at nine times): unlike [`soft_clamp`] it has no flat
+/// top for a large `x` to sit on.
+fn gentle_limit(x: f32, max: f32) -> f32 {
+    x / (1.0 + x.abs() / max)
 }
 
 /// `x` towards `max` and never past it, smoothly.
@@ -366,20 +407,22 @@ impl ViewSway {
         self.last = Some((i.heading, i.pitch));
         let limit = Vec2::new(MAX_LAG_YAW, MAX_LAG_PITCH) * heft;
         let chase = CHASE_SECONDS * heft;
-        // Two springs in a row, each at half the time: a lone spring's speed is smooth but
-        // its acceleration jumps whenever what it follows does (a mouse's every uneven
-        // frame); two in a row smooth that too (Daniel Holden's "double spring",
-        // theorangeduck.com "Spring-It-On"; research of 2026-11-14).
-        let omega = omega_for(FOLLOW_SECONDS * DOUBLE_SPRING_SHARE * slow);
+        // Two springs in a row: a lone spring's speed is smooth but its acceleration jumps
+        // whenever what it follows does (a mouse's every uneven frame); two in a row smooth
+        // that too (Daniel Holden's "double spring", theorangeduck.com "Spring-It-On";
+        // research of 2026-11-14). The first is short and only averages; the second is the
+        // arms' weight.
+        let average = omega_for(TURN_AVERAGE_SECONDS);
+        let omega = omega_for(FOLLOW_SECONDS * TURN_WEIGHT * slow);
         for k in 0..2 {
-            // The lag this frame's turn asks for, bent smoothly towards the limit; the arms
-            // follow it (bounded by what they follow, so never past the limit, and back
-            // towards the view from the moment the turn eases).
-            // The first spring averages the turn as it is (uneven frames, a mouse's bursts);
-            // the limit bends that average, and the second spring follows it. (Bending each
-            // frame's rate first lost most of an uneven turn: the sixth playtest's trace.)
-            self.turn_pre[k].step(-rate[k] * chase, omega, dt);
-            let want = soft_clamp(self.turn_pre[k].value, limit[k]);
+            // The lag this frame's turn asks for, averaged, then bent towards the limit by a
+            // curve that never flattens (`gentle_limit`): a faster turn always asks a little
+            // more, and a slower one at once a little less. The arms follow it (bounded by
+            // what they follow, so never past the limit, and back towards the view from the
+            // moment the turn eases). (Bending each frame's rate before averaging lost most
+            // of an uneven turn: the sixth playtest's trace.)
+            self.turn_pre[k].step(-rate[k] * chase, average, dt);
+            let want = gentle_limit(self.turn_pre[k].value, limit[k]);
             self.turn[k].step(want, omega, dt);
         }
         self.lag = Vec2::new(self.turn[0].value, self.turn[1].value);
@@ -473,20 +516,32 @@ impl ViewSway {
         // Heading grows clockwise, a turn about +z anticlockwise: arms behind a turn to
         // the right point left of it. A dip, a lag behind and a trailing raise tip the
         // muzzle down.
+        // Walking ahead tips the muzzle down a little; a reload leans the gun over.
+        let ahead_w = omega_for(AHEAD_SECONDS * 0.6 * slow);
+        let ahead_goal = if i.airborne { 0.0 } else { (i.velocity.y / AHEAD_FULL_SPEED).clamp(0.0, 1.0) };
+        self.ahead[0].step(ahead_goal, ahead_w, dt);
+        let first = self.ahead[0].value;
+        self.ahead[1].step(first, ahead_w, dt);
+        let walk = self.ahead[1].value * g * (1.0 - a);
+        let reload_w = omega_for(RELOAD_SECONDS * slow);
+        self.reload[0].step(i.reloading.clamp(0.0, 1.0), reload_w, dt);
+        let first = self.reload[0].value;
+        self.reload[1].step(first, reload_w, dt);
+        let reload = self.reload[1].value * g;
         // The view's pitch (up positive): down raises the gun and draws it in, up lowers it.
         let s = i.pitch.sin();
         let (down, up) = ((-s).max(0.0) * g * (1.0 - a), s.max(0.0) * g * (1.0 - a));
         let pitch_offset = Vec3::new(0.0, -PITCH_DOWN_BACK * down + PITCH_UP_OUT * up, PITCH_DOWN_RAISE * down - PITCH_UP_DROP * up);
-        let tip = lag.y + (lift + aim) * LIFT_TIP + hand.y * AHEAD_TIP + kick_up + PITCH_DOWN_TIP * down - PITCH_UP_TIP * up;
+        let tip = lag.y + (lift + aim) * LIFT_TIP + hand.y * AHEAD_TIP + kick_up + PITCH_DOWN_TIP * down - PITCH_UP_TIP * up - AHEAD_WALK_TIP * walk - RELOAD_TIP * reload;
         let turn = Quat::from_rotation_z(-lag.x + kick_side) * Quat::from_rotation_x(tip);
         let a = std::f32::consts::TAU * (i.phase - FOOTFALL_PHASE);
         // Down at each footfall (twice a cycle), across once a cycle.
         let dip = -BOB_DIP * 0.5 * (1.0 + (2.0 * a).cos()) * bob_share;
         let swing = a.sin();
-        let roll = lag.x * LAG_ROLL + BOB_ROLL * swing * bob_share + self.lean.value * sway_share;
+        let roll = lag.x * LAG_ROLL + BOB_ROLL * swing * bob_share + self.lean.value * sway_share + RELOAD_ROLL * reload;
         let b = std::f32::consts::TAU * self.breath_phase;
         let breath = Vec2::new(b.sin(), 0.5 * (2.0 * b).sin()) * BREATH_WIDTH * breath_share;
-        let offset = Vec3::new(BOB_SWAY * swing * bob_share + hand.x + breath.x, hand.y + back, dip + lift + aim + breath.y + hand.y.min(0.0) * AHEAD_DROP) + pitch_offset;
+        let offset = Vec3::new(BOB_SWAY * swing * bob_share + hand.x + breath.x, hand.y + back, dip + lift + aim + breath.y + hand.y.min(0.0) * AHEAD_DROP) + pitch_offset + Vec3::new(-RELOAD_IN * reload, 0.0, -AHEAD_WALK_DROP * walk - RELOAD_DROP * reload);
         self.peak_lag = self.peak_lag.max(lag.abs());
         self.peak_dip = self.peak_dip.max(-dip);
         self.peak_lift_dip = self.peak_lift_dip.max(-lift);
@@ -518,6 +573,17 @@ mod tests {
         assert!(up.z < level.z - 0.5 && up.y > level.y, "up: {up} against {level}");
         let sighted = at(-1.2, true) - at(0.0, true);
         assert!(sighted.length() < 0.05, "down the sights the gun stays on the eye: {sighted}");
+    }
+
+    #[test]
+    fn walking_ahead_tips_the_muzzle_down_and_a_reload_leans_the_gun() {
+        let pose = |v: Vec2, reloading: f32| settle(&mut ViewSway::default(), SwayInput { reloading, ..input(0.0, v, 0.0) }, 600);
+        let ahead = |p: SwayPose| (p.rotation * Vec3::Y).z;
+        assert!(ahead(pose(Vec2::new(0.0, 150.0), 0.0)) < ahead(pose(Vec2::ZERO, 0.0)) - 0.03, "the muzzle points lower walking ahead");
+        assert!((ahead(pose(Vec2::new(0.0, -150.0), 0.0)) - ahead(pose(Vec2::ZERO, 0.0))).abs() < 0.01, "not backing up");
+        let (still, reloading) = (pose(Vec2::ZERO, 0.0), pose(Vec2::ZERO, 1.0));
+        assert!(reloading.offset.z < still.offset.z - 1.0, "down for the reload");
+        assert!(reloading.rotation.angle_between(still.rotation) > 0.1, "turned over");
     }
 
     #[test]
@@ -561,7 +627,7 @@ mod tests {
         }
         let ahead = p.rotation * Vec3::Y;
         assert!(ahead.x < -0.01, "the weapon points left of the view: {ahead:?}");
-        let want = -soft_clamp(0.3 * CHASE_SECONDS, MAX_LAG_YAW);
+        let want = -gentle_limit(0.3 * CHASE_SECONDS, MAX_LAG_YAW);
         assert!((s.turn[0].value - want).abs() < 1e-3, "{} against {want}", s.turn[0].value);
         let p = settle(&mut s, input(h, Vec2::ZERO, 0.0), 240);
         assert!(p.rotation.angle_between(Quat::IDENTITY) < 1e-3, "back on the view: {p:?}");
@@ -579,7 +645,7 @@ mod tests {
             s.update(input(h, Vec2::ZERO, 0.0));
             lags.push(-s.turn[0].value);
         }
-        let full = soft_clamp(0.5 * CHASE_SECONDS, MAX_LAG_YAW);
+        let full = gentle_limit(0.5 * CHASE_SECONDS, MAX_LAG_YAW);
         assert!(lags[0] < 0.05 * full, "a gentle start: {} of {full}", lags[0]);
         assert!(lags.windows(2).all(|w| w[1] >= w[0] - 1e-6), "then more: {lags:?}");
         // The view stops: the arms turn back within a few frames (no waiting at the
@@ -591,7 +657,7 @@ mod tests {
             after.push(-s.turn[0].value);
         }
         let peak = after.iter().enumerate().fold((0, 0.0f32), |m, (i, &v)| if v > m.1 { (i, v) } else { m }).0;
-        assert!(peak <= 9, "back on its way within 0.15 s: the most lag at frame {peak}");
+        assert!(peak <= 6, "back on its way within 0.1 s: the most lag at frame {peak}");
         assert!(after[peak..].windows(2).all(|w| w[1] <= w[0] + 1e-6), "then steadily back");
         assert!(after.last().unwrap().abs() < 1e-3);
     }
@@ -652,6 +718,9 @@ mod tests {
         let at_footfall = s.update(input(0.0, v, FOOTFALL_PHASE)).offset.z;
         let between = s.update(input(0.0, v, FOOTFALL_PHASE + 0.25)).offset.z;
         let other = s.update(input(0.0, v, FOOTFALL_PHASE + 0.5)).offset.z;
+        // Walking ahead also holds the gun a little lower (`AHEAD_WALK_DROP`): the bob is
+        // measured from there.
+        let (at_footfall, between, other) = (at_footfall + AHEAD_WALK_DROP, between + AHEAD_WALK_DROP, other + AHEAD_WALK_DROP);
         assert!(at_footfall < -0.5 * BOB_DIP && other < -0.5 * BOB_DIP, "{at_footfall} {other}");
         assert!(between > -0.05, "{between}");
     }
