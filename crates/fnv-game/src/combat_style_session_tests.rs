@@ -166,6 +166,10 @@ fn checked_style_snapshots_warn_without_clearing_session_state() {
     let f = fixture(); let mut g = game(&f);
     let warnings = Warnings::default();
     tracing::subscriber::with_default(tracing_subscriber::registry().with(warnings.clone()), || {
+        // A warning's interest is cached for the whole process. Another test thread can
+        // first hit the same callsite while no subscriber listens and cache it as never,
+        // so this scoped subscriber would not see it. Asked again now, it is.
+        tracing::callsite::rebuild_interest_cache();
         g.checked_snapshot().unwrap();
         assert!(warnings.0.lock().unwrap().is_empty(), "a clean session needs no warning");
         g.run_query("Begin Function { }\nSetCombatStyleTraitNumeric OwnedStyle 42 7\nEnd\n", Default::default()).unwrap();
