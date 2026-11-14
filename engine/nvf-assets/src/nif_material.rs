@@ -764,6 +764,15 @@ pub fn decal_bias(bias: DepthBiasState) -> DepthBiasState {
 
 pub type NifMaterial = ExtendedMaterial<StandardMaterial, NifSurface>;
 
+/// [design, #2557] A mesh's temporary drawing override and its underlying material.
+/// Fade and texture-swap consumers use `source` while the mesh wears `copy`, so
+/// their restoration handles never retain an actor stealth field's temporary asset.
+#[derive(Component)]
+pub struct MaterialOverride {
+    pub source: Handle<NifMaterial>,
+    pub copy: Handle<NifMaterial>,
+}
+
 /// A NIF material from its StandardMaterial part.
 pub fn nif_material(base: StandardMaterial) -> NifMaterial {
     NifMaterial { base, extension: NifSurface::default() }

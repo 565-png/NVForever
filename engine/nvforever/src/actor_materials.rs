@@ -43,6 +43,12 @@ pub struct ActorMaterials {
 }
 
 impl ActorMaterials {
+    /// [design, #2557; Posing::pose] Preserve cached glow/UV poses when a temporary
+    /// cloak is removed; its underlying material may never have received that pose.
+    pub(crate) fn restored_pose(&self, entity: Entity) -> Option<(Look, Driven)> {
+        self.slots.iter().find(|s| s.entity == entity).and_then(|s| s.last)
+    }
+
     /// The shapes the clips drive and the copy of its own each was given, if any (the
     /// profile aid's `profile change sources:` line). Posing writes the material a shape
     /// wears: its own copy, or, while it fades or is drawn faded, the see-through copy it

@@ -96,8 +96,16 @@ note covers the whole census, fire refraction and actors.
   Shared source materials are never changed. Each actor's value is checked each frame;
   its hierarchy/materials are revisited only on activation, hierarchy/material-handle
   changes, or a pending material asset. New weapons and outfits therefore cloak even
-  while the value stays constant. Material animation (`actor_materials::Posing`) writes
-  owned copies in place so uncloaking restores a plain material. Logs name the actor's base EDID and reference:
+  while the value stays constant. [design, #2557; `nif_material::MaterialOverride`,
+  `nvf_play::fade::step`, `texture_swap::Swapping`] The cloak publishes its underlying
+  plain material for fades and texture swaps: their copies and restoration handles
+  never inherit the temporary cloak. Active fades refresh their derived cloak while
+  they change the plain fade copy; idle actors still avoid material work.
+  [design, #2557; `actor_materials::ActorMaterials::restored_pose`,
+  `stealth_field::ActorDrawing::restore`] Material animation writes the owned cloak
+  in place. Uncloaking reapplies its cached glow/UV pose to a private plain material,
+  preserving constant animation values on the restoration frame and following frames
+  without changing shared model materials. Logs name the actor's base EDID and reference:
   `stealth field: <EDID> 0x<refid> on (Chameleon <value>)` / `... off`.
 - [documented: issue #2557, supplied FalloutNV.esm record facts] CrSuperMutantNightkin
   (CREA 0x0007EA29) carries CrNightkinSCRIPT (SCPT 0x0007EA22), which adds

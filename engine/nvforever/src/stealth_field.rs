@@ -30,7 +30,7 @@ use crate::player_body::PlayerBody;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use fnv_sim::FormId;
-use nvf_assets::nif_material::NifMaterial;
+use nvf_assets::nif_material::{MaterialOverride, NifMaterial};
 use nvf_play::pipboy::PipBoyScreen;
 use nvf_play::script::ScriptState;
 use nvf_play::RefVisual;
@@ -178,7 +178,10 @@ struct ActorTarget {
 
 #[derive(SystemParam)]
 struct ActorDrawing<'w, 's> {
+    commands: Commands<'w, 's>,
     fields: ResMut<'w, ActorFields>,
+    animation: Query<'w, 's, &'static crate::actor_materials::ActorMaterials>,
+    fading: Query<'w, 's, (Entity, &'static nvf_play::fade::Fading)>,
     children: Query<'w, 's, &'static Children>,
     parents: Query<'w, 's, &'static ChildOf>,
     #[allow(clippy::type_complexity)]
@@ -191,12 +194,28 @@ struct ActorDrawing<'w, 's> {
 
 impl ActorDrawing<'_, '_> {
     /// [design, #2557] Never remove a material supplied by another rendering system.
-    fn restore(&mut self, e: Entity, original: Handle<NifMaterial>, copy: Handle<NifMaterial>) {
+    fn restore(&mut self, root: Entity, e: Entity, original: Handle<NifMaterial>, copy: Handle<NifMaterial>) {
         let mut meshes = self.meshes.p1();
         if let Ok(mut current) = meshes.get_mut(e) {
             if current.0 == copy {
-                current.0 = original;
+                // [design, #2557; actor_materials::Posing] A cached constant pose was
+                // applied to the cloak only. Preserve it on a private plain material.
+                current.0 = match (self.animation.get(root).ok().and_then(|a| a.restored_pose(e)), self.materials.get(&original).cloned()) {
+                    (Some((look, driven)), Some(mut material)) => {
+                        nvf_assets::material_anim::pose_material(&mut material, &look, driven, true);
+                        if self.fading.get(e).is_ok_and(|(_, f)| f.copy() == &original) {
+                            // [design, #2557] Keep the fade's private copy as the worn
+                            // material: subsequent fade steps continue writing it.
+                            *self.materials.get_mut(&original).unwrap() = material;
+                            original
+                        } else {
+                            self.materials.add(material)
+                        }
+                    }
+                    _ => original,
+                };
             }
+            self.commands.entity(e).remove::<MaterialOverride>();
         }
         self.materials.remove(&copy);
     }
@@ -209,6 +228,12 @@ impl ActorDrawing<'_, '_> {
             dirty.insert(e);
             dirty.extend(self.parents.iter_ancestors(e));
         }
+        // [design, #2557; nvf_play::fade::step] Fades animate their underlying copy
+        // in place. Refresh only these active meshes, keeping idle actors untouched.
+        for (e, _) in &self.fading {
+            dirty.insert(e);
+            dirty.extend(self.parents.iter_ancestors(e));
+        }
         let targets: Vec<_> = targets.into_iter().collect();
         let loaded: HashSet<_> = targets.iter().map(|t| t.root).collect();
         // [design, #2557] Restore detached parts before another actor can adopt them.
@@ -217,7 +242,7 @@ impl ActorDrawing<'_, '_> {
             if !loaded.contains(&root) {
                 let field = self.fields.0.remove(&root).unwrap();
                 for (e, (original, copy)) in field.originals {
-                    self.restore(e, original, copy);
+                    self.restore(root, e, original, copy);
                 }
                 info!("stealth field: {} 0x{:08X} off", field.name, field.reference);
             } else if dirty.contains(&root) {
@@ -226,7 +251,7 @@ impl ActorDrawing<'_, '_> {
                 let detached: Vec<_> = field.originals.keys().copied().filter(|e| !descendants.contains(e)).collect();
                 for e in detached {
                     let (original, copy) = field.originals.remove(&e).unwrap();
-                    self.restore(e, original, copy);
+                    self.restore(root, e, original, copy);
                 }
                 self.fields.0.insert(root, field);
             }
@@ -237,7 +262,7 @@ impl ActorDrawing<'_, '_> {
             if !want {
                 if let Some(field) = self.fields.0.remove(&root) {
                     for (e, (original, copy)) in field.originals {
-                        self.restore(e, original, copy);
+                        self.restore(root, e, original, copy);
                     }
                     info!("stealth field: {} 0x{:08X} off", field.name, field.reference);
                 }
@@ -258,7 +283,17 @@ impl ActorDrawing<'_, '_> {
                     }
                     continue;
                 };
-                if field.originals.get(&e).is_some_and(|(_, copy)| current.0 == *copy) {
+                if let Some((source, copy)) = field.originals.get(&e).filter(|(_, copy)| current.0 == *copy) {
+                    if self.fading.get(e).is_ok_and(|(_, f)| f.copy() == source) {
+                        if let Some(mut material) = self.materials.get(source).map(see_through) {
+                            if let Some((look, driven)) = self.animation.get(root).ok().and_then(|a| a.restored_pose(e)) {
+                                nvf_assets::material_anim::pose_material(&mut material, &look, driven, true);
+                            }
+                            if let Some(mut drawn) = self.materials.get_mut(copy) {
+                                *drawn = material;
+                            }
+                        }
+                    }
                     continue;
                 }
                 // [design, #2557] A replacement becomes the new original, so outfit or
@@ -266,12 +301,18 @@ impl ActorDrawing<'_, '_> {
                 if let Some((_, copy)) = field.originals.remove(&e) {
                     self.materials.remove(&copy);
                 }
-                let Some(copy) = self.materials.get(&current.0).map(see_through) else {
+                let Some(mut copy) = self.materials.get(&current.0).map(see_through) else {
                     field.pending = true;
                     continue;
                 };
+                // [design, #2557] A texture swap or fade may replace the source while
+                // the animation's constant pose remains cached.
+                if let Some((look, driven)) = self.animation.get(root).ok().and_then(|a| a.restored_pose(e)) {
+                    nvf_assets::material_anim::pose_material(&mut copy, &look, driven, true);
+                }
                 let copy = self.materials.add(copy);
                 let original = std::mem::replace(&mut current.0, copy.clone());
+                self.commands.entity(e).insert(MaterialOverride { source: original.clone(), copy: copy.clone() });
                 field.originals.insert(e, (original, copy));
             }
             if fresh {
@@ -309,7 +350,10 @@ mod tests {
     struct Writes(usize);
 
     fn app() -> App {
-        let mut app = App::new();
+        with_drawing(App::new())
+    }
+
+    fn with_drawing(mut app: App) -> App {
         app.init_resource::<ActorFields>()
             .init_resource::<Assets<NifMaterial>>()
             .init_resource::<Targets>()
@@ -319,6 +363,26 @@ mod tests {
                 |changed: Query<Entity, Changed<MeshMaterial3d<NifMaterial>>>, mut writes: ResMut<Writes>| writes.0 = changed.iter().count(),
             ).chain());
         app
+    }
+
+    fn with_fades(app: &mut App) {
+        let forms: &'static fnv_sim::FormStore = Box::leak(Box::default());
+        let refs: &'static fnv_sim::RefTable = Box::leak(Box::default());
+        app.insert_resource(nvf_play::sim::SimState { forms, refs, world: fnv_sim::World::new(forms, refs, Default::default()) })
+            .init_resource::<Time<Virtual>>()
+            .add_plugins(nvf_play::fade::FadePlugin);
+    }
+
+    fn start_fade(app: &mut App, body: Entity) {
+        let reference = app.world().resource::<Targets>().0[0].reference;
+        app.world_mut().entity_mut(body).insert((RefVisual(reference), Visibility::Inherited));
+        app.world_mut().write_message(nvf_play::fade::RefFade { form_id: reference, fade_in: true });
+        app.update();
+    }
+
+    fn advance_fade(app: &mut App, seconds: f32) {
+        app.world_mut().resource_mut::<Time<Virtual>>().advance_by(std::time::Duration::from_secs_f32(seconds));
+        app.update();
     }
 
     fn actor(app: &mut App, chameleon: f64) -> Entity {
@@ -436,6 +500,10 @@ mod tests {
             shape: "testshape".into(), target: MaterialTarget::EmissiveMult,
             values: Arc::new(ValueTrack::Float(Channel::Static(Some([2.0])))), cycle: None, priority: 0,
         });
+        clip.materials.push(MaterialTrack {
+            shape: "testshape".into(), target: MaterialTarget::UvOffset(0),
+            values: Arc::new(ValueTrack::Float(Channel::Static(Some([0.25])))), cycle: None, priority: 0,
+        });
         let mut player = BlendPlayer::new(Vec::new(), Arc::new(Vec::new()));
         player.layers[0] = Some(Layer { clip: Arc::new(BoundClip::bind(Arc::new(clip), |_| None)), phase: 0.0, weight: 1.0 });
         app.world_mut().entity_mut(a).insert(player);
@@ -445,8 +513,124 @@ mod tests {
         assert_eq!(app.world().resource::<Assets<NifMaterial>>().get(&copy).unwrap().base.emissive.red, 2.0);
         app.world_mut().resource_mut::<Targets>().0[0].chameleon = 0.0;
         app.update();
-        assert_eq!(worn(&app, body), original);
-        assert!(!refracts(&app, body));
+        let restored = worn(&app, body);
+        assert_ne!(restored, original, "animation must not mutate the shared source");
+        for _ in 0..2 {
+            let materials = app.world().resource::<Assets<NifMaterial>>();
+            let plain = materials.get(&worn(&app, body)).unwrap();
+            assert!(!plain.extension.refract);
+            assert_eq!(plain.base.emissive.red, 2.0);
+            assert_eq!(plain.base.uv_transform.translation.x, 0.25);
+            assert_eq!(materials.get(&original).unwrap().base.emissive.red, 0.0);
+            assert_eq!(materials.get(&original).unwrap().base.uv_transform.translation.x, 0.0);
+            app.update();
+            assert_eq!(worn(&app, body), restored);
+        }
+    }
+
+    #[test]
+    fn production_fade_keeps_plain_restoration_handles_and_uncloaks_during_or_after_fading() {
+        for uncloak_during in [false, true] {
+            let mut app = app();
+            with_fades(&mut app);
+            let a = actor(&mut app, 95.0);
+            let (body, original) = mesh(&mut app, a);
+            app.update();
+            let old_cloak = worn(&app, body);
+            start_fade(&mut app, body);
+            let fading = app.world().get::<nvf_play::fade::Fading>(body).unwrap();
+            assert_eq!(fading.original(), &original);
+            let fade_copy = fading.copy().clone();
+            let materials = app.world().resource::<Assets<NifMaterial>>();
+            assert!(materials.contains(original.id()));
+            assert!(!materials.get(&fade_copy).unwrap().extension.refract);
+            assert!(!materials.contains(old_cloak.id()));
+            assert!(refracts(&app, body));
+            advance_fade(&mut app, 0.5);
+            assert_eq!(app.world().resource::<Assets<NifMaterial>>().get(&worn(&app, body)).unwrap().base.base_color.alpha(), 0.25);
+            if uncloak_during {
+                app.world_mut().resource_mut::<Targets>().0[0].chameleon = 0.0;
+                app.update();
+                assert_eq!(worn(&app, body), fade_copy);
+                assert!(!refracts(&app, body));
+            }
+            advance_fade(&mut app, 2.0);
+            assert!(app.world().get::<nvf_play::fade::Fading>(body).is_none());
+            assert!(!app.world().resource::<Assets<NifMaterial>>().contains(fade_copy.id()));
+            if !uncloak_during {
+                assert!(refracts(&app, body));
+                app.world_mut().resource_mut::<Targets>().0[0].chameleon = 0.0;
+                app.update();
+            }
+            assert_eq!(worn(&app, body), original);
+            assert!(!refracts(&app, body));
+            app.update();
+            assert_eq!(worn(&app, body), original);
+        }
+    }
+
+    #[test]
+    fn production_texture_swap_uses_plain_source_with_or_without_a_fade() {
+        use fnv_game::functions::misc::TextureSwaps;
+
+        #[derive(Resource, Default)]
+        struct Swaps(TextureSwaps);
+
+        for during_fade in [false, true] {
+            let (app, _files) = crate::outfits::tests::asset_fixture();
+            let mut app = with_drawing(app);
+            with_fades(&mut app);
+            app.insert_resource(crate::outfits::tests::empty_world_data())
+                .init_resource::<crate::texture_swap::Swapped>()
+                .init_resource::<Swaps>()
+                .add_systems(Update, (|swaps: Res<Swaps>, sim: Res<nvf_play::sim::SimState>, world: Res<crate::world::WorldData>, mut drawing: crate::texture_swap::Swapping| {
+                    drawing.sync(&swaps.0, &sim, &world);
+                }).before(nvf_play::PlaySet::Sync));
+            // [documented: engine/nvf-assets/src/texture.rs tests::dds] Synthetic
+            // one-block DDS, offered to the normal texture loader without game files.
+            let texture = "textures\\synthetic-cloak-swap.dds";
+            let mut dds = vec![0u8; 136];
+            dds[..4].copy_from_slice(b"DDS ");
+            for (at, value) in [(4, 124u32), (8, 0x1007), (12, 4), (16, 4), (28, 1), (76, 32), (80, 4), (108, 0x1000)] {
+                dds[at..at + 4].copy_from_slice(&value.to_le_bytes());
+            }
+            dds[84..88].copy_from_slice(b"DXT1");
+            app.world_mut().resource_mut::<nvf_assets::TextureCache>().offer(texture.into(), dds, 0.0);
+            let a = actor(&mut app, 95.0);
+            let reference = app.world().resource::<Targets>().0[0].reference;
+            let (body, original) = mesh(&mut app, a);
+            app.world_mut().entity_mut(body).insert((RefVisual(reference), Visibility::Inherited, nvf_assets::actor::ShapeName("testshape".into())));
+            app.update();
+            if during_fade {
+                start_fade(&mut app, body);
+            }
+            {
+                let mut swaps = app.world_mut().resource_mut::<Swaps>();
+                swaps.0.by_ref.insert(FormId(reference), vec![("testshape".into(), texture.into())]);
+                swaps.0.generation += 1;
+            }
+            app.update();
+            assert!(refracts(&app, body));
+            let plain = app.world().get::<MaterialOverride>(body).unwrap().source.clone();
+            let plain = app.world().get::<nvf_play::fade::Fading>(body).map_or(plain, |f| f.original().clone());
+            let image = {
+                let materials = app.world().resource::<Assets<NifMaterial>>();
+                let swapped = materials.get(&plain).unwrap();
+                assert!(!swapped.extension.refract);
+                assert!(materials.get(&original).unwrap().base.base_color_texture.is_none());
+                swapped.base.base_color_texture.clone().expect("production swap loaded the synthetic texture")
+            };
+            if during_fade {
+                advance_fade(&mut app, 3.0);
+            }
+            app.world_mut().resource_mut::<Targets>().0[0].chameleon = 0.0;
+            app.update();
+            assert_eq!(worn(&app, body), plain);
+            assert!(!refracts(&app, body));
+            assert_eq!(app.world().resource::<Assets<NifMaterial>>().get(&plain).unwrap().base.base_color_texture.as_ref(), Some(&image));
+            app.update();
+            assert_eq!(worn(&app, body), plain);
+        }
     }
 
     #[test]
