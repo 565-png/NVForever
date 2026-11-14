@@ -28317,3 +28317,24 @@ order = [[
 expect = [
   { re = 'far script summary: (?P<n>\d+) GameMode runs of residents out of the loaded cells', range = [1, 100000], label = "scripts of residents out of the loaded cells ran" },
 ]
+
+
+[[scenario]]
+name = "npc-launcher-round"
+source = "[design, #2512] NPC attack/reload visibility on weapon-model targets (docs/spec-notes/animation.md section 9.7): the round stays hidden after the shot until reload shows it"
+note = "[design] Reuses melee-reach-lead-pipe's Violet combat setup on open ground, moved 2200 units from the god-mode player, with the launcher/ammo IDs from missile-explosion (00004340 / 00029383) [documented: those scenario setups]. No existing human NPC launcher setup was found; body-weapons-sentry-blast uses an embedded gun without this held model. Equipment reconciliation draws the launcher. Not yet run."
+areas = ["animation", "combat"]
+paths = ["engine/nvforever/src/weapons.rs", "engine/nvforever/src/actors.rs", "engine/nvforever/src/attack_anims.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "3:moveto:FiendVioletRef:player:0:2200:0,4:call:FiendVioletRef:RemoveAllItems,4.5:call:FiendVioletRef:AddItem:0x00004340:1,4.5:call:FiendVioletRef:AddItem:0x00029383:12,5:call:FiendVioletRef:EquipItem:0x00004340,7:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "FiendVioletRef"]
+run_seconds = 45
+expect = [
+  { re = 'outfit: actor 000F570B: weapon 0x00004340.*now held', label = "the launcher model is equipped on Violet" },
+  { re = 'attack anims: 000F570B plays .*2hlattack(right|left)\.kf', label = "Violet plays a launcher attack with a round visibility track" },
+  { re = 'attack anims: 000F570B plays .*2hlreload[ae]\.kf', label = "Violet plays a launcher reload with a round visibility track" },
+]
+order = [[
+  { re = 'npc weapon part: Actor 000F570B .* ##NifRound hidden', label = "the fired round is hidden" },
+  { re = 'npc weapon part: Actor 000F570B .* ##NifRound shown', label = "the reload shows the round again" },
+  { re = 'npc weapon part: Actor 000F570B .* ##NifRound hidden', label = "the next shot hides the round again" },
+]]

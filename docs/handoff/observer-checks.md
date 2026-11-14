@@ -2174,3 +2174,18 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      dirt and on concrete, first and third person, and record which SOUN records play
      at each footfall (the sound log): does `FSTArmorPowerWalkL`/`R` play, instead of
      or beside the ground's step, and does anything play for the run rustle?
+
+
+## Added 2026-11-14 (NPC launcher round visibility, #2512)
+
+141. **When does an NPC launcher show its loaded round?** (P2; #2512,
+     animation.md section 9.7.) [documented: issue #2512 and animation.md section 9.7]
+     The supplied missile launcher/Fat Man/dart-gun clips hide `##NifRound` in their
+     attack and show it during reload; the third-person launcher aim has no round
+     track. [hypothesis] The original retains the attack's hidden state through aim
+     until reload shows it, and restores the model default on equip/holster.
+     [design: #2512 settled owner decision] NVForever implements that provisional
+     rule. Record an NPC firing and reloading each weapon, then interrupt before
+     reload, wait in aim, and holster/draw again. Capture when the round disappears
+     and returns, including a weapon redrawn before reload. No original capture was
+     made in this writer run.
