@@ -110,10 +110,20 @@ note covers the whole census, fire refraction and actors.
   Uncloaking restores that source directly. Cached poses are associated with their
   plain handle, so replacements receive constant animation values without mutating
   shared model materials.
+  [design, #2557; `nvf_assets::material_anim::RigMaterials::apply`,
+  `bind_rig_materials`, `actors::spawn_creature`] Independently playing creature
+  parts and attached shader models use the same ownership rule: rig animation
+  resolves a private plain source and republishes it when UV/alpha/glow changes,
+  refreshing the derived cloak. Rig animation retains its bound private source;
+  another producer's replacement keeps ownership until it restores that source.
+  Unchanged poses publish nothing.
   [design, #2557; `effect_shaders::cover`] Overlay coverage uses the resolved source
   and caches its handle and cloak status. Cloaked meshes suppress overlays; removing
   the cloak invalidates that coverage and rebuilds overlays on the next Update,
   including when the uncloak shader starts in the restoration frame.
+  [design, #2557; `effect_shaders::play`, `cover`, `MaterialOverride`] Coverage reads
+  cloak ownership independently of the worn handle: publishing an animated holes
+  source during Update still suppresses overlays until the field removes ownership.
   Logs name the actor's base EDID and reference:
   `stealth field: <EDID> 0x<refid> on (Chameleon <value>)` / `... off`.
 - [documented: issue #2557, supplied FalloutNV.esm record facts] CrSuperMutantNightkin

@@ -68,6 +68,30 @@ impl Plugin for EffectShadersPlugin {
 }
 
 #[cfg(test)]
+#[derive(Resource)]
+pub(crate) struct PlaybackTestGame(pub(crate) fnv_game::Game<'static>);
+
+#[cfg(test)]
+pub(crate) fn holes_playback_for_test(app: &mut App, on: u32, game: fnv_game::Game<'static>) -> Source {
+    let fill = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial::default()));
+    let mut active = Active::membrane_for_test(on, fill);
+    active.shader.holes = Some(Holes {
+        texture: "synthetic-holes.dds".into(), start_time: 0.0, end_time: 10.0,
+        start_value: 255.0, end_value: 0.0, edge_width: 0.0, edge_color: [0; 3],
+    });
+    active.holes_texture = Some(Handle::default());
+    let source = Source::Script(1);
+    let mut game = game;
+    game.script_looks.shaders.push(fnv_game::functions::misc::ShaderPlay { on: FormId(on), shader: FormId(1), duration: None, serial: 1 });
+    app.init_resource::<Shaders>()
+        .init_resource::<Time>()
+        .insert_resource(PlaybackTestGame(game))
+        .add_systems(Update, (play, cover).chain());
+    app.world_mut().resource_mut::<Shaders>().active.insert(source, active);
+    source
+}
+
+#[cfg(test)]
 impl Active {
     /// [design, #2557] Synthetic membrane for production coverage regressions.
     pub(crate) fn membrane_for_test(on: u32, fill: Handle<NifMaterial>) -> Active {
@@ -329,11 +353,15 @@ fn play(
         Query<(&Mesh3d, Option<&SkinnedMesh>, &MeshMaterial3d<NifMaterial>), (Without<Overlay>, Without<RefVisual>)>,
     ),
     (combat, mut fades, mut transforms, perk_marks): (Option<Res<nvf_play::combat::Combat>>, Query<&mut RigMaterials>, Query<&mut Transform>, Option<Res<nvf_play::perk_marks::PerkMarks>>),
+    #[cfg(test)] mut test_game: Option<ResMut<PlaybackTestGame>>,
 ) {
-    let (Some(rt), Some(world)) = (script.as_deref_mut().and_then(|s| s.rt.as_mut()), world) else { return };
+    let game = script.as_deref_mut().and_then(|s| s.rt.as_mut()).map(|rt| &mut rt.game);
+    // [design, #2557] Tests supply a synthetic game at the runtime acquisition boundary.
+    #[cfg(test)]
+    let game = game.or_else(|| test_game.as_deref_mut().map(|g| &mut g.0));
+    let (Some(game), Some(world)) = (game, world) else { return };
     let st = &mut *st;
     let now = time.elapsed_secs();
-    let game = &mut rt.game;
 
     // What should play: (source, reference, shader, duration, persist).
     let mut want: Vec<(Source, u32, u32, Option<f64>, bool)> =
@@ -657,7 +685,9 @@ pub(crate) fn cover(
         for &(e, mesh, skin, mat) in meshes {
             let drawing = drawings.get(e).ok();
             let plain = nvf_assets::nif_material::plain_material(&mat.0, drawing);
-            let cloaked = plain != &mat.0;
+            // [design, #2557] Producers can publish a plain handle before PostUpdate
+            // re-derives the cloak; ownership still suppresses overlays in that gap.
+            let cloaked = drawing.is_some();
             let own = a.holed.get(&e).map_or(plain, |(original, _)| original);
             let state = (own.id(), cloaked);
             if a.coverage_state.insert(e, state) == Some(state) && a.covered.contains_key(&e) {

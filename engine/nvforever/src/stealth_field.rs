@@ -524,6 +524,105 @@ mod tests {
         }
     }
 
+    #[test]
+    fn production_rig_animation_refreshes_plain_source_and_cloak_without_idle_writes() {
+        use fnv_nif::anim::{Channel, Key, KeyKind, Keys, ValueTrack};
+        use nvf_assets::anim_play::{Clip, MaterialTarget, MaterialTrack, Playing};
+        use nvf_assets::material_anim::{animate_rig_materials, bind_rig_materials, MaterialSlot, RigMaterials};
+        use std::sync::Arc;
+
+        for bind_while_cloaked in [false, true] {
+            let mut app = app();
+            let a = actor(&mut app, if bind_while_cloaked { 95.0 } else { 0.0 });
+            let rig = app.world_mut().spawn(ChildOf(a)).id();
+            let (body, original) = mesh(&mut app, rig);
+            app.update();
+            let track = |target, start, end| MaterialTrack {
+                shape: "synthetic-part".into(), target, cycle: None, priority: 0,
+                values: Arc::new(ValueTrack::Float(Channel::Keys(Keys {
+                    kind: KeyKind::Linear,
+                    keys: [(0.0, start), (1.0, end)].into_iter().map(|(time, value)| Key {
+                        time, value: [value], forward: [0.0], backward: [0.0], tbc: [0.0; 3],
+                    }).collect(),
+                }))),
+            };
+            let tracks = vec![track(MaterialTarget::UvOffset(0), 0.0, 0.75), track(MaterialTarget::Alpha, 1.0, 0.25)];
+            let mut clip = Clip::from_controllers(tracks.clone(), Vec::new(), Vec::new());
+            clip.stop = 1.0;
+            clip.cycle_type = 2;
+            let mut playing = Playing::new("synthetic-part", &clip, |_| None);
+            playing.time = 0.25;
+            app.world_mut().entity_mut(rig).insert((playing, RigMaterials {
+                slots: vec![MaterialSlot::new("synthetic-part".into(), body, original.clone(), [0.0; 3], 1.0, 1.0)],
+                idle: Arc::new(tracks), dark: false, fade: 1.0,
+            }));
+            app.add_systems(Update, (bind_rig_materials, animate_rig_materials).chain());
+            app.update();
+            if !bind_while_cloaked {
+                app.world_mut().resource_mut::<Targets>().0[0].chameleon = 95.0;
+                app.update();
+            }
+            let source = app.world().get::<MaterialOverride>(body).unwrap().source.clone();
+            let copy = worn(&app, body);
+            assert_ne!(source, original);
+            for time in [0.5, 0.75] {
+                app.world_mut().get_mut::<Playing>(rig).unwrap().time = time;
+                app.update();
+                assert_eq!(worn(&app, body), copy);
+                assert_eq!(app.world().get::<RigMaterials>(rig).unwrap().slots[0].handle, source);
+                let materials = app.world().resource::<Assets<NifMaterial>>();
+                for handle in [&source, &copy] {
+                    let m = materials.get(handle).unwrap();
+                    assert_eq!(m.base.uv_transform.translation.x, time * 0.75);
+                    assert_eq!(m.base.base_color.alpha(), 1.0 - time * 0.75);
+                }
+                assert!(!materials.get(&source).unwrap().extension.refract);
+                assert!(materials.get(&copy).unwrap().extension.refract);
+            }
+            let count = app.world().resource::<Assets<NifMaterial>>().len();
+            for _ in 0..2 {
+                app.update();
+                assert_eq!(app.world().resource::<Writes>().0, 0);
+                assert_eq!(app.world().resource::<Assets<NifMaterial>>().len(), count);
+            }
+            let replacement = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nvf_assets::nif_material::nif_material(StandardMaterial {
+                base_color: Color::linear_rgb(0.25, 0.5, 0.75), ..default()
+            }));
+            app.world_mut().entity_mut(body).insert(MeshMaterial3d(replacement.clone()));
+            app.world_mut().get_mut::<Playing>(rig).unwrap().time = 0.875;
+            app.update();
+            assert_eq!(app.world().get::<MaterialOverride>(body).unwrap().source, replacement);
+            assert_eq!(app.world().get::<RigMaterials>(rig).unwrap().slots[0].handle, source);
+            let materials = app.world().resource::<Assets<NifMaterial>>();
+            assert_eq!(materials.get(&worn(&app, body)).unwrap().base.uv_transform.translation.x, 0.0);
+            assert_eq!(materials.get(&source).unwrap().base.uv_transform.translation.x, 0.875 * 0.75);
+            assert!(!materials.get(&source).unwrap().extension.refract);
+            assert!(!materials.contains(copy.id()));
+            // [design, #2557] A producer restoring the rig's source gets its latest
+            // animation, without rig publication taking over that producer's material.
+            app.world_mut().entity_mut(body).insert(MeshMaterial3d(source.clone()));
+            app.update();
+            assert_eq!(app.world().resource::<Assets<NifMaterial>>().get(&worn(&app, body)).unwrap().base.uv_transform.translation.x, 0.875 * 0.75);
+            app.world_mut().resource_mut::<Targets>().0[0].chameleon = 0.0;
+            for time in [0.875, 1.0] {
+                app.world_mut().get_mut::<Playing>(rig).unwrap().time = time;
+                app.update();
+                assert_eq!(worn(&app, body), source);
+                let materials = app.world().resource::<Assets<NifMaterial>>();
+                let m = materials.get(&source).unwrap();
+                assert!(!m.extension.refract);
+                assert_eq!(m.base.uv_transform.translation.x, time * 0.75);
+                assert_eq!(m.base.base_color.alpha(), 1.0 - time * 0.75);
+                for handle in [&original, &replacement] {
+                    let shared = materials.get(handle).unwrap();
+                    assert_eq!(shared.base.uv_transform.translation.x, 0.0);
+                    assert_eq!(shared.base.base_color.alpha(), 1.0);
+                    assert!(!shared.extension.refract);
+                }
+            }
+        }
+    }
+
     #[derive(Resource, Default)]
     struct Alphas(std::collections::BTreeMap<FormId, f32>);
 
@@ -581,6 +680,49 @@ mod tests {
                 app.update();
             }
         }
+    }
+
+    #[test]
+    fn production_shader_play_and_cover_suppress_holes_overlays_while_cloaked() {
+        use crate::effect_shaders::{holes_playback_for_test, Overlay, PlaybackTestGame, Shaders};
+        let (app, _files) = crate::outfits::tests::asset_fixture();
+        let mut app = with_drawing(app);
+        let a = actor(&mut app, 95.0);
+        let reference = app.world().resource::<Targets>().0[0].reference;
+        let (body, original) = mesh(&mut app, a);
+        app.world_mut().entity_mut(body).insert((RefVisual(reference), Mesh3d(Handle::default())));
+        app.update();
+        let forms = Box::leak(Box::default());
+        let refs = Box::leak(Box::default());
+        let game = crate::outfits::tests::game(fnv_sim::World::new(forms, refs, Default::default()));
+        app.insert_resource(crate::outfits::tests::empty_world_data());
+        let source = holes_playback_for_test(&mut app, reference, game);
+        for seconds in [1.0, 2.0, 3.0] {
+            app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs_f32(seconds));
+            app.update();
+            assert!(app.world().resource::<Shaders>().active[&source].covered[&body].is_empty());
+            assert_eq!(app.world_mut().query::<&Overlay>().iter(app.world()).count(), 0);
+            assert_eq!(app.world_mut().query::<&MaterialOverride>().iter(app.world()).count(), 1);
+            let materials = app.world().resource::<Assets<NifMaterial>>();
+            let cloak = materials.get(&worn(&app, body)).unwrap();
+            assert!(cloak.extension.refract);
+            assert!(cloak.extension.holes.x < 255.0 && cloak.extension.holes.x > 0.0);
+        }
+        app.world_mut().resource_mut::<Targets>().0[0].chameleon = 0.0;
+        app.update();
+        assert!(!refracts(&app, body));
+        app.update();
+        assert_eq!(app.world().resource::<Shaders>().active[&source].covered[&body].len(), 1);
+        app.world_mut().resource_mut::<Targets>().0[0].chameleon = 95.0;
+        app.update();
+        app.update();
+        assert!(app.world().resource::<Shaders>().active[&source].covered[&body].is_empty());
+        assert_eq!(app.world_mut().query::<&Overlay>().iter(app.world()).count(), 0);
+        app.world_mut().resource_mut::<PlaybackTestGame>().0.script_looks.shaders.clear();
+        app.world_mut().resource_mut::<Targets>().0[0].chameleon = 0.0;
+        app.update();
+        assert_eq!(worn(&app, body), original);
+        assert!(!refracts(&app, body));
     }
 
     #[test]
