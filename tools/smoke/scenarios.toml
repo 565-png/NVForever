@@ -22583,6 +22583,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "script-camera-fov-settings"
+source = "GetCameraFOV and GetPlayerCamFOV read the settings page's Field of view and Viewmodel field of view (docs/spec-notes/ext-small.md, ext-jg9.md; settings::script_fov): the switches' values at start, the sliders' after a change, a console fov over both, and a moved Field of view over the console's world angle"
+areas = ["scripts", "settings", "player"]
+paths = ["crates/fnv-game/src/nvse_small.rs", "crates/fnv-game/src/functions/camera.rs", "engine/nvforever/src/settings.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "9:PrintC \"nvf fov start %g %g %g\", (GetCameraFOV 0), (GetCameraFOV 1), (player.GetPlayerCamFOV 2);9.2:close;16:PrintC \"nvf fov slid %g %g\", (player.GetPlayerCamFOV 0), (player.GetPlayerCamFOV 1);16.2:close;17:fov 100 60;17.2:close;18:PrintC \"nvf fov console %g %g\", (GetCameraFOV 0), (GetCameraFOV 1);18.2:close;24:PrintC \"nvf fov moved %g %g\", (GetCameraFOV 0), (GetCameraFOV 1);24.2:close", NVF_PLAY_TEST_PAUSE = "11:15,19:23", NVF_PLAY_TEST_SETTINGS = "12:field-of-view=0.5,13:viewmodel-field-of-view=0.25,20:field-of-view=0.75" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--fov", "90", "--viewmodel-fov", "70"]
+run_seconds = 26
+order = [[
+  { re = 'script: print "nvf fov start 90 70 70"', label = "the switches' angles from the start, the viewmodel's in first person" },
+  { re = 'script: print "nvf fov slid 80 45"', label = "the sliders' new angles once changed" },
+  { re = 'script: print "nvf fov console 100 60"', label = "a console fov wins over the settings" },
+  { re = 'script: print "nvf fov moved 95 60"', label = "a moved Field of view takes the console's world angle's place; its first-person angle stays" },
+]]
+
+[[scenario]]
 name = "jip-projectiles"
 source = "JIP's live-projectile functions over the engine's shots (fnv_game::nvse_proj): a FireWeapon shot is a reference of type 51 while in flight, and gone after; a player's FireWeapon does not hit the player [observed: proj1]"
 areas = ["scripts", "combat"]
