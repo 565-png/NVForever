@@ -521,10 +521,13 @@ struct Under {
 }
 
 /// [design, #2352] `idle` at `UNDER_PRIORITY`, excluding its accumulation root and
-/// all bones or part nodes driven by `others`.
+/// all bones or part nodes driven by `others`. Material tracks are excluded so this
+/// fallback cannot override upper-layer materials (`material_anim::actor_material_values`).
 fn under_clip(idle: &BoundClip, others: &[Option<&BoundClip>; MAX_LAYERS]) -> BoundClip {
+    let mut clip = (*idle.clip).clone();
+    clip.materials.clear();
     BoundClip {
-        clip: idle.clip.clone(),
+        clip: Arc::new(clip),
         tracks: idle.tracks.iter().filter(|(i, _, _)| Some(*i) != idle.root && !others.iter().flatten().any(|c| c.tracks.iter().any(|(j, _, _)| i == j))).map(|(i, t, _)| (*i, t.clone(), UNDER_PRIORITY)).collect(),
         root: None,
         root_track: None,
@@ -1659,6 +1662,60 @@ mod tests {
                 lo.step(0.25);
                 lo.layers(&mut player);
                 assert_eq!(lo.under_layer(&player.layers).unwrap().phase, 0.5);
+            }
+        }
+    }
+
+    #[test]
+    fn creature_idle_under_special_idle_keeps_its_materials_and_animates_missing_bones() {
+        use fnv_nif::anim::{Channel, ValueTrack};
+        use nvf_assets::anim_play::{MaterialTarget, MaterialTrack};
+        use nvf_assets::material_anim::actor_material_values;
+
+        // [design, #2352] Synthetic equal-priority materials compete while the special
+        // idle omits the wing. No game tracks or material names are used.
+        let material = |alpha| MaterialTrack {
+            shape: "SyntheticPanel".into(),
+            target: MaterialTarget::Alpha,
+            values: Arc::new(ValueTrack::Float(Channel::Static(Some([alpha])))),
+            cycle: None,
+            priority: 20,
+        };
+        let mut set = (*wing_idle_set()).clone();
+        let idle = &mut set.clips.get_mut(&Move::Idle).unwrap().bound;
+        Arc::make_mut(&mut Arc::get_mut(idle).unwrap().clip).materials.push(material(0.0));
+        let set = Arc::new(set);
+        for slot in [crate::idles::IDLE_LAYER, crate::idles::IDLE_LAYER + 1] {
+            for moving in [false, true] {
+                let mut lo = Locomotion::new(set.clone(), 0.0);
+                lo.idle_under = true;
+                if moving {
+                    lo.blend = Blend::new(Move::Forward, 0.0);
+                    lo.velocity = [0.0, 85.26];
+                }
+                let mut player = BlendPlayer::new(vec![Entity::PLACEHOLDER; 3], Arc::new(vec![Transform::IDENTITY; 3]));
+                lo.step(0.25);
+                lo.layers(&mut player);
+                let mut special = Arc::try_unwrap(death_clip(9.0)).unwrap();
+                Arc::make_mut(&mut special.clip).materials.push(material(1.0));
+                player.layers[slot] = Some(Layer { clip: Arc::new(special), phase: 0.0, weight: 1.0 });
+                {
+                    let mut materials = Vec::new();
+                    actor_material_values(&player, &mut materials);
+                    assert_eq!(materials, [("SyntheticPanel", MaterialTarget::Alpha, [1.0; 3], 1.0)]);
+                }
+
+                let under = lo.under_layer(&player.layers).expect("idle fills the omitted wing");
+                assert!(under.clip.clip.materials.is_empty());
+                player.layers[UNDER_LAYER] = Some(under);
+                let mut materials = Vec::new();
+                actor_material_values(&player, &mut materials);
+                assert_eq!(materials, [("SyntheticPanel", MaterialTarget::Alpha, [1.0; 3], 1.0)]);
+                assert_eq!(lo.set.clips[&Move::Idle].bound.clip.materials.len(), 1);
+                assert_eq!(player.layers[slot].as_ref().unwrap().clip.clip.materials.len(), 1);
+                let mut bones = Vec::new();
+                player.sample(&mut bones);
+                assert_eq!(bones.iter().find(|(i, _)| *i == 1).unwrap().1.translation.x, 4.0);
             }
         }
     }
