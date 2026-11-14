@@ -1,0 +1,7 @@
+# Conditional existing-trait publication
+
+[documented: tree.rs opaque TraitWriteSerial contract] The public current tree already distinguishes external setter/XML writes from expression evaluation, including equal external writes. Count::FromFirst and Count::FromLast are independent path lookup policies and remain unchanged.
+
+[hypothesis] A conditional batch names 1..=8 complete TileIds, case-insensitive existing trait names, their last external-write tokens, and new values. Before writing, reject missing/stale generations, expression sinks, duplicate aliases, changed tokens, checked counter exhaustion, names over 4096 bytes or aggregate values over 65536 bytes. These are engine policy limits. Rejection changes no target/counter. Success uses the existing setter, including equal-write serial advancement and expression invalidation semantics, and returns fresh tokens in input order. No provider or lease service is part of this API.
+
+[observed: historical qualification, separate source context] The original main26e-based conditional-batch leaf was compiled with the normal Rust1.99 dependency graph: five added UI controls and all 98 existing controls passed (103 total). This main7201 original-hunk port preserves those five authored bodies but is UNCOMPILED/UNRUN. Historical proof does not qualify this complete current source or strict lint. No provider, game or GPU validation is claimed.
