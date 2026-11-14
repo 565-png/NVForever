@@ -427,6 +427,9 @@ fn actor_sound_sources<'a>(bp: &'a BlendPlayer, lo: Option<&'a crate::locomotion
     audible().map(|l| (&l.clip.clip, l.phase)).chain(idle)
 }
 
+/// What `actor_keys` reads per animated actor.
+type ActorKeysItem<'a> = (Entity, &'a BlendPlayer, &'a GlobalTransform, Option<&'a ActorRig>, Option<&'a crate::locomotion::Locomotion>);
+
 /// [design: actor_sound_sources] Consume the actors' regular clips and real idle owner.
 #[allow(clippy::too_many_arguments)]
 fn actor_keys(
@@ -438,7 +441,7 @@ fn actor_keys(
     d: Res<PlayWorld>,
     location: Res<Location>,
     actor_world: Option<Res<crate::actors::ActorWorld>>,
-    actors: Query<(Entity, &BlendPlayer, &GlobalTransform, Option<&ActorRig>, Option<&crate::locomotion::Locomotion>)>,
+    actors: Query<ActorKeysItem>,
     script: Option<Res<ScriptState>>,
     mut out: MessageWriter<PlaySound>,
     mut loops: MessageWriter<SoundSource>,
