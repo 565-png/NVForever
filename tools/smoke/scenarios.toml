@@ -28393,3 +28393,23 @@ expect = [
   { text = 'script: print "nvf physical wheel edge 265"', min = 1, label = "actual physical down reaches its public script handler" },
 ]
 manual = "Keep the primary game window focused; scroll up and down after loading. This manual scenario has no selection or scroll-offset expectation and provides no GPU/native visual comparison."
+
+[[scenario]]
+name = "heck-securitron-arrest"
+source = "issue #2574 (crates/fnv-game/src/combat.rs Game::harmless_hit; engine/nvf-play/src/combat.rs; fixed by #2492): Beyond the Beef's arrest scene. The Securitron's fire package VMS18SecuritronFire1 (0x001299B3, added by the begin script of line 0x00129992) is Do No Damage, and Heck Gunderson dies only in his OnHit block for the Securitron (SCPT 0x00125AF0: KillActor, then the Securitron says VMS18SecuritronHeckDeathReaction 0x00129986). Before #2492 a harmless shot ran no OnHit, so Heck lived and could still be talked to (the tester's 0.7.0 build)"
+note = "the player in ULCasino at 14:00 beside Heck; the Securitron (initially disabled) is enabled at 3 s and put beside Heck at 3.5 s, and line 0x00129992 is said by it at 5 s: Heck goes alert and the Securitron takes up its fire package"
+areas = ["ai", "combat", "scripts"]
+paths = ["engine/nvf-play/src/combat.rs", "engine/nvforever/src/use_weapon.rs", "crates/fnv-game/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "2:start:VMS18,3:enable:VMS18SecuritronREF,3.5:moveto:VMS18SecuritronREF:VMS18HeckGundersonREF:250:0:0,5:info:0x00129992:VMS18SecuritronREF" }
+args = ["--play", "--cell", "ULCasino", "--pos=2483,2000,7568", "--hour", "14", "--no-voice", "--no-messages", "--npc-packages", "all,VMS18SecuritronREF,VMS18HeckGundersonREF"]
+run_seconds = 40
+order = [[
+  { re = 'use weapon: VMS18SecuritronREF 0x001299AB uses WeapNVSecuritronSubmachineGun on VMS18HeckGundersonREF \(its package VMS18SecuritronFire1\): 6 shots; always hit, no damage', label = "the Securitron opens fire on Heck with its Do No Damage package" },
+  { text = "combat: a harmless shot by 0x001299AB hits 0x0010D4EF: its hit blocks ran, no damage", label = "a harmless shot runs Heck's OnHit for the Securitron" },
+  { text = "script: OnDeath of FalloutNV.esm|SCPT 0x00125AF0 ran on Some(0x0010D4EF)", label = "its KillActor kills Heck: his OnDeath block runs" },
+  { text = "script: VMS18SecuritronREF says 0x00129988", label = "the Securitron says its death reaction (VMS18SecuritronHeckDeathReaction)" },
+]]
+expect = [
+  { text = "use weapon: VMS18SecuritronREF 0x001299AB stops: VMS18HeckGundersonREF is dead or gone", label = "the Securitron stops firing at the dead Heck (same frame as its line: not ordered)" },
+  { text = "script: VMS18 stage 255 set", label = "Heck's OnDeath sets VMS18 255 (objective 180 not done in this setup)" },
+]
