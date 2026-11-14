@@ -1171,8 +1171,11 @@ All rules here are engine choices unless tagged otherwise. Layer 6 replaces the 
   own phase runs on; its filtered tracks have `UNDER_PRIORITY`, below other tracks.
   [design, #2352] The cached fallback has no material tracks, so filling an omitted
   bone cannot override special-idle materials (`material_anim::actor_material_values`).
-  Its cache follows all active clip identities, ignoring zero or nonfinite weights
-  and the unfiltered Idle clip itself. [documented: issue #2352, supplied wing-track
+  Its bone-mask cache follows all active clip identities, ignoring zero or nonfinite
+  weights and the unfiltered Idle clip itself. [design, #2352] The material-free source
+  `Arc<Clip>` is cached separately for the current idle and shared across bone-mask
+  rebuilds, preserving sound-key playback identity in `anim_sounds::actor_keys` when
+  upper clips start or end. [documented: issue #2352, supplied wing-track
   survey] `mtidle.kf` drives the bloatfly's wing bones (`Bip01 L/R UpperArm`,
   `Forearm`, priority 45); its movement, aim, attack and hover clips omit them.
   [hypothesis] The original keeps these bones animating from its idle (observer

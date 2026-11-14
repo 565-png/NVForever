@@ -822,6 +822,76 @@ mod tests {
     }
 
     #[test]
+    fn creature_idle_under_keeps_sound_keys_across_upper_clip_changes() {
+        use crate::creature_stance::{CreatureClips, CreatureStance};
+        use crate::locomotion::{drive, ActorAnimCost, ClipSet, Flinch, Locomotion, SetClip, UNDER_LAYER};
+        use fnv_actor::locomotion::{Blend, ClipInfo, Move};
+        use fnv_actor::weapon::StanceFacts;
+        use fnv_nif::anim::{Channel, TransformTrack};
+        use nvf_assets::anim_play::BoundClip;
+
+        // [design, #2352] Synthetic moving creature: movement drives the torso, an
+        // upper clip adds the head, and the idle keeps the wing and sound timeline.
+        fn bound(mut source: Clip, names: &[&str]) -> Arc<BoundClip> {
+            let track = Arc::new(TransformTrack {
+                translation: Channel::Static(Some([0.0; 3])), rotation: Channel::Static(None),
+                euler: None, scale: Channel::Static(None), per_cycle: None,
+            });
+            source.tracks = names.iter().map(|n| (n.to_string(), track.clone())).collect();
+            Arc::new(BoundClip::bind(Arc::new(source), |n| ["Torso", "Head", "Wing"].iter().position(|name| *name == n)))
+        }
+        let idle = bound(clip(&[(0.4, "Sound: First"), (0.6, "Sound: Second")]), &["Torso", "Head", "Wing"]);
+        let forward = bound(clip(&[]), &["Torso"]);
+        let upper = bound(clip(&[]), &["Head"]);
+        let mut set = ClipSet::default();
+        for (mv, bound, speed) in [(Move::Idle, idle, 0.0), (Move::Forward, forward, 10.0)] {
+            set.clips.insert(mv, SetClip { bound, path: String::new(), info: ClipInfo { duration: 1.0, speed, foot_phase: 0.0, blend_time: 0.0 } });
+        }
+        let mut lo = Locomotion::new(Arc::new(set), 0.0);
+        lo.idle_under = true;
+        lo.velocity = [0.0, 10.0];
+        lo.blend = Blend::new(Move::Forward, 0.0);
+        let mut world = World::new();
+        world.insert_resource(Time::<()>::default());
+        world.init_resource::<ActorAnimCost>();
+        let bones = (0..3).map(|_| world.spawn(Transform::IDENTITY).id()).collect();
+        let stance = CreatureStance::new(Arc::new(CreatureClips { clips: Default::default(), facts: StanceFacts::new() }), false);
+        let actor = world.spawn((lo, BlendPlayer::new(bones, Arc::new(vec![Transform::IDENTITY; 3])), stance)).id();
+        let drive = world.register_system(drive);
+        let mut last = HashMap::new();
+        let mut previous = None;
+        for (secs, with_upper, phase, tracks, expected) in [
+            (0.3, false, 0.3, 2, vec![]),
+            (0.2, true, 0.5, 1, vec!["Sound: First"]),
+            (0.2, false, 0.7, 2, vec!["Sound: Second"]),
+            (0.0, false, 0.7, 2, vec![]),
+        ] {
+            if with_upper {
+                world.entity_mut(actor).insert(Flinch { clip: upper.clone(), at: 0.3, forced: false });
+            } else {
+                world.entity_mut(actor).remove::<Flinch>();
+            }
+            world.resource_mut::<Time>().advance_by(std::time::Duration::from_secs_f32(secs));
+            world.run_system(drive).unwrap();
+            let layer = world.get::<BlendPlayer>(actor).unwrap().layers[UNDER_LAYER].as_ref().unwrap();
+            assert!((layer.phase - phase).abs() < 1e-6);
+            assert_eq!(layer.clip.tracks.len(), tracks);
+            let source = &layer.clip.clip;
+            let playing = (Who::Actor(actor), Arc::as_ptr(source) as usize, 0);
+            let now = source.start + layer.phase.clamp(0.0, 1.0) * source.length();
+            let mut seen = Vec::new();
+            assert_eq!(keys_of(&last, &mut seen, playing, source, now, false), expected);
+            last = seen.into_iter().collect();
+            if let Some(before) = previous {
+                if secs > 0.0 {
+                    assert!(!Arc::ptr_eq(&before, &layer.clip), "upper changes rebuild the bone mask");
+                }
+            }
+            previous = Some(layer.clip.clone());
+        }
+    }
+
+    #[test]
     fn a_clip_is_heard_from_where_it_was_seen() {
         let c = clip(&[(0.0, "Sound: A"), (0.4, "Enum: Left"), (0.9, "Enum: Right")]);
         let mut seen = Vec::new();

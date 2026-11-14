@@ -514,6 +514,9 @@ pub const UNDER_PRIORITY: i32 = i32::MIN + 1;
 #[derive(Default)]
 struct Under {
     idle: usize,
+    /// [design, #2352] Material-free source shared across bone-mask rebuilds so
+    /// `anim_sounds::actor_keys` retains its playback identity.
+    source: Option<Arc<nvf_assets::anim_play::Clip>>,
     clip: Option<Arc<BoundClip>>,
     checked: [usize; MAX_LAYERS],
     needed: bool,
@@ -521,13 +524,11 @@ struct Under {
 }
 
 /// [design, #2352] `idle` at `UNDER_PRIORITY`, excluding its accumulation root and
-/// all bones or part nodes driven by `others`. Material tracks are excluded so this
-/// fallback cannot override upper-layer materials (`material_anim::actor_material_values`).
-fn under_clip(idle: &BoundClip, others: &[Option<&BoundClip>; MAX_LAYERS]) -> BoundClip {
-    let mut clip = (*idle.clip).clone();
-    clip.materials.clear();
+/// all bones or part nodes driven by `others`. The shared material-free `source`
+/// cannot override upper-layer materials (`material_anim::actor_material_values`).
+fn under_clip(idle: &BoundClip, source: Arc<nvf_assets::anim_play::Clip>, others: &[Option<&BoundClip>; MAX_LAYERS]) -> BoundClip {
     BoundClip {
-        clip: Arc::new(clip),
+        clip: source,
         tracks: idle.tracks.iter().filter(|(i, _, _)| Some(*i) != idle.root && !others.iter().flatten().any(|c| c.tracks.iter().any(|(j, _, _)| i == j))).map(|(i, t, _)| (*i, t.clone(), UNDER_PRIORITY)).collect(),
         root: None,
         root_track: None,
@@ -790,8 +791,13 @@ impl Locomotion {
         }
         let key = Arc::as_ptr(&idle) as usize;
         if self.under.idle != key || self.under.clip.is_none() || self.under.checked != checked {
+            if self.under.idle != key || self.under.source.is_none() {
+                let mut source = (*idle.clip).clone();
+                source.materials.clear();
+                self.under.source = Some(Arc::new(source));
+            }
             self.under.idle = key;
-            let clip = under_clip(&idle, &others);
+            let clip = under_clip(&idle, self.under.source.clone().expect("made above"), &others);
             self.under.needed = !clip.tracks.is_empty() || !clip.unbound.is_empty();
             self.under.clip = Some(Arc::new(clip));
             self.under.checked = checked;
@@ -1736,11 +1742,15 @@ mod tests {
             layers[4].as_mut().unwrap().weight = weight;
             let next = lo.under_layer(&layers).unwrap().clip;
             assert!(!Arc::ptr_eq(&old, &next));
+            assert!(Arc::ptr_eq(&old.clip, &next.clip), "bone-mask changes keep sound playback identity");
             assert_eq!(next.tracks.len(), 1);
         }
         layers = Default::default();
         assert!(lo.under_layer(&layers).is_none());
         layers[2] = Some(Layer { clip: death_clip(9.0), phase: 0.0, weight: 1.0 });
+        lo.set = wing_idle_set();
+        let next = lo.under_layer(&layers).unwrap().clip;
+        assert!(!Arc::ptr_eq(&old.clip, &next.clip), "a different idle refreshes the material-free source");
         let mut no_idle = (*lo.set).clone();
         no_idle.clips.remove(&Move::Idle);
         lo.set = Arc::new(no_idle);
