@@ -79,6 +79,13 @@ Code: `engine/nvf-play/src/grass_fire.rs` (the model, the ignition, the actors),
 - **Grass** (grass.wesl): each plant reads the patch it stands on. Its colour falls to
   5% as it chars, it glows orange like embers, flickering, while its patch burns, and once
   burnt it sinks into the ground the way grass beyond the grass distance does.
+- **Scorched ground** (terrain.wesl "Scorch"): the landscape under a patch that caught
+  turns black (its colour × 0.16), reaching full by the time the patch is charred, and
+  stays black until its cell unloads. It is read between the patches' middles and broken
+  up with noise about 20 units across, so the mark has a ragged edge, not 64-unit
+  squares. Only the folded landscape draw reads it (every quadrant on a GPU with bindless
+  textures, the usual case); a quadrant's layers past the sixth, drawn blended over it,
+  cover the mark.
 - **Flames**: the base game's small fire particle system (`mps\mpsfiresmall01.nif`, the
   one fire effects add on as an add-on node; the ambient `fxfiresmall01.nif` holds no
   particle system or shape of its own and drew nothing) on each burning patch, turned and sized at random (0.7–1.2), at most 150 at once; it
@@ -88,8 +95,6 @@ Code: `engine/nvf-play/src/grass_fire.rs` (the model, the ignition, the actors),
 
 - Trees, shrubs and placed plants do not burn; only generated grass does.
 - No light from the fire beyond the embers' glow and the flame model's own.
-- Burnt ground is not marked on the landscape texture itself (the grass sinking leaves
-  the ground as it was).
 - Rain does not put fires out.
 
 ## Log

@@ -73,8 +73,9 @@ const CHARRED: f32 = 0.05;
 // The burn map's value at a point (Bevy world space): game (x, y) is Bevy (x, -z)
 // (nvforever world.rs `bevy_to_game`).
 fn burn_at(world: vec3<f32>) -> f32 {
-    let patch = vec2<i32>(floor(vec2<f32>(world.x, -world.z) / BURN_PATCH));
-    let t = ((patch % BURN_MAP) + BURN_MAP) % BURN_MAP;
+    // (`patch` is a reserved word in WGSL.)
+    let square = vec2<i32>(floor(vec2<f32>(world.x, -world.z) / BURN_PATCH));
+    let t = ((square % BURN_MAP) + BURN_MAP) % BURN_MAP;
     return textureLoad(burn_map, t, 0).r;
 }
 
