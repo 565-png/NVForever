@@ -458,13 +458,14 @@ fn register_display(app: &mut App) {
             "viewmodel-field-of-view",
             GROUP_PICTURE,
             "Viewmodel field of view",
-            "The field of view the first-person arms and weapon are drawn with, in degrees as the field of view counts them (55 as the original's default): lower draws them bigger and closer, higher smaller and further off. The world's view is left as it is. Not on the original's settings page.",
+            "The angle the first-person arms and weapon are drawn with, in degrees (55 as the original's default): lower draws them bigger and closer.",
             Slider::choice(VIEWMODEL_FOV_CHOICES, |w| viewmodel_fov_part(w.resource::<Args>().viewmodel_fov), set_viewmodel_fov, |v| format!("{:.0}", viewmodel_fov_degrees(v))),
         )
         .with_switches("--viewmodel-fov"),
     );
     // The HUD's size (#1631), kept by nvf-play's interface and fixed for the run at start.
     add_setting(app, nvf_play::interface::ui_scale_row(GROUP_PICTURE));
+    nvf_play::menu_scale::register(app, GROUP_PICTURE);
     add_setting(
         app,
         Setting {
@@ -685,14 +686,24 @@ fn read_old_vsync(world: &mut World) {
     }
 }
 
+/// Whole degrees from `min` to `max` for a slider part.
+fn slider_degrees(v: f32, min: f32, max: f32) -> f32 {
+    (min + v.clamp(0.0, 1.0) * (max - min)).round()
+}
+
+/// The slider part for `deg` degrees of `min` to `max`, as `Slider::fit` keeps parts.
+fn degrees_part(deg: f32, min: f32, max: f32) -> f32 {
+    ((deg - min) / (max - min) * 1000.0).round().clamp(0.0, 1000.0) / 1000.0
+}
+
 /// The field of view's degrees for a slider part, whole.
 fn fov_degrees(v: f32) -> f32 {
-    (FOV_MIN + v.clamp(0.0, 1.0) * (FOV_MAX - FOV_MIN)).round()
+    slider_degrees(v, FOV_MIN, FOV_MAX)
 }
 
 /// The slider part for `deg` degrees, as `Slider::fit` keeps parts.
 fn fov_part(deg: f32) -> f32 {
-    ((deg - FOV_MIN) / (FOV_MAX - FOV_MIN) * 1000.0).round().clamp(0.0, 1000.0) / 1000.0
+    degrees_part(deg, FOV_MIN, FOV_MAX)
 }
 
 /// A new field of view: kept in `Args` and put on the camera.
@@ -709,12 +720,12 @@ fn set_fov(world: &mut World, v: f32) {
 
 /// The viewmodel field of view's degrees for a slider part, whole.
 fn viewmodel_fov_degrees(v: f32) -> f32 {
-    (VIEWMODEL_FOV_MIN + v.clamp(0.0, 1.0) * (VIEWMODEL_FOV_MAX - VIEWMODEL_FOV_MIN)).round()
+    slider_degrees(v, VIEWMODEL_FOV_MIN, VIEWMODEL_FOV_MAX)
 }
 
 /// The slider part for a viewmodel field of view of `deg` degrees, as `Slider::fit` keeps parts.
 fn viewmodel_fov_part(deg: f32) -> f32 {
-    ((deg - VIEWMODEL_FOV_MIN) / (VIEWMODEL_FOV_MAX - VIEWMODEL_FOV_MIN) * 1000.0).round().clamp(0.0, 1000.0) / 1000.0
+    degrees_part(deg, VIEWMODEL_FOV_MIN, VIEWMODEL_FOV_MAX)
 }
 
 /// A new viewmodel field of view: kept in `Args`, where `player_body` reads it each frame.

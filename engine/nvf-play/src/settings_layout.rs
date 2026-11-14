@@ -78,7 +78,7 @@ pub const SECTIONS: &[Section] = &[
     // player inertia under its own category and move there all the associated settings";
     // its name and the weight's place below the switches, the fourth playtest].
     section("Gameplay", Some("Advanced Inertia"), &["movement-inertia", "weapon-sway", "weapon-weight-sway", "weapon-weight-handling", "head-bob", "breathing-camera", "inertia-weight"]),
-    section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "ui-scale"]),
+    section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "ui-scale", "menu-scale"]),
     section(
         "Display",
         Some("Interface"),
@@ -312,9 +312,9 @@ mod tests {
     /// quality and enhanced rows, #2014's counter rows, the two VATS rows and #2198's Upscaler
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
-    /// field of view row, and the movement inertia, inertia weight, weapon weight and breathing
-    /// camera rows), by the group it registers with.
-    const KNOWN: [(&str, &str); 115] = [
+    /// field of view row, the menu scale row, and the movement inertia, inertia weight,
+    /// weapon weight and breathing camera rows), by the group it registers with.
+    const KNOWN: [(&str, &str); 116] = [
         ("detached-camera", "Gameplay"),
         ("movement-inertia", "Gameplay"),
         ("inertia-weight", "Gameplay"),
@@ -376,6 +376,7 @@ mod tests {
         ("field-of-view", "Display"),
         ("viewmodel-field-of-view", "Display"),
         ("ui-scale", "Display"),
+        ("menu-scale", "Display"),
         ("fps-counter", "Display"),
         ("fps-counter-fps", "Display"),
         ("fps-counter-low", "Display"),
