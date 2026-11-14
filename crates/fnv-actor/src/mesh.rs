@@ -14,7 +14,7 @@
 //! Pip-Boy models name `Bip01 L ForeTwist` and reach 4.4…17.1 units along its x axis,
 //! down the 18.1-unit forearm]; it is an ordinary child of the bone.
 //! Bone-local head meshes keep the bone's full frame instead [hypothesis: #2529,
-//! docs/spec-notes/actors.md §1.2; design: nvf-assets `actor::rigid_shape_local`].
+//! docs/spec-notes/actors.md §1.2; design: nvf-assets `actor::rigid_part_frame`].
 
 use std::collections::BTreeSet;
 
