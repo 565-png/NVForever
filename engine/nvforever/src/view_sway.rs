@@ -63,7 +63,7 @@
 //! beside it under `Bip01 Looking`) and the view stay where they were.
 
 use bevy::math::{Quat, Vec2, Vec3};
-use nvf_play::ease::{omega_for, smoothstep, Pushed, Spring};
+use nvf_play::ease::{carried_push, omega_for, smoothstep, Pushed, Spring};
 
 /// The lag a slow, steady turn asks for: turn rate × this (seconds); × the weapon's weight.
 pub const CHASE_SECONDS: f32 = 0.12;
@@ -77,7 +77,7 @@ pub const MAX_LAG_PITCH: f32 = 4.0 * std::f32::consts::PI / 180.0;
 /// transitions between different spring values … quick ramps in speed and a delay";
 /// before, a smoothing of the rate with separate build and release times fed a spring
 /// with separate out and back times]. × the inertia weight and the weapon's weight.
-pub const FOLLOW_SECONDS: f32 = 0.35;
+pub const FOLLOW_SECONDS: f32 = 0.5;
 /// Each of the two springs in a row (see `ViewSway::update`) takes this share of
 /// [`FOLLOW_SECONDS`], so the pair arrives in about that time.
 const DOUBLE_SPRING_SHARE: f32 = 0.6;
@@ -96,16 +96,20 @@ const FULL_BOB_SPEED: f32 = 300.0;
 const BOB_DIP: f32 = 0.9;
 const BOB_SWAY: f32 = 0.6;
 const BOB_ROLL: f32 = 1.2 * std::f32::consts::PI / 180.0;
+/// The bob comes and goes with the speed on a spring settling in this long (seconds, 95%;
+/// × the inertia weight; a plain 0.2 s lag until the seventh playtest: "when walking and
+/// stopping make the gun return to the default position smoother").
+const BOB_SETTLE_SECONDS: f32 = 0.5;
 /// The first footfall's place in the movement cycle (0.40 s of 1.2 s).
 pub const FOOTFALL_PHASE: f32 = 0.33;
 /// Movement lag: the hand's spring rate (1/s; 10 until the owner's fourth playtest, "when
 /// moving side to side … the gun slides to the sides too quick"), the most offset it
 /// shows for a sudden change of velocity, units per unit/s, and the most offset at all.
-const MOVE_OMEGA: f32 = 4.5;
+const MOVE_OMEGA: f32 = 3.8;
 /// The body's velocities are smoothed over this long (seconds, 95%) before their changes
 /// push the hand (`nvf_play::ease::Pushed`), so a sudden change never jolts it [design: the
 /// sixth playtest's trace: a take-off threw the gun 3.5 units within two frames].
-const PUSH_SMOOTH_SECONDS: f32 = 0.08;
+const PUSH_SMOOTH_SECONDS: f32 = 0.12;
 const MOVE_PEAK_PER_SPEED: f32 = 0.005;
 const MAX_MOVE_LAG: f32 = 1.2;
 /// Going forward or back: the hand's lag along the view also drops it this much (units
@@ -118,7 +122,7 @@ const AHEAD_TIP: f32 = 1.2 * std::f32::consts::PI / 180.0;
 /// the most dip for a sudden change of vertical velocity (units per unit/s: about 1.2
 /// units for a standing jump's 291 units/s), the most offset at all, and the muzzle's tip
 /// per unit of dip (radians).
-const LIFT_OMEGA: f32 = 7.0;
+const LIFT_OMEGA: f32 = 4.0;
 /// (0.004 and 2 until the fifth playtest, "jumping is not noticeable".)
 const LIFT_PEAK_PER_SPEED: f32 = 0.008;
 const MAX_LIFT: f32 = 3.5;
@@ -178,6 +182,10 @@ const SNEAK_BOB: f32 = 0.6;
 const SNEAK_BREATH: f32 = 0.35;
 /// Seconds to fade the whole effect in or out (Pip-Boy, idles, the switch).
 const FADE_SECONDS: f32 = 0.15;
+/// Seconds the shares down the sights and sneaking take to come and go (times the weight):
+/// switched at once they stepped the hand the frame the stance changed [observed: the
+/// motion trace of 2026-11-14, 0.37 units at an aim's end].
+pub const STANCE_SHARE_SECONDS: f32 = 0.5;
 /// Weapon weight: no more sway up to the first weight (pounds, the WEAP record's), half
 /// as much again from the second: pistols as before, rifles a little heavier, the
 /// miniguns and launchers clearly so [design: the owner, 2026-11-13].
@@ -217,6 +225,9 @@ pub struct SwayInput {
     pub velocity: Vec2,
     /// The body's vertical velocity off the ground (units/s, up); 0 on it and swimming.
     pub vertical: f32,
+    /// The fall's acceleration (units/s², `fnv_phys` `PhysParams::gravity`): its share of
+    /// the vertical velocity's change is no push.
+    pub gravity: f32,
     /// Where the movement clips are in their cycle (0–1).
     pub phase: f32,
     pub sights: bool,
@@ -243,7 +254,7 @@ pub struct SwayInput {
 
 impl Default for SwayInput {
     fn default() -> Self {
-        SwayInput { dt: 0.0, heading: 0.0, pitch: 0.0, velocity: Vec2::ZERO, vertical: 0.0, phase: 0.0, sights: false, sneaking: false, airborne: false, heft: 1.0, slowness: 1.0, raised: 0.0, drawn: 0.0, kick: 0.0, punch: Vec3::ZERO, exertion: 0.0, on: false }
+        SwayInput { dt: 0.0, heading: 0.0, pitch: 0.0, velocity: Vec2::ZERO, vertical: 0.0, gravity: 0.0, phase: 0.0, sights: false, sneaking: false, airborne: false, heft: 1.0, slowness: 1.0, raised: 0.0, drawn: 0.0, kick: 0.0, punch: Vec3::ZERO, exertion: 0.0, on: false }
     }
 }
 
@@ -285,11 +296,14 @@ pub struct ViewSway {
     shots: u32,
     /// The most recoil back shown since the start (for the exit summary).
     pub peak_recoil: f32,
-    /// How much of the bob shows (follows the speed).
-    bob: f32,
+    /// How much of the bob shows (follows the speed on a spring).
+    bob: Spring,
     /// Breathing: where in the figure of eight (0–1) and how much of it shows.
     breath_phase: f32,
     breath: f32,
+    /// How far down the sights and how far sneaking the shares are (0-1, on springs).
+    sighted: Spring,
+    crouched: Spring,
     /// How much of everything shows.
     gain: f32,
     /// The most turn lag (sideways, up or down), bob dip and landing dip shown since the
@@ -365,9 +379,12 @@ impl ViewSway {
         for (s, v) in self.hand.iter_mut().zip([i.velocity.x, i.velocity.y]) {
             s.step(v, pre, move_omega, move_peak, dt);
         }
+        // Up and down only a take-off and a landing push: a free fall moves the body and the
+        // hand alike (`nvf_play::ease::carried_push`).
+        let push = carried_push(self.last_vertical, i.vertical, i.gravity, dt);
         self.last_vertical = i.vertical;
         let lift_omega = LIFT_OMEGA / slow;
-        self.lift.step(i.vertical, pre, lift_omega, LIFT_PEAK_PER_SPEED * heft, dt);
+        self.lift.step_delta(push, pre, lift_omega, LIFT_PEAK_PER_SPEED * heft, dt);
         // The strafe's tilt follows the sideways speed on its own spring.
         let lean_target = STRAFE_ROLL * (i.velocity.x / FULL_BOB_SPEED).clamp(-1.0, 1.0);
         self.lean.step(lean_target, omega_for(STRAFE_ROLL_SECONDS * slow), dt);
@@ -408,7 +425,7 @@ impl ViewSway {
         // always, faster and larger.
         let speed = i.velocity.length();
         let bob_target = if i.airborne { 0.0 } else { (speed / FULL_BOB_SPEED).min(1.0) };
-        self.bob += (bob_target - self.bob) * follow(0.2);
+        self.bob.step(bob_target, omega_for(BOB_SETTLE_SECONDS * slow), dt);
         let exertion = i.exertion.clamp(0.0, 1.0);
         let still = if !i.airborne && speed < BREATH_BELOW_SPEED { 1.0 } else { 0.0f32 };
         self.breath += (still.max(exertion) - self.breath) * follow(BREATH_FADE_SECONDS);
@@ -416,10 +433,17 @@ impl ViewSway {
         self.breath_phase = (self.breath_phase + dt * pace / (BREATH_SECONDS * heft)).fract();
 
         let g = self.gain;
-        let sway_share = g * if i.sights { SIGHTS_SWAY } else { 1.0 };
-        let bob_share = g * self.bob * if i.sights { SIGHTS_BOB } else { 1.0 } * if i.sneaking { SNEAK_BOB } else { 1.0 };
-        let breath_share = g * self.breath * heft * (1.0 + (EXERTED_SIZE - 1.0) * exertion) * if i.sights { SIGHTS_SWAY } else if i.sneaking { SNEAK_BREATH } else { 1.0 };
-        let recoil_share = g * if i.sights { SIGHTS_RECOIL } else { 1.0 };
+        // The calmer shares down the sights and sneaking come and go on springs.
+        let stance = omega_for(STANCE_SHARE_SECONDS * slow);
+        self.sighted.step(f32::from(u8::from(i.sights)), stance, dt);
+        self.crouched.step(f32::from(u8::from(i.sneaking)), stance, dt);
+        let (a, n) = (self.sighted.value.clamp(0.0, 1.0), self.crouched.value.clamp(0.0, 1.0));
+        let mix = |share: f32, by: f32| 1.0 + (share - 1.0) * by;
+        let sway_share = g * mix(SIGHTS_SWAY, a);
+        let bob_share = g * self.bob.value * mix(SIGHTS_BOB, a) * mix(SNEAK_BOB, n);
+        let breath_calm = mix(SNEAK_BREATH, n);
+        let breath_share = g * self.breath * heft * (1.0 + (EXERTED_SIZE - 1.0) * exertion) * (breath_calm + (SIGHTS_SWAY - breath_calm) * a);
+        let recoil_share = g * mix(SIGHTS_RECOIL, a);
         let back = -soft_clamp(-self.recoil[0].value, MAX_RECOIL_BACK) * recoil_share;
         let kick_up = soft_clamp(self.recoil[1].value, MAX_RECOIL_UP) * recoil_share;
         let kick_side = soft_clamp(self.recoil[2].value, MAX_RECOIL_UP) * recoil_share;
@@ -612,7 +636,7 @@ mod tests {
         let up = (2.0f32 * g * 61.6).sqrt();
         let mut s = ViewSway::default();
         let dt = 1.0 / 60.0;
-        let air = |vz: f32| SwayInput { vertical: vz, airborne: true, ..input(0.0, Vec2::ZERO, 0.0) };
+        let air = |vz: f32| SwayInput { vertical: vz, gravity: g, airborne: true, ..input(0.0, Vec2::ZERO, 0.0) };
         settle(&mut s, input(0.0, Vec2::ZERO, 0.0), 60);
         let mut take_off = 0.0f32;
         let mut top = f32::MIN;
@@ -635,10 +659,11 @@ mod tests {
     }
 
     #[test]
-    fn a_jump_dips_at_the_take_off_floats_at_the_top_and_dips_on_landing() {
+    fn a_jump_dips_at_the_take_off_comes_back_through_the_fall_and_dips_on_landing() {
         let (take_off, top, landing) = jump(291.0);
         assert!(take_off < -0.5, "dips at the take-off: {take_off}");
-        assert!(top > 0.0, "rides high near the top: {top}");
+        // The fall itself pushes nothing: the gun is on its way back to rest, never above it.
+        assert!(top > take_off && top < 0.2, "back towards rest near the top: {top} after {take_off}");
         assert!((-MAX_LIFT..-0.4).contains(&landing), "dips on landing: {landing}");
         let (_, _, hard) = jump(700.0);
         assert!(hard < landing - 0.2 && hard >= -MAX_LIFT, "a harder landing dips more: {hard} against {landing}");

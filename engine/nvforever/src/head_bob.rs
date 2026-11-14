@@ -40,13 +40,13 @@ const MAX_LAG: f32 = 1.5;
 /// Take-offs and landings: the spring rate (1/s), the most dip for a sudden change of
 /// vertical speed (units per unit/s: about 1.2 for a standing jump's 291 units/s), the
 /// most shown (units).
-const LAND_OMEGA: f32 = 8.0;
+const LAND_OMEGA: f32 = 4.0;
 /// (0.004 and 3 until the fifth playtest, "jumping is not noticeable".)
 pub const LAND_PEAK_PER_SPEED: f32 = 0.007;
 const MAX_LAND: f32 = 5.0;
 /// The body's velocities are smoothed over this long (seconds) before their changes push
 /// the head (`nvf_play::ease::Pushed`): a take-off or a landing never jolts the view.
-const PUSH_SMOOTH_SECONDS: f32 = 0.08;
+const PUSH_SMOOTH_SECONDS: f32 = 0.12;
 /// The full bob: the dip at each footfall and the sideways swing, units (1.6 and 0.5
 /// until the owner's fourth playtest of 2026-11-13: "there is no headbob even with it on -
 /// add a slight headbob, smooth"; the log showed a 1.5-unit dip, about 2 cm).
@@ -85,6 +85,9 @@ const SIGHTS: f32 = 0.25;
 const SNEAK: f32 = 0.6;
 /// Seconds the bob takes to follow the speed, as a time constant.
 const FOLLOW_SECONDS: f32 = 0.2;
+/// The bob comes and goes with the speed on a spring settling in this long (seconds, 95%;
+/// × the inertia weight).
+const AMOUNT_SETTLE_SECONDS: f32 = 0.5;
 /// Each of the third-person pivot's two lags, seconds.
 pub const PIVOT_SECONDS: f32 = 0.25;
 /// A change of the head's height above the feet over this (units) in one frame is not a
@@ -108,6 +111,8 @@ pub struct BobInput {
     pub velocity: Vec2,
     /// The body's vertical velocity off the ground (up), units/s; 0 on it.
     pub vertical: f32,
+    /// The fall's acceleration (units/s²): its share of the velocity's change is no push.
+    pub gravity: f32,
     /// The inertia weight: the springs' times × this.
     pub slowness: f32,
     /// The bob shows at all (first person, the switch on, nothing else driving the view).
@@ -124,7 +129,10 @@ pub struct BobInput {
 /// The bob's state across frames.
 #[derive(Debug, Clone, Default)]
 pub struct HeadBob {
-    amount: f32,
+    amount: Spring,
+    /// How far down the sights and how far sneaking the shares are (0-1, on springs).
+    sighted: Spring,
+    crouched: Spring,
     gain: f32,
     /// The bob after its spring (view frame: x right, z up), the head's lag (x right, y
     /// ahead) and its dip, and what pushed them last frame.
@@ -160,8 +168,13 @@ impl HeadBob {
         let follow = |t: f32| if dt <= 0.0 { 0.0 } else { 1.0 - (-dt / t).exp() };
         self.gain += (f32::from(u8::from(i.on)) - self.gain) * follow(FOLLOW_SECONDS);
         let target = if i.airborne { 0.0 } else { (i.speed / FULL_SPEED).min(1.0) };
-        self.amount += (target - self.amount) * follow(FOLLOW_SECONDS);
-        let share = self.gain * self.amount * if i.sights { SIGHTS } else { 1.0 } * if i.sneaking { SNEAK } else { 1.0 };
+        self.amount.step(target, omega_for(AMOUNT_SETTLE_SECONDS * i.slowness.max(0.1)), dt);
+        // The calmer shares down the sights and sneaking come and go on springs.
+        let stance = omega_for(crate::view_sway::STANCE_SHARE_SECONDS * i.slowness.max(0.1));
+        self.sighted.step(f32::from(u8::from(i.sights)), stance, dt);
+        self.crouched.step(f32::from(u8::from(i.sneaking)), stance, dt);
+        let (sighted, crouched) = (self.sighted.value.clamp(0.0, 1.0), self.crouched.value.clamp(0.0, 1.0));
+        let share = self.gain * self.amount.value * (1.0 + (SIGHTS - 1.0) * sighted) * (1.0 + (SNEAK - 1.0) * crouched);
         let a = std::f32::consts::TAU * (i.phase - crate::view_sway::FOOTFALL_PHASE);
         // Down at each footfall (twice a cycle), across once a cycle, through the spring.
         let slow = i.slowness.max(0.1);
@@ -172,6 +185,8 @@ impl HeadBob {
         self.peak_dip = self.peak_dip.max(-dip);
         // The head's own weight, pushed by the body's acceleration (below).
         let took_off = i.vertical > 0.0 && self.last_vertical <= 0.0;
+        // Only a take-off and a landing push the head: a free fall moves it with the body.
+        let push = nvf_play::ease::carried_push(self.last_vertical, i.vertical, i.gravity, dt);
         self.last_vertical = i.vertical;
         // Out of breath: running winds, walking and standing recover, jumps take breath.
         let wind = if !i.airborne && i.speed > WINDED_SPEED {
@@ -194,8 +209,8 @@ impl HeadBob {
             s.step(v, pre, lag_w, LAG_PEAK_PER_SPEED, dt);
         }
         let land_w = LAND_OMEGA / slow;
-        self.land.step(i.vertical, pre, land_w, LAND_PEAK_PER_SPEED, dt);
-        let calm = self.gain * if i.sights { 0.5 } else { 1.0 };
+        self.land.step_delta(push, pre, land_w, LAND_PEAK_PER_SPEED, dt);
+        let calm = self.gain * (1.0 - 0.5 * sighted);
         let lag = Vec2::new(self.lag[0].out.value, self.lag[1].out.value);
         let lag = if lag.length() > 1e-6 { lag * (soft(lag.length(), MAX_LAG) / lag.length()) * calm } else { Vec2::ZERO };
         let land = soft(self.land.out.value, MAX_LAND) * calm;
@@ -272,7 +287,7 @@ mod tests {
     const DT: f32 = 1.0 / 60.0;
 
     fn input(speed: f32, phase: f32) -> BobInput {
-        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, velocity: Vec2::ZERO, vertical: 0.0, slowness: 1.0, on: true, breathing: false, kick: 0.0, punch: Vec3::ZERO }
+        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, velocity: Vec2::ZERO, vertical: 0.0, gravity: 686.7, slowness: 1.0, on: true, breathing: false, kick: 0.0, punch: Vec3::ZERO }
     }
 
     #[test]

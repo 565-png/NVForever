@@ -53,6 +53,9 @@ pub struct AimZoom {
     main: f32,
     /// The vertical field of view this module last set.
     applied: Option<f32>,
+    /// With movement inertia: the zoom's progress along the settling curve, the same curve
+    /// and times as the aim clips' cross-over and the true iron sights (`crate::inertia`).
+    settled: crate::ease::Settled,
     /// The full zoom has been reported (smoke tests read the line).
     told: bool,
 }
@@ -145,6 +148,7 @@ pub(crate) fn zoom(
     mut scope: ResMut<Scope>,
     lens: Res<Scope3d>,
     talk: Option<Res<crate::dialogue_zoom::DialogueZoom>>,
+    inertia: Option<Res<crate::inertia::MovementInertia>>,
     mut cams: Query<&mut Projection, With<PlayerCamera>>,
 ) {
     let Ok(mut proj) = cams.single_mut() else { return };
@@ -165,9 +169,21 @@ pub(crate) fn zoom(
         z.sight = Some(vertical_fov(deg));
     }
     z.aimed = sight.is_some();
-    let step = time.delta_secs().min(0.25) / ZOOM_SECONDS;
     let was = z.blend;
-    z.blend = if sight.is_some() { (z.blend + step).min(1.0) } else { (z.blend - step).max(0.0) };
+    // With movement inertia the zoom runs along the settling curve over the aim's times;
+    // without, straight over ZOOM_SECONDS and eased by `zoomed_fov`.
+    let settled = inertia.as_deref().filter(|i| i.on).map(|i| {
+        let w = i.weight.max(0.1);
+        let v = z.settled.step(sight.is_some(), time.delta_secs().min(0.25), crate::inertia::AIM_IN_SECONDS * w, crate::inertia::AIM_OUT_SECONDS * w);
+        // `blend` stays the progress the rest reads: 1 only when fully in, 0 only when out.
+        z.blend = if z.settled.is_up() { 1.0 } else if z.settled.is_down() { 0.0 } else { v.clamp(1e-4, 1.0 - 1e-4) };
+        v
+    });
+    if settled.is_none() {
+        let step = time.delta_secs().min(0.25) / ZOOM_SECONDS;
+        z.blend = if sight.is_some() { (z.blend + step).min(1.0) } else { (z.blend - step).max(0.0) };
+        z.settled.reset();
+    }
     // The scope: up at full zoom in first person, down as soon as the aim is let go.
     let scoped = sight.filter(|_| !control.third_person_view()).and_then(|(w, deg)| {
         let stats = combat.as_deref()?.player_stats(w)?;
@@ -203,7 +219,11 @@ pub(crate) fn zoom(
         return;
     }
     let (Some(base), Some(target)) = (z.base, z.sight) else { return };
-    let fov = zoomed_fov(base, base + (target - base) * z.main, z.blend);
+    let goal = base + (target - base) * z.main;
+    let fov = match settled {
+        Some(v) => base + (goal - base) * v,
+        None => zoomed_fov(base, goal, z.blend),
+    };
     if let Projection::Perspective(p) = &mut *proj {
         p.fov = fov;
     }

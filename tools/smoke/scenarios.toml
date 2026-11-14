@@ -834,9 +834,9 @@ expect = [
 
 [[scenario]]
 name = "movement-inertia"
-source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs, engine/nvforever/src/crouch_eye.rs, view_sway.rs; docs/design/player-body.md §1.4a.2): the player speeds up over a moment and glides to a stop, the first-person view eases into a crouch and out, the weapon dips on a jump and a landing"
+source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs, engine/nvforever/src/player_body.rs, view_sway.rs; docs/design/player-body.md §1.4a.2): the player speeds up over a moment and glides to a stop, the first-person view eases into a crouch and out, the weapon dips on a jump and a landing"
 areas = ["player-body"]
-paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/ease.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/crouch_eye.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/ease.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/aim_zoom.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs"]
 env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak,12:sneak,14:jump" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 17
@@ -851,10 +851,10 @@ expect = [
 
 [[scenario]]
 name = "movement-inertia-trace"
-source = "owner 2026-11-14 (engine/nvforever/src/player_body.rs MotionTrace): a frame-by-frame trace of the first-person motion through a weapon draw, idling, aiming in and out, mouse flicks, a run and stop, a crouched jump, a jump and a holster, for finding hitches and two-step moves (tools/smoke/motion_trace.py reads it)"
+source = "owner 2026-11-14 (engine/nvforever/src/player_body.rs MotionTrace): a frame-by-frame trace of the first-person motion through a weapon draw, idling, aiming in and out, aiming in the middle of a turn, mouse flicks, a run and stop, a crouched jump, a jump and a holster, for finding hitches and two-step moves (tools/smoke/motion_trace.py reads it)"
 areas = ["player-body"]
 paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvf-assets/src/anim_blend.rs"]
-env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "6:weapon,12:aim,14:aim,16:aim,18:aim,29:sneak,31:jump,33:sneak,35:jump,37:weapon", NVF_PLAY_TEST_LOOK = "19.9:0:0,20.0:5:0,20.05:15:0,20.1:30:0,20.15:50:0,20.2:70:0,20.25:85:0,20.3:90:0,22.0:80:0,22.05:60:0,22.1:35:0,22.15:15:0,22.2:3:0,22.25:0:0", NVF_PLAY_TEST_MOVE = "24:1:0,27:0:0" }
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "6:weapon,12:aim,14:aim,16:aim,18:aim,29:sneak,31:jump,33:sneak,35:jump,37:weapon", NVF_PLAY_TEST_LOOK = "15.8:0:0,15.9:5:0,15.95:15:0,16.0:30:0,16.05:50:0,16.1:65:0,16.15:70:0,16.5:65:0,16.55:50:0,16.6:30:0,16.65:10:0,16.7:0:0,19.9:0:0,20.0:5:0,20.05:15:0,20.1:30:0,20.15:50:0,20.2:70:0,20.25:85:0,20.3:90:0,22.0:80:0,22.05:60:0,22.1:35:0,22.15:15:0,22.2:3:0,22.25:0:0", NVF_PLAY_TEST_MOVE = "24:1:0,27:0:0" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 41
 expect = [
@@ -866,7 +866,7 @@ expect = [
 name = "movement-inertia-off"
 source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs): with --no-movement-inertia the player starts and stops at once, as the original"
 areas = ["player-body"]
-paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/crouch_eye.rs"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs"]
 env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--no-movement-inertia"]
 run_seconds = 13

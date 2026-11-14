@@ -131,7 +131,7 @@ itself turns exactly as the mouse says.
   day): each frame's turn asks for a lag of rate × 0.12 s; a first spring averages that,
   a tanh bends the average towards 6° sideways and 4° up or down, and a second spring
   follows it (bending each frame's rate first lost most of an uneven turn: a 90° flick
-  traced at 0.7°, now 5.6°); both springs at 0.6 × 0.35 s, one constant rate out and back (Daniel Holden's
+  traced at 0.7°, now 5.6°); both springs at 0.6 × 0.5 s (0.35 s until the seventh playtest: "slower ramp up and slow smooth ramp down"), one constant rate out and back (Daniel Holden's
   "double spring": the pair also smooths the acceleration, which a lone spring jumps at
   each uneven mouse frame; second research pass, 2026-11-14). A fast turn builds the lag
   up gently, the arms never pass the limit, and when the view stops they start back at
@@ -145,34 +145,70 @@ itself turns exactly as the mouse says.
   movement clips (the footstep keys), growing with the ground speed to a run's
   (300 units/s): 0.9 units down, 0.6 across, 1.2° of tilt. Sneaking 60 %, down the sights
   20 % (the turn lag 35 %), none in the air.
-- Movement lag: a sprung hand pushed by the body's acceleration (spring rate 4.5/s; 10/s
-  until the fourth playtest, "the gun slides to the sides too quick"): starting,
+- Movement lag: a sprung hand pushed by the body's acceleration (spring rate 3.8/s; 10/s
+  until the fourth playtest, "the gun slides to the sides too quick", 4.5/s until the
+  seventh, "make the gun return to the default position smoother"): starting,
   stopping, strafing and turning while running leave the weapon a little behind (a
   sudden change of 344 units/s would peak at 1.7 units; shown at most 1.2) and a steady
   pace brings it back; behind it also drops half a unit per unit and tips the muzzle
   1.2° per unit ("a bit of inertia to front and back movement"); it leans into a strafe
   (1.5° at a run) on a spring settling in 0.6 s.
 - The hand's and the head's pushes take the body's velocities through a short spring
-  first (0.08 s; `nvf_play::ease::Pushed`), whose rate is the acceleration that pushes:
+  first (0.12 s; `nvf_play::ease::Pushed`), whose rate is the acceleration that pushes:
   a take-off threw the gun 3.5 units within two frames (peak 39 units/s), now 22.
-- Jumps and landings: the same hand pushed by the vertical acceleration (7/s; 12/s
-  before, now softer): a take-off dips the weapon about 2.3 units, it rides about two
-  units high through the fall, and a landing dips it again, more the harder the
-  landing (shown at most 3.5 units; 2 before the fifth playtest, "jumping is not
-  noticeable"); the muzzle tips 1° per unit of dip.
+- Jumps and landings: the same hand pushed by a take-off and a landing (4/s; 12/s, 7/s
+  and 5.5/s before, softer each time): each dips the weapon about 2.3 units, more the
+  harder the landing (shown at most 3.5 units; 2 before the fifth playtest, "jumping is
+  not noticeable"); the muzzle tips 1° per unit of dip. A free fall pushes nothing
+  (`nvf_play::ease::carried_push` takes gravity's share out of the change of speed while
+  in the air): the body and the hand fall alike, and with the softer springs the fall's
+  steady push had kept growing.
+- The first-person landing clip (it moves `Camera1st`: the view dips about 6 units and
+  stands up again, the standing up in 0.4 s at the clip's own pace [observed: the motion
+  trace; the head's own landing spring gives 2 of the 8 units]) is played by its
+  place along the settling curve over 1.8 × its length × the inertia weight
+  (`inertia::LAND_STRETCH`): the dip comes as fast as before (0.3 s), the standing up
+  takes 0.7 s and slows to its end (seventh playtest: "make landing after jumping
+  smoother - the little stand up to normal position after the camera dips").
+- **The settling curve** (seventh playtest: "we should not have any linear curves -
+  everything should be a smooth spring with a slow finish"): `anim_blend::settle`, a
+  critically damped spring's step response made to end at 1 (`1 - (1 + 6x)e^(-6x)`,
+  normalised): no jolt at the start, more than half the way in the first third of the
+  time, the last quarter of the time for the last 5 %. With movement inertia every
+  first-person clip fade follows it (`anim_blend::Layer::smooth`; a layer leaving runs it
+  mirrored, and one turned back mid-fade carries on from where it is shown), and so do
+  the true iron sights, the aim zoom, the draw and holster clips and the landing clip
+  (`nvf_play::ease::Settled`, a timeline along the curve that turns back without a jump).
+  Standing, walking and running clips cross over 0.45 s (`inertia::MOVE_FADE_SECONDS`;
+  their own times are about 0.2 s, straight), the standing and sneaking ones 1.0 s down
+  and 1.1 s up, all × the inertia weight.
+- No turn clips in first person with movement inertia: starting and ending with the turn
+  rate, they cut into the hold and the aim ("aiming down sight during [a turn] … the
+  animation resets and kinda skips"); the turn lag above is the arms' turn.
+- The calmer shares down the sights and sneaking (bob, lag, breathing, recoil) come and
+  go on springs settling in 0.5 s (`view_sway::STANCE_SHARE_SECONDS`), the head's too:
+  switched at once they stepped the hand the frame the stance changed (0.37 units at an
+  aim's end in the trace).
 - Aiming and blocking (sixth playtest: "points the gun and then put it to the eye level
   in 2 different movements"; a motion trace showed the 0.35 s blend ending, the sights
   clip's own rise carrying on for 0.25 s, and the sway's aim lag adding a settle bump):
-  the aim and block clips now cross over on an eased curve (`anim_blend::Layer::smooth`,
-  a smootherstep, the leaving clip over the same time) of 0.5 s in and 0.45 s out, and
-  the true iron sights move over exactly those times on the same curve, so going down
-  the sights and back is one motion each; the aim adds no lag of its own any more. All
-  × the inertia weight. The clips are not changed.
+  the aim and block clips cross over along the settling curve (below; a smootherstep
+  until the seventh playtest, which read as "linear") over 0.6 s in and 0.55 s out, the
+  leaving clip over the same time, and the true iron sights and the aim zoom
+  (`nvf_play::aim_zoom`) move over exactly those times on the same curve, so going down
+  the sights and back is one motion each, fast at first and slow to its end; the aim
+  adds no lag of its own any more. All × the inertia weight. The clips are not changed.
 - Weapon switching: drawing and putting away (6 units, smoothed by a spring settling in
   0.25 s) push a spring (8/s): the gun trails and settles (shown at most 1.5 units); the
-  draw and holster clips play at 0.45 of their speed ÷ the inertia weight
-  (`inertia::EQUIP_PACE`; "way too fast", the sixth playtest), and the game's readiness
-  waits for them.
+  draw and holster clips take 1 / 0.45 of their time × the inertia weight
+  (`inertia::EQUIP_PACE`; "way too fast", the sixth playtest), played by their place
+  along the settling curve (`Frame::equip_at`), and the game's readiness waits for them
+  (the moment the weapon changes hands is found through the curve's inverse). The hold
+  clip is asked for through the draw, under the draw clip: asked for only after it, it
+  was still fading in while the draw clip faded out, the arms-down idle showed through
+  and the gun went down and came up again (seventh playtest: "starts pulling out the
+  gun then quickly retracts it and pulls it out quickly again"). An equip clip leaving
+  takes the movement clips' 0.45 s.
 - Loop seams of the arms' clips (sixth playtest: "small hitching" in the idle): the trace
   showed the hand turning back in one frame each time the idle looped (every 2.46 s with
   a 10mm pistol). With movement inertia the first-person animator smooths its seams by
@@ -230,12 +266,14 @@ on by default) [design]:
 - While the body glides with no key held, or brakes against the keys, the movement
   clips follow the way it slides (walking or running as it last moved); detection,
   power attacks and scripts still read the keys.
-- First person: the view sinks into a crouch over 1.0 s and rises over 1.1 s on a
-  quartic ease-out (its last quarter barely moving; 0.35 s / 0.4 s cubic at first, then
-  0.5 s / 0.55 s after "slow down the last bit", then doubled: "make the 2x slower crouch
-  and stand up speed the default"), instead of the clips' straight 0.2 s cross-fade: the
-  arms rig is moved by the difference (`engine/nvforever/src/crouch_eye.rs`), so settled
-  in either stance nothing changes.
+- First person: the view sinks into a crouch over 1.0 s and rises over 1.1 s (0.35 s /
+  0.4 s at first, then 0.5 s / 0.55 s after "slow down the last bit", then doubled: "make
+  the 2x slower crouch and stand up speed the default"), instead of the clips' straight
+  0.2 s cross-fade. Since the seventh playtest ("crouching makes the hand with a gun
+  hitch") the standing and sneaking clips themselves cross over that long along the
+  settling curve (§1.4a), so the view and the arms change stance in one motion; before,
+  a separate module moved the arms rig by the difference between an eased eye height and
+  the clips' quick cross-fade, and the arms' own change of hold still took 0.2 s.
 - **Inertia weight** (a dropdown, key `inertia-weight`: 0.5, 1, 1.5, 2; 1 by default; the
   last row of the section): every time above, the weapon's
   springs (§1.4a), the head bob's (§1.4a.1) and the crouch's times, times this [design:
@@ -267,7 +305,7 @@ tuned by eye]:
   stride's bob passes through a critically damped spring settling in 0.12 s, so it
   rounds off; the body's acceleration leaves the head behind as it speeds up and lets it
   lean on as it slows (spring 9/s; a sudden change of 344 units/s would peak at 1 unit,
-  shown at most 1.5); take-offs and landings dip it (spring 8/s, about 2 units for a
+  shown at most 1.5); take-offs and landings dip it (spring 4/s; 8/s and 5.5/s before, about 2 units for a
   standing jump's landing, more for a harder one, shown at most 5; 1.2 and 3 before the
   fifth playtest). A shot nudges the camera back (12 units/s on that spring per unit of
   strength) and a blow taken jolts it down, back and aside (45 units/s per unit of

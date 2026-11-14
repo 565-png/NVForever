@@ -144,7 +144,6 @@ mod ripples;
 mod settings;
 mod iron_sights;
 mod head_bob;
-mod crouch_eye;
 mod view_sway;
 mod weapon_lower;
 mod setup;

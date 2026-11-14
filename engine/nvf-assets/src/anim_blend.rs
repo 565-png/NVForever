@@ -73,9 +73,8 @@ pub struct Layer {
     pub ease: f32,
     /// Seconds to fade in (ease 0 to 1); fading out takes [`Self::fade_out`].
     pub fade_in: f32,
-    /// The fade is taken through a smootherstep (no speed at either end) instead of
-    /// straight: two layers of a priority crossing over with the same time then share the
-    /// bones by that same eased curve (nvforever's aim, eased with its true iron sights).
+    /// The fade is taken through [`settle`] instead of straight ([`Self::shown_ease`]): the
+    /// first-person arms' clips with movement inertia (nvforever `player_body.rs`).
     pub smooth: bool,
     /// Playback speed multiplier (Loop and Once).
     pub rate: f32,
@@ -84,15 +83,58 @@ pub struct Layer {
     leaving: bool,
 }
 
-impl Layer {
-    /// The fade as the blend takes it: straight, or through a smootherstep ([`Self::smooth`]).
-    pub fn shown_ease(&self) -> f32 {
-        if self.smooth {
-            let t = self.ease.clamp(0.0, 1.0);
-            t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+/// How sharp [`settle`]'s start is: the curve is a critically damped spring's step
+/// response over `SETTLE_SHARPNESS` of its time constants.
+const SETTLE_SHARPNESS: f32 = 6.0;
+
+/// The settling curve of 0–1 [design: the owner's seventh playtest, 2026-11-14: "we
+/// should not have any linear curves - everything should be a smooth spring with a slow
+/// finish"]: the step response of a critically damped spring, scaled to arrive at 1. It
+/// leaves 0 without a jolt, is quick early (over half the way in the first third of the
+/// time) and very slow at the end (the last quarter of the time covers a twentieth).
+pub fn settle(x: f32) -> f32 {
+    let k = SETTLE_SHARPNESS;
+    let x = x.clamp(0.0, 1.0);
+    (1.0 - (1.0 + k * x) * (-k * x).exp()) / (1.0 - (1.0 + k) * (-k).exp())
+}
+
+/// The `x` at which [`settle`] is `y` (by halving; `settle` only rises).
+pub fn settle_inv(y: f32) -> f32 {
+    let y = y.clamp(0.0, 1.0);
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..24 {
+        let mid = 0.5 * (lo + hi);
+        if settle(mid) < y {
+            lo = mid;
         } else {
-            self.ease
+            hi = mid;
         }
+    }
+    0.5 * (lo + hi)
+}
+
+impl Layer {
+    /// The fade as the blend takes it: straight, or ([`Self::smooth`]) through [`settle`]:
+    /// coming in it follows the curve; going out it follows the curve's mirror, so two
+    /// layers of a priority crossing over the same time share the bones by the curve
+    /// itself, quick at first and slow at the end.
+    pub fn shown_ease(&self) -> f32 {
+        match (self.smooth, self.leaving) {
+            (false, _) => self.ease,
+            (true, false) => settle(self.ease),
+            (true, true) => 1.0 - settle(1.0 - self.ease),
+        }
+    }
+
+    /// Start to leave or to come back (`leaving`), keeping a smooth layer's shown fade
+    /// where it is: the coming-in and going-out curves differ, so the fade's place on
+    /// the other curve is found.
+    fn set_leaving(&mut self, leaving: bool) {
+        if self.smooth && leaving != self.leaving {
+            let shown = self.shown_ease();
+            self.ease = if leaving { 1.0 - settle_inv(1.0 - shown) } else { settle_inv(shown) };
+        }
+        self.leaving = leaving;
     }
 
     /// The time within the clip the layer samples, given the animator's phase.
@@ -490,7 +532,7 @@ impl Animator {
     /// from here on, keeping their weights.
     pub fn end(&mut self) {
         for l in &mut self.layers {
-            l.leaving = !l.seen;
+            l.set_leaving(!l.seen);
         }
     }
 
@@ -925,12 +967,55 @@ mod tests {
             a.want(&y, 0, 1.0, Mode::Loop, 0.4);
             a.end();
         }
-        // y's share follows the smootherstep of the time: slow at both ends, half at 0.2 s.
-        let smoother = |t: f32| t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+        // y's share follows the settling curve of the time: quick first, slow at the end.
         for (k, s) in shares.iter().enumerate() {
             let t = (k + 1) as f32 * 0.05 / 0.4;
-            assert!((s - smoother(t)).abs() < 1e-3, "{k}: {s} against {}", smoother(t));
+            assert!((s - settle(t)).abs() < 1e-3, "{k}: {s} against {}", settle(t));
         }
+        assert!(shares[2] > 0.6 && shares[5] > 0.95 && shares[5] < 1.0, "{shares:?}");
+    }
+
+    #[test]
+    fn the_settling_curve_is_quick_first_and_slow_last_and_inverts() {
+        assert_eq!(settle(0.0), 0.0);
+        assert!((settle(1.0) - 1.0).abs() < 1e-6);
+        assert!(settle(0.02) < 0.01, "no jolt at the start");
+        assert!(settle(0.33) > 0.5 && 1.0 - settle(0.75) < 0.06);
+        for y in [0.0, 0.1, 0.5, 0.9, 0.99, 1.0] {
+            assert!((settle(settle_inv(y)) - y).abs() < 1e-4, "{y}");
+        }
+    }
+
+    #[test]
+    fn a_smooth_layer_turning_back_mid_fade_keeps_its_place() {
+        let mut a = animator();
+        let x = clip(&[("A", [0.0, 0.0, 0.0], 30)], 1.0);
+        let y = clip(&[("A", [1.0, 0.0, 0.0], 30)], 1.0);
+        a.begin();
+        a.want(&x, 0, 1.0, Mode::Loop, 0.0);
+        a.end();
+        a.advance(0.1, 1.0);
+        let ask = |a: &mut Animator, c: &Arc<Clip>| {
+            a.begin();
+            a.want(c, 0, 1.0, Mode::Loop, 0.4);
+            a.end();
+            for l in &mut a.layers {
+                (l.smooth, l.fade_out) = (true, 0.4);
+            }
+        };
+        // Towards y for a while, then back to x: the pose carries on from where it is.
+        ask(&mut a, &y);
+        for _ in 0..4 {
+            a.advance(0.05, 1.0);
+            ask(&mut a, &y);
+        }
+        a.pose();
+        let before = a.locals[2].translation.x;
+        ask(&mut a, &x);
+        a.advance(1e-4, 1.0);
+        a.pose();
+        let after = a.locals[2].translation.x;
+        assert!(before > 0.5 && (after - before).abs() < 0.01, "{before} then {after}");
     }
 
     #[test]

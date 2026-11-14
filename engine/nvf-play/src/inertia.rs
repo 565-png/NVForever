@@ -17,7 +17,7 @@
 //!   playtests of 2026-11-13: first "slow the movement inertia down", then "stopping feels
 //!   like … sliding on ice - make the stop time 2x speed of the start one".]
 //! - **Inertia weight** ([`WEIGHTS`], the settings page's dropdown): every time here, and
-//!   the weapon's and the crouch's (nvforever `view_sway.rs`, `crouch_eye.rs`), times
+//!   the weapon's and the crouch's (nvforever `view_sway.rs`, `player_body.rs`), times
 //!   this: 0.5 twice as quick, 2 twice as slow.
 //! - **The air keeps its own rules** (`fnv_phys::air`, the game's measured air control):
 //!   off the ground and swimming the keys' velocity goes to the controller as before, and
@@ -41,11 +41,32 @@ pub const STOP_SECONDS: f32 = 0.25;
 /// The inertia weights the settings page offers, by name: how many times the times
 /// above (and the weapon's and the crouch's) are taken [design: the owner, 2026-11-13].
 pub const WEIGHTS: [(f32, &str); 4] = [(0.5, "0.5"), (1.0, "1"), (1.5, "1.5"), (2.0, "2")];
-/// Drawing and putting away a weapon play at this share of their speed (÷ the inertia
-/// weight), so a switch has weight; the game's readiness waits for the slower clip
+/// Drawing and putting away a weapon take 1 ÷ this as long as their clips (× the inertia
+/// weight), played along the settling curve (about the clip's own speed at first, very
+/// slow at the end), so a switch has weight; the game's readiness waits for it
 /// [design: the owner's sixth playtest, 2026-11-14, "weapon switching/holstering: way too
 /// fast"; 0.6 measured 0.62 s for a 10mm pistol's draw, still too quick].
 pub const EQUIP_PACE: f32 = 0.45;
+/// With movement inertia, aiming takes this long to come up and to go down (× the inertia
+/// weight), along the settling curve (`crate::ease::settle`: quick first, very slow at the
+/// end): the aim and block clips' cross-over, the true iron sights' move to the eye and
+/// the view's zoom all run on these, so they are one motion [design: the owner's seventh
+/// playtest, 2026-11-14: "fast at the start but very slow and smooth at the end - make
+/// the zoom in use the same curve … so it matches the animation"].
+pub const AIM_IN_SECONDS: f32 = 0.6;
+pub const AIM_OUT_SECONDS: f32 = 0.55;
+/// The first-person view and arms take this long into a crouch and out of one (× the
+/// inertia weight): the standing and sneaking clips cross over that long along the
+/// settling curve, so the view sinks and the arms change their hold together.
+pub const CROUCH_DOWN_SECONDS: f32 = 1.0;
+pub const CROUCH_UP_SECONDS: f32 = 1.1;
+/// The first-person arms' standing, walking and running clips cross over this long (× the
+/// inertia weight) along the settling curve (their own times are about 0.2 s, straight).
+pub const MOVE_FADE_SECONDS: f32 = 0.45;
+/// The first-person landing clip (the view dips and stands up again) takes this many times
+/// its own length (× the inertia weight), its place along the settling curve: the dip comes
+/// about as fast as the clip's own, the standing up after it slowly and to a soft end.
+pub const LAND_STRETCH: f32 = 1.8;
 /// Landing compression: landings slower than the first fall speed (units/s) keep their
 /// speed, from the second on they lose [`LANDING_MOST_LOST`] of it, smoothly between.
 pub const LANDING_SOFT_SPEED: f32 = 350.0;
