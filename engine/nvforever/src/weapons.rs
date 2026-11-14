@@ -630,7 +630,12 @@ impl WeaponHold {
 
 /// [design, #2512] Hang the weapon from its draw-cycle bone and apply the current
 /// attack/reload visibility sample after `locomotion::drive` advanced it.
-pub fn reparent(mut commands: Commands, mut q: Query<(&mut WeaponHold, &BlendPlayer, Option<&crate::attack_anims::CombatPose>, Option<&Name>, Has<crate::alert::WeaponHidden>)>) {
+/// What `reparent` reads per armed actor.
+type ReparentItem<'a> = (&'a mut WeaponHold, &'a BlendPlayer, Option<&'a crate::attack_anims::CombatPose>, Option<&'a Name>, Has<crate::alert::WeaponHidden>);
+
+/// [design, #2512] Hang the weapon from its draw-cycle bone and apply the current
+/// attack/reload visibility sample after `locomotion::drive` advanced it.
+pub fn reparent(mut commands: Commands, mut q: Query<ReparentItem>) {
     for (mut w, player, pose, name, package_hidden) in &mut q {
         for (node, shown) in w.part_visibility(pose.and_then(|p| p.weapon_visibility.as_ref())) {
             info!("npc weapon part: {} {node} {}", name.map_or("actor", |n| n.as_str()), if shown { "shown" } else { "hidden" });
