@@ -409,6 +409,12 @@ struct Args {
     /// horizontal) [hypothesis; docs/spec-notes/camera.md].
     #[arg(long, default_value_t = 75.0)]
     fov: f32,
+    /// The field of view the first-person arms and weapon are drawn with, degrees as --fov
+    /// counts them (fDefault1stPersonFOV, default 55; `player_body::FIRST_PERSON_FOV`):
+    /// smaller draws them bigger and closer, larger smaller and further off. The world's
+    /// view stays as --fov sets it.
+    #[arg(long, default_value_t = player_body::FIRST_PERSON_FOV)]
+    viewmodel_fov: f32,
     /// Added to the z of --pos (e.g. the eye height above a captured player position).
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
     eye_height: f32,
@@ -1598,7 +1604,7 @@ fn main() -> AppExit {
     .add_systems(Last, activators::report)
     .add_plugins(nvf_play::doors::DoorsPlugin)
     .add_plugins(destroyed::DestroyedPlugin)
-    .add_systems(Update, (doors::register, doors::open_all.run_if(move || open_doors), doors::pose).chain().after(nvf_play::doors::DoorSystems).after(advance_animations))
+    .add_systems(Update, (doors::script_drawn, doors::register, doors::open_all.run_if(move || open_doors), doors::pose).chain().after(nvf_play::doors::DoorSystems).after(advance_animations))
     .init_resource::<locomotion::ActorAnimCost>()
     .add_systems(PreUpdate, actors::take_background_work)
     .init_resource::<world::LateMeshes>()
