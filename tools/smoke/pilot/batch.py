@@ -79,6 +79,20 @@ def name_of(chain: Path) -> str:
     return chain.name.removesuffix(".actions.json")
 
 
+def in_order(todo: list[Path]) -> list[Path]:
+    """Each quest's main chain before its variants (`bye-bye-love` before
+    `bye-bye-love-dawn`): variants share their main chain's opening, so run side by side
+    they stall at the same step; after all the main chains they start once the opening
+    has been tried."""
+    names = {name_of(c) for c in todo}
+
+    def variant(c: Path) -> bool:
+        n = name_of(c)
+        return any(n.startswith(m + "-") for m in names if m != n)
+
+    return sorted(todo, key=lambda c: (variant(c), name_of(c)))
+
+
 def headless_trace(chain: Path, out: Path, fnvtool: Path, data: Path) -> Path | None:
     """The chain's headless trace, made again when the chain or fnvtool is newer."""
     trace = out / "traces" / f"{name_of(chain)}.trace.json"
@@ -216,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
             results.append({"chain": name_of(c), "report": rep, "kept": True})
         todo = [c for c in todo if c not in kept]
         print(f"pilot batch: {len(kept)} chains kept from an earlier run", flush=True)
+    todo = in_order(todo)
     print(f"pilot batch: {len(todo)} chains, {args.jobs} at once, at most {args.minutes} min each; out {out}", flush=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         free = list(range(args.jobs))

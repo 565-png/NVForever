@@ -17,6 +17,11 @@ class Picking(unittest.TestCase):
         picked = batch.chains(["intro", "ghost-town-gunfight.actions.json"])
         self.assertEqual([batch.name_of(c) for c in picked], ["ghost-town-gunfight", "intro"])
 
+    def test_main_chains_run_before_their_variants(self):
+        picked = batch.chains(["bye-bye-love", "bye-bye-love-dawn", "beggar", "ant-misbehavin"])
+        order = [batch.name_of(c) for c in batch.in_order(picked)]
+        self.assertEqual(order, ["ant-misbehavin", "beggar", "bye-bye-love", "bye-bye-love-dawn"])
+
     def test_an_unknown_chain_is_refused(self):
         with self.assertRaises(SystemExit):
             batch.chains(["no-such-chain"])
