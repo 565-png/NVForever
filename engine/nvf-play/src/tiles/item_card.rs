@@ -57,6 +57,8 @@ fn show(ui: &mut Ui, root: &str, card: &str, value: Option<&str>) {
 /// Write what the cards under `root` show of `info`, or the empty state with `None`. Every
 /// card is written, so nothing stays of the item before.
 pub fn write(ui: &mut Ui, root: &str, info: Option<&Info>) {
+    // Keep the file's heading for other items; ammo needs only its lines [design, #2502].
+    set(ui, root, &format!("{EFFECTS}/CI_TitleText"), "visible", Value::Num(if info.is_some_and(|i| i.ammo_effects) { 0.0 } else { 1.0 }));
     let Some(i) = info else {
         for card in CARDS.into_iter().chain([EFFECTS]) {
             show(ui, root, card, None);
@@ -101,7 +103,11 @@ pub fn describe(ui: &Ui, root: &str) -> String {
     for card in CARDS.into_iter().chain([EFFECTS]) {
         let path = format!("{root}/{card}");
         if ui.get_float(&format!("{path}/visible")).is_some_and(|v| v != 0.0) {
-            let title = ui.get_string(&format!("{path}/_Title")).unwrap_or_default();
+            let title = if card == EFFECTS && ui.get_float(&format!("{path}/CI_TitleText/visible")) == Some(0.0) {
+                String::new()
+            } else {
+                ui.get_string(&format!("{path}/_Title")).unwrap_or_default()
+            };
             let value = ui.get_string(&format!("{path}/_Value")).unwrap_or_default();
             out.push(format!("{title} {value}").trim().to_string());
         }
@@ -134,7 +140,7 @@ mod tests {
             card("StrengthReqInfo", "<alpha>0</alpha>"),
             card("ConditionInfo", r#"<image name="CNDArrows"><y>17</y><height>16</height></image>"#),
             card("AmmoInfo", ""),
-            card("EffectsInfo", ""),
+            card("EffectsInfo", r#"<text name="CI_TitleText"><visible>1</visible></text>"#),
         ]
         .concat();
         let xml = format!(r#"<menu name="M"><rect name="D"><user1>40</user1>{cards}</rect></menu>"#);
@@ -159,6 +165,29 @@ mod tests {
 
     fn at(ui: &Ui, path: &str) -> f64 {
         ui.get_float(&format!("{ROOT}/{path}")).unwrap_or(-1.0)
+    }
+
+    #[test]
+    fn ammo_effect_lines_have_no_heading_and_clear_on_selection() {
+        let mut ui = ui();
+        let ammo = Info { effects: Some("Test damage x0.80\nTest threshold -5".into()), ammo_effects: true, ..Info::default() };
+        write(&mut ui, ROOT, Some(&ammo));
+        ui.update();
+        assert_eq!(at(&ui, "EffectsInfo/CI_TitleText/visible"), 0.0);
+        assert_eq!(at(&ui, "EffectsInfo/y"), 40.0);
+        assert_eq!(ui.get_string(&format!("{ROOT}/EffectsInfo/_Value")).as_deref(), ammo.effects.as_deref());
+        assert_eq!(describe(&ui, ROOT), "WeightInfo --, ValueInfo --, Test damage x0.80\nTest threshold -5");
+        write(&mut ui, ROOT, Some(&Info { ammo_effects: true, ..Info::default() }));
+        ui.update();
+        assert_eq!(at(&ui, "EffectsInfo/visible"), 0.0);
+        assert_eq!(ui.get_string(&format!("{ROOT}/EffectsInfo/_Value")).as_deref(), Some(""));
+        write(&mut ui, ROOT, Some(&Info { effects: Some("Test aid +1".into()), ..Info::default() }));
+        ui.update();
+        assert_eq!(at(&ui, "EffectsInfo/CI_TitleText/visible"), 1.0);
+        assert!(describe(&ui, ROOT).contains("EffectsInfo Test aid +1"));
+        write(&mut ui, ROOT, None);
+        ui.update();
+        assert_eq!(at(&ui, "EffectsInfo/visible"), 0.0);
     }
 
     #[test]
