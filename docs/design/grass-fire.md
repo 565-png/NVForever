@@ -39,8 +39,11 @@ Code: `engine/nvf-play/src/grass_fire.rs` (the model, the ignition, the actors),
 ## 3. Spread
 
 - A patch burns for 6 s (±20%, fixed per patch). When it catches it plans to light each
-  neighbour (eight of them) that has fuel and has not burnt: after 0.5–1.5 s for a side
-  neighbour, × √2 for a diagonal one.
+  patch up to two patches away (the 24 around it) that has fuel and has not burnt: after
+  0.5–1.5 s times the distance in patches (1 for a side neighbour, √2 diagonally, 2 for
+  one across a patch). Reaching two patches lets a fire cross the bare ground between the
+  Mojave's tufts of grass (the grass near Goodsprings stands in tufts with gaps; a fire
+  limited to touching patches stopped at the first gap).
 - The wind (the weather's wind direction and speed, as the grass sways with) divides the
   delay by 1 + 0.6 × (wind strength × the cosine between the wind and the step): at full
   wind the fire runs 1.6 times as fast downwind and 0.4 times as fast upwind.
@@ -60,8 +63,8 @@ Code: `engine/nvf-play/src/grass_fire.rs` (the model, the ignition, the actors),
 
 ## 5. Actors
 
-- Twice a second, every actor whose middle is over a burning patch (within 160 units of its
-  ground height) catches the fire's object effect, as from a hit by the one who started the
+- Twice a second, every actor whose middle is within 64 units (horizontally) of a burning
+  patch's middle and within 160 units of its ground height catches the fire's object effect, as from a hit by the one who started the
   fire (`hit_effects::apply`): the same burn, damage over time, OnFire line, kill credit
   and resistances as a flamer hit. Standing in the fire refreshes the burn's time.
 - The player catches it too (not in god mode, as with any hit effect).
@@ -76,8 +79,9 @@ Code: `engine/nvf-play/src/grass_fire.rs` (the model, the ignition, the actors),
 - **Grass** (grass.wesl): each plant reads the patch it stands on. Its colour falls to
   5% as it chars, it glows orange like embers, flickering, while its patch burns, and once
   burnt it sinks into the ground the way grass beyond the grass distance does.
-- **Flames**: the base game's ambient small fire model (`effects\ambient\fxfiresmall01.nif`)
-  on each burning patch, turned and sized at random (0.7–1.2), at most 150 at once; it
+- **Flames**: the base game's small fire particle system (`mps\mpsfiresmall01.nif`, the
+  one fire effects add on as an add-on node; the ambient `fxfiresmall01.nif` holds no
+  particle system or shape of its own and drew nothing) on each burning patch, turned and sized at random (0.7–1.2), at most 150 at once; it
   shrinks away over 0.8 s when its patch burns out.
 
 ## 7. Not done (yet)

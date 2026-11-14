@@ -7,17 +7,19 @@
 //!   fuel when grass grows on it: the renderer, which places the grass, says so per cell
 //!   ([`Fires::add_fuel`]) and forgets a cell when it unloads ([`Fires::forget_cell`]), so
 //!   burnt grass is whole again when the player comes back.
-//! - **Spread.** A burning patch lights each of its eight neighbours that has fuel and
-//!   has not burnt, after a random delay ([`FireRules::spread_secs`], longer on the
-//!   diagonal), shorter downwind and longer upwind ([`FireRules::wind_bias`]). A patch
-//!   burns for about [`FireRules::burn_secs`] and is then burnt out.
+//! - **Spread.** A burning patch lights each patch within [`FireRules::jump`] patches of
+//!   it that has fuel and has not burnt (so a fire crosses the bare ground between
+//!   tufts), after a random delay ([`FireRules::spread_secs`] per patch of distance),
+//!   shorter downwind and longer upwind ([`FireRules::wind_bias`]). A patch burns for
+//!   about [`FireRules::burn_secs`] and is then burnt out.
 //! - **Limits.** A fire lights no patch further than [`FireRules::reach`] from where it
 //!   started and no more than [`FireRules::max_patches`]; no more than
 //!   [`FireRules::max_fires`] burn at once, nor more than [`FireRules::max_burning`]
 //!   patches over all of them. A landing on grass a live fire may still reach adds to
 //!   that fire instead of starting another.
-//! - **Actors.** An actor whose middle is over a burning patch (within
-//!   [`FireRules::catch_height`] of its ground) catches the fire's item, the burning
+//! - **Actors.** An actor whose middle is over or beside a burning patch (within
+//!   [`FireRules::catch_reach`] of its middle and [`FireRules::catch_height`] of its
+//!   ground) catches the fire's item, the burning
 //!   object effect that started it, as from a hit by who started it
 //!   (`crate::combat::hit_effects`), again every [`CATCH_EVERY`] seconds while it stays.
 //! - **Burn map.** One byte a patch in a [`MAP`] × [`MAP`] map that wraps around the
@@ -78,6 +80,9 @@ pub struct FireRules {
     /// The delay before a burning patch lights a side neighbour, seconds (a random value
     /// between the two; a diagonal one × √2).
     pub spread_secs: (f32, f32),
+    /// How many patches away a burning patch reaches (1: the eight around it; 2: across a
+    /// patch without grass too, as desert grass grows in tufts with bare ground between).
+    pub jump: i32,
     /// The furthest a fire reaches from where it started, game units.
     pub reach: f32,
     /// The most patches one fire lights.
@@ -89,8 +94,10 @@ pub struct FireRules {
     /// How much the wind speeds the spread downwind and slows it upwind at full wind
     /// (0: not at all; 0.6: 1.6 times as fast downwind, 0.4 times upwind).
     pub wind_bias: f32,
-    /// An actor's middle within this height of a burning patch's ground catches fire.
+    /// An actor's middle within this height of a burning patch's ground, and within
+    /// `catch_reach` of the patch's middle horizontally, catches fire.
     pub catch_height: f32,
+    pub catch_reach: f32,
 }
 
 impl Default for FireRules {
@@ -100,12 +107,14 @@ impl Default for FireRules {
             char_secs: 2.0,
             fade_secs: 5.0,
             spread_secs: (0.5, 1.5),
+            jump: 2,
             reach: 1024.0,
             max_patches: 500,
             max_fires: 8,
             max_burning: 1500,
             wind_bias: 0.6,
             catch_height: 160.0,
+            catch_reach: 64.0,
         }
     }
 }
@@ -286,6 +295,11 @@ impl Fires {
         self.fuel.contains_key(&k)
     }
 
+    /// The patch with grass nearest a point within `within` units, and its distance.
+    pub fn nearest_fuel(&self, p: V3, within: f32) -> Option<(Key, f32)> {
+        self.fuel.keys().map(|&k| (k, dist2(p, centre(k)))).filter(|(_, d)| *d <= within).min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
     /// The state of a patch fire reached.
     pub fn burn(&self, k: Key) -> Option<Burn> {
         self.burns.get(&k).copied()
@@ -400,8 +414,9 @@ impl Fires {
         self.set_texel(k, 2);
         self.events.push(FireEvent::Lit { key: k, z });
         let wind_len = (self.wind[0] * self.wind[0] + self.wind[1] * self.wind[1]).sqrt();
-        for dx in -1..=1 {
-            for dy in -1..=1 {
+        let jump = rules.jump;
+        for dx in -jump..=jump {
+            for dy in -jump..=jump {
                 let n = (k.0 + dx, k.1 + dy);
                 if n == k || !self.fuel.contains_key(&n) || self.burns.contains_key(&n) {
                     continue;
@@ -411,7 +426,8 @@ impl Fires {
                     self.stats.held += 1;
                     continue;
                 }
-                let step = if dx != 0 && dy != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
+                // Patches away (1, √2, 2, √5, √8).
+                let step = ((dx * dx + dy * dy) as f32).sqrt();
                 let (a, b) = rules.spread_secs;
                 let mut delay = (a + (b - a) * roll(n, id, 2)) * step;
                 if wind_len > 1e-4 {
@@ -491,16 +507,26 @@ impl Fires {
         }
     }
 
-    /// The fire burning under a point (an actor's middle, game space): the patch it is
-    /// over burns and its ground is within [`FireRules::catch_height`].
+    /// The fire burning under or beside a point (an actor's middle, game space): the
+    /// nearest burning patch whose middle is within [`FireRules::catch_reach`] of it and
+    /// whose ground is within [`FireRules::catch_height`] (the patch it stands on may be
+    /// bare ground between burning tufts).
     pub fn burning_at(&self, p: V3) -> Option<&Fire> {
-        let k = key(p[0], p[1]);
-        let Some(Burn::Burning { fire, .. }) = self.burns.get(&k) else { return None };
-        let z = self.fuel.get(&k)?.z;
-        if (p[2] - z).abs() > self.rules.catch_height {
-            return None;
+        let at = key(p[0], p[1]);
+        let mut best: Option<(f32, u32)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                let k = (at.0 + dx, at.1 + dy);
+                let Some(Burn::Burning { fire, .. }) = self.burns.get(&k) else { continue };
+                let Some(z) = self.fuel.get(&k).map(|f| f.z) else { continue };
+                let d = dist2(p, centre(k));
+                if d <= self.rules.catch_reach && (p[2] - z).abs() <= self.rules.catch_height && best.is_none_or(|b| d < b.0) {
+                    best = Some((d, *fire));
+                }
+            }
         }
-        self.fires.iter().find(|f| f.id == *fire)
+        let fire = best?.1;
+        self.fires.iter().find(|f| f.id == fire)
     }
 
     fn set_texel(&mut self, k: Key, v: u8) {
@@ -549,6 +575,8 @@ pub struct GrassFires {
     /// Resistance).
     burns: HashMap<FormId, bool>,
     catch_clock: f32,
+    /// A landing found no grass: said once, with the nearest grass.
+    told_no_grass: bool,
 }
 
 pub struct GrassFirePlugin;
@@ -625,6 +653,14 @@ pub(crate) fn tick(
         }
         match gf.fires.ignite(l.point, l.item, l.by) {
             Ok(_) => {}
+            Err(Refused::NoGrass) if !gf.told_no_grass => {
+                gf.told_no_grass = true;
+                let near = gf.fires.nearest_fuel(l.point, 4096.0).map_or("none within 4096 units".to_string(), |(k, d)| {
+                    let c = centre(k);
+                    format!("the nearest is {d:.0} units away at ({:.0}, {:.0})", c[0], c[1])
+                });
+                info!("grass fire: a burning landing at ({:.0}, {:.0}, {:.0}) found no grass to light; {near} (said once)", l.point[0], l.point[1], l.point[2]);
+            }
             Err(why) => debug!("grass fire: a burning landing at ({:.0}, {:.0}, {:.0}) lit nothing: {why:?}", l.point[0], l.point[1], l.point[2]),
         }
     }
@@ -669,6 +705,10 @@ fn catch(gf: &mut GrassFires, dt: f32, phys: &PhysState, mut script: Option<&mut
         actors.push((FormId::PLAYER_REF, [ch.feet[0], ch.feet[1], ch.feet[2] + ch.params.height.max(0.0) / 2.0]));
     }
     for (target, at) in actors {
+        // The player in god mode takes no hit effects (`crate::combat`'s player hits).
+        if target == FormId::PLAYER_REF && crate::combat::god_mode() {
+            continue;
+        }
         let Some((id, item, by)) = gf.fires.burning_at(at).map(|f| (f.id, f.item, f.by)) else { continue };
         let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
         let before = (stats.hit_effects.applied, stats.hit_effects.refreshed);
@@ -839,6 +879,17 @@ mod tests {
     }
 
     #[test]
+    fn a_fire_crosses_one_bare_patch_but_not_two() {
+        // Tufts at x = 0, 2 (one bare patch between), then 5 (two bare patches).
+        let mut f = Fires::default();
+        f.add_fuel((0, 0), [0, 2, 5].map(|x| ((x, 0), 0.0)));
+        f.ignite([32.0, 32.0, 0.0], ITEM, None).unwrap();
+        run(&mut f, 30.0);
+        assert!(f.burn((2, 0)).is_some());
+        assert!(f.burn((5, 0)).is_none());
+    }
+
+    #[test]
     fn a_forgotten_cell_grows_back() {
         let mut f = Fires::default();
         f.add_fuel((0, 0), (0..4).map(|x| ((x, 0), 0.0)));
@@ -863,6 +914,8 @@ mod tests {
         let id = f.ignite(point((0, 0)), ITEM, None).unwrap();
         // Standing on it (middle 60 above the ground), and high above it.
         assert_eq!(f.burning_at([32.0, 32.0, 160.0]).map(|f| f.id), Some(id));
+        // Beside it, on the bare patch next door (60 units from its middle).
+        assert_eq!(f.burning_at([92.0, 32.0, 160.0]).map(|f| f.id), Some(id));
         assert!(f.burning_at([32.0, 32.0, 600.0]).is_none());
         assert!(f.burning_at([32.0 + 640.0, 32.0, 160.0]).is_none());
     }

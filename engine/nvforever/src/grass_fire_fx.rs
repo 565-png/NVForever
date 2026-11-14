@@ -3,8 +3,8 @@
 //! the cells that unloaded forgotten so their grass grows back whole, the weather's wind
 //! handed to the fires, and a small fire model on each burning patch.
 //!
-//! The flames are the base game's ambient small fire, `effects\ambient\fxfiresmall01.nif`
-//! (the model placed fires use), at most [`MAX_FLAMES`] at once, each turned and sized at
+//! The flames are the base game's small fire particle system, `mps\mpsfiresmall01.nif`
+//! (the one fire effects add on as an add-on node), at most [`MAX_FLAMES`] at once, each turned and sized at
 //! random and shrinking away over [`SHRINK_SECS`] when its patch burns out [design].
 //!
 //! Log: `grass fire fx: …` once when the flame model is loaded (or not), and at exit
@@ -18,7 +18,7 @@ use nvf_play::grass_fire::{centre, FireEvent, GrassFires, Key};
 use std::collections::HashMap;
 
 /// The flame model on a burning patch.
-pub const FLAME_MODEL: &str = r"effects\ambient\fxfiresmall01.nif";
+pub const FLAME_MODEL: &str = r"mps\mpsfiresmall01.nif";
 /// The most flame models at once [design: frame cost].
 pub const MAX_FLAMES: usize = 150;
 /// Seconds a flame takes to shrink away once its patch burnt out [chosen].
@@ -78,7 +78,7 @@ fn sync(
         fx.cells_forgotten += 1;
     }
     if fires.dirty {
-        if let Some(image) = models.images.get_mut(&burn.0) {
+        if let Some(mut image) = models.images.get_mut(&burn.0) {
             image.data = Some(fires.map.clone());
             fires.dirty = false;
             fx.uploads += 1;
