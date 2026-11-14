@@ -3060,7 +3060,11 @@ impl Vm<'_, '_> {
             for e in c.args.iter().take(at) {
                 first.push(self.xeval(e)?);
             }
-            let (t, _) = self.format_arg(c, at)?;
+            // Too few values for its specifiers: nothing happens (`formatted_host_call`).
+            let (t, _) = match self.format_arg(c, at) {
+                Err(VmError::Type(e)) if e.starts_with("the format string takes") => return Ok(XVal::Num(0.0)),
+                r => r?,
+            };
             first.push(XVal::Str(t));
             return match self.host.ext_call(&lname, None, &first) {
                 Some(r) => r.map_err(VmError::Host),
@@ -3098,6 +3102,12 @@ impl Vm<'_, '_> {
         // array of the return value and then each output, written to the variables here.
         if let Some(outs) = out_params(&lname) {
             return self.out_call(&lname, c, outs);
+        }
+        // ShowOff's string maps live with JIP's stores (`vm::jip`).
+        if lname.starts_with("auxstringmaparray") {
+            if let Some(v) = self.strmap_function(&lname, c)? {
+                return Ok(v);
+            }
         }
         if origin == "JIP" || origin == "LU" {
             return match self.jip_function(&lname, c)? {
@@ -3344,7 +3354,15 @@ impl Vm<'_, '_> {
         for e in c.args.iter().take(at) {
             args.push(self.xeval(e)?);
         }
-        let (t, k) = self.format_arg(c, at)?;
+        // A format string whose specifiers have fewer values after it than they take:
+        // the function does nothing and the script goes on [observed: #2430 probe
+        // 2026-11-14, SetFormDescription "test %.0f left" with no value left the text as
+        // it was, the script ran on; hypothesis: the same for the other functions that
+        // take a formatted string].
+        let (t, k) = match self.format_arg(c, at) {
+            Err(VmError::Type(e)) if e.starts_with("the format string takes") => return Ok(Some(XVal::Num(0.0))),
+            r => r?,
+        };
         args.push(XVal::Str(t));
         for e in c.args.iter().skip(k) {
             args.push(self.xeval(e)?);
