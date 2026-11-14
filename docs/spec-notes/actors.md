@@ -1168,7 +1168,7 @@ All rules here are engine choices unless tagged otherwise. Layer 6 replaces the 
   aim, attack and special-idle layers are assembled. With `idle_under` enabled and an
   Idle clip in the current set, it keeps that idle running on bones and part nodes
   none of the other active clips drive, excluding the accumulation root. The idle's
-  own phase runs on; its filtered tracks have `UNDER_PRIORITY`, below other tracks.
+  own phase runs on; its fallback tracks have `UNDER_PRIORITY`, below other tracks.
   [design, #2352] The fallback occupies `BlendPlayer::pose_only`, separate from
   regular layers and consumed only by the pose blender (including its cycle tracking
   and held-pose cache). Its Clip view copies timing only: no text/sound/event keys,
@@ -1176,6 +1176,13 @@ All rules here are engine choices unless tagged otherwise. Layer 6 replaces the 
   bone therefore cannot become an event source or override special-idle materials
   (`material_anim::actor_material_values`). Its bound transform mask follows all
   active clip identities, ignoring zero or nonfinite weights and the real Idle itself.
+  [design, #2352] One root-free `BoundClip` allocation and timing-only Clip view stay
+  alive for each real Idle while it plays. Bound and unbound track masks live beside
+  the playback entry (`BlendPlayer::pose_only_mask`) and change without replacing
+  either identity. `Loops` therefore preserves accumulated per-cycle rotations across
+  upper-clip changes; fully masked intervals keep the same entry at zero weight to
+  follow phase wraps, without counting as fallback contribution frames or sound owners.
+  Mask changes also invalidate held poses without changing playback identity.
   [design, #2352] `anim_sounds::actor_sound_sources` keeps one sound owner for that
   idle: an audible regular Idle layer, otherwise the real Idle source at its continuing
   phase while the pose fallback is active. The pose-only view never supplies keys;

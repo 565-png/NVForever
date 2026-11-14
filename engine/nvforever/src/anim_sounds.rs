@@ -422,7 +422,7 @@ fn player_keys(
 /// an audible regular layer already owns that source.
 fn actor_sound_sources<'a>(bp: &'a BlendPlayer, lo: Option<&'a crate::locomotion::Locomotion>) -> impl Iterator<Item = (&'a Arc<Clip>, f32)> {
     let audible = || bp.layers.iter().flatten().filter(|l| l.weight >= HEARD_WEIGHT);
-    let idle = lo.filter(|_| bp.pose_only.is_some()).and_then(|l| l.idle_timeline())
+    let idle = lo.filter(|_| bp.pose_only.as_ref().is_some_and(|l| l.weight > 0.0)).and_then(|l| l.idle_timeline())
         .filter(|(c, _)| !audible().any(|l| Arc::ptr_eq(&l.clip.clip, c)));
     audible().map(|l| (&l.clip.clip, l.phase)).chain(idle)
 }
@@ -904,7 +904,7 @@ mod tests {
             let lo = world.get::<Locomotion>(actor).unwrap();
             let layer = bp.pose_only.as_ref().unwrap();
             assert!((layer.phase - phase).abs() < 1e-6);
-            assert_eq!(layer.clip.tracks.len(), if moving { tracks } else { 2 });
+            assert_eq!(bp.pose_only_mask.as_ref().unwrap().tracks.iter().filter(|b| **b).count(), if moving { tracks } else { 2 });
             assert!(layer.clip.clip.text_keys.is_empty());
             if !moving {
                 assert!(Arc::ptr_eq(&bp.layers[0].as_ref().unwrap().clip.clip, &real_idle));
@@ -923,11 +923,17 @@ mod tests {
             last = seen.into_iter().collect();
             if let Some(before) = previous {
                 if moving && secs > 0.0 {
-                    assert!(!Arc::ptr_eq(&before, &layer.clip), "upper changes rebuild the bone mask");
+                    assert!(Arc::ptr_eq(&before, &layer.clip), "upper changes preserve the fallback playback identity");
                 }
             }
             previous = Some(layer.clip.clone());
         }
+        // [design, #2352] A zero-weight timeline anchor owns no fallback sounds;
+        // a regular Idle remains its own audible owner.
+        world.get_mut::<BlendPlayer>(actor).unwrap().pose_only.as_mut().unwrap().weight = 0.0;
+        let bp = world.get::<BlendPlayer>(actor).unwrap();
+        let lo = world.get::<Locomotion>(actor).unwrap();
+        assert_eq!(actor_sound_sources(bp, Some(lo)).filter(|(c, _)| Arc::ptr_eq(c, &real_idle)).count(), usize::from(!moving));
     }
 
     #[test]
