@@ -452,6 +452,13 @@ the spec it links to.
     (item 5, second part) is not built yet.
     ([pickpocket §5](spec-notes/pickpocket.md))
 
+70. **Children never fight (#2438).** As you decided: every actor whose race has the
+    Child flag flees a fight at once and never attacks or draws, whatever its record's
+    confidence, aggression or combat style; it still turns hostile, so crime and faction
+    rules stay. The race's flag, not the actor's name, says who is a child. Two calls of ours: the child flees even before it is hurt
+    (children take no damage, so the "once hurt" rule would never start it), and a
+    scripted UseWeapon on a child in a fight no longer draws its weapon either. Observer
+    check 141 asks what the original does. ([combat-ai §12.2](design/combat-ai.md))
 61. **Holstered fidgets come rarer than in the original (#2026).** NPCs standing with the
     weapon away now bite their nails, smoke and so on, by the idle tree's factions and
     chances. The tree is asked every 2 s, the drawn-weapon fidgets' pace
