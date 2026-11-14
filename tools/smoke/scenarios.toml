@@ -685,10 +685,10 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 [[scenario]]
 name = "ui-scale-write"
 source = "issue #1631: the settings page's Display row UI scale (ui-scale) sets the HUD's size, kept in NVForever.ini; the first half of the round trip, ui-scale-read starts with what this run keeps"
-note = "The home's INI may hold any scale from an earlier run, so the row is set to 100% first and then to 75%: the second is always a change and is written"
+note = "The home's INI may hold any scales from an earlier run: set both rows to 100%, then both to 75%. #2519 makes the menu row independent; the existing three following 75% drawing/pointer oracles are unchanged."
 areas = ["hud", "settings"]
 paths = ["engine/nvf-play/src/interface.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs"]
-env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:ui-scale=0.5,12:ui-scale=0.25" }
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "10.5:menu-scale=1,11:ui-scale=0.5,12:ui-scale=0.25,12.5:menu-scale=0.5" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 16
 expect = [
@@ -752,6 +752,70 @@ expect = [
   { text = "tiles: SleepWaitMenu Step(6) on its tiles", count = 1, label = "the real press on the drawn page area pages the slider" },
 ]
 manual = "ui_scale_75_tiles_wait.png: the tile-drawn wait menu three quarters of the size of tiles_sleep_wait.png, in the middle of the view, the slider at 7 hours"
+
+
+[[scenario]]
+name = "hud-menu-scale-write"
+source = "#2519: persist HUD 75% with menus 100%; changing HUD alone must not make menus follow on restart"
+note = "Set menu 50% then 100% and HUD 100% then 75%, so both independent keys are written even if this disposable home was used before. The following cases read this same home."
+areas = ["hud", "settings", "menus"]
+paths = ["engine/nvf-play/src/menu_scale.rs", "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/settings.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvforever/src/settings.rs"]
+env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "10.5:menu-scale=0,11:menu-scale=1,11.5:ui-scale=0.5,12:ui-scale=0.25" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 16
+expect = [
+  { text = "settings: menu-scale 100%", label = "menus saved independently at full size" },
+  { text = "settings: ui-scale 75%", label = "HUD alone is subsequently reduced" },
+]
+
+[[scenario]]
+name = "hud-menu-scale-menus"
+source = "#2519: after hud-menu-scale-write, HUD 75% and handbuilt menus 100%; unchanged 100% wait pointer coordinates must still hit"
+note = "The slider and Accept points are wait-pointer-press's authored 100% positions, not the legacy 75% positions. Main/pause/settings/HUD screenshots require visual review."
+areas = ["hud", "settings", "menus", "wait"]
+paths = ["engine/nvf-play/src/menu_scale.rs", "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/wait.rs", "engine/nvf-play/src/ui_pointer.rs", "engine/nvf-play/src/settings_layout.rs"]
+env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:page,12:layout", NVF_PLAY_TEST_SHOTS = "12.5:hud75_menu100_settings.png,17:hud75_menu100_wait.png", NVF_PLAY_TEST_WAIT = "16:open,17.5:point=0.584:0.47,18:press,18.5:release,19:point=0.677:0.576,19.5:press,20.5:release" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
+expect = [
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 100% of the original's size)", label = "restart keeps distinct sizes" },
+  "settings layout: ui-scale -> Display > Screen",
+  "settings layout: menu-scale -> Display > Screen",
+  "pause menu: open",
+  "wait menu: open",
+  { re = 'wait menu: waiting (?P<n>\d+) hour', range = [17, 19], label = "the unscaled menu slider and Accept receive their drawn presses" },
+]
+manual = "hud75_menu100_settings.png and hud75_menu100_wait.png: full-size centred menus, settings rows HUD scale and Menu scale in Display > Screen, smaller HUD kept at its edges. Compare 100% menu screenshots and ui_scale_75_settings/wait screenshots; no clipped Back/Defaults rows."
+
+[[scenario]]
+name = "hud-menu-scale-tile-menus"
+source = "#2519: HUD 75% with tile menu 100%; the original 1100:457 tile-unit pointer must page the actual menu once"
+note = "Reads hud-menu-scale-write's home. At 100%, 1100:457 units is 825:342.75 pixels of 1280x720, or 0.64453125:0.47604167."
+areas = ["hud", "menus", "tiles", "wait"]
+paths = ["engine/nvf-play/src/menu_scale.rs", "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/wait_menu.rs"]
+env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_TILE_MENUS = "SleepWaitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_WAIT = "10:open,11:point=0.64453125:0.47604167,11.5:press,12:release", NVF_PLAY_TEST_SHOTS = "13:hud75_menu100_tiles_wait.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 16
+expect = [
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 100% of the original's size)", label = "restart retains full-size menus independently" },
+  { re = 'tiles: SleepWaitMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "the actual menu tree draws" },
+  { text = "tiles: SleepWaitMenu Step(6) on its tiles", count = 1, label = "the press on the full-size page area reaches the tiles" },
+]
+manual = "hud75_menu100_tiles_wait.png: full-size centred tile wait menu at 7 hours with HUD still 75%; compare tiles_sleep_wait.png and ui_scale_75_tiles_wait.png."
+
+[[scenario]]
+name = "hud-menu-scale-main-menu"
+source = "#2519: independent full-size main menu after the HUD-only reduction saved by hud-menu-scale-write"
+areas = ["menus", "settings"]
+paths = ["engine/nvf-play/src/menu_scale.rs", "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/main_menu.rs"]
+env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_SHOTS = "6:hud75_menu100_main.png" }
+args = ["--play", "--menu", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 8
+expect = [
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 100% of the original's size)", label = "main menu uses independently persisted size" },
+  { re = 'main menu: open \(\d+ loading screens', label = "the actual main menu opens" },
+]
+manual = "hud75_menu100_main.png: full-size main menu with all labels and buttons on screen; the saved HUD reduction must not shrink it."
 
 [[scenario]]
 name = "draw-distance-sliders"
@@ -7363,10 +7427,10 @@ expect = [
 [[scenario]]
 name = "ringo-comes-out"
 source = "playtest list 4 item 13 (docs/design/actor-behaviour.md §5.9, fnv_ai::process ProcessLevel::Coming): Ringo, sent out of the gas station by RingoTravelPackage after the player left, is moved every frame on his way into the loaded area and comes out of the door"
-note = "the player leaves through the gas station door at 5 s (after Ringo's greeting); at 15 s the result script of INFO 0x00105D09 gives Ringo (0x00104C7D) RingoTravelPackage; he takes it up at his next 18 s update in the cell buffer, then walks every frame"
+note = "the player leaves through the gas station door at 7.5 s, after Ringo's greeting (the unattended run leaves his choices at about 5.2 s; while the zoomed conversation is up the view stays locked on him, #2254, so the door is faced at 6.5 s, after it); at 15 s the result script of INFO 0x00105D09 gives Ringo (0x00104C7D) RingoTravelPackage; he takes it up at his next 18 s update in the cell buffer, then walks every frame"
 areas = ["ai", "process-levels"]
 paths = ["crates/fnv-ai/src/process.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/cell_buffer.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
 run_seconds = 60
 order = [[
@@ -7554,7 +7618,7 @@ expect = [
 
 [[scenario]]
 name = "creature-names"
-source = "playtest list 4 items 19-20 (docs/spec-notes/factions.md §7, engine/nvf-play/src/activate.rs): an actor placed from a nameless template actor is named by the actor its template leads to; a hostile creature shows only its name, a dead one Search"
+source = "playtest list 4 items 19-20 (docs/spec-notes/factions.md §7, engine/nvf-play/src/activate.rs): an actor placed from a nameless template actor is named by the actor its template leads to; a hostile creature is the target by its name with no prompt drawn (issue #2536), a dead one Search"
 note = "VERGSGecko2REF 0x00157B3D (base VSpawnTier2GeckoMed, no FULL; template list VEncTier2GeckoMed -> VCrTier2GeckoMed 'Gecko'), Very Aggressive (as its neighbour 0x00157B3E): name only while alive; both killed by the script aid at 16 s; the menu test aid opens the dead one's inventory at 24 s"
 areas = ["actors", "activation"]
 paths = ["engine/nvf-play/src/activate.rs", "engine/nvf-play/src/sim.rs", "crates/fnv-game/src/templates.rs"]
@@ -7562,10 +7626,13 @@ env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_T
 args = ["--play", "--pos=-69100,-17219,9000", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 40
 order = [[
-  { re = 'target 0x00157B3[DE] Gecko \(\) ', label = "a living gecko: 'Gecko', name only" },
+  { re = 'target 0x00157B3[DE] Gecko \(\) ', label = "a living gecko: the target as 'Gecko', with no action" },
   { re = 'menu: open Container\(.*\) "Gecko"', label = "the dead gecko's loot menu titled 'Gecko'" },
 ]]
-forbid = [{ re = 'VSpawnTier2GeckoMed \(', label = "the template actor's Editor ID as the name" }]
+forbid = [
+  { re = 'VSpawnTier2GeckoMed \(', label = "the template actor's Editor ID as the name" },
+  { text = 'reticle: prompt "" on "Gecko"', label = "a prompt drawn over the living, hostile gecko (#2536)" },
+]
 
 [[scenario]]
 name = "challenge-kill"
@@ -9826,7 +9893,7 @@ source = "playtest list 5 item 3 (engine/nvforever/src/door_fade.rs, nvf-play wo
 note = "the ringo-comes-out run: Ringo comes out of the gas station door into the drawn exterior where the player stands"
 areas = ["ai", "doors"]
 paths = ["engine/nvforever/src/door_fade.rs", "engine/nvforever/src/residents.rs", "engine/nvf-play/src/world_sounds.rs", "crates/fnv-nav/src/follow.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
 run_seconds = 60
 expect = [
@@ -9840,7 +9907,7 @@ source = "issue #2123 (crates/fnv-game/src/npc_doors.rs, docs/spec-notes/doors.m
 note = "the npc-door-fade run with an OnActivate handler set from the console at 1 s: Ringo (00104C7D) leaves the gas station by its door 0010903F (base OffDoorMetalSmL01, no script: XTEL to 00109040 [observed: fnvtool esm decode]); the handler prints both references"
 areas = ["ai", "doors", "scripts"]
 paths = ["crates/fnv-game/src/npc_doors.rs", "crates/fnv-ai/src/carry.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_CONSOLE = "1:SetEventHandler \"OnActivate\" ({ref rT, ref rA} => PrintC \"nvf npc-door event %i %i\", rT, rA);1.5:close" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_CONSOLE = "1:SetEventHandler \"OnActivate\" ({ref rT, ref rA} => PrintC \"nvf npc-door event %i %i\", rT, rA);1.5:close" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
 run_seconds = 60
 expect = [
@@ -23602,6 +23669,41 @@ order = [[
 ]]
 
 [[scenario]]
+name = "fort-slave-packs-not-floating"
+source = "issue #2439 (owner): at the Fort two slave backpacks hung in the sky with no NPC near. They are placed references of NVSlaveBackpack (0x0013732C, 0x0013732D; ARMO 0x00127C6A, Non-Playable, no world model MOD2) 565 and 913 units above the ground; their biped model was drawn at the reference. Armour only ever worn has no world look now (fnv_world::placed::worn_only; engine/nvforever/src/world.rs spawn_model)"
+note = "the owner's spot on the rise west of the camp, looking south-east at 17:00 as in the report's screenshot; frames in target/smoke (fort_packs.png). The two backpack slaves (LvlFortSlaveBackpack 0x00154414, 0x00154415) still wear theirs"
+areas = ["world"]
+paths = ["crates/fnv-world/src/placed.rs", "engine/nvforever/src/world.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_LOOK = "6:120:5", NVF_PLAY_TEST_SHOTS = "14:fort_packs.png", NVF_PLAY_TEST_CONSOLE = "12:00154414.getitemcount 00127C6A;00154415.getitemcount 00127C6A;12.5:close" }
+args = ["--world", "WastelandNV", "--pos=89242,46819,8095", "--play", "--hour", "17", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = [
+  { re = 'world: 0x0013732C NVSlaveBackpack: armour only ever worn', label = "the lower floating pack is not drawn on its own" },
+  { re = 'world: 0x0013732D NVSlaveBackpack: armour only ever worn', label = "the upper floating pack is not drawn on its own" },
+  { re = 'console: GetItemCount on 0x0015441[45] >> 1\.00', count = 2, label = "both backpack slaves still carry their pack" },
+]
+
+[[scenario]]
+name = "rs-charlie-door-and-tripwire"
+source = "issue #2420 (owner): in Ranger Station Charlie the door on the left was drawn shut, would not open and let the player through, and the tripwire behind it looked armed again on every pass. The door (OffDoorSmR02a 0x000CD068), the tripwire (0x00084246) and its shotgun come in with CharlieEnableParentREF (0x00126F4E, enabled by the station's trigger script): drawn at run time (nvf_play::script_draw), the door had no DoorRig, so it stayed drawn shut while it opened and its collision swung away; the wire's script plays Forward and then activates itself, which asks an Open sequence its model lacks, and that ask was what it showed when drawn again (fnv_game anims not_in_model)"
+note = "the destroyed interior (RSCharlieNVDESTROYED), god mode; the test aid enables the parent at 10 s as the trigger script does, puts the player on the wire at 12 s (it fires the shotgun once), moves the player to the entrance and back onto the wire (a fresh cell build: drawn again), then opens the door"
+areas = ["traps", "doors", "scripts"]
+paths = ["engine/nvf-play/src/script_draw.rs", "engine/nvforever/src/doors.rs", "engine/nvforever/src/object_anims.rs", "crates/fnv-game/src/anims.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "10:call:0x00126F4E:Enable,12:moveto:player:0x00084246,16:moveto:player:0x00084249,19:moveto:player:0x00084246,23:activate:0x000CD068", NVF_PLAY_TEST_CONSOLE = "26:000CD068.getopenstate;26.5:close" }
+args = ["--cell", "RSCharlieNVDESTROYED", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 29
+order = [[
+  { text = "door: 0x000CD068 drawn at run time, posed as a door", label = "the door enabled with its parent is drawn as a door" },
+  { re = 'script: activate parent 0x00084246 sets off 0x00084247', label = "the wire fires the shotgun" },
+  { re = 'playgroup: 0x00084246 drawn again, shows Forward at its end', label = "drawn again after the moves, the wire shows itself sprung, not armed" },
+  { re = 'door 0x000CD068 opening', label = "the door opens" },
+  { re = 'console: GetOpenState on 0x000CD068 >> 1\.00', label = "and is open" },
+]]
+expect = [
+  { re = 'script: activate parent 0x00084246 sets off', count = 1, label = "the wire goes off once" },
+]
+
+[[scenario]]
 name = "script-move-dynamic-clutter"
 source = "issue #1311: SetPos on a reference whose collision is one dynamic body (clutter, dropped or placed items) snapped back at once, the settle write-back copying the body's old pose over the move; console moves were never seen (the tick cleared Game::turned first)"
 note = "A bottle (0x0010A1F6) placed by the console at the player in Goodsprings, moved sideways 3 s later to x = -68150 with SetPos; GetPos x half a second and two seconds later reads the new x"
@@ -23731,7 +23833,7 @@ source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds 
 note = "the npc-door-fade run: the player waits outside; Ringo (0x00104C7D) comes through the door into the drawn exterior and must get a volume there"
 areas = ["combat", "actors"]
 paths = ["engine/nvf-play/src/hitvol.rs"]
-env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
 run_seconds = 60
 order = [[
@@ -28253,3 +28355,41 @@ order = [[
 expect = [
   { re = 'far script summary: (?P<n>\d+) GameMode runs of residents out of the loaded cells', range = [1, 100000], label = "scripts of residents out of the loaded cells ran" },
 ]
+
+[[scenario]]
+name = "stalkers-new-game-morning"
+source = "issue #2279 (21 of 32 player installs, v0.7.0): a new game's opening sets GameHour to 23 (VCG00 stage 0) and later to 8 (VCG01 stage 200); the south night stalkers spawned at 23:00 by VERStalkersSouth01 tried their 23:00 raid route VSpecialWBStalkerHuntersRaidMWF3 at 08:00 from the rest cell the quest had put them in, and could not reach it"
+note = "a new game; SetStage VCG01 200 at 12 s puts the clock at 08:00. The quest's night branch has spawned the stalkers by then (StalkersOn 1); its day branch, 18 s later, moves them to VStalkerSouthRestMarker and sets StalkersOn 0"
+areas = ["ai", "schedule"]
+paths = ["crates/fnv-game/src/ai.rs", "crates/fnv-game/src/package.rs", "crates/fnv-ai/src/carry.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "12:call:-:SetStage:VCG01:200" }
+args = ["--play", "--new-game", "--no-voice", "--no-messages"]
+run_seconds = 70
+expect = [
+  "new game: VCG00 started at stage 0",
+]
+order = [[
+  { re = 'ai \[23:\d\d\] VERT2NightStalkerSmallWalkingBox01REF: put at .+ by a script \(MoveTo\)', label = "the night branch puts the stalkers out at 23:00" },
+  { re = 'ai \[08:00\] the clock was set from 23:\d\d to 08:00 by a script: packages chosen again', label = "the clock set to 08:00 has everyone choose a package again (#2353)" },
+  { re = 'ai \[08:\d\d\] VERT2NightStalkerSmallWalkingBox01REF: put at .+ by a script \(MoveTo\)', label = "the day branch takes the stalkers to their rest marker" },
+  { re = 'ai summary at 08:[23]\d: .* 0 unreachable', label = "half an hour into the morning nobody has failed to reach a place" },
+]]
+forbid = [{ re = 'cannot reach the place of VSpecial\w*StalkerHunters', label = "a night stalker tries a raid route it cannot reach" }]
+
+[[scenario]]
+name = "script-physical-wheel-delivery"
+source = "[hypothesis: engineering input bridge] docs/spec-notes/script-wheel-input.md: authored public JIP handlers observe physical wheel264/265; no MCM navigation model"
+note = "Manual opt-in only: set NVF_SCRIPT_WHEEL_MANUAL=1, focus the primary game window after loading, roll the wheel up then wait and roll down during the24second run. Do not use synthetic Tap/Hold codes as physical input proof. This checks delivery to actual published script callbacks, not native per-notch parity, pane focus or left-list selection. The scenario and authored scripts are unrun."
+areas = ["input", "scripts"]
+paths = ["engine/nvf-play/src/script_input.rs", "engine/nvf-play/src/script_input_wheel_tests.rs", "crates/fnv-game/src/script_input.rs", "crates/fnv-game/src/jip_events.rs", "docs/spec-notes/script-wheel-input.md", "tools/smoke/fixtures/script-wheel-home/"]
+requires = ["NVF_SCRIPT_WHEEL_MANUAL"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/script-wheel-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
+expect = [
+  { text = 'script: print "nvf wheel up handler 1"', count = 1, label = "wheel-up callback registration succeeds" },
+  { text = 'script: print "nvf wheel down handler 1"', count = 1, label = "wheel-down callback registration succeeds" },
+  { text = 'script: print "nvf physical wheel edge 264"', min = 1, label = "actual physical up reaches its public script handler" },
+  { text = 'script: print "nvf physical wheel edge 265"', min = 1, label = "actual physical down reaches its public script handler" },
+]
+manual = "Keep the primary game window focused; scroll up and down after loading. This manual scenario has no selection or scroll-offset expectation and provides no GPU/native visual comparison."
