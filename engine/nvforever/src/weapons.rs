@@ -630,14 +630,16 @@ impl WeaponHold {
 
 /// [design, #2512] Hang the weapon from its draw-cycle bone and apply the current
 /// attack/reload visibility sample after `locomotion::drive` advanced it.
-pub fn reparent(mut commands: Commands, mut q: Query<(&mut WeaponHold, &BlendPlayer, Option<&crate::attack_anims::CombatPose>, Option<&Name>)>) {
-    for (mut w, player, pose, name) in &mut q {
+pub fn reparent(mut commands: Commands, mut q: Query<(&mut WeaponHold, &BlendPlayer, Option<&crate::attack_anims::CombatPose>, Option<&Name>, Has<crate::alert::WeaponHidden>)>) {
+    for (mut w, player, pose, name, package_hidden) in &mut q {
         for (node, shown) in w.part_visibility(pose.and_then(|p| p.weapon_visibility.as_ref())) {
             info!("npc weapon part: {} {node} {}", name.map_or("actor", |n| n.as_str()), if shown { "shown" } else { "hidden" });
         }
         let WeaponVisibility { nodes, shapes } = &mut w.visibility;
         for (e, targets, last) in shapes {
-            let shown = targets.iter().all(|&i| nodes[i].1);
+            // [design, #2512] Package hiding masks clip state without changing it;
+            // back-mounted shapes do not inherit the Weapon node's visibility.
+            let shown = !package_hidden && targets.iter().all(|&i| nodes[i].1);
             if *last != Some(shown) {
                 commands.entity(*e).try_insert(if shown { Visibility::Inherited } else { Visibility::Hidden });
                 *last = Some(shown);
@@ -845,6 +847,57 @@ mod tests {
             sample(&mut app, Some((attack.clone(), 4.5)));
             assert!(shown(&app, round) && shown(&app, round2) && shown(&app, body), "{stage:?} restores model defaults and ignores attack");
         }
+    }
+
+    #[test]
+    fn package_hidden_back_parts_stay_hidden_on_first_update() {
+        // [design, #2512] Synthetic package input uses deferred commands, as show
+        // does. The real AlertPlugin orders show after Scripts and before reparent;
+        // its ScriptState acquisition is not exercised by this fixture.
+        #[derive(Resource)]
+        struct PackageHidden(bool);
+        fn package(mut commands: Commands, hidden: Res<PackageHidden>, actors: Query<Entity, With<WeaponHold>>) {
+            for actor in &actors {
+                if hidden.0 {
+                    commands.entity(actor).insert(crate::alert::WeaponHidden);
+                } else {
+                    commands.entity(actor).remove::<crate::alert::WeaponHidden>();
+                }
+            }
+        }
+        let mut app = App::new();
+        app.add_systems(Update, reparent)
+            .add_plugins(crate::alert::AlertPlugin)
+            .insert_resource(PackageHidden(true))
+            .add_systems(Update, package.in_set(nvf_play::PlaySet::Scripts));
+        let nodes: Vec<Entity> = (0..10).map(|_| app.world_mut().spawn_empty().id()).collect();
+        let back = app.world_mut().spawn((Visibility::Inherited, OnBack, ChildOf(nodes[6]))).id();
+        let covered = app.world_mut().spawn((Visibility::Inherited, OnBack, ChildOf(nodes[6]))).id();
+        let mut st = Arc::try_unwrap(stance()).ok().unwrap();
+        st.clips.insert(EquipClip::Holster, visibility_clip(0.0, vec![("Cover", vec![(0.0, false)])]));
+        let mut w = WeaponHold::new(Arc::new(st), false, 3);
+        w.back = vec![back, covered];
+        w.visibility.add_shape(back, ["Backpack"].into_iter());
+        w.visibility.add_shape(covered, ["Cover"].into_iter());
+        let actor = app.world_mut().spawn((w, BlendPlayer::new(nodes, Arc::new(vec![Transform::IDENTITY; 10])))).id();
+        let visibility = |app: &App, e| *app.world().get::<Visibility>(e).unwrap();
+        app.update();
+        assert_eq!(visibility(&app, back), Visibility::Hidden, "first binding must respect package hiding");
+        assert_eq!(visibility(&app, covered), Visibility::Hidden);
+        assert_eq!(app.world().get::<WeaponHold>(actor).unwrap().visibility.nodes, [("Backpack".into(), true), ("Cover".into(), false)], "package hiding does not overwrite clip state");
+        app.update();
+        assert_eq!(visibility(&app, back), Visibility::Hidden, "stable package hide persists");
+        app.world_mut().resource_mut::<PackageHidden>().0 = false;
+        app.update();
+        assert_eq!(visibility(&app, back), Visibility::Inherited, "package release updates a shape with no clip change");
+        assert_eq!(visibility(&app, covered), Visibility::Hidden, "package release preserves clip hiding");
+        app.world_mut().resource_mut::<PackageHidden>().0 = true;
+        app.update();
+        assert_eq!(visibility(&app, back), Visibility::Hidden, "package hide updates a previously shown binding");
+        app.world_mut().resource_mut::<PackageHidden>().0 = false;
+        app.update();
+        assert_eq!(visibility(&app, back), Visibility::Inherited);
+        assert_eq!(visibility(&app, covered), Visibility::Hidden);
     }
 
     #[test]

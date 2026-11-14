@@ -668,7 +668,11 @@ tracks that are not transforms) on `Fallout - Meshes.bsa` and `Update.bsa`.
     before applying that stage's visibility tracks. `PreparedPart` omits model-hidden
     geometry (`nvf-assets/src/actor.rs::prepare_part`), so all retained shapes start
     shown. Visibility of every named ancestor and the shape itself is combined; shared
-    nodes change all their shapes together. No attack/reload transform tracks are
+    nodes change all their shapes together. Package hiding masks this combined state
+    without changing the retained clip state, including for parts on separate back
+    bones [design, #2512]. `alert::show` runs before `weapons::reparent`, which reads
+    its package-hidden marker and writes the final model-shape visibility; clearing
+    the marker restores the retained clip state. No attack/reload transform tracks are
     applied to NPC weapon parts. A state change logs `npc weapon part: <actor> <node>
     hidden/shown` once per model target, independent of the number of shapes below it.
     Original-game parity of the persistent state and reset rule is [hypothesis];
