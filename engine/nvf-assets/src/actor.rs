@@ -6,13 +6,15 @@
 //!   (with joint attributes for skinned shapes), materials, inverse bind poses, the
 //!   attachment bone, and a CPU copy of each mesh (for per-actor variants such as
 //!   FaceGen morphs).
-//! - A rigid part on the head (`Bip01 Head`) has its vertices in the skeleton's axes with
+//! - Most rigid parts on the head (`Bip01 Head`) have vertices in the skeleton's axes with
 //!   the origin at the bone [observed, actors.md §1.2]: a part whose root node stores the
 //!   inverse of the bone's bind rotation (eyes, mouth, teeth) is an ordinary child of the
 //!   bone; any other head part (hair, beards, hats, whose node rotations are the identity
 //!   or cancel) gets that inverse rotation from the attachment. A rigid part on any other
 //!   bone (the Pip-Boy models on `Bip01 L ForeTwist`) is in the bone's own axes: an
-//!   ordinary child. Node transforms are kept in every case.
+//!   ordinary child. Node transforms are kept in every case. Bone-local head meshes
+//!   keep the full bone frame instead ([hypothesis: actors.md §1.2, #2529];
+//!   [design: `rigid_shape_local`] distinguishes the two layouts).
 //! - Dismemberment caps are hidden: `BSDismemberSkinInstance` partitions that clear part
 //!   flag bit 0 [documented: nif.xml BSPartFlag bit 0 "PF_EDITOR_VISIBLE"; observed: the
 //!   cap shapes of `upperbody.nif` (`bodycaps`, `limbcaps`, `meatneck01`, `meathead01`)
@@ -49,6 +51,10 @@ use std::sync::Arc;
 
 /// The bone a rigid part without `Prn` hangs from [hypothesis, actors.md §1.2].
 pub const DEFAULT_RIGID_BONE: &str = "Bip01 Head";
+
+/// Minimum alignment of a rigid mesh's bounds centre with bone-local up before
+/// choosing that frame [design, #2529; docs/spec-notes/actors.md §1.2].
+pub const BONE_LOCAL_HEAD_ALIGNMENT: f32 = 0.9;
 
 /// A skeleton's node hierarchy; node 0 is the root, whose own transform the actor's
 /// placement replaces (so it is the identity here).
@@ -1008,7 +1014,8 @@ fn prepare_skeleton(nif: Nif) -> Result<PreparedSkeleton, String> {
     Ok(s)
 }
 
-/// The local transform of a rigid part's shape under bone `b`, given the part's root
+/// [design: actors.md §1.2] The skeleton-axis fallback transform of a rigid shape under
+/// bone `b`, given the part's root
 /// transform and the shape's transform below it: root ∘ shape. On the head bone
 /// ([`DEFAULT_RIGID_BONE`]) that is preceded by the inverse of the bone's bind rotation
 /// and scale unless the root already is that inverse; on any other bone the part is an
@@ -1027,6 +1034,42 @@ pub fn rigid_local(skel: &PreparedSkeleton, b: usize, root: &Affine3A, shape: &A
     } else {
         Affine3A::from_mat3(inv) * *root * *shape
     }
+}
+
+/// [design, #2529] A rigid head shape centred along bone-local up and spanning
+/// skeleton Z=0 keeps its authored frame. Other shapes retain `rigid_local`'s rule.
+/// [hypothesis: actors.md §1.2] This distinguishes bone-local caps from skeleton-axis
+/// hats without model names; skinned shapes never enter this attachment path.
+fn rigid_shape_local(skel: &PreparedSkeleton, b: usize, root: &Affine3A, shape: &PartShape) -> Affine3A {
+    let authored = *root * shape.transform;
+    let fallback = || rigid_local(skel, b, root, &shape.transform);
+    if shape.skin.is_some() || skel.names.get(b).and_then(|n| n.as_deref()) != Some(DEFAULT_RIGID_BONE) {
+        return fallback();
+    }
+    let Some(bind) = skel.bind_world.get(b).map(|w| Mat3::from(w.matrix3)).filter(|m| m.is_finite() && m.determinant().abs() > 1e-12) else {
+        return fallback();
+    };
+    let Some(VertexAttributeValues::Float32x3(vertices)) = shape.cpu.attribute(Mesh::ATTRIBUTE_POSITION) else {
+        return fallback();
+    };
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for vertex in vertices {
+        let p = authored.transform_point3(Vec3::from_array(*vertex));
+        if !p.is_finite() {
+            return fallback();
+        }
+        min = min.min(p);
+        max = max.max(p);
+    }
+    let centre = (min + max) * 0.5;
+    let up = (bind.inverse() * Vec3::Z).normalize_or_zero();
+    if centre.is_finite() && min.z <= 0.0 && max.z >= 0.0
+        && centre.normalize_or_zero().dot(up) >= BONE_LOCAL_HEAD_ALIGNMENT
+    {
+        return authored;
+    }
+    fallback()
 }
 
 /// Where an unskinned creature shape hangs (actors.md §10.2): the skeleton node of its
@@ -1320,7 +1363,7 @@ pub fn spawn_parts(commands: &mut Commands, skel: &PreparedSkeleton, parts: &[Pa
                                 }
                                 (at, local)
                             }
-                            Some(b) => (nodes[b], rigid_local(skel, b, &u.part.root, &s.transform)),
+                            Some(b) => (nodes[b], rigid_shape_local(skel, b, &u.part.root, s)),
                             None => (nodes[0], s.transform),
                         };
                         let e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), Transform::from_matrix(Mat4::from(local)))).id();
@@ -1380,6 +1423,106 @@ pub fn probe_skeleton(data: &GameData, path: &str) -> Result<PreparedSkeleton, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // [design, #2529] Authored fixtures, with no game meshes or copied vertices.
+    fn head_shape(vertices: Vec<[f32; 3]>) -> PartShape {
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+        PartShape {
+            name: Some("fixture cap".into()), mesh: Handle::default(), material: Handle::default(),
+            props: Props::default(), cpu: Arc::new(mesh), skin: None,
+            transform: Affine3A::IDENTITY, cap: false, partitions: Arc::default(),
+            ancestors: Vec::new(), own: Affine3A::IDENTITY, geometry_index: 0,
+        }
+    }
+
+    fn rotated_head() -> PreparedSkeleton {
+        let head = Transform::from_translation(Vec3::new(0.0, 2.0, 100.0))
+            .with_rotation(Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2));
+        PreparedSkeleton {
+            names: vec![None, Some(DEFAULT_RIGID_BONE.into())],
+            parents: vec![None, Some(0)], locals: vec![Transform::IDENTITY, head],
+            bind_world: vec![Affine3A::IDENTITY, head.compute_affine()],
+            by_name: HashMap::from([(DEFAULT_RIGID_BONE.into(), 1)]),
+        }
+    }
+
+    #[test]
+    fn bone_local_rigid_headgear_follows_spawn_equip_and_head_turns() {
+        let skel = rotated_head();
+        let rigid = head_shape(vec![[10.0, -2.0, -3.0], [16.0, 2.0, 3.0], [13.0, 0.0, 0.0]]);
+        let mut skinned = rigid.clone();
+        skinned.skin = Some((Handle::default(), vec![DEFAULT_RIGID_BONE.into()]));
+        let part = PartUse {
+            part: Arc::new(PreparedPart { shapes: vec![rigid, skinned], ..Default::default() }),
+            materials: Vec::new(), meshes: Vec::new(), layers: Vec::new(), hidden_shapes: Vec::new(), by_ancestor: false,
+        };
+        let mut app = App::new();
+        app.add_plugins(bevy::transform::TransformPlugin);
+        let parent = app.world_mut().spawn(Transform::IDENTITY).id();
+        let placement = Transform::from_translation(Vec3::new(20.0, -30.0, 4.0))
+            .with_rotation(Quat::from_rotation_z(0.7)).with_scale(Vec3::splat(1.2));
+        let mut spawned = spawn_actor(&mut app.world_mut().commands(), parent, placement, &skel, std::slice::from_ref(&part));
+        app.world_mut().flush();
+        app.update();
+        let check = |world: &World, e: Entity| {
+            assert_eq!(world.get::<ChildOf>(e).unwrap().parent(), spawned.nodes[1]);
+            let mesh = world.get::<GlobalTransform>(e).unwrap().affine();
+            let head = world.get::<GlobalTransform>(spawned.nodes[1]).unwrap().affine();
+            for vertex in [[10.0, -2.0, -3.0], [16.0, 2.0, 3.0], [13.0, 0.0, 0.0]] {
+                let v = Vec3::from_array(vertex);
+                assert!(mesh.transform_point3(v).distance(head.transform_point3(v)) < 1e-4);
+            }
+        };
+        check(app.world(), spawned.drawn[0]);
+        let skin_entity = spawned.drawn[1];
+        assert_eq!(app.world().get::<ChildOf>(skin_entity).unwrap().parent(), spawned.root);
+        assert_eq!(app.world().get::<SkinnedMesh>(skin_entity).unwrap().joints, vec![spawned.nodes[1]]);
+        assert_eq!(*app.world().get::<Transform>(skin_entity).unwrap(), Transform::IDENTITY);
+        let initial = app.world().get::<GlobalTransform>(spawned.drawn[0]).unwrap().transform_point(Vec3::X * 13.0);
+        app.world_mut().get_mut::<Transform>(spawned.nodes[1]).unwrap().rotation *= Quat::from_rotation_z(0.6);
+        app.update();
+        check(app.world(), spawned.drawn[0]);
+        let turned = app.world().get::<GlobalTransform>(spawned.drawn[0]).unwrap().transform_point(Vec3::X * 13.0);
+        assert!(initial.distance(turned) > 1.0);
+        // [design] Equipment added after the head turns takes the same attachment path.
+        spawn_parts(&mut app.world_mut().commands(), &skel, &[part], &mut spawned);
+        app.world_mut().flush();
+        app.update();
+        let equipped = *spawned.drawn.iter().rev().nth(1).unwrap();
+        let mesh = app.world().get::<GlobalTransform>(equipped).unwrap().affine();
+        let head = app.world().get::<GlobalTransform>(spawned.nodes[1]).unwrap().affine();
+        assert!(mesh.transform_point3(Vec3::X * 13.0).distance(head.transform_point3(Vec3::X * 13.0)) < 1e-4);
+    }
+
+    #[test]
+    fn rigid_head_frame_detection_keeps_existing_layouts_and_authored_nodes() {
+        let skel = rotated_head();
+        let z_hat = head_shape(vec![[-3.0, -2.0, 8.0], [3.0, 2.0, 16.0]]);
+        let x_cap = head_shape(vec![[10.0, -2.0, -3.0], [16.0, 2.0, 3.0]]);
+        let old = |root: &Affine3A, s: &PartShape| rigid_local(&skel, 1, root, &s.transform);
+        assert_eq!(rigid_shape_local(&skel, 1, &Affine3A::IDENTITY, &z_hat), old(&Affine3A::IDENTITY, &z_hat));
+        let inverse = Affine3A::from_mat3(Mat3::from(skel.bind_world[1].matrix3).inverse());
+        assert_eq!(rigid_shape_local(&skel, 1, &inverse, &z_hat), inverse);
+        let root = Affine3A::from_rotation_z(0.4);
+        assert_eq!(rigid_shape_local(&skel, 1, &root, &x_cap), root);
+        let mut cancelling = z_hat.clone();
+        cancelling.transform = root.inverse();
+        assert_eq!(rigid_shape_local(&skel, 1, &root, &cancelling), old(&root, &cancelling));
+        let mut offset = x_cap.clone();
+        offset.transform = Affine3A::from_translation(Vec3::X);
+        assert_eq!(rigid_shape_local(&skel, 1, &Affine3A::IDENTITY, &offset), offset.transform);
+        for vertices in [vec![], vec![[-1.0; 3], [1.0; 3]], vec![[f32::NAN, 0.0, 0.0]], vec![[10.0, 0.0, 2.0], [16.0, 0.0, 4.0]]] {
+            let s = head_shape(vertices);
+            assert_eq!(rigid_shape_local(&skel, 1, &Affine3A::IDENTITY, &s), old(&Affine3A::IDENTITY, &s));
+        }
+        let mut off_head = skel.clone();
+        off_head.names[1] = Some("fixture forearm".into());
+        assert_eq!(rigid_shape_local(&off_head, 1, &root, &x_cap), root);
+        let mut broken = skel.clone();
+        broken.bind_world[1] = Affine3A::from_mat3(Mat3::ZERO);
+        assert_eq!(rigid_shape_local(&broken, 1, &root, &x_cap), root);
+    }
 
     #[test]
     fn a_severed_piece_takes_its_own_vertices_weighted_to_its_side_only() {
