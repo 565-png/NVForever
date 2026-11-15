@@ -571,6 +571,16 @@ the spec it links to.
     again. IsEssential still reads only the flag (0 for Cass). If a companion should
     still die in some case outside Hardcore, say which. Observer check 165 asks the
     original. ([unconscious §2.2a](spec-notes/unconscious.md))
+82. **Anders can be cut down only after Diane's errand (#2472).** In FalloutNV.esm the
+    choice "Let's get you down from there." is reached only through "Are you Anders?
+    Jack and Diane sent me…", a topic that is not top-level and is learnt only from
+    Diane's two lines at Red Rock Canyon (taking her errand in VMS46, or a VMS45 line).
+    Before that he offers "Who did this to you?" and the drugs topic, as your log shows;
+    no condition tests a Great Khans' quest stage, and no script or activator frees him
+    any other way. Ours follows the data and is unchanged; after her errand the choice is
+    offered, frees him and he leaves the cross. You remember freeing him at any stage: if
+    you did so without having spoken to Diane, say so; observer check 169 asks the
+    original. ([anders-cross](spec-notes/anders-cross.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 

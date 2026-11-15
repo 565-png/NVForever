@@ -2317,3 +2317,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
      (`GetPlayerTeammate`). Then the same with `SetHardcore 1`. Knocked out, up again and
      still hired outside Hardcore, dead in it agrees with ours; IsEssential reading 1 for
      the teammate says the engine counts teammates as essential by IsEssential too.
+169. **Can Anders be freed before Diane sends the player after him?** (P3; #2472,
+     anders-cross.md.) In the data the freeing choice (AndersFree 0x00142A8A) is a
+     choice of AndersJackandDiane 0x00142A89 alone, a topic that is not top-level and is
+     learnt only from Diane's lines 0x00146698 and 0x00144651. From a save that has not
+     met Diane (`GetObjectiveDisplayed VMS46 10` reads 0), go to
+     Cottonwood Cove and talk to VRRCAndersREF: list the topics offered, then pick each.
+     Only Who did this to you? / the drugs topic / Goodbye agrees with ours; a choice
+     that cuts him down says the original offers the topic some other way (then note
+     which and whether `GetQuestVariable VMS46 AndersFreed` goes to 1).

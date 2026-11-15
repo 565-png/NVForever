@@ -28943,3 +28943,25 @@ expect = [
   { re = 'console: IsEssential on EasyPeteRef >> 0\.00', label = "IsEssential still reads his flag" },
   { re = 'console: GetDead on EasyPeteRef >> 1\.00', label = "in Hardcore KillActor kills him" },
 ]
+
+[[scenario]]
+name = "anders-free-after-diane"
+kind = "tool"
+source = "issue #2472: Anders on the cross at Cottonwood Cove offered no choice to free him. In the data the freeing choice AndersFree is reached only through the topic AndersJackandDiane, which is not top-level and is added only by Diane's lines 0x00146698 (VMS46) and 0x00144651 (VMS45): before her errand he has none (docs/spec-notes/anders-cross.md)"
+note = "two headless new games: the first talks to Anders at once (no AndersJackandDiane, so no AndersFree); the second takes Diane's errand, saves and loads, then frees him. AndersFree's end script sets VMS46.AndersFreed to 1 and starts his thanks 0x00142AA6, whose begin script sets it to 2"
+areas = ["dialogue"]
+paths = ["crates/fnv-game/src/dialogue.rs"]
+commands = [
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/anders-cross-new-game.actions.json", "{data}", "FalloutNV.esm"],
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/anders-free-after-diane.actions.json", "{data}", "FalloutNV.esm"],
+]
+expect = [
+  { json = "events.?kind=line_started.info", equals = "0x00142AA5", count = 2, label = "both games: Anders greets from the cross" },
+  { json = "events.?kind=choices_offered.choices.*.topic_edid", equals = "AndersCross", min = 2, label = "both offer Who did this to you?" },
+  { json = "events.?kind=topic_added.topic_edid", equals = "AndersJackandDiane", count = 1, label = "only Diane's errand line teaches AndersJackandDiane" },
+  { json = "events.?kind=choice_made.topic_edid", equals = "AndersJackandDiane", count = 1, label = "after it (and a save and load) he offers it" },
+  { json = "events.?kind=choices_offered.choices.*.topic_edid", equals = "AndersFree", count = 1, label = "the freeing choice, in the second game only" },
+  { json = "events.?kind=result_script.unit", equals = "FalloutNV.esm|INFO 0x00142A9C end", count = 1, label = "AndersFree's end script runs (SetRestrained 0)" },
+  { json = "events.?kind=line_started.info", equals = "0x00142AA6", count = 1, label = "his thanks follow by StartConversation" },
+  { json = "final.quests.0x00140C3B.vars.AndersFreed", equals = 2, count = 1, label = "VMS46.AndersFreed ends at 2 (freed and thanked)" },
+]
