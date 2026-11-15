@@ -1825,6 +1825,23 @@ expect = [
 manual = "the 24th 'sleep: hour' line ends one date later at the time of day the menu opened at"
 
 # ------------------------------------------------------------------ detection, alert, combat
+[[scenario]]
+name = "projectile-launch-physical-session-traits"
+source = "docs/spec-notes/projectile-launch-session-traits.md: authored opt-in two-stage physical launch consumer"
+note = "UNRUN authored diagnostic; loaded Weap10mmPistol EditorID must resolve uniquely to a finite typed nonbeam one-projectile weapon/ammo chain. Uses only a fresh b42-launch-probe-home under this smoke output; rejects prior save files, temporary aliases and unsupported original representations. Real compiled script setters and player FireWeapon reach actual Flying insertions before any acceptance. Script FireWeapon preserves ammo count; normal attack debit remains a separate CPU control. Exact prior field entries and captured item counts must be restored. This is not B42 startup, physical input, native or temporary-reference-spawn proof."
+areas = ["combat", "script"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/nvse_jip7.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/projectile_launch*.rs"]
+env = { RUST_LOG = "info", NVFOREVER_HOME = "b42-launch-probe-home", NVF_PLAY_TEST_PROJECTILE_LAUNCH = "Weap10mmPistol", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 90
+expect = [
+  { text = "projectile launch probe: armed loaded=Weap10mmPistol", count = 1, label = "actual loaded identities and staged sentinel captured" },
+  { re = 'projectile launch probe: physical stage=FirstPending .*velocity=.*speed=.*force=', count = 1, label = "edited values observed only after real insertion" },
+  { re = 'projectile launch probe: physical stage=SecondPending .*velocity=.*speed=.*force=', count = 1, label = "exact prior entries restored before the second real insertion" },
+  { text = "projectile launch probe: PASS stages=2 requests=2 physical_insertions=2 exact_fields_restored=true inventory_restored=true", count = 1, label = "strict physical oracle and cleanup both complete" },
+]
+order = [["projectile launch probe: physical stage=FirstPending", "projectile launch probe: physical stage=SecondPending", "projectile launch probe: PASS stages=2"]]
+forbid = [{ text = "projectile launch probe: FAIL", label = "configuration, script admission, identity, physical oracle, timeout and cleanup failures remain visible" }]
 
 [[scenario]]
 name = "detection-table"
@@ -7359,6 +7376,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "helios-dogs-troopers"
+source = "issue #2547: at HELIOS One the guard dogs (CrDogNCRAggressive: Very Aggressive, aggro radius 2,000, in no NCR faction, Neutral to the troopers) went into combat with the NCR troopers about 2,800 units west, and the troopers fought back. A Very Aggressive actor with an aggro radius now attacks a Neutral on sight only inside that radius (crates/fnv-game/src/awareness.rs neutral_out_of_reach)"
+note = "the dogs 0x000A695E/0x000A695F/0x000A6944 stand about (25700, 2050, 5230), TestTrooperREF4/5 about (22950, 1200, 5232); the player is put 3,000+ units south of both, in god mode, so that the dogs (GeneralHostileToPlayerFaction) leave him out"
+areas = ["ai", "combat"]
+paths = ["crates/fnv-game/src/awareness.rs", "crates/fnv-game/src/aggro.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--world", "WastelandNV", "--pos=24300,-2200,5600", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 45
+expect = [
+  { re = 'detection: CrDogNCRAggressive 000A69(5E|5F|44) → ', label = "the dogs are loaded and measure someone" },
+  { re = 'alert: CrDogNCRAggressive \S+ \S+ → Combat: detects (?!the player)', count = 0, label = "no dog goes into combat with a trooper" },
+  { re = 'alert: \S+ \S+ \S+ → Combat: detects CrDogNCRAggressive', count = 0, label = "no trooper goes into combat with a dog" },
+]
+
+[[scenario]]
 name = "goodbye-after-caravan"
 kind = "tool"
 source = "owner playtest list 4 item 22: Johnson Nash's topic list ends with a Goodbye; a Goodbye line with an end script (CaravanOffer) does not hold the generic GOODBYE back (fnv-game dialogue.rs build_choices)"
@@ -7368,6 +7400,27 @@ commands = [["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/
 expect = [
   { json = "events.?kind=choices_offered.choices.*.topic_edid", equals = "CaravanOffer" },
   { json = "events.?kind=choices_offered.choices.*.topic_edid", equals = "GOODBYE" },
+]
+
+[[scenario]]
+name = "cc-explorers-halt"
+kind = "tool"
+source = "issue #2548: at Cottonwood Cove three of the four Legion explorers force-greeted with the generic \"Move along.\" (0x00175608): the Halt line 0x0013AC97 names the AAM explorer as fixed speaker (ANAM) and was refused to the others, although its condition is the faction all four are in. A condition on the speaker naming a group now decides (docs/spec-notes/dialogue.md §4)"
+note = "each command is a headless new game talking to one explorer (NVCCExplorer2REF 0x00138A92, 3 0x00138A91, 4 0x00138A93); each prints its trace on one line. The Mark of Caesar choice (Topic001) is not offered: the new-game player has no Mark"
+areas = ["dialogue"]
+paths = ["crates/fnv-game/src/dialogue.rs"]
+commands = [
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/cc-explorer2-halt.actions.json", "{data}", "FalloutNV.esm"],
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/cc-explorer3-halt.actions.json", "{data}", "FalloutNV.esm"],
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/cc-explorer4-halt.actions.json", "{data}", "FalloutNV.esm"],
+]
+expect = [
+  { json = "events.?kind=line_started.info", equals = "0x0013AC97", count = 3, label = "all three open with the Halt line" },
+  { json = "events.?kind=line_started.speaker", equals = "0x00138A92", count = 1, label = "Explorer 2 (CM2) speaks" },
+  { json = "events.?kind=line_started.speaker", equals = "0x00138A91", count = 1, label = "Explorer 3 (AM) speaks" },
+  { json = "events.?kind=line_started.speaker", equals = "0x00138A93", count = 1, label = "Explorer 4 (CM) speaks" },
+  { json = "events.?kind=choices_offered.choices.*.topic_edid", equals = "VFreeformCottonwoodCoveNVCCLegionaryGuardAAMExplorerTopic000", count = 3, label = "each offers the Halt line's choices (the Speech check among them)" },
+  { json = "events.?kind=line_started.info", equals = "0x00175608", count = 0, label = "none says the generic \"Move along.\"" },
 ]
 
 [[scenario]]
@@ -28543,21 +28596,25 @@ run_seconds = 12
 expect = [{ text = "weather: NVWastelandClearNight at 23:00", label = "the night weather is the one shown" }]
 forbid = [{ re = 'texture not loaded: .*nvwastelandstarfieldsky', label = "a warning for the starfield texture the game does not have" }]
 
-
 [[scenario]]
-name = "projectile-launch-physical-session-traits"
-source = "docs/spec-notes/projectile-launch-session-traits.md: authored opt-in two-stage physical launch consumer"
-note = "UNRUN authored diagnostic; loaded Weap10mmPistol EditorID must resolve uniquely to a finite typed nonbeam one-projectile weapon/ammo chain. Uses only a fresh b42-launch-probe-home under this smoke output; rejects prior save files, temporary aliases and unsupported original representations. Real compiled script setters and player FireWeapon reach actual Flying insertions before any acceptance. Script FireWeapon preserves ammo count; normal attack debit remains a separate CPU control. Exact prior field entries and captured item counts must be restored. This is not B42 startup, physical input, native or temporary-reference-spawn proof."
-areas = ["combat", "script"]
-paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/nvse_jip7.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/projectile_launch*.rs"]
-env = { RUST_LOG = "info", NVFOREVER_HOME = "b42-launch-probe-home", NVF_PLAY_TEST_PROJECTILE_LAUNCH = "Weap10mmPistol", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1" }
-args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages"]
-run_seconds = 90
+name = "teammate-knockout-not-hardcore"
+source = "#2623: outside Hardcore the player's teammate is knocked out at zero health, not killed, though no companion carries the Essential flag; in Hardcore it dies (docs/spec-notes/unconscious.md §2.2a, a hypothesis: observer-checks.md check 165)"
+note = "in Goodsprings: Easy Pete (not essential) is made the player's teammate by console at 14 s, the hit aid hits him for 1,000 at 15 s (the combat path the quest pilot's companions died by), so he is knocked out (essential) and GetDead reads 0 at 17 s; at 19 s Hardcore goes on and KillActor kills him"
+areas = ["combat", "knockouts"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/followers.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:EasyPeteRef.setplayerteammate 1;EasyPeteRef.getplayerteammate;14.5:close;17:EasyPeteRef.getdead;EasyPeteRef.isessential;17.5:close;19:sethardcore 1;EasyPeteRef.killactor;EasyPeteRef.getdead;20:close", NVF_PLAY_TEST_HIT = "15:EasyPeteRef:1000" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 24
+order = [[
+  { re = 'console: GetPlayerTeammate on EasyPeteRef >> 1\.00' },
+  { re = 'knockout: Easy Pete \S+ knocked out \(essential\)' },
+  { re = 'console: GetDead on EasyPeteRef >> 0\.00', label = "alive after the knockout" },
+  { re = 'console: GetDead on EasyPeteRef >> 1\.00', label = "dead after Hardcore's KillActor" },
+]]
 expect = [
-  { text = "projectile launch probe: armed loaded=Weap10mmPistol", count = 1, label = "actual loaded identities and staged sentinel captured" },
-  { re = 'projectile launch probe: physical stage=FirstPending .*velocity=.*speed=.*force=', count = 1, label = "edited values observed only after real insertion" },
-  { re = 'projectile launch probe: physical stage=SecondPending .*velocity=.*speed=.*force=', count = 1, label = "exact prior entries restored before the second real insertion" },
-  { text = "projectile launch probe: PASS stages=2 requests=2 physical_insertions=2 exact_fields_restored=true inventory_restored=true", count = 1, label = "strict physical oracle and cleanup both complete" },
+  { re = 'console: GetPlayerTeammate on EasyPeteRef >> 1\.00', label = "Easy Pete is the player's teammate" },
+  { re = 'knockout: Easy Pete \S+ knocked out \(essential\)', label = "the killing hit knocks the teammate out" },
+  { re = 'console: GetDead on EasyPeteRef >> 0\.00', label = "outside Hardcore the teammate is not dead" },
+  { re = 'console: IsEssential on EasyPeteRef >> 0\.00', label = "IsEssential still reads his flag" },
+  { re = 'console: GetDead on EasyPeteRef >> 1\.00', label = "in Hardcore KillActor kills him" },
 ]
-order = [["projectile launch probe: physical stage=FirstPending", "projectile launch probe: physical stage=SecondPending", "projectile launch probe: PASS stages=2"]]
-forbid = [{ text = "projectile launch probe: FAIL", label = "configuration, script admission, identity, physical oracle, timeout and cleanup failures remain visible" }]
