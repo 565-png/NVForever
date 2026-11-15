@@ -1051,15 +1051,15 @@ expect = [
 ]
 order = [[
   "settings: terrain-height-blend on",
-  { re = 'graphics: light glow, terrain height blending$' },
   { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]\d* changed', label = "switching on flipped the loaded folded materials" },
+  { re = 'graphics: light glow, terrain height blending$' },
   { re = 'terrain height blending pipeline \d+ ready', label = "the TERRAIN_HEIGHT_BLEND pipeline asked for after the switch compiled and is ready" },
   "settings: terrain-height-blend off",
-  { re = 'graphics: light glow$' },
   { re = 'terrain: height blending off \(\d+ folded quadrant materials, [1-9]\d* changed', label = "switching off flipped them back" },
+  { re = 'graphics: light glow$' },
   "settings: terrain-height-blend on",
-  { re = 'graphics: light glow, terrain height blending$', label = "on again" },
   { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]\d* changed', label = "flipped on again (the ready pipeline is reused)" },
+  { re = 'graphics: light glow, terrain height blending$', label = "on again" },
 ]]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error with the height-blended terrain" },
