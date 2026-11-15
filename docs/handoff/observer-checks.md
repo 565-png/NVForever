@@ -2509,6 +2509,16 @@ already talking takes over at once, same topic or another; nothing is queued or 
      coming, or coming only within some distance of his spot, says the search area is
      wrong; walking up and standing without a word says the talk is not the Find's.
 
+## Added 2026-11-15 (Vulpes Inculta in Caesar's tent, #2560)
+
+177. **Does a shared ally faction win over an enemy one?** (P2; #2560, factions.md §4.)
+     FortVulpesInculta 0x00122B9A is in VCaesarsLegionFaction (an Ally of itself) and in
+     ArmorNCRFactionNVEnemy, which VCaesarsLegionFaction names an Enemy [observed: the
+     data]. In Caesar's tent (TheFortCaesarTents) at 21:00, after a load there: do
+     Caesar, Lucius or the Praetorians ever go into combat with Vulpes? `prid 00121FF0`
+     then `getfactionrelation 00122B9A` (2 ally, 1 enemy). Ours since #2560: 2, and they
+     stay calm [hypothesis: the original agrees, as the owner never saw the fight].
+
 ## Added 2026-11-14 (children in fights, #2438)
 
 178. **Does a child ever fight back?** (P3; #2438, combat-ai.md §12.2.) Ours, by the

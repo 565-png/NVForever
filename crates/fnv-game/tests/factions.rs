@@ -314,6 +314,33 @@ fn rank(g: &mut Game, on: u32, faction: u32) -> f64 {
 }
 
 #[test]
+fn a_shared_ally_faction_wins_over_an_enemy_one() {
+    // #2560: FortVulpesInculta is in VCaesarsLegionFaction (an Ally of itself) and in
+    // ArmorNCRFactionNVEnemy (which VCaesarsLegionFaction names an Enemy); the Legion
+    // never attacks him. Allies and friends "cannot attack each other under any
+    // circumstances" [documented: GECK wiki GetFactionCombatReaction] (factions.md §4).
+    // Here the raiders name the player's faction an enemy; the bandit (raider, idler)
+    // attacks the watchman (player's faction, idler) until the idlers name themselves an
+    // ally.
+    let f = fixture();
+    let mut g = game(&f);
+    let (bandit, watchman) = (FormId(BANDIT_REF), FormId(WATCHMAN_REF));
+    assert_eq!(call(&mut g, GET_FACTION_RELATION, BANDIT_REF, &[form(WATCHMAN_REF)]), 1.0);
+    assert!(g.would_attack(bandit, watchman));
+    g.forms.faction_reactions.entry(FormId(IDLERS)).or_default().insert(FormId(IDLERS), 2);
+    assert_eq!(call(&mut g, GET_FACTION_RELATION, BANDIT_REF, &[form(WATCHMAN_REF)]), 2.0);
+    assert_eq!(call(&mut g, GET_FACTION_RELATION, WATCHMAN_REF, &[form(BANDIT_REF)]), 2.0);
+    assert!(!g.would_attack(bandit, watchman) && !g.would_attack(watchman, bandit));
+    // A friend pair wins as well, and before an ally one [hypothesis].
+    g.forms.faction_reactions.entry(FormId(RAIDERS)).or_default().insert(FormId(IDLERS), 3);
+    assert_eq!(call(&mut g, GET_FACTION_RELATION, BANDIT_REF, &[form(WATCHMAN_REF)]), 3.0);
+    // The player's crime enemies still come first.
+    g.forms.faction_reactions.entry(FormId(RAIDERS)).or_default().insert(FormId(PLAYER_FACTION), 2);
+    g.player.enemy_of.insert(FormId(RAIDERS));
+    assert_eq!(call(&mut g, GET_FACTION_RELATION, BANDIT_REF, &[form(PLAYER)]), 1.0);
+}
+
+#[test]
 fn the_records_are_read() {
     let f = fixture();
     let a = &f.data.actors;
@@ -1775,12 +1802,15 @@ fn a_flag_on_the_friendly_faction_itself_still_counts() {
     assert!(!g.would_attack(loafer, player));
     call(&mut g, SET_PC_ENEMY_OF_FACTION, PLAYER, &[form(RATS), num(1.0)]);
     assert!(g.would_attack(loafer, player));
-    // A faction reaction of Enemy still comes first: the bandit (Raiders, who name the
-    // player's faction an enemy) is not shielded by a friendly faction.
+    // A faction reaction of Enemy yields to a shared friendly faction as well (#2560,
+    // factions.md §4: allies and friends "cannot attack each other under any
+    // circumstances"): the bandit (Raiders, who name the player's faction an enemy) is
+    // shielded once one of its factions is the player's ally.
     let bandit = FormId(BANDIT_REF);
+    assert!(g.would_attack(bandit, player));
     call(&mut g, ADD_TO_FACTION, BANDIT_REF, &[form(GANG_A), num(0.0)]);
     call(&mut g, SET_ALLY, PLAYER, &[form(PLAYER_FACTION), form(GANG_A), num(1.0), num(1.0)]);
-    assert!(g.would_attack(bandit, player));
+    assert!(!g.would_attack(bandit, player));
 }
 
 #[test]

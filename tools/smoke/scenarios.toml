@@ -8530,6 +8530,40 @@ expect = [
 ]
 
 [[scenario]]
+name = "fort-vulpes-write"
+note = "Caesar's tent is in TheFortWorld's cell 0,0 (0x0013C715); Vulpes stands at (1588, 2022, 2184), the player a little west of him"
+source = "issue #2560: in Caesar's tent at The Fort, Caesar, Lucius, the Praetorians and the mongrels went into combat with Vulpes Inculta half a second after a load and killed him. Vulpes is in VCaesarsLegionFaction and ArmorNCRFactionNVEnemy, which VCaesarsLegionFaction names an Enemy; the Legion faction names itself an Ally, and an ally is never attacked (docs/spec-notes/factions.md §4). The first half: a save in the tent; fort-vulpes-load loads it, so run them together"
+areas = ["save", "ai", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/awareness.rs", "crates/fnv-game/src/provocation.rs"]
+env = { NVFOREVER_HOME = "fort-vulpes-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "18:FortCaesarRef.getfactionrelation FortVulpesIncultaRef;18.5:FortVulpesIncultaRef.getfactionrelation FortLuciusRef;20:save smoke-fort;21:close" }
+args = ["--play", "--world", "TheFortWorld", "--pos=1350,2022,2200", "--heading", "90", "--hour", "21", "--no-voice"]
+run_seconds = 23
+expect = [
+  { re = 'save: wrote .*smoke-fort\.nvfsave \(manual', label = "the save is written in the tent" },
+  { text = "script: FortVulpesIncultaRef entered trigger 0x00176F0A", label = "Vulpes is in the tent with Caesar" },
+  { re = 'console: GetFactionRelation on \S+ >> [23]\.00', count = 2, label = "Caesar and Vulpes, Vulpes and Lucius count each other as friends or allies (their shared ArmorVCaesarsLegionFaction and VCaesarsLegionFaction)" },
+  { re = 'alert: .*→ Combat: detects \S*FortVulpesInculta', count = 0, label = "nobody goes into combat with Vulpes" },
+  { re = 'alert: \S*FortVulpesInculta \S+ \S+ → Combat', count = 0, label = "Vulpes goes into combat with nobody" },
+]
+
+[[scenario]]
+name = "fort-vulpes-load"
+source = "issue #2560: the second half: --load the save fort-vulpes-write made in Caesar's tent; the Legion stays calm with Vulpes and he lives"
+areas = ["save", "ai", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/awareness.rs", "crates/fnv-game/src/provocation.rs"]
+env = { NVFOREVER_HOME = "fort-vulpes-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "12:FortCaesarRef.getfactionrelation FortVulpesIncultaRef;13:close" }
+args = ["--play", "--load", "smoke-fort", "--no-voice"]
+run_seconds = 18
+expect = [
+  { re = 'load: restored .*smoke-fort\.nvfsave: \d+ changed references', label = "the save in the tent is loaded" },
+  { text = "script: FortVulpesIncultaRef entered trigger 0x00176F0A", label = "Vulpes is back in the tent after the load" },
+  { re = 'console: GetFactionRelation on \S+ >> [23]\.00', label = "Caesar still counts Vulpes a friend after the load" },
+  { re = 'alert: .*→ Combat: detects \S*FortVulpesInculta', count = 0, label = "after the load nobody goes into combat with Vulpes (Caesar, Lucius, the Praetorians and the mongrels did half a second in)" },
+  { re = 'alert: \S*FortVulpesInculta \S+ \S+ → Combat', count = 0, label = "after the load Vulpes goes into combat with nobody" },
+  { re = 'killed by', count = 0, label = "nobody dies in the tent" },
+]
+
+[[scenario]]
 name = "save-refused-when-dead"
 source = "issue #1572: every way of saving is refused from the player's death on (docs/design/save-load.md)"
 areas = ["save"]
