@@ -29,26 +29,6 @@ AID_PREFIXES = ("NVF_PLAY_TEST_", "NVF_PLAY_DEBUG_", "NVF_PLAY_AIDS_")
 FROM_SCRIPTS = "NVF_PLAY_AIDS_FROM_SCRIPTS"
 OWNER = "smoke-owner.txt"
 
-# [design, #2652] Game scenarios in this area need the optional DLC. With --data,
-# nvforever loads available masters unless --plugins selects a list (main.rs).
-AREA_PLUGINS = {"lonesome-road": "LonesomeRoad.esm"}
-
-
-def missing_area_plugins(launch: Launch, data: str | None) -> list[str]:
-    needed = {AREA_PLUGINS[a] for s in launch.scenarios for a in s.areas if a in AREA_PLUGINS}
-    if not needed or launch.kind != GAME:
-        return []
-    selected = None
-    if "--plugins" in launch.args:
-        at = launch.args.index("--plugins") + 1
-        selected = []
-        for arg in launch.args[at:]:
-            if arg.startswith("--"):
-                break
-            selected.extend(arg.lower().split(","))
-    return sorted(p for p in needed if (selected is not None and p.lower() not in selected)
-                  or not data or not (Path(data) / p).is_file())
-
 
 # ---------------------------------------------------------------- locks
 
