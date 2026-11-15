@@ -2576,6 +2576,15 @@ while an attack holds the block in place. This preserves both creatures' widths
 when either stops to fight; the posed torso's narrower block cannot replace one
 side of the pair. Standing pushes and attack anchoring retain their existing rules.
 
+[observed: the main session's runs of NVForever, 2026-11-15, reproduction on
+Searchlight Airport's runway, the Radscorpion + Giant Radscorpion pair] While both
+stand and fight, the pair holds the designed 113 units apart (upstream main:
+62–84). While both chase a player backing away, they still close to about 57–85
+units, the same as upstream main: the widened block does not yet keep two moving
+creatures apart. [design, #2535] Keeping moving creatures apart needs a change in
+the character controller's movement path (planned moves of several actors resolved
+against each other), left for a follow-up issue.
+
 [observed: FalloutNV.esm and Fallout - Meshes.bsa, fnvtool esm decode / nif decode,
 main session 2026-11-15] The radscorpion skeleton's BBX centre is (0, 0, 30.21),
 half sizes (70.56, 125.84, 30.21). Other skeleton half sizes: `characters\_male`

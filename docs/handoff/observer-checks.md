@@ -2349,3 +2349,11 @@ already talking takes over at once, same topic or another; nothing is queued or 
      backing away for 10 s, one creature attacked three times (3.5 s apart), the
      other never [observed: capture run15b_b2, 2026-11-15]. Backing-away cadence
      parity and the unseen collision shape remain open [design].
+     [observed: the main session's runs of NVForever, 2026-11-15, reproduction on
+     Searchlight Airport's runway, the Radscorpion + Giant Radscorpion pair] While
+     both stand and fight, the pair holds the designed 113 units apart (upstream
+     main: 62–84). While both chase a player backing away, they still close to about
+     57–85 units, the same as upstream main: the widened block does not yet keep
+     two moving creatures apart. [design, #2535] Keeping moving creatures apart
+     needs a change in the character controller's movement path (planned moves of
+     several actors resolved against each other), left for a follow-up issue.
