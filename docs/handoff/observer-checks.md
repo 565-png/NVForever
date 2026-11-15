@@ -2517,6 +2517,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
      FortChildCM), `prid` it and `startcombat player`; then attack one with fists. Record whether it
      draws a weapon, swings or runs, and its Flee line, if any.
 
+## Added 2026-11-14 (quest markers several doors deep, #2458)
+
+179. **Where does the original mark a target several doors deep, seen from another
+     worldspace?** (P2; #2458, quests-dialogue.md §2, hud.md §11.) Ours: the World Map
+     marks it at the door outdoors that starts the fewest-doors way into its interior,
+     and the compass and Local Map at the door of the player's own place that starts the
+     way there [hypothesis]. To check: with For the Republic, Part 2 (VMQ05) objective 10
+     shown and the quest active, stand on the Strip (NCR embassy) and note where the
+     World Map's quest marker sits (which door of Hoover Dam, or elsewhere) and which
+     door the compass marker points at (the gate to Freeside, or another); then again
+     from the Mojave outside Freeside and inside the dam's visitor centre. Also: does
+     the World Map draw a second marker at the Strip's gate while the player is on the
+     Strip?
+
 ## Added 2026-11-14 (talking activators with no talking actor set, #2454)
 
 185. **Who speaks through a talking activator no script has given an actor?** (P2; #2454,
