@@ -224,6 +224,13 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- **An intercom nobody has set up speaks for the actor its script names (#2454).**
+  [hypothesis, #2454] When a talking activator starts a conversation before any script
+  told it who speaks, ours lets the one actor its scripts name speak (Ramos for the
+  Hidden Valley intercom), instead of saying nothing. Without it, sneaking into the
+  bunker and being sent out for your gear by McNamara left your controls off for good.
+  Check in game that Ramos speaks on the intercom there on a sneak-in save.
+  ([talking-activators §2](spec-notes/talking-activators.md))
 - **Grass fires: size, speed and regrowth (#2567).** [design] Burning weapons and blasts
   light generated grass; a fire spreads in 64-unit patches (0.5-1.5 s a step, faster
   downwind), each patch burns 6 s, and a fire stops at 1,024 units from its start or 500
@@ -474,6 +481,13 @@ the spec it links to.
     (item 5, second part) is not built yet.
     ([pickpocket §5](spec-notes/pickpocket.md))
 
+70. **Children never fight (#2438).** As you decided: every actor whose race has the
+    Child flag flees a fight at once and never attacks or draws, whatever its record's
+    confidence, aggression or combat style; it still turns hostile, so crime and faction
+    rules stay. The race's flag, not the actor's name, says who is a child. Two calls
+    of ours: the child flees even before it is hurt (children take no damage, so the "once hurt" rule would never start it), and a
+    scripted UseWeapon on a child in a fight no longer draws its weapon either. Observer
+    check 178 asks what the original does. ([combat-ai §12.2](design/combat-ai.md))
 71. **Armour only ever worn has no look on the ground (#2439).** The two floating
     backpacks at the Fort were not the slaves' packs. They are two placed references of
     the Slave Backpack armour (0x0013732C and 0x0013732D), 565 and 913 units up with
@@ -584,6 +598,27 @@ the spec it links to.
     again. IsEssential still reads only the flag (0 for Cass). If a companion should
     still die in some case outside Hardcore, say which. Observer check 165 asks the
     original. ([unconscious §2.2a](spec-notes/unconscious.md))
+82. **Anders can be cut down only after Diane's errand (#2472).** In FalloutNV.esm the
+    choice "Let's get you down from there." is reached only through "Are you Anders?
+    Jack and Diane sent me…", a topic that is not top-level and is learnt only from
+    Diane's two lines at Red Rock Canyon (taking her errand in VMS46, or a VMS45 line).
+    Before that he offers "Who did this to you?" and the drugs topic, as your log shows;
+    no condition tests a Great Khans' quest stage, and no script or activator frees him
+    any other way. Ours follows the data and is unchanged; after her errand the choice is
+    offered, frees him and he leaves the cross. You remember freeing him at any stage: if
+    you did so without having spoken to Diane, say so; observer check 175 asks the
+    original. ([anders-cross](spec-notes/anders-cross.md))
+83. **Anders on the cross: his head no longer turns over, and he is found on the cross
+    (#2471).** His cross clips hang his head past straight down; ours read that head's
+    direction from its forward alone, got the opposite way, and turned it to you upside
+    down. The 60° limit did hold, measured from his chest (his body faces away from
+    his reference's heading on the cross; the logged yaw was the root's). Ours now: the
+    head is lifted to you right side up, within 60° of his chest (plus the talk clip's
+    own nods); the same reading fixes head tracking for any hanging head. He also used
+    to sidestep 8 units on a limping clip and climb onto the cross in front of you; an
+    actor standing at its cross is now put on it at once. Say if the crucified should
+    not turn their heads to you at all, or if you have seen the climb in the original.
+    Observer check 174 asks the original. ([anders-cross-head](spec-notes/anders-cross-head.md))
 81. **A faction disguise outranks the player's bad standing with that faction (#2611).**
     In NCR armour on the Legion route, every NCR soldier at Hoover Dam attacked: the
     player's enemy flag with NCRFactionNV (a crime, SetPCEnemyOfFaction) won over the
@@ -619,6 +654,29 @@ the spec it links to.
     with the idle. Please look at House's chamber (closed until the terminal, then
     opening) and, if you see one, a Protectron or Robobrain playing an idle.
     ([animation §9.4](spec-notes/animation.md))
+68. **Fixtures never fight: Mr. House's screens and chamber, and Festus (#2431).** An
+    Immobile creature that is Unaggressive, Helps Nobody and carries no weapon is never
+    hostile, takes no combat target and never turns, whatever the player did (murder,
+    hits, faction enmity). That rule, from the records alone, covers MrHouse,
+    MrHouseOFFLINE, NVCRMrHouse and also NVCRFestus; turrets are untouched (they carry
+    guns). The screens take no damage (their records are Invulnerable); House's body
+    can still be killed once the terminal unseals the chamber, as you ruled. Please
+    check Festus behaves as you expect, and the penthouse screen after House's death.
+    ([actor flags §11](spec-notes/actor-flags.md))
+69. **Quest targets several doors deep: which door the World Map marks (#2458).** Colonel
+    Moore (For the Republic, Part 2) stands in a power plant room of Hoover Dam that no
+    outdoor door leads into directly, so the World Map had no marker for her. The same
+    was true of 213 quest targets indoors in the master [observed: the count the data
+    test crates/fnv-game/tests/quest_marker_data.rs prints]. Now the World Map marks the
+    outdoor door that starts the way in with the fewest load doors. For Moore that is
+    the hatch of intake tower 3 on top of the dam (tower 3, then its elevator), not the
+    observation deck's door that the quest marks while you are in the Mojave. From the
+    Strip, the compass and the Local Map mark the gate to Freeside, the first door of
+    the way. Fewest doors may not be the way the original picks (walking distance, or
+    the doors players use); observer check 179 asks. If you prefer, the World Map could
+    follow the player's own way from where they stand instead (the last outdoor door
+    of that way), which can differ for buildings with several entrances.
+    ([quests-dialogue §2](spec-notes/quests-dialogue.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 
