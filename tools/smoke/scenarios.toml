@@ -29971,10 +29971,10 @@ expect = [
 [[scenario]]
 name = "roy-say-pause-resume"
 source = "[documented: #2714, spooknik's 2026-11-15 record audit] Roy's SCPT 0x00113643 calls plain Say 0x001135FA; INFO 0x0011361F has no Wayne reply. [design: docs/design/dialogue.md section 8] Its remaining time, voice and subtitle survive the pause menu and the line ends once."
-note = "[design, #2714] Start near Roy in FreesideFortWorld; call the same plain Say with no target at 10 s, hold at 11-16 s (longer than the reported 2.24 s line), then hear it out. Fixed aid times are guarded by the required voice hold/resume order. This is an unrun engine/audio acceptance check."
+note = "[design, #2714] Start near Roy in FreesideFortWorld; call the same plain Say with no target at 10 s, press Escape at 11 and 16 s (a hold longer than the reported 2.24 s line), then hear it out. Say and both key presses share the world-aid clock, including a late script start; the required voice hold/resume order guards the mid-line pause. This is an unrun engine/audio acceptance check."
 areas = ["dialogue", "voice", "menus"]
 paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/tests/synthetic.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/voice.rs", "engine/nvf-play/src/script_hud.rs", "engine/nvf-play/src/pause.rs", "docs/design/dialogue.md"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_NEAR = "0011365D", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "10:call:VFSRoyREF:Say:0x001135FA", NVF_PLAY_TEST_PAUSE = "11:16" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_NEAR = "0011365D", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "10:call:VFSRoyREF:Say:0x001135FA", NVF_PLAY_TEST_KEYS = "11:esc,16:esc" }
 args = ["--play", "--world", "FreesideFortWorld", "--pos=7915,2120,1000", "--heading", "0", "--hour", "12", "--no-messages"]
 run_seconds = 24
 order = [[
@@ -29989,7 +29989,7 @@ order = [[
   "voice: VFSRoyREF line 0x0011361F held (its timer stands still)",
   "voice: VFSRoyREF line 0x0011361F goes on",
   "script: VFSRoyREF ended line 0x0011361F",
-  { re = 'subtitle: $', label = "the HUD clears the finished subtitle" },
+  { text = "subtitle: cleared", label = "the HUD clears the finished subtitle" },
 ]]
 expect = [
   { text = "script: VFSRoyREF says 0x0011361F", count = 1, label = "Say starts the line once" },

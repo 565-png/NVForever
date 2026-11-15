@@ -258,6 +258,12 @@ SayToDone once. The headless regression
 `synthetic::plain_say_resumes_after_mid_line_pauses_and_finishes_once` exercises two
 mid-response menu holds, retained subtitle inputs, the end result and SayToDone; the
 `roy-say-pause-resume` smoke scenario checks the actual pause menu, voice and subtitle.
+[design, #2714: `nvf-play/test_aid.rs::real_presses`, `pause.rs::WorldAidClock`]
+The scenario uses Escape-key aids on the same world clock as Say, keeping the pause
+mid-line even when script loading starts that clock late. [design:
+`nvf-play/script_hud.rs::Subtitles::log_change`, `draw`] The HUD logs
+`subtitle: cleared` once when its logged subtitle selection becomes empty; the smoke
+requires that marker after Roy's line ends.
 This records the existing implementation, not an original-game capture [design].
 
 [documented: issue #2714, spooknik's 2026-11-15 record audit] Roy's object script
