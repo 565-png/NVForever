@@ -551,6 +551,15 @@ the spec it links to.
     If you saw wild creatures and patrols ignore each other more than in the original,
     say where. Observer checks 144 and 163 ask the original.
     ([factions §4](spec-notes/factions.md))
+79. **Companions are knocked out, not killed, outside Hardcore (#2623).** No companion
+    carries the Essential flag in the data and no script sets it, so Cass, Veronica and
+    Boone died in the quest pilot's fights outside Hardcore (and Veronica's death left
+    the Hidden Valley bunker locked). Ours now: outside Hardcore every player teammate
+    falls unconscious at zero health and gets up after the fight, still hired; in
+    Hardcore it dies, as before. A mod's JIP ToggleTeammateKillable 1 makes one killable
+    again. IsEssential still reads only the flag (0 for Cass). If a companion should
+    still die in some case outside Hardcore, say which. Observer check 165 asks the
+    original. ([unconscious §2.2a](spec-notes/unconscious.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 

@@ -28578,3 +28578,26 @@ args = ["--cell", "Goodsprings", "--play", "--hour", "23", "--no-voice", "--no-m
 run_seconds = 12
 expect = [{ text = "weather: NVWastelandClearNight at 23:00", label = "the night weather is the one shown" }]
 forbid = [{ re = 'texture not loaded: .*nvwastelandstarfieldsky', label = "a warning for the starfield texture the game does not have" }]
+
+[[scenario]]
+name = "teammate-knockout-not-hardcore"
+source = "#2623: outside Hardcore the player's teammate is knocked out at zero health, not killed, though no companion carries the Essential flag; in Hardcore it dies (docs/spec-notes/unconscious.md §2.2a, a hypothesis: observer-checks.md check 165)"
+note = "in Goodsprings: Easy Pete (not essential) is made the player's teammate by console at 14 s, the hit aid hits him for 1,000 at 15 s (the combat path the quest pilot's companions died by), so he is knocked out (essential) and GetDead reads 0 at 17 s; at 19 s Hardcore goes on and KillActor kills him"
+areas = ["combat", "knockouts"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/followers.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:EasyPeteRef.setplayerteammate 1;EasyPeteRef.getplayerteammate;14.5:close;17:EasyPeteRef.getdead;EasyPeteRef.isessential;17.5:close;19:sethardcore 1;EasyPeteRef.killactor;EasyPeteRef.getdead;20:close", NVF_PLAY_TEST_HIT = "15:EasyPeteRef:1000" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 24
+order = [[
+  { re = 'console: GetPlayerTeammate on EasyPeteRef >> 1\.00' },
+  { re = 'knockout: Easy Pete \S+ knocked out \(essential\)' },
+  { re = 'console: GetDead on EasyPeteRef >> 0\.00', label = "alive after the knockout" },
+  { re = 'console: GetDead on EasyPeteRef >> 1\.00', label = "dead after Hardcore's KillActor" },
+]]
+expect = [
+  { re = 'console: GetPlayerTeammate on EasyPeteRef >> 1\.00', label = "Easy Pete is the player's teammate" },
+  { re = 'knockout: Easy Pete \S+ knocked out \(essential\)', label = "the killing hit knocks the teammate out" },
+  { re = 'console: GetDead on EasyPeteRef >> 0\.00', label = "outside Hardcore the teammate is not dead" },
+  { re = 'console: IsEssential on EasyPeteRef >> 0\.00', label = "IsEssential still reads his flag" },
+  { re = 'console: GetDead on EasyPeteRef >> 1\.00', label = "in Hardcore KillActor kills him" },
+]

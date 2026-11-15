@@ -2292,3 +2292,16 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the bound is wrong. A spawned actor may start fights at once where a placed one
      waits (aggro.rs, check 2); if the spawned dog fights at both, `MoveTo` one of
      HELIOS's placed dogs instead (check 144).
+
+## Added 2026-11-15 (companions outside Hardcore, #2623)
+
+165. **Is an unflagged teammate knocked out, not killed, outside Hardcore?** (P2; #2623,
+     unconscious.md §2.2a.) Ours since #2623: outside Hardcore the player's teammate is
+     spared death as an essential actor, though no companion's ACBS has Essential; in
+     Hardcore it dies [hypothesis]. With Hardcore off: hire a companion who is not
+     flagged (Cass, or Easy Pete given `SetPlayerTeammate 1`), then `DamageAV Health
+     9999` and, on another try, `KillActor` on it. Each time read `GetDead`, `IsEssential`
+     and `GetKnockedState` for 15 s and whether it gets up and is still a teammate
+     (`GetPlayerTeammate`). Then the same with `SetHardcore 1`. Knocked out, up again and
+     still hired outside Hardcore, dead in it agrees with ours; IsEssential reading 1 for
+     the teammate says the engine counts teammates as essential by IsEssential too.
