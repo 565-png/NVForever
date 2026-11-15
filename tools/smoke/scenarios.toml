@@ -14123,6 +14123,38 @@ expect = [
 ]
 
 [[scenario]]
+name = "session-lighting-reentry"
+source = "docs/spec-notes/session-cell-lighting.md; Part of #2272: actual console session template/trait/inheritance writes reach the existing camera Projection when the cell is entered again. Application and zero-clip fallback are engine policy, not native timing observations."
+note = "Requires a non-null LoadOrder-backed template on 2ETopsPresidentialSuite and an initial GSDocMitchellHouse camera clip unequal to the authored 32123. These are checked admission conditions, not a silently substituted template. A real COC exit/return tests positive clip; then same-cell COC reapplies zero while the camera still has the positive clip, making the fallback transition observable without a new diagnostic. No immediate live-refresh, pixel or installed-mod assertion."
+areas = ["scripts", "sky", "world"]
+paths = ["crates/fnv-world/src/lighting.rs", "crates/fnv-game/src/nvse_jg1.rs", "engine/nvforever/src/world.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/sky.rs"]
+requires = ["NVF_PLAY_TEST_LIGHTING_HOME"]
+env = { NVFOREVER_HOME = "{env:NVF_PLAY_TEST_LIGHTING_HOME}", NVF_REPORTS = "0", RUST_LOG = "info,nvf_play::script=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = '8:GetCellLightingTemplate 2ETopsPresidentialSuite;9:SetCellLightingTemplate GSDocMitchellHouse (GetCellLightingTemplate "2ETopsPresidentialSuite");10:SetCellFlag GSDocMitchellHouse 15 1;11:SetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15 32123;12:PrintC "lighting-smoke positive clip %g" (GetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15);13:GetCellFlag GSDocMitchellHouse 15;14:close;20:coc Goodsprings;20.5:close;30:coc GSDocMitchellHouse;30.5:close;39:SetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15 0;40:PrintC "lighting-smoke zero clip %g" (GetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15);41:close;46:coc GSDocMitchellHouse;46.5:close' }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 58
+timeout = 180
+order = [[
+  { re = '''sky: the camera's far plane at (?!32123\b)(?P<n>\d+) units \(the cell's fog clip distance\)''', range = [500, 100000], label = "ordinary cold camera clipping is present and differs from the authored target" },
+  { re = 'console: GetCellLightingTemplate >> 0x(?!00000000\b)[0-9A-Fa-f]{8}\b', label = "the donor cell resolves a non-null LoadOrder template" },
+  { text = 'console: SetCellLightingTemplate GSDocMitchellHouse (GetCellLightingTemplate "2ETopsPresidentialSuite") >> ran', label = "the real console compiles the template assignment" },
+  { re = 'console: lighting-smoke positive clip 32123(?:\.0+)?$', label = "the selected template trait getter sees the authored positive clip" },
+  { text = "console: GetCellFlag >> 1.00", label = "clip inheritance is enabled" },
+  { text = "console: Travelling to Goodsprings", label = "leave through the real console travel path" },
+  { text = "sky: the camera's far plane at 400000 units", label = "outdoor camera fallback remains intact" },
+  { text = "console: Travelling to GSDocMitchellHouse", label = "re-enter the edited cell" },
+  { text = "sky: the camera's far plane at 32123 units (the cell's fog clip distance)", label = "the actual camera consumer applies the session clip after re-entry" },
+  { re = 'console: lighting-smoke zero clip 0(?:\.0+)?$', label = "the template getter sees zero before the second cycle" },
+  { text = "console: Travelling to GSDocMitchellHouse", label = "same-cell COC reapplies zero while the camera still has the positive clip" },
+  { text = "sky: the camera's far plane at 400000 units", label = "the interior's zero clip keeps the existing engine fallback" },
+]]
+forbid = [
+  { re = 'script: .* failed in .*console', label = "no console CallFailed event is hidden by a zero result" },
+  { re = 'script error in .*console', label = "no compiled console script error" },
+  { re = 'script: unhandled .* in .*console|script: .* in .*console.*could not read parameter', label = "no unsupported call or argument-default fallback" },
+  { re = 'console: .*not built|console: No cell named|console: .*has no marker or door to arrive at', label = "no unsupported function or invalid travel admission" },
+]
+
+[[scenario]]
 name = "region-sounds"
 source = "ESM audit group 8 (docs/spec-notes/default-objects.md §2): in Doc Mitchell's house the sounds of the region its acoustic space names (AudioIntMitchellHouse, REGN RDSD) are tried every 10 s at their chance and some play"
 areas = ["audio"]
