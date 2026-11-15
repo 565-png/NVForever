@@ -1224,6 +1224,13 @@ impl Speech {
     pub fn goodbye_at_player(&self) -> bool {
         (self.greeting || self.farewell) && self.target == Some(FormId::PLAYER_REF)
     }
+
+    /// A line started by Say or SayTo (a script's, or a combat or package bark said the
+    /// same way): not a line of a conversation between actors, a greeting, a farewell or
+    /// a hello (`Game::say_by_script`, #2582).
+    pub fn said_by_script(&self) -> bool {
+        self.conversation.is_none() && !self.greeting && !self.farewell && !self.hello
+    }
 }
 
 /// One actor turning to another while a line is said ([`Game::facings`]).
@@ -2997,7 +3004,7 @@ impl<'a> Game<'a> {
         let opts = self.opts();
         let data = self.data;
         let table = &data.table;
-        let mut ex = Exec { game: self, unit, locals, ctx };
+        let mut ex = Exec { game: self, unit, locals, ctx, seconds: None };
         let mut vm = Vm::new(table, &mut ex, opts);
         let r = match resume {
             Some(at) => vm.resume(stmts, at),
@@ -3152,7 +3159,7 @@ impl<'a> Game<'a> {
         let opts = self.opts();
         self.udf.push(UdfFrame { value: None, caller: None });
         self.open_run();
-        let mut ex = Exec { game: self, unit, locals: Locals::Temp(BTreeMap::new()), ctx };
+        let mut ex = Exec { game: self, unit, locals: Locals::Temp(BTreeMap::new()), ctx, seconds: None };
         let result = Vm::new(&data.table, &mut ex, opts).run(&block.body).map_err(|e| e.to_string());
         if let Locals::Temp(m) = &ex.locals {
             for (&index, v) in m {
@@ -3298,10 +3305,16 @@ impl<'a> Game<'a> {
     /// Defined Function; Lambda]. The function's strings and arrays go when it ends
     /// [documented: Ar Null, arrays of a function script are freed].
     pub fn run_function(&mut self, f: &fnv_script::vm::XVal, on: Option<Value>, args: Vec<fnv_script::vm::XVal>, caller: Option<FormId>, ctx: RunCtx) -> Result<fnv_script::vm::XVal, String> {
-        self.nested(move |g| g.run_function_here(f, on, args, caller, ctx))
+        self.run_function_with_seconds(f, on, args, caller, (ctx, None))
     }
 
-    fn run_function_here(&mut self, f: &fnv_script::vm::XVal, on: Option<Value>, args: Vec<fnv_script::vm::XVal>, caller: Option<FormId>, ctx: RunCtx) -> Result<fnv_script::vm::XVal, String> {
+    /// An elapsed value belongs to this UDF invocation and its nested calls only.
+    /// JIP callbacks supply it; ordinary calls and result scripts do not.
+    pub(crate) fn run_function_with_seconds(&mut self, f: &fnv_script::vm::XVal, on: Option<Value>, args: Vec<fnv_script::vm::XVal>, caller: Option<FormId>, (ctx, seconds): (RunCtx, Option<f64>)) -> Result<fnv_script::vm::XVal, String> {
+        self.nested(move |g| g.run_function_here(f, on, args, caller, (ctx, seconds)))
+    }
+
+    fn run_function_here(&mut self, f: &fnv_script::vm::XVal, on: Option<Value>, args: Vec<fnv_script::vm::XVal>, caller: Option<FormId>, (ctx, seconds): (RunCtx, Option<f64>)) -> Result<fnv_script::vm::XVal, String> {
         use fnv_script::vm::XVal;
         let id = match f {
             XVal::Ref(id) => *id,
@@ -3336,7 +3349,7 @@ impl<'a> Game<'a> {
         self.udf.push(UdfFrame { value: None, caller });
         self.open_run();
         let ctx = RunCtx { self_ref: self_ref.or(ctx.self_ref), ..ctx };
-        let mut ex = Exec { game: self, unit, locals, ctx };
+        let mut ex = Exec { game: self, unit, locals, ctx, seconds };
         let mut vm = Vm::new(&data.table, &mut ex, opts);
         let mut result = Ok(());
         for (p, a) in params.iter().zip(args) {
@@ -3573,6 +3586,9 @@ impl<'a> Game<'a> {
     pub fn put_session(&mut self, s: Session) {
         self.handlers = s.handlers;
         self.jip.main_loop = s.main_loop;
+        for callback in &mut self.jip.main_loop {
+            callback.last_clock = functions::clock_now(self.time);
+        }
         self.restarted_seen = s.restarted_seen;
         self.handler_seq = s.handler_seq;
         self.pp_put_session(s.pp);
@@ -3658,7 +3674,7 @@ impl<'a> Game<'a> {
             Arg::Float(f) => Value::Num(*f),
             Arg::Enum(c) => Value::Num(*c as f64),
             Arg::Ref(r) => {
-                let mut ex = Exec { game: self, unit, locals: Locals::Instance(key), ctx: RunCtx::default() };
+                let mut ex = Exec { game: self, unit, locals: Locals::Instance(key), ctx: RunCtx::default(), seconds: None };
                 match ex.ref_value(*r) {
                     Ok(v) => v,
                     Err(_) => return false,
@@ -4622,7 +4638,21 @@ impl<'a> Game<'a> {
     /// narrator saying Elijah's and Vera's slide lines among them; docs/spec-notes/
     /// dialogue.md §4, issue #965]. Combat barks, package and patrol topics keep
     /// [`Game::say`]: an actor with no Hit line does not say another's.
+    ///
+    /// A Say or SayTo of the topic its speaker is already saying by Say or SayTo (not a
+    /// line of a conversation, a greeting, a farewell or a hello) leaves that line playing
+    /// and returns it, as if said again [observed: observer batch o30, PR #2580: a repeat
+    /// renews the speaker's talking state from the call, a queue never builds, and a SayTo
+    /// every frame keeps it talking without a break; hypothesis: that the voice and the
+    /// subtitle do not restart with each call, observer check 144 open]. FalloutNV's Strip
+    /// gate kill zone (SCPT 0x00119786) SayTos its topic every frame the player is inside,
+    /// and the line restarted every frame before (#2582). Another topic cuts the line and
+    /// takes over, as o30 saw ([`Game::say_line`]). NVForever's talking state ends with
+    /// the line, not about 4.9 s after it as o30 measured in the original.
     pub fn say_by_script(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, say_to: bool) -> Option<FormId> {
+        if let Some(s) = self.speech.iter().find(|s| s.speaker == speaker && s.topic == topic && s.said_by_script()) {
+            return Some(s.info);
+        }
         self.say_with(speaker, target, topic, say_to, true)
     }
 
@@ -5967,6 +5997,10 @@ impl<'a> Game<'a> {
 
     /// Dispatch a function by opcode (scripts and conditions share it).
     pub fn call_function(&mut self, ctx: &Ctx, args: &[ArgValue]) -> Value {
+        self.call_function_with_seconds(ctx, args, None)
+    }
+
+    fn call_function_with_seconds(&mut self, ctx: &Ctx, args: &[ArgValue], seconds: Option<f64>) -> Value {
         let data = self.data;
         let name = || data.table.get(ctx.opcode).map(|f| f.name.clone()).unwrap_or_else(|| format!("0x{:04X}", ctx.opcode));
         // A console function (a number of ours, no opcode of the game's) by the function's catalogue name.
@@ -5974,7 +6008,10 @@ impl<'a> Game<'a> {
         match functions::lookup(ctx.opcode).or_else(console) {
             Some(Kind::Impl(f)) => {
                 let outer = functions::begin_unread();
-                let r = f(self, ctx, &Args(args));
+                // GetSecondsPassed in a callback UDF has no persistent instance.
+                // Keep instance clocks and the normal dispatch/result bookkeeping.
+                let elapsed = seconds.filter(|_| ctx.opcode == 0x100C && ctx.inst.is_none());
+                let r = elapsed.map_or_else(|| f(self, ctx, &Args(args)), |dt| Ok(Value::Num(dt)));
                 self.call_result(ctx, r, functions::end_unread(outer))
             }
             Some(Kind::NoOp(_)) => Value::ZERO,
@@ -6353,6 +6390,7 @@ struct Exec<'g, 'a> {
     unit: &'a Compiled,
     locals: Locals,
     ctx: RunCtx,
+    seconds: Option<f64>,
 }
 
 impl Exec<'_, '_> {
@@ -6558,7 +6596,7 @@ impl Host for Exec<'_, '_> {
             inst: self.inst_key(),
             in_condition: false,
         };
-        Ok(self.game.call_function(&ctx, args))
+        Ok(self.game.call_function_with_seconds(&ctx, args, self.seconds))
     }
 
     fn no_reference_call(&mut self, name: &str, on: Option<Value>, call: &fnv_script::ir::XCall) {
@@ -6717,7 +6755,7 @@ impl Host for Exec<'_, '_> {
             }
             _ => None,
         };
-        let r = self.game.run_function(f, on, args, caller, ctx);
+        let r = self.game.run_function_with_seconds(f, on, args, caller, (ctx, self.seconds));
         if let (Some(i), Locals::Temp(m)) = (mine, &mut self.locals) {
             if let Some(c) = self.game.lambdas.get(i).and_then(|d| d.captured.clone()) {
                 *m = c;
