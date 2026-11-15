@@ -1,4 +1,4 @@
-# Mesh terrain blend, rounds 1-4 (#2661)
+# Mesh terrain blend, rounds 1-5 (#2661)
 
 [design] This is NVForever's aid-only world-space colour blend, selected by
 `NVF_PLAY_TEST_MESH_BLEND=24:surface`. Band, selection, resolution and residency rules
@@ -442,3 +442,249 @@ scenarios, fine`. No cargo build/test/clippy, game run, smoke run or game-data a
 `nif_material::tests`, `nif_surface_blend::tests`; engine clippy. Then the
 `mesh-terrain-blend-goodsprings` scenario and the round-3 road view with `24:status`
 first: every resident cell should report `colour-mask=0xf`.
+
+## Round 5: contact weight, shading blend, resolution and a small capture material
+
+Round 5 supersedes the earlier statements about the default band (24), the fixed 512
+resolution, colour-only blending, the `normal` stub and the non-bindless bake material.
+
+[observed: main-session report on the round-4 exe, road mesh on the landscape in
+WastelandNV cell (-17,0)] `24:status` was all green with `colour-mask=0xf` in all 9 cells.
+`24:weight`: the shoulder that cuts into the ground had w=1; the flat road top had
+w of about 0.3-0.5, about 10-15 units above the terrain. `24:surface` mean sRGB, off then
+on: road top (99,95,73) to (100,95,73); shoulder (99,89,67) to (111,99,73); ground beside
+it (141,127,96). The shoulder kept the mesh's lighting and normal-map creases, and 8 units
+per texel looked blurred. The round-4 engine tests passed.
+
+[design] The plan this round implements is the reviewer's (fidelity plan for round 5):
+weight, shading and detail are treated as three separate defects.
+
+### Aid value
+
+[design] `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution[:shading]]]`
+(`mesh_terrain_blend.rs::parse`):
+
+| Part | Values | Default |
+| --- | --- | --- |
+| band | positive finite number | 8 |
+| view | `surface`, `weight`, `normal`, `selection`, `status` | (required) |
+| shape | `height`, `penetration`, `hybrid` | `hybrid` |
+| resolution | `512`, `1024`, `2048` (colour texels per cell side) | `1024` |
+| shading | `albedo`, `full` | `full` |
+
+The first part is the view when it names one, otherwise the band (empty: the default).
+An empty later part takes its default; more parts, an unknown word or another resolution
+is rejected in the log and leaves the aid off. Old short forms keep their meaning with the
+new defaults for what they omit: `24:status` is band 24, hybrid, 1024, full. The start
+line is `mesh terrain blend: start band=... variant=... resolution=... noise=0 shape=...
+shading=...`; the ready line appends `shape=... resolution=... shading=...` after its
+`ready eligible-shapes=... resident-cells=... generation=... variant=...` prefix, with the
+published atlas's resolution. The defaults are NVForever's choices.
+
+### Contact weight
+
+[design] With `d` the fragment's game height above the selected ground triangle
+(negative below it), `B` the band, `F` the existing residency/edge fade, `c` the cosine
+between the interpolated mesh normal before normal mapping (`pbr_input.world_normal`) and
+the ground triangle's geometric normal:
+
+```text
+H = 1 - smoothstep(0, B, max(d, 0))
+P = 1 - smoothstep(-2, 0, d)
+G = 1 - smoothstep(cos 35 deg, cos 15 deg, c)
+height:      w = F * H
+penetration: w = F * P
+hybrid:      w = F * H * max(G, P)
+```
+
+The ground normal is `normalize(-dx / 128, -dy / 128, 1)` in game space from the selected
+triangle's plane coefficients (`terrain_surface.rs::height_planes`), and `(x, z, -y)` in
+Bevy space (`world.rs::game_to_bevy`'s rotation). The 15 and 35 degree limits and the 2-unit
+penetration depth are NVForever's initial tuning choices. The CPU statement is
+`nvf-assets/src/nif_surface_blend.rs::contact_weight` (also `terrain_game_normal`,
+`game_to_world_normal`, `blend_normal`); the shader's `mesh_terrain_weight`,
+`terrain_game_normal`, `game_to_world_normal` and `mesh_terrain_blend_normal` in
+`nif_surface_bindings.wesl` transcribe them, and the numbers reach the shader as shader
+definitions from the same constants (`blend_shader_defs`). The unit tests run the Rust
+statements; the WGSL is composed and validated, not executed.
+
+[design] Expected effect, by the formula, not by a run: a road top 10-15 units above the
+ground gets no weight at band 8 in any shape; a top parallel to the ground at or above it
+gets none in `hybrid`, coplanar included; a face turned 35 degrees or more gets the full
+contact weight at the ground, fading over 8 units; anything 2 units or more below the
+ground gets full weight in `hybrid` and `penetration`. This is a contact heuristic, not
+detection of mesh boundaries.
+
+### Shading
+
+[design] `nif_material.wesl`, forward pass only, after the existing coverage tests and
+normal mapping, before lighting (one `mesh_terrain_lookup` returns status, weight, cached
+colour and the ground normal). With `w > 0` and a successful lookup:
+
+```text
+base_color.rgb = mix(mesh, cached colour, w)          (albedo and full)
+N = mesh_terrain_blend_normal(N, ground normal, w)    (full only, below)
+perceptual_roughness -> 0.95, reflectance -> 0.2, metallic -> 0, emissive * (1 - w),
+clearcoat * (1 - w), anisotropy strength * (1 - w)
+```
+
+The targets 0.95 and 0.2 are the landscape's own values, `terrain.rs::surface`, which now
+reads them from `nif_surface_blend.rs` (`LAND_PERCEPTUAL_ROUGHNESS`, `LAND_REFLECTANCE`;
+unchanged values). Roughness, reflectance and metallic are the values after the mesh's
+textures, so its specular and roughness maps fade out at w = 1. The normal mix falls back
+to the ground normal where it cancels out; w <= 0 leaves every input exactly as it was.
+Alpha, discard, coverage, positions, depth, the geometric `world_normal` (shadow bias),
+shadows and occlusion are untouched. Geometric triangle normals, not the landscape's
+LAND normals and normal maps, are the target this round [design]: creases and slope
+darkening should go, pixel-identical ground lighting is not claimed. A normal cache is
+deferred (it would need the terrain's tangent frame and layer normals, another binding,
+about 36 MiB for a 3x3 RGBA8 atlas at 1024).
+
+### Views
+
+[design] `weight`, `normal` and `status` are drawn as unlit colour without fog: the
+material is switched to unlit with fog off and its emission cleared, without an early
+return, so the lighting code keeps uniform control flow. `weight` is blue (0) to red (1)
+for the selected shape, the mesh's own colour where the lookup fails. `normal` is the
+ground triangle's game-space normal as `0.5 + 0.5 n` (flat ground (0.5, 0.5, 1), east-
+facing slopes redder, north-facing greener), black without a valid height. `status`
+keeps round 3's colours and precedence. `selection` stays a lit green tint. The
+publication line's probe now ends `probe-normal=(x, y, z)` (or `none`), the normal the
+`normal` view should show beneath the camera, and the line ends `resolution=...`.
+
+### Resolution
+
+[design] The atlas is `3 x resolution` texels square, RGBA16F, one mip:
+
+| Resolution | Units per texel | Colour storage |
+| --- | ---: | ---: |
+| 512 | 8 | 18 MiB |
+| 1024 (default) | 4 | 72 MiB |
+| 2048 | 2 | 288 MiB |
+
+CPU copies, render targets and transient generations are not counted. The shader reads
+the resolution from the bound atlas (`textureDimensions`); `MESH_TERRAIN_RESOLUTION` is
+gone. `SurfaceCache::resolution` sizes the atlas and feeds the CPU footprint probe
+(`lookup_status(..., resolution)`). At startup `check_resolution` compares `3 x resolution`
+with the device's `max_texture_dimension_2d`: supported, it logs `mesh terrain blend:
+colour atlas resolution=... atlas=WxW rgba16f colour-mib=... max-texture-dimension-2d=...`;
+unsupported, it logs `rejected resolution=...` and nothing is baked or sampled. The mip-0
+footprint validation is unchanged. RGBA8 sRGB storage and direct dominant-layer sampling
+are deferred, as the plan says.
+
+### Single-texture capture (round-4 P2)
+
+[design] `terrain_surface.rs::SurfaceCaptureMaterial` is a plain `Material` (not derived
+from StandardMaterial or TerrainMaterial) with one uniform (linear material colour, UV
+transform, texture-present flag, layer flag), one diffuse texture and one sampler; its
+key carries the layer flag and the rasteriser part of the source's depth bias
+(`raster_bias`), and `Material::depth_bias` returns the source's whole bias, so layer
+copies sort as the near layers do. Shader `terrain_capture.wesl`: colour = material x
+vertex x diffuse (a missing texture counts as white, so the source's fallback grey stays);
+a base writes alpha 1, a layer `material x vertex x diffuse` alpha, composited by the
+blend state of `AlphaMode::Blend` without depth writes. It is registered by
+`SurfaceBakePlugin` (aid on only) with prepass and shadows off. `terrain.rs::
+spawn_terrain_with` now records `CaptureDraw::Folded` only for folded bases (which exist
+only where `TerrainMaterials::folds` found bindless textures, or never under
+`NVF_PLAY_TEST_TERRAIN_LAYERS=blended`) and `CaptureDraw::Single` for every other base and
+every layer, layers after a folded base included. TerrainLayers keeps only
+`surface_bake` (`SURFACE_BAKE_LAYER` and the layer raster-bias branch are gone).
+Receipts, the expected-entity set, both phases and the delayed publication are unchanged.
+
+[design] The blend material's own layout: `NifSurfaceBlend` now binds exactly the
+ordinary `NifSurface` slots (uniform 50, texture 51, sampler 52, texture 53, index table
+50..54); its colour atlas, sampler and height atlas take the places of the ordinary holes
+texture, holes sampler and FaceGen offset, which a blend clone never has (eligibility
+requires no holes and no FaceGen; the blend key's `facegen` is false; in the blend
+variant the shader's holes/FaceGen readers return constants and are not reached). The
+uniform stays 160 bytes. So the blend pipeline binds no more textures per stage than the
+ordinary NIF pipeline it replaces: the view and mesh groups are the same mesh pipeline's,
+the material groups have equal texture counts. The ordinary NifSurface interface is
+untouched (`nif_material.rs::tests::ordinary_surface_gpu_interface_matches_main`).
+
+### Tests, type-checked only
+
+- `nvf-assets` `nif_surface_blend::tests`: weight at heights -2/0/4/8/12 for every shape,
+  parallel, 25-degree and upright normals, the 15/35-degree limits, road-top heights,
+  clamping; normals of both triangles from the plane coefficients, game-to-Bevy mapping;
+  normal blending exact at w <= 0 and safe for opposed or zero normals; shared shader
+  constants (no resolution definition); blend layout equal to the ordinary slots and
+  texture count (bindless descriptors and the struct's attributes).
+- `nvforever` `terrain_surface::tests`: every probe classification at all three
+  resolutions; a footprint boundary that rejects at 512 and passes at 1024/2048, at positive
+  and negative cells; one-texel cell edges and the missing quadrant at every resolution;
+  resolution limits and storage; the probe normal for both triangles, its Bevy rotation and
+  its `none` cases; publication line with `resolution=` and `probe-normal=`; the spawned
+  layered-quadrant regression now also checks that folding off yields no TerrainMaterial
+  copy, layer copies blend with rising sort bias after their base and the right raster
+  bias, base copies are opaque, each bake entity's material type, and the 3072-texel
+  default atlas; a rejected resolution bakes and publishes nothing.
+- `nvforever` `mesh_terrain_blend::tests`: old short forms, every comparison-sheet value,
+  band-less and empty parts, rejections; start and ready lines with their prefixes; the
+  material controls.
+- `nvforever` `mesh_blend_shader_tests`: the binding module composes and validates in all
+  four bindless/blend variants with textures only in slots 51 and 53; the complete NIF
+  forward (with and without `SOFT_EDGES`) and prepass compose, and every texture the blend
+  shader uses is a binding of the ordinary pipeline's layout; the folded bake composes;
+  `terrain_capture.wesl` composes with and without colours/coordinates and uses one texture;
+  `material_groups_fit_a_16_texture_stage_without_bindless`: blend group = ordinary NIF
+  group (<= 16), the capture's group is one texture, TerrainMaterial's exceeds 16 (why it is
+  folded-only).
+- Not available in this round: a constrained-device GPU test. Unit tests here have no wgpu
+  device (wgpu's noop backend feature is off for nvforever, and CI has no GPU), so pipeline
+  creation itself is not exercised; the composed shaders show only what each shader uses.
+
+[documented: round-5 command outputs] Permitted checks, from `engine` with
+`CARGO_TARGET_DIR=E:/Games/NVForever/engine/target-2661-opus`: `cargo check -p nvf-assets
+--tests` exit 0; `cargo check -p nvforever --tests` exit 0; `cargo check -p nvforever`
+exit 0, all without warnings. `python tools/smoke verify` from the worktree root: exit 0,
+`scenario file: 1518 scenarios, fine`. No cargo build/test/clippy, game run, smoke run or
+game-data access.
+
+### Smoke
+
+[design] `mesh-terrain-blend-goodsprings` keeps `24:surface`; its start expectation now
+reads `resolution=1024 noise=0 shape=hybrid shading=full` (1024 is the new default; the
+`start band=24 variant=surface` prefix is unchanged), and it also requires the `colour
+atlas resolution=1024 atlas=3072x3072 rgba16f colour-mib=72` line. Its other expectations
+are unchanged; `terrain_capture.wesl` joins its paths. New `mesh-terrain-blend-options`
+runs `8:status:penetration:2048:albedo` and requires the resolved start line, the 2048
+atlas line, a ready line with `variant=status shape=penetration resolution=2048
+shading=albedo`, a publication line ending `resolution=2048`, and no shader errors.
+
+### Comparison sheet for the main session
+
+[design] Identical camera, time and exposure; the round-3/4 WastelandNV road view (cell
+(-17, 0), camera game (-66629, 1481, 8468), heading 196, pitch -38) first:
+
+| Frame | `NVF_PLAY_TEST_MESH_BLEND` | Isolates |
+| --- | --- | --- |
+| Off | unset | the original mesh |
+| Round-4 reference | `24:surface:height:512:albedo` | round 4's behaviour |
+| Narrow band | `8:surface:height:512:albedo` | the band alone |
+| Contact shape | `8:surface:hybrid:512:albedo` | orientation and penetration |
+| Lighting match | `8:surface:hybrid:512:full` | the shading blend |
+| Recommended | `8:surface:hybrid:1024:full` | the sharper cache |
+
+Optional: `8:surface:hybrid:2048:full`, `8:surface:penetration:1024:full`. Diagnostics:
+`8:weight:hybrid:1024:full`, `8:status:hybrid:1024:full`, `8:selection:hybrid:1024:full`,
+`8:normal:hybrid:1024:full` (compare its colour beneath the camera with the publication
+line's `probe-normal`). Then repeat Recommended and Off at a rock foot and at a cliff base:
+the road alone cannot judge those cases. Round 4's `24:surface` frames equal the round-4
+reference value only in band, shape and resolution; in round 5 `24:surface` means
+`24:surface:hybrid:1024:full`.
+
+[hypothesis] Risks to look for: shallow rock feet may blend too little under the
+orientation gate; authored mesh normals can misclassify edges; triangle normals can show
+faceting and lack the LAND normal maps; lighting still differs through shadows, occlusion
+and the separately lit landscape layer draws; 1024 may still look soft, 2048 costs memory
+and capture time and may alias; buried visible surfaces still take the landscape's look.
+
+[design] Main session: run the `nvforever` filters `terrain_surface`, `terrain::tests`,
+`mesh_terrain_blend`, `mesh_blend_shader_tests`, `texture_swap`, `nif_mirror`, `fade`,
+`draw_distance`, `door_fade`, `effect_shaders`, `shadow_thin`, and the `nvf-assets`
+filters `nif_material::tests`, `nif_surface_blend::tests`; engine clippy; smoke
+`mesh-terrain-blend-goodsprings` and `mesh-terrain-blend-options` plus round 2's Off
+checks; then the comparison sheet. If the game starts with `WGPU_SETTINGS_PRIO=webgpu`
+(no optional features, 16 sampled textures per stage), a run of `8:status:hybrid:1024:full`
+there is the constrained-device capture check the unit tests cannot make.

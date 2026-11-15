@@ -1,10 +1,12 @@
-//! [design] NVForever's aid-only mesh/landscape colour blend: rigid exterior STATs,
-//! a 24-unit default contact band, no noise, and immutable source materials.
+//! [design] NVForever's aid-only mesh/landscape blend: rigid exterior STATs, no noise,
+//! immutable source materials. `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution
+//! [:shading]]]`; omitted parts default to an 8-unit band, the hybrid contact shape, 1024
+//! colour texels per cell and full shading. These are NVForever's own choices.
 
 use crate::terrain_surface::{SurfaceCache, update_cache};
 use bevy::prelude::*;
 use nvf_assets::nif_material::{NifMaterial, Falloff};
-use nvf_assets::nif_surface_blend::{NifBlendMaterial, NifSurfaceBlend};
+use nvf_assets::nif_surface_blend::{ContactShape, NifBlendMaterial, NifSurfaceBlend, Shading, DEFAULT_RESOLUTION, RESOLUTIONS};
 use std::{collections::HashMap, sync::OnceLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,25 +19,58 @@ impl Variant {
     fn number(self) -> f32 {
         match self { Self::Surface => 0.0, Self::Weight => 1.0, Self::Normal => 2.0, Self::Selection => 3.0, Self::Status => 4.0 }
     }
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "surface" => Self::Surface, "weight" => Self::Weight, "normal" => Self::Normal,
+            "selection" => Self::Selection, "status" => Self::Status, _ => return None,
+        })
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BlendConfig { pub band: f32, pub variant: Variant }
+/// [design] Defaults of the parts the aid's value leaves out.
+pub const DEFAULT_BAND: f32 = 8.0;
+pub const DEFAULT_SHAPE: ContactShape = ContactShape::Hybrid;
+pub const DEFAULT_SHADING: Shading = Shading::Full;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlendConfig { pub band: f32, pub variant: Variant, pub shape: ContactShape, pub resolution: u32, pub shading: Shading }
+
+impl BlendConfig {
+    /// The enabled material's controls (nif_surface_bindings.wesl `mesh_terrain`): band,
+    /// view, contact shape, shading.
+    pub fn controls(&self) -> Vec4 {
+        Vec4::new(self.band, self.variant.number(), self.shape.number(), self.shading.number())
+    }
+}
+
+const SYNTAX: &str = "expected [positive band:]surface|weight|normal|selection|status[:height|penetration|hybrid[:512|1024|2048[:albedo|full]]]";
+
+/// [design] `[band:]view[:shape[:resolution[:shading]]]`. The first part is the view when
+/// it names one, otherwise the band (empty: the default). An empty later part takes its
+/// default. Old short forms (`surface`, `:selection`, `24:status`) keep their meaning,
+/// with the new defaults for what they leave out.
 pub fn parse(value: &str) -> Result<BlendConfig, &'static str> {
-    let (band, variant) = match value.split_once(':') {
-        Some(("", variant)) => (24.0, variant),
-        Some((band, variant)) => (band.parse::<f32>().map_err(|_| "band must be a finite positive number")?, variant),
-        None => (24.0, value),
+    let mut parts: Vec<&str> = value.split(':').collect();
+    let band = if Variant::parse(parts[0]).is_some() { DEFAULT_BAND } else {
+        let band = parts.remove(0);
+        if band.is_empty() { DEFAULT_BAND } else { band.parse::<f32>().map_err(|_| "band must be a finite positive number")? }
     };
     if !band.is_finite() || band <= 0.0 { return Err("band must be a finite positive number"); }
-    let variant = match variant {
-        "surface" => Variant::Surface, "weight" => Variant::Weight,
-        "normal" => Variant::Normal, "selection" => Variant::Selection,
-        "status" => Variant::Status,
-        _ => return Err("expected [positive band]:surface|weight|normal|selection|status"),
+    let mut parts = parts.into_iter();
+    let variant = parts.next().and_then(Variant::parse).ok_or(SYNTAX)?;
+    let shape = match parts.next().unwrap_or("") {
+        "" => DEFAULT_SHAPE, "height" => ContactShape::Height, "penetration" => ContactShape::Penetration,
+        "hybrid" => ContactShape::Hybrid, _ => return Err(SYNTAX),
     };
-    Ok(BlendConfig { band, variant })
+    let resolution = match parts.next().unwrap_or("") {
+        "" => DEFAULT_RESOLUTION,
+        r => r.parse::<u32>().ok().filter(|r| RESOLUTIONS.contains(r)).ok_or("resolution must be 512, 1024 or 2048")?,
+    };
+    let shading = match parts.next().unwrap_or("") {
+        "" => DEFAULT_SHADING, "albedo" => Shading::Albedo, "full" => Shading::Full, _ => return Err(SYNTAX),
+    };
+    if parts.next().is_some() { return Err(SYNTAX); }
+    Ok(BlendConfig { band, variant, shape, resolution, shading })
 }
 
 pub fn config() -> Option<BlendConfig> {
@@ -48,15 +83,17 @@ pub fn config() -> Option<BlendConfig> {
         };
         match parse(&value) {
             Ok(c) => {
-                info!("mesh terrain blend: start band={} variant={} resolution={} noise=0", c.band, c.variant.name(), crate::terrain_surface::RESOLUTION);
-                if c.variant == Variant::Normal {
-                    info!("mesh terrain blend: normal not yet implemented (round 2)");
-                    None
-                } else { Some(c) }
+                info!("{}", start_line(&c));
+                Some(c)
             }
             Err(e) => { warn!("mesh terrain blend: rejected NVF_PLAY_TEST_MESH_BLEND={value:?}: {e}"); None }
         }
     })
+}
+
+/// The resolved configuration; `start band=... variant=...` stays the line's prefix.
+fn start_line(c: &BlendConfig) -> String {
+    format!("mesh terrain blend: start band={} variant={} resolution={} noise=0 shape={} shading={}", c.band, c.variant.name(), c.resolution, c.shape.name(), c.shading.name())
 }
 
 // [design] Selection rules, not asset-path guesses. Callers supply code facts from
@@ -89,9 +126,9 @@ pub struct MeshTerrainBlendPlugin;
 
 impl Plugin for MeshTerrainBlendPlugin {
     fn build(&self, app: &mut App) {
-        if config().is_none() { return; }
+        let Some(c) = config() else { return };
         app.add_plugins((MaterialPlugin::<NifBlendMaterial>::default(), crate::terrain_surface::SurfaceBakePlugin))
-            .init_resource::<SurfaceCache>().init_resource::<Variants>()
+            .insert_resource(SurfaceCache::with_resolution(c.resolution)).init_resource::<Variants>()
             .add_systems(Update, update_cache.after(crate::world::stream))
             .add_systems(PostUpdate, conversion_order(apply_variants));
     }
@@ -114,7 +151,7 @@ fn conversion_order<M>(system: impl IntoScheduleConfigs<bevy::ecs::system::Sched
 fn enabled_material(source: &NifMaterial, c: BlendConfig, surface: &crate::terrain_surface::PublishedSurface) -> NifBlendMaterial {
     NifBlendMaterial {
         base: source.base.clone(),
-        extension: NifSurfaceBlend::from_source(&source.extension, c.band, c.variant.number(),
+        extension: NifSurfaceBlend::from_source(&source.extension, c.controls(),
             Vec4::new(surface.origin.0 as f32, surface.origin.1 as f32, 0.0, 0.0), surface.colour.clone(), surface.height.clone()),
     }
 }
@@ -180,10 +217,16 @@ fn apply_configured_variants(
     }
     if let Some(surface) = &cache.published {
         if eligible > 0 && variants.reported != Some(cache.generation) {
-            info!("mesh terrain blend: ready eligible-shapes={eligible} resident-cells={} generation={} variant={}", surface.cells, cache.generation, c.variant.name());
+            info!("{}", ready_line(eligible, surface, cache.generation, &c));
             variants.reported = Some(cache.generation);
         }
     }
+}
+
+/// `ready eligible-shapes=... resident-cells=... generation=...` stays the line's prefix;
+/// the resolution is the published atlas's.
+fn ready_line(eligible: usize, surface: &crate::terrain_surface::PublishedSurface, generation: u64, c: &BlendConfig) -> String {
+    format!("mesh terrain blend: ready eligible-shapes={eligible} resident-cells={} generation={generation} variant={} shape={} resolution={} shading={}", surface.cells, c.variant.name(), c.shape.name(), surface.resolution, c.shading.name())
 }
 
 #[cfg(test)]
@@ -200,7 +243,7 @@ mod tests {
     }
     fn publish(app: &mut App) {
         let mut images = app.world_mut().resource_mut::<Assets<Image>>();
-        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (-18, -1), cells: 9 };
+        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (-18, -1), cells: 9, resolution: 1024 };
         app.init_resource::<SurfaceCache>();
         let mut cache = app.world_mut().resource_mut::<SurfaceCache>();
         cache.generation = 7;
@@ -374,14 +417,43 @@ mod tests {
 
     #[test]
     fn aid_parsing() {
-        assert_eq!(parse("surface").unwrap(), BlendConfig { band: 24.0, variant: Variant::Surface });
-        assert_eq!(parse(":selection").unwrap().band, 24.0);
+        let config = |band, variant, shape, resolution, shading| BlendConfig { band, variant, shape, resolution, shading };
+        use ContactShape::*;
+        // Old short forms keep working, with the new defaults for what they leave out.
+        assert_eq!(parse("surface").unwrap(), config(8.0, Variant::Surface, Hybrid, 1024, Shading::Full));
+        assert_eq!(parse(":selection").unwrap(), config(8.0, Variant::Selection, Hybrid, 1024, Shading::Full));
         assert_eq!(parse("12:weight").unwrap().variant, Variant::Weight);
         assert_eq!(parse("24:normal").unwrap().variant, Variant::Normal);
-        assert_eq!(parse("24:status").unwrap().variant, Variant::Status);
-        for value in ["", "24", "0:surface", "-1:weight", "NaN:surface", "inf:surface", "a:surface", "24:bad", "24:surface:weight"] {
+        assert_eq!(parse("24:status").unwrap(), config(24.0, Variant::Status, Hybrid, 1024, Shading::Full));
+        // The comparison sheet's values (handoff, round 5).
+        assert_eq!(parse("24:surface:height:512:albedo").unwrap(), config(24.0, Variant::Surface, Height, 512, Shading::Albedo));
+        assert_eq!(parse("8:surface:height:512:albedo").unwrap(), config(8.0, Variant::Surface, Height, 512, Shading::Albedo));
+        assert_eq!(parse("8:surface:hybrid:512:albedo").unwrap(), config(8.0, Variant::Surface, Hybrid, 512, Shading::Albedo));
+        assert_eq!(parse("8:surface:hybrid:512:full").unwrap(), config(8.0, Variant::Surface, Hybrid, 512, Shading::Full));
+        assert_eq!(parse("8:surface:hybrid:1024:full").unwrap(), config(8.0, Variant::Surface, Hybrid, 1024, Shading::Full));
+        assert_eq!(parse("8:surface:hybrid:2048:full").unwrap().resolution, 2048);
+        assert_eq!(parse("8:surface:penetration:1024:full").unwrap().shape, Penetration);
+        for view in ["weight", "status", "selection", "normal"] {
+            assert_eq!(parse(&format!("8:{view}:hybrid:1024:full")).unwrap(), config(8.0, Variant::parse(view).unwrap(), Hybrid, 1024, Shading::Full));
+        }
+        // Without a band; empty parts take their defaults.
+        assert_eq!(parse("weight:penetration").unwrap(), config(8.0, Variant::Weight, Penetration, 1024, Shading::Full));
+        assert_eq!(parse("surface::2048").unwrap(), config(8.0, Variant::Surface, Hybrid, 2048, Shading::Full));
+        assert_eq!(parse("6.5:surface:::albedo").unwrap(), config(6.5, Variant::Surface, Hybrid, 1024, Shading::Albedo));
+        for value in ["", "24", "0:surface", "-1:weight", "NaN:surface", "inf:surface", "a:surface", "24:bad", "24:surface:weight",
+            "surface:hybrid:768", "surface:hybrid:1024:shiny", "surface:hybrid:1024:full:extra", "8:surface:hybrid:1024:full:", "8:8:surface", "surface:24"] {
             assert!(parse(value).is_err(), "{value}");
         }
+    }
+
+    #[test]
+    fn start_and_ready_lines_keep_their_prefixes_and_name_every_setting() {
+        let c = parse("24:surface").unwrap();
+        assert_eq!(start_line(&c), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full");
+        let mut images = Assets::<Image>::default();
+        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (0, 0), cells: 9, resolution: 512 };
+        assert_eq!(ready_line(12, &surface, 3, &parse("8:status:height:512:albedo").unwrap()), "mesh terrain blend: ready eligible-shapes=12 resident-cells=9 generation=3 variant=status shape=height resolution=512 shading=albedo");
+        assert_eq!(parse("6.5:normal:penetration").unwrap().controls(), Vec4::new(6.5, 2.0, 1.0, 1.0));
     }
 
     #[test]
@@ -398,7 +470,7 @@ mod tests {
     #[test]
     fn enabled_clone_preserves_source_and_alpha_coverage_descriptors() {
         let mut images = Assets::<Image>::default();
-        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (-2, -1), cells: 1 };
+        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (-2, -1), cells: 1, resolution: 512 };
         for alpha_mode in [AlphaMode::Opaque, AlphaMode::Mask(0.4)] {
             let source = NifMaterial { base: StandardMaterial { alpha_mode, double_sided: true, cull_mode: None, ..default() }, extension: NifSurface::default() };
             assert!(eligible_material(&source));

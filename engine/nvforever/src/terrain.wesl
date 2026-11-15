@@ -194,10 +194,6 @@ fn fragment(
     // handedness +-1.
     var opacity = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     var tint = vec3(1.0);
-    // [design] Surface bake (terrain_surface.rs): a copy of a blended layer draw keeps the
-    // layer's own opacity, its vertex alpha, which the folded path below takes as layer 0's.
-    @if(SURFACE_BAKE) var bake_alpha = 1.0;
-    @if(SURFACE_BAKE_LAYER && VERTEX_COLORS) bake_alpha = in.color.a;
     @if(VERTEX_COLORS) opacity[0] = in.color.a;
     @if(VERTEX_COLORS) tint = in.color.rgb;
     @if(VERTEX_COLORS) in.color = vec4(in.color.rgb, 1.0);
@@ -214,8 +210,6 @@ fn fragment(
     }
 
     var pbr_input = pbr_input_from_standard_material(in, is_front);
-    // The layer's material and texture alpha, as its near draw blends with them.
-    @if(SURFACE_BAKE_LAYER) bake_alpha *= pbr_input.material.base_color.a;
     let counts = layer_counts(in.instance_index);
     @if(VERTEX_UVS_A) {
         let standard = standard_material(in.instance_index);
@@ -237,7 +231,8 @@ fn fragment(
         pbr_input.material.base_color = vec4(colour, 1.0);
         pbr_input.N = normalize(normal);
     }
-    @if(SURFACE_BAKE) return surface_bake(pbr_input.material.base_color.rgb, bake_alpha);
+    // [design] Surface bake of a folded base (terrain_surface.rs): its unlit colour.
+    @if(SURFACE_BAKE) return surface_bake(pbr_input.material.base_color.rgb);
     @if(!SURFACE_BAKE) {
     if counts.z != 0u {
         let s = scorch(in.instance_index, in.world_position.xyz);

@@ -2,9 +2,13 @@
 //! and materials. Heights cover every prepared cell; colour validity is per quadrant.
 //! A quadrant's colour is its whole near-terrain stack: the base draw (folded or not)
 //! and then every blended layer draw over it, as flat unlit copies with the near draws'
-//! materials, alpha and draw order (terrain.rs `spawn_terrain_with`, terrain.wesl
-//! `SURFACE_BAKE`/`SURFACE_BAKE_LAYER`). The bake publishes only after every copy, opaque
-//! and blended, has drawn in one frame.
+//! textures, alpha and draw order (terrain.rs `spawn_terrain_with`). A folded base (only
+//! where the GPU has bindless textures, `TerrainMaterials::folds`) is copied with its
+//! [`TerrainMaterial`] (terrain.wesl `SURFACE_BAKE`); every other base and every layer
+//! with the single-texture [`SurfaceCaptureMaterial`] (terrain_capture.wesl), whose
+//! material group binds one texture. The bake publishes only after every copy, opaque
+//! and blended, has drawn in one frame. The atlas is 512, 1024 (default) or 2048 texels
+//! per cell side, chosen by the aid and checked against the device's texture limit.
 
 use crate::terrain::TerrainMaterial;
 use crate::world::{bevy_to_game, game_to_bevy, Streamer, WorldData};
@@ -20,11 +24,21 @@ use bevy::render::render_phase::{CachedRenderPipelinePhaseItem, DrawFunctions, R
 use bevy::core_pipeline::core_3d::{Opaque3d, Transparent3d};
 use bevy::ecs::{query::ROQueryItem, system::SystemParamItem};
 use std::{collections::HashSet, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}};
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
+use bevy::render::render_resource::{AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDimension, TextureFormat, TextureUsages};
+use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
+use bevy::shader::ShaderRef;
 use fnv_world::land::SIDE;
 
-pub use nvf_assets::nif_surface_blend::{RESOLUTION, GRID, HEIGHT_TILE_WIDTH, HEIGHT_TILE_HEIGHT};
-const WIDTH: u32 = 3 * RESOLUTION;
+pub use nvf_assets::nif_surface_blend::{GRID, HEIGHT_TILE_WIDTH, HEIGHT_TILE_HEIGHT, DEFAULT_RESOLUTION, RESOLUTIONS};
+/// Texels across the 3x3-cell colour atlas.
+pub fn atlas_width(resolution: u32) -> u32 { 3 * resolution }
+/// [design] A resolution the aid accepts and the device can hold as one atlas texture.
+pub fn resolution_supported(resolution: u32, max_texture_dimension_2d: u32) -> bool {
+    RESOLUTIONS.contains(&resolution) && atlas_width(resolution) <= max_texture_dimension_2d
+}
+/// Colour atlas storage in bytes (RGBA16F, one mip), CPU copies and render targets aside.
+pub fn colour_bytes(resolution: u32) -> u64 { u64::from(atlas_width(resolution)).pow(2) * 8 }
 const HEIGHT_WIDTH: usize = 3 * HEIGHT_TILE_WIDTH;
 const HEIGHT_HEIGHT: usize = 3 * HEIGHT_TILE_HEIGHT;
 pub const BAKE_LAYER: usize = 16;
@@ -45,28 +59,115 @@ impl CapturePath {
     fn colour_valid(self) -> bool { !matches!(self, Self::HeightOnly(_)) }
 }
 
+pub const CAPTURE_SHADER: &str = "embedded://nvforever/terrain_capture.wesl";
+
+/// [design] The unlit capture of one landscape draw that is not a folded base: a fallback
+/// or non-bindless base, or a blended layer (terrain_capture.wesl). One diffuse texture,
+/// one sampler, one uniform: its material group fits a GPU without bindless textures,
+/// where [`TerrainMaterial`]'s (six standard and thirteen layer textures) does not.
+/// Registered only with the aid on; no prepass, no shadows.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+#[bind_group_data(SurfaceCaptureKey)]
+pub struct SurfaceCaptureMaterial {
+    #[uniform(0)]
+    pub values: SurfaceCaptureUniform,
+    /// The source's diffuse texture; `None` samples white (the fallback image), and the
+    /// uniform's flag ignores it then.
+    #[texture(1)]
+    #[sampler(2)]
+    pub diffuse: Option<Handle<Image>>,
+    /// A layer copy: alpha blended over the copies before it, without depth writes.
+    pub layer: bool,
+    /// The source material's depth bias: sort order plus rasteriser bias (`sort_first`).
+    pub depth_bias: f32,
+}
+
+/// [design] terrain_capture.wesl `SurfaceCapture`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType, Reflect)]
+pub struct SurfaceCaptureUniform {
+    /// Linear material colour; alpha the material's opacity.
+    pub colour: Vec4,
+    /// The texture coordinate transform's x axis (xy) and y axis (zw).
+    pub uv_axes: Vec4,
+    /// xy the transform's translation; z 1 with a diffuse texture; w 1 for a layer.
+    pub uv_offset_flags: Vec4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SurfaceCaptureKey { layer: bool, raster_bias: i32 }
+impl From<&SurfaceCaptureMaterial> for SurfaceCaptureKey {
+    fn from(m: &SurfaceCaptureMaterial) -> Self {
+        Self { layer: m.layer, raster_bias: nvf_assets::nif_material::raster_bias(m.depth_bias as i32) }
+    }
+}
+
+impl SurfaceCaptureMaterial {
+    /// The capture of a near draw with `source` (terrain.rs `surface`, `layer_material`).
+    pub fn from_standard(source: &StandardMaterial, layer: bool) -> Self {
+        let colour = LinearRgba::from(source.base_color);
+        let t = source.uv_transform;
+        Self {
+            values: SurfaceCaptureUniform {
+                colour: Vec4::new(colour.red, colour.green, colour.blue, colour.alpha),
+                uv_axes: Vec4::new(t.matrix2.x_axis.x, t.matrix2.x_axis.y, t.matrix2.y_axis.x, t.matrix2.y_axis.y),
+                uv_offset_flags: Vec4::new(t.translation.x, t.translation.y, f32::from(u8::from(source.base_color_texture.is_some())), f32::from(u8::from(layer))),
+            },
+            diffuse: source.base_color_texture.clone(),
+            layer,
+            depth_bias: source.depth_bias,
+        }
+    }
+}
+
+impl Material for SurfaceCaptureMaterial {
+    fn fragment_shader() -> ShaderRef { CAPTURE_SHADER.into() }
+    fn alpha_mode(&self) -> AlphaMode { if self.layer { AlphaMode::Blend } else { AlphaMode::Opaque } }
+    /// Orders layer copies as the near layers are ordered (the transparent sort).
+    fn depth_bias(&self) -> f32 { self.depth_bias }
+    fn enable_prepass() -> bool { false }
+    fn enable_shadows() -> bool { false }
+    fn specialize(_: &MaterialPipeline, descriptor: &mut RenderPipelineDescriptor, _: &MeshVertexBufferLayoutRef, key: MaterialPipelineKey<Self>) -> Result<(), SpecializedMeshPipelineError> {
+        // [design] The rasteriser gets only its own part of the bias, as NifSurface's
+        // specialize gives the near layer (`raster_bias`).
+        if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
+            depth_stencil.bias.constant = key.bind_group_data.raster_bias;
+        }
+        Ok(())
+    }
+}
+
+/// [design] One bake copy's material: a folded base with its own material, or the
+/// single-texture capture of any other draw.
+#[derive(Clone, Debug)]
+pub enum CaptureDraw { Folded(Box<TerrainMaterial>), Single(SurfaceCaptureMaterial) }
+
 #[derive(Component)]
 pub struct SurfaceCell {
     pub world: u32,
     pub grid: (i32, i32),
     pub heights: Vec<f32>,
-    pub quadrants: Vec<(Mesh, TerrainMaterial)>,
+    pub quadrants: Vec<(Mesh, CaptureDraw)>,
     pub paths: [CapturePath; 4],
 }
 
 impl SurfaceCell {
     /// A quadrant's draws in their drawing order: its base first, then each blended layer.
-    /// Each becomes a flat unlit copy; a layer copy keeps its material's alpha blending.
-    pub fn capture(&mut self, quadrant: u8, draws: Vec<(Mesh, TerrainMaterial)>, path: CapturePath) {
-        for (i, (mut flat, mut material)) in draws.into_iter().enumerate() {
+    /// Each becomes a flat unlit copy; a layer copy keeps its alpha blending.
+    pub fn capture(&mut self, quadrant: u8, draws: Vec<(Mesh, CaptureDraw)>, path: CapturePath) {
+        for (mut flat, draw) in draws {
             if let Some(VertexAttributeValues::Float32x3(p)) = flat.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
                 for v in p { v[2] = 0.0; }
             }
-            material.extension.surface_bake = true;
-            material.extension.bake_layer = i > 0;
-            material.extension.burn = None;
-            material.base.fog_enabled = false;
-            self.quadrants.push((flat, material));
+            let draw = match draw {
+                CaptureDraw::Folded(mut material) => {
+                    material.extension.surface_bake = true;
+                    material.extension.burn = None;
+                    material.base.fog_enabled = false;
+                    CaptureDraw::Folded(material)
+                }
+                single => single,
+            };
+            self.quadrants.push((flat, draw));
         }
         self.paths[quadrant as usize] = path;
     }
@@ -81,6 +182,7 @@ pub struct PublishedSurface {
     pub height: Handle<Image>,
     pub origin: (i32, i32),
     pub cells: usize,
+    pub resolution: u32,
 }
 
 struct BakeJob {
@@ -89,7 +191,7 @@ struct BakeJob {
     report: String,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct SurfaceCache {
     pub generation: u64,
     signature: Option<(u32, (i32, i32), Vec<Entity>)>,
@@ -97,6 +199,32 @@ pub struct SurfaceCache {
     ready: Option<u64>,
     submitted: Arc<Mutex<Option<u64>>>,
     pub published: Option<PublishedSurface>,
+    /// Colour texels per cell side (the aid's resolution).
+    pub resolution: u32,
+    /// The device cannot hold the requested atlas ([`check_resolution`]): nothing bakes.
+    pub rejected: bool,
+}
+impl Default for SurfaceCache {
+    fn default() -> Self { Self::with_resolution(DEFAULT_RESOLUTION) }
+}
+impl SurfaceCache {
+    pub fn with_resolution(resolution: u32) -> Self {
+        Self { generation: 0, signature: None, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false }
+    }
+}
+
+/// [design] Startup: the requested atlas against the device's 2D texture limit. An
+/// unsupported request is rejected in the log and bakes nothing, so no material samples it.
+pub fn check_resolution(device: Option<Res<bevy::render::renderer::RenderDevice>>, mut cache: ResMut<SurfaceCache>) {
+    let Some(device) = device else { return };
+    let max = device.limits().max_texture_dimension_2d;
+    let (resolution, width) = (cache.resolution, atlas_width(cache.resolution));
+    if resolution_supported(resolution, max) {
+        info!("mesh terrain blend: colour atlas resolution={resolution} atlas={width}x{width} rgba16f colour-mib={} max-texture-dimension-2d={max}", colour_bytes(resolution) >> 20);
+    } else {
+        warn!("mesh terrain blend: rejected resolution={resolution}: atlas {width} texels wide exceeds max-texture-dimension-2d={max}; no colour cache is baked");
+        cache.rejected = true;
+    }
 }
 
 pub fn cache_origin(point: Vec2) -> (i32, i32) {
@@ -144,7 +272,7 @@ fn colour_valid(data: &[u8], slot: (i32, i32), quadrant: u32) -> bool {
 }
 // [design] CPU publication probe, with the same precedence/footprint as the shader.
 // This classifies uploaded bytes; it does not assert that GPU bindings are correct.
-pub fn lookup_status(data: &[u8], origin: (i32, i32), point: Vec2) -> LookupStatus {
+pub fn lookup_status(data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32) -> LookupStatus {
     let cell = fnv_world::cell_of(point.x, point.y);
     let slot = (cell.0 - origin.0, cell.1 - origin.1);
     if !(0..3).contains(&slot.0) || !(0..3).contains(&slot.1) { return LookupStatus::OutOfRange; }
@@ -155,14 +283,15 @@ pub fn lookup_status(data: &[u8], origin: (i32, i32), point: Vec2) -> LookupStat
     let quadrant = u32::from(local.x >= 0.5) + 2 * u32::from(local.y >= 0.5);
     if !colour_valid(data, slot, quadrant) { return LookupStatus::InvalidColourQuadrant; }
     let atlas = (point / 4096.0 - Vec2::new(origin.0 as f32, origin.1 as f32)) / 3.0;
-    let tap = (Vec2::new(atlas.x, 1.0 - atlas.y) * WIDTH as f32 - Vec2::splat(0.5)).floor().as_ivec2();
+    let (resolution, width) = (resolution as i32, atlas_width(resolution) as i32);
+    let tap = (Vec2::new(atlas.x, 1.0 - atlas.y) * width as f32 - Vec2::splat(0.5)).floor().as_ivec2();
     let residency = height_texel(data, (slot.0 as usize * HEIGHT_TILE_WIDTH, slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID)) as u32;
     for y in 0..2 { for x in 0..2 {
-        let pixel = (tap + IVec2::new(x, y)).clamp(IVec2::ZERO, IVec2::splat(WIDTH as i32 - 1));
-        let tap_slot = (pixel.x / RESOLUTION as i32, 2 - pixel.y / RESOLUTION as i32);
+        let pixel = (tap + IVec2::new(x, y)).clamp(IVec2::ZERO, IVec2::splat(width - 1));
+        let tap_slot = (pixel.x / resolution, 2 - pixel.y / resolution);
         let offset = (tap_slot.0 - slot.0 + 1, tap_slot.1 - slot.1 + 1);
-        let quadrant = u32::from(pixel.x % RESOLUTION as i32 >= RESOLUTION as i32 / 2)
-            + 2 * u32::from(pixel.y % (RESOLUTION as i32) < RESOLUTION as i32 / 2);
+        let quadrant = u32::from(pixel.x % resolution >= resolution / 2)
+            + 2 * u32::from(pixel.y % resolution < resolution / 2);
         if residency & (1 << (offset.1 * 3 + offset.0)) == 0 || !colour_valid(data, tap_slot, quadrant) {
             return LookupStatus::RejectedFootprint;
         }
@@ -170,10 +299,26 @@ pub fn lookup_status(data: &[u8], origin: (i32, i32), point: Vec2) -> LookupStat
     LookupStatus::Success
 }
 
-fn publication_log(generation: u64, origin: (i32, i32), resident: &[String], excluded: &[String], probe: &str, assets: (AssetId<Image>, AssetId<Image>)) -> String {
-    format!("mesh terrain blend: publication generation={generation} origin=({}, {}) resident=[{}] excluded=[{}] {probe} colour={:?} height={:?}", origin.0, origin.1, resident.join(";"), excluded.join(";"), assets.0, assets.1)
+fn publication_log(generation: u64, origin: (i32, i32), resident: &[String], excluded: &[String], probe: &str, assets: (AssetId<Image>, AssetId<Image>), resolution: u32) -> String {
+    format!("mesh terrain blend: publication generation={generation} origin=({}, {}) resident=[{}] excluded=[{}] {probe} colour={:?} height={:?} resolution={resolution}", origin.0, origin.1, resident.join(";"), excluded.join(";"), assets.0, assets.1)
 }
-fn publication_probe(data: &[u8], origin: (i32, i32), point: Vec2) -> String {
+/// [design] The ground triangle's game-space normal under `point`, from the uploaded
+/// coefficients (the `normal` view's colour there is 0.5 + 0.5 n); `None` without heights.
+pub fn probe_normal(data: &[u8], origin: (i32, i32), point: Vec2) -> Option<Vec3> {
+    let cell = fnv_world::cell_of(point.x, point.y);
+    let slot = (cell.0 - origin.0, cell.1 - origin.1);
+    if !(0..3).contains(&slot.0) || !(0..3).contains(&slot.1) { return None; }
+    let local = point / fnv_world::land::SPACING - Vec2::new(cell.0 as f32, cell.1 as f32) * GRID as f32;
+    let square = local.floor().as_uvec2().min(UVec2::splat(GRID as u32 - 1));
+    let f = local - square.as_vec2();
+    let triangle = usize::from(f.y > f.x);
+    let coefficient = |c| {
+        let at = height_index(slot, (square.x as usize, square.y as usize), triangle, c);
+        f32::from_le_bytes(data[at..at + 4].try_into().unwrap())
+    };
+    (coefficient(0) > -1e30).then(|| nvf_assets::nif_surface_blend::terrain_game_normal(coefficient(1), coefficient(2)))
+}
+fn publication_probe(data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32) -> String {
     let cell = fnv_world::cell_of(point.x, point.y);
     let slot = (cell.0 - origin.0, cell.1 - origin.1);
     let local = point / fnv_world::land::SPACING - Vec2::new(cell.0 as f32, cell.1 as f32) * GRID as f32;
@@ -181,7 +326,8 @@ fn publication_probe(data: &[u8], origin: (i32, i32), point: Vec2) -> String {
     let f = local - square.as_vec2();
     let triangle = usize::from(f.y > f.x);
     let at = height_index(slot, (square.x as usize, square.y as usize), triangle, 0);
-    format!("probe-cell={cell:?} probe-slot={slot:?} probe-game-xy={point:?} probe-square={square:?} probe-triangle={triangle} probe-height-bytes={:?} probe-status={:?}", &data[at..at + 4], lookup_status(data, origin, point))
+    let normal = probe_normal(data, origin, point).map_or("none".to_string(), |n| format!("({:.3}, {:.3}, {:.3})", n.x + 0.0, n.y + 0.0, n.z + 0.0));
+    format!("probe-cell={cell:?} probe-slot={slot:?} probe-game-xy={point:?} probe-square={square:?} probe-triangle={triangle} probe-height-bytes={:?} probe-status={:?} probe-normal={normal}", &data[at..at + 4], lookup_status(data, origin, point, resolution))
 }
 pub fn encode_height_cell(data: &mut [u8], slot: (i32, i32), heights: &[f32]) {
     for y in 0..GRID {
@@ -223,7 +369,9 @@ struct BakeView {
 pub struct SurfaceBakePlugin;
 impl Plugin for SurfaceBakePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ExtractComponentPlugin::<BakeView>::default());
+        bevy::asset::embedded_asset!(app, "terrain_capture.wesl");
+        app.add_plugins((ExtractComponentPlugin::<BakeView>::default(), MaterialPlugin::<SurfaceCaptureMaterial>::default()))
+            .add_systems(Startup, check_resolution);
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
             render.add_systems(RenderStartup, (install_bake_receipt::<Opaque3d>, install_bake_receipt::<Transparent3d>))
                 .add_systems(Render, reset_receipts.in_set(RenderSystems::Prepare))
@@ -283,7 +431,11 @@ pub fn update_cache(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
+    mut captures: ResMut<Assets<SurfaceCaptureMaterial>>,
 ) {
+    if cache.rejected { return; }
+    let resolution = cache.resolution;
+    let width = atlas_width(resolution);
     // Consume the previous update's receipt first; a newly received acknowledgement
     // waits one further main frame before materials can sample the submitted target.
     let publish = cache.ready.take();
@@ -319,7 +471,7 @@ pub fn update_cache(
     if resident.is_empty() { return; }
 
     let mut colour = Image::new_fill(
-        Extent3d { width: WIDTH, height: WIDTH, depth_or_array_layers: 1 },
+        Extent3d { width, height: width, depth_or_array_layers: 1 },
         TextureDimension::D2, &[0; 8], TextureFormat::Rgba16Float,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
@@ -333,15 +485,18 @@ pub fn update_cache(
     for (_, cell) in &resident {
         let slot = (cell.grid.0 - origin.0, cell.grid.1 - origin.1);
         encode_surface_cell(&mut heights, slot, cell, &slots);
-        for (mesh, material) in &cell.quadrants {
-            let entity = commands.spawn((
-                bevy::render::batching::NoAutomaticBatching,
-                Mesh3d(meshes.add(mesh.clone())), MeshMaterial3d(materials.add(material.clone())),
+        for (mesh, draw) in &cell.quadrants {
+            let mut entity = commands.spawn((
+                bevy::render::batching::NoAutomaticBatching, Mesh3d(meshes.add(mesh.clone())),
                 Transform::from_xyz(slot.0 as f32 * 4096.0, slot.1 as f32 * 4096.0, 0.0),
                 RenderLayers::layer(BAKE_LAYER), bevy::light::NotShadowCaster,
                 bevy::light::NotShadowReceiver, ChildOf(root),
-            )).id();
-            expected.insert(entity);
+            ));
+            match draw {
+                CaptureDraw::Folded(material) => entity.insert(MeshMaterial3d(materials.add(material.as_ref().clone()))),
+                CaptureDraw::Single(material) => entity.insert(MeshMaterial3d(captures.add(material.clone()))),
+            };
+            expected.insert(entity.id());
         }
     }
     let resident_report: Vec<_> = resident.iter().map(|(_, cell)| format!("({}, {}):q=[{}] colour-mask={:#x}", cell.grid.0, cell.grid.1, cell.paths.map(CapturePath::label).join(","), cell.colour_mask())).collect();
@@ -356,7 +511,7 @@ pub fn update_cache(
     }}
     // Eye XY is inside the centre slot, regardless of eye height. This probes the
     // uploaded coefficients beneath that point, not an unobserved mesh fragment.
-    let probe = publication_probe(&heights, origin, eye.truncate());
+    let probe = publication_probe(&heights, origin, eye.truncate(), resolution);
     let height = images.add(Image::new(
         Extent3d { width: HEIGHT_WIDTH as u32, height: HEIGHT_HEIGHT as u32, depth_or_array_layers: 1 },
         TextureDimension::D2, heights, TextureFormat::Rgba8Unorm,
@@ -378,10 +533,10 @@ pub fn update_cache(
         Transform::from_xyz(6144.0, 6144.0, 100.0).looking_at(Vec3::new(6144.0, 6144.0, 0.0), Vec3::Y),
         RenderLayers::layer(BAKE_LAYER), ChildOf(root),
     )); }
-    let report = publication_log(cache.generation, origin, &resident_report, &excluded, &probe, (colour.id(), height.id()));
+    let report = publication_log(cache.generation, origin, &resident_report, &excluded, &probe, (colour.id(), height.id()), resolution);
     cache.job = Some(BakeJob {
         root,
-        publication: PublishedSurface { colour, height, origin, cells: resident.len() },
+        publication: PublishedSurface { colour, height, origin, cells: resident.len(), resolution },
         report,
     });
 }
@@ -391,6 +546,51 @@ mod tests {
     use super::*;
     fn surface(paths: [CapturePath; 4]) -> SurfaceCell {
         SurfaceCell { world: 0, grid: (-17, 0), heights: vec![42.5; SIDE * SIDE], quadrants: vec![], paths }
+    }
+    /// The probe's classification, the same at every accepted resolution.
+    fn status(data: &[u8], origin: (i32, i32), point: Vec2) -> LookupStatus {
+        let [a, b, c] = RESOLUTIONS.map(|r| lookup_status(data, origin, point, r));
+        assert!(a == b && b == c, "{point:?}: {a:?} {b:?} {c:?}");
+        a
+    }
+    #[test]
+    fn footprint_boundary_scales_with_resolution_in_negative_cells_too() {
+        // q0 of slot (0, 0) has no colour. A point 3 units east of the quadrant edge: at 8
+        // units per texel its bilinear footprint still reaches the invalid quadrant, at 4
+        // and 2 units it does not. The same holds with every coordinate shifted to
+        // negative cells.
+        let mut data = empty_height_atlas();
+        let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
+        let slots = HashSet::from([(0, 0), (1, 0), (0, 1), (1, 1)]);
+        for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
+        encode_colour_mask(&mut data, (0, 0), 0b1110);
+        for origin in [(0, 0), (-3, -2), (-18, -1)] {
+            let shift = Vec2::new(origin.0 as f32, origin.1 as f32) * 4096.0;
+            let point = shift + Vec2::new(2051.0, 1024.0);
+            assert_eq!(lookup_status(&data, origin, point, 512), LookupStatus::RejectedFootprint, "{origin:?}");
+            assert_eq!(lookup_status(&data, origin, point, 1024), LookupStatus::Success, "{origin:?}");
+            assert_eq!(lookup_status(&data, origin, point, 2048), LookupStatus::Success, "{origin:?}");
+            // One texel from the cell edge at each resolution, towards the resident east cell.
+            for resolution in RESOLUTIONS {
+                let texel = 4096.0 / resolution as f32;
+                assert_eq!(lookup_status(&data, origin, shift + Vec2::new(4096.0 - 0.25 * texel, 1024.0), resolution), LookupStatus::Success, "{origin:?} {resolution}");
+                assert_eq!(lookup_status(&data, origin, shift + Vec2::new(0.25 * texel, 3072.0), resolution), LookupStatus::Success, "{origin:?} {resolution}: taps clamp at the atlas's west edge (the shader's border fade covers it)");
+            }
+            // The missing quadrant itself, at every resolution.
+            assert_eq!(status(&data, origin, shift + Vec2::splat(1024.0)), LookupStatus::InvalidColourQuadrant);
+        }
+    }
+    #[test]
+    fn resolutions_are_the_three_accepted_and_checked_against_the_device_limit() {
+        assert_eq!(RESOLUTIONS, [512, 1024, 2048]);
+        assert_eq!(DEFAULT_RESOLUTION, 1024);
+        assert_eq!(SurfaceCache::default().resolution, 1024);
+        assert_eq!(RESOLUTIONS.map(atlas_width), [1536, 3072, 6144]);
+        assert_eq!(RESOLUTIONS.map(|r| colour_bytes(r) >> 20), [18, 72, 288], "MiB of the RGBA16F atlas");
+        assert!(resolution_supported(2048, 8192) && resolution_supported(2048, 6144));
+        assert!(!resolution_supported(2048, 6143) && !resolution_supported(1024, 2048));
+        assert!(resolution_supported(512, 2048));
+        assert!(!resolution_supported(768, 16384), "only the listed resolutions");
     }
     #[test]
     fn unsupported_quadrants_and_height_only_cells_keep_all_prepared_heights() {
@@ -406,9 +606,9 @@ mod tests {
             let at = height_index(slot, (x, y), triangle, 0);
             assert_eq!(f32::from_le_bytes(data[at..at + 4].try_into().unwrap()), 42.5);
         }}}}
-        assert_eq!(lookup_status(&data, (-18, -1), Vec2::new(-18.0 * 4096.0 + 1024.0, -3072.0)), LookupStatus::Success);
-        assert_eq!(lookup_status(&data, (-18, -1), Vec2::new(-18.0 * 4096.0 + 3072.0, -3072.0)), LookupStatus::InvalidColourQuadrant);
-        assert_eq!(lookup_status(&data, (-18, -1), Vec2::new(-17.0 * 4096.0 + 1024.0, -3072.0)), LookupStatus::InvalidColourQuadrant);
+        assert_eq!(status(&data, (-18, -1), Vec2::new(-18.0 * 4096.0 + 1024.0, -3072.0)), LookupStatus::Success);
+        assert_eq!(status(&data, (-18, -1), Vec2::new(-18.0 * 4096.0 + 3072.0, -3072.0)), LookupStatus::InvalidColourQuadrant);
+        assert_eq!(status(&data, (-18, -1), Vec2::new(-17.0 * 4096.0 + 1024.0, -3072.0)), LookupStatus::InvalidColourQuadrant);
     }
     #[test]
     fn cpu_publication_probe_classifies_all_five_shader_outcomes() {
@@ -416,27 +616,58 @@ mod tests {
         let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
         let slots = HashSet::from([(0, 0), (1, 0), (0, 1)]);
         for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
-        assert_eq!(lookup_status(&data, (0, 0), Vec2::new(-1.0, 100.0)), LookupStatus::OutOfRange);
-        assert_eq!(lookup_status(&data, (0, 0), Vec2::splat(6144.0)), LookupStatus::InvalidHeight);
-        assert_eq!(lookup_status(&data, (0, 0), Vec2::splat(4095.9)), LookupStatus::RejectedFootprint, "missing diagonal tap");
-        assert_eq!(lookup_status(&data, (0, 0), Vec2::splat(1024.0)), LookupStatus::Success);
+        assert_eq!(status(&data, (0, 0), Vec2::new(-1.0, 100.0)), LookupStatus::OutOfRange);
+        assert_eq!(status(&data, (0, 0), Vec2::splat(6144.0)), LookupStatus::InvalidHeight);
+        assert_eq!(status(&data, (0, 0), Vec2::splat(4095.9)), LookupStatus::RejectedFootprint, "missing diagonal tap");
+        assert_eq!(status(&data, (0, 0), Vec2::splat(1024.0)), LookupStatus::Success);
         encode_colour_mask(&mut data, (0, 0), 0b1110);
-        assert_eq!(lookup_status(&data, (0, 0), Vec2::splat(1024.0)), LookupStatus::InvalidColourQuadrant);
-        assert_eq!(lookup_status(&data, (0, 0), Vec2::new(2048.1, 1024.0)), LookupStatus::RejectedFootprint, "one bilinear tap crosses into the invalid neighbour quadrant");
-        assert_eq!(lookup_status(&data, (0, 0), Vec2::new(3072.0, 1024.0)), LookupStatus::Success, "supported neighbour quadrant is retained");
+        assert_eq!(status(&data, (0, 0), Vec2::splat(1024.0)), LookupStatus::InvalidColourQuadrant);
+        assert_eq!(status(&data, (0, 0), Vec2::new(2048.1, 1024.0)), LookupStatus::RejectedFootprint, "one bilinear tap crosses into the invalid neighbour quadrant");
+        assert_eq!(status(&data, (0, 0), Vec2::new(3072.0, 1024.0)), LookupStatus::Success, "supported neighbour quadrant is retained");
     }
     #[test]
     fn publication_line_names_paths_exclusions_probe_and_asset_ids() {
         let id = Handle::<Image>::default().id();
         let resident = vec![format!("(-17, 0):q=[{}] colour-mask=0x7", [CapturePath::Folded { layers: 0 }, CapturePath::Folded { layers: 2 }, CapturePath::Fallback { layers: 3 }, CapturePath::HeightOnly("missing-base-mesh")].map(CapturePath::label).join(","))];
-        let line = publication_log(7, (-18, -1), &resident, &["(-18, -1):not-loaded".into()], "probe-slot=(1, 1)", (id, id));
-        assert_eq!(line, format!("mesh terrain blend: publication generation=7 origin=(-18, -1) resident=[(-17, 0):q=[folded,folded+2-layers,fallback+3-layers,height-only:missing-base-mesh] colour-mask=0x7] excluded=[(-18, -1):not-loaded] probe-slot=(1, 1) colour={id:?} height={id:?}"));
+        let line = publication_log(7, (-18, -1), &resident, &["(-18, -1):not-loaded".into()], "probe-slot=(1, 1)", (id, id), 1024);
+        assert_eq!(line, format!("mesh terrain blend: publication generation=7 origin=(-18, -1) resident=[(-17, 0):q=[folded,folded+2-layers,fallback+3-layers,height-only:missing-base-mesh] colour-mask=0x7] excluded=[(-18, -1):not-loaded] probe-slot=(1, 1) colour={id:?} height={id:?} resolution=1024"));
         let mut data = empty_height_atlas();
         let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
         encode_surface_cell(&mut data, (1, 1), &cell, &HashSet::from([(1, 1)]));
-        let probe = publication_probe(&data, (-18, -1), Vec2::new(-17.0 * 4096.0 + 1024.0, 1024.0));
+        let probe = publication_probe(&data, (-18, -1), Vec2::new(-17.0 * 4096.0 + 1024.0, 1024.0), 1024);
         assert!(probe.contains("probe-cell=(-17, 0) probe-slot=(1, 1)"));
-        assert!(probe.contains(&format!("probe-height-bytes={:?} probe-status=Success", 42.5f32.to_le_bytes())));
+        assert!(probe.contains(&format!("probe-height-bytes={:?} probe-status=Success probe-normal=(0.000, 0.000, 1.000)", 42.5f32.to_le_bytes())), "{probe}");
+        assert!(publication_probe(&empty_height_atlas(), (-18, -1), Vec2::new(-17.0 * 4096.0 + 1024.0, 1024.0), 512).contains("probe-status=InvalidHeight probe-normal=none"));
+    }
+    /// [design] The probe's normal comes from the uploaded coefficients of the triangle
+    /// under the point, both triangles of a square, in game space; Bevy world space is
+    /// `game_to_bevy`'s rotation of it.
+    #[test]
+    fn probe_normal_reads_both_triangles_and_converts_like_the_world_root() {
+        let spacing = fnv_world::land::SPACING;
+        // Heights rising 1 per unit east and 0.5 per unit north, plus a kink so the two
+        // triangles of each square differ: the north-east corner of every square is raised.
+        let h: Vec<f32> = (0..SIDE * SIDE).map(|i| (i % SIDE) as f32 * spacing + (i / SIDE) as f32 * spacing * 0.5 + if (i % SIDE) % 2 == 1 && (i / SIDE) % 2 == 1 { 64.0 } else { 0.0 }).collect();
+        let mut data = empty_height_atlas();
+        encode_height_cell(&mut data, (1, 1), &h);
+        let origin = (-18, -3);
+        let square = Vec2::new(-17.0 * 4096.0, -2.0 * 4096.0);
+        for (f, triangle) in [(Vec2::new(0.7, 0.2), 0), (Vec2::new(0.2, 0.7), 1)] {
+            let n = probe_normal(&data, origin, square + f * spacing).unwrap();
+            let (a, east, north, ne) = (h[0], h[1], h[SIDE], h[SIDE + 1]);
+            let corners = if triangle == 0 {
+                [Vec3::new(0.0, 0.0, a), Vec3::new(spacing, 0.0, east), Vec3::new(spacing, spacing, ne)]
+            } else {
+                [Vec3::new(0.0, 0.0, a), Vec3::new(spacing, spacing, ne), Vec3::new(0.0, spacing, north)]
+            };
+            assert!(n.dot(corners[1] - corners[0]).abs() < 1e-3 && n.dot(corners[2] - corners[0]).abs() < 1e-3, "triangle {triangle}: {n:?}");
+            let world = nvf_assets::nif_surface_blend::game_to_world_normal(n);
+            assert!((world - crate::world::game_to_bevy().rotation * n).length() < 1e-5);
+            assert!(world.y > 0.0, "up in Bevy space");
+        }
+        assert_ne!(probe_normal(&data, origin, square + Vec2::new(0.7, 0.2) * spacing), probe_normal(&data, origin, square + Vec2::new(0.2, 0.7) * spacing));
+        assert_eq!(probe_normal(&data, origin, square - Vec2::splat(4096.0 * 2.0)), None, "outside the atlas");
+        assert_eq!(probe_normal(&data, (-17, -2), square), None, "slot without heights");
     }
     #[test]
     fn production_render_layer_reservations_are_distinct() {
@@ -559,6 +790,7 @@ mod tests {
                 .insert_resource(crate::terrain::TerrainSettings { tile: 256.0 })
                 .init_resource::<crate::terrain::TerrainCache>()
                 .init_resource::<Assets<TerrainMaterial>>()
+                .init_resource::<Assets<SurfaceCaptureMaterial>>()
                 .init_resource::<SurfaceCache>();
             app.world_mut().resource_mut::<nvf_assets::TextureCache>()
                 .offer(fnv_vfs::texture_path(fnv_world::land::DEFAULT_DIFFUSE), synthetic_dds(), 0.0);
@@ -574,11 +806,32 @@ mod tests {
             assert_eq!(surface.colour_mask(), 0xf, "folds={folds}: every quadrant's colour is captured");
             assert_eq!(surface.quadrants.len(), near_draws, "folds={folds}: one bake copy per near draw");
             let blended_layers: usize = expected.iter().map(|p| match p { CapturePath::Folded { layers } | CapturePath::Fallback { layers } => *layers, CapturePath::HeightOnly(_) => 0 }).sum();
-            let copies: Vec<_> = surface.quadrants.iter().map(|(_, m)| (m.extension.surface_bake, m.extension.bake_layer, m.base.alpha_mode)).collect();
-            assert!(copies.iter().all(|c| c.0), "every copy uses the unlit bake variant");
-            assert_eq!(copies.iter().filter(|c| c.1).count(), blended_layers, "folds={folds}");
-            assert!(copies.iter().filter(|c| c.1).all(|c| c.2 == AlphaMode::Blend), "layer copies keep the near layers' blending");
-            assert!(copies.iter().filter(|c| !c.1).all(|c| c.2 == AlphaMode::Opaque), "base copies stay opaque");
+            // Folded bases keep their TerrainMaterial (unlit bake variant); every other base
+            // and every layer is a single-texture capture, so a device without bindless
+            // (folds=false) never meets TerrainMaterial's 19-texture layout (round-4 P2).
+            let folded: Vec<_> = surface.quadrants.iter().filter_map(|(_, d)| match d { CaptureDraw::Folded(m) => Some(m), CaptureDraw::Single(_) => None }).collect();
+            let single: Vec<_> = surface.quadrants.iter().filter_map(|(_, d)| match d { CaptureDraw::Single(m) => Some(m), CaptureDraw::Folded(_) => None }).collect();
+            let folded_paths = expected.iter().filter(|p| matches!(p, CapturePath::Folded { .. })).count();
+            assert_eq!(folded.len(), folded_paths, "folds={folds}: one folded copy per folded base, none without folding");
+            assert!(folded.iter().all(|m| m.extension.surface_bake && m.extension.burn.is_none() && !m.base.fog_enabled), "folded copies use the unlit bake variant");
+            assert_eq!(single.iter().filter(|m| m.layer).count(), blended_layers, "folds={folds}");
+            assert!(single.iter().filter(|m| m.layer).all(|m| m.alpha_mode() == AlphaMode::Blend && m.values.uv_offset_flags.w == 1.0), "layer copies keep the near layers' blending");
+            assert!(single.iter().filter(|m| !m.layer).all(|m| m.alpha_mode() == AlphaMode::Opaque && m.depth_bias == 0.0), "base copies stay opaque");
+            assert!(single.iter().all(|m| m.diffuse.is_some() && m.values.uv_offset_flags.z == 1.0), "the synthetic default texture is bound");
+            // Layer copies keep the near layers' sort order and the rasteriser part of their bias.
+            // In drawing order, each quadrant's layer copies follow its base with rising bias.
+            let mut previous: Option<f32> = None;
+            for (_, draw) in &surface.quadrants {
+                match draw {
+                    CaptureDraw::Single(m) if m.layer => {
+                        assert!(previous.is_some_and(|p| m.depth_bias > p), "folds={folds}: a layer copy follows its base or a lower layer");
+                        previous = Some(m.depth_bias);
+                    }
+                    _ => previous = Some(f32::NEG_INFINITY),
+                }
+            }
+            let biases: Vec<_> = single.iter().filter(|m| m.layer).map(|m| (m.depth_bias, SurfaceCaptureKey::from(*m).raster_bias)).collect();
+            assert!(biases.iter().all(|&(sort, raster)| nvf_assets::nif_material::sorts_first(sort) && raster == nvf_assets::nif_material::raster_bias(sort as i32)), "{biases:?}");
             assert!(surface.quadrants.iter().all(|(mesh, _)| match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
                 Some(VertexAttributeValues::Float32x3(p)) => p.iter().all(|v| v[2] == 0.0),
                 _ => false,
@@ -606,11 +859,37 @@ mod tests {
             }}}
             for q in 0..4 {
                 let point = Vec2::new(grid.0 as f32 * 4096.0 + 1024.0 + 2048.0 * (q % 2) as f32, grid.1 as f32 * 4096.0 + 1024.0 + 2048.0 * (q / 2) as f32);
-                assert_eq!(lookup_status(&height, origin, point), LookupStatus::Success, "folds={folds} quadrant {q}");
+                assert_eq!(status(&height, origin, point), LookupStatus::Success, "folds={folds} quadrant {q}");
             }
             let expected_draws = app.world_mut().query::<&BakeView>().single(app.world()).unwrap().expected.len();
             assert_eq!(expected_draws, near_draws, "folds={folds}: the receipt waits for every copy, blended layers included");
+            let terrain_copies = app.world_mut().query_filtered::<(), (With<RenderLayers>, With<MeshMaterial3d<TerrainMaterial>>)>().iter(app.world()).count();
+            let single_copies = app.world_mut().query_filtered::<(), (With<RenderLayers>, With<MeshMaterial3d<SurfaceCaptureMaterial>>)>().iter(app.world()).count();
+            assert_eq!((terrain_copies, single_copies), (folded_paths, near_draws - folded_paths), "folds={folds}: bake entities by material type");
+            let colour = app.world().resource::<Assets<Image>>().get(&app.world().resource::<SurfaceCache>().job.as_ref().unwrap().publication.colour).unwrap();
+            assert_eq!(colour.texture_descriptor.size.width, atlas_width(DEFAULT_RESOLUTION), "the default 1024-texel cells");
         }
+    }
+    #[test]
+    fn rejected_resolution_bakes_and_publishes_nothing() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = App::new();
+        app.insert_resource(crate::outfits::tests::empty_world_data())
+            .init_resource::<Assets<Image>>().init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<TerrainMaterial>>().init_resource::<Assets<SurfaceCaptureMaterial>>()
+            .insert_resource(SurfaceCache { rejected: true, ..SurfaceCache::with_resolution(2048) });
+        let cell = app.world_mut().spawn(SurfaceCell { world: 0, grid: (0, 0), heights: vec![0.0; SIDE * SIDE], quadrants: vec![], paths: [CapturePath::Fallback { layers: 0 }; 4] }).id();
+        app.insert_resource(Streamer {
+            radius: 1, loaded: [((0, 0), cell)].into(), fades: default(), fade_secs: 0.0, settled: true,
+            arrival: None, per_frame: 1, spawning: default(), dying: default(), ahead: default(),
+            hide: default(), interior: None, light_scale: 1.0, managed: default(), manage_actors: false,
+            stats: default(), buffer: default(), centre: None, waiting: default(), model_overrides: default(),
+        });
+        app.world_mut().spawn((Camera3d::default(), crate::fly::FlyCam { yaw: 0.0, pitch: 0.0, speed: 0.0 }, GlobalTransform::from_translation(Vec3::new(2048.0, 600.0, -2048.0))));
+        for _ in 0..3 { app.world_mut().run_system_once(update_cache).unwrap(); }
+        let cache = app.world().resource::<SurfaceCache>();
+        assert!(cache.job.is_none() && cache.published.is_none() && cache.generation == 0);
+        assert!(app.world().resource::<Assets<Image>>().is_empty());
     }
     fn synthetic_dds() -> Vec<u8> {
         // A 4x4 BC1 DDS header and one block, as the texture-swap test's.

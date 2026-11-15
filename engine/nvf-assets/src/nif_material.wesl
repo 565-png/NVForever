@@ -84,7 +84,8 @@ import bevy_pbr::{
 };
 
 import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel};
-@if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::mesh_terrain_blend;
+@if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_unlit_view, mesh_terrain_diagnostic, mesh_terrain_blend_normal, LOOKUP_SUCCESS, LAND_ROUGHNESS, LAND_REFLECTANCE};
+@if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
 
 // Main-pass geometry uses the render viewport, which can be smaller than the
 // display attachment when FSR is enabled. Transmission remains a full-size texture.
@@ -526,8 +527,39 @@ fn nif_fragment(
     // equality with it: nothing is left to test here.
     @if(PREPASS_COVERAGE) pbr_input.material.base_color.a = 1.0;
     @if(!SOFT_EDGES && !PREPASS_COVERAGE) pbr_input.material.base_color = alpha_discard(pbr_input.material.flags, pbr_input.material.alpha_cutoff, pbr_input.material.base_color);
-    // [design] Forward colour only, after the existing coverage tests and before lighting.
-    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) pbr_input.material.base_color = vec4(mesh_terrain_blend(in.instance_index, in.world_position.xyz, pbr_input.material.base_color.rgb), pbr_input.material.base_color.a);
+    // [design] Mesh terrain blend (nif_surface_blend.rs, test aid NVF_PLAY_TEST_MESH_BLEND),
+    // forward only: after the existing coverage tests and normal mapping, before lighting.
+    // The weight comes from the unperturbed world_normal; alpha, positions, depth and that
+    // geometric normal (shadow bias) stay as they are. Full shading moves the material
+    // values the lighting reads towards the landscape's (terrain.rs `surface`), so the
+    // mesh's normal-map creases, specular and emission fade out where the weight is 1.
+    // The weight, normal and status views are drawn as unlit colour without fog (no early
+    // return: the lighting code after it keeps uniform control flow), their emission
+    // cleared below.
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_unlit = mesh_terrain_unlit_view(mesh_terrain_view(in.instance_index));
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) {
+        let terrain = mesh_terrain_lookup(in.instance_index, in.world_position.xyz, pbr_input.world_normal);
+        let terrain_view = mesh_terrain_view(in.instance_index);
+        if terrain_unlit {
+            pbr_input.material.base_color = vec4(mesh_terrain_diagnostic(terrain_view, terrain, pbr_input.material.base_color.rgb), pbr_input.material.base_color.a);
+            pbr_input.material.flags = (pbr_input.material.flags | STANDARD_MATERIAL_FLAGS_UNLIT_BIT) & ~STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
+        } else if terrain_view == 3u {
+            pbr_input.material.base_color = vec4(mesh_terrain_diagnostic(terrain_view, terrain, pbr_input.material.base_color.rgb), pbr_input.material.base_color.a);
+        } else if terrain.status == LOOKUP_SUCCESS && terrain.weight > 0.0 {
+            let w = terrain.weight;
+            pbr_input.material.base_color = vec4(mix(pbr_input.material.base_color.rgb, terrain.colour, w), pbr_input.material.base_color.a);
+            if mesh_terrain_shading(in.instance_index) == 1u {
+                pbr_input.N = mesh_terrain_blend_normal(pbr_input.N, terrain.normal, w);
+                pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, LAND_ROUGHNESS, w);
+                pbr_input.material.reflectance = mix(pbr_input.material.reflectance, vec3(LAND_REFLECTANCE), w);
+                pbr_input.material.metallic = mix(pbr_input.material.metallic, 0.0, w);
+                pbr_input.material.emissive = vec4(pbr_input.material.emissive.rgb * (1.0 - w), pbr_input.material.emissive.a);
+                pbr_input.material.clearcoat *= 1.0 - w;
+                pbr_input.material.anisotropy_strength *= 1.0 - w;
+                pbr_input.anisotropy_strength *= 1.0 - w;
+            }
+        }
+    }
     // base_color already holds texture × vertex colour × material colour.
     // Bevy's pbr_input_from_standard_material fills the emissive light in only for lit
     // materials, so an unlit shape's stays black: it is read from the material here
@@ -544,6 +576,7 @@ fn nif_fragment(
     let emissive_scale = select(view_emissive_scale(), 1.0, surface.emissive_rule.x > 0.5 || (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_ADD);
     let e = vec4(pbr_input.material.emissive.rgb * emissive_scale, pbr_input.material.emissive.a);
     pbr_input.material.emissive = vec4(e.rgb * pbr_input.material.base_color.rgb, e.a);
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) if terrain_unlit { pbr_input.material.emissive = vec4(vec3(0.0), e.a); }
 
     // Kept out of the lighting sum: multiply_factor adds it in display values.
     @if(BLEND_MULTIPLY) let multiply_emissive = pbr_input.material.emissive.rgb;

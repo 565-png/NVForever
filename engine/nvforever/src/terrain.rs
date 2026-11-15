@@ -124,12 +124,9 @@ const SURFACE_BAKE_SHADER: Handle<Shader> = uuid_handle!("6da97f8c-732c-4697-b34
 #[bindless(limit(512), index_table(range(50..64), binding(100)))]
 #[bind_group_data(TerrainLayersKey)]
 pub struct TerrainLayers {
-    /// [design] Dedicated unlit surface capture, terrain_surface.rs.
+    /// [design] Dedicated unlit surface capture of a folded base, terrain_surface.rs
+    /// (every other landscape draw is captured with its `SurfaceCaptureMaterial`).
     pub surface_bake: bool,
-    /// [design] With `surface_bake`: an unlit copy of one blended layer draw. The output
-    /// keeps the layer's own alpha (material x texture x vertex opacity), so the near
-    /// terrain's alpha blend state composites it over the bake's base.
-    pub bake_layer: bool,
     /// Layers held (at most [`FOLDED_LAYERS`]).
     pub count: u32,
     /// World units per texture repeat when the shader works the texture coordinate out
@@ -194,19 +191,9 @@ impl MaterialExtension for TerrainLayers {
         _: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        let bake = key.bind_group_data;
-        if bake.surface_bake {
+        if key.bind_group_data.surface_bake {
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader_defs.push("SURFACE_BAKE".into());
-                if bake.bake_layer {
-                    fragment.shader_defs.push("SURFACE_BAKE_LAYER".into());
-                }
-            }
-            // [design] A layer copy keeps the near layer's StandardMaterial, whose depth
-            // bias is sort order plus rasteriser bias (`sort_first`); the rasteriser gets
-            // only its own part, as NifSurface's specialize gives the near layer.
-            if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
-                depth_stencil.bias.constant = nvf_assets::nif_material::raster_bias(depth_stencil.bias.constant);
             }
         }
         // Land fades in and out with its cell (fade.rs), and is opaque.
@@ -219,11 +206,10 @@ impl MaterialExtension for TerrainLayers {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TerrainLayersKey {
     surface_bake: bool,
-    bake_layer: bool,
 }
 
 impl From<&TerrainLayers> for TerrainLayersKey {
-    fn from(l: &TerrainLayers) -> Self { Self { surface_bake: l.surface_bake, bake_layer: l.surface_bake && l.bake_layer } }
+    fn from(l: &TerrainLayers) -> Self { Self { surface_bake: l.surface_bake } }
 }
 
 pub struct TerrainPlugin;
@@ -307,8 +293,9 @@ impl TerrainCtx<'_, '_, '_> {
             // Green points down the image, as on NIF shapes (docs/spec-notes/nif.md §6
             // "Normal maps").
             flip_normal_map_y: true,
-            perceptual_roughness: 0.95,
-            reflectance: 0.2,
+            // Also the targets of the mesh terrain blend's full shading (test aid).
+            perceptual_roughness: nvf_assets::nif_surface_blend::LAND_PERCEPTUAL_ROUGHNESS,
+            reflectance: nvf_assets::nif_surface_blend::LAND_REFLECTANCE,
             ..default()
         }
     }
@@ -673,7 +660,7 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
 /// their drawing order, the base (folded or not) and then each blended layer drawn over
 /// it, for the bake's flat unlit copies [design]. The near draws are the same either way.
 pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx, folds: bool, capture: bool) -> Land {
-    use crate::terrain_surface::{CapturePath, SurfaceCell};
+    use crate::terrain_surface::{CaptureDraw, CapturePath, SurfaceCaptureMaterial, SurfaceCell};
     let TerrainPrep { grid, land, layers: drawn, mut meshes, mut folded, tile } = prep;
     let mut surface = capture.then(|| SurfaceCell {
         world: world.world, grid, heights: land.heights.clone().unwrap_or_default(), quadrants: Vec::new(),
@@ -692,7 +679,7 @@ pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &
         let layers = quadrant_layers(&drawn, q);
         // [design] The bake's copies of this quadrant's draws, in drawing order; `None`
         // while no base is drawn (the quadrant's colour then stays invalid).
-        let mut stack: Option<(bool, Vec<(Mesh, TerrainMaterial)>)> = None;
+        let mut stack: Option<(bool, Vec<(Mesh, CaptureDraw)>)> = None;
         // The first layers folded into the base's draw (module notes), when each of them
         // has a texture; otherwise the base alone and every layer blended over it.
         let mut blended_from = 0;
@@ -705,7 +692,7 @@ pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &
         };
         if let Some((mesh, mat, n)) = folded_mat {
             if surface.is_some() {
-                stack = Some((true, vec![(mesh.clone(), tm.tm.folded.get(&mat).unwrap().clone())]));
+                stack = Some((true, vec![(mesh.clone(), CaptureDraw::Folded(Box::new(tm.tm.folded.get(&mat).unwrap().clone())))]));
             }
             let mesh = tm.assets.meshes.add(mesh);
             commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
@@ -716,8 +703,10 @@ pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &
             let mat = tm.base_material(tex);
             if let Some(mesh) = meshes.remove(&(q, None)) {
                 if surface.is_some() {
-                    let base = tm.assets.materials.get(&mat).unwrap().base.clone();
-                    stack = Some((false, vec![(mesh.clone(), TerrainMaterial { base, extension: default() })]));
+                    // [design] Not folded: the single-texture capture, never TerrainMaterial
+                    // (whose layout a GPU without bindless textures cannot bind).
+                    let capture = SurfaceCaptureMaterial::from_standard(&tm.assets.materials.get(&mat).unwrap().base, false);
+                    stack = Some((false, vec![(mesh.clone(), CaptureDraw::Single(capture))]));
                 }
                 let mesh = tm.assets.meshes.add(mesh);
                 commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
@@ -727,11 +716,11 @@ pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &
             let Some(tex) = tm.texture_of(world, l.texture) else { continue };
             let Some(mat) = tm.layer_material(tex, rank) else { continue };
             if let Some(mesh) = meshes.remove(&(q, Some(i))) {
-                // [design] The same StandardMaterial (blend mode, texture, depth bias and
-                // so draw order) as the near layer; terrain_surface.rs marks it a layer copy.
+                // [design] The near layer's colour, texture, blending and depth bias (so its
+                // draw order), as a single-texture layer capture.
                 if let Some((_, draws)) = &mut stack {
-                    let base = tm.assets.materials.get(&mat).unwrap().base.clone();
-                    draws.push((mesh.clone(), TerrainMaterial { base, extension: default() }));
+                    let capture = SurfaceCaptureMaterial::from_standard(&tm.assets.materials.get(&mat).unwrap().base, true);
+                    draws.push((mesh.clone(), CaptureDraw::Single(capture)));
                 }
                 let mesh = tm.assets.meshes.add(mesh);
                 commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
