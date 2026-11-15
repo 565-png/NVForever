@@ -242,6 +242,24 @@ pub fn files_under(rel: &str) -> Vec<String> {
     list_files(rel, true)
 }
 
+/// The files and folders directly in a Data folder, through every read root (an earlier
+/// root hides the same name, compared without regard to case); kNVSE's GetDirectoryFiles
+/// (`crate::nvse_unlisted2`).
+pub fn entries_in(rel: &str) -> Vec<String> {
+    let (mut seen, mut out) = (std::collections::HashSet::new(), Vec::new());
+    for root in roots().read {
+        let Some(dir) = find_dir(&root, rel) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if seen.insert(name.to_ascii_lowercase()) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
 /// The loose files directly in a Data folder (no subfolders), as [`files_under`].
 pub fn files_in(rel: &str) -> Vec<String> {
     list_files(rel, false)
@@ -901,11 +919,35 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
             let path = text(args, 0).unwrap_or_default();
             let transpose = num(args, 1, 0.0) != 0.0;
             let Some(t) = g.mod_files.read_root(&path) else { return Some(Ok(zero)) };
-            let parse = |c: &str| match c.trim().parse::<f64>() {
-                Ok(x) => XVal::Num(x),
-                Err(_) => XVal::Str(c.to_string()),
+            // One or more tabs between values; `$text` a string, `@File.esm:XXXXXX` a form
+            // of that file, else a number [documented: ReadArrayFromFile]. Anything else
+            // is no value, a `;` ends the line (a comment, or a row commented out), and a
+            // line without values is no row [hypothesis: Food Scraps' config files comment
+            // their columns and rows so].
+            let order: Vec<String> = g.data.load_order.iter().map(|p| p.to_ascii_lowercase()).collect();
+            let parse = |c: &str| -> Option<XVal> {
+                let c = c.trim_matches(|ch: char| ch == '\r' || ch == ' ');
+                if let Some(s) = c.strip_prefix('$') {
+                    return Some(XVal::Str(s.to_string()));
+                }
+                // A form of a file not loaded is the empty form, in its column [hypothesis:
+                // Food Scraps lists other mods' forms and skips a row whose form is not
+                // valid (`if IsFormValid rRef == 0`)].
+                if let Some(f) = c.strip_prefix('@') {
+                    let form = f.rsplit_once(':').and_then(|(file, hex)| {
+                        let i = order.iter().position(|p| *p == file.trim().to_ascii_lowercase())?;
+                        let id = u32::from_str_radix(hex.trim(), 16).ok()?;
+                        Some(((i as u32) << 24) | (id & 0x00FF_FFFF))
+                    });
+                    return Some(XVal::Ref(form.unwrap_or(0)));
+                }
+                c.parse::<f64>().ok().map(XVal::Num)
             };
-            let rows: Vec<Vec<XVal>> = t.lines().filter(|l| !l.trim().is_empty()).map(|l| l.split('\t').map(parse).collect()).collect();
+            let rows: Vec<Vec<XVal>> = t
+                .lines()
+                .map(|l| l.split('\t').filter(|c| !c.trim().is_empty()).take_while(|c| !c.trim_start().starts_with(';')).filter_map(parse).collect::<Vec<_>>())
+                .filter(|r| !r.is_empty())
+                .collect();
             let list = |g: &mut Game, items: Vec<XVal>| {
                 let entries = items.into_iter().enumerate().map(|(i, v)| (XKey::Num(i as f64), v)).collect();
                 XVal::Array(g.ext.new_array(ArrayKind::List, entries))
@@ -1276,27 +1318,21 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
                 zero
             }
         }
-        // `folder [filter]`: the file names (no path) of a folder under the game's
-        // folder and NVForever's layer [observed: "NVSE\Plugins" "*.dll" gives bare
-        // names]; a missing folder gives an empty array [observed: plugin-odds files.none,
-        // ar_Size 0, where an unset array reads -1].
-        // GetFoldersInFolder the same for folders [observed: gaps3, "NVSE" gives
-        // "Plugins"; a missing folder an empty array].
+        // [documented: file-enumeration-data-roots.md] Both APIs use Data-relative
+        // directories and optional name filters; read roots include the mods layer.
         "getfilesinfolder" | "getfoldersinfolder" => {
             let folders = name == "getfoldersinfolder";
             let p = text(args, 0).unwrap_or_default().replace('/', "\\");
             let filter = text(args, 1).unwrap_or_else(|| "*".into()).to_ascii_lowercase();
             let mut names: Vec<String> = Vec::new();
             for root in roots().read {
-                // A path under the game folder (NVSE\Plugins) or under Data.
-                for base in [root.parent().map(|x| x.to_path_buf()), Some(root.clone())].into_iter().flatten() {
-                    if let Ok(rd) = std::fs::read_dir(base.join(&p)) {
-                        for e in rd.flatten() {
-                            if e.path().is_dir() == folders {
-                                let n = e.file_name().to_string_lossy().to_string();
-                                if glob(&filter, &n.to_ascii_lowercase()) && !names.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
-                                    names.push(n);
-                                }
+                let Some(dir) = find_dir(&root, &p) else { continue };
+                if let Ok(rd) = std::fs::read_dir(dir) {
+                    for e in rd.flatten() {
+                        if e.path().is_dir() == folders {
+                            let n = e.file_name().to_string_lossy().to_string();
+                            if glob(&filter, &n.to_ascii_lowercase()) && !names.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+                                names.push(n);
                             }
                         }
                     }
