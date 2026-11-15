@@ -45,7 +45,7 @@
 //!   either, `crate::combat_group`) [hypothesis: Assistance answers an ally being
 //!   attacked; the Silver Rush intro's customer is made to run out by his StartCombat and
 //!   only his OnHit player sets the Van Graffs against the player, #2520; observer-checks
-//!   question 141].
+//!   question 180].
 //! - **Cowards stay out** [documented: GECK wiki Confidence, "Cowardly … I will always
 //!   flee from combat"; owner's playtest list 4, item 14: confidence and aggression must
 //!   override the helps-allies join]: an actor whose Confidence is Cowardly never takes up
