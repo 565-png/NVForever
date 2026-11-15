@@ -686,6 +686,18 @@ the spec it links to.
     "gone" to scripts that test it). Observer check 172 asks the original.
     ([doors §6](spec-notes/doors.md))
 
+66. **A script package added again after it is done starts over (#2424).** The Lucky
+    38 elevator Victor's script adds his talk package on every talk and waits for the
+    conversation before it shows the floor box; after Stay Here a second talk opened
+    nothing and the floor menu never came back. Now the same package added again once
+    its goal was met begins afresh (a call while it still runs changes nothing). This
+    holds for every script that re-adds a finished package, so an actor whose script
+    adds a Travel package every frame after arriving would begin it again each time
+    [hypothesis: no shipped script was found doing so; the original's rule is not
+    documented, observer check 183]. A save made in the stuck state stays stuck: the
+    script's waiting flag (delaycounter 1) is saved and only a conversation menu clears
+    it, so NVForever does not mend it on load (that would mean naming this script).
+    ([packages §1](spec-notes/packages.md))
 67. **Idles now show over a standing actor's base idle whatever their priorities
     (#2425).** Mr. House's chamber was drawn open from the start because his sealed and
     opening idles carry lower track priorities than his base idle, whose pose is the open

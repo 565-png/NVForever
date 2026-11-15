@@ -2552,6 +2552,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      (11 of its 35 tracks under its base idle's priority): does its whole upper body turn,
      or only the bones above the base idle's priority?
 
+## Added 2026-11-14 (Lucky 38 elevator, #2424)
+
+183. **Does AddScriptPackage of a package an actor has just finished start it again?**
+     (P3; #2424, packages.md.) Ours: the same package added again after its goal was met,
+     before the actor chose another, begins afresh; added while it still runs, nothing
+     changes [hypothesis]. To check: on the Lucky 38 casino floor, talk to the elevator
+     Victor (Lucky38VictorElevatorREF 0x0015725F), pick Stay Here, and talk to him again
+     at once (within a few seconds): does he greet again and show "Choose A Floor"? And
+     in the console, `Lucky38VictorElevatorREF.AddScriptPackage
+     Lucky38VictorElevatorTalkToPlayer` twice, the second right after his greeting ends:
+     does he greet twice?
+
 ## Added 2026-11-14 (talking activators with no talking actor set, #2454)
 
 185. **Who speaks through a talking activator no script has given an actor?** (P2; #2454,

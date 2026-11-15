@@ -29112,6 +29112,24 @@ expect = [
 ]
 
 [[scenario]]
+name = "lucky38-elevator-stay-here"
+source = "issue #2424 (crates/fnv-game/src/functions/actor.rs add_script_package): the Lucky 38 elevator Victor's OnActivate (Lucky38VictorElevatorScript, SCPT 0x0015725D) adds his Dialogue package Lucky38VictorElevatorTalkToPlayer on every talk and waits for the conversation (MenuMode 1009) before its GameMode shows the floor box; Stay Here (button 0) does nothing more. A second talk before a package choice dropped the first, still current with its goal met, opened no conversation, and the script waited for one for ever: no floor box again (the owner's soft lock)"
+note = "the player starts on the casino floor by Victor at the elevator (as securitron-face-bright); he is activated at 6 s and again at 13 s, soon after Stay Here, before the 10 s package choice drops the finished package; the menu aid closes the conversation after 1 s and answers the floor box with its first button, Stay Here"
+areas = ["ai", "scripting"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/ai.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "6:activate:Lucky38VictorElevatorREF,13:activate:Lucky38VictorElevatorREF" }
+args = ["--cell", "Lucky38CasinoFloor01", "--play", "--pos=1087,-2290,7690", "--heading", "50", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 35
+order = [[
+  { text = "dialogue: conversation with Lucky38VictorElevatorREF started", label = "the first talk: Victor's package opens a conversation" },
+  { re = 'script: message Lucky38ElevatorMessageVictor .*buttons', label = "the floor box shows after it" },
+  { text = "script: menu 1001 (message Lucky38ElevatorMessageVictor) answered (OK)", label = "Stay Here (the first button) is picked" },
+  { text = "script: OnActivate of FalloutNV.esm|SCPT 0x0015725D ran on Some(0x0015725F)", label = "the second talk runs the elevator's OnActivate" },
+  { text = "dialogue: conversation with Lucky38VictorElevatorREF started", label = "and opens a conversation again (none without the fix)" },
+  { re = 'script: message Lucky38ElevatorMessageVictor .*buttons', label = "and the floor box comes back" },
+]]
+
+[[scenario]]
 name = "house-pod-sealed"
 source = "issue #2425 (engine/nvforever/src/locomotion.rs, nvf-assets anim_play.rs over_movement): Mr. House's life-support chamber is his own creature NVCRMrHouse (NVCRMrHouse01REF 0x0014B095, Lucky38ControlRoom). NVCRMrHouseSCRIPT (SCPT 0x00144627) seals it on load (housestate 1, PlayIdle MRHouseSleepingLoop, DynamicIdle_Sleeping.kf: Bip01 Shell turned about 126 degrees over him, Bip01 Yaw 0) and the terminal's unsealing item (Lucky38ControlTerminalWarning, TERM 0x0015C1A5) sets housestate 0 and plays MrHouseOpen (WakeUp.kf, 19.4 s, to the shell at about 25 degrees and Yaw 90, his mtidle.kf). Both idles' tracks are under mtidle.kf's priority, so before the fix the base idle's open pod showed throughout"
 note = "the player starts on the catwalk 1,300 units from the chamber looking at it (a 15 degree view); the node angles are read with GetNifBlockRotation (the first read only asks for the node tree); at 13 s the terminal item's two lines are stood in by the test aids (housestate 0, PlayIdle MrHouseOpen). Shots house_pod_sealed.png (12 s: the chamber closed, House not seen) and house_pod_opened.png (34 s: open, House seen)"
