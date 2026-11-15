@@ -254,7 +254,7 @@ struct Report {
 
 fn compare(bytes: &[u8]) -> Result<Report, String> {
     if bytes.len() != WIDTH * HEIGHT * 4 { return Err(format!("wrong byte count {}", bytes.len())); }
-    if bytes.chunks_exact(4).any(|p| p[3] != 255) { return Err("nonopaque target alpha".into()); }
+    if bytes.as_chunks::<4>().0.iter().any(|p| p[3] != 255) { return Err("nonopaque target alpha".into()); }
     let mut report = Report { max_delta: [0; 4], flat_mean_delta: [0.0; 4], luminance: [[0.0; 4]; 3] };
     for (q, &(left, top)) in STARTS.iter().enumerate() {
         for y in top..top + ROI {
@@ -267,14 +267,14 @@ fn compare(bytes: &[u8]) -> Result<Report, String> {
                     report.max_delta[q] = report.max_delta[q].max(a.abs_diff(b));
                     report.flat_mean_delta[q] += f64::from(b.abs_diff(flat));
                 }
-                for panel in 0..3 {
+                for (panel, row) in report.luminance.iter_mut().enumerate() {
                     let i = offset + panel * 128 * 4;
-                    report.luminance[panel][q] += 0.2126 * f64::from(bytes[i]) + 0.7152 * f64::from(bytes[i + 1]) + 0.0722 * f64::from(bytes[i + 2]);
+                    row[q] += 0.2126 * f64::from(bytes[i]) + 0.7152 * f64::from(bytes[i + 1]) + 0.0722 * f64::from(bytes[i + 2]);
                 }
             }
         }
         report.flat_mean_delta[q] /= (ROI * ROI * 3) as f64;
-        for panel in 0..3 { report.luminance[panel][q] /= (ROI * ROI) as f64; }
+        for row in &mut report.luminance { row[q] /= (ROI * ROI) as f64; }
     }
     if report.max_delta.iter().any(|&d| d > 1)
         || report.flat_mean_delta.iter().filter(|&&d| d >= 8.0).count() < 2
@@ -292,7 +292,7 @@ fn save_readback(out: &Path, ordinal: u8, frame: u64, bytes: &[u8], report: &Res
     create_file(&out.join(format!("readback-{ordinal}.txt")), format!("submitted render frames at receipt: {frame}\n{report:#?}\n").as_bytes())?;
     if bytes.len() == WIDTH * HEIGHT * 4 {
         let mut ppm = format!("P6\n{WIDTH} {HEIGHT}\n255\n").into_bytes();
-        for pixel in bytes.chunks_exact(4) { ppm.extend_from_slice(&pixel[..3]); }
+        for pixel in bytes.as_chunks::<4>().0 { ppm.extend_from_slice(&pixel[..3]); }
         create_file(&out.join(format!("readback-{ordinal}.ppm")), &ppm)?;
     }
     Ok(())
