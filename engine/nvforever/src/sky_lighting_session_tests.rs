@@ -1,8 +1,9 @@
 //! Real compiled Game writes -> production lighting reader -> SkyState -> Projection.
 //! The source-only baseline adds a neutral reader seam, not a new lighting policy.
 use super::*;
+// Also the plugin builder of `use_weapon::object_tests`: one module, as clippy::duplicate_mod asks.
 #[path = "../../../crates/fnv-game/tests/common/mod.rs"]
-mod lighting_build;
+pub(crate) mod lighting_build;
 #[path = "../../../crates/fnv-game/tests/common/lighting_templates.rs"]
 mod fixtures;
 use fixtures::*;
