@@ -55,7 +55,7 @@
 //! and unpainted ground looks as without it. The switch flips the materials in place
 //! ([`sync_height_blend`]); new materials take the current setting. Start-up test aid
 //! `NVF_PLAY_TEST_HEIGHT_BLEND=depth:gain[:source]` configures it without enabling it:
-//! defaults `0.10:4:global`; `local` subtracts a coarser mip at the same UV. Equal heights
+//! defaults `0.10:8:global` (the user's choice from in-game comparisons, 2026-11-15); `local` subtracts a coarser mip at the same UV. Equal heights
 //! sharpen unequal shares too; colour and normals use the same resulting weights.
 //!
 //! Only the folded draw is weighted: a quadrant's later layers that keep their blended
@@ -205,7 +205,7 @@ struct HeightBlendParams {
 
 impl Default for HeightBlendParams {
     fn default() -> Self {
-        Self { depth: 0.10, gain: 4.0, local: false }
+        Self { depth: 0.10, gain: 8.0, local: false }
     }
 }
 
@@ -244,12 +244,12 @@ fn height_blend_params() -> &'static HeightBlendParams {
     static PARAMS: OnceLock<HeightBlendParams> = OnceLock::new();
     PARAMS.get_or_init(|| match std::env::var("NVF_PLAY_TEST_HEIGHT_BLEND") {
         Ok(value) => parse_height_blend(&value).unwrap_or_else(|why| {
-            warn!("terrain: invalid NVF_PLAY_TEST_HEIGHT_BLEND ({why}); using 0.10:4:global");
+            warn!("terrain: invalid NVF_PLAY_TEST_HEIGHT_BLEND ({why}); using 0.10:8:global");
             HeightBlendParams::default()
         }),
         Err(std::env::VarError::NotPresent) => HeightBlendParams::default(),
         Err(std::env::VarError::NotUnicode(_)) => {
-            warn!("terrain: non-Unicode NVF_PLAY_TEST_HEIGHT_BLEND; using 0.10:4:global");
+            warn!("terrain: non-Unicode NVF_PLAY_TEST_HEIGHT_BLEND; using 0.10:8:global");
             HeightBlendParams::default()
         }
     })
@@ -945,6 +945,7 @@ mod tests {
     // CPU mirror of terrain_weights.wesl, line for line (its constants are checked against
     // the file below).
     const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
+    // A fixture gain for the height function's own tests (the default is 8, tested above).
     const HEIGHT_GAIN: f32 = 4.0;
     const HEIGHT_LIMIT: f32 = 0.25;
     const DEPTH: f32 = 0.10;
@@ -1129,10 +1130,11 @@ mod tests {
 
     #[test]
     fn height_blend_parameters_parse_without_changing_the_environment() {
-        assert_eq!(HeightBlendParams::default().gain, HEIGHT_GAIN);
+        assert_eq!(HeightBlendParams::default().gain, 8.0);
         assert_eq!(HeightBlendParams::default().depth, DEPTH);
-        assert_eq!(parse_height_blend("0.10:4"), Ok(HeightBlendParams::default()));
-        assert_eq!(parse_height_blend("0.10:4:global"), Ok(HeightBlendParams::default()));
+        assert_eq!(parse_height_blend("0.10:8"), Ok(HeightBlendParams::default()));
+        assert_eq!(parse_height_blend("0.10:8:global"), Ok(HeightBlendParams::default()));
+        assert_ne!(parse_height_blend("0.10:4"), Ok(HeightBlendParams::default()));
         let local = parse_height_blend("0.05:8:local").unwrap();
         assert_eq!(local.uniform(), Vec4::new(0.05, 8.0, 1.0, 0.0));
         assert_eq!(parse_height_blend("1:0").unwrap().uniform(), Vec4::new(1.0, 0.0, 0.0, 0.0));

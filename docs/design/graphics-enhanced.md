@@ -445,29 +445,33 @@ prior art, nothing of either was used.
   (0.5, 0.5), heights (-0.05, +0.05), depth 0.10 gives weights (0, 1).
   Colour and normals use the same weights; the resulting normal is made unit length once.
   terrain_weights.wesl is plain WGSL, with naga validation and a CPU mirror in terrain.rs.
-- **Starting parameters** [design, #2550]: depth 0.10, gain 4, global reference; height
+- **Default parameters** [design, #2550]: depth 0.10, gain 8, global reference, the user's choice from in-game comparisons at a painted gravel/cracked-mud transition (2026-11-15, the matrix below); height
   limit remains 0.25. Test aid `NVF_PLAY_TEST_HEIGHT_BLEND=depth:gain[:source]` is read
   once per process and logged at start. Source is `global` (also when omitted) or `local`.
   Depth must be finite and at least 0.001 (also the shader's floor); gain finite and non-negative.
-  Invalid input warns and falls back to the complete default `0.10:4:global`.
+  Invalid input warns and falls back to the complete default `0.10:8:global`.
   This configures the effect; enable it with the graphics switch. Only the on variant
   reads the appended uniform `(depth, gain, source_id, reserved)`, source IDs 0/1.
   The material pipeline key remains its on/off bit.
-- **Picture comparison matrix** [design, #2550; pending the user's pictures]. Keep camera,
+- **Picture comparison matrix** [design, #2550], compared at a road-side transition near Goodsprings, 1920x1080, 13:30. Keep camera,
   lighting, textures and graphics settings fixed; compare roads/clumps, flat textures,
   oblique distant ground, quadrant/cell edges and the fold limit. Restart between values.
 
   | Comparison | Switch | `NVF_PLAY_TEST_HEIGHT_BLEND` |
   |---|---|---|
   | Ordered baseline | off | `0.10:4:global` |
-  | Starting choice | on | `0.10:4:global` (or unset) |
+  | First candidate | on | `0.10:4:global` |
   | Wider transition | on | `0.20:4:global` |
   | Narrower transition | on | `0.05:4:global` |
-  | More height contrast | on | `0.10:8:global` |
+  | More height contrast (chosen default) | on | `0.10:8:global` (or unset) |
   | Spatial reference | on | `0.10:4:local` |
 
-  Final depth, gain and source remain to be settled from those pictures; neither source
-  is claimed to improve every terrain texture.
+  Off, the gravel fades into the cracked mud as a broad gradient; on, the mud breaks into
+  islands along its cracks with gravel between. Depth 0.05 starts to show straight edges
+  along the triangles; gain 0 (no height, sharpening only) gives a hard band without shape;
+  the local source looked like the global one there, so global (no extra read) is kept.
+  Retextures with higher-resolution or higher-contrast diffuses may want another gain;
+  neither source is claimed to suit every terrain texture.
 - **What it reaches.** Only the folded draw (terrain.rs "One draw for the base and its
   first layers"): up to six layers where the repeat divides the cell, four otherwise. A
   quadrant's later layers that keep their blended draws, and every layer on a GPU without
