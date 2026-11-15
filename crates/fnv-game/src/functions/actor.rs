@@ -789,7 +789,7 @@ pub fn essential(g: &Game, r: FormId) -> bool {
         // "Essential flagged teammates are not essential in Hardcore (New Vegas)"
         // [documented: GECK wiki SetPlayerTeammate notes]: a companion killed in
         // Hardcore dies, flag or not.
-        if g.hardcore() {
+        if teammates_unprotected(g) {
             return false;
         }
         // No hired companion carries the Essential flag and no script sets it, yet
@@ -804,13 +804,20 @@ pub fn essential(g: &Game, r: FormId) -> bool {
     essential_flagged(g, r)
 }
 
+/// Whether the Hardcore rule that teammates are not essential holds: in Hardcore, or,
+/// with the player's Hardcore Tweaks on, as their Essential Companions switch says
+/// [design: docs/design/tweaks.md].
+fn teammates_unprotected(g: &Game) -> bool {
+    if g.tweaks.hardcore_tweaks { !g.tweaks.hardcore_essential_companions } else { g.hardcore() }
+}
+
 /// Essential by flag, what IsEssential reads ("Returns 1 if the calling actor is flagged
 /// as essential" [documented: GECK wiki IsEssential]): the reference's own flag
 /// (SetActorRefEssential) or its base's (ACBS, changed by SetEssential). The reference
 /// flag cannot clear the base's [documented: catalogue notes of SetActorRefEssential].
 /// A teammate in Hardcore reads 0 (the SetPlayerTeammate note, [`essential`]).
 pub fn essential_flagged(g: &Game, r: FormId) -> bool {
-    if g.hardcore() && g.is_teammate(r) {
+    if teammates_unprotected(g) && g.is_teammate(r) {
         return false;
     }
     let base = base_of(g, r);

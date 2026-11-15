@@ -214,6 +214,49 @@ the spec it links to.
     face buttons; menu hints write the names (the game fonts have no symbols). Select and
     Start rather than Share/Create and Options. Right choices, and do the glyphs look
     right? ([controller §3a](design/controller.md))
+65. **Held menu keys repeat; explosions shake the view (#1891).** Both are on for
+    everyone, with no tweak turned on: an arrow key, W/A/S/D or Page Up/Down held in a
+    menu (or the D-pad) presses again after 0.4 s and then 10 times a second; an
+    explosion near the player turns the view up to about 0.8° for the same time the pad
+    rumbles. The Tweaks tab's Key Repeat Acceleration and Scale Explosion Shake (0 turns
+    it off) build on them. Our own numbers; if you rule otherwise, either goes back to off
+    and its tweak waits. (`engine/nvf-play/src/key_repeat.rs`, `shake.rs`)
+66. **A grenade indicator on the HUD (#1891).** NVForever had none; it now draws the
+    menu files' own explosive indicator for every live grenade whose blast would reach
+    you, on the grenade or on the view's edge pointing at it, for everyone. Where the
+    original puts it is a guess (observer check 190). The Tweaks tab's Hide Grenade
+    Indicator turns it off. (`engine/nvf-play/src/grenade_indicator.rs`)
+67. **An idle vanity camera (#1891).** After 120 s with no input (the master's
+    `fVanityModeAutoDelay`), the camera goes to third person and slowly circles you (a
+    turn in about 42 s, our number); any input ends it and the view stays third person,
+    as after Toggle POV held. New for everyone. The Tweaks tab's Vanity Camera Returns to
+    First Person puts a first-person view back. (`engine/nvf-play/src/vanity.rs`)
+68. **A heartbeat at low health (#1891).** Under a quarter of your health, the master's
+    `UIHealthHeartbeatALP` loops until you heal, for everyone. The threshold is ours (no
+    setting names one); observer check 192 asks the original's. The Tweaks tab's
+    Heartbeat Fades lets it fade. (`engine/nvf-play/src/heartbeat.rs`)
+69. **Loaded ammo marked (#1891).** The Pip-Boy's ammo list now gives the ammo your weapon
+    loads the equipped square, for everyone (observer check 193); the Tweaks tab's
+    Containers Show Equipped Ammo shows it in containers too. Terminals also fade out as
+    they close now (the menu file's 0.25 s). (`menu/model.rs`, `terminal.rs`)
+70. **Critical-hit corner message (#1891).** A critical by the player now shows "Critical
+    hit on <name>" in the corner with the masters' critical icon (`sCriticalStrikeIcon`),
+    for everyone; the words are ours (the original's are not in the data). The Tweaks
+    tab's Critical Hit Messages Name the Limb adds the part. (`combat.rs`)
+82. **"Map marker added" (#1891).** When a script puts a place on your map (ShowMap), a
+    corner message now says "Map marker added", for everyone (our words; the original's
+    pop-up is only known from a mod's readme). The Tweaks tab's Map Marker Added Names
+    the Place adds the name. (`engine/nvf-play/src/marker_added.rs`)
+83. **Hardcore need messages (#1891).** In Hardcore, a dehydration or sleep stage changing
+    now shows the masters' own line ("Your dehydration level has increased." and the
+    rest), for everyone; which change says which is our reading (observer check 194). The
+    Tweaks tab can turn each off. (`crates/fnv-game/src/needs.rs`)
+73. **World borders (#1891).** A region flagged Border Region now keeps the player inside
+    its areas: step past and you are put back with the masters' "You cannot proceed in
+    that direction" line in the corner. No master flags a region of a played worldspace,
+    so only plugins meet it; how the original stops you is a guess (observer check 195).
+    The Tweaks tab's World Borders: Warning Only keeps the line without the stop.
+    (`crates/fnv-game/src/borders.rs`, `engine/nvf-play/src/borders.rs`)
 58. **Followers come in once you stop (#2122).** A follower on its way now stops 150
     units inside its package's distance (not nearer than 128): Boone 180 of his 330,
     DefaultFollowPlayerFar 362 of 512, the usual 256 at 128; before, it stood near the
