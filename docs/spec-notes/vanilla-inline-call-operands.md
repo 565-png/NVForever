@@ -162,13 +162,13 @@ Core reported 3019 passed, no failures and four existing ignored tests; engine
 reported 2893 passed with no failures or ignored tests. Neither suite filtered
 tests, and all 16 owned controls passed once. Both strict lint jobs, dependency
 audits, six Python suites and the guard/aggregator passed. These are historical
-combined-source results; the new documentation-only follow-up has not run CI.
+combined-source results; later integrated heads require their own exact-head checks.
 
 The [maintainer's unresolved launcher blocker](https://github.com/LootJunkieAzza/NVForever/pull/2585#issuecomment-6886691502)
 remains: the public game launcher at that head passes the scenario's `{env:...}`
 HOME placeholder literally, so it does not select the seeded authored UDF home.
 Moving the unchanged scenario into the scripts section does not fix that path.
-PR #2585 stays Draft until the coordinated shared runner repair is integrated,
-the real opted-in launcher boundary is validated, and independent review closes
-the blocker on the exact resulting head. No game execution, native acceptance
-or blocker closure is claimed by this documentation follow-up.
+The coordinated canonical runner repair is included in this topic. PR #2585
+stays Draft until the real opted-in launcher boundary is validated and independent
+review closes the blocker on the exact resulting head, with current checks. No
+game execution, native acceptance or blocker closure is implied by integration.
