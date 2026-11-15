@@ -20,10 +20,11 @@ are known by name only; no memory layout of the original is used (extender-compa
   starts at its skeleton's root node, `Scene Root` [observed: GetNifBlockParentNodes of
   `Bip01 Head` ends there, #2132]; actors' skeleton node names come from the rig (their
   entities carry no `Name`), their parts' shapes are named as their models spell them.
-  The player's tree and those of references scripts created (actors placed with
-  PlaceAtMe, dropped items) are told every frame, watched or not, so a first read finds
-  them [observed: the original reads the player's tree, Doc's copy and a pistol placed
-  six frames before at once]; an actor a script creates is drawn the frame after, its
+  Once scripts use these functions, the player's tree and those of references scripts
+  created (actors placed with PlaceAtMe, dropped items) are told every frame, watched or
+  not, so a first read finds them [observed: the original reads the player's tree, Doc's
+  copy and a pistol placed six frames before at once]; a game whose scripts never use
+  them walks no tree. An actor a script creates in view is drawn the frame after, its
   parts read then rather than by the read-ahead (residents.rs `at_once`, #2133). Any
   other reference is told from the frame after a script first asks about it: a first
   read of it gives ar_Null or 0 [hypothesis: the original's reads it at once]. A created item drawn
