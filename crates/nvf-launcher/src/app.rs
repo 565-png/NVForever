@@ -210,7 +210,10 @@ impl App {
             let shot = fnv_save::read_header(&path).ok().map(|s| s.shot).filter(|s| !s.is_empty()).map(Arc::from);
             let name = if hd.player_name.is_empty() { path.file_stem().unwrap_or_default().to_string_lossy().into_owned() } else { hd.player_name.clone() };
             let hours = hd.play_seconds / 3600.0;
-            let detail = format!("Level {} · {} · {:.0} h played", hd.level, if hd.location.is_empty() { "Mojave Wasteland" } else { &hd.location }, hours);
+            let mut parts = vec![format!("Level {}", hd.level)];
+            parts.extend(shown_place(&hd.location).map(str::to_string));
+            parts.push(format!("{hours:.0} h played"));
+            let detail = parts.join(" · ");
             NewestSave { path, name, detail, shot }
         });
     }
@@ -998,6 +1001,18 @@ fn pick_file(_: &str) -> Option<PathBuf> {
     None
 }
 
+/// A save's place as the Continue button shows it: the cell's name when the save holds one
+/// ("The Tops Presidential Suite"), else nothing. The game writes the cell's FULL name, else
+/// its Editor ID (`StripFSGate`), else its worldspace and grid (`WastelandNV (-15, -13)`)
+/// (`place_name` in engine/nvf-play/src/console.rs); the launcher has no data files to look
+/// the last two up in, and an Editor ID is no name to show a player.
+fn shown_place(location: &str) -> Option<&str> {
+    let l = location.trim();
+    let grid = l.ends_with(')') && l.rfind(" (").is_some_and(|i| l[i + 2..l.len() - 1].split(',').all(|n| n.trim().parse::<i32>().is_ok()));
+    let editor_id = !l.contains(' ');
+    (!l.is_empty() && !grid && !editor_id).then_some(l)
+}
+
 /// `body` cut after the paragraph that passes [`PREVIEW_CHARS`], unless `open`; whether it
 /// was long enough to cut.
 fn preview(body: &str, open: bool) -> (&str, bool) {
@@ -1022,6 +1037,16 @@ mod tests {
         assert_eq!(part_text(1.0 / 3.0), "0.333");
         assert_eq!(part_text(1.2), "1.00");
         assert_eq!(part_text(0.25), "0.25");
+    }
+
+    #[test]
+    fn only_real_place_names_are_shown() {
+        assert_eq!(shown_place("The Tops Presidential Suite"), Some("The Tops Presidential Suite"));
+        assert_eq!(shown_place("Goodsprings"), None);
+        assert_eq!(shown_place("StripFSGate"), None);
+        assert_eq!(shown_place("WastelandNV (-15, -13)"), None);
+        assert_eq!(shown_place(""), None);
+        assert_eq!(shown_place("Prospector Saloon"), Some("Prospector Saloon"));
     }
 
     #[test]
