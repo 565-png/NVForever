@@ -471,19 +471,53 @@ pub struct Set {
 /// A font and its texture (the picture and its size in texels); without the texture the
 /// text is drawn with Bevy's font; with `vector`, with a vector font at the screen's own
 /// resolution (`crate::vector_font`), measured by `font` as ever.
+#[derive(Clone)]
 pub struct Face {
     pub font: Font,
     pub image: Option<(Handle<Image>, Vec2)>,
     pub vector: Option<VectorFace>,
 }
 
-/// A vector font for a [`Face`] (`crate::vector_font`): the font, its size (the em) and where
-/// its baseline lies below the top of the text Bevy lays out, both in interface units.
+/// A vector font for a [`Face`] (`crate::vector_font`): the font, its size (the em), its
+/// weight and where its baseline lies below the top of the text Bevy lays out, in interface
+/// units.
 #[derive(Clone, Debug)]
 pub struct VectorFace {
     pub font: Handle<bevy::text::Font>,
     pub em: f32,
+    pub weight: u16,
     pub base: f32,
+}
+
+/// **The vector letters' dark glow** [design: owner 2026-11-15, second test: "the vanilla font
+/// has a slight dark glow effect with a drop shadow effect behind it so it is more visible on
+/// the background"; the game's fonts have it in their pictures, observed]: under each line a
+/// ring of eight dark copies [`GLOW_REACH`] of the em off it (four copies, each with a shadow
+/// on its other side) and a drop shadow down and right ([`DROP`]), their darkness a part of
+/// the words' alpha.
+pub const GLOW_REACH: f32 = 0.07;
+pub const GLOW_ALPHA: f32 = 0.24;
+pub const DROP: Vec2 = Vec2::new(0.045, 0.065);
+pub const DROP_ALPHA: f32 = 0.55;
+
+/// A dark copy of a vector line under it (its glow); recolouring passes it over.
+#[derive(Component)]
+pub struct Halo;
+
+/// A vector line's [`TextShadow`] offset as a part of its em; [`glow_offsets`] turns it into
+/// the logical pixels the shadow takes.
+#[derive(Component, Clone, Copy)]
+pub struct TextGlow(pub Vec2);
+
+/// Set each glowing line's shadow offset from its laid-out height (one em, its line height
+/// being the font's size). After the UI's layout.
+pub fn glow_offsets(mut lines: Query<(&TextGlow, &bevy::ui::ComputedNode, &mut bevy::ui::widget::TextShadow), Changed<bevy::ui::ComputedNode>>) {
+    for (g, node, mut shadow) in &mut lines {
+        let offset = g.0 * node.size().y * node.inverse_scale_factor();
+        if shadow.offset != offset {
+            shadow.offset = offset;
+        }
+    }
 }
 
 /// A game texture for the interface: not repeated, so that a stretched picture's two
@@ -685,15 +719,28 @@ pub fn set_marked(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, x: f32
         // screen's resolution, without kerning or ligatures so it is as wide as `face.font`
         // measured it (`crate::vector_font`), in one line.
         let text = line.text_spaced(&face.font);
+        let font = TextFont { font_size: font_units(v.em), weight: bevy::text::FontWeight(v.weight), font_features: crate::vector_font::features(), ..TextFont::default().with_font(v.font.clone()) };
+        let layout = (bevy::text::LineHeight::RelativeToFont(1.0), TextLayout::new(Justify::Left, LineBreak::NoWrap));
+        let shadow = |part: Vec2, alpha: f32| (TextGlow(part), bevy::ui::widget::TextShadow { offset: Vec2::ZERO, color: Color::BLACK.with_alpha(alpha) });
+        let ink = color.alpha();
         p.spawn((Node { position_type: PositionType::Absolute, left: u(x), top: u(base - v.base), ..default() }, Pickable::IGNORE)).with_children(|n| {
-            n.spawn((
-                Text::new(text),
-                TextFont { font_size: font_units(v.em), font_features: crate::vector_font::features(), ..TextFont::default().with_font(v.font.clone()) },
-                bevy::text::LineHeight::RelativeToFont(1.0),
-                TextLayout::new(Justify::Left, LineBreak::NoWrap),
-                TextColor(color),
-                mark,
-            ));
+            // The glow (module notes of `GLOW_REACH`): each copy off one way, its shadow the
+            // other way.
+            let (r, d) = (GLOW_REACH, GLOW_REACH * std::f32::consts::FRAC_1_SQRT_2);
+            let dark = Color::BLACK.with_alpha(GLOW_ALPHA * ink);
+            for at in [Vec2::new(-r, 0.0), Vec2::new(0.0, -r), Vec2::new(-d, -d), Vec2::new(d, -d)] {
+                n.spawn((
+                    Node { position_type: PositionType::Absolute, left: u(at.x * v.em), top: u(at.y * v.em), ..default() },
+                    Text::new(text.clone()),
+                    font.clone(),
+                    layout,
+                    TextColor(dark),
+                    shadow(-2.0 * at, GLOW_ALPHA * ink),
+                    Halo,
+                    Pickable::IGNORE,
+                ));
+            }
+            n.spawn((Text::new(text), font, layout, TextColor(color), shadow(DROP, DROP_ALPHA * ink), mark));
         });
         return;
     }

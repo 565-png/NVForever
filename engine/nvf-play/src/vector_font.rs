@@ -15,15 +15,32 @@
 //! `fnv_font::Font` table (`width`, `lines`), never from the texture. [`metric_table`] fills
 //! that table from the font file's own advances for this run's code page, so every width,
 //! wrap and cut on the page stays as it is. For the drawn text to be as wide as measured,
-//! Bevy is asked for no kerning and no ligatures ([`features`]) and the weight is the file's
-//! default (400), whose advances are the `hmtx` table's. [`read`] reads only what that needs:
-//! the `head`, `hhea`, `hmtx`, `cmap` and `OS/2` tables (no new dependency).
+//! Bevy is asked for no kerning and no ligatures ([`features`]); the regular weight's
+//! advances are the `hmtx` table's, the bold titles' (weight 700 on the font's weight axis)
+//! those plus the `HVAR` table's deltas [documented: OpenType 1.9 `fvar`, `avar`, `HVAR` and
+//! item variation store chapters]. [`read`] reads only what that needs: the `head`, `hhea`,
+//! `hmtx`, `cmap`, `OS/2`, `fvar`, `avar` and `HVAR` tables (no new dependency).
+//!
+//! **Sizes** [design: owner 2026-11-15, second test: "make the overall text size smaller ...
+//! do not decrease the line/row height"]: the entries' and rows' letters [`ENTRY_EM`], the
+//! small print's [`SMALL_EM`], set here rather than from the game's fonts, whose letter boxes
+//! hold their glow too (font 7's H is 30 units, its letter about 24 [observed: the owner's
+//! screenshots]); the rows keep their heights.
 
 use bevy::prelude::*;
 use fnv_font::{Font, Glyph};
 
 /// The font file, built into the program.
 pub const FONT_BYTES: &[u8] = include_bytes!("../assets/fonts/RobotoCondensed[wght].ttf");
+
+/// The em of the entries' and rows' letters and of the small print (the note, the version,
+/// "Report a Bug"), in interface units (module notes): cap heights of about 22 and 17.
+pub const ENTRY_EM: f32 = 31.0;
+pub const SMALL_EM: f32 = 24.0;
+/// The weights drawn: the rows' and the titles' (the column, the categories, the tab rail)
+/// [design: owner 2026-11-15, "make the menu titles and the category titles bold"].
+pub const REGULAR: u16 = 400;
+pub const BOLD: u16 = 700;
 
 /// What the page needs of a TrueType font: its em, the line metrics Bevy's text places a
 /// line by, the cap and x heights, and each character's advance.
@@ -39,6 +56,165 @@ pub struct Metrics {
     advances: Vec<u16>,
     /// Character ranges and how each maps to glyphs (cmap format 4 or 12).
     map: Vec<Range>,
+    /// How the advances vary with the weight; `None` for a font without a weight axis or
+    /// `HVAR` (every weight measured as the default's).
+    var: Option<Variation>,
+}
+
+/// The font's axes and its advances' variation (module notes): `fvar`'s axes, `avar`'s maps,
+/// `HVAR`'s item variation store and advance mapping.
+#[derive(Debug, Clone, PartialEq)]
+struct Variation {
+    /// Each axis's least, default and most value; the weight axis's index.
+    axes: Vec<[f32; 3]>,
+    weight: usize,
+    /// Each axis's `avar` map, (from, to) in normalized coordinates (empty: none).
+    avar: Vec<Vec<(f32, f32)>>,
+    /// The regions: for each, each axis's start, peak and end.
+    regions: Vec<Vec<[f32; 3]>>,
+    /// The item variation data: its regions and each item's deltas, one per region.
+    data: Vec<(Vec<u16>, Vec<Vec<i32>>)>,
+    /// Glyph → (outer, inner); `None`: (0, glyph).
+    map: Option<Vec<(u16, u16)>>,
+}
+
+fn f2dot14(b: &[u8], at: usize) -> Option<f32> {
+    i16_at(b, at).map(|v| f32::from(v) / 16384.0)
+}
+
+fn fixed(b: &[u8], at: usize) -> Option<f32> {
+    u32_at(b, at).map(|v| v as i32 as f32 / 65536.0)
+}
+
+/// Read the weight axis and the advances' variation; `None` where the font has no weight
+/// axis or no `HVAR`, or either does not read.
+fn read_variation(b: &[u8]) -> Option<Variation> {
+    let (fvar, hvar) = (table(b, b"fvar")?, table(b, b"HVAR")?);
+    let (axes_at, count, size) = (u16_at(fvar, 4)? as usize, u16_at(fvar, 8)? as usize, u16_at(fvar, 10)? as usize);
+    let mut axes = Vec::with_capacity(count);
+    let mut weight = None;
+    for i in 0..count {
+        let at = axes_at + i * size;
+        if fvar.get(at..at + 4)? == b"wght" {
+            weight = Some(i);
+        }
+        axes.push([fixed(fvar, at + 4)?, fixed(fvar, at + 8)?, fixed(fvar, at + 12)?]);
+    }
+    let weight = weight?;
+    let mut avar = vec![Vec::new(); count];
+    if let Some(a) = table(b, b"avar") {
+        let mut at = 8;
+        for map in avar.iter_mut().take(u16_at(a, 6)? as usize) {
+            let n = u16_at(a, at)? as usize;
+            *map = (0..n).map(|k| Some((f2dot14(a, at + 2 + 4 * k)?, f2dot14(a, at + 4 + 4 * k)?))).collect::<Option<_>>()?;
+            at += 2 + 4 * n;
+        }
+    }
+    let store = hvar.get(u32_at(hvar, 4)? as usize..)?;
+    let list = store.get(u32_at(store, 2)? as usize..)?;
+    let (region_axes, region_count) = (u16_at(list, 0)? as usize, u16_at(list, 2)? as usize);
+    let regions = (0..region_count)
+        .map(|r| (0..region_axes).map(|a| {
+            let at = 4 + 6 * (r * region_axes + a);
+            Some([f2dot14(list, at)?, f2dot14(list, at + 2)?, f2dot14(list, at + 4)?])
+        }).collect::<Option<Vec<_>>>())
+        .collect::<Option<Vec<_>>>()?;
+    let data = (0..u16_at(store, 6)? as usize)
+        .map(|i| {
+            let d = store.get(u32_at(store, 8 + 4 * i)? as usize..)?;
+            let (items, word_field, n) = (u16_at(d, 0)? as usize, u16_at(d, 2)?, u16_at(d, 4)? as usize);
+            let (long, words) = (word_field & 0x8000 != 0, (word_field & 0x7FFF) as usize);
+            let indexes: Vec<u16> = (0..n).map(|k| u16_at(d, 6 + 2 * k)).collect::<Option<_>>()?;
+            let (big, small) = if long { (4, 2) } else { (2, 1) };
+            let row = words * big + n.saturating_sub(words) * small;
+            let first = 6 + 2 * n;
+            let rows = (0..items)
+                .map(|item| {
+                    let mut at = first + item * row;
+                    (0..n).map(|k| {
+                        let size = if k < words { big } else { small };
+                        let v = match size {
+                            4 => u32_at(d, at)? as i32,
+                            2 => i32::from(i16_at(d, at)?),
+                            _ => i32::from(*d.get(at)? as i8),
+                        };
+                        at += size;
+                        Some(v)
+                    }).collect::<Option<Vec<i32>>>()
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some((indexes, rows))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let map = match u32_at(hvar, 8)? as usize {
+        0 => None,
+        at => {
+            let m = hvar.get(at..)?;
+            let (format, entry) = (*m.first()?, *m.get(1)?);
+            let (count, first) = if format == 0 { (u16_at(m, 2)? as usize, 4) } else { (u32_at(m, 2)? as usize, 6) };
+            let (size, inner_bits) = (usize::from((entry >> 4) & 3) + 1, u32::from(entry & 0xF) + 1);
+            let entries = (0..count)
+                .map(|i| {
+                    let v = m.get(first + i * size..first + (i + 1) * size)?.iter().fold(0u32, |v, b| (v << 8) | u32::from(*b));
+                    Some(((v >> inner_bits) as u16, (v & ((1 << inner_bits) - 1)) as u16))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(entries)
+        }
+    };
+    Some(Variation { axes, weight, avar, regions, data, map })
+}
+
+impl Variation {
+    /// The normalized coordinates of weight `w` (the other axes at their defaults): `fvar`'s
+    /// normalization, then `avar`'s map, kept to F2DOT14 as a renderer keeps them.
+    fn coords(&self, w: f32) -> Vec<f32> {
+        let mut out = vec![0.0; self.axes.len()];
+        let [min, def, max] = self.axes[self.weight];
+        let v = w.clamp(min, max);
+        let mut n = if v < def && def > min {
+            (v - def) / (def - min)
+        } else if v > def && max > def {
+            (v - def) / (max - def)
+        } else {
+            0.0
+        };
+        let map = &self.avar[self.weight];
+        if let Some(k) = map.windows(2).position(|p| n >= p[0].0 && n <= p[1].0) {
+            let ((f0, t0), (f1, t1)) = (map[k], map[k + 1]);
+            n = if f1 > f0 { t0 + (n - f0) * (t1 - t0) / (f1 - f0) } else { t0 };
+        }
+        out[self.weight] = (n * 16384.0).round() / 16384.0;
+        out
+    }
+
+    /// Glyph `g`'s advance delta at `coords`, in font units, rounded as shapers round it.
+    fn delta(&self, g: u16, coords: &[f32]) -> f32 {
+        let (outer, inner) = match &self.map {
+            Some(m) => m.get(usize::from(g)).or(m.last()).copied().unwrap_or((0, g)),
+            None => (0, g),
+        };
+        let Some((indexes, rows)) = self.data.get(usize::from(outer)) else { return 0.0 };
+        let Some(row) = rows.get(usize::from(inner)) else { return 0.0 };
+        let sum: f32 = indexes.iter().zip(row).map(|(r, d)| self.regions.get(usize::from(*r)).map_or(0.0, |reg| scalar(reg, coords)) * *d as f32).sum();
+        sum.round()
+    }
+}
+
+/// How much a region counts at `coords` [documented: OpenType item variation store,
+/// "Algorithm for interpolation of instance values"].
+fn scalar(region: &[[f32; 3]], coords: &[f32]) -> f32 {
+    let mut s = 1.0;
+    for (&[start, peak, end], &v) in region.iter().zip(coords) {
+        if peak == 0.0 || start > peak || peak > end || (start < 0.0 && end > 0.0) || v == peak {
+            continue;
+        }
+        if v <= start || v >= end {
+            return 0.0;
+        }
+        s *= if v < peak { (v - start) / (peak - start) } else { (end - v) / (end - peak) };
+    }
+    s
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,7 +284,7 @@ pub fn read(b: &[u8]) -> Result<Metrics, String> {
             cap_height = f32::from(i16_at(os2, 88).unwrap_or(0)).max(1.0);
         }
     }
-    Ok(Metrics { units_per_em, ascent, descent, cap_height, x_height, advances, map: read_cmap(cmap)? })
+    Ok(Metrics { units_per_em, ascent, descent, cap_height, x_height, advances, map: read_cmap(cmap)?, var: read_variation(b) })
 }
 
 /// The Unicode subtable's ranges: format 12 (3,10 or 0,4…) before format 4 (3,1 or 0,3).
@@ -168,11 +344,26 @@ impl Metrics {
             })
     }
 
-    /// Character `c`'s advance as a part of the em.
+    /// Character `c`'s advance as a part of the em, at the default weight.
     pub fn advance(&self, c: char) -> f32 {
         let g = self.glyph(c) as usize;
         let a = self.advances.get(g).or(self.advances.last()).copied().unwrap_or(0);
         f32::from(a) / self.units_per_em
+    }
+
+    /// Character `c`'s advance as a part of the em at weight `w` (the default's where the
+    /// font does not vary).
+    pub fn advance_at(&self, c: char, w: u16) -> f32 {
+        let base = self.advance(c);
+        match &self.var {
+            Some(v) => base + v.delta(self.glyph(c), &v.coords(f32::from(w))) / self.units_per_em,
+            None => base,
+        }
+    }
+
+    /// Whether the font's advances vary with its weight.
+    pub fn varies(&self) -> bool {
+        self.var.is_some()
     }
 
     /// Whether the font has a glyph of its own for `c`.
@@ -194,16 +385,16 @@ pub fn metrics() -> Option<&'static Metrics> {
     .as_ref()
 }
 
-/// A metric table of the font at `em` interface units for this run's code page, its lines
-/// `line` apart (the raster font's), as `fnv_font::Font` measures (module notes): each
-/// character's advance its width, a space's its room after; capitals and figures as tall as
-/// the cap height, small letters as the x-height.
-pub fn metric_table(m: &Metrics, em: f32, line: f32) -> Font {
+/// A metric table of the font at `em` interface units and weight `w` for this run's code
+/// page, its lines `line` apart (the raster font's), as `fnv_font::Font` measures (module
+/// notes): each character's advance its width, a space's its room after; capitals and figures
+/// as tall as the cap height, small letters as the x-height.
+pub fn metric_table(m: &Metrics, em: f32, line: f32, w: u16) -> Font {
     let page = fnv_util::text::code_page();
     let glyphs = (0..=255u8)
         .map(|code| {
             let c = page.char_of(code);
-            let adv = m.advance(c) * em;
+            let adv = m.advance_at(c, w) * em;
             let rise = if c.is_lowercase() { m.x_height } else { m.cap_height } / m.units_per_em * em;
             if c.is_whitespace() || code < 0x20 {
                 Glyph { after: adv, ..default() }
@@ -213,6 +404,13 @@ pub fn metric_table(m: &Metrics, em: f32, line: f32) -> Font {
         })
         .collect();
     Font { size: line, texture: String::new(), glyphs }
+}
+
+/// A face of the font at `em` units and weight `w`, measured by [`metric_table`], its lines
+/// `line` apart.
+pub fn face(m: &Metrics, font: Handle<bevy::text::Font>, em: f32, w: u16, line: f32) -> crate::interface::Face {
+    let vector = crate::interface::VectorFace { font, em, weight: w, base: baseline_below_top(m, em) };
+    crate::interface::Face { font: metric_table(m, em, line, w), image: None, vector: Some(vector) }
 }
 
 /// The OpenType features turned off so the drawn text is as wide as [`metric_table`]
@@ -258,7 +456,7 @@ mod tests {
     #[test]
     fn the_table_measures_as_the_font_advances() {
         let m = read(FONT_BYTES).unwrap();
-        let t = metric_table(&m, 32.0, 36.0);
+        let t = metric_table(&m, 32.0, 36.0, REGULAR);
         let text = "Ambient Occlusion 16x";
         let sum: f32 = text.chars().map(|c| m.advance(c) * 32.0).sum();
         assert!((t.width(text) - sum).abs() < 1e-3, "{} vs {sum}", t.width(text));
@@ -267,6 +465,37 @@ mod tests {
         assert!(t.glyph(b'H').ascent > t.glyph(b'x').ascent);
         let base = baseline_below_top(&m, 32.0);
         assert!(base > 20.0 && base < 32.0, "{base}");
+    }
+
+    #[test]
+    fn bold_is_measured_from_the_weight_axis() {
+        let m = read(FONT_BYTES).unwrap();
+        assert!(m.varies(), "Roboto Condensed has a weight axis and HVAR");
+        let v = m.var.as_ref().unwrap();
+        assert_eq!(v.axes[v.weight], [100.0, 400.0, 900.0]);
+        // The default weight is the hmtx table's advance.
+        for c in "AMWaimo0%".chars() {
+            assert_eq!(m.advance_at(c, REGULAR), m.advance(c), "{c}");
+        }
+        // H by hand from the file: hmtx 1270; HVAR's deltas -12, -22, -5, 2 for the regions
+        // peaking at -1, 1, -0.5 and 0.694; avar takes 700 (0.6) to 0.6776. So 100: 1270 - 12;
+        // 700: 1270 - 22 × 0.6776 + 2 × 0.6776 / 0.6938, rounded; 900: 1270 - 22. The
+        // condensed bold is a little narrower, not wider.
+        let em = m.units_per_em;
+        for (w, units) in [(100, 1258.0), (BOLD, 1257.0), (900, 1248.0)] {
+            assert_eq!(m.advance_at('H', w), units / em, "H at {w}");
+        }
+        // Never more than a tenth of the em apart; the figures stay tabular.
+        for c in "AHMWabdemnosw".chars() {
+            assert!((m.advance_at(c, BOLD) - m.advance(c)).abs() < 0.1, "{c}");
+        }
+        let figures: Vec<f32> = "0123456789".chars().map(|c| m.advance_at(c, BOLD)).collect();
+        assert!(figures.windows(2).all(|w| w[0] == w[1]), "{figures:?}");
+        // A bold title is measured as Bevy draws it.
+        let b = metric_table(&m, ENTRY_EM, 36.0, BOLD);
+        let sum: f32 = "Graphics".chars().map(|c| m.advance_at(c, BOLD) * ENTRY_EM).sum();
+        assert!((b.width("Graphics") - sum).abs() < 1e-3);
+        assert_ne!(b.width("Graphics"), metric_table(&m, ENTRY_EM, 36.0, REGULAR).width("Graphics"));
     }
 
     #[test]

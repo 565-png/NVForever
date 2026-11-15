@@ -95,8 +95,11 @@ every category open, nothing to choose but the rows.
 **The value cell** [design: the overhaul]: every row's value is drawn in one cell, the list's
 box; a list's words, a switch's On/Off, a binding and a greyed value share one centre; a
 slider runs across the cell, its number right-aligned before its right arrow. The note sits
-under the window behind a rule and a shade; "Report a Bug" and the version sit under the
-pause column's last entry after an empty line; the window holds 13 lines.
+an empty line under the window behind a soft shade (no rule); "Report a Bug" and the version
+sit, in the small print, under the pause column's last entry after an empty line; the window
+holds 12 lines. In the sharp letters (`menu-font`) the column, the categories and the tab rail
+are bold, every line has a dark glow, and the hover and selection boxes hug the words with
+their capitals in the middle [design: owner 2026-11-15, second test].
 
 The earlier tables (#1953):
 
@@ -200,7 +203,7 @@ Ctrl+F opens the search (§6).
 [documented: `options_container` `_number_of_visible_items` 9], and so did this page until
 #2377. Now the count comes from the layout (`pause::window_lines`): as many lines as fit
 between the rows' top (`OPTIONS_TOP`) and a three-line note (`NOTE_LINES`) that ends above
-the view's bottom margin (`NOTE_BOTTOM`; before the menu overhaul "Report a bug" at the bottom left), 13 today. It is worked out in one place and
+the view's bottom margin (`NOTE_BOTTOM`; before the menu overhaul "Report a bug" at the bottom left), 12 today. It is worked out in one place and
 carried as a value (`PauseView::lines`, `Drawn::lines`) to the drawing, the keys, the
 pointer, the wheel, the scroll bar and the inspect aid, so a later layout can make it
 depend on the view; the `settings_view` functions (`follow`, `window_first`,

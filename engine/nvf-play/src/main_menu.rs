@@ -51,7 +51,7 @@
 //! Log: `main menu: open (…)`, `main menu: <entry>`, `main menu: slide <texture>`.
 
 use crate::interface::{bc_supported, face, plain_font, set_line, u, Face};
-use crate::start_menu::{color, highlight_colors, Shade, BASE, COLUMN, FONT, ITEM, LINE, RIGHT};
+use crate::start_menu::{color, entry_base, highlight_colors, Shade, COLUMN, FONT, ITEM, LINE, RIGHT};
 use crate::pause::{AidTime, Page, PageRequest, Paused};
 use crate::{PlaySet, PlayState, PlayWorld};
 use bevy::asset::RenderAssetUsages;
@@ -180,6 +180,9 @@ pub struct MainMenu {
     slides: Vec<String>,
     slide: usize,
     phase: Option<Phase>,
+    /// The game's font 7, and the entries' face as drawn: bold in the vector font while the
+    /// Menu Font row says Sharp (`crate::pause::MenuFont::title`), else font 7.
+    raster: Option<Face>,
     face: Option<Face>,
     theme: Option<Theme>,
 }
@@ -205,6 +208,9 @@ struct Slide;
 struct Logo;
 #[derive(Component, Clone, Copy)]
 struct EntryNode(usize);
+/// The highlight box round an entry's words (as the pause menu's column, `crate::pause`).
+#[derive(Component)]
+struct EntryBox;
 
 pub struct MainMenuPlugin;
 
@@ -250,6 +256,8 @@ fn open_at_start(
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
     mut music_assets: ResMut<Assets<crate::music::LayeredMusic>>,
+    mut menu_font: Option<ResMut<crate::pause::MenuFont>>,
+    mut fonts: Option<ResMut<Assets<bevy::text::Font>>>,
 ) {
     if start.is_none() {
         return;
@@ -268,7 +276,12 @@ fn open_at_start(
     menu.phase = Some(Phase::In(0.0));
     menu.selected = if menu.saves > 0 { 0 } else { 1 };
     let bc = bc_supported(formats.as_deref());
-    menu.face = Some(face(FONT, plain_font(36.0, 17.0), data.as_deref(), &mut images, bc));
+    let raster = face(FONT, plain_font(36.0, 17.0), data.as_deref(), &mut images, bc);
+    menu.face = Some(match menu_font.as_deref_mut() {
+        Some(m) => m.title(&raster, fonts.as_deref_mut()),
+        None => raster.clone(),
+    });
+    menu.raster = Some(raster);
     let logo = data.as_deref().and_then(|d| crate::interface::texture(LOGO, d, &mut images, bc));
     let edge = images.add(vignette());
     let theme = data.as_deref().and_then(|d| match d.vfs.read(THEME) {
@@ -379,21 +392,44 @@ fn spawn(commands: &mut Commands, menu: &MainMenu, logo: Option<(Handle<Image>, 
         });
 }
 
-/// An entry's label in the language chosen, right-aligned in its row.
+/// An entry's label in the language chosen, right-aligned in its row, and the highlight box
+/// that hugs it (lit by `show_entries`), where the pause menu's column has its words and box
+/// (`crate::pause`, 12 units each side) so the words stay put as its pages open.
 fn entry_label(p: &mut ChildSpawnerCommands, f: &Face, e: Entry) {
     let label = fnv_util::words::tr(e.label());
     if let Some(line) = f.font.lines(label, None).into_iter().next() {
         let w = f.font.width(label);
-        set_line(p, f, &line, COLUMN - 5.0 - w - 10.0 - 2.0 * LINE, BASE - LINE, color(Shade::Bright));
+        let x = COLUMN - 5.0 - w - 10.0 - 2.0 * LINE;
+        p.spawn((
+            EntryBox,
+            Node { position_type: PositionType::Absolute, left: u(x - 12.0), top: u(-LINE), width: u(w + 24.0), height: u(ITEM), border: UiRect::all(u(LINE)), ..default() },
+            BorderColor::all(Color::NONE),
+            BackgroundColor(Color::NONE),
+            Pickable::IGNORE,
+        ));
+        set_line(p, f, &line, x, entry_base(f) - LINE, color(Shade::Bright));
     }
 }
 
-/// The entries' labels drawn again in the new language when it changes (a choice on the
-/// settings page, which opens over this menu).
-fn relabel(menu: Res<MainMenu>, mut seen: Local<Option<u32>>, entries: Query<(Entity, &EntryNode)>, mut commands: Commands) {
-    let now = fnv_util::words::generation();
+/// The entries' labels drawn again in the new language, or in the new face when the Menu Font
+/// row changed (both chosen on the settings page, which opens over this menu).
+fn relabel(
+    mut menu: ResMut<MainMenu>,
+    mut seen: Local<Option<(u32, bool)>>,
+    mut menu_font: Option<ResMut<crate::pause::MenuFont>>,
+    mut fonts: Option<ResMut<Assets<bevy::text::Font>>>,
+    entries: Query<(Entity, &EntryNode)>,
+    mut commands: Commands,
+) {
+    let sharp = menu_font.as_deref().is_some_and(|m| m.sharp);
+    let now = (fnv_util::words::generation(), sharp);
     if *seen == Some(now) {
         return;
+    }
+    if seen.is_some_and(|s| s.1 != sharp) {
+        if let (Some(raster), Some(m)) = (menu.raster.clone(), menu_font.as_deref_mut()) {
+            menu.face = Some(m.title(&raster, fonts.as_deref_mut()));
+        }
     }
     let Some(f) = menu.face.as_ref() else { return };
     if entries.is_empty() {
@@ -565,10 +601,11 @@ fn slideshow(
 fn show_entries(
     menu: Res<MainMenu>,
     page: Res<Page>,
-    mut entries: Query<(Entity, &EntryNode, &mut BorderColor, &mut BackgroundColor, &mut Visibility)>,
+    mut entries: Query<(Entity, &EntryNode, &mut Visibility)>,
     children: Query<&Children>,
+    mut boxes: Query<(&mut BorderColor, &mut BackgroundColor), With<EntryBox>>,
     mut glyphs: Query<&mut ImageNode, Without<Slide>>,
-    mut texts: Query<&mut TextColor>,
+    mut texts: Query<&mut TextColor, Without<crate::interface::Halo>>,
     mut logo: Query<&mut Visibility, (With<Logo>, Without<EntryNode>)>,
     mut drawn: Local<[Option<(Color, usize)>; Entry::ALL.len()]>,
 ) {
@@ -579,19 +616,22 @@ fn show_entries(
         v.set_if_neq(if *page == Page::Main { Visibility::Inherited } else { Visibility::Hidden });
     }
     let (line, fill) = highlight_colors();
-    for (id, e, mut border, mut bg, mut vis) in &mut entries {
+    for (id, e, mut vis) in &mut entries {
         let shown = if *page == Page::Main { Visibility::Inherited } else { Visibility::Hidden };
         vis.set_if_neq(shown);
         let entry = Entry::ALL[e.0];
         let c = color(if entry.enabled(menu.saves) { Shade::Bright } else { Shade::Dim });
         let chosen = e.0 == menu.selected;
         let want = if chosen { BorderColor::all(line) } else { BorderColor::all(Color::NONE) };
-        border.set_if_neq(want);
-        bg.set_if_neq(BackgroundColor(if chosen { fill } else { Color::NONE }));
         let (mut ink, mut count) = (None, 0);
         // [design, #2247] set_line/set_marked put the coloured nodes below a line
         // anchor (interface.rs); reach them even when the label has extra containers.
         for child in children.iter_descendants(id) {
+            if let Ok((mut border, mut bg)) = boxes.get_mut(child) {
+                border.set_if_neq(want);
+                bg.set_if_neq(BackgroundColor(if chosen { fill } else { Color::NONE }));
+                continue;
+            }
             if let Ok(mut g) = glyphs.get_mut(child) {
                 if g.color != c {
                     g.color = c;
@@ -658,9 +698,9 @@ mod tests {
         let entries = entries.into_iter().map(|(id, entry)| {
             let anchors = world.get::<Children>(id).unwrap();
             let mut glyphs = Vec::new();
-            for anchor in anchors {
-                assert!(world.get::<ImageNode>(*anchor).is_none() && world.get::<TextColor>(*anchor).is_none());
-                glyphs.extend(world.get::<Children>(*anchor).unwrap().iter());
+            for anchor in anchors.iter().filter(|a| world.get::<EntryBox>(*a).is_none()) {
+                assert!(world.get::<ImageNode>(anchor).is_none() && world.get::<TextColor>(anchor).is_none());
+                glyphs.extend(world.get::<Children>(anchor).unwrap().iter());
             }
             assert!(!glyphs.is_empty(), "{} has ink below its anchor", entry.label());
             (id, entry, glyphs)
@@ -685,8 +725,11 @@ mod tests {
                 }
                 let (line, fill) = highlight_colors();
                 let selected = *entry == Entry::New;
-                assert_eq!(*app.world().get::<BorderColor>(*id).unwrap(), BorderColor::all(if selected { line } else { Color::NONE }));
-                assert_eq!(app.world().get::<BackgroundColor>(*id).unwrap().0, if selected { fill } else { Color::NONE });
+                // The box hugging the words is lit, the row itself never.
+                let boxed = app.world().get::<Children>(*id).unwrap().iter().find(|c| app.world().get::<EntryBox>(*c).is_some()).expect("the entry's box");
+                assert_eq!(*app.world().get::<BorderColor>(boxed).unwrap(), BorderColor::all(if selected { line } else { Color::NONE }));
+                assert_eq!(app.world().get::<BackgroundColor>(boxed).unwrap().0, if selected { fill } else { Color::NONE });
+                assert_eq!(*app.world().get::<BorderColor>(*id).unwrap(), BorderColor::all(Color::NONE));
             }
         }
         *app.world_mut().resource_mut::<Page>() = Page::Settings { selected: None };

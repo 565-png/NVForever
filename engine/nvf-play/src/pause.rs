@@ -995,9 +995,11 @@ const NOTE_LINES: usize = 3;
 const NOTE_ROW_LINES: usize = 2;
 /// The rows a stand-in's note names before "and N more" ([`note_of`]) [design: #2377].
 const STAND_IN_NAMES: usize = 3;
-/// The room between the window's last line and the note, a rule in its middle: the note
-/// stands apart from the rows [design: the menu overhaul, owner 2026-11-15].
-const NOTE_GAP: f32 = 32.0;
+/// The room between the window's last line and the note: the note stands apart from the rows
+/// by an empty line more than the 32 it had [design: the menu overhaul, owner 2026-11-15;
+/// second test: "remove the small line between menu options and description and move the
+/// description one empty space down"].
+const NOTE_GAP: f32 = 32.0 + OPTION_ROW;
 /// The room between the band's right edge and the categories [design: #1210, the scroll
 /// bar and band ran under them at 16:9].
 const TABS_GAP: f32 = 20.0;
@@ -1011,10 +1013,13 @@ const VIEW_W: f32 = 960.0 * 16.0 / 9.0;
 /// (its left arrow) to its right edge (its right arrow), its number right-aligned in a lane
 /// before the right arrow, so numbers line up down the page. The places are in a
 /// [`ROW_BASE`] row; [`RowX`] keeps them at their distance from the row's right end.
-const LIST_LEFT: f32 = 420.0;
-const LIST_WIDTH: f32 = 386.0;
+const LIST_LEFT: f32 = 372.0;
+const LIST_WIDTH: f32 = 434.0;
 /// The strip at a list box's right end that holds its arrow.
 const LIST_ARROW_STRIP: f32 = 30.0;
+/// A list box's top and bottom from its row's [design: owner 2026-11-15, second test: "the
+/// font does not fit into the dropdown boxes"].
+const LIST_BOX_INSET: f32 = 5.0;
 const VALUE_AT: f32 = LIST_LEFT + (LIST_WIDTH - LIST_ARROW_STRIP) / 2.0;
 /// A slider's arrows (their size and left edges) and meter (its left edge, width and
 /// height) [design: the "How many?" meter's height and arrows (`crate::menu::look`), fitted
@@ -1024,13 +1029,13 @@ const METER_ARROWS: [f32; 2] = [LIST_LEFT, LIST_LEFT + LIST_WIDTH - METER_ARROW.
 const METER_LEFT: f32 = LIST_LEFT + METER_ARROW.x + 7.5;
 /// A slider's number lane before its right arrow (wider words take room from the meter),
 /// and the room between the number and the arrow.
-const READOUT_W: f32 = 80.0;
+const READOUT_W: f32 = 96.0;
 const READOUT_GAP: f32 = 14.0;
 /// How far the arrows' pictures are drawn below their box's middle: their triangle sits high
 /// in the picture, so this puts its point level with the meter's middle [observed: the
 /// owner's screenshot of 2026-11-15, the arrows about 5 units high].
 const ARROW_DROP: f32 = 5.0;
-const METER_WIDTH: f32 = 248.0;
+const METER_WIDTH: f32 = 264.0;
 const METER_HEIGHT: f32 = 24.0;
 const DROP_ROWS: usize = 8;
 const DROP_ITEM: f32 = 44.0;
@@ -1147,6 +1152,28 @@ impl Default for MenuFont {
     }
 }
 
+impl MenuFont {
+    /// The vector font's asset, made the first time.
+    pub fn handle(&mut self, fonts: &mut Assets<bevy::text::Font>) -> Handle<bevy::text::Font> {
+        self.handle.get_or_insert_with(|| fonts.add(bevy::text::Font::from_bytes(crate::vector_font::FONT_BYTES.to_vec()))).clone()
+    }
+
+    /// `faces` (the game's raster fonts) as the menus draw them: in the vector font where the
+    /// Menu Font row says Sharp and the font reads (`Faces::sharp`); else as they are.
+    pub fn faces(&mut self, faces: &Faces, fonts: Option<&mut Assets<bevy::text::Font>>) -> Faces {
+        match (self.sharp, crate::vector_font::metrics(), fonts) {
+            (true, Some(m), Some(fonts)) => faces.sharp(m, self.handle(fonts)),
+            _ => faces.clone(),
+        }
+    }
+
+    /// The main menu's entries' face: font 7 `raster` as [`MenuFont::faces`] draws the titles.
+    pub fn title(&mut self, raster: &Face, fonts: Option<&mut Assets<bevy::text::Font>>) -> Face {
+        let faces = Faces { entry: raster.clone(), title: raster.clone(), small: raster.clone() };
+        self.faces(&faces, fonts).title
+    }
+}
+
 /// The Menu Font row's choices, Sharp first (the default).
 const MENU_FONTS: [&str; 2] = ["Sharp", "Original"];
 
@@ -1165,35 +1192,16 @@ fn take_menu_font(w: &mut World, text: &str) -> bool {
     true
 }
 
-/// `faces` (the game's raster fonts, read for their sizes) as the vector font's at the same
-/// cap height, where the Menu Font row says Sharp and the font and Bevy's fonts are there;
-/// else as they are.
+/// `faces` (the game's raster fonts) as the pause menu draws them ([`MenuFont::faces`]).
 fn menu_faces(world: &mut World, faces: Faces) -> Faces {
-    use crate::interface::{Face, VectorFace};
-    use crate::vector_font::{baseline_below_top, metric_table, metrics};
-    let sharp = world.get_resource::<MenuFont>().is_none_or(|f| f.sharp);
-    let (Some(m), true) = (metrics(), sharp) else { return faces };
-    let made = world.get_resource::<MenuFont>().and_then(|f| f.handle.clone());
-    let handle = match made {
-        Some(h) => h,
-        None => {
-            let Some(mut fonts) = world.get_resource_mut::<Assets<bevy::text::Font>>() else { return faces };
-            let h = fonts.add(bevy::text::Font::from_bytes(crate::vector_font::FONT_BYTES.to_vec()));
-            world.get_resource_or_insert_with(MenuFont::default).handle = Some(h.clone());
-            h
+    world.init_resource::<MenuFont>();
+    world.resource_scope(|world, mut menu_font: Mut<MenuFont>| {
+        let out = menu_font.faces(&faces, world.get_resource_mut::<Assets<bevy::text::Font>>().as_deref_mut());
+        if let (Some(e), Some(t), Some(s)) = (&out.entry.vector, &out.title.vector, &out.small.vector) {
+            info!("pause menu: letters Roboto Condensed at {:.1} (titles weight {}) and {:.1} units, glow (Menu Font Sharp)", e.em, t.weight, s.em);
         }
-    };
-    // Each face at the raster font's cap height (its H's rise; a stand-in's: the original's
-    // sizes [hypothesis: font 7's cap about 22.5 units, font 3's about 16.3]).
-    let cap_part = m.cap_height / m.units_per_em;
-    let to = |raster: Face, stand_in_cap: f32| {
-        let cap = Some(raster.font.glyph(b'H').ascent).filter(|c| raster.image.is_some() && *c > 0.0).unwrap_or(stand_in_cap);
-        let em = cap / cap_part;
-        Face { font: metric_table(m, em, raster.font.size), image: None, vector: Some(VectorFace { font: handle.clone(), em, base: baseline_below_top(m, em) }) }
-    };
-    let out = Faces { entry: to(faces.entry, 22.5), small: to(faces.small, 16.3) };
-    info!("pause menu: letters Roboto Condensed at {:.1} and {:.1} units (Menu Font Sharp)", out.entry.vector.as_ref().map_or(0.0, |v| v.em), out.small.vector.as_ref().map_or(0.0, |v| v.em));
-    out
+        out
+    })
 }
 
 /// What the keys have on the first page and in the quit question, and what Defaults goes
@@ -1567,7 +1575,7 @@ impl Plugin for PausePlugin {
                 key: "menu-font",
                 group: "Interface",
                 label: "Menu font",
-                note: "The pause menu's letters. Sharp: Roboto Condensed, sharp at any resolution. Original: the game's own font, blurred at high resolutions.",
+                note: "The main and pause menus' letters. Sharp: Roboto Condensed, sharp at any resolution, titles bold, a dark glow behind. Original: the game's own font, blurred at high resolutions.",
                 switches: "",
                 get: |_| false,
                 set: |_, _| {},
@@ -1576,6 +1584,8 @@ impl Plugin for PausePlugin {
             crate::settings::ChoiceList { names: |_| MENU_FONTS.iter().map(|n| (*n).to_string()).collect(), chosen: menu_font_chosen, pick: take_menu_font, save: menu_font_chosen, load: take_menu_font, ask_keep: false },
         );
         app.init_resource::<MenuFont>();
+        // The vector letters' glow, set from their laid-out size (`crate::interface::GLOW_REACH`).
+        app.add_systems(PostUpdate, crate::interface::glow_offsets.after(bevy::ui::UiSystems::Layout));
         app.init_resource::<Paused>()
             .init_resource::<PageRequest>()
             .init_resource::<Page>()
@@ -1696,7 +1706,7 @@ fn right_entry_look(p: &mut ChildSpawnerCommands, face: &Face, label: &str, node
             let bw = (w + 2.0 * pad).min(width);
             t.spawn((Node { border: UiRect::all(u(LINE)), ..at(width - bw, 0.0, bw, ITEM) }, BorderColor::all(line), BackgroundColor(fill)));
         }
-        crate::pad::set_hint(t, face, label, width - w - pad, BASE, color(shade), glyphs);
+        crate::pad::set_hint(t, face, label, width - w - pad, crate::start_menu::entry_base(face), color(shade), glyphs);
     });
 }
 
@@ -1795,7 +1805,7 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
             let lit = d.page_entry();
             for (i, (label, ok)) in d.column.iter().enumerate() {
                 let shade = if (on_column && *ok) || (!on_column && i == lit) { Shade::Bright } else { Shade::Dim };
-                right_entry(root, &f.entry, tr_str(label), from_right(RIGHT, top + i as f32 * ITEM, COLUMN - 5.0, ITEM), COLUMN - 5.0, shade, on_column && i == d.main_selected, PauseButton::Column(i), glyphs);
+                right_entry(root, &f.title, tr_str(label), from_right(RIGHT, top + i as f32 * ITEM, COLUMN - 5.0, ITEM), COLUMN - 5.0, shade, on_column && i == d.main_selected, PauseButton::Column(i), glyphs);
             }
             match d.page {
                 Page::Main => {
@@ -1826,9 +1836,9 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
             // Back (and Defaults) at the bottom right.
             if d.page != Page::Main && !d.mod_window {
                 let on = |item| matches!(d.page, Page::Settings { .. }) && d.focus == SettingsFocus::Rail(item);
-                right_entry(root, &f.entry, &back_label(), from_right(RIGHT, back_top(), 200.0, ITEM), 200.0, Shade::Bright, on(RailItem::Back), PauseButton::Back, glyphs);
+                right_entry(root, &f.title, &back_label(), from_right(RIGHT, back_top(), 200.0, ITEM), 200.0, Shade::Bright, on(RailItem::Back), PauseButton::Back, glyphs);
                 if matches!(d.page, Page::Settings { .. }) {
-                    right_entry(root, &f.entry, tr("Defaults"), from_right(RIGHT, back_top() - ITEM, 200.0, ITEM), 200.0, Shade::Bright, on(RailItem::Defaults), PauseButton::Defaults, glyphs);
+                    right_entry(root, &f.title, tr("Defaults"), from_right(RIGHT, back_top() - ITEM, 200.0, ITEM), 200.0, Shade::Bright, on(RailItem::Defaults), PauseButton::Defaults, glyphs);
                 }
             }
             // Under the column's last entry, after an empty line: "Report a Bug" (over a
@@ -1938,7 +1948,7 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
             let shade = if d.choice_reason(o.row, k).is_some() { Shade::Dim } else { Shade::Bright };
             let nw = f.entry.font.width(name);
             b.spawn((Button, PauseButton::Choice(o.row, k), boxed(at(0.0, (k - o.first) as f32 * DROP_ITEM, LIST_WIDTH - 2.0 * LINE, DROP_ITEM), k == o.at)))
-            .with_children(|r| sm_text(r, &f.entry, name, (LIST_WIDTH - nw) / 2.0 - LINE, DROP_ITEM * 0.72, color(shade)));
+            .with_children(|r| sm_text(r, &f.entry, name, (LIST_WIDTH - nw) / 2.0 - LINE, crate::start_menu::base_in(&f.entry, DROP_ITEM), color(shade)));
         }
     });
 }
@@ -1980,8 +1990,8 @@ fn title_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, op
             None => r.spawn((arrow, turn, BackgroundColor(bright.with_alpha(0.5)))),
         };
         let x = 12.0 + HEADING_ARROW.x + 12.0;
-        let words = fit_text(|t| f.entry.font.width(t), words, lb.width - x - 10.0);
-        sm_text(r, &f.entry, &words, x, BASE + 2.0, bright);
+        let words = fit_text(|t| f.title.font.width(t), words, lb.width - x - 10.0);
+        sm_text(r, &f.title, &words, x, BASE + 2.0, bright);
     };
     match button {
         Some((b, on)) => root.spawn((Button, b, boxed(node, on))).with_children(content),
@@ -2254,7 +2264,7 @@ fn list_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, i:
     let bright = color(if live { Shade::Bright } else { Shade::Dim });
     let (line, fill) = highlight_colors();
     let list_left = parts.value.0;
-    r.spawn((Node { border: UiRect::all(u(LINE)), ..at(list_left, 6.0, LIST_WIDTH, OPTION_ROW - 12.0) }, BorderColor::all(line.with_alpha(if open { 1.0 } else if live { 0.6 } else { 0.25 })), BackgroundColor(if open { fill } else { Color::NONE })));
+    r.spawn((Node { border: UiRect::all(u(LINE)), ..at(list_left, LIST_BOX_INSET, LIST_WIDTH, OPTION_ROW - 2.0 * LIST_BOX_INSET) }, BorderColor::all(line.with_alpha(if open { 1.0 } else if live { 0.6 } else { 0.25 })), BackgroundColor(if open { fill } else { Color::NONE })));
     // The state kept as text stays the English name (tests and aids read it); the page
     // shows it in the language chosen.
     if live {
@@ -2280,7 +2290,7 @@ fn rail_column(root: &mut ChildSpawnerCommands, f: &Faces, d: &Drawn, glyphs: &c
     let lines = d.rail.iter().filter(|r| !matches!(r, RailItem::Defaults | RailItem::Back));
     for (i, item) in lines.enumerate() {
         let name = rail_label(*item, d.device.1);
-        let w = SUB_WIDTH.max(f.entry.font.width(name) + 20.0);
+        let w = SUB_WIDTH.max(f.title.font.width(name) + 20.0);
         // The line shown and the line under the pointer bright; the keys' line boxed
         // filled, the pointer's boxed unfilled [design: #1953].
         let hovered = d.rail_hover == Some(*item);
@@ -2292,7 +2302,7 @@ fn rail_column(root: &mut ChildSpawnerCommands, f: &Faces, d: &Drawn, glyphs: &c
         } else {
             BoxLook::None
         };
-        right_entry_look(root, &f.entry, name, from_right(SUB_RIGHT, OPTIONS_TOP + i as f32 * ITEM, w, ITEM), w, shade, look, PauseButton::Rail(*item), glyphs);
+        right_entry_look(root, &f.title, name, from_right(SUB_RIGHT, OPTIONS_TOP + i as f32 * ITEM, w, ITEM), w, shade, look, PauseButton::Rail(*item), glyphs);
     }
 }
 
@@ -2303,8 +2313,7 @@ fn note_lines(root: &mut ChildSpawnerCommands, f: &Faces, note: &str, lb: ListBo
     let lines = note_wrapped(&f.small.font, note, width);
     let fit = note_fit(lines.len(), top);
     let bright = color(Shade::Bright);
-    // The rule between the rows and the note, and a shade behind the note's lines.
-    root.spawn((from_middle(left + 10.0, top - NOTE_GAP / 2.0, width, 1.0), BackgroundColor(bright.with_alpha(0.35))));
+    // A shade behind the note's lines.
     soft_box(root, left, top - 8.0, lb.width, NOTE_LINES as f32 * NOTE_STEP + 16.0, NOTE_SHADE);
     root.spawn(from_middle(left + 10.0, top, width, fit as f32 * NOTE_STEP)).with_children(|t| {
         for (i, line) in lines.iter().take(fit).enumerate() {
@@ -2342,7 +2351,7 @@ fn note_fit(lines: usize, top: f32) -> usize {
 
 /// The rail's width: its widest line's, translated ([`rail_column`]).
 fn rail_width(f: &Faces, rail: &[RailItem], controller: bool) -> f32 {
-    rail.iter().filter(|r| !matches!(r, RailItem::Defaults | RailItem::Back)).map(|r| SUB_WIDTH.max(f.entry.font.width(rail_label(*r, controller)) + 20.0)).fold(SUB_WIDTH, f32::max)
+    rail.iter().filter(|r| !matches!(r, RailItem::Defaults | RailItem::Back)).map(|r| SUB_WIDTH.max(f.title.font.width(rail_label(*r, controller)) + 20.0)).fold(SUB_WIDTH, f32::max)
 }
 
 /// A rail line's words, translated: Search says "Keyboard search" while a controller works
@@ -2424,6 +2433,7 @@ impl RowX {
 /// What is cut is only what is drawn: the search, the log and the hidden texts the aids read
 /// keep the full words [design: #2377].
 fn fit_text(width_of: impl Fn(&str) -> f32, text: &str, room: f32) -> String {
+    let room = room + 0.01;
     if width_of(text) <= room {
         return text.to_string();
     }
@@ -2581,7 +2591,7 @@ fn report_entry(root: &mut ChildSpawnerCommands, f: &Faces, hovered: bool, glyph
     let label = tr(REPORT_LABEL);
     let w = COLUMN - 5.0;
     let look = if hovered { BoxLook::Outline } else { BoxLook::None };
-    right_entry_look(root, &f.entry, label, from_right(RIGHT, top, w, ITEM), w, if hovered { Shade::Bright } else { Shade::Dim }, look, PauseButton::Report, glyphs);
+    right_entry_look(root, &f.small, label, from_right(RIGHT, top, w, ITEM), w, if hovered { Shade::Bright } else { Shade::Dim }, look, PauseButton::Report, glyphs);
 }
 
 /// A node at `x`, `y` in its parent, `w` × `h`.
@@ -5488,16 +5498,17 @@ mod tests {
         assert_eq!((x.value_at(), x.value_left(), x.meter_left(), x.arrows(), x.list_left()), (VALUE_AT, LIST_LEFT, METER_LEFT, METER_ARROWS, LIST_LEFT));
         let x = RowX(1036.0);
         assert_eq!((x.0 - x.value_at(), x.0 - x.list_left(), x.0 - x.arrows()[1]), (ROW_BASE - VALUE_AT, ROW_BASE - LIST_LEFT, ROW_BASE - METER_ARROWS[1]));
-        // The window's lines (13 today) and a note of three lines fit above the view's bottom
-        // margin, and one more line would not (#2377, the menu overhaul).
+        // The window's lines (12 today: the note's empty line above it took one, the owner's
+        // second test) and a note of three lines fit above the view's bottom margin, and one
+        // more line would not (#2377, the menu overhaul).
         let lines = window_lines();
-        assert_eq!(lines, 13);
+        assert_eq!(lines, 12);
         let note_top = OPTIONS_TOP + lines as f32 * OPTION_ROW + NOTE_GAP;
         assert_eq!(note_fit(2, note_top), 2);
         assert_eq!(note_fit(30, note_top), NOTE_LINES);
         assert_eq!(note_fit(30, OPTIONS_TOP + NOTE_GAP), NOTE_LINES, "a short list's note is no longer either");
         assert!(note_top + NOTE_LINES as f32 * NOTE_STEP <= note_bottom() && note_bottom() < 960.0);
-        assert!(note_top + OPTION_ROW + NOTE_LINES as f32 * NOTE_STEP > note_bottom(), "a 14th line would leave no room for the note");
+        assert!(note_top + OPTION_ROW + NOTE_LINES as f32 * NOTE_STEP > note_bottom(), "a 13th line would leave no room for the note");
     }
 
     /// The systems that read or write the world aids' clock (directly or through
@@ -6503,9 +6514,33 @@ mod tests {
         crate::settings::step_slider(app.world_mut(), 0, -2);
         assert_eq!(shown(&mut app), "40%");
         assert_eq!(app.world().resource::<PauseView>().defaults, Some(vec![0.5]));
-        assert_eq!(meter_ticks(1.0, METER_WIDTH), 31);
-        assert_eq!(meter_ticks(0.5, METER_WIDTH), 16);
+        assert_eq!(meter_ticks(1.0, METER_WIDTH), 33);
+        assert_eq!(meter_ticks(0.5, METER_WIDTH), 17);
         assert_eq!(meter_ticks(0.0, METER_WIDTH), 0);
+    }
+
+    /// The owner's second test (2026-11-15): "100%" was cut to "10..." in the sharp letters.
+    /// In them a slider's number fits its lane with room to spare, a list's longest usual
+    /// words their box, and the cut never takes words exactly as wide as their room.
+    #[test]
+    fn the_sharp_letters_fit_the_value_cell() {
+        let m = crate::vector_font::metrics().expect("the menus' font reads");
+        let faces = Faces::plain().sharp(m, Handle::default());
+        let width = |t: &str| faces.entry.font.width(t);
+        for words in ["100%", "200%", "1000%", "Unlimited"] {
+            assert!(width(words) <= READOUT_W * 0.9 || words == "Unlimited", "{words}: {}", width(words));
+            let p = row_parts(RowX(ROW_BASE), ValueKind::Slider(width(words)));
+            assert_eq!(fit_text(width, words, p.text_room()), words);
+        }
+        for words in ["Performance", "Ultra Performance", "Very High", "Borderless"] {
+            let p = row_parts(RowX(ROW_BASE), ValueKind::List(width(words)));
+            assert_eq!(fit_text(width, words, p.text_room()), words, "{words}");
+        }
+        assert_eq!(fit_text(|_| 80.0, "exact", 80.0 - 1e-4), "exact");
+        // The titles bold, the rows regular, the small print smaller.
+        let (e, t, s) = (faces.entry.vector.unwrap(), faces.title.vector.unwrap(), faces.small.vector.unwrap());
+        assert_eq!((e.weight, t.weight, s.weight), (crate::vector_font::REGULAR, crate::vector_font::BOLD, crate::vector_font::REGULAR));
+        assert!(s.em < e.em && e.em == t.em);
     }
 
     #[test]
