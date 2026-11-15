@@ -294,6 +294,10 @@ pub const PUT_WITHIN: f32 = 400.0;
 /// Seconds without [`STUCK_UNITS`] of movement on a walk before a new path is planned.
 const STUCK_SECS: f64 = 4.0;
 const STUCK_UNITS: f32 = 24.0;
+/// A walk held up this close to the middle of the load door its leg ends at uses the door
+/// from where it stands, game units [design: half the Northern Passage door's 512-unit width
+/// plus a step].
+const DOOR_PRESS_REACH: f32 = 320.0;
 const REPLANS: u8 = 3;
 /// Hops along its own path a stuck walk may take, and how far each.
 const SKIPS: u8 = 3;
@@ -806,7 +810,15 @@ impl Pilot {
             None => info!("pilot: step {} {op} done in {secs:.1} s", self.i),
         }
         let mut s = json!({"chain": self.chain, "step": self.i, "op": op, "seconds": (secs * 10.0).round() / 10.0});
-        self.failed_in_a_row = if error.is_some() { self.failed_in_a_row + 1 } else { 0 };
+        // A read, a note or a wait that passes does not end a run of failures: a chain whose
+        // player never reached its add-on (Honest Hearts' Northern Passage) failed every walk,
+        // talk and fight for 40 minutes while the get_quest steps between them passed.
+        let passive = op.starts_with("get_") || matches!(op.as_str(), "note" | "advance_seconds" | "wait_talk" | "end_talk");
+        if error.is_some() {
+            self.failed_in_a_row += 1;
+        } else if !passive {
+            self.failed_in_a_row = 0;
+        }
         if let Some(e) = error {
             s["error"] = json!(e);
         }
@@ -1304,7 +1316,20 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
             if w.stuck_at.is_some_and(|at| hdist(feet, at) > UNSTUCK_UNITS) {
                 (w.stuck_at, w.replans) = (None, 0);
             }
+            // Held up against the load door the leg ends at, before its point on the navmesh:
+            // used from here, as a player presses E on the door in front of it. Honest Hearts'
+            // Northern Passage door is an invisible slab 512 units wide (DOOR 0x01011470,
+            // OBND y -256..256) across the cave mouth; the player stopped 252 units from its
+            // middle and replanned into it for the whole run.
+            let door_ahead = w.follower.as_ref().and_then(|f| f.path.legs.get(f.leg)).and_then(|l| l.door).map(|d| d.door);
+            let door_near = door_ahead.filter(|&d| h.game(|g| where_is(g, FormId(d))).flatten().is_some_and(|(_, at)| hdist(feet, at) < DOOR_PRESS_REACH));
             if h.locks.movement || h.in_menu || hdist(feet, w.seen.1) > STUCK_UNITS {
+                w.seen = (p.now, feet);
+            } else if let Some(door) = door_near.filter(|_| p.now - w.seen.0 > STUCK_SECS) {
+                info!("pilot: step {}: held up {:.0} units short of door {door:08X}'s end of the path, within reach of the door: uses it from here", p.i, w.follower.as_ref().map_or(0.0, |f| hdist(feet, *f.path.legs[f.leg].points.last().unwrap_or(&feet))));
+                if let Some(f) = w.follower.as_mut() {
+                    f.next = f.path.legs[f.leg].points.len();
+                }
                 w.seen = (p.now, feet);
             } else if p.now - w.seen.0 > STUCK_SECS && w.replans >= 2 && w.skips < SKIPS {
                 // Two jumps and steps aside did not free it: moved on along its own path,

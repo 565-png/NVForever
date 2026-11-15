@@ -55,8 +55,11 @@ NVFOREVER_HOME=<a folder of its own> nvforever --data <Data> --play --new-game \
 
 Of its own accord, between steps: it fights what attacks the player or the actor it is with,
 answers the level-up menu (points spread down the list, the first perk on offer), keeps its weapon
-whole, searches bodies, and at a door that stays locked (or, unlocked, does not take the player: a vault door "activated elsewhere") tries the door's switch (a script that names
-the door), a talking activator beside it, any other scripted activator beside it, a terminal entry
+whole, searches bodies, uses a load door from where a walk is held up within 320 units of it
+(Honest Hearts' Northern Passage door is an invisible slab 512 units wide that stops the player
+short of the door's point on the navmesh), and at a door that stays locked (or, unlocked, does
+not take the player: a vault door "activated elsewhere") tries the door's switch (a script that
+names the door), a talking activator beside it, any other scripted activator beside it, a terminal entry
 that names the door, then another way round.
 
 ## 4. What it reports
@@ -68,7 +71,7 @@ Finding kinds: `unreachable`, `stuck`, `could_not_target`, `no_way_out`, `line_n
 `precondition`, `menu_closed`, `not_carried_out`, `step_timed_out`, `chain_abandoned`,
 `pilot_held`.
 
-Limits: a step 240 s; a fight 75 s; 12 failed steps in a row abandon a chain; 120 s of real time
+Limits: a step 240 s; a fight 75 s; 12 failed steps in a row abandon a chain (a read, a note or a wait that passes between them does not break the run); 120 s of real time
 in which the pilot cannot act end the run.
 
 ## 5. What it has found so far (2026-11-13/14)
@@ -114,9 +117,9 @@ state carries the false alarms a thin `given` brings (§2).
   school); waiting for an actor a schedule takes behind a locked door (Francine at the
   Atomic Wrangler); a chain's made-up `SetPos` off the navmesh (set onto the nearest
   point within 4,096 units); talking across a counter (the Gun Runners' Vendortron);
-  a goal no door reaches (Lucky 38's top floor, reached by scripted travel); load doors
-  no navmesh lists (Honest Hearts' Northern Passage door, so the walk is sent back by
-  the add-on's exit trigger); waiting out the end of a fight before activating (ED-E's
+  a goal no door reaches (Lucky 38's top floor, reached by scripted travel); a walk
+  planned out of a place that locks behind the player (Dead Money's theater: the pilot
+  walked out on the way to Dean's holotape, then met the theater door at lock level 255); waiting out the end of a fight before activating (ED-E's
   repair box refused "in combat"); the scripted activators near a door taken for its
   switch (the Atomic Wrangler's slot machines).
 - A known-difference list, so that the opening's modal boxes stop showing as divergences.
