@@ -82,6 +82,26 @@ Depends on `fnv-esm` and `fnv-world` only.
 A path is a list of legs, one per space visited, each with its polyline, its corridor of
 triangles, its door stops and the door that ends it.
 
+[design, #2716] In-place door bounds overlap entire triangles (`doors.rs`), so only the
+original path's snapped start and goal triangles bypass door refusal when their points
+are outside every refusing door's oriented footprint (bounds edges count as inside).
+`search_path` checks both points and passes those two triangle IDs to A* across all legs;
+intermediate triangles and unrelated teleport-leg endpoints remain closed. Raycasts
+keep ordinary refusal, so the shortcut pass cannot open a new route through a closed
+locked door. [hypothesis, #2716] An already open in-place door refuses no triangle,
+regardless of locks or a previous script refusal (observer check 210). [design / file refs]
+`door_tri_open` reads `PathParams::open_doors`, supplied by `Ai::path_params` from live
+world state, falling back to default-open placement for untouched locked doors.
+
+[design, #2716] `fnvtool nav path` (and shared path options for `nav walk`) accepts
+repeatable `--open-door <formid>` without granting permission to open any other lock.
+Synthetic nav tests cover overlapping start/goal triangles beside rotated bounds,
+inside/boundary endpoints, multiple refusing doors, closed locked passage and open locked
+passage; `fnv-ai/tests/carry.rs::open_locked_in_place_doors_reach_actor_path_parameters`
+covers script-opened and untouched default-open state. Smoke scenarios
+`mick-secret-door-paths` and `mick-secret-door-packages` check the two routes and the
+Travel-arrival-to-secret-sales transition; record evidence is in spec-notes/navmesh.md §4.
+
 ## 4. Following
 
 - `Follower` advances past corners within 16 units (or once passed while close), uses a

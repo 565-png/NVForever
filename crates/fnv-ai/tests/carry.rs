@@ -1009,6 +1009,41 @@ fn a_door_locked_and_unlocked_in_the_game_reaches_the_paths() {
     assert_eq!(s.ai.agents[&actor].walker.space, B);
 }
 
+#[test]
+fn open_locked_in_place_doors_reach_actor_path_parameters() {
+    // [design, #2716] Synthetic barrier across cell A, using a fixture reference:
+    // exercise closed, script-opened, untouched default-open, and script-closed states.
+    for mode in ["closed", "script", "default", "closed-default"] {
+        let mut f = fixture();
+        let placed = f.refs.refs.get_mut(&FormId(M1)).unwrap();
+        placed.lock = Some(fnv_sim::refs::Lock { level: 255, key: None, leveled: false });
+        placed.open_by_default = matches!(mode, "default" | "closed-default");
+        let mut s = sim(&f, &[R_TRAVEL]);
+        s.nav.set_in_place_doors(vec![fnv_nav::InPlaceDoor {
+            door: M1,
+            space: A,
+            position: [200.0, 200.0, 0.0],
+            rotation: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            scale: 1.0,
+            bounds: ([-4.0, -200.0, 0.0], [4.0, 200.0, 200.0]),
+        }], |_| Some(DoorLock { level: 255, key: None }));
+        s.ai.apply_door_locks(&mut s.game, &mut s.nav);
+        assert!(s.game.world.peek(FormId(M1)).is_none());
+        if matches!(mode, "script" | "closed-default") {
+            s.game.set_ref_open(FormId(M1), mode == "script").unwrap();
+        }
+        s.run(1.0);
+        let events = s.events(R_TRAVEL);
+        if matches!(mode, "closed" | "closed-default") {
+            assert!(events.iter().any(|e| matches!(e, AiEvent::Unreachable { .. })), "{events:?}");
+        } else {
+            assert!(events.iter().any(|e| matches!(e, AiEvent::Trip { .. })), "{mode}: {events:?}");
+            assert!(!events.iter().any(|e| matches!(e, AiEvent::Unreachable { .. })), "{mode}: {events:?}");
+        }
+        assert!(s.game.world.lock_of(FormId(M1)).unwrap().locked);
+    }
+}
+
 /// A load door the game disables (a script's Disable, an enable parent's) is no way: the
 /// actor sets its package aside rather than going through it. Enabled again, the graph
 /// learns it, the package is chosen again at once and the actor gets through

@@ -681,6 +681,62 @@ fn locked_doors_that_open_in_place_close_the_way_without_the_key() {
 }
 
 #[test]
+fn locked_door_overlap_allows_only_endpoints_outside_its_footprint() {
+    // [design, #2716] Synthetic rotated door: model y is game -x. The goal's
+    // triangle reaches x=500, but the goal at x=450 is outside the footprint.
+    let g = corridor_with_door(Some(crate::graph::DoorLock { level: 255, key: None }));
+    let from = Place { space: W, pos: [350.0, 75.0, 0.0] };
+    let beside = Place { space: W, pos: [450.0, 75.0, 0.0] };
+    let t = g.locate(W, beside.pos, 1.0).unwrap();
+    let p = PathParams::default();
+    assert!(!g.door_tri_open(t, &p));
+    for (a, b) in [(from, beside), (beside, from)] {
+        let path = g.find_path(a, b, &p).unwrap();
+        assert!(path.legs[0].door_stops.is_empty());
+        assert!(path.legs[0].points.iter().all(|q| q[0] < 496.0));
+    }
+    // [design, #2716] Neither an endpoint inside/on the bounds nor a passing
+    // triangle gets the exception. A same-triangle goal inside is refused too.
+    for x in [496.0, 500.0, 504.0] {
+        let inside = Place { space: W, pos: [x, 75.0, 0.0] };
+        assert!(g.find_path(from, inside, &p).is_err());
+        assert!(g.find_path(inside, from, &p).is_err());
+        assert!(g.find_path(inside, inside, &p).is_err());
+    }
+    let across = Place { space: W, pos: [650.0, 75.0, 0.0] };
+    assert!(g.find_path(from, across, &p).is_err());
+    assert!(g.find_path(beside, across, &p).is_err());
+    assert!(g.walkable_line(W, g.locate(W, from.pos, 1.0).unwrap(), from.pos, across.pos, 0.0, &p).is_none());
+}
+
+#[test]
+fn endpoint_must_be_outside_every_refusing_door_footprint() {
+    // [design, #2716] The point clears the first rotated door but lies in the second.
+    let mut g = corridor_with_door(None);
+    g.set_in_place_doors(vec![hinged(0xD00, 500.0, 0.0), hinged(0xD01, 450.0, 0.0)], |_| Some(crate::graph::DoorLock { level: 255, key: None }));
+    let from = Place { space: W, pos: [350.0, 75.0, 0.0] };
+    let to = Place { space: W, pos: [450.0, 75.0, 0.0] };
+    let t = g.locate(W, to.pos, 1.0).unwrap();
+    assert_eq!(g.door_tris[&t].len(), 2);
+    assert!(g.find_path(from, to, &PathParams::default()).is_err());
+    assert!(g.find_path(from, to, &PathParams { open_doors: vec![0xD01], ..Default::default() }).is_ok());
+}
+
+#[test]
+fn open_locked_in_place_door_does_not_refuse_paths_or_raycasts() {
+    // [hypothesis, #2716] An open locked door is no barrier (observer check 210).
+    let g = corridor_with_door(Some(crate::graph::DoorLock { level: 255, key: None }));
+    let from = Place { space: W, pos: [350.0, 50.0, 0.0] };
+    let to = Place { space: W, pos: [650.0, 50.0, 0.0] };
+    let p = PathParams { open_doors: vec![0xD00], refused_doors: vec![0xD00], opens_doors: false, ..Default::default() };
+    assert!(g.find_path(from, to, &p).is_ok());
+    let t = g.locate(W, from.pos, 1.0).unwrap();
+    assert!(g.walkable_line(W, t, from.pos, to.pos, 0.0, &p).is_some());
+    let closed = PathParams { open_doors: Vec::new(), ..p };
+    assert!(g.find_path(from, to, &closed).is_err());
+}
+
+#[test]
 fn a_path_beside_a_door_does_not_stop() {
     // Three lanes; the door closes only the southern one, at x = 500.
     let mut g = graph(&[(grid(1, [0.0, 0.0], 10, 3, 100.0, &[], flat), W)]);

@@ -2447,7 +2447,13 @@ impl Ai {
         // key and owned by Dad's base (TTW's Fallout3.esm REFR 0602EA4A); without this his
         // package was out of reach and the scene stopped, owner's TTW run 2026-11-02].
         params.owned_doors.extend(self.locked_doors.iter().copied().filter(|&d| game.ownership(FormId(d)).is_some_and(|o| !o.from_cell && game.counts_as_owner(actor, &o))));
-        // Doors the game has open (opened, or open by default and since touched).
+        // [design, #2716 / fnv_sim::World::initial] An untouched locked door uses its
+        // default-open placement; a materialized reference's live state wins below.
+        // Open locked doors do not refuse nav triangles [hypothesis,
+        // docs/spec-notes/navmesh.md; observer check 210].
+        params.open_doors.extend(self.locked_doors.iter().copied().filter(|&d| {
+            game.world.peek(FormId(d)).is_none() && game.world.placed.get(FormId(d)).is_some_and(|r| r.open_by_default)
+        }));
         params.open_doors.extend(game.world.changed().filter(|(_, s)| s.open).map(|(id, _)| id.0));
         // A creature flagged "Can't Open Doors" [documented: GECK wiki
         // GetActorBaseFlagsHigh, Creature column] uses no teleport door [hypothesis: what
