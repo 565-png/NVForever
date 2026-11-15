@@ -397,10 +397,12 @@ fn sync_volumes(
     vols.living.clear();
     phys.actor_heights.clear();
     phys.actor_block_radii.clear();
+    let mut creature_feet = HashMap::new();
     for (bbx, root, vis) in &creatures {
         if vis.get() && bounds.contains_key(&bbx.reference) && !crate::combat::is_dead(script.as_deref(), bbx.reference) {
             if let Some(radius) = bbx.radius(root) {
                 phys.actor_block_radii.insert(bbx.reference, radius);
+                creature_feet.insert(bbx.reference, space::to_game(root.translation()));
             }
         }
     }
@@ -416,7 +418,12 @@ fn sync_volumes(
         // In the player's way where its body is now, unless the character controller
         // walks it (its block is where its character is, `crate::player`).
         if !dead && id != FormId::PLAYER_REF.0 && !phys.npcs.contains_key(&id) && !blocks.in_nobodys_way.contains(&id) {
-            let block = blocking::block_for(id, lo, hi, posed.and_then(|p| blocking::torso(&p.segments)));
+            let mut block = blocking::block_for(id, lo, hi, posed.and_then(|p| blocking::torso(&p.segments)));
+            // Stopping removes the character (nvforever::residents::think), but must
+            // keep the widened creature circle at its feet [design, #2535].
+            if let Some(&radius) = phys.actor_block_radii.get(&id).filter(|&&r| r > block.radius) {
+                block = blocking::Block::character(id, creature_feet[&id], radius, hi[2] - lo[2], false);
+            }
             // One that stands where it may be pushed is where its owner has it, with
             // the pushes still to come.
             // ACBS "Not Pushable": never pushed aside (actor-fields.md §1).
@@ -930,6 +937,99 @@ mod tests {
         app.world_mut().entity_mut(person).despawn();
         app.update();
         assert_all_cleared(&app);
+    }
+
+    #[test]
+    fn differently_scaled_creatures_keep_both_widths_when_their_characters_stop() {
+        use crate::blocking::Block;
+        use crate::phys::NpcBody;
+        // Synthetic pair, offset render bounds and independent reference scales
+        // [design, #2535]. Skeleton width/base scales supplied by the main session
+        // [observed: FalloutNV.esm and Fallout - Meshes.bsa, fnvtool decode, 2026-11-15].
+        let ids = [ACRE_REF, ACHR_REF];
+        let feet = [[0.0; 3], [400.0, 0.0, 0.0]];
+        for reference_scales in [[1.0, 1.0], [1.25, 0.9]] {
+            let mut app = app(sim_of(&[(ids[0], *b"ACRE"), (ids[1], *b"ACRE")]));
+            let radii = [70.56 * 0.6 * reference_scales[0], 70.56 * reference_scales[1]];
+            for (i, base) in [0.6, 1.0].into_iter().enumerate() {
+                let e = mesh(&mut app, ids[i], feet[i]);
+                let root = GlobalTransform::from(Transform::from_translation(space::to_bevy(feet[i])).with_scale(Vec3::splat(base)))
+                    * Transform::from_scale(Vec3::splat(reference_scales[i]));
+                app.world_mut().entity_mut(e).insert((
+                    CreatureBbx { reference: ids[i], half_width: 70.56 },
+                    Aabb { center: Vec3::new(15.0, 25.0, 64.0).into(), half_extents: Vec3::new(20.0, 20.0, 64.0).into() },
+                    root,
+                ));
+            }
+            // Residents drops each stopped character independently; a carried attack
+            // can make it walking again [design: residents::think/carry, #2535].
+            for walking in [[true, true], [false, true], [true, false], [false, false], [true, true]] {
+                {
+                    let mut phys = app.world_mut().resource_mut::<PhysState>();
+                    for i in 0..2 {
+                        phys.remove_npc(ids[i]);
+                        if walking[i] {
+                            let ch = phys.world.add_character(ids[i], fnv_phys::CharacterParams::default(), feet[i]);
+                            phys.npcs.insert(ids[i], NpcBody { ch, prev_feet: feet[i], velocity: [0.0; 2], jump: false, sink: 0.0, lift: Default::default() });
+                        }
+                    }
+                }
+                app.update();
+                let phys = app.world().resource::<PhysState>();
+                let drawn = app.world().resource::<ActorBlocks>();
+                let mut pair = drawn.list.clone();
+                for n in phys.npcs.values() {
+                    assert_eq!(n.ch.params.radius, 22.0);
+                    pair.push(Block::character(n.ch.id, n.ch.feet, blocking::walking_radius(n.ch.params.radius, phys.actor_block_radii.get(&n.ch.id).copied()), n.ch.params.height, false));
+                }
+                assert_eq!(pair.len(), 2);
+                for i in 0..2 {
+                    let block = pair.iter().find(|b| b.actor == ids[i]).unwrap();
+                    assert!((block.radius - radii[i]).abs() < 1e-4, "walking={walking:?}: {pair:?}");
+                    assert_eq!((block.a, block.b), ([feet[i][0], feet[i][1]], [feet[i][0], feet[i][1]]));
+                    let direction = if i == 0 { 1.0 } else { -1.0 };
+                    for carried in [false, true] {
+                        let mut blocks = pair.clone();
+                        let mut pushes = Vec::new();
+                        let v = if carried {
+                            // Even a pushable standing target stops a carried lunge
+                            // [design: blocking::clip_pushing_nobody].
+                            for b in &mut blocks { b.pushable = true; }
+                            blocking::clip_pushing_nobody(ids[i], [400.0 * direction, 0.0], feet[i], block.radius, 128.0, 1.0, &mut blocks)
+                        } else {
+                            blocking::clip(ids[i], [400.0 * direction, 0.0], feet[i], block.radius, 128.0, 1.0, &mut blocks, &mut pushes)
+                        };
+                        assert!((400.0 - v[0].abs() - radii.iter().sum::<f32>()).abs() < 1e-4, "walking={walking:?}, carried={carried}: {v:?}");
+                        assert!(pushes.is_empty());
+                    }
+                }
+                // An attack holds the standing block across frames [design:
+                // sync_volumes/ActorBlocks::attacking]; it must hold the wide circle.
+                let before = drawn.list.clone();
+                app.world_mut().resource_mut::<ActorBlocks>().attacking.extend(ids);
+                app.update();
+                assert_eq!(app.world().resource::<ActorBlocks>().list, before);
+            }
+        }
+    }
+
+    #[test]
+    fn standing_blocks_keep_their_shape_without_a_wider_creature_bbx() {
+        // Synthetic ordinary NPC, missing BBX and narrow creature BBX [design, #2535].
+        for width in [None, Some(3.0)] {
+            let mut app = app(sim());
+            let e = mesh(&mut app, ACRE_REF, [100.0, 0.0, 0.0]);
+            mesh(&mut app, ACHR_REF, [200.0, 0.0, 0.0]);
+            if let Some(half_width) = width {
+                app.world_mut().entity_mut(e).insert(CreatureBbx { reference: ACRE_REF, half_width });
+            }
+            app.update();
+            for (id, x) in [(ACRE_REF, 100.0), (ACHR_REF, 200.0)] {
+                let expected = blocking::block_for(id, [x - 20.0, -20.0, -20.0], [x + 20.0, 20.0, 20.0], None);
+                let blocks = app.world().resource::<ActorBlocks>();
+                assert_eq!(blocks.list.iter().find(|b| b.actor == id), Some(&expected));
+            }
+        }
     }
 
     #[test]

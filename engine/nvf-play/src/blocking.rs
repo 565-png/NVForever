@@ -21,6 +21,9 @@
 //!   A walking creature's circle instead uses at least its scaled skeleton BBX
 //!   half-width (`walking_radius`), independently of its world capsule [hypothesis:
 //!   capture run15b_b2 spacing, 2026-11-15; design, #2535].
+//!   When it stops and loses its walking character, `hitvol::sync_volumes` keeps
+//!   that wider circle at its root feet instead of reverting to the posed torso
+//!   block [design, #2535].
 //! - **Who is left out**: the dead. An actor the character controller walks
 //!   (`PhysState::npcs`) has its block where its character is, made anew every fixed
 //!   step (`crate::player`), and so has the player for those actors: characters pass

@@ -2569,6 +2569,13 @@ larger world capsules would not fit the doors and paths actors walk [design:
 visible living creature roots; their transforms already include both scales
 [design: `actors::spawn_creature`, `hitvol::sync_volumes`].
 
+[design: `residents::think`, `hitvol::sync_volumes`, #2535] A stopped fighter
+loses its walking character. Its standing block keeps the scaled BBX circle at
+the creature root's feet when wider than the existing drawn block, including
+while an attack holds the block in place. This preserves both creatures' widths
+when either stops to fight; the posed torso's narrower block cannot replace one
+side of the pair. Standing pushes and attack anchoring retain their existing rules.
+
 [observed: FalloutNV.esm and Fallout - Meshes.bsa, fnvtool esm decode / nif decode,
 main session 2026-11-15] The radscorpion skeleton's BBX centre is (0, 0, 30.21),
 half sizes (70.56, 125.84, 30.21). Other skeleton half sizes: `characters\_male`

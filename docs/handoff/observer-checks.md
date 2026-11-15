@@ -2340,6 +2340,9 @@ already talking takes over at once, same topic or another; nothing is queued or 
      half-width × actor scale circle when larger than their previous block radius
      [hypothesis: fits the observed spacing; the original's shape was not seen].
      The world capsule is unchanged [design: `phys::npc_params`].
+     [design: `hitvol::sync_volumes`, #2535] The wider circle also stays when a
+     fighter stops and its walking character is removed; standing attack blocks
+     therefore retain both creatures' widths.
 
      **Still open:** the original's extra pause after action 4 (3/14 attacks at once,
      others after 0.1–2.1 s) is not built; what chooses its duration? Against a player
