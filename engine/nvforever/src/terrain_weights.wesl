@@ -10,22 +10,12 @@
 
 // The luminance weights (Rec. 709) applied to linear colour.
 const TERRAIN_LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
-// Height = gain x (texel luminance - texture mean luminance), clamped to +- limit.
-const TERRAIN_HEIGHT_GAIN: f32 = 1.0;
+// Height = gain x (raw decoded texel luminance - reference luminance), clamped
+// to +- limit. The caller supplies the start-up gain and global/local reference.
 const TERRAIN_HEIGHT_LIMIT: f32 = 0.25;
-// A height one band above the share-weighted mean doubles a layer's weight (before the
-// weights are made to sum to 1 again); the exponent is clamped to +- 4 bands.
-const TERRAIN_HEIGHT_BAND: f32 = 0.10;
-// Heights whose share-weighted spread (standard deviation) is below this take today's
-// linear shares; the height weighting is fully on at twice it.
-const TERRAIN_EQUAL_EPS: f32 = 0.005;
 
-// A texel's height: its luminance less its texture's mean luminance (mean-centring: a
-// bright texture does not win for being bright, but the texture's broad shading stays;
-// this is not a spatial high-pass filter). Both colours are linear (the textures are
-// read sRGB-decoded).
-fn terrain_height(texel: vec3<f32>, mean: vec3<f32>) -> f32 {
-    return clamp(TERRAIN_HEIGHT_GAIN * (dot(texel, TERRAIN_LUMA) - dot(mean, TERRAIN_LUMA)), -TERRAIN_HEIGHT_LIMIT, TERRAIN_HEIGHT_LIMIT);
+fn terrain_height(texel: vec3<f32>, reference: vec3<f32>, gain: f32) -> f32 {
+    return clamp(gain * (dot(texel, TERRAIN_LUMA) - dot(reference, TERRAIN_LUMA)), -TERRAIN_HEIGHT_LIMIT, TERRAIN_HEIGHT_LIMIT);
 }
 
 // The share of the base and of each of the `n` layers in the ordered blend: `a[k]` is
@@ -46,13 +36,12 @@ fn terrain_ordered_shares(a: array<f32, 6>, n: u32) -> array<f32, 7> {
     return w;
 }
 
-// The final weights from the ordered shares `w` and the heights `h`: each share boosted by
-// 2^((height - mean height) / band), the exponent clamped to +- 4, then made to sum to 1
-// again. Where the contributing heights are about equal the shares stay linear (a smooth
-// gate on their spread), so flat textures do not draw hard triangle edges. A share of 0
-// stays 0 and a sole contributor keeps 1, so what the data paints fully, or not at all,
-// looks as without height blending.
-fn terrain_height_weights(w: array<f32, 7>, h: array<f32, 7>) -> array<f32, 7> {
+// Depth competition [design, #2550]: score = share + clamp(height, -share, share).
+// Retain scores within depth of the highest, multiply by their shares, then normalise.
+// Equal heights still sharpen unequal shares; there is no equal-height gate. Zero
+// shares stay zero and a sole contributor stays one. The share cap makes the score
+// continuous as a painted layer vanishes. Depth is positive (floored for roundoff).
+fn terrain_height_weights(w: array<f32, 7>, h: array<f32, 7>, depth: f32) -> array<f32, 7> {
     var p = w;
     var height = h;
     var total = 0.0;
@@ -63,22 +52,18 @@ fn terrain_height_weights(w: array<f32, 7>, h: array<f32, 7>) -> array<f32, 7> {
     if total <= 0.0 {
         return array<f32, 7>(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     }
-    var mean = 0.0;
+    var score = array<f32, 7>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    var highest = 0.0;
     for (var i = 0; i < 7; i += 1) {
         p[i] = p[i] / total;
-        mean += p[i] * height[i];
+        score[i] = p[i] + clamp(height[i], -p[i], p[i]);
+        highest = max(highest, score[i]);
     }
-    var spread = 0.0;
-    for (var i = 0; i < 7; i += 1) {
-        let d = height[i] - mean;
-        spread += p[i] * d * d;
-    }
-    let gate = smoothstep(TERRAIN_EQUAL_EPS * TERRAIN_EQUAL_EPS, 4.0 * TERRAIN_EQUAL_EPS * TERRAIN_EQUAL_EPS, spread);
+    let d = max(depth, 1e-6);
     var q = array<f32, 7>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     var q_total = 0.0;
     for (var i = 0; i < 7; i += 1) {
-        let e = clamp((height[i] - mean) / TERRAIN_HEIGHT_BAND, -4.0, 4.0);
-        q[i] = p[i] * mix(1.0, exp2(e), gate);
+        q[i] = p[i] * max(0.0, d - (highest - score[i]));
         q_total += q[i];
     }
     for (var i = 0; i < 7; i += 1) {

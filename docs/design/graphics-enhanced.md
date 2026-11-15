@@ -420,32 +420,54 @@ and the gaps between them fill last. Prior art for this engine family: the New V
 Reloaded terrain shader's `HeightBlend` and Skyrim's Community Shaders; cited only as
 prior art, nothing of either was used.
 
-- **Height source.** The vanilla ground textures carry no height (most are DXT1 with no
-  alpha), so a texel's height is its brightness less its texture's mean brightness:
-  `clamp(gain × (luma(texel) − luma(mean)), −limit, limit)`, Rec. 709 luma on the linear
-  (sRGB-decoded) colour. The mean is the texture's coarsest mip (one texel for a full mip
-  chain), read in the shader with an explicit level: one extra cached texel read per
-  contributing texture (the base and each layer with a share above 0). This is
-  mean-centring, not a high-pass filter: a bright sand does not win for being bright, but
-  the broad shading painted into a texture stays. The texel and its mean are taken in the
-  same space; the coarsest mip is the authoring tool's average, so it is a near mean, not
-  an exact one, and a texture with a short mip chain gives a local value instead. The
-  base's diffuse is read once more for its colour before the vertex tint (the same
-  coordinate and bias as the standard material's read: texels already in cache). The
-  diffuse alpha keeps its old role (it multiplies a layer's share); reading it as height,
-  as texture replacers for terrain parallax supply, is a follow-up.
-- **Weights.** The ordered blend (each layer laid over what came before by opacity ×
-  alpha) is turned into a share for the base and each layer, which sum to 1. Each share is
-  boosted by 2^((height − share-weighted mean height) / band), the exponent held to ±4
-  bands, and the shares are made to sum to 1 again. Where the contributing heights are
-  about equal (share-weighted spread below the threshold, fully on at twice it), the shares
-  stay linear, so flat textures draw no hard triangle edges. A share of 0 stays 0 and a
-  sole contributor keeps 1: ground painted fully, or not at all, looks as with the switch
-  off. The normals blend with the same weights and are made unit length once.
-  terrain_weights.wesl holds this as plain WGSL; the engine's tests validate it with naga
-  and check a CPU mirror (terrain.rs tests).
-- **Starting values** (NVForever's own, to be settled from pictures): gain 1.0, limit
-  0.25, band 0.10, threshold 0.005.
+- **Height source.** Height is `clamp(gain * (luma(raw_texel) - luma(reference)),
+  -0.25, 0.25)`, Rec. 709 luma on linear, sRGB-decoded colour before material or vertex
+  tint. Diffuse alpha keeps its existing role of multiplying painted opacity. `global`
+  (default) reads the existing coarsest mip at UV (0.5, 0.5), a near texture mean for a
+  full mip chain. A bright texture does not win just for being bright; broad shading in
+  the texture still contributes. A short mip chain gives an imperfect reference.
+  `local` reads a coarser mip at the texel's own UV: `LOD = min(last_mip,
+  max(4, estimated_current_lod + 2))`. Current LOD is estimated from UV derivatives scaled
+  by each texture's dimensions, including the view's mip bias. Derivatives are captured
+  before divergent control flow or discard; reference samples use explicit levels in
+  both binding forms. This local reference removes some broader spatial shading too.
+  A base without a diffuse texture has height zero. The base diffuse is read again for
+  raw colour, at the standard material's coordinate and bias.
+- **Weights.** For painted opacity * diffuse alpha `a[k]`, ordered shares are
+  `w[k+1] = a[k] * product(1 - a[j], j > k)` and `w[0] = product(1 - a[j])`.
+  They sum to one. Compute `score[i] = w[i] + clamp(height[i], -w[i], w[i])`,
+  `highest = max(score)`, and `q[i] = w[i] * max(0, depth - (highest - score[i]))`;
+  final weights are `q[i] / sum(q)`. Scores outside the depth window drop out.
+  The share cap preserves continuity when a layer appears or disappears. A zero share
+  stays zero and a sole contributor stays one. Equal heights now sharpen unequal shares;
+  there is no equal-height gate or exponential boost. Equal shares and equal heights
+  remain equal. Increasing depth converges towards the ordered blend. With shares
+  (0.5, 0.5), heights (-0.05, +0.05), depth 0.10 gives weights (0, 1).
+  Colour and normals use the same weights; the resulting normal is made unit length once.
+  terrain_weights.wesl is plain WGSL, with naga validation and a CPU mirror in terrain.rs.
+- **Starting parameters** [design, #2550]: depth 0.10, gain 4, global reference; height
+  limit remains 0.25. Test aid `NVF_PLAY_TEST_HEIGHT_BLEND=depth:gain[:source]` is read
+  once per process and logged at start. Source is `global` (also when omitted) or `local`.
+  Depth must be finite and positive (shader floor 0.000001); gain finite and non-negative.
+  Invalid input warns and falls back to the complete default `0.10:4:global`.
+  This configures the effect; enable it with the graphics switch. Only the on variant
+  reads the appended uniform `(depth, gain, source_id, reserved)`, source IDs 0/1.
+  The material pipeline key remains its on/off bit.
+- **Picture comparison matrix** [design, #2550; pending the user's pictures]. Keep camera,
+  lighting, textures and graphics settings fixed; compare roads/clumps, flat textures,
+  oblique distant ground, quadrant/cell edges and the fold limit. Restart between values.
+
+  | Comparison | Switch | `NVF_PLAY_TEST_HEIGHT_BLEND` |
+  |---|---|---|
+  | Ordered baseline | off | `0.10:4:global` |
+  | Starting choice | on | `0.10:4:global` (or unset) |
+  | Wider transition | on | `0.20:4:global` |
+  | Narrower transition | on | `0.05:4:global` |
+  | More height contrast | on | `0.10:8:global` |
+  | Spatial reference | on | `0.10:4:local` |
+
+  Final depth, gain and source remain to be settled from those pictures; neither source
+  is claimed to improve every terrain texture.
 - **What it reaches.** Only the folded draw (terrain.rs "One draw for the base and its
   first layers"): up to six layers where the repeat divides the cell, four otherwise. A
   quadrant's later layers that keep their blended draws, and every layer on a GPU without
@@ -467,15 +489,16 @@ prior art, nothing of either was used.
   quadrant materials, <m> changed; …)`), and the first switch compiles the new pipeline
   (the pause menu waits for it). With the switch off the shader's path is the one there
   always was, operation for operation.
-- **Cost.** No extra full-size texture reads beyond the base's second read (a cache hit);
-  one coarsest-mip texel per contributing texture, and a little arithmetic per layer per
-  pixel. To be measured with the Tracy build's GPU zones at a layer-heavy view (Goodsprings
-  roads, the Primm junction), off against on. Zero-share layers are still sampled, as with
-  the switch off; skipping them needs explicit-gradient reads and belongs with the
-  anti-tiling work (#2551).
+- **Cost.** Global uses one coarsest-mip reference sample per contributing texture,
+  generally a small cached working set. Local uses one explicit-level spatial sample per
+  contributor at the same UV; it has a larger working set and derivative/LOD arithmetic.
+  Both also reread the base's raw diffuse, usually cached. Cost needs GPU measurements at
+  layer-heavy Goodsprings roads and the Primm junction, off/global/local. Zero-share
+  layers still have the ordinary diffuse/normal reads; skipping those is separate work.
 - Whether `enhanced` turns it on is the owner's call; until then it is off in both presets
   and is not an effect of the Enhanced effects row. Smoke: `terrain-height-blend` (switched
-  on, off and on while running) and `terrain-height-blend-start` (on from the start); both
+  on, off and on while running), `terrain-height-blend-start` (global from the start),
+  and `terrain-height-blend-local-start` (local from the start); all
   want the variant's `terrain height blending pipeline <n> ready` line
   (`NVF_PLAY_TEST_PIPELINE_LOG`, pipeline_gate.rs). The look itself is checked by pictures.
 

@@ -16,8 +16,9 @@
 //
 // TERRAIN_HEIGHT_BLEND (the Terrain height blending switch, terrain.rs "Height blending",
 // [design, #2550]): the same textures, read the same way, but the ordered blend becomes a
-// weight for the base and each layer (terrain_weights.wesl), boosted where a texture's
-// texel is brighter than that texture's mean (read from its coarsest mip), so a layer
+// weight for the base and each layer (terrain_weights.wesl), competing by share plus
+// height within a depth of the highest score. Height compares raw decoded colour to a
+// global (coarsest mip) or local (coarser mip at the same UV) reference, so a layer
 // comes in through its stones and clumps first. Without it the path below is the one
 // there always was, operation for operation.
 
@@ -47,6 +48,8 @@ struct TerrainLayers {
     // x: world units per texture repeat when the texture coordinate is worked out here and
     // the mesh's holds the fifth and sixth opacities; 0 when the mesh's is the coordinate.
     tile: vec4<f32>,
+    // Start-up comparison parameters: depth, gain, source (global 0 / local 1), reserved.
+    height: vec4<f32>,
 }
 
 // The extension's index table (indices 50-63 of TerrainLayers' bindless attribute).
@@ -205,22 +208,42 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
     }
 }
 
-// A texture's mean colour: its coarsest mip, one texel (1 x 1 for a full mip chain), read
-// at an explicit level, which is allowed where the fragments of a quad take different
-// branches. Sampled sRGB-decoded like the texel it is compared with.
-@if(TERRAIN_HEIGHT_BLEND) fn base_mean(instance_index: u32) -> vec3<f32> {
+// Only the on variant reads the appended parameters [design, #2550].
+@if(TERRAIN_HEIGHT_BLEND) fn height_params(instance_index: u32) -> vec4<f32> {
+    @if(BINDLESS) return terrain_layers[terrain_indices[material_slot(instance_index)].layers].height;
+    @if(!BINDLESS) return terrain_layer_values.height;
+}
+
+// Global: the existing coarsest-mip reference. Local: a coarse spatial reference at
+// the same UV, two levels beyond the estimated current LOD, never finer than mip 4.
+// Gradients are captured before any divergent control flow in fragment(), and scaled
+// by each texture's own dimensions here; explicit-level reads are safe in share branches.
+@if(TERRAIN_HEIGHT_BLEND) fn height_reference(t: texture_2d<f32>, s: sampler, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, source: f32) -> vec3<f32> {
+    let last_mip = f32(textureNumLevels(t) - 1u);
+    var lod = last_mip;
+    var coord = vec2(0.5);
+    if source > 0.5 {
+        let size = vec2<f32>(textureDimensions(t, 0));
+        let gx = dx * size;
+        let gy = dy * size;
+        let current_lod = 0.5 * log2(max(max(dot(gx, gx), dot(gy, gy)), 1e-12)) + view.mip_bias;
+        lod = min(last_mip, max(4.0, current_lod + 2.0));
+        coord = uv;
+    }
+    return textureSampleLevel(t, s, coord, lod).rgb;
+}
+
+@if(TERRAIN_HEIGHT_BLEND) fn base_reference(instance_index: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, source: f32) -> vec3<f32> {
     @if(BINDLESS) {
         let slot = material_slot(instance_index);
-        let t = material_indices[slot].base_color_texture;
-        return textureSampleLevel(bindless_textures_2d[t], bindless_samplers_filtering[material_indices[slot].base_color_sampler], vec2(0.5), f32(textureNumLevels(bindless_textures_2d[t]) - 1u)).rgb;
+        return height_reference(bindless_textures_2d[material_indices[slot].base_color_texture], bindless_samplers_filtering[material_indices[slot].base_color_sampler], uv, dx, dy, source);
     }
     @if(!BINDLESS) {
-        return textureSampleLevel(pbr_bindings::base_color_texture, pbr_bindings::base_color_sampler, vec2(0.5), f32(textureNumLevels(pbr_bindings::base_color_texture) - 1u)).rgb;
+        return height_reference(pbr_bindings::base_color_texture, pbr_bindings::base_color_sampler, uv, dx, dy, source);
     }
 }
 
-// Layer `k`'s mean colour (as [`base_mean`]).
-@if(TERRAIN_HEIGHT_BLEND) fn layer_mean(k: u32, instance_index: u32) -> vec3<f32> {
+@if(TERRAIN_HEIGHT_BLEND) fn layer_reference(k: u32, instance_index: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, source: f32) -> vec3<f32> {
     @if(BINDLESS) {
         let slot = material_slot(instance_index);
         let i = terrain_indices[slot];
@@ -230,15 +253,15 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
         if k == 3u { t = i.diffuse3; }
         if k == 4u { t = i.diffuse4; }
         if k == 5u { t = i.diffuse5; }
-        return textureSampleLevel(bindless_textures_2d[t], bindless_samplers_filtering[material_indices[slot].base_color_sampler], vec2(0.5), f32(textureNumLevels(bindless_textures_2d[t]) - 1u)).rgb;
+        return height_reference(bindless_textures_2d[t], bindless_samplers_filtering[material_indices[slot].base_color_sampler], uv, dx, dy, source);
     }
     @if(!BINDLESS) {
-        if k == 1u { return textureSampleLevel(diffuse1, pbr_bindings::base_color_sampler, vec2(0.5), f32(textureNumLevels(diffuse1) - 1u)).rgb; }
-        if k == 2u { return textureSampleLevel(diffuse2, pbr_bindings::base_color_sampler, vec2(0.5), f32(textureNumLevels(diffuse2) - 1u)).rgb; }
-        if k == 3u { return textureSampleLevel(diffuse3, pbr_bindings::base_color_sampler, vec2(0.5), f32(textureNumLevels(diffuse3) - 1u)).rgb; }
-        if k == 4u { return textureSampleLevel(diffuse4, pbr_bindings::base_color_sampler, vec2(0.5), f32(textureNumLevels(diffuse4) - 1u)).rgb; }
-        if k == 5u { return textureSampleLevel(diffuse5, pbr_bindings::base_color_sampler, vec2(0.5), f32(textureNumLevels(diffuse5) - 1u)).rgb; }
-        return textureSampleLevel(diffuse0, pbr_bindings::base_color_sampler, vec2(0.5), f32(textureNumLevels(diffuse0) - 1u)).rgb;
+        if k == 1u { return height_reference(diffuse1, pbr_bindings::base_color_sampler, uv, dx, dy, source); }
+        if k == 2u { return height_reference(diffuse2, pbr_bindings::base_color_sampler, uv, dx, dy, source); }
+        if k == 3u { return height_reference(diffuse3, pbr_bindings::base_color_sampler, uv, dx, dy, source); }
+        if k == 4u { return height_reference(diffuse4, pbr_bindings::base_color_sampler, uv, dx, dy, source); }
+        if k == 5u { return height_reference(diffuse5, pbr_bindings::base_color_sampler, uv, dx, dy, source); }
+        return height_reference(diffuse0, pbr_bindings::base_color_sampler, uv, dx, dy, source);
     }
 }
 
@@ -248,6 +271,20 @@ fn fragment(
     @builtin(front_facing) is_front: bool,
 ) -> FragmentOutput {
     var in = vertex;
+    @if(TERRAIN_HEIGHT_BLEND) var height_dx = vec2(0.0);
+    @if(TERRAIN_HEIGHT_BLEND) var height_dy = vec2(0.0);
+    @if(TERRAIN_HEIGHT_BLEND) {
+        @if(VERTEX_UVS_A) {
+            // Before dither/standard-material discard or any per-fragment branch. Recreate
+            // the same UV used below without a branch on the material's tile value.
+            let tile = layer_tile(in.instance_index);
+            let local_uv = (get_local_from_world(in.instance_index) * in.world_position).xy / select(1.0, tile, tile > 0.0);
+            let raw_uv = select(in.uv, local_uv, tile > 0.0);
+            let uv = (standard_material(in.instance_index).uv_transform * vec3(raw_uv, 1.0)).xy;
+            height_dx = dpdx(uv);
+            height_dy = dpdy(uv);
+        }
+    }
     @if(VISIBILITY_RANGE_DITHER) visibility_range_dither(in.position, in.visibility_range_dither);
     // The layers' opacities, taken out of the attributes that carried them, which then
     // hold what the standard material expects: an opaque vertex colour and a tangent of
@@ -293,6 +330,7 @@ fn fragment(
             pbr_input.N = normalize(normal);
         }
         @if(TERRAIN_HEIGHT_BLEND) {
+            let params = height_params(in.instance_index);
             // The same reads as above, in the same places (every held layer's diffuse,
             // the normal maps it has), kept for the weights; the base's diffuse once more.
             let base_raw = base_diffuse(in.instance_index, uv);
@@ -309,19 +347,18 @@ fn fragment(
                 }
             }
             var w = terrain_ordered_shares(paint, n);
-            // Heights of the textures that contribute here: one more read each, of the
-            // texture's coarsest mip (one texel, always in cache). A base without a texture
-            // (plain grey) is flat.
+            // One reference read per contributing texture, global or local. Heights
+            // use raw decoded colour before tint. A base without a texture is flat.
             var height = array<f32, 7>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
             if w[0] > 0.0 && (standard.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u {
-                height[0] = terrain_height(base_raw.rgb, base_mean(in.instance_index));
+                height[0] = terrain_height(base_raw.rgb, base_reference(in.instance_index, uv, height_dx, height_dy, params.z), params.y);
             }
             for (var k = 0u; k < n; k += 1u) {
                 if w[k + 1u] > 0.0 {
-                    height[k + 1u] = terrain_height(texels[k].rgb, layer_mean(k, in.instance_index));
+                    height[k + 1u] = terrain_height(texels[k].rgb, layer_reference(k, in.instance_index, uv, height_dx, height_dy, params.z), params.y);
                 }
             }
-            var f = terrain_height_weights(w, height);
+            var f = terrain_height_weights(w, height, params.x);
             // Colour and normal with the same weights; the normal made unit length once.
             colour = f[0] * colour;
             normal = f[0] * normal;

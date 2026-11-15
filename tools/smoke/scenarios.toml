@@ -1096,6 +1096,34 @@ forbid = [
 ]
 
 [[scenario]]
+name = "terrain-height-blend-local-start"
+source = "[design, #2550] engine/nvforever/src/terrain.rs \"Height blending\": started with local height reference (0.10:4:local) and --graphics-only terrain-height-blend, the folded materials are made with it and their TERRAIN_HEIGHT_BLEND pipeline compiles and is ready, without a rendering or pipeline error"
+areas = ["renderer", "graphics", "terrain"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_weights.wesl",
+  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/pipeline_gate.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_HEIGHT_BLEND = "0.10:4:local" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-height-blend"]
+run_seconds = 14
+expect = [
+  { text = "terrain: height blend parameters depth=0.1 gain=4 source=local", label = "local reference: the start-up local reference parameters were parsed" },
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "local reference: the GPU folds the layers (bindless)" },
+]
+order = [[
+  { re = 'graphics: light glow, terrain height blending$', label = "local reference: the switch is on from the start" },
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, 0 changed', label = "local reference: on from the first frame: every material was made with it" },
+  { re = 'terrain height blending pipeline \d+ ready', label = "local reference: the materials made with it draw with the TERRAIN_HEIGHT_BLEND pipeline, which compiled" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "local reference: a rendering (validation) error with the terrain drawn height-blended from the start" },
+  { re = 'terrain height blending pipeline \d+ failed', label = "local reference: the start's TERRAIN_HEIGHT_BLEND pipeline failed" },
+  { text = "failed and will not be tried again", label = "local reference: a pipeline that failed for good" },
+  { text = "still being retried after", label = "local reference: a pipeline still retried at the cap" },
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]', label = "local reference: no material made without the setting" },
+]
+
+[[scenario]]
 name = "fps-counter"
 source = "engine/nvforever/src/perf_overlay/ (issues #1087, #1704, #1868): --fps shows the frame rate counter (with CPU and GPU use) from the start, and the settings page's Frame rate counter switch hides and shows it while the game runs"
 areas = ["renderer", "settings"]
