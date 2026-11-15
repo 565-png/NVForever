@@ -585,6 +585,16 @@ the spec it links to.
     still die in some case outside Hardcore, say which. Observer check 165 asks the
     original. ([unconscious §2.2a](spec-notes/unconscious.md))
 
+80. **Scripts cannot disable the player (#2617).** On the Legion route the intake tower
+    trigger VHDIntakeTowerLegionaryDespawnScript disables whoever walks in once the
+    Legion's intake tower strategy is 2, the player too; a disabled player's scripted
+    load doors do nothing, so the Power Plant 01 elevator never took the player through.
+    Ours now: Disable of the player does nothing, and a save holding the player disabled
+    loads with the player enabled. The other choice is to let the player be disabled and
+    only lift the Activate rule for the player (the player would then be hidden and
+    "gone" to scripts that test it). Observer check 172 asks the original.
+    ([doors §6](spec-notes/doors.md))
+
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 
 

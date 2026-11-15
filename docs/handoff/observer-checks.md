@@ -2426,3 +2426,16 @@ already talking takes over at once, same topic or another; nothing is queued or 
      a narrow angle, or not there at all? Compare with activating the lower
      teleporting member as a control. [design, #2528] Do not infer original
      behavior from NVForever's successful teleport smoke scenarios.
+
+## Added 2026-11-15 (a script's Disable of the player, #2617)
+
+172. **Can a script disable the player, and can a disabled player use a scripted load
+     door?** (P2; #2617, doors.md §6.) VHDIntakeTowerLegionaryDespawnScript (SCPT
+     0x0013CA2C) disables whoever enters its trigger (VHDIntakeTowerLegionaryDespawnTriggerREF,
+     0x0013CA72) once VHDLegionBattle.IntakeTowerStrategy is 2 [observed: the data].
+     In any interior: `player.disable`, then `player.getdisabled` (1 or 0?), walk, and use a
+     load door, an unscripted one and one whose OnActivate ends in a bare Activate (the
+     Power Plant 01 elevator, VHDODeckElevREF 0x0013151C, in HooverDamIntODeck). Then, on a
+     save there, `set VHDLegionBattle.IntakeTowerStrategy to 2`, `player.moveto 0013CA72`
+     and `player.getdisabled`. Ours since #2617: Disable of the player does nothing
+     [hypothesis]; GetDisabled 1 or a door that stays shut in the original says otherwise.

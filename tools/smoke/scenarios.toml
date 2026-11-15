@@ -4956,6 +4956,36 @@ expect = [
 order = [["terminal 0x0014B0A7 plays Open before its screen", "terminal: open 0x0014B0A7", "terminal 0x0014B0A7 closes"]]
 
 [[scenario]]
+name = "dam-elevator-disabled-player"
+source = "#2617: on the Legion route, once VHDLegionBattle.IntakeTowerStrategy is 2, VHDIntakeTowerLegionaryDespawnScript (SCPT 0013CA2C) disables whoever enters its trigger, the player too; a disabled actor's Activate does nothing, so the Power Plant 01 elevator VHDODeckElevREF (0013151C, SCPT 0014659A, OnActivate ending in a bare Activate) played its sound and never took the player through. Disable now leaves the player enabled (functions::refs::disable_ref, doors.md section 6)"
+note = "Strategy 2 by the console at 3 s (the result script of INFO 0013CA26 sets it in play); the script aid moves the player into VHDIntakeTowerLegionaryDespawnTriggerREF (0013CA72) at 5 s, back to the elevator at 11 s and activates it at 15 s as the player's own E would [observed: fnvtool script decompile, esm decode]"
+areas = ["scripts", "quests"]
+paths = ["crates/fnv-game/src/functions/refs.rs", "crates/fnv-game/src/game.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/script_events.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "3:set VHDLegionBattle.IntakeTowerStrategy to 2;3.3:close", NVF_PLAY_TEST_SCRIPT = "5:moveto:player:VHDIntakeTowerLegionaryDespawnTriggerREF,11:moveto:player:VHDODeckElevREF,15:activate:VHDODeckElevREF" }
+args = ["--cell", "HooverDamIntODeck", "--play", "--no-voice"]
+run_seconds = 24
+order = [[
+  { text = "script: OnTriggerEnter of FalloutNV.esm|SCPT 0x0013CA2C ran", label = "the intake tower trigger's block runs for the player" },
+  { text = "script: activating 0x0013151C runs its OnActivate block instead of the default action", label = "then the elevator's OnActivate block runs" },
+  { re = 'script: travel to Some\(1181400\) / None at', label = "and its bare Activate takes the player through the load door to HooverDamIntPowerPlant01 (001206D8)" },
+]]
+expect = [{ text = "script: Disable of the player ignored", label = "the trigger's Disable leaves the player enabled" }]
+
+[[scenario]]
+name = "door-scripted-activate-battle"
+source = "#2617: the same elevator during the battle (vHDBattleController.iBattleState 2, the state of the owner's report): the block's battle branch enables six references and sets VHDLegionBattle's respawners once, then its bare Activate still takes the player through"
+note = "iBattleState set by the console at 4 s, the door activated by the script aid at 8 s; VHDLegionPowerPlant01EnableMarker (001465C5) is the first reference the branch enables [observed: fnvtool script decompile SCPT 0014659A, esm decode]"
+areas = ["scripts", "quests"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvf-play/src/script_events.rs", "engine/nvf-play/src/activate.rs", "crates/fnv-game/src/functions/refs.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "4:set vHDBattleController.iBattleState to 2;4.3:close", NVF_PLAY_TEST_SCRIPT = "8:activate:VHDODeckElevREF" }
+args = ["--cell", "HooverDamIntODeck", "--play", "--no-voice"]
+run_seconds = 18
+expect = [
+  { text = "script: OnActivate of FalloutNV.esm|SCPT 0x0014659A ran on Some(0x0013151C)", label = "the elevator's OnActivate block runs" },
+  { re = 'script: travel to Some\(1181400\) / None at', label = "its bare Activate sends the player through the load door to HooverDamIntPowerPlant01 (001206D8)" },
+]
+
+[[scenario]]
 name = "terminal-from-message-box"
 source = "#2459: EastPumpStationTerminal's script (SCPT 0x000E8FA3) shows EastPumpStationTermMsg on activation and its GameMode block answers the button \"Activate the terminal.\" (2) with a bare Activate. An answered box closes after that frame's scripts (ScriptState::answer, Runtime::finish_answer), the player is back in the world in the next frame (hold_player), and only there does the GameMode block read the button: the terminal's screen opens. A box closed before the frame's scripts instead lets the block run while the box still holds PlayState::Menu, and the request is dropped (the quest pilot's own answer did that, #2365)"
 note = "East Pump Station (interior 1EEastPumpStation 000E8F6F), the terminal REFR 000FAA48 (base EastPumpStationTerminal 000E8FA2, not locked) [observed: FalloutNV.esm, fnvtool world refs / script decompile]. Activated at 6 s by the script aid, as the player's own activation; at 8 s the real key 2 picks the second button drawn (script_hud.rs menu_keys, the path of a click too): the record's button 2, since \"Repair the network connection.\" is hidden below Science 50; the terminal left at 12 s. Used by the quest Hard Luck Blues (VES34Vault)"
