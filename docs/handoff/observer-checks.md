@@ -2199,7 +2199,7 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
 
 ## Added 2026-11-14 (helipad ladder pair, #2528)
 
-149. **Which helipad ladder faces are usable, and can the upper endpoint be targeted
+171. **Which helipad ladder faces are usable, and can the upper endpoint be targeted
      from the deck?** (P2; #2528, cells-refs.md §5.) [documented: supplied writer
      brief #2528 round w4, fnvtool ESM decode of FalloutNV.esm] The nearly coincident
      lower pair is teleporting `00164C64` (`VHDExteriorLadder`) at

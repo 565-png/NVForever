@@ -145,7 +145,7 @@ from the supplied bounds and rotations] Under `Rz(-z)`, the negative-X side of
 mostly onto opposite sides of their origins. [hypothesis, #2528] Treating that
 body side as the exposed approach face makes the plain ladder face the northern
 landing approach and the teleporting ladder face the opposite approach. OBND
-does not prove front-face normals or which side the original offers; check 149
+does not prove front-face normals or which side the original offers; check 171
 below requests both approaches.
 
 [observed: main-session run supplied in writer brief #2528 round w4,
@@ -183,7 +183,7 @@ these pages specifies hiding a prompt or refusing activation when a non-teleport
 door's model has no open/close animation. [design, #2528] No engine rule changes
 on that basis. [hypothesis, #2528] Retaining the ordinary non-teleport toggle for
 this ladder is provisional pending original-game prompt/result evidence in
-[observer check 149](../handoff/observer-checks.md#added-2026-11-14-helipad-ladder-pair-2528).
+[observer check 171](../handoff/observer-checks.md#added-2026-11-14-helipad-ladder-pair-2528).
 
 **Transformed envelope.** [documented: supplied writer brief #2528 rounds w2/w3]
 The top base OBND is (-1037,-109,0)..(112,-84,445), rotation
