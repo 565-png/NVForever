@@ -393,7 +393,13 @@ pub struct Settings(
     /// How an older INI key's value splits into the rows' own ([`set_older_split`]): (the
     /// older key, the split).
     Vec<(&'static str, OlderSplit)>,
+    /// Rows shown only while their module says so ([`set_shown_when`]): (the row's key, the
+    /// key of the row that stands for it while hidden, the test).
+    Vec<(&'static str, &'static str, ShownWhen)>,
 );
+
+/// Whether a row is shown now ([`set_shown_when`]).
+pub type ShownWhen = fn(&World) -> bool;
 
 /// An older row's INI value read as the values of the rows that took over from it
 /// ([`set_older_split`]): (a row's key, its text) for each row the older value decides; none
@@ -488,6 +494,19 @@ impl Settings {
         })
     }
 
+    /// The rows their module hides now ([`set_shown_when`]): each one's index and the index
+    /// of the row that stands for it (itself when that row is not registered).
+    pub fn hidden(&self, world: &World) -> Vec<(usize, usize)> {
+        self.8
+            .iter()
+            .filter(|(_, _, shown)| !shown(world))
+            .filter_map(|(key, parent, _)| {
+                let i = self.index(key)?;
+                Some((i, self.index(parent).unwrap_or(i)))
+            })
+            .collect()
+    }
+
     /// Every row's state as a number: [`Setting::value`], a list's chosen index (-1: not
     /// listed).
     pub fn values(&self, world: &World) -> Vec<f32> {
@@ -538,6 +557,19 @@ pub fn set_disabled_status(app: &mut App, key: &'static str, status: fn(&World) 
     let mut settings = app.world_mut().resource_mut::<Settings>();
     settings.2.retain(|(k, _)| *k != key);
     settings.2.push((key, status));
+}
+
+/// Show row `key` only while `shown` says so [design: the menu overhaul, owner 2026-11-15:
+/// rows that cannot apply to the parent's choice are hidden, not greyed, where the owner
+/// said so (the upscaler's own rows, Generated Frames, the movement categories)]. While it
+/// is hidden the row `parent` stands for it: the search and the Changed list show that row,
+/// and a choice on the hidden row moves to it (`crate::settings_view::parent_of`). The INI
+/// and the test aids still set the hidden row.
+pub fn set_shown_when(app: &mut App, key: &'static str, parent: &'static str, shown: ShownWhen) {
+    app.init_resource::<Settings>();
+    let mut settings = app.world_mut().resource_mut::<Settings>();
+    settings.8.retain(|(k, _, _)| *k != key);
+    settings.8.push((key, parent, shown));
 }
 
 /// Show list `key`'s choices by `label`'s words instead of their names (module notes). The

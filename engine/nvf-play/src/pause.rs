@@ -230,7 +230,7 @@
 use crate::interface::{bc_supported, u, Face, Picture, Pictures};
 use crate::settings::{add_setting, Setting, Settings};
 use crate::settings_layout::{ResolvedLayout, CONTROLS_TAB};
-use crate::settings_view::{ControlRow, Found, RailItem, RowId, SettingsFocus, SettingsLayout, SettingsScope, ViewEntry, Visibility, NO_ROW_SOUND, SEARCH};
+use crate::settings_view::{ControlRow, Folding, Found, RailItem, RowId, SettingsFocus, SettingsLayout, SettingsScope, ViewEntry, Visibility, NO_ROW_SOUND, SEARCH};
 use fnv_util::words::{tr, tr_str};
 use crate::start_menu::{color, highlight_colors, text as sm_text, Faces, Shade, BASE, COLUMN, ITEM, LINE, RIGHT, SUB_RIGHT, SUB_WIDTH};
 use crate::{PlaySet, PlayState};
@@ -544,7 +544,7 @@ pub struct ReportEntry {
 }
 
 /// The report entry's words [design: NVForever's own].
-const REPORT_LABEL: &str = "Report a bug";
+const REPORT_LABEL: &str = "Report a Bug";
 
 fn no_form(form: Option<Res<FormOver>>) -> bool {
     !form.is_some_and(|f| f.0)
@@ -843,7 +843,16 @@ const KEYBOARD_SEARCH: &str = "Keyboard search";
 /// The mark after the search's text while it has the keys [design].
 const CARET: &str = "_";
 /// The links over the rows to the heading before and after [design: #1953].
-const HEADING_LINKS: [&str; 2] = ["Previous heading", "Next heading"];
+const HEADING_LINKS: [&str; 2] = ["Previous Category", "Next Category"];
+/// A switch's states, in the lists' casing [design: the menu overhaul, one casing].
+const ON: &str = "On";
+const OFF: &str = "Off";
+/// A category heading's note and the Tweaks tab's Category row's [design: the menu
+/// overhaul; NVForever's own words].
+const HEADING_NOTE: &str = "Enter or a click opens or closes this category; Left closes it, Right opens it.";
+const GROUP_NOTE: &str = "Which group of tweaks the list shows. The search finds every tweak.";
+/// The Tweaks tab's Category row's label [design: owner 2026-11-15].
+const GROUP_ROW: &str = "Category";
 /// A control's value while it waits for its new key.
 const WAITING: &str = "Press a key...";
 /// The same with a controller.
@@ -909,10 +918,11 @@ const METER_MIN: f32 = 100.0;
 const OPTIONS_TOP: f32 = 120.0;
 /// The heading links' line over the rows [design: #1953].
 const LINKS_TOP: f32 = OPTIONS_TOP - ITEM - 8.0;
-/// The note under the rows: its lines this far apart, the last one above the version's
-/// line [design].
+/// The note under the rows: its lines this far apart, the last one above the view's bottom
+/// margin [design; "Report a Bug" and the version moved under the column, the menu
+/// overhaul].
 const NOTE_STEP: f32 = 26.0;
-const NOTE_BOTTOM: f32 = 900.0;
+const NOTE_BOTTOM: f32 = 940.0;
 /// The note's room under the window, in lines: two for a row's note and one for what it
 /// stands for or a choice's reason (#2377) [design]; never more are drawn.
 const NOTE_LINES: usize = 3;
@@ -921,33 +931,37 @@ const NOTE_LINES: usize = 3;
 const NOTE_ROW_LINES: usize = 2;
 /// The rows a stand-in's note names before "and N more" ([`note_of`]) [design: #2377].
 const STAND_IN_NAMES: usize = 3;
-/// The top of "Report a bug" at the bottom left ([`report_entry`]), over the version's line:
-/// the window and its note end above it, so the note never runs into it where the list
-/// starts near the view's left edge [design: #2377].
-const REPORT_TOP: f32 = 960.0 - 60.0 - ITEM;
-/// The room between the window's last line and the note [design].
-const NOTE_GAP: f32 = 20.0;
+/// The room between the window's last line and the note, a rule in its middle: the note
+/// stands apart from the rows [design: the menu overhaul, owner 2026-11-15].
+const NOTE_GAP: f32 = 32.0;
 /// The room between the band's right edge and the categories [design: #1210, the scroll
 /// bar and band ran under them at 16:9].
 const TABS_GAP: f32 = 20.0;
 /// The view's width in interface units when no window says (16:9).
 const VIEW_W: f32 = 960.0 * 16.0 / 9.0;
-const VALUE_AT: f32 = 700.0;
-/// A slider's meter in its row: its left edge, width and height, the arrows' left edges
-/// and the value's centre [design: the "How many?" meter's height and arrows
-/// (`crate::menu::look`), fitted into the row's right part].
-const METER_LEFT: f32 = 445.0;
-const METER_WIDTH: f32 = 240.0;
-const METER_HEIGHT: f32 = 24.0;
-const METER_ARROWS: [f32; 2] = [420.0, 692.0];
-const METER_ARROW: Vec2 = Vec2::new(17.5, 35.0);
-const PERCENT_AT: f32 = 765.0;
-/// A list's box in its row (its left edge and width, from the slider's left arrow to the
-/// row's end), the open list's rows shown at once and their height [design]. The places
-/// above and this one are in a [`ROW_BASE`] row; [`RowX`] keeps them at their distance from
-/// the row's right end.
+/// **The value cell** [design: the menu overhaul, owner 2026-11-15: "all text should be
+/// aligned the same"]: every row's value is drawn in one cell, the list's box (its left edge
+/// and width, [`LIST_LEFT`], [`LIST_WIDTH`]), and nothing outside it. A list's words, a
+/// switch's state, a binding and a greyed row's value are centred on one point, the list's
+/// words' centre left of its arrow ([`VALUE_AT`]); a slider runs from the cell's left edge
+/// (its left arrow) to its right edge (its right arrow), its number right-aligned in a lane
+/// before the right arrow, so numbers line up down the page. The places are in a
+/// [`ROW_BASE`] row; [`RowX`] keeps them at their distance from the row's right end.
 const LIST_LEFT: f32 = 420.0;
 const LIST_WIDTH: f32 = 386.0;
+/// The strip at a list box's right end that holds its arrow.
+const LIST_ARROW_STRIP: f32 = 30.0;
+const VALUE_AT: f32 = LIST_LEFT + (LIST_WIDTH - LIST_ARROW_STRIP) / 2.0;
+/// A slider's arrows (their size and left edges) and meter (its left edge, width and
+/// height) [design: the "How many?" meter's height and arrows (`crate::menu::look`), fitted
+/// into the value cell].
+const METER_ARROW: Vec2 = Vec2::new(17.5, 35.0);
+const METER_ARROWS: [f32; 2] = [LIST_LEFT, LIST_LEFT + LIST_WIDTH - METER_ARROW.x];
+const METER_LEFT: f32 = LIST_LEFT + METER_ARROW.x + 7.5;
+/// A slider's number lane before its right arrow (wider words take room from the meter).
+const READOUT_W: f32 = 80.0;
+const METER_WIDTH: f32 = 248.0;
+const METER_HEIGHT: f32 = 24.0;
 const DROP_ROWS: usize = 8;
 const DROP_ITEM: f32 = 44.0;
 /// A tick of the meter: 8 apart, the picture's top 8 × 20 texels stretched to the meter's
@@ -1091,6 +1105,9 @@ struct PauseView {
     changed_logged: Option<Vec<RowId>>,
     /// The settings list's place when last logged ([`log_list_box`]).
     list_logged: Option<ListBox>,
+    /// Which categories are open and the Tweaks tab's group (kept in `[UI]`,
+    /// [`SettingsTabStore`]).
+    folding: Folding,
 }
 
 impl PauseView {
@@ -1255,9 +1272,18 @@ struct Drawn {
     stand_ins: Vec<(RowId, Vec<String>)>,
     /// "Report a bug" at the bottom left ([`ReportEntry`]), and whether the pointer is on it.
     report: Option<bool>,
+    /// Each category listed: how many rows it holds now and whether it is open.
+    headings: Vec<(crate::settings_layout::Placement, usize, bool)>,
+    /// The Tweaks tab's group shown (its Category row).
+    group: Option<&'static str>,
 }
 
 impl Drawn {
+    /// Category `p`'s rows shown and whether it is open (unknown: none, open).
+    fn heading(&self, p: crate::settings_layout::Placement) -> (usize, bool) {
+        self.headings.iter().find(|h| h.0 == p).map_or((0, true), |h| (h.1, h.2))
+    }
+
     /// List row `i`'s choices and chosen one.
     fn list(&self, i: usize) -> Option<(&[String], &str)> {
         self.lists.iter().find(|l| l.0 == i).map(|l| (l.1.as_slice(), l.2.as_str()))
@@ -1317,12 +1343,12 @@ struct Window {
 }
 
 /// How many lines the settings page's window shows at once (headings count): as many as fit
-/// between the rows' top and a note of [`NOTE_LINES`] lines over [`REPORT_TOP`], at least
-/// one; 12 with today's layout [design: #2377]. Worked out here only and carried as a value
+/// between the rows' top and a note of [`NOTE_LINES`] lines over [`NOTE_BOTTOM`], at least
+/// one; 13 with today's layout [design: #2377, the menu overhaul]. Worked out here only and carried as a value
 /// ([`PauseView::lines`], [`Drawn::lines`]) to everything that draws, scrolls or points at
 /// the window, so a later layout can make it depend on the view.
 fn window_lines() -> usize {
-    let room = REPORT_TOP - OPTIONS_TOP - NOTE_GAP - NOTE_LINES as f32 * NOTE_STEP;
+    let room = NOTE_BOTTOM - OPTIONS_TOP - NOTE_GAP - NOTE_LINES as f32 * NOTE_STEP;
     ((room / OPTION_ROW).floor().max(1.0)) as usize
 }
 
@@ -1401,6 +1427,7 @@ impl Plugin for PausePlugin {
             .init_resource::<SettingsLayout>()
             .init_resource::<SearchKeys>()
             .init_resource::<SettingsTabStore>()
+            .init_resource::<crate::settings_view::HiddenRows>()
             .add_systems(Startup, read_settings_tab)
             .init_resource::<PauseInputAid>()
             .init_resource::<crate::bindings::KeyboardCapture>()
@@ -1427,7 +1454,7 @@ impl Plugin for PausePlugin {
                 // Over a conversation, a barter menu takes Esc for itself (`crate::menu`).
                 (
                     open.run_if(in_state(PlayState::Playing).or_else(in_state(PlayState::Dialogue)).and_then(crate::menu::no_menu)),
-                    (choose.run_if(no_form), finish_resume, show_status, draw).chain().run_if(in_state(PlayState::Menu)),
+                    (crate::settings_view::update_hidden_rows, choose.run_if(no_form), finish_resume, show_status, draw).chain().run_if(in_state(PlayState::Menu)),
                 )
                     .in_set(PlaySet::Ui),
             )
@@ -1598,7 +1625,7 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
                             .with_children(|t| sm_text(t, &f.entry, tr(c), 10.0, BASE, color(Shade::Bright)));
                         }
                     } else if !d.status.is_empty() {
-                        root.spawn((PauseStatusText, from_right(RIGHT, top + d.column.len() as f32 * ITEM + 10.0, 700.0, ITEM))).with_children(|t| {
+                        root.spawn((PauseStatusText, from_right(RIGHT, top + (d.column.len() + 3) as f32 * ITEM + 10.0, 700.0, ITEM))).with_children(|t| {
                             let w = f.small.font.width(&d.status);
                             sm_text(t, &f.small, &d.status, 700.0 - w - 10.0, 30.0, color(Shade::Bright));
                         });
@@ -1616,13 +1643,16 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
                     right_entry(root, &f.entry, tr("Defaults"), from_right(RIGHT, BACK_TOP - ITEM, 200.0, ITEM), 200.0, Shade::Bright, on(RailItem::Defaults), PauseButton::Defaults, glyphs);
                 }
             }
-            // "Report a bug" over the version at the bottom left; the first page shows the
-            // version too (the settings page draws its own).
-            if let Some(hovered) = d.report {
-                report_entry(root, f, hovered, glyphs);
-                if d.page == Page::Main {
-                    version(root, f);
+            // Under the column's last entry, after an empty line: "Report a Bug" (over a
+            // game) and the version under it, right-aligned with the entries [design: owner
+            // 2026-11-15, the menu overhaul; before it the bottom left]. A mod's own page
+            // keeps the view to itself.
+            if d.page != Page::Mods {
+                let below = top + (d.column.len() + 1) as f32 * ITEM;
+                if let Some(hovered) = d.report {
+                    report_entry(root, f, hovered, glyphs, below);
                 }
+                version(root, f, below + if d.report.is_some() { ITEM } else { 0.0 });
             }
             if let Some((label, left, sel)) = d.keep {
                 keep_question(root, f, label, left, sel);
@@ -1689,8 +1719,10 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     for (n, k) in drawn.clone().enumerate() {
         let y = top + n as f32 * OPTION_ROW;
         match entries[k] {
-            ViewEntry::Heading(p) => heading_line(root, f, &heading_words(p, crumbs), lb, y),
+            ViewEntry::Heading(p) => heading_line(root, look, d, p, selected == Some(RowId::Heading(p)), lb, y),
+            ViewEntry::Crumb(p) => crumb_line(root, f, &heading_words(p, crumbs), lb, y),
             ViewEntry::Row(id) => row_line(root, d, look, list, id, selected == Some(id), lb, y, glyphs),
+            ViewEntry::Gap => {}
         }
     }
     // The chosen row's note under the rows; with its list open on a choice out of reach,
@@ -1703,7 +1735,6 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     root.spawn((SwitchNote, Text::new(note.clone()), Node { display: Display::None, ..default() }));
     let shown = (entries.len() - first.min(entries.len())).min(lines) as f32;
     note_lines(root, f, &note, lb, top + shown * OPTION_ROW + NOTE_GAP);
-    version(root, f);
     // The open dropdown over the rows under its own (over those above near the bottom).
     let Some((o, names)) = d.dropdown.and_then(|o| Some((o, d.list(o.row)?.0))) else { return };
     let Some(n) = drawn.clone().position(|k| entries[k] == ViewEntry::Row(RowId::Setting(o.row))) else { return };
@@ -1724,8 +1755,40 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     });
 }
 
-/// A heading's line: its words dim in the page's font, nothing to choose [design: #1953].
-fn heading_line(root: &mut ChildSpawnerCommands, f: &Faces, words: &str, lb: ListBox, y: f32) {
+/// The arrow before a category's heading: the slider's right arrow, smaller, turned down
+/// while the category is open [design: the menu overhaul].
+const HEADING_ARROW: Vec2 = Vec2::new(10.0, 20.0);
+
+/// A category's heading (module notes): the arrow (right while closed, down while open), its
+/// words bright, while closed how many rows it holds, a rule under it; the box round it when
+/// chosen; a click opens or closes it [design: the menu overhaul, owner 2026-11-15]. Bright,
+/// so a heading is never taken for a greyed row.
+#[allow(clippy::too_many_arguments)]
+fn heading_line(root: &mut ChildSpawnerCommands, look: &PauseLook, d: &Drawn, p: crate::settings_layout::Placement, on: bool, lb: ListBox, y: f32) {
+    let f = &look.faces;
+    let (count, open) = d.heading(p);
+    let name = tr(p.heading.unwrap_or(p.tab));
+    let words = if open { name.to_string() } else { format!("{name} ({count})") };
+    root.spawn((HeadingLine, Text::new(words.clone()), Node { display: Display::None, ..default() }));
+    let bright = color(Shade::Bright);
+    root.spawn((Button, PauseButton::Row(RowId::Heading(p)), boxed(from_middle(lb.left, y, lb.width, OPTION_ROW), on))).with_children(|r| {
+        let arrow = at(12.0, (OPTION_ROW - HEADING_ARROW.y) / 2.0, HEADING_ARROW.x, HEADING_ARROW.y);
+        let turn = if open { UiTransform::from_rotation(Rot2::radians(std::f32::consts::FRAC_PI_2)) } else { UiTransform::default() };
+        match &look.arrows[1] {
+            Some(image) => r.spawn((arrow, turn, ImageNode { color: bright, ..ImageNode::new(image.clone()) })),
+            None => r.spawn((arrow, turn, BackgroundColor(bright.with_alpha(0.5)))),
+        };
+        let x = 12.0 + HEADING_ARROW.x + 12.0;
+        let words = fit_text(|t| f.entry.font.width(t), &words, lb.width - x - 10.0);
+        sm_text(r, &f.entry, &words, x, BASE + 2.0, bright);
+        // The rule under the words.
+        r.spawn((at(10.0, OPTION_ROW - 6.0, lb.width - 20.0, 1.0), BackgroundColor(bright.with_alpha(0.35))));
+    });
+}
+
+/// On the search and the Changed list, the line saying where the rows after it live: its
+/// words dim in the page's font, nothing to choose [design: #1953].
+fn crumb_line(root: &mut ChildSpawnerCommands, f: &Faces, words: &str, lb: ListBox, y: f32) {
     root.spawn((HeadingLine, Text::new(words), Node { display: Display::None, ..default() }));
     let words = fit_text(|t| f.entry.font.width(t), words, lb.width - 20.0);
     root.spawn(from_middle(lb.left, y, lb.width, OPTION_ROW)).with_children(|t| sm_text(t, &f.entry, &words, 10.0, BASE + 2.0, color(Shade::Dim)));
@@ -1775,7 +1838,13 @@ struct SearchText;
 fn heading_links(root: &mut ChildSpawnerCommands, f: &Faces, lb: ListBox, glyphs: &crate::pad::PadGlyphs) -> f32 {
     let mut right = lb.left + lb.width;
     for (k, key) in [(1, KeyCode::PageDown), (0, KeyCode::PageUp)] {
-        let label = format!("{}  {}", tr(HEADING_LINKS[k]), crate::pad::hint(&[key], crate::pad::PAUSE_AT));
+        // The keyboard's keys by their short names ("PgUp)"): the original's "R)" shape
+        // reads broken after two words [design: the menu overhaul].
+        let hint = match crate::pad::labels() {
+            crate::pad::Labels::Keys => format!("{})", if key == KeyCode::PageUp { "PgUp" } else { "PgDn" }),
+            _ => crate::pad::hint(&[key], crate::pad::PAUSE_AT),
+        };
+        let label = format!("{}  {hint}", tr(HEADING_LINKS[k]));
         let w = crate::pad::hint_width(&f.small, &label, glyphs) + 20.0;
         right -= w;
         right_entry(root, &f.small, &label, from_middle(right, LINKS_TOP, w, ITEM), w, Shade::Bright, false, PauseButton::HeadingStep(if k == 0 { -1 } else { 1 }), glyphs);
@@ -1800,35 +1869,34 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
             let label = tr(s.label);
             let label_shade = color(if disabled.is_some() { Shade::Dim } else { Shade::Bright });
             root.spawn((Button, PauseButton::Row(id), node)).with_children(|r| {
+                // A greyed row (it cannot apply now) shows its value dim; why is the note's
+                // [design: the menu overhaul]. The aids read the reason as its state.
+                let value_shade = if disabled.is_some() { Shade::Dim } else { Shade::Bright };
                 if let Some(reason) = disabled {
-                    let reason = tr(reason);
-                    r.spawn((SwitchState(id), Text::new(reason), Node { display: Display::None, ..default() }));
-                    let parts = row_parts(x, ValueKind::Centred(width(reason)));
-                    let (label, reason) = fit_row(width, &parts, label, reason);
-                    sm_text(r, &f.entry, &label, parts.label.0, BASE + 2.0, label_shade);
-                    sm_text(r, &f.entry, &reason, parts.text_x(width(&reason)), BASE + 2.0, color(Shade::Dim));
-                    return;
+                    r.spawn((SwitchState(id), Text::new(tr(reason)), Node { display: Display::None, ..default() }));
                 }
                 if let Some(slider) = &s.slider {
                     let value = slider.text(v);
                     let parts = row_parts(x, ValueKind::Slider(width(tr_str(&value))));
                     sm_text(r, &f.entry, &fit_text(width, label, parts.label_room()), parts.label.0, BASE + 2.0, label_shade);
-                    slider_row(r, look, &parts, id, v, &value);
+                    slider_row(r, look, &parts, id, v, &value, value_shade, disabled.is_none());
                     return;
                 }
                 if let Some((_, chosen)) = d.list(i) {
                     let shown = d.chosen_words(i, chosen);
                     let parts = row_parts(x, ValueKind::List(width(tr_str(shown.0))));
                     sm_text(r, &f.entry, &fit_text(width, label, parts.label_room()), parts.label.0, BASE + 2.0, label_shade);
-                    list_row(r, look, &parts, id, chosen, shown, d.dropdown.is_some_and(|o| o.row == i));
+                    list_row(r, look, &parts, id, chosen, (shown.0, shown.1 || disabled.is_some()), d.dropdown.is_some_and(|o| o.row == i), disabled.is_none());
                     return;
                 }
-                let value = tr(if v > 0.5 { "ON" } else { "OFF" });
-                r.spawn((SwitchState(id), Text::new(value), Node { display: Display::None, ..default() }));
+                let value = tr(if v > 0.5 { ON } else { OFF });
+                if disabled.is_none() {
+                    r.spawn((SwitchState(id), Text::new(value), Node { display: Display::None, ..default() }));
+                }
                 let parts = row_parts(x, ValueKind::Centred(width(value)));
                 let (label, value) = fit_row(width, &parts, label, value);
                 sm_text(r, &f.entry, &label, parts.label.0, BASE + 2.0, label_shade);
-                sm_text(r, &f.entry, &value, parts.text_x(width(&value)), BASE + 2.0, color(Shade::Bright));
+                sm_text(r, &f.entry, &value, parts.text_x(width(&value)), BASE + 2.0, color(value_shade));
             });
         }
         RowId::Control(c) => {
@@ -1838,7 +1906,7 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
                     let m = if matches!(c, ControlRow::Vertical(_)) { d.vertical } else { d.sensitivity };
                     let parts = row_parts(x, ValueKind::Slider(width(tr_str(&value))));
                     sm_text(r, &f.entry, &fit_text(width, name, parts.label_room()), parts.label.0, BASE + 2.0, color(Shade::Bright));
-                    slider_row(r, look, &parts, id, crate::bindings::sensitivity_part(m), &value);
+                    slider_row(r, look, &parts, id, crate::bindings::sensitivity_part(m), &value, Shade::Bright, true);
                     return;
                 }
                 let vw = crate::pad::button_width(&f.entry, &value, glyphs);
@@ -1857,13 +1925,25 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
                 crate::pad::set_button(r, &f.entry, &shown, parts.text_x(sw), BASE + 2.0, color(Shade::Bright), glyphs);
             });
         }
+        // The Tweaks tab's Category row: the group shown, in a list's box; Enter, Left and
+        // Right step to the next or the one before [design: owner 2026-11-15].
+        RowId::Group => {
+            let group = d.group.unwrap_or("");
+            root.spawn((Button, PauseButton::Row(id), node)).with_children(|r| {
+                let parts = row_parts(x, ValueKind::List(width(tr(group))));
+                sm_text(r, &f.entry, &fit_text(width, tr(GROUP_ROW), parts.label_room()), parts.label.0, BASE + 2.0, color(Shade::Bright));
+                list_row(r, look, &parts, id, group, (group, false), false, true);
+            });
+        }
+        // Drawn by `heading_line`.
+        RowId::Heading(_) => {}
     }
 }
 
 /// A Controls row's label and value, on the device in use.
 fn control_line(d: &Drawn, c: ControlRow) -> (&'static str, String) {
     let (device, controller) = d.device;
-    let on_off = |on: bool| tr(if on { "ON" } else { "OFF" }).to_string();
+    let on_off = |on: bool| tr(if on { ON } else { OFF }).to_string();
     match c {
         ControlRow::Device => (DEVICE_ROW, device.to_string()),
         ControlRow::AutomaticInput => (AUTOMATIC_INPUT_ROW, on_off(d.automatic_input)),
@@ -1886,6 +1966,8 @@ fn row_note(list: &[Setting], id: RowId, d: &Drawn) -> String {
     let c = match id {
         RowId::Setting(i) => return list.get(i).map_or_else(String::new, |s| tr(s.note).to_string()),
         RowId::Control(c) => c,
+        RowId::Heading(_) => return tr(HEADING_NOTE).to_string(),
+        RowId::Group => return tr(GROUP_NOTE).to_string(),
     };
     match c {
         ControlRow::AutomaticInput => tr(AUTOMATIC_INPUT_NOTE).to_string(),
@@ -1921,21 +2003,24 @@ fn row_note(list: &[Setting], id: RowId, d: &Drawn) -> String {
 
 /// A list's row: its choice in a box with a down arrow (lit while its dropdown is open),
 /// shown by its words (`shown`, cut to the box where they do not fit), dim when out of reach
-/// now.
-fn list_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, i: RowId, chosen: &str, shown: (&str, bool), open: bool) {
-    let bright = color(Shade::Bright);
+/// now; the whole box dim while the row is greyed (`live` false).
+#[allow(clippy::too_many_arguments)]
+fn list_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, i: RowId, chosen: &str, shown: (&str, bool), open: bool, live: bool) {
+    let bright = color(if live { Shade::Bright } else { Shade::Dim });
     let (line, fill) = highlight_colors();
     let list_left = parts.value.0;
-    r.spawn((Node { border: UiRect::all(u(LINE)), ..at(list_left, 6.0, LIST_WIDTH, OPTION_ROW - 12.0) }, BorderColor::all(line.with_alpha(if open { 1.0 } else { 0.6 })), BackgroundColor(if open { fill } else { Color::NONE })));
+    r.spawn((Node { border: UiRect::all(u(LINE)), ..at(list_left, 6.0, LIST_WIDTH, OPTION_ROW - 12.0) }, BorderColor::all(line.with_alpha(if open { 1.0 } else if live { 0.6 } else { 0.25 })), BackgroundColor(if open { fill } else { Color::NONE })));
     // The state kept as text stays the English name (tests and aids read it); the page
     // shows it in the language chosen.
-    r.spawn((SwitchState(i), Text::new(chosen), Node { display: Display::None, ..default() }));
+    if live {
+        r.spawn((SwitchState(i), Text::new(chosen), Node { display: Display::None, ..default() }));
+    }
     let (words, out_of_reach) = shown;
     let font = &look.faces.entry.font;
     let words = fit_text(|t| font.width(t), tr_str(words), parts.text_room());
     sm_text(r, &look.faces.entry, &words, parts.text_x(font.width(&words)), BASE + 2.0, if out_of_reach { color(Shade::Dim) } else { bright });
     // The right arrow turned to point down.
-    let node = at(list_left + LIST_WIDTH - 30.0, (OPTION_ROW - METER_ARROW.y) / 2.0, METER_ARROW.x, METER_ARROW.y);
+    let node = at(list_left + LIST_WIDTH - LIST_ARROW_STRIP, (OPTION_ROW - METER_ARROW.y) / 2.0, METER_ARROW.x, METER_ARROW.y);
     let turned = UiTransform { rotation: Rot2::degrees(90.0), ..default() };
     match &look.arrows[1] {
         Some(image) => r.spawn((node, turned, ImageNode { color: bright, ..ImageNode::new(image.clone()) })),
@@ -1973,6 +2058,9 @@ fn note_lines(root: &mut ChildSpawnerCommands, f: &Faces, note: &str, lb: ListBo
     let lines = note_wrapped(&f.small.font, note, width);
     let fit = note_fit(lines.len(), top);
     let bright = color(Shade::Bright);
+    // The rule between the rows and the note, and a shade behind the note's lines.
+    root.spawn((from_middle(left + 10.0, top - NOTE_GAP / 2.0, width, 1.0), BackgroundColor(bright.with_alpha(0.35))));
+    root.spawn((from_middle(left, top - 4.0, lb.width, NOTE_LINES as f32 * NOTE_STEP + 8.0), BackgroundColor(Color::BLACK.with_alpha(0.25))));
     root.spawn(from_middle(left + 10.0, top, width, fit as f32 * NOTE_STEP)).with_children(|t| {
         for (i, line) in lines.iter().take(fit).enumerate() {
             crate::interface::set_line(t, &f.small, line, 0.0, NOTE_STEP * (i as f32 + 0.8), bright);
@@ -2081,11 +2169,6 @@ impl RowX {
         METER_ARROWS.map(|a| self.kept_from_right(a))
     }
 
-    /// A slider's value's centre.
-    fn percent_at(self) -> f32 {
-        self.kept_from_right(PERCENT_AT)
-    }
-
     fn list_left(self) -> f32 {
         self.kept_from_right(LIST_LEFT)
     }
@@ -2179,17 +2262,17 @@ fn row_parts(x: RowX, kind: ValueKind) -> RowParts {
             ((left, right), (left, right), x.value_at(), METER_WIDTH, right_arrow)
         }
         ValueKind::Slider(vw) => {
-            let room = right - (right_arrow + METER_ARROW.x + ARROW_PAD);
-            let extra = (vw - room).clamp(0.0, METER_WIDTH - METER_MIN);
-            let arrow = right_arrow - extra;
-            let text = (arrow + METER_ARROW.x + ARROW_PAD, right);
-            let centre = if extra > 0.0 { (text.0 + text.1) / 2.0 } else { x.percent_at() };
-            ((left_arrow, right), text, centre, METER_WIDTH - extra, arrow)
+            // The number right-aligned before the right arrow; wide words take room from the
+            // meter, down to its least.
+            let text_right = right_arrow - ARROW_PAD;
+            let extra = (vw - READOUT_W).clamp(0.0, METER_WIDTH - METER_MIN);
+            let text = (text_right - READOUT_W - extra, text_right);
+            ((left_arrow, right_arrow + METER_ARROW.x), text, text_right - vw / 2.0, METER_WIDTH - extra, right_arrow)
         }
         ValueKind::List(_) => {
             let left = x.list_left();
-            let text = (left + VALUE_PAD, left + LIST_WIDTH - 30.0 - VALUE_PAD);
-            ((left, left + LIST_WIDTH), text, left + (LIST_WIDTH - 30.0) / 2.0, METER_WIDTH, right_arrow)
+            let text = (left + VALUE_PAD, left + LIST_WIDTH - LIST_ARROW_STRIP - VALUE_PAD);
+            ((left, left + LIST_WIDTH), text, x.value_at(), METER_WIDTH, right_arrow)
         }
         ValueKind::Binding(vw) => {
             // Within the row: words wider than from `floor` to its right end are cut.
@@ -2236,21 +2319,24 @@ fn window_bar(root: &mut ChildSpawnerCommands, look: &PauseLook, rows: usize, fi
     });
 }
 
-/// The version at the bottom left [observed: the original shows its own there].
-fn version(root: &mut ChildSpawnerCommands, f: &Faces) {
-    root.spawn(Node { position_type: PositionType::Absolute, left: u(30.0), top: u(960.0 - 60.0), width: u(400.0), height: u(40.0), ..default() }).with_children(|t| {
-        sm_text(t, &f.small, concat!("NVForever ", env!("CARGO_PKG_VERSION")), 0.0, 26.0, color(Shade::Bright));
+/// The version under the column (and "Report a Bug"), from `top`, right-aligned with the
+/// column's entries in the small face [design: owner 2026-11-15; the original shows its own
+/// at the bottom left, observed].
+fn version(root: &mut ChildSpawnerCommands, f: &Faces, top: f32) {
+    let words = concat!("NVForever ", env!("CARGO_PKG_VERSION"));
+    let w = COLUMN - 5.0;
+    root.spawn(from_right(RIGHT, top, w, ITEM)).with_children(|t| {
+        sm_text(t, &f.small, words, w - f.small.font.width(words) - 10.0, 30.0, color(Shade::Bright));
     });
 }
 
-/// "Report a bug" just over [`version`]'s line, left-aligned with it; boxed unfilled while
-/// the pointer is on it, as the rail's lines.
-fn report_entry(root: &mut ChildSpawnerCommands, f: &Faces, hovered: bool, glyphs: &crate::pad::PadGlyphs) {
+/// "Report a Bug" under the column from `top`, right-aligned as its entries are; dim, boxed
+/// unfilled and bright while the pointer is on it, as the rail's lines.
+fn report_entry(root: &mut ChildSpawnerCommands, f: &Faces, hovered: bool, glyphs: &crate::pad::PadGlyphs, top: f32) {
     let label = tr(REPORT_LABEL);
-    let w = crate::pad::hint_width(&f.entry, label, glyphs) + 20.0;
-    let node = Node { position_type: PositionType::Absolute, left: u(20.0), top: u(REPORT_TOP), width: u(w), height: u(ITEM), ..default() };
+    let w = COLUMN - 5.0;
     let look = if hovered { BoxLook::Outline } else { BoxLook::None };
-    right_entry_look(root, &f.entry, label, node, w, if hovered { Shade::Bright } else { Shade::Dim }, look, PauseButton::Report, glyphs);
+    right_entry_look(root, &f.entry, label, from_right(RIGHT, top, w, ITEM), w, if hovered { Shade::Bright } else { Shade::Dim }, look, PauseButton::Report, glyphs);
 }
 
 /// A node at `x`, `y` in its parent, `w` × `h`.
@@ -2266,8 +2352,9 @@ fn meter_ticks(v: f32, meter_w: f32) -> usize {
 
 /// A slider's meter, arrows and value (`value`: `v` as shown, e.g. a percentage) in its
 /// row `i`, laid out by `parts` (wide words take room from the meter, then are cut).
-fn slider_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, i: RowId, v: f32, value: &str) {
-    let bright = color(Shade::Bright);
+#[allow(clippy::too_many_arguments)]
+fn slider_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, i: RowId, v: f32, value: &str, shade: Shade, live: bool) {
+    let bright = color(shade);
     let my = (OPTION_ROW - METER_HEIGHT) / 2.0;
     let (meter_left, meter_w) = parts.meter;
     // The ground, then the ticks as far as the value.
@@ -2280,16 +2367,25 @@ fn slider_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, 
             None => r.spawn((at(x, my, (w - 3.0).max(1.0), METER_HEIGHT), BackgroundColor(bright))),
         };
     }
-    // Over them what takes the pointer, a little taller than the meter.
-    r.spawn((Button, PauseButton::Meter(i), RelativeCursorPosition::default(), at(meter_left, my - 6.0, meter_w, METER_HEIGHT + 12.0)));
+    // Over them what takes the pointer, a little taller than the meter; a greyed slider has
+    // nothing to click.
+    if live {
+        r.spawn((Button, PauseButton::Meter(i), RelativeCursorPosition::default(), at(meter_left, my - 6.0, meter_w, METER_HEIGHT + 12.0)));
+    }
     for (k, (x, step)) in [(parts.value.0, -1), (parts.right_arrow, 1)].into_iter().enumerate() {
         let node = at(x, (OPTION_ROW - METER_ARROW.y) / 2.0, METER_ARROW.x, METER_ARROW.y);
-        match &look.arrows[k] {
-            Some(image) => r.spawn((Button, PauseButton::SliderStep(i, step), node, ImageNode { color: bright, ..ImageNode::new(image.clone()) })),
-            None => r.spawn((Button, PauseButton::SliderStep(i, step), node, BackgroundColor(bright.with_alpha(0.5)))),
+        let mut arrow = match &look.arrows[k] {
+            Some(image) => r.spawn((node, ImageNode { color: bright, ..ImageNode::new(image.clone()) })),
+            None => r.spawn((node, BackgroundColor(bright.with_alpha(0.5)))),
         };
+        if live {
+            arrow.insert((Button, PauseButton::SliderStep(i, step)));
+        }
     }
-    r.spawn((SwitchState(i), Text::new(value), Node { display: Display::None, ..default() }));
+    // A greyed slider's state as the aids read it is its reason (`row_line`).
+    if live {
+        r.spawn((SwitchState(i), Text::new(value), Node { display: Display::None, ..default() }));
+    }
     // A value with words ("Off" on the frame rate limit) in the language shown.
     let font = &look.faces.entry.font;
     let value = fit_text(|t| font.width(t), tr_str(value), parts.text_room());
@@ -2488,6 +2584,8 @@ struct RowEffects {
     steps: Vec<(usize, i32)>,
     sets: Vec<(usize, f32)>,
     picks: Vec<(usize, String)>,
+    /// The Tweaks tab's Category row stepped: to the group after (1) or before (-1).
+    group_step: Option<i32>,
 }
 
 /// The controls' state a Controls row's action needs.
@@ -2507,6 +2605,8 @@ fn takes_letters(settings: &Settings, id: RowId) -> bool {
     match id {
         RowId::Setting(i) => settings.choices(i).is_some() || settings.list().get(i).is_some_and(|s| s.slider.is_some()),
         RowId::Control(c) => matches!(c, ControlRow::Sensitivity(_) | ControlRow::Vertical(_)),
+        RowId::Group => true,
+        RowId::Heading(_) => false,
     }
 }
 
@@ -2581,6 +2681,24 @@ fn act_on_row(id: RowId, action: RowAction, settings: &Settings, view: &mut Paus
             }
             _ => {}
         },
+        // A category: Enter and a click open or close it, Left closes, Right opens [design:
+        // the menu overhaul, owner 2026-11-15].
+        RowId::Heading(p) => {
+            let open = match action {
+                Activate => !view.folding.is_open(&p),
+                Step(s) => s > 0,
+                Clear => return,
+            };
+            if view.folding.put(&p, open) {
+                info!("pause menu: category {} {}", p.path(), if open { "opened" } else { "closed" });
+                sounds.write(flipped);
+            }
+        }
+        RowId::Group => match action {
+            Activate => fx.group_step = Some(1),
+            Step(s) => fx.group_step = Some(s),
+            Clear => {}
+        },
     }
 }
 
@@ -2652,14 +2770,14 @@ fn changed_defaults(view: &PauseView, list: &[Setting], commands: &mut Commands)
         .iter()
         .filter_map(|id| match id {
             RowId::Setting(i) => Some(*i),
-            RowId::Control(_) => None,
+            RowId::Control(_) | RowId::Heading(_) | RowId::Group => None,
         })
         .collect();
     let controls: Vec<ControlRow> = ids
         .iter()
         .filter_map(|id| match id {
             RowId::Control(c) => Some(*c),
-            RowId::Setting(_) => None,
+            RowId::Setting(_) | RowId::Heading(_) | RowId::Group => None,
         })
         .collect();
     commands.queue(move |world: &mut World| {
@@ -2714,6 +2832,11 @@ fn remember(view: &mut PauseView, selected: Option<RowId>) {
 /// switches (`[UI] TileMenus`, `crate::tiles::vanilla`) [design: #1953].
 pub const TAB_SECTION: &str = crate::tiles::vanilla::SECTION;
 pub const TAB_KEY: &str = "SettingsTab";
+/// The categories opened or closed against their default ([`Folding::to_ini`]) and the
+/// Tweaks tab's group shown, beside the tab [design: the menu overhaul, owner 2026-11-15:
+/// "collapsing stays however the user left it"].
+pub const FOLDING_KEY: &str = "SettingsCategories";
+pub const GROUP_KEY: &str = "SettingsTweaksCategory";
 
 /// The settings page's tab kept across runs (Continue and a save's load start NVForever
 /// again): read once at start from `[UI] SettingsTab=` of the INI the settings page uses
@@ -2724,6 +2847,9 @@ pub const TAB_KEY: &str = "SettingsTab";
 pub struct SettingsTabStore {
     pub path: Option<PathBuf>,
     pub tab: Option<String>,
+    /// The categories' state and the Tweaks group as last kept or read ([`FOLDING_KEY`],
+    /// [`GROUP_KEY`]).
+    pub folding: Option<(String, String)>,
 }
 
 impl SettingsTabStore {
@@ -2734,15 +2860,31 @@ impl SettingsTabStore {
         }
         self.tab = Some(t.to_string());
         let Some(path) = self.path.clone() else { return };
-        match write_tab(&path, t) {
+        match write_ui(&path, TAB_KEY, t) {
             Ok(()) => info!("settings page: [{TAB_SECTION}] {TAB_KEY}={t} kept in {}", path.display()),
             Err(e) => warn!("settings page: [{TAB_SECTION}] {TAB_KEY} not kept: {e}"),
         }
     }
+
+    /// The categories' state `f` now: kept in the INI when it is not what is kept already.
+    fn keep_folding(&mut self, f: &Folding) {
+        let now = (f.to_ini(), f.group.clone().unwrap_or_default());
+        if self.folding.as_ref() == Some(&now) || (self.folding.is_none() && now == (String::new(), String::new())) {
+            return;
+        }
+        self.folding = Some(now.clone());
+        let Some(path) = self.path.clone() else { return };
+        for (key, value) in [(FOLDING_KEY, &now.0), (GROUP_KEY, &now.1)] {
+            match write_ui(&path, key, value) {
+                Ok(()) => info!("settings page: [{TAB_SECTION}] {key}={value} kept in {}", path.display()),
+                Err(e) => warn!("settings page: [{TAB_SECTION}] {key} not kept: {e}"),
+            }
+        }
+    }
 }
 
-/// `[UI] SettingsTab=<tab>` written into the INI at `path`, its other lines kept.
-fn write_tab(path: &Path, tab: &str) -> Result<(), String> {
+/// `[UI] <key>=<value>` written into the INI at `path`, its other lines kept.
+fn write_ui(path: &Path, key: &str, value: &str) -> Result<(), String> {
     fnv_install::guard_write(path, None).map_err(|e| e.to_string())?;
     let old = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -2752,17 +2894,27 @@ fn write_tab(path: &Path, tab: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    std::fs::write(path, fnv_install::ini_set(&old, TAB_SECTION, TAB_KEY, tab)).map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::write(path, fnv_install::ini_set(&old, TAB_SECTION, key, value)).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Read the kept tab at start (module notes).
-fn read_settings_tab(file: Option<Res<crate::settings::SettingsFile>>, mut store: ResMut<SettingsTabStore>) {
+/// Read the kept tab, the categories' state and the Tweaks group at start (module notes).
+fn read_settings_tab(file: Option<Res<crate::settings::SettingsFile>>, mut store: ResMut<SettingsTabStore>, view: Option<ResMut<PauseView>>) {
     let Some(path) = file.and_then(|f| f.0.clone()) else { return };
-    let tab = std::fs::read_to_string(&path).ok().and_then(|t| fnv_install::ini_get(&t, TAB_SECTION, TAB_KEY)).map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let text = std::fs::read_to_string(&path).ok();
+    let get = |key: &str| text.as_deref().and_then(|t| fnv_install::ini_get(t, TAB_SECTION, key)).map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let tab = get(TAB_KEY);
     if let Some(t) = &tab {
         info!("settings page: [{TAB_SECTION}] {TAB_KEY}={t} read from {}", path.display());
     }
-    *store = SettingsTabStore { path: Some(path), tab };
+    let (fold, group) = (get(FOLDING_KEY).unwrap_or_default(), get(GROUP_KEY).unwrap_or_default());
+    if !fold.is_empty() || !group.is_empty() {
+        info!("settings page: [{TAB_SECTION}] {FOLDING_KEY}={fold}, {GROUP_KEY}={group} read from {}", path.display());
+    }
+    if let Some(mut view) = view {
+        view.folding = Folding { set: Folding::from_ini(&fold), group: (!group.is_empty()).then_some(group.clone()) };
+    }
+    let folding = (!fold.is_empty() || !group.is_empty()).then_some((fold, group));
+    *store = SettingsTabStore { path: Some(path), tab, folding };
 }
 
 /// Esc, Back or the rail's Back on the search: the search closed and what was listed when
@@ -2993,8 +3145,9 @@ fn log_inspect(list: &[Setting], view: &PauseView, selected: Option<RowId>, entr
     info!("pause menu: inspect: {}, keys on the {focus}, selected {chosen}, lines {}-{} of {}", view.scope.name(), drawn.start + usize::from(!drawn.is_empty()), drawn.end, entries.len());
     info!("pause menu: inspect: window {lines} lines, {} drawn", drawn.len());
     let line = |e: &ViewEntry| match e {
-        ViewEntry::Heading(p) => format!("[{}]", p.path()),
+        ViewEntry::Heading(p) | ViewEntry::Crumb(p) => format!("[{}]", p.path()),
         ViewEntry::Row(id) => id.name(list),
+        ViewEntry::Gap => String::new(),
     };
     info!("pause menu: inspect: shown {}", entries[drawn].iter().map(line).collect::<Vec<_>>().join(", "));
     let rows: Vec<String> = entries.iter().filter(|e| matches!(e, ViewEntry::Row(_))).map(line).collect();
@@ -3007,8 +3160,8 @@ fn log_inspect(list: &[Setting], view: &PauseView, selected: Option<RowId>, entr
     }
     let crumbs = !matches!(view.scope, SettingsScope::Tab(_));
     words.extend(entries.iter().filter_map(|e| match e {
-        ViewEntry::Heading(p) => Some(heading_words(*p, crumbs)),
-        ViewEntry::Row(_) => None,
+        ViewEntry::Heading(p) | ViewEntry::Crumb(p) => Some(heading_words(*p, crumbs)),
+        ViewEntry::Row(_) | ViewEntry::Gap => None,
     }));
     if entries.is_empty() {
         words.push(tr(empty_words(view.scope)).to_string());
@@ -3043,7 +3196,7 @@ fn choose(
         Option<ResMut<PauseInputAid>>,
         Option<ResMut<crate::tiles::mods::ModsPage>>,
     ),
-    (bindings, pads, sticks, pending, mods, mut listening, mut layout, colours): (
+    (bindings, pads, sticks, pending, mods, mut listening, mut layout, colours, hidden): (
         Option<Res<crate::bindings::Bindings>>,
         crate::pad::ActionPads,
         Option<Res<crate::pad::StickButtons>>,
@@ -3052,6 +3205,7 @@ fn choose(
         ResMut<Listening>,
         ResMut<SettingsLayout>,
         Option<Res<crate::ui_colour::CustomColours>>,
+        Option<Res<crate::settings_view::HiddenRows>>,
     ),
     (meters, pointed, mut tab_store, mut report): (Query<(&PauseButton, &RelativeCursorPosition)>, Query<(&PointerState, &PauseButton)>, Option<ResMut<SettingsTabStore>>, Option<ResMut<ReportEntry>>),
 ) {
@@ -3114,7 +3268,7 @@ fn choose(
     let list = settings.list();
     let layout = layout.refresh(list);
     let device = bindings.as_ref().map_or(InputDevice::KeyboardMouse, |b| b.device);
-    let vis = Visibility::of(device, colours.as_deref());
+    let vis = Visibility::of(device, colours.as_deref()).with_hidden(hidden.as_deref());
     let mut fx = RowEffects::default();
     let is_slider = |i: usize| list.get(i).is_some_and(|s| s.slider.is_some());
     let is_list = |i: usize| settings.choices(i).is_some();
@@ -3445,7 +3599,7 @@ fn choose(
         if view.scope == SettingsScope::Search {
             refresh_search(&mut view, layout, list);
         }
-        let (scope, sel, e) = sv::normalize(layout, list, view.scope, selected, vis, &view.found);
+        let (scope, sel, e) = sv::normalize(layout, list, view.scope, selected, &vis, &view.found, &view.folding);
         view.scope = scope;
         page.set_if_neq(Page::Settings { selected: sel });
         rows = e;
@@ -4002,7 +4156,7 @@ fn choose(
                     }
                     view.scope = scope;
                     sel = None;
-                    rows = sv::project(layout, list, scope, vis, &view.found);
+                    rows = sv::project(layout, list, scope, &vis, &view.found, &view.folding);
                     // On the rail the keys stay there, on the tab's line; a tab taken with
                     // rows to choose gives them to the rows (a click, Enter on the rail).
                     view.focus = if on_rail && (rail_take.is_none() || rows.is_empty()) { SettingsFocus::Rail(RailItem::of(scope)) } else { SettingsFocus::Rows };
@@ -4117,7 +4271,7 @@ fn choose(
         if view.scope == SettingsScope::Search {
             refresh_search(&mut view, layout, list);
         }
-        let (scope, sel, e) = sv::normalize(layout, list, view.scope, selected, vis, &view.found);
+        let (scope, sel, e) = sv::normalize(layout, list, view.scope, selected, &vis, &view.found, &view.folding);
         view.scope = scope;
         page.set_if_neq(Page::Settings { selected: sel });
         rows = e;
@@ -4192,6 +4346,9 @@ fn choose(
         if let (Some(t), Some(store)) = (tab, tab_store.as_mut()) {
             store.keep(t);
         }
+        if let Some(store) = tab_store.as_mut() {
+            store.keep_folding(&view.folding);
+        }
         if log_open {
             info!("pause menu: settings open on {}; selected {}", view.scope.name(), selected.map_or_else(|| "none".to_string(), |id| id.name(list)));
         }
@@ -4210,7 +4367,7 @@ fn choose(
                     .iter()
                     .filter_map(|e| match e {
                         ViewEntry::Row(id) => Some(id.name(list)),
-                        ViewEntry::Heading(_) => None,
+                        ViewEntry::Heading(_) | ViewEntry::Crumb(_) | ViewEntry::Gap => None,
                     })
                     .collect();
                 info!("pause menu: search \"{q}\": {} result(s); keys {}", keys.len(), keys.join(","));
@@ -4228,6 +4385,18 @@ fn choose(
     // The pointer or the keys moved the first page's choice or the question's: its sound.
     if view.main_selected != main_before && *page == Page::Main || (view.confirm.is_some() && confirm_before.is_some() && view.confirm != confirm_before) {
         sounds.write(UiSound { menu: UiMenu::Pause, event: UiEvent::Focus });
+    }
+    // The Tweaks tab's Category row: the group after or before, the list from its top.
+    if let (Some(step), SettingsScope::Tab(t)) = (fx.group_step, view.scope) {
+        let groups = layout.tab(t).map(|t| t.subgroups()).unwrap_or_default();
+        if !groups.is_empty() {
+            let at = view.folding.group_of(&groups).and_then(|g| groups.iter().position(|x| *x == g)).unwrap_or(0);
+            let to = groups[(at as i32 + step).rem_euclid(groups.len() as i32) as usize];
+            view.folding.group = Some(to.to_string());
+            view.scroll = 0;
+            info!("pause menu: tweaks category {to}");
+            sounds.write(UiSound { menu: UiMenu::Settings, event: UiEvent::Flipped });
+        }
     }
     for i in fx.flips {
         if view_disabled(&view, i) { continue; }
@@ -4348,7 +4517,7 @@ fn settings_now(world: &mut World, list: &[Setting], selected: Option<RowId>) ->
         if view.scope == SettingsScope::Search {
             refresh_search(&mut view, l, list);
         }
-        let (scope, sel, entries) = sv::normalize(l, list, view.scope, selected, vis, &view.found);
+        let (scope, sel, entries) = sv::normalize(l, list, view.scope, selected, &vis, &view.found, &view.folding);
         // A Changed row put back leaves the list: the choice goes to the row after it.
         let before = view.drawn.as_ref().filter(|d| d.scope == SettingsScope::Changed && scope == SettingsScope::Changed).map(|d| d.entries.clone()).unwrap_or_default();
         let sel = sv::reselect(&before, &entries, selected).filter(|id| sv::slot_of(&entries, *id).is_some()).or(sel);
@@ -4415,6 +4584,22 @@ fn drawn_now(world: &mut World) -> Drawn {
         page => (page, Vec::new(), Vec::new()),
     };
     let disabled: Vec<_> = (0..list.len()).map(|i| world.resource::<Settings>().disabled_status(world, i)).collect();
+    // Each category listed: its rows shown now and whether it is open; the Tweaks tab's group.
+    let (headings, group) = {
+        let vis = Visibility::of_world(world);
+        let none = crate::settings_layout::ResolvedLayout::default();
+        let layout = world.get_resource::<SettingsLayout>().map_or(&none, |l| &l.layout);
+        let view = world.resource::<PauseView>();
+        let headings = lines
+            .iter()
+            .filter_map(|e| if let ViewEntry::Heading(p) = e { Some((*p, crate::settings_view::category_count(layout, &list, p, &vis), view.folding.is_open(p))) } else { None })
+            .collect();
+        let group = match view.scope {
+            SettingsScope::Tab(t) => view.folding.group_of(&layout.tab(t).map(|t| t.subgroups()).unwrap_or_default()),
+            _ => None,
+        };
+        (headings, group)
+    };
     let lists: Vec<(usize, Vec<String>, String)> = {
         let settings = world.resource::<Settings>();
         (0..list.len()).filter_map(|i| settings.choices(i).map(|c| (i, (c.names)(world), (c.chosen)(world)))).collect()
@@ -4448,7 +4633,7 @@ fn drawn_now(world: &mut World) -> Drawn {
             SettingsScope::Tab(_) => &[],
         };
         let vis = Visibility::of_world(world);
-        crate::settings_view::stands_for(&list, ids, vis).into_iter().map(|(by, rows)| (by, rows.into_iter().map(|r| stand_in_name(&list, r)).collect())).collect()
+        crate::settings_view::stands_for(&list, ids, &vis).into_iter().map(|(by, rows)| (by, rows.into_iter().map(|r| stand_in_name(&list, r)).collect())).collect()
     };
     // Over a game only, on the first page and the settings page (the load page's rows
     // and a mod's page have the bottom left).
@@ -4491,6 +4676,8 @@ fn drawn_now(world: &mut World) -> Drawn {
         search: (matches!(page, Page::Settings { .. }) && view.scope == SettingsScope::Search).then(|| (view.search.query.clone(), view.focus == SettingsFocus::SearchText)),
         stand_ins,
         report: report_shown.then_some(view.report_hover),
+        headings,
+        group,
     }
 }
 
@@ -4509,6 +4696,8 @@ fn stand_in_name(list: &[Setting], id: RowId) -> String {
                 _ => label.to_string(),
             }
         }
+        RowId::Heading(p) => tr(p.heading.unwrap_or(p.tab)).to_string(),
+        RowId::Group => tr(GROUP_ROW).to_string(),
     }
 }
 
@@ -4982,7 +5171,7 @@ mod tests {
                 // as wide) inside the row.
                 let x = lb.row();
                 assert!(x.value_left() - 10.0 >= 150.0, "{view_w}/{tabs_w}: a label's room {}", x.value_left() - 10.0);
-                assert!(x.list_left() >= 0.0 && x.list_left() + LIST_WIDTH <= lb.width && x.meter_left() > x.arrows()[0] && x.percent_at() < lb.width);
+                assert!(x.list_left() >= 0.0 && x.list_left() + LIST_WIDTH <= lb.width && x.meter_left() > x.arrows()[0] && x.arrows()[1] + METER_ARROW.x <= lb.width);
             }
         }
         // 16:9 with a 220-unit rail: the list is about 1036 units wide (820 before #2377),
@@ -4998,19 +5187,19 @@ mod tests {
         // A row of the width before #2377 has every place where it was; a wider one keeps
         // each as far from its right end.
         let x = RowX(ROW_BASE);
-        assert_eq!((x.value_at(), x.value_left(), x.meter_left(), x.arrows(), x.percent_at(), x.list_left()), (VALUE_AT, LIST_LEFT, METER_LEFT, METER_ARROWS, PERCENT_AT, LIST_LEFT));
+        assert_eq!((x.value_at(), x.value_left(), x.meter_left(), x.arrows(), x.list_left()), (VALUE_AT, LIST_LEFT, METER_LEFT, METER_ARROWS, LIST_LEFT));
         let x = RowX(1036.0);
-        assert_eq!((x.0 - x.value_at(), x.0 - x.list_left(), x.0 - x.percent_at()), (ROW_BASE - VALUE_AT, ROW_BASE - LIST_LEFT, ROW_BASE - PERCENT_AT));
-        // The window's lines (12 today) and a note of three lines fit above "Report a bug"
-        // and the version's line, and one more line would not (#2377).
+        assert_eq!((x.0 - x.value_at(), x.0 - x.list_left(), x.0 - x.arrows()[1]), (ROW_BASE - VALUE_AT, ROW_BASE - LIST_LEFT, ROW_BASE - METER_ARROWS[1]));
+        // The window's lines (13 today) and a note of three lines fit above the view's bottom
+        // margin, and one more line would not (#2377, the menu overhaul).
         let lines = window_lines();
-        assert_eq!(lines, 12);
+        assert_eq!(lines, 13);
         let note_top = OPTIONS_TOP + lines as f32 * OPTION_ROW + NOTE_GAP;
         assert_eq!(note_fit(2, note_top), 2);
         assert_eq!(note_fit(30, note_top), NOTE_LINES);
         assert_eq!(note_fit(30, OPTIONS_TOP + NOTE_GAP), NOTE_LINES, "a short list's note is no longer either");
-        assert!(note_top + NOTE_LINES as f32 * NOTE_STEP <= REPORT_TOP && REPORT_TOP < NOTE_BOTTOM && NOTE_BOTTOM < 960.0);
-        assert!(note_top + OPTION_ROW + NOTE_LINES as f32 * NOTE_STEP > REPORT_TOP, "a 13th line would leave no room for the note");
+        assert!(note_top + NOTE_LINES as f32 * NOTE_STEP <= NOTE_BOTTOM && NOTE_BOTTOM < 960.0);
+        assert!(note_top + OPTION_ROW + NOTE_LINES as f32 * NOTE_STEP > NOTE_BOTTOM, "a 14th line would leave no room for the note");
     }
 
     /// The systems that read or write the world aids' clock (directly or through
@@ -5120,7 +5309,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_shows_dim_headings_that_take_a_line_and_are_never_chosen() {
+    fn a_tab_shows_bright_category_headings_the_keys_can_choose() {
         let rows = [("difficulty", "Gameplay"), ("hardcore", "Gameplay"), ("autosave-travel", "Saving"), ("god-mode", "Debug")];
         let mut app = settings_app(&rows, Page::Settings { selected: None });
         app.update();
@@ -5131,18 +5320,19 @@ mod tests {
         headings.sort();
         assert_eq!(headings, ["Game", "Saving"]);
         let texts: Vec<(String, Color)> = world.query::<(&Text, &TextColor)>().iter(world).map(|(t, c)| (t.0.clone(), c.0)).collect();
-        assert!(texts.contains(&("Game".to_string(), color(Shade::Dim))), "a heading is dim: {texts:?}");
-        // Rows take the pointer, headings do not; Debug's row is on its own tab.
+        assert!(texts.contains(&("Game".to_string(), color(Shade::Bright))), "a heading is bright, never taken for a greyed row: {texts:?}");
+        // Rows and headings take the pointer; Debug's row is on its own tab.
         let buttons: Vec<PauseButton> = world.query::<&PauseButton>().iter(world).copied().collect();
         let rows_drawn: Vec<RowId> = buttons.iter().filter_map(|b| if let PauseButton::Row(r) = b { Some(*r) } else { None }).collect();
-        assert_eq!(rows_drawn.len(), 3, "{rows_drawn:?}");
+        assert_eq!(rows_drawn.len(), 5, "{rows_drawn:?}");
+        assert_eq!(rows_drawn.iter().filter(|r| matches!(r, RowId::Heading(_))).count(), 2);
         assert!(!rows_drawn.contains(&RowId::Setting(3)));
         // The rail: Search, Changed, the seven tabs; the heading links.
         let rail: Vec<RailItem> = buttons.iter().filter_map(|b| if let PauseButton::Rail(r) = b { Some(*r) } else { None }).collect();
         assert_eq!(rail.len(), 2 + crate::settings_layout::TAB_ORDER.len());
         assert!(buttons.contains(&PauseButton::HeadingStep(-1)) && buttons.contains(&PauseButton::HeadingStep(1)));
-        // Three rows and two headings: five lines, the window's count.
-        assert_eq!(world.resource::<PauseView>().drawn.as_ref().unwrap().entries.len(), 5);
+        // Three rows, two headings and the empty line after the open Game: six lines.
+        assert_eq!(world.resource::<PauseView>().drawn.as_ref().unwrap().entries.len(), 6);
     }
 
     #[test]
@@ -5154,9 +5344,9 @@ mod tests {
             let version = world.query::<&Text>().iter(world).any(|t| t.0.starts_with("NVForever"));
             (reports, version)
         };
-        // Without the form (a viewer or menu-only run): no entry, and no version on the first page.
+        // Without the form (a viewer or menu-only run): no entry; the version under the column.
         let mut app = settings_app(&[("difficulty", "Gameplay")], Page::Main);
-        assert_eq!(drawn(&mut app), (vec![], false));
+        assert_eq!(drawn(&mut app), (vec![], true));
         // With it: once on the first page, over the version; the settings page has it too.
         for page in [Page::Main, Page::Settings { selected: None }] {
             let mut app = settings_app(&[("difficulty", "Gameplay")], page);
@@ -5165,7 +5355,7 @@ mod tests {
             assert_eq!(reports.len(), 1, "{page:?}");
             assert!(version, "{page:?}: the version under it");
         }
-        // Not on the load page, whose rows reach the bottom.
+        // Not on the load page.
         let mut app = settings_app(&[("difficulty", "Gameplay")], Page::Load { selected: 0 });
         app.insert_resource(ReportEntry { shown: true, asked: false });
         assert!(drawn(&mut app).0.is_empty());
@@ -5300,9 +5490,10 @@ mod tests {
         let world = app.world_mut();
         let d = world.resource::<PauseView>().drawn.clone().unwrap();
         let line = |e: &ViewEntry| match e {
-            ViewEntry::Heading(p) => format!("[{}]", p.path()),
+            ViewEntry::Heading(p) | ViewEntry::Crumb(p) => format!("[{}]", p.path()),
             ViewEntry::Row(RowId::Setting(i)) => rows[*i].0.to_string(),
             ViewEntry::Row(r) => format!("{r:?}"),
+            ViewEntry::Gap => String::new(),
         };
         // Under the heading of where it lives, its tab too.
         let names: Vec<String> = d.entries.iter().map(line).collect();
@@ -5575,7 +5766,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&path, "[Settings]\ngrass=0\n").unwrap();
-        let mut store = SettingsTabStore { path: Some(path.clone()), tab: None };
+        let mut store = SettingsTabStore { path: Some(path.clone()), tab: None, folding: None };
         store.keep("Graphics");
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("grass=0") && text.contains("[UI]") && text.contains("SettingsTab=Graphics"), "{text}");
@@ -5594,7 +5785,7 @@ mod tests {
         for (kept, shown) in [("Graphics", "Graphics"), ("Nope", "Gameplay")] {
             let mut app = search_app(&rows, "", SettingsFocus::Rows);
             *app.world_mut().resource_mut::<Page>() = Page::Main;
-            app.insert_resource(PauseView::default()).insert_resource(SettingsTabStore { path: None, tab: Some(kept.into()) });
+            app.insert_resource(PauseView::default()).insert_resource(SettingsTabStore { path: None, tab: Some(kept.into()), folding: None });
             app.world_mut().resource_mut::<PauseAid>().actions = vec![(0.0, "settings".into())];
             app.update();
             assert_eq!(app.world().resource::<PauseView>().scope, SettingsScope::Tab(shown), "{kept}");
@@ -5761,7 +5952,7 @@ mod tests {
                         assert!(width(&v) <= p.text_room() + 0.01 && tx >= p.text.0 - 0.01 && tx + width(&v) <= p.text.1 + 0.01 && tx + width(&v) <= lb.width, "{at}: value {v:?} at {tx}");
                         if let ValueKind::Slider(_) = kind {
                             let (ml, mw) = p.meter;
-                            assert!(p.value.0 + METER_ARROW.x <= ml && ml + mw < p.right_arrow && p.right_arrow + METER_ARROW.x <= p.text.0 && mw >= METER_MIN, "{at}: {p:?}");
+                            assert!(p.value.0 + METER_ARROW.x <= ml && ml + mw <= p.text.0 && p.text.1 <= p.right_arrow && mw >= METER_MIN, "{at}: {p:?}");
                         }
                     }
                 }
@@ -5771,7 +5962,11 @@ mod tests {
         let x = RowX(ROW_BASE);
         assert_eq!(row_parts(x, ValueKind::Centred(34.0)).text_x(34.0), VALUE_AT - 17.0);
         let p = row_parts(x, ValueKind::Slider(51.0));
-        assert_eq!((p.text_x(51.0), p.right_arrow, p.meter), (PERCENT_AT - 25.5, METER_ARROWS[1], (METER_LEFT, METER_WIDTH)));
+        assert_eq!((p.text_x(51.0), p.right_arrow, p.meter), (METER_ARROWS[1] - ARROW_PAD - 51.0, METER_ARROWS[1], (METER_LEFT, METER_WIDTH)), "the number right-aligned before the right arrow");
+        // The value cell: a list's words, a switch's state and a binding share one centre;
+        // the slider ends where the list's box does.
+        assert_eq!(row_parts(x, ValueKind::List(100.0)).centre, row_parts(x, ValueKind::Centred(100.0)).centre);
+        assert_eq!(METER_ARROWS[1] + METER_ARROW.x, LIST_LEFT + LIST_WIDTH);
         assert_eq!(row_parts(x, ValueKind::List(100.0)).text_x(100.0), LIST_LEFT + (LIST_WIDTH - 30.0 - 100.0) / 2.0);
         assert_eq!(row_parts(x, ValueKind::Binding(60.0)).text.0, VALUE_AT - 30.0);
         assert_eq!(row_parts(x, ValueKind::Centred(34.0)).label, (10.0, LIST_LEFT - LABEL_GAP));
@@ -5912,9 +6107,9 @@ mod tests {
             let mut q = world.query::<(&SwitchState, &Text)>();
             q.single(world).unwrap().1 .0.clone()
         };
-        assert_eq!(state(&mut app), "OFF");
+        assert_eq!(state(&mut app), "Off");
         crate::settings::flip(app.world_mut(), 0);
-        assert_eq!(state(&mut app), "ON");
+        assert_eq!(state(&mut app), "On");
         // Defaults go back to the state the page was first shown with.
         assert_eq!(app.world().resource::<PauseView>().defaults, Some(vec![0.0]));
         let world = app.world_mut();
@@ -5977,8 +6172,8 @@ mod tests {
         crate::settings::step_slider(app.world_mut(), 0, -2);
         assert_eq!(shown(&mut app), "40%");
         assert_eq!(app.world().resource::<PauseView>().defaults, Some(vec![0.5]));
-        assert_eq!(meter_ticks(1.0, METER_WIDTH), 30);
-        assert_eq!(meter_ticks(0.5, METER_WIDTH), 15);
+        assert_eq!(meter_ticks(1.0, METER_WIDTH), 31);
+        assert_eq!(meter_ticks(0.5, METER_WIDTH), 16);
         assert_eq!(meter_ticks(0.0, METER_WIDTH), 0);
     }
 
@@ -6015,17 +6210,17 @@ mod tests {
         assert_eq!(*app.world().resource::<Page>(), Page::Settings { selected: Some(control(ControlRow::Binding(Control::Jump, InputDevice::Controller))) });
         let choose_row = |app: &mut App, c: ControlRow| *app.world_mut().resource_mut::<Page>() = Page::Settings { selected: Some(RowId::Control(c)) };
         choose_row(&mut app, ControlRow::AutomaticInput);
-        assert_eq!(value_of(&mut app, |r| *r == RowId::Control(ControlRow::AutomaticInput)).as_deref(), Some("ON"));
+        assert_eq!(value_of(&mut app, |r| *r == RowId::Control(ControlRow::AutomaticInput)).as_deref(), Some("On"));
         crate::bindings::set_automatic_input_switching(app.world_mut(), false);
-        assert_eq!(value_of(&mut app, |r| *r == RowId::Control(ControlRow::AutomaticInput)).as_deref(), Some("OFF"));
+        assert_eq!(value_of(&mut app, |r| *r == RowId::Control(ControlRow::AutomaticInput)).as_deref(), Some("Off"));
         choose_row(&mut app, ControlRow::Device);
         assert_eq!(value_of(&mut app, |r| *r == RowId::Control(ControlRow::Device)).as_deref(), Some("Controller"));
         // With a controller Rumble comes after the sensitivity, on by default.
         let is_rumble = |r: &RowId| *r == RowId::Control(ControlRow::Rumble);
         choose_row(&mut app, ControlRow::Rumble);
-        assert_eq!(value_of(&mut app, is_rumble).as_deref(), Some("ON"));
+        assert_eq!(value_of(&mut app, is_rumble).as_deref(), Some("On"));
         crate::bindings::set_rumble(app.world_mut(), false);
-        assert_eq!(value_of(&mut app, is_rumble).as_deref(), Some("OFF"));
+        assert_eq!(value_of(&mut app, is_rumble).as_deref(), Some("Off"));
         crate::bindings::set_device(app.world_mut(), InputDevice::KeyboardMouse);
         assert_eq!(value_of(&mut app, is_rumble), None, "no Rumble row with keyboard and mouse");
         assert_eq!(*app.world().resource::<Page>(), Page::Settings { selected: Some(control(ControlRow::Device)) }, "its choice goes to the Input Device row");
@@ -6046,9 +6241,9 @@ mod tests {
         assert!(buttons.contains(&PauseButton::Meter(mouse)) && buttons.contains(&PauseButton::SliderStep(mouse, 1)), "a meter with arrows: {buttons:?}");
         let is_invert = |r: &RowId| *r == RowId::Control(ControlRow::Invert);
         choose_row(&mut app, ControlRow::Invert);
-        assert_eq!(value_of(&mut app, is_invert).as_deref(), Some("OFF"));
+        assert_eq!(value_of(&mut app, is_invert).as_deref(), Some("Off"));
         crate::bindings::set_invert_y(app.world_mut(), true);
-        assert_eq!(value_of(&mut app, is_invert).as_deref(), Some("ON"));
+        assert_eq!(value_of(&mut app, is_invert).as_deref(), Some("On"));
     }
 
     #[derive(Resource)]
