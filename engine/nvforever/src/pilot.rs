@@ -1734,9 +1734,14 @@ fn door_terminal(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<DoorTermina
 /// Whether there was something to use.
 fn try_beside(p: &Pilot, poked: &mut Vec<(u32, u32)>, side: &mut Option<(FormId, u32, Box<Walk>)>, errands: &mut Option<(Errand, Place)>, h: &mut Hands, door: u32, feet: [f32; 3]) -> bool {
     let used = poked.clone();
-    let Some((r, cell, pos, away, what)) = h.game(|g| door_switch(g, door, &used)).flatten() else {
+    let switch = h.game(|g| door_switch(g, door, &used)).flatten();
+    // A terminal entry that names the door comes before an activator that only stands
+    // beside it: the Temple of the Union's maintenance terminal unlocks Ulysses' door
+    // (0x010084CF), and the commissary terminal and Auto-Doc beside it were tried for good.
+    let terminal = if switch.as_ref().is_none_or(|s| s.4 != WORKS_DOOR) { h.game(|g| door_terminal(g, door, &used)).flatten() } else { None };
+    let Some((r, cell, pos, away, what)) = switch.filter(|_| terminal.is_none()) else {
         // No switch: a terminal with an entry for the door is an errand of its own.
-        let Some((terminal, menu, item, cell, pos)) = h.game(|g| door_terminal(g, door, &used)).flatten() else { return false };
+        let Some((terminal, menu, item, cell, pos)) = terminal else { return false };
         poked.push((terminal.0, door));
         let space = cell.and_then(|c| crate::nav::space_of_cell(h.world, c.0)).unwrap_or(space_of(h.location));
         let name = h.game(|g| g.data.name(terminal)).unwrap_or_default();
