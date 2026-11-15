@@ -1,7 +1,7 @@
 # Inline arguments inside a vanilla expression
 
-[documented: public compiler implementation at commit `576d39630287845c598914d17ddffd71eebbef28`,
-`crates/fnv-script/src/compile/gen.rs`, `gen/x.rs`, and `lex.rs`]
+Repository source context: `crates/fnv-script/src/compile/gen.rs`,
+`gen/x.rs`, and `lex.rs` in the public compiler used by the authored controls.
 The vanilla expression emitter keeps its own postfix operator stack: `||` binds
 more tightly than `&&`. The existing extender argument parser accepts a grouped
 argument as one expression. Its outer expression grammar has different logical
@@ -18,7 +18,7 @@ without its grouped second argument, leaving two outer expression values. The
 old manual log identifies the same unit and stack error, but does not bind the
 historical in-memory bytes or failing instruction offset.
 
-[documented: `crates/fnv-game/src/source_compile.rs`]
+Repository source context: `crates/fnv-game/src/source_compile.rs`.
 Auto source compilation seeds the unit's variables and references, and selects
 a sourced unit when its decoded representation contains raw pieces. It must not
 silently change a condition's surrounding vanilla arithmetic or logical order.
@@ -38,7 +38,7 @@ without changing its existing token values. No VM stack relaxation, native
 inline-bytecode decoder, function/opcode special case or installed source rewrite
 is introduced.
 
-[documented: authored control source to accompany this leaf]
+Authored control contract (implementation evidence):
 Controls must discriminate a two-parameter grouped argument, vanilla mixed
 `&&`/`||` precedence, quoted/signed/reference arguments, ordinary neighbors, and
 the real Auto source-selection path using an authored opaque argument plus
@@ -49,16 +49,15 @@ submission; no native or whole-mod behavior is inferred from these authored case
 
 ## Parser-bound call extent and receiver preservation
 
-[documented: authored six-control and separate eight-edge CPU receipts,
-2026-11-14] The initial implementation passed all six primary controls and five
+Historical authored CPU qualification (process evidence, 2026-11-14): The initial implementation passed all six primary controls and five
 of eight edge controls. Three edge controls still failed: a bare nested second
 argument, a spaced-dot receiver, and a quoted EditorID receiver. The ordinary or
 explicit neighbor passed before each grouped-case failure. All eight grouped
 edge forms failed on the unchanged baseline; these are limits of the proposed
 extension, not evidence that a previously working grouped form regressed.
 
-[documented: public `Gen::function`, `Gen::reference`/`Gen::form`, and
-`gen/x.rs::xargs`] The vanilla token already identifies the function and its
+Repository source context: `Gen::function`, `Gen::reference`/`Gen::form`,
+and `gen/x.rs::xargs`. The vanilla token already identifies the function and its
 receiver, including a joined spaced dot and a quoted EditorID. The existing
 argument parser knows how many tokens a nested call consumes. Re-parsing the
 receiver as a string or counting a nested function name as its entire argument
@@ -72,7 +71,7 @@ argument. Preserve the surrounding vanilla operator stack. A probe that is not a
 grouped call restores its temporary name/variable/diagnostic state before the
 ordinary emitter runs. Do not alter the general extended receiver grammar.
 
-[documented: unchanged authored control sources] Revision two retains every
+Authored control preservation (process evidence): Revision two retains every
 assertion and input in the primary six, separate eight edges, span unit, and real
 Auto source-selection fixture. The final parser-bound compiler revision passed the six primary controls, eight
 edge controls and separate span unit in the bounded public compiler target; this
@@ -82,7 +81,7 @@ syntax, a full source corpus, and native grammar equivalence remain unqualified.
 
 ## Bounded validation and engine-query aid
 
-[documented: authored CPU proof `7c310d1e` and independent review `d13f5572`]
+Historical authored CPU qualification (process evidence):
 The final compiler production blobs were tested from a common public-API layout
 on Rust 1.99, normal Cargo release/default features: primary six and edge eight
 passed, plus the one span test (14 other unit tests filtered). Unchanged-base
@@ -92,14 +91,13 @@ assertions after passing ordinary/explicit neighbors. The earlier candidate's
 three edge failures remain historical evidence. These are authored compiler,
 decoder and VM controls with a controlled Host, not a native grammar certificate.
 
-[documented: `lex.rs::MAX_LINE` and source peer `8f016e91`]
+Repository source context: `lex.rs::MAX_LINE`.
 The 512-character threshold reports a diagnostic; it is not an enforced input
 cap. Prefix mapping may re-lex multiple original substrings. No general parser
 performance bound, complete grammar support or full-source identity/execution
 claim is made from these bounded fixtures.
 
-[documented: authored Auto fixture, `source_compile.rs`, and R4 CPU proof
-`e4e71c65`]
+Historical authored Auto control qualification (process evidence):
 The latest public576/production087 pair passed strict plugin/SCPT/read_record,
 owner/source/SCDA/raw admission, actual selected Auto-unit identity and dispatch
 admission. The unchanged baseline then failed its first global-value assertion
@@ -113,8 +111,8 @@ failure remain historical and are not grouped-call behavioral results.
 This is a bounded real GameData Auto/Game::run_event/quest getter/global writer
 control on the shared public graph. It is not execution of this whole current-main
 port, automatic game scheduling, the renderer, a named mod or native bytecode.
-The executing-worker reconciliation is sealed; independent final receipt review
-is pending at this source proposal.
+The historical independent review reconciled those bounded results. Neither
+that review nor the historical CI below executes this documentation follow-up.
 
 [hypothesis: optional engine-query smoke]
 An authored QueryJob runs an ordinary self-distance neighbor, a grouped receiver
@@ -125,9 +123,8 @@ sentinels, and the existing job reports five rows with zero errors. This tests
 runtime query compilation/dispatch, not the Auto loader, automatic game scripts,
 pixels, native parity or a named mod. The registered scenario is unrun.
 
-[documented: public `Game::compile_file`, `compile_source`, `nvse_rest`, and
-`mod_files::udf_data_path` at pinned main
-`07878551131e14ed6ed8b771d34adff86138f3ee`]
+Repository source context: `Game::compile_file`, `compile_source`,
+`nvse_rest`, and `mod_files::udf_data_path` used by the authored fixture.
 CompileScript takes a UDF-relative file path, not inline source text. The optional
 smoke's fifth query compiles the authored file `vanilla-inline-call-owned.gek`
 through compile_mod_runtime and calls the resulting function. Its local starts
@@ -146,12 +143,32 @@ and archive the seeded bytes and generated query output in a future controller.
 No source file, scenario or result here authorizes a renderer launch; this smoke
 has not been compiled or executed.
 
-[documented: pinned main
-`07878551131e14ed6ed8b771d34adff86138f3ee`,
-`crates/fnv-install/src/lib.rs::EngineHome::mods` and
-`engine/nvf-play/src/script_input.rs::mod_file_roots`]
+Repository source context: `crates/fnv-install/src/lib.rs::EngineHome::mods`
+and `engine/nvf-play/src/script_input.rs::mod_file_roots`.
 The engine's loose-file layer is HOME/mods, followed by installed Data. Therefore
 the authored UDF must be seeded under HOME/mods/NVSE, not HOME/Data/NVSE. The
 previous source-only seed note was wrong; no smoke was executed with it. The
 script body, query sources and success expectations are unchanged by this
 preparation correction.
+
+
+## Historical public CI and unresolved launcher review
+
+Historical public CI for PR #2585 head `951187d78bd2840a658b21258d5fa0cbb7b12525`
+passed all seven checks ([canonical CI](https://github.com/LootJunkieAzza/NVForever/actions/runs/43646954563),
+[game-data guard](https://github.com/LootJunkieAzza/NVForever/actions/runs/43646954614)).
+The actual checkout was a merge with main7201, not the standalone branch tree.
+Core reported 3019 passed, no failures and four existing ignored tests; engine
+reported 2893 passed with no failures or ignored tests. Neither suite filtered
+tests, and all 16 owned controls passed once. Both strict lint jobs, dependency
+audits, six Python suites and the guard/aggregator passed. These are historical
+combined-source results; the new documentation-only follow-up has not run CI.
+
+The [maintainer's unresolved launcher blocker](https://github.com/LootJunkieAzza/NVForever/pull/2585#issuecomment-6886691502)
+remains: the public game launcher at that head passes the scenario's `{env:...}`
+HOME placeholder literally, so it does not select the seeded authored UDF home.
+Moving the unchanged scenario into the scripts section does not fix that path.
+PR #2585 stays Draft until the coordinated shared runner repair is integrated,
+the real opted-in launcher boundary is validated, and independent review closes
+the blocker on the exact resulting head. No game execution, native acceptance
+or blocker closure is claimed by this documentation follow-up.
