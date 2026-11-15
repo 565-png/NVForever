@@ -280,6 +280,8 @@ pub struct SkyState {
     /// The camera's place has been looked at once ([`weather_region`]); until then the
     /// weather is the one the start chose and no roll is made.
     placed: bool,
+    /// Last sampled worldspace and exterior cell [design, #2531; `Self::place_outdoors`].
+    region_cell: Option<(u32, (i32, i32))>,
     /// The game clock has moved the sky (fades take game time; without a clock a change
     /// is at once).
     pub(crate) clock_seen: bool,
@@ -500,6 +502,7 @@ impl SkyState {
             regions,
             source: None,
             placed: false,
+            region_cell: None,
             clock_seen: false,
             sun_hour: None,
             rolled_for: None,
@@ -532,10 +535,9 @@ impl SkyState {
         }
     }
 
-    /// The camera stands in the overriding weather region `region` (FormID; `None`: in
-    /// none), or indoors with `at` = `None`, where the list followed stays as it was:
-    /// follow that region's list, or the climate's.
-    pub fn place(&mut self, at: Option<Option<u32>>) {
+    /// Follow the sampled region (FormID; `Some(None)`: climate), or keep the list
+    /// indoors (`None`). Placement can snap without repeating startup [design, #2531].
+    pub fn place(&mut self, at: Option<Option<u32>>, instant: bool) {
         let first = !self.placed;
         self.placed = true;
         // Said here, not in `new`, which runs before the log is set up.
@@ -556,10 +558,30 @@ impl SkyState {
         if let Some(region) = at {
             self.source = region.and_then(|f| self.regions.iter().position(|r| r.region.form_id == f));
         }
-        self.follow_climate(first || !self.clock_seen);
+        self.follow_climate(instant || first || !self.clock_seen);
         // A release waits for the roll after this one, not for the start's own.
         if let Some(sw) = self.script.as_mut().filter(|_| first) {
             sw.roll = self.rolls;
+        }
+    }
+
+    /// Sample the outline on exterior cell entry, holding the result within that cell
+    /// [observed: captures run15b_w and run15b_w2, 2026-11-15; world.md §6, #2531].
+    /// A fresh or invalidated placement snaps; walking across a cell border fades
+    /// [observed: same captures, script MoveTo versus walking; hypothesis: other Travel].
+    fn place_outdoors(&mut self, regions: &[RegionWeather], world: u32, x: f32, y: f32) {
+        let cell = (world, fnv_world::cell_of(x, y));
+        if self.region_cell == Some(cell) {
+            return;
+        }
+        let instant = self.region_cell.is_none_or(|(previous_world, _)| previous_world != world);
+        self.region_cell = Some(cell);
+        let inside = fnv_world::sky::region_at(regions, world, x, y)
+            .map(|r| r.form_id)
+            .filter(|f| self.regions.iter().any(|r| r.region.form_id == *f));
+        let now = self.source.map(|i| self.regions[i].region.form_id);
+        if instant || !self.placed || inside != now {
+            self.place(Some(inside), instant);
         }
     }
 
@@ -934,6 +956,9 @@ impl SkyState {
     /// Switch between interior lighting (`Some`) and the worldspace's sky (`None`).
     pub fn set_interior(&mut self, lighting: Option<fnv_world::lighting::CellLighting>) {
         self.interior = lighting;
+        // Every Travel calls this, including same-cell exterior moves [design, #2531;
+        // world.rs::travel]. Recheck the destination without repeating startup logs.
+        self.region_cell = None;
         self.changed = true;
     }
 
@@ -1078,25 +1103,18 @@ impl SkyState {
     }
 }
 
-/// The weather follows the region the camera stands in (the player's eye in play mode, as
-/// for imposters): an overriding weather region's list, else the climate's; indoors the
-/// list stays as it was [hypothesis].
+/// Sample weather regions at cell entry or placement, using the camera point
+/// [design: `SkyState::place_outdoors`, #2531]. Indoors keep the list [hypothesis].
 pub fn weather_region(world: Res<WorldData>, cam: Query<&Transform, With<FlyCam>>, mut sky: ResMut<SkyState>) {
     let Ok(t) = cam.single() else { return };
     if sky.interior.is_some() {
         if !sky.placed {
-            sky.place(None);
+            sky.place(None, true);
         }
         return;
     }
     let g = crate::world::bevy_to_game(t.translation);
-    let inside = fnv_world::sky::region_at(world.weather_regions, world.world, g.x, g.y)
-        .map(|r| r.form_id)
-        .filter(|f| sky.regions.iter().any(|r| r.region.form_id == *f));
-    let now = sky.source.map(|i| sky.regions[i].region.form_id);
-    if !sky.placed || inside != now {
-        sky.place(Some(inside));
-    }
+    sky.place_outdoors(world.weather_regions, world.world, g.x, g.y);
 }
 
 /// The worldspace's image space (WRLD INAM), or its parent's.
@@ -2107,6 +2125,7 @@ mod tests {
             regions: Vec::new(),
             source: None,
             placed: false,
+            region_cell: None,
             clock_seen: false,
             sun_hour: None,
             rolled_for: None,
@@ -2121,7 +2140,7 @@ mod tests {
             moon_textures: Default::default(),
             lightning_request: false,
         };
-        sky.place(Some(None));
+        sky.place(Some(None), false);
         assert_eq!((sky.rolls, sky.pick), (0, SAVED), "the first look keeps the saved weather");
         sky.follow_game_clock(12.0 + 1.0 / 60.0, 25.375);
         assert_eq!(sky.days_passed, 25.0);
@@ -2173,6 +2192,7 @@ mod tests {
             regions: Vec::new(),
             source: None,
             placed: false,
+            region_cell: None,
             clock_seen: false,
             sun_hour: None,
             rolled_for: None,
@@ -2187,6 +2207,121 @@ mod tests {
             moon_textures: Default::default(),
             lightning_request: false,
         }
+    }
+
+    // Synthetic region and weather fixtures [design, #2531; no game data].
+    fn region_test_sky() -> (SkyState, Vec<RegionWeather>) {
+        let mut sky = sky_started_on_held();
+        sky.clock_seen = true;
+        let region = RegionWeather {
+            form_id: 3,
+            edid: Some("TestRegion".into()),
+            world: Some(11),
+            areas: vec![vec![[100.0, 100.0], [200.0, 100.0], [200.0, 200.0], [100.0, 200.0]]],
+            flags: fnv_world::sky::REGION_WEATHER_OVERRIDE,
+            ..Default::default()
+        };
+        sky.regions = vec![RegionList {
+            region: region.clone(),
+            choices: vec![Choice { weather: Weather { form_id: 4, ..Default::default() }, chance: 100, global: None }],
+        }];
+        (sky, vec![region])
+    }
+
+    #[test]
+    fn weather_region_holds_across_outline_until_cell_entry() {
+        let (mut sky, regions) = region_test_sky();
+        sky.place_outdoors(&regions, 11, 150.0, 150.0);
+        assert_eq!((sky.region(), sky.weather.form_id, sky.fade), (Some("TestRegion"), 4, 1.0));
+        assert!(sky.prev.is_none());
+        let rolls = sky.rolls;
+        let rng = sky.rng;
+        sky.place_outdoors(&regions, 11, 250.0, 150.0);
+        assert_eq!((sky.region(), sky.weather.form_id, sky.rolls, sky.rng), (Some("TestRegion"), 4, rolls, rng));
+        sky.place_outdoors(&regions, 11, 4096.0, 150.0);
+        assert_eq!((sky.region(), sky.weather.form_id, sky.rolls), (None, LISTED, rolls + 1));
+        assert_eq!(sky.prev.as_ref().map(|w| w.form_id), Some(4));
+        assert_eq!(sky.fade, 0.0);
+
+        sky.place_outdoors(&regions, 11, 300.0, 150.0);
+        sky.place_outdoors(&regions, 11, 150.0, 150.0);
+        assert_eq!((sky.region(), sky.weather.form_id, sky.rolls), (None, LISTED, rolls + 1));
+    }
+
+    #[test]
+    fn weather_region_cell_entry_inside_outline_fades_on_either_axis() {
+        for axis in 0..2 {
+            let (mut sky, mut regions) = region_test_sky();
+            for point in &mut regions[0].areas[0] {
+                point[axis] -= 150.0;
+            }
+            let mut at = [150.0, 150.0];
+            at[axis] = -100.0;
+            sky.place_outdoors(&regions, 11, at[0], at[1]);
+            assert_eq!(sky.weather.form_id, LISTED);
+            let rolls = sky.rolls;
+            at[axis] = -25.0;
+            sky.place_outdoors(&regions, 11, at[0], at[1]);
+            assert_eq!((sky.region(), sky.rolls), (None, rolls));
+            at[axis] = 0.0;
+            sky.place_outdoors(&regions, 11, at[0], at[1]);
+            assert_eq!((sky.region(), sky.weather.form_id, sky.rolls), (Some("TestRegion"), 4, rolls + 1));
+            assert_eq!(sky.prev.as_ref().map(|w| w.form_id), Some(LISTED));
+            assert_eq!(sky.fade, 0.0);
+        }
+    }
+
+    #[test]
+    fn weather_region_same_cell_travel_rechecks_and_snaps() {
+        let (mut sky, regions) = region_test_sky();
+        sky.place_outdoors(&regions, 11, 150.0, 150.0);
+        let rolls = sky.rolls;
+        sky.set_interior(None);
+        sky.place_outdoors(&regions, 11, 250.0, 150.0);
+        assert_eq!((sky.region(), sky.weather.form_id, sky.rolls), (None, LISTED, rolls + 1));
+        assert!(sky.prev.is_none());
+        assert_eq!(sky.fade, 1.0);
+        sky.set_interior(Some(Default::default()));
+        sky.set_interior(None);
+        sky.place_outdoors(&regions, 11, 150.0, 150.0);
+        assert_eq!((sky.region(), sky.weather.form_id), (Some("TestRegion"), 4));
+        assert!(sky.prev.is_none());
+        assert_eq!(sky.fade, 1.0);
+    }
+
+    #[test]
+    fn weather_region_world_change_rechecks_same_grid_and_snaps() {
+        let (mut sky, regions) = region_test_sky();
+        sky.place_outdoors(&regions, 11, 150.0, 150.0);
+        sky.place_outdoors(&regions, 22, 150.0, 150.0);
+        assert_eq!((sky.region(), sky.weather.form_id), (None, LISTED));
+        assert!(sky.prev.is_none());
+        assert_eq!(sky.fade, 1.0);
+    }
+
+    #[test]
+    fn weather_region_negative_cell_entry_uses_floor() {
+        let (mut sky, mut regions) = region_test_sky();
+        for point in &mut regions[0].areas[0] {
+            point[0] -= 300.0;
+        }
+        sky.place_outdoors(&regions, 11, -150.0, 150.0);
+        sky.place_outdoors(&regions, 11, -0.5, 150.0);
+        assert_eq!(sky.region(), Some("TestRegion"));
+        sky.place_outdoors(&regions, 11, 0.0, 150.0);
+        assert_eq!(sky.region(), None);
+        assert_eq!(sky.fade, 0.0);
+    }
+
+    #[test]
+    fn weather_region_travel_preserves_script_hold() {
+        let (mut sky, regions) = region_test_sky();
+        sky.restore_saved(&saved_held());
+        sky.place_outdoors(&regions, 11, 150.0, 150.0);
+        sky.set_interior(None);
+        sky.place_outdoors(&regions, 11, 250.0, 150.0);
+        assert_eq!((sky.weather.form_id, sky.pick), (HELD, LISTED));
+        assert!(sky.script.is_some_and(|sw| sw.hold));
     }
 
     #[test]
@@ -2216,7 +2351,7 @@ mod tests {
     fn a_saved_hold_outlasts_the_first_look_and_what_follows() {
         let mut sky = sky_started_on_held();
         sky.restore_saved(&saved_held());
-        sky.place(Some(None));
+        sky.place(Some(None), false);
         // The climate still rolls under the hold; what it picks waits for a release.
         assert_eq!((sky.weather.form_id, sky.rolls, sky.pick), (HELD, 1, LISTED));
         let mut rng = 123;
@@ -2233,7 +2368,7 @@ mod tests {
     fn a_release_after_the_load_stands_and_the_next_roll_takes_over() {
         let mut sky = sky_started_on_held();
         sky.restore_saved(&saved_held());
-        sky.place(Some(None));
+        sky.place(Some(None), false);
         // A load script releases it before the engine's part of the save is put back.
         sky.release_script_weather();
         assert_eq!(sky.weather.form_id, HELD, "until the next roll, as any release");
@@ -2255,7 +2390,7 @@ mod tests {
         for saved in [serde_json::json!({"weather": format!("W{HELD}"), "held": false}), serde_json::json!({"weather": "Gone", "held": true})] {
             let mut sky = sky_started_on_held();
             sky.restore_saved(&saved);
-            sky.place(Some(None));
+            sky.place(Some(None), false);
             assert_eq!(sky.weather.form_id, LISTED, "{saved}");
             assert!(sky.script.is_none());
         }

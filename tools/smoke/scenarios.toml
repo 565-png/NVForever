@@ -28943,3 +28943,18 @@ expect = [
   { re = 'console: IsEssential on EasyPeteRef >> 0\.00', label = "IsEssential still reads his flag" },
   { re = 'console: GetDead on EasyPeteRef >> 1\.00', label = "in Hardcore KillActor kills him" },
 ]
+
+[[scenario]]
+name = "weather-region-cell-stairs"
+source = "#2531; docs/spec-notes/world.md §6 [observed: captures run15b_w and run15b_w2, 2026-11-15]: walking across NVLegateRegion's outline inside cell 26,4 holds the region weather until another exterior cell is entered"
+note = "[design, #2531] Written without running the game. Start on the Legate's stairs, face east, move forward for 1 s (about 270 units, across outline x 109513 but short of cell border x 110592), then stand. The console reads player x after the move to verify the outline was crossed; [hypothesis: movement distance is provisional until the main session runs this scenario]."
+areas = ["sky", "weather"]
+paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/world.rs", "crates/fnv-world/src/sky.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_LOOK = "2:90:0", NVF_PLAY_TEST_MOVE = "6:1:0,7:0:0", NVF_PLAY_TEST_CONSOLE = "9:player.getpos x;9.5:close" }
+args = ["--cell", "Goodsprings", "--pos=109330,18852,5470", "--play", "--hour", "17.4", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = [
+  { re = 'weather roll: NVlegateCampWeather .*from region NVLegateRegion .*at the start', label = "the start samples the camp region" },
+  { re = 'console: GetPos on player >> (?P<n>[\d.]+)', range = [109514, 110591], label = "the player crossed the outline and stayed in cell 26,4" },
+]
+forbid = [{ text = "on leaving a weather region", label = "crossing the outline inside the cell keeps camp weather" }]
