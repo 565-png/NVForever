@@ -268,7 +268,7 @@ pub fn load_faces(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool)
     }
     let (text, lit) = soft.unwrap_or_else(|| {
         let hard = face(FONT, plain_font(25.0, CHAR), data, images, bc);
-        let lit = Face { font: hard.font.clone(), image: hard.image.clone() };
+        let lit = Face { font: hard.font.clone(), image: hard.image.clone(), vector: hard.vector.clone() };
         (hard, lit)
     });
     let (scanlines, scan_kept) = data.and_then(|d| scanline_image(d, images)).map_or((None, 1.0), |(image, kept)| (Some(image), kept));
@@ -438,7 +438,7 @@ fn soft_faces(path: &str, data: &GameData, images: &mut Assets<Image>) -> Option
         image.asset_usage = bevy::asset::RenderAssetUsages::default();
         image.sampler = bevy::image::ImageSampler::linear();
         let size = Vec2::new(soft.width as f32, soft.height as f32);
-        Some(Face { font: soft.font, image: Some((images.add(image), size)) })
+        Some(Face { font: soft.font, image: Some((images.add(image), size)), vector: None })
     };
     let text = bent(bright(), GLASS_MIDDLE)?;
     let lit = bent(lit_text(), bright())?;

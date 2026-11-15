@@ -232,7 +232,7 @@
 //! `release` (the left mouse button) [design: #1953].
 
 use crate::interface::{bc_supported, u, Face, Picture, Pictures};
-use crate::settings::{add_setting, Setting, Settings};
+use crate::settings::{add_choice_list, add_setting, Setting, Settings};
 use crate::settings_layout::{ResolvedLayout, CONTROLS_TAB};
 use crate::settings_view::{ControlRow, Folding, Found, RailItem, RowId, SettingsFocus, SettingsLayout, SettingsScope, ViewEntry, Visibility, NO_ROW_SOUND, SEARCH};
 use fnv_util::words::{tr, tr_str};
@@ -1130,6 +1130,72 @@ impl PauseLook {
     }
 }
 
+/// The pause menu's letters: the vector font, sharp at any resolution (the default), or the
+/// game's own raster font [design: owner 2026-11-15, the menu overhaul: "current typeface is
+/// raster therefore it does look blurry"; Roboto Condensed, `crate::vector_font`]. The INI's
+/// `menu-font`; a change draws the page again with it.
+#[derive(Resource, Clone, Debug)]
+pub struct MenuFont {
+    pub sharp: bool,
+    /// The font asset, made once.
+    handle: Option<Handle<bevy::text::Font>>,
+}
+
+impl Default for MenuFont {
+    fn default() -> MenuFont {
+        MenuFont { sharp: true, handle: None }
+    }
+}
+
+/// The Menu Font row's choices, Sharp first (the default).
+const MENU_FONTS: [&str; 2] = ["Sharp", "Original"];
+
+fn menu_font_chosen(w: &World) -> String {
+    MENU_FONTS[usize::from(!w.get_resource::<MenuFont>().is_none_or(|f| f.sharp))].to_string()
+}
+
+/// The Menu Font row's choice `text`: the page drawn again with its letters.
+fn take_menu_font(w: &mut World, text: &str) -> bool {
+    let Some(k) = MENU_FONTS.iter().position(|n| n.eq_ignore_ascii_case(text.trim())) else { return false };
+    w.get_resource_or_insert_with(MenuFont::default).sharp = k == 0;
+    w.remove_resource::<PauseLook>();
+    if let Some(mut v) = w.get_resource_mut::<PauseView>() {
+        v.drawn = None;
+    }
+    true
+}
+
+/// `faces` (the game's raster fonts, read for their sizes) as the vector font's at the same
+/// cap height, where the Menu Font row says Sharp and the font and Bevy's fonts are there;
+/// else as they are.
+fn menu_faces(world: &mut World, faces: Faces) -> Faces {
+    use crate::interface::{Face, VectorFace};
+    use crate::vector_font::{baseline_below_top, metric_table, metrics};
+    let sharp = world.get_resource::<MenuFont>().is_none_or(|f| f.sharp);
+    let (Some(m), true) = (metrics(), sharp) else { return faces };
+    let made = world.get_resource::<MenuFont>().and_then(|f| f.handle.clone());
+    let handle = match made {
+        Some(h) => h,
+        None => {
+            let Some(mut fonts) = world.get_resource_mut::<Assets<bevy::text::Font>>() else { return faces };
+            let h = fonts.add(bevy::text::Font::from_bytes(crate::vector_font::FONT_BYTES.to_vec()));
+            world.get_resource_or_insert_with(MenuFont::default).handle = Some(h.clone());
+            h
+        }
+    };
+    // Each face at the raster font's cap height (its H's rise; a stand-in's: the original's
+    // sizes [hypothesis: font 7's cap about 22.5 units, font 3's about 16.3]).
+    let cap_part = m.cap_height / m.units_per_em;
+    let to = |raster: Face, stand_in_cap: f32| {
+        let cap = Some(raster.font.glyph(b'H').ascent).filter(|c| raster.image.is_some() && *c > 0.0).unwrap_or(stand_in_cap);
+        let em = cap / cap_part;
+        Face { font: metric_table(m, em, raster.font.size), image: None, vector: Some(VectorFace { font: handle.clone(), em, base: baseline_below_top(m, em) }) }
+    };
+    let out = Faces { entry: to(faces.entry, 22.5), small: to(faces.small, 16.3) };
+    info!("pause menu: letters Roboto Condensed at {:.1} and {:.1} units (Menu Font Sharp)", out.entry.vector.as_ref().map_or(0.0, |v| v.em), out.small.vector.as_ref().map_or(0.0, |v| v.em));
+    out
+}
+
 /// What the keys have on the first page and in the quit question, and what Defaults goes
 /// back to (taken when the settings page is first shown).
 #[derive(Resource, Default)]
@@ -1495,6 +1561,21 @@ impl Plugin for PausePlugin {
                 Err(e) => warn!("NVF_PLAY_TEST_PAUSE_MENU: {e}"),
             }
         }
+        add_choice_list(
+            app,
+            Setting {
+                key: "menu-font",
+                group: "Interface",
+                label: "Menu font",
+                note: "The pause menu's letters. Sharp: Roboto Condensed, sharp at any resolution. Original: the game's own font, blurred at high resolutions.",
+                switches: "",
+                get: |_| false,
+                set: |_, _| {},
+                slider: None,
+            },
+            crate::settings::ChoiceList { names: |_| MENU_FONTS.iter().map(|n| (*n).to_string()).collect(), chosen: menu_font_chosen, pick: take_menu_font, save: menu_font_chosen, load: take_menu_font, ask_keep: false },
+        );
+        app.init_resource::<MenuFont>();
         app.init_resource::<Paused>()
             .init_resource::<PageRequest>()
             .init_resource::<Page>()
@@ -5060,7 +5141,8 @@ fn draw(world: &mut World) {
         return;
     }
     if !world.contains_resource::<PauseLook>() {
-        let look = PauseLook::load(world);
+        let mut look = PauseLook::load(world);
+        look.faces = menu_faces(world, look.faces);
         world.insert_resource(look);
         // The page's words checked once with the faces they are drawn in (#2377).
         world.resource_scope(|world, look: Mut<PauseLook>| check_page_text(world, &look.faces));

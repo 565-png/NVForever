@@ -92,7 +92,7 @@ impl Faces {
 
     /// Stand-in fonts (tests).
     pub fn plain() -> Faces {
-        Faces { entry: Face { font: plain_font(36.0, 17.0), image: None }, small: Face { font: plain_font(24.0, 11.0), image: None } }
+        Faces { entry: Face { font: plain_font(36.0, 17.0), image: None, vector: None }, small: Face { font: plain_font(24.0, 11.0), image: None, vector: None } }
     }
 }
 

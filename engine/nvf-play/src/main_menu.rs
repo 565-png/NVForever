@@ -646,6 +646,7 @@ mod tests {
         let face = Face {
             font: fnv_font::Font { size: 16.0, texture: String::new(), glyphs: vec![glyph; 256] },
             image: bitmap.then(|| (Handle::default(), Vec2::splat(16.0))),
+            vector: None,
         };
         let menu = MainMenu { open: true, selected: 1, face: Some(face), ..default() };
         spawn(&mut app.world_mut().commands(), &menu, None, Handle::default(), Handle::default());

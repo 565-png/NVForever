@@ -474,6 +474,19 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
   is the install's.
 - Registered in `engine/nvf-play/src/language.rs`
 
+
+### `menu-font`: Menu font
+
+- On the page: The pause menu's letters. Sharp: Roboto Condensed, sharp at any resolution.
+  Original: the game's own font, blurred at high resolutions.
+- In full: Sharp draws the pause menu's text (the column, the settings page, the load page)
+  with Roboto Condensed (SIL Open Font License 1.1, Fallout 4's own interface font), laid out
+  by Bevy's text at the screen's resolution and sized to the game font's cap height, without
+  kerning or ligatures so it is as wide as the page measures it. Original keeps the game's
+  raster font, whose letters are stretched at high resolutions. Default Sharp [design: owner
+  2026-11-15, the menu overhaul]. The other menus keep the game's font.
+- Registered in `engine/nvf-play/src/pause.rs` (`MenuFont`), the font in
+  `engine/nvf-play/src/vector_font.rs`
 ### `sneak-gauges`: Light and noise gauges while sneaking
 
 - On the page: On: two bars under the sneak word show how lit you are and how much noise you

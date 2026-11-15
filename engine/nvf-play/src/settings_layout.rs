@@ -127,7 +127,7 @@ pub const SECTIONS: &[Section] = &[
     section("Display", Some("Frame Rate"), &["display-sync", "frame-cap", "physics-rate"]),
     section("Display", Some("Upscaling and Anti-Aliasing"), &["upscaler", "upscaler-quality", "dlss-model", "fsr-library", "anti-aliasing", "sharpen"]),
     section("Display", Some("Frame Generation and Latency"), &["frame-generation", "frame-generation-frames", "latency-reduction"]),
-    section("Display", Some("Interface"), &["language", "sneak-gauges", "dynamic-crosshair", "crosshair-style", "ui-scale", "menu-scale"]),
+    section("Display", Some("Interface"), &["language", "menu-font", "sneak-gauges", "dynamic-crosshair", "crosshair-style", "ui-scale", "menu-scale"]),
     section("Display", Some("Colours"), &["hud-colour", "hud-red", "hud-green", "hud-blue", "pipboy-colour", "pipboy-red", "pipboy-green", "pipboy-blue"]),
     section(
         "Display",
@@ -1223,7 +1223,7 @@ mod tests {
     /// library row, #2242's upscaling counter row, #2317's Generated frames row, the field of
     /// view rows, the menu scale and Physics rate rows, #2662's grass fires and #2550's
     /// terrain height blending), by the group it registers with.
-    const KNOWN: [(&str, &str); 113] = [
+    const KNOWN: [(&str, &str); 114] = [
         ("detached-camera", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
@@ -1264,6 +1264,7 @@ mod tests {
         ("pipboy-green", "Interface"),
         ("pipboy-blue", "Interface"),
         ("language", "Interface"),
+        ("menu-font", "Interface"),
         ("head-tracking", "World"),
         ("foot-ik", "World"),
         ("sky-clock", "World"),

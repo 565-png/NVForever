@@ -469,10 +469,21 @@ pub struct Set {
 }
 
 /// A font and its texture (the picture and its size in texels); without the texture the
-/// text is drawn with Bevy's font.
+/// text is drawn with Bevy's font; with `vector`, with a vector font at the screen's own
+/// resolution (`crate::vector_font`), measured by `font` as ever.
 pub struct Face {
     pub font: Font,
     pub image: Option<(Handle<Image>, Vec2)>,
+    pub vector: Option<VectorFace>,
+}
+
+/// A vector font for a [`Face`] (`crate::vector_font`): the font, its size (the em) and where
+/// its baseline lies below the top of the text Bevy lays out, both in interface units.
+#[derive(Clone, Debug)]
+pub struct VectorFace {
+    pub font: Handle<bevy::text::Font>,
+    pub em: f32,
+    pub base: f32,
 }
 
 /// A game texture for the interface: not repeated, so that a stretched picture's two
@@ -608,11 +619,11 @@ pub fn face(path: &str, stand_in: Font, data: Option<&GameData>, images: &mut As
             }
         };
         let image = font_tex(&font, d).and_then(|t| tex_image(&font.tex_path(), t, images)).or_else(|| font_texture(&font.texture_path(), d, images, bc))?;
-        Some(Face { font, image: Some(image) })
+        Some(Face { font, image: Some(image), vector: None })
     });
     read.unwrap_or_else(|| {
         warn!("interface: drawn without the game's font {path}");
-        Face { font: stand_in, image: None }
+        Face { font: stand_in, image: None, vector: None }
     })
 }
 
@@ -669,6 +680,23 @@ pub fn set_line(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, x: f32, 
 
 /// [`set_line`] with `mark` on every coloured node (each glyph, or the stand-in text).
 pub fn set_marked(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, x: f32, base: f32, color: Color, mark: impl Bundle + Clone) {
+    if let Some(v) = &face.vector {
+        // The line's text in the vector font, its baseline on `base`: Bevy lays it out at the
+        // screen's resolution, without kerning or ligatures so it is as wide as `face.font`
+        // measured it (`crate::vector_font`), in one line.
+        let text = line.text_spaced(&face.font);
+        p.spawn((Node { position_type: PositionType::Absolute, left: u(x), top: u(base - v.base), ..default() }, Pickable::IGNORE)).with_children(|n| {
+            n.spawn((
+                Text::new(text),
+                TextFont { font_size: font_units(v.em), font_features: crate::vector_font::features(), ..TextFont::default().with_font(v.font.clone()) },
+                bevy::text::LineHeight::RelativeToFont(1.0),
+                TextLayout::new(Justify::Left, LineBreak::NoWrap),
+                TextColor(color),
+                mark,
+            ));
+        });
+        return;
+    }
     let Some((image, size)) = &face.image else {
         // The codes are the run's code page's, not Latin-1 (`Ж` is 0xC6 in Windows-1251);
         // the spaces between the words are put back (#2298).
@@ -1112,7 +1140,7 @@ pub(crate) mod tests {
                 glyphs[code as usize] = Glyph::default();
             }
         }
-        Face { font: Font { size: 31.0, texture: String::new(), glyphs }, image: None }
+        Face { font: Font { size: 31.0, texture: String::new(), glyphs }, image: None, vector: None }
     }
 
     /// #1829: the hint glyphs sit on the x-height band, not the cap-height middle. The

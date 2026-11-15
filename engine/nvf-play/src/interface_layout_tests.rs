@@ -109,6 +109,7 @@ fn face(image: Handle<Image>) -> Face {
             glyphs,
         },
         image: Some((image, Vec2::splat(64.0))),
+        vector: None,
     }
 }
 
