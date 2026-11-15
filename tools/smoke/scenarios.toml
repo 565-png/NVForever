@@ -28447,6 +28447,7 @@ expect = [
   { text = "script: player entered trigger VFSVegasAnnihilationVolumeREF", label = "the player is in the gate's kill zone" },
   { text = "OnStartCombat of FalloutNV.esm|SCPT 0x0017934D ran on Some(0x00119793)", label = "the Gatekeeper starts its fight" },
   { re = 'script: VFSSecuritronGreeterREF says 0x', min = 3, max = 60, label = "the Gatekeeper says its lines one after another, not one a frame (2,231 in 40 s before #2582)" },
+]
 
 [[scenario]]
 name = "turret-base-stays"
