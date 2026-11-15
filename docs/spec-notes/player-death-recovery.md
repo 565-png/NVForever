@@ -41,18 +41,19 @@ manual/quick/auto ordering, one dispatch, invalid/dead save fallback, absent or
 unreadable profiles, pending loads and preservation of an existing autosave.
 These are historical CPU results, not a build or run of this public port.
 
-Current port qualification: The earlier public `e737ff0` source passed all ten recovery
-controls in [hosted CI](https://github.com/LootJunkieAzza/NVForever/actions/runs/43667829640):
-core reported 3019 passes and four existing ignored tests; engine reported 2918 passes.
-Strict engine Clippy failed on one redundant clone in an authored assertion. A
-fixture-only correction and later heads require their own exact-head checks. Rendered
-death/menu recovery and child-window handoff remain unverified. The `death-recovery-handoff` smoke
-scenario is authored and UNRUN. The existing camera-only checks keep every original acceptance condition, including
-`death-fade` black at six seconds. Their isolated fixture homes apply the loaded
-`fPlayerDeathReloadTime` setting as 120 seconds before killing the player and
-require the real successful console result; this prevents recovery from ending
-the camera/float/music observation window. Missing GMST admission is a visible
-fixture failure. No parity golden or acceptance range is relaxed.
+Public source qualification: The original ten recovery controls cover the live
+delay, selection, cancellation and dispatch behaviors above. Earlier public
+heads have their own hosted results; checks for a changed head must be reported
+against that head. Rendered death/menu recovery and child-window handoff remain
+separate from CPU and process-boundary controls. The authored
+`death-recovery-handoff` scenario checks the existing window handoff; preparing
+its source does not establish a GAME result.
+
+The existing camera-only checks retain every original acceptance condition,
+including `death-fade` black at six seconds. Their isolated homes and successful
+loaded `fPlayerDeathReloadTime=120` console checks are retained. No parity golden,
+duration, acceptance range or existing expectation is relaxed.
+
 
 
 Implementation context (NVForever 7201ca6d57d3bb8a435bffc3fc7a5ecedf79dea3,
@@ -65,3 +66,60 @@ The separate `death-recovery-handoff` scenario retains its recovery behavior and
 all expectations. Rendered runs remain UNRUN; source preparation and historical
 CPU acceptance do not establish child-window handoff or no-save menu usability.
 An early Draft may disclose these pending checks without waiting for them.
+
+
+## Assisted runs and save ownership
+
+Implementation context (public source `7bec60cebfe115ab863cf7d11358e26b61fdca5d`):
+`tools/smoke/smoke/runner.py::game_env` supplies `NVF_PLAY_AIDS_FROM_SCRIPTS` to canonical
+`--play` launches; `engine/nvf-play/src/test_aid.rs::drives_run` distinguishes driving
+and measuring aids. `SaveConfig::default` selects the explicit NVForever home
+or the ordinary player profile. The original handoff removed driving aids but
+kept that clock marker and the same profile. A smoke death could therefore
+select a real player save and leave its observation run. This is a source-backed
+counterexample, not an executed native-game observation.
+
+[hypothesis] Engineering test policy: capture the recovery admission once during
+`SavePlugin` initialization. Ordinary runs, including measuring-only runs with
+no assisted clock marker, keep normal death recovery. The presence of the clock
+marker (including `0`) or a driving aid disables automatic death recovery before
+its clock, latch, save-directory scan, menu change or load dispatch. Scripted
+resurrection and ordinary save/load commands are not disabled.
+
+[hypothesis] An assisted recovery scenario opts in only with
+`NVF_PLAY_TEST_DEATH_RECOVERY=1`, explicit `NVFOREVER_HOME`, and an existing
+canonical `death-recovery-home/saves` directly under that run's working
+directory. The actual `SaveConfig.dir` must equal that saves directory. Missing,
+foreign, redirected or mismatched directories visibly refuse the opt-in. This
+path convention is an ownership precondition for an explicitly requested test,
+not a claim that any similarly named user folder is safe to overwrite. The
+recovery consumer reads saves; it does not write them.
+
+The sole registry automatic-death-recovery positive is
+`death-recovery-handoff`; it retains its living-save, restored-world and exact
+handoff expectations and gains the explicit opt-in. The own-hit, grenade
+self-kill and dead-save-refusal scenarios retain their assertions and add a
+forbidden recovery diagnostic. All other death/combat observations remain in
+their original process by default. Manual load/refusal/menu handoffs, healing
+and NPC resurrection keep their existing behavior. The existing handoff still
+preserves the profile and explicit handoff-exit/measuring exceptions, but drops
+the driving aids and assisted script-clock marker in the successor.
+
+Authored coverage includes actual recovery-update controls over typed NVForever
+saves in fresh, owned child processes, ordinary/measuring preservation,
+assisted defaults, owned opt-in and refused opt-ins. A separate real-process
+handoff control records the OS-delivered argv/environment, then executes a fresh
+Rust test child that uses the actual CLI parser, `SaveConfig::default` and
+`start_from_save` on the exact staged save. It checks the save identity, loaded
+placement, unchanged bytes and absent driving/clock aids. The child-test wrapper
+does not start a renderer, restore a complete live world or prove window timing.
+Its ignored entry points are invoked explicitly by their ordinary parent tests;
+they are not standalone acceptance skips. New-head execution is reported with
+the resulting source-bound checks, not inferred from these authored controls.
+
+The previously noted both-buffer pending-load check and menu-under-handoff
+rendering policy are unchanged. A handled earlier-frame load may still leave
+the usable Load menu instead of issuing another request during the same death;
+rendered coverage remains separate. No global environment variables are changed
+by the new controls. They stage only authored saves beneath owned temporary
+homes and never open the ordinary player's default profile.

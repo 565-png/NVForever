@@ -357,6 +357,7 @@ impl Plugin for SavePlugin {
             .init_resource::<SaveWrites>()
             .init_resource::<CoopEngineState>()
             .init_resource::<FastTravelLanding>()
+            .init_resource::<death_recovery::RecoveryPolicy>()
             .init_resource::<death_recovery::DeathRecovery>()
             .add_message::<crate::wait::RestEnded>()
             .add_message::<SaveRequest>()

@@ -13,6 +13,65 @@ use std::path::{Path, PathBuf};
 const DEFAULT_DELAY: f32 = 5.0;
 const DELAY_SETTING: &str = "fPlayerDeathReloadTime";
 
+/// Captured once by SavePlugin. Ordinary runs keep death recovery; assisted
+/// runs must explicitly opt in with the dedicated, owned smoke profile.
+#[derive(Resource)]
+pub(super) struct RecoveryPolicy {
+    enabled: bool,
+}
+
+impl FromWorld for RecoveryPolicy {
+    fn from_world(world: &mut World) -> Self {
+        let environment: Vec<_> = std::env::vars_os().collect();
+        let cwd = std::env::current_dir().ok();
+        let dir = world.get_resource::<SaveConfig>().and_then(|cfg| cfg.dir.as_deref());
+        match Self::for_run(&environment, cwd.as_deref(), dir) {
+            Ok(enabled) => {
+                if !enabled {
+                    info!("test policy: automatic death recovery disabled for an assisted run");
+                }
+                RecoveryPolicy { enabled }
+            }
+            Err(why) => {
+                warn!("test policy: death recovery opt-in refused: {why}");
+                RecoveryPolicy { enabled: false }
+            }
+        }
+    }
+}
+
+impl RecoveryPolicy {
+    fn for_run(environment: &[(std::ffi::OsString, std::ffi::OsString)], cwd: Option<&Path>, dir: Option<&Path>) -> Result<bool, &'static str> {
+        let value = |name: &str| environment.iter().find(|(key, _)| key == name).map(|(_, value)| value.as_os_str());
+        let assisted = value("NVF_PLAY_AIDS_FROM_SCRIPTS").is_some()
+            || environment.iter().any(|(key, _)| key.to_str().is_some_and(crate::drives_run));
+        if !assisted {
+            return Ok(true);
+        }
+        let Some(opt_in) = value("NVF_PLAY_TEST_DEATH_RECOVERY") else { return Ok(false) };
+        if opt_in != "1" {
+            return Err("expected NVF_PLAY_TEST_DEATH_RECOVERY=1");
+        }
+        let cwd = cwd.and_then(|p| p.canonicalize().ok()).ok_or("owned working directory is unavailable")?;
+        let home = value("NVFOREVER_HOME").filter(|v| !v.is_empty()).ok_or("explicit owned NVFOREVER_HOME is required")?;
+        let home = Path::new(home);
+        let home = if home.is_absolute() { home.to_path_buf() } else { cwd.join(home) };
+        let home = home.canonicalize().map_err(|_| "owned home is unavailable")?;
+        if home.parent() != Some(cwd.as_path()) || home.file_name() != Some(std::ffi::OsStr::new("death-recovery-home")) {
+            return Err("home must be death-recovery-home directly under this run's working directory");
+        }
+        let saves = home.join("saves").canonicalize().map_err(|_| "owned saves directory is unavailable")?;
+        if saves.parent() != Some(home.as_path()) || saves.file_name() != Some(std::ffi::OsStr::new("saves")) {
+            return Err("saves directory escapes the owned home");
+        }
+        let actual = dir.and_then(|p| p.canonicalize().ok()).ok_or("actual SaveConfig directory is unavailable")?;
+        if actual != saves {
+            return Err("actual SaveConfig does not select the owned home");
+        }
+        Ok(true)
+    }
+}
+
 /// One attempt per uninterrupted death. A resurrection cancels and rearms it.
 #[derive(Resource, Default)]
 pub(super) struct DeathRecovery {
@@ -39,6 +98,9 @@ fn latest_living(dir: Option<&Path>, plugins: &[fnv_save::PluginEntry]) -> Optio
 /// Runs after the script frame's effects reach the world and before save requests are
 /// flushed. It neither writes a save nor changes the existing dead-save refusal.
 pub(super) fn update(world: &mut World) {
+    if world.get_resource::<RecoveryPolicy>().is_some_and(|policy| !policy.enabled) {
+        return;
+    }
     if world.contains_resource::<PendingEngine>() {
         return;
     }
@@ -342,4 +404,5 @@ mod tests {
         assert_eq!(requests(&app).as_slice(), std::slice::from_ref(&path));
         assert_eq!(std::fs::read(path).unwrap(), original);
     }
+    include!("death_recovery_assisted_tests.rs");
 }

@@ -46,6 +46,7 @@ untimed = [
   "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
   "NVF_PLAY_TEST_MELEE_KNOCKBACK",
   "NVF_PLAY_TEST_RAGDOLL_FAIL",
+  "NVF_PLAY_TEST_DEATH_RECOVERY",
 ]
 
 # Test aids whose value is a list of timed items (`<seconds>:<what>`), joined with sep.
@@ -201,7 +202,7 @@ source = "original death reload observed in campaign o29_dmg (2026-11-08, #1858)
 note = "UNRUN: an isolated NVForever home saves a living player before KillActor; the existing load handoff must take over once, without overwriting that save. This is separate from the unchanged camera-only fade timing scenario."
 areas = ["save", "combat"]
 paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/save/death_recovery.rs", "engine/nvf-play/src/loading.rs", "engine/nvforever/src/handoff.rs"]
-env = { NVFOREVER_HOME = "death-recovery-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "20:save death-recovery-living;21:close;24:player.killactor;25:close", NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+env = { NVFOREVER_HOME = "death-recovery-home", NVF_PLAY_TEST_DEATH_RECOVERY = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "20:save death-recovery-living;21:close;24:player.killactor;25:close", NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 90
 ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its world is in"
@@ -8291,6 +8292,7 @@ source = "issue #1572: every way of saving is refused from the player's death on
 areas = ["save"]
 paths = ["engine/nvf-play/src/save.rs"]
 note = "player.kill at 14 s; the QuickSave key at 15.5 s and 17 s (the second while the screen is going black) and a console save at 19 s are all refused, and nothing is written. NVFOREVER_HOME keeps the run off the real quicksave."
+forbid = [{ text = "death recovery:", label = "assisted death remains in this run without opening recovery or loading another save" }]
 env = { NVFOREVER_HOME = "save-dead-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.kill;14.3:close;19:save dead-save;19.5:close", NVF_PLAY_TEST_KEYS = "15.5:f5,17:f5" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
 run_seconds = 22
@@ -11478,6 +11480,7 @@ expect = [
   { re = 'combat: the player died, killed by Player', label = "the player dies of it", known_failing = "#1581: the blast misses the player on some runs" },
 ]
 forbid = [
+  { text = "death recovery:", label = "assisted death remains in this run without opening recovery or loading another save" },
   { re = 'xp: \S+ XP from a kill', label = "no kill XP" },
   { re = 'challenge: (Lord Death|Kaboom|The Rifleman) ', label = "no kill challenge" },
 ]
@@ -11495,6 +11498,7 @@ order = [[
   { re = 'test aid: the player hits 0x00000014 for \d+ with ' },
 ]]
 forbid = [
+  { text = "death recovery:", label = "assisted death remains in this run without opening recovery or loading another save" },
   { re = 'XP from a kill', label = "no XP for their own death" },
   { re = 'challenge: (Lord Death|The Rifleman|Kaboom) ', label = "no challenge for their own death" },
 ]
