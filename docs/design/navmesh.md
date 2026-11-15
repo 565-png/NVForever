@@ -98,7 +98,12 @@ world state, falling back to default-open placement for untouched locked doors.
 [hypothesis, #2716] Runtime passage through an open in-place door likewise wins over
 a cached or fresh activation refusal. [design / `Ai::ask_door`] The activation attempt
 and crossing bookkeeping still run; live state after the attempt decides whether the
-refusal cancels movement. Load doors retain their existing handling.
+refusal cancels movement. [design, #2716 / `Ai::ask_door`] If an in-place door has
+closed since planning, its live lock, inventory key and own ownership are rechecked
+after activation, honoring the configured path permission overrides. A prior open
+state grants no permission to reopen it; either a script refusal or missing lock
+permission cancels the path before movement or an opening request. Cell ownership
+does not authorize the lock. Load doors retain their existing handling.
 
 [design, #2716] `fnvtool nav path` (and shared path options for `nav walk`) accepts
 repeatable `--open-door <formid>` without granting permission to open any other lock.
@@ -107,7 +112,10 @@ inside/boundary endpoints, multiple refusing doors, closed locked passage and op
 passage; `fnv-ai/tests/carry.rs::open_locked_in_place_doors_reach_actor_path_parameters`
 covers script-opened and untouched default-open state;
 `open_locked_in_place_door_allows_arrival_despite_script_refusal` checks arrival with
-cached and fresh refusals while the door stays open and locked. Smoke scenarios
+cached and fresh refusals while the door stays open and locked.
+[design / file refs] `an_open_planned_door_closed_before_arrival_rechecks_live_permissions`
+checks closure after planning, keys and ownership gained or lost, unlocks, and
+configured overrides, including cancellation before any opening request. Smoke scenarios
 `mick-secret-door-paths` and `mick-secret-door-packages` check the two routes and the
 Travel-arrival-to-secret-sales transition; record evidence is in spec-notes/navmesh.md §4.
 

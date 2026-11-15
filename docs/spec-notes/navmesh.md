@@ -189,7 +189,12 @@ the actor jumps or drops over them (actor-jumps.md §3).
   Runtime passage also permits an already-open in-place door despite a cached or fresh
   activation refusal. [design / `fnv_ai::Ai::ask_door`] The activation attempt still runs
   for crossing events; live state afterward decides whether a refusal cancels movement.
-  Load-door behavior is unchanged. Original-game check:
+  [design, #2716 / `fnv_ai::Ai::ask_door`] A door closed after planning must pass
+  its live lock permission check after activation: current inventory key or its own
+  ownership, plus configured path permission overrides. Cell ownership does not
+  authorize the lock. If permission is absent, the path is cancelled before movement
+  or an opening request, even when the door has no activation script. Load-door
+  behavior is unchanged. Original-game check:
   `docs/handoff/observer-checks.md` **210**.
 - A door's bounds can be wider than its opening: `UtlDoor01`'s span 249 units across
   (−69 to 180), more than the doorway the navmesh runs through at 0x0012C97C [observed];

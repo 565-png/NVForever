@@ -2492,9 +2492,22 @@ impl Ai {
         // [hypothesis, #2716] An already-open in-place door is no barrier, even with
         // a cached or fresh script refusal (navmesh.md; observer check 210). [design]
         // Ask first to preserve crossing events and use live state after the script.
-        let open_in_place = game.world.placed.get(FormId(door)).is_some_and(|r| r.teleport.is_none())
-            && game.world.get(FormId(door)).is_ok_and(|s| s.open);
-        if answer != fnv_game::npc_doors::DoorAnswer::Refused || open_in_place {
+        let in_place = game.world.placed.get(FormId(door)).is_some_and(|r| r.teleport.is_none());
+        let open_in_place = in_place && game.world.get(FormId(door)).is_ok_and(|s| s.open);
+        // [design, #2716] SetOpenState can close a door without changing its lock
+        // (`Game::set_ref_open`). A path planned while open grants no permission to
+        // reopen it: recheck the live lock, key and own ownership after activation,
+        // with the same configured overrides as `path_params`. Cell ownership does
+        // not authorize opening a locked door (`path_params`).
+        let p = &self.cfg.params;
+        let locked_out = in_place && !open_in_place && game.world.lock_of(FormId(door)).is_some_and(|lock| {
+            lock.locked
+                && !p.open_locked
+                && !p.owned_doors.contains(&door)
+                && !game.ownership(FormId(door)).is_some_and(|o| !o.from_cell && game.counts_as_owner(actor, &o))
+                && !lock.key.is_some_and(|key| p.keys.contains(&key.0) || game.world.item_count(actor, key).is_ok_and(|n| n > 0))
+        });
+        if open_in_place || (answer != fnv_game::npc_doors::DoorAnswer::Refused && !locked_out) {
             return true;
         }
         a.walker.follower = None;

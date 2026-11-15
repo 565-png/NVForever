@@ -1010,6 +1010,90 @@ fn a_door_locked_and_unlocked_in_the_game_reaches_the_paths() {
 }
 
 #[test]
+fn an_open_planned_door_closed_before_arrival_rechecks_live_permissions() {
+    // [design, #2716] Count the engine's opening requests, including ones a stale
+    // open-door path would make after SetOpenState closes its still-locked door.
+    #[derive(Default)]
+    struct OpenRequests(Vec<u32>);
+    impl fnv_ai::Mover for OpenRequests {
+        fn open(&mut self, _: FormId, door: u32) -> bool {
+            self.0.push(door);
+            true
+        }
+    }
+    // [design] Hold the first movement step so closure happens after planning but
+    // before an open door's approach stop can be consumed at the starting point.
+    struct PlanOnly;
+    impl fnv_ai::Mover for PlanOnly {
+        fn walk(&mut self, _: FormId, _: &mut fnv_nav::Walker, _: &NavGraph, _: f32) -> Option<fnv_nav::WalkEvent> {
+            Some(fnv_nav::WalkEvent::Moved)
+        }
+    }
+
+    for permission in ["none", "key", "lost-key", "owner", "lost-owner", "unlocked", "configured-locks", "configured-key", "configured-owner"] {
+        // [design] An authored key record lets inventory changes use World APIs.
+        let key = FormId(0xF20);
+        let mut bytes = plugin_bytes();
+        bytes.extend(record(b"KEYM", key.0, &[sub(b"EDID", z("ApproachKey"))]));
+        let mut f = fixture_of(bytes);
+        let actor = FormId(R_TRAVEL);
+        let door = FormId(M1);
+        f.refs.refs.get_mut(&door).unwrap().lock = Some(fnv_sim::refs::Lock { level: 255, key: Some(key), leveled: false });
+        let mut s = sim(&f, &[R_TRAVEL]);
+        s.nav.set_in_place_doors(vec![fnv_nav::InPlaceDoor {
+            door: M1, space: A, position: [200.0, 200.0, 0.0],
+            rotation: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], scale: 1.0,
+            bounds: ([-4.0, -200.0, 0.0], [4.0, 200.0, 200.0]),
+        }], |_| Some(DoorLock { level: 255, key: Some(key.0) }));
+        s.ai.apply_door_locks(&mut s.game, &mut s.nav);
+        if permission == "lost-key" {
+            s.game.world.add_item(actor, key, 1).unwrap();
+        }
+        if permission == "lost-owner" {
+            s.game.world.get(door).unwrap().extra.owner = Some(actor);
+        }
+        s.game.set_ref_open(door, true).unwrap();
+        s.game.tick();
+        s.ai.update_moved(&mut s.game, &s.nav, 0.5, &mut PlanOnly);
+        let a = &s.ai.agents[&actor];
+        assert_eq!(a.activity, Activity::Travelling, "{permission}");
+        assert_eq!(a.walker.follower.as_ref().unwrap().door_ahead(a.walker.feet, f32::INFINITY), Some(M1), "{permission}");
+        let lock_serial = s.game.world.lock_serial();
+        s.game.set_ref_open(door, false).unwrap();
+        assert_eq!(s.game.world.lock_serial(), lock_serial, "closure does not invalidate the path");
+        match permission {
+            "key" => { s.game.world.add_item(actor, key, 1).unwrap(); }
+            "lost-key" => { s.game.world.remove_item(actor, key, 1).unwrap(); }
+            "owner" => s.game.world.get(door).unwrap().extra.owner = Some(actor),
+            "lost-owner" => s.game.world.get(door).unwrap().extra.owner = None,
+            "unlocked" => { s.game.world.unlock(door).unwrap(); }
+            "configured-locks" => s.ai.cfg.params.open_locked = true,
+            "configured-key" => s.ai.cfg.params.keys.push(key.0),
+            "configured-owner" => s.ai.cfg.params.owned_doors.push(M1),
+            _ => {}
+        }
+        let mut mover = OpenRequests::default();
+        for _ in 0..80 {
+            s.game.tick();
+            s.ai.update_moved(&mut s.game, &s.nav, 0.5, &mut mover);
+        }
+        let events = s.events(R_TRAVEL);
+        if matches!(permission, "none" | "lost-key" | "lost-owner") {
+            assert!(events.iter().any(|e| matches!(e, AiEvent::DoorRefused { door: d } if *d == door)), "{permission}: {events:?}");
+            assert!(!events.iter().any(|e| matches!(e, AiEvent::Arrived { .. } | AiEvent::Door { .. })), "{permission}: {events:?}");
+            assert!(s.feet(R_TRAVEL)[0] < 196.0, "{permission}: {:?}", s.feet(R_TRAVEL));
+            assert!(!mover.0.contains(&M1), "{permission}: reopening was requested");
+            assert!(!s.game.world.peek(door).unwrap().open);
+            assert!(s.game.world.lock_of(door).unwrap().locked);
+        } else {
+            assert!(events.iter().any(|e| matches!(e, AiEvent::Arrived { .. })), "{permission}: {events:?}");
+            assert!(!events.iter().any(|e| matches!(e, AiEvent::DoorRefused { .. })), "{permission}: {events:?}");
+            assert_eq!(s.ai.agents[&actor].walker.space, B, "{permission}");
+        }
+    }
+}
+
+#[test]
 fn open_locked_in_place_door_allows_arrival_despite_script_refusal() {
     use fnv_game::data::Compiled;
     use fnv_game::npc_doors::DoorAnswer;
