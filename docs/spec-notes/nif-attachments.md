@@ -1,6 +1,6 @@
 # Drawn script model attachments
 
-[documented: repository implementation] At public main
+Implementation context: at pinned public main
 `63db0209cc77ab7ce45eed44a90fecf925e47dd1`, `nif_blocks::call` records
 AttachModel specifications but `nvforever::nif_mirror` does not draw them. Modes
 and runtime lists are documented in [ext-jippp.md](ext-jippp.md); this change
