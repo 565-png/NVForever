@@ -4662,7 +4662,7 @@ impl<'a> Game<'a> {
 
     /// [`Game::say`] for the script functions Say and SayTo: when no line of the topic
     /// passes the fixed-speaker check (the speaker is not the line's fixed speaker, and
-    /// the line has no GetIsID condition of its own), judged from the data alone
+    /// the line has no condition of its own naming who says it), judged from the data alone
     /// ([`Game::no_line_for_speaker`]; a line refused at run time by Say Once or a
     /// condition does not count), the lines are tried without that check, so the speaker the script names says the fixed speaker's line in its
     /// stead ([`crate::dialogue::Says::InStead`]); a topic with a line the speaker passes
