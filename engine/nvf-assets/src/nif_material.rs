@@ -395,7 +395,7 @@ pub fn depth_equal(descriptor: &mut RenderPipelineDescriptor, mesh_key: MeshPipe
 /// the owner's settings (docs/design/streaming-hitches.md §3.1) [observed 2026-10-28].
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 #[data(50, NifSurfaceUniform, binding_array(101))]
-#[bindless(limit(512), index_table(range(50..54), binding(100)))]
+#[bindless(limit(512), index_table(range(50..57), binding(100)))]
 #[bind_group_data(NifSurfaceKey)]
 pub struct NifSurface {
     /// Start angle, stop angle (cosines), start opacity, stop opacity; constant opacity 1
@@ -489,6 +489,16 @@ pub struct NifSurface {
     /// arrays hold filterable textures, and the offsets are Rgba16Float, which is.
     #[texture(53)]
     pub facegen_offset: Option<Handle<Image>>,
+    /// [design] Aid-only world-space landscape cache; zero band leaves shading alone.
+    pub mesh_terrain: Vec4,
+    /// [design] Southwest grid coordinate of the bounded 3 by 3 cache.
+    pub mesh_terrain_origin: Vec4,
+    #[texture(54)]
+    #[sampler(55)]
+    pub mesh_terrain_colour: Option<Handle<Image>>,
+    /// [design] Lossless f32 bits in RGBA8, read with textureLoad (bindless filterable table).
+    #[texture(56)]
+    pub mesh_terrain_height: Option<Handle<Image>>,
 }
 
 /// The values of a [`NifSurface`] the shaders read (`nif_surface_bindings.wesl`, shared
@@ -508,6 +518,8 @@ pub struct NifSurfaceUniform {
     /// [`NifSurface::pipboy_a`], [`NifSurface::pipboy_b`].
     pub pipboy_a: Vec4,
     pub pipboy_b: Vec4,
+    pub mesh_terrain: Vec4,
+    pub mesh_terrain_origin: Vec4,
 }
 
 /// Screen UV of shift per unit of refraction strength and of view-space tilt
@@ -519,7 +531,7 @@ pub const REFRACTION_SCREEN: f32 = 0.1;
 
 impl From<&NifSurface> for NifSurfaceUniform {
     fn from(s: &NifSurface) -> Self {
-        NifSurfaceUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b }
+        NifSurfaceUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b, mesh_terrain: s.mesh_terrain, mesh_terrain_origin: s.mesh_terrain_origin }
     }
 }
 
@@ -588,6 +600,10 @@ impl Default for NifSurface {
             soft: Vec4::ZERO,
             holes_texture: None,
             facegen_offset: None,
+            mesh_terrain: Vec4::ZERO,
+            mesh_terrain_origin: Vec4::ZERO,
+            mesh_terrain_colour: None,
+            mesh_terrain_height: None,
         }
     }
 }
@@ -605,6 +621,7 @@ pub struct NifSurfaceKey {
     pub first_person: bool,
     pub add_linear: bool,
     pub pipboy_screen: bool,
+    pub mesh_terrain: bool,
 }
 
 impl From<&NifSurface> for NifSurfaceKey {
@@ -619,6 +636,7 @@ impl From<&NifSurface> for NifSurfaceKey {
             first_person: surface.first_person,
             add_linear: surface.add_linear,
             pipboy_screen: surface.pipboy_screen,
+            mesh_terrain: surface.mesh_terrain.x > 0.0 && surface.mesh_terrain_colour.is_some() && surface.mesh_terrain_height.is_some(),
         }
     }
 }
@@ -638,6 +656,7 @@ impl MaterialExtension for NifSurface {
         _: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        mesh_terrain_pipeline(descriptor, key.bind_group_data.mesh_terrain);
         nif_prepass(descriptor, key.mesh_key);
         if key.bind_group_data.first_person {
             first_person_depth(descriptor, key.mesh_key);
@@ -688,6 +707,15 @@ impl MaterialExtension for NifSurface {
             }
         }
         Ok(())
+    }
+}
+
+/// [design] Only the forward fragment gets the cache path; no coverage/depth descriptor changes.
+fn mesh_terrain_pipeline(descriptor: &mut RenderPipelineDescriptor, enabled: bool) {
+    if enabled && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.push("MESH_TERRAIN_BLEND".into());
+        }
     }
 }
 
@@ -1144,6 +1172,32 @@ mod tests {
     const EQUAL_DEPTH: (Option<bool>, Option<CompareFunction>) = (Some(false), Some(CompareFunction::Equal));
 
     #[test]
+    fn mesh_terrain_variants_preserve_depth_targets_and_coverage_in_all_passes() {
+        for samples in [1, 4, 8] {
+            for masked in [false, true] {
+                for prepass in [false, true] {
+                    let mut off = if prepass { prepass_pipeline(samples) } else { main_pipeline(samples, None) };
+                    if masked { off.vertex.shader_defs.push("MAY_DISCARD".into()); }
+                    let mut on = off.clone();
+                    mesh_terrain_pipeline(&mut off, false);
+                    mesh_terrain_pipeline(&mut on, true);
+                    for d in [&mut off, &mut on] {
+                        nif_prepass(d, MeshPipelineKey::DEPTH_PREPASS);
+                        depth_equal(d, MeshPipelineKey::DEPTH_PREPASS);
+                    }
+                    assert_eq!(depth_state(&off), depth_state(&on));
+                    assert_eq!(off.multisample, on.multisample);
+                    assert_eq!(off.primitive, on.primitive);
+                    assert_eq!(off.vertex.shader_defs, on.vertex.shader_defs);
+                    assert_eq!(off.fragment.as_ref().map(|f| &f.targets), on.fragment.as_ref().map(|f| &f.targets));
+                    let enabled_def = on.fragment.as_ref().is_some_and(|f| f.shader_defs.contains(&"MESH_TERRAIN_BLEND".into()));
+                    assert_eq!(enabled_def, !prepass);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn depth_equal_only_in_the_main_pass_of_a_view_with_a_prepass() {
         // An opaque shape in a view with a depth prepass.
         let mut d = main_pipeline(4, None);
@@ -1371,7 +1425,7 @@ mod tests {
         // Only the switches in `NifSurfaceKey` select the pipeline; the falloff and the
         // alpha cut are uniforms.
         let mut surface = NifSurface::default();
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: false, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: false, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, mesh_terrain: false });
         assert_eq!(surface.alpha_cut, 0.0);
         assert_eq!(surface.emissive_rule, Vec4::ZERO);
         assert_eq!(NifSurfaceUniform::from(&surface).emissive_rule, Vec4::ZERO);
@@ -1381,19 +1435,19 @@ mod tests {
         assert_eq!(NifSurfaceUniform::from(&surface).emissive_rule, surface.emissive_rule);
         assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey::from(&NifSurface::default()));
         surface.decal = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, mesh_terrain: false });
         surface.hard_edges = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, mesh_terrain: false });
         surface.shade_light = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, mesh_terrain: false });
         // The refraction strength is a uniform; whether the shape refracts is the pipeline's.
         surface.refraction = 0.1;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, mesh_terrain: false });
         surface.refract = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, mesh_terrain: false });
         // A FaceGen offset selects the tinting shader.
         surface.facegen_offset = Some(Handle::default());
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: true, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: true, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, mesh_terrain: false });
     }
 
     /// First-person depth (module notes): the squeeze keeps the near plane at 1, puts the

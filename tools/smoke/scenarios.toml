@@ -39,6 +39,7 @@ masters = [
 
 # Test aids that hold no times (safe to keep as they are when a member is offset).
 untimed = [
+  "NVF_PLAY_TEST_MESH_BLEND",
   "NVF_PLAY_TEST_SCRIPT_MENUS", "NVF_PLAY_TEST_GIVE", "NVF_PLAY_TEST_EQUIP", "NVF_PLAY_TEST_NEAR",
   "NVF_PLAY_TEST_MENU", "NVF_PLAY_TEST_BARTER", "NVF_PLAY_TEST_BARTER_DELAY", "NVF_PLAY_TEST_NO_SPREAD",
   "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_PROJECTILE_LAUNCH", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
@@ -29443,4 +29444,21 @@ forbid = [
   { re = 'combat: .* hits the player', label = "the NCR shoot the disguised player" },
   { re = 'alert: .* → Combat: detects the player', label = "an NCR soldier starts fighting the disguised player" },
   { re = 'combat group: .* about the player', label = "an alarm about the player goes round" },
+]
+
+
+[[scenario]]
+name = "mesh-terrain-blend-goodsprings"
+source = "[design] #2661 round 1: aid-only world-space landscape colour cache (engine/nvforever/src/mesh_terrain_blend.rs, terrain_surface.rs)"
+areas = ["rendering", "terrain"]
+paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvforever/src/terrain.*", "engine/nvforever/src/world.rs", "engine/nvf-assets/src/nif_material.*", "engine/nvf-assets/src/nif_surface_bindings.wesl"]
+env = { NVF_PLAY_TEST_MESH_BLEND = "24:surface", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "14:mesh_terrain_blend_goodsprings.png" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages"]
+run_seconds = 20
+manual = "[design] Inspect road/rock feet for a continuous colour transition to terrain; compare the identical view with the aid absent and with 24:weight and 24:selection. Normal is a round-2 stub. No golden updates."
+expect = [
+  { re = 'mesh terrain blend: start band=24 variant=surface resolution=512 noise=0', label = "the effective aid configuration" },
+  { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+', range = [1, 1000000], label = "nonzero eligible shapes and a published resident cache" },
+  { re = 'test aid: screenshot .*mesh_terrain_blend_goodsprings\.png', label = "the contact frame is saved" },
+  { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
 ]

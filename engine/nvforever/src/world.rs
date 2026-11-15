@@ -1357,6 +1357,19 @@ pub fn spawn_model(
         info!("clutter pose: 0x{r:08X} {path} drawn in its stored pose ({} bodies)", p.bodies);
     }
     stats.refs_posed += usize::from(posed.is_some());
+    // [design] Aid-only selection from the actual spawn path and prepared model.
+    // Record presence follows fnv-game/src/data.rs (DEST); no asset-name selection.
+    let blend_candidate = crate::mesh_terrain_blend::config().is_some() && {
+        let exterior = world.index.refs.get(&r).and_then(|r| world.index.cells.get(&r.cell))
+            .is_some_and(|c| !c.is_interior() && c.world == Some(world.world));
+        let destructible = fnv_world::fields::winner(world.lo, base.form_id)
+            .and_then(|(pi, record)| fnv_world::fields::Fields::new(record, pi, world.schema).ok())
+            .is_some_and(|f| f.raw(b"DEST").is_some());
+        let rigid = model.rig.is_none() && model.skinned == 0 && !model.particles
+            && !model.jointed && !model.loose && posed.is_none()
+            && model.nodes.iter().all(|n| n.damage_stages.is_none());
+        crate::mesh_terrain_blend::eligible_reference(&base.sig, exterior, rigid, destructible, p.imposter)
+    };
     for s in &model.shapes {
         let shape = nvf_play::clutter_pose::shape_transform(posed.as_ref(), s);
         let m = Mat4::from(rt * shape);
@@ -1369,6 +1382,9 @@ pub fn spawn_model(
         // A shape below a damage-stage node: under a holder of its own, shown at its stages
         // only (destroyed.rs); the holder's RefVisual follows the reference's presence.
         let stages = s.node.and_then(|n| nvf_assets::model::damage_stages_of(&model.nodes, n));
+        // [design] Morphing meshes are registered independently of rigs (nvf-assets/src/morph.rs).
+        let blend_source = (blend_candidate && !s.external_emittance
+            && models.cache.morphs.ids().all(|id| id != s.mesh.id())).then(|| material.clone());
         let e = match stages {
             Some(st) => {
                 let holder = commands.spawn((Transform::IDENTITY, Visibility::Inherited, RefVisual(r), ChildOf(parent))).id();
@@ -1376,6 +1392,9 @@ pub fn spawn_model(
             }
             None => commands.spawn((Mesh3d(s.mesh.clone()), MeshMaterial3d(material), Transform::from_matrix(m), RefVisual(r), ChildOf(parent))).id(),
         };
+        if let Some(original) = blend_source {
+            commands.entity(e).insert(crate::mesh_terrain_blend::BlendShape::new(original));
+        }
         // A mine's light parts: shown and hidden by its state (`nvf_play::mines`).
         if let Some(l) = nvf_play::mines::MineLight::of(s.name.as_deref(), &s.ancestors) {
             commands.entity(e).insert(l);

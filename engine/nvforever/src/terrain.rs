@@ -44,7 +44,7 @@
 
 use crate::world::WorldData;
 use fnv_esm::{LoadOrder, Schema as EsmSchema};
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{load_internal_asset, uuid_handle, RenderAssetUsages};
 use bevy::ecs::system::SystemParam;
 use bevy::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline};
@@ -114,6 +114,7 @@ pub fn folded_layers(tile: f32) -> usize {
 pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainLayers>;
 
 const SHADER: &str = "embedded://nvforever/terrain.wesl";
+const SURFACE_BAKE_SHADER: Handle<Shader> = uuid_handle!("6da97f8c-732c-4697-b345-9a8ac21c2661");
 
 /// The folded layers' textures, in the layers' order, and how many there are. The values
 /// and texture indices sit in bindless tables beside StandardMaterial's, as NifSurface's
@@ -121,7 +122,10 @@ const SHADER: &str = "embedded://nvforever/terrain.wesl";
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 #[data(50, TerrainLayersUniform, binding_array(101))]
 #[bindless(limit(512), index_table(range(50..64), binding(100)))]
+#[bind_group_data(TerrainLayersKey)]
 pub struct TerrainLayers {
+    /// [design] Dedicated unlit surface capture, terrain_surface.rs.
+    pub surface_bake: bool,
     /// Layers held (at most [`FOLDED_LAYERS`]).
     pub count: u32,
     /// World units per texture repeat when the shader works the texture coordinate out
@@ -186,6 +190,11 @@ impl MaterialExtension for TerrainLayers {
         _: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        if key.bind_group_data.0 {
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("SURFACE_BAKE".into());
+            }
+        }
         // Land fades in and out with its cell (fade.rs), and is opaque.
         nvf_assets::fade_prepass(descriptor, key.mesh_key);
         nvf_assets::depth_equal(descriptor, key.mesh_key);
@@ -193,11 +202,21 @@ impl MaterialExtension for TerrainLayers {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TerrainLayersKey(bool);
+
+impl From<&TerrainLayers> for TerrainLayersKey {
+    fn from(l: &TerrainLayers) -> Self { Self(l.surface_bake) }
+}
+
 pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "terrain.wesl");
+        if crate::mesh_terrain_blend::config().is_some() {
+            load_internal_asset!(app, SURFACE_BAKE_SHADER, "terrain_surface.wesl", |s, _| Shader::from_wesl(s, "embedded://nvforever/terrain_surface.wesl"));
+        }
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default());
     }
 }
@@ -305,7 +324,7 @@ impl TerrainCtx<'_, '_, '_> {
         let mut next = || textures.next().map_or((None, None), |(d, n)| (Some(d), n));
         let ((diffuse0, normal0), (diffuse1, normal1), (diffuse2, normal2), (diffuse3, normal3), (diffuse4, normal4), (diffuse5, normal5)) = (next(), next(), next(), next(), next(), next());
         let burn = self.tm.burn.as_deref().map(|b| b.0.clone());
-        let extension = TerrainLayers { count: layers.len() as u32, tile, diffuse0, normal0, diffuse1, normal1, diffuse2, normal2, diffuse3, normal3, diffuse4, normal4, diffuse5, normal5, burn };
+        let extension = TerrainLayers { count: layers.len() as u32, tile, diffuse0, normal0, diffuse1, normal1, diffuse2, normal2, diffuse3, normal3, diffuse4, normal4, diffuse5, normal5, burn, ..default() };
         let base = self.surface(tex.as_deref());
         let h = self.tm.folded.add(TerrainMaterial { base, extension });
         self.tm.cache.folded.insert(key, h.clone());
@@ -567,6 +586,7 @@ fn quadrant_layers(layers: &[Layer], q: u8) -> Vec<(usize, &Layer)> {
 /// read ahead, world.rs): the base mesh of each quadrant, `(quadrant, None)`, and the
 /// blended mesh of each drawn layer, `(quadrant, Some(index in layers))`.
 pub struct TerrainPrep {
+    grid: (i32, i32),
     /// The cell's landscape as the data has it (grass and footsteps read its layers).
     pub land: Land,
     /// The layers drawn: the land's, stitched to the neighbours' ([`stitch_layers`]).
@@ -610,7 +630,7 @@ pub fn prepare_terrain(lo: &LoadOrder, schema: &EsmSchema, land_id: u32, grid: (
             }
         }
     }
-    Some(TerrainPrep { land, layers, meshes, folded, tile })
+    Some(TerrainPrep { grid, land, layers, meshes, folded, tile })
 }
 
 /// A mesh of a cell's land (its base or a texture layer over it).
@@ -620,7 +640,10 @@ pub struct LandMesh;
 /// Spawn a cell's terrain from its prepared landscape ([`prepare_terrain`]); returns the
 /// landscape (for the grass).
 pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx) -> Land {
-    let TerrainPrep { land, layers: drawn, mut meshes, mut folded, tile } = prep;
+    let TerrainPrep { grid, land, layers: drawn, mut meshes, mut folded, tile } = prep;
+    let mut surface = crate::mesh_terrain_blend::config().map(|_| crate::terrain_surface::SurfaceCell {
+        world: world.world, grid, heights: land.heights.clone().unwrap_or_default(), quadrants: Vec::new(),
+    });
     let folds = tm.tm.folds();
     let most = folded_layers(tile);
     // The repeat for the shader to work the texture coordinate out with, 0 when the mesh
@@ -644,6 +667,13 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
             None => None,
         };
         if let Some((mesh, mat, n)) = folded_mat {
+            // [design] Capture only complete folded quadrants; overflow/fallback waits for round 2.
+            if n == layers.len() {
+                if let Some(surface) = &mut surface {
+                    let material = tm.tm.folded.get(&mat).unwrap().clone();
+                    surface.push(&mesh, material);
+                }
+            }
             let mesh = tm.assets.meshes.add(mesh);
             commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
             tm.tm.cache.folded_quadrants += 1;
@@ -652,6 +682,12 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
         } else {
             let mat = tm.base_material(tex);
             if let Some(mesh) = meshes.remove(&(q, None)) {
+                if layers.is_empty() {
+                    if let Some(surface) = &mut surface {
+                        let base = tm.assets.materials.get(&mat).unwrap().base.clone();
+                        surface.push(&mesh, TerrainMaterial { base, extension: default() });
+                    }
+                }
                 let mesh = tm.assets.meshes.add(mesh);
                 commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
             }
@@ -665,6 +701,9 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
                 tm.tm.cache.layers += 1;
             }
         }
+    }
+    if let Some(surface) = surface.filter(|s| s.quadrants.len() == 4) {
+        commands.entity(cell).insert(surface);
     }
     land
 }

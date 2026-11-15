@@ -84,6 +84,7 @@ import bevy_pbr::{
 };
 
 import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel};
+@if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::mesh_terrain_blend;
 
 // Main-pass geometry uses the render viewport, which can be smaller than the
 // display attachment when FSR is enabled. Transmission remains a full-size texture.
@@ -525,6 +526,8 @@ fn nif_fragment(
     // equality with it: nothing is left to test here.
     @if(PREPASS_COVERAGE) pbr_input.material.base_color.a = 1.0;
     @if(!SOFT_EDGES && !PREPASS_COVERAGE) pbr_input.material.base_color = alpha_discard(pbr_input.material.flags, pbr_input.material.alpha_cutoff, pbr_input.material.base_color);
+    // [design] Forward colour only, after the existing coverage tests and before lighting.
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) pbr_input.material.base_color = vec4(mesh_terrain_blend(in.instance_index, in.world_position.xyz, pbr_input.material.base_color.rgb), pbr_input.material.base_color.a);
     // base_color already holds texture × vertex colour × material colour.
     // Bevy's pbr_input_from_standard_material fills the emissive light in only for lit
     // materials, so an unlit shape's stays black: it is read from the material here
