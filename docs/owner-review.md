@@ -127,6 +127,14 @@ the spec it links to.
     its target. The original's rule is unknown (the WEAP Short/Long Burst flags are not
     understood). Longer or shorter bursts, longer pauses, or Long Burst weapons firing
     longer? ([combat-ai](design/combat-ai.md), `fnv_combat::burst`)
+84. **Cowards flee every fight from its start (#2520).** An NPC or creature whose
+    Confidence is Cowardly (and was not raised at a flee spot) now runs from every fight
+    at once, unhurt, whatever the odds; before, it fled only once hurt and its threat
+    ratios said so, and it still fought whoever attacked it. The GECK wiki says a coward
+    "will always flee from combat"; from the very start is our reading, not seen in the
+    original (observer check 180 asks about the Silver Rush customer this was found on).
+    It changes every Cowardly actor in every fight. Should cowards still fight back when
+    cornered, or wait until hurt? ([combat-ai §12](design/combat-ai.md))
 
 ## Tier 2: movement and controls feel
 
@@ -309,6 +317,13 @@ the spec it links to.
   prefers whole-device NVML, then amdgpu, then game-only DRM client time. Choosing
   DRM first would make supporting Linux drivers show the game's contribution consistently.
   [Settings usage note](design/settings-page.md#performance-usage-availability-2249).
+- **Dialogue packages walk you into their trigger area (#2453).**
+  [hypothesis, #2453] With "Do Not Control Target Movement" off the original walks the
+  player into the package's trigger location; ours does it once you are close enough
+  and in the NPC's sight: you walk (your movement keys set aside) to a point 48 units
+  inside the area, then the NPC greets you. Ramos at Hidden Valley needs it (his escort
+  runs only with you inside his box). Check in game that the walk feels right as you
+  come down into the bunker's first room, and at Davison's door in REPCONN's basement. ([packages §3](spec-notes/packages.md))
 - **Explosion-hit handlers on corpses (#2346).** [design, #2346] A blast now reaches a corpse
   whose ragdoll has taken over, so ShowOff's OnExplosionHit handlers also run for corpses
   it catches (no damage is taken). Whether the original calls them for a corpse is not

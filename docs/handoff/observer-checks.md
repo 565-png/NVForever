@@ -2541,6 +2541,21 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the World Map draw a second marker at the Strip's gate while the player is on the
      Strip?
 
+## Added 2026-11-14 (allies of an actor given StartCombat, #2520)
+
+180. **Do an actor's allies join a fight a script gave it against a player who did
+     nothing?** (P1; #2520, combat-ai.md §10.) Ours: no; Assistance answers an ally being
+     attacked (hit by the player, or fought by someone it did not start on), so a
+     StartCombat on a player it would leave alone draws neither its allies nor an alarm
+     [hypothesis]. Also ours: a Cowardly actor in a fight flees from its start, hurt or
+     not [hypothesis from GECK wiki Confidence, "will always flee from combat"]. To check:
+     in a game where VMS29a has not started, walk into the Silver Rush (FreesideSilverRush),
+     stand still by the door and watch the intro to its end (INFO 0012423E, the customer's
+     `startcombat player`): does Jean-Baptiste (0010D8E5) or a Van Graff thug draw on the
+     player, what stage is VMS29a afterwards (`GetStage VMS29a`), and does the customer
+     (00124121) run out without swinging? Then again, hitting the customer once as he
+     runs: do the Van Graffs turn on the player then?
+
 ## Added 2026-11-14 (Mr. House's screens after his death, #2431)
 
 181. **Is Mr. House's penthouse screen ever hostile?** (P3; #2431, actor-flags.md §11.)
@@ -2585,6 +2600,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      whether the dialogue menu opens, which INFO is said (Ramos's 000E3664 or none),
      and when the controls come back. Also `HVIntercomREF.IsTalkingActivatorActor
      RamosREF` just before McNamara's line.
+
+## Added 2026-11-14 (Dialogue packages that control the target, #2453)
+
+186. **Does a Dialogue package walk the player into its trigger location?** (P2; #2453,
+     packages.md §3.) The GECK wiki says the target "will walk towards that location when
+     the dialogue package starts" when Do Not Control Target Movement is off [documented];
+     ours walks the player, once within the activate distance and in sight, to 48 units
+     inside the trigger box at walking pace and greets there [hypothesis]. On a save before the Hidden Valley bunker, sneak past the
+     intercom into HiddenValley01 and stop on the stairs about 300 units from Ramos's
+     RamosWaitingMarker: record the player's position every frame, whether the controls
+     are taken, the pace, and when the dialogue menu opens, relative to the box
+     HVRamosTargetDialogTriggerREF (y from -6132 to -5408).
 
 ## Added 2026-11-12 (the player's marker on the compass)
 
@@ -2660,6 +2687,49 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
+
+## Added 2026-11-15 (REPCONN test-site load-door lock, #2538)
+
+198. **Is a load door without lock data locked as its other side is?** (P1; #2538,
+     cells-refs.md section 6.) **Answered [observed: capture run15b_a, 2026-11-15;
+     xNVSE 6.4.9, JIP LN 57.30]: yes for reads and player activation.** Fresh
+     `coc RocketLabBasement` (0x0007EA61, REPCONN Basement) from a Goodsprings save
+     that never visited it: 0x000CE1AD, without XLOC, and its XTEL partner
+     0x0008F97C, with XLOC 255 / no key / flags 0, both read `GetLocked` 1 and
+     `GetLockLevel` 255. The tunnel-side door is at (9812, -2504, 7180); from
+     (9902, -2414, 7180), 130 units in front, `000CE1AD.Activate player` did not
+     move the player or teleport. Activating 0x0008F97C from inside the room was
+     refused too, with all four reads unchanged after each attempt. The hatch pair
+     0x000CD777 / 0x001694E6 read 0 / 0 on both sides. [observed: FalloutNV.esm,
+     fnvtool esm decode / world refs, 2026-11-15] The two load doors share base
+     UtlDoorBg01 0x0003D205 (no script); 0x0008F97C is at (9760, -2572, 7176),
+     85 units from 0x000CE1AD. The hatches use REPCONHatch2 0x001694DD (no name
+     or script), at (7756, -3644, 7316) / (8222, -3377, 6615); neither has XLOC.
+     No FalloutNV.esm script names any of these four references. [hypothesis,
+     #2538] Key/pick/script unlocking through either side changes the source lock;
+     creating an own lock leaves the partner independent. Those mutations, key
+     inheritance, broken-lock sharing and NPC use were not captured.
+
+## Answered 2026-11-15 (weather region lookup timing, #2531)
+
+199. **When does the weather follow a weather region: by its outline or the cell's
+     region list, and when is it looked up?** (P2; #2531, world.md §6.) **Answered
+     [observed: captures run15b_w and run15b_w2, 2026-11-15; first person, GameHour 12,
+     xNVSE 6.4.9, JIP LN 57.30 GetCurrentWeather/GetCurrentWeatherPercent]:** script
+     MoveTo to (110686, 19125), cell 27,4: NVWastelandClear; (109775, 18882), cell 26,4,
+     260 units outside NVLegateRegion's outline: clear for 40 s despite that cell's
+     XCLR listing the region [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-15].
+     MoveTo (109330, 18852), inside: NVlegateCampWeather;
+     back outside: clear. All complete (percent 1.0) at the first sample 4 s after
+     moving. Walking east at y 18849 kept camp weather past outline x 109513 and
+     fall-off distance x 110537: last camp sample x 110567.9, first clear x 110596.0
+     at percent 0.000, across cell border x 110592. Fade rose 0.033/s, complete in
+     about 30 s. Walking west entered cell 26,4 outside the outline and kept clear
+     to (109067, 18849), 450 units inside, for another 49 s standing. Thus membership
+     uses the outline, sampled on exterior cell entry; walking inside a cell holds
+     the result, while script moves resample and snap. [hypothesis: extend that
+     placement refresh to load doors, other teleports, fast travel, loaded games,
+     worldspace changes and coming outdoors; only script MoveTo was captured.]
 
 ## Answered 2026-11-15 (combat distraction, #2573)
 
