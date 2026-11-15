@@ -1774,6 +1774,41 @@ expect = [
 ]
 
 [[scenario]]
+name = "ai-no-door-out-of-sight"
+kind = "tool"
+source = "docs/spec-notes/packages.md §11 (#2405): out of sight, an actor whose package's place no door at all leads to (Gomez in the NCR safehouse's side room, a two-triangle navmesh island, sent to GomezDoor by SafehouseNCRRangerLeave) is put there instead of reporting it unreachable every hour; a creature that cannot open doors (Rey, following Old Lady Gibson out of her shack) stays without a path failure"
+areas = ["ai"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-nav/src/path.rs", "crates/fnvtool/src/ai_run.rs"]
+commands = [
+  ["ai", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--hours", "3", "--start-hour", "12", "--actor", "GomezREF", "--quest-var", "vSafehouse:10=1", "--out-of-sight"],
+  ["ai", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--hours", "3", "--start-hour", "12", "--actor", "GibsonDogReyRef", "--actor", "OldLadyGibsonRef"],
+]
+expect = [
+  { json = "actors.?actor=GomezREF.event_counts.put_there", schema = "fnv.ai.run/1", equals = 1, label = "Gomez is put at GomezDoor once, out of sight" },
+  { json = "actors.?actor=GomezREF.event_counts.arrived", schema = "fnv.ai.run/1", equals = 1, label = "and has arrived there" },
+  { json = "actors.?actor=GomezREF.event_counts.unreachable", schema = "fnv.ai.run/1", count = 0, label = "no hourly 'cannot reach' for Gomez" },
+  { json = "actors.?actor=GibsonDogReyRef.event_counts.doors_closed_to_it", schema = "fnv.ai.run/1", range = [1, 10], label = "Rey stays when Old Lady Gibson goes out of her door" },
+  { json = "actors.?actor=GibsonDogReyRef.event_counts.unreachable", schema = "fnv.ai.run/1", count = 0, label = "no path failure for Rey" },
+  { json = "actors.?actor=OldLadyGibsonRef.event_counts.door", schema = "fnv.ai.run/1", range = [1, 10], label = "she does go out (the case is met)" },
+]
+
+[[scenario]]
+name = "ai-no-door-out-of-sight-game"
+source = "docs/spec-notes/packages.md §11 (#2405): in the game, with the player outside the NCR safehouse's cave door (0x001593B6, WastelandNV), Gomez in the interior behind it is out of the loaded area; his Leave package (vSafehouse variable 10, GomezGoToSleep, = 1) sends him from the side room's navmesh island to GomezDoor, which no door joins: he is put there instead of logging 'cannot reach' every game hour (players' reports, build 0.7.0)"
+areas = ["ai"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-nav/src/path.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_CONSOLE = "2:set vSafehouse.GomezGoToSleep to 1;2.5:close" }
+args = ["--play", "--world", "WastelandNV", "--pos=-3600,26900,5460", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "all,GomezREF"]
+run_seconds = 150
+expect = [
+  { re = 'GomezREF: put at the place of SafehouseNCRRangerLeave out of sight, no door joining the two: \(2811, 951, 6438\) in SafehouseNCRINT', label = "Gomez is put at GomezDoor out of sight" },
+  "ai summary",
+]
+forbid = [
+  { re = 'GomezREF: cannot reach the place of SafehouseNCRRangerLeave', label = "Gomez's Leave is not reported unreachable" },
+]
+
+[[scenario]]
 name = "ai-observed"
 kind = "tool"
 source = "CLAUDE.md: after AI package changes, with the owner's observer captures: fnvtool ai observed and ai run --samples (actor-behaviour.md §4, §5.3)"
