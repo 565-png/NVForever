@@ -55,7 +55,7 @@ bounds, unsigned neighbors, role isolation, same-role worker deduplication,
 release, original alpha metadata, and actual NIF material slot consumption.
 No installed texture bytes or asset-specific substitutions enter this source.
 
-[observed: separately retained authored CPU receipts, 2026-11-14] Historical
+Process qualification (separately retained authored CPU receipts, 2026-11-14): Historical
 CPU qualification ran 18 DDS controls separately and, in a qualified
 c28-based dependency graph, 173 asset controls (165 existing and 8 BC5). The
 13 shared DDS baseline controls give 11 passes and 2 format-acceptance assertion
