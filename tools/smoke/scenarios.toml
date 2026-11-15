@@ -29440,6 +29440,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "cachino-find-greet"
+source = "issue #2473: Cachino's vGomorrahCachinoDialoguePackage (PACK 00119485) is a Find package for PlayerRef near his editor location with radius 0, valid while GetTalkedToPC is 0 and the player is in Gomorrah00-03; the lines asking about him only enable him (0011118D.enable). A radius 0 Find for one reference has no search area, and reaching the player starts a force greet (docs/spec-notes/packages.md section 10)"
+note = "Gomorrah01 (main level): the player stands about 900 units west of Cachino's spot (7159, 1281), by the gamblers; the console enables him at 1 s, as the lines asking about him do. Before the fix he found nothing within 512 units of his spot and stood still"
+areas = ["ai", "dialogue-packages"]
+paths = ["crates/fnv-ai/src/errand.rs", "crates/fnv-ai/src/goal.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "1:0011118D.enable;1.2:close" }
+args = ["--cell", "Gomorrah01", "--play", "--pos=6300,1450,6410", "--heading", "90", "--npc-packages", "VMS21CachinoREF", "--no-voice", "--no-messages"]
+run_seconds = 45
+order = [[
+  { re = 'VMS21CachinoREF: finds .*goes to it', label = "Cachino sets off for the player" },
+  { re = 'dialogue: conversation with VMS21CachinoREF started \(topic GREETING\)', label = "and starts his conversation on reaching them" },
+]]
+
+[[scenario]]
 name = "enable-disabled-actor-talks"
 source = "#2616: an actor disabled when its cell loads and enabled by a script while a menu holds the game (the hatch terminal's result script) is drawn at once, body, head and face rig, and fades in; the conversation the same script starts shows it speaking, its mouth moving with the line (docs/spec-notes/enable-disabled-actor.md)"
 note = "Hoover Dam intake tower (HooverDamIntIntakeTower01 0x00133FB1): VHDIntakeTowerCenturionREF 0x0013CA6B (NPC_ VHDIntakeTowerCenturion, on the leveled template EncVHDCLCenturion) is placed persistent and initially disabled [observed: fnvtool world refs]. The player is put next to the hatch terminal VHDIntakeTowerHatchUnlockTerminalREF 0x0013CA6D at 5 s, opens it at 8 s and takes Unlock Maintenance Hatch at 10 s: its result script enables the Centurion and his Dialogue package starts the conversation in the same frame, about 70 units away. On main before the fix he was never drawn: the residents read who is enabled only after the AI's update, which a held game (terminal, conversation) skips"

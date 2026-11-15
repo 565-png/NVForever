@@ -2492,6 +2492,23 @@ already talking takes over at once, same topic or another; nothing is queued or 
      that cuts him down says the original offers the topic some other way (then note
      which and whether `GetQuestVariable VMS46 AndersFreed` goes to 1).
 
+## Added 2026-11-15 (Cachino finds the player in Gomorrah, #2473)
+
+176. **How does Cachino's Find package bring him to the player?** (P2; #2473,
+     packages.md §10.) From a game where VMS21 has not started, stand at the Brimstone
+     bar on Gomorrah's main level (Gomorrah01), more than 1,000 units from Cachino's
+     spot (7159, 1281), and ask a Gomorrah courtesan or guest where Cachino is
+     (topic `vDialogueGomorrahGenericTopic005`; his ref 0x0011118D is enabled by that line's end script). Note the time
+     from the end of that conversation to Cachino setting off, to his first line (his
+     Say Once greeting INFO 0x001133A0, about the player's questions), and how far from the
+     player he stands when he speaks (`GetDistance player` on him). Then once more with
+     the player on the floor below (Gomorrah00): does he come through the doors to
+     another cell? Ours since #2473: he sets off at once, walks to the player wherever
+     they are in the four Gomorrah cells, and the conversation opens when he is within
+     about 3x the arrival distance and can see the player [hypothesis]. Not seen
+     coming, or coming only within some distance of his spot, says the search area is
+     wrong; walking up and standing without a word says the talk is not the Find's.
+
 ## Added 2026-11-14 (talking activators with no talking actor set, #2454)
 
 185. **Who speaks through a talking activator no script has given an actor?** (P2; #2454,
