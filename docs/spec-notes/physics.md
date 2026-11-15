@@ -673,6 +673,18 @@ playtest list 5 item 59]. The tumbleweeds roll with the weather's wind: [wind](w
   moves, since `move_character` updates queries first) never moved [observed: test
   `bodies_added_then_queried_still_simulate`, rapier 0.36.0]. `update_queries` flags such
   bodies changed again so the next step registers them. Re-check when upgrading rapier.
+  This rearm must also keep a kinematic body's queued next pose. `set_position`
+  replaces both its current and next pose; `character::apply_move` has already queued
+  the next translation before the fixed step [documented: rapier3d 0.36.0,
+  `dynamics/rigid_body.rs`, `set_position` and `set_next_kinematic_position`;
+  `crates/fnv-phys/src/character.rs`, `apply_move`]. Copy the next pose before rearming
+  and restore it afterward for kinematic bodies [hypothesis: engineering policy]. This leaves registration
+  deferred until the real step. The library's `world::query_motion_tests` compare the
+  queried world with a direct step of the same snapshot: position- and velocity-driven
+  motion, an unrelated body's queued force and torque, and a real `move_character`
+  followed by an unrelated insertion and query. The query must not advance time or
+  erase the movement that the next step consumes. These are authored implementation
+  controls, not measurements of the original game.
   The same query loses the wake-up of a sleeping kinematic body that is teleported
   (`place_character` on a character that was not moved for a few seconds): the body
   stayed where it was put while the character walked on, so rays and other characters

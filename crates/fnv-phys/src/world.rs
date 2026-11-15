@@ -1057,7 +1057,13 @@ impl PhysWorld {
             for &h in &self.new_bodies {
                 if let Some(b) = self.w.bodies.get_mut(h) {
                     let p = *b.position();
+                    // The rearm must not erase a move queued by apply_move: rapier's
+                    // set_position also replaces next_position, before the real step.
+                    let next = b.is_kinematic().then(|| *b.next_position());
                     b.set_position(p, false);
+                    if let Some(next) = next {
+                        b.set_next_kinematic_position(next);
+                    }
                 }
             }
             // A body added asleep wakes when its first contacts are found: rapier wakes
@@ -1579,3 +1585,7 @@ fn probe(shape: &Shape, at: &Iso, k: f32) -> Result<(Pose, SharedShape), Convert
         _ => Err(ConvertError::NotSingleShape),
     }
 }
+
+#[cfg(test)]
+#[path = "world_query_motion_tests.rs"]
+mod query_motion_tests;
