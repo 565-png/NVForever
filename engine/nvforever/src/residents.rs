@@ -865,6 +865,9 @@ struct Resident {
     /// Handed to the AI (once the game state is there).
     joined: bool,
     spawned: bool,
+    /// Created by a script and not drawn yet: drawn in the first frame it is in view,
+    /// past the read-ahead and the frame's spawn budget (`nav::Who::at_once`).
+    at_once: bool,
     root: Option<Entity>,
     failed: bool,
     /// In the world and enabled, as the game has it.
@@ -1114,6 +1117,10 @@ struct Core {
     /// Actors an idle holds in place (`idles::IdleHolds`, docs/spec-notes/idles.md §15):
     /// they stand as a staggering actor does while it shows.
     posed: HashSet<u32>,
+    /// Creatures playing their unarmed stance's draw clip (`creature_stance.rs`: the
+    /// ghoul's roar, the gecko's hiss) this frame: they stand until it ends, as a
+    /// staggering actor does (#2686: an alerted ghoul slid across the floor roaring).
+    drawing: HashSet<u32>,
     /// Of those, the ones whose idle carries the body away from the reference
     /// (`idles::IdleHolds::carried_off`): they are drawn facing as they did when it began.
     carried_off: HashSet<u32>,
@@ -1386,6 +1393,7 @@ impl Residents {
             held_now: false,
             staggering: HashSet::new(),
             posed: HashSet::new(),
+            drawing: HashSet::new(),
             carried_off: HashSet::new(),
             breaking: HashSet::new(),
             travel: HashMap::new(),
@@ -1559,6 +1567,7 @@ impl Core {
             self.add_resident(id, base.0, creature, 1.0, pos, label, true);
             if let Some(r) = self.list.last_mut().filter(|r| r.actor == id) {
                 r.first_steps = Some(FirstSteps::new("its creation by a script"));
+                r.at_once = true;
             }
         }
     }
@@ -1605,6 +1614,7 @@ impl Core {
             named,
             joined: false,
             spawned: false,
+            at_once: false,
             root: None,
             failed: false,
             present: false,
@@ -1858,6 +1868,11 @@ impl Core {
                 if never_turns(r.immobile, game.creature_turning_speed(FormId(r.base), r.actor)) {
                     self.ai.fix_heading(r.actor);
                     info!("ai: {} never turns (flagged Immobile, Turning Speed 0): it keeps its heading", r.label);
+                } else if game.is_fixture(r.actor) {
+                    // A fixture that never fights (`fnv_game::Game::is_fixture`): Mr.
+                    // House's chamber, Turning Speed 30, never turns either (#2431).
+                    self.ai.fix_heading(r.actor);
+                    info!("ai: {} never turns (a fixture: Immobile, Unaggressive, Helps Nobody, unarmed): it keeps its heading", r.label);
                 }
             }
         }
@@ -2258,6 +2273,7 @@ impl Core {
                 matches!(r.seat, Seat::Ordered(..) | Seat::GettingUp(_))
                     || held_by_talk(game, &self.ai, r.actor)
                     || self.staggering.contains(&r.actor.0)
+                    || self.drawing.contains(&r.actor.0)
             })
             .map(|r| r.actor.0)
             .collect();
@@ -2292,6 +2308,9 @@ impl Core {
             // Who started the conversation with its Dialogue package goes on turning
             // to the player.
             self.ai.update_held(game, dt);
+            // Enabled or disabled by a script the held game ran (a terminal's result, a
+            // dialogue result): drawn or taken away now, not when the game goes on.
+            self.note_presence(game);
             return;
         }
         {
@@ -2438,6 +2457,13 @@ impl Core {
                 let was = stop_body(Some(&mut *p), id);
                 if was > 0.0 {
                     info!("ai [{}] {} {id:08X}: its character stops while it staggers (was walking at {was:.0} units/s)", self.clock_text, game.data.name(FormId(id)));
+                }
+            }
+            // Nor a creature while it draws its stance (the ghoul's roar, #2686).
+            for &id in self.drawing.iter().filter(|id| !self.carried.contains_key(id)) {
+                let was = stop_body(Some(&mut *p), id);
+                if was > 0.0 {
+                    info!("ai [{}] {} {id:08X}: its character stops while it draws its stance (was walking at {was:.0} units/s)", self.clock_text, game.data.name(FormId(id)));
                 }
             }
             // Nor while an idle holds it in place (idles.md §15).
@@ -2669,9 +2695,14 @@ impl Core {
         self.ai.events.clear();
     }
 
-    /// Each resident's state for whoever draws and seats it, after the AI's update.
-    fn note(&mut self, game: &Game, mut blocks: Option<&mut ActorBlocks>, held: &HashSet<u32>, now: f32) {
-        let hour = clock_text(game);
+    /// Whether each resident is in the world and enabled, as the game has it now. Also
+    /// while a menu or a conversation holds the game ([`Core::think`]): a script run there
+    /// (a terminal's result script, a dialogue result) that enables an actor disabled
+    /// when its cell loaded has it drawn at once, so a conversation the same script starts
+    /// shows it speaking; until #2616 the presence was only read after the AI's update,
+    /// which a held game skips, so the hatch terminal's Centurion at Hoover Dam was never
+    /// drawn through its conversation (docs/spec-notes/enable-disabled-actor.md).
+    fn note_presence(&mut self, game: &Game) {
         for r in self.list.iter_mut() {
             r.present = r.joined && !r.failed && game.present(r.actor);
             if r.joined && !r.failed && !r.present {
@@ -2679,6 +2710,14 @@ impl Core {
             } else if r.present && std::mem::take(&mut r.absent) {
                 r.first_steps = Some(FirstSteps::new("being enabled"));
             }
+        }
+    }
+
+    /// Each resident's state for whoever draws and seats it, after the AI's update.
+    fn note(&mut self, game: &Game, mut blocks: Option<&mut ActorBlocks>, held: &HashSet<u32>, now: f32) {
+        let hour = clock_text(game);
+        self.note_presence(game);
+        for r in self.list.iter_mut() {
             let Some(agent) = self.ai.agents.get(&r.actor) else { continue };
             // A perched bird is in nobody's way (actor-behaviour.md §5.8).
             if let (Some(b), true) = (blocks.as_deref_mut(), r.perched) {
@@ -3044,6 +3083,7 @@ type Held<'w, 's> = (
     Option<Res<'w, crate::npc_combat::Fighters>>,
     Option<ResMut<'w, crate::idles::IdleHolds>>,
     Query<'w, 's, &'static mut SitRefused>,
+    Query<'w, 's, (&'static RefVisual, &'static crate::creature_stance::CreatureStance), Without<crate::locomotion::Dying>>,
 );
 
 /// Run the package choice and the walks, log what happens, keep the visuals in step.
@@ -3063,7 +3103,7 @@ pub fn drive(
     mut actors: Query<(&mut Transform, Option<&mut Locomotion>), Without<OnFurniture>>,
     mut doors: ResMut<nvf_play::doors::Doors>,
     (script, mut sim, mut phys, mut blocks): PlayState,
-    (seated, hours, flinches, fighters, idle_holds, mut refusals): Held,
+    (seated, hours, flinches, fighters, idle_holds, mut refusals, stances): Held,
     (mut door_fades, mut door_sounds, mut travel, mut knocks, trips, screen): Moves,
 ) {
     // Hours passed in the Wait menu since the last frame (`--play` only: without it
@@ -3098,6 +3138,15 @@ pub fn drive(
     // Who staggers (a hit reaction playing) stands until it ends.
     res.core.on_furniture = seated.iter().map(|v| v.0).collect();
     res.core.staggering = flinches.iter().filter(|(_, f)| now < f.at + f.clip.clip.length()).map(|(v, _)| v.0).collect();
+    // So does a creature drawing its stance (#2686), from the frame before.
+    let drawing: HashSet<u32> = stances.iter().filter(|(_, s)| s.holds_in_place()).map(|(v, _)| v.0).collect();
+    for id in drawing.difference(&res.core.drawing) {
+        info!("actor {id:08X} holds still while it draws its stance");
+    }
+    for id in res.core.drawing.difference(&drawing) {
+        info!("actor {id:08X} drew its stance: free to move");
+    }
+    res.core.drawing = drawing;
     // How far attack clips carry actors (`attack_anims.rs`), from the frame before.
     if let Some(t) = travel.as_deref_mut() {
         res.core.travel = t.take();
@@ -3295,7 +3344,7 @@ pub fn drive(
         let Some(agent) = core.ai.agents.get(&r.actor) else { continue };
         let w = &agent.walker;
         let visible = r.present && drawn(&world, &streamer, w.space, w.feet);
-        if visible && !r.spawned {
+        if visible && !r.spawned && !r.at_once {
             if budget == 0 {
                 continue;
             }
@@ -3428,11 +3477,14 @@ pub fn drive(
             }
         }
         let stage = (&mut r.spawned, &mut r.root);
-        if let Err(e) = nav::show_actor(&mut commands, root, visible, actor_world.as_deref(), equipment_world, &mut ahead, &mut spawn_stats, &mut parts, &mut models, &roots, &mut actors, nav::Who { reference: r.actor.0, base: r.base, creature: r.creature, scale: r.scale, strafe, air: agent.walker.air.is_some(), jumped: moved }, stage, (feet, heading), moving, dt) {
+        if let Err(e) = nav::show_actor(&mut commands, root, visible, actor_world.as_deref(), equipment_world, &mut ahead, &mut spawn_stats, &mut parts, &mut models, &roots, &mut actors, nav::Who { reference: r.actor.0, base: r.base, creature: r.creature, scale: r.scale, strafe, air: agent.walker.air.is_some(), jumped: moved, at_once: r.at_once }, stage, (feet, heading), moving, dt) {
             if r.named {
                 warn!("ai: {} could not be drawn ({e})", r.label);
             }
             r.failed = true;
+        }
+        if r.spawned {
+            r.at_once = false;
         }
         // Its first second drawn after a script made, enabled or moved it: the clips it
         // walks or runs with (`FirstSteps`).

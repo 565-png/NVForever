@@ -520,11 +520,16 @@ impl TerrainCtx<'_, '_, '_> {
         a.textures.get(path, srgb, &a.data, &mut a.images, a.formats.as_deref())
     }
 
+    fn normal(&mut self, path: &str) -> Option<Handle<Image>> {
+        let a = &mut *self.assets;
+        a.textures.normal(path, &a.data, &mut a.images, a.formats.as_deref()).map(|(image, _)| image)
+    }
+
     /// The lit surface of a landscape texture: diffuse and normal map. `None` for the
     /// diffuse path (an LTEX without a texture set) gives a plain grey.
     fn surface(&mut self, tex: Option<&str>) -> StandardMaterial {
         let image = tex.and_then(|t| self.image(t, true));
-        let normal = tex.and_then(|t| self.tm.cache.normals.get(t).cloned()).and_then(|n| self.image(&n, false));
+        let normal = tex.and_then(|t| self.tm.cache.normals.get(t).cloned()).and_then(|n| self.normal(&n));
         surface_material(image, normal)
     }
 
@@ -556,7 +561,7 @@ impl TerrainCtx<'_, '_, '_> {
         let mut textures = Vec::with_capacity(layers.len());
         for l in layers {
             let diffuse = self.image(l, true)?;
-            let normal = self.tm.cache.normals.get(l).cloned().and_then(|n| self.image(&n, false));
+            let normal = self.tm.cache.normals.get(l).cloned().and_then(|n| self.normal(&n));
             textures.push((diffuse, normal));
         }
         let mut textures = textures.into_iter();
@@ -970,6 +975,9 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
     }
     land
 }
+
+#[cfg(test)]
+use crate::decals::bc5_fixture;
 
 #[cfg(test)]
 mod tests {
@@ -1709,4 +1717,88 @@ mod tests {
         assert_eq!(edge_position(EAST, 4), 4 * QUAD_SIDE + L);
         assert_eq!(edge_position(WEST, 4), 4 * QUAD_SIDE);
     }
+    #[test]
+    fn bc5_terrain_base_blended_and_all_folded_slots_use_normal_role() {
+        use bevy::ecs::system::SystemState;
+        let (_inputs, mut world) = bc5_fixture::inputs();
+        world.insert_resource(TerrainSettings { tile: 256.0 });
+        world.init_resource::<TerrainCache>();
+        world.init_resource::<Assets<TerrainMaterial>>();
+        let mut state = SystemState::<(ModelCtx, TerrainMaterials)>::new(&mut world);
+        let (mut assets, mut tm) = state.get_mut(&mut world).unwrap();
+        for (normal, size) in [("signed.dds", UVec2::splat(4)), ("partial.dds", UVec2::new(3, 5)), ("unsigned.dds", UVec2::splat(4))] {
+            // Independent fresh material ownership for each normal; one texture cache.
+            *tm.cache = TerrainCache::default();
+            tm.cache.normals.insert("old.dds".into(), normal.into());
+            let linear = assets.textures.get(normal, false, &assets.data, &mut assets.images, None).unwrap();
+            let mut ctx = TerrainCtx { tm: &mut tm, assets: &mut assets };
+            let base = ctx.base_material(Some("old.dds".into()));
+            let blended = ctx.layer_material("old.dds".into(), 1).unwrap();
+            let layers = vec!["old.dds".to_string(); FOLDED_LAYERS];
+            let folded = ctx.folded_material(Some("old.dds".into()), &layers, 256.0).unwrap();
+            let material = ctx.assets.materials.get(&base).unwrap();
+            let normal_h = material.base.normal_map_texture.as_ref().unwrap().clone();
+            bc5_fixture::normal(&ctx.assets.images, &normal_h, size);
+            assert_ne!(normal_h, linear);
+            assert!(material.base.flip_normal_map_y);
+            assert_eq!(material.base.reflectance, 0.2);
+            let material = ctx.assets.materials.get(&blended).unwrap();
+            assert_eq!(material.base.normal_map_texture, Some(normal_h.clone()));
+            assert_eq!(material.base.alpha_mode, AlphaMode::Blend);
+            let material = ctx.tm.folded.get(&folded).unwrap();
+            assert_eq!(material.base.normal_map_texture, Some(normal_h.clone()));
+            let ext = &material.extension;
+            assert_eq!(ext.count, FOLDED_LAYERS as u32);
+            for slot in [&ext.normal0, &ext.normal1, &ext.normal2, &ext.normal3, &ext.normal4, &ext.normal5] {
+                assert_eq!(slot.as_ref(), Some(&normal_h));
+            }
+            assert_eq!(ctx.base_material(Some("old.dds".into())), base);
+            assert_eq!(ctx.layer_material("old.dds".into(), 1), Some(blended));
+            assert_eq!(ctx.folded_material(Some("old.dds".into()), &layers, 256.0), Some(folded));
+        }
+        let mut ctx = TerrainCtx { tm: &mut tm, assets: &mut assets };
+        ctx.tm.cache.normals.insert("old.dds".into(), "old.dds".into());
+        let old = ctx.surface(Some("old.dds"));
+        assert!(old.normal_map_texture.is_some());
+        let image = ctx.assets.images.get(old.normal_map_texture.as_ref().unwrap()).unwrap();
+        assert_eq!(image.texture_descriptor.format, bevy::render::render_resource::TextureFormat::Bc3RgbaUnorm);
+        assert_eq!(image.data.as_deref(), Some([255u8; 16].as_slice()));
+        assert_eq!(old.perceptual_roughness, 0.95);
+        ctx.tm.cache.normals.insert("old.dds".into(), "missing.dds".into());
+        let missing = ctx.surface(Some("old.dds"));
+        assert!(missing.normal_map_texture.is_none());
+        assert!(missing.base_color_texture.is_some());
+        assert!(ctx.surface(None).normal_map_texture.is_none());
+    }
+
+    #[test]
+    fn bc5_folded_normals_are_admitted_independently_of_the_base_normal() {
+        use bevy::ecs::system::SystemState;
+        let (_inputs, mut world) = bc5_fixture::inputs();
+        world.insert_resource(TerrainSettings { tile: 256.0 });
+        world.init_resource::<TerrainCache>();
+        world.init_resource::<Assets<TerrainMaterial>>();
+        let mut state = SystemState::<(ModelCtx, TerrainMaterials)>::new(&mut world);
+        let (mut assets, mut tm) = state.get_mut(&mut world).unwrap();
+        let layers: Vec<String> = ["old.dds", "OLD.dds", "Old.dds", "oLd.dds", "olD.dds", "OLD.DDS"].into_iter().map(str::to_string).collect();
+        let normals = ["signed.dds", "partial.dds", "unsigned.dds", "signed.dds", "partial.dds", "unsigned.dds"];
+        for (layer, normal) in layers.iter().zip(normals) { tm.cache.normals.insert(layer.clone(), normal.into()); }
+        let mut ctx = TerrainCtx { tm: &mut tm, assets: &mut assets };
+        for count in [1, FOLDED_LAYERS] {
+            let h = ctx.folded_material(None, &layers[..count], 256.0).unwrap();
+            let material = ctx.tm.folded.get(&h).unwrap();
+            assert!(material.base.normal_map_texture.is_none(), "base normal cannot stand in for a folded slot");
+            let ext = &material.extension;
+            assert_eq!(ext.count, count as u32);
+            let slots = [&ext.normal0, &ext.normal1, &ext.normal2, &ext.normal3, &ext.normal4, &ext.normal5];
+            for (i, slot) in slots.into_iter().enumerate() {
+                if i < count {
+                    bc5_fixture::normal(&ctx.assets.images, slot.as_ref().unwrap(), if i % 3 == 1 { UVec2::new(3, 5) } else { UVec2::splat(4) });
+                    if i >= 3 { assert_eq!(slot, slots[i - 3]); }
+                } else { assert!(slot.is_none()); }
+            }
+            assert_eq!(ctx.folded_material(None, &layers[..count], 256.0), Some(h));
+        }
+    }
+
 }
