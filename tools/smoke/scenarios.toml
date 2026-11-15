@@ -1160,16 +1160,16 @@ expect = [
 
 [[scenario]]
 name = "movement-inertia-trace-sights-shotgun-still"
-source = "owner 2026-11-15 (twelfth playtest, the shotgun's shimmer down its sights): as movement-inertia-trace-sights-shotgun with Weapon breathing switched off on the settings page first, to tell the breathing's drift from any other motion of the gun"
+source = "owner 2026-11-15 (twelfth playtest, the shotgun's shimmer down its sights): as movement-inertia-trace-sights-shotgun with Weapon Inertia switched off on the settings page first (the breathing's drift with it), to tell the sway from any other motion of the gun"
 areas = ["player-body"]
 paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/settings.rs"]
-env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-sights-shotgun-still.csv", NVF_PLAY_TEST_EQUIP = "001735E3", NVF_PLAY_TEST_GIVE = "0015367E:20", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "2:3.5", NVF_PLAY_TEST_SETTINGS = "2.5:weapon-breathing", NVF_PLAY_TEST_CONTROL = "4:weapon,8:aim", NVF_PLAY_TEST_SHOTS = "14.0:sights_still_a.png,14.05:sights_still_b.png,14.1:sights_still_c.png,14.15:sights_still_d.png,14.2:sights_still_e.png,14.25:sights_still_f.png,14.3:sights_still_g.png" }
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-sights-shotgun-still.csv", NVF_PLAY_TEST_EQUIP = "001735E3", NVF_PLAY_TEST_GIVE = "0015367E:20", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "2:3.5", NVF_PLAY_TEST_SETTINGS = "2.5:weapon-inertia", NVF_PLAY_TEST_CONTROL = "4:weapon,8:aim", NVF_PLAY_TEST_SHOTS = "14.0:sights_still_a.png,14.05:sights_still_b.png,14.1:sights_still_c.png,14.15:sights_still_d.png,14.2:sights_still_e.png,14.25:sights_still_f.png,14.3:sights_still_g.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "3840x2160"]
 run_seconds = 18
 expect = [
-  { text = "settings: weapon-breathing off", label = "Weapon breathing is switched off" },
+  { text = "settings: weapon-inertia off", label = "Weapon Inertia is switched off" },
   { text = "true iron sights: the sights are on the eye", label = "the shotgun is down its sights" },
-  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
+  { re = 'player body summary: weapon sway off', label = "the run reached its end, Weapon Inertia off" },
 ]
 
 [[scenario]]
@@ -1190,14 +1190,14 @@ name = "advanced-movement-switches"
 source = "owner 2026-11-15 (\"finish the Advanced Movement project ... a full bug check\"; engine/nvf-play/src/player.rs, engine/nvforever/src/settings.rs, docs/design/player-body.md §1.4a.3): every switch of NVF Features › Advanced movement turned off on the settings page part-way through a draw, then on again while aimed, with the rifle firing, the player running, jumping and crouching between, so a switch changed mid-motion leaves nothing stuck"
 areas = ["player-body", "settings"]
 paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/aim_zoom.rs", "engine/nvf-play/src/combat.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6,13.3:15", NVF_PLAY_TEST_SETTINGS = "4.4:movement-inertia,4.5:eased-crouch,4.6:landing-weight,4.7:smooth-weapon-animations,4.8:weapon-weight-handling,4.9:soft-recoil,5.0:weapon-sway,5.1:weapon-weight-sway,5.2:weapon-breathing,5.3:head-bob,5.4:breathing-camera,5.5:out-of-breath,5.6:hit-jolt,5.7:advanced-movement,13.4:advanced-movement,13.5:movement-inertia,13.6:eased-crouch,13.7:landing-weight,13.8:smooth-weapon-animations,13.9:weapon-weight-handling,14.0:soft-recoil,14.1:weapon-sway,14.2:weapon-weight-sway,14.3:weapon-breathing,14.4:head-bob,14.5:breathing-camera,14.6:out-of-breath,14.7:hit-jolt", NVF_PLAY_TEST_CONTROL = "4:weapon,7:jump,9:sneak,10:sneak,12:aim,15.5:fire,16:fire,17:aim,18:jump,20:weapon", NVF_PLAY_TEST_MOVE = "6.5:1:0,8.5:0:0,18:1:0,19.5:0:0" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6,13.3:15", NVF_PLAY_TEST_SETTINGS = "4.4:movement-inertia,4.5:weapon-handling,4.6:advanced-recoil,4.7:weapon-inertia,4.8:animation-smoothing,4.9:camera-motion,5.0:advanced-movement,13.4:advanced-movement,13.5:movement-inertia,13.6:weapon-handling,13.7:advanced-recoil,13.8:weapon-inertia,13.9:animation-smoothing,14.0:camera-motion", NVF_PLAY_TEST_CONTROL = "4:weapon,7:jump,9:sneak,10:sneak,12:aim,15.5:fire,16:fire,17:aim,18:jump,20:weapon", NVF_PLAY_TEST_MOVE = "6.5:1:0,8.5:0:0,18:1:0,19.5:0:0" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 24
 expect = [
   { text = "settings: advanced-movement off", label = "the main switch goes off" },
-  { text = "settings: hit-jolt off", label = "the last part switch goes off" },
+  { text = "settings: camera-motion off", label = "the last part switch goes off" },
   { text = "settings: advanced-movement on", label = "the main switch comes back on" },
-  { text = "settings: hit-jolt on", label = "and the last part switch" },
+  { text = "settings: camera-motion on", label = "and the last part switch" },
   { re = 'combat: kick: shot', label = "the rifle fired with every switch back on" },
   { re = 'player body summary: weapon sway on', label = "the switches: the run reached its end" },
 ]
@@ -1207,8 +1207,20 @@ forbid = [
 ]
 
 [[scenario]]
+name = "advanced-movement-menu"
+source = "owner 2026-11-15 (\"simplify the Advanced Movement menu\"; engine/nvf-play/src/settings_layout.rs, settings_view.rs; docs/design/player-body.md §1.4a.3): the NVF Features tab lists the Global Toggle under Advanced Movement, then an empty line, Gameplay's three switches, an empty line and Visual Only's three, in the owner's order"
+areas = ["player-body", "settings"]
+paths = ["engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/settings.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_PLAY_TEST_SETTINGS = "11:tab:NVF Features", NVF_PLAY_TEST_PAUSE_MENU = "12:inspect", NVF_PLAY_TEST_SHOTS = "13:advanced_movement_menu.png" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, , [NVF Features > Visual Only], weapon-inertia, animation-smoothing, camera-motion", label = "the Global Toggle, an empty line, Gameplay, an empty line, Visual Only, in the owner's order" },
+]
+
+[[scenario]]
 name = "movement-inertia-off"
-source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs): with --no-movement-inertia the player starts and stops at once, as the original; since 2026-11-15 the eased crouch is a switch of its own and stays"
+source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs): with --no-movement-inertia the player starts and stops at once and the crouch follows the clips, as the original (the eased crouch is Movement Inertia's again since the owner's menu of 2026-11-15)"
 areas = ["player-body"]
 paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs"]
 env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak" }
@@ -1216,8 +1228,8 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hou
 run_seconds = 13
 expect = [
   { re = 'player body summary: weapon sway on', label = "the run reached its end" },
-  { re = 'movement inertia: (up to|glided)', count = 0, label = "no start or glide under inertia" },
-  { text = "player view: crouched (eased crouch)", label = "the eased crouch is its own switch: still eased" },
+  { re = 'movement inertia: (up to|glided)', count = 0, label = "no start or glide without Movement Inertia" },
+  { re = 'eased crouch', count = 0, label = "the crouch follows the clips too: the eased crouch is Movement Inertia's" },
 ]
 
 [[scenario]]
@@ -1237,17 +1249,17 @@ expect = [
 
 [[scenario]]
 name = "advanced-movement-parts"
-source = "owner 2026-11-15 (engine/nvf-play/src/player.rs, engine/nvforever/src/settings.rs; docs/design/player-body.md §1.4a.3): each part of Advanced movement is a switch of its own: the settings page's Eased crouch off leaves the glide on and the crouch uneased"
+source = "owner 2026-11-15 (engine/nvf-play/src/player.rs, engine/nvforever/src/settings.rs; docs/design/player-body.md §1.4a.3): each switch of Advanced Movement acts alone: Camera Motion off on the settings page leaves Movement Inertia's glide and eased crouch, and the view no longer bobs"
 areas = ["player-body", "settings"]
-paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/settings.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "3:5", NVF_PLAY_TEST_SETTINGS = "4:eased-crouch", NVF_PLAY_TEST_MOVE = "7:1:0,10:0:0", NVF_PLAY_TEST_CONTROL = "12:sneak" }
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/head_bob.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "3:5", NVF_PLAY_TEST_SETTINGS = "4:camera-motion", NVF_PLAY_TEST_MOVE = "7:1:0,10:0:0", NVF_PLAY_TEST_CONTROL = "12:sneak" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 15
 expect = [
-  { text = "settings: eased-crouch off", label = "the Eased crouch switch is turned off on the page" },
-  { re = 'movement inertia: glided (?P<n>[\d.]+) units', range = [25, 50], label = "the glide stays: Movement inertia is its own switch" },
-  { re = 'eased crouch', count = 0, label = "the crouch follows the clips" },
-  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
+  { text = "settings: camera-motion off", label = "Camera Motion is turned off on the page" },
+  { re = 'movement inertia: glided (?P<n>[\d.]+) units', range = [25, 50], label = "the glide stays: Movement Inertia is its own switch" },
+  { text = "player view: crouched (eased crouch)", label = "and so does its eased crouch" },
+  { re = 'player body summary: head bob off, deepest first-person dip (?P<n>[\d.]+) units', range = [0, 0.05], label = "the view no longer bobs" },
 ]
 
 [[scenario]]
@@ -11158,18 +11170,13 @@ expect = [
   "settings layout: autosave-travel -> Gameplay > Saving",
   "settings layout: menu-pause -> Gameplay > Dialogue",
   "settings layout: detached-camera -> Gameplay > Camera",
-  "settings layout: advanced-movement -> NVF Features > Advanced movement",
-  "settings layout: movement-inertia -> NVF Features > Advanced movement",
-  "settings layout: eased-crouch -> NVF Features > Advanced movement",
-  "settings layout: landing-weight -> NVF Features > Advanced movement",
-  "settings layout: smooth-weapon-animations -> NVF Features > Advanced movement",
-  "settings layout: weapon-weight-handling -> NVF Features > Advanced movement",
-  "settings layout: soft-recoil -> NVF Features > Advanced movement",
-  "settings layout: head-bob -> NVF Features > Advanced movement",
-  "settings layout: breathing-camera -> NVF Features > Advanced movement",
-  "settings layout: weapon-breathing -> NVF Features > Advanced movement",
-  "settings layout: out-of-breath -> NVF Features > Advanced movement",
-  "settings layout: hit-jolt -> NVF Features > Advanced movement",
+  "settings layout: advanced-movement -> NVF Features > Advanced Movement",
+  "settings layout: movement-inertia -> NVF Features > Gameplay",
+  "settings layout: weapon-handling -> NVF Features > Gameplay",
+  "settings layout: advanced-recoil -> NVF Features > Gameplay",
+  "settings layout: weapon-inertia -> NVF Features > Visual Only",
+  "settings layout: animation-smoothing -> NVF Features > Visual Only",
+  "settings layout: camera-motion -> NVF Features > Visual Only",
   { text = "settings layout: inertia-weight", count = 0, label = "the inertia weight is gone (owner 2026-11-15)" },
   "settings layout: resolution -> Display > Screen",
   "settings layout: hud-colour -> Display > Interface",

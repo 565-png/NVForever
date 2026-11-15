@@ -376,14 +376,15 @@ impl Plugin for PlayerPlugin {
             )
             .add_systems(Update, crate::control::place_camera.in_set(PlaySet::Physics).after(log_status));
         app.init_resource::<crate::inertia::MovementInertia>().add_systems(Update, crate::inertia::follow_weapon);
-        // The Advanced movement section's switches kept here (NVF Features; the rest are
-        // nvforever's `settings.rs`): the main switch, then each part under it.
+        // The Advanced Movement section's switches kept here (NVF Features; Weapon Inertia and
+        // Camera Motion are nvforever's `settings.rs`): the Global Toggle, then Gameplay's and
+        // Animation Smoothing [design: the owner, 2026-11-15, the menu's names and order].
         type Inertia = crate::inertia::MovementInertia;
         let switch = |key, label, note, switches, get: fn(&World) -> bool, set: fn(&mut World, bool)| crate::settings::Setting { key, group: crate::pause::GROUP_MENUS, label, note, switches, get, set, slider: None };
         for s in [
             switch(
                 "advanced-movement",
-                "Advanced movement",
+                "Global Toggle",
                 "On: the switches below shape how your character, view and weapon move. Off: none of them acts, as in the original; each keeps its own choice.",
                 "--no-advanced-movement",
                 |w| w.resource::<Inertia>().advanced,
@@ -391,51 +392,35 @@ impl Plugin for PlayerPlugin {
             ),
             switch(
                 "movement-inertia",
-                "Movement inertia",
-                "On: your character speeds up, glides to a stop and brakes before turning back. Off: full speed and an instant stop, as in the original.",
+                "Movement Inertia",
+                "On: you speed up, glide to a stop and brake before turning; crouching eases and landings dip and slow you by the fall. Off: as in the original.",
                 "--no-movement-inertia",
                 |w| w.resource::<Inertia>().on,
                 |w, on| w.resource_mut::<Inertia>().on = on,
             ),
             switch(
-                "eased-crouch",
-                "Eased crouch",
-                "On: in first person the view sinks slowly into a crouch and rises out of it, and a crouched jump stays crouched. Off: the quick change of the original.",
-                "",
-                |w| w.resource::<Inertia>().crouch,
-                |w, on| w.resource_mut::<Inertia>().crouch = on,
-            ),
-            switch(
-                "landing-weight",
-                "Landing weight",
-                "On: the higher the fall, the deeper the view and the weapon dip, the slower you stand up and the more speed you lose. Off: every landing like a hop.",
-                "",
-                |w| w.resource::<Inertia>().landing,
-                |w, on| w.resource_mut::<Inertia>().landing = on,
-            ),
-            switch(
-                "smooth-weapon-animations",
-                "Smooth weapon animations",
-                "On: in first person drawing, putting away, aiming, attacks, reloads and the Pip-Boy ease in and settle slowly. Off: the quick timing of the original.",
-                "",
-                |w| w.resource::<Inertia>().smooth,
-                |w, on| w.resource_mut::<Inertia>().smooth = on,
-            ),
-            switch(
-                "weapon-weight-handling",
-                "Weapon weight in handling",
-                "On: with Smooth weapon animations on, heavier weapons take longer to draw, put away, aim and reload, up to half as long again. Off: all alike.",
-                "--no-weapon-weight-handling",
+                "weapon-handling",
+                "Weapon Handling",
+                "On: drawing, putting away and aiming a weapon take a moment longer, and longer still for heavier weapons. Off: the original's timing.",
+                "--no-weapon-handling",
                 |w| w.resource::<Inertia>().weapon_handling,
                 |w, on| w.resource_mut::<Inertia>().weapon_handling = on,
             ),
             switch(
-                "soft-recoil",
-                "Soft recoil",
-                "On: a shot's kick eases the view up and part of it settles back, and the gun recoils on springs. Off: the whole kick stays, as in the original.",
+                "advanced-recoil",
+                "Advanced Recoil",
+                "On: a shot's kick eases the view up and part of it settles back down, and the view nudges back. Off: the whole kick stays, as in the original.",
                 "",
                 |w| w.resource::<Inertia>().recoil,
                 |w, on| w.resource_mut::<Inertia>().recoil = on,
+            ),
+            switch(
+                "animation-smoothing",
+                "Animation Smoothing",
+                "On: in first person drawing, aiming, attacks, reloads and the Pip-Boy ease in and settle softly, taking no longer. Off: the original's clips.",
+                "",
+                |w| w.resource::<Inertia>().smooth,
+                |w, on| w.resource_mut::<Inertia>().smooth = on,
             ),
         ] {
             crate::settings::add_setting(app, s);
@@ -1688,6 +1673,7 @@ mod tests {
                 .init_resource::<crate::furniture::PlayerSeat>()
                 .init_resource::<NoClip>()
                 .init_resource::<Lunge>()
+                .init_resource::<crate::inertia::MovementInertia>()
                 .add_message::<crate::rumble::Landed>()
                 .add_message::<crate::falls::Fell>()
                 .add_systems(Update, step);

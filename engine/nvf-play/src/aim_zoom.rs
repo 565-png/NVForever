@@ -201,9 +201,8 @@ pub(crate) fn zoom(
             let at = zoom_ease(z.blend);
             z.settled.place(at, sight.is_some());
         }
-        // The weapon's handling: heavier weapons come up slower.
-        let w = i.hands();
-        let v = z.settled.step(sight.is_some(), time.delta_secs().min(0.25), crate::inertia::AIM_IN_SECONDS * w, crate::inertia::AIM_OUT_SECONDS * w);
+        // Weapon Handling's pace (heavier weapons come up slower), else the game's.
+        let v = z.settled.step(sight.is_some(), time.delta_secs().min(0.25), i.aim_seconds(true), i.aim_seconds(false));
         // `blend` stays the progress the rest reads: 1 only when fully in, 0 only when out.
         z.blend = if z.settled.is_up() { 1.0 } else if z.settled.is_down() { 0.0 } else { v.clamp(1e-4, 1.0 - 1e-4) };
         v
@@ -212,7 +211,9 @@ pub(crate) fn zoom(
         if z.settled_on {
             z.blend = zoom_ease_inv(z.settled.value());
         }
-        let step = time.delta_secs().min(0.25) / ZOOM_SECONDS;
+        // Weapon Handling's pace for the straight zoom too, else the game's.
+        let seconds = inertia.as_deref().filter(|i| i.handles()).map_or(ZOOM_SECONDS, |i| i.aim_seconds(sight.is_some()));
+        let step = time.delta_secs().min(0.25) / seconds;
         z.blend = if sight.is_some() { (z.blend + step).min(1.0) } else { (z.blend - step).max(0.0) };
     }
     z.settled_on = settled.is_some();

@@ -193,97 +193,39 @@ pub fn register(app: &mut App) {
                 slider: None,
             },
         );
+        // Advanced Movement's visual switches (NVF Features › Visual Only; nvf_play `player.rs`
+        // keeps the rest) [design: the owner, 2026-11-15]. A saved `weapon-sway` or `head-bob`
+        // (the rows they took over from) is read as theirs.
         add_setting(
             app,
             Setting {
-                key: "weapon-sway",
+                key: "weapon-inertia",
                 group: GROUP_PICTURE,
-                label: "Weapon sway",
-                note: "On: in first person the arms and weapon lag behind turns and steps, bob as you walk and dip as you jump and land. Off: they stay still.",
+                label: "Weapon Inertia",
+                note: "On: in first person the arms and weapon lag behind turns and steps, bob, dip, breathe and recoil, heavier weapons more. Off: they stay still.",
                 switches: "--no-weapon-sway",
                 get: |w| w.resource::<PlayerBody>().weapon_sway,
                 set: |w, on| w.resource_mut::<PlayerBody>().weapon_sway = on,
                 slider: None,
             },
         );
+        nvf_play::settings::set_older_key(app, "weapon-inertia", "weapon-sway");
+        nvf_play::settings::set_older_split(app, "weapon-sway", |v| vec![("weapon-inertia", v.to_string())]);
         add_setting(
             app,
             Setting {
-                key: "weapon-weight-sway",
+                key: "camera-motion",
                 group: GROUP_PICTURE,
-                label: "Weapon weight in the sway",
-                note: "On: with Weapon sway on, heavier weapons swing slower and further, up to half as much again for the heaviest. Off: every weapon sways alike.",
-                switches: "--weapon-weight-sway",
-                get: |w| w.resource::<PlayerBody>().weapon_weight_sway,
-                set: |w, on| w.resource_mut::<PlayerBody>().weapon_weight_sway = on,
-                slider: None,
-            },
-        );
-        add_setting(
-            app,
-            Setting {
-                key: "head-bob",
-                group: GROUP_PICTURE,
-                label: "Head bob",
-                note: "On: in first person the view dips with each step, lags a little as you speed up or slow down, and dips as you take off and land. Off: it stays level.",
+                label: "Camera Motion",
+                note: "On: in first person the view bobs with each step, breathes, gets out of breath after running and jolts when you are hit. Off: it stays still.",
                 switches: "--no-head-bob",
                 get: |w| w.resource::<PlayerBody>().head_bob,
                 set: |w, on| w.resource_mut::<PlayerBody>().head_bob = on,
                 slider: None,
             },
         );
-        add_setting(
-            app,
-            Setting {
-                key: "breathing-camera",
-                group: GROUP_PICTURE,
-                label: "Breathing camera",
-                note: "On: in first person the view rises and falls slowly and slightly with your breath, most when you stand still. Off: it stays still.",
-                switches: "--no-breathing-camera",
-                get: |w| w.resource::<PlayerBody>().breathing_camera,
-                set: |w, on| w.resource_mut::<PlayerBody>().breathing_camera = on,
-                slider: None,
-            },
-        );
-        add_setting(
-            app,
-            Setting {
-                key: "weapon-breathing",
-                group: GROUP_PICTURE,
-                label: "Weapon breathing",
-                note: "On: in first person the weapon drifts slowly with your breath, most when you stand still, least down the sights. Off: it holds still.",
-                switches: "",
-                get: |w| w.resource::<PlayerBody>().weapon_breathing,
-                set: |w, on| w.resource_mut::<PlayerBody>().weapon_breathing = on,
-                slider: None,
-            },
-        );
-        add_setting(
-            app,
-            Setting {
-                key: "out-of-breath",
-                group: GROUP_PICTURE,
-                label: "Out of breath",
-                note: "On: running and jumping wind you, and the view and the weapon breathe faster and deeper until you rest. Off: your breath stays calm.",
-                switches: "",
-                get: |w| w.resource::<PlayerBody>().out_of_breath,
-                set: |w, on| w.resource_mut::<PlayerBody>().out_of_breath = on,
-                slider: None,
-            },
-        );
-        add_setting(
-            app,
-            Setting {
-                key: "hit-jolt",
-                group: GROUP_PICTURE,
-                label: "Hit jolt",
-                note: "On: in first person a hit you take jolts the view and the weapon a little, then they settle. Off: they stay steady.",
-                switches: "",
-                get: |w| w.resource::<PlayerBody>().hit_jolt,
-                set: |w, on| w.resource_mut::<PlayerBody>().hit_jolt = on,
-                slider: None,
-            },
-        );
+        nvf_play::settings::set_older_key(app, "camera-motion", "head-bob");
+        nvf_play::settings::set_older_split(app, "head-bob", |v| vec![("camera-motion", v.to_string())]);
         add_setting(
             app,
             Setting {

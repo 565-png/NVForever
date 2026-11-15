@@ -16,11 +16,13 @@
 //!   exactly per step, it is the same at any physics tick rate. [design: the owner's
 //!   playtests of 2026-11-13: first "slow the movement inertia down", then "stopping feels
 //!   like … sliding on ice - make the stop time 2x speed of the start one".]
-//! - **Switches** (the settings page's NVF Features › Advanced movement): the main
-//!   "Advanced movement" switch over all of them ([`MovementInertia::advanced`]), then one
-//!   each for the ground inertia here, the eased crouch, the smooth weapon animations, the
-//!   weapon's weight in its handling, the soft recoil and the landing weight; the weapon
-//!   sway's, the head bob's and the breath's are nvforever's `PlayerBody`. (An "Inertia
+//! - **Switches** (the settings page's NVF Features › Advanced Movement): the Global Toggle
+//!   over all of them ([`MovementInertia::advanced`]); under Gameplay, Movement Inertia (the
+//!   ground inertia here, the eased crouch, the take-off and landing dip and a hard
+//!   landing's weight), Weapon Handling (the slower draw, put-away and aim, the weapon's
+//!   weight in them) and Advanced Recoil; under Visual Only, Animation Smoothing here and
+//!   nvforever's Weapon Inertia and Camera Motion (`PlayerBody`) [design: the owner,
+//!   2026-11-15, "simplify the Advanced Movement menu ... add 2 categories"]. (An "Inertia
 //!   weight" dropdown scaled every time until the owner's eleventh playtest, 2026-11-15:
 //!   "remove the inertia weight option - current default will be the one we use"; 1.)
 //! - **The air keeps its own rules** (`fnv_phys::air`, the game's measured air control):
@@ -56,6 +58,11 @@ pub const EQUIP_PACE: f32 = 0.45;
 /// the zoom in use the same curve … so it matches the animation"].
 pub const AIM_IN_SECONDS: f32 = 0.6;
 pub const AIM_OUT_SECONDS: f32 = 0.55;
+/// Without Weapon Handling the aim keeps the game's own pace, the true iron sights' (nvforever
+/// `iron_sights::SIGHTS_IN_SECONDS`): Animation Smoothing then only shapes the way, along
+/// the settling curve, the clips' cross-over and the zoom with it.
+pub const AIM_IN_PLAIN_SECONDS: f32 = 0.35;
+pub const AIM_OUT_PLAIN_SECONDS: f32 = 0.3;
 /// The first-person view and arms take this long into a crouch and out of one: the
 /// standing and sneaking clips cross over that long along the
 /// settling curve, so the view sinks and the arms change their hold together.
@@ -148,24 +155,20 @@ pub enum Report {
 /// the main switch.
 #[derive(Resource, Debug, Clone)]
 pub struct MovementInertia {
-    /// The "Advanced movement" main switch: off, none of the switches here acts, nor the
-    /// weapon sway's, the head bob's and the breath's (nvforever `PlayerBody`).
+    /// The Global Toggle: off, none of the switches here acts, nor Weapon Inertia and Camera
+    /// Motion (nvforever `PlayerBody`).
     pub advanced: bool,
-    /// The "Movement inertia" switch: the ground speed's springs ([`Self::ground`]).
+    /// Movement Inertia ([`Self::ground`]): the ground speed's springs, the eased crouch, the
+    /// take-off and landing dip and a hard landing's weight.
     pub on: bool,
-    /// The "Eased crouch" switch ([`Self::eased_crouch`]).
-    pub crouch: bool,
-    /// The "Smooth weapon animations" switch ([`Self::smooth_hands`]): the first-person
-    /// clips along the settling curve, the slower draw, the aim's and the zoom's curve.
+    /// Animation Smoothing ([`Self::smooth_hands`]): the first-person clips along the settling
+    /// curve, the aim's and the zoom's way along it, at Weapon Handling's pace or the game's.
     pub smooth: bool,
-    /// The "Soft recoil" switch ([`Self::soft_recoil`]): the view's kick eased in and
-    /// partly settling back, the gun's recoil springs.
+    /// Advanced Recoil ([`Self::soft_recoil`]): the view's kick eased in and partly settling
+    /// back, the view's nudge back.
     pub recoil: bool,
-    /// The "Landing weight" switch ([`Self::landing_weight`]): hard landings dip deeper,
-    /// stand up slower and take speed.
-    pub landing: bool,
-    /// The "Weapon weight in handling" switch and the weapon in hand's [`handling`] (1 with
-    /// it or Smooth weapon animations off), kept by [`follow_weapon`].
+    /// Weapon Handling ([`Self::handles`]): the slower draw, put-away and aim, and the weapon
+    /// in hand's [`handling`] (1 with it off), kept by [`follow_weapon`].
     pub weapon_handling: bool,
     pub handling: f32,
     /// Horizontal velocity (game x, y), units/s, and its rate of change.
@@ -190,7 +193,7 @@ pub struct MovementInertia {
 
 impl Default for MovementInertia {
     fn default() -> Self {
-        MovementInertia { advanced: true, on: true, crouch: true, smooth: true, recoil: true, landing: true, weapon_handling: true, handling: 1.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None, last_placed: None }
+        MovementInertia { advanced: true, on: true, smooth: true, recoil: true, weapon_handling: true, handling: 1.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None, last_placed: None }
     }
 }
 
@@ -200,30 +203,48 @@ impl MovementInertia {
         MovementInertia { on, ..default() }
     }
 
-    /// The ground speed rides its springs ("Movement inertia" under the main switch).
+    /// The ground speed rides its springs (Movement Inertia under the Global Toggle).
     pub fn ground(&self) -> bool {
         self.advanced && self.on
     }
 
-    /// The first-person view eases into a crouch and out ("Eased crouch").
+    /// The first-person view eases into a crouch and out, and a crouched jump stays low
+    /// (Movement Inertia).
     pub fn eased_crouch(&self) -> bool {
-        self.advanced && self.crouch
+        self.ground()
     }
 
-    /// The first-person weapon clips follow the settling curve ("Smooth weapon animations").
+    /// The view dips at a take-off and a landing, deeper and slower to stand up after a
+    /// higher fall, and a hard landing takes speed (Movement Inertia).
+    pub fn landing_weight(&self) -> bool {
+        self.ground()
+    }
+
+    /// The first-person weapon clips follow the settling curve (Animation Smoothing).
     pub fn smooth_hands(&self) -> bool {
         self.advanced && self.smooth
     }
 
-    /// The view's kick eases in and partly settles back, the gun recoils on springs
-    /// ("Soft recoil").
+    /// Drawing, putting away and aiming take longer, more for heavier weapons (Weapon
+    /// Handling).
+    pub fn handles(&self) -> bool {
+        self.advanced && self.weapon_handling
+    }
+
+    /// The view's kick eases in and partly settles back (Advanced Recoil).
     pub fn soft_recoil(&self) -> bool {
         self.advanced && self.recoil
     }
 
-    /// Hard landings land heavier ("Landing weight").
-    pub fn landing_weight(&self) -> bool {
-        self.advanced && self.landing
+    /// Seconds aiming takes to come up (`up`) or go down: Weapon Handling's slower pace with
+    /// the weapon's weight, else the game's own.
+    pub fn aim_seconds(&self, up: bool) -> f32 {
+        match (self.handles(), up) {
+            (true, true) => AIM_IN_SECONDS * self.hands(),
+            (true, false) => AIM_OUT_SECONDS * self.hands(),
+            (false, true) => AIM_IN_PLAIN_SECONDS,
+            (false, false) => AIM_OUT_PLAIN_SECONDS,
+        }
     }
 
     /// How many times their base times the first-person hands take (the weapon's
@@ -389,7 +410,7 @@ impl MovementInertia {
 /// Keep [`MovementInertia::handling`] on the weapon the player holds (or is drawing).
 pub fn follow_weapon(mut inertia: ResMut<MovementInertia>, combat: Option<Res<crate::combat::Combat>>) {
     let weight = combat.as_deref().and_then(|c| c.forms.weapons.get(&c.player_weapon()?).map(|w| w.weight));
-    let handling = match (inertia.smooth_hands() && inertia.weapon_handling, weight) {
+    let handling = match (inertia.handles(), weight) {
         (true, Some(w)) => handling(w),
         _ => 1.0,
     };
@@ -459,12 +480,18 @@ mod tests {
         }
         assert!((t - START_SECONDS).abs() < 0.01, "{t}");
         let m = MovementInertia::default();
-        assert!(m.ground() && m.eased_crouch() && m.smooth_hands() && m.soft_recoil() && m.landing_weight(), "all on by default");
+        assert!(m.ground() && m.eased_crouch() && m.landing_weight() && m.smooth_hands() && m.handles() && m.soft_recoil(), "all on by default");
         let off = MovementInertia { advanced: false, ..default() };
-        assert!(!off.ground() && !off.eased_crouch() && !off.smooth_hands() && !off.soft_recoil() && !off.landing_weight());
-        assert!(off.on && off.crouch && off.smooth && off.recoil && off.landing, "each keeps its own choice under it");
-        let one = MovementInertia { crouch: false, ..default() };
-        assert!(!one.eased_crouch() && one.ground() && one.smooth_hands(), "one switch off leaves the rest");
+        assert!(!off.ground() && !off.eased_crouch() && !off.smooth_hands() && !off.handles() && !off.soft_recoil() && !off.landing_weight());
+        assert!(off.on && off.smooth && off.recoil && off.weapon_handling, "each keeps its own choice under it");
+        // Movement Inertia carries the crouch and the landings with it.
+        let still = MovementInertia { on: false, ..default() };
+        assert!(!still.ground() && !still.eased_crouch() && !still.landing_weight() && still.smooth_hands());
+        // Without Weapon Handling the aim keeps the game's pace, the weapon's weight none.
+        let plain = MovementInertia { weapon_handling: false, handling: 1.5, ..default() };
+        assert_eq!((plain.aim_seconds(true), plain.aim_seconds(false)), (AIM_IN_PLAIN_SECONDS, AIM_OUT_PLAIN_SECONDS));
+        let heavy = MovementInertia { handling: 1.5, ..default() };
+        assert!((heavy.aim_seconds(true) - AIM_IN_SECONDS * 1.5).abs() < 1e-6);
     }
 
     #[test]

@@ -153,11 +153,13 @@ impl RowId {
     }
 }
 
-/// A line of the page's list: a heading over rows, or a row.
+/// A line of the page's list: a heading over rows, a row, or an empty line between sections
+/// (`settings_layout::Section::gap`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewEntry {
     Heading(Placement),
     Row(RowId),
+    Gap,
 }
 
 /// What the settings page lists: a tab, the search's results or the Changed list (#1953
@@ -317,6 +319,7 @@ pub fn project(layout: &ResolvedLayout, list: &[Setting], scope: SettingsScope, 
     out.extend(layout.tab_entries(tab, |i| list.get(i).is_some_and(|s| vis.shows(s))).into_iter().map(|e| match e {
         LayoutEntry::Heading(p) => ViewEntry::Heading(p),
         LayoutEntry::Setting(i) => ViewEntry::Row(RowId::Setting(i)),
+        LayoutEntry::Gap => ViewEntry::Gap,
     }));
     out
 }
@@ -330,7 +333,7 @@ pub fn slot_of(entries: &[ViewEntry], id: RowId) -> Option<usize> {
 pub fn first_row(entries: &[ViewEntry]) -> Option<RowId> {
     entries.iter().find_map(|e| match e {
         ViewEntry::Row(id) => Some(*id),
-        ViewEntry::Heading(_) => None,
+        ViewEntry::Heading(_) | ViewEntry::Gap => None,
     })
 }
 
@@ -340,7 +343,7 @@ fn rows(entries: &[ViewEntry]) -> Vec<RowId> {
         .iter()
         .filter_map(|e| match e {
             ViewEntry::Row(id) => Some(*id),
-            ViewEntry::Heading(_) => None,
+            ViewEntry::Heading(_) | ViewEntry::Gap => None,
         })
         .collect()
 }
@@ -370,6 +373,7 @@ fn sections(entries: &[ViewEntry]) -> Vec<(Option<Placement>, Vec<usize>)> {
                 Some((_, rows)) => rows.push(k),
                 None => out.push((None, vec![k])),
             },
+            ViewEntry::Gap => {}
         }
     }
     out.retain(|(_, rows)| !rows.is_empty());
@@ -394,7 +398,7 @@ pub fn step_heading(entries: &[ViewEntry], selected: Option<RowId>, step: i32) -
     let (heading, rows) = &secs[to];
     match entries[rows[0]] {
         ViewEntry::Row(id) => Some((id, *heading)),
-        ViewEntry::Heading(_) => None,
+        ViewEntry::Heading(_) | ViewEntry::Gap => None,
     }
 }
 
@@ -403,7 +407,7 @@ pub fn heading_of(entries: &[ViewEntry], id: RowId) -> Option<Placement> {
     let k = slot_of(entries, id)?;
     entries[..k].iter().rev().find_map(|e| match e {
         ViewEntry::Heading(p) => Some(*p),
-        ViewEntry::Row(_) => None,
+        ViewEntry::Row(_) | ViewEntry::Gap => None,
     })
 }
 
@@ -447,7 +451,8 @@ pub fn window_first(entries: &[ViewEntry], first: usize, selected: Option<RowId>
 pub fn drawn_slots(entries: &[ViewEntry], first: usize, shown: usize) -> std::ops::Range<usize> {
     let first = first.min(entries.len());
     let mut end = (first + shown.max(1)).min(entries.len());
-    if end > first + 1 && matches!(entries[end - 1], ViewEntry::Heading(_)) {
+    // An empty line before that heading goes with it.
+    while end > first + 1 && matches!(entries[end - 1], ViewEntry::Heading(_) | ViewEntry::Gap) {
         end -= 1;
     }
     first..end
@@ -458,7 +463,7 @@ pub fn drawn_slots(entries: &[ViewEntry], first: usize, shown: usize) -> std::op
 /// goes on past it to the row beyond (else back to the row before), so the window always
 /// draws a row the choice can move to and the wheel crosses headings [design: #2377].
 pub fn land(entries: &[ViewEntry], first: usize, step: i64, shown: usize) -> usize {
-    let is_heading = |k: usize| matches!(entries.get(k), Some(ViewEntry::Heading(_)));
+    let is_heading = |k: usize| matches!(entries.get(k), Some(ViewEntry::Heading(_) | ViewEntry::Gap));
     if shown > 1 || !is_heading(first) {
         return first;
     }
@@ -479,7 +484,7 @@ pub fn clamp_into_window(entries: &[ViewEntry], first: usize, selected: Option<R
     let shown: Vec<(usize, RowId)> = drawn
         .filter_map(|k| match entries[k] {
             ViewEntry::Row(id) => Some((k, id)),
-            ViewEntry::Heading(_) => None,
+            ViewEntry::Heading(_) | ViewEntry::Gap => None,
         })
         .collect();
     if shown.is_empty() {
@@ -723,6 +728,7 @@ mod tests {
             .iter()
             .map(|e| match e {
                 ViewEntry::Heading(p) => format!("[{}]", p.heading.unwrap_or(p.tab)),
+                ViewEntry::Gap => String::new(),
                 ViewEntry::Row(id) => id.name(list),
             })
             .collect()

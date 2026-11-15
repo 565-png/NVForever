@@ -52,6 +52,8 @@ impl Placement {
 pub struct Section {
     pub placement: Placement,
     pub keys: &'static [&'static str],
+    /// An empty line goes before its heading (when anything of the tab is above it).
+    pub gap: bool,
 }
 
 /// The tabs, in the order the page lists them [design: #1953].
@@ -67,7 +69,12 @@ pub const CONTROLS_TAB: &str = "Controls";
 pub const TWEAKS_TAB: &str = "Tweaks";
 
 const fn section(tab: &'static str, heading: Option<&'static str>, keys: &'static [&'static str]) -> Section {
-    Section { placement: Placement { tab, subgroup: None, heading }, keys }
+    Section { placement: Placement { tab, subgroup: None, heading }, keys, gap: false }
+}
+
+/// A [`section`] after an empty line.
+const fn section_after_gap(tab: &'static str, heading: Option<&'static str>, keys: &'static [&'static str]) -> Section {
+    Section { placement: Placement { tab, subgroup: None, heading }, keys, gap: true }
 }
 
 /// Every named row's tab and heading, in the order the page shows them [design: #1953's
@@ -78,30 +85,14 @@ pub const SECTIONS: &[Section] = &[
     section("Gameplay", Some("Dialogue"), &["menu-pause", "dialogue-goodbye-hint", "dialogue-look", "dialogue-recentre", "dialogue-zoom", "lip-sync"]),
     section("Gameplay", Some("Reports"), &["send-reports", "reports-delete"]),
     section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-lower", "field-of-view", "viewmodel-field-of-view"]),
-    // How the body, the view and the weapon move: the main switch first, then each part
-    // [design: the owner, 2026-11-13: "move the player inertia under its own category and
-    // move there all the associated settings"; 2026-11-15: "rename our changes to 'Advanced
-    // movement' and add on/off toggle for all features"].
-    section(
-        NVF_FEATURES_TAB,
-        Some("Advanced movement"),
-        &[
-            "advanced-movement",
-            "movement-inertia",
-            "eased-crouch",
-            "landing-weight",
-            "smooth-weapon-animations",
-            "weapon-weight-handling",
-            "soft-recoil",
-            "weapon-sway",
-            "weapon-weight-sway",
-            "weapon-breathing",
-            "head-bob",
-            "breathing-camera",
-            "out-of-breath",
-            "hit-jolt",
-        ],
-    ),
+    // How the body, the view and the weapon move: the Global Toggle, then what changes the
+    // game and what only its look, each after an empty line [design: the owner, 2026-11-13:
+    // "move the player inertia under its own category"; 2026-11-15: "simplify the Advanced
+    // Movement menu ... add 2 categories - toggles for purely visual change and toggle for
+    // changes that affect gameplay", the names and order theirs].
+    section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement"]),
+    section_after_gap(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil"]),
+    section_after_gap(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "physics-rate", "ui-scale", "menu-scale"]),
     section(
         "Display",
@@ -186,6 +177,8 @@ pub fn check(sections: &[Section]) -> Result<(), String> {
 pub struct ResolvedSection {
     pub placement: Placement,
     pub rows: Vec<usize>,
+    /// An empty line before it ([`Section::gap`]).
+    pub gap: bool,
 }
 
 /// A tab and its sections.
@@ -195,11 +188,12 @@ pub struct ResolvedTab {
     pub sections: Vec<ResolvedSection>,
 }
 
-/// One line of a tab as the table gives it: a heading or a registered row.
+/// One line of a tab as the table gives it: a heading, a registered row or an empty line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutEntry {
     Heading(Placement),
     Setting(usize),
+    Gap,
 }
 
 /// The table applied to the registered rows ([`resolve_layout`]).
@@ -229,7 +223,7 @@ pub fn resolve_layout(list: &[Setting]) -> ResolvedLayout {
             placements[i] = Some(s.placement);
         }
         if let Some(t) = tabs.iter_mut().find(|t| t.name == s.placement.tab) {
-            t.sections.push(ResolvedSection { placement: s.placement, rows });
+            t.sections.push(ResolvedSection { placement: s.placement, rows, gap: s.gap });
         }
     }
     // The unnamed rows, by tab, in registry order: one section after each tab's named ones.
@@ -254,7 +248,7 @@ pub fn resolve_layout(list: &[Setting]) -> ResolvedLayout {
     let count = unnamed.iter().map(|(_, r)| r.len()).sum();
     for (t, rows) in unnamed {
         let placement = Placement::tab(tabs[t].name);
-        tabs[t].sections.push(ResolvedSection { placement, rows });
+        tabs[t].sections.push(ResolvedSection { placement, rows, gap: false });
     }
     ResolvedLayout { tabs, placements: placements.into_iter().map(|p| p.unwrap_or(Placement::tab(""))).collect(), unnamed: count }
 }
@@ -295,6 +289,9 @@ impl ResolvedLayout {
             if rows.is_empty() {
                 continue;
             }
+            if s.gap && !out.is_empty() {
+                out.push(LayoutEntry::Gap);
+            }
             if s.placement.heading.is_some() {
                 out.push(LayoutEntry::Heading(s.placement));
             }
@@ -328,6 +325,7 @@ mod tests {
             .map(|e| match e {
                 LayoutEntry::Heading(p) => format!("[{}]", p.heading.unwrap_or("")),
                 LayoutEntry::Setting(i) => list[i].key.to_string(),
+                LayoutEntry::Gap => String::new(),
             })
             .collect()
     }
@@ -338,15 +336,13 @@ mod tests {
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
     /// field of view row, the menu scale row, the Physics rate row and the Advanced movement rows), by the group
     /// it registers with.
-    const KNOWN: [(&str, &str); 124] = [
+    const KNOWN: [(&str, &str); 117] = [
         ("detached-camera", "Gameplay"),
         ("advanced-movement", "Gameplay"),
         ("movement-inertia", "Gameplay"),
-        ("eased-crouch", "Gameplay"),
-        ("landing-weight", "Gameplay"),
-        ("smooth-weapon-animations", "Gameplay"),
-        ("weapon-weight-handling", "Gameplay"),
-        ("soft-recoil", "Gameplay"),
+        ("weapon-handling", "Gameplay"),
+        ("advanced-recoil", "Gameplay"),
+        ("animation-smoothing", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
         ("reload-slows", "Gameplay"),
@@ -392,13 +388,8 @@ mod tests {
         ("borderless", "Display"),
         ("monitor", "Display"),
         ("first-person-body", "Display"),
-        ("weapon-sway", "Display"),
-        ("weapon-weight-sway", "Display"),
-        ("head-bob", "Display"),
-        ("breathing-camera", "Display"),
-        ("weapon-breathing", "Display"),
-        ("out-of-breath", "Display"),
-        ("hit-jolt", "Display"),
+        ("weapon-inertia", "Display"),
+        ("camera-motion", "Display"),
         ("weapon-lower", "Display"),
         ("sun-shadows", "Display"),
         ("grass", "Display"),
@@ -497,8 +488,12 @@ mod tests {
         assert!(keys(&list, &l, "Tweaks").is_empty(), "an empty tab is still a tab");
         let at = |k: &str| l.placement_of(list.iter().position(|s| s.key == k).unwrap()).unwrap().path();
         assert_eq!(at("menu-pause"), "Gameplay > Dialogue");
-        assert_eq!(at("head-bob"), "NVF Features > Advanced movement");
-        assert_eq!(keys(&list, &l, NVF_FEATURES_TAB)[..3], ["[Advanced movement]", "advanced-movement", "movement-inertia"], "the main switch first");
+        assert_eq!(at("camera-motion"), "NVF Features > Visual Only");
+        assert_eq!(
+            keys(&list, &l, NVF_FEATURES_TAB),
+            ["[Advanced Movement]", "advanced-movement", "", "[Gameplay]", "movement-inertia", "weapon-handling", "advanced-recoil", "", "[Visual Only]", "weapon-inertia", "animation-smoothing", "camera-motion"],
+            "the Global Toggle, then Gameplay and Visual Only, each after an empty line (the owner's order)"
+        );
         assert_eq!(TAB_ORDER[..5], ["Gameplay", "Display", "Audio", "Controls", "NVF Features"], "after the original's four");
         assert_eq!(at("hud-red"), "Display > Interface");
         assert_eq!(at("sky-clock"), "Graphics > World");
@@ -514,10 +509,11 @@ mod tests {
     #[test]
     fn a_missing_row_and_an_empty_heading_are_left_out() {
         // No lip sync, no player body; no head tracking, foot IK or sky clock at all.
-        let list = registry(&[("difficulty", "Gameplay"), ("menu-pause", "Gameplay"), ("head-bob", "Display"), ("god-mode", "Debug")]);
+        let list = registry(&[("difficulty", "Gameplay"), ("menu-pause", "Gameplay"), ("camera-motion", "Display"), ("god-mode", "Debug")]);
         let l = resolve_layout(&list);
         assert_eq!(keys(&list, &l, "Gameplay"), ["[Game]", "difficulty", "[Dialogue]", "menu-pause"]);
-        assert_eq!(keys(&list, &l, NVF_FEATURES_TAB), ["[Advanced movement]", "head-bob"]);
+        // No empty line at a tab's top: nothing of the tab is above the Visual Only heading.
+        assert_eq!(keys(&list, &l, NVF_FEATURES_TAB), ["[Visual Only]", "camera-motion"]);
         assert!(keys(&list, &l, "Graphics").is_empty());
         // A hidden row hides its heading when it is the section's only one, and keeps its place.
         let hidden = list.iter().position(|s| s.key == "menu-pause").unwrap();

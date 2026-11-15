@@ -208,20 +208,6 @@ are at the end.
 - Command-line switches: `--first-person-body`
 - Registered in `engine/nvforever/src/settings.rs`
 
-### `weapon-sway`: Weapon sway
-
-- On the page: On: in first person the arms and weapon lag behind a turn and bob as you walk
-  and run. Off: they stay still in the view.
-- Command-line switches: `--no-weapon-sway`
-- Registered in `engine/nvforever/src/settings.rs`
-
-### `head-bob`: Head bob
-
-- On the page: On: in first person the view dips with each step as you walk and run. Off: it
-  stays level.
-- Command-line switches: `--no-head-bob`
-- Registered in `engine/nvforever/src/settings.rs`
-
 ### `weapon-lower`: Lower weapon near walls
 
 - On the page: On: in first person a drawn weapon lowers at a wall or a friend and comes
@@ -622,6 +608,54 @@ After the Controls tab's own rows (see the end of this page):
 - On the page: How hard aiming down the sights turns the view onto a hostile near the
   crosshair (0: not at all). Push the right stick away to break it.
 - Registered in `engine/nvf-play/src/aim_assist.rs`
+
+## NVF Features › Advanced Movement
+
+### `advanced-movement`: Global Toggle
+
+- On the page: On: the switches below shape how your character, view and weapon move. Off: none of them acts, as in the original; each keeps its own choice.
+- Command-line switches: `--no-advanced-movement`
+- Registered in `engine/nvf-play/src/player.rs`
+
+## NVF Features › Gameplay
+
+### `movement-inertia`: Movement Inertia
+
+- On the page: On: you speed up, glide to a stop and brake before turning; crouching eases and landings dip and slow you by the fall. Off: as in the original.
+- Command-line switches: `--no-movement-inertia`
+- Registered in `engine/nvf-play/src/player.rs`
+
+### `weapon-handling`: Weapon Handling
+
+- On the page: On: drawing, putting away and aiming a weapon take a moment longer, and longer still for heavier weapons. Off: the original's timing.
+- Command-line switches: `--no-weapon-handling`
+- Registered in `engine/nvf-play/src/player.rs`
+
+### `advanced-recoil`: Advanced Recoil
+
+- On the page: On: a shot's kick eases the view up and part of it settles back down, and the view nudges back. Off: the whole kick stays, as in the original.
+- Command-line switches: none
+- Registered in `engine/nvf-play/src/player.rs`
+
+## NVF Features › Visual Only
+
+### `weapon-inertia`: Weapon Inertia
+
+- On the page: On: in first person the arms and weapon lag behind turns and steps, bob, dip, breathe and recoil, heavier weapons more. Off: they stay still.
+- Command-line switches: `--no-weapon-sway` (a saved `weapon-sway` is read as this row)
+- Registered in `engine/nvforever/src/settings.rs`
+
+### `animation-smoothing`: Animation Smoothing
+
+- On the page: On: in first person drawing, aiming, attacks, reloads and the Pip-Boy ease in and settle softly, taking no longer. Off: the original's clips.
+- Command-line switches: none
+- Registered in `engine/nvf-play/src/player.rs`
+
+### `camera-motion`: Camera Motion
+
+- On the page: On: in first person the view bobs with each step, breathes, gets out of breath after running and jolts when you are hit. Off: it stays still.
+- Command-line switches: `--no-head-bob` (a saved `head-bob` is read as this row)
+- Registered in `engine/nvforever/src/settings.rs`
 
 ## Graphics › Quality
 

@@ -740,10 +740,6 @@ struct Args {
     /// (head_bob.rs); a switch of the settings page.
     #[arg(long, requires = "play")]
     no_head_bob: bool,
-    /// No breathing camera: the first-person view does not rise and fall with the breath
-    /// (head_bob.rs); a switch of the settings page.
-    #[arg(long, requires = "play")]
-    no_breathing_camera: bool,
     /// No advanced movement: none of the settings page's Advanced movement switches acts
     /// (inertia, eased crouch, smooth weapon animations, weapon sway, head bob, the breath,
     /// soft recoil, landing weight, hit jolt; nvf_play::inertia::MovementInertia::advanced),
@@ -754,14 +750,10 @@ struct Args {
     /// switch of the settings page.
     #[arg(long, requires = "play")]
     no_movement_inertia: bool,
-    /// With smooth weapon animations every weapon draws, aims and reloads alike, whatever it
-    /// weighs (nvf_play::inertia::handling); a switch of the settings page, on by default.
+    /// No Weapon Handling: drawing, putting away and aiming keep the game's own timing,
+    /// whatever the weapon weighs (nvf_play::inertia); a switch of the settings page.
     #[arg(long, requires = "play")]
-    no_weapon_weight_handling: bool,
-    /// Heavier weapons sway slower and further in first person (view_sway.rs); a switch of
-    /// the settings page, off by default.
-    #[arg(long, requires = "play")]
-    weapon_weight_sway: bool,
+    no_weapon_handling: bool,
     /// Keep the first-person weapon up against walls and friendly actors close ahead
     /// (weapon_lower.rs); a switch of the settings page.
     #[arg(long, requires = "play")]
@@ -1755,10 +1747,10 @@ fn main() -> AppExit {
             app.add_plugins(creator_view::CreatorViewPlugin { light_scale: args.light_scale });
             // The Vigor Tester's machine: its camera and lights, the room behind it.
             app.add_plugins(vigor_view::VigorViewPlugin);
-            app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, weapon_weight_sway: args.weapon_weight_sway, head_bob: !args.no_head_bob, breathing_camera: !args.no_breathing_camera, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin, grass_fire_fx::GrassFireFxPlugin));
+            app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, head_bob: !args.no_head_bob, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin, grass_fire_fx::GrassFireFxPlugin));
             app.insert_resource(nvf_play::aim_zoom::Scope3d { on: args.scope_3d, lens: false });
             let mut inertia = nvf_play::inertia::MovementInertia::switched(!args.no_movement_inertia);
-            inertia.weapon_handling = !args.no_weapon_weight_handling;
+            inertia.weapon_handling = !args.no_weapon_handling;
             inertia.advanced = !args.no_advanced_movement;
             app.insert_resource(inertia);
             app.add_plugins(decals::DecalsPlugin);

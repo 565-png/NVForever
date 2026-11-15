@@ -1010,26 +1010,12 @@ impl Default for Motion {
 pub struct PlayerBody {
     /// Draw the body in first person too (`--first-person-body`, the settings page).
     pub first_person_body: bool,
-    /// Sway and bob the first-person arms and weapon (`view_sway.rs`; off with
-    /// `--no-weapon-sway`, the settings page).
+    /// Weapon Inertia: the first-person arms and weapon lag, bob, dip, breathe and recoil,
+    /// heavier weapons more (`view_sway.rs`; off with `--no-weapon-sway`, the settings page).
     pub weapon_sway: bool,
-    /// Heavier weapons sway slower and further (`view_sway.rs`; on with
-    /// `--weapon-weight-sway`, the settings page; off by default).
-    pub weapon_weight_sway: bool,
-    /// Bob the first-person camera while walking (`head_bob.rs`; off with
-    /// `--no-head-bob`, the settings page).
+    /// Camera Motion: the first-person view bobs, breathes, gets out of breath and jolts when
+    /// hit (`head_bob.rs`; off with `--no-head-bob`, the settings page).
     pub head_bob: bool,
-    /// The first-person camera rises and falls with the breath (`head_bob.rs`; off with
-    /// `--no-breathing-camera`, the settings page).
-    pub breathing_camera: bool,
-    /// The first-person weapon drifts with the breath (`view_sway.rs`; the settings page's
-    /// "Weapon breathing", on from the start).
-    pub weapon_breathing: bool,
-    /// Running and jumping wind the player (`head_bob.rs`; "Out of breath", on).
-    pub out_of_breath: bool,
-    /// A blow taken jolts the first-person view and weapon (`view_sway.rs`, `head_bob.rs`;
-    /// "Hit jolt", on).
-    pub hit_jolt: bool,
     /// Lower the first-person weapon against a wall or a friendly actor close ahead
     /// (`weapon_lower.rs`; off with `--no-weapon-lower`, the settings page).
     pub weapon_lower: bool,
@@ -1287,12 +1273,8 @@ pub struct PlayerBodyPlugin {
     pub first_person_body: bool,
     /// Not `--no-weapon-sway`.
     pub weapon_sway: bool,
-    /// `--weapon-weight-sway`.
-    pub weapon_weight_sway: bool,
     /// Not `--no-head-bob`.
     pub head_bob: bool,
-    /// Not `--no-breathing-camera`.
-    pub breathing_camera: bool,
     /// Not `--no-weapon-lower`.
     pub weapon_lower: bool,
     /// Not `--no-true-iron-sights`.
@@ -1302,7 +1284,7 @@ pub struct PlayerBodyPlugin {
 impl Plugin for PlayerBodyPlugin {
     fn build(&self, app: &mut App) {
         // Furniture (`furniture.rs`) says what the body plays before it is posed.
-        app.insert_resource(PlayerBody { first_person_body: self.first_person_body, weapon_sway: self.weapon_sway, weapon_weight_sway: self.weapon_weight_sway, head_bob: self.head_bob, breathing_camera: self.breathing_camera, weapon_breathing: true, out_of_breath: true, hit_jolt: true, weapon_lower: self.weapon_lower, true_iron_sights: self.true_iron_sights, ..default() })
+        app.insert_resource(PlayerBody { first_person_body: self.first_person_body, weapon_sway: self.weapon_sway, head_bob: self.head_bob, weapon_lower: self.weapon_lower, true_iron_sights: self.true_iron_sights, ..default() })
             .init_resource::<crate::furniture::BodyOverride>()
             .init_resource::<crate::furniture::PlayerUse>()
             .init_resource::<crate::weapon_lower::Ahead>()
@@ -1439,11 +1421,11 @@ fn report(mut exit: MessageReader<AppExit>, body: Res<PlayerBody>) {
             m.sway.peak_lag.y.to_degrees(),
             m.sway.peak_dip,
             m.sway.peak_lift_dip.max(0.0) + 0.0,
-            if body.weapon_weight_sway { "on" } else { "off" }
+            if body.weapon_sway { "on" } else { "off" }
         );
         let (head, pivot) = m.head.pivot_rms();
         info!("player body summary: head bob {}, deepest first-person dip {:.2} units; third-person pivot over {} frames moved {pivot:.3} units a frame (rms) against the head's {head:.3}, pivot/head {:.2}", if body.head_bob { "on" } else { "off" }, m.head.peak_dip, m.head.frames, pivot / head.max(1e-3));
-        info!("player body summary: head inertia, deepest take-off or landing dip {:.2} units; breathing camera {}, highest rise {:.2} units", m.head.peak_land.max(0.0) + 0.0, if body.breathing_camera { "on" } else { "off" }, m.head.peak_breath.max(0.0) + 0.0);
+        info!("player body summary: head inertia, deepest take-off or landing dip {:.2} units; breathing camera {}, highest rise {:.2} units", m.head.peak_land.max(0.0) + 0.0, if body.head_bob { "on" } else { "off" }, m.head.peak_breath.max(0.0) + 0.0);
         info!("player body summary: most gun recoil back {:.2} units, most out of breath {:.2}", m.sway.peak_recoil.max(0.0) + 0.0, m.head.peak_exertion);
         info!("player body summary: weapon lowering {}, lowered {} times, most {:.2}", if body.weapon_lower { "on" } else { "off" }, m.lower.times, m.lower.peak);
     }
@@ -2353,7 +2335,7 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     // A landing with movement inertia: the clip is played by its place along the settling
     // curve over a longer time, so the view dips about as fast as the clip has it and
     // stands up slowly to a soft end (at the clip's own pace the standing up took 0.4 s).
-    if let (true, Some(stretch)) = (first_inertia, f.land_stretch) {
+    if let (View::First, Some(stretch)) = (rig.view, f.land_stretch) {
         for l in a.layers.iter_mut().filter(|l| l.tag == TAG_LAND && !l.finished()) {
             let length = l.clip.length().max(1e-3);
             let x = nvf_play::ease::settle_inv((l.time / length).clamp(0.0, 1.0)) + f.dt.max(0.0) / (length * stretch.max(0.1));
@@ -3094,7 +3076,7 @@ fn drive_body(
     let (draw_t, away_t) = timing_rig.transitions(&mut ctx, stance, prefix);
     // The Equip Speed perks (Quick Draw): the draw and holster take 1 ÷ the rate as long;
     // with movement inertia they are slower still (`nvf_play::inertia::EQUIP_PACE`).
-    let equip_pace = inertia.as_deref().filter(|i| i.smooth_hands()).map_or(1.0, |i| nvf_play::inertia::EQUIP_PACE / i.hands());
+    let equip_pace = inertia.as_deref().filter(|i| i.handles()).map_or(1.0, |i| nvf_play::inertia::EQUIP_PACE / i.hands());
     let eq = if anim.equip_rate > 0.0 { anim.equip_rate } else { 1.0 } * equip_pace;
     // With movement inertia the clip is played along the settling curve (`Frame::equip_at`):
     // the weapon changes hands when the curve reaches the clip's own moment for it.
@@ -3237,10 +3219,10 @@ fn drive_body(
     let frame = Frame {
         inertia: smooth,
         crouch_jump: inertia.as_deref().is_some_and(|i| i.eased_crouch()),
-        aim_fade: smooth_with.map(|i| i.hands() * if control.aiming { nvf_play::inertia::AIM_IN_SECONDS } else { nvf_play::inertia::AIM_OUT_SECONDS }),
+        aim_fade: inertia.as_deref().filter(|i| i.smooth_hands() || i.handles()).map(|i| i.aim_seconds(control.aiming)),
         stance_fade,
         move_fade: smooth.then_some(nvf_play::inertia::MOVE_FADE_SECONDS),
-        land_stretch: smooth_with.map(|i| if i.landing_weight() { nvf_play::inertia::land_stretch(m.landed_speed) } else { nvf_play::inertia::LAND_STRETCH }),
+        land_stretch: inertia.as_deref().filter(|i| i.landing_weight()).map(|_| nvf_play::inertia::land_stretch(m.landed_speed)),
         hands_pace: smooth_with.map(|i| i.hands()),
         equip_at,
         dt,
@@ -3318,14 +3300,14 @@ fn drive_body(
     let pipboy = (pip.on_arm() && pip.warming.is_none()).then_some(pip.clip_time);
     // A heavier weapon in the hand sways slower and further, with its switch on.
     let gun_weight = combat.as_deref().filter(|_| m.hands.in_hand).and_then(|c| c.forms.weapons.get(&c.player_weapon()?)).map_or(0.0, |w| w.weight);
-    let weight = if state.weapon_weight_sway { gun_weight } else { 0.0 };
+    let weight = gun_weight;
     // A shot of a gun or launcher this frame: its recoil on the gun's springs, stronger for
     // a heavier gun (`view_sway.rs`); thrown and melee weapons have none.
     let soft_recoil = inertia.as_deref().is_none_or(|i| i.soft_recoil());
-    let kick = if soft_recoil && attack_now && matches!(prefix, "1hp" | "2hr" | "2ha" | "2hh" | "2hl") { 0.7 + 0.6 * nvf_play::ease::smoothstep(2.0, 20.0, gun_weight) } else { 0.0 };
+    let kick = if attack_now && matches!(prefix, "1hp" | "2hr" | "2ha" | "2hh" | "2hl") { 0.7 + 0.6 * nvf_play::ease::smoothstep(2.0, 20.0, gun_weight) } else { 0.0 };
     // The blows taken since last frame, as one punch (already in the view's frame).
     let punch = blows.as_deref_mut().map_or(Vec3::ZERO, |b| std::mem::take(&mut b.punch));
-    let punch = if advanced && state.hit_jolt { punch } else { Vec3::ZERO };
+    let punch = if advanced && state.head_bob { punch } else { Vec3::ZERO };
     let hard_landings = inertia.as_deref().is_some_and(|i| i.landing_weight());
     // The arms' field of view: the console's `fov` can ask for another first-person field
     // of view; otherwise the settings page's (`--viewmodel-fov`). The sway, tuned at the
@@ -3349,7 +3331,7 @@ fn drive_body(
             sneaking: stance == Stance::Sneak,
             airborne: m.falling,
             heft: crate::view_sway::heft(weight),
-            breathing: advanced && state.weapon_breathing,
+            breathing: true,
             hard_landings,
             // How far the gun is up to aim or block: the true iron sights' own share
             // while they ran last frame, else the aim or block clip asked for.
@@ -3364,7 +3346,7 @@ fn drive_body(
             },
             kick,
             punch,
-            exertion: if advanced && state.out_of_breath { m.head.exertion() } else { 0.0 },
+            exertion: if advanced && state.head_bob { m.head.exertion() } else { 0.0 },
             reloading: f32::from(u8::from(f.animator.layers.iter().any(|l| l.tag == TAG_RELOAD && !l.finished() && !l.is_leaving()))),
             on: advanced && state.weapon_sway && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         })
@@ -3383,10 +3365,13 @@ fn drive_body(
             airborne: m.falling,
             velocity: m.velocity,
             vertical,
-            out_of_breath: advanced && state.out_of_breath,
+            out_of_breath: advanced && state.head_bob,
             hard_landings,
-            breathing: advanced && state.breathing_camera && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
-            kick,
+            // The take-off and landing dip is Movement Inertia's, the rest Camera Motion's.
+            landing: hard_landings && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
+            breathing: advanced && state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
+            // The view's nudge back from a shot is Advanced Recoil's.
+            kick: if soft_recoil { kick } else { 0.0 },
             punch,
             on: advanced && state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         });
@@ -3442,13 +3427,18 @@ fn drive_body(
             (0.0, 0.0)
         }
         (true, None) => {
-            m.sights.reset();
-            let s = crate::iron_sights::step(m.sights_share, aimed, dt);
-            (s, crate::iron_sights::ease(s))
+            // Weapon Handling's pace, else the sights' own; the settling curve kept where
+            // the gun is, so Animation Smoothing switched on part-way goes on from there.
+            let s = match inertia.as_deref().filter(|i| i.handles()) {
+                Some(i) => crate::iron_sights::step_over(m.sights_share, aimed, dt, i.aim_seconds(true), i.aim_seconds(false)),
+                None => crate::iron_sights::step(m.sights_share, aimed, dt),
+            };
+            let eased = crate::iron_sights::ease(s);
+            m.sights.place(eased, aimed);
+            (s, eased)
         }
         (true, Some(i)) => {
-            let w = i.hands();
-            let v = m.sights.step(aimed, dt, nvf_play::inertia::AIM_IN_SECONDS * w, nvf_play::inertia::AIM_OUT_SECONDS * w);
+            let v = m.sights.step(aimed, dt, i.aim_seconds(true), i.aim_seconds(false));
             (if m.sights.is_up() { 1.0 } else if m.sights.is_down() { 0.0 } else { v.clamp(1e-4, 1.0 - 1e-4) }, v)
         }
     };

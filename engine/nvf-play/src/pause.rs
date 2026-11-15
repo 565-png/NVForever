@@ -1691,6 +1691,7 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
         match entries[k] {
             ViewEntry::Heading(p) => heading_line(root, f, &heading_words(p, crumbs), lb, y),
             ViewEntry::Row(id) => row_line(root, d, look, list, id, selected == Some(id), lb, y, glyphs),
+            ViewEntry::Gap => {}
         }
     }
     // The chosen row's note under the rows; with its list open on a choice out of reach,
@@ -2995,6 +2996,7 @@ fn log_inspect(list: &[Setting], view: &PauseView, selected: Option<RowId>, entr
     let line = |e: &ViewEntry| match e {
         ViewEntry::Heading(p) => format!("[{}]", p.path()),
         ViewEntry::Row(id) => id.name(list),
+        ViewEntry::Gap => String::new(),
     };
     info!("pause menu: inspect: shown {}", entries[drawn].iter().map(line).collect::<Vec<_>>().join(", "));
     let rows: Vec<String> = entries.iter().filter(|e| matches!(e, ViewEntry::Row(_))).map(line).collect();
@@ -3008,7 +3010,7 @@ fn log_inspect(list: &[Setting], view: &PauseView, selected: Option<RowId>, entr
     let crumbs = !matches!(view.scope, SettingsScope::Tab(_));
     words.extend(entries.iter().filter_map(|e| match e {
         ViewEntry::Heading(p) => Some(heading_words(*p, crumbs)),
-        ViewEntry::Row(_) => None,
+        ViewEntry::Row(_) | ViewEntry::Gap => None,
     }));
     if entries.is_empty() {
         words.push(tr(empty_words(view.scope)).to_string());
@@ -4210,7 +4212,7 @@ fn choose(
                     .iter()
                     .filter_map(|e| match e {
                         ViewEntry::Row(id) => Some(id.name(list)),
-                        ViewEntry::Heading(_) => None,
+                        ViewEntry::Heading(_) | ViewEntry::Gap => None,
                     })
                     .collect();
                 info!("pause menu: search \"{q}\": {} result(s); keys {}", keys.len(), keys.join(","));
@@ -5303,6 +5305,7 @@ mod tests {
             ViewEntry::Heading(p) => format!("[{}]", p.path()),
             ViewEntry::Row(RowId::Setting(i)) => rows[*i].0.to_string(),
             ViewEntry::Row(r) => format!("{r:?}"),
+            ViewEntry::Gap => String::new(),
         };
         // Under the heading of where it lives, its tab too.
         let names: Vec<String> = d.entries.iter().map(line).collect();
