@@ -2265,3 +2265,15 @@ already talking takes over at once, same topic or another; nothing is queued or 
     line heard and shown at a time, each to its end, or does the voice stutter and the
     subtitle flicker? The campaign `o30c_say` (tools/capture/observe) does the same by
     script with shots, if run with the window in front.
+
+## Added 2026-11-15 (That Lucky Old Sun's ARCHIMEDES strike, #2544)
+
+164. **How does ARCHIMEDES's armed strike play out?** (P3; #2544, use-weapon.md §2.) With
+     VMS03 at objective 70, `set VMS03.bArchimedesArmed to 1` and activate the Reflector
+     Control Panel 0x000E07DF on the observation deck between 9 and 15 h. Note the time
+     from the activation to the first trooper's death and between deaths (TestTrooperREF1
+     0x000E35D5, then 0x000E35D4, 0x000E35D1, 0x000E35D3, 0x000E35D2: `GetDead`), whether
+     ARCHIMEDESMarkerREF2 (0x000E07DD) visibly turns between targets, and whether the
+     troopers fire at the player before the first shot. Ours since #2544: the first
+     death about 37 s after the activation, one every 1-4 s after, the turret turning
+     to each [hypothesis: the script's timers, ours turns at the combat rate].
