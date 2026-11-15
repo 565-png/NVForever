@@ -127,6 +127,14 @@ the spec it links to.
     its target. The original's rule is unknown (the WEAP Short/Long Burst flags are not
     understood). Longer or shorter bursts, longer pauses, or Long Burst weapons firing
     longer? ([combat-ai](design/combat-ai.md), `fnv_combat::burst`)
+84. **Cowards flee every fight from its start (#2520).** An NPC or creature whose
+    Confidence is Cowardly (and was not raised at a flee spot) now runs from every fight
+    at once, unhurt, whatever the odds; before, it fled only once hurt and its threat
+    ratios said so, and it still fought whoever attacked it. The GECK wiki says a coward
+    "will always flee from combat"; from the very start is our reading, not seen in the
+    original (observer check 180 asks about the Silver Rush customer this was found on).
+    It changes every Cowardly actor in every fight. Should cowards still fight back when
+    cornered, or wait until hurt? ([combat-ai §12](design/combat-ai.md))
 
 ## Tier 2: movement and controls feel
 
