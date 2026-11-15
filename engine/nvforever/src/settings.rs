@@ -313,6 +313,7 @@ pub fn register(app: &mut App) {
             group: GROUP_GRAPHICS,
             label: "Smooth terrain",
             note: nvf_play::smooth_terrain::NOTE,
+            switches: "--no-smooth-terrain",
             get: |_| nvf_play::smooth_terrain::setting(),
             set: |_, on| nvf_play::smooth_terrain::set_setting(on),
             slider: None,
