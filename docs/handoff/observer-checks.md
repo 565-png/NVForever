@@ -2357,8 +2357,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      These captures did not time detection loss or the search after breaking sight.
 
      [design, #2573; tools/smoke/scenarios.toml] `detection-combat-target-sneak`
-     checks five paired GetDetectionValue reads, requiring the player's attacker
-     to read higher than the NPC fighting a gecko, and logs both distances without
-     absolute ranges. Authored without running the game; the main session must
-     confirm mirrored 690-unit offsets, read times and whether the attacker closes
-     before the reads. The answered capture evidence above is unchanged.
+     uses the cleared Searchlight Airport runway at hour 12 with god mode. The
+     player sneaks from 2 s and stands still. Fighter GoodspringsSettler01Ref
+     (00104F03) and watcher GoodspringsSettler03Ref (00104F0A) have Perception 5 and
+     Assistance 0; the watcher is removed from all factions. A gecko is created at
+     the watcher with Aggression 0 and Perception 0, then positioned 150 units
+     toward the player. Both settlers reset to mirrored 690-unit offsets at 5.8 s
+     and the gecko resets at 5.9 s. At 6 s the fighter starts combat with the player
+     and the watcher with the gecko. Five paired GetDetectionValue/GetDistance reads
+     run every 0.5 s from 6.6 to 8.6 s. Every fighter value must exceed its paired
+     watcher value; distances are logged without absolute ranges.
+
+     [observed: smoke runs on the combined build, 2026-11-15] With the fix, both
+     detectors at 690 units read fighter 64 / watcher 56; the fighter closing to 610
+     read 69 (PASS). With both detection.rs files reverted to upstream main, fighter
+     84-88 / watcher 91 in all five pairs (FAIL).

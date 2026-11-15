@@ -182,12 +182,24 @@ The light level decides most of the visual term, and its measure is a hypothesis
   read higher to its own fighter and lower to one fighting someone else [observed:
   captures run15b_t1 and run15b_t2, 2026-11-15; actor-behaviour.md §2.1a; answered
   observer check 175]. Still open here: GetDetected at night with the Pip-Boy light
-  on and off. The `detection-combat-target-sneak` smoke compares five paired JIP
-  GetDetectionValue reads: the player's attacker must read higher than a fighter
-  busy with a gecko. It logs distances without absolute ranges [design, #2573;
-  tools/smoke/scenarios.toml]. Authored without running the game; the main session
-  must confirm offsets, read times and whether the attacker closes before the reads
-  [design, #2573].
+  on and off.
+
+  [design, #2573; tools/smoke/scenarios.toml] `detection-combat-target-sneak` uses
+  the cleared Searchlight Airport runway at hour 12 with god mode. The player sneaks
+  from 2 s and stands still. Fighter GoodspringsSettler01Ref (00104F03) and watcher
+  GoodspringsSettler03Ref (00104F0A) have Perception 5 and Assistance 0; the watcher
+  is removed from all factions. A gecko is created at the watcher with Aggression 0
+  and Perception 0, then positioned 150 units toward the player. Both settlers reset
+  to mirrored 690-unit offsets at 5.8 s and the gecko resets at 5.9 s. At 6 s the
+  fighter starts combat with the player and the watcher with the gecko. Five paired
+  GetDetectionValue/GetDistance reads run every 0.5 s from 6.6 to 8.6 s. Every
+  fighter value must exceed its paired watcher value; distances are logged without
+  absolute ranges.
+
+  [observed: smoke runs on the combined build, 2026-11-15] With the fix, both
+  detectors at 690 units read fighter 64 / watcher 56; the fighter closing to 610
+  read 69 (PASS). With both detection.rs files reverted to upstream main, fighter
+  84-88 / watcher 91 in all five pairs (FAIL).
 - Not modelled: perk entry point "Ignore Running During Detection", melee blows' own
   sound (a blow's impact counts, §8), SetAllVisible, player.GetLineOfSight on objects
   that are not actors, the sneak meter on the HUD, fights in the low process (§7).
