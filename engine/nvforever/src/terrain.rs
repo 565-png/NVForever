@@ -643,6 +643,7 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
     let TerrainPrep { grid, land, layers: drawn, mut meshes, mut folded, tile } = prep;
     let mut surface = crate::mesh_terrain_blend::config().map(|_| crate::terrain_surface::SurfaceCell {
         world: world.world, grid, heights: land.heights.clone().unwrap_or_default(), quadrants: Vec::new(),
+        paths: [crate::terrain_surface::CapturePath::HeightOnly("missing-base-mesh"); 4],
     });
     let folds = tm.tm.folds();
     let most = folded_layers(tile);
@@ -667,11 +668,14 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
             None => None,
         };
         if let Some((mesh, mat, n)) = folded_mat {
-            // [design] Capture only complete folded quadrants; overflow/fallback waits for round 2.
+            // [design] Unsupported colour affects this quadrant only; heights are independent.
+            if let Some(surface) = &mut surface {
+                surface.paths[q as usize] = crate::terrain_surface::CapturePath::HeightOnly("layered-overflow");
+            }
             if n == layers.len() {
                 if let Some(surface) = &mut surface {
                     let material = tm.tm.folded.get(&mat).unwrap().clone();
-                    surface.push(&mesh, material);
+                    surface.push(q, &mesh, material, crate::terrain_surface::CapturePath::Folded);
                 }
             }
             let mesh = tm.assets.meshes.add(mesh);
@@ -680,12 +684,15 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
             tm.tm.cache.folded_layers += n;
             blended_from = n;
         } else {
+            if let Some(surface) = &mut surface {
+                surface.paths[q as usize] = crate::terrain_surface::CapturePath::HeightOnly(if folds { "fallback-layers" } else { "non-bindless-layers" });
+            }
             let mat = tm.base_material(tex);
             if let Some(mesh) = meshes.remove(&(q, None)) {
                 if layers.is_empty() {
                     if let Some(surface) = &mut surface {
                         let base = tm.assets.materials.get(&mat).unwrap().base.clone();
-                        surface.push(&mesh, TerrainMaterial { base, extension: default() });
+                        surface.push(q, &mesh, TerrainMaterial { base, extension: default() }, crate::terrain_surface::CapturePath::Fallback);
                     }
                 }
                 let mesh = tm.assets.meshes.add(mesh);
@@ -702,7 +709,7 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
             }
         }
     }
-    if let Some(surface) = surface.filter(|s| s.quadrants.len() == 4) {
+    if let Some(surface) = surface {
         commands.entity(cell).insert(surface);
     }
     land

@@ -8,14 +8,14 @@ use nvf_assets::nif_surface_blend::{NifBlendMaterial, NifSurfaceBlend};
 use std::{collections::HashMap, sync::OnceLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Variant { Surface, Weight, Normal, Selection }
+pub enum Variant { Surface, Weight, Normal, Selection, Status }
 
 impl Variant {
     fn name(self) -> &'static str {
-        match self { Self::Surface => "surface", Self::Weight => "weight", Self::Normal => "normal", Self::Selection => "selection" }
+        match self { Self::Surface => "surface", Self::Weight => "weight", Self::Normal => "normal", Self::Selection => "selection", Self::Status => "status" }
     }
     fn number(self) -> f32 {
-        match self { Self::Surface => 0.0, Self::Weight => 1.0, Self::Normal => 2.0, Self::Selection => 3.0 }
+        match self { Self::Surface => 0.0, Self::Weight => 1.0, Self::Normal => 2.0, Self::Selection => 3.0, Self::Status => 4.0 }
     }
 }
 
@@ -32,7 +32,8 @@ pub fn parse(value: &str) -> Result<BlendConfig, &'static str> {
     let variant = match variant {
         "surface" => Variant::Surface, "weight" => Variant::Weight,
         "normal" => Variant::Normal, "selection" => Variant::Selection,
-        _ => return Err("expected [positive band]:surface|weight|normal|selection"),
+        "status" => Variant::Status,
+        _ => return Err("expected [positive band]:surface|weight|normal|selection|status"),
     };
     Ok(BlendConfig { band, variant })
 }
@@ -75,15 +76,7 @@ pub fn eligible_material(m: &NifMaterial) -> bool {
         && s.soft == Vec4::ZERO && m.base.depth_bias == 0.0
 }
 
-#[derive(Component)]
-pub struct BlendShape {
-    pub original: Handle<NifMaterial>,
-    enabled: Option<Handle<NifBlendMaterial>>,
-}
-
-impl BlendShape {
-    pub fn new(original: Handle<NifMaterial>) -> Self { Self { original, enabled: None } }
-}
+pub use nvf_assets::nif_surface_blend::BlendShape;
 
 #[derive(Resource, Default)]
 struct Variants {
@@ -99,7 +92,11 @@ impl Plugin for MeshTerrainBlendPlugin {
         if config().is_none() { return; }
         app.add_plugins((MaterialPlugin::<NifBlendMaterial>::default(), crate::terrain_surface::SurfaceBakePlugin))
             .init_resource::<SurfaceCache>().init_resource::<Variants>()
-            .add_systems(Update, (update_cache, apply_variants).chain().after(crate::world::stream));
+            .add_systems(Update, update_cache.after(crate::world::stream))
+            // Ordinary producers (swaps, alpha, scripted fades) finish in Update.
+            .add_systems(PostUpdate, apply_variants
+                .before(bevy::asset::AssetEventSystems)
+                .before(bevy::mesh::mark_3d_meshes_as_changed_if_their_assets_changed));
     }
 }
 
@@ -120,12 +117,31 @@ fn apply_variants(
     mut shapes: Query<(Entity, &mut BlendShape, Option<&MeshMaterial3d<NifMaterial>>)>,
 ) {
     let Some(c) = config() else { return };
+    apply_configured_variants(&mut commands, &cache, &mut variants, &materials, &mut blends, &mut shapes, c);
+}
+
+// [design] Explicit config boundary lets ECS tests publish without process-wide env state.
+fn apply_configured_variants(
+    commands: &mut Commands,
+    cache: &SurfaceCache,
+    variants: &mut Variants,
+    materials: &Assets<NifMaterial>,
+    blends: &mut Assets<NifBlendMaterial>,
+    shapes: &mut Query<(Entity, &mut BlendShape, Option<&MeshMaterial3d<NifMaterial>>)>,
+    c: BlendConfig,
+) {
     if variants.generation != cache.generation {
         variants.generation = cache.generation;
         variants.materials.clear();
     }
+    // A producer can edit an owned source in place and republish the same handle
+    // (NIF block material edits). Evict once per source before creating shared clones.
+    for (_, shape, drawn) in shapes.iter() {
+        if shape.enabled.is_none() { continue; }
+        if let Some(drawn) = drawn { variants.materials.remove(&drawn.0.id()); }
+    }
     let mut eligible = 0;
-    for (entity, mut shape, drawn) in &mut shapes {
+    for (entity, mut shape, drawn) in shapes.iter_mut() {
         // [design] Respect a material override, retaining its actual source handle too.
         if let Some(drawn) = drawn {
             shape.original = drawn.0.clone();
@@ -153,7 +169,7 @@ fn apply_variants(
     }
     if let Some(surface) = &cache.published {
         if eligible > 0 && variants.reported != Some(cache.generation) {
-            info!("mesh terrain blend: ready eligible-shapes={eligible} resident-cells={} generation={}", surface.cells, cache.generation);
+            info!("mesh terrain blend: ready eligible-shapes={eligible} resident-cells={} generation={} variant={}", surface.cells, cache.generation, c.variant.name());
             variants.reported = Some(cache.generation);
         }
     }
@@ -164,12 +180,115 @@ mod tests {
     use super::*;
     use nvf_assets::nif_material::NifSurface;
 
+    fn configured(
+        mut commands: Commands, cache: Res<SurfaceCache>, mut variants: ResMut<Variants>,
+        materials: Res<Assets<NifMaterial>>, mut blends: ResMut<Assets<NifBlendMaterial>>,
+        mut shapes: Query<(Entity, &mut BlendShape, Option<&MeshMaterial3d<NifMaterial>>)>,
+    ) {
+        apply_configured_variants(&mut commands, &cache, &mut variants, &materials, &mut blends, &mut shapes, parse("24:status").unwrap());
+    }
+    fn publish(app: &mut App) {
+        let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (-18, -1), cells: 9 };
+        app.init_resource::<SurfaceCache>();
+        let mut cache = app.world_mut().resource_mut::<SurfaceCache>();
+        cache.generation = 7;
+        cache.published = Some(surface);
+    }
+    fn simulation(app: &mut App) {
+        let forms = Box::leak(Box::<fnv_sim::FormStore>::default());
+        let refs = Box::leak(Box::<fnv_sim::RefTable>::default());
+        app.insert_resource(nvf_play::sim::SimState { forms, refs, world: fnv_sim::World::new(forms, refs, default()) });
+    }
+    #[test]
+    fn publication_followed_by_scripted_swap_recreates_enabled_clone_and_restores_swap() {
+        use fnv_game::functions::misc::TextureSwaps;
+        #[derive(Resource, Default)] struct Swaps(TextureSwaps);
+        let (mut app, _files) = crate::outfits::tests::asset_fixture();
+        simulation(&mut app);
+        app.insert_resource(crate::outfits::tests::empty_world_data())
+            .init_resource::<Variants>().init_resource::<Assets<NifBlendMaterial>>()
+            .init_resource::<crate::texture_swap::Swapped>().init_resource::<Swaps>()
+            .add_systems(Update, |swaps: Res<Swaps>, sim: Res<nvf_play::sim::SimState>, world: Res<crate::world::WorldData>, mut drawing: crate::texture_swap::Swapping| drawing.sync(&swaps.0, &sim, &world))
+            .add_systems(PostUpdate, configured);
+        publish(&mut app);
+        let original = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let range = crate::fade::drawn(8);
+        let e = app.world_mut().spawn((BlendShape::new(original.clone()), MeshMaterial3d(original.clone()), nvf_play::RefVisual(42), nvf_assets::actor::ShapeName("road".into()), range.clone())).id();
+        app.update();
+        let before = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+        assert!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).is_none());
+        // Synthetic BC1 DDS through the production texture loader; no game data.
+        let texture = "textures\\synthetic-blend-swap.dds";
+        let mut dds = vec![0u8; 136]; dds[..4].copy_from_slice(b"DDS ");
+        for (at, value) in [(4, 124u32), (8, 0x1007), (12, 4), (16, 4), (28, 1), (76, 32), (80, 4), (108, 0x1000)] { dds[at..at + 4].copy_from_slice(&value.to_le_bytes()); }
+        dds[84..88].copy_from_slice(b"DXT1");
+        app.world_mut().resource_mut::<nvf_assets::TextureCache>().offer(texture.into(), dds, 0.0);
+        {
+            let mut swaps = app.world_mut().resource_mut::<Swaps>();
+            swaps.0.by_ref.insert(fnv_sim::FormId(42), vec![("road".into(), texture.into())]);
+            swaps.0.generation = 1;
+        }
+        app.update();
+        let shape = app.world().get::<BlendShape>(e).unwrap();
+        assert_ne!(shape.original, original);
+        let swapped = shape.original.clone();
+        let after = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap();
+        assert_ne!(after.0, before);
+        let image = app.world().resource::<Assets<NifMaterial>>().get(&swapped).unwrap().base.base_color_texture.clone().unwrap();
+        assert_eq!(app.world().resource::<Assets<NifBlendMaterial>>().get(&after.0).unwrap().base.base_color_texture.as_ref(), Some(&image));
+        assert!(app.world().resource::<Assets<NifMaterial>>().get(&original).unwrap().base.base_color_texture.is_none());
+        assert!(app.world().get::<bevy::camera::visibility::VisibilityRange>(e) == Some(&range));
+        app.update(); // The processed generation must keep the swap on enabled shapes.
+        assert_eq!(app.world().get::<BlendShape>(e).unwrap().original, swapped);
+        // NIF block material edits republish an owned source under the same handle.
+        let before_edit = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&swapped).unwrap().base.perceptual_roughness = 0.31;
+        app.world_mut().entity_mut(e).insert(MeshMaterial3d(swapped.clone()));
+        app.update();
+        let refreshed = &app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0;
+        assert_ne!(refreshed, &before_edit);
+        assert_eq!(app.world().resource::<Assets<NifBlendMaterial>>().get(refreshed).unwrap().base.perceptual_roughness, 0.31);
+        app.world_mut().resource_mut::<SurfaceCache>().published = None;
+        app.update();
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).unwrap().0, swapped);
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none());
+    }
+
+    #[test]
+    fn published_shape_joins_script_fade_and_returns_to_blending_afterwards() {
+        let mut app = App::new();
+        simulation(&mut app);
+        app.init_resource::<Assets<NifMaterial>>().init_resource::<Assets<NifBlendMaterial>>()
+            .init_resource::<Assets<Image>>().init_resource::<Variants>().init_resource::<Time<Virtual>>()
+            .add_plugins(nvf_play::fade::FadePlugin).add_systems(PostUpdate, configured);
+        publish(&mut app);
+        let original = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let e = app.world_mut().spawn((BlendShape::new(original.clone()), MeshMaterial3d(original), nvf_play::RefVisual(42), Visibility::Inherited)).id();
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some());
+        app.world_mut().write_message(nvf_play::fade::RefFade { form_id: 42, fade_in: false });
+        app.update();
+        assert!(app.world().get::<nvf_play::fade::Fading>(e).is_some());
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none());
+        app.world_mut().resource_mut::<Time<Virtual>>().advance_by(std::time::Duration::from_secs(1));
+        app.update();
+        let handle = &app.world().get::<MeshMaterial3d<NifMaterial>>(e).unwrap().0;
+        assert_eq!(app.world().resource::<Assets<NifMaterial>>().get(handle).unwrap().base.base_color.alpha(), 0.5);
+        app.world_mut().resource_mut::<Time<Virtual>>().advance_by(std::time::Duration::from_secs(2));
+        app.update();
+        assert!(app.world().get::<nvf_play::fade::Fading>(e).is_none());
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some());
+        assert_eq!(app.world().get::<Visibility>(e), Some(&Visibility::Hidden));
+    }
+
     #[test]
     fn aid_parsing() {
         assert_eq!(parse("surface").unwrap(), BlendConfig { band: 24.0, variant: Variant::Surface });
         assert_eq!(parse(":selection").unwrap().band, 24.0);
         assert_eq!(parse("12:weight").unwrap().variant, Variant::Weight);
         assert_eq!(parse("24:normal").unwrap().variant, Variant::Normal);
+        assert_eq!(parse("24:status").unwrap().variant, Variant::Status);
         for value in ["", "24", "0:surface", "-1:weight", "NaN:surface", "inf:surface", "a:surface", "24:bad", "24:surface:weight"] {
             assert!(parse(value).is_err(), "{value}");
         }

@@ -95,6 +95,11 @@ struct NifSurface {
     return terrain_height_texel(instance_index, slot * HEIGHT_TILE) > -1e30;
 }
 
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_valid(instance_index: u32, slot: vec2<i32>, quadrant: u32) -> bool {
+    let mask = u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(1, GRID)));
+    return (mask & (1u << quadrant)) != 0u;
+}
+
 // [design] Colour only; coverage, alpha, vertices and depth stay with nif_material.wesl.
 @if(MESH_TERRAIN_BLEND) fn mesh_terrain_blend(instance_index: u32, world: vec3<f32>, colour: vec3<f32>) -> vec3<f32> {
     let s = nif_surface(instance_index);
@@ -103,7 +108,10 @@ struct NifSurface {
     let game = vec3(world.x, -world.z, world.y);
     let cell = vec2<i32>(floor(game.xy / CELL_SIZE));
     let slot = cell - vec2<i32>(s.mesh_terrain_origin.xy);
-    if any(slot < vec2(0)) || any(slot >= vec2(3)) { return colour; }
+    if any(slot < vec2(0)) || any(slot >= vec2(3)) {
+        if variant == 4u { return vec3(1.0, 0.0, 1.0); } // out of range: magenta
+        return colour;
+    }
     let local = game.xy / SPACING - vec2<f32>(cell) * f32(GRID);
     let square = min(vec2<i32>(floor(local)), vec2(GRID - 1));
     let f = local - vec2<f32>(square);
@@ -113,8 +121,16 @@ struct NifSurface {
     let a = terrain_height_texel(instance_index, base);
     let dx = terrain_height_texel(instance_index, base + vec2(1, 0));
     let dy = terrain_height_texel(instance_index, base + vec2(2, 0));
-    if a < -1e30 { return colour; }
+    if a < -1e30 {
+        if variant == 4u { return vec3(1.0, 0.0, 0.0); } // invalid height: red
+        return colour;
+    }
     let height = a + f.x * dx + f.y * dy;
+    let quadrant = select(0u, 1u, local.x >= f32(GRID) * 0.5) + select(0u, 2u, local.y >= f32(GRID) * 0.5);
+    if !terrain_colour_valid(instance_index, slot, quadrant) {
+        if variant == 4u { return vec3(1.0, 0.35, 0.0); } // invalid colour quadrant: orange
+        return colour;
+    }
     // [design] Fade over one LAND grid interval next to missing slots, before filtering
     // can reach an empty colour texel. Mips/gutters and distance fading remain later work.
     let within = game.xy - vec2<f32>(cell) * CELL_SIZE;
@@ -135,10 +151,16 @@ struct NifSurface {
             let tap_slot = vec2(pixel.x / RESOLUTION, 2 - pixel.y / RESOLUTION);
             let offset = tap_slot - slot + vec2(1);
             let bit = u32(offset.y * 3 + offset.x);
-            if (residency & (1u << bit)) == 0u { return colour; }
+            let tap_quadrant = select(0u, 1u, pixel.x % RESOLUTION >= RESOLUTION / 2)
+                + select(0u, 2u, pixel.y % RESOLUTION < RESOLUTION / 2);
+            if (residency & (1u << bit)) == 0u || !terrain_colour_valid(instance_index, tap_slot, tap_quadrant) {
+                if variant == 4u { return vec3(0.0, 1.0, 1.0); } // rejected footprint: cyan
+                return colour;
+            }
         }
     }
     let w = (1.0 - smoothstep(0.0, s.mesh_terrain.x, max(game.z - height, 0.0))) * smoothstep(0.0, SPACING, border);
+    if variant == 4u { return vec3(0.0, 0.2 + 0.8 * w, 0.0); } // success: green, weight as brightness
     if variant == 1u { return vec3(w, 0.0, 1.0 - w); }
     if w <= 0.0 { return colour; }
     return mix(colour, terrain_colour_texel(instance_index, uv), w);

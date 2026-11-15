@@ -21,6 +21,20 @@ pub fn blend_shader_defs() -> Vec<ShaderDefVal> {
     ]
 }
 pub type NifBlendMaterial = ExtendedMaterial<StandardMaterial, NifSurfaceBlend>;
+
+// [design] The source remains accessible to gameplay material producers even while
+// the renderer uses the separate blend type. Fade/range state stays on the entity.
+#[derive(Component)]
+pub struct BlendShape {
+    pub original: Handle<NifMaterial>,
+    pub enabled: Option<Handle<NifBlendMaterial>>,
+}
+impl BlendShape {
+    pub fn new(original: Handle<NifMaterial>) -> Self { Self { original, enabled: None } }
+}
+pub fn source_material<'a>(ordinary: Option<&'a MeshMaterial3d<NifMaterial>>, blend: Option<&'a BlendShape>) -> Option<&'a Handle<NifMaterial>> {
+    ordinary.map(|m| &m.0).or_else(|| blend.map(|b| &b.original))
+}
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 #[data(50, NifSurfaceBlendUniform, binding_array(101))]
 #[bindless(limit(512), index_table(range(50..57), binding(100)))]

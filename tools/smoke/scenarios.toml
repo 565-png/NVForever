@@ -29449,16 +29449,17 @@ forbid = [
 
 [[scenario]]
 name = "mesh-terrain-blend-goodsprings"
-source = "[design] #2661 rounds 1-2: aid-only world-space landscape colour cache (engine/nvforever/src/mesh_terrain_blend.rs, terrain_surface.rs)"
+source = "[design] #2661 rounds 1-3: aid-only world-space landscape colour cache (engine/nvforever/src/mesh_terrain_blend.rs, terrain_surface.rs)"
 areas = ["rendering", "terrain"]
-paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvforever/src/terrain.*", "engine/nvforever/src/world.rs", "engine/nvf-assets/src/nif_material.*", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvforever/src/mesh_blend_shader_tests.rs"]
+paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvforever/src/terrain.*", "engine/nvforever/src/world.rs", "engine/nvf-assets/src/nif_material.*", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvforever/src/mesh_blend_shader_tests.rs", "engine/nvforever/src/fade.rs", "engine/nvforever/src/draw_distance.rs", "engine/nvforever/src/door_fade.rs", "engine/nvforever/src/texture_swap.rs", "engine/nvforever/src/effect_shaders.rs", "engine/nvforever/src/shadow_thin.rs", "engine/nvforever/src/nif_mirror.rs", "engine/nvf-play/src/fade.rs"]
 env = { NVF_PLAY_TEST_MESH_BLEND = "24:surface", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "14:mesh_terrain_blend_goodsprings.png" }
 args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages"]
 run_seconds = 20
-manual = "[design] Inspect road/rock feet for a continuous colour transition to terrain; compare the identical view with the aid absent and with 24:weight and 24:selection. Normal remains unimplemented. No golden updates."
+manual = "[design] Shoot 24:status first: magenta out of range, red invalid height, orange invalid colour quadrant, cyan rejected bilinear footprint, green success (brightness follows weight). Inspect publication grids, quadrant paths and exclusions. Compare identical road/rock-foot views with the aid absent, 24:surface, 24:weight and 24:selection. Normal remains unimplemented. No golden updates."
 expect = [
   { re = 'mesh terrain blend: start band=24 variant=surface resolution=512 noise=0', label = "the effective aid configuration" },
   { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+', range = [1, 1000000], label = "nonzero eligible shapes and a published resident cache" },
+  { re = 'mesh terrain blend: publication generation=[0-9]+ origin=.* resident=.* excluded=.* probe-cell=.* probe-height-bytes=.* probe-status=.* colour=.* height=', label = "publication reports coverage, probe bytes and image identities" },
   { re = 'test aid: screenshot .*mesh_terrain_blend_goodsprings\.png', label = "the contact frame is saved" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
 ]

@@ -1,10 +1,10 @@
-# Mesh terrain blend, rounds 1?2 (#2661)
+# Mesh terrain blend, rounds 1-3 (#2661)
 
 [design] This is NVForever's aid-only world-space colour blend, selected by
 `NVF_PLAY_TEST_MESH_BLEND=24:surface`. Band, selection, resolution and residency rules
 are engineering choices, not statements about another renderer. There is no settings row.
 
-[design] `surface`, `weight`, `normal` and `selection` are accepted, with an optional
+[design] `surface`, `weight`, `normal`, `selection` and `status` are accepted, with an optional
 positive finite band before `:`. A bare variant or empty band uses 24 units. Invalid
 values log rejection and leave the aid off. `normal` logs "not yet" and does no work.
 See `engine/nvforever/src/mesh_terrain_blend.rs::parse` and `config`.
@@ -18,9 +18,11 @@ variants. SCOL and the other record types remain excluded. Selection code:
 Record access uses existing `fnv-world/src/placed.rs`, `index.rs`, `fields.rs`, and the
 DEST-presence convention in `fnv-game/src/data.rs`.
 
-[design] Each supported cell contributes the same prepared heights and four complete
-terrain surfaces used by `terrain.rs::spawn_terrain`. Flat copies of its prepared meshes
-draw with copies of the same texture handles and folded material values. The ordinary
+[design] Each prepared cell contributes the same LAND heights used by
+`terrain.rs::spawn_terrain`, independently of its draw path. Complete folded quadrants
+and layer-free fallback bases contribute colour; unsupported quadrants retain heights
+and carry an invalid colour bit, without excluding their supported neighbours. Flat copies
+of its prepared meshes draw with the same texture handles and folded material values. The ordinary
 `terrain.wesl` layer evaluation is shared unchanged; `terrain_surface.wesl` returns its
 linear unlit colour before scorch, lighting or fog. A dedicated orthographic GPU view
 on reserved render layer 16 bakes 512 by 512 texels per cell into a 1536 by 1536 RGBA16F atlas.
@@ -39,18 +41,22 @@ come from `nvf-assets/src/nif_surface_blend.rs::blend_shader_defs`; Rust packing
 the same constants. Mathematical floor handles negative cells.
 
 [design] Each 192 by 33 height tile has 32 rows of coefficients and a metadata row.
-The first metadata texel holds the numeric nine-bit neighbour residency mask, produced
-by `terrain_surface.rs::residency_mask`. Before filtered colour sampling, the shader
+The first metadata texel holds the numeric nine-bit height-neighbour residency mask, produced
+by `terrain_surface.rs::residency_mask`. The second metadata texel holds the numeric
+four-bit colour mask (SW, SE, NW, NE). Before filtered colour sampling, the shader
 maps all four mip-zero bilinear taps (with clamped atlas edges and reversed atlas Y)
-to cells and requires every corresponding bit. This includes missing diagonal cells
-in an L-shaped region. The original cardinal 128-unit border fade also remains.
+to cells/quadrants and requires every corresponding height-residency and colour bit.
+This includes missing diagonal cells in an L-shaped region. The original cardinal
+128-unit border fade also remains.
 
 [design] Publication has no pixel download or GPU completion wait. The bake camera uses
 `NoIndirectDrawing` and every cloned quadrant uses `NoAutomaticBatching`.
 `terrain_surface.rs::install_bake_receipt` wraps Bevy's opaque `DrawMaterial` command
 with a receipt reached only after all its commands, including `DrawMesh`, succeed.
-An expected entity set names every quadrant of every included cell. The render world
-clears receipts each frame; skipped/unprepared draws cannot accumulate across frames.
+An expected entity set names every captured colour quadrant. A region containing only
+height-only cells publishes on the next main frame without a colour bake or receipt;
+its colour is never sampled. The render world clears receipts each frame;
+skipped/unprepared draws cannot accumulate across frames.
 After `render_system` has submitted commands, `submit_receipts` acknowledges only a
 complete set. Its successful view is removed from `SortedCameras` before subsequent
 passes can clear the atlas. A shared generation-tagged receipt reaches the main world;
@@ -62,7 +68,8 @@ stop on Skip/Failure), `engine/vendor/bevy_pbr/src/render/mesh.rs::DrawMesh`, an
 
 [design] Source materials are retained per entity; enabled clones are shared per source
 handle and generation. The readiness line reports nonzero eligible-shape and resident-cell
-counts after publication. Publication establishes complete submission, not visual quality.
+counts after publication. For colour bakes, publication establishes complete submission;
+it does not establish visual quality.
 
 [design] The forward fragment mixes RGB before lighting with
 `1 - smoothstep(0, band, max(height_above_ground, 0))`, multiplied by the residency fade.
@@ -126,7 +133,8 @@ Off does not register the enabled material/cache/render receipt plugin.
   covers every square, both triangles, all coefficients and all nine slots. Production
   cache-origin floor and residency masks include negative coordinates and L-shaped cells.
 - Production receipt systems are tested for partial-frame reset, full-set acknowledgement
-  and removal of a submitted camera; an empty or incomplete set cannot publish.
+  and removal of a submitted camera; an empty or incomplete draw set cannot acknowledge a colour bake. Entirely
+  height-only regions take the explicit no-colour-bake path described above.
 - Shader tests compose/validate production code, including height decoding, footprint
   indexing and the only weight formula. They do **not** execute WGSL, sample GPU textures,
   measure weights/colour output, or prove visible axis orientation. Rust tests verify the
@@ -135,13 +143,15 @@ Off does not register the enabled material/cache/render receipt plugin.
 - This writer only type-checks tests. No unit tests, shader validators, builds, game runs,
   screenshots, smoke runs or performance measurements are executed here.
 
-[design] Remaining limitations: incomplete/overflow/fallback terrain cells are omitted;
+[design] Remaining limitations: layered overflow and fallback quadrants have invalid
+colour; their cells retain full heights and supported quadrants retain colour. There is
 no normal/material-response blend, scorch, mip chain, gutters, resolution selector,
 distance fade, temporal history/reactivity integration or visual acceptance result.
 Residency changes rebake the bounded atlas without a per-frame budget or partial updates.
-Texture/layer invalidation and in-place source-material edits do not refresh cached clones.
-Systems that only query ordinary NIF material components need further lifecycle work for
-enabled clones. GPU diagnostic zones and streaming/performance acceptance remain open.
+Texture/layer invalidation does not rebake captured terrain. Source-material edits
+refresh clones when their producer republishes the ordinary handle; arbitrary in-place
+asset edits without entity republication remain outside this refresh path. GPU visual
+and streaming/performance acceptance remain open.
 
 [hypothesis] The 512-texel cache may soften contact detail. Missing-corner rejection can
 make a narrow transition where its footprint becomes invalid. Fixed-view captures must
@@ -155,7 +165,8 @@ Build the game, run smoke `mesh-terrain-blend-goodsprings`, then preserve the Of
 `tops-suite-light`, `smoke-blend-bison-steve`, `stealth-boy-refraction`,
 `graphics-enhanced`, `nif-bindless-batches`, `pipboy`, `pipboy-screen-fx` and
 `pipboy-screen-text`. Include overlapping VATS/bake and Vigor/creator camera checks.
-Compare identical viewpoints with aid absent, `24:surface`, `24:weight`, `24:selection`;
+Shoot `24:status` first, then compare identical viewpoints with aid absent,
+`24:surface`, `24:weight`, `24:selection`;
 `24:normal` checks only its stub log. Use the established Primm viewpoint, with AA off
 and the main session's usual AA/upscaler configurations. This document supplies no new
 Primm viewpoint. Inspect streaming, missing-cell corners and atlas invalidation; measure
@@ -176,3 +187,143 @@ corrected before the final checks. The first sandboxed check could not open the 
 external target lock; the same authorized command was then permitted with sandbox
 escalation. Source changes are confined to this worktree; Cargo used the requested external
 cache output. No push was performed.
+
+## Round 3: height coverage, diagnostics and material consumers
+
+[documented: main-session runtime report supplied with the round-3 request] At the
+reported WastelandNV road view, cell (-17, 0), camera game (-66629, 1481, 8468), heading
+196, pitch -38, the main session recorded `ready eligible-shapes=1994 resident-cells=5
+generation=6`. Selection tinted the road/pole; weight matched Off and surface showed no
+visible change. This writer has not run that view. Whole-cell exclusion was the leading
+source diagnosis; these changes remove it but do not establish GPU visual acceptance.
+
+[design] Coverage takes the permitted **per-quadrant validity** alternative, rather than
+implementing ordered translucent layer baking this round:
+
+| Near-terrain path | Published height | Published colour |
+| --- | --- | --- |
+| Complete folded base and all layers | Whole prepared cell | This quadrant |
+| Folded base plus overflow layers | Whole prepared cell | Invalid quadrant: `height-only:layered-overflow` |
+| Fallback/non-bindless base with no layers | Whole prepared cell | This quadrant: `fallback` |
+| Fallback base with layers | Whole prepared cell | Invalid quadrant: `height-only:fallback-layers` |
+| Non-bindless base with layers | Whole prepared cell | Invalid quadrant: `height-only:non-bindless-layers` |
+| Missing base mesh | Whole prepared cell | Invalid quadrant: `height-only:missing-base-mesh` |
+
+[design] `terrain.rs` now inserts `SurfaceCell` even with zero captured quadrants.
+`terrain_surface.rs::encode_surface_cell` always uploads all prepared height planes and
+height-neighbour residency, then the independent four-bit colour mask. A bad quadrant
+cannot remove the other three or their cell's heights. Every bilinear colour tap must
+also name a valid quadrant. Ordinary `surface`/`weight` return the original mesh colour
+in invalid colour quadrants; `status` identifies that outcome. A wholly height-only
+region publishes without waiting forever for an empty draw receipt. Mixed regions still
+wait for all supported colour draws to submit, followed by the existing publication delay.
+
+[design] Diagnostic precedence and colours in `nif_surface_bindings.wesl`:
+
+1. Magenta: fragment cell is outside the atlas's 3x3 slots.
+2. Red: the fragment's height coefficient is invalid.
+3. Orange: the fragment's own colour quadrant is invalid.
+4. Cyan: at least one bilinear tap has missing height residency or invalid colour.
+5. Green: success, with brightness `0.2 + 0.8 * weight` so zero-weight success stays visible.
+
+[design] These are RGB values before ordinary NIF lighting. They do not modify alpha,
+discard, coverage, depth or prepass behaviour. `mesh_terrain_blend.rs` accepts `24:status`
+as variant 4; `normal` remains a stub. The `ready eligible-shapes=... resident-cells=...
+generation=...` prefix is unchanged, with `variant=...` appended. Resident-cell count now
+counts height coverage, not four-colour-quadrant compatibility.
+
+[design] One `mesh terrain blend: publication ...` line reports generation, origin,
+sorted resident grids with q0..q3 paths and a colour mask, all excluded slots with
+`not-loaded`, `no-prepared-LAND` or `invalid-prepared-heights`, the camera-eye XY probe's
+cell/slot/square/triangle/raw height bytes/CPU lookup status, and colour/height asset IDs.
+The eye probe is beneath the camera, not a claim about an arbitrary road fragment. Pair
+the publication generation and IDs with `ready`'s generation and selected variant.
+The CPU classifier reads the bytes about to be uploaded; it does not inspect GPU bindings.
+
+[design] File-by-file consumer changes:
+
+- `nvf-assets/src/nif_surface_blend.rs`: owns `BlendShape` and `source_material`, shared
+  with the gameplay crate; the ordinary NIF GPU interface is unchanged.
+- `nvforever/src/mesh_terrain_blend.rs`: republishes clones in PostUpdate, before asset
+  events and mesh/material bookkeeping. Ordinary handles published by Update consumers
+  become the new source; an enabled source republished under the same handle also evicts
+  its cached clone before clones are shared again. Cache invalidation restores that source.
+- `nvforever/src/fade.rs`: includes the blend type in the cell-fade filter. Levels remain
+  on the cell and `VisibilityRange` remains on each entity.
+- `nvforever/src/draw_distance.rs`: includes both active material types in new/changed/all
+  queries, preserves a progressing fade, applies resting ranges and slider updates, and
+  marks the active handle changed when adding the first range requires a new pipeline.
+- `nvforever/src/door_fade.rs`: supports both material types and marks the active one
+  changed on its first range as well.
+- `nvf-play/src/fade.rs`: scripted reference fades find an enabled shape's source;
+  their existing entity `Fading`/`FadeHidden` state and alpha-copy progression continue.
+  Alpha-blended copies use the ordinary type while fading and can rejoin blending afterwards.
+- `nvforever/src/texture_swap.rs`: resolves through `BlendShape.original`, publishes the
+  swapped ordinary source for clone recreation, and retries retained script swaps when
+  reference/material/blend components arrive. The processed generation cannot skip a
+  shape merely because it currently draws with the blend type.
+- `nvforever/src/effect_shaders.rs`: reference overlays, holes/restoration and alpha
+  changes resolve either type's source. Special-coverage/alpha copies still fail ordinary
+  blend eligibility; the clone system restores their source and re-enables only when eligible.
+- `nvforever/src/shadow_thin.rs`: keeps enabled meshes in reference bounds and per-mesh
+  shadow decisions, resolving opacity from their source material.
+- `nvforever/src/nif_mirror.rs`: scripted NIF block material edits resolve enabled sources;
+  republication refreshes a clone even when an owned source was edited in place.
+- `nvforever/src/terrain_surface.rs`: atlas initialization uses `as_chunks_mut::<4>()`;
+  no constant-size `chunks_exact_mut(4)` remains in this feature's new code.
+- `tools/smoke/scenarios.toml`: selects the changed consumers, requires the publication
+  diagnostic line, and gives status-first manual capture guidance. Existing `ready`,
+  screenshot and shader-error expectations are retained.
+
+[documented: source search of `MeshMaterial3d<NifMaterial>` in `nvforever/src` and
+`nvf-play/src`, round 3] Other producers are actor/rig-only (`actor_materials`, actor
+stealth fields), player-only (`stealth_field`, `pipboy_arm`, Vigor), card/interface-only
+(`blackjack_view`), script-drawn emittance-only (`emittance`), or inspection paths
+(`refraction`, VATS). These do not receive the rigid exterior STAT `BlendShape` marker;
+external-emittance, actor, first-person and interface meshes remain excluded. No new
+material consumer was inferred from an asset pathname.
+
+[design] New regression coverage, **type-checked only**:
+
+- Production encoding retains every square/triangle's heights in partial and wholly
+  height-only cells, with independent colour masks and supported-neighbour success.
+- Production CPU publication probes classify all five statuses, including a missing
+  diagonal and a bilinear tap crossing an invalid quadrant; log formatting checks grids,
+  paths, reasons, probe bytes/status and both asset-ID fields.
+- ECS publication followed by a scripted texture swap uses the production swap system
+  and synthetic BC1 DDS loader, recreates the enabled clone, retains its entity range,
+  survives the processed generation, refreshes an edited source republished under the
+  same handle, and restores the swapped source when publication is invalidated.
+- ECS scripted fade starts from an enabled mesh, progresses through its ordinary alpha
+  copy and restores blending at completion; draw-distance coverage keeps an ongoing fade
+  then applies range/slider changes to the blend type. Cell-fade filter includes that type.
+- Existing production WESL-composition tests include the updated status/validity code
+  when the main session executes them. Cargo check does not execute those validators.
+
+[documented: round-3 command outputs] Final permitted checks from `engine`, all with
+`CARGO_TARGET_DIR=E:/Games/NVForever/engine/target-2661-sol`:
+
+- `cargo check -p nvforever --tests`: exit 0; Finished dev profile, 6.95s.
+- `cargo check -p nvf-assets --tests`: exit 0; Finished dev profile, 3.57s.
+- `cargo check -p nvf-play --tests`: exit 0; Finished dev profile, 1m 40s.
+- `python tools/smoke verify` from the worktree root: exit 0;
+  `merge check: HEAD is no merge commit (or its parents are not here)`;
+  `scenario file: 1517 scenarios, fine`.
+
+[documented: round-3 command outputs] The initial sandboxed Cargo check could not open
+the specified external cache lock; the same authorized command succeeded with sandbox
+escalation. An intermediate check caught test assertions requiring `Debug` on Bevy's
+`VisibilityRange`; they were corrected. No cargo build/test/clippy, shader validation,
+game run, smoke run or game-data access was performed. No push was performed.
+
+[design] Main session: capture **`24:status` first** at the supplied WastelandNV road
+view, then identical Off / `24:selection` / `24:weight` / `24:surface` views. Preserve the
+publication line and `ready` line together. Orange confirms a remaining unsupported
+quadrant rather than missing cell heights; magenta distinguishes visible fragments
+outside the region; red despite valid CPU probe data calls for GPU binding investigation.
+Green brightness establishes the shader's lookup/weight classification only after a
+real run. Repeat with non-bindless fallback, overflow layers, streaming, a mid-fade
+publication, Objects slider changes and a texture swap while enabled. Main-session test
+filters should also include `draw_distance`, `fade`, `door_fade`, `effect_shaders` and
+`nif_mirror` in addition to the earlier filters. Existing Off/AA/upscaler checks above
+remain required. Unsupported colour quadrants and GPU/performance acceptance stay open.
