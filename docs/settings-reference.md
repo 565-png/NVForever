@@ -237,7 +237,25 @@ are at the end.
 
 - On the page: The game's field of view in degrees across a 4:3 picture (75 as the
   original's default); wider screens see more at the sides.
+- In full: Scripts read the angle set here (GetCameraFOV 0, GetPlayerCamFOV 0) from the start
+  and after each change, as the original's scripts read its INI's; a console `fov` world
+  angle wins until the slider is moved again.
 - Command-line switches: `--fov`
+- Registered in `engine/nvforever/src/settings.rs`
+
+### `viewmodel-field-of-view`: Viewmodel field of view
+
+- On the page: The angle the first-person arms and weapon are drawn with, in degrees (55 as
+  the original's default): lower draws them bigger and closer.
+- In full: The field of view the first-person arms and weapon are drawn with, from 30 to 90 in
+  steps of 5, in degrees as the field of view counts them (across a 4:3 picture; 55 as the
+  original's `fDefault1stPersonFOV`). Lower draws them bigger and closer, higher smaller and
+  further off; it takes effect at once. The world's view, the Pip-Boy's own 47 and the
+  console's `fov` first-person angle are left as they are. Scripts read it as the
+  first-person field of view (GetCameraFOV 1, GetPlayerCamFOV 1, and GetPlayerCamFOV 2 in
+  first person) from the start and after each change; a console `fov` first-person angle
+  wins there too. Not on the original's settings page.
+- Command-line switches: `--viewmodel-fov`
 - Registered in `engine/nvforever/src/settings.rs`
 
 ## Display › Screen
@@ -284,16 +302,39 @@ are at the end.
   limit). A lower limit keeps the computer cooler and quieter.
 - Registered in `engine/nvforever/src/settings.rs`
 
-### `ui-scale`: UI scale
+### `physics-rate`: Physics rate
 
-- On the page: The size of the HUD and the menus, as a part of the original's. Above 100%
-  only the HUD grows. Takes effect at the next start.
-- In full: The size of the HUD and the menus, as a part of the original's (100%): smaller
-  leaves more of the picture free, each HUD piece kept at its edge of the screen and each
-  menu in the middle. Above 100% only the HUD grows: the menus stay at the original's size,
-  so they keep on the screen. Takes effect at the next start (loading a save starts the game
-  again). Not in the original.
+- On the page: How many times a second the physics moves the world on. Higher answers the
+  keys sooner and collides more finely, but costs the processor more.
+- In full: How many times a second the physics moves the world on: the player, the people,
+  what falls and what is pushed. A higher rate answers the keys sooner and meets collisions
+  more finely; its cost to the processor grows with the rate. Match FPS: as many as the
+  frames a second the game draws, from 60 up to what the display sync and the frame rate
+  limit allow (at most 160); it follows the frame rate down when it stays low and back up
+  when it recovers. When the physics takes over half of each frame, the rate goes down a
+  step (never under 60) until there is room again. While `--physics-hz` sets the rate for a
+  run, the row shows "Set by --physics-hz for this run".
+- Command-line switches: `--physics-hz`
+- Registered in `engine/nvf-play/src/phys_rate.rs`
+
+### `ui-scale`: HUD scale
+
+- On the page: Size of the in-game HUD, independent of menu scale. Takes effect at the next start.
+- In full: The in-game HUD keeps each piece at its screen edge, from 50% to 150%.
+  The existing `ui-scale` INI key is retained. Menu scale is independent. Loading a
+  save starts the game again and applies the next-start settings.
 - Registered in `engine/nvf-play/src/interface.rs`
+
+### `menu-scale`: Menu scale
+
+- On the page: Size of the main, pause and other menus, independent of HUD scale. Takes effect at the next start.
+- In full: Main, pause/settings and other menus stay centred, from 50% to 100%.
+  This retains the existing fixed-layout cap; larger menus would need reflow.
+  A missing key starts with the old effective menu size. Any settings edit saves
+  that independent value, including when only HUD scale changed; it will not
+  follow the HUD on restart. Explicit menu values win. See
+  [HUD/menu scale](spec-notes/hud-menu-scale.md) for normalized INI slider units.
+- Registered in `engine/nvf-play/src/menu_scale.rs`
 
 ## Display › Interface
 
