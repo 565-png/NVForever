@@ -30288,3 +30288,21 @@ expect = [
 forbid = [
   { text = "a click on the target screen: Queue", label = "the click queues no attack" },
 ]
+
+[[scenario]]
+name = "house-screen-plays-only-its-own-clips"
+source = "#2747 (owner's tester 2026-11-15): Mr. House's penthouse screen swung about 90 degrees between his lines about Ranger Grant (INFO 0x001418A1): their speaker idles MrHouseTalkA/MrHouseTalkB play the pod's clips (creatures/NVMrHouse/IdleAnims/SpecialIdle_TalkA/B.kf), which key Bip01 Yaw a quarter turn about z and Bip01 Pelvis a quarter turn, the pod skeleton's rest pose; the screen's bones of those names rest unturned. A creature plays only clips from its own skeleton folder (engine/nvforever/src/idles.rs foreign_creature_clip)"
+note = "Lucky38MrHouseREF 0x001264C5 (base MrHouse, skeleton creatures/NVPenthoueMainComputer). The test aid asks the screen to play MrHouseTalkB at 9 s as a script's PlayIdle would; House's own face idle (NVPHMCHouseIdle, its own folder) still plays. Shot house_screen_still.png: the screen faces the room as placed"
+areas = ["idles", "actors", "creatures"]
+paths = ["engine/nvforever/src/idles.rs"]
+env = { NVF_PLAY_TEST_FACE = "6:001264C5", NVF_PLAY_TEST_GOTO = "7:-1290:5590:18905", NVF_PLAY_TEST_LOOK = "8:135:22", NVF_PLAY_TEST_SCRIPT = "9:play_idle:0x001264C5:MrHouseTalkB", NVF_PLAY_TEST_SHOTS = "12:house_screen_still.png" }
+args = ["--play", "--world", "Lucky38World", "--pos=-2376,6057,19200", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 15
+manual = "house_screen_still.png: the big screen faces the room with House's face on it, not turned or tipped"
+order = [[
+  { re = 'idle: Lucky38MrHouseREF plays NVPHMCHouseIdle .*\(Standing\)', label = "House's own face idle plays" },
+  { re = 'idle: Lucky38MrHouseREF does not play MrHouseTalkB \(Script\): its clip is made for the skeleton in creatures\\nvmrhouse', label = "the pod's talk clip is not played on the screen" },
+]]
+forbid = [
+  { re = 'idle: Lucky38MrHouseREF plays MrHouseTalk', label = "the screen never plays the pod's talk idles" },
+]
