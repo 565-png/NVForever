@@ -82,9 +82,9 @@ fn node(name: u32, position: [f32; 3], children: &[i32]) -> Vec<u8> {
     w.u32(0);
     w.0
 }
-fn shape(name: u32, position: [f32; 3], data: i32, material: i32) -> Vec<u8> {
+fn shape(name: u32, position: [f32; 3], data: i32, material: i32, shader: i32) -> Vec<u8> {
     let mut w = Bytes::default();
-    av(&mut w, name, position, &[material]);
+    av(&mut w, name, position, &[material, shader]);
     w.i32(data).i32(-1).u32(0).i32(-1).u8(0);
     w.0
 }
@@ -110,6 +110,15 @@ fn material(gloss: f32) -> Vec<u8> {
     let mut w = Bytes::default();
     w.u32(u32::MAX).u32(0).i32(-1);
     w.f(&[1., 0., 0., 0., 0., 0., gloss, 1., 1.]);
+    w.0
+}
+// Authored BSShaderPPLightingProperty, matching the existing nif_spawn test builder.
+// Material-only shapes are helper geometry; this shader makes the fixture drawable.
+fn lit_shader() -> Vec<u8> {
+    let mut w = Bytes::default();
+    w.u32(u32::MAX).u32(0).i32(-1).u16(1);
+    w.u32(1).u32(0).u32(0).f(&[1.]);
+    w.u32(3).i32(-1).f(&[0.]).u32(0).f(&[4., 1.]);
     w.0
 }
 fn nif(blocks: &[(&str, Vec<u8>)], strings: &[&str]) -> Vec<u8> {
@@ -150,8 +159,8 @@ fn nif(blocks: &[(&str, Vec<u8>)], strings: &[&str]) -> Vec<u8> {
     w.u32(1).i32(0);
     w.0
 }
-fn flagged_shape(name: u32, position: [f32; 3], data: i32, material: i32, flags: u32) -> Vec<u8> {
-    let mut bytes = shape(name, position, data, material);
+fn flagged_shape(name: u32, position: [f32; 3], data: i32, material: i32, shader: i32, flags: u32) -> Vec<u8> {
+    let mut bytes = shape(name, position, data, material, shader);
     bytes[12..16].copy_from_slice(&flags.to_le_bytes());
     bytes
 }
@@ -161,12 +170,13 @@ fn duplicate_file(label: &str) -> Vec<u8> {
             ("BSFadeNode", node(0, [3., 4., 5.], &[1, 2])),
             ("NiNode", node(1, [1., 0., 0.], &[3])),
             ("NiNode", node(2, [0., 2., 0.], &[4])),
-            ("NiTriStrips", shape(3, [2., 0., 0.], 5, 7)),
-            ("NiTriStrips", flagged_shape(3, [0., 3., 0.], 6, 8, 46)),
+            ("NiTriStrips", shape(3, [2., 0., 0.], 5, 7, 9)),
+            ("NiTriStrips", flagged_shape(3, [0., 3., 0.], 6, 8, 9, 46)),
             ("NiTriStripsData", geometry(1.)),
             ("NiTriStripsData", geometry(2.)),
             ("NiMaterialProperty", material(11.)),
             ("NiMaterialProperty", material(22.)),
+            ("BSShaderPPLightingProperty", lit_shader()),
         ],
         &["OwnedNifRoot", "BranchA", "BranchB", label],
     )
@@ -178,10 +188,11 @@ fn single_file(unnamed: bool) -> Vec<u8> {
             ("NiNode", node(1, [1., 0., 0.], &[2])),
             (
                 "NiTriStrips",
-                shape(if unnamed { u32::MAX } else { 2 }, [2., 0., 0.], 3, 4),
+                shape(if unnamed { u32::MAX } else { 2 }, [2., 0., 0.], 3, 4, 5),
             ),
             ("NiTriStripsData", geometry(1.)),
             ("NiMaterialProperty", material(11.)),
+            ("BSShaderPPLightingProperty", lit_shader()),
         ],
         &["OwnedNifRoot", "BranchA", "UniqueShape"],
     )
@@ -307,12 +318,13 @@ fn multiple_file() -> Vec<u8> {
         &[
             ("NiNode", node(0, [3., 4., 5.], &[2])),
             ("NiNode", node(1, [30., 40., 50.], &[3])),
-            ("NiTriStrips", shape(2, [2., 0., 0.], 4, 6)),
-            ("NiTriStrips", shape(u32::MAX, [0., 3., 0.], 5, 7)),
+            ("NiTriStrips", shape(2, [2., 0., 0.], 4, 6, 8)),
+            ("NiTriStrips", shape(u32::MAX, [0., 3., 0.], 5, 7, 8)),
             ("NiTriStripsData", geometry(1.)),
             ("NiTriStripsData", geometry(2.)),
             ("NiMaterialProperty", material(11.)),
             ("NiMaterialProperty", material(22.)),
+            ("BSShaderPPLightingProperty", lit_shader()),
         ],
         &["RootA", "RootB", "ShapeA"],
     );
