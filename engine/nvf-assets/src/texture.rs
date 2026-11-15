@@ -47,13 +47,15 @@ impl From<Image> for DecodedTexture {
     }
 }
 
+type CachedTextures = HashMap<(String, TextureUsage), Option<(Handle<Image>, bool)>>;
+
 /// Loaded textures by (VFS path, usage); `None` remembers a failure.
 /// Each loaded handle retains its source's alpha classification.
 #[derive(Resource, Default)]
 pub struct TextureCache {
-    map: HashMap<(String, TextureUsage), Option<(Handle<Image>, bool)>>,
+    map: CachedTextures,
     /// Copies sampled with clamped edges ([`Self::get_clamped`]), by the same key.
-    clamped: HashMap<(String, TextureUsage), Option<(Handle<Image>, bool)>>,
+    clamped: CachedTextures,
     /// Files read ahead on a worker thread ([`Self::offer`]), by resolved path, with when
     /// they came in.
     ahead: HashMap<String, (Vec<u8>, f64)>,
@@ -1164,7 +1166,7 @@ pub(crate) mod bc5_tests {
                 assert_eq!(normal.image.texture_descriptor.format, TextureFormat::Rgba8Unorm);
                 assert_eq!(normal.image.data.as_deref(), Some(rgba.repeat(16).as_slice()));
                 assert!(normal.lacks_alpha, "synthesized alpha is not a specular mask");
-                for pixel in normal.image.data.as_ref().unwrap().chunks_exact(4) {
+                for pixel in normal.image.data.as_ref().unwrap().as_chunks::<4>().0 {
                     let n = Vec3::new(pixel[0] as f32, pixel[1] as f32, pixel[2] as f32) / 127.5 - Vec3::ONE;
                     assert!(n.is_finite() && n.length_squared() > 0.0);
                 }
