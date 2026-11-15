@@ -29369,3 +29369,18 @@ forbid = [
   { re = 'alert: .* → Combat: detects the player', label = "an NCR soldier starts fighting the disguised player" },
   { re = 'combat group: .* about the player', label = "an alarm about the player goes round" },
 ]
+
+[[scenario]]
+name = "torch-glow-billboard"
+source = "issue #2549: the Cottonwood Cove torches (OasisTorch01, meshes/clutter/oasis/oasistorch01.nif) hold their glow card GlowMesh:0, a 122 x 144 quad in the xy plane of a mode-4 NiBillboardNode, which placed models drew in the file's pose: a flat sheet of light above the flame; placed models' billboard nodes now turn to the camera (engine/nvforever/src/world.rs face_camera, docs/spec-notes/billboard-nodes.md)"
+note = "the player 300 units east of torch 00163B5A-or-B (58240,-91332,-1456) at 22:00, looking west at it, level. Before the fix the glow was a thin bright horizontal line at the flame; after it a soft round glow facing the view"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/world.rs", "engine/nvf-assets/src/model.rs", "engine/nvforever/src/shot_fx.rs", "engine/nvf-play/src/script_draw.rs", "docs/spec-notes/billboard-nodes.md"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_LOOK = "3:270:0", NVF_PLAY_TEST_SHOTS = "9:torch_glow_billboard.png" }
+args = ["--play", "--world", "WastelandNV", "--pos=58540,-91332,-1440", "--hour", "22", "--no-voice", "--no-messages"]
+run_seconds = 12
+manual = "torch_glow_billboard.png: the torch's flame with a soft round orange glow around it, facing the view; no thin horizontal line of light across or above the flame"
+expect = [
+  { re = 'world: [1-9]\d* placed billboard nodes turn to the camera \([1-9]\d* references\)', label = "the placed models' billboard nodes are drawn turning" },
+  { re = 'test aid: screenshot .*torch_glow_billboard\.png', label = "the frame is saved" },
+]

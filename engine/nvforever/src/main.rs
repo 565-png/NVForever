@@ -1627,6 +1627,8 @@ fn main() -> AppExit {
     .add_systems(Update, timelapse.after(sky::update_sky))
     // The sun's cascades reach behind the player's body (sky::SUN_REACH_BACK).
     // Only the sun's casters that can shade the view's slice of each cascade (#1378).
+    // Placed models' and effect models' billboard nodes face the camera (#2549).
+    .add_systems(PostUpdate, world::face_camera.before(bevy::transform::TransformSystems::Propagate))
     .add_systems(PostUpdate, sky::sun_casters_over_slice.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
     .add_systems(PostUpdate, sky::reach_toward_sun.after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades).before(bevy::light::SimulationLightSystems::UpdateLightFrusta))
     .add_systems(Startup, (crash::report_start, report_archives))
@@ -2428,6 +2430,9 @@ fn screenshot_and_exit(
             "cells loaded in {:.2}s ({:.0} ms loading): refs drawn {} (animated {}, doors {}, with named sequences {}, posed {}), disabled {}, not drawn {} {:?}, no model {} (error markers {}), shapes {}",
             *elapsed, s.load_ms, s.refs_drawn, s.refs_animated, s.refs_doors, s.refs_group_rigs, s.refs_posed, s.refs_skipped_disabled, s.refs_skipped_type, s.skipped_types, s.refs_no_model, s.refs_error_marker, s.shapes
         );
+        if s.billboards > 0 {
+            info!("world: {} placed billboard nodes turn to the camera ({} references)", s.billboards, s.refs_billboards);
+        }
     }
     let Some(r) = *ready_at else { return };
     // Pipelines compile during the first seconds; give them time after the last load.
