@@ -2585,6 +2585,30 @@ expect = [
 ]
 order = [["combat: ammo swapped to", "combat: reloaded 13, magazine 13"]]
 
+# Authored field; output belongs to a fresh smoke --out directory.
+[[scenario]]
+name = "bc5-signed-normal-owned-field"
+source = "docs/spec-notes/dds-bc5.md: authored rendered material field; engineering comparator policy, not original-game pixels"
+areas = ["renderer", "textures", "nif"]
+paths = ["crates/fnv-dds/src/lib.rs", "engine/nvf-assets/src/texture.rs", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/bc5_field.rs", "engine/nvf-assets/src/bc5_field/", "engine/nvf-assets/src/nif_material.rs"]
+env = { NVF_PLAY_TEST_BC5_FIELD = "1", NVFOREVER_HOME = "bc5-field-home", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 20
+timeout = 180
+expect = [
+  { text = "bc5 field: actual NIF material source, 3 authored panels, 4 quadrants", count = 1 },
+  { text = "bc5 field: first rendered readback PASS", count = 1 },
+  { text = "bc5 field: second rendered readback PASS", count = 1 },
+  { text = "bc5 field: rendered comparison PASS", count = 1 },
+]
+order = [["bc5 field: first rendered readback PASS", "bc5 field: second rendered readback PASS", "bc5 field: rendered comparison PASS"]]
+forbid = [
+  { re = '(?i)bc5 field:.*(FAIL|timeout|missing|wrong byte count)' },
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
+]
+note = "Use a fresh --out directory: the aid creates a new bc5-field-home/bc5-field-output and refuses to replace earlier evidence. Field DDS/geometry are authored in source; the normal world still needs read-only stock bootstrap data. No native filtering or installed-texture claim."
+manual = "Inspect both complete readback-1.ppm and readback-2.ppm under the owned home: signed and reference four-quadrant panels match; both differ from the flat negative. Pin raw RGBA files and authored DDS bytes, review all ROI reports, and retain failures. Queueing a readback is not a rendered result."
+
 # ------------------------------------------------------------------ texture swaps
 
 [[scenario]]
