@@ -29459,6 +29459,45 @@ expect = [
 order = [["dialogue: conversation with VHDIntakeTowerCenturionREF started", "dialogue look: VHDIntakeTowerCenturionREF faces the player"]]
 
 [[scenario]]
+name = "anders-free-after-diane"
+kind = "tool"
+source = "issue #2472: Anders on the cross at Cottonwood Cove offered no choice to free him. In the data the freeing choice AndersFree is reached only through the topic AndersJackandDiane, which is not top-level and is added only by Diane's lines 0x00146698 (VMS46) and 0x00144651 (VMS45): before her errand he has none (docs/spec-notes/anders-cross.md)"
+note = "two headless new games: the first talks to Anders at once (no AndersJackandDiane, so no AndersFree); the second takes Diane's errand, saves and loads, then frees him. AndersFree's end script sets VMS46.AndersFreed to 1 and starts his thanks 0x00142AA6, whose begin script sets it to 2"
+areas = ["dialogue"]
+paths = ["crates/fnv-game/src/dialogue.rs"]
+commands = [
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/anders-cross-new-game.actions.json", "{data}", "FalloutNV.esm"],
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/anders-free-after-diane.actions.json", "{data}", "FalloutNV.esm"],
+]
+expect = [
+  { json = "events.?kind=line_started.info", equals = "0x00142AA5", count = 2, label = "both games: Anders greets from the cross" },
+  { json = "events.?kind=choices_offered.choices.*.topic_edid", equals = "AndersCross", min = 2, label = "both offer Who did this to you?" },
+  { json = "events.?kind=topic_added.topic_edid", equals = "AndersJackandDiane", count = 1, label = "only Diane's errand line teaches AndersJackandDiane" },
+  { json = "events.?kind=choice_made.topic_edid", equals = "AndersJackandDiane", count = 1, label = "after it (and a save and load) he offers it" },
+  { json = "events.?kind=choices_offered.choices.*.topic_edid", equals = "AndersFree", count = 1, label = "the freeing choice, in the second game only" },
+  { json = "events.?kind=result_script.unit", equals = "FalloutNV.esm|INFO 0x00142A9C end", count = 1, label = "AndersFree's end script runs (SetRestrained 0)" },
+  { json = "events.?kind=line_started.info", equals = "0x00142AA6", count = 1, label = "his thanks follow by StartConversation" },
+  { json = "final.quests.0x00140C3B.vars.AndersFreed", equals = 2, count = 1, label = "VMS46.AndersFreed ends at 2 (freed and thanked)" },
+]
+
+[[scenario]]
+name = "anders-leaves-cross"
+source = "issue #2472: Anders on the cross at Cottonwood Cove could not be freed. Once AndersJackandDiane is known (Diane's errand line 0x00146698 adds it) the freeing choice AndersFree is offered; its end script (INFO 0x00142A9C) sets VMS46.AndersFreed to 1 and SetRestrained 0, and his thanks (0x00142AA6) set it to 2, and after the conversation his package VRRCAndersRRC (AndersFreed == 2) takes him off the cross and home (docs/spec-notes/anders-cross.md)"
+note = "the player starts about 150 units west of Anders; the topic Diane's line teaches is added by the console at 8 s (Red Rock Canyon is not loaded here); the player talks to him at 10 s and picks AndersJackandDiane, then AndersFree; his thanks (StartConversation) are left by the unattended rule"
+areas = ["dialogue", "ai"]
+paths = ["crates/fnv-game/src/dialogue.rs", "engine/nvforever/src/furniture.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "8:addtopic 00142A89;8.3:close", NVF_PLAY_TEST_TALK = "10:VRRCAndersREF=AndersJackandDiane|AndersFree" }
+args = ["--play", "--world", "WastelandNV", "--pos=55570,-96120,-480", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "001413C3"]
+run_seconds = 50
+order = [[
+  { re = 'offers \d+ choices: .*\[AndersJackandDiane\]', label = "with the topic known he offers Are you Anders?" },
+  { re = 'offers \d+ choices: .*\[AndersFree\]', label = "and then the freeing choice" },
+  { re = 'dialogue: VRRCAndersREF says \[GREETING\] 0x00142AA6', label = "his thanks follow (StartConversation; its begin script sets AndersFreed to 2)" },
+  { re = 'ai \[[\d:]+\] 001413C3: package VRRCAndersRRC', label = "after the talk his package is the one for AndersFreed 2: home to Red Rock Canyon" },
+  { re = 'furniture: 001413C3 (gets|got) off 0013A4BA', label = "and leaves the cross" },
+]]
+
+[[scenario]]
 name = "rigid-headgear-oliver"
 source = "[documented: #2529 writer brief, fnvtool FalloutNV.esm + Fallout - Meshes.bsa] VHDGeneralOliver 001300A9 wears rigid NVGenOliverCap 00134490, identity-root GenOliverCap:5 with bounds centre (13.30,1.64,0). [hypothesis: actors.md section 1.2] The mesh uses the head bone's own axes. [design, #2529] Preserve the full head transform for that layout at spawn and equipment changes."
 note = "PlaceAtMe follows hitvol-marked-created-actor. The sole created actor is Oliver; restrain him, move him near the player and use Look with rotateBody 0 while the player moves to change the head pose. The read-only probe logs cap world and head-relative centres and full-frame error after transform propagation. This does not assume any quest-conditioned Oliver greeting; observer check 168 requests a repeatable conversation setup."
