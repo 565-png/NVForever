@@ -9,11 +9,14 @@
 //! omitted parts take the same defaults, and hybrid v2's widths are `band / 16` and
 //! `6 band`. These are NVForever's own choices.
 //!
-//! [design] Live switching ([`follow_setting`]): turning the blend on records the census
-//! and the landscape captures of what is already drawn (world.rs::blend_backfill,
-//! terrain_surface.rs::backfill_cells) and lets the cache bake; turning it off puts every
-//! shape's ordinary material back and drops the census, the captures, the atlas and the
-//! enabled clones. While it is off no bake is scheduled and nothing is allocated.
+//! [design] Live switching ([`follow_setting`]): turning the blend on opens its material
+//! gate ([`BlendGate`]), records the census and the landscape captures of what is already
+//! drawn (world.rs::blend_backfill, terrain_surface.rs::backfill_cells) and lets the cache
+//! bake; turning it off puts every shape's ordinary material back ([`stop`], in PostUpdate
+//! after the material producers), drops the census, the captures, the atlas and the
+//! enabled clones, and closes the gate once their materials are gone ([`close_gate`]).
+//! While it is off no bake is scheduled and nothing is allocated; what still runs is
+//! listed in docs/design/graphics-enhanced.md §3.12.
 //!
 //! [design] Census (round 6): every spawned STAT or SCOL shape carries a [`BlendCensus`]
 //! with the reasons its reference and shape cannot blend, recorded before any filtering
@@ -24,6 +27,7 @@
 
 use crate::terrain_surface::{SurfaceCache, update_cache};
 use bevy::light::NotShadowCaster;
+use bevy::pbr::MaterialGate;
 use bevy::prelude::*;
 use nvf_assets::nif_material::{Falloff, MaterialOverride, NifMaterial, SeeThroughNoShadow};
 use nvf_assets::nif_surface_blend::{ContactShape, ContactWidths, NifBlendMaterial, NifSurfaceBlend, Shading, DEFAULT_RESOLUTION, RESOLUTIONS};
@@ -167,12 +171,33 @@ pub struct BlendState {
     /// The cells whose capture was tried since it turned on
     /// (terrain_surface.rs::backfill_cells).
     pub tried: HashSet<Entity>,
+    /// Switched off this frame: [`stop`] puts the ordinary materials back in PostUpdate.
+    stopping: bool,
+    /// Off, the material gate still open: frames in a row with no blend or capture
+    /// material left ([`close_gate`]).
+    draining: Option<u32>,
 }
 
 /// Run condition: the blend is on.
 pub fn active(state: Res<BlendState>) -> bool {
     state.active.is_some()
 }
+
+fn stopping(state: Res<BlendState>) -> bool {
+    state.stopping
+}
+
+fn draining(state: Res<BlendState>) -> bool {
+    state.draining.is_some()
+}
+
+/// [design] The gate of the blend's two material types, the enabled clones'
+/// [`NifBlendMaterial`] and the bake's `SurfaceCaptureMaterial`, and of the bake view's
+/// extraction (vendored bevy_pbr `MaterialGate`, engine/vendor/README.md). Open from the
+/// moment the blend turns on until [`close_gate`] finds nothing of either type left after
+/// it turned off; closed in a run that never turns it on.
+#[derive(Resource, Clone)]
+pub struct BlendGate(pub MaterialGate);
 
 /// Hybrid v2's resolved widths and the weight formula's version, appended to the start
 /// and ready lines: ` flat=... steep=... weight-version=2`, or ` weight-version=1` for the
@@ -437,66 +462,87 @@ struct Variants {
 }
 
 /// [design] Registered in every run, so the settings row can switch the blend while the
-/// game runs: the materials' plugins and empty resources only; every system that
-/// captures, bakes or converts runs only while the blend is on ([`active`]).
+/// game runs: the materials' plugins behind the closed [`BlendGate`] and empty resources;
+/// every system that captures, bakes or converts runs only while the blend is on
+/// ([`active`]), the restoration only in the frame it turns off, the gate's closing only
+/// after that. What still runs while it is off: graphics-enhanced.md §3.12 "Off".
 pub struct MeshTerrainBlendPlugin;
 
 impl Plugin for MeshTerrainBlendPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((MaterialPlugin::<NifBlendMaterial>::default(), crate::terrain_surface::SurfaceBakePlugin))
+        let gate = MaterialGate::new();
+        app.add_plugins((MaterialPlugin::<NifBlendMaterial>::gated(gate.clone()), crate::terrain_surface::SurfaceBakePlugin { gate: gate.clone() }))
+            .insert_resource(BlendGate(gate))
             .init_resource::<SurfaceCache>().init_resource::<Variants>().init_resource::<BlendState>()
             .add_systems(Update, (
                 follow_setting.before(crate::world::stream),
+                close_gate.after(follow_setting).run_if(draining),
                 (crate::world::blend_backfill, crate::terrain_surface::backfill_cells).after(follow_setting).run_if(active),
                 update_cache.after(crate::world::stream).after(crate::terrain_surface::backfill_cells).run_if(active),
             ))
-            .add_systems(PostUpdate, conversion_order(apply_variants.run_if(active)));
+            .add_systems(PostUpdate, conversion_order((stop.run_if(stopping), apply_variants.run_if(active)).chain()));
     }
 }
 
-/// The shapes the blend tracks, for switching it off.
-type Switched<'w, 's> = Query<'w, 's, (Entity, Option<&'static BlendShape>), Or<(With<BlendShape>, With<BlendCensus>)>>;
+/// The shapes the blend tracks, for switching it off, and whether a producer has put an
+/// ordinary material on them.
+type Switched<'w, 's> = Query<'w, 's, (Entity, Option<&'static BlendShape>, Has<MeshMaterial3d<NifMaterial>>), Or<(With<BlendShape>, With<BlendCensus>)>>;
 
 /// [design] Each frame, before the world streams: the blend [`desired`] from the aid and
 /// the settings row (`Graphics::mesh_terrain_blend`), switched on or off when it differs
-/// from what is drawn. On: the start line, the atlas checked against the device, the
-/// census of what is already drawn queued. Off: [`stop`]. No restart either way.
-#[allow(clippy::too_many_arguments)]
+/// from what is drawn. On: the gate opened, the start line, the atlas checked against the
+/// device, the census of what is already drawn queued. Off: no more spawns record, and
+/// [`stop`] puts the materials back in PostUpdate, after this frame's material producers;
+/// a different look (not reachable today: the aid is read once, the row has one look)
+/// starts the frame after. No restart either way.
 fn follow_setting(
-    mut commands: Commands,
     graphics: Option<Res<crate::graphics::Graphics>>,
     device: Option<Res<bevy::render::renderer::RenderDevice>>,
+    gate: Res<BlendGate>,
     mut state: ResMut<BlendState>,
     mut cache: ResMut<SurfaceCache>,
     mut variants: ResMut<Variants>,
-    shapes: Switched,
-    cells: Query<Entity, With<crate::terrain_surface::SurfaceCell>>,
 ) {
     let want = desired(aid(), graphics.is_some_and(|g| g.mesh_terrain_blend));
-    if want == state.active { return; }
+    if want == state.active || state.stopping { return; }
     if state.active.is_some() {
-        stop(&mut commands, &mut state, &mut cache, &mut variants, &shapes, &cells);
+        RECORDING.store(false, Ordering::Relaxed);
+        state.active = None;
+        state.stopping = true;
+        return;
     }
     let Some(c) = want else { return };
+    gate.0.set_open(true);
     RECORDING.store(true, Ordering::Relaxed);
     info!("{}", start_line(&c));
     cache.start(c.resolution, device.map(|d| d.limits().max_texture_dimension_2d));
     *variants = Variants::default();
     state.active = Some(c);
     state.shapes_pending = true;
+    state.draining = None;
 }
 
-/// [design] The blend off: every converted shape back on its ordinary material (the
-/// shared see-through shadow bookkeeping follows that change), the census and the
-/// landscape captures removed, the bake cancelled and the atlas and clones dropped
-/// ([`SurfaceCache::release`]), then one `stop` line.
-fn stop(commands: &mut Commands, state: &mut BlendState, cache: &mut SurfaceCache, variants: &mut Variants, shapes: &Switched, cells: &Query<Entity, With<crate::terrain_surface::SurfaceCell>>) {
-    RECORDING.store(false, Ordering::Relaxed);
-    let mut restored = 0;
-    for (entity, shape) in shapes.iter() {
+/// [design] The blend off, in PostUpdate where the conversion runs ([`conversion_order`]:
+/// after the Update producers, texture swaps, fades, effect shaders and overrides, and the
+/// PostUpdate ones, the NIF mirror and the blended cut-outs, with their commands applied).
+/// Each converted shape leaves the blend material: an ordinary material a producer put on
+/// it this frame stays (a texture swap's copy, whose generation the swap has consumed, or
+/// a fade's or override's copy); only a shape with none gets [`BlendShape::original`] back
+/// (the shared see-through shadow bookkeeping follows either change). Then the census and
+/// the landscape captures are removed, the bake cancelled and the atlas and clones dropped
+/// ([`SurfaceCache::release`]), one `stop` line, and [`close_gate`] waits for the
+/// materials to go.
+fn stop(mut commands: Commands, mut state: ResMut<BlendState>, mut cache: ResMut<SurfaceCache>, mut variants: ResMut<Variants>, shapes: Switched, cells: Query<Entity, With<crate::terrain_surface::SurfaceCell>>) {
+    let (mut restored, mut kept) = (0, 0);
+    for (entity, shape, ordinary) in shapes.iter() {
         let mut e = commands.entity(entity);
         if let Some(enabled) = shape.filter(|s| s.enabled.is_some()) {
-            e.try_remove::<MeshMaterial3d<NifBlendMaterial>>().try_insert(MeshMaterial3d(enabled.original.clone()));
+            e.try_remove::<MeshMaterial3d<NifBlendMaterial>>();
+            if ordinary {
+                kept += 1;
+            } else {
+                e.try_insert(MeshMaterial3d(enabled.original.clone()));
+            }
             restored += 1;
         }
         e.try_remove::<(BlendShape, BlendCensus)>();
@@ -505,10 +551,36 @@ fn stop(commands: &mut Commands, state: &mut BlendState, cache: &mut SurfaceCach
         commands.entity(cell).try_remove::<crate::terrain_surface::SurfaceCell>();
     }
     let released = cells.iter().count();
-    cache.release(commands);
+    cache.release(&mut commands);
     *variants = Variants::default();
-    *state = BlendState::default();
-    info!("mesh terrain blend: stop restored-shapes={restored} tracked-shapes={} released-cells={released}", shapes.iter().count());
+    *state = BlendState { draining: Some(0), ..default() };
+    info!("mesh terrain blend: stop restored-shapes={restored} tracked-shapes={} released-cells={released} kept-producer-materials={kept}", shapes.iter().count());
+}
+
+/// [design] Frames in a row with no blend or capture material, asset or component, before
+/// the gate closes: the removals made by [`stop`] are extracted and unloaded in the render
+/// world in the first of them (vendored bevy_pbr `MaterialGate`).
+const IDLE_FRAMES: u32 = 3;
+
+/// [design] While off with the gate open: once nothing of the blend's two material types
+/// has been left for [`IDLE_FRAMES`] frames, the gate closes; the render world then drops
+/// their allocators and shader handles and puts Bevy's draw functions back
+/// (terrain_surface.rs `uninstall_bake_receipts`), and an `idle` line says so. A switch
+/// back on meanwhile keeps the gate open ([`follow_setting`]).
+fn close_gate(
+    mut state: ResMut<BlendState>,
+    gate: Res<BlendGate>,
+    blends: Res<Assets<NifBlendMaterial>>,
+    captures: Res<Assets<crate::terrain_surface::SurfaceCaptureMaterial>>,
+    drawn: Query<(), Or<(With<MeshMaterial3d<NifBlendMaterial>>, With<MeshMaterial3d<crate::terrain_surface::SurfaceCaptureMaterial>>)>>,
+) {
+    let Some(frames) = state.draining.as_mut() else { return };
+    *frames = if blends.is_empty() && captures.is_empty() && drawn.is_empty() { *frames + 1 } else { 0 };
+    if *frames >= IDLE_FRAMES {
+        gate.0.set_open(false);
+        state.draining = None;
+        info!("mesh terrain blend: idle materials-released=true");
+    }
 }
 
 /// [design] Where the conversion runs: ordinary producers (swaps, alpha, scripted fades)
@@ -927,13 +999,15 @@ mod tests {
             "8:surface:hybrid:1024:full:0.5,48:extra",
             // Only hybrid v2 takes widths.
             "8:surface:height:1024:full:0.5,48", "8:surface:penetration:1024:full:0.5,48", "8:surface:hybrid-v1:1024:full:0.5,48",
-            // A derived width that is not finite.
-            "3e38:surface",
+            // A derived hybrid width that is not finite (round 7's default `height` derives
+            // none, so the shape is named).
+            "3e38:surface:hybrid",
         ] {
             assert!(parse(value).is_err(), "{value}");
         }
         // The old shapes keep accepting what they accepted.
         assert!(parse("3e38:surface:height").is_ok());
+        assert!(parse("3e38:surface").is_ok(), "the default height shape derives no widths");
     }
 
     #[test]
@@ -1287,21 +1361,51 @@ mod tests {
         assert_eq!(desired(Some(aid), true), Some(aid), "and wins over the row");
     }
 
+    /// Tests that switch the blend serialise on this: [`RECORDING`] is process-wide.
+    static SWITCHING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn switching() -> std::sync::MutexGuard<'static, ()> {
+        SWITCHING.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The plugin's switching schedule ([`MeshTerrainBlendPlugin`] without the world's
+    /// capture and bake systems), with the row as given.
+    fn switch_systems(app: &mut App, row: bool) {
+        use crate::graphics::{Graphics, Preset};
+        let mut graphics = Graphics::preset(Preset::Vanilla);
+        graphics.mesh_terrain_blend = row;
+        app.insert_resource(graphics).insert_resource(BlendGate(MaterialGate::new()))
+            .init_resource::<Assets<NifMaterial>>().init_resource::<Assets<NifBlendMaterial>>().init_resource::<Assets<Image>>()
+            .init_resource::<Assets<crate::terrain_surface::SurfaceCaptureMaterial>>()
+            .init_resource::<Variants>().init_resource::<SurfaceCache>().init_resource::<BlendState>()
+            .add_systems(Update, (follow_setting, close_gate.after(follow_setting).run_if(draining)))
+            .add_systems(PostUpdate, conversion_order((stop.run_if(stopping), apply_variants.run_if(active)).chain()));
+    }
+    fn set_row(app: &mut App, on: bool) {
+        app.world_mut().resource_mut::<crate::graphics::Graphics>().mesh_terrain_blend = on;
+    }
+    fn gate_open(app: &App) -> bool {
+        app.world().resource::<BlendGate>().0.is_open()
+    }
+    /// What the asset plugin's tracking does with the dropped clones (not in these apps).
+    fn drop_unused_blends(app: &mut App) {
+        let mut blends = app.world_mut().resource_mut::<Assets<NifBlendMaterial>>();
+        let ids: Vec<_> = blends.ids().collect();
+        for id in ids { blends.remove(id); }
+    }
+
     /// #2661 round 7: the settings row switches the blend while the game runs. Off, no
-    /// system converts and nothing is allocated; on, the row's look starts and the
-    /// conversion runs; off again, every converted shape gets its ordinary material back
-    /// and the census, the landscape captures, the published atlas and the clones go.
-    /// (The test aid is not set in unit tests: `aid()` is `None`.)
+    /// system converts, nothing is allocated and the material gate stays closed; on, the
+    /// gate opens, the row's look starts and the conversion runs; off again, every
+    /// converted shape gets its ordinary material back and the census, the landscape
+    /// captures, the published atlas and the clones go; round 8: the gate closes once no
+    /// blend material has been left for [`IDLE_FRAMES`] frames. (The test aid is not set in
+    /// unit tests: `aid()` is `None`.)
     #[test]
     fn the_row_switches_the_blend_on_and_off_while_the_game_runs() {
-        use crate::graphics::{Graphics, Preset};
         use crate::terrain_surface::{CapturePath, SurfaceCell};
+        let _switching = switching();
         let mut app = App::new();
-        app.insert_resource(Graphics::preset(Preset::Vanilla))
-            .init_resource::<Assets<NifMaterial>>().init_resource::<Assets<NifBlendMaterial>>().init_resource::<Assets<Image>>()
-            .init_resource::<Variants>().init_resource::<SurfaceCache>().init_resource::<BlendState>()
-            .add_systems(Update, follow_setting)
-            .add_systems(PostUpdate, conversion_order(apply_variants.run_if(active)));
+        switch_systems(&mut app, false);
         let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
         // Off: a published surface and a tracked shape left over would still not convert.
         publish(&mut app);
@@ -1310,13 +1414,15 @@ mod tests {
         assert_eq!(app.world().resource::<BlendState>().active, None);
         assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none(), "nothing converts while off");
         assert!(app.world().resource::<Assets<NifBlendMaterial>>().is_empty(), "no clone is made while off");
+        assert!(!gate_open(&app), "a run that never turns the blend on keeps its materials' gate closed");
         // On.
-        app.world_mut().resource_mut::<Graphics>().mesh_terrain_blend = true;
+        set_row(&mut app, true);
         app.update();
         let state = app.world().resource::<BlendState>();
         assert_eq!(state.active, Some(setting_config()));
         assert!(state.shapes_pending, "the census of what is drawn is queued");
         assert!(recording(), "spawns record the census and captures now");
+        assert!(gate_open(&app), "the gate opens before the first clone is made");
         assert_eq!(app.world().resource::<SurfaceCache>().resolution, 1024);
         publish(&mut app);
         let cell = app.world_mut().spawn(SurfaceCell { world: 0, grid: (0, 0), heights: vec![], quadrants: vec![], paths: [CapturePath::HeightOnly("missing-base-mesh"); 4] }).id();
@@ -1325,7 +1431,7 @@ mod tests {
         assert!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).is_none());
         let generation = app.world().resource::<SurfaceCache>().generation;
         // Off again.
-        app.world_mut().resource_mut::<Graphics>().mesh_terrain_blend = false;
+        set_row(&mut app, false);
         app.update();
         assert!(!recording());
         assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).map(|m| m.0.clone()), Some(source.clone()), "its ordinary material is back");
@@ -1336,10 +1442,116 @@ mod tests {
         assert!(cache.published.is_none() && cache.generation > generation, "the atlas is dropped; an old receipt cannot publish");
         assert!(app.world().resource::<Variants>().materials.is_empty(), "the clones are dropped");
         assert_eq!(app.world().resource::<BlendState>().active, None);
+        // The gate waits while a blend material is still in the store, then for IDLE_FRAMES.
+        for _ in 0..IDLE_FRAMES + 2 { app.update(); }
+        assert!(gate_open(&app), "a clone not yet dropped keeps the gate open");
+        drop_unused_blends(&mut app);
+        for _ in 0..IDLE_FRAMES - 1 { app.update(); }
+        assert!(gate_open(&app));
+        app.update();
+        assert!(!gate_open(&app), "nothing of the blend left: the gate closes");
+        assert_eq!(app.world().resource::<BlendState>().draining, None);
         // A stale publication while off converts nothing.
         publish(&mut app);
         app.world_mut().entity_mut(e).insert((tracked(0, 0), BlendShape::new(source.clone())));
         app.update();
         assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none());
+        assert!(app.world().resource::<Assets<NifBlendMaterial>>().is_empty());
+        // Back on while draining keeps the gate open.
+        app.world_mut().entity_mut(e).remove::<(BlendShape, BlendCensus)>();
+        set_row(&mut app, true);
+        app.update();
+        set_row(&mut app, false);
+        app.update();
+        assert_eq!(app.world().resource::<BlendState>().draining, Some(0));
+        set_row(&mut app, true);
+        app.update();
+        assert!(gate_open(&app) && app.world().resource::<BlendState>().draining.is_none(), "back on before it closed");
+    }
+
+    /// #2661 round 8: switching off in the frame a texture swap publishes its copy keeps the
+    /// copy. The swap consumed its generation, so a restoration of the old source would
+    /// lose it for good (no `BlendShape` is left to bring it back).
+    #[test]
+    fn switching_off_during_a_texture_swap_keeps_the_swap() {
+        use fnv_game::functions::misc::TextureSwaps;
+        #[derive(Resource, Default)] struct Swaps(TextureSwaps);
+        let _switching = switching();
+        let (mut app, _files) = crate::outfits::tests::asset_fixture();
+        simulation(&mut app);
+        switch_systems(&mut app, true);
+        app.insert_resource(crate::outfits::tests::empty_world_data())
+            .init_resource::<crate::texture_swap::Swapped>().init_resource::<Swaps>()
+            .add_systems(Update, |swaps: Res<Swaps>, sim: Res<nvf_play::sim::SimState>, world: Res<crate::world::WorldData>, mut drawing: crate::texture_swap::Swapping| drawing.sync(&swaps.0, &sim, &world));
+        publish(&mut app);
+        let original = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(original.clone()), MeshMaterial3d(original.clone()), nvf_play::RefVisual(42), nvf_assets::actor::ShapeName("road".into()))).id();
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some(), "converted");
+        // Synthetic BC1 DDS through the production texture loader; no game data.
+        let texture = "textures\\synthetic-blend-swap-off.dds";
+        let mut dds = vec![0u8; 136]; dds[..4].copy_from_slice(b"DDS ");
+        for (at, value) in [(4, 124u32), (8, 0x1007), (12, 4), (16, 4), (28, 1), (76, 32), (80, 4), (108, 0x1000)] { dds[at..at + 4].copy_from_slice(&value.to_le_bytes()); }
+        dds[84..88].copy_from_slice(b"DXT1");
+        app.world_mut().resource_mut::<nvf_assets::TextureCache>().offer(texture.into(), dds, 0.0);
+        {
+            let mut swaps = app.world_mut().resource_mut::<Swaps>();
+            swaps.0.by_ref.insert(fnv_sim::FormId(42), vec![("road".into(), texture.into())]);
+            swaps.0.generation = 1;
+        }
+        // The swap and the switch in the same frame.
+        set_row(&mut app, false);
+        app.update();
+        let drawn = app.world().get::<MeshMaterial3d<NifMaterial>>(e).expect("an ordinary material").0.clone();
+        assert_ne!(drawn, original, "the swap's copy stays, not the old source");
+        assert!(app.world().resource::<Assets<NifMaterial>>().get(&drawn).unwrap().base.base_color_texture.is_some(), "the swapped texture is drawn");
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none());
+        assert!(app.world().get::<BlendShape>(e).is_none());
+        // The swap consumed generation 1: nothing applies it again unless the copy stays.
+        app.update();
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).unwrap().0, drawn, "and stays");
+    }
+
+    /// #2661 round 8: switching off in the frame a temporary owner, a script fade or a
+    /// material override, puts its copy on keeps the copy; the owner restores the source
+    /// itself.
+    #[test]
+    fn switching_off_during_a_fade_or_an_override_keeps_the_owners_copy() {
+        let _switching = switching();
+        // A fade out starting in the same frame.
+        let mut app = App::new();
+        simulation_with(&mut app, disabled_reference());
+        switch_systems(&mut app, true);
+        app.init_resource::<Time<Virtual>>().add_plugins(nvf_play::fade::FadePlugin);
+        publish(&mut app);
+        let original = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(original.clone()), MeshMaterial3d(original.clone()), nvf_play::RefVisual(42), Visibility::Inherited)).id();
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some(), "converted");
+        app.world_mut().write_message(nvf_play::fade::RefFade { form_id: 42, fade_in: false });
+        set_row(&mut app, false);
+        app.update();
+        let copy = app.world().get::<nvf_play::fade::Fading>(e).expect("the fade runs").copy().clone();
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).map(|m| m.0.clone()), Some(copy), "the fade's copy is drawn");
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none() && app.world().get::<BlendShape>(e).is_none());
+        app.world_mut().resource_mut::<Time<Virtual>>().advance_by(std::time::Duration::from_secs(3));
+        app.update();
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).map(|m| m.0.clone()), Some(original.clone()), "the fade restores the source");
+
+        // An override published in the same frame (before the switch's PostUpdate).
+        let mut app = App::new();
+        switch_systems(&mut app, true);
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(source.clone()), MeshMaterial3d(source.clone()))).id();
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some(), "converted");
+        let cloak = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() }, extension: default() });
+        app.world_mut().entity_mut(e).insert((MeshMaterial3d(cloak.clone()), MaterialOverride { source: source.clone(), copy: cloak.clone() }));
+        set_row(&mut app, false);
+        app.update();
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).map(|m| m.0.clone()), Some(cloak), "the override's copy stays");
+        assert!(app.world().get::<MaterialOverride>(e).is_some());
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none() && app.world().get::<BlendShape>(e).is_none());
     }
 }

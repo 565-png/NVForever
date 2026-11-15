@@ -498,14 +498,42 @@ than the ordinary pipeline it replaces (the atlases take the holes and FaceGen s
 blend clone never has). A source edited under the same handle (blended cut-outs flipping
 Blend and Mask, scripted NIF edits) rebuilds its clone in the same frame; texture swaps,
 fades, draw-distance ranges, door fades, effect shaders and shadow thinning follow the
-source. The row switches the blend while the game runs: on, it logs its start line, checks
-the atlas against the device, records the census of the shapes already drawn and the
-captures of the cells already drawn around the camera (their landscape prepared again,
-the same quadrant stacks and cached materials as a cell drawn with the blend on), and
-bakes; off, every converted shape gets its ordinary material back, and the census, the
-captures, the atlas and the clones are dropped, with one `stop` line. While it is off no
-bake is scheduled, nothing is captured or allocated, nothing logs, and Bevy's draw
-functions stay its own (the receipt is installed when the first bake view appears).
+source. The row switches the blend while the game runs: on, it opens the material gate
+(below), logs its start line, checks the atlas against the device, records the census of
+the shapes already drawn and the captures of the cells already drawn around the camera
+(their landscape prepared again, the same quadrant stacks and cached materials as a cell
+drawn with the blend on), and bakes; off, every converted shape leaves the blend material,
+and the census, the captures, the atlas and the clones are dropped, with one `stop` line.
+The restoration (`stop`) runs in PostUpdate where the conversion runs, after the Update
+producers (texture swaps, fades, effect shaders, overrides) and the PostUpdate ones (the
+NIF mirror, the blended cut-outs) with their commands applied: an ordinary material a
+producer put on the shape that frame stays (a texture swap's copy, whose generation the
+swap has consumed; a fade's or an override's copy), and only a shape with none gets its
+recorded source back.
+
+**Off** [design: `mesh_terrain_blend.rs::BlendGate`, `close_gate`;
+`terrain_surface.rs::SurfaceBakePlugin`; vendored bevy_pbr `MaterialGate` and bevy_render
+`ErasedRenderAssetPlugin::gated`, engine/vendor/README.md]: both material types, the
+clones' `NifBlendMaterial` and the bake's `SurfaceCaptureMaterial`, are registered behind
+one gate, closed in a run that never turns the blend on. While it is closed none of their
+own systems run (main world: change marking and the specialization check; render world:
+asset extraction and preparation, instance extraction and sweep, specialization
+extraction), their shaders are not loaded, no bind group allocator and no bindless
+fallback buffer exists for them, the bake view is not extracted, the draw functions are
+Bevy's own, and the receipt and span systems do not run (they need a bake view in the
+render world). Nothing is captured, baked, allocated or logged. What still runs that main
+does not have, every frame: `follow_setting` (the aid and the row compared with what is
+drawn); the run conditions themselves, an atomic load for each gated system or group, a
+resource check for each material type's opening and closing and for putting the draw
+functions back, and an empty-query check for the receipt and span systems (the span
+systems' once per view); and bevy_asset's tracking systems of the two asset types, whose
+stores exist, empty (an asset type cannot be registered after startup). After the blend is
+turned off, the gate stays open until no material of either type, as an asset or on an
+entity, has been left for 3 frames (their removals extracted and unloaded); then the
+render world drops both allocators and shader handles, puts Bevy's own `DrawMaterial`
+command back in the opaque and transparent phases, and an `idle` line is logged, so the
+run is idle as above again. Pipelines compiled while it was on stay in Bevy's pipeline
+cache, as every pipeline does (Bevy never evicts them).
 
 **Cache and selection rules** [design, NVForever's choices]: the 3 by 3 region follows the
 camera's cell; a change of it rebakes the whole atlas (no per-frame budget, no partial
@@ -543,15 +571,20 @@ weight fields, then the census (`stat-shapes`, `excluded-shapes`,
 and refreshed at most once per 60 frames; `census-shape ref=... base=... model=... shape=...
 status=eligible|excluded first-reason=... reasons=... base-type=STAT|SCOL`, one per distinct
 base, shape and reason mask, at most 2048 a run; `stop restored-shapes=... tracked-shapes=...
-released-cells=...`. A road without a `census-shape` line need not be untracked: the lines
+released-cells=... kept-producer-materials=...` (`restored-shapes` counts every converted
+shape back on an ordinary material, `kept-producer-materials` those that kept one a
+producer put on that frame); `idle materials-released=true` when the gate closes. A road without a `census-shape` line need not be untracked: the lines
 stop at 2048, a shape whose material is still loading waits for its line, and a line is
 printed once per base, shape and mask with the first reference seen, so a search by
 reference can miss it; the ready line's counts cover every resident shape.
 
 **Cost**: GPU cost: (measured in the pull request). The bake is timed as the GPU span
 `nvf_mesh_terrain_bake` (Tracy's GPU zones and the `--log-frame-times` list,
-`terrain_surface.rs::bake_span`); the lookup in the meshes' fragments shows in the main
-opaque pass instead.
+`terrain_surface.rs::bake_span`), from before the bake view's first pass to after its
+last. Its two timestamps go into command encoders of their own, queued at the two systems'
+places in the render order, so the span pairs the same with `NVF_PLAY_TEST_PROFILE_ENCODERS=1`
+(whose automatic `enc:<system>` span opens on a render context's own encoder) as without
+it. The lookup in the meshes' fragments shows in the main opaque pass instead.
 
 **Limits** [hypothesis where marked]: the cache may soften contact detail, and a footprint
 turning invalid at a missing corner can make a narrow transition [hypothesis]; geometric
@@ -563,14 +596,15 @@ keeps scanning every tracked shape each frame while the blend is on (only its li
 limited); rigged STATs and SCOLs drawn while the blend was off are not counted until their
 cell is drawn again (they never convert); the colour-coded `excluded` view was not built.
 
-**Tests and smoke**: `nvforever` test filters `mesh_terrain_blend`, `terrain_surface`,
+**Tests and smoke**: `nvforever` test filters `mesh_terrain_blend` (switching off during a
+texture swap, a fade and an override: `switching_off_during`), `terrain_surface`,
 `terrain::tests`, `mesh_blend_shader_tests`, `graphics::tests::mesh_terrain_blend`,
 `settings::tests::the_mesh_blend_row`, `texture_swap`, `nif_mirror`, `fade`,
 `draw_distance`, `door_fade`, `effect_shaders`, `shadow_thin`; `nvf-assets`
 `nif_surface_blend::tests`, `nif_material::tests`; `nvf-play` `settings_layout`, `fade`.
 The WGSL is composed and validated by naga in the tests, not executed. Smoke:
 `mesh-terrain-blend-setting` (the row on from the command line), `mesh-terrain-blend-live`
-(on and off from the settings page), the aid's `mesh-terrain-blend-goodsprings`,
+(on and off from the settings page, then the gate closing), the aid's `mesh-terrain-blend-goodsprings`,
 `-options` and `-widths`; `graphics-enhanced` and `settings-enhanced-effects` check that
 the enhanced look neither turns it on nor logs it.
 

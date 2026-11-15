@@ -29532,7 +29532,7 @@ expect = [
 
 [[scenario]]
 name = "mesh-terrain-blend-live"
-source = "[design] #2661 round 7: the Graphics row mesh-terrain-blend switched on and off on the settings page while the game runs, no restart: on, the shapes and cells already drawn are taken in and the cache bakes; off, every converted shape gets its ordinary material back and nothing more is baked (engine/nvforever/src/mesh_terrain_blend.rs follow_setting, stop; world.rs blend_backfill; terrain_surface.rs backfill_cells)"
+source = "[design] #2661 round 7: the Graphics row mesh-terrain-blend switched on and off on the settings page while the game runs, no restart: on, the shapes and cells already drawn are taken in and the cache bakes; off, every converted shape gets its ordinary material back and nothing more is baked (engine/nvforever/src/mesh_terrain_blend.rs follow_setting, stop, close_gate; world.rs blend_backfill; terrain_surface.rs backfill_cells)"
 note = "the row starts off (a test run's vanilla look); it is flipped on at 11 s and off again at 22 s, each time on the settings page"
 areas = ["rendering", "terrain", "settings"]
 paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvforever/src/terrain.*", "engine/nvforever/src/world.rs", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings_layout.rs"]
@@ -29542,6 +29542,7 @@ run_seconds = 26
 expect = [
   { re = 'mesh terrain blend: start ', count = 1, label = "started once, by the row" },
   { re = 'mesh terrain blend: stop ', count = 1, label = "stopped once, by the row" },
+  { re = 'mesh terrain blend: idle ', count = 1, label = "round 8: the material gate closed once, after the stop" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "nothing refused while switching" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors on or off" },
 ]
@@ -29552,6 +29553,7 @@ order = [[
   { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+ variant=surface shape=height', label = "the cells drawn while it was off are captured and published" },
   { text = "settings: mesh-terrain-blend off", label = "the row off" },
   { re = 'mesh terrain blend: stop restored-shapes=([1-9][0-9]*) tracked-shapes=[0-9]+ released-cells=[1-9]', label = "the converted shapes get their ordinary materials back, the captures go" },
+  { re = 'mesh terrain blend: idle materials-released=true', label = "round 8: with the materials gone the gate closes, allocators and draw functions back as before" },
 ]]
 forbid = [
   { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },

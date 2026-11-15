@@ -1,6 +1,7 @@
 //! [design] The mesh terrain blend's bounded 3x3 unlit colour atlas (#2661), using
 //! terrain.rs's prepared meshes and materials; nothing is captured, baked or allocated
-//! while the blend is off (`mesh_terrain_blend.rs`: the settings row or the test aid).
+//! while the blend is off (`mesh_terrain_blend.rs`: the settings row or the test aid;
+//! [`SurfaceBakePlugin`] says what runs then).
 //! Heights cover every prepared cell; colour validity is per quadrant.
 //! A quadrant's colour is its whole near-terrain stack: the base draw (folded or not)
 //! and then every blended layer draw over it, as flat unlit copies with the near draws'
@@ -20,15 +21,14 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::ImageSampler;
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
-use bevy::render::{Render, RenderApp, RenderSystems};
-use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
+use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems, sync_world::RenderEntity};
 use bevy::render::render_phase::{CachedRenderPipelinePhaseItem, DrawFunctions, RenderCommand, RenderCommandResult, RenderCommandState, PhaseItem, TrackedRenderPass};
 use bevy::core_pipeline::core_3d::{Opaque3d, Transparent3d};
 use bevy::ecs::{query::ROQueryItem, system::SystemParamItem};
 use std::{collections::HashSet, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}};
 use bevy::render::render_resource::{AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, TextureDimension, TextureFormat, TextureUsages};
 use bevy::mesh::MeshVertexBufferLayoutRef;
-use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
+use bevy::pbr::{MaterialGate, MaterialPipeline, MaterialPipelineKey};
 use bevy::shader::ShaderRef;
 use fnv_world::land::SIDE;
 
@@ -67,7 +67,8 @@ pub const CAPTURE_SHADER: &str = "embedded://nvforever/terrain_capture.wesl";
 /// or non-bindless base, or a blended layer (terrain_capture.wesl). One diffuse texture,
 /// one sampler, one uniform: its material group fits a GPU without bindless textures,
 /// where [`TerrainMaterial`]'s (six standard and thirteen layer textures) does not.
-/// Registered in every run, drawn only while the blend bakes; no prepass, no shadows.
+/// Registered in every run behind the blend's gate ([`SurfaceBakePlugin`]), drawn only
+/// while the blend bakes; no prepass, no shadows.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 #[bind_group_data(SurfaceCaptureKey)]
 pub struct SurfaceCaptureMaterial {
@@ -374,8 +375,7 @@ fn empty_height_atlas() -> Vec<u8> {
 
 // [design] Receipts follow DrawMaterial's successful direct draw, not merely readiness
 // or a fence. Every frame starts empty, so incomplete frames cannot accumulate to success.
-#[derive(Component, Clone, ExtractComponent)]
-#[extract_app(RenderApp)]
+#[derive(Component, Clone)]
 struct BakeView {
     generation: u64,
     expected: HashSet<Entity>,
@@ -384,18 +384,29 @@ struct BakeView {
     submitted: Arc<Mutex<Option<u64>>>,
 }
 
-/// [design] Registered whether or not the blend is on, so the settings row can switch it
-/// while the game runs; while it is off no bake view exists, so none of this draws, and
-/// the draw functions stay Bevy's own until the first bake view is extracted.
-pub struct SurfaceBakePlugin;
+/// [design] Registered in every run, so the settings row can switch the blend while the
+/// game runs, but gated: while the blend's [`MaterialGate`] is closed (never turned on, or
+/// off and its materials gone, mesh_terrain_blend.rs `close_gate`) the capture material's
+/// systems and the bake view extraction do not run, the capture shader is not loaded and
+/// no allocator exists; the receipt and span systems run only while a bake view is in the
+/// render world. Bevy's draw functions are wrapped when the first bake view appears and
+/// put back once the gate closes.
+pub struct SurfaceBakePlugin {
+    pub gate: MaterialGate,
+}
 impl Plugin for SurfaceBakePlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "terrain_capture.wesl");
-        app.add_plugins((ExtractComponentPlugin::<BakeView>::default(), MaterialPlugin::<SurfaceCaptureMaterial>::default()));
+        app.add_plugins(MaterialPlugin::<SurfaceCaptureMaterial>::gated(self.gate.clone()));
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
-            render.add_systems(Render, install_bake_receipts.run_if(first_bake_view).in_set(RenderSystems::Prepare))
-                .add_systems(Render, reset_receipts.in_set(RenderSystems::Prepare))
-                .add_systems(Render, submit_receipts.in_set(RenderSystems::Cleanup))
+            let (extract, closed) = (self.gate.clone(), self.gate.clone());
+            render.add_systems(ExtractSchedule, extract_bake_views.run_if(move || extract.is_open()))
+                .add_systems(Render, install_bake_receipts.run_if(first_bake_view).in_set(RenderSystems::Prepare))
+                .add_systems(Render, uninstall_bake_receipts
+                    .run_if(move |installed: Option<Res<BakeReceiptsInstalled>>| installed.is_some() && !closed.is_open())
+                    .in_set(RenderSystems::Prepare))
+                .add_systems(Render, reset_receipts.run_if(any_bake_view).in_set(RenderSystems::Prepare))
+                .add_systems(Render, submit_receipts.run_if(any_bake_view).in_set(RenderSystems::Cleanup))
                 .add_systems(bevy::core_pipeline::Core3d, (
                     bake_span_begin.before(bevy::core_pipeline::Core3dSystems::Prepass),
                     bake_span_end.after(bevy::core_pipeline::Core3dSystems::PostProcess),
@@ -404,7 +415,15 @@ impl Plugin for SurfaceBakePlugin {
     }
 }
 
-/// A bake view is in the render world (the span systems run only then).
+/// The bake cameras' views into the render world (what `ExtractComponentPlugin` does, but
+/// gated). A view leaves with its camera: the bake camera is only ever despawned.
+fn extract_bake_views(mut commands: Commands, views: Extract<Query<(RenderEntity, &BakeView)>>) {
+    for (entity, view) in &views {
+        commands.entity(entity).insert(view.clone());
+    }
+}
+
+/// A bake view is in the render world (the receipt and span systems run only then).
 fn any_bake_view(views: Query<(), With<BakeView>>) -> bool {
     !views.is_empty()
 }
@@ -414,8 +433,8 @@ fn any_bake_view(views: Query<(), With<BakeView>>) -> bool {
 struct BakeReceiptsInstalled;
 
 /// [design] A bake view is in the render world and the receipts are not installed yet:
-/// the blend has just baked for the first time this run (a run that never turns the blend
-/// on keeps Bevy's own draw functions).
+/// the blend bakes for the first time since the gate opened (a run that never turns the
+/// blend on keeps Bevy's own draw functions).
 fn first_bake_view(views: Query<(), With<BakeView>>, installed: Option<Res<BakeReceiptsInstalled>>) -> bool {
     installed.is_none() && !views.is_empty()
 }
@@ -423,15 +442,29 @@ fn first_bake_view(views: Query<(), With<BakeView>>, installed: Option<Res<BakeR
 /// Both phases' receipts, once (before the bake's passes are recorded; `DrawFunctions`
 /// prepares each function when its phase renders).
 fn install_bake_receipts(world: &mut World) {
-    install_bake_receipt::<Opaque3d>(world);
-    install_bake_receipt::<Transparent3d>(world);
+    set_draw_material::<Opaque3d, (bevy::pbr::DrawMaterial, BakeReceipt)>(world);
+    set_draw_material::<Transparent3d, (bevy::pbr::DrawMaterial, BakeReceipt)>(world);
     world.insert_resource(BakeReceiptsInstalled);
 }
 
+/// [design] The gate closed (no bake view, no blend or capture material left): both
+/// phases get a new `DrawMaterial` command of Bevy's own, what bevy_pbr's
+/// `add_render_command::<P, DrawMaterial>` installs, so an idle run draws as main does.
+fn uninstall_bake_receipts(world: &mut World) {
+    set_draw_material::<Opaque3d, bevy::pbr::DrawMaterial>(world);
+    set_draw_material::<Transparent3d, bevy::pbr::DrawMaterial>(world);
+    world.remove_resource::<BakeReceiptsInstalled>();
+}
+
 // [design] Base copies draw in Opaque3d, layer copies (alpha blended) in Transparent3d;
-// both phases' DrawMaterial carries the receipt.
-fn install_bake_receipt<P: CachedRenderPipelinePhaseItem>(world: &mut World) {
-    let command = RenderCommandState::<P, (bevy::pbr::DrawMaterial, BakeReceipt)>::new(world);
+// while installed, both phases' DrawMaterial carries the receipt. The function keeps
+// DrawMaterial's id, so prepared materials need no change either way.
+fn set_draw_material<P: CachedRenderPipelinePhaseItem, C>(world: &mut World)
+where
+    C: RenderCommand<P> + Send + Sync + 'static,
+    C::Param: bevy::ecs::system::ReadOnlySystemParam,
+{
+    let command = RenderCommandState::<P, C>::new(world);
     let functions = world.resource::<DrawFunctions<P>>();
     let mut functions = functions.write();
     let id = functions.id::<bevy::pbr::DrawMaterial>();
@@ -448,8 +481,15 @@ type BakeSpanParams = (bevy::render::renderer::RenderContext<'static, 'static>, 
 /// with the render diagnostics on: `--log-frame-times`, a Tracy build). The span opens
 /// before the view's first pass and closes after its last, so the bake's own passes nest
 /// in it. Both ends are exclusive systems: the executor runs those on its scope's thread,
-/// and the recorder keeps open spans per thread, so the end finds the span the begin
-/// opened. Any other view, or no recorder: nothing.
+/// and the recorder pairs a span's end with the newest span still open on the same thread
+/// (bevy_render `diagnostic/internal.rs`). Each end writes its timestamp into a command
+/// encoder of its own, finished and queued at that system's place in the render order
+/// (`RenderContext::add_command_buffer`), never into the render context's encoder: with
+/// `NVF_PLAY_TEST_PROFILE_ENCODERS=1` asking for that encoder opens an automatic
+/// `enc:<system>` span first, which the begin would nest inside and the context's drop
+/// would close in its place (#2661 round 8). So neither system opens an `enc:` span, every
+/// pass system in between opens and closes its own, and the end closes the bake span with
+/// encoder profiling on or off. Any other view, or no recorder: nothing.
 fn bake_span_begin(world: &mut World, state: &mut bevy::ecs::system::SystemState<BakeSpanParams>) {
     bake_span(world, state, true);
 }
@@ -462,12 +502,13 @@ fn bake_span(world: &mut World, state: &mut bevy::ecs::system::SystemState<BakeS
         let Ok((mut ctx, view, bakes)) = state.get_mut(world) else { return };
         if !view.is_some_and(|v| bakes.contains(v.0)) { return; }
         let Some(recorder) = ctx.diagnostic_recorder() else { return };
-        let encoder = ctx.command_encoder();
+        let mut encoder = ctx.render_device().create_command_encoder(&bevy::render::render_resource::CommandEncoderDescriptor { label: Some(BAKE_SPAN) });
         if begin {
-            recorder.begin_time_span(encoder, BAKE_SPAN.into());
+            recorder.begin_time_span(&mut encoder, BAKE_SPAN.into());
         } else {
-            recorder.end_time_span(encoder);
+            recorder.end_time_span(&mut encoder);
         }
+        ctx.add_command_buffer(encoder.finish());
     }
     state.apply(world);
 }
