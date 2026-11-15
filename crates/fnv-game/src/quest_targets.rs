@@ -97,13 +97,9 @@ pub fn door_there(world: &World, door: FormId) -> bool {
     world.peek(door).is_none_or(|s| !s.deleted()) && world.is_enabled(door).unwrap_or(true)
 }
 
-/// The door is locked now: its run-time state once the world holds one, else its placed
-/// lock.
+/// [design, #2538] The applicable lock, including the load door's partner (`World::lock_of`).
 fn door_locked(world: &World, door: FormId) -> bool {
-    match world.peek(door) {
-        Some(s) => s.lock.is_some_and(|l| l.locked),
-        None => world.placed.get(door).is_some_and(|p| p.lock.is_some()),
-    }
+    world.lock_of(door).is_some_and(|l| l.locked)
 }
 
 /// Where a reference is, for the doors between places: an interior cell, or a worldspace

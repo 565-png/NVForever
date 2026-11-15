@@ -634,10 +634,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // [documented: GetOpenKey; SetOpenKey] the key of a lockable reference.
         "getopenkey" => {
             let r = subject.unwrap_or(FormId(0));
-            let key = match g.world.peek(r) {
-                Some(s) => s.lock.and_then(|l| l.key),
-                None => g.world.placed.get(r).and_then(|p| p.lock).and_then(|l| l.key),
-            };
+            let key = g.world.lock_of(r).and_then(|l| l.key);
             XVal::Ref(key.map_or(0, |k| k.0))
         }
         "setopenkey" => {

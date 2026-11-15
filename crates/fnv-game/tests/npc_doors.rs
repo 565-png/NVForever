@@ -563,3 +563,46 @@ fn a_new_crossing_is_heard_again_whatever_the_kept_answer() {
     assert_eq!(heard(&g), 2.0, "a second crossing");
     assert_eq!(used(&g, REF_LETS), Value::Num(1.0), "the kept answer stands");
 }
+
+
+/// [design, #2538] No game data: a plain door borrows a synthetic partner's lock.
+#[test]
+fn load_door_lock_queries_picking_and_script_unlock_agree() {
+    use fnv_game::functions::Ctx;
+    use fnv_game::lockpick::{self, Level, Opening, Refusal};
+    use fnv_sim::refs::{Lock, Teleport};
+    let mut f = fixture();
+    let (a, b) = (FormId(REF_PLAIN), FormId(REF_LETS));
+    f.refs.refs.get_mut(&a).unwrap().teleport = Some(Teleport { door: b, pos: [1.0, 2.0, 3.0], rot: [0.0; 3], no_alarm: false });
+    f.refs.refs.get_mut(&b).unwrap().lock = Some(Lock { level: 255, key: None, leveled: false });
+    let mut g = game(&f);
+    // [documented: schemas/script/functions.json] The vanilla function opcodes.
+    let call = |g: &mut Game, opcode| {
+        let ctx = Ctx { unit: "load-door-lock".into(), opcode, on: Some(a), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+        g.call_function(&ctx, &[])
+    };
+    assert_eq!(call(&mut g, 0x1041), Value::Num(255.0));
+    assert_eq!(call(&mut g, 0x1005), Value::Num(1.0));
+    assert_eq!(lockpick::opening(&mut g, a, 100.0), Opening::Refused(Refusal::RequiresKey));
+    call(&mut g, 0x1073);
+    assert_eq!(g.world.lock_status(b).unwrap(), 0);
+    assert_eq!(lockpick::opening(&mut g, a, 100.0), Opening::NotLocked);
+    g.world.lock(b, Some(25)).unwrap();
+    lockpick::broke(&mut g, a);
+    assert!(g.locks.broken.contains(&b));
+    assert!(!g.locks.broken.contains(&a));
+    assert_eq!(call(&mut g, 0x1005), Value::Num(2.0));
+    assert_eq!(call(&mut g, 0x120A), Value::Num(1.0));
+    lockpick::broke(&mut g, a);
+    assert!(g.locks.retried.contains(&b));
+    g.locks.broken.clear();
+    g.locks.retried.clear();
+    g.world.get(FormId::PLAYER_REF).unwrap().inventory.get_or_insert_with(Default::default).add(lockpick::BOBBY_PIN, 3);
+    assert!(matches!(lockpick::opening(&mut g, a, 100.0), Opening::Pick { level: Level::Easy, .. }));
+    lockpick::opened(&mut g, a, Level::Easy, false);
+    assert_eq!(g.world.lock_status(b).unwrap(), 0);
+    assert_eq!(call(&mut g, 0x1005), Value::Num(0.0));
+    call(&mut g, 0x1072);
+    assert_eq!(g.world.lock_source(a), a);
+    assert_eq!(g.world.lock_status(b).unwrap(), 0);
+}

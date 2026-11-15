@@ -494,14 +494,14 @@ pub fn get_locked(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
         return Ok(Value::Num(if in_loaded_cell(g, r) { crate::terminal::locked(g, r) as f64 } else { 0.0 }));
     }
     let status = g.world.lock_status(r).map_err(|e| e.to_string())?;
-    Ok(Value::Num(if status == 1 && g.locks.broken.contains(&r) { 2.0 } else { status as f64 }))
+    Ok(Value::Num(if status == 1 && g.locks.broken.contains(&g.world.lock_source(r)) { 2.0 } else { status as f64 }))
 }
 
 /// 1 for a lock broken by forcing it (`crate::lockpick`) [documented: GECK wiki
 /// GetIsLockBroken].
 pub fn get_is_lock_broken(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
-    Ok(Value::bool(g.locks.broken.contains(&r)))
+    Ok(Value::bool(g.locks.broken.contains(&g.world.lock_source(r))))
 }
 
 /// `Ref.Activate [actor] [flag]`: with no actor the calling reference's action reference

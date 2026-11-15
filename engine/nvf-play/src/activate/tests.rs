@@ -486,3 +486,18 @@ fn switching_cancels_a_holdable_activate_tap_before_it_can_take_the_item() {
     assert!(drain::<RefChanged>(&mut app).is_empty());
     assert_eq!(app.world().resource::<SimState>().world.peek(FormId::PLAYER_REF).and_then(|r| r.inventory.as_ref()).map_or(0, |i| i.count(FormId(STIMPAK))), 0);
 }
+
+
+/// [design, #2538] Both HUD states use the same partner lock as activation.
+#[test]
+fn load_door_lock_prompt_uses_partner_level_and_key() {
+    let mut sim = sim();
+    sim.world.lock(FormId(DOOR_DEST), Some(255)).unwrap();
+    assert_eq!(describe(&sim, index(), DOOR_REF).unwrap().1, Action::Locked { level: 255 });
+    assert_eq!(describe(&sim, index(), DOOR_REF).unwrap().1.label(), "Locked (Requires Key)");
+    sim.world.get(FormId(DOOR_DEST)).unwrap().lock.as_mut().unwrap().key = Some(FormId(KEY));
+    sim.world.add_item(FormId::PLAYER_REF, FormId(KEY), 1).unwrap();
+    assert_eq!(describe(&sim, index(), DOOR_REF).unwrap().1, Action::Unlock);
+    sim.world.unlock(FormId(DOOR_REF)).unwrap();
+    assert!(matches!(describe(&sim, index(), DOOR_REF).unwrap().1, Action::Travel { .. }));
+}
