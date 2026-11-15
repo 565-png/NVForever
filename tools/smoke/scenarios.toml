@@ -177,6 +177,35 @@ cmd = ["python", "-m", "unittest", "discover", "-s", "tools/release/tests"]
 # ------------------------------------------------------------------ renderer, sky, image space
 
 [[scenario]]
+name = "death-recovery-handoff"
+source = "original death reload observed in campaign o29_dmg (2026-11-08, #1858), docs/handoff/observer-checks.md item 89; bounded recovery policy in docs/spec-notes/player-death-recovery.md"
+note = "UNRUN: an isolated NVForever home saves a living player before KillActor; the existing load handoff must take over once, without overwriting that save. This is separate from the unchanged camera-only fade timing scenario."
+areas = ["save", "combat"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/save/death_recovery.rs", "engine/nvf-play/src/loading.rs", "engine/nvforever/src/handoff.rs"]
+env = { NVFOREVER_HOME = "death-recovery-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "20:save death-recovery-living;21:close;24:player.killactor;25:close", NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 90
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its world is in"
+expect = [
+  { re = 'save: wrote .*death-recovery-living\.nvfsave', count = 1, label = "one living save is written" },
+  { re = 'death recovery: loading .*death-recovery-living\.nvfsave after', count = 1, label = "death selects the living save once" },
+  { re = 'load: handing over to a new run with --load .*death-recovery-living\.nvfsave', count = 1, label = "one existing load handoff starts" },
+  { re = 'load: restored .*death-recovery-living\.nvfsave: \d+ changed references', count = 1, label = "the new run restores the living save" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown" },
+  { text = "the new run took over and its world is in; ending it", label = "the restored world comes in" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends after takeover" },
+  { text = "No living save could be loaded", count = 0, label = "the usable living save is not rejected" },
+  { re = 'before the world was in|before it was ready|the previous run did not end normally', count = 0, label = "no handoff timeout or crash" },
+]
+order = [[
+  { re = 'save: wrote .*death-recovery-living\.nvfsave', label = "save first" },
+  { re = 'death recovery: loading .*death-recovery-living\.nvfsave after', label = "then recover" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "new window shows" },
+  { re = 'load: restored .*death-recovery-living\.nvfsave', label = "restore after handoff" },
+  { text = "the new run took over and its world is in; ending it", label = "restored world ready" },
+]]
+
+[[scenario]]
 name = "memory-budget-capped"
 source = "#1170: the asset caches' keep limits follow the machine's RAM and the GPU's memory budget (VK_EXT_memory_budget); with the test aids capping the GPU budget at 512 MB, the limits go to their least (30 s, 128 per cache) and the flight over Goodsprings uses over 85 % of it (this process's use of the device-local heaps, VK_EXT_memory_budget), which presses the caches (they keep the least, 30 s and 128)"
 areas = ["renderer"]
@@ -11171,7 +11200,7 @@ name = "death-cam-first"
 source = "owner 2026-10-16: when the player dies the body drops as a ragdoll with the first-person view fixed to its head, in slow motion and blurred (engine/nvforever/src/death_cam.rs)"
 areas = ["combat", "camera"]
 paths = ["engine/nvforever/src/death_cam.rs", "engine/nvforever/src/ragdoll.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/imagespace.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/audio_out.rs"]
-env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "10:player.killactor;11:close" }
+env = { NVFOREVER_HOME = "death-cam-first-recovery-delay-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "9:setgs fPlayerDeathReloadTime 120;9.5:close;10:player.killactor;11:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 22
 order = [[
@@ -11179,11 +11208,13 @@ order = [[
   { re = 'sound speed: 0\.\d\d -> 1\.00', label = "and come back to speed when it ends" },
 ]]
 expect = [
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
   "death camera: the player died in first person: the body drops as a ragdoll, the view stays on its head",
   "player controls: all held, the player is dead",
   { re = 'death camera: the body is on the ground [\d.]+ s after the death', label = "the ragdoll comes to rest" },
   "death camera: 1 death(s) shown, the player dead at exit",
 ]
+forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }]
 
 [[scenario]]
 name = "death-fade"
@@ -11191,27 +11222,31 @@ source = "owner todo 6 item 3 (2026-10-17): 2 s after the player dies the screen
 note = "killed at 10 s as death-cam-first; the fade starts 2 s of real time after the death and is black 4 s later; the slow motion runs meanwhile, so these are not game seconds"
 areas = ["combat", "camera"]
 paths = ["engine/nvforever/src/death_cam.rs", "engine/nvforever/src/imagespace.rs"]
-env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "10:player.killactor;11:close" }
+env = { NVFOREVER_HOME = "death-fade-recovery-delay-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "9:setgs fPlayerDeathReloadTime 120;9.5:close;10:player.killactor;11:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 22
 expect = [
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
   "death camera: the player died in first person: the body drops as a ragdoll, the view stays on its head",
   { re = 'death camera: the screen starts fading to black (?P<n>[\d.]+) s after the death', range = [2.0, 2.3], label = "the fade starts about 2 s after the death" },
   { re = 'death camera: the screen is black (?P<n>[\d.]+) s after the death', range = [6.0, 6.3], label = "the screen is black about 6 s after the death" },
 ]
+forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }]
 
 [[scenario]]
 name = "death-cam-third"
 source = "owner 2026-10-16: in third person the camera stays on the player's body as it drops, in slow motion and blurred; owner 2026-10-25: the camera keeps its place and only turns to the body (engine/nvforever/src/death_cam.rs)"
 areas = ["combat", "camera"]
 paths = ["engine/nvforever/src/death_cam.rs", "engine/nvforever/src/ragdoll.rs", "engine/nvforever/src/player_body.rs"]
-env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONTROL = "8:view", NVF_PLAY_TEST_CONSOLE = "10:player.killactor;11:close" }
+env = { NVFOREVER_HOME = "death-cam-third-recovery-delay-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONTROL = "8:view", NVF_PLAY_TEST_CONSOLE = "9:setgs fPlayerDeathReloadTime 120;9.5:close;10:player.killactor;11:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 22
 expect = [
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
   "death camera: the player died in third person: the body drops as a ragdoll, the camera stays put and looks at it",
   { re = 'death camera: the body is on the ground [\d.]+ s after the death', label = "the ragdoll comes to rest" },
 ]
+forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }]
 
 [[scenario]]
 name = "g5-self-kill-1"
@@ -11254,14 +11289,15 @@ source = "owner 2026-10-25: anything ragdolled floats to the surface in water (d
 note = "the player swims out from the Boulder Beach shore as wade-in-swim (on to x about 59300), is killed under the lake's surface (2600) at 19 s, and its body rises and comes to rest floating there"
 areas = ["ragdoll", "physics"]
 paths = ["crates/fnv-phys/src/buoyancy.rs", "crates/fnv-phys/src/ragdoll.rs", "crates/fnv-phys/src/water.rs", "engine/nvforever/src/ragdoll.rs", "engine/nvforever/src/death_cam.rs"]
-env = { NVF_PLAY_TEST_MOVE = "10:1:0,17:0:0", NVF_PLAY_TEST_CONSOLE = "19:player.killactor;20:close" }
+env = { NVFOREVER_HOME = "ragdoll-floats-recovery-delay-home", NVF_PLAY_TEST_MOVE = "10:1:0,17:0:0", NVF_PLAY_TEST_CONSOLE = "18:setgs fPlayerDeathReloadTime 120;18.5:close;19:player.killactor;20:close" }
 args = ["--play", "--pos=56992,37536,2745", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 50
 expect = [
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
   "death camera: the player died in first person: the body drops as a ragdoll, the view stays on its head",
   { re = 'ragdoll: actor 00000014 floats at \(5\d{4}, 37\d{3}, [\d.]+\), its trunk (?P<n>-?\d+) units under the surface at 2600', range = [-25, 25], label = "the body comes to rest floating, its trunk at the lake's surface (6 under, 13 s after the death, 2026-10-25)" },
 ]
-forbid = [{ re = 'ragdoll: actor 00000014 held at rest still moving', label = "the body is never frozen part way up" }]
+forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }, { re = 'ragdoll: actor 00000014 held at rest still moving', label = "the body is never frozen part way up" }]
 
 [[scenario]]
 name = "loose-items-float"
@@ -13735,13 +13771,14 @@ name = "death-music-dobj"
 source = "ESM audit group 8 (docs/spec-notes/default-objects.md §1): the default objects' Death Music (DefaultDeath, special\\death.mp3) is not shipped, so when the player dies the SOUN MUSDeath plays as before"
 areas = ["audio", "music"]
 paths = ["engine/nvf-play/src/music.rs", "crates/fnv-world/src/audio.rs"]
-env = { NVF_PLAY_TEST_CONSOLE = "8:player.kill;8.3:close" }
+env = { NVFOREVER_HOME = "death-music-dobj-recovery-delay-home", NVF_PLAY_TEST_CONSOLE = "7:setgs fPlayerDeathReloadTime 120;7.5:close;8:player.kill;8.3:close" }
 args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 16
 expect = [
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
   { re = 'music: the player died: the music stops, MUSDeath \(0x[0-9A-F]{8}\) plays', label = "the SOUN fallback plays: the DOBJ's death music names no shipped file" },
 ]
-forbid = [{ text = "the default objects' death music", label = "no default objects' death music file in the shipped data" }]
+forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }, { text = "the default objects' death music", label = "no default objects' death music file in the shipped data" }]
 
 [[scenario]]
 name = "anim-state-throw"

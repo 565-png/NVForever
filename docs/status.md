@@ -34,6 +34,8 @@ compared with independent readers and in-game captures) and the smoke runner
 (`tools/smoke`, the scenarios in `tools/smoke/scenarios.toml`; `python tools/smoke verify`
 counts them).
 
+Player death recovery is **Partly**: live reload-delay setting, one-attempt living-save selection and existing load dispatch are implemented ([spec](spec-notes/player-death-recovery.md)). Ten authored CPU controls passed in an earlier normal26e context; current-main build/lint, rendered recovery and `death-recovery-handoff` smoke remain pending. The existing camera-only oracles are unchanged; their isolated fixtures use an explicit live 120-second reload delay. These rendered setups remain UNRUN.
+
 ## 1. Foundations
 
 | System | State | Specifics | Notes |
