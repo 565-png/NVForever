@@ -17,6 +17,7 @@ pub mod read_pool;
 pub mod release;
 pub mod nif_material;
 pub mod nif_spawn;
+pub mod terrain_sampling;
 pub mod texture;
 
 pub use data::{ArchivePlugin, GameData};

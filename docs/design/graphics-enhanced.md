@@ -471,13 +471,107 @@ prior art, nothing of either was used.
   one coarsest-mip texel per contributing texture, and a little arithmetic per layer per
   pixel. To be measured with the Tracy build's GPU zones at a layer-heavy view (Goodsprings
   roads, the Primm junction), off against on. Zero-share layers are still sampled, as with
-  the switch off; skipping them needs explicit-gradient reads and belongs with the
-  anti-tiling work (#2551).
+  the switch off; with Terrain anti-tiling on as well (§3.13) they are skipped, and the
+  heights come from its reads.
 - Whether `enhanced` turns it on is the owner's call; until then it is off in both presets
   and is not an effect of the Enhanced effects row. Smoke: `terrain-height-blend` (switched
   on, off and on while running) and `terrain-height-blend-start` (on from the start); both
   want the variant's `terrain height blending pipeline <n> ready` line
   (`NVF_PLAY_TEST_PIPELINE_LOG`, pipeline_gate.rs). The look itself is checked by pictures.
+
+### 3.13 Terrain anti-tiling (`terrain-anti-tiling`; off in both presets)
+
+[design, #2551] An addition of NVForever's own, not a fact about the original game, which
+repeats every landscape texture plainly every 256 world units, 16 times across a cell
+(docs/spec-notes/world.md §3 "Texture repeat" [observed]). From a hill or over the
+Mojave flats the same marks recur on that grid. With this switch the terrain shaders read
+each landscape texture at a few offset places and blend them, so the repeat no longer
+lines up into a grid. The techniques are published: Heitz & Neyret, "High-Performance
+By-Example Noise using a Histogram-Preserving Blending Operator" (HPG 2018); Mikkelsen,
+"Practical Real-Time Hex-Tiling" (JCGT 11(3), 2022); Quilez, "Texture repetition". This is
+NVForever's own small version (no histogram transform). Skyrim Community Shaders'
+"Terrain Variation" (the two strongest corners of the triangle grid) and New Vegas
+Reloaded's LOD noise are prior art only; no code was taken from any of them.
+
+- **Lattice and hash.** The texture coordinate (u = game x / repeat, v = game y / repeat,
+  as the meshes carry it) is laid on a lattice of equilateral triangles four repeats on a
+  side (1,024 units at the game's repeat). Each lattice vertex is named by two signed whole
+  numbers (floor, never truncation) and hashed (a 32-bit integer mixer, no `sin`) into an
+  offset of the texture and, for Hex3, one of six 60° rotations. The coordinate hangs on
+  the world, so neighbouring quadrants and cells read the same place the same way: no seam
+  at quadrant or cell edges from the reads. Each read's coordinate is taken relative to its
+  corner, so it stays small far from the origin; the tests compare it with an f64
+  reference near ±200,000 units (f32 positions there are 1/64 unit apart, about 0.03 texel
+  of a 512-texel texture over 256 units). No promise is made past that range.
+- **Candidates (temporary).** Both are built for the comparison and one will be kept:
+  - *Triangle2*: the two corners with the largest weights (ties to the smaller names),
+    offsets only, weights in proportion. Where the kept pair changes, one read is swapped
+    for another at a weight above 0: not continuous; the pictures decide whether it shows.
+  - *Hex3* (the default): all three corners as hex cells, offsets and rotations, the
+    barycentric weights to the fourth power made to sum to 1. Continuous (a corner's
+    weight is 0 on the edge across from it). The curve narrows the blend; it is not a
+    histogram transform and does not promise kept contrast.
+  The test aid `NVF_PLAY_TEST_TERRAIN_TILING=triangle2|hex3` picks one (read once, logged
+  as `terrain anti-tiling: candidate …`).
+- **Mip selection.** Every read takes explicit gradients: the plain coordinate's change
+  across a pixel (taken before any branch or discard), turned with the read's rotation and
+  scaled by 2^mip bias, since a gradient read takes no bias of its own (the upscalers set
+  it). Offsets and lattice choices are not differentiated, so a hash border causes no mip
+  jump.
+- **Normal maps** take the same reads: each texel is decoded (two-component maps rebuild
+  z), its green flipped as the material says, then turned back by the read's rotation; the
+  blend is made unit length and put through the surface's frame. The decoded result does
+  not go through Bevy's `apply_normal_mapping` again. Folded layers take the base
+  material's decoding flags, as the ordinary path does (an image's format is not known
+  when the material is made: textures decode on worker threads).
+- **Faint reads.** After the candidate's weights, each weight less 1/256 (held at 0) is
+  made to sum to 1 again, so a read fades to nothing before it is skipped (no jump at the
+  cut); at least one read always stays.
+- **Skipping.** The folded layers are walked last to first with the ordered blend's own
+  products (`terrain_ordered_shares`): a layer of opacity 0 is not read, and a fully
+  covering later layer leaves everything under it, the base too, unread. A diffuse read can
+  still be needed to find an alpha of 0. Normal maps (and, with height blending, the mean
+  texels) are read only for textures whose final weight is above 0. Exact zeros, no
+  epsilon: faint painted layers count.
+- **Height blending together.** With §3.12 on as well, the heights come from the very
+  anti-tiled diffuse reads (no second read of the base), and the weights rule is §3.12's.
+- **The surface set-up.** Instead of Bevy's `pbr_input_from_standard_material` (which
+  would read the base texture and normal map once more at the plain place, and take the
+  SSAO multibounce from that plain colour), nvf_assets terrain_pbr.wesl starts from
+  `pbr_input_from_vertex_output`, copies the landscape material's values and multiplies
+  vertex colour and material colour in once; after the colour is final it applies Bevy's
+  SSAO multibounce and specular occlusion formulas to it. Its contract is the landscape
+  material's (colour, diffuse texture, normal map, scalar values; terrain.rs
+  `surface_material`, checked by a test); a wider material needs this changed too. With
+  the switch off, both earlier paths (height blending off and on) are compiled as before:
+  their `@if` conditions only gain `!TERRAIN_ANTI_TILING`.
+- **What it reaches.** The folded draw (base and folded layers) in this change. Not
+  anti-tiled: the depth prepass and shadows (the same depth either way), the normal
+  prepass's normals (screen-space passes that read them keep the plain reads), and the
+  distant LOD terrain's baked textures.
+- **Cost.** Per read texture, two (Triangle2) or three (Hex3) diffuse reads instead of one,
+  the same for each contributing normal map, plus a little arithmetic; skipping brings the
+  common case (a base and one or two layers) near today's count. With D diffuse-read
+  textures, N contributing normal maps and M contributing means: at most K·D + K·N + M
+  reads (K = 2 or 3 before faint reads drop). To be measured with the Tracy build's GPU
+  zones (main view's opaque pass and the frame) at the open-ground and layer-heavy views,
+  off against on, and each candidate with height blending against height blending alone.
+- **Switching.** The settings row Terrain anti-tiling (Graphics > Picture), or
+  `--graphics-only terrain-anti-tiling`. A pipeline key of the folded material
+  (`TerrainLayersKey`); switching flips every folded material in place
+  (`terrain::sync_anti_tiling`, logged as `terrain: anti-tiling on|off (<n> folded quadrant
+  materials, <m> changed)`), new materials take the setting, and the first switch compiles
+  the new pipeline (the pause menu waits for it). A texture repeat that is not above 0
+  keeps the ordinary reads (a warning when it is switched on).
+- **Starting values** (NVForever's own, to be settled from pictures): lattice side 4
+  repeats, faint-read cut 1/256, Hex3's fourth-power curve, salts `0x25510001..3`.
+- Whether `enhanced` turns it on is the owner's call; until then it is off in both presets
+  and is not an effect of the Enhanced effects row. Smoke: `terrain-anti-tiling` (switched
+  on, off and on while running), `terrain-anti-tiling-start` (on from the start) and
+  `terrain-anti-tiling-height-blend` (one folded pipeline with both switches); they want
+  `terrain anti-tiling pipeline <n> ready: path=folded height=on|off method=…`
+  (`NVF_PLAY_TEST_PIPELINE_LOG`, pipeline_gate.rs). The look and the cost are checked by
+  pictures and Tracy.
 
 ## 4. Tried and dropped
 

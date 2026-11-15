@@ -895,6 +895,10 @@ impl Plugin for NifMaterialPlugin {
         load_internal_asset!(app, NIF_PREPASS_SHADER, "nif_prepass.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/nif_prepass.wesl"));
         load_internal_asset!(app, COVERAGE_SHADER, "coverage.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/coverage.wesl"));
         load_internal_asset!(app, FIRST_PERSON_DEPTH_SHADER, "first_person_depth.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/first_person_depth.wesl"));
+        // Landscape anti-tiling (terrain_sampling.rs), imported by nvforever's terrain.wesl
+        // and by this crate's nif_material.wesl only with TERRAIN_ANTI_TILING.
+        load_internal_asset!(app, crate::terrain_sampling::SAMPLING_SHADER, "terrain_sampling.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/terrain_sampling.wesl"));
+        load_internal_asset!(app, crate::terrain_sampling::PBR_SHADER, "terrain_pbr.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/terrain_pbr.wesl"));
         // Every 3D camera gets the view transmission texture, as each one had before Bevy
         // 0.20 made `ScreenSpaceTransmission` opt-in: the refraction here and the water
         // (nvforever water.rs) read it, and their shaders bind it unconditionally.
