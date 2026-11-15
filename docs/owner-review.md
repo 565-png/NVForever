@@ -130,6 +130,12 @@ the spec it links to.
 
 ## Tier 2: movement and controls feel
 
+- **Darting movement clips (#2352).** [design, #2352] `ROOT_EXCURSION_RATIO = 1.5`
+  selects moves whose sampled root excursion exceeds 1.5 times net travel; their
+  drawn x/y stays at the track's start. A different ratio changes which moves lose
+  their in-cycle sway. Actor movement is unchanged; original dart behavior awaits
+  observer check 169. ([actors §8.2](spec-notes/actors.md#82-root-motion))
+
 13. **Grab.** Z held, or E held for 0.4 s, picks up an object or a corpse. It drops when
     lagging 90 units and is thrown at up to 600 units/s. Nothing over 100 kg can be
     picked up, and you can only walk while holding over 25 kg. All guessed.
@@ -226,6 +232,13 @@ the spec it links to.
   kept in saves). Bigger reach, a slower front, fires that leave the ground scorched for a
   game day, or trees and shrubs that burn too are each a figure or a follow-up away.
   [grass-fire](design/grass-fire.md)
+
+- **Rigid headgear frame detection (#2529).** [design, #2529] Choose bone-local axes
+  when a rigid head part's combined authored bounds straddle skeleton Z=0 and their
+  centre aligns at least 0.9 with bone-local up (`BONE_LOCAL_HEAD_ALIGNMENT`);
+  otherwise retain the skeleton-axis rule. This fixes Oliver's supplied +X cap layout
+  without naming a model. Keep this conservative geometry rule, or require explicit
+  model-frame metadata for ambiguous mod meshes? ([actors §1.2](spec-notes/actors.md#12-meshes))
 
 - **NPC conversations go on past a Goodbye line that links on (#2451).** [hypothesis,
   #2451] The editor's documentation says a Goodbye line ends a conversation between
@@ -579,8 +592,31 @@ the spec it links to.
     no condition tests a Great Khans' quest stage, and no script or activator frees him
     any other way. Ours follows the data and is unchanged; after her errand the choice is
     offered, frees him and he leaves the cross. You remember freeing him at any stage: if
-    you did so without having spoken to Diane, say so; observer check 169 asks the
+    you did so without having spoken to Diane, say so; observer check 175 asks the
     original. ([anders-cross](spec-notes/anders-cross.md))
+81. **A faction disguise outranks the player's bad standing with that faction (#2611).**
+    In NCR armour on the Legion route, every NCR soldier at Hoover Dam attacked: the
+    player's enemy flag with NCRFactionNV (a crime, SetPCEnemyOfFaction) won over the
+    friendship the armour's script sets up with ArmorNCRFactionNV, so nobody was fooled.
+    Ours now: such a flag does not count while the actor is also in a faction that is
+    the player's ally or friend (the disguise faction); only sniffers (the rangers, MPs,
+    Captain Graham) within the disguise pulse's 25 ft, about 533 units, and in sight see
+    through it, and then a fight they start blows the cover for the dam. A flag on the
+    disguise faction itself (a murder seen while disguised) still counts. The soldiers
+    it fools take the player for a friend, so a sniffer's alarm (a glimpse or a fight)
+    no longer turns them on the player. If the disguise now seems too
+    forgiving (it fools after any crime but one done in disguise), say so. Observer
+    check 173 asks the original. ([disguises §3, §4](spec-notes/disguises.md))
+
+80. **Scripts cannot disable the player (#2617).** On the Legion route the intake tower
+    trigger VHDIntakeTowerLegionaryDespawnScript disables whoever walks in once the
+    Legion's intake tower strategy is 2, the player too; a disabled player's scripted
+    load doors do nothing, so the Power Plant 01 elevator never took the player through.
+    Ours now: Disable of the player does nothing, and a save holding the player disabled
+    loads with the player enabled. The other choice is to let the player be disabled and
+    only lift the Activate rule for the player (the player would then be hidden and
+    "gone" to scripts that test it). Observer check 172 asks the original.
+    ([doors §6](spec-notes/doors.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 

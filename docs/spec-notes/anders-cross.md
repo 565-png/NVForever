@@ -87,4 +87,4 @@ starts his thanks 0x00142AA6]. Smoke scenarios `anders-free-after-diane` (headle
 `anders-leaves-cross` (in the game) hold this.
 
 Whether the original offers some other way before Diane's errand (the owner remembers
-freeing him whatever the quest stage) is observer check 169; owner-review item 82.
+freeing him whatever the quest stage) is observer check 175; owner-review item 82.
