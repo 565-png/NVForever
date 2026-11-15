@@ -749,14 +749,11 @@ fn systems_of<'a>(
                         .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(def.material.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, NoFrustumCulling, ChildOf(root)))
                         .id();
                     if let (Some(idle), Some(owner)) = (idle, key.instance) {
-                        use nvf_assets::material_anim::{MaterialSlot, RigMaterials};
-                        let look = def.look;
-                        let mut player = Playing::new(&idle.clip.name, &idle.clip, |_| None);
-                        player.held = true;
-                        commands.entity(entity).insert((IdleParticleMaterial(owner), player, RigMaterials {
-                            slots: vec![MaterialSlot::new(def.name.clone(), entity, def.material.clone(), look.colour, look.mult, look.alpha)],
-                            idle: Arc::new(idle.clip.materials.clone()), dark: false, fade: 1.0,
-                        }));
+                        if let Some(materials) = def.idle_materials(entity, &idle.clip) {
+                            let mut player = Playing::new(&idle.clip.name, &idle.clip, |_| None);
+                            player.held = true;
+                            commands.entity(entity).insert((IdleParticleMaterial(owner), player, materials));
+                        }
                     }
                     let mut def = def.clone();
                     if let Some(idle) = idle {

@@ -725,6 +725,17 @@ fn mover_of(file: &NifFile, dec: &Decoded, by_block: &HashMap<usize, &SceneObjec
 }
 
 impl ParticleSystemDef {
+    /// [design, #2685] Only systems named by KF material tracks own material slots.
+    pub fn idle_materials(&self, entity: Entity, clip: &crate::anim_play::Clip) -> Option<crate::material_anim::RigMaterials> {
+        use crate::material_anim::{MaterialSlot, RigMaterials};
+        let tracks: Vec<_> = clip.materials.iter().filter(|t| t.shape == self.name).cloned().collect();
+        if tracks.is_empty() { return None }
+        Some(RigMaterials {
+            slots: vec![MaterialSlot::new(self.name.clone(), entity, self.material.clone(), self.look.colour, self.look.mult, self.look.alpha)],
+            idle: std::sync::Arc::new(tracks), dark: false, fade: 1.0,
+        })
+    }
+
     /// [design, #2685] Bind an actor idle KF to this instance using the same sequence
     /// representation as placed objects; cached model definitions remain untouched.
     pub fn bind_idle(&mut self, clip: &crate::anim_play::Clip) {
@@ -740,7 +751,14 @@ impl ParticleSystemDef {
                 t.keys.iter().map(|(at, on)| (*at - clip.start, *on)).collect()
             }
         };
-        let index = self.sequences.len();
+        // [design, #2685] Embedded IDs are indices before per-system filtering;
+        // modifier-only sequences can reserve IDs absent from the emission table.
+        let used: std::collections::HashSet<_> = self.sequences.iter().map(|s| s.index)
+            .chain(self.gravity.iter().map(|g| &g.active)
+                .chain(self.drag.iter().map(|d| &d.active))
+                .chain(self.bombs.iter().map(|b| &b.active))
+                .flat_map(|a| a.by_sequence.iter().map(|(i, _)| *i))).collect();
+        let index = (0..).find(|i| !used.contains(i)).unwrap();
         self.sequences.push(SequenceEmission {
             sequence: clip.name.clone(), index,
             rate: self.rate,
@@ -1719,6 +1737,60 @@ mod tests {
     use super::*;
 
     #[test]
+    fn external_idle_material_application_preserves_untargeted_members() {
+        use crate::anim_play::{Clip, MaterialTarget, MaterialTrack, Playing};
+        use crate::material_anim::{animate_rig_materials, bind_rig_materials, RigMaterials};
+        use bevy::math::Affine2;
+        use fnv_nif::anim::ValueTrack;
+        let track = |shape: &str, target, value| MaterialTrack {
+            shape: shape.into(), target, values: std::sync::Arc::new(ValueTrack::Float(Channel::Static(Some([value])))), cycle: None, priority: 0,
+        };
+        let clip = Clip::from_controllers(vec![track("Glow", MaterialTarget::EmissiveMult, 4.0), track("Fade", MaterialTarget::Alpha, 0.25)], Vec::new(), Vec::new());
+        let mut app = App::new();
+        app.init_resource::<Assets<NifMaterial>>()
+            .add_systems(Update, (bind_rig_materials, animate_rig_materials).chain());
+        let mut material = NifMaterial::default();
+        material.base.unlit = true;
+        material.base.alpha_mode = AlphaMode::Blend;
+        material.base.base_color = Color::linear_rgba(0.7, 0.8, 0.9, 0.6);
+        // [design, #2685] Synthetic normalized builder output differs from stored look.
+        material.base.emissive = LinearRgba::WHITE;
+        material.base.uv_transform = Affine2::from_translation(Vec2::new(0.2, 0.3));
+        material.extension.refract = true;
+        material.extension.refraction = 0.4;
+        let shared = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(material.clone());
+        let mut spawn = |name: &str| {
+            let entity = app.world_mut().spawn(MeshMaterial3d(shared.clone())).id();
+            let d = ParticleSystemDef { name: name.into(), material: shared.clone(),
+                look: crate::material_anim::Look::stored([0.1; 3], 1.0, 1.0), ..def() };
+            if let Some(materials) = d.idle_materials(entity, &clip) {
+                assert!(materials.idle.iter().all(|t| t.shape == name));
+                app.world_mut().entity_mut(entity).insert((Playing::new("owned.kf", &clip, |_| None), materials));
+            }
+            entity
+        };
+        let untouched = spawn("Untouched");
+        let fade = spawn("Fade");
+        let glow = spawn("Glow");
+        app.update();
+        app.update();
+        assert!(app.world().get::<RigMaterials>(untouched).is_none());
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(untouched).unwrap().0, shared);
+        let materials = app.world().resource::<Assets<NifMaterial>>();
+        let drawn = |entity| materials.get(&app.world().get::<MeshMaterial3d<NifMaterial>>(entity).unwrap().0).unwrap();
+        assert_eq!(drawn(untouched).base.emissive, LinearRgba::WHITE);
+        assert_eq!(drawn(fade).base.emissive, LinearRgba::WHITE);
+        assert_eq!(drawn(fade).base.base_color.alpha(), 0.25);
+        assert_eq!(drawn(glow).base.emissive, LinearRgba::rgb(0.4, 0.4, 0.4));
+        assert_eq!(drawn(glow).base.base_color, material.base.base_color);
+        for entity in [untouched, fade, glow] {
+            assert_eq!(drawn(entity).base.uv_transform, material.base.uv_transform);
+            assert_eq!(drawn(entity).extension.refraction, 0.4);
+        }
+        assert_eq!(materials.get(&shared).unwrap().base.base_color, material.base.base_color);
+    }
+
+    #[test]
     fn external_idle_kf_reaches_named_emitter_and_modifier_tracks() {
         use fnv_nif::anim::{BoolTrack, Sequence, Track, ValueTrack};
         let track = |system: &str, controller: &str, id: Option<&str>, interp: Option<&str>, values, bools| Track {
@@ -1738,9 +1810,17 @@ mod tests {
         let mut d = def();
         d.name = "OwnedSystem".into();
         d.drag.push(Drag { axis: Vec3::Z, percentage: 0.1, origin: Vec3::ZERO, range: 0.0, range_falloff: 0.0,
-            active: ModifierActive { name: "OwnedDrag".into(), keys: vec![(0.0, false)], ..Default::default() } });
+            active: ModifierActive { name: "OwnedDrag".into(), keys: vec![(0.0, false)],
+                by_sequence: vec![(0, vec![(0.0, false)]), (1, vec![(0.0, false)])] } });
+        // [design, #2685] Sparse embedded emission ID and modifier-only ID collide
+        // with both the old len() allocator and a search of emission IDs alone.
+        d.sequences.push(emission("Embedded", 1, vec![(0.0, true)], 9.0));
         d.bind_idle(&clip);
         let emission = d.sequence("OwnedIdle").unwrap();
+        assert_eq!(emission.index, 2);
+        assert_eq!(d.sequences.iter().find(|s| s.index == emission.index).unwrap().sequence, "OwnedIdle");
+        assert_eq!(emission.period, 2.0);
+        assert!(!emission.loops);
         assert_eq!(emission.rate_at(0.25), 40.0);
         assert_eq!(emission.on_time(0.0, 2.0), 1.0);
         assert_eq!(emission.on_time(2.0, 100.0), 0.0);

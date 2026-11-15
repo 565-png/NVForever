@@ -211,7 +211,7 @@ mod tests {
                 RigNode { name: Some("Effects".into()), parent: None, local: Transform::IDENTITY, hidden: false, billboard: None },
                 RigNode { name: Some("OwnedGlow".into()), parent: Some(0), local: Transform::IDENTITY, hidden: false, billboard: None },
             ],
-            shapes: vec![RigShape { node: 1, mesh: default(), material: default(), skin: None,
+            shapes: vec![RigShape { node: 1, mesh: default(), material: default(), skin: None, morph: None,
                 look: ("OwnedGlow".into(), [0.0; 3], 1.0, 1.0), refraction: 0.0, animated: true }],
             idle: None, door: None, groups: Vec::new(), effect: None,
         }), ..default() };

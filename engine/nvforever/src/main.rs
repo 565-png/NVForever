@@ -1603,6 +1603,8 @@ fn main() -> AppExit {
     .add_systems(Update, particles::sync_idle_materials.after(anim_objects::hold).before(nvf_assets::material_anim::bind_rig_materials))
     // Vertex morphs (waving flags, sagging wires): docs/spec-notes/vertex-morphs.md.
     .add_systems(Update, nvf_assets::morph::play_vertex_morphs.after(world::stream))
+    // [design, #2685] Manager morphs follow the active rig, including restored groups.
+    .add_systems(Update, nvf_assets::morph::play_sequence_morphs.after(advance_animations))
     .init_resource::<activators::ActivatorStats>()
     .add_systems(
         Update,

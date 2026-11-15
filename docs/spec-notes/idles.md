@@ -424,7 +424,10 @@ words, with where ours stands:
   Enabled ground fog (REFR 0x001629DD, model `effects\NV\hChamberGroundFog.NIF`,
   `Forward` CLAMP 0..52.33 s [observed: data, main session #2685]) already draws through
   `script_draw`, plays its sequence on `PlayGroup Forward 1`, and restores the saved
-  group at its end. Its morph/UV/alpha use the existing object players.
+  group at its end. [design, #2685; nvf-assets/src/morph.rs::play_sequence_morphs]
+  Its manager morph now binds `Forward` by shape/frame name and follows the same
+  `Playing::sequence_time` as UV/alpha, including the held or restored endpoint.
+  Each rig receives a private morph mesh; other copies keep their own pose.
 - [design: engine/nvforever/src/idles.rs::ActorIdle; crates/fnv-game/src/game.rs saved
   state] Actor idle slots and their playback times are not serialized. Consequently
   this change retains glow/ANIO state during the live session, but cannot restore a

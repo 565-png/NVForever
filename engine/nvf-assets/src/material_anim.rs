@@ -59,11 +59,13 @@ pub struct MaterialSlot {
     /// whether it was last drawn black for a dark idle ([`RigMaterials::apply`]).
     unlit_base: Option<LinearRgba>,
     unlit_dark: bool,
+    /// [design, #2685] Members previously driven, for restoring a replaced clip.
+    driven: Driven,
 }
 
 impl MaterialSlot {
     pub fn new(shape: String, entity: Entity, handle: Handle<NifMaterial>, emissive: [f32; 3], emissive_mult: f32, alpha: f32) -> MaterialSlot {
-        MaterialSlot { shape, entity, handle, own: false, emissive, emissive_mult, alpha, refraction: 0.0, last: None, faded: 1.0, unlit_base: None, unlit_dark: false }
+        MaterialSlot { shape, entity, handle, own: false, emissive, emissive_mult, alpha, refraction: 0.0, last: None, faded: 1.0, unlit_base: None, unlit_dark: false, driven: Driven::default() }
     }
 }
 
@@ -233,12 +235,16 @@ impl RigMaterials {
         let fade = self.fade.clamp(0.0, 1.0);
         for (slot, v) in self.slots.iter_mut().zip(values) {
             let unlit_dark = dark && tracks.iter().any(|tr| tr.shape == slot.shape);
+            // [design, #2685] Preserve the builder's values for untouched members.
+            // Retain previous membership so replacing a clip can restore its values.
+            let driven = tracks.iter().filter(|tr| tr.shape == slot.shape)
+                .fold(slot.driven, |d, tr| d.or(Driven::of(tr.target)));
             if !slot.own {
                 continue;
             }
             let Ok((current, override_)) = drawing.shapes.get(slot.entity) else { continue };
             let source = plain_material(&current.0, override_);
-            if slot.last == Some(v) && slot.faded == fade && slot.unlit_dark == unlit_dark {
+            if slot.last == Some(v) && slot.faded == fade && slot.unlit_dark == unlit_dark && slot.driven == driven {
                 continue;
             }
             // [design, #2557] Keep animating the bound private plain source. Another
@@ -249,7 +255,8 @@ impl RigMaterials {
             if unlit && slot.unlit_base.is_none() {
                 slot.unlit_base = Some(m.base.base_color.to_linear());
             }
-            pose_material(&mut m, &Look { alpha: v.alpha * fade, ..v }, Driven::ALL, false);
+            let faded = Driven { alpha: fade < 1.0 || slot.faded < 1.0, ..default() };
+            pose_material(&mut m, &Look { alpha: v.alpha * fade, ..v }, driven.or(faded), false);
             if let Some(base) = slot.unlit_base.filter(|_| unlit && (unlit_dark || slot.unlit_dark)) {
                 let a = m.base.base_color.alpha();
                 m.base.base_color = if unlit_dark {
@@ -262,6 +269,7 @@ impl RigMaterials {
             slot.last = Some(v);
             slot.faded = fade;
             slot.unlit_dark = unlit_dark;
+            slot.driven = driven;
             // [design, #2557] Publication dirties only this mesh's cloak derivation.
             if publish {
                 drawing.commands.entity(slot.entity).insert(MeshMaterial3d(slot.handle.clone()));

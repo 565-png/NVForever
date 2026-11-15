@@ -328,6 +328,8 @@ pub struct RigShape {
     pub refraction: f32,
     /// A clip of the rig drives the shape's material.
     pub animated: bool,
+    /// [design, #2685] Manager morphs bound by sequence name, sampled per instance.
+    pub morph: Option<Arc<crate::morph::SequenceMorph>>,
 }
 
 impl RigShape {
@@ -445,6 +447,9 @@ impl Rig {
             let e = entities[s.node];
             let mut cmd = commands.entity(e);
             cmd.insert((Mesh3d(s.mesh.clone()), MeshMaterial3d(s.material.clone())));
+            if let Some(morph) = &s.morph {
+                cmd.insert(crate::morph::PlayingMorph::new(entities[0], morph.clone()));
+            }
             if let Some((binds, joints)) = &s.skin {
                 let joints = joints.iter().map(|&j| entities[j]).collect();
                 cmd.insert((SkinnedMesh { inverse_bindposes: binds.clone(), joints }, DynamicSkinnedMeshBounds));
@@ -654,27 +659,21 @@ fn material_tracks_of_own(file: &NifFile, dec: &Decoded, inactive: bool) -> Vec<
 }
 
 /// The vertex morphs a model plays by shape block (docs/spec-notes/vertex-morphs.md §3):
-/// `NiGeomMorpherController`s that run by themselves (Active, not manager controlled)
-/// or that the file's `Idle` (else `SpecialIdle`) sequence drives, whose shape moves,
-/// with relative targets whose morph 0 has the shape's vertex count. A clamped one whose
+/// `NiGeomMorpherController`s that run by themselves (Active, not manager controlled),
+/// whose shape moves, with relative targets whose morph 0 has the shape's vertex count.
+/// A clamped one whose
 /// weights end where they start is played looping: the NCR, Nevada and Followers flags
 /// (clamped, -2 s to 22.8 or 34.7 s, every weight back at its start value at the stop
 /// time [observed: `examples/morph_survey.rs`]) are cycles meant to repeat
 /// [hypothesis]; other clamped ones are left out [hypothesis: they play once when
 /// something starts them (the tripwire's snap, the dart gun's band, an explosion's
 /// splash); on a world object's clock they would have ended before anyone sees them].
-fn shape_morphs(file: &NifFile, dec: &Decoded, seqs: &[fnv_nif::anim::Sequence], name_of: impl Fn(usize) -> Option<String>) -> HashMap<usize, GeomMorpher> {
-    let named = |s: &&fnv_nif::anim::Sequence, want: &str| s.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(want));
-    let idle: Vec<&fnv_nif::anim::Sequence> = seqs.iter().filter(|s| named(s, "idle")).chain(seqs.iter().filter(|s| named(s, "specialidle"))).collect();
+fn shape_morphs(file: &NifFile, dec: &Decoded) -> HashMap<usize, GeomMorpher> {
     let mut out = HashMap::new();
     for mut g in geom_morphers(file, dec) {
         let Ok(target) = usize::try_from(g.target) else { continue };
         if !g.is_free() {
-            // Manager controlled: fed by the idle sequence, if it drives this shape.
-            let Some(name) = name_of(target).filter(|_| g.flags & 0x20 != 0) else { continue };
-            if !idle.iter().any(|s| g.take_sequence(s, &name) > 0) {
-                continue;
-            }
+            continue;
         }
         let n = g.num_vertices;
         if (g.flags >> 1) & 3 == 2 {
@@ -1514,6 +1513,8 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     // and hides one of its nodes, or drives its light.
     let moves = |c: &Clip| {
         c.tracks.iter().any(|(n, _)| has(n)) || c.materials.iter().any(|m| has(&m.shape)) || c.visibility.iter().any(|(n, ..)| has(n)) || c.lights.iter().any(|l| has_light(&l.light))
+            // [design, #2685] Morph-only groups also need a rig and a Playing clock.
+            || seqs.iter().filter(|s| s.name.as_deref() == Some(&c.name)).any(|s| s.tracks.iter().any(|t| t.controller_type.as_deref() == Some("NiGeomMorpherController") && t.node_name.as_deref().is_some_and(has)))
     };
     let named = |want: &str| {
         seqs.iter().filter(|s| s.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(want))).map(Clip::from_sequence).find(&moves)
@@ -1553,9 +1554,14 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     if let Some(c) = idle.as_ref().filter(|c| !c.visibility.is_empty()) {
         info!("{path}: its {} sequence shows and hides {} node(s)", c.name, c.visibility.len());
     }
-    // Vertex morphs that run by themselves, or with the Idle (else SpecialIdle)
-    // sequence, by shape block (docs/spec-notes/vertex-morphs.md §3).
-    let morph_of = shape_morphs(&file, &dec, &seqs, |b| by_block.get(&b).and_then(|o| o.name.clone()));
+    // [design, #2685] Free morphs keep their shared clock; manager morphs use the rig.
+    let morph_of = shape_morphs(&file, &dec);
+    let managed_morphs: HashMap<_, _> = geom_morphers(&file, &dec).into_iter().filter_map(|g| {
+        let target = usize::try_from(g.target).ok()?;
+        let name = by_block.get(&target)?.name.as_deref()?;
+        let morph = crate::morph::SequenceMorph::bind(&g, &seqs, name)?;
+        Some((target, Arc::new(morph)))
+    }).collect();
     // A door's Open and Close, when both move nodes of this file.
     let mut door = named("open").zip(named("close")).and_then(|(open, close)| Some(DoorClips { open: playable(path, open)?, close: playable(path, close)? }));
     // Every named sequence that animates this file (scripts' PlayGroup).
@@ -1740,6 +1746,11 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
             first_worn += props.first_person_texture_count();
         }
         let Some((mut mesh, tris)) = build_mesh(data) else { continue };
+        let managed_morph = managed_morphs.get(&o.block).filter(|m| m.num_vertices() == mesh.count_vertices()).cloned();
+        if managed_morph.is_some() {
+            // [design, #2685] Keep the source available for private rig mesh copies.
+            mesh.asset_usage = RenderAssetUsages::all();
+        }
         // A morphing shape: its mesh stays readable in the main world so that
         // `morph::play_vertex_morphs` can rewrite its vertices.
         let morph = morph_of.get(&o.block).filter(|g| g.num_vertices == mesh.count_vertices()).map(|g| {
@@ -1804,7 +1815,7 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
                 let animated = animated_shapes.contains(&shape_name);
                 let (e, m) = props.emissive_parts();
                 let look = (shape_name.clone(), e, m, props.alpha_part());
-                r.shapes.push(RigShape { node, mesh, material: material.clone(), skin, look, refraction: props.refraction_part(), animated });
+                r.shapes.push(RigShape { node, mesh, material: material.clone(), skin, look, refraction: props.refraction_part(), animated, morph: managed_morph });
             }
         }
         // A shape only a visibility track shows is the rig's alone.
