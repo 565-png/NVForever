@@ -860,6 +860,18 @@ After the Controls tab's own rows (see the end of this page):
 - More: docs/design/graphics-enhanced.md
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `terrain-height-blend`: Terrain height blending
+
+- On the page: On: where ground textures meet, the new one shows through its brighter stones
+  and clumps first instead of an even fade. Fully painted ground is unchanged.
+- In full: On: where landscape texture layers meet, the change follows each texture's own
+  relief, judged by its brightness against the texture's mean, instead of an even fade
+  along the triangle grid. Ground painted fully, or not at all, looks the same. Off in
+  both presets; not in the original.
+- Command-line switches: `--graphics`, `--graphics-only`
+- More: docs/design/graphics-enhanced.md §3.12
+- Registered in `engine/nvforever/src/settings.rs`
+
 ### `light-shafts`: Sun shafts
 
 - On the page: On: sunlight streams past what stands in front of the sun, stronger the
