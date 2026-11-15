@@ -59,7 +59,7 @@ fn terrain_height_weights(w: array<f32, 7>, h: array<f32, 7>, depth: f32) -> arr
         score[i] = p[i] + clamp(height[i], -p[i], p[i]);
         highest = max(highest, score[i]);
     }
-    let d = max(depth, 1e-6);
+    let d = max(depth, 0.001);
     var q = array<f32, 7>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     var q_total = 0.0;
     for (var i = 0; i < 7; i += 1) {

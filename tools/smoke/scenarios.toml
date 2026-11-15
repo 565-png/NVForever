@@ -1107,7 +1107,7 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NV
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-height-blend"]
 run_seconds = 14
 expect = [
-  { text = "terrain: height blend parameters depth=0.1 gain=4 source=local", label = "local reference: the start-up local reference parameters were parsed" },
+  { text = "terrain: height blend parameters algorithm=depth depth=0.1 gain=4 source=local height_limit=0.25", label = "local reference: the start-up local reference parameters were parsed" },
   { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "local reference: the GPU folds the layers (bindless)" },
 ]
 order = [[

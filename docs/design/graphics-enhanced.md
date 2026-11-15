@@ -448,7 +448,7 @@ prior art, nothing of either was used.
 - **Starting parameters** [design, #2550]: depth 0.10, gain 4, global reference; height
   limit remains 0.25. Test aid `NVF_PLAY_TEST_HEIGHT_BLEND=depth:gain[:source]` is read
   once per process and logged at start. Source is `global` (also when omitted) or `local`.
-  Depth must be finite and positive (shader floor 0.000001); gain finite and non-negative.
+  Depth must be finite and at least 0.001 (also the shader's floor); gain finite and non-negative.
   Invalid input warns and falls back to the complete default `0.10:4:global`.
   This configures the effect; enable it with the graphics switch. Only the on variant
   reads the appended uniform `(depth, gain, source_id, reserved)`, source IDs 0/1.

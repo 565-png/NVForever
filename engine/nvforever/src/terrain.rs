@@ -215,6 +215,9 @@ impl HeightBlendParams {
     }
 }
 
+/// The smallest transition depth accepted (and the shader's floor) [design, #2550].
+const MIN_DEPTH: f32 = 0.001;
+
 /// Pure parser; invalid input falls back as a whole at the environment boundary.
 fn parse_height_blend(value: &str) -> Result<HeightBlendParams, &'static str> {
     let fields: Vec<_> = value.split(':').collect();
@@ -223,8 +226,8 @@ fn parse_height_blend(value: &str) -> Result<HeightBlendParams, &'static str> {
     }
     let depth: f32 = fields[0].parse().map_err(|_| "invalid depth")?;
     let gain: f32 = fields[1].parse().map_err(|_| "invalid gain")?;
-    if !depth.is_finite() || depth <= 0.0 {
-        return Err("depth must be finite and positive");
+    if !depth.is_finite() || depth < MIN_DEPTH {
+        return Err("depth must be finite and at least 0.001");
     }
     if !gain.is_finite() || gain < 0.0 {
         return Err("gain must be finite and non-negative");
@@ -254,7 +257,7 @@ fn height_blend_params() -> &'static HeightBlendParams {
 
 fn log_height_blend_params() {
     let p = height_blend_params();
-    info!("terrain: height blend parameters depth={} gain={} source={} (start-up configuration; graphics switch enables)", p.depth, p.gain, if p.local { "local" } else { "global" });
+    info!("terrain: height blend parameters algorithm=depth depth={} gain={} source={} height_limit=0.25 (start-up configuration; graphics switch enables)", p.depth, p.gain, if p.local { "local" } else { "global" });
 }
 
 /// Bit of `counts.w` set while the material blends by height (the pipeline's
@@ -979,7 +982,7 @@ mod tests {
             score[i] = p[i] + h[i].clamp(-p[i], p[i]);
             highest = highest.max(score[i]);
         }
-        let d = depth.max(1e-6);
+        let d = depth.max(MIN_DEPTH);
         let q: [f32; 7] = std::array::from_fn(|i| p[i] * (d - (highest - score[i])).max(0.0));
         let sum: f32 = q.iter().sum();
         q.map(|x| x / sum)
@@ -1129,7 +1132,8 @@ mod tests {
         let local = parse_height_blend("0.05:8:local").unwrap();
         assert_eq!(local.uniform(), Vec4::new(0.05, 8.0, 1.0, 0.0));
         assert_eq!(parse_height_blend("1:0").unwrap().uniform(), Vec4::new(1.0, 0.0, 0.0, 0.0));
-        for invalid in ["", "0.1", "0.1:4:", "0.1:4:GLOBAL", "0.1:4:local:extra", "0:4", "-1:4", "NaN:4", "inf:4", "0.1:NaN", "0.1:inf", "0.1:-1", ":4", "0.1:", "abc:4"] {
+        assert_eq!(parse_height_blend("0.001:4").unwrap().depth, MIN_DEPTH);
+        for invalid in ["", "0.1", "0.1:4:", "0.1:4:GLOBAL", "0.1:4:local:extra", "0:4", "0.0009:4", "0.00000001:8:local", "-1:4", "NaN:4", "inf:4", "0.1:NaN", "0.1:inf", "0.1:-1", ":4", "0.1:", "abc:4"] {
             assert!(parse_height_blend(invalid).is_err(), "{invalid}");
         }
         // The additional uniform does not enter TerrainLayersKey or enable the effect.
