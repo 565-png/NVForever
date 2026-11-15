@@ -1646,6 +1646,7 @@ fn paint(commands: &mut Commands, drawn: &mut Drawn, mut pieces: Vec<Piece>, tar
     // The runtime pictures' revisions and sizes, so a new one under the same name repaints.
     super::runtime_images::mark(&mut pieces, kit.runtime.as_deref(), &mut drawn.runtime_told);
     // Apply recipient metadata in the actual target's units, before final comparison.
+    // A camera's image is laid out at its own size whatever the UI scale (#1631).
     let _canvas = target.camera.map(|_| interface::original_units());
     super::runtime_images::present(&mut pieces, kit.runtime.as_deref(), ui);
     drawn.tex.frame();
