@@ -48,6 +48,9 @@ pub(super) struct Menus<'w> {
     item_mod: Option<Res<'w, nvf_play::pipboy::item_mod::PipItemMod>>,
     active: Option<Res<'w, nvf_play::menu::ActiveMenu>>,
     wait: Option<Res<'w, nvf_play::wait::WaitMenu>>,
+    terminal: Option<Res<'w, nvf_play::terminal::TerminalScreen>>,
+    levelup: Option<Res<'w, nvf_play::levelup::LevelUpMenu>>,
+    dialogue: Option<Res<'w, nvf_play::dialogue::DialogueScreen>>,
 }
 
 fn hash_debug(value: &impl std::fmt::Debug, hash: &mut impl Hasher) {
@@ -150,8 +153,8 @@ impl Menus<'_> {
         }
         if let Some(pip) = self.pipboy.as_ref().filter(|p| p.open()) {
             hash_debug(&(pip.page, pip.tabs), hash);
-            if let Some(data) = &self.data {
-                hash_debug(&data.selection(pip.tabs[pip.page.index()]), hash);
+            if let Some(data) = self.data.as_ref().filter(|_| pip.page == nvf_play::pipboy::Page::Data) {
+                hash_debug(&data.progress(pip.tabs[pip.page.index()]), hash);
             }
             if let Some(stats) = &self.stats {
                 hash_debug(&(stats.status, stats.selected, stats.top, stats.desc, stats.reputation, stats.limb), hash);
@@ -169,6 +172,39 @@ impl Menus<'_> {
         if let Some(wait) = self.wait.as_ref().and_then(|w| w.0.as_ref()) {
             hash_debug(&(wait.sleep, wait.hours, wait.passing.map(|p| (p.asked, p.left))), hash);
             name = Some("SleepWaitMenu".into());
+        }
+        if let Some(terminal) = self.terminal.as_ref().and_then(|t| t.0.as_ref()) {
+            use nvf_play::terminal::Page;
+            terminal.reference.hash(hash);
+            terminal.base.hash(hash);
+            // [design, #2403 / file refs] Fingerprint the terminal.rs page and its
+            // visible navigation/result state, excluding hover-sound and end timers.
+            match &terminal.page {
+                Page::Hacking(h) => {
+                    0_u8.hash(hash);
+                    hash_debug(&(h.cursor, &h.puzzle.chars, h.puzzle.attempts, &h.puzzle.log, h.puzzle.state), hash);
+                    name = Some("HackingMenu".into());
+                }
+                Page::LockedOut(lines) => {
+                    1_u8.hash(hash);
+                    lines.hash(hash);
+                    name = Some("HackingMenu".into());
+                }
+                Page::Menu(m) => {
+                    2_u8.hash(hash);
+                    hash_debug(&(m.terminal, &m.parents, &m.items, &m.labels, m.selected, &m.result, m.note, m.scroll), hash);
+                    name = Some("TerminalMenu".into());
+                }
+            }
+        }
+        if let Some(progress) = self.levelup.as_ref().and_then(|m| m.progress()) {
+            hash_debug(&progress, hash);
+            name = Some("LevelUpMenu".into());
+        }
+        if g.is_some_and(|g| g.dialogue.is_some()) || self.state.as_ref().is_some_and(|s| *s.get() == nvf_play::PlayState::Dialogue) {
+            if let Some(dialogue) = &self.dialogue {
+                hash_debug(&dialogue.progress(), hash);
+            }
         }
         if self.paused.as_ref().is_some_and(|p| p.0) {
             hash_debug(&self.page.as_deref(), hash);
@@ -244,6 +280,198 @@ pub(super) fn detect(
 mod tests {
     use super::*;
     use bevy::input::keyboard::Key;
+
+    fn detector_app() -> App {
+        let now = std::time::Instant::now();
+        let mut app = App::new();
+        app.init_resource::<Time<Real>>()
+            .insert_resource(State::new(nvf_play::PlayState::Menu))
+            .add_message::<KeyboardInput>()
+            .add_message::<MouseButtonInput>()
+            .insert_resource(Collector {
+                summary: Default::default(),
+                file: Default::default(),
+                started: now,
+                last_write: now,
+                places: Default::default(),
+                cells_seen: Default::default(),
+                last_space: None,
+                space_time: Default::default(),
+                start_kind: "test",
+                load: None,
+                here: Default::default(),
+                load_ended: 0.0,
+                detectors: Default::default(),
+            })
+            .add_systems(Update, detect);
+        app
+    }
+
+    fn sample(app: &mut App, now: f64, presses: usize) {
+        let mut time = app.world_mut().resource_mut::<Time<Real>>();
+        let delta = now - time.elapsed_secs_f64();
+        time.advance_by(std::time::Duration::from_secs_f64(delta));
+        for _ in 0..presses {
+            app.world_mut().write_message(KeyboardInput {
+                key_code: KeyCode::KeyE,
+                logical_key: Key::Character("e".into()),
+                state: ButtonState::Pressed,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+        }
+        app.update();
+    }
+
+    /// [design, #2403] Run the actual collection/detection system, with no reports
+    /// plugin, writers, network or game data. Each pair isolates one progress signal.
+    fn navigation_resets_detection<R: Resource>(before: R, after: R, ineffective: R, setup: impl FnOnce(&mut World), menu: &str) {
+        let mut app = detector_app();
+        setup(app.world_mut());
+        app.insert_resource(before);
+        sample(&mut app, 0.0, 0);
+        sample(&mut app, 59.0, 5);
+        assert!(app.world().resource::<Collector>().summary.events.is_empty());
+        app.insert_resource(after);
+        sample(&mut app, 60.0, 5);
+        assert!(app.world().resource::<Collector>().summary.events.is_empty(), "navigation at the old deadline resets the watch");
+        sample(&mut app, 119.0, 5);
+        assert!(app.world().resource::<Collector>().summary.events.is_empty(), "59 seconds since progress");
+        app.insert_resource(ineffective);
+        sample(&mut app, 120.0, 5);
+        let events = &app.world().resource::<Collector>().summary.events;
+        assert_eq!(events.len(), 1, "ineffective input must not reset the timer");
+        assert_eq!(events[0]["kind"], "controls_locked");
+        assert_eq!(events[0]["menu"], menu);
+        assert_eq!(events[0]["held_s"], 60.0);
+        sample(&mut app, 180.0, 5);
+        assert_eq!(app.world().resource::<Collector>().summary.events.len(), 1, "once per unchanged lock");
+    }
+
+    fn terminal_fixture(step: usize) -> nvf_play::terminal::TerminalScreen {
+        use fnv_sim::FormId;
+        use nvf_play::terminal::{MenuView, Page, Session, TerminalScreen};
+        let mut m = MenuView {
+            terminal: FormId(42),
+            parents: Vec::new(),
+            items: vec![0, 1],
+            labels: vec!["Synthetic first row".into(), "Synthetic second row".into()],
+            selected: 0,
+            hidden: false,
+            result: String::new(),
+            note: None,
+            scroll: 0,
+            server: 0,
+            welcome: String::new(),
+        };
+        if step >= 1 {
+            m.selected = 1;
+        }
+        if step >= 2 {
+            m.parents.push((m.terminal, m.selected));
+            m.terminal = FormId(43);
+        }
+        if step >= 3 {
+            m.note = Some(FormId(44));
+        }
+        if step >= 4 {
+            m.scroll = 1;
+        }
+        if step >= 5 {
+            m.result = "Synthetic result".into();
+        }
+        let page = if step == 6 { Page::LockedOut(["Synthetic lockout".into(), String::new()]) } else { Page::Menu(m) };
+        TerminalScreen(Some(Session { reference: FormId(41), base: FormId(42), page }))
+    }
+
+    #[test]
+    fn detect_terminal_navigation_resets_but_ineffective_presses_fire() {
+        for step in 1..=6 {
+            navigation_resets_detection(terminal_fixture(step - 1), terminal_fixture(step), terminal_fixture(step), |_| {}, if step == 6 { "HackingMenu" } else { "TerminalMenu" });
+        }
+    }
+
+    #[test]
+    fn detect_hacking_selection_and_results_reset_but_timers_do_not() {
+        use nvf_play::terminal::report_progress_fixture as fixture;
+        for step in 1..=2 {
+            navigation_resets_detection(fixture(step - 1), fixture(step), fixture(if step == 2 { 3 } else { step }), |_| {}, "HackingMenu");
+        }
+    }
+
+    #[test]
+    fn detect_builtin_screens_ignore_idle_time_until_presses_arrive() {
+        for screen in 0..4 {
+            let mut app = detector_app();
+            match screen {
+                0 => {
+                    app.insert_resource(terminal_fixture(0));
+                }
+                1 => {
+                    app.insert_resource(nvf_play::levelup::report_progress_fixture(0));
+                }
+                2 => {
+                    app.insert_resource(nvf_play::dialogue::report_progress_fixture(0));
+                    app.insert_resource(State::new(nvf_play::PlayState::Dialogue));
+                }
+                _ => {
+                    let mut pip = nvf_play::pipboy::PipBoy::default();
+                    pip.phase = nvf_play::pipboy::Phase::Up;
+                    pip.page = nvf_play::pipboy::Page::Data;
+                    app.insert_resource(pip);
+                    app.insert_resource(nvf_play::pipboy::data::report_progress_fixture(0));
+                }
+            }
+            sample(&mut app, 0.0, 0);
+            sample(&mut app, 120.0, 0);
+            assert!(app.world().resource::<Collector>().summary.events.is_empty());
+            sample(&mut app, 121.0, 5);
+            assert_eq!(app.world().resource::<Collector>().summary.events.len(), 1);
+        }
+    }
+
+    #[test]
+    fn detect_levelup_navigation_and_allocations_reset_but_hover_does_not() {
+        use nvf_play::levelup::report_progress_fixture as fixture;
+        for step in 1..=5 {
+            navigation_resets_detection(fixture(step - 1), fixture(step), fixture(if step == 5 { 6 } else { step }), |_| {}, "LevelUpMenu");
+        }
+    }
+
+    #[test]
+    fn detect_dialogue_selection_resets_but_boundary_presses_and_timers_do_not() {
+        use nvf_play::dialogue::report_progress_fixture as fixture;
+        navigation_resets_detection(
+            fixture(0),
+            fixture(1),
+            fixture(2),
+            |w| {
+                w.insert_resource(State::new(nvf_play::PlayState::Dialogue));
+            },
+            "DialogMenu",
+        );
+    }
+
+    #[test]
+    fn detect_data_note_scroll_and_list_navigation_reset_but_counters_do_not() {
+        use nvf_play::pipboy::{data::report_progress_fixture as fixture, Page, Phase, PipBoy};
+        for step in 1..=3 {
+            navigation_resets_detection(
+                fixture(step - 1),
+                fixture(step),
+                fixture(if step == 3 { 4 } else { step }),
+                |w| {
+                    let mut pip = PipBoy::default();
+                    pip.phase = Phase::Up;
+                    pip.page = Page::Data;
+                    pip.tabs[Page::Data.index()] = 3;
+                    w.insert_resource(pip);
+                },
+                "Pip-Boy Data",
+            );
+        }
+    }
 
     #[derive(Resource, Default)]
     struct Sample {

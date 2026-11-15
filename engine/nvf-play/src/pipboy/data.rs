@@ -560,6 +560,25 @@ pub struct DataState {
     lines_logged: Option<(Vec<LineTo>, Option<CustomMarker>)>,
 }
 
+/// [design, #2403] Synthetic list/note scrolling for reports integration tests only.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_progress_fixture(step: usize) -> DataState {
+    let mut st = DataState { text_max: 1000.0, pane_of: Some((NOTES, false, 42)), ..Default::default() };
+    if step >= 1 {
+        scroll_pane(&mut st, NOTES, Some((NOTES, false, 42)), PaneMoves { pages: 1.0, ..Default::default() });
+    }
+    if step >= 2 {
+        st.sel[NOTES] = 1;
+    }
+    if step >= 3 {
+        st.first[NOTES] = 1;
+    }
+    st.navigated = step as u32;
+    st.poll = step as f32;
+    st
+}
+
 // ---- what is shown ------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1224,6 +1243,12 @@ impl DataState {
     /// (`super::sounds`).
     pub fn selection(&self, tab: usize) -> (usize, bool) {
         (self.sel.get(tab).copied().unwrap_or(0), self.challenges)
+    }
+
+    /// [design, #2403 / file refs] Read-only logical list/pane progress. Excludes
+    /// radio playback/wave clocks, pointer hover and attempted-input counters.
+    pub fn progress(&self, tab: usize) -> impl std::fmt::Debug + '_ {
+        (self.selection(tab), self.first.get(tab), self.text_first, self.pane_of, self.notes_of_active)
     }
 
     /// The active quest, for a save (`crate::save`): a ForceActiveQuest the Pip-Boy has

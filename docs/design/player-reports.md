@@ -293,6 +293,11 @@ watch. Countdown and animation clocks do not count as progress. Keyboard auto-re
 holding a button do not add presses; controller menu keys synthesized by `nvf_play::pad`
 are not counted again. It watches the runtime's dialogue and message-box serial, menu
 code/prompt, and the engine's pause, Pip-Boy, container/barter/inventory and wait state.
+It also samples the terminal's hacking/menu/lockout page, submenu ancestry, selected
+row, note scroll and result state; the level-up page, selected row, scroll and skill/perk
+allocations; the dialogue screen's selected choice; and DATA's list and note/objective
+pane scroll (`nvf-play/src/{terminal,levelup,dialogue,pipboy/data}.rs`). Redraw flags,
+aid timers, radio playback and attempted-input counters do not count as progress.
 It does not inspect pixels or arbitrary scripted tile values; a page change entirely
 inside a mod's tile tree is not currently a progress signal.
 
