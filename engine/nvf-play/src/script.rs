@@ -2669,16 +2669,18 @@ pub fn asks_nothing(buttons: usize) -> bool {
     buttons <= 1
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptState {
     /// A runtime over an empty load order, for tests of what works the open menu: nothing
     /// has run, no menu is open.
+    #[cfg(test)]
     pub(crate) fn over_no_plugins() -> ScriptState {
         Self::over_plugins(&[])
     }
 
-    /// As [`ScriptState::over_no_plugins`], over these plugins.
-    pub(crate) fn over_plugins(plugins: &[fnv_esm::Plugin]) -> ScriptState {
+    /// [design, #2652] A runtime over authored plugins, without loading assets or
+    /// running scripts; available to downstream engine tests through `test-support`.
+    pub fn over_plugins(plugins: &[fnv_esm::Plugin]) -> ScriptState {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
         let lo = fnv_esm::LoadOrder::new(plugins).unwrap();
         let schema = fnv_esm::Schema::load_dir(root.join("fnv")).unwrap();
@@ -2719,6 +2721,7 @@ impl ScriptState {
     }
 
     /// The player answered the open menu: it closes after this frame's scripts.
+    #[cfg(test)]
     pub(crate) fn answered(&self) -> bool {
         self.rt.as_ref().is_some_and(|rt| rt.closing.is_some())
     }

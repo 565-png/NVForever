@@ -41,7 +41,7 @@ from pathlib import Path
 from . import choose, front, integrity, slots
 from .expect import ScenarioError
 from .plan import Launch, plan
-from .runner import (Env, Locks, Verdict, default_lock_paths, exe_is_stale, judge, missing_requirements,
+from .runner import (Env, Locks, Verdict, default_lock_paths, exe_is_stale, judge, missing_area_plugins, missing_requirements,
                      read_lines, report, run_launch, unmet_platforms)
 from .scenarios import GAME, Suite, load
 
@@ -409,6 +409,10 @@ def run_launches(launches: list[Launch], env: Env, locks, jobs: int, a, say) -> 
         others = sorted({p for s in x.scenarios for p in unmet_platforms(s)})
         if others:
             skip(i, f"{', '.join(others)} only")
+            return
+        plugins = missing_area_plugins(x, getattr(env, "data", None))
+        if plugins:
+            skip(i, f"optional plugins not loaded: {', '.join(plugins)}")
             return
         code, err, secs = run_launch(x, env, locks)
         with out:

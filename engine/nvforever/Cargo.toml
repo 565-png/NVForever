@@ -93,6 +93,9 @@ libc = "0.2"
 # The program icon in the Windows executable (build.rs); MIT.
 winresource = "0.1"
 
+[dev-dependencies]
+nvf-play = { workspace = true, features = ["test-support"] }
+
 [features]
 default = ["intro-video"]
 # The intro film before a new game (nvf-play's `intro-video`: a GPL-3.0-or-later decoder,

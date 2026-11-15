@@ -29966,3 +29966,36 @@ order = [[
 expect = [
   { re = 'vats mode summary: entered 1 times, 0 marks, 0 shots, 0 AP spent, 1 refused', label = "one stay, one refusal" },
 ]
+
+
+[[scenario]]
+name = "use-weapon-silo-mainframe"
+source = "[design, #2652] Player activation and button 1 give ED-E its mainframe package; its Always Hit / Do No Damage shot must run OnHit ED-E and set NVDLC04MQ01a 55. Record chain: #2652; launch-code preparation: crates/fnv-game/walkthrough/lonesome-road.actions.json."
+note = "[design] Start at quest 50 with the launch-code note and ED-E enabled beside its stand marker; only preparation uses aids. Activation, button choice, package arrival, UseWeapon and the harmless hit perform the unlock. The lonesome-road area skips this launch without LonesomeRoad.esm."
+areas = ["combat", "use-weapon", "lonesome-road"]
+paths = ["engine/nvforever/src/use_weapon.rs", "engine/nvforever/src/use_weapon/**", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "5:start:NVDLC04MQ01a,5:stage:NVDLC04MQ01a:50,6:enable:NVDLC04EDEREF,7:moveto:player:NVDLC04Silo01MainframeREF:0:-200:0,7:moveto:NVDLC04EDEREF:NVDLC04Silo01MainframeMarkerREF,8:call:player:AddNote:NVDLC04Silo02LaunchCode,12:activate:NVDLC04Silo01MainframeREF,13:button:1" }
+args = ["--cell", "NVDLC04Silo01", "--play", "--no-voice", "--npc-packages", "all"]
+run_seconds = 70
+order = [[
+  { re = 'use weapon: NVDLC04EDEREF .* uses NVDLC04WeapEDEArcWelder on (NVDLC04Silo01MainframeREF|Hopeville Silo Mainframe Controls)', label = "ED-E fires at the mainframe through its package" },
+  { re = 'combat: a harmless shot by .* hits 0x[0-9A-F]{2}0075E5: its hit blocks ran, no damage', label = "the harmless zap runs the mainframe hit block" },
+  { text = 'script: NVDLC04MQ01a stage 55 set', label = "the mainframe unlock sets stage 55" },
+]]
+expect = [
+  { re = 'use weapon: NVDLC04EDEREF .* has fired its 1 shots at (NVDLC04Silo01MainframeREF|Hopeville Silo Mainframe Controls)', label = "the finite mainframe use ends" },
+]
+
+[[scenario]]
+name = "use-weapon-gi-blues-shelter"
+source = "[design, #2652, #2715 shooter half] The King's INFO 0x0012931B effect starts the staged NCR fight; VFSNCRBarker01REF's Repeat Fire package targets VFSPacerBusShelterREF (STAT 0x0011BD4E), as supplied in #2652's last comment."
+note = "[design] The aid runs the King's effect and moves the player near the shelter to load the scene. The package chooses the static target and keeps firing; Pacer's cover pose belongs to separate work."
+areas = ["combat", "use-weapon", "quests"]
+paths = ["engine/nvforever/src/use_weapon.rs", "engine/nvforever/src/use_weapon/**", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "3:moveto:player:VFSPacerBusShelterREF:0:-600:100,5:start:VMS19,8:info:0x0012931B:VFSTheKingREF" }
+args = ["--world", "FreesideNorthWorld", "--play", "--hour", "12", "--no-voice", "--npc-packages", "all"]
+run_seconds = 70
+expect = [
+  { re = 'use weapon: VFSNCRBarker01REF .* uses .* on VFSPacerBusShelterREF.*on and on', label = "the barker repeats fire at the shelter" },
+  { re = 'use weapon summary: .*? (?P<n>\d+) shots \(', range = [1, 100000], label = "the staged fight fires shots" },
+]

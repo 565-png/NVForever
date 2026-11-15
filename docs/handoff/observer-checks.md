@@ -2687,3 +2687,17 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
+
+212. **How does UseWeapon aim at objects and markers?** (P1; #2652, #2715 shooter
+     half; `docs/spec-notes/use-weapon.md` section 6.) [documented: #2652 supplied record
+     facts] The Hopeville silo mainframe's ACTI OnHit ED-E block sets NVDLC04MQ01a
+     55 after its package requests one Always Hit / Do No Damage arc-welder shot;
+     the commissary terminals also wait on ED-E's hit. Capture activation and button
+     1 at the mainframe, then a commissary unlock: does OnHit receive ED-E, and where
+     does the beam land? Capture a finite script use at an XMarker: do its shots fire
+     and does ED-E resume the next package without ResetAI? In G.I. Blues, do the
+     barkers keep firing at VFSPacerBusShelterREF while their Repeat Fire package
+     holds, including during combat? [hypothesis] NVForever aims at placed position
+     plus OBND centre (marker: position alone), counts misses toward finite uses, and
+     dispatches harmless object hits with the shooter. Check that placement on an
+     asymmetric or rotated object as well. Pacer's cover pose is outside this check.

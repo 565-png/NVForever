@@ -91,3 +91,27 @@ never attack [documented: catalogue notes on SetRestrained].
   to stand, whether a blow counts as one of `numberOfShots`, and what Always Hit and Do No
   Damage do to a blow (ours: docs/design/use-weapon.md §3.1, all [hypothesis]). Which
   shipped calls name a melee weapon was not surveyed.
+
+## 6. Non-actor reference targets (#2652, #2715 shooter half)
+
+- [documented: GECK wiki UseWeapon (Function), revision 30345, offline snapshot
+  2026-10-28] The target parameter has type `ref`; the page does not restrict it to
+  actors or specify an aim point for objects.
+- [documented: #2652 issue report and its final #2715 comment, supplied record facts]
+  LonesomeRoad.esm PACK 0x008923's end script gives ED-E one Always Hit / Do No Damage
+  shot at ACTI NVDLC04Silo01MainframeREF (REFR 0x0075E5). Its script SCPT 0x008952
+  waits in `OnHit NVDLC04EDEREF` and sets NVDLC04MQ01a 55. The commissary activators
+  use the same Use Weapon / OnHit pattern. Other DLC scripts target XMarkers without
+  waiting for a hit. FalloutNV.esm PACK 0x0012943D gives the NCR barkers Always Hit,
+  Do No Damage, Repeat Fire at VFSPacerBusShelterREF (0x0011BD4E, STAT); BusShelter01
+  has OBND z -1..227.
+- [hypothesis: inferred from those supplied scripts, original not captured in this run]
+  The original fires at objects and markers; finite marker shots release the actor,
+  and harmless object hits pass the shooter to OnHit. Observer check 212 requests the
+  original behavior and aim placement.
+- [design, #2652; `engine/nvforever/src/use_weapon/targets.rs`] NVForever keeps drawn
+  actor aim unchanged and resolves other present references from moved/placed positions.
+  It adds the base OBND centre when available, otherwise fires toward the position
+  itself [hypothesis: aim placement pending observer check 212]. Collision and hit
+  dispatch stay on the existing object path; the shot count, rather than collision,
+  finishes a finite use. The fight handover uses the same target availability rule.
