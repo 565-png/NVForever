@@ -4072,6 +4072,28 @@ expect = [
 ]
 
 [[scenario]]
+name = "vigor-tester-new-game"
+source = "#2406 (reports: Doc Mitchell's house has the most frame hitches): in a new game the Vigor Tester's machine is spawned hidden behind the start's loading screen and its first opening takes it (docs/spec-notes/vigor-tester.md §7, docs/design/streaming-hitches.md §6)"
+note = "vigor-tester's steps in a --new-game start (the opening's own menus held off; menu 1074 asked by the test aid 3 s after the screen comes down); the machine made ready is the one shown, turned and clicked"
+areas = ["chargen", "vigor", "menus"]
+paths = ["engine/nvf-play/src/chargen/vigor.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1074", NVF_PLAY_TEST_VIGOR = "2:click:LookInside_Btn:0,4.5:raise,4.6:raise,4.7:done,5.5:page:review,8:select:luck,8.1:raise,8.2:raise:L,8.3:raise:endurance,8.5:click:P1_RT_Btn:0" }
+args = ["--play", "--new-game", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
+run_seconds = 20
+order = [[
+  { re = 'vigor tester: made ready behind the loading screen in \d+ ms \(\d+ parts\)', label = "the machine is spawned behind the start's loading screen" },
+  "loading screen down after",
+  "vigor tester: the machine made ready behind the loading screen is used",
+  "vigor tester: open, S.P.E.C.I.A.L.",
+  "done, S.P.E.C.I.A.L. 7 5 6 5 5 5 7 (click)",
+]]
+expect = [
+  "Endurance 6, 0 points remaining",
+  "vigor tester summary: opened 1 times, 5 changes, 8 page turns, 2 clicks on its buttons, done 1 times",
+]
+
+[[scenario]]
 name = "vigor-sounds"
 source = "playtest list 5 item 39 (2026-10-16): the Vigor Tester's sounds between pages and raising and lowering an attribute (docs/spec-notes/vigor-tester.md §6)"
 note = "vigor-tester's steps with Luck lowered once and raised once more, so that every sound is heard; not shared with it (a launch of its own, as vigor-tester)"
@@ -4986,6 +5008,38 @@ order = [[
 expect = [
   { text = "combat: 0x0016526B destruction stage", count = 3, label = "each of the bouquet's stages is reached exactly once" },
 ]
+
+[[scenario]]
+name = "gas-trap-gun-fired-inside"
+source = "#2687; GECK wiki Traps [documented]: a gas trap goes off when a weapon is fired inside it; engine/nvf-play/src/gas_traps.rs. The GasTrapDummy hit is a [hypothesis]"
+note = "Vault 22's spore purge gas (V22SporePurgeGasRef 0x000F0908, V22TrapGasFire01: a Gas Trap-layer sphere phantom, nothing solid) is enabled at 3 s, as Keely's line INFO 0x000F43F8 does. The player is moved into it at 5 s and fires a 10mm pistol at 9 s. The 10mm is in neither gas list, so the cloud is hit with GasTrapDummy (in ExplodesGasTrapsOnHit). Its script's DamageObject 5 takes it to stage 1 (burning), its self-damage to stage 2 and explosion 0x000348D0, and its OnDestructionStageChange completes There Stands the Grass (VMS06) objective 50. Before #2687 the phantom was dropped and nothing happened"
+areas = ["traps", "scripts", "combat"]
+paths = ["engine/nvf-play/src/gas_traps.rs", "engine/nvf-play/src/script_trigger.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:enable:0x000F0908,5:moveto:player:0x000F0908", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:30", NVF_PLAY_TEST_CONTROL = "6:weapon,9:fire", NVF_PLAY_TEST_CONSOLE = "16:getobjectivecompleted VMS06 50;0F0908.getdestructionstage;16.5:close" }
+args = ["--cell", "Vault22e", "--pos=3592,2200,8470", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 18
+order = [[
+  { re = 'script: .* has 1 gas volume\(s\) in its model' },
+  { re = 'combat: a shot fired inside it reaches gas cloud 0x000F0908, hit with GasTrapDummy: its hit blocks ran' },
+  "combat: 0x000F0908 destruction stage -1 -> 1",
+  { re = 'combat: 0x000F0908 destruction stage 1 -> 2, disabled, 1 explosion\(s\)' },
+  { re = 'console: GetObjectiveCompleted.* >> 1\.00' },
+]]
+
+[[scenario]]
+name = "gas-trap-shishkebab-walk-in"
+source = "#2687; V22TrapGasSCRIPT 0x000EF405 OnTriggerEnter: an actor with a weapon of ExplodesGasTrapsOnTouch drawn sets the cloud off [observed: fnvtool script decompile]; the Gas Trap-layer phantom kept as a trigger volume"
+note = "Vault 22's spore purge gas (V22SporePurgeGasRef 0x000F0908) is enabled at 3 s, as Keely's line does (the vault's other clouds hang on disabled enable parents until it burns). The player draws the Shishkebab (0000434E) at 4 s and is moved into the gas at 7 s. Its OnTriggerEnter (IsWeaponInList ExplodesGasTrapsOnTouch, IsWeaponOut) runs DamageObject 5, so it reaches stage 1, and its OnDestructionStageChange completes VMS06 objective 50"
+areas = ["traps", "scripts"]
+paths = ["engine/nvf-play/src/script_trigger.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvf-play/src/gas_traps.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:enable:0x000F0908,7:moveto:player:0x000F0908", NVF_PLAY_TEST_EQUIP = "0000434E", NVF_PLAY_TEST_CONTROL = "4:weapon", NVF_PLAY_TEST_CONSOLE = "14:getobjectivecompleted VMS06 50;14.5:close" }
+args = ["--cell", "Vault22e", "--pos=3592,2200,8470", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 16
+order = [[
+  "script: player entered trigger V22SporePurgeGasRef",
+  "combat: 0x000F0908 destruction stage -1 -> 1",
+  { re = 'console: GetObjectiveCompleted.* >> 1\.00' },
+]]
 
 # ------------------------------------------------------------------ dialogue, Pip-Boy, terminals
 
@@ -19521,6 +19575,26 @@ expect = [
 manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the side-quest walkthrough report (batch 4, issue #918)"
 
 [[scenario]]
+name = "mq-there-stands-the-grass-spore-purge"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/there-stands-the-grass-spore-purge.actions.json: There Stands the Grass (VMS06), Keely's spore purge: the purge gas lit completes objective 50 (#2687)"
+areas = ["quests", "scripts", "traps"]
+paths = ["crates/fnv-game/walkthrough/there-stands-the-grass-spore-purge.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/combat.rs", "crates/fnv-game/src/functions/objects.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/there-stands-the-grass-spore-purge.actions.json"]]
+expect = [
+  { json = "observations.?label=purge gas before Keely's line.disabled", equals = true, label = "the purge gas starts disabled" },
+  { json = "observations.?label=purge gas after Keely's line.disabled", equals = false, label = "Keely's line enables it" },
+  { json = "observations.?label=milestone: VMS06 objective 50 shown.objective.50.displayed", equals = true, label = "objective 50 shown" },
+  { json = "observations.?label=milestone: VMS06 objective 50 shown.objective.50.completed", equals = false, label = "and not done before the gas burns" },
+  { json = "observations.?label=laser through the purge gas.ran", equals = true, label = "the laser's hit runs the gas's OnHitWith" },
+  { json = "observations.?label=purge gas lit.destroyed", equals = true, label = "the gas reaches its Destroy stage" },
+  { json = "observations.?label=final: VMS06 objective 50.objective.50.completed", equals = true, label = "objective 50 completed" },
+  { json = "observations.?label=final: VMS06 objective 50.objective.60.displayed", equals = true, label = "objective 60 shown" },
+  { json = "steps.*.error", count = 0, label = "spore purge: no step fails" },
+  { json = "given_errors.*", count = 0, label = "spore purge: no given fails" },
+]
+
+[[scenario]]
 name = "mq-vault-21-tour"
 kind = "tool"
 source = "headless walkthrough crates/fnv-game/walkthrough/vault-21-tour.actions.json: Vault 21 tour (VVault21Tour): Sarah Weintraub's tour (20)"
@@ -30226,4 +30300,26 @@ manual = "gomorrah_sconce_near.png: the wash of light above the bowl is brightes
 expect = [
   { re = 'test aid: screenshot .*gomorrah_sconce_near\.png', label = "the frame facing the sconce is saved" },
   { re = 'test aid: screenshot .*gomorrah_sconce_side\.png', label = "the frame from the side is saved" },
+]
+
+[[scenario]]
+name = "vats-classic-arrow-click"
+source = "#2657 (engine/nvf-play/src/vats_mode.rs read_keys; engine/nvf-play/src/tiles/vats_menu.rs VatsTiles::clicked): a click on the classic target screen is tested against the pointer's place at the click, by the boxes as last drawn, not against the hover of the frame before"
+note = "the Fists, no fight, two calm targets: Easy Pete and a Goodsprings settler are put 150 units in front of the player, 60 to either side, at 4 s and held. V at 8 s starts the screen on one of them. At 11 s the test aid puts the pointer on the right arrow and clicks in the same frame (the hover of the frame before has no arrow): the target changes and no attack is queued. V at 14 s leaves"
+areas = ["combat", "vats", "ui"]
+paths = ["engine/nvf-play/src/vats_mode.rs", "engine/nvf-play/src/vats_classic.rs", "engine/nvf-play/src/tiles/vats_menu.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "4:moveto:EasyPeteRef:player:-60:150:0,4:moveto:GoodspringsSettler03Ref:player:60:150:0,4.2:call:EasyPeteRef:SetRestrained:1,4.2:call:GoodspringsSettler03Ref:SetRestrained:1", NVF_PLAY_TEST_CONTROL = "3:weapon", NVF_PLAY_TEST_KEYS = "8:v,14:v", NVF_PLAY_TEST_VATS_STYLE = "classic", NVF_PLAY_TEST_VATS_POINTER = "11:right:click" }
+args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 17
+order = [[
+  { re = 'vats mode: classic: 2 targets, [0-9A-F]{8} selected', label = "V starts the screen with the two targets" },
+  { text = "NVF_PLAY_TEST_VATS_POINTER: the pointer comes onto the right arrow at", label = "the pointer comes onto the right arrow and clicks in the same frame" },
+  { text = "vats mode: classic: a click on the target screen: Target(1) (the hover of the frame before: arrow None)", label = "the click is on the arrow, though the hover has none yet" },
+  { re = 'vats mode: classic: target [12] of 2, [0-9A-F]{8}', label = "one target change" },
+]]
+expect = [
+  { re = 'vats mode summary: entered 1 times, 0 marks, 0 shots, 0 AP spent, 0 refused', label = "no attack queued" },
+]
+forbid = [
+  { text = "a click on the target screen: Queue", label = "the click queues no attack" },
 ]
