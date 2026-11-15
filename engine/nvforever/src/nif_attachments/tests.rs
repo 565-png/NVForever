@@ -957,6 +957,7 @@ fn indexed_rig_spawn_preserves_group_rig_and_unrelated_prepared_materials() {
             parent: o.parent,
             local: o.local,
             hidden: false,
+            billboard: None,
         })
         .collect();
     let shapes = authored
