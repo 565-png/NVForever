@@ -584,6 +584,19 @@ the spec it links to.
     again. IsEssential still reads only the flag (0 for Cass). If a companion should
     still die in some case outside Hardcore, say which. Observer check 165 asks the
     original. ([unconscious §2.2a](spec-notes/unconscious.md))
+81. **A faction disguise outranks the player's bad standing with that faction (#2611).**
+    In NCR armour on the Legion route, every NCR soldier at Hoover Dam attacked: the
+    player's enemy flag with NCRFactionNV (a crime, SetPCEnemyOfFaction) won over the
+    friendship the armour's script sets up with ArmorNCRFactionNV, so nobody was fooled.
+    Ours now: such a flag does not count while the actor is also in a faction that is
+    the player's ally or friend (the disguise faction); only sniffers (the rangers, MPs,
+    Captain Graham) within the disguise pulse's 25 ft, about 533 units, and in sight see
+    through it, and then a fight they start blows the cover for the dam. A flag on the
+    disguise faction itself (a murder seen while disguised) still counts. The soldiers
+    it fools take the player for a friend, so a sniffer's alarm (a glimpse or a fight)
+    no longer turns them on the player. If the disguise now seems too
+    forgiving (it fools after any crime but one done in disguise), say so. Observer
+    check 173 asks the original. ([disguises §3, §4](spec-notes/disguises.md))
 
 80. **Scripts cannot disable the player (#2617).** On the Legion route the intake tower
     trigger VHDIntakeTowerLegionaryDespawnScript disables whoever walks in once the

@@ -29347,3 +29347,25 @@ order = [[
 forbid = [
   { re = 'activate 0x00164C64 .*DoorToggled', label = "bottom direct: the ladder must never toggle open or closed" },
 ]
+
+[[scenario]]
+name = "ncr-disguise-dam"
+source = "#2611 (Arizona Killer): in NCR ranger combat armour the player passes the NCR at Hoover Dam though the NCR take the player for an enemy (SetPCEnemyOfFaction NCRFactionNV 1, a stand-in for the Legion route's bad standing): the armour's script makes ArmorNCRFactionNV, which every NCR soldier of the dam is in, the player's friend, and only the sniffers (VNCRSnifferFaction) the disguise pulse reaches (25 ft, about 533 units, in sight) leave it (docs/spec-notes/disguises.md §3)"
+note = "the player stands at VHDAssassinationSetupREF on the dam road below the podium, among the pre-battle engineers (no sniffers, 600-1,800 units off); the nearest sniffers, rangers 04 and 05, about 2,000 units off by the vertibird pad. Console at 4 s: the armour and helmet given and worn (its OnEquip makes the disguise and starts the pulse quest); at 7 s the NCR enemy flag. Before the fix the flag outranked the disguise: every soldier near attacked at once (53 hits in 40 s) and the alarm brought troopers 8,000 units off"
+areas = ["ai", "combat", "factions"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/crime.rs", "crates/fnv-game/src/combat_group.rs", "crates/fnv-game/src/area_effects.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "4:player.additem 00129254 1;player.equipitem 00129254;player.additem 00145EC5 1;player.equipitem 00145EC5;4.5:close;7:setpcenemyoffaction 000A46E7 1;7.3:close;40:VHDPreBattleNCRTrooper4REF.getfactionrelation player;VHDPreBattleRanger04REF.getfactionrelation player;40.5:close" }
+args = ["--play", "--world", "WastelandNV", "--pos=67805,22301,4530", "--hour", "10", "--no-voice", "--no-messages"]
+run_seconds = 45
+expect = [
+  { text = 'script: message NCRFactionOutfitWarning', label = "the armour's OnEquip runs the disguise" },
+  { text = 'area effect: DisguiseFactionPulseActorEffect around the player', label = "the disguise pulse runs" },
+  { text = 'console: SetPCEnemyOfFaction >> 0.00', label = "the NCR enemy flag is set" },
+  { re = 'console: GetFactionRelation on VHDPreBattleNCRTrooper4REF >> 3\.00', label = "a trooper takes the disguised player for a friend" },
+  { re = 'console: GetFactionRelation on VHDPreBattleRanger04REF >> 3\.00', label = "so does a sniffer out of the pulse's reach" },
+]
+forbid = [
+  { re = 'combat: .* hits the player', label = "the NCR shoot the disguised player" },
+  { re = 'alert: .* → Combat: detects the player', label = "an NCR soldier starts fighting the disguised player" },
+  { re = 'combat group: .* about the player', label = "an alarm about the player goes round" },
+]
