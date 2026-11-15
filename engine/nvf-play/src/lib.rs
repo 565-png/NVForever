@@ -85,6 +85,7 @@ pub mod challenges;
 pub mod poker;
 pub mod menu;
 pub mod mod_log;
+pub mod gas_traps;
 pub mod grass_fire;
 pub mod mines;
 pub mod thrown;
