@@ -1121,6 +1121,166 @@ fn arrival_heading_uses_linked_and_object_locations() {
     }
 }
 
+// [design, #2526; goal::resolve] A remain-near Guard travels to its target, even
+// with a different linked heading marker stored as its location.
+#[test]
+fn arrival_heading_for_a_guard_uses_its_target_not_its_location() {
+    use fnv_game::package::{PackageType, Target, TargetKind};
+    for heading_target in [false, true] {
+        let mut f = fixture();
+        let def = f.data.package_defs.get_mut(&FormId(P_TO_HEADING)).unwrap();
+        def.ty = PackageType::Guard;
+        def.type_flags = type_flags::REMAIN_NEAR_REFERENCE;
+        def.location.as_mut().unwrap().kind = LocationKind::NearLinked;
+        def.target = Some(Target { kind: TargetKind::Reference(Some(FormId(MARK_A))), count_distance: 0 });
+        f.refs.refs.get_mut(&FormId(R_TO_HEADING)).unwrap().linked = Some(FormId(HEAD_MARK));
+        let target = f.refs.refs.get_mut(&FormId(MARK_A)).unwrap();
+        target.rot[2] = 0.75;
+        if heading_target {
+            target.base = FormId(0x34);
+        }
+        let destination = target.pos;
+        let mut s = sim(&f, &[R_TO_HEADING]);
+        s.run(30.0);
+        let a = &s.ai.agents[&FormId(R_TO_HEADING)];
+        assert_eq!(a.activity, Activity::There);
+        assert!(dist(a.walker.feet, destination) < 1.0);
+        let headings: Vec<_> = s.events(R_TO_HEADING).into_iter().filter_map(|e| match e {
+            AiEvent::ArrivalFacing { heading } => Some(*heading),
+            _ => None,
+        }).collect();
+        if heading_target {
+            assert_eq!(headings, vec![0.75]);
+            assert!(fnv_nav::follow::heading_delta(a.walker.heading, 0.75).abs() < 1e-3);
+        } else {
+            assert!(headings.is_empty(), "plain target must not use linked marker: {headings:?}");
+        }
+    }
+}
+
+// [design, #2526] Simulate a detour by moving the travelling actor into the chosen
+// marker's radius from the far side, closer to a competing marker with another heading.
+#[test]
+fn arrival_heading_keeps_the_object_reference_selected_before_travel() {
+    for kind in [LocationKind::ObjectId(Some(FormId(0x34))), LocationKind::ObjectType(9)] {
+        let mut f = fixture();
+        // [design: synthetic fixture] Classify the test marker base as Misc so the
+        // object-type variant can select these same two references (`errand::of_type`).
+        f.data.sigs.insert(FormId(0x34), *b"MISC");
+        let loc = f.data.package_defs.get_mut(&FormId(P_TO_HEADING)).unwrap().location.as_mut().unwrap();
+        loc.kind = kind;
+        loc.radius = 150;
+        f.refs.refs.get_mut(&FormId(HEAD_MARK)).unwrap().pos = [250.0, 200.0, 0.0];
+        let other = f.refs.refs.get_mut(&FormId(MARK_A)).unwrap();
+        other.base = FormId(0x34);
+        other.pos = [390.0, 200.0, 0.0];
+        other.rot[2] = 1.25;
+        let mut s = sim(&f, &[R_TO_HEADING]);
+        let actor = FormId(R_TO_HEADING);
+        s.run(0.5);
+        assert_eq!(s.ai.agents[&actor].activity, Activity::Travelling, "{kind:?}");
+        let detour = [380.0, 200.0, 0.0];
+        s.game.world.get(actor).unwrap().pos = detour;
+        s.ai.agents.get_mut(&actor).unwrap().walker.feet = detour;
+        s.ai.update(&mut s.game, &s.nav, 0.05);
+        assert_eq!(s.ai.agents[&actor].activity, Activity::There, "{kind:?}");
+        let at = s.feet(R_TO_HEADING);
+        assert!(dist(at, [390.0, 200.0, 0.0]) < dist(at, [250.0, 200.0, 0.0]), "{at:?}");
+        s.run(10.0);
+        assert!(s.events(R_TO_HEADING).iter().any(|e| matches!(e, AiEvent::ArrivalFacing { heading } if *heading == 2.0)), "{kind:?}: {:?}", s.events(R_TO_HEADING));
+        assert!(fnv_nav::follow::heading_delta(s.ai.agents[&actor].walker.heading, 2.0).abs() < 1e-3);
+    }
+}
+
+// [documented: #2526 w2 brief, main-session fnvtool ai show / quest SLSD/SCVR,
+// FalloutNV.esm, 2026-11-15] Subject-run AND conditions and list order reproduced
+// with synthetic quests, actors and package IDs; no record bytes or script text.
+#[test]
+fn speech_guard_conditions_select_the_linked_travel_without_an_override() {
+    use fnv_game::cond::{Cmp, Condition, Operand, RunOn};
+    use fnv_game::game::InstKey;
+    use fnv_game::package::PackageType;
+    use fnv_game::quest::QuestDef;
+    use fnv_script::vm::{ArgValue, Value};
+
+    let mut f = fixture();
+    let (main, speech) = (FormId(0xA10), FormId(0xA11));
+    for form in [main, speech] {
+        f.data.quests.insert(form, QuestDef { form, ..Default::default() });
+    }
+    let cond = |function, params, cmp, rhs| Condition { function, params, cmp, rhs: Operand::Value(rhs), or: false, run_on: RunOn::Subject };
+    let var = |quest: FormId, index: u16, cmp, rhs| cond(79, vec![ArgValue::Value(Value::Ref(quest.0)), ArgValue::Value(Value::Num(index as f64))], cmp, rhs);
+    let is = |actor| cond(136, vec![ArgValue::Value(Value::Ref(actor))], Cmp::Eq, 1.0);
+    let front = FormId(0xA00);
+    let dead = FormId(0xA01);
+    let idle = FormId(0xA02);
+    let safe_one = FormId(0xA03);
+    let safe_two = FormId(0xA04);
+    let follow_one = FormId(0xA05);
+    let follow_two = FormId(0xA06);
+    let defs = [
+        (front, vec![var(main, 2, Cmp::Ne, 1.0), var(main, 11, Cmp::Lt, 2.0), var(main, 9, Cmp::Lt, 3.0), var(main, 5, Cmp::Eq, 2.0), is(R_RADIUS)]),
+        (dead, vec![var(main, 26, Cmp::Eq, 1.0)]),
+        (idle, vec![var(main, 26, Cmp::Eq, 0.0), var(main, 2, Cmp::Eq, 0.0), var(speech, 4, Cmp::Eq, 2.0)]),
+        (safe_one, vec![var(main, 3, Cmp::Eq, 1.0), var(main, 2, Cmp::Eq, 1.0), is(R_TO_HEADING)]),
+        (safe_two, vec![var(main, 3, Cmp::Eq, 1.0), var(main, 2, Cmp::Eq, 1.0), is(R_RADIUS)]),
+        (follow_one, vec![is(R_TO_HEADING)]),
+        (follow_two, vec![is(R_RADIUS)]),
+    ];
+    let template = f.data.package_defs[&FormId(P_TO_HEADING)].clone();
+    for (id, conditions) in defs {
+        let mut def = template.clone();
+        def.conditions = conditions;
+        if id == idle {
+            def.location.as_mut().unwrap().kind = LocationKind::NearLinked;
+        }
+        if id == dead {
+            def.ty = PackageType::Guard;
+        }
+        f.data.package_defs.insert(id, def);
+    }
+    let list = vec![front, dead, idle, safe_one, safe_two, follow_one, follow_two];
+    for (base, actor) in [(N_TO_HEADING, R_TO_HEADING), (N_RADIUS, R_RADIUS)] {
+        f.data.actors.get_mut(&FormId(base)).unwrap().packages = list.clone();
+        f.refs.refs.get_mut(&FormId(actor)).unwrap().linked = Some(FormId(HEAD_MARK));
+    }
+    let mut s = sim(&f, &[R_TO_HEADING, R_RADIUS]);
+    let set = |s: &mut Sim, quest, index, value| s.game.store(InstKey::Quest { quest }, None, index, Value::Num(value), "synthetic speech state", false);
+    let picks = |s: &mut Sim| [s.game.select_package(FormId(R_TO_HEADING)), s.game.select_package(FormId(R_RADIUS))];
+    assert_eq!(picks(&mut s), [Some(follow_one), Some(follow_two)]);
+    set(&mut s, speech, 4, 2.0);
+    for actor in [R_TO_HEADING, R_RADIUS] {
+        assert_eq!(s.game.check_package(FormId(actor), front), PackageCheck::ConditionsFail);
+        assert_eq!(s.game.check_package(FormId(actor), dead), PackageCheck::ConditionsFail);
+        assert_eq!(s.game.check_package(FormId(actor), idle), PackageCheck::Valid);
+    }
+    assert_eq!(picks(&mut s), [Some(idle), Some(idle)]);
+    s.run(30.0);
+    for actor in [R_TO_HEADING, R_RADIUS] {
+        assert!(s.game.extra[&FormId(actor)].script_package.is_none());
+        assert_eq!(s.game.extra[&FormId(actor)].current_package, Some(idle));
+        assert!(s.events(actor).iter().any(|e| matches!(e, AiEvent::ArrivalFacing { heading } if *heading == 2.0)));
+    }
+    // [design: condition audit] StageFront wins only for actor two during attack;
+    // each other conjunct can veto it, leaving SpeechIdle valid in these states.
+    set(&mut s, main, 5, 2.0);
+    assert_eq!(picks(&mut s), [Some(idle), Some(front)]);
+    for (index, threshold) in [(11, 2.0), (9, 3.0)] {
+        set(&mut s, main, index, threshold);
+        assert_eq!(picks(&mut s), [Some(idle), Some(idle)]);
+        set(&mut s, main, index, 0.0);
+    }
+    set(&mut s, main, 26, 1.0);
+    assert_eq!(picks(&mut s), [Some(dead), Some(front)]);
+    set(&mut s, main, 5, 0.0);
+    assert_eq!(picks(&mut s), [Some(dead), Some(dead)]);
+    set(&mut s, main, 26, 0.0);
+    set(&mut s, main, 2, 1.0);
+    assert_eq!(picks(&mut s), [Some(follow_one), Some(follow_two)]);
+    set(&mut s, main, 3, 1.0);
+    assert_eq!(picks(&mut s), [Some(safe_one), Some(safe_two)]);
+}
+
 #[test]
 fn arrival_heading_leaves_plain_xmarker_facing_unchanged() {
     let mut f = fixture();

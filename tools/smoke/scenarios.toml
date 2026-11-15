@@ -29985,3 +29985,29 @@ expect = [
 forbid = [
   { re = 'VHDRangerKimballGuard0[12]REF: cannot reach', label = "both guards reach their nearby stage markers" },
 ]
+
+
+[[scenario]]
+name = "scene-kimball-guard-natural-heading"
+source = "[documented: #2526 w2 brief, main-session fnvtool ai show + quest-script SLSD/SCVR decode, FalloutNV.esm, 2026-11-15] Subject-run AND conditions: at speech iKimballStage 2 and VMQ03a variables 0, StageFront fails AssassinAttack == 2, KimballDead fails bKimballDead == 1, and SpeechIdle passes for both guards before Saferoom/Follow. Linked stage markers have z rotation 3.3832 rad."
+note = "[design, #2526] Direct quest-variable setup in Hoover Dam cell 16,5: first set speech stage 0, enable both guards and place them 150 units from their own linked stage markers; clear all VMQ03a variables used by the package lists, then set speech stage 2 and EvaluatePackage. No AddScriptPackage override or dialogue result script: the actual lists and conditions must select SpeechIdle and each guard must arrive facing its linked marker's heading."
+areas = ["ai", "quests", "nav"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/goal.rs", "crates/fnv-game/src/ai.rs", "crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/quest.rs", "crates/fnv-game/src/functions/refs.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "3:var:VHDKimballSpeech:iKimballStage:0,4:call:VHDRangerKimballGuard01REF:Enable,4.1:call:VHDRangerKimballGuard02REF:Enable,5:moveto:VHDRangerKimballGuard01REF:VHDKimballGuard1StageMarkerREF:150:0:0,5.1:moveto:VHDRangerKimballGuard02REF:VHDKimballGuard2StageMarkerREF:150:0:0,6:var:VMQ03a:iKimballFlee:0,6.1:var:VMQ03a:iDetonatorFound:0,6.2:var:VMQ03a:iVertibirdBombActive:0,6.3:var:VMQ03a:AssassinAttack:0,6.4:var:VMQ03a:bKimballDead:0,6.5:var:VMQ03a:bKimballSaferoom:0,7:var:VHDKimballSpeech:iKimballStage:2,8:call:VHDRangerKimballGuard01REF:EvaluatePackage,8.1:call:VHDRangerKimballGuard02REF:EvaluatePackage" }
+args = ["--play", "--cell", "16,5", "--world", "WastelandNV", "--npc-packages", "VHDRangerKimballGuard01REF,VHDRangerKimballGuard02REF", "--hour", "9", "--no-voice", "--no-messages"]
+run_seconds = 45
+order = [
+  [
+    { text = "script: test aid set VHDKimballSpeech.iKimballStage = 2", label = "natural speech state staged" },
+    { text = "VHDRangerKimballGuard01REF: package VHDKimballGuardSpeechIdlePackage", label = "guard one selects SpeechIdle from its own list" },
+    { re = 'VHDRangerKimballGuard01REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "guard one takes its linked stage marker heading" },
+  ],
+  [
+    { text = "script: test aid set VHDKimballSpeech.iKimballStage = 2", label = "natural speech state staged" },
+    { text = "VHDRangerKimballGuard02REF: package VHDKimballGuardSpeechIdlePackage", label = "guard two selects SpeechIdle from its own list" },
+    { re = 'VHDRangerKimballGuard02REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "guard two takes its linked stage marker heading" },
+  ],
+]
+forbid = [
+  { re = 'VHDRangerKimballGuard0[12]REF: cannot reach', label = "both guards reach their nearby stage markers" },
+]

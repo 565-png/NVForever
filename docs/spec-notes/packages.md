@@ -275,7 +275,11 @@ location, in cell (radius ignored), near reference; the radius is editable.
     than 0 (his `CG03MrBrotchGiveGOAT` has 20) is not known; ours turns for any.
     [design, #2526: `fnv_ai::goal::location_reference`, `carry::marker_heading`]
     Near reference, near linked reference, near object ID and near object type share
-    the destination-reference resolver for walking and arrival facing. Plain XMarkers
+    the destination-reference resolver. `Goal::Near` retains the selected reference
+    alongside the travel position; arrival facing reads it without repeating the
+    nearest-object search from the actor's new position. Guard with Remain Near
+    Reference to Guard retains its effective target, so an unrelated location marker
+    cannot supply its heading. Plain XMarkers
     keep the walker's arrival heading; furniture, sandbox and guard-wander handling
     retain precedence. [documented: #2526 writer brief, main session's fnvtool esm
     decode / ai show of FalloutNV.esm] Kimball's guards `VHDRangerKimballGuard01REF`
@@ -290,20 +294,38 @@ location, in cell (radius ignored), near reference; the radius is editable.
     actor without a placed editor rotation has no arrival heading supplied by this rule.
     [documented: #2526 supplied ai-show evidence] The speech crowd's
     `VHDCivilianIdlePackage` (00133EC3) is Travel near editor location, radius 0.
-  - **Guard package selection audit** [documented: #2526 supplied `2526-ai.json`]:
-    both guards list `VHDKimballGuard02StageFrontPackage` (00135004, five conditions)
-    before `VHDKimballGuardKimballDeadPackage` (00134B20, one condition) and
-    `VHDKimballGuardSpeechIdlePackage` (00131F13, three conditions).
-    [documented: supplied `2526-records.md`, SCPT 00145EC2]
-    Moore's introduction sets speech quest 00130C78 `iKimballStage` to 2 and reevaluates
-    both guards. [hypothesis] SpeechIdle is the intended speech package; the supplied
-    counts cannot establish when StageFront wins. [design: `fnv_game::ai::select_package`,
-    `check_package`] Selection uses the first valid package, evaluating its conditions
-    with the actor as subject and the package target. No condition bug is established:
-    PACK 00135004, 00134B20 and 00131F13 CTDA expressions (functions, arguments, comparison,
-    AND/OR flags, run-on subject/reference) are needed to check the reported rear-stage
-    positioning; the supplied JSON contains counts only. The heading smoke explicitly
-    assigns SpeechIdle and does not verify natural package selection.
+  - **Guard package selection audit** [documented: #2526 supplied `2526-ai.json`,
+    `2526-guard-packages.json` and w2 brief; main-session fnvtool ai show and quest-script
+    SLSD/SCVR decode of FalloutNV.esm, 2026-11-15]: both guards' list order is StageFront
+    (00135004), KimballDead (00134B20), SpeechIdle (00131F13), Saferoom01/02
+    (00133EB6/7), then Follow01/02 (0013259E / 00131F12). All conditions are AND,
+    run on subject. VMQ03a (00131F08, script 00131F0A) variable indices are
+    `iKimballFlee` 2, `bKimballSaferoom` 3, `AssassinAttack` 5,
+    `iVertibirdBombActive` 9, `iDetonatorFound` 11, `bKimballDead` 26;
+    VHDKimballSpeech (00130C78, script 00130C77) `iKimballStage` is index 4.
+    With `iKimballStage = 2` and these VMQ03a variables at 0:
+    - StageFront requires flee != 1, detonator < 2, bomb < 3, attack == 2 and
+      GetIsReference(guard02) == 1. It fails attack == 2 for both, and the reference
+      condition also excludes guard01.
+    - KimballDead requires dead == 1 and fails; SpeechIdle requires dead == 0,
+      flee == 0 and speech stage == 2, so passes for both and wins before the rest.
+    - Saferoom packages require saferoom == 1, flee == 1 and their own guard reference;
+      Follow packages require only their own guard reference. Neither can displace a
+      valid earlier SpeechIdle. During attack == 2, StageFront can win for guard02
+      when its other conjuncts pass; it never wins for guard01.
+    [documented: supplied `2526-records.md`, SCPT 00145EC2] Moore's introduction sets
+    the speech variable to 2 and reevaluates both guards. [design: `fnv_game::ai`
+    `select_package`, `check_package`; `game::eval_conditions`; `functions::quest`
+    `get_quest_variable`; `functions::refs::get_is_reference`] The evaluator reads
+    quest instance variables by index, compares the subject for GetIsReference and
+    chooses the first valid package. Synthetic `fnv-ai/tests/carry.rs` coverage checks
+    the supplied conjunctions/order for both guards, including attack, death, flee and
+    saferoom transitions: no condition-evaluation bug is established. The selected
+    SpeechIdle destination is each guard's linked stage marker; retaining its heading
+    fixes the demonstrated facing defect. [design: tools/smoke/scenarios.toml]
+    `scene-kimball-guard-natural-heading` stages these quest variables and asserts both
+    natural SpeechIdle selections and arrival headings without AddScriptPackage;
+    `scene-kimball-guard-heading` remains the focused forced-package arrival check.
 - **Sandbox**: ambient behaviour within the location radius: it scores nearby objects
   (food, furniture, idle markers, other actors), weights them by a per-kind probability
   that drops to zero for the kind just chosen and rises for the others; sleep start
