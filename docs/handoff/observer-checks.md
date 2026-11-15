@@ -2199,7 +2199,7 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
 
 ## Added 2026-11-14 (Oliver's rigid cap frame, #2529)
 
-146. **Does Oliver's cap follow the full head frame, idle and speaking?** (P2; #2529,
+168. **Does Oliver's cap follow the full head frame, idle and speaking?** (P2; #2529,
      actors.md §1.2.) [documented: #2529 writer brief, fnvtool FalloutNV.esm +
      Fallout - Meshes.bsa] `VHDGeneralOliver` 0x001300A9 carries `NVGenOliverCap`
      0x00134490; its worn `GenOliverCap.NIF` is unskinned, identity-root, with no
