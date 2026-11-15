@@ -254,7 +254,12 @@ apart and the last row/column coincides with the neighbour's first.
   mode=detail(2:6) subdiv=4 bound=8 land-shift=4; drawing, collision and queries use this
   surface` (off: `mode=stored subdiv=1 bound=0 land-shift=0`), and the exit's `terrain
   summary` counts cell draws over the run (a cell drawn again counts again) and names the
-  recipe. The Pip-Boy local map's outline reads the same surface beyond the loaded
+  recipe. Cost of the default [observed: 2026-11-15, 1920x1080 unpaced, RTX 4070, three
+  launches each on a Goodsprings hillside and two fast flights (1500 units/s) over
+  Goodsprings]: standing frame time 3.78 ms (2 x 2 interpolate 3.74, off 3.78), the
+  flight's worst frame 32.9 ms (2 x 2 32.4), peak working set about 255 MB above 2 x 2
+  (3,038 against 2,783 MB) and video memory about 130 MB above it; #2676 proposes a
+  2 x 2 / 4 x 4 setting and 4 x 4 only near the camera. The Pip-Boy local map's outline reads the same surface beyond the loaded
   collision, and so do the console's CenterOnWorld and CenterOnExterior (the cell's
   centre on the run's surface; `coc` uses arrival markers). An actor standing without a physics character at
   an authored or navmesh height over the bare landscape (within 32 units of the stored

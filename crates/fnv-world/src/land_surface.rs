@@ -56,7 +56,7 @@ use fnv_esm::{LoadOrder, Schema};
 
 /// New squares per grid square and side when smoothed, by default [design, #2149:
 /// the user's 2026-11-15 choice from in-game comparisons, for rounder silhouettes;
-/// frame cost and memory still to be measured].
+/// measured the same day: no frame-time change, about 255 MB more RAM than 2 (world.md §3)].
 pub const DEFAULT_SUBDIV: usize = 4;
 
 /// The subdivisions a smoothed surface can be built with [design, #2149].

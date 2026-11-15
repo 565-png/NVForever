@@ -226,8 +226,11 @@ the spec it links to.
   rounder silhouettes, and bound 8 keeps placed objects in contact by holding the
   surface within one height step of the stored triangles. Smoothing stays on by default
   with collision following it (your 2026-11-13 decision); the setting applies at the
-  next start so drawn ground and collision change together. Frame cost and actual memory
-  cost remain to be measured: 4 × 4 has four times the triangles of 2 × 2. The test aids
+  next start so drawn ground and collision change together. Measured 2026-11-15 (1920x1080,
+  unpaced, RTX 4070) [observed]: standing frame time unchanged (3.78 ms, 2 × 2 3.74, off
+  3.78), worst frame in a fast flight over Goodsprings unchanged (32.9 ms, 2 × 2 32.4);
+  about 255 MB more RAM and 130 MB more video memory than 2 × 2. #2676 proposes a
+  2 × 2 / 4 × 4 setting and 4 × 4 only near the camera for low-end machines. The test aids
   still choose the other recipes, and the Debug row Terrain wireframe shows the triangles.
   Smoke `terrain-smoothing` covers the default; `terrain-smoothing-fit-s2-b8`,
   `-interpolate-s4-b8`, `-fit-s4-b12`, `-detail-s4-b8` cover explicit recipes.
