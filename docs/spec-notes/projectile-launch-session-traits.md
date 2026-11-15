@@ -6,7 +6,7 @@
 
 [hypothesis] Share the existing random spread/spawn operation between ordinary and edited shots. Preserve no-runtime/no-override typed behavior, vanilla weapon speed multipliers, normal player ammo/magazine/counters/animation, and the distinction between a selected missing typed record (effects/counters but no physical flight) versus no selected projectile (the existing silent path). This leaf adds no setter and broadens no generic World placement admission.
 
-Process qualification (historical authored CPU controls): An owned coherent d9 source pair ran the same eight source-compatible controls: three baseline passes and five physical-consumer assertion failures, then all nine candidate controls passed. The ninth control uses the new factored spawn API and was candidate-only. An earlier E0463 host dependency-search setup failure ran zero tests and remains separately recorded. Later coherent c28 CPU contexts also passed the original nine bodies. These results belong to those exact source contexts, not this publicda13 port.
+Process qualification (historical authored CPU controls): An owned coherent d9 source pair ran the same eight source-compatible controls: three baseline passes and five physical-consumer assertion failures, then all nine candidate controls passed. The ninth control uses the new factored spawn API and was candidate-only. An earlier E0463 host dependency-search setup failure ran zero tests and remains separately recorded. Later coherent c28 CPU contexts also passed the original nine bodies. These results belong to those exact source contexts, not any later public revision.
 
 [documented: authored engine/nvf-play/src/combat/projectile_launch_tests.rs] Nine portable-record controls exercise actual Game setters and next-frame actor shots, physical velocity/carried force, restoration without editing existing flights, temporary-form trait inheritance, unrelated typed neighbors, missing/no selected projectile and normal equip_sync -> combat::fire -> fly with actual ammo, magazine, counters, animation and shot messages. The player input boundary is CPU PlayerControl.trigger, not OS input or complete animation scheduling. A fixed-random three-projectile control checks six draws and independent analytic direction sentinels.
 
@@ -75,10 +75,11 @@ timeouts. The wait control admits7200 without staging, makes the7201 update elig
 The active control admits the first real physical insertion at300, aborts301 before
 a restored second request, and requires exact absent-field restoration, original
 inventory counts and no repeated dispatch or cleanup. They use no7200/300-frame
-loops. All original23 control bodies are unchanged; these two new controls and the
-new whole public head are UNCOMPILED/UNRUN pending their own checks. Actual GAME
-execution remains optional under CONTRIBUTING; the meaningful consumer scenario
-must be source-reviewed/typechecked before Ready.
+loops. All original23 control bodies are unchanged. Authored coverage specifies
+the required oracles; compilation and execution results must be bound to the exact
+source revision and reported separately. Actual GAME execution remains optional
+under CONTRIBUTING; the meaningful consumer scenario must be source-reviewed and
+typechecked before Ready.
 Nothing here completes B42 startup, Quickthrow OS input/animation, temporary World
 reference placement/model lookup, TTL deletion, save ownership, native or rendered
 acceptance.
