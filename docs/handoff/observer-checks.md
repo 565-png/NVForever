@@ -2174,6 +2174,16 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      dirt and on concrete, first and third person, and record which SOUN records play
      at each footfall (the sound log): does `FSTArmorPowerWalkL`/`R` play, instead of
      or beside the ground's step, and does anything play for the run rustle?
+     **Answered for NPCs 2026-11-14** (#2541; Blue Moon sandbox stock game, save
+     nvfairport on concrete, `IsSoundPlaying <rec> <actor>` sampled on 130 frames)
+     [observed]: Doc Mitchell walking in ArmorPowerT45d read FSTArmorPowerL 49 and R 95
+     frames beside FSTConcSolidWalkL 59 and R 95; without armour only the ground step;
+     LvlNCRHeavyTrooper (ArmorPowerNCRSalvaged, Heavy but not Power Armor) FSTArmorL/R
+     beside the ground step; FSTArmorPowerWalkL/R never; standing still nothing. So the
+     armour's footfall plays beside the ground's step, power armour's by the Power Armor
+     flag and heavy armour's by Heavy, and IsSoundPlaying sees the game's own footsteps.
+     Still open: the player (an unattended run could not walk the player), first
+     person, running, dirt, medium armour.
 
 ## Added 2026-11-14 (the Fort's placed slave backpacks, #2439)
 
@@ -2458,6 +2468,69 @@ already talking takes over at once, same topic or another; nothing is queued or 
      says the flag beats the disguise (then the disguise works only through the
      reputation reset, reputation.md §4).
 
+## Added 2026-11-15 (Anders's head on the cross, #2471)
+
+174. **Does a crucified actor turn his head to the player, and is he ever seen climbing
+     onto the cross?** (P3; #2471, anders-cross-head.md.) At Cottonwood Cove, talk to
+     Anders (VRRCAndersREF 0x001413C3, cross 0x0013A4BA) from the front and from 90° to
+     his side. Note whether his head turns to the player in each, how far to the side it
+     goes, and whether it stays tilted down. Then leave the cell and come back (and, on
+     a new game, arrive by fast travel) and note whether he is ever seen getting onto the
+     cross (`GetSitting` reading 2) or always found on it (3). Ours since #2471: the head
+     turns up to 60° from his chest and up to 30° from the level; he is put on the cross
+     at once when he stands at it [design].
+
+## Added 2026-11-15 (Anders freed before Diane, #2472)
+
+175. **Can Anders be freed before Diane sends the player after him?** (P3; #2472,
+     anders-cross.md.) In the data the freeing choice (AndersFree 0x00142A8A) is a
+     choice of AndersJackandDiane 0x00142A89 alone, a topic that is not top-level and is
+     learnt only from Diane's lines 0x00146698 and 0x00144651. From a save that has not
+     met Diane (`GetObjectiveDisplayed VMS46 10` reads 0), go to
+     Cottonwood Cove and talk to VRRCAndersREF: list the topics offered, then pick each.
+     Only Who did this to you? / the drugs topic / Goodbye agrees with ours; a choice
+     that cuts him down says the original offers the topic some other way (then note
+     which and whether `GetQuestVariable VMS46 AndersFreed` goes to 1).
+
+## Added 2026-11-15 (Cachino finds the player in Gomorrah, #2473)
+
+176. **How does Cachino's Find package bring him to the player?** (P2; #2473,
+     packages.md §10.) From a game where VMS21 has not started, stand at the Brimstone
+     bar on Gomorrah's main level (Gomorrah01), more than 1,000 units from Cachino's
+     spot (7159, 1281), and ask a Gomorrah courtesan or guest where Cachino is
+     (topic `vDialogueGomorrahGenericTopic005`; his ref 0x0011118D is enabled by that line's end script). Note the time
+     from the end of that conversation to Cachino setting off, to his first line (his
+     Say Once greeting INFO 0x001133A0, about the player's questions), and how far from the
+     player he stands when he speaks (`GetDistance player` on him). Then once more with
+     the player on the floor below (Gomorrah00): does he come through the doors to
+     another cell? Ours since #2473: he sets off at once, walks to the player wherever
+     they are in the four Gomorrah cells, and the conversation opens when he is within
+     about 3x the arrival distance and can see the player [hypothesis]. Not seen
+     coming, or coming only within some distance of his spot, says the search area is
+     wrong; walking up and standing without a word says the talk is not the Find's.
+
+## Added 2026-11-14 (children in fights, #2438)
+
+178. **Does a child ever fight back?** (P3; #2438, combat-ai.md §12.2.) Ours, by the
+     owner's decision: a child (a race with the Child flag) set on the player flees at
+     once and never attacks. To check: `player.placeatme 0011E506` (a Legion child,
+     FortChildCM), `prid` it and `startcombat player`; then attack one with fists. Record whether it
+     draws a weapon, swings or runs, and its Flee line, if any.
+
+## Added 2026-11-14 (quest markers several doors deep, #2458)
+
+179. **Where does the original mark a target several doors deep, seen from another
+     worldspace?** (P2; #2458, quests-dialogue.md §2, hud.md §11.) Ours: the World Map
+     marks it at the door outdoors that starts the fewest-doors way into its interior,
+     and the compass and Local Map at the door of the player's own place that starts the
+     way there [hypothesis]. To check: with For the Republic, Part 2 (VMQ05) objective 10
+     shown and the quest active, stand on the Strip (NCR embassy) and note where the
+     World Map's quest marker sits (which door of Hoover Dam, or elsewhere) and which
+     door the compass marker points at (the gate to Freeside, or another); then again
+     from the Mojave outside Freeside and inside the dam's visitor centre. Also: does
+     the World Map draw a second marker at the Strip's gate while the player is on the
+     Strip?
+
 ## Added 2026-11-14 (Mr. House's screens after his death, #2431)
 
 181. **Is Mr. House's penthouse screen ever hostile?** (P3; #2431, actor-flags.md §11.)
@@ -2467,3 +2540,15 @@ already talking takes over at once, same topic or another; nothing is queued or 
      0x001264C5): red crosshair, red compass tick, does `GetCombatTarget` on it read the
      player, does it turn? Then shoot it: does it take damage? The same for Festus
      (NVCRFestus) when shot.
+
+## Added 2026-11-14 (talking activators with no talking actor set, #2454)
+
+185. **Who speaks through a talking activator no script has given an actor?** (P2; #2454,
+     talking-activators.md §2.) Ours: the one actor the load order's scripts name for it
+     in SetTalkingActivatorActor (Ramos for HVIntercomREF), else the activator itself
+     [hypothesis]. On a save from before the Hidden Valley bunker, get in without
+     touching HVIntercomREF (sneak in), go through Ramos's escort, accept McNamara's
+     ranger task: when the screen fades and the player stands at the inner door, record
+     whether the dialogue menu opens, which INFO is said (Ramos's 000E3664 or none),
+     and when the controls come back. Also `HVIntercomREF.IsTalkingActivatorActor
+     RamosREF` just before McNamara's line.
