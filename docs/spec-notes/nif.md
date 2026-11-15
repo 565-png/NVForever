@@ -810,7 +810,7 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   edge some 10 to 20 levels [observed]. What is left follows the data under the
   display-value sum ("Additive blend"): the card adds display 0.34 at the bowl on a wall
   darker than the original's (owner's choice), so the wash is strong near the bowl. An
-  observer frame of the corridor would settle its strength (observer-checks.md 197).
+  observer frame of the corridor would settle its strength (observer-checks.md 201).
 - **Alpha blend of unlit shapes** (SRC_ALPHA / INV_SRC_ALPHA on a
   BSShaderNoLightingProperty shape: smoke and mist sheets, dust, and every particle
   system, which `nvf_assets::particles` draws with the same material). The blend is
