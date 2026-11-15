@@ -14129,16 +14129,16 @@ note = "Requires a non-null LoadOrder-backed template on 2ETopsPresidentialSuite
 areas = ["scripts", "sky", "world"]
 paths = ["crates/fnv-world/src/lighting.rs", "crates/fnv-game/src/nvse_jg1.rs", "engine/nvforever/src/world.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/sky.rs"]
 requires = ["NVF_PLAY_TEST_LIGHTING_HOME"]
-env = { NVFOREVER_HOME = "{env:NVF_PLAY_TEST_LIGHTING_HOME}", NVF_REPORTS = "0", RUST_LOG = "info,nvf_play::script=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = '8:GetCellLightingTemplate 2ETopsPresidentialSuite;9:SetCellLightingTemplate GSDocMitchellHouse (GetCellLightingTemplate "2ETopsPresidentialSuite");10:SetCellFlag GSDocMitchellHouse 15 1;11:SetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15 32123;12:PrintC "lighting-smoke positive clip %g" (GetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15);13:GetCellFlag GSDocMitchellHouse 15;14:close;20:coc Goodsprings;20.5:close;30:coc GSDocMitchellHouse;30.5:close;39:SetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15 0;40:PrintC "lighting-smoke zero clip %g" (GetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15);41:close;46:coc GSDocMitchellHouse;46.5:close' }
+env = { NVFOREVER_HOME = "{env:NVF_PLAY_TEST_LIGHTING_HOME}", NVF_REPORTS = "0", RUST_LOG = "info,nvf_play::script=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = '8:PrintC "lighting-smoke template %i" (GetCellLightingTemplate "2ETopsPresidentialSuite");9:SetCellLightingTemplate GSDocMitchellHouse (GetCellLightingTemplate "2ETopsPresidentialSuite");10:SetCellFlag GSDocMitchellHouse 15 1;11:SetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15 32123;12:PrintC "lighting-smoke positive clip %g" (GetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15);13:PrintC "lighting-smoke inherit %g" (GetCellFlag GSDocMitchellHouse 15);14:close;20:coc Goodsprings;20.5:close;30:coc GSDocMitchellHouse;30.5:close;39:SetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15 0;40:PrintC "lighting-smoke zero clip %g" (GetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15);41:close;46:coc GSDocMitchellHouse;46.5:close' }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 58
 timeout = 180
 order = [[
   { re = '''sky: the camera's far plane at (?!32123\b)(?P<n>\d+) units \(the cell's fog clip distance\)''', range = [500, 100000], label = "ordinary cold camera clipping is present and differs from the authored target" },
-  { re = 'console: GetCellLightingTemplate >> 0x(?!00000000\b)[0-9A-Fa-f]{8}\b', label = "the donor cell resolves a non-null LoadOrder template" },
+  { re = 'console: lighting-smoke template (?!00000000\b)[0-9A-Fa-f]{8}$', label = "the donor cell resolves a non-null LoadOrder template" },
   { text = 'console: SetCellLightingTemplate GSDocMitchellHouse (GetCellLightingTemplate "2ETopsPresidentialSuite") >> ran', label = "the real console compiles the template assignment" },
   { re = 'console: lighting-smoke positive clip 32123(?:\.0+)?$', label = "the selected template trait getter sees the authored positive clip" },
-  { text = "console: GetCellFlag >> 1.00", label = "clip inheritance is enabled" },
+  { re = 'console: lighting-smoke inherit 1(?:\.0+)?$', label = "clip inheritance is enabled" },
   { text = "console: Travelling to Goodsprings", label = "leave through the real console travel path" },
   { text = "sky: the camera's far plane at 400000 units", label = "outdoor camera fallback remains intact" },
   { text = "console: Travelling to GSDocMitchellHouse", label = "re-enter the edited cell" },
