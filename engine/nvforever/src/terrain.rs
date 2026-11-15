@@ -129,6 +129,8 @@ pub struct TerrainCache {
     /// Quadrants drawn with their first layers folded in, and the layers folded.
     pub folded_quadrants: usize,
     pub folded_layers: usize,
+    /// Layers drawn blended over a folded quadrant (past [`folded_layers`]), so far.
+    pub overflow_layers: usize,
     pub quadrants_without_base: usize,
     pub layers: usize,
 }
@@ -848,6 +850,7 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
     // The repeat for the shader to work the texture coordinate out with, 0 when the mesh
     // carries the coordinate.
     let shader_tile = if most == FOLDED_LAYERS { tile } else { 0.0 };
+    let mut overflow = 0usize;
     for q in 0..4u8 {
         let base = drawn.iter().rev().find(|l| l.base && l.quadrant == q);
         if base.is_none() {
@@ -885,7 +888,19 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
                 let mesh = tm.assets.meshes.add(mesh);
                 commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
                 tm.tm.cache.layers += 1;
+                if blended_from > 0 {
+                    overflow += 1;
+                }
             }
+        }
+    }
+    // The first cell with layers past a folded group says how many it drew blended over
+    // them (once a run; the smoke check that such layer draws exist at all).
+    if overflow > 0 {
+        let first = tm.tm.cache.overflow_layers == 0;
+        tm.tm.cache.overflow_layers += overflow;
+        if first {
+            info!("terrain: {overflow} layers drawn blended over folded quadrants (past the first {most} of a quadrant), in the first cell that has them");
         }
     }
     land

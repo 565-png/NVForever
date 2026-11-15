@@ -550,7 +550,11 @@ mod tests {
     fn the_surface_set_up_reads_only_the_landscape_materials_textures() {
         // terrain_pbr.wesl's contract (its header): diffuse texture, normal map, colours and
         // scalar values; no other StandardMaterial texture and no lightmap. nvforever's
-        // terrain.rs checks the landscape materials hold nothing else.
+        // terrain.rs checks the landscape materials hold nothing else. A StandardMaterial
+        // binding is reached as `pbr_bindings::<name>` (bound one by one) or as a field of
+        // the bindless index table (`.<name>`), so those exact references are looked for:
+        // a bare substring would also match the view's SSAO texture,
+        // `screen_space_ambient_occlusion_texture`, which the set-up does read.
         for absent in [
             "emissive_texture",
             "metallic_roughness_texture",
@@ -565,9 +569,15 @@ mod tests {
             "diffuse_transmission_texture",
             "specular_texture",
             "specular_tint_texture",
-            "lightmap(",
         ] {
-            assert!(!PBR_SOURCE.contains(absent), "terrain_pbr.wesl reads `{absent}`: widen the contract (and its test) first");
+            for reference in [format!("pbr_bindings::{absent}"), format!(".{absent}")] {
+                assert!(!PBR_SOURCE.contains(&reference), "terrain_pbr.wesl reads `{reference}`: widen the contract (and its test) first");
+            }
+        }
+        assert!(!PBR_SOURCE.contains("lightmap("), "terrain_pbr.wesl reads a lightmap: widen the contract first");
+        // The references the set-up does make, in both binding modes.
+        for present in ["pbr_bindings::base_color_texture", "pbr_bindings::normal_map_texture", ".base_color_texture", ".normal_map_texture", "screen_space_ambient_occlusion_texture"] {
+            assert!(PBR_SOURCE.contains(present), "{present}");
         }
         for read in ["base_color_texture", "normal_map_texture", "base_color_sampler", "normal_map_sampler", "ssao_multibounce", "pbr_input_from_vertex_output"] {
             assert!(PBR_SOURCE.contains(read), "{read}");

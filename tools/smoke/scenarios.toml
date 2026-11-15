@@ -1216,11 +1216,12 @@ forbid = [
 
 [[scenario]]
 name = "terrain-anti-tiling-overflow"
-source = "[design, #2551] engine/nvforever/src/terrain.rs \"Anti-tiling\": with a texture repeat that does not divide the cell (--terrain-tile 300) a quadrant folds four layers and draws the rest on their own; started with --graphics-only terrain-anti-tiling, the folded and the separate TERRAIN_ANTI_TILING pipelines both compile and are ready, every landscape material made with the switch, without a rendering or pipeline error"
+source = "[design, #2551] engine/nvforever/src/terrain.rs \"Anti-tiling\": with a texture repeat that does not divide the cell (--terrain-tile 300) a quadrant folds four layers and draws the rest on their own (the first cell with such layers logs how many); started with --graphics-only terrain-anti-tiling, the folded pipeline and the separate pipeline of the blended layer draws both compile and are ready, every landscape material made with the switch, without a rendering or pipeline error"
 areas = ["renderer", "graphics", "terrain"]
 paths = [
   "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvf-assets/src/nif_material.rs",
   "engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/terrain_pbr.wesl", "engine/nvf-assets/src/terrain_sampling.wesl",
+  "engine/nvforever/src/pipeline_gate.rs",
 ]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--terrain-tile", "300", "--graphics-only", "terrain-anti-tiling"]
@@ -1228,7 +1229,8 @@ run_seconds = 14
 expect = [
   { re = 'terrain: the first 4 texture layers of a quadrant are folded into its base', label = "a repeat that does not divide the cell folds four layers" },
   { re = 'terrain anti-tiling pipeline \d+ ready: path=folded height=off', label = "the folded anti-tiled pipeline (the mesh carries the coordinate; the repeat comes from the material)" },
-  { re = 'terrain anti-tiling pipeline \d+ ready: path=separate height=off', label = "the separate anti-tiled pipeline (the layers past the fourth, and bases without layers)" },
+  { re = 'terrain: [1-9]\d* layers drawn blended over folded quadrants \(past the first 4 of a quadrant\)', label = "overflow layers exist: layers past the fourth drawn on their own over a folded quadrant" },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=separate height=off method=hex3 blend=on', label = "the separate anti-tiled pipeline of an alpha-blended layer draw (an unfolded base alone is opaque, blend=off)" },
 ]
 order = [[
   { re = 'graphics: light glow, terrain anti-tiling$', label = "on from the start, at repeat 300" },

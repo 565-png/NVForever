@@ -580,8 +580,11 @@ Reloaded's LOD noise are prior art only; no code was taken from any of them.
   `terrain-anti-tiling-separate` (every layer drawn on its own,
   `NVF_PLAY_TEST_TERRAIN_LAYERS=blended`, switched on and off) and
   `terrain-anti-tiling-overflow` (`--terrain-tile 300`: four folded layers and the rest
-  drawn on their own); they want
-  `terrain anti-tiling pipeline <n> ready: path=folded|separate height=on|off method=…`
+  drawn on their own; it wants `terrain: <n> layers drawn blended over folded quadrants`,
+  logged by the first cell that has such layers, and the separate pipeline with
+  `blend=on`); they want
+  `terrain anti-tiling pipeline <n> ready: path=folded|separate height=on|off method=…
+  blend=on|off`
   (`NVF_PLAY_TEST_PIPELINE_LOG`, pipeline_gate.rs). The look and the cost are checked by
   pictures and Tracy.
 
