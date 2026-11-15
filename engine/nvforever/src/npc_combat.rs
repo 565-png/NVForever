@@ -548,18 +548,9 @@ struct NpcSwing {
 }
 
 impl NpcSwing {
-    /// The next decision waits for the clip's interrupt key, or its end without one
-    /// [documented: GECK NiTextKeyExtraData; observed: capture run15b_b2, 2026-11-15,
-    /// radscorpions; hypothesis: NPC swings, #2535]. All times use the playing clip's
-    /// clock (`attack_anims::CombatPose::layers`) [design].
+    /// Share the clip boundary with scripted melee [design: SwingClip::ready_in].
     fn ready_in(&self, base_left: f32) -> f32 {
-        match self.clip {
-            Some(c) => match c.chain {
-                Some((at, _)) => (at - self.t).max(0.0),
-                None => base_left.max((c.len - self.t).max(0.0)),
-            },
-            None => base_left,
-        }
+        self.clip.map_or(base_left, |c| c.ready_in(self.t, base_left))
     }
 
     /// What a blow begun now goes on with: the group its `a:` key named, between that key
@@ -1096,7 +1087,7 @@ pub fn creature_spacing(bodies: Option<f32>, reach: f32) -> (f32, f32) {
 /// nvf_play::player, #2535]. An ordinary walking character supplies the other body
 /// of a widened pair, even after the creature stops; ordinary pairs retain their
 /// existing drawn-block lookup [design, #2535].
-struct CombatBodies<'a> {
+pub(crate) struct CombatBodies<'a> {
     walking: HashMap<u32, (Block, bool)>,
     widened: std::collections::HashSet<u32>,
     drawn: &'a [Block],
@@ -1104,7 +1095,7 @@ struct CombatBodies<'a> {
 }
 
 impl<'a> CombatBodies<'a> {
-    fn new(phys: Option<&PhysState>, blocks: Option<&'a ActorBlocks>) -> Self {
+    pub(crate) fn new(phys: Option<&PhysState>, blocks: Option<&'a ActorBlocks>) -> Self {
         let walking = phys.map(|p| p.npcs.iter().map(|(&id, n)| {
             let radius = nvf_play::blocking::walking_radius(n.ch.params.radius, p.actor_block_radii.get(&id).copied());
             (id, (Block::character(id, n.ch.feet, radius, n.ch.params.height, false), radius > n.ch.params.radius))
@@ -1141,12 +1132,12 @@ impl<'a> CombatBodies<'a> {
         Some((mine, radius))
     }
 
-    fn gap(&self, me: u32, target: u32, tfeet: V3) -> Option<f32> {
+    pub(crate) fn gap(&self, me: u32, target: u32, tfeet: V3) -> Option<f32> {
         let (mine, radius) = self.pair(me, target)?;
         Some(mine.room([tfeet[0], tfeet[1]], radius))
     }
 
-    fn radii(&self, me: u32, target: u32) -> Option<f32> {
+    pub(crate) fn radii(&self, me: u32, target: u32) -> Option<f32> {
         let (mine, radius) = self.pair(me, target)?;
         Some(mine.radius + radius)
     }

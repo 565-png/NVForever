@@ -222,6 +222,20 @@ pub struct SwingClip {
     pub len: f32,
 }
 
+impl SwingClip {
+    /// Seconds until the next melee decision: the interrupt key, or the clip's
+    /// end as well as the base wait without a key [documented: GECK
+    /// NiTextKeyExtraData; observed: capture run15b_b2, 2026-11-15, radscorpions;
+    /// hypothesis: NPC swings, #2535]. Times use the playing clip's clock
+    /// [design: CombatPose::layers].
+    pub(crate) fn ready_in(&self, elapsed: f32, base_left: f32) -> f32 {
+        match self.chain {
+            Some((at, _)) => (at - elapsed).max(0.0),
+            None => base_left.max((self.len - elapsed).max(0.0)),
+        }
+    }
+}
+
 /// What [`PlayAttack`] plays.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Move {

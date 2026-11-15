@@ -653,7 +653,10 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     clip's `a:` key, even when later than the 1.2 s base timer; without a key it
     waits for the clip's end as well as the base timer. An earlier key still brings
     the decision forward for combos. Clip times use the existing playback clock
-    (`attack_anims::CombatPose::layers`, `npc_combat::NpcSwing::ready_in`) [design].
+    (`attack_anims::CombatPose::layers`, `attack_anims::SwingClip::ready_in`) [design].
+    Ordinary combat and scripted melee share this boundary calculation; scripted
+    volley pauses use an independent clock, so an early combo key cannot shorten
+    them [design: `npc_combat::NpcSwing::ready_in`, `use_weapon::Swinger::advance`, #2535].
     The key's interrupt meaning is [documented: GECK wiki NiTextKeyExtraData, above];
     the lower bound is [observed: capture run15b_b2, 2026-11-15] for radscorpions,
     and [hypothesis] for NPC ordinary and power swings. Attack-chance rolls, style

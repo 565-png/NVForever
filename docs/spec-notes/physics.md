@@ -2597,7 +2597,8 @@ Combat body gaps and lunge stopping use the walking block's radius too. Creature
 reach remains centre to centre, (RNAM + body reach) × scale: for this pair,
 (64 + 124) × 0.6 = 112.8 and × 1.0 = 188, beyond their respective blocks plus
 the player's radius (64.336/92.56). People count melee reach beyond body radii.
-[design: `npc_combat::CombatBodies`, #2535] When either participant has
+[design: `npc_combat::CombatBodies`, `use_weapon::melee_range`, #2535] Ordinary
+combat and scripted melee share the body lookup. When either participant has
 a widened block, combat also supplies the other participant's ordinary character
 block if absent from the drawn list. Both attack directions therefore have a body
 gap and summed radii, including a walking humanoid against a walking or standing

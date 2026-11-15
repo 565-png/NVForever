@@ -138,8 +138,11 @@ melee fighters (docs/design/combat-ai.md §14.4, §15; `npc_combat`):
   within reach [design: the package's own walking is not interrupted].
 - **Swings**: facing the target (`USE_FACING`), its weapon drawn, within reach and within
   128 units of height, every `STRIKE_SECONDS` over the weapon's attack speed (Attack Mult),
-  sooner at the last clip's `a:` key, which picks the next swing's group (a combo, as
-  #353); no block or attack-chance roll, the script asks for the blows [hypothesis]. A blow
+  adjusted to the last clip's `a:` key (earlier or later), or held through its end
+  without a key, using the shared `SwingClip::ready_in` rule (combat-rules.md §10).
+  Volley pauses hold independently of that clock [design, #2535]. The key picks
+  the next swing's group (a combo, as #353); no block or attack-chance roll, the
+  script asks for the blows [hypothesis]. A blow
   lands at its clip's `Hit` key (`attack_anims` times) as an `ActorStrike` (damage, the
   target's block, impacts and sounds as any NPC blow).
 - **Always Hit**: a blow lands even when the target stepped out of reach by its `Hit` key
