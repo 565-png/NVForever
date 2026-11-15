@@ -1196,7 +1196,17 @@ at random, Say Once a Day), and a response is timed in one place
   [observed: docs/spec-notes/voice.md §8]. Only game time counts (menus stop a line) [hypothesis, consistent with Doc's
   stage 60 line ending after the message boxes, §10.3].
 - A speaker saying a line that starts another (SayTo in a result script, or a new SayTo)
-  stops the first without its end script [hypothesis]; a speaker that is disabled,
+  stops the first without its end script [hypothesis]; a new Say or SayTo of another
+  topic takes over at once, and one of the topic already being said (by Say or SayTo)
+  renews the speaker's talking state without a queue [observed: observer batch o30, PR
+  #2580]. Since #2582 a script's Say or SayTo of the topic its speaker is saying leaves
+  that line playing (`Game::say_by_script`) [hypothesis: the voice and the subtitle do
+  not restart with each call, observer check 144 open]: the Strip gate's kill zone
+  (SCPT 0x00119786) SayTos its topic every frame the player is inside, and its line
+  restarted every frame before. A line's own end script runs after the line is over,
+  so a chain of SayTo of one topic from end scripts says a new line each time. A
+  difference: o30 saw IsTalking stay on about 4.9 s after a line's file ended; here it
+  ends with the line. A speaker that is disabled,
   deleted or dead stops its line [hypothesis]. IsTalking is 1 while a line is said.
 - What this reproduces [observed, §10.2–10.3]: Doc's SayTo VCG01Intro takes the next
   unsaid line each time; three lines' end scripts chain SayTo to reach the line that sets

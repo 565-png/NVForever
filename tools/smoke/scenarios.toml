@@ -28435,6 +28435,21 @@ expect = [
 manual = "Keep the primary game window focused; scroll up and down after loading. This manual scenario has no selection or scroll-offset expectation and provides no GPU/native visual comparison."
 
 [[scenario]]
+name = "strip-gate-kill-zone-lines"
+source = "#2582: FalloutNV's Strip gate kill zone (VFSVegasAnnihilationVolumeREF, SCPT 0x00119786) SayTos VFSSecuritronKill every frame the player is inside (its target2 is never set); a script's Say/SayTo of the topic its speaker is already saying leaves that line playing (Game::say_by_script; observer batch o30, PR #2580). Before, the Securitron Gatekeeper restarted its line every frame: 2,231 lines in about 40 s"
+note = "The player starts inside the kill zone at the Freeside gate with no passport, in god mode; the zone's OnTriggerEnter sets the five gate Securitrons on the player and the Gatekeeper (VFSSecuritronGreeterREF) says its Kill lines one after another"
+areas = ["scripts", "dialogue", "combat"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/misc.rs", "engine/nvf-play/src/script_trigger.rs"]
+env = { NVF_PLAY_TEST_GOD = "1" }
+args = ["--play", "--world", "FreesideWorld", "--pos=-6300,-9700,1040", "--heading", "40", "--hour", "13", "--no-voice", "--no-messages"]
+run_seconds = 40
+expect = [
+  { text = "script: player entered trigger VFSVegasAnnihilationVolumeREF", label = "the player is in the gate's kill zone" },
+  { text = "OnStartCombat of FalloutNV.esm|SCPT 0x0017934D ran on Some(0x00119793)", label = "the Gatekeeper starts its fight" },
+  { re = 'script: VFSSecuritronGreeterREF says 0x', min = 3, max = 60, label = "the Gatekeeper says its lines one after another, not one a frame (2,231 in 40 s before #2582)" },
+]
+
+[[scenario]]
 name = "turret-base-stays"
 source = "#2561 (owner's screenshots 2026-11-14, engine/nvforever/src/turret_aim.rs): a floor turret turned its whole model to the player, base and feet included; the skeleton hangs Bip01 Yaw from the base by a hinge, so the base stays as placed and the yaw bone carries the turn"
 note = "a Mark VI floor turret (SVFloorTurret, sentryturret skeleton) placed at the player (GOD) at 3 s and set on the player; the player is put 300 units east of it at 6 s, a quarter turn from the heading it was placed with. The log line measures both bones on the drawn skeleton: their world rotations against those they had before the turn"
