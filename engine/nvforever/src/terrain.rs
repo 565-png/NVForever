@@ -48,12 +48,15 @@
 //! height blending (`Graphics::terrain_height_blend`, off by default and in both presets)
 //! gives the folded material's pipeline `TERRAIN_HEIGHT_BLEND` ([`TerrainLayersKey`]):
 //! terrain.wesl then turns the ordered blend into a weight for the base and each folded
-//! layer and boosts each by the texture's brightness at the texel less that texture's mean
-//! brightness (its coarsest mip, one texel read per contributing texture), so a layer comes
+//! layer and competes within a depth of the highest share-plus-height score. Height is
+//! raw decoded texel brightness less a global or local reference, so a layer comes
 //! in through its bright stones and clumps first (terrain_weights.wesl, mirrored on
 //! the CPU in the tests). A share of 0 stays 0 and a sole contributor keeps 1: fully painted
 //! and unpainted ground looks as without it. The switch flips the materials in place
-//! ([`sync_height_blend`]); new materials take the current setting.
+//! ([`sync_height_blend`]); new materials take the current setting. Start-up test aid
+//! `NVF_PLAY_TEST_HEIGHT_BLEND=depth:gain[:source]` configures it without enabling it:
+//! defaults `0.10:8:global` (the user's choice from in-game comparisons, 2026-11-15); `local` subtracts a coarser mip at the same UV. Equal heights
+//! sharpen unequal shares too; colour and normals use the same resulting weights.
 //!
 //! Only the folded draw is weighted: a quadrant's later layers that keep their blended
 //! draws (past [`folded_layers`]), and every layer where the GPU has no bindless textures,
@@ -105,6 +108,7 @@ use nvf_assets::model::ModelCtx;
 use nvf_assets::nif_material::sort_first;
 use nvf_assets::{nif_material, NifMaterial};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 #[derive(Resource)]
 pub struct TerrainSettings {
@@ -222,11 +226,78 @@ pub struct TerrainLayers {
 /// What terrain.wesl reads of a [`TerrainLayers`]: `counts` x the layer count, y a bit for
 /// each layer that has a normal map, z 1 when it has the burn map, w the feature bits
 /// ([`FEATURE_HEIGHT_BLEND`], [`FEATURE_ANTI_TILING`]); `tile` x [`TerrainLayers::tile`],
-/// y [`TerrainLayers::texture_repeat`].
+/// y [`TerrainLayers::texture_repeat`]; `height` the start-up
+/// (depth, gain, source ID: global 0 / local 1, reserved) [design, #2550].
 #[derive(Clone, Default, ShaderType)]
 pub struct TerrainLayersUniform {
     pub counts: UVec4,
     pub tile: Vec4,
+    pub height: Vec4,
+}
+
+/// Start-up comparison parameters [design, #2550], independent of the on/off key.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct HeightBlendParams {
+    depth: f32,
+    gain: f32,
+    local: bool,
+}
+
+impl Default for HeightBlendParams {
+    fn default() -> Self {
+        Self { depth: 0.10, gain: 8.0, local: false }
+    }
+}
+
+impl HeightBlendParams {
+    fn uniform(self) -> Vec4 {
+        Vec4::new(self.depth, self.gain, if self.local { 1.0 } else { 0.0 }, 0.0)
+    }
+}
+
+/// The smallest transition depth accepted (and the shader's floor) [design, #2550].
+const MIN_DEPTH: f32 = 0.001;
+
+/// Pure parser; invalid input falls back as a whole at the environment boundary.
+fn parse_height_blend(value: &str) -> Result<HeightBlendParams, &'static str> {
+    let fields: Vec<_> = value.split(':').collect();
+    if !(2..=3).contains(&fields.len()) {
+        return Err("expected depth:gain[:global|local]");
+    }
+    let depth: f32 = fields[0].parse().map_err(|_| "invalid depth")?;
+    let gain: f32 = fields[1].parse().map_err(|_| "invalid gain")?;
+    if !depth.is_finite() || depth < MIN_DEPTH {
+        return Err("depth must be finite and at least 0.001");
+    }
+    if !gain.is_finite() || gain < 0.0 {
+        return Err("gain must be finite and non-negative");
+    }
+    let local = match fields.get(2).copied().unwrap_or("global") {
+        "global" => false,
+        "local" => true,
+        _ => return Err("source must be global or local"),
+    };
+    Ok(HeightBlendParams { depth, gain, local })
+}
+
+fn height_blend_params() -> &'static HeightBlendParams {
+    static PARAMS: OnceLock<HeightBlendParams> = OnceLock::new();
+    PARAMS.get_or_init(|| match std::env::var("NVF_PLAY_TEST_HEIGHT_BLEND") {
+        Ok(value) => parse_height_blend(&value).unwrap_or_else(|why| {
+            warn!("terrain: invalid NVF_PLAY_TEST_HEIGHT_BLEND ({why}); using 0.10:8:global");
+            HeightBlendParams::default()
+        }),
+        Err(std::env::VarError::NotPresent) => HeightBlendParams::default(),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!("terrain: non-Unicode NVF_PLAY_TEST_HEIGHT_BLEND; using 0.10:8:global");
+            HeightBlendParams::default()
+        }
+    })
+}
+
+fn log_height_blend_params() {
+    let p = height_blend_params();
+    info!("terrain: height blend parameters algorithm=depth depth={} gain={} source={} height_limit=0.25 (start-up configuration; graphics switch enables)", p.depth, p.gain, if p.local { "local" } else { "global" });
 }
 
 /// Bit of `counts.w` set while the material blends by height (the pipeline's
@@ -243,7 +314,7 @@ impl From<&TerrainLayers> for TerrainLayersUniform {
         let most = if l.tile > 0.0 { FOLDED_LAYERS } else { FOLDED_LAYERS_WITH_UV };
         let features = if l.height_blend { FEATURE_HEIGHT_BLEND } else { 0 } | if TerrainLayersKey::from(l).anti_tiling { FEATURE_ANTI_TILING } else { 0 };
         let repeat = if nvf_assets::terrain_sampling::repeat_valid(l.texture_repeat) { l.texture_repeat } else { 0.0 };
-        TerrainLayersUniform { counts: UVec4::new(l.count.min(most as u32), bits, u32::from(l.burn.is_some()), features), tile: Vec4::new(l.tile.max(0.0), repeat, 0.0, 0.0) }
+        TerrainLayersUniform { counts: UVec4::new(l.count.min(most as u32), bits, u32::from(l.burn.is_some()), features), tile: Vec4::new(l.tile.max(0.0), repeat, 0.0, 0.0), height: height_blend_params().uniform() }
     }
 }
 
@@ -303,7 +374,7 @@ impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "terrain.wesl");
         bevy::asset::load_internal_asset!(app, WEIGHTS_SHADER, "terrain_weights.wesl", |s, _| bevy::shader::Shader::from_wesl(s, "embedded://nvforever/terrain_weights.wesl"));
-        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default()).add_systems(PostUpdate, (sync_height_blend, sync_anti_tiling));
+        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default()).add_systems(Startup, log_height_blend_params).add_systems(PostUpdate, (sync_height_blend, sync_anti_tiling));
     }
 }
 
@@ -1016,17 +1087,17 @@ mod tests {
     // CPU mirror of terrain_weights.wesl, line for line (its constants are checked against
     // the file below).
     const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
-    const HEIGHT_GAIN: f32 = 1.0;
+    // A fixture gain for the height function's own tests (the default is 8, tested above).
+    const HEIGHT_GAIN: f32 = 4.0;
     const HEIGHT_LIMIT: f32 = 0.25;
-    const HEIGHT_BAND: f32 = 0.10;
-    const EQUAL_EPS: f32 = 0.005;
+    const DEPTH: f32 = 0.10;
 
     fn luma(c: [f32; 3]) -> f32 {
         c[0] * LUMA[0] + c[1] * LUMA[1] + c[2] * LUMA[2]
     }
 
-    fn terrain_height(texel: [f32; 3], mean: [f32; 3]) -> f32 {
-        (HEIGHT_GAIN * (luma(texel) - luma(mean))).clamp(-HEIGHT_LIMIT, HEIGHT_LIMIT)
+    fn terrain_height(texel: [f32; 3], reference: [f32; 3], gain: f32) -> f32 {
+        (gain * (luma(texel) - luma(reference))).clamp(-HEIGHT_LIMIT, HEIGHT_LIMIT)
     }
 
     fn ordered_shares(a: [f32; 6], n: usize) -> [f32; 7] {
@@ -1041,24 +1112,23 @@ mod tests {
         w
     }
 
-    fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
-        let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
-        t * t * (3.0 - 2.0 * t)
-    }
-
-    fn height_weights(w: [f32; 7], h: [f32; 7]) -> [f32; 7] {
-        let p: Vec<f32> = w.iter().map(|x| x.max(0.0)).collect();
+    fn height_weights(w: [f32; 7], h: [f32; 7], depth: f32) -> [f32; 7] {
+        let mut p = w.map(|x| x.max(0.0));
         let total: f32 = p.iter().sum();
         if total <= 0.0 {
             return [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         }
-        let p: Vec<f32> = p.iter().map(|x| x / total).collect();
-        let mean: f32 = p.iter().zip(&h).map(|(p, h)| p * h).sum();
-        let spread: f32 = p.iter().zip(&h).map(|(p, h)| p * (h - mean) * (h - mean)).sum();
-        let gate = smoothstep(EQUAL_EPS * EQUAL_EPS, 4.0 * EQUAL_EPS * EQUAL_EPS, spread);
-        let q: Vec<f32> = p.iter().zip(&h).map(|(p, h)| p * ((1.0 - gate) + ((h - mean) / HEIGHT_BAND).clamp(-4.0, 4.0).exp2() * gate)).collect();
+        let mut score = [0.0f32; 7];
+        let mut highest = 0.0f32;
+        for i in 0..7 {
+            p[i] /= total;
+            score[i] = p[i] + h[i].clamp(-p[i], p[i]);
+            highest = highest.max(score[i]);
+        }
+        let d = depth.max(MIN_DEPTH);
+        let q: [f32; 7] = std::array::from_fn(|i| p[i] * (d - (highest - score[i])).max(0.0));
         let sum: f32 = q.iter().sum();
-        std::array::from_fn(|i| q[i] / sum)
+        q.map(|x| x / sum)
     }
 
     fn close7(a: [f32; 7], b: [f32; 7], tol: f32) -> bool {
@@ -1073,10 +1143,7 @@ mod tests {
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap_or_else(|e| panic!("{e:?}"));
         for line in [
             "const TERRAIN_LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);",
-            "const TERRAIN_HEIGHT_GAIN: f32 = 1.0;",
             "const TERRAIN_HEIGHT_LIMIT: f32 = 0.25;",
-            "const TERRAIN_HEIGHT_BAND: f32 = 0.10;",
-            "const TERRAIN_EQUAL_EPS: f32 = 0.005;",
         ] {
             assert!(source.contains(line), "terrain_weights.wesl must declare `{line}` (the tests' mirror)");
         }
@@ -1086,6 +1153,23 @@ mod tests {
         for f in ["fn terrain_height(", "fn terrain_ordered_shares(", "fn terrain_height_weights("] {
             assert!(source.contains(f), "{f}");
         }
+    }
+
+    #[test]
+    fn height_reference_sampling_is_valid_wgsl() {
+        use wgpu::naga;
+        // Validate the actual shared reference sampler, including its texture/sampler
+        // arguments and explicit LOD. Runtime smoke covers the active binding form.
+        // Line endings as checked out (CRLF on Windows) normalised before cutting the function out.
+        let terrain = include_str!("terrain.wesl").replace("\r\n", "\n");
+        // From the plain-value helper through the non-bindless reader that calls it; the WESL
+        // conditions in front of each `fn` are left out of the cut.
+        let start = terrain.find("fn height_reference_at(").unwrap();
+        let reader = terrain.find("fn height_reference(").unwrap();
+        let end = reader + terrain[reader..].find("\n}\n").unwrap() + 2;
+        let source = format!("struct View {{ mip_bias: f32 }} @group(0) @binding(0) var<uniform> view: View;\n{}", terrain[start..end].replace("@if(TERRAIN_HEIGHT_BLEND) ", ""));
+        let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap_or_else(|e| panic!("{e:?}"));
     }
 
     #[test]
@@ -1123,63 +1207,104 @@ mod tests {
                 let sum: f32 = w.iter().zip(&colours).map(|(w, colour)| w * colour[c]).sum();
                 assert!((sum - want).abs() < 1e-5, "case {case}: {sum} vs {want}");
             }
-            // Equal heights: the height weights are those shares.
-            assert!(close7(height_weights(w, [0.1; 7]), w, 1e-6));
+            // A sufficiently large depth converges to the ordered shares, even though
+            // equal heights at the starting depth now sharpen unequal shares.
+            assert!(close7(height_weights(w, [0.1; 7], 1e6), w, 2e-6));
         }
     }
 
     #[test]
     fn height_weights_keep_what_the_data_paints() {
         let heights = [0.2, -0.25, 0.25, 0.0, -0.1, 0.15, 0.05];
-        // Unpainted: the base alone, whatever the heights.
-        let none = ordered_shares([0.0; 6], 6);
-        assert_eq!(height_weights(none, heights), [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
-        // Every layer fully painted: the last wins, alone.
-        let full = ordered_shares([1.0; 6], 6);
-        assert_eq!(full, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
-        assert_eq!(height_weights(full, heights), full);
-        // A layer fully painted over the base and the earlier layers: it alone.
-        let third = ordered_shares([0.5, 0.7, 1.0, 0.0, 0.0, 0.0], 6);
-        assert_eq!(height_weights(third, heights), [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]);
-        // A share of 0 stays 0, a tiny one survives, all are non-negative and sum to 1.
+        for (paint, expected) in [
+            ([0.0; 6], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            ([1.0; 6], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]),
+            ([0.5, 0.7, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+        ] {
+            assert_eq!(height_weights(ordered_shares(paint, 6), heights, DEPTH), expected);
+        }
         let w = ordered_shares([0.4, 0.0, 1e-4, 0.6, 0.0, 0.3], 6);
-        let f = height_weights(w, heights);
-        for (i, (fi, wi)) in f.iter().zip(w).enumerate() {
+        let f = height_weights(w, heights, DEPTH);
+        for (fi, wi) in f.iter().zip(w) {
             assert!(*fi >= 0.0 && fi.is_finite(), "{f:?}");
-            assert_eq!(*fi == 0.0, wi == 0.0, "{i}: {w:?} -> {f:?}");
+            if wi == 0.0 {
+                assert_eq!(*fi, 0.0);
+            }
         }
         assert!((f.iter().sum::<f32>() - 1.0).abs() < 1e-5);
-        // Height decides the transition band: of two equal shares the higher texture takes
-        // more, by 2^(difference / band).
-        let half = ordered_shares([0.5, 0.0, 0.0, 0.0, 0.0, 0.0], 1);
-        assert!(close7(half, [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0], 1e-7));
-        let f = height_weights(half, [-0.05, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0]);
-        assert!((f[1] / f[0] - 2.0).abs() < 1e-4, "{f:?}: one band apart");
-        let f = height_weights(half, [-HEIGHT_LIMIT, HEIGHT_LIMIT, 0.0, 0.0, 0.0, 0.0, 0.0]);
-        assert!((f[1] / f[0] - 32.0).abs() < 1e-2, "{f:?}: the height limit caps it at five bands apart");
-        // Nearly equal heights take the linear shares; the gate opens over a narrow spread.
-        let f = height_weights(half, [0.0, 0.004, 0.0, 0.0, 0.0, 0.0, 0.0]);
-        assert!(close7(f, half, 1e-6), "{f:?}");
-        let f = height_weights(half, [0.0, 0.02, 0.0, 0.0, 0.0, 0.0, 0.0]);
-        assert!(f[1] > 0.53, "{f:?}: the gate is open at a spread of twice the threshold");
-        // A height on a zero share changes nothing (the spread and the mean are by share).
-        let w = ordered_shares([0.5, 0.0, 0.0, 0.0, 0.0, 0.0], 6);
-        assert_eq!(height_weights(w, [0.0, 0.0, 0.25, -0.25, 0.25, -0.25, 0.25]), height_weights(w, [0.0; 7]));
-        // No share at all (never from the ordered shares, which sum to 1): the base.
-        assert_eq!(height_weights([0.0; 7], heights), [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(height_weights([0.0; 7], heights, DEPTH), [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        let half = [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let f = height_weights(half, [-0.05, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0], DEPTH);
+        assert!(close7(f, [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], 1e-6), "{f:?}");
+        assert!(close7(height_weights(half, [0.0; 7], DEPTH), half, 1e-6));
+        let unequal = [0.6, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0];
+        assert_eq!(height_weights(unequal, [0.0; 7], DEPTH), [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        // Inactive heights have no vote, even at their extremes.
+        assert_eq!(height_weights(half, [0.0, 0.0, 0.25, -0.25, 0.25, -0.25, 0.25], DEPTH), height_weights(half, [0.0; 7], DEPTH));
+    }
+
+    #[test]
+    fn depth_weights_are_continuous_at_share_and_height_boundaries() {
+        let epsilon = 1e-6;
+        // Appearance/disappearance, equal shares, a score crossing the depth cutoff,
+        // and a score crossing the share cap. No equal-height gate or special cases.
+        for h in [[0.0; 7], [-0.05, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0], [0.25, -0.25, 0.0, 0.0, 0.0, 0.0, 0.0]] {
+            for a in [0.0f32, 1e-4, 0.25, 0.45, 0.5, 0.55, 0.75, 1.0] {
+                let weights = |a: f32| height_weights(ordered_shares([a, 0.0, 0.0, 0.0, 0.0, 0.0], 1), h, DEPTH);
+                assert!(close7(weights((a - epsilon).max(0.0)), weights((a + epsilon).min(1.0)), 1e-4), "a={a} h={h:?}");
+            }
+        }
+        let half = [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0];
+        for h in [-0.1, 0.0, 0.1] {
+            let weights = |h| height_weights(half, [0.0, h, 0.0, 0.0, 0.0, 0.0, 0.0], DEPTH);
+            assert!(close7(weights(h - epsilon), weights(h + epsilon), 1e-4));
+        }
+    }
+
+    #[test]
+    fn large_depth_converges_to_ordered_shares() {
+        let w = ordered_shares([0.4, 0.0, 1e-4, 0.6, 0.0, 0.3], 6);
+        let h = [0.2, -0.25, 0.25, 0.0, -0.1, 0.15, 0.05];
+        let error = |d| height_weights(w, h, d).iter().zip(w).map(|(a, b)| (a - b).abs()).sum::<f32>();
+        assert!(error(100.0) < error(1.0));
+        assert!(error(1e6) < 2e-6);
+    }
+
+    #[test]
+    fn height_blend_parameters_parse_without_changing_the_environment() {
+        assert_eq!(HeightBlendParams::default().gain, 8.0);
+        assert_eq!(HeightBlendParams::default().depth, DEPTH);
+        assert_eq!(parse_height_blend("0.10:8"), Ok(HeightBlendParams::default()));
+        assert_eq!(parse_height_blend("0.10:8:global"), Ok(HeightBlendParams::default()));
+        assert_ne!(parse_height_blend("0.10:4"), Ok(HeightBlendParams::default()));
+        let local = parse_height_blend("0.05:8:local").unwrap();
+        assert_eq!(local.uniform(), Vec4::new(0.05, 8.0, 1.0, 0.0));
+        assert_eq!(parse_height_blend("1:0").unwrap().uniform(), Vec4::new(1.0, 0.0, 0.0, 0.0));
+        assert_eq!(parse_height_blend("0.001:4").unwrap().depth, MIN_DEPTH);
+        for invalid in ["", "0.1", "0.1:4:", "0.1:4:GLOBAL", "0.1:4:local:extra", "0:4", "0.0009:4", "0.00000001:8:local", "-1:4", "NaN:4", "inf:4", "0.1:NaN", "0.1:inf", "0.1:-1", ":4", "0.1:", "abc:4"] {
+            assert!(parse_height_blend(invalid).is_err(), "{invalid}");
+        }
+        // The additional uniform does not enter TerrainLayersKey or enable the effect.
+        assert_eq!(TerrainLayersUniform::min_size().get(), 48);
+        let off = TerrainLayers::default();
+        assert!(!TerrainLayersKey::from(&off).height_blend);
+        assert_eq!(TerrainLayersUniform::from(&off).height, height_blend_params().uniform());
     }
 
     #[test]
     fn a_texel_height_is_its_brightness_over_its_textures_mean() {
-        assert_eq!(terrain_height([0.5; 3], [0.5; 3]), 0.0);
-        assert!((terrain_height([0.6; 3], [0.5; 3]) - 0.1).abs() < 1e-6);
+        assert_eq!(terrain_height([0.5; 3], [0.5; 3], HEIGHT_GAIN), 0.0);
+        assert!((terrain_height([0.55; 3], [0.5; 3], HEIGHT_GAIN) - 0.2).abs() < 1e-6);
+        assert_eq!(terrain_height([0.6; 3], [0.5; 3], 0.0), 0.0);
+        assert!((terrain_height([0.55; 3], [0.5; 3], 1.0) - 0.05).abs() < 1e-6);
+        assert_eq!(terrain_height([0.55; 3], [0.5; 3], 8.0), HEIGHT_LIMIT);
         // A bright texture does not stand higher for being bright: only the texel against
         // its own texture's mean counts.
-        assert_eq!(terrain_height([0.9; 3], [0.9; 3]), terrain_height([0.1; 3], [0.1; 3]));
-        assert_eq!(terrain_height([1.0; 3], [0.0; 3]), HEIGHT_LIMIT);
-        assert_eq!(terrain_height([0.0; 3], [1.0; 3]), -HEIGHT_LIMIT);
+        assert_eq!(terrain_height([0.9; 3], [0.9; 3], HEIGHT_GAIN), terrain_height([0.1; 3], [0.1; 3], HEIGHT_GAIN));
+        assert_eq!(terrain_height([1.0; 3], [0.0; 3], HEIGHT_GAIN), HEIGHT_LIMIT);
+        assert_eq!(terrain_height([0.0; 3], [1.0; 3], HEIGHT_GAIN), -HEIGHT_LIMIT);
         // Green counts most, blue least.
-        assert!(terrain_height([0.0, 0.1, 0.0], [0.0; 3]) > terrain_height([0.1, 0.0, 0.0], [0.0; 3]));
+        assert!(terrain_height([0.0, 0.1, 0.0], [0.0; 3], HEIGHT_GAIN) > terrain_height([0.1, 0.0, 0.0], [0.0; 3], HEIGHT_GAIN));
     }
 
     #[test]
@@ -1281,8 +1406,8 @@ mod tests {
             "                w[k + 1u] = a * remaining;",
             "                remaining *= 1.0 - a;",
             "            if w[0] != 0.0 {",
-            "                    height[0] = terrain_height(raw[0].rgb, base_mean(in.instance_index));",
-            "                        height[k + 1u] = terrain_height(raw[k + 1u].rgb, layer_mean(k, in.instance_index));",
+            "                    height[0] = terrain_height(raw[0].rgb, base_reference(in.instance_index, vec2(0.5), vec2(0.0), vec2(0.0), 0.0), anti_params.y);",
+            "                        height[k + 1u] = terrain_height(raw[k + 1u].rgb, layer_reference(k, in.instance_index, vec2(0.5), vec2(0.0), vec2(0.0), 0.0), anti_params.y);",
         ] {
             assert!(terrain.contains(line), "terrain.wesl: `{line}`");
         }
@@ -1353,9 +1478,13 @@ mod tests {
             }
             assert_eq!(read[0], w[0] != 0.0);
             // With height blending, a texture not read has a share of 0 and keeps it.
-            let f = height_weights(w, [0.2, -0.25, 0.25, 0.0, -0.1, 0.15, 0.05]);
-            for i in 0..7 {
-                assert!(read[i] || f[i] == 0.0, "case {case}: {i} unread but weighted");
+            for depth in [MIN_DEPTH, DEPTH, 0.5, 1e6] {
+                let f = height_weights(w, [0.2, -0.25, 0.25, 0.0, -0.1, 0.15, 0.05], depth);
+                assert!(f.iter().all(|x| x.is_finite() && *x >= 0.0));
+                assert!((f.iter().sum::<f32>() - 1.0).abs() < 1e-5);
+                for i in 0..7 {
+                    assert!(read[i] || f[i] == 0.0, "case {case}, depth {depth}: {i} unread but weighted");
+                }
             }
         }
         // A fully covering later layer: everything under it (the base too) is not read.
