@@ -287,6 +287,17 @@ location, in cell (radius ignored), near reference; the radius is editable.
   setting: its own rule for the object just used, and for the only object open
   (60 s, issue #1505), is a design choice under the maintainer's review
   (docs/design/actor-behaviour.md §5.5, docs/owner-review.md; observer check 114 asks the original).
+  The action-type rule permits repetition “unless it has no other options”
+  [documented: GECK wiki, [Sandbox Package, Action Selection](https://geckwiki.com/index.php?title=Sandbox_Package),
+  offline revision 32636]. An idle-marker-only package with just its last marker open
+  reuses that marker at expiry without Standing [design, #2715:
+  `fnv_ai::sandbox::Allowed::only_idle_markers`, `Sandbox::next`]. All five other
+  behaviours must be disabled; permitting one retains the default even when it has
+  no available choices [design, #2715: `Sandbox::next`]. Pacer's cower package permits only idle markers and names
+  VFSNCRFightPacerMarkerREF (REFR 0x001293EC), DefaultCowerIdleMarker (IDLM 0x000C47CC,
+  timer 0), with LooseCowerIdles (0x000C0A9A, looping 3rdP_Cowering.kf)
+  [documented: #2715 issue comment, supplied record findings]. That he stays cowering
+  throughout the original's staged fight is unmeasured [hypothesis; observer check 213].
 - **Patrol**: walk the chain of linked references; repeatable patrols loop (or go back
   and forth) and start at the nearest point; non-repeatable ones start at the first point
   and are done at the last; data on the points (Idle Markers, XMarkerHeading: idle time,

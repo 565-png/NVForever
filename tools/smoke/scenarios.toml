@@ -29966,3 +29966,21 @@ order = [[
 expect = [
   { re = 'vats mode summary: entered 1 times, 0 marks, 0 shots, 0 AP spent, 1 refused', label = "one stay, one refusal" },
 ]
+
+[[scenario]]
+name = "pacer-cower-sole-marker"
+source = "[documented: #2715 issue comment, supplied record findings] VFSPacerCowerNCRFightPackage permits only idle markers; VFSNCRFightPacerMarkerREF (0x001293EC) uses DefaultCowerIdleMarker (timer 0) and looping LooseCowerIdles. [documented: GECK wiki Sandbox Package, Action Selection] The action-type rule allows repetition unless it has no other options. [design, #2715] Sandbox::next reuses the last marker immediately only for an idle-marker-only package with that sole eligible marker; observer check 213 measures original parity."
+note = "[design: engine/nvf-play/src/script.rs script aids, engine/nvforever/src/residents.rs sandbox logs, idles.rs marker debug logs] Start VMS19, set ncrfight 1, place Pacer at his named marker as the King's scene does, then move the player nearby. Require the cower animation, at least four marker choices, no Standing pick, and procedure 46 at 118 s, at least 90 s after cowering began. The placement offsets are synthetic staging choices."
+areas = ["ai", "animation", "scripts"]
+paths = ["crates/fnv-ai/src/sandbox.rs", "crates/fnv-ai/src/carry.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/idles.rs"]
+env = { RUST_LOG = "info,nvforever::idles=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:start:VMS19,3:var:VMS19:ncrfight:1,4:moveto:VFSPacerREF:VFSNCRFightPacerMarkerREF,6:moveto:player:VFSNCRFightPacerMarkerREF:0:-250:0", NVF_PLAY_TEST_CONSOLE = "118:VFSPacerREF.GetCurrentAIProcedure;118.5:close" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "14", "--no-voice", "--no-messages", "--npc-packages", "all,VFSPacerREF"]
+run_seconds = 130
+expect = [
+  { text = "VFSPacerREF: package VFSPacerCowerNCRFightPackage", label = "Pacer selects his staged-fight sandbox" },
+  { re = 'VFSPacerREF: sandbox: goes to idle marker 0x001293EC', min = 4, label = "Pacer reselects his sole marker through repeated timer expiries" },
+  { re = 'idle: VFSPacerREF plays LooseCowerIdles .*\(MarkerIdles\)', label = "the marker plays Pacer's cower idle" },
+  { re = 'VFSPacerREF: sandbox: stands', count = 0, label = "no Standing stretch between marker uses" },
+  { re = 'console: GetCurrentAIProcedure on VFSPacerREF >> 46\.00', count = 1, label = "Pacer is still using the idle marker at 118 seconds" },
+  { gap = ["idle: VFSPacerREF plays LooseCowerIdles", "console: GetCurrentAIProcedure on VFSPacerREF >> 46.00"], range = [90, 125], label = "the no-Standing observation spans at least 90 simulation seconds" },
+]

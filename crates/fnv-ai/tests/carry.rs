@@ -5923,28 +5923,102 @@ fn a_disabled_second_chair_leaves_the_first_as_the_only_one() {
     }
 }
 
-/// An idle marker as the only object: the same minute of standing between its uses, never
-/// the look right after one.
+/// [design, #2715] Any other allowed behaviour keeps the #1505 default even when
+/// it has no available objects or wander route (`Sandbox::next`).
 #[test]
-fn a_sandboxs_only_idle_marker_is_used_again_after_a_minute_of_something_else() {
-    let f = sole_object_sandboxer(false, true);
-    assert!(f.data.issues.is_empty(), "{:?}", f.data.issues.to_json());
-    let mut s = sim(&f, &[R_SB_OBJECTS]);
-    s.nav = way_restored();
-    let marker = Doing::AtIdleMarker(FormId(SOLE_MARKER));
-    s.run(900.0);
-    let allowed = s.ai.agents[&FormId(R_SB_OBJECTS)].sandbox.as_ref().unwrap().allowed;
-    assert!(allowed.idle_markers && !allowed.furniture && !allowed.wandering);
-    let did = timed_doings(&s);
-    assert!(did.iter().all(|d| d.1 == marker || d.1 == Doing::Standing), "{did:?}");
-    assert!(did.iter().filter(|d| d.1 == marker).count() >= 3, "{did:?}");
-    // A marker's stint ends at a look, which stands: the time it ended is that look.
-    let ended: Vec<f64> = did.windows(2).filter(|w| w[0].1 == marker).map(|w| w[1].0).collect();
-    for (first_stand, again) in sole_object_gaps(&did, marker, &ended) {
-        assert!(again - first_stand >= SOLE_OBJECT_AGAIN_AFTER, "{first_stand} to {again}");
-        assert!(again - first_stand < SOLE_OBJECT_AGAIN_AFTER + 10.0, "{first_stand} to {again}");
+fn a_sole_idle_marker_with_other_behaviours_keeps_the_minute_of_something_else() {
+    for enabled in [type_flags::NO_WANDERING, type_flags::NO_EATING, type_flags::NO_SLEEPING, type_flags::NO_CONVERSATION, type_flags::NO_FURNITURE] {
+        let mut f = sole_object_sandboxer(false, true);
+        f.data.package_defs.get_mut(&FormId(P_SB_OBJECTS)).unwrap().type_flags &= !enabled;
+        f.refs.refs.get_mut(&FormId(R_SB_OBJECTS)).unwrap().pos = SOLE_MARKER_AT;
+        assert!(f.data.issues.is_empty(), "{:?}", f.data.issues.to_json());
+        let mut s = sim(&f, &[R_SB_OBJECTS]);
+        // [design: synthetic fixture] No navmesh: wandering is permitted but unavailable.
+        s.nav = NavGraph::assemble(&[]);
+        let marker = Doing::AtIdleMarker(FormId(SOLE_MARKER));
+        s.run(900.0);
+        let did = timed_doings(&s);
+        assert!(did.iter().all(|d| d.1 == marker || d.1 == Doing::Standing), "{enabled:#x}: {did:?}");
+        assert!(did.iter().filter(|d| d.1 == marker).count() >= 3, "{enabled:#x}: {did:?}");
+        let ended: Vec<f64> = did.windows(2).filter(|w| w[0].1 == marker).map(|w| w[1].0).collect();
+        for (first_stand, again) in sole_object_gaps(&did, marker, &ended) {
+            assert!(again - first_stand >= SOLE_OBJECT_AGAIN_AFTER, "{first_stand} to {again}");
+            assert!(again - first_stand < SOLE_OBJECT_AGAIN_AFTER + 10.0, "{first_stand} to {again}");
+        }
+        assert_eq!(package_events(&s), 1);
     }
-    assert_eq!(package_events(&s), 1);
+}
+
+/// [design, #2715] Idle-only packages reuse their sole marker at each expiry,
+/// including a zero timer's default duration (`Sandbox::next`).
+#[test]
+fn an_idle_marker_only_sandbox_keeps_its_sole_marker_without_standing() {
+    for timer in [0.0, 10.0] {
+        let mut f = sole_object_sandboxer(false, true);
+        f.data.idle_markers.get_mut(&FormId(IDLE_MARKER)).unwrap().timer = timer;
+        f.refs.refs.get_mut(&FormId(R_SB_OBJECTS)).unwrap().pos = SOLE_MARKER_AT;
+        let mut s = sim(&f, &[R_SB_OBJECTS]);
+        let marker = Doing::AtIdleMarker(FormId(SOLE_MARKER));
+        s.run(1.0);
+        for _ in 0..360 {
+            s.run(0.5);
+            assert_eq!(s.ai.agents[&FormId(R_SB_OBJECTS)].sandbox.as_ref().unwrap().doing, marker);
+        }
+        let did = timed_doings(&s);
+        assert!(did.len() >= 5, "timers expired repeatedly: {did:?}");
+        assert!(did.iter().all(|d| d.1 == marker), "{did:?}");
+        assert_eq!(package_events(&s), 1);
+    }
+}
+
+/// [design, #2715] Restoring daily rolls does not introduce an initial marker wait
+/// (`Ai::settle`, `Sandbox::start`, `Sandbox::set_schedule`).
+#[test]
+fn a_loaded_idle_marker_only_sandbox_picks_its_marker_on_the_first_update() {
+    let mut f = sole_object_sandboxer(false, true);
+    f.refs.refs.get_mut(&FormId(R_SB_OBJECTS)).unwrap().pos = SOLE_MARKER_AT;
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    let actor = FormId(R_SB_OBJECTS);
+    s.run(40.0);
+    let schedule = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
+    let json = serde_json::to_string(&s.ai.progress()).unwrap();
+    let mut ai = Ai::new(AiConfig::default());
+    ai.add(&s.game, actor).unwrap();
+    ai.restore(serde_json::from_str(&json).unwrap());
+    s.ai = ai;
+    let loaded_at = s.game.time;
+    s.run(0.5);
+    let sb = s.ai.agents[&actor].sandbox.as_ref().unwrap();
+    assert_eq!(sb.doing, Doing::AtIdleMarker(FormId(SOLE_MARKER)));
+    assert_eq!(sb.times(), (schedule.sleep, schedule.meals));
+    assert_eq!(timed_doings(&s), vec![(loaded_at + 0.5, Doing::AtIdleMarker(FormId(SOLE_MARKER)))]);
+    assert!(s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Resumed { sandbox: true, .. })));
+}
+
+/// [design, #2715] Another eligible idle marker still takes priority over the last;
+/// disabled markers remain excluded (`Sandbox::objects`, `Sandbox::next`).
+#[test]
+fn an_idle_marker_only_sandbox_alternates_markers_and_excludes_disabled_ones() {
+    let mut f = sole_object_sandboxer(false, true);
+    let second = FormId(SECOND_CHAIR);
+    let mut placed = f.refs.refs[&FormId(SOLE_MARKER)].clone();
+    placed.id = second;
+    placed.pos[0] += 100.0;
+    f.refs.refs.insert(second, placed);
+    f.refs.by_cell.get_mut(&FormId(CELL_C)).unwrap().push(second);
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    s.run(180.0);
+    let did = doings(&s, R_SB_OBJECTS);
+    let markers = [Doing::AtIdleMarker(FormId(SOLE_MARKER)), Doing::AtIdleMarker(second)];
+    assert!(did.len() >= 5, "{did:?}");
+    assert!(did.iter().all(|d| markers.contains(d)), "{did:?}");
+    assert!(did.windows(2).all(|w| w[0] != w[1]), "{did:?}");
+    s.game.world.set_enabled(FormId(SOLE_MARKER), false).unwrap();
+    s.game.world.set_enabled(second, false).unwrap();
+    s.ai.events.clear();
+    s.run(90.0);
+    let did = doings(&s, R_SB_OBJECTS);
+    assert!(!did.is_empty() && did.iter().all(|d| *d == Doing::Standing), "{did:?}");
 }
 
 /// A chair and an idle marker: each is the other's "something else", so the actor goes

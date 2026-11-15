@@ -2687,3 +2687,19 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
+
+## Added 2026-11-16 (Pacer's cover, #2715)
+
+213. **Does Pacer keep cowering throughout the staged NCR fight, including after a load?**
+    (P2; `fnv_ai::sandbox`, #2715 part 3.) His VFSPacerCowerNCRFightPackage
+    (PACK 0x00129434) permits only idle markers; VFSNCRFightPacerMarkerREF
+    (REFR 0x001293EC) uses DefaultCowerIdleMarker (IDLM 0x000C47CC, timer 0),
+    with LooseCowerIdles (0x000C0A9A, looping 3rdP_Cowering.kf)
+    [documented: #2715 issue comment, supplied record findings]. With VMS19 ncrfight
+    at 1, watch Pacer from the start for at least 120 seconds without talking or
+    starting combat. Does he ever stand upright between cower loops? Save while
+    he cowers, reload, and measure the time until he cowers again. NVForever reuses
+    the sole marker at each timer expiry when every other behaviour is disabled
+    [design, #2715: `Allowed::only_idle_markers`, `Sandbox::next`]; continuous cower
+    in the original is provisional [hypothesis]. This leaves the general sole-object
+    60-second rule and observer check 114 intact [design, #1505, #2715].
