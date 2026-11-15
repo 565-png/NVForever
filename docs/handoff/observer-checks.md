@@ -2200,7 +2200,7 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
 
 ## Added 2026-11-14 (NPC launcher round visibility, #2512)
 
-145. **When does an NPC launcher show its loaded round?** (P2; #2512,
+167. **When does an NPC launcher show its loaded round?** (P2; #2512,
      animation.md section 9.7.) [documented: issue #2512 and animation.md section 9.7]
      The supplied missile launcher/Fat Man/dart-gun clips hide `##NifRound` in their
      attack and show it during reload; the third-person launcher aim has no round
