@@ -16469,6 +16469,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "combat-explosive-too-close"
+source = "#2745 (owner 2026-11-15): Boomers in the Nellis barracks stood with their grenade launchers and let the player kill them; a fighter whose explosive weapon cannot fire at a target inside its blast, still too close after 2 s, takes up another weapon or its fists (docs/design/combat-ai.md §22)"
+note = "Violet's items replaced with a grenade launcher (blast 750: no shot nearer than 814) and its grenades, the player moved 300 units from her at 12 s, god mode; she holds fire within the blast, puts the launcher away and fights with her fists"
+areas = ["combat"]
+paths = ["crates/fnv-ai/src/rearm.rs", "crates/fnv-game/src/rearm.rs", "crates/fnv-game/src/style_weapon.rs", "engine/nvforever/src/npc_combat.rs", "engine/nvforever/src/outfits.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "12:moveto:player:FiendVioletRef:300:0:0,12.5:call:FiendVioletRef:RemoveAllItems,12.6:call:FiendVioletRef:AddItem:WeapNVGrenadeLauncher:1,12.6:call:FiendVioletRef:AddItem:Ammo40mmGrenade:12,12.7:call:FiendVioletRef:EquipItem:WeapNVGrenadeLauncher,13:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "FiendVioletRef"]
+run_seconds = 35
+expect = [
+  { re = 'npc combat: FiendVioletRef \S+ fights the player with WeapNVGrenadeLauncher \(gun\)', label = "she fights with the grenade launcher first" },
+  { re = "holds fire: the player is within its weapon's blast", label = "she holds fire with the player inside the blast" },
+  { re = 'rearm: puts away .* for its fists', label = "she puts the launcher away" },
+  { re = 'npc combat: FiendVioletRef \S+ fights the player with its fists', label = "she fights with her fists" },
+]
+
+[[scenario]]
 name = "console-compiled-source"
 source = "extender task A6 (docs/spec-notes/script-compiler.md §7, docs/design/console.md): a console line with an expression goes through the script compiler and runs as a one-line result script"
 areas = ["console", "scripts"]
