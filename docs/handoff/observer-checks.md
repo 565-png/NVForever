@@ -1272,7 +1272,7 @@ The numbers above stay put so links to them hold; each item here gives its own p
 
 ## Added 2026-11-04 (the tutorial menu from its file, issue #978)
 
-82. **What does `clipwindow` do?** (P3; menu-xml.md §3.1.1.) Answered in part (private
+196. **What does `clipwindow` do?** (P3; menu-xml.md §3.1.1.) Answered in part (private
     capture hud_tutorial_more, 1280 x 720) [observed]: in the drawing it is a rectangular
     crop of the descendants, a scrolled line stopping part way at the column's top and bottom
     edges. Still open: whether a click below the column's edge reaches a tile inside it (a
