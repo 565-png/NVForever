@@ -2531,6 +2531,16 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the World Map draw a second marker at the Strip's gate while the player is on the
      Strip?
 
+## Added 2026-11-14 (Mr. House's screens after his death, #2431)
+
+181. **Is Mr. House's penthouse screen ever hostile?** (P3; #2431, actor-flags.md §11.)
+     Ours: an Immobile, Unaggressive, Helps-Nobody, unarmed creature never fights
+     [hypothesis]. To check: kill Mr. House in his chamber (after the terminal unseals
+     it), go back up to the penthouse and look at the screen (Lucky38MrHouseREF
+     0x001264C5): red crosshair, red compass tick, does `GetCombatTarget` on it read the
+     player, does it turn? Then shoot it: does it take damage? The same for Festus
+     (NVCRFestus) when shot.
+
 ## Added 2026-11-14 (talking activators with no talking actor set, #2454)
 
 185. **Who speaks through a talking activator no script has given an actor?** (P2; #2454,

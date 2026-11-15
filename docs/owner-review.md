@@ -686,6 +686,15 @@ the spec it links to.
     "gone" to scripts that test it). Observer check 172 asks the original.
     ([doors §6](spec-notes/doors.md))
 
+68. **Fixtures never fight: Mr. House's screens and chamber, and Festus (#2431).** An
+    Immobile creature that is Unaggressive, Helps Nobody and carries no weapon is never
+    hostile, takes no combat target and never turns, whatever the player did (murder,
+    hits, faction enmity). That rule, from the records alone, covers MrHouse,
+    MrHouseOFFLINE, NVCRMrHouse and also NVCRFestus; turrets are untouched (they carry
+    guns). The screens take no damage (their records are Invulnerable); House's body
+    can still be killed once the terminal unseals the chamber, as you ruled. Please
+    check Festus behaves as you expect, and the penthouse screen after House's death.
+    ([actor flags §11](spec-notes/actor-flags.md))
 69. **Quest targets several doors deep: which door the World Map marks (#2458).** Colonel
     Moore (For the Republic, Part 2) stands in a power plant room of Hoover Dam that no
     outdoor door leads into directly, so the World Map had no marker for her. The same

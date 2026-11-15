@@ -39,6 +39,7 @@ mod effect_updates;
 mod experience;
 mod extender_conditions;
 mod factions;
+mod fixtures_data;
 mod functions;
 mod game_clock;
 mod hit_effects_data;
