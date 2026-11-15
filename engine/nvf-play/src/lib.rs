@@ -86,6 +86,7 @@ pub mod challenges;
 pub mod poker;
 pub mod menu;
 pub mod mod_log;
+pub mod grass_fire;
 pub mod mines;
 pub mod thrown;
 pub mod perk_marks;
@@ -418,6 +419,7 @@ impl Plugin for PlayPlugin {
             .add_plugins(jip_physics::JipPhysicsPlugin)
             .add_plugins(script_quantity::ScriptQuantityPlugin)
             .add_plugins(mines::MinesPlugin)
+            .add_plugins(grass_fire::GrassFirePlugin)
             .add_plugins(thrown::ThrownPlugin)
             .add_plugins(falls::FallsPlugin)
             .add_plugins(swing_traps::SwingTrapsPlugin)

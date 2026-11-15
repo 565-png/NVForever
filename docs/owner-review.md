@@ -218,6 +218,15 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- **Grass fires: size, speed and regrowth (#2567).** [design] Burning weapons and blasts
+  light generated grass; a fire spreads in 64-unit patches (0.5-1.5 s a step, faster
+  downwind), each patch burns 6 s, and a fire stops at 1,024 units from its start or 500
+  patches, at most 8 fires at once. Anyone standing in it catches the source's burn,
+  credited to whoever started it. Burnt grass grows back whenever its cell reloads (not
+  kept in saves). Bigger reach, a slower front, fires that leave the ground scorched for a
+  game day, or trees and shrubs that burn too are each a figure or a follow-up away.
+  [grass-fire](design/grass-fire.md)
+
 - **NPC conversations go on past a Goodbye line that links on (#2451).** [hypothesis,
   #2451] The editor's documentation says a Goodbye line ends a conversation between
   NPCs; ours ends it only when the line links nowhere, because the data needs it:
@@ -452,6 +461,36 @@ the spec it links to.
     (item 5, second part) is not built yet.
     ([pickpocket §5](spec-notes/pickpocket.md))
 
+71. **Armour only ever worn has no look on the ground (#2439).** The two floating
+    backpacks at the Fort were not the slaves' packs. They are two placed references of
+    the Slave Backpack armour (0x0013732C and 0x0013732D), 565 and 913 units up with
+    nothing under them; the record has no ground model, so its worn model was drawn there.
+    Ours now: Non-Playable armour without a ground model is not drawn or collided as a
+    world object (the player can never pick it up). It is still drawn on the slaves who
+    wear it. Playable armour without a ground model still lies as its worn model. If you
+    would rather see these two packs, they would have to be dropped to the ground (they
+    have no collision of their own). Observer check 142 asks what the original shows.
+    ([simulation §3 Item models](spec-notes/simulation.md))
+72. **A sprung trap stays sprung when drawn again (#2420).** Ranger Station Charlie's
+    door and tripwire come in with an enable parent the station's trigger script turns
+    on. The door was drawn without its door animation, so it looked shut while it was
+    open and its collision had swung away; it now opens and closes as a door. The
+    tripwire went off once only, but each cell load drew it armed again: its script asks
+    an "Open" sequence its model does not have, and that was what it showed. Ours now
+    forgets a group the model lacks and shows the one before (the sprung wire). We did
+    not see the wire fire twice or a mine re-arm in our runs; if you still see fresh
+    explosions on a second pass, note where you stand (the frag mines at the entrance
+    and the bottle-cap mine behind the door are separate placed mines). Observer check
+    143. ([doors §2](spec-notes/doors.md), [activators §5](spec-notes/activators.md))
+74. **An actor whose package lies behind a disabled door stays where it is (#2566).**
+    With Volare! failed (a Boomer elder killed), Loyal's only valid package is the
+    B-29 hangar (NellisHangar1b), whose doors stay disabled until the B-29 is raised;
+    ours had put him in there, out of the player's reach, and the quest marker looped
+    between the hangar door and its inside. Now no path and no quest marker goes
+    through a disabled door: Loyal sets that package aside and stays in NellisHangar2
+    (the mess hall hangar), where the marker leads. If you would rather the engine
+    let him in anyway and open the way for the player, say so. Observer check 160.
+    ([navmesh §4](spec-notes/navmesh.md), [quests §2](spec-notes/quests-dialogue.md))
 61. **Holstered fidgets come rarer than in the original (#2026).** NPCs standing with the
     weapon away now bite their nails, smoke and so on, by the idle tree's factions and
     chances. The tree is asked every 2 s, the drawn-weapon fidgets' pace
