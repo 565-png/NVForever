@@ -1430,6 +1430,25 @@ impl ModelCtx<'_> {
         m
     }
 
+    /// [design, #2685] An ANIO model prepared for the named idle's external tracks.
+    /// Its separate cache entry preserves ordinary placed-model preparation.
+    pub fn model_for_idle(&mut self, path: &str, idle: u32, clip: &Clip) -> Option<Arc<PreparedModel>> {
+        let path = fnv_vfs::normalize(path);
+        let key = format!("{path}|actor-idle-{idle:08x}");
+        if let Some(model) = self.cache.map.get(&key) {
+            return model.clone();
+        }
+        let mut stores = Stores {
+            textures: StoreTextures { textures: &mut self.textures, data: &self.data, images: &mut self.images, formats: self.formats.as_deref() },
+            meshes: &mut self.meshes, materials: &mut self.materials,
+            bindposes: &mut self.bindposes, morphs: &mut self.cache.morphs,
+        };
+        let model = crate::guard::guarded(|| prepare_unguarded(&mut stores, &path, false, false, &[], Some(clip)))
+            .map(Arc::new).map_err(|e| warn!("anim object: {path}: {e}")).ok();
+        self.cache.map.insert(key, model.clone());
+        model
+    }
+
     fn prepare(&mut self, path: &str, keep_cpu: bool, first_person: bool, swaps: &[AltTexture]) -> Result<PreparedModel, String> {
         let mut stores = Stores {
             textures: StoreTextures { textures: &mut self.textures, data: &self.data, images: &mut self.images, formats: self.formats.as_deref() },
@@ -1446,10 +1465,10 @@ impl ModelCtx<'_> {
 /// thread ([`Stores`]) or on a worker thread ([`Deferred`]).
 /// A panic while preparing is that model's failure, not the game's (guard.rs).
 fn prepare_into(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, first_person: bool, swaps: &[AltTexture]) -> Result<PreparedModel, String> {
-    crate::guard::guarded(|| prepare_unguarded(sink, path, keep_cpu, first_person, swaps))
+    crate::guard::guarded(|| prepare_unguarded(sink, path, keep_cpu, first_person, swaps, None))
 }
 
-fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, first_person: bool, swaps: &[AltTexture]) -> Result<PreparedModel, String> {
+fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, first_person: bool, swaps: &[AltTexture], external: Option<&Clip>) -> Result<PreparedModel, String> {
     let game = sink.data().clone();
     let bytes = game.read(path).ok_or("not in any archive")?;
     let schema = game.schema.clone();
@@ -1529,7 +1548,7 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     }
     // A broken file's clips (NaN keys, timing out of range) are dropped, the model
     // standing still instead.
-    let idle = idle.and_then(|c| playable(path, c));
+    let mut idle = idle.and_then(|c| playable(path, c));
     let effect = effect.and_then(|c| playable(path, c));
     if let Some(c) = idle.as_ref().filter(|c| !c.visibility.is_empty()) {
         info!("{path}: its {} sequence shows and hides {} node(s)", c.name, c.visibility.len());
@@ -1541,6 +1560,12 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     let mut door = named("open").zip(named("close")).and_then(|(open, close)| Some(DoorClips { open: playable(path, open)?, close: playable(path, close)? }));
     // Every named sequence that animates this file (scripts' PlayGroup).
     let mut groups: Vec<Clip> = seqs.iter().filter(|s| s.name.is_some()).map(Clip::from_sequence).filter(&moves).filter_map(|c| playable(path, c)).collect();
+    // [design, #2685] Prepare external idle targets before choosing material features
+    // and rig nodes, including models whose own controllers only blend KF values.
+    if let Some(clip) = external {
+        idle = Some(clip.clone());
+        groups.push(clip.clone());
+    }
     // Shapes that wear a driven shape's material or texturing property are driven with it
     // (`material_sharers`, `texturing_sharers`).
     let sharers = material_sharers(&file, &dec);

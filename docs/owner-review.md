@@ -275,6 +275,12 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- **Hold CLAMP effect idles (#2685).** [design, #2685] `HOLD_CLAMP_EFFECT_IDLES` keeps
+  a CLAMP actor idle with material/emitter tracks at its exact end until replacement or
+  stop, overriding repeat counts. This keeps attached chamber effects and pod glow;
+  disabling it restores finite-idle fade-out. Review the generalization to other
+  effect idles ([idles section 10.1](spec-notes/idles.md#101-chamber-effects-and-external-kf-controllers-2685)).
+
 - **An intercom nobody has set up speaks for the actor its script names (#2454).**
   [hypothesis, #2454] When a talking activator starts a conversation before any script
   told it who speaks, ours lets the one actor its scripts name speak (Ramos for the

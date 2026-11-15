@@ -29966,3 +29966,23 @@ order = [[
 expect = [
   { re = 'vats mode summary: entered 1 times, 0 marks, 0 shots, 0 AP spent, 1 refused', label = "one stay, one refusal" },
 ]
+
+
+[[scenario]]
+name = "house-chamber-fx"
+source = "[documented: issue #2685, main-session record/script/NIF/KF decode 2026-11-15, upstream 1790ab94a] MrHouseOpen names an ANIO effect, and the unseal enables ground fog then plays its Forward group"
+note = "[design, #2685] Lucky38ControlRoom is the chamber cell from house-pod-sealed. Aids stand in for terminal housestate/PlayIdle and Enable/PlayGroup; final screenshots need observer comparison 221"
+areas = ["idles", "actors", "animation", "particles"]
+paths = ["crates/fnv-actor/src/idle_play.rs", "crates/fnv-actor/src/idle.rs", "engine/nvforever/src/anim_objects.rs", "engine/nvforever/src/idles.rs", "engine/nvforever/src/particles.rs", "engine/nvf-assets/src/anim_play.rs", "engine/nvf-assets/src/model.rs", "engine/nvf-assets/src/particles.rs", "engine/nvforever/src/object_anims.rs", "engine/nvf-play/src/script_draw.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "13:var:NVCRMrHouse01REF:housestate:0,13:play_idle:NVCRMrHouse01REF:MrHouseOpen", NVF_PLAY_TEST_CONSOLE = "13.1:0x001629DD.enable;14:0x001629DD.playgroup forward 1;14.3:close", NVF_PLAY_TEST_SHOTS = "15:house_chamber_fx_start.png,35:house_chamber_fx_held.png,69:house_chamber_fog_held.png" }
+args = ["--cell", "Lucky38ControlRoom", "--play", "--pos=1024,-2400,8010", "--heading", "180", "--pitch", "1.5", "--fov", "15", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 72
+expect = [
+  { re = 'idle: NVCRMrHouse01REF plays MrHouseOpen', label = "unseal idle starts" },
+  { re = 'anim object: 0014B095 holds .*hchamberfx\.nif on Bip01 \(hChamberFXAmin, idle 0013A23A\)', count = 1, label = "chamber ANIO attaches once" },
+  { re = 'playgroup: hChamberGroundFogREF (plays Forward \(once, 52\.\d+ s\), flag 1|drawn \(enabled at run time\), plays Forward from)', label = "enabled fog starts its Forward sequence" },
+  { re = 'particles: 0014B095 .*hchamberfx\.nif emits as its SpecialIdle_Wakeup says: 5 of 5 systems', label = "idle KF reaches all five ANIO particle systems" },
+  { re = 'particles: born in .*hchamberfx\.nif:', label = "ANIO particles were born" },
+  { re = 'actor materials: reference 0014B095 shape ##heart:0 driven by its clips', label = "pod glow reaches a NIFZ material" },
+]
+manual = "[hypothesis, #2685] Steam bursts at start, pod glow at 35 s, and lingering ground haze at 69 s; compare observer check 221. Actor idle reload parity remains unimplemented."

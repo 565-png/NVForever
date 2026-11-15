@@ -2687,3 +2687,14 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
+
+
+## 221. House chamber steam, glow and ground fog (#2685)
+
+[hypothesis; spec-notes/idles.md section 10.1, particles.md section 7.8] From a sealed
+chamber in Lucky38ControlRoom, use the unseal terminal item and record the opening,
+steam bursts, panel glow and ground fog at start, after 20 s and after 55 s. Check that
+glow and haze linger, then save/load at the held end and compare. Also check whether
+replacing/stopping the idle removes its effect model. The provisional engine rule holds
+CLAMP effect tracks until replacement, using authored values throughout; actor idle
+playback is currently not serialized. No original capture was performed in this run.
