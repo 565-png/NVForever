@@ -263,6 +263,9 @@ impl RigMaterials {
                     let a = if matches!(m.base.alpha_mode, AlphaMode::Blend) { 0.0 } else { a };
                     Color::LinearRgba(LinearRgba::new(0.0, 0.0, 0.0, a))
                 } else {
+                    // [design, #2685] Dark mode hid blended alpha even without an
+                    // alpha track. Restore it unless animation/fade just posed it.
+                    let a = if driven.alpha || faded.alpha { a } else { base.alpha };
                     Color::LinearRgba(LinearRgba { alpha: a, ..base })
                 };
             }
@@ -432,6 +435,73 @@ mod tests {
         let slots = [slot("windowEm01:0")];
         assert_eq!(sample(&slots, &[], 0.0, 0.0, false)[0].alpha, 0.0);
         assert_eq!(sample(&slots, std::slice::from_ref(&left), 0.01, 0.01, false)[0].alpha, 1.0);
+    }
+
+    #[test]
+    fn dark_blended_material_restores_alpha_on_reactivation() {
+        // [design, #2685] Synthetic builder alpha differs from the stored look;
+        // an undriven alpha must survive the dark override without normalization.
+        for target in [MaterialTarget::UvOffset(0), MaterialTarget::SelfIllum] {
+            for animated_alpha in [false, true] {
+                for (off_fade, on_fade) in [(1.0, 1.0), (0.5, 0.5), (0.5, 1.0), (1.0, 0.5)] {
+                    let track = |target, value| MaterialTrack {
+                        shape: "SyntheticGlow".into(), target,
+                        values: Arc::new(ValueTrack::Float(Channel::Static(Some([value])))),
+                        cycle: None, priority: 0,
+                    };
+                    let mut tracks = vec![track(target, 0.4)];
+                    if animated_alpha {
+                        tracks.push(track(MaterialTarget::Alpha, 0.25));
+                    }
+                    let mut app = App::new();
+                    app.init_resource::<Assets<NifMaterial>>().add_systems(Update, (
+                        bind_rig_materials,
+                        |mut rigs: Query<&mut RigMaterials>, mut drawing: RigMaterialDrawing| {
+                            for mut rig in &mut rigs {
+                                let tracks = rig.idle.clone();
+                                let dark = rig.dark;
+                                rig.apply(&tracks, 1.0, 1.0, dark, &mut drawing);
+                            }
+                        },
+                    ).chain());
+                    let mut material = NifMaterial::default();
+                    material.base.unlit = true;
+                    material.base.alpha_mode = AlphaMode::Blend;
+                    material.base.base_color = Color::linear_rgba(0.2, 0.3, 0.4, 0.6);
+                    let original = material.base.base_color.to_linear();
+                    let shared = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(material);
+                    let entity = app.world_mut().spawn(MeshMaterial3d(shared.clone())).id();
+                    app.world_mut().entity_mut(entity).insert(RigMaterials {
+                        slots: vec![MaterialSlot::new("SyntheticGlow".into(), entity, shared.clone(), [0.0; 3], 1.0, 0.8)],
+                        idle: Arc::new(tracks), dark: false, fade: off_fade,
+                    });
+                    let drawn = |app: &App| {
+                        let handle = &app.world().get::<MeshMaterial3d<NifMaterial>>(entity).unwrap().0;
+                        assert_ne!(handle, &shared);
+                        app.world().resource::<Assets<NifMaterial>>().get(handle).unwrap().base.base_color.to_linear()
+                    };
+                    app.update();
+                    let pre_dark = if animated_alpha { 0.25 } else if off_fade < 1.0 { 0.8 } else { 0.6 };
+                    assert_eq!(drawn(&app).alpha, pre_dark * off_fade);
+                    app.world_mut().get_mut::<RigMaterials>(entity).unwrap().dark = true;
+                    for _ in 0..2 {
+                        app.update();
+                        assert_eq!(drawn(&app).alpha, 0.0);
+                    }
+                    {
+                        let mut rig = app.world_mut().get_mut::<RigMaterials>(entity).unwrap();
+                        rig.dark = false;
+                        rig.fade = on_fade;
+                    }
+                    let restored = if animated_alpha { 0.25 } else if off_fade < 1.0 || on_fade < 1.0 { 0.8 } else { 0.6 };
+                    for _ in 0..2 {
+                        app.update();
+                        assert_eq!(drawn(&app), LinearRgba { alpha: restored * on_fade, ..original });
+                    }
+                    assert_eq!(app.world().resource::<Assets<NifMaterial>>().get(&shared).unwrap().base.base_color.to_linear(), original);
+                }
+            }
+        }
     }
 
     #[test]
