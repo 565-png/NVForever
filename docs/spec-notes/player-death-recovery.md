@@ -33,15 +33,15 @@ load is retained without adding another. Use the existing child-process/window
 handoff, not a second restart mechanism. No save is written by death recovery;
 the existing refusal to save a dead player and queued-autosave handling remain.
 
-[observed] Ten authored CPU controls passed in an isolated normal engine context
+Process qualification (historical authored CPU controls): Ten authored CPU controls passed in an isolated normal engine context
 based on main26e plus six UI ports. They use portable authored records, real
 `Game::kill`/`resurrect`, actual NVForever save files, ECS time/menu resources and
 `LoadRequest` messages. They cover setting changes/defaults, pause/resurrection,
 manual/quick/auto ordering, one dispatch, invalid/dead save fallback, absent or
 unreadable profiles, pending loads and preservation of an existing autosave.
-These are historical CPU results, not a build or run of this public7201 port.
+These are historical CPU results, not a build or run of this public port.
 
-[documented: current port qualification] Current-main compilation, strict Clippy, rendered death/menu recovery
+Current port qualification: Current-main compilation, strict Clippy, rendered death/menu recovery
 and child-window handoff remain unverified. The `death-recovery-handoff` smoke
 scenario is authored and UNRUN. The existing camera-only checks keep every original acceptance condition, including
 `death-fade` black at six seconds. Their isolated fixture homes apply the loaded
@@ -51,9 +51,9 @@ the camera/float/music observation window. Missing GMST admission is a visible
 fixture failure. No parity golden or acceptance range is relaxed.
 
 
-[documented: NVForever 7201ca6d57d3bb8a435bffc3fc7a5ecedf79dea3,
+Implementation context (NVForever 7201ca6d57d3bb8a435bffc3fc7a5ecedf79dea3,
 `crates/fnv-game/src/functions/console.rs` set_game_setting and
-`crates/fnv-sim/src/world.rs` setting_f32/change_setting] Existing `setgs` mutates
+`crates/fnv-sim/src/world.rs` setting_f32/change_setting): Existing `setgs` mutates
 only an actual loaded setting for the session. The recovery consumer reads that
 same live value. The 120-second camera-only fixture input is an engineering test
 setup; it is not an original-game timing observation or a production delay change.
