@@ -30,6 +30,7 @@ mod native_crash;
 #[cfg(target_os = "linux")]
 mod native_crash_unix;
 mod nif_mirror;
+mod nif_attachments;
 mod anim_paths;
 mod actor_feet;
 mod tumble;
