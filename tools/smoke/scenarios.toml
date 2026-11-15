@@ -29966,3 +29966,53 @@ order = [[
 expect = [
   { re = 'vats mode summary: entered 1 times, 0 marks, 0 shots, 0 AP spent, 1 refused', label = "one stay, one refusal" },
 ]
+
+
+[[scenario]]
+name = "pipboy-hotkey-assign-pad"
+source = "[design, #2312] controller.md section 3: RB opens the existing ITEMS hotkey panel, D-pad steps all eight slots, A assigns, B cancels; provisional selection method pending observer check 219"
+note = "Reuses pipboy-hotkey-assign's inventory fixture. RB opens slot 1, right visits Ammo Swap (A refuses), down reaches slot 3 and A assigns. Reopen, move left and cancel with B; the Pip-Boy stays open. After closing, D-pad down uses slot 3. No mouse/digit assignment."
+areas = ["hotkeys", "pipboy", "controller"]
+paths = ["engine/nvf-play/src/pipboy/hotkey_panel.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/pad.rs", "engine/nvf-play/src/hotkeys.rs"]
+env = { NVFOREVER_HOME = "pipboy-hotkey-assign-pad-home", NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:device:Controller", NVF_PLAY_TEST_GIVE = "0008F216:1,0008ED02:24", NVF_PLAY_TEST_PIPBOY = "25:open,26:page=items,26.5:tab=0,40:close", NVF_PLAY_TEST_KEYS = "28:pad-RB,29:pad-D-Pad Right,30:pad-A,31:pad-D-Pad Down,32:pad-A,34:pad-RB,35:pad-D-Pad Left,36:pad-B,43:pad-D-Pad Down" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  "controls: input device Controller",
+  { text = "pipboy hotkeys: controller opened, key 1 chosen", count = 2 },
+  { re = 'pipboy hints: items Weapons: .*Hotkey RB\)', min = 1 },
+  "pipboy hotkeys: controller key 2 chosen",
+  { re = 'hotkeys: slot 2 is Ammo Swap: \.357 Magnum Revolver not assigned', count = 1 },
+  "pipboy hotkeys: controller key 3 chosen",
+  { re = 'hotkeys: slot 3 holds \.357 Magnum Revolver \(0x0008F216\)', count = 1 },
+  "pipboy hotkeys: controller key 8 chosen",
+  { text = "pipboy hotkeys: controller closed", count = 2 },
+  { re = 'hotkeys: slot 3: equipped \.357 Magnum Revolver', count = 1 },
+  { re = 'hotkeys: slot (1|8) holds', count = 0, label = "B cancels without assigning" },
+]
+order = [["controller opened", "controller key 2 chosen", "slot 2 is Ammo Swap", "controller key 3 chosen", "hotkeys: slot 3 holds", "controller closed", "controller opened", "controller key 8 chosen", "controller closed", "hotkeys: slot 3: equipped"]]
+
+
+[[scenario]]
+name = "tiles-items-hotkey-pad"
+source = "[design, #2312] controller.md section 3: RB opens the existing ITEMS hotkey panel, D-pad steps all eight slots, A assigns, B cancels; provisional selection method pending observer check 219"
+note = "Reuses pipboy-hotkey-assign's inventory fixture. RB opens slot 1, right visits Ammo Swap (A refuses), down reaches slot 3 and A assigns. Reopen, move left and cancel with B; the Pip-Boy stays open. After closing, D-pad down uses slot 3. No mouse/digit assignment."
+areas = ["hotkeys", "pipboy", "controller"]
+paths = ["engine/nvf-play/src/pipboy/hotkey_panel.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/pad.rs", "engine/nvf-play/src/hotkeys.rs"]
+env = { NVFOREVER_HOME = "tiles-items-hotkey-pad-home", NVF_PLAY_TEST_TILE_MENUS = "InventoryMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:device:Controller", NVF_PLAY_TEST_GIVE = "0008F216:1,0008ED02:24", NVF_PLAY_TEST_PIPBOY = "25:open,26:page=items,26.5:tab=0,40:close", NVF_PLAY_TEST_KEYS = "28:pad-RB,29:pad-D-Pad Right,30:pad-A,31:pad-D-Pad Down,32:pad-A,34:pad-RB,35:pad-D-Pad Left,36:pad-B,43:pad-D-Pad Down" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  { text = "controls: input device Controller", label = "tile assignment uses Controller" },
+  { text = "pipboy hotkeys: controller opened, key 1 chosen", count = 2, label = "tile page opens the shared modal twice" },
+  { text = "tiles: InventoryMenu hotkey panel shown, key 1", min = 2 },
+  { text = "pipboy hotkeys: controller key 2 chosen", label = "tile panel visits Ammo Swap" },
+  { re = 'hotkeys: slot 2 is Ammo Swap: \.357 Magnum Revolver not assigned', count = 1, label = "tile panel refuses reserved slot" },
+  { text = "pipboy hotkeys: controller key 3 chosen", label = "tile panel advances to slot 3" },
+  { re = 'hotkeys: slot 3 holds \.357 Magnum Revolver \(0x0008F216\)', count = 1, label = "tile panel assigns the fixture item" },
+  { text = "pipboy hotkeys: controller key 8 chosen", label = "tile panel wraps backwards" },
+  { text = "pipboy hotkeys: controller closed", count = 2, label = "tile modal closes after confirm and cancel" },
+  { re = 'hotkeys: slot 3: equipped \.357 Magnum Revolver', count = 1, label = "D-pad uses the slot assigned over tiles" },
+  { re = 'hotkeys: slot (1|8) holds', count = 0, label = "tile modal cancellation changes no assignment" },
+]
+order = [["controller opened", "controller key 2 chosen", "slot 2 is Ammo Swap", "controller key 3 chosen", "hotkeys: slot 3 holds", "controller closed", "controller opened", "controller key 8 chosen", "controller closed", "hotkeys: slot 3: equipped"]]
