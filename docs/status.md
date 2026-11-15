@@ -36,6 +36,8 @@ counts them).
 
 Initial projectile launch session traits are **Partly**: the proposed supported speed and carried impact-force bridge feeds new actor and normal player shots ([spec](spec-notes/projectile-launch-session-traits.md)). Historical authored d9/c28 results remain separate. Hosted merge897883d of public source cc789 into main78408 passed all nine portable engine controls and all required checks; later source revisions need their own CI. An opt-in authored two-stage physical-consumer scenario, owner-bound exact cleanup and boundary controls are included. Qualify source, typechecking and CI against each exact revision; authored coverage alone conveys no execution result. Optional GAME execution and rendered acceptance remain separate. Temporary-base World-reference spawning, lifetime/save policy and full B42 startup remain separate gates.
 
+Deleted engine-shot associations also have a focused next-consumer retirement bridge and eleven authored lifecycle controls. Historical private616/Rapier0.36.0 results remain separate; portable qualification belongs to each exact public source and CI revision. Disable semantics, native timing, save persistence and installed B42 behavior remain unqualified.
+
 ## 1. Foundations
 
 | System | State | Specifics | Notes |
