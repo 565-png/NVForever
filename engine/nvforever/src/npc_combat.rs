@@ -1094,9 +1094,11 @@ pub fn creature_spacing(bodies: Option<f32>, reach: f32) -> (f32, f32) {
 
 /// Combat's snapshot of walking blocks, absent from the drawn-block list [design:
 /// nvf_play::player, #2535]. An ordinary walking character supplies the other body
-/// of a widened pair; ordinary pairs retain their existing drawn-block lookup.
+/// of a widened pair, even after the creature stops; ordinary pairs retain their
+/// existing drawn-block lookup [design, #2535].
 struct CombatBodies<'a> {
     walking: HashMap<u32, (Block, bool)>,
+    widened: std::collections::HashSet<u32>,
     drawn: &'a [Block],
     player_radius: Option<f32>,
 }
@@ -1107,8 +1109,18 @@ impl<'a> CombatBodies<'a> {
             let radius = nvf_play::blocking::walking_radius(n.ch.params.radius, p.actor_block_radii.get(&id).copied());
             (id, (Block::character(id, n.ch.feet, radius, n.ch.params.height, false), radius > n.ch.params.radius))
         }).collect()).unwrap_or_default();
+        // Eligibility outlives the walking character: standing creatures keep their
+        // BBX block in the drawn list [design: hitvol::sync_volumes, #2535].
+        let widened = phys.map(|p| p.actor_block_radii.iter().filter_map(|(&id, &bbx)| {
+            let capsule = p.npcs.get(&id).map_or_else(
+                || nvf_play::phys::npc_params(p.actor_heights.get(&id).copied()).radius,
+                |n| n.ch.params.radius,
+            );
+            (nvf_play::blocking::walking_radius(capsule, Some(bbx)) > capsule).then_some(id)
+        }).collect()).unwrap_or_default();
         Self {
             walking,
+            widened,
             drawn: blocks.map_or(&[], |b| b.list.as_slice()),
             player_radius: phys.and_then(|p| p.player.as_ref()).map(|c| c.params.radius),
         }
@@ -1118,7 +1130,7 @@ impl<'a> CombatBodies<'a> {
         self.walking.get(&id).filter(|(_, widened)| *widened).map(|(b, _)| *b)
             .or_else(|| self.drawn.iter().find(|b| b.actor == id).copied())
             .or_else(|| {
-                self.walking.get(&other).filter(|(_, widened)| *widened)?;
+                if !self.widened.contains(&other) { return None; }
                 self.walking.get(&id).map(|(b, _)| *b)
             })
     }
@@ -3634,7 +3646,7 @@ mod tests {
     }
 
     #[test]
-    fn walking_humanoid_and_widened_creature_can_strike_at_their_blocked_distance() {
+    fn walking_humanoid_can_strike_a_widened_creature_before_and_after_it_stops() {
         use nvf_play::phys::{NpcBody, PhysState};
         // Synthetic walking pair and knife-like weapon [design, #2535]. BBX width,
         // RNAM and scales supplied in #2535 [observed: FalloutNV.esm and Fallout -
@@ -3654,28 +3666,60 @@ mod tests {
                 phys.npcs.insert(id, NpcBody { ch, prev_feet: feet, velocity: [25.0, 0.0], jump: false, sink: 0.0, lift: Default::default() });
             }
             phys.actor_block_radii.insert(creature, width);
-            let blocks = ActorBlocks::default();
-            // Both walkers are absent from the drawn list [design: blocking.rs].
-            // Repeat after both have moved so the snapshot must follow their feet
-            // [design: CombatBodies::new].
-            for offset in [0.0, 15.0] {
-                for (distance, knife_near) in [(combined + 0.01, true), (combined + knife_reach - 0.01, true), (combined + knife_reach + 0.01, false)] {
-                    phys.npcs.get_mut(&person).unwrap().ch.feet = [offset, 0.0, 0.0];
-                    phys.npcs.get_mut(&creature).unwrap().ch.feet = [offset + distance, 0.0, 0.0];
-                    let bodies = CombatBodies::new(Some(&phys), Some(&blocks));
-                    for (me, target, arm, reach, near) in [
-                        (person, creature, Arm::Melee(None), knife_reach, knife_near),
-                        (creature, person, Arm::Creature(1.0, creature_reach), creature_reach, distance <= creature_reach.max(combined + MELEE_HIT_GAP)),
-                    ] {
-                        let feet = phys.npcs[&me].ch.feet;
-                        let tfeet = phys.npcs[&target].ch.feet;
-                        let away = flat(feet, tfeet);
-                        let gap = bodies.gap(me, target, tfeet);
-                        let radii = bodies.radii(me, target);
-                        assert!((radii.unwrap() - combined).abs() < 1e-4);
-                        assert!((gap.unwrap() - (away - combined)).abs() < 1e-4);
-                        assert_eq!(in_melee_reach(&arm, away, gap, radii, reach), near);
+            let height = phys.npcs[&creature].ch.params.height;
+            phys.actor_heights.insert(creature, height);
+            let mut blocks = ActorBlocks::default();
+            // Walkers are absent from the drawn list; stopped creatures retain a
+            // BBX circle there [design: blocking.rs, hitvol::sync_volumes, #2535].
+            for standing in [false, true, false] {
+                if standing {
+                    phys.remove_npc(creature);
+                    assert!(!phys.npcs.contains_key(&creature));
+                } else if !phys.npcs.contains_key(&creature) {
+                    let feet = [combined + 0.01, 0.0, 0.0];
+                    let ch = phys.world.add_character(creature, fnv_phys::CharacterParams::default(), feet);
+                    phys.npcs.insert(creature, NpcBody { ch, prev_feet: feet, velocity: [25.0, 0.0], jump: false, sink: 0.0, lift: Default::default() });
+                    blocks.list.clear();
+                }
+                for offset in [0.0, 15.0] {
+                    for (distance, knife_near) in [(combined + 0.01, true), (combined + knife_reach - 0.01, true), (combined + knife_reach + 0.01, false)] {
+                        let person_feet = [offset, 0.0, 0.0];
+                        let creature_feet = [offset + distance, 0.0, 0.0];
+                        phys.npcs.get_mut(&person).unwrap().ch.feet = person_feet;
+                        if standing {
+                            blocks.list = vec![Block::character(creature, creature_feet, width, height, false)];
+                        } else {
+                            phys.npcs.get_mut(&creature).unwrap().ch.feet = creature_feet;
+                        }
+                        let bodies = CombatBodies::new(Some(&phys), Some(&blocks));
+                        for (me, target, feet, tfeet, arm, reach, near) in [
+                            (person, creature, person_feet, creature_feet, Arm::Melee(None), knife_reach, knife_near),
+                            (creature, person, creature_feet, person_feet, Arm::Creature(1.0, creature_reach), creature_reach, distance <= creature_reach.max(combined + MELEE_HIT_GAP)),
+                        ] {
+                            let away = flat(feet, tfeet);
+                            let gap = bodies.gap(me, target, tfeet);
+                            let radii = bodies.radii(me, target);
+                            assert!((radii.unwrap() - combined).abs() < 1e-4, "standing={standing}");
+                            assert!((gap.unwrap() - (away - combined)).abs() < 1e-4);
+                            assert_eq!(in_melee_reach(&arm, away, gap, radii, reach), near, "standing={standing}");
+                        }
                     }
+                }
+                // Missing or smaller BBX must not enable the ordinary walker
+                // fallback, even with a drawn target [design, #2535].
+                for bbx in [None, Some(10.0)] {
+                    phys.actor_block_radii.clear();
+                    phys.actor_block_radii.extend(bbx.map(|r| (creature, r)));
+                    let bodies = CombatBodies::new(Some(&phys), Some(&blocks));
+                    assert!(bodies.radii(person, creature).is_none());
+                    assert!(bodies.radii(creature, person).is_none());
+                }
+                phys.actor_block_radii.insert(creature, width);
+                if standing {
+                    // Eligibility alone must never invent a missing target block
+                    // [design: CombatBodies::pair].
+                    blocks.list.clear();
+                    assert!(CombatBodies::new(Some(&phys), Some(&blocks)).radii(person, creature).is_none());
                 }
             }
             // No widened participant: keep ordinary pairs' existing lookup
