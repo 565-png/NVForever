@@ -2331,3 +2331,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the crossing or stop, and whether it first detours; keep a clear run-up and
      prevent routes around the ends. Also check a 46–49° ramp so the actor's slope
      behavior can be separated from its stepping over an edge.
+
+## Added 2026-11-14 (Oliver's rigid cap frame, #2529)
+
+168. **Does Oliver's cap follow the full head frame, idle and speaking?** (P2; #2529,
+     actors.md §1.2.) [documented: #2529 writer brief, fnvtool FalloutNV.esm +
+     Fallout - Meshes.bsa] `VHDGeneralOliver` 0x001300A9 carries `NVGenOliverCap`
+     0x00134490; its worn `GenOliverCap.NIF` is unskinned, identity-root, with no
+     bone-naming extra data and vertices centred about +13 along X. [hypothesis]
+     It is authored in `Bip01 Head`'s local frame. [design, #2529] NVForever preserves
+     that frame when the bounds pass `BONE_LOCAL_HEAD_ALIGNMENT` (0.9), retaining
+     skeleton-axis attachment for other layouts. Check the original while Oliver is
+     idle, entering conversation, looking sideways/up/down while speaking, and leaving
+     conversation. Compare the cap's centre and orientation to the head throughout;
+     also compare a cowboy hat, beret and helmet using the skeleton-axis layout from
+     actors.md §1.2. Record which heads/items clip or shift, and the valid greeting's
+     quest/stage conditions for a repeatable conversation smoke setup. No original
+     capture or game run was made in the writer session.

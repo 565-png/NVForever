@@ -29097,3 +29097,26 @@ expect = [
   { re = 'lip: skipped \S*0013ca2a_1\.lip: speaker VHDIntakeTowerCenturionREF has no face rig', count = 0, label = "his first line is not left without lip sync" },
 ]
 order = [["dialogue: conversation with VHDIntakeTowerCenturionREF started", "dialogue look: VHDIntakeTowerCenturionREF faces the player"]]
+
+[[scenario]]
+name = "rigid-headgear-oliver"
+source = "[documented: #2529 writer brief, fnvtool FalloutNV.esm + Fallout - Meshes.bsa] VHDGeneralOliver 001300A9 wears rigid NVGenOliverCap 00134490, identity-root GenOliverCap:5 with bounds centre (13.30,1.64,0). [hypothesis: actors.md section 1.2] The mesh uses the head bone's own axes. [design, #2529] Preserve the full head transform for that layout at spawn and equipment changes."
+note = "PlaceAtMe follows hitvol-marked-created-actor. The sole created actor is Oliver; restrain him, move him near the player and use Look with rotateBody 0 while the player moves to change the head pose. The read-only probe logs cap world and head-relative centres and full-frame error after transform propagation. This does not assume any quest-conditioned Oliver greeting; observer check 168 requests a repeatable conversation setup."
+areas = ["actors", "head-tracking"]
+paths = ["engine/nvf-assets/src/actor.rs", "engine/nvforever/src/actors.rs", "engine/nvforever/src/outfits.rs", "engine/nvforever/src/rigid_head_probe.rs", "engine/nvforever/src/head_look.rs", "engine/nvforever/src/dialogue_look.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_RIGID_HEAD = "001300A9|GenOliverCap:5", NVF_PLAY_TEST_SCRIPT = "2:call:player:PlaceAtMe:VHDGeneralOliver:1,3:call:0xFF000000:SetRestrained:1,4:moveto:0xFF000000:player:0:160:0,5:call:0xFF000000:Look:player:0,10:moveto:player:0xFF000000:100:0:0,18:moveto:player:0xFF000000:-100:0:0,25:call:0xFF000000:StopLook" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 32
+expect = [
+  { re = 'ai \[[^\]]*\] VHDGeneralOliver 0xFF[0-9A-F]{6}: created by a script \(PlaceAtMe\)', count = 1, label = "Oliver is spawned from his base record" },
+  { re = 'ai \[[^\]]*\] .*: created by a script \(PlaceAtMe\)', count = 1, label = "the dynamic reference used by the aid is the only created actor" },
+  { re = 'rigid head check: .*parent_head=false', count = 0, label = "the rigid cap is parented directly to the head bone" },
+  { text = 'rigid head check: actor=', min = 10, label = "cap placement is logged throughout the run" },
+  { re = 'rigid head check: .*relative=\((?P<n>[-\d.]+),', range = [13.25, 13.35], all = true, label = "the cap stays above the head along its local X" },
+  { re = 'rigid head check: .*relative=\([-\d.]+,(?P<n>[-\d.]+),', range = [1.59, 1.69], all = true, label = "the authored local Y offset is kept" },
+  { re = 'rigid head check: .*relative=\([-\d.]+,[-\d.]+,(?P<n>[-\d.]+)\)', range = [-0.05, 0.05], all = true, label = "the authored local Z offset is kept" },
+  { re = 'rigid head check summary: samples=(?P<n>\d+)', range = [60, 100000000], label = "the probe sampled the moving head" },
+  { re = 'rigid head check summary: .*max_error=(?P<n>[\d.]+)', range = [0, 0.02], label = "every sampled centre follows the full head transform" },
+  { re = 'rigid head check summary: .*max_frame_error=(?P<n>[\d.]+)', range = [0, 0.001], label = "every sampled cap frame follows head rotation and scale" },
+  { re = 'rigid head check summary: .*turn_deg=(?P<n>[\d.]+)', range = [0.5, 180], label = "the head actually turned during the check" },
+]
