@@ -2174,6 +2174,16 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      dirt and on concrete, first and third person, and record which SOUN records play
      at each footfall (the sound log): does `FSTArmorPowerWalkL`/`R` play, instead of
      or beside the ground's step, and does anything play for the run rustle?
+     **Answered for NPCs 2026-11-14** (#2541; Blue Moon sandbox stock game, save
+     nvfairport on concrete, `IsSoundPlaying <rec> <actor>` sampled on 130 frames)
+     [observed]: Doc Mitchell walking in ArmorPowerT45d read FSTArmorPowerL 49 and R 95
+     frames beside FSTConcSolidWalkL 59 and R 95; without armour only the ground step;
+     LvlNCRHeavyTrooper (ArmorPowerNCRSalvaged, Heavy but not Power Armor) FSTArmorL/R
+     beside the ground step; FSTArmorPowerWalkL/R never; standing still nothing. So the
+     armour's footfall plays beside the ground's step, power armour's by the Power Armor
+     flag and heavy armour's by Heavy, and IsSoundPlaying sees the game's own footsteps.
+     Still open: the player (an unattended run could not walk the player), first
+     person, running, dirt, medium armour.
 
 ## Added 2026-11-14 (the Fort's placed slave backpacks, #2439)
 
@@ -2458,6 +2468,30 @@ already talking takes over at once, same topic or another; nothing is queued or 
      says the flag beats the disguise (then the disguise works only through the
      reputation reset, reputation.md §4).
 
+## Added 2026-11-15 (Anders's head on the cross, #2471)
+
+174. **Does a crucified actor turn his head to the player, and is he ever seen climbing
+     onto the cross?** (P3; #2471, anders-cross-head.md.) At Cottonwood Cove, talk to
+     Anders (VRRCAndersREF 0x001413C3, cross 0x0013A4BA) from the front and from 90° to
+     his side. Note whether his head turns to the player in each, how far to the side it
+     goes, and whether it stays tilted down. Then leave the cell and come back (and, on
+     a new game, arrive by fast travel) and note whether he is ever seen getting onto the
+     cross (`GetSitting` reading 2) or always found on it (3). Ours since #2471: the head
+     turns up to 60° from his chest and up to 30° from the level; he is put on the cross
+     at once when he stands at it [design].
+
+## Added 2026-11-15 (Anders freed before Diane, #2472)
+
+175. **Can Anders be freed before Diane sends the player after him?** (P3; #2472,
+     anders-cross.md.) In the data the freeing choice (AndersFree 0x00142A8A) is a
+     choice of AndersJackandDiane 0x00142A89 alone, a topic that is not top-level and is
+     learnt only from Diane's lines 0x00146698 and 0x00144651. From a save that has not
+     met Diane (`GetObjectiveDisplayed VMS46 10` reads 0), go to
+     Cottonwood Cove and talk to VRRCAndersREF: list the topics offered, then pick each.
+     Only Who did this to you? / the drugs topic / Goodbye agrees with ours; a choice
+     that cuts him down says the original offers the topic some other way (then note
+     which and whether `GetQuestVariable VMS46 AndersFreed` goes to 1).
+
 ## Added 2026-11-15 (Cachino finds the player in Gomorrah, #2473)
 
 176. **How does Cachino's Find package bring him to the player?** (P2; #2473,
@@ -2474,3 +2508,15 @@ already talking takes over at once, same topic or another; nothing is queued or 
      about 3x the arrival distance and can see the player [hypothesis]. Not seen
      coming, or coming only within some distance of his spot, says the search area is
      wrong; walking up and standing without a word says the talk is not the Find's.
+
+## Added 2026-11-14 (talking activators with no talking actor set, #2454)
+
+185. **Who speaks through a talking activator no script has given an actor?** (P2; #2454,
+     talking-activators.md §2.) Ours: the one actor the load order's scripts name for it
+     in SetTalkingActivatorActor (Ramos for HVIntercomREF), else the activator itself
+     [hypothesis]. On a save from before the Hidden Valley bunker, get in without
+     touching HVIntercomREF (sneak in), go through Ramos's escort, accept McNamara's
+     ranger task: when the screen fades and the player stands at the inner door, record
+     whether the dialogue menu opens, which INFO is said (Ramos's 000E3664 or none),
+     and when the controls come back. Also `HVIntercomREF.IsTalkingActivatorActor
+     RamosREF` just before McNamara's line.
