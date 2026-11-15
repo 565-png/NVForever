@@ -29983,7 +29983,7 @@ order = [
     { re = '001438DA: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "first ranger sets off to marker 01" },
     { re = '001438DA: arrived after .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "first ranger reaches marker 01" },
     { re = '001438DA: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "first ranger sets off to marker 02" },
-    { re = 'actor jumps: 001438DA drops off a ledge at', label = "first ranger descends after marker 01" },
+    { re = 'actor jumps: 001438DA is in the air on Jump', label = "first ranger descends after marker 01" },
     { re = '001438DA: arrived after .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "first ranger reaches marker 02 after the drop" },
   ],
   [
@@ -29991,7 +29991,7 @@ order = [
     { re = '001438DB: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "second ranger sets off to marker 01" },
     { re = '001438DB: arrived after .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "second ranger reaches marker 01" },
     { re = '001438DB: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "second ranger sets off to marker 02" },
-    { re = 'actor jumps: 001438DB drops off a ledge at', label = "second ranger descends after marker 01" },
+    { re = 'actor jumps: 001438DB is in the air on Jump', label = "second ranger descends after marker 01" },
     { re = '001438DB: arrived after .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "second ranger reaches marker 02 after the drop" },
   ],
 ]

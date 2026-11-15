@@ -18,7 +18,7 @@ def ranger_lines(actor, names=True):
         f"{actor}: runs to (10, 20, 30) (patrol point {marker01})",
         f"{actor}: arrived after 1.0s, 100 units (patrol point {marker01})",
         f"{actor}: runs to (40, 50, 60) (patrol point {marker02})",
-        f"actor jumps: {actor} drops off a ledge at (1, 2, 300) to (4, 5, 100)",
+        f"actor jumps: {actor} is in the air on JumpLoopForward",
         f"{actor}: arrived after 2.0s, 200 units (patrol point {marker02})",
     ]
 
@@ -51,7 +51,7 @@ class LegateRangerTests(unittest.TestCase):
                     logs = {a: ranger_lines(a) for a in ("001438DA", "001438DB")}
                     del logs[actor][missing]
                     self.assertEqual(self.verdict(logs["001438DA"], logs["001438DB"]), "FAIL")
-            for wrong in ("actor jumps: 00000001 drops off a ledge at (1, 2, 3)",
+            for wrong in ("actor jumps: 00000001 is in the air on JumpLoopForward",
                           f"actor jumps: {actor} jumps up a ledge at (1, 2, 3)"):
                 with self.subTest(actor=actor, wrong=wrong):
                     logs = {a: ranger_lines(a) for a in ("001438DA", "001438DB")}
