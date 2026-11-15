@@ -47,6 +47,13 @@ fn carry_sky(from: &SkyState, s: &mut SkyState) {
     s.moon_textures = from.moon_textures.clone();
 }
 
+/// Same-world climate rebuilds keep the sampled placement [design, #2531;
+/// `SkyState::carry_region_placement`]. Worldspace travel uses `carry_sky` instead.
+pub(crate) fn carry_climate_sky(from: &SkyState, s: &mut SkyState) {
+    carry_sky(from, s);
+    s.carry_region_placement(from);
+}
+
 /// The climate the scripts want (ForceClimate, SetCurrentClimate; `fnv_game::nvse_jip12`)
 /// and their moon textures (SetMoonTexture): the sky is made again with them, keeping its
 /// weather when the climate changes [hypothesis: the original goes on to the new
@@ -75,7 +82,7 @@ pub fn script_sky(
         let weather = sky.weather.edid.clone();
         match SkyState::with_climate(&world, c, args.weather.as_deref(), weather.as_deref(), sky.hour, sky.rng) {
             Ok(mut s) => {
-                carry_sky(&sky, &mut s);
+                carry_climate_sky(&sky, &mut s);
                 info!("sky: climate {:08X} -> {c:08X}{}: {}", sky.climate.form_id, if wanted.is_some() { " (a script's)" } else { "" }, s.describe());
                 *sky = s;
                 remake = true;

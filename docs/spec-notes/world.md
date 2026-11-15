@@ -297,6 +297,11 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
     SkyState::set_interior, world.rs::travel and worldspace.rs retain placement paths].
     Walking into a cell fades a changed weather; a new placement snaps [observed for
     walking and script MoveTo: same captures; hypothesis for the other travel cases].
+    A same-world climate rebuild retains that sampled cell and region (rebound by
+    FormID), so ForceClimate/SetCurrentClimate do not trigger a fresh outline lookup;
+    travel invalidation and worldspace rebuilds still refresh placement [design,
+    #2531: sky.rs::carry_region_placement, worldspace.rs::carry_climate_sky and switch;
+    implementation of the settled lookup rule, not an additional capture claim].
     Indoors the list stays as it was [hypothesis]. Among overlapping overriding regions,
     highest priority then lowest FormID wins [hypothesis: the flag is named by
     JohnnyGuitar's GetRegionWeatherOverride and priority by GetRegionWeatherPriority

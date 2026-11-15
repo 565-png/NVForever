@@ -519,6 +519,18 @@ impl SkyState {
         })
     }
 
+    /// Preserve the sampled cell and region across a climate-only rebuild [design,
+    /// #2531; `worldspace::script_sky`]. Rebind the source by FormID into the new list.
+    /// An invalidated travel placement stays invalidated (`Self::set_interior`).
+    pub(crate) fn carry_region_placement(&mut self, from: &Self) {
+        self.region_cell = from.region_cell;
+        self.source = from.source.and_then(|i| self.regions.iter().position(|r| r.region.form_id == from.regions[i].region.form_id));
+        self.placed = from.placed;
+        if self.region_cell.is_some() {
+            self.follow_climate(true);
+        }
+    }
+
     /// A loaded game's part of the sky ([`SAVE_HOOK`]), before the first look at the weather
     /// lists ([`SkyState::place`]): a hold set after that look would hold what its roll
     /// chose. Only the weather the save holds is held: the sky starts on another when that
@@ -2269,6 +2281,88 @@ mod tests {
             assert_eq!(sky.prev.as_ref().map(|w| w.form_id), Some(LISTED));
             assert_eq!(sky.fade, 0.0);
         }
+    }
+
+    // Synthetic equivalent of with_climate's fresh state and retained start weather
+    // [design, #2531; SkyState::with_climate, worldspace::script_sky].
+    fn climate_rebuild_test_sky(from: &SkyState) -> SkyState {
+        let (mut sky, _) = region_test_sky();
+        sky.climate.form_id = 12;
+        sky.choices = vec![Choice { weather: Weather { form_id: 5, ..Default::default() }, chance: 100, global: None }];
+        sky.weather = from.weather.clone();
+        sky.pick = from.weather.form_id;
+        sky.resume = Some(from.weather.form_id);
+        sky.rng = from.rng;
+        sky
+    }
+
+    #[test]
+    fn weather_region_climate_rebuild_keeps_sample_outside_outline() {
+        let (mut sky, regions) = region_test_sky();
+        sky.place_outdoors(&regions, 11, 150.0, 150.0);
+        sky.place_outdoors(&regions, 11, 250.0, 150.0);
+        let mut rebuilt = climate_rebuild_test_sky(&sky);
+        // A rebuilt list may have a different order [design: synthetic fixture].
+        rebuilt.regions.insert(0, RegionList { region: RegionWeather { form_id: 13, ..Default::default() }, choices: Vec::new() });
+        crate::worldspace::carry_climate_sky(&sky, &mut rebuilt);
+        assert_eq!(rebuilt.source, Some(1));
+        assert!(rebuilt.placed);
+        assert_eq!(rebuilt.region_cell, sky.region_cell);
+        rebuilt.place_outdoors(&regions, 11, 250.0, 150.0);
+        rebuilt.set_hour(12.1, false);
+        assert_eq!((rebuilt.region(), rebuilt.weather.form_id, rebuilt.rolls, rebuilt.rng), (Some("TestRegion"), 4, 0, sky.rng));
+        assert!(rebuilt.prev.is_none());
+        assert_eq!(rebuilt.fade, 1.0);
+
+        rebuilt.place_outdoors(&regions, 11, 4096.0, 150.0);
+        assert_eq!((rebuilt.region(), rebuilt.weather.form_id, rebuilt.rolls), (None, 5, 1));
+        assert_eq!(rebuilt.prev.as_ref().map(|w| w.form_id), Some(4));
+        assert_eq!(rebuilt.fade, 0.0);
+    }
+
+    #[test]
+    fn weather_region_climate_rebuild_keeps_sample_inside_outline() {
+        let (mut sky, regions) = region_test_sky();
+        sky.place_outdoors(&regions, 11, 250.0, 150.0);
+        sky.place_outdoors(&regions, 11, 150.0, 150.0);
+        let mut rebuilt = climate_rebuild_test_sky(&sky);
+        crate::worldspace::carry_climate_sky(&sky, &mut rebuilt);
+        rebuilt.place_outdoors(&regions, 11, 150.0, 150.0);
+        assert_eq!((rebuilt.region(), rebuilt.weather.form_id, rebuilt.rolls), (None, 5, 1));
+        assert!(rebuilt.placed);
+        assert_eq!(rebuilt.region_cell, sky.region_cell);
+        assert!(rebuilt.prev.is_none());
+        assert_eq!(rebuilt.fade, 1.0);
+    }
+
+    #[test]
+    fn weather_region_climate_rebuild_preserves_travel_invalidation() {
+        for travel_before_rebuild in [true, false] {
+            let (mut sky, regions) = region_test_sky();
+            sky.place_outdoors(&regions, 11, 150.0, 150.0);
+            if travel_before_rebuild {
+                sky.set_interior(None);
+            }
+            let mut rebuilt = climate_rebuild_test_sky(&sky);
+            crate::worldspace::carry_climate_sky(&sky, &mut rebuilt);
+            if !travel_before_rebuild {
+                rebuilt.set_interior(None);
+            }
+            assert!(rebuilt.region_cell.is_none());
+            rebuilt.place_outdoors(&regions, 11, 250.0, 150.0);
+            assert_eq!((rebuilt.region(), rebuilt.weather.form_id), (None, 5));
+            assert!(rebuilt.prev.is_none());
+            assert_eq!(rebuilt.fade, 1.0);
+        }
+
+        let (mut sky, regions) = region_test_sky();
+        sky.place_outdoors(&regions, 11, 150.0, 150.0);
+        let mut rebuilt = climate_rebuild_test_sky(&sky);
+        crate::worldspace::carry_climate_sky(&sky, &mut rebuilt);
+        rebuilt.place_outdoors(&regions, 22, 150.0, 150.0);
+        assert_eq!((rebuilt.region(), rebuilt.weather.form_id), (None, 5));
+        assert!(rebuilt.prev.is_none());
+        assert_eq!(rebuilt.fade, 1.0);
     }
 
     #[test]
