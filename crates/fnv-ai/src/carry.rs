@@ -66,6 +66,10 @@ const HOME_REACH: f32 = 4096.0;
 /// allow swimming (`Ai::path_params`), against 1 on land [our choice].
 pub const NO_SWIM_WATER_COST: f32 = 50.0;
 
+/// Fallback safe drop height [design, #2532; documented: physics.md §6.10 and
+/// engine/nvf-play/src/falls.rs use 600 when fJumpFallHeightMin is absent].
+const SAFE_DROP_HEIGHT: f32 = 600.0;
+
 /// A way through a radiation marker's radius costs this many times as much for an actor
 /// that avoids radiation [design: kept off where a way round is not far longer, still
 /// taken when there is none].
@@ -2416,8 +2420,7 @@ impl Ai {
         // set"; "Allow Falls: Actors will not jump off of an elevation that will cause
         // damage unless this flag is set" [documented: GECK wiki Packages, Flags tab].
         // Without Allow Swimming water costs [`NO_SWIM_WATER_COST`] times as much (a way
-        // through water is still taken when there is no other) [our choice]; Allow Falls
-        // lets the way use the navmesh's ledge links [hypothesis: ledges are the drops].
+        // through water is still taken when there is no other) [design].
         if game.package_has(actor, flags::ALLOW_SWIMMING) {
             params.water_cost = params.water_cost.min(self.cfg.params.water_cost);
         } else {
@@ -2425,6 +2428,11 @@ impl Ai {
         }
         if game.package_has(actor, flags::ALLOW_FALLS) {
             params.ledges = true;
+        } else if !params.ledges {
+            // [hypothesis, #2532] An authored drop no higher than the damage threshold
+            // is safe without Allow Falls; use the planned takeoff and landing. The
+            // threshold/fallback follows nvf-play falls.rs (physics.md §6.10).
+            params.safe_drop_max = Some(game.world.forms.setting_f32("fJumpFallHeightMin").unwrap_or(SAFE_DROP_HEIGHT).max(0.0));
         }
         // Avoid Radiation: the radiation markers near it cost a way through them more
         // (`avoids_radiation`).

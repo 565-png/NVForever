@@ -1016,7 +1016,9 @@ destination, 13) and "no navmesh near the start" 1; every other verdict is uncha
 With them came: GetIsUsedItem, GetIsUsedItemType, GetIsUsedItemEquipType and
 GetUsedItemActivate (what an actor uses: its furniture, or what its package had it take
 or use); Pretend In Combat (running, weapon out), Allow Swimming (water avoided without
-it), Allow Falls (ledge links allowed with it) and No Warn/Attack Behavior (no
+it), Allow Falls (unrestricted downward ledge links allowed with it;
+[design, #2532] harmless authored drops can connect an otherwise unreachable route
+without it, packages.md section 7.1) and No Warn/Attack Behavior (no
 aggro-radius warnings); packages.md §3.1.
 
 ## 6. Decisions for the owner

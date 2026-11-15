@@ -186,6 +186,7 @@ fn unlinked_navmeshes_are_unreachable_and_ledges_are_opt_in() {
     let from = Place { space: W, pos: [50.0, 50.0, 0.0] };
     let to = Place { space: W, pos: [350.0, 50.0, -300.0] };
     assert!(matches!(g.find_path(from, to, &PathParams::default()), Err(PathError::Unreachable { .. })));
+    assert!(g.find_path(from, to, &PathParams { safe_drop_max: Some(300.0), ..Default::default() }).is_err());
     // The same two joined by a ledge down (and up, back).
     let (mut a, mut b) = (a, b);
     let (ea, eb) = (edges_at(&a, 200.0), edges_at(&b, 200.0));
@@ -198,6 +199,21 @@ fn unlinked_navmeshes_are_unreachable_and_ledges_are_opt_in() {
     let g = graph(&[(a, W), (b, W)]);
     assert!(g.stats.ledge_edges > 0);
     assert!(g.find_path(from, to, &PathParams::default()).is_err());
+    let safe = PathParams { safe_drop_max: Some(300.0), ..Default::default() };
+    let drop = g.find_path(from, to, &safe).unwrap();
+    assert_eq!(drop.legs[0].hops.len(), 1);
+    assert!(g.find_path(from, to, &PathParams { safe_drop_max: Some(299.0), ..safe.clone() }).is_err());
+    assert!(g.find_path(to, from, &safe).is_err());
+    let mut walker = Walker::new(W, from.pos, 0.0, 100.0);
+    walker.go_to(&g, to, &safe).unwrap();
+    let mut airborne = false;
+    for _ in 0..200 {
+        walker.update(&g, 0.05);
+        airborne |= walker.air.is_some();
+    }
+    assert!(airborne);
+    assert!((walker.feet[2] + 300.0).abs() < 1.0);
+    assert!((walker.feet[0] - to.pos[0]).abs() < 2.0);
     let ledges = PathParams { ledges: true, ..Default::default() };
     let p = g.find_path(from, to, &ledges).unwrap();
     assert_eq!(p.end().map(|e| e[2]), Some(-300.0));
@@ -242,6 +258,27 @@ fn walkers_take_off_from_the_ledge_links_point() {
         }
         assert_eq!(from, Some(off), "speed {speed}, step {dt}");
     }
+}
+
+#[test]
+fn safe_drop_limit_uses_the_sloping_landing_not_the_triangle_centre() {
+    let mut a = grid(1, [0.0, 0.0], 2, 2, 100.0, &[], flat);
+    let b = grid(2, [200.0, 0.0], 2, 2, 100.0, &[], |x, _| -300.0 - (x - 200.0) * 0.5);
+    let (ea, eb) = (edges_at(&a, 200.0), edges_at(&b, 200.0));
+    for &(at, ae, ..) in &ea {
+        link(&mut a, at, ae, 2, eb[0].0, link_kind::LEDGE_DOWN);
+    }
+    let g = graph(&[(a, W), (b, W)]);
+    let from = Place { space: W, pos: [50.0, 50.0, 0.0] };
+    let to = Place { space: W, pos: [350.0, 50.0, -375.0] };
+    let p = g.find_path(from, to, &PathParams { ledges: true, ..Default::default() }).unwrap();
+    let leg = &p.legs[0];
+    let h = leg.hops[0];
+    let height = leg.points[h.point][2] - leg.points[h.point + 1][2];
+    assert!(height > 300.0 && height < 320.0, "{height}");
+    let safe = PathParams { safe_drop_max: Some(height), ..Default::default() };
+    assert!(g.find_path(from, to, &safe).is_ok());
+    assert!(g.find_path(from, to, &PathParams { safe_drop_max: Some(299.0), ..safe }).is_err());
 }
 
 #[test]

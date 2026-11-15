@@ -82,6 +82,25 @@ Depends on `fnv-esm` and `fnv-world` only.
 A path is a list of legs, one per space visited, each with its polyline, its corridor of
 triangles, its door stops and the door that ends it.
 
+[design, #2532: `fnv_nav::PathParams::safe_drop_max`, `NavGraph::search_path`]
+AI without Allow Falls can use authored downward links within the load order's
+`fJumpFallHeightMin`, measured between `ledge_ends`' planned takeoff and landing
+(fallback 600, matching `nvf-play/src/falls.rs`). Ordinary hierarchical routing is
+tried first; when no area/door route exists, bounded full A* can connect those islands
+by harmless drops. The navigation default remains opt-in, and unrestricted ledges and
+climbs retain their existing policy. [hypothesis, #2532] Per-link height is a provisional
+safety estimate, not a measurement of the original (observer check 224).
+
+[documented: supplied #2532 record brief, main-session fnvtool 2026-11-15]
+The showdown controller enables rangers 0x001438DA/DB; their Patrol package 0x001438E8
+has no Allow Falls and visits markers 01 0x001438D3, 02 0x001438D4, 03 0x001438D1,
+04 0x001438D2 and a fifth marker whose ID was not supplied. No supplied script assigns
+that package with AddScriptPackage. [hypothesis, #2532] Rejecting all ledge links can
+strand them; this change fixes that general mismatch but cannot establish the camp's
+actual route. The main session must check both NPC_ package lists/conditions and NAVM
+links/heights from the rangers to marker 01, then between the patrol markers. The smoke
+`legate-rangers-showdown` tests natural package selection and first-marker arrival.
+
 ## 4. Following
 
 - `Follower` advances past corners within 16 units (or once passed while close), uses a
