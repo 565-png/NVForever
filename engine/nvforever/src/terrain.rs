@@ -713,6 +713,39 @@ mod tests {
     use super::*;
     use bevy::mesh::VertexAttributeValues;
 
+    #[test]
+    fn surface_height_planes_match_real_mesh_triangles() {
+        let h: Vec<_> = (0..SIDE * SIDE).map(|i| ((i * 17 + i / SIDE * 11) % 73) as f32 * 3.25 - 90.0).collect();
+        let land = Land { heights: Some(h.clone()), ..default() };
+        for q in 0..4 {
+            let mesh = quadrant_mesh(&land, q, None, Vec2::new(-8192.0, -4096.0), 256.0).unwrap();
+            let VertexAttributeValues::Float32x3(vertices) = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap() else { panic!() };
+            let triangles = triangles(&mesh);
+            for (n, triangle) in triangles.iter().enumerate() {
+                let v = triangle.map(|i| Vec3::from_array(vertices[i as usize]));
+                let square = n / 2;
+                let x = (q as usize % 2) * 16 + square % 16;
+                let y = (q as usize / 2) * 16 + square / 16;
+                let i = y * SIDE + x;
+                let planes = crate::terrain_surface::height_planes(h[i], h[i + 1], h[i + SIDE], h[i + SIDE + 1]);
+                for bary in [[0.2, 0.3, 0.5], [0.8, 0.1, 0.1], [0.0, 0.5, 0.5], if n % 2 == 0 { [0.5, 0.0, 0.5] } else { [0.5, 0.5, 0.0] }] {
+                    let p = v[0] * bary[0] + v[1] * bary[1] + v[2] * bary[2];
+                    let f = p.truncate() / SPACING - Vec2::new(x as f32, y as f32);
+                    let plane = planes[n % 2];
+                    let z = plane[0] + f.x * plane[1] + f.y * plane[2];
+                    assert!((z - p.z).abs() < 0.001, "quadrant={q} triangle={n}");
+                    if (f.y - f.x).abs() > 0.0001 {
+                        assert_eq!(usize::from(f.y > f.x), n % 2, "actual mesh diagonal");
+                    } else {
+                        for plane in planes {
+                            assert!((plane[0] + f.x * plane[1] + f.y * plane[2] - p.z).abs() < 0.001, "shared diagonal");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn sloped_land() -> Land {
         // A slope rising to the east and, less, to the north.
         let heights = (0..SIDE * SIDE).map(|i| (i % SIDE) as f32 * 40.0 + (i / SIDE) as f32 * 15.0).collect();

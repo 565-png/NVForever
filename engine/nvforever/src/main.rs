@@ -2563,3 +2563,6 @@ mod tests {
         assert!((horizontal(16.0 / 9.0) - 91.31).abs() < 0.01);
     }
 }
+
+#[cfg(test)]
+mod mesh_blend_shader_tests;

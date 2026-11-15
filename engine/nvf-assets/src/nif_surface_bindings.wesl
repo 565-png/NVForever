@@ -44,19 +44,19 @@ struct NifSurface {
     // noise's reach (display values), z the canvas's share of the texture's width; w unused.
     pipboy_b: vec4<f32>,
     // [design] Band, variant, unused; cache southwest cell in origin.xy.
-    mesh_terrain: vec4<f32>,
-    mesh_terrain_origin: vec4<f32>,
+    @if(NIF_SURFACE_BLEND) mesh_terrain: vec4<f32>,
+    @if(NIF_SURFACE_BLEND) mesh_terrain_origin: vec4<f32>,
 }
 
-// The extension's index table (indices 50-56 of nif_material.rs NifSurface's bindless attribute).
+// Main: indices 50-53. The separate enabled extension adds 54-56.
 @if(BINDLESS) struct NifSurfaceIndices {
     surface: u32,          // 50
     holes_texture: u32,    // 51
     holes_sampler: u32,    // 52
     facegen_offset: u32,   // 53
-    mesh_terrain_colour: u32, // 54
-    mesh_terrain_sampler: u32, // 55
-    mesh_terrain_height: u32, // 56
+    @if(NIF_SURFACE_BLEND) mesh_terrain_colour: u32, // 54
+    @if(NIF_SURFACE_BLEND) mesh_terrain_sampler: u32, // 55
+    @if(NIF_SURFACE_BLEND) mesh_terrain_height: u32, // 56
 }
 @if(BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<storage> nif_indices: array<NifSurfaceIndices>;
 @if(BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(101) var<storage> nif_surfaces: array<NifSurface>;
@@ -64,11 +64,19 @@ struct NifSurface {
 @if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(51) var holes_texture: texture_2d<f32>;
 @if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(52) var holes_sampler: sampler;
 @if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(53) var facegen_offset: texture_2d<f32>;
-@if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(54) var mesh_terrain_colour: texture_2d<f32>;
-@if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(55) var mesh_terrain_sampler: sampler;
-@if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(56) var mesh_terrain_height: texture_2d<f32>;
+@if(NIF_SURFACE_BLEND && !BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(54) var mesh_terrain_colour: texture_2d<f32>;
+@if(NIF_SURFACE_BLEND && !BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(55) var mesh_terrain_sampler: sampler;
+@if(NIF_SURFACE_BLEND && !BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(56) var mesh_terrain_height: texture_2d<f32>;
 
-// [design] Encoded heights preserve all original f32 bits without requiring filterable R32F.
+// [design] Values come from nif_surface_blend.rs::blend_shader_defs, shared with packing.
+@if(MESH_TERRAIN_BLEND) const RESOLUTION: i32 = i32(constants::MESH_TERRAIN_RESOLUTION);
+@if(MESH_TERRAIN_BLEND) const ATLAS_WIDTH: i32 = 3 * RESOLUTION;
+@if(MESH_TERRAIN_BLEND) const GRID: i32 = i32(constants::MESH_TERRAIN_GRID);
+@if(MESH_TERRAIN_BLEND) const HEIGHT_TILE: vec2<i32> = vec2(i32(constants::MESH_TERRAIN_HEIGHT_TILE_WIDTH), i32(constants::MESH_TERRAIN_HEIGHT_TILE_HEIGHT));
+@if(MESH_TERRAIN_BLEND) const CELL_SIZE: f32 = f32(constants::MESH_TERRAIN_CELL_SIZE);
+@if(MESH_TERRAIN_BLEND) const SPACING: f32 = f32(constants::MESH_TERRAIN_SPACING);
+
+// [design] Encoded coefficients preserve their f32 bits without requiring filterable R32F.
 @if(MESH_TERRAIN_BLEND) fn terrain_height_texel(instance_index: u32, p: vec2<i32>) -> f32 {
     @if(BINDLESS) let v = textureLoad(bindless_textures_2d[nif_indices[material_slot(instance_index)].mesh_terrain_height], p, 0);
     @if(!BINDLESS) let v = textureLoad(mesh_terrain_height, p, 0);
@@ -84,7 +92,7 @@ struct NifSurface {
 
 @if(MESH_TERRAIN_BLEND) fn terrain_cell_resident(instance_index: u32, slot: vec2<i32>) -> bool {
     if any(slot < vec2(0)) || any(slot >= vec2(3)) { return false; }
-    return terrain_height_texel(instance_index, slot * 33) > -1e30;
+    return terrain_height_texel(instance_index, slot * HEIGHT_TILE) > -1e30;
 }
 
 // [design] Colour only; coverage, alpha, vertices and depth stay with nif_material.wesl.
@@ -93,35 +101,46 @@ struct NifSurface {
     let variant = u32(s.mesh_terrain.y);
     if variant == 3u { return mix(colour, vec3(0.1, 0.8, 0.25), 0.6); }
     let game = vec3(world.x, -world.z, world.y);
-    let cell = vec2<i32>(floor(game.xy / 4096.0));
+    let cell = vec2<i32>(floor(game.xy / CELL_SIZE));
     let slot = cell - vec2<i32>(s.mesh_terrain_origin.xy);
     if any(slot < vec2(0)) || any(slot >= vec2(3)) { return colour; }
-    let local = game.xy / 128.0 - vec2<f32>(cell) * 32.0;
-    let square = min(vec2<i32>(floor(local)), vec2(31));
+    let local = game.xy / SPACING - vec2<f32>(cell) * f32(GRID);
+    let square = min(vec2<i32>(floor(local)), vec2(GRID - 1));
     let f = local - vec2<f32>(square);
-    let base = slot * 33 + square;
+    let triangle = select(0, 1, f.y > f.x);
+    let base = slot * HEIGHT_TILE + vec2(square.x * 6 + triangle * 3, square.y);
+    // Coefficients are built by terrain_surface.rs::height_planes from the real mesh diagonal.
     let a = terrain_height_texel(instance_index, base);
-    let b = terrain_height_texel(instance_index, base + vec2(1, 0));
-    let c = terrain_height_texel(instance_index, base + vec2(0, 1));
-    let d = terrain_height_texel(instance_index, base + vec2(1, 1));
-    // [design] Missing slots contain a negative sentinel outside the supported height range.
-    if a < -1e30 || b < -1e30 || c < -1e30 || d < -1e30 { return colour; }
-    // terrain.rs::quadrant_mesh triangles: SW/E/NE and SW/NE/N.
-    var height = a + f.x * (b - a) + f.y * (d - b);
-    if f.y > f.x { height = a + f.x * (d - c) + f.y * (c - a); }
+    let dx = terrain_height_texel(instance_index, base + vec2(1, 0));
+    let dy = terrain_height_texel(instance_index, base + vec2(2, 0));
+    if a < -1e30 { return colour; }
+    let height = a + f.x * dx + f.y * dy;
     // [design] Fade over one LAND grid interval next to missing slots, before filtering
     // can reach an empty colour texel. Mips/gutters and distance fading remain later work.
-    let within = game.xy - vec2<f32>(cell) * 4096.0;
-    var border = 4096.0;
+    let within = game.xy - vec2<f32>(cell) * CELL_SIZE;
+    var border = CELL_SIZE;
     if !terrain_cell_resident(instance_index, slot + vec2(-1, 0)) { border = min(border, within.x); }
-    if !terrain_cell_resident(instance_index, slot + vec2(1, 0)) { border = min(border, 4096.0 - within.x); }
+    if !terrain_cell_resident(instance_index, slot + vec2(1, 0)) { border = min(border, CELL_SIZE - within.x); }
     if !terrain_cell_resident(instance_index, slot + vec2(0, -1)) { border = min(border, within.y); }
-    if !terrain_cell_resident(instance_index, slot + vec2(0, 1)) { border = min(border, 4096.0 - within.y); }
-    let w = (1.0 - smoothstep(0.0, s.mesh_terrain.x, max(game.z - height, 0.0))) * smoothstep(0.0, 128.0, border);
+    if !terrain_cell_resident(instance_index, slot + vec2(0, 1)) { border = min(border, CELL_SIZE - within.y); }
+    // Validate every cell touched by the exact mip-0 bilinear footprint, including
+    // diagonals. The atlas Y axis is reversed by the bake camera.
+    let atlas = (game.xy / CELL_SIZE - s.mesh_terrain_origin.xy) / 3.0;
+    let uv = vec2(atlas.x, 1.0 - atlas.y);
+    let tap = vec2<i32>(floor(uv * f32(ATLAS_WIDTH) - vec2(0.5)));
+    let residency = u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(0, GRID)));
+    for (var y = 0; y < 2; y++) {
+        for (var x = 0; x < 2; x++) {
+            let pixel = clamp(tap + vec2(x, y), vec2(0), vec2(ATLAS_WIDTH - 1));
+            let tap_slot = vec2(pixel.x / RESOLUTION, 2 - pixel.y / RESOLUTION);
+            let offset = tap_slot - slot + vec2(1);
+            let bit = u32(offset.y * 3 + offset.x);
+            if (residency & (1u << bit)) == 0u { return colour; }
+        }
+    }
+    let w = (1.0 - smoothstep(0.0, s.mesh_terrain.x, max(game.z - height, 0.0))) * smoothstep(0.0, SPACING, border);
     if variant == 1u { return vec3(w, 0.0, 1.0 - w); }
     if w <= 0.0 { return colour; }
-    let atlas = (game.xy / 4096.0 - s.mesh_terrain_origin.xy) / 3.0;
-    let uv = vec2(atlas.x, 1.0 - atlas.y);
     return mix(colour, terrain_colour_texel(instance_index, uv), w);
 }
 

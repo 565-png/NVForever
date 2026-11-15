@@ -4,6 +4,7 @@
 use crate::terrain_surface::{SurfaceCache, update_cache};
 use bevy::prelude::*;
 use nvf_assets::nif_material::{NifMaterial, Falloff};
+use nvf_assets::nif_surface_blend::{NifBlendMaterial, NifSurfaceBlend};
 use std::{collections::HashMap, sync::OnceLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +78,7 @@ pub fn eligible_material(m: &NifMaterial) -> bool {
 #[derive(Component)]
 pub struct BlendShape {
     pub original: Handle<NifMaterial>,
-    enabled: Option<Handle<NifMaterial>>,
+    enabled: Option<Handle<NifBlendMaterial>>,
 }
 
 impl BlendShape {
@@ -87,7 +88,7 @@ impl BlendShape {
 #[derive(Resource, Default)]
 struct Variants {
     generation: u64,
-    materials: HashMap<AssetId<NifMaterial>, Handle<NifMaterial>>,
+    materials: HashMap<AssetId<NifMaterial>, Handle<NifBlendMaterial>>,
     reported: Option<u64>,
 }
 
@@ -96,25 +97,27 @@ pub struct MeshTerrainBlendPlugin;
 impl Plugin for MeshTerrainBlendPlugin {
     fn build(&self, app: &mut App) {
         if config().is_none() { return; }
-        app.init_resource::<SurfaceCache>().init_resource::<Variants>()
+        app.add_plugins((MaterialPlugin::<NifBlendMaterial>::default(), crate::terrain_surface::SurfaceBakePlugin))
+            .init_resource::<SurfaceCache>().init_resource::<Variants>()
             .add_systems(Update, (update_cache, apply_variants).chain().after(crate::world::stream));
     }
 }
 
-fn enabled_material(source: &NifMaterial, c: BlendConfig, surface: &crate::terrain_surface::PublishedSurface) -> NifMaterial {
-    let mut enabled = source.clone();
-    enabled.extension.mesh_terrain = Vec4::new(c.band, c.variant.number(), 0.0, 0.0);
-    enabled.extension.mesh_terrain_origin = Vec4::new(surface.origin.0 as f32, surface.origin.1 as f32, 0.0, 0.0);
-    enabled.extension.mesh_terrain_colour = Some(surface.colour.clone());
-    enabled.extension.mesh_terrain_height = Some(surface.height.clone());
-    enabled
+fn enabled_material(source: &NifMaterial, c: BlendConfig, surface: &crate::terrain_surface::PublishedSurface) -> NifBlendMaterial {
+    NifBlendMaterial {
+        base: source.base.clone(),
+        extension: NifSurfaceBlend::from_source(&source.extension, c.band, c.variant.number(),
+            Vec4::new(surface.origin.0 as f32, surface.origin.1 as f32, 0.0, 0.0), surface.colour.clone(), surface.height.clone()),
+    }
 }
 
 fn apply_variants(
+    mut commands: Commands,
     cache: Res<SurfaceCache>,
     mut variants: ResMut<Variants>,
-    mut materials: ResMut<Assets<NifMaterial>>,
-    mut shapes: Query<(&mut BlendShape, &mut MeshMaterial3d<NifMaterial>)>,
+    materials: Res<Assets<NifMaterial>>,
+    mut blends: ResMut<Assets<NifBlendMaterial>>,
+    mut shapes: Query<(Entity, &mut BlendShape, Option<&MeshMaterial3d<NifMaterial>>)>,
 ) {
     let Some(c) = config() else { return };
     if variants.generation != cache.generation {
@@ -122,27 +125,30 @@ fn apply_variants(
         variants.materials.clear();
     }
     let mut eligible = 0;
-    for (mut shape, mut drawn) in &mut shapes {
+    for (entity, mut shape, drawn) in &mut shapes {
         // [design] Respect a material override, retaining its actual source handle too.
-        if drawn.0 != shape.original && shape.enabled.as_ref() != Some(&drawn.0) {
+        if let Some(drawn) = drawn {
             shape.original = drawn.0.clone();
-            shape.enabled = None;
         }
         let allowed = materials.get(&shape.original).is_some_and(eligible_material);
         eligible += usize::from(allowed);
         let Some(surface) = cache.published.as_ref().filter(|_| allowed) else {
-            if drawn.0 != shape.original { drawn.0 = shape.original.clone(); }
+            if shape.enabled.is_some() {
+                commands.entity(entity).remove::<MeshMaterial3d<NifBlendMaterial>>().insert(MeshMaterial3d(shape.original.clone()));
+            }
             shape.enabled = None;
             continue;
         };
         let source = shape.original.id();
         let handle = if let Some(handle) = variants.materials.get(&source) { handle.clone() } else {
             let enabled = enabled_material(materials.get(source).unwrap(), c, surface);
-            let handle = materials.add(enabled);
+            let handle = blends.add(enabled);
             variants.materials.insert(source, handle.clone());
             handle
         };
-        if drawn.0 != handle { drawn.0 = handle.clone(); }
+        if shape.enabled.as_ref() != Some(&handle) || drawn.is_some() {
+            commands.entity(entity).remove::<MeshMaterial3d<NifMaterial>>().insert(MeshMaterial3d(handle.clone()));
+        }
         shape.enabled = Some(handle);
     }
     if let Some(surface) = &cache.published {
@@ -151,24 +157,6 @@ fn apply_variants(
             variants.reported = Some(cache.generation);
         }
     }
-}
-
-// [design] CPU mirrors of the fragment's arithmetic for focused tests, not a second height source.
-#[cfg(test)]
-fn weight(height: f32, band: f32) -> f32 {
-    let t = (height / band).clamp(0.0, 1.0);
-    1.0 - t * t * (3.0 - 2.0 * t)
-}
-
-#[cfg(test)]
-fn sample_height(heights: &[f32], point: Vec2, cell: (i32, i32)) -> Option<f32> {
-    if fnv_world::cell_of(point.x, point.y) != cell || heights.len() != 33 * 33 { return None; }
-    let local = point / 128.0 - Vec2::new(cell.0 as f32, cell.1 as f32) * 32.0;
-    let square = local.floor().as_uvec2().min(UVec2::splat(31));
-    let f = local - square.as_vec2();
-    let i = square.y as usize * 33 + square.x as usize;
-    let (a, b, cc, d) = (heights[i], heights[i + 1], heights[i + 33], heights[i + 34]);
-    Some(if f.y > f.x { a + f.x * (d - cc) + f.y * (cc - a) } else { a + f.x * (b - a) + f.y * (d - b) })
 }
 
 #[cfg(test)]
@@ -185,40 +173,6 @@ mod tests {
         for value in ["", "24", "0:surface", "-1:weight", "NaN:surface", "inf:surface", "a:surface", "24:bad", "24:surface:weight"] {
             assert!(parse(value).is_err(), "{value}");
         }
-    }
-
-    #[test]
-    fn weights_saturate_and_are_continuous_bounded_monotone() {
-        assert_eq!(weight(-100.0, 24.0), 1.0);
-        assert_eq!(weight(0.0, 24.0), 1.0);
-        assert_eq!(weight(24.0, 24.0), 0.0);
-        assert_eq!(weight(100.0, 24.0), 0.0);
-        let mut previous = 1.0;
-        for i in 0..=2400 {
-            let w = weight(i as f32 / 100.0, 24.0);
-            assert!((0.0..=1.0).contains(&w) && w <= previous);
-            assert!((w - previous).abs() < 0.001);
-            previous = w;
-        }
-        assert!((weight(-0.0001, 24.0) - weight(0.0001, 24.0)).abs() < 1e-6);
-        assert!(weight(23.9999, 24.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn triangle_height_uses_rendered_diagonal_and_negative_floor() {
-        let mut h = vec![0.0; 33 * 33];
-        h[34] = 100.0;
-        // [design] A saddle distinguishes triangular interpolation from bilinear (18.75).
-        assert_eq!(sample_height(&h, Vec2::new(96.0, 32.0), (0, 0)), Some(25.0));
-        assert_eq!(sample_height(&h, Vec2::new(32.0, 96.0), (0, 0)), Some(25.0));
-        assert_eq!(sample_height(&h, Vec2::new(64.0, 64.0), (0, 0)), Some(50.0));
-        let origin = Vec2::new(-8192.0, -4096.0);
-        assert_eq!(sample_height(&h, origin + Vec2::new(96.0, 32.0), (-2, -1)), Some(25.0));
-        assert_eq!(sample_height(&h, Vec2::new(-0.01, -0.01), (0, 0)), None);
-        let flat = vec![12.0; 33 * 33];
-        assert_eq!(sample_height(&flat, Vec2::new(-0.01, -0.01), (-1, -1)), Some(12.0));
-        assert_eq!(sample_height(&flat, Vec2::ZERO, (0, 0)), Some(12.0));
-        assert_eq!(sample_height(&flat, Vec2::new(4096.0, 4096.0), (1, 1)), Some(12.0));
     }
 
     #[test]
@@ -246,8 +200,8 @@ mod tests {
             assert_eq!(source.base.depth_bias, enabled.base.depth_bias);
             assert_eq!(source.extension.alpha_cut, enabled.extension.alpha_cut);
             assert_eq!(source.extension.holes, enabled.extension.holes);
-            assert!(source.extension.mesh_terrain_colour.is_none());
-            assert!(nvf_assets::nif_material::NifSurfaceKey::from(&enabled.extension).mesh_terrain);
+            assert!(enabled.extension.mesh_terrain_colour.is_some());
+            assert_eq!(nvf_assets::nif_material::NifSurfaceKey::from(&source.extension), nvf_assets::nif_surface_blend::NifSurfaceBlendKey::from(&enabled.extension).0);
         }
         for alpha_mode in [AlphaMode::Blend, AlphaMode::Add, AlphaMode::Multiply, AlphaMode::AlphaToCoverage] {
             assert!(!eligible_material(&NifMaterial { base: StandardMaterial { alpha_mode, ..default() }, extension: default() }));
