@@ -149,9 +149,9 @@ mod tests {
             *x /= sum;
         }
         let mut out = Lattice { id: [[0; 2]; 3], bary: b, rel: [[0.0; 2]; 3] };
-        for j in 0..3 {
-            out.id[j] = [cell[0] + d[j][0], cell[1] + d[j][1]];
-            let e = [f[0] - d[j][0] as f32, f[1] - d[j][1] as f32];
+        for (j, dj) in d.iter().enumerate() {
+            out.id[j] = [cell[0] + dj[0], cell[1] + dj[1]];
+            let e = [f[0] - dj[0] as f32, f[1] - dj[1] as f32];
             out.rel[j] = [LATTICE * (e[0] + 0.5 * e[1]), LATTICE * (H * e[1])];
         }
         out
