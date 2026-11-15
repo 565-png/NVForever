@@ -211,9 +211,45 @@ fn weight_fields(c: &BlendConfig) -> String {
 }
 
 /// The resolved configuration; `start band=... variant=...` stays the line's prefix and
-/// round 5's fields keep their order before the appended weight fields.
-fn start_line(c: &BlendConfig) -> String {
-    format!("mesh terrain blend: start band={} variant={} resolution={} noise=0 shape={} shading={}{}", c.band, c.variant.name(), c.resolution, c.shape.name(), c.shading.name(), weight_fields(c))
+/// round 5's fields keep their order before the appended weight fields; round 10a's
+/// resolved landscape-detail mode ends it ([`DetailMode::fields`]).
+fn start_line(c: &BlendConfig, detail: DetailMode) -> String {
+    format!("mesh terrain blend: start band={} variant={} resolution={} noise=0 shape={} shading={}{}{}", c.band, c.variant.name(), c.resolution, c.shape.name(), c.shading.name(), weight_fields(c), detail.fields())
+}
+
+/// [design] Round 10a: whether publications sample the landscape's own layer textures
+/// near the camera (`Layers`) or keep the colour cache alone, and why.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DetailMode { Layers, Colour(&'static str) }
+impl DetailMode {
+    /// ` detail=layers`, or ` detail=colour detail-reason=<aid|device|no-device>`.
+    fn fields(self) -> String {
+        match self { Self::Layers => " detail=layers".into(), Self::Colour(reason) => format!(" detail=colour detail-reason={reason}") }
+    }
+    pub fn layers(self) -> bool { self == Self::Layers }
+}
+
+/// [design] The test aid `NVF_PLAY_TEST_MESH_BLEND_DETAIL=colour` keeps the colour cache
+/// alone for comparison runs (read once; any other value is refused in the log).
+fn detail_aid() -> bool {
+    static FORCED: OnceLock<bool> = OnceLock::new();
+    *FORCED.get_or_init(|| match std::env::var("NVF_PLAY_TEST_MESH_BLEND_DETAIL") {
+        Ok(v) if v == "colour" => true,
+        Ok(v) => { warn!("mesh terrain blend: rejected NVF_PLAY_TEST_MESH_BLEND_DETAIL={v:?}: expected colour"); false }
+        Err(_) => false,
+    })
+}
+
+/// [design] Round 10a's capability: the blend material is bindless on this device (its
+/// landscape palette lives in the bindless index table, nif_surface_blend.rs) and the
+/// device indexes sampled-texture arrays non-uniformly (a fragment's quadrant picks the
+/// layers). Otherwise, or with the aid, the colour cache alone.
+pub fn detail_capability(device: Option<&bevy::render::renderer::RenderDevice>, forced_colour: bool) -> DetailMode {
+    use bevy::render::settings::WgpuFeatures;
+    if forced_colour { return DetailMode::Colour("aid"); }
+    let Some(device) = device else { return DetailMode::Colour("no-device") };
+    let bindless = bevy::render::material_bind_groups::material_uses_bindless_resources::<NifBlendMaterial>(device);
+    if bindless && device.features().contains(WgpuFeatures::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING) { DetailMode::Layers } else { DetailMode::Colour("device") }
 }
 
 /// [design] Why a tracked shape cannot blend, one bit each; the order is the first-reason
@@ -573,8 +609,11 @@ fn follow_setting(
     let Some(c) = want else { return };
     gate.0.set_open(true);
     RECORDING.store(true, Ordering::Relaxed);
-    info!("{}", start_line(&c));
-    cache.start(c.resolution, device.map(|d| d.limits().max_texture_dimension_2d));
+    // [design] Round 10a: the detail mode is resolved only when the blend turns on (no
+    // detail work while off).
+    let detail = detail_capability(device.as_deref(), detail_aid());
+    info!("{}", start_line(&c, detail));
+    cache.start(c.resolution, device.map(|d| d.limits().max_texture_dimension_2d), detail.layers());
     *variants = Variants { readiness: variants.readiness.take(), ..default() };
     state.active = Some(c);
     state.shapes_pending = true;
@@ -663,8 +702,10 @@ fn conversion_order<M>(system: impl IntoScheduleConfigs<bevy::ecs::system::Sched
 fn enabled_material(source: &NifMaterial, c: BlendConfig, surface: &crate::terrain_surface::PublishedSurface) -> NifBlendMaterial {
     NifBlendMaterial {
         base: source.base.clone(),
+        // [design] Round 10a: every clone of a publication binds that publication's palette
+        // (empty without landscape detail), so its table numbers match its height atlas.
         extension: NifSurfaceBlend::from_source(&source.extension, c.controls(), c.width_controls(),
-            Vec4::new(surface.origin.0 as f32, surface.origin.1 as f32, surface.coverage as f32, 0.0), surface.colour.clone(), surface.height.clone()),
+            Vec4::new(surface.origin.0 as f32, surface.origin.1 as f32, surface.coverage as f32, 0.0), surface.colour.clone(), surface.height.clone(), surface.palette.clone()),
     }
 }
 
@@ -841,9 +882,12 @@ fn shape_line(t: &BlendCensus, mask: u32) -> String {
 
 /// `ready eligible-shapes=... resident-cells=... generation=...` stays the line's prefix and
 /// round 5's `variant= shape= resolution= shading=` follow unchanged; then the weight fields
-/// and the census. The resolution is the published atlas's.
+/// and the census. The resolution is the published atlas's. Round 10a ends it with
+/// ` detail=layers` when the publication supplies layer detail for at least one quadrant
+/// (` detail-quadrants=N` follows), else ` detail=colour`.
 fn ready_line(surface: &crate::terrain_surface::PublishedSurface, generation: u64, c: &BlendConfig, census: &Census) -> String {
-    format!("mesh terrain blend: ready eligible-shapes={} resident-cells={} generation={generation} variant={} shape={} resolution={} shading={}{}{}", census.eligible, surface.cells, c.variant.name(), c.shape.name(), surface.resolution, c.shading.name(), weight_fields(c), census.fields())
+    let detail = if surface.detail.is_empty() { " detail=colour".to_string() } else { format!(" detail=layers detail-quadrants={}", surface.detail.len()) };
+    format!("mesh terrain blend: ready eligible-shapes={} resident-cells={} generation={generation} variant={} shape={} resolution={} shading={}{}{}{detail}", census.eligible, surface.cells, c.variant.name(), c.shape.name(), surface.resolution, c.shading.name(), weight_fields(c), census.fields())
 }
 
 #[cfg(test)]
@@ -1107,12 +1151,17 @@ mod tests {
     #[test]
     fn start_and_ready_lines_keep_their_prefixes_and_name_every_setting() {
         let c = parse("24:surface").unwrap();
-        assert_eq!(start_line(&c), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1");
-        assert!(start_line(&c).starts_with("mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=height shading=full"), "round 5's prefix");
-        assert_eq!(start_line(&parse("24:surface:hybrid").unwrap()), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=1.5 steep=144 weight-version=2");
-        assert_eq!(start_line(&setting_config()), "mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1", "the settings row's look");
-        assert_eq!(start_line(&parse("8:status:penetration:2048:albedo").unwrap()), "mesh terrain blend: start band=8 variant=status resolution=2048 noise=0 shape=penetration shading=albedo weight-version=1");
-        assert_eq!(start_line(&parse("8:surface:hybrid:1024:full:0.5,32").unwrap()), "mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=0.5 steep=32 weight-version=2");
+        assert_eq!(start_line(&c, DetailMode::Layers), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1 detail=layers");
+        // Round 10a: the resolved detail mode ends the line, with the reason for the colour cache alone.
+        assert!(start_line(&c, DetailMode::Colour("aid")).ends_with(" weight-version=1 detail=colour detail-reason=aid"));
+        assert!(start_line(&c, DetailMode::Colour("device")).ends_with(" detail=colour detail-reason=device"));
+        assert_eq!(detail_capability(None, false), DetailMode::Colour("no-device"));
+        assert_eq!(detail_capability(None, true), DetailMode::Colour("aid"), "the aid wins before the device is asked");
+        assert!(start_line(&c, DetailMode::Layers).starts_with("mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=height shading=full"), "round 5's prefix");
+        assert_eq!(start_line(&parse("24:surface:hybrid").unwrap(), DetailMode::Layers), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=1.5 steep=144 weight-version=2 detail=layers");
+        assert_eq!(start_line(&setting_config(), DetailMode::Layers), "mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1 detail=layers", "the settings row's look");
+        assert_eq!(start_line(&parse("8:status:penetration:2048:albedo").unwrap(), DetailMode::Layers), "mesh terrain blend: start band=8 variant=status resolution=2048 noise=0 shape=penetration shading=albedo weight-version=1 detail=layers");
+        assert_eq!(start_line(&parse("8:surface:hybrid:1024:full:0.5,32").unwrap(), DetailMode::Layers), "mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=0.5 steep=32 weight-version=2 detail=layers");
         let mut images = Assets::<Image>::default();
         let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (0, 0), cells: 9, resolution: 512, revision: 3, coverage: 511, ..default() };
         let mut census = Census::default();
@@ -1125,7 +1174,9 @@ mod tests {
         let prefix = "mesh terrain blend: ready eligible-shapes=12 resident-cells=9 generation=3 variant=status shape=height resolution=512 shading=albedo";
         assert!(line.starts_with(&format!("{prefix} weight-version=1 stat-shapes=2 excluded-shapes=2 pending-material-shapes=1 excluded-world=0 excluded-rig=1 excluded-particles=1 excluded-posed=0")), "{line}");
         assert!(line.contains(" excluded-missing-source=1 excluded-temporary=0 excluded-alpha-mode=0"), "{line}");
-        assert!(line.ends_with(" excluded-depth-bias-nonfinite=0 admitted-blend=1 admitted-bias=1 admitted-decal=1 admitted-mask=0 admitted-alpha-cut=1 scol-shapes=1"), "round 7: SCOL shapes last: {line}");
+        assert!(line.ends_with(" excluded-depth-bias-nonfinite=0 admitted-blend=1 admitted-bias=1 admitted-decal=1 admitted-mask=0 admitted-alpha-cut=1 scol-shapes=1 detail=colour"), "round 7: SCOL shapes after the census; round 10a: the detail mode last: {line}");
+        let layered = crate::terrain_surface::PublishedSurface { detail: vec![((0, 0), 1), ((1, 0), 3)], ..surface.clone() };
+        assert!(ready_line(&layered, 3, &parse("8:status:height:512:albedo").unwrap(), &census).ends_with(" scol-shapes=1 detail=layers detail-quadrants=2"));
         for (_, name) in reason::NAMES { assert!(line.contains(&format!(" excluded-{name}=")), "every reason is printed, zero included: {name}"); }
         let v2 = ready_line(&surface, 3, &parse("8:surface:hybrid").unwrap(), &Census::default());
         assert!(v2.starts_with("mesh terrain blend: ready eligible-shapes=0 resident-cells=9 generation=3 variant=surface shape=hybrid resolution=512 shading=full flat=0.5 steep=48 weight-version=2 stat-shapes=0 "), "{v2}");
@@ -1658,7 +1709,7 @@ mod tests {
         assert!(gate_open(&app), "the gate opens before the first clone is made");
         assert_eq!(app.world().resource::<SurfaceCache>().resolution, 1024);
         publish(&mut app);
-        let cell = app.world_mut().spawn(SurfaceCell { world: 0, grid: (0, 0), heights: vec![], quadrants: vec![], paths: [CapturePath::HeightOnly("missing-base-mesh"); 4], content_revision: 0, sources: vec![], dependencies: default() }).id();
+        let cell = app.world_mut().spawn(SurfaceCell { world: 0, grid: (0, 0), heights: vec![], quadrants: vec![], paths: [CapturePath::HeightOnly("missing-base-mesh"); 4], content_revision: 0, sources: vec![], dependencies: default(), detail: default() }).id();
         app.update();
         assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some(), "the shape blends");
         assert!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).is_none());

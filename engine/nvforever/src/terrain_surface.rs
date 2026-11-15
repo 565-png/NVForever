@@ -12,6 +12,10 @@
 //! material group binds one texture. The bake publishes only after every copy, opaque
 //! and blended, has drawn in one frame. The atlas is 512, 1024 (default) or 2048 texels
 //! per cell side (the settings row: 1024; the test aid chooses), checked against the device's texture limit.
+//! Round 10a: with the detail capability a publication also packs, after the heights,
+//! each admitted quadrant's near-draw description (its layer images in a per-publication
+//! palette, prepared vertex attributes and opacities: [`QuadrantDetail`], [`DetailPalette`]),
+//! which the blend shader samples directly near the camera (graphics-enhanced.md §3.12).
 
 use crate::terrain::TerrainMaterial;
 use crate::world::{bevy_to_game, game_to_bevy, Streamer, WorldData};
@@ -153,6 +157,82 @@ pub fn capture_revision() -> u64 {
 #[derive(Clone)]
 pub enum CaptureSource { Folded(Handle<TerrainMaterial>), Single(Handle<nvf_assets::NifMaterial>, bool) }
 
+/// [design] Round 10a: what one quadrant's near draw is made of, for direct sampling of
+/// its layer textures at a mesh fragment (nif_surface_bindings.wesl `mesh_terrain_detail`):
+/// the base draw's source material (a folded `TerrainMaterial` or the single base
+/// material), the separately drawn overflow layers' materials in drawing order, and the
+/// prepared vertex attributes of the very meshes drawn (terrain.rs `terrain_draws`):
+/// linear vertex colour, normalized vertex normal and tangent (game space), and one
+/// opacity grid per drawn overlay (the folded ones, then the overflow ones).
+#[derive(Clone, Debug)]
+pub struct QuadrantDetail {
+    pub base: DetailBase,
+    pub overflow: Vec<Handle<nvf_assets::NifMaterial>>,
+    /// The base draw's texture coordinate is the place in the cell over the repeat (a
+    /// six-layer folded draw), not the place in the world.
+    pub cell_local: bool,
+    /// World units per texture repeat the meshes were built for.
+    pub tile: f32,
+    pub tint: Vec<[f32; 3]>,
+    pub normal: Vec<[f32; 3]>,
+    pub tangent: Vec<[f32; 3]>,
+    /// The tangents' handedness (terrain.rs `TANGENT_SIGN`, from the mesh drawn).
+    pub tangent_sign: f32,
+    pub opacity: Vec<Vec<f32>>,
+    /// The textures and values read from the source materials; `None` when a source
+    /// material is gone or no longer matches the prepared layers (the quadrant then keeps
+    /// the colour cache).
+    pub resolved: Option<ResolvedDetail>,
+}
+
+#[derive(Clone, Debug)]
+pub enum DetailBase { Folded(Handle<TerrainMaterial>), Single(Handle<nvf_assets::NifMaterial>) }
+
+/// [design] The near draw's surface inputs: the base's diffuse and normal map, colour and
+/// texture-coordinate transform (the base `StandardMaterial`, terrain.rs `surface`), and
+/// each drawn overlay's diffuse and normal map, folded ones first.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedDetail {
+    pub base_diffuse: Option<Handle<Image>>,
+    pub base_normal: Option<Handle<Image>>,
+    pub base_rgb: Vec3,
+    pub uv: bevy::math::Affine2,
+    pub overlays: Vec<(Handle<Image>, Option<Handle<Image>>)>,
+    pub folded: usize,
+    /// Normal maps are read with green pointing down the image (`flip_normal_map_y`).
+    pub flip_y: bool,
+}
+
+impl ResolvedDetail {
+    /// From the base draw's material and the overflow layers' materials; `None` when an
+    /// overlay has no diffuse texture (the near draw would not have drawn it), an overflow
+    /// layer reads its normal map the other way up from the base, or the overlays do not
+    /// match the `layers` opacity grids prepared.
+    pub fn from_materials(base: &StandardMaterial, folded: Option<&crate::terrain::TerrainLayers>, overflow: &[&StandardMaterial], layers: usize) -> Option<Self> {
+        let mut overlays = Vec::new();
+        if let Some(e) = folded {
+            let pairs = [(&e.diffuse0, &e.normal0), (&e.diffuse1, &e.normal1), (&e.diffuse2, &e.normal2), (&e.diffuse3, &e.normal3), (&e.diffuse4, &e.normal4), (&e.diffuse5, &e.normal5)];
+            for (d, n) in pairs.into_iter().take(e.count as usize) { overlays.push((d.clone()?, n.clone())); }
+        }
+        let folded = overlays.len();
+        for m in overflow {
+            if m.flip_normal_map_y != base.flip_normal_map_y { return None; }
+            overlays.push((m.base_color_texture.clone()?, m.normal_map_texture.clone()));
+        }
+        if overlays.len() != layers { return None; }
+        let c = LinearRgba::from(base.base_color);
+        Some(Self { base_diffuse: base.base_color_texture.clone(), base_normal: base.normal_map_texture.clone(), base_rgb: Vec3::new(c.red, c.green, c.blue), uv: base.uv_transform, overlays, folded, flip_y: base.flip_normal_map_y })
+    }
+    fn images(&self) -> impl Iterator<Item = &Handle<Image>> {
+        self.base_diffuse.iter().chain(&self.base_normal).chain(self.overlays.iter().flat_map(|(d, n)| std::iter::once(d).chain(n)))
+    }
+}
+
+/// [design] A quadrant's detail capture, or why it keeps the colour cache.
+#[derive(Clone, Debug)]
+pub enum DetailCapture { Layers(Box<QuadrantDetail>), Colour(&'static str) }
+impl Default for DetailCapture { fn default() -> Self { Self::Colour("not-captured") } }
+
 #[derive(Component)]
 pub struct SurfaceCell {
     pub world: u32,
@@ -162,8 +242,11 @@ pub struct SurfaceCell {
     pub paths: [CapturePath; 4],
     pub content_revision: u64,
     pub sources: Vec<CaptureSource>,
-    /// Diffuse dependencies recorded with the captured draw stack, never mesh hashes.
+    /// Diffuse dependencies recorded with the captured draw stack, never mesh hashes; with
+    /// round 10a also every image a quadrant's detail reads (normal maps included).
     pub dependencies: HashSet<AssetId<Image>>,
+    /// Round 10a: each quadrant's detail capture.
+    pub detail: [DetailCapture; 4],
 }
 
 impl SurfaceCell {
@@ -200,6 +283,11 @@ impl SurfaceCell {
                 }
             }
         }
+        // [design] Round 10a: the detail's images too (normal maps, and through their
+        // assets the samplers), so their edits and removals invalidate the cell.
+        for d in &self.detail {
+            if let DetailCapture::Layers(d) = d { images.extend(d.resolved.iter().flat_map(ResolvedDetail::images).map(Handle::id)); }
+        }
         self.dependencies = images;
     }
     fn colour_mask(&self) -> u32 {
@@ -218,6 +306,11 @@ pub struct PublishedSurface {
     /// Enabled-only mask in this publication's original coordinates.
     pub coverage: u32,
     pub(crate) keys: Vec<CellKey>,
+    /// Round 10a: the layer images and samplers its detail quadrants sample (empty without
+    /// landscape detail), bound by every enabled clone of this publication.
+    pub palette: nvf_assets::nif_surface_blend::TerrainPalette,
+    /// The quadrants whose layer detail this publication supplies (grid, quadrant).
+    pub detail: Vec<((i32, i32), u8)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -276,6 +369,9 @@ pub struct SurfaceCache {
     pub resolution: u32,
     /// The device cannot hold the requested atlas ([`check_resolution`]): nothing bakes.
     pub rejected: bool,
+    /// Round 10a: publications carry landscape detail (the blend material is bindless on
+    /// this device, `mesh_terrain_blend.rs::detail_capability`); otherwise colour only.
+    pub detail: bool,
 }
 impl Default for SurfaceCache {
     fn default() -> Self { Self::with_resolution(DEFAULT_RESOLUTION) }
@@ -293,7 +389,7 @@ impl SurfaceCache {
         if self.context.is_none() { publication.coverage } else { retained_mask(publication, &self.current) }
     }
     pub fn with_resolution(resolution: u32) -> Self {
-        Self { generation: 0, signature: None, context: None, selected_centre: None, captured_inputs: default(), stitched_dirty: default(), epoch: 0, revision: 0, current: vec![], image_revisions: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false }
+        Self { generation: 0, signature: None, context: None, selected_centre: None, captured_inputs: default(), stitched_dirty: default(), epoch: 0, revision: 0, current: vec![], image_revisions: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false, detail: false }
     }
 
     /// [design] Select independently of the immutable front, including while a job waits.
@@ -328,9 +424,10 @@ impl SurfaceCache {
     /// device's 2D texture limit (`None` without a render device: not checked, not
     /// logged). An unsupported request is rejected in the log and bakes nothing, so no
     /// material samples it. Nothing is allocated here; the first bake allocates.
-    pub fn start(&mut self, resolution: u32, max_texture_dimension_2d: Option<u32>) {
+    pub fn start(&mut self, resolution: u32, max_texture_dimension_2d: Option<u32>, detail: bool) {
         self.resolution = resolution;
         self.rejected = false;
+        self.detail = detail;
         let Some(max) = max_texture_dimension_2d else { return };
         let width = atlas_width(resolution);
         if resolution_supported(resolution, max) {
@@ -437,6 +534,16 @@ pub fn lookup_covered_status(data: &[u8], origin: (i32, i32), point: Vec2, resol
     LookupStatus::Success
 }
 
+/// [design] Round 10a's end of the publication line: whether the publication supplies
+/// layer detail, the palette's use, the admitted quadrants' count and each quadrant that
+/// keeps the colour cache with its reason (a publication can be mixed). Without the
+/// capability: ` detail=colour detail-reason=capability`.
+fn detail_log(detail: Option<&DetailPalette>) -> String {
+    let Some(d) = detail else { return " detail=colour detail-reason=capability".into() };
+    let refused: Vec<_> = d.refused.iter().map(|((g, q), r)| format!("({}, {}):q{q}:{r}", g.0, g.1)).collect();
+    format!(" detail={} palette-images={} palette-samplers={} detail-quadrants={} colour-quadrants=[{}]",
+        if d.admitted.is_empty() { "colour" } else { "layers" }, d.palette.images.len(), d.palette.samplers.len(), d.admitted.len(), refused.join(";"))
+}
 fn publication_log(generation: u64, origin: (i32, i32), resident: &[String], excluded: &[String], probe: &str, assets: (AssetId<Image>, AssetId<Image>), resolution: u32) -> String {
     format!("mesh terrain blend: publication generation={generation} origin=({}, {}) resident=[{}] excluded=[{}] {probe} colour={:?} height={:?} resolution={resolution}", origin.0, origin.1, resident.join(";"), excluded.join(";"), assets.0, assets.1)
 }
@@ -465,7 +572,10 @@ fn publication_probe(data: &[u8], origin: (i32, i32), point: Vec2, resolution: u
     let triangle = usize::from(f.y > f.x);
     let at = height_index(slot, (square.x as usize, square.y as usize), triangle, 0);
     let normal = probe_normal(data, origin, point).map_or("none".to_string(), |n| format!("({:.3}, {:.3}, {:.3})", n.x + 0.0, n.y + 0.0, n.z + 0.0));
-    format!("probe-cell={cell:?} probe-slot={slot:?} probe-game-xy={point:?} probe-square={square:?} probe-triangle={triangle} probe-height-bytes={:?} probe-status={:?} probe-normal={normal}", &data[at..at + 4], lookup_status(data, origin, point, resolution))
+    // [design] Round 10a: the probe cell's detail mask (the colour classification above is
+    // the colour cache's; the layers are checked separately, as in the shader).
+    let detail = if (0..3).contains(&slot.0) && (0..3).contains(&slot.1) { detail_mask(data, slot) } else { 0 };
+    format!("probe-cell={cell:?} probe-slot={slot:?} probe-game-xy={point:?} probe-square={square:?} probe-triangle={triangle} probe-height-bytes={:?} probe-status={:?} probe-normal={normal} probe-detail-mask={detail:#x}", &data[at..at + 4], lookup_status(data, origin, point, resolution))
 }
 pub fn encode_height_cell(data: &mut [u8], slot: (i32, i32), heights: &[f32]) {
     for y in 0..GRID {
@@ -485,11 +595,128 @@ fn encode_surface_cell(data: &mut [u8], slot: (i32, i32), cell: &SurfaceCell, re
     encode_height_cell(data, slot, &cell.heights);
     encode_residency(data, slot, resident);
     encode_colour_mask(data, slot, cell.colour_mask());
+    encode_detail_mask(data, slot, 0);
 }
-fn empty_height_atlas() -> Vec<u8> {
-    let mut heights = vec![0; HEIGHT_WIDTH * HEIGHT_HEIGHT * 4];
-    for h in heights.as_chunks_mut::<4>().0 { h.copy_from_slice(&INVALID_HEIGHT.to_le_bytes()); }
+#[cfg(test)]
+fn empty_height_atlas() -> Vec<u8> { empty_height_atlas_rows(HEIGHT_HEIGHT) }
+/// [design] The height atlas with `rows` rows: the heights' and, with landscape detail,
+/// the detail words' after them (zero: no quadrant entry is valid).
+fn empty_height_atlas_rows(rows: usize) -> Vec<u8> {
+    let mut heights = vec![0; HEIGHT_WIDTH * rows * 4];
+    for h in heights[..HEIGHT_WIDTH * HEIGHT_HEIGHT * 4].as_chunks_mut::<4>().0 { h.copy_from_slice(&INVALID_HEIGHT.to_le_bytes()); }
     heights
+}
+
+// [design] Round 10a: a cell's four-bit mask of the quadrants whose layer detail this
+// publication supplies, beside the residency and colour masks (texel 2 of the metadata row).
+fn encode_detail_mask(data: &mut [u8], slot: (i32, i32), mask: u32) {
+    let at = ((slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID) * HEIGHT_WIDTH + slot.0 as usize * HEIGHT_TILE_WIDTH + 2) * 4;
+    data[at..at + 4].copy_from_slice(&(mask as f32).to_le_bytes());
+}
+pub fn detail_mask(data: &[u8], slot: (i32, i32)) -> u32 {
+    height_texel(data, (slot.0 as usize * HEIGHT_TILE_WIDTH + 2, slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID)) as u32
+}
+fn put_word(data: &mut [u8], word: usize, value: u32) {
+    let at = (HEIGHT_HEIGHT * HEIGHT_WIDTH + word) * 4;
+    data[at..at + 4].copy_from_slice(&value.to_le_bytes());
+}
+#[cfg(test)]
+pub fn detail_word(data: &[u8], word: usize) -> u32 {
+    let at = (HEIGHT_HEIGHT * HEIGHT_WIDTH + word) * 4;
+    u32::from_le_bytes(data[at..at + 4].try_into().unwrap())
+}
+/// The detail table's entry number of quadrant `q` of `slot` (slot-major, as the shader).
+pub fn detail_entry(slot: (i32, i32), q: u8) -> usize { (slot.1 as usize * 3 + slot.0 as usize) * 4 + q as usize }
+/// [design] One admitted quadrant's table entry and vertex records.
+pub(crate) fn encode_detail(data: &mut [u8], entry: usize, quadrant: &nvf_assets::nif_surface_blend::DetailQuadrant, detail: &QuadrantDetail) {
+    use nvf_assets::nif_surface_blend::{detail_quadrant_word, detail_vertex_word, detail_vertex_words, QUAD_VERTICES};
+    for (i, w) in quadrant.words().into_iter().enumerate() { put_word(data, detail_quadrant_word(entry) + i, w); }
+    let mut opacity = Vec::with_capacity(detail.opacity.len());
+    for v in 0..QUAD_VERTICES {
+        opacity.clear();
+        opacity.extend(detail.opacity.iter().map(|grid| grid[v]));
+        let words = detail_vertex_words(detail.tint[v], detail.normal[v], detail.tangent[v], &opacity);
+        for (i, w) in words.into_iter().enumerate() { put_word(data, detail_vertex_word(entry, v) + i, w); }
+    }
+}
+
+/// [design] StandardMaterial's two-component normal map rule (vendored bevy_pbr
+/// `pbr_material.rs`, `as_bind_group_shader_type`): the image's format is a two-channel one.
+fn two_component(image: &Image) -> bool {
+    matches!(image.texture_descriptor.format, TextureFormat::Rg8Unorm | TextureFormat::Rg16Unorm | TextureFormat::Bc5RgUnorm | TextureFormat::EacRg11Unorm
+        | TextureFormat::Astc { channel: wgpu::AstcChannel::Unorm, .. })
+}
+
+/// [design] Round 10a: one publication's palette ([`PALETTE_IMAGES`] images and
+/// [`PALETTE_SAMPLERS`] sampler descriptions at most) and the quadrants it admits, in a
+/// deterministic order: quadrants the previous publication admitted for unchanged cells
+/// first, then the rest by grid and quadrant. A quadrant is admitted whole or keeps the
+/// colour cache, with the reason. Samplers are shared by description: a palette sampler
+/// stands for every image whose `ImageSampler` equals its representative's (texture.rs
+/// gives landscape textures one description).
+#[derive(Default)]
+pub struct DetailPalette {
+    pub palette: nvf_assets::nif_surface_blend::TerrainPalette,
+    sampler_keys: Vec<bevy::image::ImageSampler>,
+    pub admitted: Vec<(((i32, i32), u8), nvf_assets::nif_surface_blend::DetailQuadrant)>,
+    pub refused: Vec<(((i32, i32), u8), &'static str)>,
+}
+use nvf_assets::nif_surface_blend::{PALETTE_IMAGES, PALETTE_SAMPLERS};
+impl DetailPalette {
+    pub fn assemble<'a>(cells: impl IntoIterator<Item = &'a SurfaceCell>, images: &Assets<Image>, retained: &[((i32, i32), u8)]) -> Self {
+        let mut order: Vec<(&SurfaceCell, u8)> = cells.into_iter().flat_map(|c| (0..4u8).map(move |q| (c, q))).collect();
+        order.sort_by_key(|(c, q)| (!retained.contains(&(c.grid, *q)), c.grid, *q));
+        let mut out = Self::default();
+        for (cell, q) in order {
+            match &cell.detail[q as usize] {
+                DetailCapture::Colour(reason) => out.refused.push(((cell.grid, q), reason)),
+                DetailCapture::Layers(d) => match out.admit(d, images) {
+                    Ok(quadrant) => out.admitted.push(((cell.grid, q), quadrant)),
+                    Err(reason) => out.refused.push(((cell.grid, q), reason)),
+                },
+            }
+        }
+        out
+    }
+    fn image(&self, h: &Handle<Image>, tentative: &mut Vec<Handle<Image>>) -> u16 {
+        let at = self.palette.images.iter().chain(tentative.iter()).position(|i| i == h).unwrap_or_else(|| { tentative.push(h.clone()); self.palette.images.len() + tentative.len() - 1 });
+        at as u16
+    }
+    fn sampler(&self, image: &Image, h: &Handle<Image>, tentative: &mut Vec<(Handle<Image>, bevy::image::ImageSampler)>) -> u16 {
+        let at = self.sampler_keys.iter().chain(tentative.iter().map(|(_, k)| k)).position(|k| *k == image.sampler)
+            .unwrap_or_else(|| { tentative.push((h.clone(), image.sampler.clone())); self.sampler_keys.len() + tentative.len() - 1 });
+        at as u16
+    }
+    fn admit(&mut self, d: &QuadrantDetail, images: &Assets<Image>) -> Result<nvf_assets::nif_surface_blend::DetailQuadrant, &'static str> {
+        let r = d.resolved.as_ref().ok_or("unresolved-materials")?;
+        let loaded = |h: &Handle<Image>| images.get(h).ok_or("image-not-loaded");
+        let (mut tentative, mut samplers) = (Vec::new(), Vec::new());
+        let base_diffuse = r.base_diffuse.as_ref().map(|h| self.image(h, &mut tentative));
+        let base_normal = r.base_normal.as_ref().map(|h| self.image(h, &mut tentative));
+        let mut overlays = Vec::with_capacity(r.overlays.len());
+        for (diffuse, normal) in &r.overlays {
+            let two = normal.as_ref().map(|n| loaded(n).map(two_component)).transpose()?.unwrap_or(false);
+            overlays.push((self.image(diffuse, &mut tentative), normal.as_ref().map(|n| self.image(n, &mut tentative)), two));
+        }
+        // The base diffuse sampler reads every diffuse and overlay normal map (terrain.wesl);
+        // without a base texture the first overlay's stands in.
+        let diffuse_rep = r.base_diffuse.as_ref().or(r.overlays.first().map(|(d, _)| d));
+        let diffuse_sampler = match diffuse_rep { Some(h) => self.sampler(loaded(h)?, h, &mut samplers), None => 0 };
+        let normal_sampler = match &r.base_normal { Some(h) => self.sampler(loaded(h)?, h, &mut samplers), None => diffuse_sampler };
+        for h in r.images() { loaded(h)?; }
+        if self.palette.images.len() + tentative.len() > PALETTE_IMAGES { return Err("palette-images-full"); }
+        if self.sampler_keys.len() + samplers.len() > PALETTE_SAMPLERS { return Err("palette-samplers-full"); }
+        self.palette.images.extend(tentative);
+        for (h, key) in samplers { self.palette.samplers.push(h); self.sampler_keys.push(key); }
+        let base_two_component = r.base_normal.as_ref().map(|n| loaded(n).map(two_component)).transpose()?.unwrap_or(false);
+        let t = r.uv;
+        Ok(nvf_assets::nif_surface_blend::DetailQuadrant {
+            cell_local: d.cell_local, base_diffuse, base_normal, diffuse_sampler, normal_sampler, overlays, folded: r.folded,
+            base_two_component, flip_y: r.flip_y, base_rgb: r.base_rgb,
+            uv: [t.matrix2.x_axis.x, t.matrix2.x_axis.y, t.matrix2.y_axis.x, t.matrix2.y_axis.y, t.translation.x, t.translation.y],
+            tile: d.tile, tangent_sign: d.tangent_sign,
+        })
+    }
 }
 
 // [design] Receipts follow DrawMaterial's successful direct draw, not merely readiness
@@ -792,6 +1019,21 @@ pub fn refresh_captures(
             };
         }
         if missing { cell.paths = [CapturePath::HeightOnly("missing-source-material"); 4]; cell.quadrants.clear(); cell.sources.clear(); }
+        // [design] Round 10a: the detail's textures and values come from the same source
+        // materials; read them again, or fall back to the colour cache when a source is gone
+        // or no longer matches the prepared layers (an unsupported edit).
+        for d in &mut cell.detail {
+            let DetailCapture::Layers(detail) = &mut *d else { continue };
+            let overflow: Option<Vec<&StandardMaterial>> = detail.overflow.iter().map(|h| ordinary.get(h).map(|m| &m.base)).collect();
+            let layers = detail.opacity.len();
+            detail.resolved = if missing { None } else {
+                overflow.and_then(|overflow| match &detail.base {
+                    DetailBase::Folded(h) => folded.get(h).and_then(|m| ResolvedDetail::from_materials(&m.base, Some(&m.extension), &overflow, layers)),
+                    DetailBase::Single(h) => ordinary.get(h).and_then(|m| ResolvedDetail::from_materials(&m.base, None, &overflow, layers)),
+                })
+            };
+            if detail.resolved.is_none() { *d = DetailCapture::Colour(if missing { "missing-source-material" } else { "unresolved-materials" }); }
+        }
         cell.refresh_dependencies();
         // This is a source edit, not a LAND reconstruction; Changed catches it without
         // propagating a false stitched-LAND reconstruction to its neighbours.
@@ -916,7 +1158,9 @@ pub fn update_cache(
     colour.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC | TextureUsages::COPY_DST;
     colour.sampler = ImageSampler::linear();
     let colour = images.add(colour);
-    let mut heights = empty_height_atlas();
+    // [design] Round 10a: with landscape detail the height atlas carries the detail rows.
+    let rows = if cache.detail { HEIGHT_HEIGHT + nvf_assets::nif_surface_blend::DETAIL_ROWS } else { HEIGHT_HEIGHT };
+    let mut heights = empty_height_atlas_rows(rows);
     let mut expected = HashSet::new();
     let root = commands.spawn((Name::new("Mesh terrain surface bake"), game_to_bevy(), Visibility::Inherited)).id();
     let slots = resident.iter().map(|(_, c)| (c.grid.0 - origin.0, c.grid.1 - origin.1)).collect();
@@ -938,6 +1182,25 @@ pub fn update_cache(
             expected.insert(entity.id());
         }
     }
+    // [design] Round 10a: the palette and the admitted quadrants' detail, packed after the
+    // heights; detail masks join the metadata rows. Every replacement repacks its own
+    // palette numbers (the height atlas is rebuilt for it), so no numbers of another
+    // publication's palette survive.
+    let detail = cache.detail.then(|| {
+        let retained: Vec<_> = cache.published.as_ref().map(|p| p.detail.iter().copied().filter(|(grid, _)| signature.cells.iter().any(|k| k.grid == *grid && p.keys.contains(k))).collect()).unwrap_or_default();
+        let assembled = DetailPalette::assemble(resident.iter().map(|(_, c)| &**c), &images, &retained);
+        for (((grid, q), quadrant), cell) in assembled.admitted.iter().filter_map(|a| resident.iter().find(|(_, c)| c.grid == a.0 .0).map(|(_, c)| (a, c))) {
+            let DetailCapture::Layers(d) = &cell.detail[*q as usize] else { continue };
+            let slot = (grid.0 - origin.0, grid.1 - origin.1);
+            encode_detail(&mut heights, detail_entry(slot, *q), quadrant, d);
+        }
+        for (_, cell) in &resident {
+            let slot = (cell.grid.0 - origin.0, cell.grid.1 - origin.1);
+            let mask = assembled.admitted.iter().filter(|((g, _), _)| *g == cell.grid).fold(0, |m, ((_, q), _)| m | 1 << q);
+            encode_detail_mask(&mut heights, slot, mask);
+        }
+        assembled
+    });
     let resident_report: Vec<_> = resident.iter().map(|(_, cell)| format!("({}, {}):q=[{}] colour-mask={:#x}", cell.grid.0, cell.grid.1, cell.paths.map(CapturePath::label).join(","), cell.colour_mask())).collect();
     let mut excluded = Vec::new();
     for y in origin.1..origin.1 + 3 { for x in origin.0..origin.0 + 3 {
@@ -952,7 +1215,7 @@ pub fn update_cache(
     // uploaded coefficients beneath that point, not an unobserved mesh fragment.
     let probe = publication_probe(&heights, origin, eye.truncate(), resolution);
     let height = images.add(Image::new(
-        Extent3d { width: HEIGHT_WIDTH as u32, height: HEIGHT_HEIGHT as u32, depth_or_array_layers: 1 },
+        Extent3d { width: HEIGHT_WIDTH as u32, height: rows as u32, depth_or_array_layers: 1 },
         TextureDimension::D2, heights, TextureFormat::Rgba8Unorm,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     ));
@@ -978,11 +1241,13 @@ pub fn update_cache(
         Transform::from_xyz(6144.0, 6144.0, 100.0).looking_at(Vec3::new(6144.0, 6144.0, 0.0), Vec3::Y),
         RenderLayers::layer(BAKE_LAYER), ChildOf(root),
     )); }
-    let report = publication_log(cache.generation, origin, &resident_report, &excluded, &probe, (colour.id(), height.id()), resolution);
+    let report = publication_log(cache.generation, origin, &resident_report, &excluded, &probe, (colour.id(), height.id()), resolution) + &detail_log(detail.as_ref());
+    let (palette, detail) = detail.map(|d| (d.palette, d.admitted.into_iter().map(|(at, _)| at).collect())).unwrap_or_default();
     cache.job = Some(BakeJob {
         root, receipt, copied: copied.len(), baked,
         publication: PublishedSurface { colour, height, origin, cells: resident.len(), resolution, revision: 0,
-            coverage: signature.cells.iter().fold(0, |m, k| m | (1 << ((k.grid.1-origin.1)*3+k.grid.0-origin.0))), keys: signature.cells },
+            coverage: signature.cells.iter().fold(0, |m, k| m | (1 << ((k.grid.1-origin.1)*3+k.grid.0-origin.0))), keys: signature.cells,
+            palette, detail },
         report,
     });
 }
@@ -992,6 +1257,8 @@ pub fn update_cache(
 /// screenshots remain necessary to judge the actual rendered contact.
 #[derive(Resource)]
 struct ContinuityProbe {
+    /// The crossing sequence the probe drives (`NVF_PLAY_TEST_MESH_BLEND_CROSSING`).
+    crossing: Option<Crossing>,
     start: f64, duration: f64, done: bool, armed: bool,
     witnesses: Vec<(Entity, CellKey, Vec2)>,
     camera: Option<(i32, i32)>, colour: Option<AssetId<Image>>, request: u64,
@@ -1006,12 +1273,90 @@ pub fn install_continuity_probe(app: &mut App) {
         warn!("mesh terrain blend: continuity rejected aid; expected start-seconds:duration-seconds"); return;
     };
     if !start.is_finite() || !duration.is_finite() || start < 0.0 || !(1.0..=120.0).contains(&duration) { return; }
+    let crossing = match std::env::var("NVF_PLAY_TEST_MESH_BLEND_CROSSING") {
+        Err(_) => None,
+        Ok(v) => match Crossing::parse(&v) {
+            Some(c) => Some(c),
+            None => { warn!("mesh terrain blend: continuity rejected crossing aid; expected y:z:delay/x[,delay/x...]"); return; }
+        },
+    };
     app.insert_resource(ContinuityProbe {
+        crossing,
         start, duration, done: false, armed: false, witnesses: vec![], camera: None, colour: None, request: 0,
         selected: None, direction: None, previous_pending: false, recentres: 0, pending_reversals: 0,
         frames: 0, transitions: 0, pending: 0, retained: 0, pending_retained: 0, unwitnessed_pending: 0, replacements: 0,
         unpublished: 0, missing_enabled: 0, missing_prepared: 0, failures: 0, copied: 0, baked: 0,
-    }).add_systems(PostUpdate, continuity_probe.after(crate::mesh_terrain_blend::BlendConversion).after(update_cache).run_if(crate::mesh_terrain_blend::active).run_if(resource_exists::<nvf_play::pause::PlayClock>));
+    }).add_systems(PostUpdate, (continuity_probe, continuity_crossing).chain().after(crate::mesh_terrain_blend::BlendConversion).after(update_cache).run_if(crate::mesh_terrain_blend::active).run_if(resource_exists::<nvf_play::pause::PlayClock>));
+}
+
+/// [design] Test aid only (round 10a, the round-9b review's two notes):
+/// `NVF_PLAY_TEST_MESH_BLEND_CROSSING=<y>:<z>:<delay>/<x>[,<delay>/<x>...]` (with the
+/// continuity probe) puts the player's feet at game `(x, y, z)` step by step, on the
+/// probe's own world clock and only after it armed: a step is due `delay` world seconds
+/// after the previous step (after arming for the first), and every step after the first
+/// also waits until the probe has seen, in a frame after the previous step, the selected
+/// centre in the previous target's cell (its recentre) and pending work in the current
+/// frame. So each reversal lands on a distinct later frame while a replacement is pending,
+/// never in the same frame as the step before it. A step still waiting 10 world seconds
+/// after it was due goes anyway and counts as a timeout. The staging go-to before arming
+/// stays with `NVF_PLAY_TEST_GOTO`.
+struct Crossing {
+    y: f32, z: f32,
+    steps: Vec<(f64, f32)>,
+    next: usize,
+    /// World seconds of the previous step (of arming, before the first).
+    last_at: f64,
+    last_frame: u64,
+    last_target: Option<(i32, i32)>,
+    timeouts: u64,
+}
+impl Crossing {
+    const TIMEOUT: f64 = 10.0;
+    fn parse(value: &str) -> Option<Self> {
+        let mut parts = value.splitn(3, ':');
+        let (y, z) = (parts.next()?.parse::<f32>().ok()?, parts.next()?.parse::<f32>().ok()?);
+        let steps: Option<Vec<_>> = parts.next()?.split(',').map(|s| {
+            let (delay, x) = s.split_once('/')?;
+            let (delay, x) = (delay.trim().parse::<f64>().ok()?, x.trim().parse::<f32>().ok()?);
+            (delay.is_finite() && delay >= 0.0 && x.is_finite()).then_some((delay, x))
+        }).collect();
+        let steps = steps.filter(|s| !s.is_empty())?;
+        (y.is_finite() && z.is_finite()).then_some(Self { y, z, steps, next: 0, last_at: 0.0, last_frame: 0, last_target: None, timeouts: 0 })
+    }
+    /// Whether step `next` goes now: due, and (after the first) the previous step's
+    /// recentre seen in a later probed frame with work pending now, or timed out. `None`:
+    /// not yet; `Some(gated)`: go, `gated` false for a timeout.
+    fn ready(&self, now: f64, frame: u64, selected: Option<(i32, i32)>, pending: bool) -> Option<bool> {
+        let &(delay, _) = self.steps.get(self.next)?;
+        let due = self.last_at + delay;
+        if now < due { return None; }
+        let seen = self.last_target.is_none_or(|target| frame > self.last_frame && selected == Some(target) && pending);
+        if seen { Some(true) } else if now > due + Self::TIMEOUT { Some(false) } else { None }
+    }
+}
+
+/// [design] The crossing steps (see [`Crossing`]), after the probe in the same frame, so
+/// they read the frame's probed recentre and pending state.
+fn continuity_crossing(
+    mut probe: ResMut<ContinuityProbe>, time: nvf_play::pause::AidTime, cache: Res<SurfaceCache>,
+    phys: Option<ResMut<nvf_play::phys::PhysState>>, player: Option<ResMut<nvf_play::player::Player>>,
+) {
+    let Some(now) = time.world_secs().map(f64::from) else { return };
+    if !probe.armed || probe.done { return; }
+    let (frame, pending) = (probe.frames, probe.previous_pending);
+    let Some(c) = probe.crossing.as_mut() else { return };
+    let Some(gated) = c.ready(now, frame, cache.selected_centre, pending) else { return };
+    let (Some(mut phys), Some(mut player)) = (phys, player) else { return };
+    if phys.player.is_none() { return; }
+    let x = c.steps[c.next].1;
+    let at = [x, c.y, c.z];
+    phys.place_player(at, 60.0, 1000.0);
+    player.feet = phys.player.as_ref().map_or(at, |ch| ch.feet);
+    c.timeouts += u64::from(!gated);
+    c.next += 1;
+    (c.last_at, c.last_frame, c.last_target) = (now, frame, Some(fnv_world::cell_of(x, c.y)));
+    info!("mesh terrain blend: continuity crossing step={} x={x:.0} y={:.0} frame={frame} world-secs={now:.2} gated={gated} pending={pending} timeouts={}", c.next, c.y, c.timeouts);
+    if c.next == c.steps.len() { info!("mesh terrain blend: continuity crossing done steps={} timeouts={}", c.next, c.timeouts); }
 }
 type ProbeShapes<'w, 's> = Query<'w, 's, (Entity, &'static nvf_assets::nif_surface_blend::BlendShape, &'static GlobalTransform, Option<&'static MeshMaterial3d<nvf_assets::nif_surface_blend::NifBlendMaterial>>)>;
 #[allow(clippy::too_many_arguments)]
@@ -1046,6 +1391,8 @@ fn continuity_probe(
         }
         if probe.witnesses.is_empty() { return; }
         probe.armed = true; probe.camera = camera_cell; probe.colour = Some(front.colour.id()); probe.selected = cache.selected_centre;
+        // The crossing sequence's clock starts at arming (the world clock, as the probe's).
+        if let Some(c) = probe.crossing.as_mut() { c.last_at = now; }
         info!("mesh terrain blend: continuity armed witnesses={}", probe.witnesses.len());
     }
     probe.frames += 1;
@@ -1102,7 +1449,7 @@ fn continuity_probe(
 mod tests {
     use super::*;
     fn surface(paths: [CapturePath; 4]) -> SurfaceCell {
-        SurfaceCell { world: 0, grid: (-17, 0), heights: vec![42.5; SIDE * SIDE], quadrants: vec![], paths, content_revision: 0, sources: vec![], dependencies: default() }
+        SurfaceCell { world: 0, grid: (-17, 0), heights: vec![42.5; SIDE * SIDE], quadrants: vec![], paths, content_revision: 0, sources: vec![], dependencies: default(), detail: default() }
     }
     /// The probe's classification, the same at every accepted resolution.
     fn status(data: &[u8], origin: (i32, i32), point: Vec2) -> LookupStatus {
@@ -1415,11 +1762,28 @@ mod tests {
             });
             let eye = Vec3::new(grid.0 as f32 * 4096.0 + 2048.0, grid.1 as f32 * 4096.0 + 2048.0, 600.0);
             app.world_mut().spawn((Camera3d::default(), crate::fly::FlyCam { yaw: 0.0, pitch: 0.0, speed: 0.0 }, GlobalTransform::from_translation(Vec3::new(eye.x, eye.z, -eye.y))));
+            // Round 10a: with the detail capability, folded or not.
+            app.world_mut().resource_mut::<SurfaceCache>().detail = true;
             app.world_mut().run_system_once(update_cache).unwrap();
             let cache = app.world().resource::<SurfaceCache>();
             let job = cache.job.as_ref().expect("a bake is pending for the resident cell");
             assert_eq!((job.publication.origin, job.publication.cells), ((grid.0 - 1, grid.1 - 1), 1));
             assert!(job.report.contains("colour-mask=0xf"), "{}", job.report);
+            // Every quadrant's detail is admitted (q0: six folded and one overflow layer with
+            // folding, seven overflow layers without; q3 without a base record draws the
+            // default texture), sharing one image and one sampler description.
+            assert!(job.report.ends_with(" detail=layers palette-images=1 palette-samplers=1 detail-quadrants=4 colour-quadrants=[]"), "folds={folds}: {}", job.report);
+            assert_eq!((job.publication.detail.len(), job.publication.palette.images.len()), (4, 1));
+            {
+                let image = app.world().resource::<Assets<Image>>().get(&job.publication.height).unwrap();
+                assert_eq!(image.texture_descriptor.size.height as usize, HEIGHT_HEIGHT + nvf_assets::nif_surface_blend::DETAIL_ROWS, "the detail rows follow the heights");
+                let data = image.data.as_ref().unwrap();
+                assert_eq!(detail_mask(data, (1, 1)), 0xf);
+                assert_eq!(detail_mask(data, (0, 0)), 0, "a slot without a cell");
+                let q0 = detail_word(data, nvf_assets::nif_surface_blend::detail_quadrant_word(detail_entry((1, 1), 0)));
+                assert_eq!(((q0 >> 8) & 15, (q0 >> 12) & 15), (if folds { 6 } else { 0 }, 7), "folds={folds}: folded and overflow overlays");
+                assert!(job.report.contains("probe-detail-mask=0xf"), "{}", job.report);
+            }
             let height = app.world().resource::<Assets<Image>>().get(&job.publication.height).unwrap().data.clone().unwrap();
             let origin = job.publication.origin;
             for y in 0..GRID { for x in 0..GRID { for triangle in 0..2 {
@@ -1439,6 +1803,128 @@ mod tests {
             assert_eq!(colour.texture_descriptor.size.width, atlas_width(DEFAULT_RESOLUTION), "the default 1024-texel cells");
         }
     }
+    /// A detail capture whose base reads `base` and `normal` and whose overlays read the
+    /// given images (opacities and vertices are irrelevant to the palette).
+    fn layers(base: Handle<Image>, normal: Handle<Image>, overlays: Vec<(Handle<Image>, Option<Handle<Image>>)>) -> DetailCapture {
+        let n = nvf_assets::nif_surface_blend::QUAD_VERTICES;
+        DetailCapture::Layers(Box::new(QuadrantDetail {
+            base: DetailBase::Single(Handle::default()), overflow: vec![], cell_local: false, tile: 256.0,
+            tint: vec![[1.0; 3]; n], normal: vec![[0.0, 0.0, 1.0]; n], tangent: vec![[1.0, 0.0, 0.0]; n], tangent_sign: -1.0,
+            opacity: vec![vec![0.5; n]; overlays.len()],
+            resolved: Some(ResolvedDetail { base_diffuse: Some(base), base_normal: Some(normal), base_rgb: Vec3::ONE, uv: bevy::math::Affine2::IDENTITY, overlays, folded: 0, flip_y: true }),
+        }))
+    }
+    fn sampled(images: &mut Assets<Image>, anisotropy: u16) -> Handle<Image> {
+        let mut image = Image::default();
+        image.sampler = ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor { anisotropy_clamp: anisotropy, ..bevy::image::ImageSamplerDescriptor::linear() });
+        images.add(image)
+    }
+
+    /// [design] Round 10a: the palette admits whole quadrants in a deterministic order
+    /// (previous admissions of unchanged cells first, then grid and quadrant), refuses a
+    /// quadrant whose images or sampler descriptions would overflow it, with the reason,
+    /// shares images and sampler descriptions between quadrants, and the cell's
+    /// dependencies include its normal maps.
+    #[test]
+    fn palette_admits_whole_quadrants_in_order_and_refuses_overflow() {
+        use nvf_assets::nif_surface_blend::{PALETTE_IMAGES, PALETTE_SAMPLERS};
+        let mut images = Assets::<Image>::default();
+        // Sixteen quadrants of 26 distinct images each (a base, its normal map and twelve
+        // overlays with normal maps): 14 fit 384 (364), the 15th and 16th do not.
+        let mut cells = Vec::new();
+        for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let mut cell = surface([CapturePath::Folded { layers: 12 }; 4]);
+            cell.grid = (x, y);
+            for q in 0..4 {
+                let overlays = (0..12).map(|_| (sampled(&mut images, 8), Some(sampled(&mut images, 8)))).collect();
+                cell.detail[q] = layers(sampled(&mut images, 8), sampled(&mut images, 8), overlays);
+            }
+            cell.refresh_dependencies();
+            cells.push(cell);
+        }
+        assert_eq!(cells[0].dependencies.len(), 4 * 26, "every detail image is a dependency, normal maps included");
+        let p = DetailPalette::assemble(&cells, &images, &[]);
+        assert_eq!((p.admitted.len(), p.palette.images.len(), p.palette.samplers.len()), (14, 364, 1));
+        assert!(p.palette.images.len() <= PALETTE_IMAGES);
+        assert_eq!(p.refused, vec![(((1, 1), 2), "palette-images-full"), (((1, 1), 3), "palette-images-full")]);
+        assert_eq!(p.admitted.first().map(|a| a.0), Some(((0, 0), 0)), "grid order");
+        // A retained admission comes first, so another quadrant is refused instead.
+        let retained = [((1, 1), 3)];
+        let r = DetailPalette::assemble(&cells, &images, &retained);
+        assert_eq!(r.admitted.first().map(|a| a.0), Some(((1, 1), 3)));
+        assert_eq!(r.refused.iter().map(|(at, _)| *at).collect::<Vec<_>>(), vec![((1, 1), 1), ((1, 1), 2)]);
+        // Shared images and descriptions: two quadrants reading the same textures add one set.
+        let (base, normal, overlay) = (sampled(&mut images, 8), sampled(&mut images, 8), sampled(&mut images, 8));
+        let mut shared = surface([CapturePath::Folded { layers: 1 }; 4]);
+        for q in 0..4 { shared.detail[q] = layers(base.clone(), normal.clone(), vec![(overlay.clone(), None)]); }
+        let s = DetailPalette::assemble([&shared], &images, &[]);
+        assert_eq!((s.admitted.len(), s.palette.images.len(), s.palette.samplers.len()), (4, 3, 1));
+        let words = s.admitted[3].1.words();
+        assert_eq!((words[1], words[2], words[15]), (1 << 16, 0, 2), "palette numbers: base 0, its normal 1, overlay 2; sampler 0 for both");
+        // Sampler descriptions: two per quadrant (diffuse and normal) fit sixteen in eight
+        // quadrants; the ninth is refused.
+        let mut many = Vec::new();
+        for x in 0..3 {
+            let mut cell = surface([CapturePath::Folded { layers: 0 }; 4]);
+            cell.grid = (x, 0);
+            for q in 0..4 {
+                let k = (x * 4 + q) as u16;
+                cell.detail[q as usize] = layers(sampled(&mut images, 2 * k + 1), sampled(&mut images, 2 * k + 2), vec![]);
+            }
+            many.push(cell);
+        }
+        let m = DetailPalette::assemble(&many, &images, &[]);
+        assert_eq!((m.admitted.len(), m.palette.samplers.len()), (8, PALETTE_SAMPLERS));
+        assert!(m.refused.iter().all(|(_, r)| *r == "palette-samplers-full") && m.refused.len() == 4);
+        // A colour-only capture keeps its reason; a missing image refuses the quadrant.
+        let mut colour = surface([CapturePath::Folded { layers: 0 }; 4]);
+        colour.detail[1] = DetailCapture::Colour("overlays-over-cap");
+        colour.detail[2] = layers(Handle::default(), base.clone(), vec![]);
+        let c = DetailPalette::assemble([&colour], &images, &[]);
+        assert!(c.refused.contains(&(((-17, 0), 1), "overlays-over-cap")) && c.refused.contains(&(((-17, 0), 2), "image-not-loaded")));
+        assert!(c.refused.contains(&(((-17, 0), 0), "not-captured")));
+    }
+
+    /// [design] Round 10a: without the detail capability (or with the aid forcing colour)
+    /// a publication's height atlas has no detail rows, no palette and no detail masks.
+    #[test]
+    fn colour_only_publications_carry_no_detail() {
+        let (mut app, _files) = cache_fixture();
+        let cache = app.world().resource::<SurfaceCache>();
+        assert!(!cache.detail);
+        let published = cache.published.clone().unwrap();
+        assert!(published.palette.images.is_empty() && published.detail.is_empty());
+        let image = app.world_mut().resource_mut::<Assets<Image>>().get(&published.height).unwrap().clone();
+        assert_eq!(image.texture_descriptor.size.height as usize, HEIGHT_HEIGHT);
+        let data = image.data.unwrap();
+        for y in 0..3 { for x in 0..3 { assert_eq!(detail_mask(&data, (x, y)), 0); } }
+    }
+
+    /// [design] The crossing aid's steps: on the probe's clock after arming, each later step
+    /// only after the previous recentre was seen in a later frame with work pending, so two
+    /// steps never share a frame; a timeout after 10 world seconds.
+    #[test]
+    fn crossing_steps_wait_for_the_seen_recentre_and_pending_work() {
+        assert!(Crossing::parse("4800:8600").is_none() && Crossing::parse("4800:8600:").is_none() && Crossing::parse("4800:8600:x/1").is_none());
+        assert!(Crossing::parse("4800:8600:-1/5").is_none(), "no negative delay");
+        let mut c = Crossing::parse("4800:8600:4/-65152,0.3/-65920").unwrap();
+        assert_eq!((c.y, c.z, c.steps.clone()), (4800.0, 8600.0, vec![(4.0, -65152.0), (0.3, -65920.0)]));
+        c.last_at = 10.0; // armed at 10 s
+        assert_eq!(c.ready(13.9, 5, None, false), None, "the first step waits for its delay after arming");
+        assert_eq!(c.ready(14.0, 5, None, false), Some(true), "and nothing else");
+        (c.next, c.last_at, c.last_frame, c.last_target) = (1, 14.0, 5, Some(fnv_world::cell_of(-65152.0, 4800.0)));
+        let east = Some((-16, 1));
+        assert_eq!(c.last_target, east);
+        assert_eq!(c.ready(14.5, 5, east, true), None, "never in the frame of the previous step");
+        assert_eq!(c.ready(14.5, 6, Some((-17, 1)), true), None, "the recentre not yet seen");
+        assert_eq!(c.ready(14.5, 6, east, false), None, "no pending work");
+        assert_eq!(c.ready(14.2, 6, east, true), None, "the delay");
+        assert_eq!(c.ready(14.5, 6, east, true), Some(true));
+        assert_eq!(c.ready(24.4, 9, None, false), Some(false), "a timeout 10 s after it was due");
+        c.next = 2;
+        assert_eq!(c.ready(100.0, 50, east, true), None, "done");
+    }
+
     #[test]
     fn rejected_resolution_bakes_and_publishes_nothing() {
         use bevy::ecs::system::RunSystemOnce;
@@ -1447,7 +1933,7 @@ mod tests {
             .init_resource::<Assets<Image>>().init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<TerrainMaterial>>().init_resource::<Assets<SurfaceCaptureMaterial>>()
             .insert_resource(SurfaceCache { rejected: true, ..SurfaceCache::with_resolution(2048) });
-        let cell = app.world_mut().spawn(SurfaceCell { world: 0, grid: (0, 0), heights: vec![0.0; SIDE * SIDE], quadrants: vec![], paths: [CapturePath::Fallback { layers: 0 }; 4], content_revision: 0, sources: vec![], dependencies: default() }).id();
+        let cell = app.world_mut().spawn(SurfaceCell { world: 0, grid: (0, 0), heights: vec![0.0; SIDE * SIDE], quadrants: vec![], paths: [CapturePath::Fallback { layers: 0 }; 4], content_revision: 0, sources: vec![], dependencies: default(), detail: default() }).id();
         app.insert_resource(Streamer {
             radius: 1, loaded: [((0, 0), cell)].into(), fades: default(), fade_secs: 0.0, settled: true,
             arrival: None, per_frame: 1, spawning: default(), dying: default(), ahead: default(),

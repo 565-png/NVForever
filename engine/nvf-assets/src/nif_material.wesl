@@ -84,7 +84,7 @@ import bevy_pbr::{
 };
 
 import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel};
-@if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_unlit_view, mesh_terrain_diagnostic, mesh_terrain_blend_normal, LOOKUP_SUCCESS, LAND_ROUGHNESS, LAND_REFLECTANCE};
+@if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_unlit_view, mesh_terrain_diagnostic, mesh_terrain_blend_normal, mesh_terrain_target_colour, mesh_terrain_target_normal, MeshTerrainInputs, LOOKUP_SUCCESS, LAND_ROUGHNESS, LAND_REFLECTANCE};
 @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
 
 // Main-pass geometry uses the render viewport, which can be smaller than the
@@ -537,8 +537,13 @@ fn nif_fragment(
     // return: the lighting code after it keeps uniform control flow), their emission
     // cleared below.
     @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_unlit = mesh_terrain_unlit_view(mesh_terrain_view(in.instance_index));
+    // [design] Round 10a: the derivatives of the fragment's game xy (Bevy (x, -z)), taken
+    // here in uniform control flow, before the lookup's branches, for the landscape layers'
+    // explicit-gradient reads (nif_surface_bindings.wesl `mesh_terrain_detail`).
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_xy = vec2(in.world_position.x, -in.world_position.z);
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_inputs = MeshTerrainInputs(distance(view.world_position, in.world_position.xyz), dpdx(terrain_xy), dpdy(terrain_xy), view.mip_bias, mesh_terrain_shading(in.instance_index));
     @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) {
-        let terrain = mesh_terrain_lookup(in.instance_index, in.world_position.xyz, pbr_input.world_normal);
+        let terrain = mesh_terrain_lookup(in.instance_index, in.world_position.xyz, pbr_input.world_normal, terrain_inputs);
         let terrain_view = mesh_terrain_view(in.instance_index);
         if terrain_unlit {
             pbr_input.material.base_color = vec4(mesh_terrain_diagnostic(terrain_view, terrain, pbr_input.material.base_color.rgb), pbr_input.material.base_color.a);
@@ -547,9 +552,9 @@ fn nif_fragment(
             pbr_input.material.base_color = vec4(mesh_terrain_diagnostic(terrain_view, terrain, pbr_input.material.base_color.rgb), pbr_input.material.base_color.a);
         } else if terrain.status == LOOKUP_SUCCESS && terrain.weight > 0.0 {
             let w = terrain.weight;
-            pbr_input.material.base_color = vec4(mix(pbr_input.material.base_color.rgb, terrain.colour, w), pbr_input.material.base_color.a);
+            pbr_input.material.base_color = vec4(mix(pbr_input.material.base_color.rgb, mesh_terrain_target_colour(terrain), w), pbr_input.material.base_color.a);
             if mesh_terrain_shading(in.instance_index) == 1u {
-                pbr_input.N = mesh_terrain_blend_normal(pbr_input.N, terrain.normal, w);
+                pbr_input.N = mesh_terrain_blend_normal(pbr_input.N, mesh_terrain_target_normal(terrain), w);
                 pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, LAND_ROUGHNESS, w);
                 pbr_input.material.reflectance = mix(pbr_input.material.reflectance, vec3(LAND_REFLECTANCE), w);
                 pbr_input.material.metallic = mix(pbr_input.material.metallic, 0.0, w);

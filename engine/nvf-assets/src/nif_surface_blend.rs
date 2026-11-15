@@ -1,24 +1,75 @@
 //! [design] Enabled-only interface; ordinary NifSurface keeps main's interface.
 //!
 //! The blend type has the same bindings as the ordinary [`NifSurface`]: uniform 50 (a
-//! longer uniform), texture 51, sampler 52 and texture 53, index table 50..54. Where the
+//! longer uniform), texture 51, sampler 52 and texture 53. Where the
 //! ordinary type binds its holes texture, that texture's sampler and the FaceGen offset,
 //! the blend type binds the landscape colour atlas, its sampler and the height atlas.
 //! Blend clones are made only from materials without holes or FaceGen
 //! (nvforever `mesh_terrain_blend.rs::eligible_material`), so neither ordinary use is
 //! needed, and a blend pipeline binds no more textures in any stage than the ordinary
 //! NIF pipeline it replaces (the view and mesh groups are the same mesh pipeline's).
+//!
+//! [design] Round 10a, landscape detail: with bindless textures the blend type's index
+//! table (binding 100) is longer, 50..[`PALETTE_END`] instead of 50..54. After the four
+//! ordinary entries come [`PALETTE_IMAGES`] texture entries and [`PALETTE_SAMPLERS`]
+//! sampler entries: the landscape layer textures (diffuse and normal maps) and samplers a
+//! publication's detail quadrants sample ([`TerrainPalette`]). Their slots are local to
+//! the material's slab, so they are registered through this type's own allocator and
+//! resolved through the material's own table row, never copied from the landscape's
+//! materials. Unused entries hold the fallback image and sampler. Without bindless the
+//! type's layout is exactly [`NifSurfaceBlendColour`]'s (uniform 50, textures 51 and 53,
+//! sampler 52): [`NifSurfaceBlend`]'s `bind_group_layout_entries` is that type's, and the
+//! palette is bound only in bindless mode, where it adds no binding, only table entries.
 use super::nif_material::*;
 use bevy::prelude::*;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline};
 use bevy::mesh::MeshVertexBufferLayoutRef;
-use bevy::render::render_resource::{AsBindGroup, ShaderType, RenderPipelineDescriptor, SpecializedMeshPipelineError};
+use bevy::render::render_resource::{AsBindGroup, AsBindGroupError, BindGroupBuilder, BindGroupLayout, BindGroupLayoutEntry, BindlessDescriptor, BindlessIndex, BindlessIndexTableDescriptor, BindlessResourceType, BindlessSlabResourceLimit, SamplerBindingType, ShaderType, RenderPipelineDescriptor, SpecializedMeshPipelineError, TextureViewDimension, UnpreparedBindingResource};
+use bevy::render::renderer::RenderDevice;
+use bevy::ecs::system::SystemParamItem;
 use bevy::shader::{ShaderRef, ShaderDefVal};
 // [design] Shared CPU packing and shader specialization dimensions. The colour atlas's
 // resolution is not one of them: the shader reads it from the bound texture.
 pub const GRID: usize = fnv_world::land::SIDE - 1;
 pub const HEIGHT_TILE_WIDTH: usize = GRID * 6;
 pub const HEIGHT_TILE_HEIGHT: usize = GRID + 1;
+/// [design] The height atlas's width and its rows of heights and metadata (3 by 3 cell
+/// tiles); a publication with landscape detail appends [`DETAIL_ROWS`] rows below them.
+pub const HEIGHT_WIDTH: usize = 3 * HEIGHT_TILE_WIDTH;
+pub const HEIGHT_ROWS: usize = 3 * HEIGHT_TILE_HEIGHT;
+/// [design] Round 10a's landscape detail, packed after the height rows as 32-bit words,
+/// one per RGBA8 texel (read with `textureLoad`, as the heights are): first a table of
+/// [`DETAIL_QUADRANT_WORDS`] words for each of the 36 quadrants (slot-major, quadrant
+/// minor), then [`DETAIL_VERTEX_WORDS`] words for each of each quadrant's 17 by 17
+/// vertices. Word `w` sits at texel `(w % HEIGHT_WIDTH, HEIGHT_ROWS + w / HEIGHT_WIDTH)`.
+pub const DETAIL_QUADRANTS: usize = 36;
+pub const DETAIL_QUADRANT_WORDS: usize = 32;
+pub const QUAD_VERTICES: usize = fnv_world::land::QUAD_SIDE * fnv_world::land::QUAD_SIDE;
+/// [design] A vertex record: 22 16-bit values in 11 words, in this order: linear red,
+/// green, blue (unorm16), the vertex normal x, y, z and the tangent x, y, z (game space,
+/// snorm16), then one opacity per overlay (unorm16), the last value padding.
+pub const DETAIL_VERTEX_WORDS: usize = 11;
+pub const DETAIL_WORDS: usize = DETAIL_QUADRANTS * DETAIL_QUADRANT_WORDS + DETAIL_QUADRANTS * QUAD_VERTICES * DETAIL_VERTEX_WORDS;
+pub const DETAIL_ROWS: usize = DETAIL_WORDS.div_ceil(HEIGHT_WIDTH);
+/// [design] NVForever's cap (main session's round-10 decision): a quadrant's base and at
+/// most 12 overlays, the folded ones and then the separately drawn overflow ones, in
+/// their drawing order. 12 opacities fit three vec4s; a quadrant with more overlays keeps
+/// the colour cache.
+pub const DETAIL_MAX_OVERLAYS: usize = 12;
+/// [design] Palette entries per material: up to 384 distinct layer images and 16 distinct
+/// sampler descriptions per publication, so one material's table stays well inside the
+/// 512-resource slab with its own textures, the two atlases and its data.
+pub const PALETTE_IMAGES: usize = 384;
+pub const PALETTE_SAMPLERS: usize = 16;
+pub const PALETTE_ENTRIES: usize = PALETTE_IMAGES + PALETTE_SAMPLERS;
+/// The first bindless index after the ordinary four, and the end of the blend type's index
+/// table (the attribute on [`NifSurfaceBlendColour`] spells the number out; a test checks).
+pub const PALETTE_FIRST_INDEX: u32 = 54;
+pub const PALETTE_END: u32 = PALETTE_FIRST_INDEX + PALETTE_ENTRIES as u32;
+/// [design] Initial tuning (round 10 plan): layer detail in full to 2048 game units from
+/// the camera, mixed towards the colour cache over 2048-4096, colour alone beyond.
+pub const DETAIL_NEAR: f32 = 2048.0;
+pub const DETAIL_FAR: f32 = 4096.0;
 /// [design] Colour texels per cell side the aid accepts; the default (and the settings
 /// row's) is the middle one.
 pub const RESOLUTIONS: [u32; 3] = [512, 1024, 2048];
@@ -59,8 +110,108 @@ pub fn blend_shader_defs() -> Vec<ShaderDefVal> {
         ShaderDefVal::UInt("MESH_TERRAIN_V2_COS_STEEP_E6".into(), V2_COS_STEEP_E6),
         ShaderDefVal::UInt("MESH_TERRAIN_ROUGHNESS_E6".into(), to_micro(LAND_PERCEPTUAL_ROUGHNESS)),
         ShaderDefVal::UInt("MESH_TERRAIN_REFLECTANCE_E6".into(), to_micro(LAND_REFLECTANCE)),
+        // Round 10a's landscape detail (the module notes; nvforever terrain_surface.rs packs it).
+        ShaderDefVal::UInt("MESH_TERRAIN_HEIGHT_WIDTH".into(), HEIGHT_WIDTH as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_ROW".into(), HEIGHT_ROWS as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_QUADRANT_WORDS".into(), DETAIL_QUADRANT_WORDS as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_VERTEX_WORDS".into(), DETAIL_VERTEX_WORDS as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_QUADRANTS".into(), DETAIL_QUADRANTS as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_QUAD_VERTICES".into(), QUAD_VERTICES as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_MAX_OVERLAYS".into(), DETAIL_MAX_OVERLAYS as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_PALETTE_IMAGES".into(), PALETTE_IMAGES as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_PALETTE_ENTRIES".into(), PALETTE_ENTRIES as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_NEAR".into(), DETAIL_NEAR as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_FAR".into(), DETAIL_FAR as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_FLAG_TWO_COMPONENT".into(), bevy::pbr::StandardMaterialFlags::TWO_COMPONENT_NORMAL_MAP.bits()),
+        ShaderDefVal::UInt("MESH_TERRAIN_FLAG_FLIP_Y".into(), bevy::pbr::StandardMaterialFlags::FLIP_NORMAL_MAP_Y.bits()),
     ]
 }
+
+/// [design] One quadrant's entry in the detail table (module notes; nvforever
+/// terrain_surface.rs packs it from the near draw's materials and meshes, nif_surface_bindings.wesl
+/// `mesh_terrain_detail` reads it). Palette numbers are this publication's.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DetailQuadrant {
+    /// Word 0 bit 1: the texture coordinate is the place in the cell over the repeat (a
+    /// six-layer folded draw), not the place in the world.
+    pub cell_local: bool,
+    /// Palette numbers of the base's diffuse and normal map (`None`: the base draws with
+    /// its material colour only, or without a normal map).
+    pub base_diffuse: Option<u16>,
+    pub base_normal: Option<u16>,
+    /// Palette sampler numbers: the base diffuse sampler (every diffuse and overlay normal
+    /// read) and the base normal map's.
+    pub diffuse_sampler: u16,
+    pub normal_sampler: u16,
+    /// The overlays in drawing order: diffuse and optional normal palette numbers, and
+    /// whether the normal map is a two-component one. The first `folded` are folded into
+    /// the base draw (their colour takes the base material's colour and their normal maps
+    /// its decoding, terrain.wesl); the rest are separately drawn overflow layers.
+    pub overlays: Vec<(u16, Option<u16>, bool)>,
+    pub folded: usize,
+    /// The base normal map is a two-component one (StandardMaterial's rule).
+    pub base_two_component: bool,
+    /// Every normal map is read with green pointing down the image (terrain.rs `surface`).
+    pub flip_y: bool,
+    /// The base material's linear colour, texture-coordinate transform (x axis, y axis,
+    /// translation) and the texture repeat in game units.
+    pub base_rgb: Vec3,
+    pub uv: [f32; 6],
+    pub tile: f32,
+    /// The vertex tangents' handedness (word 27; nvforever terrain.rs `TANGENT_SIGN`).
+    pub tangent_sign: f32,
+}
+
+impl DetailQuadrant {
+    /// The entry's words (the shader's `mesh_terrain_detail`).
+    pub fn words(&self) -> [u32; DETAIL_QUADRANT_WORDS] {
+        let mut w = [0u32; DETAIL_QUADRANT_WORDS];
+        let total = self.overlays.len().min(DETAIL_MAX_OVERLAYS);
+        w[0] = 1 | u32::from(self.cell_local) << 1 | u32::from(self.base_diffuse.is_some()) << 2 | u32::from(self.base_normal.is_some()) << 3
+            | (self.folded.min(total) as u32) << 8 | (total as u32) << 12;
+        w[1] = u32::from(self.base_diffuse.unwrap_or(0)) | u32::from(self.base_normal.unwrap_or(0)) << 16;
+        w[2] = u32::from(self.diffuse_sampler) | u32::from(self.normal_sampler) << 16;
+        let mut decode = u32::from(self.base_two_component) | u32::from(self.flip_y) << 1;
+        for (k, &(diffuse, normal, two)) in self.overlays.iter().take(total).enumerate() {
+            w[3] |= u32::from(normal.is_some()) << k;
+            // Folded overlays decode with the base's flags (terrain.wesl), overflow ones
+            // with their own material's.
+            let two = if k < self.folded { self.base_two_component } else { two };
+            decode |= (u32::from(two) | u32::from(self.flip_y) << 1) << (2 + 2 * k);
+            w[15 + k] = u32::from(diffuse) | u32::from(normal.unwrap_or(0)) << 16;
+        }
+        w[4] = decode;
+        for (i, v) in [self.base_rgb.x, self.base_rgb.y, self.base_rgb.z].into_iter().chain(self.uv).chain([self.tile]).enumerate() {
+            w[5 + i] = v.to_bits();
+        }
+        w[27] = self.tangent_sign.to_bits();
+        w
+    }
+}
+
+/// [design] A vertex record's words (module notes): linear colour, game-space normal and
+/// tangent, and the overlays' opacities (at most [`DETAIL_MAX_OVERLAYS`]).
+pub fn detail_vertex_words(rgb: [f32; 3], normal: [f32; 3], tangent: [f32; 3], opacity: &[f32]) -> [u32; DETAIL_VERTEX_WORDS] {
+    let unorm = |x: f32| (x.clamp(0.0, 1.0) * 65535.0).round() as u32;
+    let snorm = |x: f32| u32::from((x.clamp(-1.0, 1.0) * 32767.0).round() as i16 as u16);
+    let mut halves = [0u32; 2 * DETAIL_VERTEX_WORDS];
+    for (i, &c) in rgb.iter().enumerate() { halves[i] = unorm(c); }
+    for (i, &n) in normal.iter().chain(&tangent).enumerate() { halves[3 + i] = snorm(n); }
+    for (k, &o) in opacity.iter().take(DETAIL_MAX_OVERLAYS).enumerate() { halves[9 + k] = unorm(o); }
+    let mut w = [0u32; DETAIL_VERTEX_WORDS];
+    for (i, pair) in halves.as_chunks::<2>().0.iter().enumerate() { w[i] = pair[0] | pair[1] << 16; }
+    w
+}
+
+/// The word index of quadrant `entry`'s table entry and of vertex `v`'s record.
+pub fn detail_quadrant_word(entry: usize) -> usize { entry * DETAIL_QUADRANT_WORDS }
+pub fn detail_vertex_word(entry: usize, v: usize) -> usize {
+    DETAIL_QUADRANTS * DETAIL_QUADRANT_WORDS + (entry * QUAD_VERTICES + v) * DETAIL_VERTEX_WORDS
+}
+/// The 16-bit value `h` of a vertex record, as the shader decodes it: unorm (colour,
+/// opacities) or snorm (normal, tangent).
+pub fn detail_unorm(words: &[u32], h: usize) -> f32 { ((words[h / 2] >> (16 * (h % 2))) & 0xffff) as f32 / 65535.0 }
+pub fn detail_snorm(words: &[u32], h: usize) -> f32 { (((words[h / 2] >> (16 * (h % 2))) & 0xffff) as u16 as i16 as f32 / 32767.0).max(-1.0) }
 
 /// [design] How the contact weight is formed (`mesh_terrain_weight` in
 /// nif_surface_bindings.wesl, [`contact_weight`] here). `Hybrid` is hybrid v2 (round 6,
@@ -179,11 +330,14 @@ impl BlendShape {
 pub fn source_material<'a>(ordinary: Option<&'a MeshMaterial3d<NifMaterial>>, blend: Option<&'a BlendShape>) -> Option<&'a Handle<NifMaterial>> {
     ordinary.map(|m| &m.0).or_else(|| blend.map(|b| &b.original))
 }
+/// [design] The blend type's colour interface: every binding the type has without bindless
+/// (module notes). Its index table reaches [`PALETTE_END`] (454) so [`NifSurfaceBlend`] can
+/// put the landscape palette in the same table row in bindless mode.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 #[data(50, NifSurfaceBlendUniform, binding_array(101))]
-#[bindless(limit(512), index_table(range(50..54), binding(100)))]
+#[bindless(limit(512), index_table(range(50..454), binding(100)))]
 #[bind_group_data(NifSurfaceBlendKey)]
-pub struct NifSurfaceBlend {
+pub struct NifSurfaceBlendColour {
     pub falloff: Vec4,
     pub alpha_cut: f32,
     pub add_whole: f32,
@@ -240,8 +394,8 @@ pub struct NifSurfaceBlendUniform {
     pub mesh_terrain_widths: Vec4,
 }
 
-impl From<&NifSurfaceBlend> for NifSurfaceBlendUniform {
-    fn from(s: &NifSurfaceBlend) -> Self {
+impl From<&NifSurfaceBlendColour> for NifSurfaceBlendUniform {
+    fn from(s: &NifSurfaceBlendColour) -> Self {
         NifSurfaceBlendUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b, mesh_terrain: s.mesh_terrain, mesh_terrain_origin: s.mesh_terrain_origin, mesh_terrain_widths: s.mesh_terrain_widths }
     }
 }
@@ -250,7 +404,10 @@ impl From<&NifSurfaceBlend> for NifSurfaceBlendUniform {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NifSurfaceBlendKey(pub NifSurfaceKey);
 impl From<&NifSurfaceBlend> for NifSurfaceBlendKey {
-    fn from(s: &NifSurfaceBlend) -> Self {
+    fn from(s: &NifSurfaceBlend) -> Self { Self::from(&s.colour) }
+}
+impl From<&NifSurfaceBlendColour> for NifSurfaceBlendKey {
+    fn from(s: &NifSurfaceBlendColour) -> Self {
         Self(NifSurfaceKey {
             decal: s.decal,
             refract: s.refract,
@@ -265,9 +422,111 @@ impl From<&NifSurfaceBlend> for NifSurfaceBlendKey {
         })
     }
 }
+/// [design] Round 10a: the layer images and sampler representatives of one publication's
+/// detail quadrants (nvforever terrain_surface.rs `DetailPalette`), in palette order. A
+/// sampler entry names an image whose GPU sampler stands for every palette image with an
+/// equal sampler description. Empty without landscape detail.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+pub struct TerrainPalette {
+    pub images: Vec<Handle<Image>>,
+    pub samplers: Vec<Handle<Image>>,
+}
+
+/// [design] The enabled blend extension: the colour interface ([`NifSurfaceBlendColour`],
+/// its fields reached through `Deref`) and, in bindless mode only, the landscape palette in
+/// the same index table row (module notes).
+#[derive(Asset, Reflect, Debug, Clone)]
+pub struct NifSurfaceBlend {
+    pub colour: NifSurfaceBlendColour,
+    pub palette: TerrainPalette,
+}
+impl std::ops::Deref for NifSurfaceBlend {
+    type Target = NifSurfaceBlendColour;
+    fn deref(&self) -> &NifSurfaceBlendColour { &self.colour }
+}
+impl std::ops::DerefMut for NifSurfaceBlend {
+    fn deref_mut(&mut self) -> &mut NifSurfaceBlendColour { &mut self.colour }
+}
+
+/// The palette's resource types after the colour interface's (bindless index 54 on).
+pub fn palette_resource(index: usize) -> BindlessResourceType {
+    if index < PALETTE_IMAGES { BindlessResourceType::Texture2d } else { BindlessResourceType::SamplerFiltering }
+}
+
+impl AsBindGroup for NifSurfaceBlend {
+    type Data = <NifSurfaceBlendColour as AsBindGroup>::Data;
+    type Param = <NifSurfaceBlendColour as AsBindGroup>::Param;
+
+    fn bindless_slot_count() -> Option<BindlessSlabResourceLimit> { NifSurfaceBlendColour::bindless_slot_count() }
+    // [design] The colour interface's own rule, so the type stays bindless exactly where
+    // StandardMaterial and the ordinary NifSurface are (ExtendedMaterial combines them).
+    fn bindless_supported(render_device: &RenderDevice) -> bool { NifSurfaceBlendColour::bindless_supported(render_device) }
+    fn label() -> &'static str { "NifSurfaceBlend" }
+    fn bind_group_data(&self) -> Self::Data { self.colour.bind_group_data() }
+
+    fn build_bind_group(
+        &self,
+        layout: &BindGroupLayout,
+        render_device: &RenderDevice,
+        param: &mut SystemParamItem<'_, '_, Self::Param>,
+        force_no_bindless: bool,
+        output: &mut BindGroupBuilder,
+    ) -> Result<(), AsBindGroupError> {
+        self.colour.build_bind_group(layout, render_device, param, force_no_bindless, output)?;
+        // Without bindless: the colour interface's bindings only (module notes).
+        if force_no_bindless || !Self::bindless_supported(render_device) { return Ok(()); }
+        let (images, fallback, _) = param;
+        for k in 0..PALETTE_IMAGES {
+            let view = match self.palette.images.get(k) {
+                Some(h) => images.get(h).ok_or(AsBindGroupError::RetryNextUpdate)?.texture_view.clone(),
+                None => fallback.d2.texture_view.clone(),
+            };
+            output.binding_resources.push((PALETTE_FIRST_INDEX + k as u32, UnpreparedBindingResource::TextureView(TextureViewDimension::D2, view)));
+        }
+        for j in 0..PALETTE_SAMPLERS {
+            let sampler = match self.palette.samplers.get(j) {
+                Some(h) => images.get(h).ok_or(AsBindGroupError::RetryNextUpdate)?.sampler.clone(),
+                None => fallback.d2.sampler.clone(),
+            };
+            output.binding_resources.push((PALETTE_FIRST_INDEX + (PALETTE_IMAGES + j) as u32, UnpreparedBindingResource::Sampler(SamplerBindingType::Filtering, sampler)));
+        }
+        Ok(())
+    }
+
+    // [design] Exactly the colour interface's layout, with or without bindless: the
+    // palette lives in the colour interface's longer index table and its texture and
+    // sampler binding arrays (module notes).
+    fn bind_group_layout_entries(render_device: &RenderDevice, force_no_bindless: bool) -> Vec<BindGroupLayoutEntry> {
+        NifSurfaceBlendColour::bind_group_layout_entries(render_device, force_no_bindless)
+    }
+
+    fn bindless_descriptor() -> Option<BindlessDescriptor> {
+        let mut descriptor = NifSurfaceBlendColour::bindless_descriptor()?;
+        let mut resources = descriptor.resources.to_vec();
+        resources.resize(PALETTE_FIRST_INDEX as usize, BindlessResourceType::None);
+        resources.extend((0..PALETTE_ENTRIES).map(palette_resource));
+        descriptor.resources = resources.into();
+        debug_assert!(descriptor.index_tables.iter().any(|t| t.indices == (BindlessIndex(50)..BindlessIndex(PALETTE_END))));
+        Some(descriptor)
+    }
+}
+
+/// The palette's part of the index table ([`PALETTE_FIRST_INDEX`]..[`PALETTE_END`]) lies in
+/// the colour interface's table: no table of its own.
+pub fn palette_index_table(descriptor: &BindlessDescriptor) -> Option<&BindlessIndexTableDescriptor> {
+    descriptor.index_tables.iter().find(|t| t.indices.start.0 <= PALETTE_FIRST_INDEX && t.indices.end.0 >= PALETTE_END)
+}
+
 impl NifSurfaceBlend {
     /// `source` has neither holes nor FaceGen (eligibility); `controls` are band, view,
     /// contact shape and shading, `widths` hybrid v2's flat and steep widths.
+    pub fn from_source(source: &NifSurface, controls: Vec4, widths: Vec4, origin: Vec4, colour: Handle<Image>, height: Handle<Image>, palette: TerrainPalette) -> Self {
+        Self { colour: NifSurfaceBlendColour::from_source(source, controls, widths, origin, colour, height), palette }
+    }
+}
+
+impl NifSurfaceBlendColour {
+    /// See [`NifSurfaceBlend::from_source`].
     pub fn from_source(source: &NifSurface, controls: Vec4, widths: Vec4, origin: Vec4, colour: Handle<Image>, height: Handle<Image>) -> Self {
         debug_assert!(source.holes_texture.is_none() && source.facegen_offset.is_none(), "blend clones are made only without holes or FaceGen");
         Self {
@@ -360,20 +619,86 @@ mod tests {
     #[test]
     fn blend_layout_binds_exactly_the_ordinary_slots_and_texture_count() {
         let ordinary = NifSurface::bindless_descriptor().unwrap();
-        let blend = NifSurfaceBlend::bindless_descriptor().unwrap();
-        // Both extend the same StandardMaterial base.
-        assert_eq!(textures(&blend), textures(&ordinary));
-        assert_eq!(textures(&blend), 2);
-        assert_eq!(&blend.resources[50..], &ordinary.resources[50..], "same slot types: 50 data, 51 texture, 52 sampler, 53 texture");
-        assert_eq!(blend.index_tables.len(), 1);
-        let (b, o) = (&blend.index_tables[0], &ordinary.index_tables[0]);
-        assert_eq!((b.indices.start.0, b.indices.end.0, b.binding_number.0), (o.indices.start.0, o.indices.end.0, o.binding_number.0));
-        assert_eq!((blend.buffers[0].binding_number.0, blend.buffers[0].bindless_index.0, blend.buffers[0].size), (101, 50, Some(176)));
+        // [design] Without bindless every binding is the colour interface's (the blend
+        // type's `bind_group_layout_entries` is that type's, checked below): the same slot
+        // types and texture count as the ordinary NIF type.
+        let colour = NifSurfaceBlendColour::bindless_descriptor().unwrap();
+        assert_eq!(textures(&colour), textures(&ordinary));
+        assert_eq!(textures(&colour), 2);
+        assert_eq!(&colour.resources[50..], &ordinary.resources[50..], "same slot types: 50 data, 51 texture, 52 sampler, 53 texture");
+        assert_eq!((colour.buffers[0].binding_number.0, colour.buffers[0].bindless_index.0, colour.buffers[0].size), (101, 50, Some(176)));
         let source = include_str!("nif_surface_blend.rs");
-        let fields = source.split("pub struct NifSurfaceBlend {").nth(1).unwrap().split("\n}").next().unwrap();
+        let fields = source.split("pub struct NifSurfaceBlendColour {").nth(1).unwrap().split("\n}").next().unwrap();
         assert_eq!(fields.matches("#[texture(").count(), 2);
         assert!(fields.contains("#[texture(51)]") && fields.contains("#[sampler(52)]") && fields.contains("#[texture(53)]"));
         assert!(!fields.contains("#[texture(54)]") && !fields.contains("holes_texture") && !fields.contains("facegen_offset"));
+        let layout = source.split("fn bind_group_layout_entries(render_device: &RenderDevice, force_no_bindless: bool) -> Vec<BindGroupLayoutEntry> {").nth(1).unwrap().split("\n    }").next().unwrap();
+        assert_eq!(layout.trim(), "NifSurfaceBlendColour::bind_group_layout_entries(render_device, force_no_bindless)", "no binding of its own, bindless or not");
+        let build = source.split("fn build_bind_group(").nth(1).unwrap();
+        assert!(build.find("if force_no_bindless || !Self::bindless_supported(render_device) { return Ok(()); }").unwrap() < build.find("PALETTE_FIRST_INDEX").unwrap(), "the palette only in bindless mode");
+        // [design] Bindless (intentional change in round 10a): the same binding (100) for one
+        // longer index table, 50..454, whose entries after the ordinary four are the palette's
+        // 384 textures and 16 samplers; the ordinary type's table is unchanged.
+        let blend = NifSurfaceBlend::bindless_descriptor().unwrap();
+        assert_eq!(&blend.resources[50..54], &ordinary.resources[50..]);
+        assert_eq!(blend.resources.len(), PALETTE_END as usize);
+        assert!(blend.resources[54..54 + PALETTE_IMAGES].iter().all(|r| *r == R::Texture2d));
+        assert!(blend.resources[54 + PALETTE_IMAGES..].iter().all(|r| *r == R::SamplerFiltering));
+        assert_eq!(blend.index_tables.len(), 1, "no second table and no second storage binding");
+        let (b, o) = (&blend.index_tables[0], &ordinary.index_tables[0]);
+        assert_eq!((b.indices.start.0, b.indices.end.0, b.binding_number.0), (50, PALETTE_END, 100));
+        assert_eq!((o.indices.start.0, o.indices.end.0, o.binding_number.0), (50, 54, 100), "the ordinary NifSurface table is main's");
+        assert_eq!(PALETTE_END, 454, "the attribute on NifSurfaceBlendColour spells it out");
+        assert!(palette_index_table(&blend).is_some_and(|t| t.binding_number.0 == 100));
+        assert_eq!(blend.buffers.len(), colour.buffers.len(), "no buffer of its own");
+        // One material's resources stay inside the 512-resource slab: the palette, the
+        // standard material's textures and samplers, the two atlases and the data.
+        let standard = StandardMaterial::bindless_descriptor().unwrap().resources.iter().filter(|r| **r != R::None).count();
+        assert!(PALETTE_ENTRIES + standard + 4 < 512, "{standard}");
+    }
+
+    #[test]
+    fn detail_layout_fits_the_height_atlas_and_round_trips() {
+        assert_eq!((HEIGHT_WIDTH, HEIGHT_ROWS), (576, 99));
+        assert_eq!(DETAIL_WORDS, 36 * 32 + 36 * 289 * 11);
+        assert_eq!(DETAIL_ROWS, 201);
+        assert!(detail_vertex_word(DETAIL_QUADRANTS - 1, QUAD_VERTICES - 1) + DETAIL_VERTEX_WORDS <= DETAIL_ROWS * HEIGHT_WIDTH);
+        assert_eq!(detail_vertex_word(0, 0), detail_quadrant_word(DETAIL_QUADRANTS));
+        // Twelve opacities, colour, normal and tangent in 22 halves; the last is padding.
+        let opacity: Vec<f32> = (0..12).map(|k| k as f32 / 11.0).collect();
+        let w = detail_vertex_words([0.25, 1.0, 0.0], [0.6, -0.8, 0.0], [-1.0, 0.0, 0.5], &opacity);
+        let close = |a: f32, b: f32, e: f32| (a - b).abs() <= e;
+        for (h, v) in [(0, 0.25), (1, 1.0), (2, 0.0)] { assert!(close(detail_unorm(&w, h), v, 1.0 / 65535.0)); }
+        for (h, v) in [(3, 0.6), (4, -0.8), (5, 0.0), (6, -1.0), (7, 0.0), (8, 0.5)] { assert!(close(detail_snorm(&w, h), v, 1.0 / 32767.0), "{h}"); }
+        for (k, o) in opacity.iter().enumerate() { assert!(close(detail_unorm(&w, 9 + k), *o, 1.0 / 65535.0), "opacity {k}"); }
+        assert_eq!((detail_unorm(&w, 9), detail_unorm(&w, 20)), (0.0, 1.0), "0 and 1 are exact");
+        assert_eq!(w[10] >> 16, 0, "padding");
+        // Out-of-range inputs clamp; more than twelve opacities never spill.
+        let clamped = detail_vertex_words([2.0, -1.0, 0.5], [3.0, -3.0, 0.0], [0.0; 3], &[1.5; 14]);
+        assert_eq!((detail_unorm(&clamped, 0), detail_unorm(&clamped, 1), detail_snorm(&clamped, 3), detail_snorm(&clamped, 4)), (1.0, 0.0, 1.0, -1.0));
+        assert_eq!(clamped[10] >> 16, 0);
+    }
+
+    #[test]
+    fn detail_quadrant_words_name_folded_and_overflow_overlays() {
+        let q = DetailQuadrant {
+            cell_local: true, base_diffuse: Some(3), base_normal: Some(4), diffuse_sampler: 1, normal_sampler: 2,
+            overlays: vec![(5, Some(6), true), (7, None, false), (8, Some(9), true)], folded: 2,
+            base_two_component: false, flip_y: true, base_rgb: Vec3::new(0.5, 0.25, 1.0),
+            uv: [1.0, 0.0, 0.0, 1.0, 0.25, -0.5], tile: 256.0, tangent_sign: -1.0,
+        };
+        let w = q.words();
+        assert_eq!(w[0], 1 | 2 | 4 | 8 | 2 << 8 | 3 << 12);
+        assert_eq!((w[1], w[2], w[3]), (3 | 4 << 16, 1 | 2 << 16, 0b101));
+        // Base: flip only. Folded overlays 0 and 1 decode as the base (two-component off even
+        // where their own map is one); overflow overlay 2 with its own two-component map.
+        assert_eq!(w[4], 0b10 | 0b10 << 2 | 0b10 << 4 | 0b11 << 6);
+        assert_eq!((f32::from_bits(w[5]), f32::from_bits(w[7]), f32::from_bits(w[12]), f32::from_bits(w[13]), f32::from_bits(w[14])), (0.5, 1.0, 0.25, -0.5, 256.0));
+        assert_eq!((w[15], w[16], w[17], w[18]), (5 | 6 << 16, 7, 8 | 9 << 16, 0));
+        assert_eq!(f32::from_bits(w[27]), -1.0, "the tangents' handedness");
+        // The cap: thirteen overlays keep twelve (the packer refuses such a quadrant first).
+        let many = DetailQuadrant { overlays: vec![(1, None, false); 13], folded: 6, ..q };
+        assert_eq!((many.words()[0] >> 12) & 15, 12);
     }
 
     #[test]

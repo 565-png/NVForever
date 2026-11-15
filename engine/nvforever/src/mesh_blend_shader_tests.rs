@@ -107,15 +107,27 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
                     @if(BINDLESS) @group(3) @binding(11) var bindless_samplers_filtering: binding_array<sampler>;
                 "#.into()),
                 ("embedded://nvf_assets/nif_surface_bindings.wesl".into(), include_str!("../../nvf-assets/src/nif_surface_bindings.wesl").into()),
+                // Stand-ins with the signatures of Bevy's TBN and normal-map helpers (the
+                // complete composition below uses the vendored ones).
+                ("embedded://bevy_pbr/render/pbr_functions.wesl".into(), r#"
+                    fn calculate_tbn_mikktspace(world_normal: vec3<f32>, world_tangent: vec4<f32>) -> mat3x3<f32> {
+                        return mat3x3(world_tangent.xyz, world_tangent.w * cross(world_normal, world_tangent.xyz), world_normal);
+                    }
+                    fn apply_normal_mapping(flags: u32, tbn: mat3x3<f32>, double_sided: bool, is_front: bool, nt: vec3<f32>) -> vec3<f32> {
+                        return normalize(tbn * (nt * 2.0 - 1.0) * f32(flags + 1u));
+                    }
+                "#.into()),
             ];
             modules.push(("embedded://nvforever/blend_validation.wesl".into(), r#"
                 import nvf_assets::nif_surface_bindings::{nif_surface, holes_alpha, facegen_size, facegen_texel};
-                @if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_diagnostic, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_blend_normal, LAND_ROUGHNESS, LAND_REFLECTANCE};
+                @if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_diagnostic, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_blend_normal, mesh_terrain_target_colour, mesh_terrain_target_normal, MeshTerrainInputs, LAND_ROUGHNESS, LAND_REFLECTANCE};
                 @fragment fn fragment(@location(0) world: vec3<f32>, @location(1) normal: vec3<f32>) -> @location(0) vec4<f32> {
                     var colour = nif_surface(0u).falloff.xyz * holes_alpha(0u, world.xy) + facegen_texel(0u, vec2<i32>(facegen_size(0u)));
                     @if(MESH_TERRAIN_BLEND) {
-                        let t = mesh_terrain_lookup(0u, world, normal);
-                        colour = mix(colour, t.colour, t.weight) + mesh_terrain_blend_normal(normal, t.normal, t.weight) * LAND_ROUGHNESS * LAND_REFLECTANCE;
+                        let xy = vec2(world.x, -world.z);
+                        let inputs = MeshTerrainInputs(length(world), dpdx(xy), dpdy(xy), 0.0, mesh_terrain_shading(0u));
+                        let t = mesh_terrain_lookup(0u, world, normal, inputs);
+                        colour = mix(colour, mesh_terrain_target_colour(t), t.weight) + mesh_terrain_blend_normal(normal, mesh_terrain_target_normal(t), t.weight) * LAND_ROUGHNESS * LAND_REFLECTANCE;
                         if mesh_terrain_shading(0u) == 0u { colour = mesh_terrain_diagnostic(mesh_terrain_view(0u), t, colour); }
                     }
                     return vec4(colour, 1.0);
@@ -141,11 +153,15 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
             if blend {
                 assert!(source.contains("terrain_covered"), "enabled coverage survives bindless and ordinary composition");
                 assert!(source.contains("mesh_terrain_origin.z"), "coverage reuses the enabled uniform without another binding");
+                // Round 10a: the layer detail only where the palette exists (bindless).
+                assert_eq!(source.contains("textureSampleGrad"), bindless, "bindless={bindless}: detail reads with explicit gradients, none without bindless");
             }
             // Round 9 reuses origin.z; round 6's enabled width and ordinary layouts stay fixed.
             assert_eq!(surface_sizes, vec![if blend { 176 } else { 128 }]);
-            // The blend type reuses the ordinary table and slots (nif_surface_blend.rs notes).
-            if bindless { assert_eq!(index_sizes, vec![16]); }
+            // The blend type reuses the ordinary table and slots (nif_surface_blend.rs notes);
+            // round 10a's bindless blend row is longer by the palette's 400 entries.
+            if bindless { assert_eq!(index_sizes, vec![if blend { 16 + 4 * nvf_assets::nif_surface_blend::PALETTE_ENTRIES as u32 } else { 16 }]); }
+            assert_eq!(nvf_assets::nif_surface_blend::PALETTE_ENTRIES, 400, "nif_surface_bindings.wesl spells out array<u32, 400>");
             if !bindless {
                 let bound = |binding| module.global_variables.iter().any(|(_, v)| v.binding.as_ref().is_some_and(|b| b.group == 3 && b.binding == binding));
                 for binding in [50, 51, 52, 53] { assert!(bound(binding), "bindless={bindless} blend={blend} binding {binding}"); }
@@ -156,15 +172,83 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
         }
     }
     let material = include_str!("../../nvf-assets/src/nif_material.wesl");
-    assert!(material.contains("let terrain = mesh_terrain_lookup(in.instance_index, in.world_position.xyz, pbr_input.world_normal);"), "the weight uses the unperturbed normal");
+    assert!(material.contains("let terrain = mesh_terrain_lookup(in.instance_index, in.world_position.xyz, pbr_input.world_normal, terrain_inputs);"), "the weight uses the unperturbed normal");
     assert!(material.find("let terrain = mesh_terrain_lookup(").unwrap() > material.find("alpha_discard(pbr_input.material.flags").unwrap(), "after the coverage tests");
     assert!(material.find("let terrain = mesh_terrain_lookup(").unwrap() < material.find("out.color = apply_pbr_lighting(pbr_input);").unwrap(), "before lighting");
+    // [design] Round 10a: the game-xy derivatives are taken before the lookup, at the
+    // function's top level (uniform control flow), never inside its branches.
+    let inputs = material.find("let terrain_inputs = MeshTerrainInputs(distance(view.world_position, in.world_position.xyz), dpdx(terrain_xy), dpdy(terrain_xy), view.mip_bias,").expect("the derivatives");
+    assert!(inputs < material.find("let terrain = mesh_terrain_lookup(").unwrap());
+    let line_start = material[..inputs].rfind('\n').unwrap();
+    assert_eq!(material[line_start + 1..inputs].trim(), "@if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE)", "a top-level statement, not inside a branch");
     // [design] Zero weight leaves every shading input as it was: the surface blend sits
     // inside the positive-weight branch, which hybrid v2 keeps.
     let branch = material.find("} else if terrain.status == LOOKUP_SUCCESS && terrain.weight > 0.0 {").expect("the positive-weight branch");
-    for input in ["pbr_input.material.base_color = vec4(mix(", "pbr_input.N = mesh_terrain_blend_normal(", "pbr_input.material.perceptual_roughness = mix(", "pbr_input.material.emissive = vec4(pbr_input.material.emissive.rgb * (1.0 - w)"] {
+    for input in ["pbr_input.material.base_color = vec4(mix(pbr_input.material.base_color.rgb, mesh_terrain_target_colour(terrain), w)", "pbr_input.N = mesh_terrain_blend_normal(pbr_input.N, mesh_terrain_target_normal(terrain), w)", "pbr_input.material.perceptual_roughness = mix(", "pbr_input.material.emissive = vec4(pbr_input.material.emissive.rgb * (1.0 - w)"] {
         assert!(material.find(input).unwrap() > branch, "{input}");
     }
+    // [design] The layer detail is read only inside the lookup's positive-weight, positive-
+    // share branch, with explicit gradients from the inputs, and normal maps only for full
+    // shading; never from the screen-space prepass normal.
+    let bindings = include_str!("../../nvf-assets/src/nif_surface_bindings.wesl").replace("\r\n", "\n");
+    let positive = bindings.find("    if r.weight > 0.0 {\n        if colour_valid { r.colour = terrain_colour_texel(instance_index, uv); }").expect("the positive-weight branch");
+    assert!(bindings.find("@if(BINDLESS) if r.detail > 0.0 {").unwrap() > positive);
+    assert!(bindings.contains("let ddx = axes * inputs.ddx * scale;") && bindings.contains("let scale = exp2(inputs.bias) / tile;"));
+    assert!(bindings.contains("if full && (flags & 8u) != 0u {") && bindings.contains("        if full {\n            var layer_n = plain;"));
+    assert!(!bindings.contains("prepass_normal") && !bindings.contains("prepass_utils"), "the target never comes from the prepass normal");
+    let detail = bindings.split("fn mesh_terrain_detail(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    let sample = bindings.split("fn detail_sample(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    for body in [detail, sample] {
+        assert!(!body.contains("textureSample(") && !body.contains("textureSampleBias(") && !body.contains("dpdx") && !body.contains("fwidth"), "no implicit derivatives in the divergent detail branch");
+    }
+    assert!(sample.contains("textureSampleGrad("));
+}
+
+/// [design] Round 10a: the shader's barycentric interpolation and record layout transcribe
+/// terrain.rs's mesh triangles and nif_surface_blend.rs's packing.
+#[test]
+fn shader_detail_transcribes_the_mesh_triangles_and_the_record_layout() {
+    let bindings = include_str!("../../nvf-assets/src/nif_surface_bindings.wesl");
+    for line in [
+        // Below the diagonal (SW, SE, NE), above it (SW, NE, NW), as quadrant_mesh's indices.
+        "var vertices = vec3(sw, sw + 1u, sw + side + 1u);",
+        "var weights = vec3(1.0 - f.x, f.x - f.y, f.y);",
+        "vertices = vec3(sw, sw + side + 1u, sw + side);",
+        "weights = vec3(1.0 - f.y, f.x, f.y - f.x);",
+        // Records: colour (unorm), normal and tangent (snorm), then opacities from value 9.
+        "m.tint += t.weights[i] * vec3(detail_unorm(w0), detail_unorm(w0 >> 16u), detail_unorm(w1));",
+        "m.normal += t.weights[i] * vec3(detail_snorm(w1 >> 16u), detail_snorm(w2), detail_snorm(w2 >> 16u));",
+        "m.tangent += t.weights[i] * vec3(detail_snorm(w3), detail_snorm(w3 >> 16u), detail_snorm(w4));",
+        "let h = 9u + k;",
+        // Ordered opacities: saturate(opacity) x the diffuse alpha, folded overlays tinted by
+        // the base material's colour, overflow ones by white.
+        "let share = saturate(detail_opacity(instance_index, t, k)) * texel.a;",
+        "colour = mix(colour, texel.rgb * a.tint * select(vec3(1.0), base_rgb, k < folded), share);",
+        "normal = mix(normal, layer_n, share);",
+        "return TerrainDetail(colour, normalize(normal));",
+        // Table words.
+        "let total = min((flags >> 12u) & 15u, DETAIL_MAX_OVERLAYS);",
+        "let folded = min((flags >> 8u) & 15u, total);",
+        "let pair = terrain_detail_word(instance_index, q + 15u + k);",
+        "let handedness = bitcast<f32>(terrain_detail_word(instance_index, q + 27u));",
+        "let local = select(place, place - vec2<f32>(cell) * CELL_SIZE, (flags & 2u) != 0u);",
+        // Bevy's helpers, the interpolated (not renormalized) normal and tangent.
+        "let tbn = calculate_tbn_mikktspace(world_n, vec4(game_to_world_normal(a.tangent), handedness));",
+        "@if(NIF_SURFACE_BLEND) palette: array<u32, 400>, // 54-453",
+    ] {
+        assert!(bindings.contains(line), "{line}");
+    }
+    use nvf_assets::nif_surface_blend::*;
+    let defs = blend_shader_defs();
+    let uint = |name: &str| defs.iter().find_map(|d| match d { ShaderDefVal::UInt(n, v) if n == name => Some(*v), _ => None }).unwrap_or_else(|| panic!("{name}"));
+    assert_eq!(uint("MESH_TERRAIN_DETAIL_ROW") as usize, HEIGHT_ROWS);
+    assert_eq!(uint("MESH_TERRAIN_HEIGHT_WIDTH") as usize, HEIGHT_WIDTH);
+    assert_eq!(uint("MESH_TERRAIN_DETAIL_VERTEX_WORDS") as usize, DETAIL_VERTEX_WORDS);
+    assert_eq!(uint("MESH_TERRAIN_DETAIL_QUADRANT_WORDS") as usize, DETAIL_QUADRANT_WORDS);
+    assert_eq!(uint("MESH_TERRAIN_PALETTE_IMAGES") as usize, PALETTE_IMAGES);
+    assert_eq!((uint("MESH_TERRAIN_DETAIL_NEAR"), uint("MESH_TERRAIN_DETAIL_FAR")), (2048, 4096));
+    assert_eq!(uint("MESH_TERRAIN_FLAG_TWO_COMPONENT"), bevy::pbr::StandardMaterialFlags::TWO_COMPONENT_NORMAL_MAP.bits());
+    assert_eq!(uint("MESH_TERRAIN_FLAG_FLIP_Y"), bevy::pbr::StandardMaterialFlags::FLIP_NORMAL_MAP_Y.bits());
 }
 
 /// [design] The WESL weight transcribes nif_surface_blend.rs::contact_weight and v2_band:
@@ -172,7 +256,7 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
 /// uniform as (flat, band, steep), and the shared cosine definitions.
 #[test]
 fn shader_weight_matches_the_cpu_statement_of_hybrid_v2() {
-    let bindings = include_str!("../../nvf-assets/src/nif_surface_bindings.wesl");
+    let bindings = include_str!("../../nvf-assets/src/nif_surface_bindings.wesl").replace("\r\n", "\n");
     for line in [
         "let c = clamp(abs(cos_angle), 0.0, 1.0);",
         "let shallow = 1.0 - smoothstep(V2_COS_PARALLEL, 1.0, c);",
@@ -315,7 +399,9 @@ fn material_groups_fit_a_16_texture_stage_without_bindless() {
     let textures = |d: Option<BindlessDescriptor>| d.unwrap().resources.iter().filter(|r| matches!(r, R::Texture1d | R::Texture2d | R::Texture2dArray | R::Texture3d | R::TextureCube | R::TextureCubeArray)).count();
     let standard = textures(StandardMaterial::bindless_descriptor());
     let ordinary = standard + textures(nvf_assets::nif_material::NifSurface::bindless_descriptor());
-    let blend = standard + textures(nvf_assets::nif_surface_blend::NifSurfaceBlend::bindless_descriptor());
+    // [design] Without bindless the blend type's layout is its colour interface's
+    // (nif_surface_blend.rs: round 10a's palette exists only in the bindless table).
+    let blend = standard + textures(nvf_assets::nif_surface_blend::NifSurfaceBlendColour::bindless_descriptor());
     let folded = standard + textures(crate::terrain::TerrainLayers::bindless_descriptor());
     assert_eq!(blend, ordinary, "the blend adds no texture to the ordinary NIF material group");
     assert!(ordinary <= STAGE_LIMIT);

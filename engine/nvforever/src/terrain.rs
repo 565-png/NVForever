@@ -676,16 +676,60 @@ pub(crate) fn capture_surface(world: &WorldData, prep: TerrainPrep, tm: &mut Ter
     terrain_draws(None, world, prep, tm, folds, true).1
 }
 
+/// [design] Round 10a: the vertex attributes of a base draw's mesh that the mesh terrain
+/// blend's landscape detail interpolates (linear vertex colour, normal, tangent direction;
+/// game space) and the tangents' handedness, read from the very mesh drawn
+/// ([`quadrant_mesh`] or [`folded_mesh`], whose tangent's fourth number keeps the sign of
+/// [`TANGENT_SIGN`]), so the detail never reinterprets LAND on its own.
+pub(crate) struct DetailVertices { pub tint: Vec<[f32; 3]>, pub normal: Vec<[f32; 3]>, pub tangent: Vec<[f32; 3]>, pub sign: f32 }
+pub(crate) fn detail_vertices(mesh: &Mesh) -> Option<DetailVertices> {
+    use bevy::mesh::VertexAttributeValues as V;
+    let Some(V::Float32x3(normal)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) else { return None };
+    let Some(V::Float32x4(tangent)) = mesh.attribute(Mesh::ATTRIBUTE_TANGENT) else { return None };
+    let Some(V::Float32x4(colour)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) else { return None };
+    let sign = tangent.first()?[3].signum();
+    Some(DetailVertices { tint: colour.iter().map(|c| [c[0], c[1], c[2]]).collect(), normal: normal.clone(), tangent: tangent.iter().map(|t| [t[0], t[1], t[2]]).collect(), sign })
+}
+
+/// [design] Round 10a: one quadrant's detail parts while its draws are made: the base
+/// draw's source and vertices, whether its coordinate is cell-local, the drawn overlays'
+/// opacity grids and the overflow layers' materials, in drawing order.
+struct DetailParts {
+    base: crate::terrain_surface::DetailBase,
+    vertices: Option<DetailVertices>,
+    cell_local: bool,
+    opacity: Vec<Vec<f32>>,
+    overflow: Vec<Handle<NifMaterial>>,
+}
+
+impl DetailParts {
+    /// The capture, resolved against the materials the near draw uses; the colour cache
+    /// with the reason otherwise.
+    fn capture(self, tm: &TerrainCtx, tile: f32) -> crate::terrain_surface::DetailCapture {
+        use crate::terrain_surface::{DetailBase, DetailCapture, QuadrantDetail, ResolvedDetail};
+        let Some(DetailVertices { tint, normal, tangent, sign: tangent_sign }) = self.vertices else { return DetailCapture::Colour("missing-vertex-attributes") };
+        if self.opacity.len() > nvf_assets::nif_surface_blend::DETAIL_MAX_OVERLAYS { return DetailCapture::Colour("overlays-over-cap"); }
+        let overflow: Option<Vec<&StandardMaterial>> = self.overflow.iter().map(|h| tm.assets.materials.get(h).map(|m| &m.base)).collect();
+        let resolved = overflow.and_then(|overflow| match &self.base {
+            DetailBase::Folded(h) => tm.tm.folded.get(h).and_then(|m| ResolvedDetail::from_materials(&m.base, Some(&m.extension), &overflow, self.opacity.len())),
+            DetailBase::Single(h) => tm.assets.materials.get(h).and_then(|m| ResolvedDetail::from_materials(&m.base, None, &overflow, self.opacity.len())),
+        });
+        if resolved.is_none() { return DetailCapture::Colour("unresolved-materials"); }
+        DetailCapture::Layers(Box::new(QuadrantDetail { base: self.base, overflow: self.overflow, cell_local: self.cell_local, tile, tint, normal, tangent, tangent_sign, opacity: self.opacity, resolved }))
+    }
+}
+
 /// The near draws of a cell (spawned under `near`'s cell when given) and, with `capture`,
 /// its [`crate::terrain_surface::SurfaceCell`]. The near-draw counters move only with
 /// `near`.
 fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx, folds: bool, capture: bool) -> (Land, Option<crate::terrain_surface::SurfaceCell>) {
-    use crate::terrain_surface::{CaptureDraw, CapturePath, SurfaceCaptureMaterial, SurfaceCell};
+    use crate::terrain_surface::{CaptureDraw, CapturePath, DetailBase, DetailCapture, SurfaceCaptureMaterial, SurfaceCell};
     let TerrainPrep { grid, land, layers: drawn, mut meshes, mut folded, tile } = prep;
     let mut surface = capture.then(|| SurfaceCell {
         world: world.world, grid, heights: land.heights.clone().unwrap_or_default(), quadrants: Vec::new(),
         paths: [CapturePath::HeightOnly("missing-base-mesh"); 4],
         content_revision: crate::terrain_surface::capture_revision(), sources: vec![], dependencies: default(),
+        detail: default(),
     });
     let most = folded_layers(tile);
     // The repeat for the shader to work the texture coordinate out with, 0 when the mesh
@@ -701,6 +745,8 @@ fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, p
         // [design] The bake's copies of this quadrant's draws, in drawing order; `None`
         // while no base is drawn (the quadrant's colour then stays invalid).
         let mut stack: Option<(bool, Vec<(Mesh, CaptureDraw)>)> = None;
+        // [design] Round 10a: the same draws' detail parts (only while capturing).
+        let mut detail: Option<DetailParts> = None;
         // The first layers folded into the base's draw (module notes), when each of them
         // has a texture; otherwise the base alone and every layer blended over it.
         let mut blended_from = 0;
@@ -715,6 +761,10 @@ fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, p
             if let Some(surface) = &mut surface {
                 surface.sources.push(crate::terrain_surface::CaptureSource::Folded(mat.clone()));
                 stack = Some((true, vec![(mesh.clone(), CaptureDraw::Folded(Box::new(tm.tm.folded.get(&mat).unwrap().clone())))]));
+                detail = Some(DetailParts {
+                    base: DetailBase::Folded(mat.clone()), vertices: detail_vertices(&mesh), cell_local: shader_tile > 0.0,
+                    opacity: layers.iter().take(n).map(|(_, l)| alpha_grid(l)).collect(), overflow: Vec::new(),
+                });
             }
             if let Some((commands, cell)) = near.as_mut() {
                 let mesh = tm.assets.meshes.add(mesh);
@@ -732,6 +782,7 @@ fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, p
                     // (whose layout a GPU without bindless textures cannot bind).
                     let capture = SurfaceCaptureMaterial::from_standard(&tm.assets.materials.get(&mat).unwrap().base, false);
                     stack = Some((false, vec![(mesh.clone(), CaptureDraw::Single(capture))]));
+                    detail = Some(DetailParts { base: DetailBase::Single(mat.clone()), vertices: detail_vertices(&mesh), cell_local: false, opacity: Vec::new(), overflow: Vec::new() });
                 }
                 if let Some((commands, cell)) = near.as_mut() {
                     let mesh = tm.assets.meshes.add(mesh);
@@ -749,6 +800,12 @@ fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, p
                     if let Some(surface) = &mut surface { surface.sources.push(crate::terrain_surface::CaptureSource::Single(mat.clone(), true)); }
                     let capture = SurfaceCaptureMaterial::from_standard(&tm.assets.materials.get(&mat).unwrap().base, true);
                     draws.push((mesh.clone(), CaptureDraw::Single(capture)));
+                    // [design] Round 10a: an overflow layer joins the detail after the folded
+                    // ones, in drawing order, with the opacity grid its mesh was built from.
+                    if let Some(d) = &mut detail {
+                        d.opacity.push(alpha_grid(l));
+                        d.overflow.push(mat.clone());
+                    }
                 }
                 if let Some((commands, cell)) = near.as_mut() {
                     let mesh = tm.assets.meshes.add(mesh);
@@ -759,6 +816,7 @@ fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, p
         }
         if let (Some(surface), Some((folded, draws))) = (&mut surface, stack) {
             let layers = draws.len() - 1;
+            surface.detail[q as usize] = detail.map_or(DetailCapture::Colour("no-base-draw"), |d| d.capture(tm, tile));
             surface.capture(q, draws, if folded { CapturePath::Folded { layers } } else { CapturePath::Fallback { layers } });
         }
     }
@@ -988,6 +1046,178 @@ mod tests {
         // Edges that agree are left alone.
         let agreed = stitch_layers(&stitched, &[None, None, None, None]);
         assert_eq!(agreed, stitched);
+    }
+
+    /// A 4x4 BC1 DDS header and one block (terrain_surface.rs tests' synthetic texture).
+    fn synthetic_dds() -> Vec<u8> {
+        let mut dds = vec![0u8; 136];
+        dds[..4].copy_from_slice(b"DDS ");
+        for (at, value) in [(4, 124u32), (8, 0x1007), (12, 4), (16, 4), (28, 1), (76, 32), (80, 4), (108, 0x1000)] { dds[at..at + 4].copy_from_slice(&value.to_le_bytes()); }
+        dds[84..88].copy_from_slice(b"DXT1");
+        dds
+    }
+
+    /// The shader's reconstruction (nif_surface_bindings.wesl `terrain_triangle`,
+    /// `detail_attributes`, `detail_opacity`) from the packed words: the corner records of
+    /// the square's triangle and their barycentric weights.
+    fn shader_mix(data: &[u8], entry: usize, q: u8, square: (usize, usize), f: Vec2, overlays: usize) -> (Vec3, Vec3, Vec3, Vec<f32>) {
+        use nvf_assets::nif_surface_blend::{detail_snorm, detail_unorm, detail_vertex_word, DETAIL_VERTEX_WORDS};
+        let half = QUAD_SIDE - 1;
+        let local = (square.0 - half * (q as usize % 2), square.1 - half * (q as usize / 2));
+        let sw = local.1 * QUAD_SIDE + local.0;
+        let (vertices, weights) = if f.y > f.x {
+            ([sw, sw + QUAD_SIDE + 1, sw + QUAD_SIDE], [1.0 - f.y, f.x, f.y - f.x])
+        } else {
+            ([sw, sw + 1, sw + QUAD_SIDE + 1], [1.0 - f.x, f.x - f.y, f.y])
+        };
+        let (mut tint, mut normal, mut tangent, mut opacity) = (Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, vec![0.0; overlays]);
+        for (v, w) in vertices.into_iter().zip(weights) {
+            let words: Vec<u32> = (0..DETAIL_VERTEX_WORDS).map(|j| crate::terrain_surface::detail_word(data, detail_vertex_word(entry, v) + j)).collect();
+            tint += w * Vec3::new(detail_unorm(&words, 0), detail_unorm(&words, 1), detail_unorm(&words, 2));
+            normal += w * Vec3::new(detail_snorm(&words, 3), detail_snorm(&words, 4), detail_snorm(&words, 5));
+            tangent += w * Vec3::new(detail_snorm(&words, 6), detail_snorm(&words, 7), detail_snorm(&words, 8));
+            for (k, o) in opacity.iter_mut().enumerate() { *o += w * detail_unorm(&words, 9 + k); }
+        }
+        (tint, normal, tangent, opacity)
+    }
+
+    /// Barycentric interpolation over the actual mesh triangle containing `p` (cell-local).
+    fn mesh_mix(mesh: &Mesh, p: Vec2) -> Option<([u32; 3], [f32; 3])> {
+        let Some(VertexAttributeValues::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
+        triangles(mesh).into_iter().find_map(|t| {
+            let [a, b, c] = t.map(|i| Vec2::new(pos[i as usize][0], pos[i as usize][1]));
+            let d = (b - a).perp_dot(c - a);
+            let wb = (p - a).perp_dot(c - a) / d;
+            let wc = (b - a).perp_dot(p - a) / d;
+            let wa = 1.0 - wb - wc;
+            (wa >= -1e-5 && wb >= -1e-5 && wc >= -1e-5).then_some((t, [wa, wb, wc]))
+        })
+    }
+
+    /// [design] Round 10a: a quadrant's detail, packed and read back as the shader reads it,
+    /// equals barycentric interpolation of the meshes actually drawn: the base draw's vertex
+    /// colour, normal and tangent, the folded layers' opacities in their folded mesh's
+    /// channels and the overflow layers' in their own meshes' vertex alpha. Both triangles,
+    /// vertices, diagonals and quadrant edges, a negative cell, a stitched neighbour layer,
+    /// six-layer folding and no folding, a quadrant without a base record, the 12-overlay
+    /// cap (12 kept, 13 refused).
+    #[test]
+    fn detail_capture_reconstructs_the_drawn_triangles() {
+        use bevy::ecs::system::RunSystemOnce;
+        use crate::terrain_surface::{DetailCapture, DetailPalette, SurfaceCell};
+        let grid = (-17, 0);
+        let heights: Vec<f32> = (0..SIDE * SIDE).map(|i| ((i * 13 + i / SIDE * 7) % 59) as f32 * 2.5 - 40.0).collect();
+        let normals: Vec<[i8; 3]> = (0..SIDE * SIDE).map(|i| [((i * 7) % 41) as i8 - 20, ((i * 11) % 37) as i8 - 18, 100]).collect();
+        let colors: Vec<[u8; 3]> = (0..SIDE * SIDE).map(|i| [(i * 5 % 256) as u8, (i * 9 % 256) as u8, (255 - i % 256) as u8]).collect();
+        let interior = |k: usize, n: usize| -> Vec<(u16, f32)> {
+            (0..n).map(|j| {
+                let (r, c) = (2 + (k * 3 + j * 5) % 13, 2 + (k * 7 + j * 3) % 13);
+                ((r * QUAD_SIDE + c) as u16, 0.05 + ((k * 13 + j * 29) % 19) as f32 / 20.0)
+            }).collect()
+        };
+        let mut layers = Vec::new();
+        for (q, count) in [(0u8, 7usize), (1, 13), (2, 12), (3, 2)] {
+            if q != 3 { layers.push(Layer { quadrant: q, texture: Some(0xB0 + u32::from(q)), layer: -1, base: true, alpha: vec![] }); }
+            for k in 0..count {
+                let mut alpha = interior(k, 6);
+                // q0's first layer also paints its south edge (the cell edge) and a vertex.
+                if q == 0 && k == 0 { alpha.extend([(3u16, 0.9), (0, 1.0)]); }
+                layers.push(Layer { quadrant: q, texture: Some(0x100 + u32::from(q) * 0x20 + k as u32), layer: k as i16, base: false, alpha });
+            }
+        }
+        // The south neighbour paints texture 0x99 along its north edge, under our q0.
+        let south = vec![Layer { quadrant: 2, texture: Some(0x99), layer: 0, base: false, alpha: (0..6).map(|k| (((QUAD_SIDE - 1) * QUAD_SIDE + k * 2) as u16, 0.3 + 0.1 * k as f32)).collect() }];
+        let around = [None, None, Some(south), None];
+        let land = Land { heights: Some(heights), normals: Some(normals), colors: Some(colors), layers, ..default() };
+        for folds in [true, false] {
+            let (mut app, _files) = crate::outfits::tests::asset_fixture();
+            app.insert_resource(crate::outfits::tests::empty_world_data())
+                .insert_resource(TerrainSettings { tile: 256.0 })
+                .init_resource::<TerrainCache>()
+                .init_resource::<Assets<TerrainMaterial>>()
+                .init_resource::<Assets<crate::terrain_surface::SurfaceCaptureMaterial>>();
+            app.world_mut().resource_mut::<nvf_assets::TextureCache>().offer(fnv_vfs::texture_path(DEFAULT_DIFFUSE), synthetic_dds(), 0.0);
+            // Every LTEX of the fixture draws the synthetic default texture.
+            let ids: Vec<u32> = land.layers.iter().filter_map(|l| l.texture).chain([0x99]).collect();
+            app.world_mut().resource_mut::<TerrainCache>().textures.extend(ids.into_iter().map(|id| (id, Some(DEFAULT_DIFFUSE.to_string()))));
+            let cell = app.world_mut().spawn_empty().id();
+            let (prep_land, prep_around) = (land.clone(), around.clone());
+            app.world_mut().run_system_once(move |mut commands: Commands, world: Res<WorldData>, mut terrain: TerrainMaterials, mut models: ModelCtx| {
+                let prep = prepare_land(prep_land.clone(), &prep_around, grid, 256.0);
+                spawn_terrain_with(&mut commands, cell, &world, prep, &mut TerrainCtx { tm: &mut terrain, assets: &mut models }, folds, true);
+            }).unwrap();
+            let reference = prepare_land(land.clone(), &around, grid, 256.0);
+            let surface = app.world().get::<SurfaceCell>(cell).expect("a capture");
+            let images = app.world().resource::<Assets<Image>>();
+            let detail = |q: usize| match &surface.detail[q] { DetailCapture::Layers(d) => d.as_ref(), DetailCapture::Colour(r) => panic!("folds={folds} q{q}: {r}") };
+            // The cap: 13 overlays keep the colour cache, 12 are composed.
+            assert!(matches!(surface.detail[1], DetailCapture::Colour("overlays-over-cap")), "folds={folds}");
+            assert_eq!(detail(2).opacity.len(), 12);
+            let q0 = quadrant_layers(&reference.layers, 0);
+            assert_eq!(q0.len(), 8, "seven own layers and the stitched one");
+            assert!(q0.last().is_some_and(|(_, l)| l.texture == Some(0x99)), "the stitched layer is drawn last");
+            let palette = DetailPalette::assemble([surface], images, &[]);
+            assert_eq!(palette.admitted.len(), 3, "folds={folds}: q0, q2, q3");
+            assert_eq!((palette.palette.images.len(), palette.palette.samplers.len()), (1, 1), "one shared texture, one sampler description");
+            let slot = (1, 1);
+            let mut data = vec![0u8; nvf_assets::nif_surface_blend::HEIGHT_WIDTH * (nvf_assets::nif_surface_blend::HEIGHT_ROWS + nvf_assets::nif_surface_blend::DETAIL_ROWS) * 4];
+            for ((_, q), quadrant) in &palette.admitted {
+                crate::terrain_surface::encode_detail(&mut data, crate::terrain_surface::detail_entry(slot, *q), quadrant, detail(*q as usize));
+            }
+            for q in [0u8, 2, 3] {
+                let d = detail(q as usize);
+                let r = d.resolved.as_ref().unwrap();
+                let drawn = quadrant_layers(&reference.layers, q);
+                let folded_count = if folds { drawn.len().min(FOLDED_LAYERS) } else { 0 };
+                assert_eq!((r.folded, d.opacity.len(), d.cell_local, d.tangent_sign), (folded_count, drawn.len(), folds, TANGENT_SIGN), "folds={folds} q{q}");
+                let words: Vec<u32> = (0..nvf_assets::nif_surface_blend::DETAIL_QUADRANT_WORDS).map(|i| crate::terrain_surface::detail_word(&data, nvf_assets::nif_surface_blend::detail_quadrant_word(crate::terrain_surface::detail_entry(slot, q)) + i)).collect();
+                assert_eq!(((words[0] >> 8) & 15, (words[0] >> 12) & 15, words[0] & 2 != 0), (folded_count as u32, drawn.len() as u32, folds), "folds={folds} q{q}: table counts");
+                let base = if folds { &reference.folded[&q] } else { &reference.meshes[&(q, None)] };
+                let attr = |name, i: u32| -> Vec3 { match base.attribute(name) {
+                    Some(VertexAttributeValues::Float32x3(v)) => Vec3::from_array(v[i as usize]),
+                    Some(VertexAttributeValues::Float32x4(v)) => Vec3::new(v[i as usize][0], v[i as usize][1], v[i as usize][2]),
+                    _ => panic!(),
+                }};
+                // The reference opacity of overlay k at vertex i: a folded channel of the base
+                // draw's mesh, or the overflow layer mesh's vertex alpha.
+                let opacity = |k: usize, i: u32| -> f32 {
+                    let i = i as usize;
+                    if k < folded_count {
+                        let f32x2 = |a| match base.attribute(a) { Some(VertexAttributeValues::Float32x2(v)) => v[i], _ => panic!() };
+                        let Some(VertexAttributeValues::Float32x4(col)) = base.attribute(Mesh::ATTRIBUTE_COLOR) else { panic!() };
+                        let Some(VertexAttributeValues::Float32x4(tan)) = base.attribute(Mesh::ATTRIBUTE_TANGENT) else { panic!() };
+                        [col[i][3], f32x2(Mesh::ATTRIBUTE_UV_1)[0], f32x2(Mesh::ATTRIBUTE_UV_1)[1], tan[i][3].abs() - 1.0, f32x2(Mesh::ATTRIBUTE_UV_0)[0], f32x2(Mesh::ATTRIBUTE_UV_0)[1]][k]
+                    } else {
+                        let Some(VertexAttributeValues::Float32x4(col)) = reference.meshes[&(q, Some(drawn[k].0))].attribute(Mesh::ATTRIBUTE_COLOR) else { panic!() };
+                        col[i][3]
+                    }
+                };
+                let half = QUAD_SIDE - 1;
+                let (qx, qy) = (half * (q as usize % 2), half * (q as usize / 2));
+                for local in [(0usize, 0usize), (15, 15), (7, 3), (0, 15), (15, 0), (4, 11)] {
+                    for f in [Vec2::new(0.25, 0.75), Vec2::new(0.75, 0.25), Vec2::splat(0.5), Vec2::ZERO, Vec2::new(0.999, 0.0), Vec2::new(0.0, 0.999), Vec2::new(0.6, 0.6)] {
+                        let square = (qx + local.0, qy + local.1);
+                        let p = (Vec2::new(square.0 as f32, square.1 as f32) + f) * SPACING;
+                        let (corners, weights) = mesh_mix(base, p).expect("inside a drawn triangle");
+                        let expect = |name| corners.iter().zip(weights).map(|(&i, w)| attr(name, i) * w).sum::<Vec3>();
+                        let (tint, normal, tangent, opacities) = shader_mix(&data, crate::terrain_surface::detail_entry(slot, q), q, square, f, d.opacity.len());
+                        let close = |a: Vec3, b: Vec3| (a - b).abs().max_element() < 2e-4;
+                        assert!(close(tint, expect(Mesh::ATTRIBUTE_COLOR)), "folds={folds} q{q} {square:?} {f:?}: tint {tint:?}");
+                        assert!(close(normal, expect(Mesh::ATTRIBUTE_NORMAL)), "folds={folds} q{q} {square:?} {f:?}: normal");
+                        assert!(close(tangent, expect(Mesh::ATTRIBUTE_TANGENT)), "folds={folds} q{q} {square:?} {f:?}: tangent");
+                        for (k, o) in opacities.iter().enumerate() {
+                            let want: f32 = corners.iter().zip(weights).map(|(&i, w)| opacity(k, i) * w).sum();
+                            assert!((o - want).abs() < 2e-4, "folds={folds} q{q} {square:?} {f:?}: overlay {k} {o} != {want}");
+                        }
+                    }
+                }
+            }
+            // Interpolated normals vary across a triangle (the fixture's LAND normals differ
+            // per vertex), so a tangent recomputed from the interpolated normal would not be
+            // the interpolated tangent the shader reads.
+            let d = detail(0);
+            assert!(d.normal[0] != d.normal[1] && d.tangent[0] != d.tangent[1]);
+        }
     }
 
     #[test]

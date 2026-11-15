@@ -9,6 +9,9 @@ import bevy_pbr::render::mesh_bindings::mesh;
 @if(BINDLESS) import bevy_pbr::render::pbr_types::StandardMaterial;
 @if(!BINDLESS) import bevy_pbr::render::pbr_bindings;
 @if(!BINDLESS) import bevy_pbr::render::pbr_types::StandardMaterial;
+// [design] Round 10a's landscape detail uses Bevy's own TBN and normal-map helpers, as the
+// near landscape's draws do (terrain.wesl, StandardMaterial).
+@if(MESH_TERRAIN_BLEND && BINDLESS) import bevy_pbr::render::pbr_functions::{calculate_tbn_mikktspace, apply_normal_mapping};
 
 struct NifSurface {
     // x start angle (cosine), y stop angle (cosine), z start opacity, w stop opacity;
@@ -53,12 +56,16 @@ struct NifSurface {
 
 // The extension's index table (indices 50-53 of NifSurface's bindless attribute). The
 // enabled blend type (nif_surface_blend.rs module notes) has the same table, with its
-// landscape colour atlas at 51, that atlas's sampler at 52 and its height atlas at 53.
+// landscape colour atlas at 51, that atlas's sampler at 52 and its height atlas at 53,
+// and after them round 10a's landscape palette (indices 54-453: 384 textures, then 16
+// samplers; nif_surface_blend.rs PALETTE_ENTRIES, which a test keeps equal to 400). The
+// member is in the blend type's prepass too, so both read the same table row size.
 @if(BINDLESS) struct NifSurfaceIndices {
     surface: u32,          // 50
     holes_texture: u32,    // 51
     holes_sampler: u32,    // 52
     facegen_offset: u32,   // 53
+    @if(NIF_SURFACE_BLEND) palette: array<u32, 400>, // 54-453
 }
 @if(BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<storage> nif_indices: array<NifSurfaceIndices>;
 @if(BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(101) var<storage> nif_surfaces: array<NifSurface>;
@@ -83,6 +90,19 @@ struct NifSurface {
 @if(MESH_TERRAIN_BLEND) const V2_COS_STEEP: f32 = f32(constants::MESH_TERRAIN_V2_COS_STEEP_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const LAND_ROUGHNESS: f32 = f32(constants::MESH_TERRAIN_ROUGHNESS_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const LAND_REFLECTANCE: f32 = f32(constants::MESH_TERRAIN_REFLECTANCE_E6) / 1e6;
+// [design] Round 10a's landscape detail layout and distances (nif_surface_blend.rs).
+@if(MESH_TERRAIN_BLEND) const HEIGHT_WIDTH: u32 = u32(constants::MESH_TERRAIN_HEIGHT_WIDTH);
+@if(MESH_TERRAIN_BLEND) const DETAIL_ROW: u32 = u32(constants::MESH_TERRAIN_DETAIL_ROW);
+@if(MESH_TERRAIN_BLEND) const DETAIL_QUADRANT_WORDS: u32 = u32(constants::MESH_TERRAIN_DETAIL_QUADRANT_WORDS);
+@if(MESH_TERRAIN_BLEND) const DETAIL_VERTEX_WORDS: u32 = u32(constants::MESH_TERRAIN_DETAIL_VERTEX_WORDS);
+@if(MESH_TERRAIN_BLEND) const DETAIL_QUADRANTS: u32 = u32(constants::MESH_TERRAIN_DETAIL_QUADRANTS);
+@if(MESH_TERRAIN_BLEND) const QUAD_VERTICES: u32 = u32(constants::MESH_TERRAIN_QUAD_VERTICES);
+@if(MESH_TERRAIN_BLEND) const DETAIL_MAX_OVERLAYS: u32 = u32(constants::MESH_TERRAIN_DETAIL_MAX_OVERLAYS);
+@if(MESH_TERRAIN_BLEND) const PALETTE_IMAGES: u32 = u32(constants::MESH_TERRAIN_PALETTE_IMAGES);
+@if(MESH_TERRAIN_BLEND) const DETAIL_NEAR: f32 = f32(constants::MESH_TERRAIN_DETAIL_NEAR);
+@if(MESH_TERRAIN_BLEND) const DETAIL_FAR: f32 = f32(constants::MESH_TERRAIN_DETAIL_FAR);
+@if(MESH_TERRAIN_BLEND) const FLAG_TWO_COMPONENT: u32 = u32(constants::MESH_TERRAIN_FLAG_TWO_COMPONENT);
+@if(MESH_TERRAIN_BLEND) const FLAG_FLIP_Y: u32 = u32(constants::MESH_TERRAIN_FLAG_FLIP_Y);
 
 // [design] Lookup classifications, in diagnostic precedence order.
 @if(MESH_TERRAIN_BLEND) const LOOKUP_OUT_OF_RANGE: u32 = 0u;
@@ -101,20 +121,210 @@ struct NifSurface {
     colour: vec3<f32>,
     game_normal: vec3<f32>,
     normal: vec3<f32>,
+    // [design] Round 10a: the landscape layers' share of the target (the distance mix d
+    // where both sources serve the fragment, 1 where only the layers do, the weight then
+    // faded by d; 0 for the colour cache alone), and their colour and mapped normal (Bevy
+    // world space), evaluated only with a positive weight and share.
+    detail: f32,
+    detail_colour: vec3<f32>,
+    detail_normal: vec3<f32>,
+}
+
+// [design] Round 10a: what the lookup needs of the fragment besides its position: the
+// camera's distance (game units), the derivatives of its game xy across the view's x and
+// y (taken by the caller in uniform control flow, before any lookup branch), the view's
+// mip bias, and whether full shading reads the mapped normal (0 albedo, 1 full).
+@if(MESH_TERRAIN_BLEND) struct MeshTerrainInputs {
+    distance: f32,
+    ddx: vec2<f32>,
+    ddy: vec2<f32>,
+    bias: f32,
+    full: u32,
 }
 
 // [design] Encoded coefficients preserve their f32 bits without requiring filterable R32F.
-@if(MESH_TERRAIN_BLEND) fn terrain_height_texel(instance_index: u32, p: vec2<i32>) -> f32 {
+@if(MESH_TERRAIN_BLEND) fn terrain_height_bits(instance_index: u32, p: vec2<i32>) -> u32 {
     @if(BINDLESS) let v = textureLoad(bindless_textures_2d[nif_indices[material_slot(instance_index)].facegen_offset], p, 0);
     @if(!BINDLESS) let v = textureLoad(mesh_terrain_height, p, 0);
     let b = vec4<u32>(round(v * 255.0));
-    return bitcast<f32>(b.x | (b.y << 8u) | (b.z << 16u) | (b.w << 24u));
+    return b.x | (b.y << 8u) | (b.z << 16u) | (b.w << 24u);
+}
+@if(MESH_TERRAIN_BLEND) fn terrain_height_texel(instance_index: u32, p: vec2<i32>) -> f32 {
+    return bitcast<f32>(terrain_height_bits(instance_index, p));
 }
 
 @if(MESH_TERRAIN_BLEND) fn terrain_colour_texel(instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
-    @if(BINDLESS) let i = nif_indices[material_slot(instance_index)];
-    @if(BINDLESS) return textureSampleLevel(bindless_textures_2d[i.holes_texture], bindless_samplers_filtering[i.holes_sampler], uv, 0.0).rgb;
+    @if(BINDLESS) let slot = material_slot(instance_index);
+    @if(BINDLESS) return textureSampleLevel(bindless_textures_2d[nif_indices[slot].holes_texture], bindless_samplers_filtering[nif_indices[slot].holes_sampler], uv, 0.0).rgb;
     @if(!BINDLESS) return textureSampleLevel(mesh_terrain_colour, mesh_terrain_sampler, uv, 0.0).rgb;
+}
+
+// [design] Round 10a: this publication supplies the quadrant's layer detail (texel 2 of the
+// cell's metadata row, terrain_surface.rs `encode_detail_mask`), intersected with the live
+// coverage as the colour is. Without bindless there is no palette: never.
+@if(MESH_TERRAIN_BLEND) fn terrain_detail_valid(instance_index: u32, slot: vec2<i32>, quadrant: u32) -> bool {
+    @if(!BINDLESS) return false;
+    @if(BINDLESS) {
+        if !terrain_covered(instance_index, slot) { return false; }
+        let mask = u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(2, GRID)));
+        return (mask & (1u << quadrant)) != 0u;
+    }
+}
+
+// [design] Round 10a: word `w` of the detail rows after the heights (nif_surface_blend.rs
+// module notes), and a 16-bit value of it.
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn terrain_detail_word(instance_index: u32, w: u32) -> u32 {
+    return terrain_height_bits(instance_index, vec2<i32>(i32(w % HEIGHT_WIDTH), i32(DETAIL_ROW + w / HEIGHT_WIDTH)));
+}
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn detail_unorm(h: u32) -> f32 { return f32(h & 0xffffu) / 65535.0; }
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn detail_snorm(h: u32) -> f32 { return max(f32(bitcast<i32>(h << 16u) >> 16u) / 32767.0, -1.0); }
+
+// [design] The fragment's ground triangle's three vertex records and barycentric weights.
+@if(MESH_TERRAIN_BLEND && BINDLESS) struct TerrainTriangle {
+    records: vec3<u32>,
+    weights: vec3<f32>,
+}
+
+// [design] The interpolated linear vertex colour, normal and tangent (game space; the
+// normal and tangent not renormalized, as the mesh's interpolated ones are not).
+@if(MESH_TERRAIN_BLEND && BINDLESS) struct TerrainVertexMix {
+    tint: vec3<f32>,
+    normal: vec3<f32>,
+    tangent: vec3<f32>,
+}
+
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn detail_attributes(instance_index: u32, t: TerrainTriangle) -> TerrainVertexMix {
+    var m = TerrainVertexMix(vec3(0.0), vec3(0.0), vec3(0.0));
+    for (var i = 0u; i < 3u; i++) {
+        let r = t.records[i];
+        let w0 = terrain_detail_word(instance_index, r);
+        let w1 = terrain_detail_word(instance_index, r + 1u);
+        let w2 = terrain_detail_word(instance_index, r + 2u);
+        let w3 = terrain_detail_word(instance_index, r + 3u);
+        let w4 = terrain_detail_word(instance_index, r + 4u);
+        m.tint += t.weights[i] * vec3(detail_unorm(w0), detail_unorm(w0 >> 16u), detail_unorm(w1));
+        m.normal += t.weights[i] * vec3(detail_snorm(w1 >> 16u), detail_snorm(w2), detail_snorm(w2 >> 16u));
+        m.tangent += t.weights[i] * vec3(detail_snorm(w3), detail_snorm(w3 >> 16u), detail_snorm(w4));
+    }
+    return m;
+}
+
+// Overlay `k`'s opacity, interpolated (value 9 + k of each record).
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn detail_opacity(instance_index: u32, t: TerrainTriangle, k: u32) -> f32 {
+    let h = 9u + k;
+    var o = 0.0;
+    for (var i = 0u; i < 3u; i++) {
+        o += t.weights[i] * detail_unorm(terrain_detail_word(instance_index, t.records[i] + h / 2u) >> (16u * (h % 2u)));
+    }
+    return o;
+}
+
+// The StandardMaterial flags a normal map is decoded with: two bits per entry of word 4
+// (entry 0 the base, entry k + 1 overlay k), two-component and green flipped.
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn detail_decode(decode: u32, entry: u32) -> u32 {
+    let bits = decode >> (2u * entry);
+    return select(0u, FLAG_TWO_COMPONENT, (bits & 1u) != 0u) | select(0u, FLAG_FLIP_Y, (bits & 2u) != 0u);
+}
+
+// A palette texture read with a palette sampler through this material's own table row
+// (its slab's slots), with explicit gradients (mip selection as an implicit read would
+// make it, without derivatives in this divergent branch).
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn detail_sample(instance_index: u32, image: u32, palette_sampler: u32, uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> vec4<f32> {
+    let slot = material_slot(instance_index);
+    let image_slot = nif_indices[slot].palette[image & 0xffffu];
+    let sampler_slot = nif_indices[slot].palette[PALETTE_IMAGES + (palette_sampler & 0xffffu)];
+    return textureSampleGrad(bindless_textures_2d[image_slot], bindless_samplers_filtering[sampler_slot], uv, ddx, ddy);
+}
+
+@if(MESH_TERRAIN_BLEND && BINDLESS) struct TerrainDetail {
+    colour: vec3<f32>,
+    normal: vec3<f32>,
+}
+
+// [design] Round 10a: the near landscape's surface inputs at the fragment's game xy,
+// composed as its draw composes them (terrain.wesl; terrain.rs `quadrant_mesh`, `folded_mesh`):
+// the base diffuse x interpolated linear vertex colour x base material colour, then each
+// overlay in drawing order mixed in by saturate(opacity) x its diffuse alpha (ordered
+// opacities, not normalized weights), its colour the texel x vertex colour x the base
+// material colour for folded overlays (terrain.wesl) and x white for the separately drawn
+// overflow ones (terrain.rs `layer_material`: a layer drawn has a texture, so white). The
+// normal (full shading only) starts as the base's mapped normal (or the plain interpolated
+// one) and mixes towards each overlay's mapped normal (or the plain one) by the same shares,
+// normalized once. Overflow layers are NVForever's approximation (graphics-enhanced.md
+// §3.12): the near draw blends their lit result, this composes albedo and normal and lights
+// once. `place` is the fragment's game xy, `cell` its cell.
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn mesh_terrain_detail(instance_index: u32, entry: u32, t: TerrainTriangle, place: vec2<f32>, cell: vec2<i32>, inputs: MeshTerrainInputs) -> TerrainDetail {
+    let q = entry * DETAIL_QUADRANT_WORDS;
+    let flags = terrain_detail_word(instance_index, q);
+    let total = min((flags >> 12u) & 15u, DETAIL_MAX_OVERLAYS);
+    let folded = min((flags >> 8u) & 15u, total);
+    let images = terrain_detail_word(instance_index, q + 1u);
+    let samplers = terrain_detail_word(instance_index, q + 2u);
+    let normals = terrain_detail_word(instance_index, q + 3u);
+    let decode = terrain_detail_word(instance_index, q + 4u);
+    let base_rgb = vec3(bitcast<f32>(terrain_detail_word(instance_index, q + 5u)), bitcast<f32>(terrain_detail_word(instance_index, q + 6u)), bitcast<f32>(terrain_detail_word(instance_index, q + 7u)));
+    let axes = mat2x2<f32>(
+        bitcast<f32>(terrain_detail_word(instance_index, q + 8u)), bitcast<f32>(terrain_detail_word(instance_index, q + 9u)),
+        bitcast<f32>(terrain_detail_word(instance_index, q + 10u)), bitcast<f32>(terrain_detail_word(instance_index, q + 11u)));
+    let offset = vec2(bitcast<f32>(terrain_detail_word(instance_index, q + 12u)), bitcast<f32>(terrain_detail_word(instance_index, q + 13u)));
+    let tile = bitcast<f32>(terrain_detail_word(instance_index, q + 14u));
+    let handedness = bitcast<f32>(terrain_detail_word(instance_index, q + 27u));
+    // The near draw's texture coordinate: the place in the world over the repeat, or in
+    // the cell for a six-layer folded draw (terrain.wesl), then the base's transform. The
+    // gradients follow the same linear map; the view's mip bias scales them, as
+    // textureSampleBias would.
+    let local = select(place, place - vec2<f32>(cell) * CELL_SIZE, (flags & 2u) != 0u);
+    let uv = axes * (local / tile) + offset;
+    let scale = exp2(inputs.bias) / tile;
+    let ddx = axes * inputs.ddx * scale;
+    let ddy = axes * inputs.ddy * scale;
+    let diffuse_sampler = samplers & 0xffffu;
+    let normal_sampler = samplers >> 16u;
+    let a = detail_attributes(instance_index, t);
+    var colour = a.tint * base_rgb;
+    if (flags & 4u) != 0u { colour *= detail_sample(instance_index, images, diffuse_sampler, uv, ddx, ddy).rgb; }
+    // Bevy world space: game (x, y, z) is Bevy (x, z, -y), for the normal and the tangent.
+    let world_n = game_to_world_normal(a.normal);
+    let tbn = calculate_tbn_mikktspace(world_n, vec4(game_to_world_normal(a.tangent), handedness));
+    let plain = normalize(world_n);
+    let full = inputs.full != 0u;
+    var normal = plain;
+    if full && (flags & 8u) != 0u {
+        normal = apply_normal_mapping(detail_decode(decode, 0u), tbn, false, true, detail_sample(instance_index, images >> 16u, normal_sampler, uv, ddx, ddy).rgb);
+    }
+    for (var k = 0u; k < total; k++) {
+        let pair = terrain_detail_word(instance_index, q + 15u + k);
+        let texel = detail_sample(instance_index, pair, diffuse_sampler, uv, ddx, ddy);
+        let share = saturate(detail_opacity(instance_index, t, k)) * texel.a;
+        colour = mix(colour, texel.rgb * a.tint * select(vec3(1.0), base_rgb, k < folded), share);
+        if full {
+            var layer_n = plain;
+            if ((normals >> k) & 1u) != 0u {
+                layer_n = apply_normal_mapping(detail_decode(decode, k + 1u), tbn, false, true, detail_sample(instance_index, pair >> 16u, diffuse_sampler, uv, ddx, ddy).rgb);
+            }
+            normal = mix(normal, layer_n, share);
+        }
+    }
+    return TerrainDetail(colour, normalize(normal));
+}
+
+// [design] Round 10a: the fragment's ground triangle in its quadrant's 17 by 17 grid, as the
+// height lookup picks it (`square`, the fraction `f` within it, `triangle` 1 above the
+// south-west to north-east diagonal), and the barycentric weights of its corners: below
+// the diagonal (1 - u) SW + (u - v) SE + v NE, above it (1 - v) SW + u NE + (v - u) NW.
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn terrain_triangle(entry: u32, quadrant: u32, square: vec2<i32>, f: vec2<f32>, triangle: i32) -> TerrainTriangle {
+    let half_grid = GRID / 2;
+    let local = square - vec2(i32(quadrant % 2u), i32(quadrant / 2u)) * half_grid;
+    let side = u32(half_grid + 1);
+    let sw = u32(local.y) * side + u32(local.x);
+    var vertices = vec3(sw, sw + 1u, sw + side + 1u);
+    var weights = vec3(1.0 - f.x, f.x - f.y, f.y);
+    if triangle == 1 {
+        vertices = vec3(sw, sw + side + 1u, sw + side);
+        weights = vec3(1.0 - f.y, f.x, f.y - f.x);
+    }
+    let start = DETAIL_QUADRANTS * DETAIL_QUADRANT_WORDS + entry * QUAD_VERTICES * DETAIL_VERTEX_WORDS;
+    return TerrainTriangle(vec3(start) + vertices * DETAIL_VERTEX_WORDS, weights);
 }
 
 // [design] Colour texels per cell side: the bound atlas is three cells wide
@@ -191,10 +401,14 @@ struct NifSurface {
 
 // [design] Coverage, alpha, vertices and depth stay with nif_material.wesl. `mesh_normal`
 // is the interpolated vertex normal before normal mapping (pbr_input.world_normal), so
-// the weight does not follow the normal map's texture.
-@if(MESH_TERRAIN_BLEND) fn mesh_terrain_lookup(instance_index: u32, world: vec3<f32>, mesh_normal: vec3<f32>) -> MeshTerrainLookup {
+// the weight does not follow the normal map's texture. Round 10a: two sources can serve
+// a fragment with valid heights, each checked on its own: the colour cache (its quadrant
+// and its whole bilinear footprint) and the landscape's layers (the quadrant's detail, the
+// fragment nearer than DETAIL_FAR); a failed colour footprint no longer fails a fragment
+// the layers serve. `status` is LOOKUP_SUCCESS when either serves it.
+@if(MESH_TERRAIN_BLEND) fn mesh_terrain_lookup(instance_index: u32, world: vec3<f32>, mesh_normal: vec3<f32>, inputs: MeshTerrainInputs) -> MeshTerrainLookup {
     let s = nif_surface(instance_index);
-    var r = MeshTerrainLookup(LOOKUP_OUT_OF_RANGE, 0.0, vec3(0.0), vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 0.0));
+    var r = MeshTerrainLookup(LOOKUP_OUT_OF_RANGE, 0.0, vec3(0.0), vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 0.0), 0.0, vec3(0.0), vec3(0.0, 1.0, 0.0));
     let game = vec3(world.x, -world.z, world.y);
     let cell = vec2<i32>(floor(game.xy / CELL_SIZE));
     let slot = cell - vec2<i32>(s.mesh_terrain_origin.xy);
@@ -213,7 +427,9 @@ struct NifSurface {
     r.normal = game_to_world_normal(r.game_normal);
     let height = a + f.x * dx + f.y * dy;
     let quadrant = select(0u, 1u, local.x >= f32(GRID) * 0.5) + select(0u, 2u, local.y >= f32(GRID) * 0.5);
-    if !terrain_colour_valid(instance_index, slot, quadrant) { r.status = LOOKUP_INVALID_COLOUR; return r; }
+    let colour_quadrant = terrain_colour_valid(instance_index, slot, quadrant);
+    let detail_valid = inputs.distance < DETAIL_FAR && terrain_detail_valid(instance_index, slot, quadrant);
+    if !colour_quadrant && !detail_valid { r.status = LOOKUP_INVALID_COLOUR; return r; }
     // [design] Fade over one LAND grid interval next to missing slots, before filtering
     // can reach an empty colour texel. Mips/gutters and distance fading remain later work.
     let within = game.xy - vec2<f32>(cell) * CELL_SIZE;
@@ -230,27 +446,57 @@ struct NifSurface {
     let uv = vec2(atlas.x, 1.0 - atlas.y);
     let tap = vec2<i32>(floor(uv * f32(atlas_width) - vec2(0.5)));
     let residency = u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(0, GRID)));
-    for (var y = 0; y < 2; y++) {
-        for (var x = 0; x < 2; x++) {
-            let pixel = clamp(tap + vec2(x, y), vec2(0), vec2(atlas_width - 1));
-            let tap_slot = vec2(pixel.x / resolution, 2 - pixel.y / resolution);
-            let offset = tap_slot - slot + vec2(1);
-            let bit = u32(offset.y * 3 + offset.x);
-            let tap_quadrant = select(0u, 1u, pixel.x % resolution >= resolution / 2)
-                + select(0u, 2u, pixel.y % resolution < resolution / 2);
-            if (residency & (1u << bit)) == 0u || !terrain_colour_valid(instance_index, tap_slot, tap_quadrant) {
-                r.status = LOOKUP_REJECTED_FOOTPRINT;
-                return r;
+    var colour_valid = colour_quadrant;
+    if colour_quadrant {
+        for (var y = 0; y < 2; y++) {
+            for (var x = 0; x < 2; x++) {
+                let pixel = clamp(tap + vec2(x, y), vec2(0), vec2(atlas_width - 1));
+                let tap_slot = vec2(pixel.x / resolution, 2 - pixel.y / resolution);
+                let offset = tap_slot - slot + vec2(1);
+                let bit = u32(offset.y * 3 + offset.x);
+                let tap_quadrant = select(0u, 1u, pixel.x % resolution >= resolution / 2)
+                    + select(0u, 2u, pixel.y % resolution < resolution / 2);
+                if (residency & (1u << bit)) == 0u || !terrain_colour_valid(instance_index, tap_slot, tap_quadrant) {
+                    colour_valid = false;
+                }
             }
         }
     }
+    if !colour_valid && !detail_valid { r.status = LOOKUP_REJECTED_FOOTPRINT; return r; }
     let n_length = length(mesh_normal);
     let cos_angle = select(dot(mesh_normal / max(n_length, 1e-6), r.normal), 1.0, n_length < 1e-6);
     r.status = LOOKUP_SUCCESS;
     let widths = vec3(s.mesh_terrain_widths.x, s.mesh_terrain.x, s.mesh_terrain_widths.y);
-    r.weight = mesh_terrain_weight(u32(s.mesh_terrain.z), widths, game.z - height, cos_angle) * smoothstep(0.0, SPACING, border);
-    if r.weight > 0.0 { r.colour = terrain_colour_texel(instance_index, uv); }
+    var weight = mesh_terrain_weight(u32(s.mesh_terrain.z), widths, game.z - height, cos_angle) * smoothstep(0.0, SPACING, border);
+    // [design] Round 10a's distance mix d (1 to DETAIL_NEAR, 0 from DETAIL_FAR): with both
+    // sources the layers' share of the target; with the layers alone a fade of the weight,
+    // so the blend never mixes towards an invalid colour texel.
+    let near = 1.0 - smoothstep(DETAIL_NEAR, DETAIL_FAR, inputs.distance);
+    if detail_valid && colour_valid { r.detail = near; } else if detail_valid { r.detail = 1.0; weight *= near; }
+    r.weight = weight;
+    if r.weight > 0.0 {
+        if colour_valid { r.colour = terrain_colour_texel(instance_index, uv); }
+        @if(BINDLESS) if r.detail > 0.0 {
+            let entry = u32(slot.y * 3 + slot.x) * 4u + quadrant;
+            let d = mesh_terrain_detail(instance_index, entry, terrain_triangle(entry, quadrant, square, f, triangle), game.xy, cell, inputs);
+            r.detail_colour = d.colour;
+            r.detail_normal = d.normal;
+        }
+    }
     return r;
+}
+
+// [design] Round 10a: the target colour and normal of a successful lookup: the colour
+// cache's colour and the ground triangle's geometric normal, mixed towards the layers' by
+// their share (the normal renormalized; where the mix cancels the layers' stands in).
+@if(MESH_TERRAIN_BLEND) fn mesh_terrain_target_colour(t: MeshTerrainLookup) -> vec3<f32> {
+    return mix(t.colour, t.detail_colour, t.detail);
+}
+@if(MESH_TERRAIN_BLEND) fn mesh_terrain_target_normal(t: MeshTerrainLookup) -> vec3<f32> {
+    if t.detail <= 0.0 { return t.normal; }
+    let mixed = mix(t.normal, t.detail_normal, t.detail);
+    if dot(mixed, mixed) < 1e-12 { return t.detail_normal; }
+    return normalize(mixed);
 }
 
 // [design] The aid's view: 0 surface, 1 weight, 2 normal, 3 selection, 4 status.
