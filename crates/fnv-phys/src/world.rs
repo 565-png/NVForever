@@ -828,6 +828,12 @@ impl PhysWorld {
     /// at the centre, falling linearly to 0 at the radius]. A settling ragdoll it strikes
     /// stops settling (`PhysWorld::settle_ragdoll`). Returns how many moved.
     pub fn push_dynamic(&mut self, center: [f32; 3], radius: f32, speed: f32) -> usize {
+        self.push_dynamic_but(center, radius, speed, &|_| false)
+    }
+
+    /// [`World::push_dynamic`] leaving out the bodies of the references `spared` names
+    /// (by FormID).
+    pub fn push_dynamic_but(&mut self, center: [f32; 3], radius: f32, speed: f32, spared: &dyn Fn(u32) -> bool) -> usize {
         let k = self.k;
         let c = vec3(center) * k;
         let r = (radius * k).max(1e-4);
@@ -839,6 +845,9 @@ impl PhysWorld {
         let mut struck_ragdolls = Vec::new();
         for (h, b) in self.w.bodies.iter_mut() {
             if !b.is_dynamic() {
+                continue;
+            }
+            if matches!(Owner::decode(b.user_data), Some(Owner::Ref { form_id, .. }) if spared(form_id)) {
                 continue;
             }
             let d = b.position().translation - c;
@@ -1137,7 +1146,13 @@ impl PhysWorld {
             for &h in &self.new_bodies {
                 if let Some(b) = self.w.bodies.get_mut(h) {
                     let p = *b.position();
+                    // The rearm must not erase a move queued by apply_move: rapier's
+                    // set_position also replaces next_position, before the real step.
+                    let next = b.is_kinematic().then(|| *b.next_position());
                     b.set_position(p, false);
+                    if let Some(next) = next {
+                        b.set_next_kinematic_position(next);
+                    }
                 }
             }
             // A body added asleep wakes when its first contacts are found: rapier wakes
@@ -1697,3 +1712,7 @@ fn probe(shape: &Shape, at: &Iso, k: f32) -> Result<(Pose, SharedShape), Convert
         _ => Err(ConvertError::NotSingleShape),
     }
 }
+
+#[cfg(test)]
+#[path = "world_query_motion_tests.rs"]
+mod query_motion_tests;

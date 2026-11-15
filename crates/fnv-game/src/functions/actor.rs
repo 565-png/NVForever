@@ -789,7 +789,7 @@ pub fn essential(g: &Game, r: FormId) -> bool {
         // "Essential flagged teammates are not essential in Hardcore (New Vegas)"
         // [documented: GECK wiki SetPlayerTeammate notes]: a companion killed in
         // Hardcore dies, flag or not.
-        if g.hardcore() {
+        if teammates_unprotected(g) {
             return false;
         }
         // No hired companion carries the Essential flag and no script sets it, yet
@@ -804,13 +804,20 @@ pub fn essential(g: &Game, r: FormId) -> bool {
     essential_flagged(g, r)
 }
 
+/// Whether the Hardcore rule that teammates are not essential holds: in Hardcore, or,
+/// with the player's Hardcore Tweaks on, as their Essential Companions switch says
+/// [design: docs/design/tweaks.md].
+fn teammates_unprotected(g: &Game) -> bool {
+    if g.tweaks.hardcore_tweaks { !g.tweaks.hardcore_essential_companions } else { g.hardcore() }
+}
+
 /// Essential by flag, what IsEssential reads ("Returns 1 if the calling actor is flagged
 /// as essential" [documented: GECK wiki IsEssential]): the reference's own flag
 /// (SetActorRefEssential) or its base's (ACBS, changed by SetEssential). The reference
 /// flag cannot clear the base's [documented: catalogue notes of SetActorRefEssential].
 /// A teammate in Hardcore reads 0 (the SetPlayerTeammate note, [`essential`]).
 pub fn essential_flagged(g: &Game, r: FormId) -> bool {
-    if g.hardcore() && g.is_teammate(r) {
+    if teammates_unprotected(g) && g.is_teammate(r) {
         return false;
     }
     let base = base_of(g, r);
@@ -995,16 +1002,31 @@ pub(crate) fn forget_relations(g: &Game) {
 /// [`faction_relation`] does (0 neutral, 1 enemy, 2 ally, 3 friend). A media location
 /// controller's conditional faction asks this of the player (docs/spec-notes/audio.md §13).
 pub fn factions_relation(g: &Game, mine: &[FormId], o: FormId) -> i64 {
-    if o == FormId::PLAYER_REF && mine.iter().any(|f| g.player.enemy_of.contains(f)) {
-        return 1;
-    }
     factions_between(g, mine, o, &factions_of(g, o))
+}
+
+/// Whether the player is an enemy of an actor in the factions `mine` by a faction enemy
+/// flag (SetPCEnemyOfFaction, a witnessed crime): one of `mine` is flagged, and none of
+/// the others is the player's ally or friend (`theirs`: the player's factions). A
+/// faction disguise makes such a faction the player's friend: the NCR armour's OnEquip
+/// makes PlayerFaction and ArmorNCRFactionNV friends, every NCR soldier is in
+/// ArmorNCRFactionNV too, and the disguise pulse takes sniffers near the player out of
+/// it, by its notes so that they may turn hostile to a player they think little of
+/// [observed: FalloutNV.esm's disguise scripts; hypothesis: the friendship outranks the
+/// flag, docs/spec-notes/disguises.md §3]. The flagged faction's own friendship does
+/// not count: a crime among the player's friends stays a crime.
+pub fn player_enemy_of_factions(g: &Game, mine: &[FormId], theirs: &[FormId]) -> bool {
+    let enemy_of = &g.player.enemy_of;
+    if enemy_of.is_empty() || !mine.iter().any(|f| enemy_of.contains(f)) {
+        return false;
+    }
+    !mine.iter().filter(|f| !enemy_of.contains(f)).any(|&x| theirs.iter().any(|&y| matches!(reaction(g, x, y), 2 | 3)))
 }
 
 /// [`factions_relation`] with `o`'s factions given (`theirs`): reads no kept factions, so
 /// it takes no lock (a detection round's pairs on several threads, #1799).
 pub fn factions_between(g: &Game, mine: &[FormId], o: FormId, theirs: &[FormId]) -> i64 {
-    if o == FormId::PLAYER_REF && mine.iter().any(|f| g.player.enemy_of.contains(f)) {
+    if o == FormId::PLAYER_REF && player_enemy_of_factions(g, mine, theirs) {
         return 1;
     }
     let all: Vec<i64> = mine.iter().flat_map(|&x| theirs.iter().map(move |&y| (x, y))).map(|(x, y)| reaction(g, x, y)).collect();
@@ -1183,7 +1205,21 @@ pub fn add_script_package(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, St
     // An actor holds one script package: a second call replaces the first
     // [documented: GECK wiki AddScriptPackage notes, actor-behaviour.md §1.4; observed:
     // od_08_script_packages, owner-decision-captures.md item 8].
-    g.extra.entry(r).or_default().script_package = Some(p);
+    let e = g.extra.entry(r).or_default();
+    // The package added again while it is still the current one and its goal was met
+    // begins afresh: its goal is forgotten and the AI takes it up anew
+    // (`RefExtra::ai_reset`), as for a package it did not have [hypothesis: the GECK
+    // wiki's "takes precedence over all other packages until it is done" read for each
+    // call; the Lucky 38 elevator's OnActivate adds its Dialogue package
+    // Lucky38VictorElevatorTalkToPlayer on every talk and waits for the conversation
+    // (delaycounter 1 until MenuMode 1009), so a second talk after Stay Here never
+    // opened one and the floor box never came back, issue #2424]. A call while it
+    // still runs changes nothing, so a script adding it every frame does not restart it.
+    if e.current_package == Some(p) && e.package_goal_met {
+        e.package_goal_met = false;
+        e.ai_reset = true;
+    }
+    e.script_package = Some(p);
     if g.runs_packages() {
         g.set_package(r, Some(p));
     } else {
