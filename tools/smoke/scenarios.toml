@@ -1113,15 +1113,15 @@ expect = [
 ]
 order = [[
   "settings: terrain-anti-tiling on",
-  { re = 'graphics: light glow, terrain anti-tiling$' },
   { re = 'terrain: anti-tiling on \(\d+ folded quadrant materials, [1-9]\d* changed\)', label = "switching on flipped the loaded folded materials" },
+  { re = 'graphics: light glow, terrain anti-tiling$' },
   { re = 'terrain anti-tiling pipeline \d+ ready: path=folded height=off', label = "the folded TERRAIN_ANTI_TILING pipeline asked for after the switch compiled and is ready" },
   "settings: terrain-anti-tiling off",
-  { re = 'graphics: light glow$' },
   { re = 'terrain: anti-tiling off \(\d+ folded quadrant materials, [1-9]\d* changed\)', label = "switching off flipped them back" },
+  { re = 'graphics: light glow$' },
   "settings: terrain-anti-tiling on",
-  { re = 'graphics: light glow, terrain anti-tiling$', label = "on again" },
   { re = 'terrain: anti-tiling on \(\d+ folded quadrant materials, [1-9]\d* changed\)', label = "flipped on again (the ready pipeline is reused)" },
+  { re = 'graphics: light glow, terrain anti-tiling$', label = "on again" },
 ]]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error with the anti-tiled terrain" },
