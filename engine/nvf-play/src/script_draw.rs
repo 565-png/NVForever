@@ -283,7 +283,7 @@ fn sync(
                             let mut boards = nvf_assets::model::BakedBillboards::default();
                             for s in &model.shapes {
                                 let shape = clutter_pose::shape_transform(posed.as_ref(), s);
-                                let (parent, shape) = posed.is_none().then(|| boards.place(&mut commands, root, &model, Affine3A::IDENTITY, s)).flatten().unwrap_or((root, shape));
+                                let (parent, shape) = posed.is_none().then(|| boards.place(&mut commands, root, &model, Affine3A::IDENTITY, s, ())).flatten().unwrap_or((root, shape));
                                 let e = commands.spawn((Mesh3d(s.mesh.clone()), MeshMaterial3d(s.material.clone()), Transform::from_matrix(Mat4::from(shape)), RefVisual(id), ChildOf(parent))).id();
                                 if let Some(x) = d.placement.emittance.filter(|_| s.external_emittance) {
                                     commands.entity(e).insert(WantsEmittance(x));

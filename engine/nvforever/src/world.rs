@@ -1416,11 +1416,12 @@ pub fn spawn_model(
     }
     stats.refs_posed += usize::from(posed.is_some());
     // Shapes below a billboard node go under an entity for it that turns to the camera
-    // (#2549: a torch's glow card, else a flat sheet); a posed model stays as posed.
+    // (#2549: a torch's glow card, else a flat sheet); a posed model stays as posed. Its
+    // holder carries the reference's RefVisual, so moving and redrawing it take them along.
     let mut boards = nvf_assets::model::BakedBillboards::default();
     for s in &model.shapes {
         let shape = nvf_play::clutter_pose::shape_transform(posed.as_ref(), s);
-        let (parent, m) = match posed.is_none().then(|| boards.place(commands, parent, &model, rt, s)).flatten() {
+        let (parent, m) = match posed.is_none().then(|| boards.place(commands, parent, &model, rt, s, RefVisual(r))).flatten() {
             Some((board, below)) => (board, Mat4::from(below)),
             None => (parent, Mat4::from(rt * shape)),
         };
@@ -1900,12 +1901,16 @@ mod tests {
             } else {
                 let mut boards = BakedBillboards::default();
                 let mut commands = app.world_mut().commands();
-                let (board, below) = boards.place(&mut commands, cell, &model, rt, &model.shapes[0]).expect("the glow is under a billboard node");
-                assert!(boards.place(&mut commands, cell, &model, rt, &model.shapes[1]).is_none(), "the torch's stick stays baked");
+                let (board, below) = boards.place(&mut commands, cell, &model, rt, &model.shapes[0], RefVisual(7)).expect("the glow is under a billboard node");
+                assert!(boards.place(&mut commands, cell, &model, rt, &model.shapes[1], ()).is_none(), "the torch's stick stays baked");
                 let card = commands.spawn((Transform::from_matrix(Mat4::from(below)), ChildOf(board))).id();
                 app.world_mut().flush();
                 // Where the file puts it, before any turn.
                 let at = Vec3::from(world_of(app.world(), card).translation);
+                // The holder, a child of the cell, is the reference's: moved.rs and
+                // destroyed.rs move and redraw it with the rest of the reference.
+                let holder = app.world().get::<ChildOf>(board).unwrap().parent();
+                assert_eq!((app.world().get::<RefVisual>(holder).map(|v| v.0), app.world().get::<ChildOf>(holder).map(|c| c.parent())), (Some(7), Some(cell)));
                 assert!((at - Vec3::from((rt * model.shapes[0].transform).translation)).length() < 1e-3, "{at}");
                 card
             };

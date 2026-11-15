@@ -215,13 +215,16 @@ impl BakedBillboards {
     /// Where shape `s` of `model`, placed by `rt` under `parent`, goes: `None` when it is
     /// under no billboard node (baked as before, `rt ∘ s.transform`); else the billboard
     /// node's entity (made the first time, under a holder at `rt ∘` the node's parent from
-    /// the root) and the shape's transform below it.
-    pub fn place(&mut self, commands: &mut Commands, parent: Entity, model: &PreparedModel, rt: Affine3A, s: &PreparedShape) -> Option<(Entity, Affine3A)> {
+    /// the root) and the shape's transform below it. `tag` goes on the holder when it is
+    /// made: render streaming's static path gives it the reference's `RefVisual`, so that
+    /// what moves or redraws a reference by its drawn children of the cell (nvf-play
+    /// moved.rs `follow`, destroyed.rs `swap_models`) takes the billboard's shapes along.
+    pub fn place<B: Bundle>(&mut self, commands: &mut Commands, parent: Entity, model: &PreparedModel, rt: Affine3A, s: &PreparedShape, tag: B) -> Option<(Entity, Affine3A)> {
         let b = billboard_above(&model.nodes, s.node)?;
         let node = &model.nodes[b];
         let e = *self.made.entry(b).or_insert_with(|| {
             let above = rt * node_from_root(&model.nodes, node.parent);
-            let holder = commands.spawn((Transform::from_matrix(Mat4::from(above)), Visibility::Inherited, ChildOf(parent))).id();
+            let holder = commands.spawn((Transform::from_matrix(Mat4::from(above)), Visibility::Inherited, tag, ChildOf(parent))).id();
             let t = Transform::from_matrix(Mat4::from(node.local));
             commands.spawn((t, Visibility::Inherited, Billboard { mode: node.billboard.unwrap_or(0), bind: t.rotation }, ChildOf(holder))).id()
         });
