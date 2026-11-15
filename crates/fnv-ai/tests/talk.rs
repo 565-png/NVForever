@@ -219,10 +219,10 @@ fn plugin_bytes(greeting: u16, hello: bool) -> Vec<u8> {
         // A Wander package about its editor location, no Fallout behaviour flags set (so all
         // of them allowed).
         record(b"PACK", P_WANDER, &[sub(b"EDID", z("WanderHere")), sub(b"PKDT", [&0u32.to_le_bytes()[..], &[5, 0, 0, 0], &[0; 4]].concat()), sub(b"PLDT", triple((3, 0, 0))), sub(b"PSDT", [&[0xFF, 0xFF, 0, 0xFF][..], &0u32.to_le_bytes()].concat())]),
-        // A Travel package to its editor location: the actor stands where it was placed.
         // A Find for the player near its editor location, radius 0: Cachino's
         // vGomorrahCachinoDialoguePackage (issue #2473, packages.md section 10).
         record(b"PACK", P_FIND_PLAYER, &[sub(b"EDID", z("FindThePlayer")), sub(b"PKDT", [&0u32.to_le_bytes()[..], &[0, 0, 0, 0], &[0; 4]].concat()), sub(b"PLDT", triple((3, 0, 0))), sub(b"PSDT", [&[0xFF, 0xFF, 0, 0xFF][..], &0u32.to_le_bytes()].concat()), sub(b"PTDT", triple(player))]),
+        // A Travel package to its editor location: the actor stands where it was placed.
         record(b"PACK", P_STAND, &[sub(b"EDID", z("StandHere")), sub(b"PKDT", [&0u32.to_le_bytes()[..], &[6, 0, 0, 0], &[0; 4]].concat()), sub(b"PLDT", triple((3, 0, 0))), sub(b"PSDT", [&[0xFF, 0xFF, 0, 0xFF][..], &0u32.to_le_bytes()].concat())]),
     ]
     .concat();

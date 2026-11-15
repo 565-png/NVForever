@@ -1271,19 +1271,19 @@ PLAYERLAYMINE 56; the other PLAYER… topics have none.
 
 ## 10. A Find package for the player: Cachino in Gomorrah (issue #2473)
 
-- **The data** [documented: `fnvtool ai show --actor VMS21CachinoREF`, `script decompile`,
+- **The data** [observed: `fnvtool ai show --actor VMS21CachinoREF`, `script decompile`,
   `dialogue lines`, `world refs --cell Gomorrah01`, FalloutNV.esm]:
   - Cachino (`VMS21CachinoREF` 0x0011118D, base `VMS21Cachino` 0x0010C6F5) is placed
     initially disabled in Gomorrah01 ("Gomorrah Main Level") at (7159, 1281, 6400).
   - The lines where the player asks Gomorrah's people about him enable him: the end
     scripts of INFO 0x001750C7 / 0x001750A9 (topics `vDialogueGomorrahGenericTopic003` /
-    `005`, "Actually I'm looking for someone named Cachino." / "Where can I find
-    Cachino?"), 0x001750CD (`Topic007`), 0x001750B4, 0x0016318A, 0x0016318B, 0x0011663F
+    `005`, the player's two prompts asking where Cachino is), 0x001750CD (`Topic007`), 0x001750B4, 0x0016318A, 0x0016318B, 0x0011663F
     (`Topic006`) and the receptionist's 0x001537FF all run `0x0011118D.enable` (and
     `setobjectivedisplayed 0x00136166 27 0`; 0x001750C7 also sets VMS21's
     `icachinoquestions` to 1, 0x001537FF sets VMS21's objectives 1 done, 10 shown). Two of
-    those lines tell the player that Cachino will come to them: 0x001750CD "I'll have him
-    find you there", 0x001750B4 "he'll find you" (Brimstone, the bar of the main level).
+    those lines tell the player that Cachino will come to them: 0x001750CD (he will be sent
+    to the player, who should wait at Brimstone, the bar of the main level) and 0x001750B4
+    (he will find the player).
     No quest stage is set and no script calls StartConversation, EvaluatePackage or
     AddScriptPackage on him at that point.
   - His package list, in order: `VMS21CachinoNeroSit`, `VMS21CachinoSalSit`,
@@ -1299,8 +1299,8 @@ PLAYERLAYMINE 56; the other PLAYER… topics have none.
     Gomorrah00 == 1` OR `Gomorrah01` OR `Gomorrah02` OR `Gomorrah03`): valid while he has
     not talked to the player and the player is in any of the four Gomorrah cells.
   - His GREETING lines (quest `vDialogueGomorrah`) start, for VMS21 before stage 10 and
-    objective 31 not shown, with the Say Once INFO 0x001133A0, "I hear you been asking
-    questions about me", then 0x001164B1 "You again?".
+    objective 31 not shown, with the Say Once INFO 0x001133A0 (about the player asking
+    questions about him), then 0x001164B1 (for meeting the player again).
 - **What follows from it** [hypothesis]: nothing but the package can bring him to the
   player, and nothing but a conversation ends it (GetTalkedToPC turns 1 only once he has
   talked to the player). So the original's Find, for a living actor named as its target,
@@ -1329,4 +1329,4 @@ PLAYERLAYMINE 56; the other PLAYER… topics have none.
   actor lists it and no script adds it) and Fallout 3's `FFEU02/05GreetPlayer`, named
   for the greeting.
 - **Open**: how near the original's actor comes before it talks, how long it takes to set
-  off, and whether a Weapon Drawn Find to the player talks too (observer check 168).
+  off, and whether a Weapon Drawn Find to the player talks too (observer check 176).
