@@ -38,6 +38,7 @@ counts them).
 
 | System | State | Specifics | Notes |
 |---|---|---|---|
+| Typed UI projection request state | In progress | Source ProjectUITile requests are transient bounded UiExtra state. The existing catalogue row is corrected in place, retaining int-return metadata; 12 original controls plus a new actual FunctionTable/VM control remain uncompiled/unrun on current main. No renderer, native opcode adapter, model binding or full held-map acceptance. | [typed projection state](spec-notes/held-ui-projection-state.md) |
 | Fatal no-reference call context | In progress | [hypothesis] Diagnostic-only host notification and bounded shallow Game context for the two extended-call failure paths (#2499); public three-control pair and formatter checks UNRUN. No source-span, registrar or native-parity claim. | [null-call context](spec-notes/null-call-context.md) |
 | Runtime script origin | In progress | Ordinary AuxVar no-plugin origin for ScriptRunner/CompileScript; real ESM/ESP ownership retained. Runtime-origin interfaces have owned regression controls; no string-map or full-mod acceptance. | [runtime script origin](spec-notes/runtime-script-origin.md) |
 | Physical script wheel input | In progress | Primary-window wheel messages feed script scancodes 264/265 without replacing keyboard/buttons or getter/edge policy. Four authored CPU controls pass in a qualified normal26e host; public port and manual device smoke remain unrun. No MCM left-list selection or complete-mod acceptance. | [script wheel input](spec-notes/script-wheel-input.md) |
