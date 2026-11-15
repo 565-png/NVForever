@@ -36,9 +36,15 @@ use bevy::prelude::*;
 pub const NOISE_FULL: f32 = 100.0;
 /// Seconds the noise bar takes to fall from full to empty [design].
 pub const NOISE_FALL: f32 = 1.5;
-/// The cover mark: its line's width and how far it stands out of the segment [design].
+/// The cover mark: its line's width and how far it stands out of the segment, in
+/// interface units rounded to whole pixels ([`SneakGauges::mark_pixels`]), so the square is
+/// even on every side; together under [`GAP`] at any height, so it never reaches the
+/// next segment [design; #2688 owner: the first square, 2 + 2 units in a 3-unit gap,
+/// overlapped its neighbour and was uneven].
 const COVER_OUTLINE: f32 = 2.0;
-const COVER_OFFSET: f32 = 2.0;
+const COVER_OFFSET: f32 = 1.0;
+/// The gap between segments, in interface units [design].
+const GAP: f32 = 5.0;
 /// Seconds the light bar takes to follow a change across the whole bar [design].
 const LIGHT_FOLLOW: f32 = 0.5;
 /// Segments of each bar [design: as the stealth games' bars].
@@ -95,6 +101,18 @@ impl SneakGauges {
     pub fn cover_segment(shown: f32) -> Option<usize> {
         (0..SEGMENTS).rev().find(|&k| (k as f32 + 0.5) / SEGMENTS as f32 <= shown)
     }
+
+    /// The cover mark's line width and offset in whole physical pixels for a window
+    /// `height` physical pixels high at UI scale `scale`: the line at least one pixel,
+    /// and the two together leaving at least a pixel of the gap clear (on very small
+    /// windows the offset goes first).
+    pub fn mark_pixels(height: f32, scale: f32) -> (f32, f32) {
+        let unit = height * scale / 960.0;
+        let room = ((GAP * unit) - 1.0).floor().max(1.0);
+        let width = (COVER_OUTLINE * unit).round().clamp(1.0, room);
+        let offset = (COVER_OFFSET * unit).round().max(1.0).min(room - width);
+        (width, offset)
+    }
 }
 
 pub struct SneakGaugesPlugin;
@@ -150,13 +168,13 @@ fn spawn(mut commands: Commands, root: Query<(), With<GaugeRoot>>) {
         for (bar, name) in ["LIGHT", "NOISE"].into_iter().enumerate() {
             p.spawn(Node { height: u(ROW), align_items: AlignItems::Center, ..default() }).with_children(|row| {
                 row.spawn((Node { width: u(LABEL), ..default() }, Text::new(name), TextFont { font_size: crate::interface::font_units(13.0), ..default() }, TextColor(amber(255.0))));
-                row.spawn(Node { width: u(WIDTH - LABEL), height: u(BAR), column_gap: u(3.0), ..default() }).with_children(|segs| {
+                row.spawn(Node { width: u(WIDTH - LABEL), height: u(BAR), column_gap: u(GAP), ..default() }).with_children(|segs| {
                     for k in 0..SEGMENTS {
                         segs.spawn((
                             Segment { bar, k },
                             Node { flex_grow: 1.0, height: Val::Percent(100.0), ..default() },
                             BackgroundColor(amber(60.0)),
-                            Outline { width: u(COVER_OUTLINE), offset: u(COVER_OFFSET), color: Color::NONE },
+                            Outline { width: Val::Px(1.0), offset: Val::Px(1.0), color: Color::NONE },
                         ));
                     }
                 });
@@ -171,6 +189,7 @@ fn draw(
     mut gauges: ResMut<SneakGauges>,
     mut root: Query<&mut Visibility, With<GaugeRoot>>,
     mut segments: Query<(&Segment, &mut BackgroundColor, &mut Outline)>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
     let show = gauges.on && view.shown && view.sneak.is_some();
     let Ok(mut vis) = root.single_mut() else { return };
@@ -198,13 +217,21 @@ fn draw(
     }
     g.secs += dt;
     g.most = [g.most[0].max(g.light), g.most[1].max(g.noise)];
+    // Val::Px is in logical pixels: whole physical pixels divided by the scale factor.
+    let (width, offset) = windows.single().map_or((Val::Px(2.0), Val::Px(1.0)), |w| {
+        let (wd, off) = SneakGauges::mark_pixels(w.physical_height() as f32, crate::interface::unit_scale());
+        let f = w.scale_factor();
+        (Val::Px(wd / f), Val::Px(off / f))
+    });
     for (s, mut c, mut o) in &mut segments {
         let lit = (s.k as f32 + 0.5) / SEGMENTS as f32 <= g.shown[s.bar];
         c.0 = amber(if lit { 255.0 } else { 60.0 });
         let marked = s.bar == 1 && mark == Some(s.k);
         let want = if marked { cover_colour() } else { Color::NONE };
-        if o.color != want {
+        if o.color != want || (marked && (o.width != width || o.offset != offset)) {
             o.color = want;
+            o.width = width;
+            o.offset = offset;
         }
     }
 }
@@ -255,5 +282,21 @@ mod tests {
         let down = SneakGauges::step_cover(0.4, 0.0, 0.15);
         assert!((down - 0.3).abs() < 1e-5, "down a tenth in 0.15 s");
         assert_eq!(SneakGauges::step_cover(0.5, 200.0, 0.1), 1.0);
+    }
+
+    #[test]
+    fn the_cover_mark_is_whole_pixels_and_stays_inside_the_gap() {
+        assert_eq!(SneakGauges::mark_pixels(900.0, 1.0), (2.0, 1.0));
+        assert_eq!(SneakGauges::mark_pixels(2160.0, 1.0), (5.0, 2.0));
+        for h in [480.0, 600.0, 720.0, 900.0, 1080.0, 1440.0, 2160.0, 4320.0] {
+            for scale in [0.5, 0.75, 1.0, 1.25, 1.5] {
+                let (w, o) = SneakGauges::mark_pixels(h, scale);
+                let gap = GAP * h * scale / 960.0;
+                assert!(w >= 1.0 && o >= 0.0 && w.fract() == 0.0 && o.fract() == 0.0);
+                if gap >= 2.0 {
+                    assert!(w + o <= gap - 1.0, "{h} px at {scale}: mark {w}+{o} px in a {gap:.1} px gap");
+                }
+            }
+        }
     }
 }
