@@ -76,10 +76,10 @@ pub const MAX_LAG_PITCH: f32 = 4.0 * std::f32::consts::PI / 180.0;
 /// mid-way [design: the owner's fifth playtest, 2026-11-14: "it looks like there are
 /// transitions between different spring values … quick ramps in speed and a delay";
 /// before, a smoothing of the rate with separate build and release times fed a spring
-/// with separate out and back times]. × the inertia weight and the weapon's weight.
+/// with separate out and back times]. × the weapon's weight.
 /// One spring since the ninth playtest (two of 0.3 s in a row before).
 pub const FOLLOW_SECONDS: f32 = 0.4;
-/// The turn lag's own weight on top of the inertia weight [design: the owner's ninth
+/// The turn lag's own weight on top of the weapon's [design: the owner's ninth
 /// playtest, 2026-11-14: "increase the default weight just for mouse movement reactions to
 /// 1.2x the current values"].
 pub const TURN_WEIGHT: f32 = 1.2;
@@ -112,7 +112,7 @@ const BOB_DIP: f32 = 0.9;
 const BOB_SWAY: f32 = 0.6;
 const BOB_ROLL: f32 = 1.2 * std::f32::consts::PI / 180.0;
 /// The bob comes and goes with the speed on a spring settling in this long (seconds, 95%;
-/// × the inertia weight; a plain 0.2 s lag until the seventh playtest: "when walking and
+/// × the weapon's weight; a plain 0.2 s lag until the seventh playtest: "when walking and
 /// stopping make the gun return to the default position smoother").
 const BOB_SETTLE_SECONDS: f32 = 0.5;
 /// The first footfall's place in the movement cycle (0.40 s of 1.2 s).
@@ -189,7 +189,7 @@ const RELOAD_ROLL: f32 = 9.0 * std::f32::consts::PI / 180.0;
 const RELOAD_IN: f32 = 0.8;
 const RELOAD_SECONDS: f32 = 0.3;
 /// Tilt into a strafe at a run's sideways speed, radians, reached through a spring
-/// settling in this long (seconds; × the inertia weight).
+/// settling in this long (seconds; × the weapon's weight).
 const STRAFE_ROLL: f32 = 1.5 * std::f32::consts::PI / 180.0;
 const STRAFE_ROLL_SECONDS: f32 = 0.6;
 /// Raising the gun to aim or block and lowering it again: how far it travels (units, about
@@ -294,8 +294,11 @@ pub struct SwayInput {
     pub airborne: bool,
     /// The weapon's weight as sway ([`heft`]; 1 for none).
     pub heft: f32,
-    /// The inertia weight (`nvf_play::inertia::WEIGHTS`): the springs' times, times this.
-    pub slowness: f32,
+    /// The gun breathes with the player (the "Weapon breathing" switch).
+    pub breathing: bool,
+    /// A hard landing pushes harder than its speed alone (the "Landing weight" switch,
+    /// `nvf_play::inertia::hard_landing`).
+    pub hard_landings: bool,
     /// How far the gun is raised to aim or block (0–1): the true iron sights' eased share
     /// while they run, else 1 while aiming or blocking and 0 otherwise.
     pub raised: f32,
@@ -315,7 +318,7 @@ pub struct SwayInput {
 
 impl Default for SwayInput {
     fn default() -> Self {
-        SwayInput { dt: 0.0, heading: 0.0, pitch: 0.0, velocity: Vec2::ZERO, vertical: 0.0, phase: 0.0, sights: false, sneaking: false, airborne: false, heft: 1.0, slowness: 1.0, raised: 0.0, drawn: 0.0, kick: 0.0, punch: Vec3::ZERO, exertion: 0.0, reloading: 0.0, on: false }
+        SwayInput { dt: 0.0, heading: 0.0, pitch: 0.0, velocity: Vec2::ZERO, vertical: 0.0, phase: 0.0, sights: false, sneaking: false, airborne: false, heft: 1.0, breathing: true, hard_landings: true, raised: 0.0, drawn: 0.0, kick: 0.0, punch: Vec3::ZERO, exertion: 0.0, reloading: 0.0, on: false }
     }
 }
 
@@ -409,9 +412,8 @@ impl ViewSway {
         let dt = i.dt.max(0.0);
         let follow = |t: f32| if dt <= 0.0 { 0.0 } else { 1.0 - (-dt / t).exp() };
         let heft = i.heft.max(1.0);
-        // The springs' times grow with the weapon's weight and the inertia weight; the
-        // sizes with the weapon's weight only.
-        let slow = heft * i.slowness.max(0.1);
+        // The springs' times and the sizes grow with the weapon's weight.
+        let slow = heft;
         self.gain += (f32::from(u8::from(i.on)) - self.gain) * follow(FADE_SECONDS);
 
         // Turn lag: from how fast the view turns this frame. A jump of the view (a
@@ -459,7 +461,8 @@ impl ViewSway {
         }
         // Up and down only a take-off and a landing push: a free fall moves the body and the
         // hand alike (`nvf_play::ease::carried_push`).
-        let push = nvf_play::inertia::hard_landing(carried_push(self.last_vertical, i.vertical));
+        let push = carried_push(self.last_vertical, i.vertical);
+        let push = if i.hard_landings { nvf_play::inertia::hard_landing(push) } else { push };
         self.last_vertical = i.vertical;
         let lift_omega = LIFT_OMEGA / slow;
         self.lift.step_delta(push, pre, lift_omega, LIFT_PEAK_PER_SPEED * heft, dt);
@@ -506,7 +509,8 @@ impl ViewSway {
         self.bob.step(bob_target, omega_for(BOB_SETTLE_SECONDS * slow), dt);
         let exertion = i.exertion.clamp(0.0, 1.0);
         let still = if !i.airborne && speed < BREATH_BELOW_SPEED { 1.0 } else { 0.0f32 };
-        self.breath += (still.max(exertion) - self.breath) * follow(BREATH_FADE_SECONDS);
+        let breath_goal = if i.breathing { still.max(exertion) } else { 0.0 };
+        self.breath += (breath_goal - self.breath) * follow(BREATH_FADE_SECONDS);
         let pace = 1.0 + (EXERTED_PACE - 1.0) * exertion;
         self.breath_phase = (self.breath_phase + dt * pace / (BREATH_SECONDS * heft)).fract();
 
@@ -868,9 +872,9 @@ mod tests {
     #[test]
     fn a_flick_moves_the_arms_smoothly_within_the_limit_and_they_follow_with_weight() {
         // The view turns 90° in 0.15 s, then holds: the head first, the arms after.
-        let flick = |slowness: f32| {
+        let flick = |heft: f32| {
             let mut s = ViewSway::default();
-            let i = |h: f32| SwayInput { slowness, ..input(h, Vec2::ZERO, 0.0) };
+            let i = |h: f32| SwayInput { heft, ..input(h, Vec2::ZERO, 0.0) };
             settle(&mut s, i(0.0), 30);
             let mut h = 0.0;
             for _ in 0..9 {
@@ -901,8 +905,8 @@ mod tests {
             s.update(input(h, Vec2::ZERO, 0.0));
             assert!(s.turn[0].value <= 1e-6, "past the view: {}", s.turn[0].value);
         }
-        let (_, slow) = flick(2.0);
-        assert!(slow > 1.4 * back, "twice the inertia weight, longer: {slow} against {back}");
+        let (_, slow) = flick(MOST_HEFT);
+        assert!(slow > 1.2 * back, "the heaviest weapon follows slower: {slow} against {back}");
     }
 
     #[test]

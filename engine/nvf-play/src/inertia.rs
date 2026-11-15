@@ -16,9 +16,13 @@
 //!   exactly per step, it is the same at any physics tick rate. [design: the owner's
 //!   playtests of 2026-11-13: first "slow the movement inertia down", then "stopping feels
 //!   like … sliding on ice - make the stop time 2x speed of the start one".]
-//! - **Inertia weight** ([`WEIGHTS`], the settings page's dropdown): every time here, and
-//!   the weapon's and the crouch's (nvforever `view_sway.rs`, `player_body.rs`), times
-//!   this: 0.5 twice as quick, 2 twice as slow.
+//! - **Switches** (the settings page's NVF Features › Advanced movement): the main
+//!   "Advanced movement" switch over all of them ([`MovementInertia::advanced`]), then one
+//!   each for the ground inertia here, the eased crouch, the smooth weapon animations, the
+//!   weapon's weight in its handling, the soft recoil and the landing weight; the weapon
+//!   sway's, the head bob's and the breath's are nvforever's `PlayerBody`. (An "Inertia
+//!   weight" dropdown scaled every time until the owner's eleventh playtest, 2026-11-15:
+//!   "remove the inertia weight option - current default will be the one we use"; 1.)
 //! - **The air keeps its own rules** (`fnv_phys::air`, the game's measured air control):
 //!   off the ground and swimming the keys' velocity goes to the controller as before, and
 //!   the spring follows what the character does, so a landing carries the air speed into
@@ -31,40 +35,37 @@
 use crate::ease::{omega_for, Spring};
 use bevy::prelude::*;
 
-/// Seconds to reach a new, faster speed from rest (95%), at inertia weight 1.
+/// Seconds to reach a new, faster speed from rest (95%).
 pub const START_SECONDS: f32 = 0.5;
-/// Seconds to glide down to 5% of the speed, or to brake before a turn back (95%), at
-/// inertia weight 1: half the start [design: the owner's second playtest, 2026-11-13,
+/// Seconds to glide down to 5% of the speed, or to brake before a turn back (95%): half
+/// the start [design: the owner's second playtest, 2026-11-13,
 /// "stopping feels like the character is sliding on ice - make the stop time 2x speed of
 /// the start one"; 0.9 s before].
 pub const STOP_SECONDS: f32 = 0.25;
-/// The inertia weights the settings page offers, by name: how many times the times
-/// above (and the weapon's and the crouch's) are taken [design: the owner, 2026-11-13].
-pub const WEIGHTS: [(f32, &str); 4] = [(0.5, "0.5"), (1.0, "1"), (1.5, "1.5"), (2.0, "2")];
-/// Drawing and putting away a weapon take 1 ÷ this as long as their clips (× the inertia
-/// weight), played along the settling curve (about the clip's own speed at first, very
+/// Drawing and putting away a weapon take 1 ÷ this as long as their clips,
+/// played along the settling curve (about the clip's own speed at first, very
 /// slow at the end), so a switch has weight; the game's readiness waits for it
 /// [design: the owner's sixth playtest, 2026-11-14, "weapon switching/holstering: way too
 /// fast"; 0.6 measured 0.62 s for a 10mm pistol's draw, still too quick].
 pub const EQUIP_PACE: f32 = 0.45;
-/// With movement inertia, aiming takes this long to come up and to go down (× the inertia
-/// weight), along the settling curve (`crate::ease::settle`: quick first, very slow at the
+/// With smooth weapon animations, aiming takes this long to come up and to go down,
+/// along the settling curve (`crate::ease::settle`: quick first, very slow at the
 /// end): the aim and block clips' cross-over, the true iron sights' move to the eye and
 /// the view's zoom all run on these, so they are one motion [design: the owner's seventh
 /// playtest, 2026-11-14: "fast at the start but very slow and smooth at the end - make
 /// the zoom in use the same curve … so it matches the animation"].
 pub const AIM_IN_SECONDS: f32 = 0.6;
 pub const AIM_OUT_SECONDS: f32 = 0.55;
-/// The first-person view and arms take this long into a crouch and out of one (× the
-/// inertia weight): the standing and sneaking clips cross over that long along the
+/// The first-person view and arms take this long into a crouch and out of one: the
+/// standing and sneaking clips cross over that long along the
 /// settling curve, so the view sinks and the arms change their hold together.
 pub const CROUCH_DOWN_SECONDS: f32 = 1.0;
 pub const CROUCH_UP_SECONDS: f32 = 1.1;
-/// The first-person arms' standing, walking and running clips cross over this long (× the
-/// inertia weight) along the settling curve (their own times are about 0.2 s, straight).
+/// The first-person arms' standing, walking and running clips cross over this long
+/// along the settling curve (their own times are about 0.2 s, straight).
 pub const MOVE_FADE_SECONDS: f32 = 0.45;
 /// The first-person landing clip (the view dips and stands up again) takes this many times
-/// its own length (× the inertia weight), its place along the settling curve: the dip comes
+/// its own length, its place along the settling curve: the dip comes
 /// about as fast as the clip's own, the standing up after it slowly and to a soft end. A
 /// hop's landing (up to [`LANDING_SOFT_SPEED`]) takes the first, a hard one (from
 /// [`LANDING_HARD_SPEED`]) the second, smoothly between ([`land_stretch`]) [design: the
@@ -72,18 +73,18 @@ pub const MOVE_FADE_SECONDS: f32 = 0.45;
 pub const LAND_STRETCH: f32 = 1.8;
 pub const HARD_LAND_STRETCH: f32 = 3.2;
 /// After a reload, a jam or an attack the first-person arms go back to the hold over this
-/// long (× the inertia weight × the weapon's handling), along the settling curve; the clips
+/// long (× the weapon's handling), along the settling curve; the clips
 /// themselves start at once and the arms ease across the step to them [design: the owner's
 /// eighth playtest, 2026-11-14: "try improving reloads with springs"].
 pub const RELOAD_OUT_SECONDS: f32 = 0.4;
 pub const ATTACK_OUT_SECONDS: f32 = 0.3;
-/// With movement inertia the view's kick of a shot comes over this long (95 %; × the
-/// inertia weight): most of it at once, the rest softly (`crate::combat`). The climb is the
+/// With soft recoil the view's kick of a shot comes over this long (95 %):
+/// most of it at once, the rest softly (`crate::combat`). The climb is the
 /// same, only spread over a few frames [design: the owner's eighth playtest, 2026-11-14:
 /// "fast start, slow end … the jump is not instant to the next recoil point"].
 pub const KICK_EASE_SECONDS: f32 = 0.16;
-/// With movement inertia this share of each shot's view kick settles back down again,
-/// over this long (95 %; × the inertia weight) on a critically damped spring: the gun
+/// With soft recoil this share of each shot's view kick settles back down again,
+/// over this long (95 %) on a critically damped spring: the gun
 /// rises and comes back down a little instead of the whole kick staying in the view
 /// [design: the owner's ninth playtest, 2026-11-14: "make the gun smoothly return down a
 /// bit so the recoil does not just force the whole camera up. Also make the end of the
@@ -112,7 +113,7 @@ pub fn hard_landing(push: f32) -> f32 {
 }
 
 /// How many times its own length the first-person landing clip takes for a landing at
-/// `fall_speed` (units/s), before the inertia weight.
+/// `fall_speed` (units/s).
 pub fn land_stretch(fall_speed: f32) -> f32 {
     LAND_STRETCH + (HARD_LAND_STRETCH - LAND_STRETCH) * crate::ease::smoothstep(LANDING_SOFT_SPEED, LANDING_HARD_SPEED, fall_speed)
 }
@@ -132,17 +133,6 @@ const PLACED_DISTANCE: f32 = 500.0;
 const SNAP_SPEED: f32 = 0.3;
 const SNAP_RATE: f32 = 3.0;
 
-/// The inertia weight of a name or a number (`"1.5"`, or the name the page shows).
-pub fn weight_by_name(s: &str) -> Option<f32> {
-    let s = s.trim();
-    WEIGHTS.iter().find(|(w, name)| *name == s || s.parse::<f32>().is_ok_and(|v| (v - w).abs() < 1e-3)).map(|(w, _)| *w)
-}
-
-/// The name the page shows for an inertia weight (the nearest offered).
-pub fn weight_name(weight: f32) -> &'static str {
-    WEIGHTS.iter().min_by(|a, b| (a.0 - weight).abs().total_cmp(&(b.0 - weight).abs())).map_or("1", |(_, n)| n)
-}
-
 /// What a start or a stop took, for the log (a smoke check).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Report {
@@ -153,15 +143,29 @@ pub enum Report {
     Stopped { seconds: f32, distance: f32, speed: f32 },
 }
 
-/// The player's ground velocity under inertia, and the switch.
+/// The player's ground velocity under inertia, and the switches (all on by default). Each
+/// switch's own field is what the settings page shows; whether it acts is its method, under
+/// the main switch.
 #[derive(Resource, Debug, Clone)]
 pub struct MovementInertia {
-    /// The "Movement inertia" switch (on by default).
+    /// The "Advanced movement" main switch: off, none of the switches here acts, nor the
+    /// weapon sway's, the head bob's and the breath's (nvforever `PlayerBody`).
+    pub advanced: bool,
+    /// The "Movement inertia" switch: the ground speed's springs ([`Self::ground`]).
     pub on: bool,
-    /// The "Inertia weight" dropdown ([`WEIGHTS`]; 1 by default).
-    pub weight: f32,
-    /// The "Weapon weight in handling" switch (on by default) and the weapon in hand's
-    /// [`handling`] (1 with the switch off), kept by [`follow_weapon`].
+    /// The "Eased crouch" switch ([`Self::eased_crouch`]).
+    pub crouch: bool,
+    /// The "Smooth weapon animations" switch ([`Self::smooth_hands`]): the first-person
+    /// clips along the settling curve, the slower draw, the aim's and the zoom's curve.
+    pub smooth: bool,
+    /// The "Soft recoil" switch ([`Self::soft_recoil`]): the view's kick eased in and
+    /// partly settling back, the gun's recoil springs.
+    pub recoil: bool,
+    /// The "Landing weight" switch ([`Self::landing_weight`]): hard landings dip deeper,
+    /// stand up slower and take speed.
+    pub landing: bool,
+    /// The "Weapon weight in handling" switch and the weapon in hand's [`handling`] (1 with
+    /// it or Smooth weapon animations off), kept by [`follow_weapon`].
     pub weapon_handling: bool,
     pub handling: f32,
     /// Horizontal velocity (game x, y), units/s, and its rate of change.
@@ -184,7 +188,7 @@ pub struct MovementInertia {
 
 impl Default for MovementInertia {
     fn default() -> Self {
-        MovementInertia { on: true, weight: 1.0, weapon_handling: true, handling: 1.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None }
+        MovementInertia { advanced: true, on: true, crouch: true, smooth: true, recoil: true, landing: true, weapon_handling: true, handling: 1.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None }
     }
 }
 
@@ -194,10 +198,36 @@ impl MovementInertia {
         MovementInertia { on, ..default() }
     }
 
-    /// How many times their base times the first-person hands take (the inertia weight ×
-    /// the weapon's handling).
+    /// The ground speed rides its springs ("Movement inertia" under the main switch).
+    pub fn ground(&self) -> bool {
+        self.advanced && self.on
+    }
+
+    /// The first-person view eases into a crouch and out ("Eased crouch").
+    pub fn eased_crouch(&self) -> bool {
+        self.advanced && self.crouch
+    }
+
+    /// The first-person weapon clips follow the settling curve ("Smooth weapon animations").
+    pub fn smooth_hands(&self) -> bool {
+        self.advanced && self.smooth
+    }
+
+    /// The view's kick eases in and partly settles back, the gun recoils on springs
+    /// ("Soft recoil").
+    pub fn soft_recoil(&self) -> bool {
+        self.advanced && self.recoil
+    }
+
+    /// Hard landings land heavier ("Landing weight").
+    pub fn landing_weight(&self) -> bool {
+        self.advanced && self.landing
+    }
+
+    /// How many times their base times the first-person hands take (the weapon's
+    /// handling).
     pub fn hands(&self) -> f32 {
-        self.weight.max(0.1) * self.handling.max(0.1)
+        self.handling.max(0.1)
     }
 
     /// The ground velocity now (game x, y), units/s.
@@ -272,7 +302,7 @@ impl MovementInertia {
         let want = key[0].hypot(key[1]);
         // Faster the same way: starting; slower, or against the way it goes: braking.
         let starting = want > speed && key[0] * v[0] + key[1] * v[1] >= 0.0;
-        let omega = omega_for(self.weight.max(0.1) * if starting { START_SECONDS } else { STOP_SECONDS });
+        let omega = omega_for(if starting { START_SECONDS } else { STOP_SECONDS });
         for (s, k) in self.axes.iter_mut().zip(key) {
             s.step(k, omega, dt);
         }
@@ -326,7 +356,7 @@ impl MovementInertia {
     pub fn clip_intent(&self, forward: f32, right: f32, walk: bool, heading: f32) -> (f32, f32, bool) {
         let v = self.velocity();
         let speed = v[0].hypot(v[1]);
-        if !self.on || !self.grounded || speed < GLIDE_CLIP_SPEED {
+        if !self.ground() || !self.grounded || speed < GLIDE_CLIP_SPEED {
             return (forward, right, walk);
         }
         let (s, c) = heading.sin_cos();
@@ -346,7 +376,7 @@ impl MovementInertia {
 /// Keep [`MovementInertia::handling`] on the weapon the player holds (or is drawing).
 pub fn follow_weapon(mut inertia: ResMut<MovementInertia>, combat: Option<Res<crate::combat::Combat>>) {
     let weight = combat.as_deref().and_then(|c| c.forms.weapons.get(&c.player_weapon()?).map(|w| w.weight));
-    let handling = match (inertia.weapon_handling, weight) {
+    let handling = match (inertia.smooth_hands() && inertia.weapon_handling, weight) {
         (true, Some(w)) => handling(w),
         _ => 1.0,
     };
@@ -408,25 +438,20 @@ mod tests {
     }
 
     #[test]
-    fn the_weight_scales_the_times() {
-        let to_95 = |weight: f32| {
-            let mut m = MovementInertia { weight, ..default() };
-            let mut t = 0.0;
-            while m.step([0.0, RUN], false, DT / 4.0)[1] < 0.95 * RUN {
-                t += DT / 4.0;
-            }
-            t
-        };
-        let one = to_95(1.0);
-        assert!((one - START_SECONDS).abs() < 0.01, "{one}");
-        for (w, _) in WEIGHTS {
-            assert!((to_95(w) - w * one).abs() < 0.01, "{w}: {}", to_95(w));
+    fn the_start_takes_its_time_and_the_main_switch_rules_every_switch() {
+        let mut m = MovementInertia::default();
+        let mut t = 0.0;
+        while m.step([0.0, RUN], false, DT / 4.0)[1] < 0.95 * RUN {
+            t += DT / 4.0;
         }
-        assert_eq!(weight_by_name("1.5"), Some(1.5));
-        assert_eq!(weight_by_name("2"), Some(2.0));
-        assert_eq!(weight_by_name("3"), None);
-        assert_eq!(weight_name(0.5), "0.5");
-        assert_eq!(weight_name(1.0), "1");
+        assert!((t - START_SECONDS).abs() < 0.01, "{t}");
+        let m = MovementInertia::default();
+        assert!(m.ground() && m.eased_crouch() && m.smooth_hands() && m.soft_recoil() && m.landing_weight(), "all on by default");
+        let off = MovementInertia { advanced: false, ..default() };
+        assert!(!off.ground() && !off.eased_crouch() && !off.smooth_hands() && !off.soft_recoil() && !off.landing_weight());
+        assert!(off.on && off.crouch && off.smooth && off.recoil && off.landing, "each keeps its own choice under it");
+        let one = MovementInertia { crouch: false, ..default() };
+        assert!(!one.eased_crouch() && one.ground() && one.smooth_hands(), "one switch off leaves the rest");
     }
 
     #[test]
@@ -502,8 +527,8 @@ mod tests {
         assert_eq!(land_stretch(2000.0), HARD_LAND_STRETCH);
         assert_eq!(hard_landing(291.0), 291.0, "a hop pushes as before");
         assert!((hard_landing(-1200.0) + 1200.0 * HARD_LANDING_GAIN).abs() < 1e-2);
-        let m = MovementInertia { weight: 2.0, handling: 1.5, ..default() };
-        assert_eq!(m.hands(), 3.0);
+        let m = MovementInertia { handling: 1.5, ..default() };
+        assert_eq!(m.hands(), 1.5);
     }
 
     #[test]
@@ -540,6 +565,9 @@ mod tests {
         m.on = false;
         assert_eq!(m.clip_intent(0.0, 0.0, false, 0.0), (0.0, 0.0, false));
         m.on = true;
+        m.advanced = false;
+        assert_eq!(m.clip_intent(0.0, 0.0, false, 0.0), (0.0, 0.0, false), "the main switch off");
+        m.advanced = true;
         steps(&mut m, [0.0, 0.0], 3.0, DT);
         assert_eq!(m.clip_intent(0.0, 0.0, false, 0.0), (0.0, 0.0, false));
     }

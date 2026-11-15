@@ -376,53 +376,70 @@ impl Plugin for PlayerPlugin {
             )
             .add_systems(Update, crate::control::place_camera.in_set(PlaySet::Physics).after(log_status));
         app.init_resource::<crate::inertia::MovementInertia>().add_systems(Update, crate::inertia::follow_weapon);
-        crate::settings::add_setting(
-            app,
-            crate::settings::Setting {
-                key: "movement-inertia",
-                group: crate::pause::GROUP_MENUS,
-                label: "Movement inertia",
-                note: "On: your character speeds up, glides to a stop, brakes before turning back and eases into a crouch. Off: full speed and an instant stop, as the original.",
-                switches: "--no-movement-inertia",
-                get: |w| w.resource::<crate::inertia::MovementInertia>().on,
-                set: |w, on| w.resource_mut::<crate::inertia::MovementInertia>().on = on,
-                slider: None,
-            },
-        );
-        crate::settings::add_setting(
-            app,
-            crate::settings::Setting {
-                key: "weapon-weight-handling",
-                group: crate::pause::GROUP_MENUS,
-                label: "Weapon weight in handling",
-                note: "On: with Movement inertia on, heavier weapons take longer to draw, put away, aim and reload, up to half as long again. Off: every weapon alike.",
-                switches: "--no-weapon-weight-handling",
-                get: |w| w.resource::<crate::inertia::MovementInertia>().weapon_handling,
-                set: |w, on| w.resource_mut::<crate::inertia::MovementInertia>().weapon_handling = on,
-                slider: None,
-            },
-        );
-        crate::settings::add_choice_list(
-            app,
-            crate::settings::Setting {
-                key: "inertia-weight",
-                group: crate::pause::GROUP_MENUS,
-                label: "Inertia weight",
-                note: "How heavy movement feels: every inertia time (starting, stopping, the weapon following, crouching) times this. 0.5 twice as quick, 2 twice as slow.",
-                switches: "",
-                get: |_| false,
-                set: |_, _| {},
-                slider: None,
-            },
-            crate::settings::ChoiceList {
-                names: |_| crate::inertia::WEIGHTS.iter().map(|(_, n)| n.to_string()).collect(),
-                chosen: |w| crate::inertia::weight_name(w.resource::<crate::inertia::MovementInertia>().weight).to_string(),
-                pick: inertia_weight_pick,
-                save: |w| format!("{}", w.resource::<crate::inertia::MovementInertia>().weight),
-                load: inertia_weight_pick,
-                ask_keep: false,
-            },
-        );
+        // The Advanced movement section's switches kept here (NVF Features; the rest are
+        // nvforever's `settings.rs`): the main switch, then each part under it.
+        type Inertia = crate::inertia::MovementInertia;
+        let switch = |key, label, note, switches, get: fn(&World) -> bool, set: fn(&mut World, bool)| crate::settings::Setting { key, group: crate::pause::GROUP_MENUS, label, note, switches, get, set, slider: None };
+        for s in [
+            switch(
+                "advanced-movement",
+                "Advanced movement",
+                "On: the switches below shape how your character, view and weapon move. Off: none of them acts, as in the original; each keeps its own choice.",
+                "--no-advanced-movement",
+                |w| w.resource::<Inertia>().advanced,
+                |w, on| w.resource_mut::<Inertia>().advanced = on,
+            ),
+            switch(
+                "movement-inertia",
+                "Movement inertia",
+                "On: your character speeds up, glides to a stop and brakes before turning back. Off: full speed and an instant stop, as in the original.",
+                "--no-movement-inertia",
+                |w| w.resource::<Inertia>().on,
+                |w, on| w.resource_mut::<Inertia>().on = on,
+            ),
+            switch(
+                "eased-crouch",
+                "Eased crouch",
+                "On: in first person the view sinks slowly into a crouch and rises out of it, and a crouched jump stays crouched. Off: the quick change of the original.",
+                "",
+                |w| w.resource::<Inertia>().crouch,
+                |w, on| w.resource_mut::<Inertia>().crouch = on,
+            ),
+            switch(
+                "landing-weight",
+                "Landing weight",
+                "On: the higher the fall, the deeper the view and the weapon dip, the slower you stand up and the more speed you lose. Off: every landing like a hop.",
+                "",
+                |w| w.resource::<Inertia>().landing,
+                |w, on| w.resource_mut::<Inertia>().landing = on,
+            ),
+            switch(
+                "smooth-weapon-animations",
+                "Smooth weapon animations",
+                "On: in first person drawing, putting away, aiming, attacks, reloads and the Pip-Boy ease in and settle slowly. Off: the quick timing of the original.",
+                "",
+                |w| w.resource::<Inertia>().smooth,
+                |w, on| w.resource_mut::<Inertia>().smooth = on,
+            ),
+            switch(
+                "weapon-weight-handling",
+                "Weapon weight in handling",
+                "On: with Smooth weapon animations on, heavier weapons take longer to draw, put away, aim and reload, up to half as long again. Off: all alike.",
+                "--no-weapon-weight-handling",
+                |w| w.resource::<Inertia>().weapon_handling,
+                |w, on| w.resource_mut::<Inertia>().weapon_handling = on,
+            ),
+            switch(
+                "soft-recoil",
+                "Soft recoil",
+                "On: a shot's kick eases the view up and part of it settles back, and the gun recoils on springs. Off: the whole kick stays, as in the original.",
+                "",
+                |w| w.resource::<Inertia>().recoil,
+                |w, on| w.resource_mut::<Inertia>().recoil = on,
+            ),
+        ] {
+            crate::settings::add_setting(app, s);
+        }
         crate::settings::add_setting(
             app,
             crate::settings::Setting {
@@ -436,17 +453,6 @@ impl Plugin for PlayerPlugin {
                 slider: None,
             },
         );
-    }
-}
-
-/// The "Inertia weight" dropdown's choice, by its name or its number.
-fn inertia_weight_pick(w: &mut World, name: &str) -> bool {
-    match crate::inertia::weight_by_name(name) {
-        Some(weight) => {
-            w.resource_mut::<crate::inertia::MovementInertia>().weight = weight;
-            true
-        }
-        None => false,
     }
 }
 
@@ -1326,7 +1332,7 @@ fn step(
             let key = [x * k, y * k];
             // On the ground the velocity speeds up and slows down (`crate::inertia`); in
             // the air the controller's own rules take the keys' velocity.
-            let [x, y] = if inertia.on && c.grounded { inertia.step(key, intent.walk, dt) } else { key };
+            let [x, y] = if inertia.ground() && c.grounded { inertia.step(key, intent.walk, dt) } else { key };
             // An attack's clip carries the player (`Lunge`).
             if lunge.carrying && lunge.from.is_none() {
                 lunge.from = Some(c.feet);
@@ -1403,15 +1409,15 @@ fn step(
         let was_swimming = c.swimming;
         let was_footing = crate::phys::step_lift::footing(c);
         let s = p.world.move_character(c, CharacterInput { velocity: go, jump: intent.jump && i == 0, vertical: vz, view });
-        if inertia.on {
+        if inertia.ground() {
             // A landing lands into the inertia, not the game's landing speed profile; a
-            // hard one takes speed out of it.
+            // hard one takes speed out of it (Landing weight).
             c.since_landing = None;
-            if let Some(speed) = s.landed_speed {
+            if let Some(speed) = s.landed_speed.filter(|_| inertia.landing_weight()) {
                 inertia.land(speed);
             }
         }
-        if !inertia.on || !c.grounded || c.swimming || d.auto_walk > 0.0 {
+        if !inertia.ground() || !c.grounded || c.swimming || d.auto_walk > 0.0 {
             // Off the ground, in the water or switched off: the spring takes what the
             // character did, so the ground picks up from there.
             inertia.follow(c.velocity);

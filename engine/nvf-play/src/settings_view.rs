@@ -703,7 +703,7 @@ mod tests {
         ("difficulty", "Gameplay"),
         ("hardcore", "Gameplay"),
         ("menu-pause", "Gameplay"),
-        ("head-bob", "Display"),
+        ("detached-camera", "Gameplay"),
         ("autosave-travel", "Saving"),
         ("autosave-wait", "Saving"),
         ("hud-colour", "Interface"),
@@ -734,7 +734,7 @@ mod tests {
         let l = resolve_layout(&list);
         let vis = Visibility::default();
         let g = project(&l, &list, SettingsScope::Tab("Gameplay"), vis, &NONE);
-        assert_eq!(names(&list, &g), ["[Game]", "difficulty", "hardcore", "[Saving]", "autosave-travel", "autosave-wait", "[Dialogue]", "menu-pause", "[Advanced Inertia]", "head-bob"]);
+        assert_eq!(names(&list, &g), ["[Game]", "difficulty", "hardcore", "[Saving]", "autosave-travel", "autosave-wait", "[Dialogue]", "menu-pause", "[Camera]", "detached-camera"]);
         // The colour's sliders only for Custom, the HUD's alone.
         let d = |colours| names(&list, &project(&l, &list, SettingsScope::Tab("Display"), Visibility { colours, ..vis }, &NONE));
         assert_eq!(d([false, false]), ["[Interface]", "hud-colour"]);
@@ -761,8 +761,8 @@ mod tests {
         let k = |n| key(&list, n);
         assert_eq!(step_selectable(&g, Some(k("hardcore")), 1), Some(k("autosave-travel")));
         assert_eq!(step_selectable(&g, Some(k("autosave-travel")), -1), Some(k("hardcore")));
-        assert_eq!(step_selectable(&g, Some(k("head-bob")), 1), Some(k("difficulty")), "round the end");
-        assert_eq!(step_selectable(&g, Some(k("difficulty")), -1), Some(k("head-bob")));
+        assert_eq!(step_selectable(&g, Some(k("detached-camera")), 1), Some(k("difficulty")), "round the end");
+        assert_eq!(step_selectable(&g, Some(k("difficulty")), -1), Some(k("detached-camera")));
         assert_eq!(step_selectable(&g, None, 1), Some(k("difficulty")));
         assert_eq!(step_selectable(&[], None, 1), None, "an empty tab");
         let one = [ViewEntry::Heading(Placement::tab("x")), ViewEntry::Row(k("god-mode"))];
@@ -779,8 +779,8 @@ mod tests {
         assert_eq!(to("difficulty", 1), Some(("autosave-travel".into(), Some("Saving"))));
         assert_eq!(to("autosave-wait", 1), Some(("menu-pause".into(), Some("Dialogue"))));
         assert_eq!(to("menu-pause", -1), Some(("autosave-travel".into(), Some("Saving"))));
-        assert_eq!(to("head-bob", 1), Some(("difficulty".into(), Some("Game"))), "round the end");
-        assert_eq!(to("difficulty", -1), Some(("head-bob".into(), Some("Advanced Inertia"))));
+        assert_eq!(to("detached-camera", 1), Some(("difficulty".into(), Some("Game"))), "round the end");
+        assert_eq!(to("difficulty", -1), Some(("detached-camera".into(), Some("Camera"))));
         // A tab without headings is one section: its first row; an empty one, nothing.
         let debug = project(&l, &list, SettingsScope::Tab("Debug"), Visibility::default(), &NONE);
         assert_eq!(step_heading(&debug, Some(k("god-mode")), 1), Some((k("god-mode"), None)));

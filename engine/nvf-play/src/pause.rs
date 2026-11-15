@@ -33,7 +33,7 @@
 //! <path>`, `pause menu: delete cancelled`.
 //!
 //! **The settings page** (#1953; docs/design/settings-page.md) lists the rows of
-//! [`crate::settings`] and the controls of `crate::bindings` in seven tabs, the original's
+//! [`crate::settings`] and the controls of `crate::bindings` in eight tabs, the original's
 //! four categories first: Gameplay, Display, Audio, Controls, then Graphics, Tweaks and
 //! Debug (`crate::settings_layout` says each row's tab and heading; a row it does not name
 //! stays under the group it registered with) [design: #1953]. Left of the column, from the
@@ -904,7 +904,7 @@ const ARROW_PAD: f32 = 4.0;
 const METER_MIN: f32 = 100.0;
 /// The settings page's rows' top: higher than the column's (360 with the pause menu's
 /// five entries), where nine rows and the note under them ran off the bottom [design:
-/// #1210]. The rail starts there too: Search, Changed and seven tabs are nine lines
+/// #1210]. The rail starts there too: Search, Changed and eight tabs are ten lines
 /// [design: #1953].
 const OPTIONS_TOP: f32 = 120.0;
 /// The heading links' line over the rows [design: #1953].
@@ -5137,7 +5137,7 @@ mod tests {
         let rows_drawn: Vec<RowId> = buttons.iter().filter_map(|b| if let PauseButton::Row(r) = b { Some(*r) } else { None }).collect();
         assert_eq!(rows_drawn.len(), 3, "{rows_drawn:?}");
         assert!(!rows_drawn.contains(&RowId::Setting(3)));
-        // The rail: Search, Changed, the seven tabs; the heading links.
+        // The rail: Search, Changed, the eight tabs; the heading links.
         let rail: Vec<RailItem> = buttons.iter().filter_map(|b| if let PauseButton::Rail(r) = b { Some(*r) } else { None }).collect();
         assert_eq!(rail.len(), 2 + crate::settings_layout::TAB_ORDER.len());
         assert!(buttons.contains(&PauseButton::HeadingStep(-1)) && buttons.contains(&PauseButton::HeadingStep(1)));

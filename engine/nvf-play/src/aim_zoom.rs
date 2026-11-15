@@ -170,10 +170,10 @@ pub(crate) fn zoom(
     }
     z.aimed = sight.is_some();
     let was = z.blend;
-    // With movement inertia the zoom runs along the settling curve over the aim's times;
-    // without, straight over ZOOM_SECONDS and eased by `zoomed_fov`.
-    let settled = inertia.as_deref().filter(|i| i.on).map(|i| {
-        // The inertia weight × the weapon's handling: heavier weapons come up slower.
+    // With smooth weapon animations the zoom runs along the settling curve over the aim's
+    // times; without, straight over ZOOM_SECONDS and eased by `zoomed_fov`.
+    let settled = inertia.as_deref().filter(|i| i.smooth_hands()).map(|i| {
+        // The weapon's handling: heavier weapons come up slower.
         let w = i.hands();
         let v = z.settled.step(sight.is_some(), time.delta_secs().min(0.25), crate::inertia::AIM_IN_SECONDS * w, crate::inertia::AIM_OUT_SECONDS * w);
         // `blend` stays the progress the rest reads: 1 only when fully in, 0 only when out.

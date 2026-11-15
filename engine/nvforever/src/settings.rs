@@ -199,7 +199,7 @@ pub fn register(app: &mut App) {
                 key: "weapon-sway",
                 group: GROUP_PICTURE,
                 label: "Weapon sway",
-                note: "On: in first person the arms and weapon lag behind turns and steps, bob as you walk, dip as you jump and land, and breathe with you. Off: they stay still.",
+                note: "On: in first person the arms and weapon lag behind turns and steps, bob as you walk and dip as you jump and land. Off: they stay still.",
                 switches: "--no-weapon-sway",
                 get: |w| w.resource::<PlayerBody>().weapon_sway,
                 set: |w, on| w.resource_mut::<PlayerBody>().weapon_sway = on,
@@ -242,6 +242,45 @@ pub fn register(app: &mut App) {
                 switches: "--no-breathing-camera",
                 get: |w| w.resource::<PlayerBody>().breathing_camera,
                 set: |w, on| w.resource_mut::<PlayerBody>().breathing_camera = on,
+                slider: None,
+            },
+        );
+        add_setting(
+            app,
+            Setting {
+                key: "weapon-breathing",
+                group: GROUP_PICTURE,
+                label: "Weapon breathing",
+                note: "On: in first person the weapon drifts slowly with your breath, most when you stand still, least down the sights. Off: it holds still.",
+                switches: "",
+                get: |w| w.resource::<PlayerBody>().weapon_breathing,
+                set: |w, on| w.resource_mut::<PlayerBody>().weapon_breathing = on,
+                slider: None,
+            },
+        );
+        add_setting(
+            app,
+            Setting {
+                key: "out-of-breath",
+                group: GROUP_PICTURE,
+                label: "Out of breath",
+                note: "On: running and jumping wind you, and the view and the weapon breathe faster and deeper until you rest. Off: your breath stays calm.",
+                switches: "",
+                get: |w| w.resource::<PlayerBody>().out_of_breath,
+                set: |w, on| w.resource_mut::<PlayerBody>().out_of_breath = on,
+                slider: None,
+            },
+        );
+        add_setting(
+            app,
+            Setting {
+                key: "hit-jolt",
+                group: GROUP_PICTURE,
+                label: "Hit jolt",
+                note: "On: in first person a hit you take jolts the view and the weapon a little, then they settle. Off: they stay steady.",
+                switches: "",
+                get: |w| w.resource::<PlayerBody>().hit_jolt,
+                set: |w, on| w.resource_mut::<PlayerBody>().hit_jolt = on,
                 slider: None,
             },
         );

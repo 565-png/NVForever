@@ -81,6 +81,10 @@ pub struct Layer {
     seen: bool,
     /// Not asked for at the last [`Animator::end`]: fading out.
     leaving: bool,
+    /// Each bound track's rotation as the last [`Animator::pose`] blended it (on its side of
+    /// the sphere), so the next frame's stays on the same side: kept continuous, a clip's
+    /// rotation never flips sign against the others it is blended with.
+    aligned: Vec<Option<Vec4>>,
 }
 
 /// How sharp [`settle`]'s start is: the curve is a critically damped spring's step
@@ -184,6 +188,8 @@ struct Contribution {
     ease: f32,
     layer: u16,
     track: u16,
+    /// Its place in the layer's `bound` (and `aligned`).
+    slot: u16,
 }
 
 /// A node outside the skeleton that clips drive by name: a part of the weapon model
@@ -225,6 +231,9 @@ pub struct Animator {
     jumped: bool,
     /// The last [`Self::advance`]'s seconds.
     last_dt: f32,
+    /// Each node's rotation in the last [`Self::pose`], the side of the sphere this frame's
+    /// rotations are blended on (`pose`).
+    last_rotations: Vec<Quat>,
 }
 
 /// Inertialization of loop seams [design: the owner's sixth playtest, 2026-11-14: "the
@@ -348,7 +357,7 @@ impl Animator {
     pub fn new(skel: Arc<PreparedSkeleton>, nodes: Vec<Entity>, accum_root: Option<&str>) -> Animator {
         let held = accum_root.and_then(|r| clip_target(&skel, r)).into_iter().collect();
         let locals = skel.locals.clone();
-        Animator { skel, nodes, layers: Vec::new(), phase: 0.0, locals, extra: Vec::new(), held, rest: Vec::new(), extra_rest: None, scratch: Vec::new(), seams: None, wrapped: false, jumped: false, last_dt: 0.0 }
+        Animator { skel, nodes, layers: Vec::new(), phase: 0.0, locals, extra: Vec::new(), held, rest: Vec::new(), extra_rest: None, scratch: Vec::new(), seams: None, wrapped: false, jumped: false, last_dt: 0.0, last_rotations: Vec::new() }
     }
 
     /// Smooth the seams of looping clips: at a wrap the pose carries on and eases onto the
@@ -538,6 +547,7 @@ impl Animator {
             rate: 1.0,
             seen: true,
             leaving: false,
+            aligned: Vec::new(),
         });
         self.layers.len() - 1
     }
@@ -651,16 +661,27 @@ impl Animator {
     pub fn pose(&mut self) {
         let skel = &self.skel;
         self.scratch.clear();
-        for (li, l) in self.layers.iter().enumerate() {
+        for (li, l) in self.layers.iter_mut().enumerate() {
             if l.ease <= 0.0 {
+                l.aligned.clear();
                 continue;
             }
+            l.aligned.resize(l.bound.len(), None);
             let ease = l.shown_ease();
-            for &(bone, track, priority) in &l.bound {
-                self.scratch.push(Contribution { bone, priority: (l.sequence_priority, priority), weight: l.weight * ease, ease, layer: li as u16, track });
+            for (slot, &(bone, track, priority)) in l.bound.iter().enumerate() {
+                self.scratch.push(Contribution { bone, priority: (l.sequence_priority, priority), weight: l.weight * ease, ease, layer: li as u16, track, slot: slot as u16 });
             }
         }
         self.scratch.sort_unstable_by_key(|c| (c.bone, Reverse(c.priority)));
+        // Each clip's rotation of a bone is blended on the side of the sphere it was on last
+        // frame (`Layer::aligned`); one just come in, on the side of the bone's last pose.
+        // Taken by the first clip's side each frame, two clips whose rotations of a bone
+        // passed half a turn apart while they crossed over flipped the blend to the other way
+        // round in one frame (the straight razor's put-away over the idle: the upper arm, a
+        // jump of the hand of 34 units) [observed: the trace `movement-inertia-trace-weapons`,
+        // 2026-11-15].
+        self.last_rotations.clear();
+        self.last_rotations.extend(self.locals.iter().map(|l| l.rotation));
         // Bones without tracks: the bind pose, or their own rest pose; held nodes: the
         // identity; extra nodes: their place in their model.
         self.locals.clone_from(&skel.locals);
@@ -678,7 +699,7 @@ impl Animator {
             // The bone's rest pose (set above).
             let bind = self.locals[bone];
             let (mut t, mut q, mut s) = (Vec3::ZERO, Vec4::ZERO, 0.0f32);
-            let mut first: Option<Vec4> = None;
+            let mut first: Option<Vec4> = self.last_rotations.get(bone).map(|r| Vec4::from(*r));
             let mut free = 1.0f32;
             while i < self.scratch.len() && self.scratch[i].bone as usize == bone {
                 // One priority group.
@@ -704,12 +725,19 @@ impl Animator {
                     t += f * track.translation.sample(time).map_or(bind.translation, Vec3::from_array);
                     let r = track.rotation_after(time, l.cycles()).map_or(bind.rotation, |[w, x, y, z]| Quat::from_xyzw(x, y, z, w));
                     let mut v = Vec4::from(r);
-                    let reference = *first.get_or_insert(v);
+                    let reference = match l.aligned.get(c.slot as usize).copied().flatten() {
+                        Some(last) => last,
+                        None => *first.get_or_insert(v),
+                    };
                     if v.dot(reference) < 0.0 {
                         v = -v;
                     }
+                    first.get_or_insert(v);
                     q += f * v;
                     s += f * track.scale.sample(time).map_or(bind.scale.x, |[x]| x);
+                    if let Some(a) = self.layers[c.layer as usize].aligned.get_mut(c.slot as usize) {
+                        *a = Some(v);
+                    }
                 }
             }
             if free > 1e-6 {
@@ -863,6 +891,43 @@ mod tests {
         a.layers.clear();
         a.pose();
         assert_eq!(a.locals[2].translation, Vec3::new(1.0, 0.0, 0.0));
+    }
+
+    /// A clip turning node `name` about z by `angle` (radians), at a priority.
+    fn turning(name: &str, angle: f32, priority: i32) -> Arc<Clip> {
+        let c = clip(&[(name, [0.0; 3], priority)], 1.0);
+        let mut c = Arc::into_inner(c).expect("a new clip");
+        let q = Quat::from_rotation_z(angle);
+        c.tracks[0].1 = Arc::new(TransformTrack { translation: Channel::Static(None), rotation: Channel::Static(Some([q.w, q.x, q.y, q.z])), euler: None, scale: Channel::Static(None), per_cycle: None });
+        Arc::new(c)
+    }
+
+    #[test]
+    fn two_clips_crossing_half_a_turn_apart_blend_without_a_flip() {
+        // A holds the bone still; B turns it on from 120° to 240°, both at one priority: the
+        // blend follows B's turn by its share and never flips round. B a new layer each frame (no history: the side of the bone's last pose), then one
+        // layer whose clip turns on (its own last side), down to a quarter share.
+        for (kept, share) in [(false, 1.0), (true, 1.0), (true, 0.27)] {
+            let mut a = animator();
+            a.want(&turning("A", 0.0, 10), 0, 1.0, Mode::Loop, 0.0);
+            let mut last: Option<Quat> = None;
+            for k in 0..=60 {
+                let b = turning("A", (120.0 + 2.0 * k as f32).to_radians(), 10);
+                if kept && k > 0 {
+                    a.layers[1].clip = b;
+                } else {
+                    a.restart(&b, 1, 1.0, Mode::Loop, 0.0);
+                }
+                a.layers[1].weight = share;
+                a.layers[0].weight = 1.0 - share * 0.5;
+                a.pose();
+                let now = a.locals[2].rotation;
+                if let Some(l) = last {
+                    assert!(l.angle_between(now).to_degrees() < 3.0, "kept {kept}, share {share}: the blend jumped {}° at {}°", l.angle_between(now).to_degrees(), 120 + 2 * k);
+                }
+                last = Some(now);
+            }
+        }
     }
 
     #[test]

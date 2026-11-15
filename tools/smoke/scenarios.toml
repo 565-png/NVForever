@@ -982,8 +982,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "movement-inertia-trace-weapons"
+source = "owner 2026-11-15 (engine/nvforever/src/player_body.rs MotionTrace; eleventh playtest: \"some equip animations are not affected - check that every animation for guns/melee weapons is affected\"): a frame-by-frame trace of drawing, attacking with and putting away each weapon type (pistol, one- and two-handed melee, a grenade, a heavy weapon, fists) and a weapon swapped while drawn, for finding clips that do not follow the settling curve (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-weapons.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:Weap10mmPistol:1,2:call:player:AddItem:WeapNVStraightRazor:1,2:call:player:AddItem:WeapNVRebarClub:1,2:call:player:AddItem:WeapGrenadeFrag:3,2:call:player:AddItem:WeapFlamer:1,2:call:player:AddItem:WeapNVHuntingShotgun:1,4:call:player:EquipItem:Weap10mmPistol,10:call:player:EquipItem:WeapNVStraightRazor,17:call:player:EquipItem:WeapNVRebarClub,24:call:player:EquipItem:WeapGrenadeFrag,30:call:player:EquipItem:WeapFlamer,36:call:player:UnequipItem:WeapFlamer,43:call:player:EquipItem:Weap10mmPistol,47:call:player:EquipItem:WeapNVHuntingShotgun", NVF_PLAY_TEST_CONTROL = "5:weapon,8:weapon,11:weapon,13:fire,15:weapon,18:weapon,20:fire,22:weapon,25:weapon,28:weapon,31:weapon,34:weapon,37:weapon,39:fire,41:weapon,44:weapon,50:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 53
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the weapons is written" },
+  { re = 'player body summary: weapon sway on', label = "the weapons: the run reached its end" },
+]
+
+[[scenario]]
 name = "movement-inertia-off"
-source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs): with --no-movement-inertia the player starts and stops at once, as the original"
+source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs): with --no-movement-inertia the player starts and stops at once, as the original; since 2026-11-15 the eased crouch is a switch of its own and stays"
 areas = ["player-body"]
 paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs"]
 env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak" }
@@ -992,7 +1005,37 @@ run_seconds = 13
 expect = [
   { re = 'player body summary: weapon sway on', label = "the run reached its end" },
   { re = 'movement inertia: (up to|glided)', count = 0, label = "no start or glide under inertia" },
+  { text = "player view: crouched (eased crouch)", label = "the eased crouch is its own switch: still eased" },
+]
+
+[[scenario]]
+name = "advanced-movement-off"
+source = "owner 2026-11-15 (engine/nvf-play/src/inertia.rs MovementInertia::advanced; docs/design/player-body.md §1.4a.3): with the Advanced movement main switch off (--no-advanced-movement) none of its parts acts: no glide, no eased crouch, no weapon dip on a jump, as the original"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak,12:sneak,14:jump" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--no-advanced-movement"]
+run_seconds = 17
+expect = [
+  { re = 'player body summary: weapon sway on', label = "the run reached its end (the sway's own switch stays on)" },
+  { re = 'movement inertia: (up to|glided)', count = 0, label = "no start or glide under inertia" },
   { re = 'eased crouch', count = 0, label = "the crouch follows the clips" },
+  { re = 'player body summary: weapon sway on, .*deepest jump or landing dip (?P<n>[\d.]+) units', range = [0, 0.05], label = "the weapon does not dip: the sway does not act under the main switch" },
+]
+
+[[scenario]]
+name = "advanced-movement-parts"
+source = "owner 2026-11-15 (engine/nvf-play/src/player.rs, engine/nvforever/src/settings.rs; docs/design/player-body.md §1.4a.3): each part of Advanced movement is a switch of its own: the settings page's Eased crouch off leaves the glide on and the crouch uneased"
+areas = ["player-body", "settings"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/settings.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "3:5", NVF_PLAY_TEST_SETTINGS = "4:eased-crouch", NVF_PLAY_TEST_MOVE = "7:1:0,10:0:0", NVF_PLAY_TEST_CONTROL = "12:sneak" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 15
+expect = [
+  { text = "settings: eased-crouch off", label = "the Eased crouch switch is turned off on the page" },
+  { re = 'movement inertia: glided (?P<n>[\d.]+) units', range = [25, 50], label = "the glide stays: Movement inertia is its own switch" },
+  { re = 'eased crouch', count = 0, label = "the crouch follows the clips" },
+  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
 ]
 
 [[scenario]]
@@ -10707,7 +10750,7 @@ forbid = [
 
 [[scenario]]
 name = "settings-layout"
-source = "#1953: the settings page's seven tabs, the original's four first, and each row's tab and heading from one table (engine/nvf-play/src/settings_layout.rs; docs/design/settings-page.md); an empty Tweaks tab opens on no row"
+source = "#1953: the settings page's eight tabs, the original's four first, then NVF Features (owner 2026-11-15), and each row's tab and heading from one table (engine/nvf-play/src/settings_layout.rs; docs/design/settings-page.md); an empty Tweaks tab opens on no row"
 note = "the placements checked are of rows registered in every --play run; `0 not in the table` says every row this run registers has its place"
 areas = ["settings"]
 paths = ["engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs"]
@@ -10715,17 +10758,25 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_P
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 18
 expect = [
-  { text = "settings layout: tabs Gameplay, Display, Audio, Controls, Graphics, Tweaks, Debug", count = 1, label = "seven tabs, the original's four first" },
-  { re = 'settings layout: \d+ row\(s\) in 7 tab\(s\), 0 not in the table', label = "every registered row has its place in the table, no tab of its own" },
+  { text = "settings layout: tabs Gameplay, Display, Audio, Controls, NVF Features, Graphics, Tweaks, Debug", count = 1, label = "eight tabs, the original's four first, then NVForever's own features" },
+  { re = 'settings layout: \d+ row\(s\) in 8 tab\(s\), 0 not in the table', label = "every registered row has its place in the table, no tab of its own" },
   "settings layout: difficulty -> Gameplay > Game",
   "settings layout: autosave-travel -> Gameplay > Saving",
   "settings layout: menu-pause -> Gameplay > Dialogue",
   "settings layout: detached-camera -> Gameplay > Camera",
-  "settings layout: movement-inertia -> Gameplay > Advanced Inertia",
-  "settings layout: inertia-weight -> Gameplay > Advanced Inertia",
-  "settings layout: weapon-weight-handling -> Gameplay > Advanced Inertia",
-  "settings layout: head-bob -> Gameplay > Advanced Inertia",
-  "settings layout: breathing-camera -> Gameplay > Advanced Inertia",
+  "settings layout: advanced-movement -> NVF Features > Advanced movement",
+  "settings layout: movement-inertia -> NVF Features > Advanced movement",
+  "settings layout: eased-crouch -> NVF Features > Advanced movement",
+  "settings layout: landing-weight -> NVF Features > Advanced movement",
+  "settings layout: smooth-weapon-animations -> NVF Features > Advanced movement",
+  "settings layout: weapon-weight-handling -> NVF Features > Advanced movement",
+  "settings layout: soft-recoil -> NVF Features > Advanced movement",
+  "settings layout: head-bob -> NVF Features > Advanced movement",
+  "settings layout: breathing-camera -> NVF Features > Advanced movement",
+  "settings layout: weapon-breathing -> NVF Features > Advanced movement",
+  "settings layout: out-of-breath -> NVF Features > Advanced movement",
+  "settings layout: hit-jolt -> NVF Features > Advanced movement",
+  { text = "settings layout: inertia-weight", count = 0, label = "the inertia weight is gone (owner 2026-11-15)" },
   "settings layout: resolution -> Display > Screen",
   "settings layout: hud-colour -> Display > Interface",
   "settings layout: hud-red -> Display > Interface",
@@ -10742,7 +10793,7 @@ expect = [
   "settings layout: scope-3d -> Debug",
   { text = "pause menu: tab Tweaks; selected none", label = "the empty Tweaks tab opens on no row" },
   { text = "pause menu: inspect: Tweaks, keys on the rows, selected none, lines 0-0 of 0", label = "it lists nothing" },
-  { re = 'pause menu: inspect: words Search \| Changed \| Gameplay \| Display \| Audio \| Controls \| Graphics \| Tweaks \| Debug \| No settings here\.', label = "the rail and the empty tab's words" },
+  { re = 'pause menu: inspect: words Search \| Changed \| Gameplay \| Display \| Audio \| Controls \| NVF Features \| Graphics \| Tweaks \| Debug \| No settings here\.', label = "the rail and the empty tab's words" },
   { text = "pause menu: settings window of 12 lines", count = 1, label = "the window's lines worked out from the layout, once (#2377)" },
   { re = 'pause menu: settings list (\d+) wide from \d+ in a view \d+ wide, band \d+-\d+', label = "the list's width from the view, logged (#2377)" },
   "pause menu: inspect: window 12 lines, 0 drawn",
@@ -11012,7 +11063,7 @@ order = [[
   "language: xx",
   "settings: language Smoke Language",
   { text = 'pause menu: search "menu-pause": 1 result(s); keys menu-pause', label = "the English key is found under another language" },
-  { text = "pause menu: inspect: words [xx] Search | [xx] Changed | [xx] Gameplay | [xx] Display | [xx] Audio | [xx] Controls | [xx] Graphics | [xx] Tweaks | [xx] Debug | [xx] Search: menu-pause | [xx] Gameplay > [xx] Dialogue", label = "the rail, the search's line and where the row lives, translated" },
+  { text = "pause menu: inspect: words [xx] Search | [xx] Changed | [xx] Gameplay | [xx] Display | [xx] Audio | [xx] Controls | [xx] NVF Features | [xx] Graphics | [xx] Tweaks | [xx] Debug | [xx] Search: menu-pause | [xx] Gameplay > [xx] Dialogue", label = "the rail, the search's line and where the row lives, translated" },
   'pause menu: search "zzzz": 0 result(s); keys',
   { re = 'pause menu: inspect: words .*\| \[xx\] Search: zzzz \| \[xx\] No results\.$', label = "nothing found, in the language" },
   "pause menu: search closed",
@@ -11095,7 +11146,7 @@ run_seconds = 17
 expect = [
   { re = 'quality presets: none of low\.ini, medium\.ini, high\.ini, VeryHigh\.ini in .*quality-presets-none: the Quality row is not shown', count = 1, label = "said once" },
   { text = "settings layout: enhanced -> Graphics > Picture", label = "the Enhanced effects row is there all the same" },
-  { re = 'settings layout: \d+ row\(s\) in 7 tab\(s\), 0 not in the table', label = "every row still has its place" },
+  { re = 'settings layout: \d+ row\(s\) in 8 tab\(s\), 0 not in the table', label = "every row still has its place" },
   { re = 'NVF_PLAY_TEST_SETTINGS: no switch "quality"', label = "there is no Quality row to take a preset" },
 ]
 forbid = [

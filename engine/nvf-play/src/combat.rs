@@ -1197,7 +1197,7 @@ pub struct Combat {
     kick_rng: SplitMix,
     /// The bloom has just shrunk away; logged with the crosshair cone.
     kick_just_settled: bool,
-    /// The view's kick still to come (pitch, heading; radians): with movement inertia a
+    /// The view's kick still to come (pitch, heading; radians): with soft recoil a
     /// shot's kick comes over a moment instead of in one frame ([`ease_kick`]).
     kick_left: [f32; 2],
     /// The share of the kicks the view settles back down by (pitch, heading; radians), and
@@ -2840,7 +2840,7 @@ fn weapon_sounds(
 }
 
 /// Turn the view by this frame's share of a kick `left` (pitch, heading; radians) and give
-/// what is still to come. With `seconds` (movement inertia) the share follows an
+/// what is still to come. With `seconds` (soft recoil) the share follows an
 /// exponential that has 95 % of the kick in by then: fastest at once, slower and slower to
 /// the end, never past it; a frame of no time shows none. Without, all of it at once.
 fn ease_kick(player: &mut Player, left: [f32; 2], seconds: Option<f32>, dt: f32) -> [f32; 2] {
@@ -2861,7 +2861,7 @@ fn ease_kick(player: &mut Player, left: [f32; 2], seconds: Option<f32>, dt: f32)
 
 /// Settle the view back down by the kicks' returning share `goal` (pitch, heading; radians)
 /// on critically damped springs over `seconds` (95 %): it starts gently while the kick
-/// still rises, and ends slowly. Without `seconds` (movement inertia off) nothing returns
+/// still rises, and ends slowly. Without `seconds` (soft recoil off) nothing returns
 /// and what was still to return is dropped.
 fn ease_back(player: &mut Player, goal: &mut [f32; 2], back: &mut [crate::ease::Spring; 2], seconds: Option<f32>, dt: f32) {
     let Some(s) = seconds else {
@@ -2920,11 +2920,12 @@ pub(crate) fn fire(
     let dt = time.delta_secs();
     let c = &mut *c;
     c.time += dt;
-    // The view's kick of the last shots, with movement inertia, comes in over a moment.
-    let kick_seconds = inertia.as_deref().filter(|i| i.on).map(|i| crate::inertia::KICK_EASE_SECONDS * i.weight.max(0.1));
+    // The view's kick of the last shots, with soft recoil, comes in over a moment.
+    let soft = inertia.as_deref().is_some_and(|i| i.soft_recoil());
+    let kick_seconds = soft.then_some(crate::inertia::KICK_EASE_SECONDS);
     let pending = std::mem::take(&mut c.kick_left);
     c.kick_left = ease_kick(&mut player, pending, kick_seconds, dt);
-    let back_seconds = inertia.as_deref().filter(|i| i.on).map(|i| crate::inertia::KICK_BACK_SECONDS * i.weight.max(0.1));
+    let back_seconds = soft.then_some(crate::inertia::KICK_BACK_SECONDS);
     ease_back(&mut player, &mut c.kick_back_goal, &mut c.kick_back, back_seconds, dt);
     // Where the gun points: the view, turned by a 3D scope's sway (the view itself sways
     // otherwise).
@@ -3325,12 +3326,12 @@ pub(crate) fn fire(
                 if vats_shot.is_none() && !c.no_spread && !c.self_ammo {
                     let rng = &mut c.kick_rng;
                     let kick = c.kick.shot(&c.tuning, &w, cycle.timing.interval, &mut || rng.next_f32());
-                    // With movement inertia its first share shows this frame, the rest over the
+                    // With soft recoil its first share shows this frame, the rest over the
                     // next ones; otherwise all at once, as the original.
                     let left = c.kick_left;
                     c.kick_left = ease_kick(&mut player, [kick.pitch_deg.to_radians(), kick.yaw_deg.to_radians()], kick_seconds, dt);
                     c.kick_left = [c.kick_left[0] + left[0], c.kick_left[1] + left[1]];
-                    // A share of it the view then settles back down by (movement inertia).
+                    // A share of it the view then settles back down by (soft recoil).
                     if kick_seconds.is_some() {
                         c.kick_back_goal[0] += crate::inertia::KICK_BACK_SHARE * kick.pitch_deg.to_radians();
                         c.kick_back_goal[1] += crate::inertia::KICK_BACK_SHARE * kick.yaw_deg.to_radians();

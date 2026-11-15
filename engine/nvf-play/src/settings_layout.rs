@@ -4,15 +4,15 @@
 //! the registry keeps its order, which the values, the INI and the test aids go by. This
 //! table only says where the page draws it [design].
 //!
-//! **Seven tabs, the original's four categories first** [design: #1953; the original's
+//! **Eight tabs, the original's four categories first** [design: #1953; the original's
 //! Settings opens Gameplay, Display, Audio and Controls, observed in the original's pause
-//! menu, 2026-11-09]: Gameplay, Display, Audio, Controls, then Graphics, Tweaks and Debug
-//! ([`TAB_ORDER`]). Each tab lists [`SECTIONS`] in order, a dim heading over each named
-//! one.
+//! menu, 2026-11-09]: Gameplay, Display, Audio, Controls, then NVF Features (NVForever's own
+//! features, [`NVF_FEATURES_TAB`]), Graphics, Tweaks and Debug ([`TAB_ORDER`]). Each tab
+//! lists [`SECTIONS`] in order, a dim heading over each named one.
 //!
 //! **A row the table does not name** stays under the group it registered with, used as its
 //! tab with no heading, after the tab's named rows, in registry order; a group that is
-//! none of the seven tabs becomes a tab of its own after Debug, in the order such groups
+//! none of the eight tabs becomes a tab of its own after Debug, in the order such groups
 //! first appear in the registry ([`resolve_layout`]) [design: #1953, so #1892's Tweaks rows
 //! show under Tweaks without it naming them here]. No group is renamed for an unnamed row
 //! (a `Sound` row the table does not name shows under a `Sound` tab, not under Audio).
@@ -55,7 +55,11 @@ pub struct Section {
 }
 
 /// The tabs, in the order the page lists them [design: #1953].
-pub const TAB_ORDER: [&str; 7] = ["Gameplay", "Display", "Audio", "Controls", "Graphics", "Tweaks", "Debug"];
+pub const TAB_ORDER: [&str; 8] = ["Gameplay", "Display", "Audio", "Controls", NVF_FEATURES_TAB, "Graphics", "Tweaks", "Debug"];
+/// The tab of NVForever's own features, after the original's four [design: the owner's
+/// eleventh playtest, 2026-11-15: "create new section under Settings and name it 'NVF
+/// Features'"].
+pub const NVF_FEATURES_TAB: &str = "NVF Features";
 /// The tab whose first rows are the controls' keys and buttons (`crate::bindings`), drawn
 /// by the page itself before this table's rows.
 pub const CONTROLS_TAB: &str = "Controls";
@@ -74,10 +78,30 @@ pub const SECTIONS: &[Section] = &[
     section("Gameplay", Some("Dialogue"), &["menu-pause", "dialogue-goodbye-hint", "dialogue-look", "dialogue-recentre", "dialogue-zoom", "lip-sync"]),
     section("Gameplay", Some("Reports"), &["send-reports", "reports-delete"]),
     section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-lower", "field-of-view", "viewmodel-field-of-view"]),
-    // How heavy the body and the weapon feel [design: the owner, 2026-11-13: "move the
-    // player inertia under its own category and move there all the associated settings";
-    // its name and the weight's place below the switches, the fourth playtest].
-    section("Gameplay", Some("Advanced Inertia"), &["movement-inertia", "weapon-sway", "weapon-weight-sway", "weapon-weight-handling", "head-bob", "breathing-camera", "inertia-weight"]),
+    // How the body, the view and the weapon move: the main switch first, then each part
+    // [design: the owner, 2026-11-13: "move the player inertia under its own category and
+    // move there all the associated settings"; 2026-11-15: "rename our changes to 'Advanced
+    // movement' and add on/off toggle for all features"].
+    section(
+        NVF_FEATURES_TAB,
+        Some("Advanced movement"),
+        &[
+            "advanced-movement",
+            "movement-inertia",
+            "eased-crouch",
+            "landing-weight",
+            "smooth-weapon-animations",
+            "weapon-weight-handling",
+            "soft-recoil",
+            "weapon-sway",
+            "weapon-weight-sway",
+            "weapon-breathing",
+            "head-bob",
+            "breathing-camera",
+            "out-of-breath",
+            "hit-jolt",
+        ],
+    ),
     section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "ui-scale", "menu-scale"]),
     section(
         "Display",
@@ -188,7 +212,7 @@ pub struct ResolvedLayout {
     unnamed: usize,
 }
 
-/// The table applied to `list`, the registry in its order (module notes): the seven tabs
+/// The table applied to `list`, the registry in its order (module notes): the eight tabs
 /// (an empty one too), each named section with the rows registered (a missing optional row
 /// left out, a section left with none dropped), then each tab's unnamed rows, then the
 /// unnamed groups' tabs. Every registered row is in it once.
@@ -312,13 +336,17 @@ mod tests {
     /// quality and enhanced rows, #2014's counter rows, the two VATS rows and #2198's Upscaler
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
-    /// field of view row, the menu scale row, and the movement inertia, inertia weight,
-    /// weapon weight and breathing camera rows), by the group it registers with.
-    const KNOWN: [(&str, &str); 116] = [
+    /// field of view row, the menu scale row, and the Advanced movement rows), by the group
+    /// it registers with.
+    const KNOWN: [(&str, &str); 123] = [
         ("detached-camera", "Gameplay"),
+        ("advanced-movement", "Gameplay"),
         ("movement-inertia", "Gameplay"),
-        ("inertia-weight", "Gameplay"),
+        ("eased-crouch", "Gameplay"),
+        ("landing-weight", "Gameplay"),
+        ("smooth-weapon-animations", "Gameplay"),
         ("weapon-weight-handling", "Gameplay"),
+        ("soft-recoil", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
         ("reload-slows", "Gameplay"),
@@ -368,6 +396,9 @@ mod tests {
         ("weapon-weight-sway", "Display"),
         ("head-bob", "Display"),
         ("breathing-camera", "Display"),
+        ("weapon-breathing", "Display"),
+        ("out-of-breath", "Display"),
+        ("hit-jolt", "Display"),
         ("weapon-lower", "Display"),
         ("sun-shadows", "Display"),
         ("grass", "Display"),
@@ -449,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn the_seven_tabs_come_first_with_every_row_once_in_the_tables_order() {
+    fn the_eight_tabs_come_first_with_every_row_once_in_the_tables_order() {
         let list = registry(&KNOWN);
         let l = resolve_layout(&list);
         assert_eq!(l.tab_names(), TAB_ORDER, "no group is a tab of its own: every row is named");
@@ -465,7 +496,9 @@ mod tests {
         assert!(keys(&list, &l, "Tweaks").is_empty(), "an empty tab is still a tab");
         let at = |k: &str| l.placement_of(list.iter().position(|s| s.key == k).unwrap()).unwrap().path();
         assert_eq!(at("menu-pause"), "Gameplay > Dialogue");
-        assert_eq!(at("head-bob"), "Gameplay > Advanced Inertia");
+        assert_eq!(at("head-bob"), "NVF Features > Advanced movement");
+        assert_eq!(keys(&list, &l, NVF_FEATURES_TAB)[..3], ["[Advanced movement]", "advanced-movement", "movement-inertia"], "the main switch first");
+        assert_eq!(TAB_ORDER[..5], ["Gameplay", "Display", "Audio", "Controls", "NVF Features"], "after the original's four");
         assert_eq!(at("hud-red"), "Display > Interface");
         assert_eq!(at("sky-clock"), "Graphics > World");
         assert_eq!(at("quality"), "Graphics > Quality");
@@ -482,7 +515,8 @@ mod tests {
         // No lip sync, no player body; no head tracking, foot IK or sky clock at all.
         let list = registry(&[("difficulty", "Gameplay"), ("menu-pause", "Gameplay"), ("head-bob", "Display"), ("god-mode", "Debug")]);
         let l = resolve_layout(&list);
-        assert_eq!(keys(&list, &l, "Gameplay"), ["[Game]", "difficulty", "[Dialogue]", "menu-pause", "[Advanced Inertia]", "head-bob"]);
+        assert_eq!(keys(&list, &l, "Gameplay"), ["[Game]", "difficulty", "[Dialogue]", "menu-pause"]);
+        assert_eq!(keys(&list, &l, NVF_FEATURES_TAB), ["[Advanced movement]", "head-bob"]);
         assert!(keys(&list, &l, "Graphics").is_empty());
         // A hidden row hides its heading when it is the section's only one, and keeps its place.
         let hidden = list.iter().position(|s| s.key == "menu-pause").unwrap();
@@ -496,7 +530,7 @@ mod tests {
         let list = registry(&[("difficulty", "Gameplay"), ("new-switch", "Gameplay"), ("odd-sound", "Sound"), ("x1", "Mods"), ("volume-master", "Sound"), ("x2", "Extras"), ("x3", "Mods")]);
         let l = resolve_layout(&list);
         // After Debug, in the order the groups first appear in the registry; Sound is not Audio.
-        assert_eq!(l.tab_names()[7..], ["Sound", "Mods", "Extras"]);
+        assert_eq!(l.tab_names()[8..], ["Sound", "Mods", "Extras"]);
         assert_eq!(keys(&list, &l, "Gameplay"), ["[Game]", "difficulty", "new-switch"]);
         assert_eq!(keys(&list, &l, "Sound"), ["odd-sound"]);
         assert_eq!(keys(&list, &l, "Audio"), ["volume-master"]);

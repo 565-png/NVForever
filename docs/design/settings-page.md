@@ -2,7 +2,7 @@
 
 The pause menu's settings page (`engine/nvf-play/src/pause.rs`) shows every registered
 setting (`engine/nvf-play/src/settings.rs`) and the controls of
-`engine/nvf-play/src/bindings.rs`. Since #1953 it shows them in seven tabs with headings,
+`engine/nvf-play/src/bindings.rs`. Since #1953 it shows them in eight tabs (seven until NVF Features, 2026-11-15) with headings,
 from a table that only says where each row is drawn. This note is the page's model; the
 code's module notes say the same at their own level.
 
@@ -31,9 +31,10 @@ INI's (`GivenSwitches`, `apply_stored`, `after_ini`), as #1382 has it.
 
 ## 2. The layout table
 
-Seven tabs, the original's four categories first: **Gameplay, Display, Audio, Controls,
-Graphics, Tweaks, Debug** [design: #1953; the original's Settings opens Gameplay, Display,
-Audio and Controls, observed in the original's pause menu, 2026-11-09].
+Eight tabs, the original's four categories first: **Gameplay, Display, Audio, Controls,
+NVF Features, Graphics, Tweaks, Debug** [design: #1953; the original's Settings opens
+Gameplay, Display, Audio and Controls, observed in the original's pause menu, 2026-11-09;
+NVF Features, NVForever's own features, the owner 2026-11-15].
 
 | Tab | Heading | Rows (keys), in order |
 |---|---|---|
@@ -41,12 +42,12 @@ Audio and Controls, observed in the original's pause menu, 2026-11-09].
 | Gameplay | Saving | `autosave-travel`, `autosave-fast-travel`, `autosave-wait`, `autosave-sleep`, `autosave-scripts` |
 | Gameplay | Dialogue | `menu-pause`, `dialogue-goodbye-hint`, `dialogue-look`, `dialogue-recentre`, `dialogue-zoom`, `lip-sync` |
 | Gameplay | Camera | `detached-camera`, `true-iron-sights`, `first-person-body`, `weapon-lower`, `field-of-view`, `viewmodel-field-of-view` |
-| Gameplay | Advanced Inertia | `movement-inertia`, `weapon-sway`, `weapon-weight-sway`, `weapon-weight-handling`, `head-bob`, `breathing-camera`, `inertia-weight` |
 | Display | Screen | `resolution`, `borderless`, `monitor`, `display-sync`, `frame-cap`, `ui-scale`, `menu-scale` |
 | Display | Interface | `hud-colour`, `hud-red`, `hud-green`, `hud-blue`, `pipboy-colour`, `pipboy-red`, `pipboy-green`, `pipboy-blue`, `language`, `dynamic-crosshair`, `crosshair-style`, `sneak-gauges` |
 | Display | Performance | `fps-counter`, `fps-counter-fps`, `fps-counter-low`, `fps-counter-graph`, `fps-counter-split`, `fps-counter-cpu`, `fps-counter-gpu`, `fps-counter-vram`, `fps-counter-ram`, `fps-counter-loaded`, `fps-counter-upscaling` |
 | Audio | (none) | `volume-master`, `volume-music`, `volume-footstep`, `volume-voice`, `volume-effects`, `volume-radio`, `music`, `voice`, `reverb`, `voice-reverb` |
 | Controls | (none) | the Controls tab's own rows (§4), then `button-style`, `aim-assist`, `aim-slowdown`, `aim-lock` |
+| NVF Features | Advanced movement | `advanced-movement` (the main switch), `movement-inertia`, `eased-crouch`, `landing-weight`, `smooth-weapon-animations`, `weapon-weight-handling`, `soft-recoil`, `weapon-sway`, `weapon-weight-sway`, `weapon-breathing`, `head-bob`, `breathing-camera`, `out-of-breath`, `hit-jolt` (player-body.md §1.4a.3) |
 | Graphics | Quality | `quality` (#1966; only when the install has its preset files: docs/spec-notes/quality-presets.md) |
 | Graphics | Picture | `enhanced` (#1966), `grade`, `sun-shadows`, `upscaler`, `upscaler-quality`, `dlss-model`, `fsr-library`, `frame-generation`, `frame-generation-frames`, `anti-aliasing`, `latency-reduction`, `shadow-filter`, `ambient-occlusion`, `fine-shadows`, `bloom`, `glow`, `eye-adaptation`, `neon-glow`, `sharpen`, `anisotropic`, `light-shafts`, `water-reflections`, `water-mirror` |
 | Graphics | Distance | `distant-lod`, `grass`, `object-distance`, `actor-distance`, `item-distance`, `shadow-distance`, `grass-distance` |
@@ -68,10 +69,10 @@ original puts the HUD and Pip-Boy colours and the crosshair in its Display categ
 1. Each section takes the rows of its keys that are registered; a missing optional row
    (lip sync without lip data, the draw distances without `DrawDistances`, …) is left
    out, a section left with none is dropped.
-2. All seven tabs are there, an empty one too (Tweaks today).
+2. All eight tabs are there, an empty one too (Tweaks today).
 3. **A row the table does not name** keeps the group it registered with as its tab, with
    no heading, after the tab's named rows, in registry order. A group that is none of the
-   seven becomes a tab of its own after Debug, in the order such groups first appear in
+   eight becomes a tab of its own after Debug, in the order such groups first appear in
    the registry. No group is renamed: an unnamed `Sound` row shows under a `Sound` tab,
    not under Audio.
 4. Every registered row is listed exactly once.

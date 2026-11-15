@@ -736,13 +736,18 @@ struct Args {
     /// (head_bob.rs); a switch of the settings page.
     #[arg(long, requires = "play")]
     no_breathing_camera: bool,
-    /// No movement inertia: full speed at once and an instant stop, and the first-person
-    /// view drops into a crouch with the clips (nvf_play::inertia); a switch of the
-    /// settings page.
+    /// No advanced movement: none of the settings page's Advanced movement switches acts
+    /// (inertia, eased crouch, smooth weapon animations, weapon sway, head bob, the breath,
+    /// soft recoil, landing weight, hit jolt; nvf_play::inertia::MovementInertia::advanced),
+    /// as in the original; the main switch of that section.
+    #[arg(long, requires = "play")]
+    no_advanced_movement: bool,
+    /// No movement inertia: full speed at once and an instant stop (nvf_play::inertia); a
+    /// switch of the settings page.
     #[arg(long, requires = "play")]
     no_movement_inertia: bool,
-    /// With movement inertia every weapon draws, aims and reloads alike, whatever it weighs
-    /// (nvf_play::inertia::handling); a switch of the settings page, on by default.
+    /// With smooth weapon animations every weapon draws, aims and reloads alike, whatever it
+    /// weighs (nvf_play::inertia::handling); a switch of the settings page, on by default.
     #[arg(long, requires = "play")]
     no_weapon_weight_handling: bool,
     /// Heavier weapons sway slower and further in first person (view_sway.rs); a switch of
@@ -1741,6 +1746,7 @@ fn main() -> AppExit {
             app.insert_resource(nvf_play::aim_zoom::Scope3d { on: args.scope_3d, lens: false });
             let mut inertia = nvf_play::inertia::MovementInertia::switched(!args.no_movement_inertia);
             inertia.weapon_handling = !args.no_weapon_weight_handling;
+            inertia.advanced = !args.no_advanced_movement;
             app.insert_resource(inertia);
             app.add_plugins(decals::DecalsPlugin);
             app.add_plugins(knockouts::KnockoutsPlugin);
