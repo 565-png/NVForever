@@ -8,10 +8,11 @@ The engine supplies read-only filewidth/fileheight after zoom, with zero for
 stretch zoom. The visibility property controls display and input. This source
 does not establish when hidden global-image metadata is evaluated or readable.
 
-[observed: private installed XML metadata inspection, no mod text transcribed]
+Consumer context from private installed XML metadata inspection (no mod text
+transcribed):
 A loaded globals subtree contains a hidden own-image calibration. A global
 expression divides a fixed logical metric by its fileheight, and menu image
-zooms depend on that result. This is a consumer observation, not a native
+zooms depend on that result. This is a consumer data dependency, not a native
 rendering measurement or proof that a full Pip-Boy figure is fixed.
 
 [documented: NVForever public source at
