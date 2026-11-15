@@ -71,7 +71,7 @@ real-time guards remain120 waiting seconds and15 active seconds.
 
 [hypothesis: bounded diagnostic policy] Two additional direct boundary controls set
 the actual Probe counters near each cap, with real elapsed time below both separate
-timeouts. The wait control admits7200 without staging, aborts7201 and never fires.
+timeouts. The wait control admits7200 without staging, makes the7201 update eligible at20 real seconds (below the waiting timeout), and requires refusal before preparation can acquire a capsule or fire.
 The active control admits the first real physical insertion at300, aborts301 before
 a restored second request, and requires exact absent-field restoration, original
 inventory counts and no repeated dispatch or cleanup. They use no7200/300-frame

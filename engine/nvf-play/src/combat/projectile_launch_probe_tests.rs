@@ -270,6 +270,15 @@ fn waiting_frame_cap_accepts_7200_then_aborts_7201_without_staging() {
     }
     assert_eq!(query(&mut a, "SetFunctionValue (Player.GetItemCount OwnedGun)"), XVal::Num(20.0));
     assert_eq!(query(&mut a, "SetFunctionValue (Player.GetItemCount OwnedAmmo)"), XVal::Num(0.0));
+    // At the over-limit update preparation would otherwise become eligible.
+    // It still precedes the independent waiting timeout; no active capsule exists.
+    a.world_mut().resource_mut::<Time<Real>>().advance_by(std::time::Duration::from_secs(20));
+    {
+        let now = a.world().resource::<Time<Real>>().elapsed_secs_f64();
+        let p = a.world().resource::<Probe>();
+        assert!(now - p.started.unwrap() >= 20.0 && now - p.started.unwrap() < WAIT_SECONDS);
+        assert!(p.backup.is_none());
+    }
     a.update();
     {
         let p = a.world().resource::<Probe>();
