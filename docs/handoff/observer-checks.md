@@ -2479,3 +2479,17 @@ already talking takes over at once, same topic or another; nothing is queued or 
      whether the dialogue menu opens, which INFO is said (Ramos's 000E3664 or none),
      and when the controls come back. Also `HVIntercomREF.IsTalkingActivatorActor
      RamosREF` just before McNamara's line.
+
+## Added 2026-11-15 (Gomorrah Suites wall-sconce glow, #2435)
+
+197. **How strong and how wide is the glow on the wall above a lit Gomorrah Suites
+     sconce?** (P3; #2435, nif.md §6 "Fog on added light".) Ours: the card
+     `NeoclassicalSconce:9` (ONE / ONE, no texture, vertex colour 0.34 at the bowl to
+     black on its outline) adds its colour in display values, fog only dimming it; next
+     to the bowl it is about 100 grey levels over the wall, near the outline 10 to 25
+     [observed in NVForever; hypothesis for the game]. In Gomorrah03 by any hour, stand
+     at 5900, 2250, 6384 facing east (heading 90, level) towards the sconce 0x0011A90A,
+     take one frame, then one from heading 50; note the wall's grey level beside the
+     glow, the glow's level next to the bowl and halfway up, and whether an outline of
+     the card can be seen anywhere. Softer and dimmer than ours points at the
+     display-value sum ("Additive blend") on a ONE / ONE card; the same agrees with ours.
