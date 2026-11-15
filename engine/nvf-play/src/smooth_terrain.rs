@@ -20,7 +20,7 @@ static RUN: AtomicBool = AtomicBool::new(true);
 pub const KEY: &str = "smooth-terrain";
 
 /// The settings row's note, NVForever's own words [design].
-pub const NOTE: &str = "On: the landscape between its points is drawn and walked on as a smooth surface, each grid square in four, never more than one height step from the stored ground, so slopes and ridges lose their steps and zig-zags; actors and objects stand on what is drawn. Off: the landscape's triangles as stored. Takes effect at the next start (loading a save starts the game again). Not in the original. (--no-smooth-terrain)";
+pub const NOTE: &str = "On: the ground between the landscape's points is drawn and walked on as a smooth surface, at most one height step from the stored ground. Off: the stored triangles. Takes effect at the next start.";
 
 /// The state the settings page shows (what the next start uses).
 pub fn setting() -> bool {
