@@ -148,6 +148,20 @@ impl Material for SurfaceCaptureMaterial {
 #[derive(Clone, Debug)]
 pub enum CaptureDraw { Folded(Box<TerrainMaterial>), Single(SurfaceCaptureMaterial) }
 
+/// [design] A folded base's bake copy: the unlit surface bake (terrain.wesl `SURFACE_BAKE`
+/// returns the base colour only), no scorch, no fog. Round 10a review (second round):
+/// without the normal maps, which that colour never reads, so a removed normal map (a
+/// detail dependency, which masks and rebakes the cell) cannot keep the copy from being
+/// prepared and the replacement's receipt from ever arriving.
+fn bake_copy(material: &mut TerrainMaterial) {
+    let e = &mut material.extension;
+    e.surface_bake = true;
+    e.burn = None;
+    for normal in [&mut e.normal0, &mut e.normal1, &mut e.normal2, &mut e.normal3, &mut e.normal4, &mut e.normal5] { *normal = None; }
+    material.base.fog_enabled = false;
+    material.base.normal_map_texture = None;
+}
+
 /// [design] A new reconstruction gets a new input revision, including stitched inputs.
 pub fn capture_revision() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -268,12 +282,7 @@ impl SurfaceCell {
                 for v in p { v[2] = 0.0; }
             }
             let draw = match draw {
-                CaptureDraw::Folded(mut material) => {
-                    material.extension.surface_bake = true;
-                    material.extension.burn = None;
-                    material.base.fog_enabled = false;
-                    CaptureDraw::Folded(material)
-                }
+                CaptureDraw::Folded(mut material) => { bake_copy(&mut material); CaptureDraw::Folded(material) }
                 single => single,
             };
             self.quadrants.push((flat, draw));
@@ -282,17 +291,21 @@ impl SurfaceCell {
         self.refresh_dependencies();
     }
     fn image_dependencies(&self) -> &HashSet<AssetId<Image>> { &self.dependencies }
-    fn refresh_dependencies(&mut self) {
-        let mut images = HashSet::new();
-        for (_, draw) in &self.quadrants {
+    /// [design] The colour images the bake copies bind (each draw's diffuse; a folded copy's
+    /// base diffuse and layer diffuses, its normal maps being stripped, [`bake_copy`]).
+    fn colour_images(&self) -> impl Iterator<Item = AssetId<Image>> + '_ {
+        self.quadrants.iter().flat_map(|(_, draw)| -> Vec<AssetId<Image>> {
             match draw {
-                CaptureDraw::Single(m) => { images.extend(m.diffuse.as_ref().map(Handle::id)); }
+                CaptureDraw::Single(m) => m.diffuse.iter().map(Handle::id).collect(),
                 CaptureDraw::Folded(m) => {
                     let e = &m.extension;
-                    for h in [&m.base.base_color_texture, &e.diffuse0, &e.diffuse1, &e.diffuse2, &e.diffuse3, &e.diffuse4, &e.diffuse5].into_iter().flatten() { images.insert(h.id()); }
+                    [&m.base.base_color_texture, &e.diffuse0, &e.diffuse1, &e.diffuse2, &e.diffuse3, &e.diffuse4, &e.diffuse5].into_iter().flatten().map(Handle::id).collect()
                 }
             }
-        }
+        })
+    }
+    fn refresh_dependencies(&mut self) {
+        let mut images: HashSet<_> = self.colour_images().collect();
         // [design] Round 10a: the detail's images too (normal maps, and through their
         // assets the samplers), so their edits and removals invalidate the cell.
         for d in &self.detail {
@@ -325,11 +338,12 @@ pub struct PublishedSurface {
     pub(crate) palette_use: PaletteUse,
 }
 
-/// One admitted quadrant's cell, palette images read and its two palette samplers.
-type QuadrantReads = ((i32, i32), Vec<u16>, [u16; 2]);
+/// One admitted quadrant's cell, palette images read and the palette samplers it samples.
+type QuadrantReads = ((i32, i32), Vec<u16>, Vec<u16>);
 /// [design] Round 10a review: the publication's whole palette and which entries each
-/// admitted quadrant reads (its images, its two samplers), with each palette image's own
-/// sampler description as a palette sampler number (`None`: not one of the palette's).
+/// admitted quadrant reads (its images, the samplers it actually samples), with each
+/// palette image's own sampler description as a palette sampler number (`None`: not one
+/// of the palette's).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PaletteUse {
     full: nvf_assets::nif_surface_blend::TerrainPalette,
@@ -347,6 +361,11 @@ impl PublishedSurface {
     /// `update_cache`) are never needed again: rebuilding a retained clone for a coverage
     /// update cannot wait for an image that is gone (Bevy drops the old prepared material
     /// before preparing the new one).
+    ///
+    /// [design] Round 10a review (second round): a sampler counts as read only by the
+    /// quadrants that sample it ([`DetailPalette::usage`]; a textureless quadrant samples
+    /// none), and a sampler without a live representative image binds the fallback, never
+    /// the publication's original representative (which may be the removed image).
     pub fn live_palette(&self, coverage: u32) -> nvf_assets::nif_surface_blend::TerrainPalette {
         let u = &self.palette_use;
         let (mut images, mut samplers) = (vec![false; u.full.images.len()], vec![false; u.full.samplers.len()]);
@@ -359,7 +378,7 @@ impl PublishedSurface {
         let representative = |j: usize| u.own_sampler.iter().zip(&images).position(|(own, &live)| live && *own == Some(j as u16)).and_then(|i| u.full.images[i].clone());
         nvf_assets::nif_surface_blend::TerrainPalette {
             images: u.full.images.iter().zip(&images).map(|(h, &live)| h.clone().filter(|_| live)).collect(),
-            samplers: u.full.samplers.iter().enumerate().map(|(j, h)| if samplers[j] { representative(j).or_else(|| h.clone()) } else { None }).collect(),
+            samplers: samplers.iter().enumerate().map(|(j, &live)| if live { representative(j) } else { None }).collect(),
         }
     }
 }
@@ -409,6 +428,9 @@ pub struct SurfaceCache {
     revision: u64,
     current: Vec<CellKey>,
     image_revisions: HashMap<AssetId<Image>, u64>,
+    /// Round 10a review (second round): dependencies removed from the image assets and not
+    /// added back, so a cell whose bake copies would bind one is planned without it.
+    removed_images: HashSet<AssetId<Image>>,
     image_events: bevy::ecs::message::MessageCursor<AssetEvent<Image>>,
     /// Cancelled render extraction gets three frames to retire before another allocation.
     retirement: u8,
@@ -447,7 +469,7 @@ impl SurfaceCache {
         if self.context.is_none() { publication.coverage } else { retained_mask(publication, &self.current) }
     }
     pub fn with_resolution(resolution: u32) -> Self {
-        Self { generation: 0, signature: None, context: None, selected_centre: None, captured_inputs: default(), stitched_dirty: default(), epoch: 0, revision: 0, current: vec![], image_revisions: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false, detail: false, unsettled_frames: 0 }
+        Self { generation: 0, signature: None, context: None, selected_centre: None, captured_inputs: default(), stitched_dirty: default(), epoch: 0, revision: 0, current: vec![], image_revisions: default(), removed_images: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false, detail: false, unsettled_frames: 0 }
     }
 
     /// [design] Select independently of the immutable front, including while a job waits.
@@ -760,11 +782,17 @@ impl DetailPalette {
         out
     }
     /// [design] Round 10a review: which entries each admitted quadrant reads and each
-    /// image's own sampler description, for [`PublishedSurface::live_palette`].
+    /// image's own sampler description, for [`PublishedSurface::live_palette`]. A quadrant
+    /// samples its diffuse sampler only with a base diffuse or an overlay, its normal
+    /// sampler only with a base normal map (nif_surface_bindings.wesl
+    /// `mesh_terrain_detail`); a textureless quadrant samples none, so the zero its table
+    /// words hold for both keeps no sampler alive.
     pub(crate) fn usage(&self, images: &Assets<Image>) -> PaletteUse {
         let quadrants = self.admitted.iter().map(|((grid, _), q)| {
             let read = q.base_diffuse.iter().chain(&q.base_normal).copied().chain(q.overlays.iter().flat_map(|(d, n, _)| std::iter::once(*d).chain(*n))).collect();
-            (*grid, read, [q.diffuse_sampler, q.normal_sampler])
+            let diffuse = (q.base_diffuse.is_some() || !q.overlays.is_empty()).then_some(q.diffuse_sampler);
+            let sampled = diffuse.into_iter().chain(q.base_normal.map(|_| q.normal_sampler)).collect();
+            (*grid, read, sampled)
         }).collect();
         let own_sampler = self.palette.images.iter().map(|h| {
             let image = images.get(h.as_ref()?)?;
@@ -1104,7 +1132,8 @@ pub fn refresh_captures(
             *draw = match source {
                 CaptureSource::Folded(h) => {
                     let Some(m) = folded.get(h) else { missing = true; continue };
-                    let mut m = m.clone(); m.extension.surface_bake = true; m.extension.burn = None; m.base.fog_enabled = false;
+                    let mut m = m.clone();
+                    bake_copy(&mut m);
                     CaptureDraw::Folded(Box::new(m))
                 }
                 CaptureSource::Single(h, layer) => {
@@ -1174,12 +1203,27 @@ pub fn update_cache(
     let mut dependencies = HashSet::new();
     for (_, cell) in &cells { dependencies.extend(cell.image_dependencies().iter().copied()); }
     cache.image_revisions.retain(|id, _| dependencies.contains(id));
+    cache.removed_images.retain(|id| dependencies.contains(id));
     if let Some(events) = events {
-        let changed: Vec<_> = cache.image_events.read(&events).filter_map(|e| match e {
-            AssetEvent::Modified { id } | AssetEvent::Removed { id } if dependencies.contains(id) => Some(*id), _ => None,
-        }).collect();
-        for id in changed { *cache.image_revisions.entry(id).or_default() += 1; }
+        let changed: Vec<_> = cache.image_events.read(&events).filter(|e| match e {
+            AssetEvent::Added { id } | AssetEvent::Modified { id } | AssetEvent::Removed { id } | AssetEvent::LoadedWithDependencies { id } => dependencies.contains(id),
+            _ => false,
+        }).copied().collect();
+        for event in changed {
+            match event {
+                AssetEvent::Modified { id } => { *cache.image_revisions.entry(id).or_default() += 1; cache.removed_images.remove(&id); }
+                AssetEvent::Removed { id } => { *cache.image_revisions.entry(id).or_default() += 1; cache.removed_images.insert(id); }
+                AssetEvent::Added { id } | AssetEvent::LoadedWithDependencies { id } => { cache.removed_images.remove(&id); }
+                _ => {}
+            }
+        }
     }
+    // [design] Round 10a review (second round): a cell whose bake copies bind a colour image
+    // that was removed (and not added back) is planned without that cell, as if it were not
+    // resident (`missing-colour-image`): its copy could never be prepared, so a replacement
+    // waiting for its draw would never receive a receipt. An image not loaded yet is still
+    // waited for, as before. The cell returns (and bakes) when the image is added back.
+    let colour_missing: HashSet<Entity> = cells.iter().filter(|(_, c)| c.colour_images().any(|id| cache.removed_images.contains(&id) && !images.contains(id))).map(|(e, _)| e).collect();
     let resolution = cache.resolution;
     let width = atlas_width(resolution);
     let Ok(camera) = camera.single() else { return };
@@ -1188,6 +1232,7 @@ pub fn update_cache(
     let mut resident: Vec<_> = cells.iter().filter(|(e, c)| {
         c.world == world.world && streamer.loaded.get(&c.grid) == Some(e)
             && !cache.stitched_dirty.contains_key(e)
+            && !colour_missing.contains(e)
             && (origin.0..origin.0 + 3).contains(&c.grid.0)
             && (origin.1..origin.1 + 3).contains(&c.grid.1)
             && c.heights.len() == SIDE * SIDE
@@ -1326,6 +1371,7 @@ pub fn update_cache(
     for y in origin.1..origin.1 + 3 { for x in origin.0..origin.0 + 3 {
         if !resident.iter().any(|(_, c)| c.grid == (x, y)) {
             let reason = if !streamer.loaded.contains_key(&(x, y)) { "not-loaded" }
+                else if cells.iter().any(|(e, c)| c.grid == (x, y) && c.world == world.world && colour_missing.contains(&e)) { "missing-colour-image" }
                 else if cells.iter().any(|(_, c)| c.grid == (x, y) && c.world == world.world) { "invalid-prepared-heights" }
                 else { "no-prepared-LAND" };
             excluded.push(format!("({x}, {y}):{reason}"));
@@ -2134,6 +2180,127 @@ pub(crate) mod tests {
         let o = DetailPalette::assemble([&other], &images, &[]);
         assert_eq!(o.admitted.iter().map(|a| a.0).collect::<Vec<_>>(), vec![((-16, 0), 0), ((-16, 0), 1)]);
         assert!(o.refused.contains(&(((-16, 0), 2), "sampler-mismatch")) && o.refused.contains(&(((-16, 0), 3), "not-captured")));
+    }
+
+    /// [design] Round 10a review, second round (P2): a textureless admitted quadrant
+    /// samples no sampler (its table words still name sampler 0 for both). When the cell
+    /// whose image represents sampler 0 is masked (that image removed from the image
+    /// assets), the surviving textureless quadrant keeps nothing alive: the live palette
+    /// binds the fallback for the sampler, never the removed representative.
+    #[test]
+    fn a_textureless_survivor_never_restores_a_removed_sampler_representative() {
+        let mut images = Assets::<Image>::default();
+        let (base, normal) = (sampled(&mut images, 8), sampled(&mut images, 8));
+        let mut textured = surface([CapturePath::Fallback { layers: 0 }; 4]);
+        textured.grid = (0, 0);
+        textured.detail[0] = layers(base.clone(), normal.clone(), vec![]);
+        let mut bare = surface([CapturePath::Fallback { layers: 0 }; 4]);
+        bare.grid = (1, 0);
+        let DetailCapture::Layers(mut d) = layers(Handle::default(), Handle::default(), vec![]) else { unreachable!() };
+        let r = d.resolved.as_mut().unwrap();
+        (r.base_diffuse, r.base_normal) = (None, None);
+        bare.detail[0] = DetailCapture::Layers(d);
+        let p = DetailPalette::assemble([&textured, &bare], &images, &[]);
+        assert_eq!(p.admitted.iter().map(|a| a.0).collect::<Vec<_>>(), vec![((0, 0), 0), ((1, 0), 0)], "the textureless quadrant is admitted");
+        assert_eq!((p.admitted[1].1.diffuse_sampler, p.admitted[1].1.normal_sampler), (0, 0), "its table words name sampler 0 for both");
+        assert_eq!((p.palette.images.clone(), p.palette.samplers.clone()), (vec![Some(base.clone()), Some(normal.clone())], vec![Some(base.clone())]));
+        let published = PublishedSurface { origin: (-1, -1), palette: p.palette.clone(), palette_use: p.usage(&images), ..default() };
+        // (0, 0) and (1, 0) in slots (1, 1) and (2, 1) of origin (-1, -1).
+        let (textured_slot, bare_slot) = (1 << 4, 1 << 5);
+        assert_eq!(published.live_palette(textured_slot | bare_slot), p.palette, "both covered: the whole palette");
+        images.remove(&base);
+        let live = published.live_palette(bare_slot);
+        assert_eq!(live.images, vec![None, None], "the masked cell's images on the fallback");
+        assert_eq!(live.samplers, vec![None], "sampler 0 has no live representative: the fallback, not the removed image");
+        assert_eq!(published.live_palette(textured_slot).samplers, vec![Some(base.clone())], "a covered quadrant that samples it keeps its representative");
+    }
+
+    /// The images a pending bake's expected draws bind that are not in the image assets
+    /// (a draw that binds one could never be prepared, so its receipt would never come).
+    fn unpreparable_bake_images(app: &mut App) -> Vec<Handle<Image>> {
+        let expected = app.world_mut().query::<&BakeView>().single(app.world()).unwrap().expected.clone();
+        let world = app.world();
+        let images = world.resource::<Assets<Image>>();
+        let mut missing = Vec::new();
+        for e in expected {
+            let bound: Vec<Handle<Image>> = if let Some(m) = world.get::<MeshMaterial3d<TerrainMaterial>>(e) {
+                let m = world.resource::<Assets<TerrainMaterial>>().get(&m.0).unwrap();
+                let x = &m.extension;
+                [&m.base.base_color_texture, &m.base.normal_map_texture, &x.diffuse0, &x.normal0, &x.diffuse1, &x.normal1, &x.diffuse2, &x.normal2,
+                    &x.diffuse3, &x.normal3, &x.diffuse4, &x.normal4, &x.diffuse5, &x.normal5, &x.burn].into_iter().flatten().cloned().collect()
+            } else {
+                let m = world.get::<MeshMaterial3d<SurfaceCaptureMaterial>>(e).unwrap();
+                world.resource::<Assets<SurfaceCaptureMaterial>>().get(&m.0).unwrap().diffuse.iter().cloned().collect()
+            };
+            missing.extend(bound.into_iter().filter(|h| !images.contains(h)));
+        }
+        missing
+    }
+
+    /// [design] Round 10a review, second round (P2): a folded capture (base diffuse and
+    /// normal map, one folded layer with its normal map) whose layer normal map is removed
+    /// from the image assets. The removal masks the cell and rebakes it; its folded bake
+    /// copy binds no normal map, so every draw the replacement waits for can be prepared.
+    /// Then a colour image of the copy is removed: the cell is planned out (no draw waits
+    /// on it, the front's coverage masks it) until the image is added back, when it bakes
+    /// again. No receipt is injected for a draw that could not be prepared.
+    #[test]
+    fn removed_images_never_leave_the_replacement_waiting_on_an_unpreparable_draw() {
+        let (mut app, _files, _) = fixture(false, true);
+        let (base, base_normal, diffuse, normal) = { let mut i = app.world_mut().resource_mut::<Assets<Image>>(); (sampled(&mut i, 8), sampled(&mut i, 8), sampled(&mut i, 8), sampled(&mut i, 8)) };
+        let entity = app.world().resource::<Streamer>().loaded[&(0, 0)];
+        {
+            let mut cell = app.world_mut().get_mut::<SurfaceCell>(entity).unwrap();
+            cell.quadrants.clear();
+            let material = TerrainMaterial {
+                base: StandardMaterial { base_color_texture: Some(base.clone()), normal_map_texture: Some(base_normal.clone()), ..default() },
+                extension: crate::terrain::TerrainLayers { count: 1, diffuse0: Some(diffuse.clone()), normal0: Some(normal.clone()), ..default() },
+            };
+            let DetailCapture::Layers(mut d) = layers(base.clone(), base_normal.clone(), vec![(diffuse.clone(), Some(normal.clone()))]) else { unreachable!() };
+            d.resolved.as_mut().unwrap().folded = 1;
+            cell.detail[0] = DetailCapture::Layers(d);
+            let mesh = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+            cell.capture(0, vec![(mesh, CaptureDraw::Folded(Box::new(material)))], CapturePath::Folded { layers: 0 });
+            let CaptureDraw::Folded(copy) = &cell.quadrants[0].1 else { unreachable!() };
+            assert!(copy.extension.surface_bake && copy.base.normal_map_texture.is_none() && copy.extension.normal0.is_none(), "the bake copy binds no normal map");
+            assert_eq!(copy.extension.diffuse0.as_ref(), Some(&diffuse));
+            assert!(cell.dependencies.contains(&normal.id()), "the normal map is still a (detail) dependency");
+        }
+        let folded_copies = |app: &mut App| {
+            let expected = app.world_mut().query::<&BakeView>().single(app.world()).unwrap().expected.clone();
+            expected.iter().filter(|e| app.world().get::<MeshMaterial3d<TerrainMaterial>>(**e).is_some()).count()
+        };
+        tick(&mut app);
+        assert!(job_colour(&app).is_some() && work_sets(&mut app).1.contains(&(0, 0)) && folded_copies(&mut app) == 1);
+        assert_eq!(unpreparable_bake_images(&mut app), Vec::<Handle<Image>>::new(), "every draw can be prepared");
+        finish(&mut app);
+        assert!(app.world().resource::<SurfaceCache>().published.as_ref().unwrap().detail.contains(&((0, 0), 0)));
+        // The layer normal map removed (Assets::remove ignores strong handles) and its event.
+        app.world_mut().resource_mut::<Assets<Image>>().remove(&normal);
+        app.world_mut().resource_mut::<Messages<AssetEvent<Image>>>().write(AssetEvent::Removed { id: normal.id() });
+        tick(&mut app);
+        assert!(job_colour(&app).is_some(), "the removal rebakes the cell");
+        assert!(work_sets(&mut app).1.contains(&(0, 0)) && folded_copies(&mut app) == 1, "its folded copy is drawn again");
+        assert_eq!(unpreparable_bake_images(&mut app), Vec::<Handle<Image>>::new(), "the removed normal map is not bound by the folded copy");
+        assert!(!app.world().resource::<SurfaceCache>().job.as_ref().unwrap().publication.detail.contains(&((0, 0), 0)), "its detail is refused (image-not-loaded)");
+        // A colour image of the folded copy removed: the cell is planned out. The pending
+        // job (which would bind it) is cancelled; the rest is unchanged, so the front's
+        // coverage masks the cell and no draw waits.
+        app.world_mut().resource_mut::<Assets<Image>>().remove(&diffuse);
+        app.world_mut().resource_mut::<Messages<AssetEvent<Image>>>().write(AssetEvent::Removed { id: diffuse.id() });
+        for _ in 0..5 {
+            tick(&mut app);
+            if job_colour(&app).is_some() { assert_eq!(unpreparable_bake_images(&mut app), Vec::<Handle<Image>>::new(), "a job never waits on the removed colour image"); }
+        }
+        let front = app.world().resource::<SurfaceCache>().published.clone().unwrap();
+        assert_eq!((front.coverage >> 4) & 1, 0, "(0, 0) masked");
+        assert!(job_colour(&app).is_none(), "a pure removal: nothing to bake");
+        // Added back: the cell returns and bakes, with a copy that can be prepared.
+        assert!(app.world_mut().resource_mut::<Assets<Image>>().insert(diffuse.id(), Image::default()).is_ok());
+        app.world_mut().resource_mut::<Messages<AssetEvent<Image>>>().write(AssetEvent::Added { id: diffuse.id() });
+        tick(&mut app);
+        assert!(job_colour(&app).is_some() && work_sets(&mut app).1.contains(&(0, 0)), "the cell bakes again");
+        assert_eq!(unpreparable_bake_images(&mut app), Vec::<Handle<Image>>::new());
     }
 
     /// [design] Round 10a review (P2): an overflow layer's colour, alpha or texture

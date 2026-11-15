@@ -704,13 +704,17 @@ struct DetailParts {
 
 impl DetailParts {
     /// The capture, resolved against the materials the near draw uses; the colour cache
-    /// with the reason otherwise.
-    fn capture(self, tm: &TerrainCtx, tile: f32) -> crate::terrain_surface::DetailCapture {
+    /// with the reason when the vertices are missing or the overlays exceed the cap.
+    /// [design] Round 10a review (second round): materials the detail cannot reproduce
+    /// (`ResolvedDetail::from_materials`'s reasons, e.g. an overflow layer already tinted
+    /// when the blend is turned on or a cell is backfilled) keep the capture with its
+    /// `Err(reason)`, as `refresh_captures` does, so the publication refuses the quadrant
+    /// with that reason and an edit back restores its detail.
+    fn capture(self, folded: &Assets<TerrainMaterial>, ordinary: &Assets<NifMaterial>, tile: f32) -> crate::terrain_surface::DetailCapture {
         use crate::terrain_surface::{DetailCapture, QuadrantDetail};
         let Some(DetailVertices { tint, normal, tangent, sign: tangent_sign }) = self.vertices else { return DetailCapture::Colour("missing-vertex-attributes") };
         if self.opacity.len() > nvf_assets::nif_surface_blend::DETAIL_MAX_OVERLAYS { return DetailCapture::Colour("overlays-over-cap"); }
-        let resolved = crate::terrain_surface::resolve_detail(&self.base, &self.overflow, self.opacity.len(), &tm.tm.folded, &tm.assets.materials);
-        if let Err(reason) = resolved { return DetailCapture::Colour(reason); }
+        let resolved = crate::terrain_surface::resolve_detail(&self.base, &self.overflow, self.opacity.len(), folded, ordinary);
         DetailCapture::Layers(Box::new(QuadrantDetail { base: self.base, overflow: self.overflow, cell_local: self.cell_local, tile, tint, normal, tangent, tangent_sign, opacity: self.opacity, resolved }))
     }
 }
@@ -812,7 +816,7 @@ fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, p
         }
         if let (Some(surface), Some((folded, draws))) = (&mut surface, stack) {
             let layers = draws.len() - 1;
-            surface.detail[q as usize] = detail.map_or(DetailCapture::Colour("no-base-draw"), |d| d.capture(tm, tile));
+            surface.detail[q as usize] = detail.map_or(DetailCapture::Colour("no-base-draw"), |d| d.capture(&tm.tm.folded, &tm.assets.materials, tile));
             surface.capture(q, draws, if folded { CapturePath::Folded { layers } } else { CapturePath::Fallback { layers } });
         }
     }
@@ -1088,6 +1092,50 @@ mod tests {
             let wa = 1.0 - wb - wc;
             (wa >= -1e-5 && wb >= -1e-5 && wc >= -1e-5).then_some((t, [wa, wb, wc]))
         })
+    }
+
+    /// [design] Round 10a review, second round (P3): a quadrant captured (blend turned on,
+    /// or a cell backfilled) while its overflow layer's material is tinted keeps the
+    /// capture with its reason (`overflow-material`), so the publication refuses it, and
+    /// reverting the edit (the material refresh) restores its detail.
+    #[test]
+    fn an_initially_rejected_overflow_capture_recovers_when_the_edit_is_reverted() {
+        use bevy::ecs::system::RunSystemOnce;
+        use crate::terrain_surface::{CaptureSource, CapturePath, DetailBase, DetailCapture, DetailPalette, SurfaceCell};
+        let mut app = App::new();
+        app.init_resource::<Assets<Image>>().init_resource::<Assets<NifMaterial>>().init_resource::<Assets<TerrainMaterial>>()
+            .init_resource::<Messages<AssetEvent<NifMaterial>>>();
+        let (diffuse, layer_diffuse) = { let mut i = app.world_mut().resource_mut::<Assets<Image>>(); (i.add(Image::default()), i.add(Image::default())) };
+        let (base, layer) = {
+            let mut m = app.world_mut().resource_mut::<Assets<NifMaterial>>();
+            let base = m.add(NifMaterial { base: StandardMaterial { base_color_texture: Some(diffuse), ..default() }, extension: default() });
+            let layer = m.add(NifMaterial { base: StandardMaterial { base_color_texture: Some(layer_diffuse), base_color: Color::srgb(1.0, 0.5, 0.5), alpha_mode: AlphaMode::Blend, ..default() }, extension: default() });
+            (base, layer)
+        };
+        let n = nvf_assets::nif_surface_blend::QUAD_VERTICES;
+        let parts = DetailParts {
+            base: DetailBase::Single(base.clone()), cell_local: false, opacity: vec![vec![0.5; n]], overflow: vec![layer.clone()],
+            vertices: Some(DetailVertices { tint: vec![[1.0; 3]; n], normal: vec![[0.0, 0.0, 1.0]; n], tangent: vec![[1.0, 0.0, 0.0]; n], sign: TANGENT_SIGN }),
+        };
+        let capture = parts.capture(app.world().resource::<Assets<TerrainMaterial>>(), app.world().resource::<Assets<NifMaterial>>(), 256.0);
+        let DetailCapture::Layers(d) = &capture else { panic!("the capture is kept with its reason") };
+        assert_eq!(d.resolved.as_ref().err(), Some(&"overflow-material"));
+        let mut detail: [DetailCapture; 4] = default();
+        detail[0] = capture;
+        let entity = app.world_mut().spawn(SurfaceCell {
+            world: 0, grid: (0, 0), heights: vec![0.0; SIDE * SIDE], quadrants: vec![], paths: [CapturePath::Fallback { layers: 1 }; 4], content_revision: 0,
+            sources: vec![CaptureSource::Single(base.clone(), false), CaptureSource::Single(layer.clone(), true)], dependencies: default(), detail,
+        }).id();
+        let admitted = |app: &App| {
+            let p = DetailPalette::assemble([app.world().get::<SurfaceCell>(entity).unwrap()], app.world().resource::<Assets<Image>>(), &[]);
+            (p.admitted.iter().any(|(at, _)| *at == ((0, 0), 0)), p.refused.iter().find(|(at, _)| *at == ((0, 0), 0)).map(|(_, r)| *r))
+        };
+        assert_eq!(admitted(&app), (false, Some("overflow-material")), "refused with the capture's reason");
+        // The tint reverted under the same handle: the material refresh restores the detail.
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&layer).unwrap().base.base_color = Color::WHITE;
+        app.world_mut().resource_mut::<Messages<AssetEvent<NifMaterial>>>().write(AssetEvent::Modified { id: layer.id() });
+        app.world_mut().run_system_once(crate::terrain_surface::refresh_captures).unwrap();
+        assert_eq!(admitted(&app), (true, None), "layer detail once the edit is reverted");
     }
 
     /// [design] Round 10a: a quadrant's detail, packed and read back as the shader reads it,

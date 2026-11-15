@@ -532,11 +532,21 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   cell, or one whose image was removed: a removal bumps the image's dependency revision
   and so masks every cell reading it in the same update), the entries only masked cells'
   quadrants read become the fallback, keeping their numbers (the immutable height atlas's
-  numbers keep naming the same entries), and a sampler still read takes as its
-  representative an image a covered quadrant reads with that description. The coverage
+  numbers keep naming the same entries), and a sampler still sampled takes as its
+  representative an image a covered quadrant reads with that description (second review
+  round: a quadrant samples its diffuse sampler only with a base diffuse or an overlay
+  and its normal sampler only with a base normal map, so a textureless quadrant keeps no
+  sampler alive; a sampler without a live representative binds the fallback sampler,
+  never the publication's original representative, which may be the removed image). The coverage
   update rebuilds retained clones (Bevy drops the old prepared material before preparing
   the new one), and new clones of the front take the same restricted palette, so neither
-  can wait for an image that is gone and the retained clones keep drawing. *Composition* (`mesh_terrain_detail`): the
+  can wait for an image that is gone and the retained clones keep drawing. The masked
+  cell's replacement bake cannot wait for one either (second review round): a folded
+  base's bake copy binds no normal map (`terrain_surface.rs::bake_copy`; the unlit bake
+  returns the base colour only), and a cell whose bake copies would bind a colour image
+  removed from the image assets (and not added back) is planned without that cell,
+  excluded as `missing-colour-image` (an image not loaded yet is still waited for); it
+  bakes again once the image is added back. *Composition* (`mesh_terrain_detail`): the
   fragment's ground triangle and its barycentric weights come from the height lookup's own
   square and diagonal (below the diagonal `(1-u) SW + (u-v) SE + v NE`, above it
   `(1-v) SW + u NE + (v-u) NW`); the colour starts as the base diffuse x interpolated vertex
@@ -592,9 +602,11 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   quadrant whose overflow layer's material has another colour or alpha, or another
   transform than the base's (a base transform edited alone included), keeps the colour
   cache, logged as `overflow-material` (round 10a review,
-  `ResolvedDetail::from_materials`); the check runs at capture and again at every source
-  material refresh (`refresh_captures`), which keeps the capture with the reason, so an
-  edit back serves layer detail again. This is an approximation: the near terrain alpha-blends each
+  `ResolvedDetail::from_materials`); the check runs at capture (turning the blend on, a
+  backfilled cell, a cell drawn while it is on) and again at every source material refresh
+  (`refresh_captures`), and both keep the capture with the reason (second review round:
+  the capture too, `terrain.rs::DetailParts::capture`), so an edit back serves layer
+  detail again. This is an approximation: the near terrain alpha-blends each
   overflow layer's *lit* result, while the detail composes albedo and normal before
   lighting once. [hypothesis] The difference is small because the layers share the
   surface's lighting and differ only in their mapped normals. Every match described here
@@ -860,9 +872,12 @@ texture swap, a fade and an override: `switching_off_during`), `terrain_surface`
 `delayed_steps_find_the_previous_work_still_pending_after_it_prepared`,
 `samplers_the_detail_does_not_reproduce_keep_the_colour_cache`,
 `overflow_material_edits_keep_the_colour_cache_until_reproducible_again`,
-`settlement_guard_waits_but_never_forever`), `mesh_terrain_blend` (round 10a review:
+`settlement_guard_waits_but_never_forever`; second review round:
+`a_textureless_survivor_never_restores_a_removed_sampler_representative`,
+`removed_images_never_leave_the_replacement_waiting_on_an_unpreparable_draw`), `mesh_terrain_blend` (round 10a review:
 `removed_palette_image_keeps_retained_clones_drawable_and_the_replacement_publishes`),
-`terrain::tests` (round 10a: `detail_capture_reconstructs_the_drawn_triangles`),
+`terrain::tests` (round 10a: `detail_capture_reconstructs_the_drawn_triangles`; second
+review round: `an_initially_rejected_overflow_capture_recovers_when_the_edit_is_reverted`),
 `mesh_blend_shader_tests` (round 10a:
 `shader_detail_transcribes_the_mesh_triangles_and_the_record_layout`), `graphics::tests::mesh_terrain_blend`,
 `settings::tests::the_mesh_blend_row`, `texture_swap`, `nif_mirror`, `fade`,
