@@ -480,7 +480,14 @@ impl ClipMotion {
     /// The motion of `clip`'s bones (the fingers left out: theirs is small and many).
     fn of(clip: &Clip) -> ClipMotion {
         let (start, stop) = (clip.start, clip.stop.max(clip.start));
-        let tracks: Vec<_> = clip.tracks.iter().filter(|(n, _)| !n.to_ascii_lowercase().contains("finger")).map(|(_, t)| t).collect();
+        // The arms only: the fingers' motion is small and many, and the weapon's node (the
+        // flamer swinging off the back while the hands hold still) made the playback all but
+        // stop with the hands (the trace `movement-inertia-trace-weapons`, 2026-11-15).
+        let arms = |n: &str| {
+            let n = n.to_ascii_lowercase();
+            !n.contains("finger") && n != "weapon"
+        };
+        let tracks: Vec<_> = clip.tracks.iter().filter(|(n, _)| arms(n)).map(|(_, t)| t).collect();
         let pose = |t: f32| -> Vec<(Option<Vec3>, Option<Quat>)> {
             tracks.iter().map(|k| (k.translation.sample(t).map(Vec3::from_array), k.rotation_at(t).map(|[w, x, y, z]| Quat::from_xyzw(x, y, z, w)))).collect()
         };
@@ -1200,6 +1207,11 @@ fn handover_share(x: f32) -> f32 {
 #[derive(Default)]
 struct MotionTrace {
     file: Option<std::io::BufWriter<std::fs::File>>,
+    /// Beside it (`<file>.layers`): the first-person rig's layers each frame (tag, shown
+    /// fade, weight, time / length, rate; `<` leaving), the hands' phase and time and
+    /// `seam` where the pose eased across a jump, for telling which clip a hitch in the
+    /// trace comes from.
+    layers: Option<std::io::BufWriter<std::fs::File>>,
     tried: bool,
 }
 
@@ -1214,6 +1226,7 @@ impl MotionTrace {
                         let _ = std::io::Write::write_all(&mut w, b"t,dt,heading,pitch,eye_x,eye_y,eye_z,hand_x,hand_y,hand_z,hand_rx,hand_ry,hand_rz,sway_x,sway_y,sway_z,sway_yaw,sway_pitch,sway_roll,sights,aiming,falling,sneaking,speed,drawn,feet_z,airborne,lhand_x,lhand_y,lhand_z,lens\n");
                         info!("motion trace: writing {path}");
                         self.file = Some(w);
+                        self.layers = std::fs::File::create(format!("{path}.layers")).ok().map(std::io::BufWriter::new);
                     }
                     Err(e) => warn!("NVF_PLAY_TEST_MOTION_TRACE: {path}: {e}"),
                 }
@@ -1235,6 +1248,18 @@ impl MotionTrace {
             "{t:.5},{dt:.5},{:.5},{:.5},{:.3},{:.3},{:.3},{:.4},{:.4},{:.4},{:.6},{:.6},{:.6},{:.4},{:.4},{:.4},{yaw:.5},{pitch:.5},{roll:.5},{sights:.4},{},{},{},{speed:.1},{},{:.3},{airborne:.3},{:.4},{:.4},{:.4},{lens:.5}\n",
             player.heading, player.pitch, e.x, e.y, e.z, h.x, h.y, h.z, r.x, r.y, r.z, sway.offset.x, sway.offset.y, sway.offset.z, b(aiming), b(falling), b(sneaking), b(drawn), player.feet[2], l.x, l.y, l.z
         );
+        let _ = std::io::Write::write_all(w, line.as_bytes());
+    }
+
+    /// One line of the layers' file (`layers`).
+    fn write_layers(&mut self, t: f64, hands: &WeaponHands, animator: Option<&Animator>) {
+        let Some(w) = self.layers.as_mut() else { return };
+        let mut line = format!("{t:.5} {:?} {:.4}{}", hands.phase, hands.time, if animator.is_some_and(|a| a.seamed) { " seam" } else { "" });
+        for l in animator.map(|a| a.layers.as_slice()).unwrap_or_default() {
+            let len = l.clip.length().max(1e-6);
+            line += &format!(" | {}{} e{:.4} w{:.3} x{:.4} r{:.3}", if l.is_leaving() { "<" } else { "" }, l.tag, l.shown_ease(), l.weight, l.time / len, l.rate);
+        }
+        line.push('\n');
         let _ = std::io::Write::write_all(w, line.as_bytes());
     }
 }
@@ -2019,7 +2044,15 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
                     }
                 }
             }
-            HandEvent::ToHand => rig.animator.cut(TAG_HOLSTER),
+            // The holstered weapon's clip goes at once; with movement inertia in first person
+            // the arms ease across what it held (the flamer's draw: a 7 to 86 units/s step at the
+            // hand-over, the trace `movement-inertia-trace-weapons`, 2026-11-15).
+            HandEvent::ToHand => {
+                rig.animator.cut(TAG_HOLSTER);
+                if f.inertia && rig.view == View::First && f.equip_at.is_some() {
+                    rig.animator.smooth_jump();
+                }
+            }
             HandEvent::ToHolster | HandEvent::Drawn | HandEvent::Holstered => {}
         }
     }
@@ -2273,20 +2306,23 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
             a.layers[l].rate = f.equip_rate;
         }
     }
+    let aims_in = a.layers.iter().any(|l| is_aim(l.tag));
     // The layers leaving take the same times, and with movement inertia every first-person
     // fade follows the settling curve.
     for l in a.layers.iter_mut() {
         if let Some(t) = fade_for(l.tag) {
             l.fade_out = t;
         }
-        if first_inertia || (f.aim_fade.is_some() && is_aim(l.tag)) || crouch_fade(l.tag).is_some() {
+        // A draw's or a holster's clip keeps a straight fade: the hand-over sets it (below).
+        if (first_inertia && l.tag != TAG_EQUIP) || (f.aim_fade.is_some() && is_aim(l.tag)) || crouch_fade(l.tag).is_some() {
             l.smooth = true;
         }
         // A draw's or a holster's clip lets go slowly: its last pose is not the pose that
         // follows (the arms down after a holster), and over its own short time the
         // hand-over was a second movement.
         if let (true, TAG_EQUIP, Some(t)) = (first_inertia, l.tag, f.move_fade) {
-            l.fade_out = t;
+            // A draw's clip with the hold coming in: it goes as the hold comes (below).
+            l.fade_out = if aims_in && draw.as_ref().is_some_and(|c| Arc::ptr_eq(&c.clip, &l.clip)) { f32::INFINITY } else { t };
         }
         // A reload, a jam or an attack ending: the arms go back to the hold slowly, along
         // the settling curve, the heavier the weapon the slower (`Frame::hands_pace`).
@@ -2405,11 +2441,38 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     // settling curve, whose start is sharp, the arms of the fists' and the 10mm pistol's
     // holster, nearly stopped, set off again at 350 units/s within two frames (the trace
     // `movement-inertia-trace-weapons`, 2026-11-15).
-    if let (true, Some(at)) = (first_inertia, f.equip_at) {
-        let x = nvf_play::ease::settle_inv(at.clamp(0.0, 1.0));
-        let over = handover_share(x);
-        for l in a.layers.iter_mut().filter(|l| l.tag == TAG_EQUIP && !l.is_leaving()) {
-            (l.ease, l.smooth) = (1.0 - over, false);
+    // A draw hands over no faster than the hold it hands over to comes in: the hold fades
+    // in under the draw at its own pace and shares a priority with it on the spine and
+    // the arms, so a draw that let go first left the two together short of the whole
+    // (98.7 %) and the arms-down idle under them showed through: the arms sagged towards
+    // it and came back, a kick and a second movement at the 10mm pistol's draw's end (the
+    // trace `movement-inertia-trace-weapons` and its layers' file; the owner, 2026-11-15,
+    // "pistol drawing animation is not smooth at all, it hitches multiple times").
+    // After the draw, its clip leaving keeps covering what the hold has not yet taken too
+    // (dropping its last 2 % in one frame was a second kick).
+    if first_inertia {
+        let over = f.equip_at.map(|at| handover_share(nvf_play::ease::settle_inv(at.clamp(0.0, 1.0))));
+        // The aim clips together (the hold, or the hold crossing over to the sights or a block:
+        // their shares then add up to about the whole, so an aim taken up right after a draw
+        // does not bring the draw clip back).
+        let aims: Vec<f32> = a.layers.iter().filter(|l| is_aim(l.tag)).map(|l| l.shown_ease()).collect();
+        let hold = (!aims.is_empty()).then(|| aims.iter().sum::<f32>().min(1.0));
+        for l in a.layers.iter_mut().filter(|l| l.tag == TAG_EQUIP) {
+            let a_draw = draw.as_ref().is_some_and(|c| Arc::ptr_eq(&c.clip, &l.clip));
+            let leaving = l.is_leaving();
+            let own = match over {
+                Some(o) if !leaving => 1.0 - o,
+                _ => l.ease,
+            };
+            let keep = match hold {
+                // Drawing: its own hand-over, or what the hold has not yet taken.
+                Some(h) if a_draw && !leaving => own.max(1.0 - h),
+                // Drawn and leaving (it does not fade by itself then): what the hold has not
+                // yet taken, never more than it had; gone once the hold is whole.
+                Some(h) if a_draw => own.min(1.0 - h),
+                _ => own,
+            };
+            (l.ease, l.smooth) = (keep.clamp(0.0, 1.0), false);
         }
     }
     rig.carry = carried.and_then(|(c, from)| Some(c.root_travel(from, a.layers.iter().find(|l| l.tag == TAG_ATTACK && Arc::ptr_eq(&l.clip, &c))?.time)));
@@ -3534,6 +3597,7 @@ fn drive_body(
             Some((Vec3::from(h.translation) - Vec3::from(c.translation), turn.to_scaled_axis()))
         });
         trace.write(time.elapsed_secs_f64(), dt, &player, eye, hand, sway, (m.sights_share, control.aiming, m.falling, stance == Stance::Sneak, m.speed, m.hands.phase == WeaponPhase::Drawn), m.airborne, left, lens_k);
+        trace.write_layers(time.elapsed_secs_f64(), &m.hands, body.first.as_ref().map(|f| &f.animator));
     }
     state.head_eye = third_eye.filter(|_| third_view).map(|e| e.to_array());
     // The third-person pivot: the head's height above the feet without the stride's

@@ -59,15 +59,16 @@ pub const START_SECONDS: f32 = 0.5;
 pub const STOP_SECONDS: f32 = 0.25;
 /// With Weapon Handling, drawing and putting away a weapon of `weight` (pounds) take this
 /// many times as long as the original's at Agility 5, before the attributes
-/// ([`attribute_rate`]) and Movement Weight: light weapons (2 lb and under) 1.2, a rifle of
-/// about 8 lb 1.5, from 20 lb 2, smoothly between. Played along the settling curve (about
+/// ([`attribute_rate`]) and Movement Weight: light weapons (2 lb and under) 1.5, a rifle of
+/// about 8 lb 1.8, from 20 lb 2.4, smoothly between. Played along the settling curve (about
 /// the clip's own speed at first, very slow at the end), so a switch has weight; the game's
 /// readiness waits for it [design: the owner, 2026-11-15, testers: "the weapon draw speed is
 /// kinda brutal ... like pulling out a concrete slab", "make lighter/medium items faster to
-/// draw"; it was 2.2 times for a 10mm pistol, 2.4 for a rifle, 3.3 for heavy weapons].
+/// draw"; it was 2.2 times for a 10mm pistol, 2.4 for a rifle, 3.3 for heavy weapons, then
+/// 1.2 / 1.5 / 2 for one build, then the owner's "Light 1.5, Medium 1.8, Heavy 2.4"].
 pub fn draw_weight(weight: f32) -> f32 {
     use crate::ease::smoothstep;
-    1.2 + 0.3 * smoothstep(2.0, 8.0, weight) + 0.5 * smoothstep(8.0, 20.0, weight)
+    1.5 + 0.3 * smoothstep(2.0, 8.0, weight) + 0.6 * smoothstep(8.0, 20.0, weight)
 }
 
 /// How much a weapon of `weight` (pounds) is light, medium and heavy, summing to 1: light up
@@ -673,10 +674,10 @@ mod tests {
             let all_off = MovementInertia { advanced: false, ..at(2.0, agility, 10.0) };
             assert!((all_off.equip_rate() - rate).abs() < 1e-5);
         }
-        // At 5 and 5 only the weight: light 1.2 times the original's time, a rifle 1.5, heavy 2.
-        assert!((at(1.0, 5.0, 5.0).equip_rate() - 1.0 / 1.2).abs() < 1e-5);
-        assert!((at(8.0, 5.0, 5.0).equip_rate() - 1.0 / 1.5).abs() < 1e-5);
-        assert!((at(25.0, 5.0, 5.0).equip_rate() - 0.5).abs() < 1e-5);
+        // At 5 and 5 only the weight: light 1.5 times the original's time, a rifle 1.8, heavy 2.4.
+        assert!((at(1.0, 5.0, 5.0).equip_rate() - 1.0 / 1.5).abs() < 1e-5);
+        assert!((at(8.0, 5.0, 5.0).equip_rate() - 1.0 / 1.8).abs() < 1e-5);
+        assert!((at(25.0, 5.0, 5.0).equip_rate() - 1.0 / 2.4).abs() < 1e-5);
         assert_eq!(weight_class(2.0), [1.0, 0.0, 0.0]);
         assert_eq!(weight_class(9.0), [0.0, 1.0, 0.0]);
         assert_eq!(weight_class(30.0), [0.0, 0.0, 1.0]);
@@ -701,8 +702,8 @@ mod tests {
             }
         }
         assert_eq!(attribute_rate(2.0, 0.0, 99.0), attribute_rate(2.0, 1.0, 10.0), "read within 1 to 10");
-        // A light weapon at Agility 10 draws quicker than the original's at 5.
-        assert!(at(2.0, 10.0, 5.0).equip_rate() > 1.0);
+        // A light weapon at Agility 10 draws in the original's time at 5 (1.5 over 1.5).
+        assert!((at(2.0, 10.0, 5.0).equip_rate() - 1.0).abs() < 1e-5);
         // The aim takes a small share: never ultra quick, never very slow.
         let quick = at(1.0, 10.0, 10.0).aim_seconds(true);
         assert!(quick > AIM_IN_PLAIN_SECONDS && quick < AIM_IN_SECONDS, "{quick}");
@@ -729,7 +730,7 @@ mod tests {
         assert!((m.velocity()[1] - RUN * (1.0 - LANDING_MOST_LOST / 4.0)).abs() < 1e-3);
         // Weapon Handling's time over the original's shrinks; the original's stays.
         let rifle = |weight: f32| MovementInertia { weight, weapon_weight: Some(8.0), ..default() };
-        assert!((1.0 / rifle(0.25).equip_rate() - (1.0 + 0.5 / 4.0)).abs() < 1e-4);
+        assert!((1.0 / rifle(0.25).equip_rate() - (1.0 + 0.8 / 4.0)).abs() < 1e-4);
         assert!(rifle(0.25).equip_rate() <= 1.0, "never quicker than the original's at 5 and 5");
         let aim = rifle(0.25).aim_seconds(true);
         assert!(aim > AIM_IN_PLAIN_SECONDS && aim < rifle(1.0).aim_seconds(true));

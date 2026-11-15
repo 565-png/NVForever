@@ -95,11 +95,21 @@ const SETTLE_SHARPNESS: f32 = 6.0;
 /// should not have any linear curves - everything should be a smooth spring with a slow
 /// finish"]: the step response of a critically damped spring, scaled to arrive at 1. It
 /// leaves 0 without a jolt, is quick early (over half the way in the first third of the
-/// time) and very slow at the end (the last quarter of the time covers a twentieth).
+/// time) and very slow at the end (the last quarter of the time covers a twentieth). It
+/// arrives at rest: the spring's last bit of speed (about a tenth of the average) is taken
+/// out over the end by `x²(x − 1)`, which leaves the start and the middle as they were and
+/// keeps the curve rising; a fade or a move that stopped at the spring's own end lost that
+/// speed in one frame, a visible stop (the trace `movement-inertia-trace-weapons`: the
+/// 10mm pistol's hold coming in at the draw's end, 9 units/s to 1 in a frame) [design: the
+/// owner, 2026-11-15, "pistol drawing animation is not smooth at all", "make the aiming
+/// down sights animation smoother at the end - same time length"].
 pub fn settle(x: f32) -> f32 {
     let k = SETTLE_SHARPNESS;
     let x = x.clamp(0.0, 1.0);
-    (1.0 - (1.0 + k * x) * (-k * x).exp()) / (1.0 - (1.0 + k) * (-k).exp())
+    let norm = 1.0 - (1.0 + k) * (-k).exp();
+    let spring = (1.0 - (1.0 + k * x) * (-k * x).exp()) / norm;
+    let end_speed = k * k * (-k).exp() / norm;
+    spring - end_speed * x * x * (x - 1.0)
 }
 
 /// The `x` at which [`settle`] is `y` (by halving; `settle` only rises).
@@ -231,6 +241,8 @@ pub struct Animator {
     jumped: bool,
     /// The last [`Self::advance`]'s seconds.
     last_dt: f32,
+    /// The last [`Self::pose`] eased across a loop's seam or a jump (for a motion trace).
+    pub seamed: bool,
     /// Each node's rotation in the last [`Self::pose`], the side of the sphere this frame's
     /// rotations are blended on (`pose`).
     last_rotations: Vec<Quat>,
@@ -357,7 +369,7 @@ impl Animator {
     pub fn new(skel: Arc<PreparedSkeleton>, nodes: Vec<Entity>, accum_root: Option<&str>) -> Animator {
         let held = accum_root.and_then(|r| clip_target(&skel, r)).into_iter().collect();
         let locals = skel.locals.clone();
-        Animator { skel, nodes, layers: Vec::new(), phase: 0.0, locals, extra: Vec::new(), held, rest: Vec::new(), extra_rest: None, scratch: Vec::new(), seams: None, wrapped: false, jumped: false, last_dt: 0.0, last_rotations: Vec::new() }
+        Animator { skel, nodes, layers: Vec::new(), phase: 0.0, locals, extra: Vec::new(), held, rest: Vec::new(), extra_rest: None, scratch: Vec::new(), seams: None, wrapped: false, jumped: false, last_dt: 0.0, seamed: false, last_rotations: Vec::new() }
     }
 
     /// Smooth the seams of looping clips: at a wrap the pose carries on and eases onto the
@@ -752,6 +764,7 @@ impl Animator {
                 self.locals[bone] = posed;
             }
         }
+        self.seamed = self.wrapped && self.seams.is_some();
         if let Some(s) = self.seams.as_mut() {
             s.smooth(&mut self.locals, self.wrapped, self.last_dt);
             // A pose asked for again without time passing is not a second seam.

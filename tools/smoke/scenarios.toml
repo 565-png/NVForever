@@ -1222,16 +1222,16 @@ expect = [
 [[scenario]]
 name = "weapon-handling-attributes"
 source = "owner 2026-11-15, testers' feedback (engine/nvf-play/src/inertia.rs attribute_rate, aim_rate, draw_weight; docs/design/player-body.md §1.4a.3): with Weapon Handling a light weapon's draw follows Agility most and Strength a little, the aim a small share of it"
-note = "the 9mm pistol (000E3778, 1.5 lb) is drawn at 10 s; Agility goes to 10 at 12 s and Strength to 10 at 15 s. Draw rate = (1 + 0.1 x (Agility - 5) x 1.0 + 0.1 x (Strength - 5) x 0.3) / 1.2; aim = 0.6 s x 0.932 / (1 + 0.4 x (that attribute rate - 1))"
+note = "the 9mm pistol (000E3778, 1.5 lb) is drawn at 10 s; Agility goes to 10 at 12 s and Strength to 10 at 15 s. Draw rate = (1 + 0.1 x (Agility - 5) x 1.0 + 0.1 x (Strength - 5) x 0.3) / 1.5; aim = 0.6 s x 0.932 / (1 + 0.4 x (that attribute rate - 1))"
 areas = ["player-body", "combat"]
 paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/combat.rs", "engine/nvforever/src/player_body.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_CONSOLE = "12:player.setav agility 10;12.3:close;15:player.setav strength 10;15.3:close", NVF_PLAY_TEST_CONTROL = "10:weapon" }
 args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 19
 order = [[
-  { re = 'weapon handling: draws at x0\.83 before perks, aims in 0\.56s \(1\.5 lb, Agility 5, Strength 5, Movement Weight 100%, Weapon Handling on\)', label = "at 5 and 5 the pistol takes 1.2 times the original's draw" },
-  { re = 'weapon handling: draws at x1\.25 before perks, aims in 0\.47s \(1\.5 lb, Agility 10, Strength 5,', label = "Agility 10: the light weapon's full Agility gain (1.5 / 1.2), the aim a share of it" },
-  { re = 'weapon handling: draws at x1\.3[78] before perks, aims in 0\.45s \(1\.5 lb, Agility 10, Strength 10,', label = "Strength 10 adds little to a light weapon" },
+  { re = 'weapon handling: draws at x0\.67 before perks, aims in 0\.56s \(1\.5 lb, Agility 5, Strength 5, Movement Weight 100%, Weapon Handling on\)', label = "at 5 and 5 the pistol takes 1.5 times the original's draw" },
+  { re = 'weapon handling: draws at x1\.00 before perks, aims in 0\.47s \(1\.5 lb, Agility 10, Strength 5,', label = "Agility 10: the light weapon's full Agility gain (1.5 / 1.5), the aim a share of it" },
+  { re = 'weapon handling: draws at x1\.10 before perks, aims in 0\.45s \(1\.5 lb, Agility 10, Strength 10,', label = "Strength 10 adds little to a light weapon" },
 ]]
 
 [[scenario]]
