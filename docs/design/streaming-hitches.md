@@ -530,6 +530,7 @@ builds, i9-14900K, RTX 4070, 48 GB, game files in the OS cache [observed, 2026-1
 | the same with reports collecting | 60 % (other sessions compiling) | 227, the whole frame slower everywhere (`prepare_uniform_components`, batching); the Vigor Tester's opening 413 ms (`vigor::open_close` 319 ms) | 427 ms |
 | the fix below, driver shader cache empty | 23 % | none (the opening's window: 40 ms slowest) | 40 ms |
 | the fix, voice and the intro film on | — | none while the film played (8,692 frames, the whole run) | 65 ms |
+| the fix, voice on, the film skipped at 6 s (Doc's lines, face editor, Vigor Tester, tag skills, traits) | — | none | 66 ms |
 
 - **Not reproduced**: no frame over 250 ms in this stretch on this machine, cold driver
   cache or not. The reports' 3.4-3.9 s frames are not explained by anything measured
