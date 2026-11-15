@@ -507,6 +507,19 @@ the spec it links to.
     (2026-11-11) predates #2239 [hypothesis: your build was older than it; the log names
     no version]. No other engine change was made; the smoke scenarios
     `freeside-fort-residents-door` and `freeside-north-residents-door` keep it fixed.
+75. **A shared friend or ally faction now keeps the peace over an enemy one (#2560).**
+    Vulpes Inculta at the Fort is in VCaesarsLegionFaction and in ArmorNCRFactionNVEnemy,
+    and the Legion faction names ArmorNCRFactionNVEnemy an Enemy; we let the enemy pair
+    win, so Caesar, Lucius and the guards killed him on sight. Ours now: when any of two
+    actors' factions name each other Friend or Ally, they cannot fight by faction (the
+    wiki: allies "cannot attack each other under any circumstances"); crimes against the
+    player still come first. This also calms other mixed groups the data builds the same
+    way: the 188's shared faction, NCR troopers wearing Legion armour (both in
+    ArmorVCaesarsLegionFaction), Vulpes's VCrVoidCritterFaction (Friend of animals,
+    raiders and super mutants), and any actor whose disguise faction is shared with its
+    watchers. A hit or a murder still starts a fight. If a fight you expect is gone (two
+    sides that should fight in a group they share), say where. Observer check 161 asks
+    the original. ([factions §4](spec-notes/factions.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 

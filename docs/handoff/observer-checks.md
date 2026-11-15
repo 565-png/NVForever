@@ -2196,3 +2196,13 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      anything explode on a second pass (the bottle-cap mine 0x0008424C, the frag mines
      0x00084257 and 0x00084258 by the entrance)? Ours since #2420: shown sprung, fires
      once.
+
+## Added 2026-11-15 (Vulpes Inculta in Caesar's tent, #2560)
+
+161. **Does a shared ally faction win over an enemy one?** (P2; #2560, factions.md §4.)
+     FortVulpesInculta 0x00122B9A is in VCaesarsLegionFaction (an Ally of itself) and in
+     ArmorNCRFactionNVEnemy, which VCaesarsLegionFaction names an Enemy [observed: the
+     data]. In Caesar's tent (TheFortCaesarTents) at 21:00, after a load there: do
+     Caesar, Lucius or the Praetorians ever go into combat with Vulpes? `prid 00121FF0`
+     then `getfactionrelation 00122B9A` (2 ally, 1 enemy). Ours since #2560: 2, and they
+     stay calm [hypothesis: the original agrees, as the owner never saw the fight].
