@@ -65,6 +65,13 @@ During Combat, read from the use's own package as `Game::package_def` gives it):
   chest aim point. Any other present reference uses its current position
   (`fnv_ai::goal::place_of_ref`) plus the base OBND centre, or the position itself
   without OBND. This aim placement is provisional [hypothesis: observer check 212].
+  [hypothesis, #2652; spec note section 6] A non-actor placed target in a sibling
+  exterior worldspace with the same nonempty immediate parent uses these coordinates
+  in the shooter's worldspace. Different or absent parents and interiors do not
+  qualify; actor targeting stays unchanged. [design: `fnv_ai::goal::weapon_target_place`]
+  Use Weapon facing (standing and rooted), resident use-owned combat aim, object
+  aiming and combat handover use this rule. General GetDistance and place_of_ref
+  retain their existing space handling.
   Shots at a marker count even without a collision; finite script uses end when spent,
   and Repeat Fire continues while its package holds.
 - **Always Hit**: a cone of 0 (straight at the aim point; cover between can still stop it).
@@ -201,7 +208,22 @@ melee fighters (docs/design/combat-ai.md §14.4, §15; `npc_combat`):
   OnHit local; it does not exercise physical collision.
 - [design, #2652] Smoke `use-weapon-silo-mainframe` prepares quest 50/launch codes and
   ED-E, then activates the mainframe and chooses button 1, expecting the actual zap,
-  harmless hit and stage 55. Area `lonesome-road` skips game launches when the optional
-  master is absent or excluded by `--plugins` (`tools/smoke/smoke/runner.py`). Smoke
+  harmless hit and stage 55. [design: smoke scenario] It requires LonesomeRoad.esm;
+  the main session removed automatic DLC gating in cca71f907. Smoke
   `use-weapon-gi-blues-shelter` runs the King's effect and expects the barker's Repeat
   Fire at the shelter and nonzero shots; it does not check Pacer's cover pose.
+- [design, #2652] Shooter tests `sibling_worldspace_static_gets_shots_at_its_bounds_centre`
+  and `unrelated_worldspace_static_does_not_get_shots` cover shared, different and
+  absent WRLD parents. `fnv-ai/tests/carry.rs` tests sibling-object facing for
+  standing/rooted users, actor/interior rejection, and EvaluatePackage selecting
+  and starting a use after authored conditions change (runtime package type 33).
+- [design: `residents::process_levels`, `residents::drawn`, `world::stream`]
+  High process requires a loaded cell in the current worldspace; the default radius
+  is two cells (`main.rs`), each 4096 units (`fnv_world::CELL_SIZE`). The supplied
+  w4 player coordinates (-3961,4646) fall in (-1,1), and the barker's (-6848,6512)
+  in (-2,1), within that radius. Smoke anchors MoveTo on Pacer's FreesideNorthWorld
+  cower marker rather than the other world's shelter, preserving those player
+  coordinates. [design: `Game::evaluate_package`, `Ai::step_actor_inner`, `Ai::begin`]
+  EvaluatePackage selects immediately; high-process AI starts the new use on its
+  next step. Actors outside high process wait for their scheduled low-process step
+  (`fnv-ai/src/process.rs`, `carry.rs::step`); no processing-distance rule changes.

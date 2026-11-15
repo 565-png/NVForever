@@ -281,7 +281,7 @@ pub(crate) fn shoot(
             }
             // Nothing to fire at, or not there yet: the test `npc_combat::fight` keeps its
             // attacks off by ([`acts_on`]).
-            let object_at = (!places.contains_key(&w.target.0)).then(|| target_place(g, w.target)).flatten();
+            let object_at = (!places.contains_key(&w.target.0)).then(|| target_place(g, me, w.target)).flatten();
             let target_at = places.get(&w.target.0).copied().or(object_at.map(|(feet, _)| (feet, feet)));
             if !acts_on(&w, target_at.is_some()) {
                 continue;

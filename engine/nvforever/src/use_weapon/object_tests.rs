@@ -22,6 +22,10 @@ const SCRIPT: u32 = 0x805;
 const CELL: u32 = 0x806;
 
 fn fixture(kind: &[u8; 4], bounds: Option<[i16; 6]>) -> bevy::prelude::World {
+    fixture_in_worlds(kind, bounds, None)
+}
+
+fn fixture_in_worlds(kind: &[u8; 4], bounds: Option<[i16; 6]>, parents: Option<[Option<u32>; 2]>) -> bevy::prelude::World {
     let placed = |sig, id, base, pos: [f32; 3]| record(sig, 0, id, &[
         sub(b"NAME", u32s(&[base])),
         sub(b"DATA", [pos.into_iter().flat_map(f32::to_le_bytes).collect::<Vec<_>>(), vec![0; 12]].concat()),
@@ -38,11 +42,21 @@ fn fixture(kind: &[u8; 4], bounds: Option<[i16; 6]>) -> bevy::prelude::World {
     let parameter = [le16(1), vec![b'r'], le16(1)].concat();
     let bump = set(var(b's', 1), ex(&[var(b's', 1), a("1"), a("+")]));
     let code = unit(0, &script(&[(event::ON_HIT, Some(parameter), bump)]), &[(1, "hits", 1)], &[SHOOTER.0]);
-    let refs = [placed(b"ACHR", SHOOTER.0, 0x807, [0.0; 3]), placed(b"REFR", TARGET.0, BASE, [0.0, 500.0, 0.0])].concat();
-    let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &refs));
-    let cells = group([0; 4], 2, &group([0; 4], 3, &[record(b"CELL", 0, CELL, &[]), children].concat()));
+    let shooter = placed(b"ACHR", SHOOTER.0, 0x807, [0.0; 3]);
+    let target = placed(b"REFR", TARGET.0, BASE, [0.0, 500.0, 0.0]);
+    let cell = |id: u32, refs: &[u8]| [record(b"CELL", 0, id, &[]), group(id.to_le_bytes(), 6, &group(id.to_le_bytes(), 9, refs))].concat();
+    let cells = if let Some(parents) = parents {
+        let worlds: Vec<u8> = parents.into_iter().enumerate().flat_map(|(i, parent)| {
+            let id = 0x810 + i as u32;
+            let subs = parent.map(|p| sub(b"WNAM", u32s(&[p]))).into_iter().collect::<Vec<_>>();
+            [record(b"WRLD", 0, id, &subs), group(id.to_le_bytes(), 1, &cell(CELL + i as u32 * 0x10, if i == 0 { &shooter } else { &target }))].concat()
+        }).collect();
+        top(b"WRLD", &[record(b"WRLD", 0, 0x820, &[]), record(b"WRLD", 0, 0x821, &[]), worlds].concat())
+    } else {
+        top(b"CELL", &group([0; 4], 2, &group([0; 4], 3, &cell(CELL, &[shooter, target].concat()))))
+    };
     let raw = [tes4(), top(b"NPC_", &record(b"NPC_", 0, 0x807, &[sub(b"EDID", z("AuthoredShooter"))])),
-        top(kind, &record(kind, 0, BASE, &base)), top(b"SCPT", &record(b"SCPT", 0, SCRIPT, &code)), top(b"CELL", &cells)].concat();
+        top(kind, &record(kind, 0, BASE, &base)), top(b"SCPT", &record(b"SCPT", 0, SCRIPT, &code)), cells].concat();
     let plugins = Box::leak(Box::new(vec![fnv_esm::Plugin::parse(&raw, "Authored.esm".into()).unwrap()]));
     let script = ScriptState::over_plugins(plugins);
     let g = &script.rt.as_ref().unwrap().game;
@@ -141,6 +155,34 @@ fn static_target_gets_shots_and_repeat_fire_keeps_going() {
     assert!(!use_.done);
 }
 
+/// [hypothesis, #2652] Sibling worldspaces share coordinates for non-actor targets;
+/// [design] authored WNAM records exercise the parent index and real shooter together.
+#[test]
+fn sibling_worldspace_static_gets_shots_at_its_bounds_centre() {
+    let mut world = fixture_in_worlds(b"STAT", Some([-40, -10, -2, 40, 10, 202]), Some([Some(0x820); 2]));
+    start(&mut world, true);
+    let shots = fire(&mut world);
+    assert!(shots.len() > 3);
+    for shot in shots {
+        assert!(shot.harmless);
+        assert_eq!(shot.cone, 0.0);
+        let hit = vec::add(shot.origin, vec::scale(shot.aim, (500.0 - shot.origin[1]) / shot.aim[1]));
+        assert!((hit[2] - 100.0).abs() < 0.001, "sibling's OBND centre: {hit:?}");
+    }
+}
+
+/// [design, #2652] Neither a different parent nor two absent parents allow projection.
+#[test]
+fn unrelated_worldspace_static_does_not_get_shots() {
+    for parents in [[Some(0x820), Some(0x821)], [None, None], [Some(0x820), None]] {
+        let mut world = fixture_in_worlds(b"STAT", Some([0, 0, 0, 0, 0, 200]), Some(parents));
+        start(&mut world, true);
+        assert!(fire(&mut world).is_empty(), "parents: {parents:?}");
+        assert_eq!(world.resource::<Shooters>().stats.from_packages, 0);
+        assert_eq!(world.resource::<ScriptState>().rt.as_ref().unwrap().game.weapon_use(SHOOTER).unwrap().fired, 0);
+    }
+}
+
 #[test]
 fn drawn_actor_keeps_its_posed_chest_aim_instead_of_object_bounds() {
     let mut world = fixture(b"ACTI", Some([0, 0, 0, 0, 0, 200]));
@@ -165,13 +207,13 @@ fn fallback_tracks_moved_references_and_rejects_dead_disabled_or_missing_targets
     let mut world = fixture(b"ACTI", Some([10, -20, 0, 30, 20, 100]));
     let mut script = world.resource_mut::<ScriptState>();
     let g = &mut script.rt.as_mut().unwrap().game;
-    assert_eq!(target_place(g, TARGET), Some(([0.0, 500.0, 0.0], [20.0, 500.0, 50.0])));
+    assert_eq!(target_place(g, SHOOTER, TARGET), Some(([0.0, 500.0, 0.0], [20.0, 500.0, 50.0])));
     g.world.get(TARGET).unwrap().pos = [100.0, 200.0, 300.0];
-    assert_eq!(target_place(g, TARGET), Some(([100.0, 200.0, 300.0], [120.0, 200.0, 350.0])));
+    assert_eq!(target_place(g, SHOOTER, TARGET), Some(([100.0, 200.0, 300.0], [120.0, 200.0, 350.0])));
     g.extra.entry(TARGET).or_default().dead = true;
-    assert!(target_place(g, TARGET).is_none());
+    assert!(target_place(g, SHOOTER, TARGET).is_none());
     g.extra.entry(TARGET).or_default().dead = false;
     g.world.set_enabled(TARGET, false).unwrap();
-    assert!(target_place(g, TARGET).is_none());
-    assert!(target_place(g, FormId(0xFFFF)).is_none());
+    assert!(target_place(g, SHOOTER, TARGET).is_none());
+    assert!(target_place(g, SHOOTER, FormId(0xFFFF)).is_none());
 }

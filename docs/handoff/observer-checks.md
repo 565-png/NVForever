@@ -2700,4 +2700,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
      holds, including during combat? [hypothesis] NVForever aims at placed position
      plus OBND centre (marker: position alone), counts misses toward finite uses, and
      dispatches harmless object hits with the shooter. Check that placement on an
-     asymmetric or rotated object as well. Pacer's cover pose is outside this check.
+     asymmetric or rotated object as well. [documented: #2652 w4 supplied world refs]
+     The barkers and Pacer stand in FreesideNorthWorld, while the shelter belongs
+     to FreesideWorld; both have parent WastelandNV and share coordinates.
+     [hypothesis, #2652] NVForever treats a non-actor placed Use Weapon / UseWeapon
+     target in a sibling worldspace (same nonempty immediate parent) as coordinates
+     in the shooter's worldspace, with its OBND centre added. Capture whether the
+     barkers turn and shoot at this shelter from the fight markers, and compare an
+     unrelated-worldspace object and a sibling-worldspace actor target (neither
+     receives this projection). Pacer's cover pose is outside this check.

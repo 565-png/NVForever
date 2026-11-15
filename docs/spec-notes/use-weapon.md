@@ -115,3 +115,21 @@ never attack [documented: catalogue notes on SetRestrained].
   itself [hypothesis: aim placement pending observer check 212]. Collision and hit
   dispatch stay on the existing object path; the shot count, rather than collision,
   finishes a finite use. The fight handover uses the same target availability rule.
+- [documented: #2652 w4 brief, supplied fnvtool world list / world refs facts]
+  The barkers' fight markers (0x001293F0 / 0x001293F5) and Pacer's cower marker
+  (0x001293EC) belong to FreesideNorthWorld (0x0012D94D), but the shelter target
+  (0x0011BD4E) belongs to FreesideWorld (0x0010BEEA). Both worldspaces name
+  WastelandNV (0x000DA726) as parent (parent flags 4) and share coordinates:
+  the shelter at (-3961,5246,1033) is near Pacer's marker at (-3863,5234,1049).
+- [observed: main session's c2 run and trace supplied in #2652 w4 brief] The King's
+  INFO end script runs, sets ncrfight to 1, gives the barkers rifles, moves them to
+  their fight markers and calls EvaluatePackage, but the smoke records zero shots.
+  [design: `fnv-ai/src/carry.rs::weapon_step`] Exact-space filtering prevents the
+  barkers turning toward that sibling-worldspace target.
+- [hypothesis, #2652; observer check 212] A Use Weapon / UseWeapon non-actor placed
+  target in another worldspace with the same nonempty immediate parent is aimed at
+  by its coordinates plus OBND centre, as if in the shooter's worldspace. Different
+  parents, absent parents, and interiors do not qualify. Actor targets keep their
+  existing behavior. [design: `fnv-ai/src/goal.rs::weapon_target_place`]
+  Facing, resident use-owned combat aim, object aim and fight handover share this
+  rule; ordinary reference positions, distances and combat targets do not change.

@@ -1536,7 +1536,7 @@ pub(crate) fn fight(
             // A weapon use being carried out fires instead (`use_weapon`), while the
             // shooter acts on it (`weapon_use_holds_fight`).
             let landing = g.weapon_use(me).is_some_and(|w| shooters.as_deref().is_some_and(|s| s.landing(id, w.seq)));
-            let target_available = g.weapon_use(me).is_some_and(|w| places.contains_key(&w.target.0) || crate::use_weapon::target_place(g, w.target).is_some());
+            let target_available = g.weapon_use(me).is_some_and(|w| places.contains_key(&w.target.0) || crate::use_weapon::target_place(g, me, w.target).is_some());
             match use_hold(g.weapon_use(me), g.active_weapon_use(me), g.awareness.state(me), target_available, landing) {
                 // The hand-over goes back and forth as the use's target comes and goes
                 // among the available targets: its fight is kept as it is meanwhile.

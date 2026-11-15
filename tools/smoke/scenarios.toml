@@ -29989,10 +29989,10 @@ expect = [
 [[scenario]]
 name = "use-weapon-gi-blues-shelter"
 source = "[design, #2652, #2715 shooter half] The King's INFO 0x0012931B effect starts the staged NCR fight; VFSNCRBarker01REF's Repeat Fire package targets VFSPacerBusShelterREF (STAT 0x0011BD4E), as supplied in #2652's last comment."
-note = "[design] The aid runs the King's effect and moves the player near the shelter to load the scene. The package chooses the static target and keeps firing; Pacer's cover pose belongs to separate work."
+note = "[design, #2652 w4] MoveTo uses Pacer's cower marker 0x001293EC in FreesideNorthWorld, retaining player coordinates (-3961,4646,1133). The barker at grid (-2,1) is within the default two-cell loaded radius of player grid (-1,1). The King's effect starts the package; expectations are unchanged. Pacer's cover pose belongs to separate work."
 areas = ["combat", "use-weapon", "quests"]
 paths = ["engine/nvforever/src/use_weapon.rs", "engine/nvforever/src/use_weapon/**", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "3:moveto:player:VFSPacerBusShelterREF:0:-600:100,5:start:VMS19,8:info:0x0012931B:VFSTheKingREF" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "3:moveto:player:0x001293EC:-98:-588:84,5:start:VMS19,8:info:0x0012931B:VFSTheKingREF" }
 args = ["--world", "FreesideNorthWorld", "--play", "--hour", "12", "--no-voice", "--npc-packages", "all"]
 run_seconds = 70
 expect = [
