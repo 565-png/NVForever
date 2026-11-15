@@ -81,7 +81,7 @@ const STEP_MIN: f32 = 16.0;
 /// is placed 8 units from his), and a sidestep there played the walk clips (with a
 /// crippled leg, the limping ones) and then the climb onto the cross in sight of the
 /// player [observed: issue #2471's log, smoke anders-cross-head-limit]. Found on it
-/// instead [design; whether the original shows the climb is observer check 170].
+/// instead [design; whether the original shows the climb is observer check 171].
 /// One walked to a cross from further away still climbs on.
 pub fn found_on_cross(marker_id: u8, d: f32) -> bool {
     marker_id == fnv_ai::furniture::CRUCIFIX_MARKER && d < STEP_MIN

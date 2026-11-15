@@ -64,5 +64,5 @@ is NVForever's own. The freeing of Anders (#2472) is `anders-cross.md`.
   (`furniture::found_on_cross`) [design]. One walked to a cross from further still
   climbs on.
 - Whether a crucified actor turns his head to the player at all, and whether the
-  original shows the climb onto the cross, are not known: observer check 170, owner
+  original shows the climb onto the cross, are not known: observer check 171, owner
   review item 83.

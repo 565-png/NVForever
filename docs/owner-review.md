@@ -130,6 +130,12 @@ the spec it links to.
 
 ## Tier 2: movement and controls feel
 
+- **Darting movement clips (#2352).** [design, #2352] `ROOT_EXCURSION_RATIO = 1.5`
+  selects moves whose sampled root excursion exceeds 1.5 times net travel; their
+  drawn x/y stays at the track's start. A different ratio changes which moves lose
+  their in-cycle sway. Actor movement is unchanged; original dart behavior awaits
+  observer check 169. ([actors §8.2](spec-notes/actors.md#82-root-motion))
+
 13. **Grab.** Z held, or E held for 0.4 s, picks up an object or a corpse. It drops when
     lagging 90 units and is thrown at up to 600 units/s. Nothing over 100 kg can be
     picked up, and you can only walk while holding over 25 kg. All guessed.
@@ -226,6 +232,13 @@ the spec it links to.
   kept in saves). Bigger reach, a slower front, fires that leave the ground scorched for a
   game day, or trees and shrubs that burn too are each a figure or a follow-up away.
   [grass-fire](design/grass-fire.md)
+
+- **Rigid headgear frame detection (#2529).** [design, #2529] Choose bone-local axes
+  when a rigid head part's combined authored bounds straddle skeleton Z=0 and their
+  centre aligns at least 0.9 with bone-local up (`BONE_LOCAL_HEAD_ALIGNMENT`);
+  otherwise retain the skeleton-axis rule. This fixes Oliver's supplied +X cap layout
+  without naming a model. Keep this conservative geometry rule, or require explicit
+  model-frame metadata for ambiguous mod meshes? ([actors §1.2](spec-notes/actors.md#12-meshes))
 
 - **NPC conversations go on past a Goodbye line that links on (#2451).** [hypothesis,
   #2451] The editor's documentation says a Goodbye line ends a conversation between
@@ -581,7 +594,7 @@ the spec it links to.
     to sidestep 8 units on a limping clip and climb onto the cross in front of you; an
     actor standing at its cross is now put on it at once. Say if the crucified should
     not turn their heads to you at all, or if you have seen the climb in the original.
-    Observer check 170 asks the original. ([anders-cross-head](spec-notes/anders-cross-head.md))
+    Observer check 171 asks the original. ([anders-cross-head](spec-notes/anders-cross-head.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 
