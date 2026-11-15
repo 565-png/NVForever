@@ -175,6 +175,7 @@ mod perf_overlay;
 mod occlusion;
 mod rooms;
 mod terrain;
+mod terrain_wireframe;
 mod texture_swap;
 mod effect_particles;
 mod effect_shaders;
@@ -649,6 +650,10 @@ struct Args {
     /// Draw the navmesh near the camera and the travellers' paths.
     #[arg(long)]
     show_navmesh: bool,
+    /// Draw the loaded landscape's triangle edges over it (terrain_wireframe.rs; the
+    /// settings page's Debug row Terrain wireframe).
+    #[arg(long)]
+    terrain_wireframe: bool,
     /// With --play: draw the developer markers of shots: a cross at each impact and a
     /// line from the muzzle along each hitscan shot (settings page: Developer).
     #[arg(long)]
@@ -1550,6 +1555,9 @@ fn main() -> AppExit {
     .insert_resource(fly::AutoFly(args.auto_fly))
     .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen).with_origin(lod_origin))
     .insert_resource(TerrainSettings { tile: args.terrain_tile })
+    // The terrain wireframe (#2149), off unless asked for: it builds nothing while off.
+    .add_plugins(terrain_wireframe::TerrainWireframePlugin { on: args.terrain_wireframe })
+    .insert_resource(terrain_wireframe::WireSource::of_records(world.lo, world.schema, world.index))
     .init_resource::<TerrainCache>()
     .init_resource::<imposters::Imposters>()
     .insert_resource(Streamer {

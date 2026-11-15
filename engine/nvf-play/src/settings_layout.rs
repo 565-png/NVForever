@@ -122,7 +122,7 @@ pub const SECTIONS: &[Section] = &[
     ),
     section("Graphics", Some("Distance"), &["distant-lod", "grass", "object-distance", "actor-distance", "item-distance", "shadow-distance", "grass-distance"]),
     section("Graphics", Some("World"), &["head-tracking", "foot-ik", "sky-clock"]),
-    section("Debug", None, &["overlay", "hit-markers", "god-mode", "navmesh", "scope-3d"]),
+    section("Debug", None, &["overlay", "hit-markers", "god-mode", "navmesh", "terrain-wireframe", "scope-3d"]),
 ];
 
 /// The Controls tab's rows that are shown only while the input device is a controller
@@ -309,9 +309,9 @@ mod tests {
     /// quality and enhanced rows, #2014's counter rows, the two VATS rows and #2198's Upscaler
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
-    /// field of view row, the menu scale row, the Physics rate row and #2149's Smooth terrain row), by the group it
+    /// field of view row, the menu scale row, the Physics rate row, #2149's Smooth terrain row and its Debug row Terrain wireframe), by the group it
     /// registers with.
-    const KNOWN: [(&str, &str); 113] = [
+    const KNOWN: [(&str, &str); 114] = [
         ("detached-camera", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
@@ -423,6 +423,7 @@ mod tests {
         ("hit-markers", "Debug"),
         ("god-mode", "Debug"),
         ("navmesh", "Debug"),
+        ("terrain-wireframe", "Debug"),
         ("send-reports", "Reports"),
         ("reports-delete", "Reports"),
     ];
@@ -455,7 +456,7 @@ mod tests {
         assert_eq!(keys(&list, &l, "Gameplay")[..9], ["[Game]", "difficulty", "hardcore", "kill-camera", "vats-style", "vats-slowdown", "reload-slows", "UsePipBoy", "[Saving]"]);
         assert_eq!(keys(&list, &l, "Audio"), ["volume-master", "volume-music", "volume-footstep", "volume-voice", "volume-effects", "volume-radio", "music", "voice", "reverb", "voice-reverb"]);
         assert_eq!(keys(&list, &l, "Controls"), CONTROLLER_KEYS);
-        assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "scope-3d"]);
+        assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "terrain-wireframe", "scope-3d"]);
         assert!(keys(&list, &l, "Tweaks").is_empty(), "an empty tab is still a tab");
         let at = |k: &str| l.placement_of(list.iter().position(|s| s.key == k).unwrap()).unwrap().path();
         assert_eq!(at("menu-pause"), "Gameplay > Dialogue");

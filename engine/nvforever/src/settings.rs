@@ -396,6 +396,29 @@ pub fn register(app: &mut App) {
             },
         );
     }
+    register_terrain_wireframe(app);
+}
+
+/// The Debug row Terrain wireframe (#2149, `crate::terrain_wireframe`): live, off by
+/// default, beside the navmesh's whether or not there is a navmesh.
+fn register_terrain_wireframe(app: &mut App) {
+    use crate::terrain_wireframe::TerrainWireframe;
+    if !app.world().contains_resource::<TerrainWireframe>() {
+        return;
+    }
+    add_setting(
+        app,
+        Setting {
+            key: crate::terrain_wireframe::KEY,
+            group: GROUP_DEVELOPER,
+            label: "Terrain wireframe",
+            note: crate::terrain_wireframe::NOTE,
+            switches: crate::terrain_wireframe::SWITCHES,
+            get: |w| w.resource::<TerrainWireframe>().on,
+            set: |w, on| w.resource_mut::<TerrainWireframe>().on = on,
+            slider: None,
+        },
+    );
 }
 
 /// The Frame rate counter switch's note.
@@ -2347,5 +2370,50 @@ mod viewmodel_fov_tests {
         // Out of range stays at the ends.
         assert_eq!(viewmodel_fov_part(10.0), 0.0);
         assert_eq!(viewmodel_fov_part(120.0), 1.0);
+    }
+}
+
+#[cfg(test)]
+mod terrain_wireframe_tests {
+    use super::*;
+    use crate::terrain_wireframe::{TerrainWireframe, KEY, NOTE};
+    use nvf_play::settings::Settings;
+
+    fn app(on: bool) -> App {
+        let mut app = App::new();
+        app.insert_resource(TerrainWireframe::new(on));
+        register_terrain_wireframe(&mut app);
+        app
+    }
+
+    /// The Debug row: registered with its own switch and a note within the page's budget;
+    /// off by default, `--terrain-wireframe` on; a click switches the wireframe live and
+    /// the page's Defaults puts it back off. No row without the wireframe.
+    #[test]
+    fn the_row_switches_the_wireframe_live() {
+        let mut app = app(false);
+        let i = row_of(&app, KEY);
+        let s = app.world().resource::<Settings>().list()[i];
+        assert_eq!((s.group, s.label, s.switches), (GROUP_DEVELOPER, "Terrain wireframe", "--terrain-wireframe"));
+        assert_eq!(nvf_play::settings::note_over_budget(NOTE), None);
+        assert!(NOTE.len() < 200);
+        assert!(!(s.get)(app.world()));
+        assert_eq!(nvf_play::settings::flip(app.world_mut(), i), Some(true));
+        assert!(app.world().resource::<TerrainWireframe>().on);
+        nvf_play::settings::restore(app.world_mut(), i, 0.0);
+        assert!(!app.world().resource::<TerrainWireframe>().on);
+        let on = app_on();
+        assert!((on.world().resource::<Settings>().list()[row_of(&on, KEY)].get)(on.world()));
+        let mut none = App::new();
+        register_terrain_wireframe(&mut none);
+        assert!(none.world().get_resource::<Settings>().is_none_or(|s| s.index(KEY).is_none()));
+    }
+
+    fn app_on() -> App {
+        app(true)
+    }
+
+    fn row_of(app: &App, key: &str) -> usize {
+        app.world().resource::<Settings>().index(key).unwrap()
     }
 }
