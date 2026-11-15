@@ -74,6 +74,10 @@ in which the pilot cannot act end the run.
 ## 5. What it has found so far (2026-11-13/14)
 
 - Hardin's power armour training holds the player for good (#2309): found by the watchdog.
+- The Silver Rush intro's customer fights instead of fleeing, and the Van Graffs join him
+  (#2520, fix #2522).
+- Companions die outside Hardcore (#2623): Cass, Veronica and Boone were killed; Veronica's
+  death left the Hidden Valley bunker door locked.
 - Every other stall so far was the pilot's own (no level-up answer, the wrong box button, a
   conversation broken off, a fight not fought). The places players report breaks (Hidden Valley,
   Freeside, the Strip) are where it is being pointed now.
@@ -104,5 +108,16 @@ state carries the false alarms a thin `given` brings (§2).
 - A terminal opened from a message box button is refused in play (East Pump Station, Vault 34):
   being looked into separately.
 - Melee, cover and reach as the NPCs judge them in fights; `hit` steps.
+- From the batch triage of 2026-11-15 (the pilot's own trouble, not filed as bugs):
+  picking a lock within the player's Lockpick skill (The Pitt's mine door); going to,
+  talking to or searching the actor who holds a door's key (Pacer's key at the King's
+  school); waiting for an actor a schedule takes behind a locked door (Francine at the
+  Atomic Wrangler); a chain's made-up `SetPos` off the navmesh (set onto the nearest
+  point within 4,096 units); talking across a counter (the Gun Runners' Vendortron);
+  a goal no door reaches (Lucky 38's top floor, reached by scripted travel); load doors
+  no navmesh lists (Honest Hearts' Northern Passage door, so the walk is sent back by
+  the add-on's exit trigger); waiting out the end of a fight before activating (ED-E's
+  repair box refused "in combat"); the scripted activators near a door taken for its
+  switch (the Atomic Wrangler's slot machines).
 - A known-difference list, so that the opening's modal boxes stop showing as divergences.
 - The static sweep (`fnvtool`, #2365 item 5) is its own work.
