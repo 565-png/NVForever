@@ -995,6 +995,47 @@ expect = [
 ]
 
 [[scenario]]
+name = "movement-inertia-trace-sights-shotgun"
+source = "owner 2026-11-15 (engine/nvforever/src/player_body.rs MotionTrace; twelfth playtest: \"the guns/hands are still micro-shimmering. Especially visible with the Sturdy Caravan Shotgun ... aim down sights\"): a frame-by-frame trace and full-resolution screenshots of the Sturdy Caravan Shotgun held still down its sights, for finding the gun's motion against the view frame to frame (tools/smoke/motion_trace.py reads the trace)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/iron_sights.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-sights-shotgun.csv", NVF_PLAY_TEST_EQUIP = "001735E3", NVF_PLAY_TEST_GIVE = "0015367E:20", NVF_PLAY_TEST_CONTROL = "4:weapon,8:aim", NVF_PLAY_TEST_SHOTS = "14.0:sights_shotgun_a.png,14.05:sights_shotgun_b.png,14.1:sights_shotgun_c.png,14.15:sights_shotgun_d.png,14.2:sights_shotgun_e.png,14.25:sights_shotgun_f.png,14.3:sights_shotgun_g.png,14.35:sights_shotgun_h.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "3840x2160"]
+run_seconds = 18
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the shotgun down its sights is written" },
+  { text = "true iron sights: the sights are on the eye", label = "the shotgun is down its sights" },
+  { re = 'player body summary: weapon sway on', label = "the shotgun down its sights: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-sights-shotgun-still"
+source = "owner 2026-11-15 (twelfth playtest, the shotgun's shimmer down its sights): as movement-inertia-trace-sights-shotgun with Weapon breathing switched off on the settings page first, to tell the breathing's drift from any other motion of the gun"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/settings.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-sights-shotgun-still.csv", NVF_PLAY_TEST_EQUIP = "001735E3", NVF_PLAY_TEST_GIVE = "0015367E:20", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "2:3.5", NVF_PLAY_TEST_SETTINGS = "2.5:weapon-breathing", NVF_PLAY_TEST_CONTROL = "4:weapon,8:aim", NVF_PLAY_TEST_SHOTS = "14.0:sights_still_a.png,14.05:sights_still_b.png,14.1:sights_still_c.png,14.15:sights_still_d.png,14.2:sights_still_e.png,14.25:sights_still_f.png,14.3:sights_still_g.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "3840x2160"]
+run_seconds = 18
+expect = [
+  { text = "settings: weapon-breathing off", label = "Weapon breathing is switched off" },
+  { text = "true iron sights: the sights are on the eye", label = "the shotgun is down its sights" },
+  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-block"
+source = "owner 2026-11-15 (twelfth playtest: \"does blocking using melee weapons have inertia applied also?\"; engine/nvforever/src/player_body.rs MotionTrace): a frame-by-frame trace of a lead pipe raised to block and lowered twice, for checking that the block follows the aim's settling curve and the sway's raise lag"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-block.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:WeapLeadPipe:1,2.5:call:player:EquipItem:WeapLeadPipe", NVF_PLAY_TEST_CONTROL = "4:weapon,8:aim,10:aim,12:aim,14:aim" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 17
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the block is written" },
+  { re = 'player body summary: weapon sway on', label = "the block: the run reached its end" },
+]
+
+[[scenario]]
 name = "movement-inertia-off"
 source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs): with --no-movement-inertia the player starts and stops at once, as the original; since 2026-11-15 the eased crouch is a switch of its own and stays"
 areas = ["player-body"]
