@@ -16380,10 +16380,10 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:setstage 
 args = ["--cell", "NellisHangar2", "--play", "--no-voice", "--no-messages", "--hour", "12", "--npc-packages", "all,NellisLoyalREF"]
 run_seconds = 30
 expect = [
-  { re = 'ai \[.*\] [^:]*Loyal[^:]*: cannot reach the place of NellisLoyalB29SandboxAIPackage', label = "Loyal sets the B-29 hangar package aside: its doors are disabled" },
+  { re = 'ai \[[^]]*\] NellisLoyalREF: cannot reach the place of NellisLoyalB29SandboxAIPackage', label = "Loyal sets the B-29 hangar package aside: its doors are disabled" },
 ]
 forbid = [
-  { re = 'ai \[.*\] [^:]*Loyal[^:]*: .*in NellisHangar1b', label = "Loyal walked or put into the B-29 hangar" },
+  { re = 'ai \[[^]]*\] NellisLoyalREF: .*in NellisHangar1b', label = "Loyal walked or put into the B-29 hangar" },
 ]
 
 [[scenario]]
