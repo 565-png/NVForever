@@ -615,7 +615,8 @@ fn play(
                 // Played also out of hearing, silent: it is heard if the speaker comes
                 // near (or the player does) while it lasts.
                 // Said through a helmet or a speaker: the voice filter (crate::voice_filter).
-                let filtered = crate::voice_filter::speaker_filtered(&sim, s.speaker);
+                // The player's tweak leaves voices unfiltered [design: docs/design/tweaks.md].
+                let filtered = !g.tweaks.no_voice_filter && crate::voice_filter::speaker_filtered(&sim, s.speaker);
                 // Said at a place: into the listener's room, cut at the line's end.
                 let room = sfx.as_ref().and_then(|x| x.room_reverb);
                 let reverb_on = sfx_settings.as_ref().is_some_and(|x| x.reverb);
@@ -706,7 +707,8 @@ impl Plugin for VoicePlugin {
                 key: "voice",
                 group: crate::pause::GROUP_MENUS,
                 label: "Dialogue voice",
-                note: "On: lines are spoken. Off: they are silent from the next line on, and still last as long as their sound. (--no-voice)",
+                note: "On: lines are spoken. Off: they are silent from the next line on, and still last as long as their sound.",
+                switches: "--no-voice",
                 get: |w| w.resource::<VoiceSettings>().play,
                 set: |w, on| w.resource_mut::<VoiceSettings>().play = on,
                 slider: None,

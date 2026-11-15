@@ -417,7 +417,8 @@ fn input(
                 }
             }
             if m.attributes() {
-                // The keyboard's Left and Right and the controller's D-pad (issue #1910).
+                // The keyboard's Left and Right and the controller's D-pad (issue #1910) and
+                // left stick (issue #2313, `pad::menu_stick`).
                 for right in crate::pad::sideways(&typed, &keys) {
                     ops.push((Op::Adjust(None, right), "key"));
                 }
@@ -762,7 +763,7 @@ mod tests {
     #[test]
     fn a_tile_act_names_its_row_by_its_trait() {
         use fnv_game::chargen::TraitSheet;
-        let sheet = TraitSheet { traits: vec![FormId(7), FormId(9)], chosen: Default::default(), max: 2 };
+        let sheet = TraitSheet { traits: vec![FormId(7), FormId(9)], chosen: Default::default(), max: 2, free: None };
         let m = ListMenu { code: menus::TRAITS, sheet: lists::Sheet::Traits { now: sheet.clone(), start: sheet, allowed: vec![true, true] }, selected: 0, scroll: 0, hover: None };
         assert_eq!(tile_ops(&m, TileAct::Hover(FormId(9))), vec![(Op::Select(1), "pointer")]);
         assert_eq!(tile_ops(&m, TileAct::Click(FormId(9))), vec![(Op::Select(1), "pointer"), (Op::Click, "click")]);

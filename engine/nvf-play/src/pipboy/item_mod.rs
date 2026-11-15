@@ -131,9 +131,11 @@ struct ModAct;
 
 /// Only a row not chosen yet (as the repair list's rows, `super::repair`). Not while the
 /// menu drawn from its file has yet to decide (`crate::tiles::item_mod_menu::ItemModTiles::waiting`):
-/// these rows stand for that frame, and a pointer at rest would choose a mod.
-fn on_row_over(over: On<PointerOver>, rows: Query<&ModRow>, menu: Res<PipItemMod>, tiles: Option<Res<crate::tiles::item_mod_menu::ItemModTiles>>, mut out: MessageWriter<ModInput>) {
-    if tiles.is_some_and(|t| t.waiting) {
+/// these rows stand for that frame, and a pointer at rest would choose a mod. Only a pointer
+/// that moved (`super::hover_takes`, #2310): the rows redrawn under a resting pointer as the
+/// keys or the D-pad step leave their choice alone.
+fn on_row_over(over: On<PointerOver>, rows: Query<&ModRow>, menu: Res<PipItemMod>, tiles: Option<Res<crate::tiles::item_mod_menu::ItemModTiles>>, moved: Option<Res<super::PointerMoved>>, mut out: MessageWriter<ModInput>) {
+    if tiles.is_some_and(|t| t.waiting) || !super::hover_takes(moved.as_deref()) {
         return;
     }
     let (Ok(r), Some(s)) = (rows.get(over.entity), menu.0.as_ref()) else { return };
@@ -308,12 +310,15 @@ pub fn keys(
     combat: Option<Res<crate::combat::Combat>>,
     mut sounds: MessageWriter<UiSound>,
     prompt: Res<crate::menu::PromptKeys>,
+    mut script: Option<ResMut<crate::script::ScriptState>>,
+    mut taken: ResMut<super::KeysTaken>,
 ) {
     let keys = keys.snapshot();
     // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
     let _canvas = crate::interface::original_units();
     use KeyCode::*;
-    let mut steps: Vec<ModInput> = aid.read().copied().collect();
+    // [design, #2553] Only physical steps take keys, as in super::repair::keys.
+    let mut steps: Vec<_> = aid.read().copied().map(|s| (s, false)).collect();
     let items = pip.open() && pip.page == Page::Items && active.0.as_ref().is_some_and(|m| m.mode == Mode::Inventory);
     if !items {
         if menu.0.take().is_some() {
@@ -326,16 +331,19 @@ pub fn keys(
     }
     let shift = keys.any_pressed([ShiftLeft, ShiftRight]);
     if keys.just_pressed(KeyX) && !shift && !menu.is_open() {
-        steps.push(ModInput::Open);
+        steps.push((ModInput::Open, true));
     }
     if menu.is_open() {
         for (k, s) in [(&[ArrowUp, KeyW][..], ModInput::Up), (&[ArrowDown, KeyS], ModInput::Down), (&[Enter, NumpadEnter, Space], ModInput::Use), (&[KeyE, Escape], ModInput::Cancel)] {
             if keys.any_just_pressed(k.iter().copied()) {
-                steps.push(s);
+                steps.push((s, true));
             }
         }
     }
-    for step in steps {
+    for (step, physical) in steps {
+        if physical && (menu.is_open() || step == ModInput::Open) {
+            taken.take();
+        }
         if let ModInput::Click(i) = step {
             info!("pipboy mod: clicked row {i}");
         }
@@ -344,6 +352,16 @@ pub fn keys(
             (None, ModInput::Open) => {
                 // Not a weapon with mod slots: X does nothing.
                 let Some(o) = current(&active, &sim, combat.as_deref()) else { continue };
+                // The player's tweak: modding a weapon asks its skill requirement [design: docs/design/tweaks.md].
+                let need = combat.as_deref().and_then(|c| c.forms.weapons.get(&o.item)).and_then(|w| Some((fnv_game::functions::av_by_name(w.skill.as_deref()?)?, w.skill_req)));
+                if let (Some((skill, req)), Some(rt)) = (need, script.as_deref_mut().and_then(|s| s.rt.as_mut()).filter(|rt| rt.game.tweaks.modding_needs_skill)) {
+                    let has = crate::script::with_world(rt, &mut sim, |rt| fnv_game::functions::actor_value_capped(&mut rt.game, FormId::PLAYER_REF, skill));
+                    if has < f64::from(req) {
+                        info!("pipboy mod: {} needs skill {req} to mod (the player has {has:.0}, tweak)", o.name);
+                        sounds.write(UiSound { menu: UiMenu::Inventory, event: UiEvent::Refused });
+                        continue;
+                    }
+                }
                 info!("pipboy mod: open {} (flags {}): {}", o.name, o.extra.mods, o.choices.iter().map(|c| format!("{} (slot {}{})", c.name, c.slot, if c.attached { ", on" } else { "" })).collect::<Vec<_>>().join(", "));
                 menu.0 = Some(Session { offer: o, first: 0, selected: 0 });
             }

@@ -259,6 +259,8 @@ pub enum SimError {
     UnknownRef(FormId),
     #[error("unknown base form {0}")]
     UnknownForm(FormId),
+    #[error("{0} is not a supported temporary scene base")]
+    UnsupportedTemporaryBase(FormId),
     #[error("{0} has no inventory")]
     NoInventory(FormId),
     #[error("{0} is not an inventory item")]
@@ -486,6 +488,14 @@ struct TimeGlobalIds {
     days_passed: Option<FormId>,
 }
 
+/// Session-only descriptor for a directly cloned non-actor scene base. It is not
+/// serialized; the Game layer refuses unsupported snapshots containing its refs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TemporarySceneBase {
+    pub original: FormId,
+    pub model_override: Option<String>,
+}
+
 pub struct World<'a> {
     pub forms: &'a FormStore,
     pub placed: &'a RefTable,
@@ -494,6 +504,7 @@ pub struct World<'a> {
     /// [`SimConfig::player_level`]. Not saved: the game sets it on a load and on each tick.
     roll_level: Option<u16>,
     refs: BTreeMap<FormId, RefState>,
+    temporary_scene_bases: BTreeMap<FormId, TemporarySceneBase>,
     /// Globals set at run time (scripts, the clock); others keep their authored value.
     globals: BTreeMap<FormId, f32>,
     /// The digits of the time globals their f32 cannot hold.
@@ -526,6 +537,9 @@ pub struct World<'a> {
     /// The inventory sources of references created at run time ([`World::give_items_of`]);
     /// saved.
     created_inventory_sources: BTreeMap<FormId, FormId>,
+    /// Items made at run time (TempCloneForm of an item), each with the item it copies:
+    /// a container takes them by their own ID ([`World::add_clone_item`]). Not saved.
+    clone_items: BTreeMap<FormId, FormId>,
     /// Game settings changed at run time (the console's `SetGameSetting`), by lower-case
     /// Editor ID; they replace the record's value for [`World::setting_value`] readers.
     /// Kept for the session, not saved ([`WorldSession`]).
@@ -533,6 +547,13 @@ pub struct World<'a> {
     /// The player may wear power armour (SetPCCanUsePowerArmor; the game layer keeps the
     /// flag and sets it here, [`World::set_power_armor_training`]).
     power_armor_training: bool,
+    /// The player may equip a broken weapon (the player's Equip Broken Items tweak, set by
+    /// the game layer, [`World::set_player_equips_broken`]) [design: docs/design/tweaks.md].
+    player_equips_broken: bool,
+    /// The player's key is not used on a lock: the engine sets it while the player's
+    /// Pick Locks Even With Key tweak and Shift are on (NVForever's tweaks,
+    /// docs/design/tweaks.md); not saved.
+    player_ignores_keys: bool,
     /// Encounter zones entered and their levels (`crate::zones`).
     pub(crate) zone_levels: BTreeMap<FormId, u16>,
     /// SetZoneRespawns: zone → whether it respawns, over its "Never Resets" flag.
@@ -581,6 +602,7 @@ impl<'a> World<'a> {
             cfg,
             roll_level: None,
             refs: BTreeMap::new(),
+            temporary_scene_bases: BTreeMap::new(),
             globals: BTreeMap::new(),
             fine_clock: clock::FineClock::default(),
             time_global_ids: TimeGlobalIds { hour: forms.by_edid(clock::GAME_HOUR), days_passed: forms.by_edid(clock::GAME_DAYS_PASSED) },
@@ -593,8 +615,11 @@ impl<'a> World<'a> {
             weight_rules: BTreeMap::new(),
             inventory_sources: BTreeMap::new(),
             created_inventory_sources: BTreeMap::new(),
+            clone_items: BTreeMap::new(),
             setting_changes: BTreeMap::new(),
             power_armor_training: false,
+            player_equips_broken: false,
+            player_ignores_keys: false,
             zone_levels: BTreeMap::new(),
             zone_respawns: BTreeMap::new(),
             ref_levels: BTreeMap::new(),
@@ -641,6 +666,16 @@ impl<'a> World<'a> {
     /// Power Armor Training perk runs, observed].
     pub fn set_power_armor_training(&mut self, on: bool) {
         self.power_armor_training = on;
+    }
+
+    /// Whether the player may equip a broken weapon (else [`SimError::Broken`]).
+    pub fn set_player_equips_broken(&mut self, on: bool) {
+        self.player_equips_broken = on;
+    }
+
+    /// Whether the player's carried key is left unused on a lock ([`World::activate`]).
+    pub fn set_player_ignores_keys(&mut self, on: bool) {
+        self.player_ignores_keys = on;
     }
 
     pub fn power_armor_training(&self) -> bool {
@@ -985,7 +1020,23 @@ impl<'a> World<'a> {
         s.inventory.as_mut().ok_or(SimError::NoInventory(id))
     }
 
+    /// `clone`, made at run time from `item`, is an item a container takes by its own ID
+    /// [documented: TempCloneForm; observed: MCM marks the mods it listed by adding them
+    /// to a container, MCM Extender's menus by temporary clones of Caps001, MCM's script
+    /// source and MCM Extender's OnPauseMenuOpen.gek]. False when `item` is no item.
+    pub fn add_clone_item(&mut self, clone: FormId, item: FormId) -> bool {
+        let item = self.clone_items.get(&item).copied().unwrap_or(item);
+        let ok = self.forms.item(item).is_some();
+        if ok {
+            self.clone_items.insert(clone, item);
+        }
+        ok
+    }
+
     fn check_item(&self, item: FormId) -> Result<(), SimError> {
+        if self.clone_items.contains_key(&item) {
+            return Ok(());
+        }
         match self.forms.item(item) {
             Some(_) => Ok(()),
             None if self.forms.sig(item).is_some() => Err(SimError::NotAnItem(item)),
@@ -1432,7 +1483,7 @@ impl<'a> World<'a> {
         if inv.free_count(item) == 0 {
             return Err(SimError::NotCarried { actor, item });
         }
-        if it.kind == ItemKind::Weapon && !inv.has_sound_at(item, at) && !inv.is_equipped(item) {
+        if it.kind == ItemKind::Weapon && !inv.has_sound_at(item, at) && !inv.is_equipped(item) && !(actor == FormId::PLAYER_REF && self.player_equips_broken) {
             return Err(SimError::Broken(item));
         }
         if it.power_armor && actor == FormId::PLAYER_REF && !self.power_armor_training && !inv.is_equipped(item) {
@@ -1976,6 +2027,31 @@ impl<'a> World<'a> {
         Ok(id)
     }
 
+    /// Admit a known original's direct temporary alias without losing its identity.
+    /// Inventory/actor/clone chains and changed descriptors are outside this preview.
+    pub fn place_temporary_scene_base(&mut self, alias: FormId, descriptor: TemporarySceneBase, cell: Option<FormId>, pos: [f32; 3], rot: [f32; 3], count: i32) -> Result<FormId, SimError> {
+        // Inert model admission only. Doors, furniture, activators and actors need
+        // additional interaction/script contracts beyond a selected model path.
+        let supported = self.forms.sig(descriptor.original).is_some_and(|sig| matches!(&sig, b"STAT" | b"MSTT" | b"PROJ"));
+        if !supported || self.forms.sig(alias).is_some() || self.temporary_scene_bases.get(&alias).is_some_and(|old| old != &descriptor) {
+            return Err(SimError::UnsupportedTemporaryBase(alias));
+        }
+        let reference = self.place(descriptor.original, cell, pos, rot, count)?;
+        self.refs.get_mut(&reference).expect("place inserted this reference").base = alias;
+        self.temporary_scene_bases.insert(alias, descriptor);
+        Ok(reference)
+    }
+
+    pub fn temporary_scene_base(&self, base: FormId) -> Option<&TemporarySceneBase> {
+        self.temporary_scene_bases.get(&base)
+    }
+
+    /// The preview freezes both a placed alias and the original it inherits from.
+    /// Descriptors remain for the session, including deleted-reference tombstones.
+    pub fn has_placed_temporary_base(&self, form: FormId) -> bool {
+        self.temporary_scene_bases.contains_key(&form) || self.temporary_scene_bases.values().any(|d| d.original == form)
+    }
+
     /// The inventory of a reference, for callers that change extra data in place
     /// (Layer 5 functions such as ModWeaponHealthPerc).
     pub fn inventory_mut(&mut self, id: FormId) -> Result<&mut Inventory, SimError> {
@@ -2142,7 +2218,8 @@ impl<'a> World<'a> {
         let mut unlocked_with = None;
         if matches!(base.data, BaseData::Door(_) | BaseData::Container(_)) {
             if let Some(l) = t.lock.filter(|l| l.locked) {
-                match l.key.filter(|&k| self.inventory(actor).is_ok_and(|inv| inv.count(k) > 0)) {
+                let skip_key = actor == FormId::PLAYER_REF && self.player_ignores_keys;
+                match l.key.filter(|&k| !skip_key && self.inventory(actor).is_ok_and(|inv| inv.count(k) > 0)) {
                     Some(k) => {
                         self.unlock(target)?;
                         unlocked_with = Some(k);

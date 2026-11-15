@@ -230,6 +230,14 @@ every PACK and IDLM subrecord of the six masters decodes with nothing left over
 - A script package (`AddScriptPackage`) takes precedence over all other packages until
   it is done; an actor has one at a time; without Must Complete / Must Reach Location it
   is removed at the next evaluation; it is saved with the game.
+- The same package added again while it is still the actor's current one and its goal
+  was met (no choice has dropped it yet) begins afresh: the goal is forgotten and the AI
+  takes it up anew, as after ResetAI; added while it still runs, nothing changes
+  [hypothesis: the GECK wiki's "until it is done" read per call; observer check 183].
+  The Lucky 38 elevator Victor needs it: his OnActivate adds his Dialogue package on
+  every talk and waits for the conversation before showing the floor box, and a second
+  talk soon after Stay Here otherwise opened none, for good [observed:
+  Lucky38VictorElevatorScript, SCPT 0x0015725D in FalloutNV.esm; issue #2424].
 - `EvaluatePackage` drops even a Must Complete / Must Reach Location package and chooses
   again.
 - Flags that shape choosing: **Must Complete** (does not end until its conditions are met:
@@ -341,10 +349,36 @@ location, in cell (radius ignored), near reference; the radius is editable.
     the activate distance.
   - **Do Not Control Target Movement** off: with a trigger location the target "will
     walk towards that location when the dialogue package starts", without one it "will
-    stand still and wait for the actor to reach the activation distance". **No
+    stand still and wait for the actor to reach the activation distance". NVForever
+    walks the player for case 2 (a wait location of radius 0) with the flag off and
+    the player as the target: once the player is within the activate distance and in
+    the actor's sight but outside the trigger location (a box or a radius), the player
+    walks, at walking pace and with the movement keys set aside, to the nearest point
+    48 units inside the box (or within three quarters of the radius), and the
+    conversation opens there (`fnv_ai` `lead_player`, `Game::player_lead`, nvf-play
+    `dialogue_lead_walks`) [hypothesis: when the walk starts, its pace and where it
+    ends; observer check 186]. A walk that gets no nearer its point (8 units) for 1.5 s,
+    something solid in the way, ends and the actor talks where the player stands
+    (`fnv_ai::carry::LEAD_STUCK_SECONDS`) [our choice: the player is never held walking
+    into a wall]. A trigger location that is a cell, or a reference with
+    neither radius nor box, keeps the plain case 2. Scripts count on it: Paladin Ramos's "Follow me" (INFO
+    000A3CE0, HVRamosEntryDialogPackage, activate distance 300) disables the controls
+    and leaves the escort to the OnTrigger block of HVRamosTargetDialogTrigger, which
+    moves Ramos and the player to HiddenValley02 and gives the controls back only
+    while the player is inside the box; the box ends 218 units from Ramos's wait
+    marker, so a player greeted at 296 units stood outside it for good (issue #2453)
+    [observed: the scripts, `fnvtool script decompile --form 15E57A`]. **No
     HeadTracking**: speaker and target "will not be forced to look at each other by the
     package". FOV: the dialogue menu's zoom when the target is the player. Topic: the
     first topic of a conversation between two NPCs, or the Say To line.
+  - **A target other than the player** (an actor, or a talking activator, which speaks
+    for its talking actor): the actor goes up to it as to the player and starts a
+    conversation between actors (`Game::start_actor_conversation`, dialogue.md §5.1);
+    the package lasts while the two talk (issue #2451: Veronica's
+    FollowersVeronicaForceGreetIntercom, target HVIntercomREF). Only the player is
+    measured for a clear line. Before, such packages were parked "not carried out"; the
+    masters' others are the Strip's VStripSS1* street scenes and
+    CaptainParkerArrestKeith [observed: `fnvtool ai show`].
   - Must Complete: the package "will not reevaluate until actor has engaged in
     dialogue with the target".
   - **A wait location that is furniture**: the actor sits on it and talks from its
@@ -1224,3 +1258,101 @@ PLAYERLAYMINE 56; the other PLAYER… topics have none.
   actor exactly at the walk's end or somewhere part-way / within the package's radius;
   whether a short fast travel inside the loaded area moves anybody (ours: nobody,
   [design]); whether the hours a fast travel passes matter beyond choosing the package.
+
+## 9. A script moving the clock (issue #2353)
+
+- **The case** [documented: `fnvtool script decompile`, FalloutNV.esm]: Doc Mitchell's last
+  line (INFO 0x001057E7) ends by showing the Hardcore box (activating 0x0011F293, whose
+  script shows the message and reads the button in GameMode), giving the controls back and
+  starting the quest VGenericTimer (0x00168A86) with a 0.1 s timer counted with
+  GetSecondsPassed; at its end VGenericTimerSCRIPT sets VCG01 to stage 200, whose script
+  does `set GameHour to 8`. A player who answers the box and goes straight out of the door
+  arrives in Goodsprings before that stage runs, so the residents are placed on arrival
+  (§8) for the chargen clock's early morning (Easy Pete in his bed: EasyPeteSleepPackage,
+  00:00-08:00, in GSHouseInterior03 [documented: `fnvtool ai day`, `ai show`]), and then
+  the clock jumps to 08:00. A write to GameHour only stores the value
+  (`fnv_sim::World::set_global`); before #2353 nobody chose again until its periodic turn
+  (§3, up to 10 s on) and then walked from its night place [hypothesis from the code:
+  the issue's chain, not seen in a run; players reported Easy Pete out of place].
+- **What the original does**: not known. The GECK wiki's "How Are Packages Evaluated"
+  lists the periodic choice, EvaluatePackage, ResetAI and the end of a wait, and says
+  nothing about a script setting GameHour [documented: GECK wiki]. Observer check 132.
+- **What is built** [design, #2353]: a script's write to GameHour (`set GameHour to`, the
+  console's `set`, JIP's SetGameHour) that moves the clock face by more than
+  `fnv_game::ai::SCRIPT_HOUR_JUMP` (1 game hour; 23:00 to 01:00 is 2) is noted for the
+  engine (`Game::set_global_by_script`, `Game::take_hour_jump`; several writes before the
+  engine looks are one jump, from the first hour to the last). The engine handles it like
+  the end of a wait: every actor the periodic choice covers chooses its package now
+  (`Game::choose_packages_now`), and every resident the player cannot see (in the cell
+  buffer or an interior behind a door of the loaded cells, not in a drawn cell) is put
+  where its new package's walk ends, on its furniture, by §8's rule (`fnv_ai::Ai::hour_jumped`,
+  engine `residents.rs` `Core::after_hour_jump`). Residents in view are not moved: they set
+  off for their new packages in sight; a walk that would start in view is not skipped
+  either. Those left alone by §8 (dead, in combat, just moved by a script, …) are left
+  alone here too.
+- **Not changed**: a package's schedule duration ends by GameDaysPassed
+  (`Game::end_timed_packages`), which a GameHour write does not move, and a held package
+  (Must Complete, Must Reach Location until its goal) stays through the new choice. So the
+  Goodsprings night stalkers of #2279 are not obviously fixed by this.
+
+## 10. A Find package for the player: Cachino in Gomorrah (issue #2473)
+
+- **The data** [observed: `fnvtool ai show --actor VMS21CachinoREF`, `script decompile`,
+  `dialogue lines`, `world refs --cell Gomorrah01`, FalloutNV.esm]:
+  - Cachino (`VMS21CachinoREF` 0x0011118D, base `VMS21Cachino` 0x0010C6F5) is placed
+    initially disabled in Gomorrah01 ("Gomorrah Main Level") at (7159, 1281, 6400).
+  - The lines where the player asks Gomorrah's people about him enable him: the end
+    scripts of INFO 0x001750C7 / 0x001750A9 (topics `vDialogueGomorrahGenericTopic003` /
+    `005`, the player's two prompts asking where Cachino is), 0x001750CD (`Topic007`), 0x001750B4, 0x0016318A, 0x0016318B, 0x0011663F
+    (`Topic006`) and the receptionist's 0x001537FF all run `0x0011118D.enable` (and
+    `setobjectivedisplayed 0x00136166 27 0`; 0x001750C7 also sets VMS21's
+    `icachinoquestions` to 1, 0x001537FF sets VMS21's objectives 1 done, 10 shown). Two of
+    those lines tell the player that Cachino will come to them: 0x001750CD (he will be sent
+    to the player, who should wait at Brimstone, the bar of the main level) and 0x001750B4
+    (he will find the player).
+    No quest stage is set and no script calls StartConversation, EvaluatePackage or
+    AddScriptPackage on him at that point.
+  - His package list, in order: `VMS21CachinoNeroSit`, `VMS21CachinoSalSit`,
+    `VMS21CachinoDialoguePackage2` (a Dialogue package of the boss-room scene, VMS21
+    variables 5 >= 2 and 28 == 0), `VMS21CachinoBossRoomTravelWait`, then
+    **`vGomorrahCachinoDialoguePackage`** (PACK 0x00119485), then
+    `DefaultSandboxLinkedMarker256NoSleepNoWander`. The first four read quest variables
+    of the later scenes; the fifth is the one for this moment.
+  - `vGomorrahCachinoDialoguePackage` is a **Find** package (type 0, not Dialogue), no
+    flags, schedule any time, location "near editor location" radius 0, target the
+    specific reference PlayerRef with count / distance 0, no begin / end / change topic
+    or script. Conditions: `GetTalkedToPC == 0` (subject) AND (target `GetInCell
+    Gomorrah00 == 1` OR `Gomorrah01` OR `Gomorrah02` OR `Gomorrah03`): valid while he has
+    not talked to the player and the player is in any of the four Gomorrah cells.
+  - His GREETING lines (quest `vDialogueGomorrah`) start, for VMS21 before stage 10 and
+    objective 31 not shown, with the Say Once INFO 0x001133A0 (about the player asking
+    questions about him), then 0x001164B1 (for meeting the player again).
+- **What follows from it** [hypothesis]: nothing but the package can bring him to the
+  player, and nothing but a conversation ends it (GetTalkedToPC turns 1 only once he has
+  talked to the player). So the original's Find, for a living actor named as its target,
+  goes to that actor where it is, and on reaching the player it talks: the documented
+  "Find: Idles play when 'activating' the target of the find" (Category:Packages) reads
+  as the actor activating its target, and an actor activated is talked to. The owner saw
+  it in the original: he walks up soon after the player asks and asks why they are
+  asking about the family [owner statement 2026-11-14, issue #2473]. The masters'
+  `DefaultFindPlayerPackage` (0x00140D3E) has the same shape (near editor location,
+  radius 0, PlayerRef), named for finding the player wherever they are.
+- **Before #2473** [observed in ours, smoke `cachino-find-greet` on main]: a radius 0
+  search area was 512 units around the location (§3.1, our choice), for a named
+  reference too; the player asking at the bar or the floor, farther than 512 from his
+  spot, was not in the area, so he found nothing and stood still ("finds nothing more"),
+  looking again every 10 s. Reaching the player only stood him there.
+- **What is built** [design, #2473]: a Find whose target is one reference and whose
+  location has no radius (0) has no search area: it goes after that reference wherever it
+  is (another cell too, over the navmeshes and through doors). A location with a radius
+  keeps its area (`VMS18HeadWaiterGetFood` 128 around the pie, `NellisFindJanet` 128).
+  A Find that reaches **the player**, without Allow Killing and not in combat, starts a
+  conversation as a force greet (`Game::force_greet`, its GREETING; a clear line to the
+  player as for Dialogue packages, `Game::greet_sight`, and held while a menu or a
+  loading screen is up). With nothing to say the package is over as before. Of the 14
+  Find packages of FalloutNV.esm with a specific reference target, five name the player:
+  this one, `DefaultFindPlayerPackage`, `BMTabithaPissedFindPackage` (Weapon Drawn; no
+  actor lists it and no script adds it) and Fallout 3's `FFEU02/05GreetPlayer`, named
+  for the greeting.
+- **Open**: how near the original's actor comes before it talks, how long it takes to set
+  off, and whether a Weapon Drawn Find to the player talks too (observer check 176).

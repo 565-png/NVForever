@@ -456,6 +456,35 @@ fn semi_automatic_cycle_and_reload() {
 }
 
 #[test]
+fn the_tweaks_keep_a_semi_auto_pull_and_reload_in_recovery() {
+    // docs/design/tweaks.md: bSemiAutoQueue and bReloadWhileFiring.
+    let t = CombatTuning::default();
+    let w = WeaponStats { clip_size: 20, ..gun(20) };
+    let timing = Timing::of(&w, &ClipTiming::default(), &t);
+    // Pulls every 0.45 s at a 0.5 s interval: plain, each second pull lands early and
+    // is lost; with a 0.1 s queue it is kept.
+    let pulls = |k: usize| k.is_multiple_of(9);
+    let mut plain = Cycle::new(&w, timing, false, 20);
+    let mut queued = Cycle::new(&w, timing, false, 20);
+    queued.semi_auto_queue = 0.1;
+    let a = shots(&run(&mut plain, &t, 60, 0.05, pulls, 0));
+    let b = shots(&run(&mut queued, &t, 60, 0.05, pulls, 0));
+    assert!(b > a, "plain {a}, queued {b}");
+    // A reload asked for while the shot recovers starts at once.
+    let mut c = Cycle::new(&w, timing, false, 5);
+    c.reload_in_recovery = true;
+    let mut ev = c.step(&t, Input { trigger: true, reload: false, dt: 0.05, carried: 10 });
+    for _ in 0..10 {
+        if ev.iter().any(|e| matches!(e, Event::Fired { .. })) {
+            break;
+        }
+        ev.extend(c.step(&t, Input { trigger: false, reload: false, dt: 0.01, carried: 10 }));
+    }
+    ev.extend(c.step(&t, Input { trigger: false, reload: true, dt: 0.01, carried: 10 }));
+    assert!(ev.contains(&Event::ReloadStarted), "{ev:?}");
+}
+
+#[test]
 fn every_fourth_shot_is_free_with_a_regenerate_ammo_shots_mod() {
     // weapon-data-fields.md §5: shots 4 and 8 of eight use no ammunition.
     let t = CombatTuning::default();
@@ -792,6 +821,70 @@ fn a_free_shot_leaves_from_an_emptied_magazine() {
     assert_eq!(rounds, vec![1, 0], "shots 3 and 4: {ev:?}");
 }
 
+/// Per-Bullet Looping Reloads: a round a press, presses while it loads queue more, up
+/// to the most.
+#[test]
+fn per_bullet_reloads_load_what_the_presses_queued() {
+    let t = CombatTuning::default();
+    let w = WeaponStats { clip_size: 6, ..gun(26) };
+    let clips = ClipTiming { reload_len: Some(1.767), reload_hit: Some(0.633), reload_open_len: Some(1.067), ..Default::default() };
+    let timing = Timing::of(&w, &clips, &t);
+    let dt = 0.01;
+    let run = |presses: &[usize], most: u32| {
+        let mut c = Cycle::new(&w, timing, false, 0);
+        c.reload_presses = Some((1, most));
+        let ev: Vec<Event> = (0..800).flat_map(|k| c.step(&t, Input { trigger: false, reload: presses.contains(&k), dt, carried: 20 })).collect();
+        (c.magazine, ev)
+    };
+    // One press: one round, then it closes.
+    let (mag, ev) = run(&[0], 0);
+    assert_eq!(mag, 1);
+    assert!(ev.contains(&Event::Reloaded { taken: 1 }));
+    // Two more presses while it opens and loads: three rounds.
+    assert_eq!(run(&[0, 50, 120], 0).0, 3);
+    // At most two queued.
+    assert_eq!(run(&[0, 50, 120, 130], 2).0, 2);
+    // Off: the whole magazine.
+    let mut c = Cycle::new(&w, timing, false, 0);
+    for k in 0..800 {
+        c.step(&t, Input { trigger: false, reload: k == 0, dt, carried: 20 });
+    }
+    assert_eq!(c.magazine, 6);
+}
+
+/// Reload While Firing with Per-Bullet Looping Reloads (docs/design/tweaks.md): a press
+/// while the shot recovers starts a one-round reload, counted once, and a pull in the
+/// same tick does not stop it.
+#[test]
+fn a_reload_in_recovery_takes_its_press_once(){
+    let t = CombatTuning::default();
+    let w = WeaponStats { clip_size: 6, ..gun(26) };
+    let clips = ClipTiming { reload_len: Some(1.767), reload_hit: Some(0.633), reload_open_len: Some(1.067), ..Default::default() };
+    let timing = Timing::of(&w, &clips, &t);
+    let dt = 0.01;
+    for pull in [false, true] {
+        let mut c = Cycle::new(&w, timing, false, 1);
+        c.reload_presses = Some((1, 0));
+        c.reload_in_recovery = true;
+        let mut ev = c.step(&t, Input { trigger: true, reload: false, dt, carried: 20 });
+        for _ in 0..100 {
+            if ev.iter().any(|e| matches!(e, Event::Fired { .. })) {
+                break;
+            }
+            ev.extend(c.step(&t, Input { trigger: false, reload: false, dt, carried: 20 }));
+        }
+        assert!(ev.iter().any(|e| matches!(e, Event::Fired { .. })), "{ev:?}");
+        assert_eq!(c.magazine, 0);
+        // Still recovering: the press (and the pull) come now.
+        let ev = c.step(&t, Input { trigger: pull, reload: true, dt, carried: 20 });
+        assert!(ev.contains(&Event::ReloadStarted), "pull {pull}: {ev:?}");
+        for _ in 0..800 {
+            c.step(&t, Input { trigger: false, reload: false, dt, carried: 20 });
+        }
+        assert_eq!(c.magazine, 1, "pull {pull}");
+    }
+}
+
 /// The .357 revolver's clips (`1hpreloadxstart.kf` 1.067 s; `1hpreloadx.kf` 1.767 s,
 /// `Hit` at 0.633 s): it opens, loads a round per pass up to `Hit`, and closes.
 #[test]
@@ -1004,6 +1097,46 @@ fn a_blast_catches_a_big_creature_by_its_body() {
     assert_eq!(edge.len(), 1);
     assert!(close(edge[0].damage, 25.0), "{edge:?}");
     assert!(blast(&world(true, Some(80.0)), &t, &e, [40.0, 0.0, 0.0], None).is_empty());
+}
+
+/// A living actor and a corpse that has no hit volume (a ragdoll's, #2346): the corpse is
+/// among the bodies only a blast asks for.
+struct Graveyard {
+    living: Toy,
+    corpses: Vec<(ActorId, V3, f32)>,
+}
+
+impl CombatWorld for Graveyard {
+    fn ray(&self, from: V3, to: V3, ignore: &[ActorId]) -> Option<WorldHit> {
+        Toy { actors: self.living.actors.iter().chain(&self.corpses).copied().collect(), fence: false, wall: self.living.wall }.ray(from, to, ignore)
+    }
+
+    fn actors_near(&self, point: V3, radius: f32) -> Vec<(ActorId, V3)> {
+        self.living.actors_near(point, radius)
+    }
+
+    fn blast_targets_near(&self, point: V3, radius: f32) -> Vec<(ActorId, V3)> {
+        let corpses = Toy { actors: self.corpses.clone(), fence: false, wall: None };
+        self.actors_near(point, radius).into_iter().chain(corpses.actors_near(point, radius)).collect()
+    }
+}
+
+/// A blast catches a settled corpse beside a living actor, each once; a wall still shields
+/// the corpse. Only blasts: the corpse is not among `actors_near` (what proximity fuses and
+/// swings ask), so it sets off no mine.
+#[test]
+fn a_blast_catches_a_corpse_without_a_hit_volume() {
+    let t = CombatTuning::default();
+    let e = ExplosionStats { damage: 100.0, radius: 200.0, force: 300.0, ..ExplosionStats::default() };
+    let world = |wall| Graveyard { living: Toy { actors: vec![(7, [0.0, 80.0, 40.0], 20.0)], fence: false, wall }, corpses: vec![(9, [100.0, 0.0, 10.0], 30.0)] };
+    let hits = blast(&world(None), &t, &e, [0.0, 0.0, 5.0], None);
+    let mut caught: Vec<ActorId> = hits.iter().map(|h| h.actor).collect();
+    caught.sort_unstable();
+    assert_eq!(caught, vec![7, 9], "{hits:?}");
+    assert!(hits.iter().all(|h| h.damage > 0.0));
+    assert!(world(None).actors_near([100.0, 0.0, 10.0], 50.0).is_empty(), "no proximity fuse sees the corpse");
+    let shielded = blast(&world(Some(50.0)), &t, &e, [0.0, 0.0, 5.0], None);
+    assert_eq!(shielded.iter().map(|h| h.actor).collect::<Vec<_>>(), vec![7]);
 }
 
 /// A blast on the floor, the centre of an actor's bounds a little below the floor's
@@ -1387,6 +1520,18 @@ fn melee_reach_power_and_block() {
     assert!(close(damage::melee_reach(&r, &knife, 1.0), 0.5 * r.combat_distance));
     // A reach of 0 (the Fists) counts as 1.
     assert!(close(damage::melee_reach(&r, &fists, 1.0), r.combat_distance));
+    // V.A.T.S. (issue #2656): the swing's reach doubled, at most 300 [documented: GECK wiki
+    // "VATS Settings", fVATSMeleeReachMult 2, fVATSMeleeMaxDistance 300].
+    assert!(close(r.vats_melee_reach_mult, 2.0) && close(r.vats_melee_max_distance, 300.0));
+    assert!(close(damage::vats_melee_reach(&r, &knife, 1.0), 107.0));
+    assert!(close(damage::vats_melee_reach(&r, &fists, 1.0), 214.0));
+    let pipe = WeaponStats { anim_type: Some("Melee (2 Hand)".into()), reach: 1.25, ..gun(10) };
+    assert!(close(damage::vats_melee_reach(&r, &pipe, 1.0), 267.5));
+    let long = WeaponStats { reach: 1.5, ..pipe.clone() };
+    assert!(close(damage::vats_melee_reach(&r, &long, 1.0), 300.0), "capped");
+    let mut far = Rules::defaults();
+    (far.vats_melee_reach_mult, far.vats_melee_max_distance) = (6.0, 1000.0);
+    assert!(close(damage::vats_melee_reach(&far, &fists, 1.0), 642.0), "the settings are read");
     // A power attack multiplies the base before armour, by its direction's setting.
     let a = Attacker { strength: 10.0, ..skilled() };
     let power = fnv_combat::melee::PowerDir::Stand.damage(&r);
@@ -1556,4 +1701,14 @@ fn companion_nerve_raises_damage_and_armour() {
     let t = Target { dt: 8.0, dr: 10.0, nerve: 0.25, ..Target::default() };
     let d = hit(&w, 1, &skilled(), &t, &[], HitPart::default(), 0.99);
     assert!(close(d.dt, 10.0) && close(d.dr, 12.5) && close(d.dealt, 10.0 * 0.875), "{d:?}");
+}
+
+#[test]
+fn the_radius_buff_keeps_the_inner_part_whole() {
+    // bExplosionRadiusBuff (docs/design/tweaks.md): full damage to 30% of the radius,
+    // 20% at its edge.
+    let t = CombatTuning { explosion_inner: 0.3, explosion_inner_edge: 0.2, ..CombatTuning::default() };
+    assert_eq!(fnv_combat::damage::explosion_damage(&t, 100.0, 100.0, 20.0), 100.0);
+    assert!((fnv_combat::damage::explosion_damage(&t, 100.0, 100.0, 100.0) - 20.0).abs() < 1e-3);
+    assert!((fnv_combat::damage::explosion_damage(&CombatTuning::default(), 100.0, 100.0, 100.0) - 25.0).abs() < 1e-3);
 }

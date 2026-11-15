@@ -45,6 +45,14 @@ const TALK_PACKAGE: u32 = 0xB00;
 const LINE_SETTLER: u32 = 0x913;
 const LINE_SINK: u32 = 0x914;
 const SINK_SCRIPT: u32 = 0xA03;
+const BUNKER: u32 = 0x604;
+const BUNKER_REF: u32 = 0x605;
+const BUNKER_SCRIPT: u32 = 0xA04;
+const T_INTERCOM: u32 = 0x920;
+const L_ASK: u32 = 0x921;
+const L_REFUSE: u32 = 0x922;
+const L_INSIST: u32 = 0x923;
+const L_OPEN: u32 = 0x924;
 
 const P: FormId = FormId::PLAYER_REF;
 const GET_DEAD: u16 = 46;
@@ -106,6 +114,21 @@ fn info(id: u32, speaker: u32, text: &str, conds: Vec<Subrecord>) -> Vec<u8> {
     info_flagged(id, speaker, 0, text, conds)
 }
 
+/// A Conversation line (INFO type 1, next speaker Target) with DATA flags, its Link To
+/// topics and its conditions.
+fn conversation_line(id: u32, speaker: u32, flags: u8, text: &str, conds: Vec<Subrecord>, choices: &[u32]) -> Vec<u8> {
+    let mut s = vec![sub(b"DATA", vec![1, 0, flags, 0]), sub(b"QSTI", u32b(QUEST))];
+    let trdt = [u32b(0), u32b(50), vec![0; 4], vec![1, 0, 0, 0], u32b(0), vec![0; 4]].concat();
+    s.extend([sub(b"TRDT", trdt), sub(b"NAM1", z(text)), sub(b"NAM2", z("")), sub(b"NAM3", z(""))]);
+    s.extend(conds);
+    s.extend(choices.iter().map(|t| sub(b"TCLT", u32b(*t))));
+    s.extend(unit(0, &[], &[], &[]));
+    s.push(sub(b"NEXT", vec![]));
+    s.extend(unit(0, &[], &[], &[]));
+    s.push(sub(b"ANAM", u32b(speaker)));
+    record(b"INFO", 0, id, &s)
+}
+
 /// A line with DATA flags (the first flags byte: 0x01 Goodbye).
 fn info_flagged(id: u32, speaker: u32, flags: u8, text: &str, conds: Vec<Subrecord>) -> Vec<u8> {
     let mut s = vec![sub(b"DATA", vec![0, 0, flags, 0]), sub(b"QSTI", u32b(QUEST))];
@@ -136,9 +159,11 @@ fn plugin_bytes() -> Vec<u8> {
     let tact = [
         record(b"TACT", 0, INTERCOM, &[sub(b"EDID", z("Intercom")), sub(b"FULL", z("Intercom"))]),
         record(b"TACT", 0, SINK, &[sub(b"EDID", z("SinkAppliance")), sub(b"FULL", z("Appliance")), sub(b"SCRI", u32b(SINK_SCRIPT))]),
+        record(b"TACT", 0, BUNKER, &[sub(b"EDID", z("BunkerIntercom")), sub(b"FULL", z("Intercom")), sub(b"SCRI", u32b(BUNKER_SCRIPT))]),
     ]
     .concat();
-    let quest = record(b"QUST", 0, QUEST, &[sub(b"EDID", z("Q")), sub(b"DATA", [vec![1u8, 50, 0, 0], 0f32.to_le_bytes().to_vec()].concat())]);
+    // Start game enabled, Allow Repeated Conversation Topics (as VDialogueHiddenValley).
+    let quest = record(b"QUST", 0, QUEST, &[sub(b"EDID", z("Q")), sub(b"DATA", [vec![5u8, 50, 0, 0], 0f32.to_le_bytes().to_vec()].concat())]);
     let lines = [
         // Benny's line through an activator.
         info(LINE_BENNY, BENNY, "Hey there, pallie.", vec![ctda(EQ, 1.0, TALKING_THROUGH, 0)]),
@@ -152,7 +177,21 @@ fn plugin_bytes() -> Vec<u8> {
         info(LINE_SINK, SINK, "Hello, master.", vec![ctda(EQ, 1.0, GET_IS_ID, SINK)]),
     ]
     .concat();
+    // Veronica and Ramos at Hidden Valley's intercom (topic HVVeronicaEnter): every line
+    // Goodbye and Say Once, each but the last linking to the topic again; the settler
+    // asks, Benny answers through the intercom.
+    const BYE_ONCE: u8 = 0x01 | 0x04;
+    let through = || vec![ctda(EQ, 1.0, TALKING_THROUGH, 0)];
+    let intercom_lines = [
+        conversation_line(L_ASK, NPC, BYE_ONCE, "Open up.", vec![], &[T_INTERCOM]),
+        conversation_line(L_REFUSE, BENNY, BYE_ONCE, "Password first.", through(), &[T_INTERCOM]),
+        conversation_line(L_INSIST, NPC, BYE_ONCE, "Open up now.", vec![], &[T_INTERCOM]),
+        conversation_line(L_OPEN, BENNY, BYE_ONCE, "Opening.", through(), &[]),
+    ]
+    .concat();
     let dial = [
+        record(b"DIAL", 0, T_INTERCOM, &[sub(b"EDID", z("IntercomExchange")), sub(b"FULL", z("IntercomExchange")), sub(b"PNAM", 50f32.to_le_bytes().to_vec()), sub(b"DATA", vec![1, 0])]),
+        group(T_INTERCOM.to_le_bytes(), 7, &intercom_lines),
         record(b"DIAL", 0, GREETING, &[sub(b"EDID", z("GREETING")), sub(b"FULL", z("GREETING")), sub(b"PNAM", 50f32.to_le_bytes().to_vec()), sub(b"DATA", vec![0, 0])]),
         group(GREETING.to_le_bytes(), 7, &lines),
     ]
@@ -190,6 +229,10 @@ fn plugin_bytes() -> Vec<u8> {
         SINK_SCRIPT,
         &[vec![sub(b"EDID", z("SinkApplianceScript"))], unit(0, &script(&[(0x02, None, set_talk), (0x00, None, talk)]), &[(1, "bTalk", 1)], &[])].concat(),
     );
+    // The Hidden Valley intercom's shape (SCPT 0x000A418A): OnActivate sets its talking
+    // actor (here Chris, reference 1) and activates it.
+    let set_chris = [st(OP_SET_TALKING_ACTOR, &[le16(1), vec![b'r'], le16(1)].concat()), st(0x100D, &le16(0))].concat();
+    let bunker_script = record(b"SCPT", 0, BUNKER_SCRIPT, &[vec![sub(b"EDID", z("BunkerIntercomScript"))], unit(0, &script(&[(0x02, None, set_chris)]), &[], &[CHRIS_REF])].concat());
     // A Dialogue package: talk to the player, no topic (the greeting).
     let pkdd = [0f32.to_le_bytes().to_vec(), u32b(0), u32b(0), vec![0; 4], u32b(0), vec![0; 4]].concat();
     let ptdt = [0i32.to_le_bytes(), 0x14u32.to_le_bytes(), 0i32.to_le_bytes(), 0f32.to_le_bytes()].concat();
@@ -208,14 +251,15 @@ fn plugin_bytes() -> Vec<u8> {
     let trigger = record(b"ACTI", 0, TRIGGER, &[sub(b"EDID", z("IntercomTrigger")), sub(b"SCRI", u32b(TRIGGER_SCRIPT))]);
     let trigger_ref = record(b"REFR", 0, TRIGGER_REF, &[sub(b"EDID", z("IntercomTriggerREF")), sub(b"NAME", u32b(TRIGGER)), sub(b"DATA", vec![0; 24])]);
     let cell = record(b"CELL", 0, CELL, &[sub(b"EDID", z("TestCell"))]);
+    let bunker_ref = record(b"REFR", 0, BUNKER_REF, &[sub(b"EDID", z("BunkerIntercomREF")), sub(b"NAME", u32b(BUNKER)), sub(b"DATA", vec![0; 24])]);
     let sink_ref = record(b"REFR", 0, SINK_REF, &[sub(b"EDID", z("SinkApplianceREF")), sub(b"NAME", u32b(SINK)), sub(b"DATA", vec![0; 24])]);
-    let refs = [achr(VICTIM_REF, NPC), achr(SLEEPER_REF, NPC), achr(BENNY_REF, BENNY), achr(CHRIS_REF, CHRIS), refr, trigger_ref, sink_ref].concat();
+    let refs = [achr(VICTIM_REF, NPC), achr(SLEEPER_REF, NPC), achr(BENNY_REF, BENNY), achr(CHRIS_REF, CHRIS), refr, trigger_ref, sink_ref, bunker_ref].concat();
     let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &refs));
     [
         tes4(),
         top(b"PERK", &perks),
         top(b"NPC_", &npcs),
-        top(b"SCPT", &[trigger_script, sink_script].concat()),
+        top(b"SCPT", &[trigger_script, sink_script, bunker_script].concat()),
         top(b"PACK", &pack),
         top(b"ACTI", &trigger),
         top(b"TACT", &tact),
@@ -384,6 +428,66 @@ fn talking_activators_speak_for_their_actor() {
     assert_eq!(call(&mut g, benny, OP_TALKING_THROUGH, &[]), 0.0);
     // Face to face Benny has no line (his only one needs the activator).
     assert!(g.start_dialogue(benny, None).is_err());
+}
+
+/// A talking activator no SetTalkingActivatorActor has reached speaks for the one actor
+/// its scripts name (`Game::scripted_talking_actor`, issue #2454): the Hidden Valley
+/// intercom, made to start a conversation by a door's script on a route that never used
+/// it, speaks for Ramos as its OnActivate would have set.
+#[test]
+fn a_talking_activator_with_no_actor_set_speaks_for_the_actor_its_script_names() {
+    let f = fixture();
+    let mut g = game(&f);
+    let bunker = FormId(BUNKER_REF);
+    let chris = FormId(CHRIS_REF);
+    assert_eq!(g.scripted_talking_actor(bunker), Some(chris));
+    // The plain intercom's scripts name nobody for it.
+    assert_eq!(g.scripted_talking_actor(FormId(INTERCOM_REF)), None);
+    assert_eq!(g.talker(bunker), (chris, Some(bunker)));
+    assert_eq!(g.force_greet(bunker, None).unwrap(), FormId(LINE_CHRIS_BYE));
+    let c = g.dialogue.clone().unwrap();
+    assert_eq!((c.actor, c.through), (chris, Some(bunker)));
+    g.end_dialogue();
+    // An actor set by script wins.
+    call(&mut g, bunker, OP_SET_TALKING_ACTOR, &[ArgValue::Value(Value::Ref(BENNY_REF))]);
+    assert_eq!(g.talker(bunker), (FormId(BENNY_REF), Some(bunker)));
+    // Cleared by script: the activator's own voice, not the scripted actor again.
+    call(&mut g, bunker, OP_SET_TALKING_ACTOR, &[]);
+    assert_eq!(g.talker(bunker), (bunker, Some(bunker)));
+    no_errors(&g);
+}
+
+/// An actor's conversation with a talking activator: the activator says its talking
+/// actor's lines (chosen with IsActorTalkingThroughActivator 1), and Goodbye lines that
+/// link on go on (Veronica and Ramos at Hidden Valley's intercom, issue #2451).
+#[test]
+fn an_actor_talks_with_a_talking_activator_through_goodbye_lines_that_link_on() {
+    let f = fixture();
+    let mut g = game(&f);
+    let intercom = FormId(INTERCOM_REF);
+    call(&mut g, intercom, OP_SET_TALKING_ACTOR, &[ArgValue::Value(Value::Ref(BENNY_REF))]);
+    let from = g.events.len();
+    assert_eq!(g.start_actor_conversation(FormId(VICTIM_REF), intercom, Some(FormId(T_INTERCOM))).unwrap(), FormId(L_ASK));
+    for _ in 0..4000 {
+        g.tick();
+        if !g.in_actor_conversation(FormId(VICTIM_REF)) {
+            break;
+        }
+    }
+    let said: Vec<(FormId, Option<FormId>, FormId)> = g.events[from..]
+        .iter()
+        .filter_map(|e| match e.kind {
+            EventKind::LineStarted { speaker, target, info, .. } => Some((speaker, target, info)),
+            _ => None,
+        })
+        .collect();
+    let (npc, benny) = (FormId(VICTIM_REF), FormId(BENNY_REF));
+    assert_eq!(
+        said,
+        vec![(npc, Some(intercom), FormId(L_ASK)), (benny, Some(npc), FormId(L_REFUSE)), (npc, Some(intercom), FormId(L_INSIST)), (benny, Some(npc), FormId(L_OPEN))],
+    );
+    assert!(g.events[from..].iter().any(|e| matches!(e.kind, EventKind::ActorConversationEnded { reason: "goodbye", lines: 4, .. })), "{:?}", &g.events[from..]);
+    no_errors(&g);
 }
 
 /// A Goodbye greeting through a talking activator opens a conversation, which the line

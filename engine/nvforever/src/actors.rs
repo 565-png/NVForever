@@ -90,6 +90,9 @@ pub struct ActorWorld {
     /// The face morphs scripts gave a reference (MatchFaceGeometry; `fnv_game::
     /// appearance`, told by `appearance.rs`): applied to its face as it is drawn.
     pub faces: Mutex<HashMap<u32, Vec<FaceMorph>>>,
+    /// NPC bases whose look comes from another base for the session (ShowOff's
+    /// BaseCopyFaceGenFrom, `fnv_game::Game::face_from_base`, told by `appearance.rs`).
+    pub face_bases: Mutex<HashMap<u32, u32>>,
     /// The level each placed actor reads its leveled lists at in the game
     /// (`fnv_game::Game::leveled_at`, told by `zones.rs`); absent: the display level 1
     /// (docs/spec-notes/encounter-zones.md §5).
@@ -140,6 +143,7 @@ impl ActorWorld {
             rolls: Mutex::new(HashMap::new()),
             changes: Mutex::new(HashMap::new()),
             faces: Mutex::new(HashMap::new()),
+            face_bases: Mutex::new(HashMap::new()),
             levels: Mutex::new(HashMap::new()),
         }
     }
@@ -176,7 +180,24 @@ impl ActorWorld {
     /// creator) in place of the record's.
     pub fn resolve_as(&self, base: u32, reference: u32, wearing: Option<&[FormId]>, look: Option<&fnv_actor::Look>) -> Result<Appearance, String> {
         let change = self.change(reference);
-        let mut app = Resolver { actors: &self.actors, forms: &self.forms }.resolve_changed_at(FormId(base), self.seed(reference), wearing, look, change, self.level(reference)).map_err(|e| e.to_string())?;
+        let resolver = Resolver { actors: &self.actors, forms: &self.forms };
+        let (seed, level) = (self.seed(reference), self.level(reference));
+        let mut app = resolver.resolve_changed_at(FormId(base), seed, wearing, look, change, level).map_err(|e| e.to_string())?;
+        // BaseCopyFaceGenFrom: the source NPC's look (race, sex, face, skin, hair, eyes,
+        // head parts) wearing this actor's own clothes, as this actor [documented:
+        // CopyFaceGenFrom; hypothesis: height and outfit stay the actor's own].
+        let source = self.face_bases.lock().ok().and_then(|m| m.get(&base).copied());
+        if let (Some(src), None) = (source, look) {
+            match resolver.resolve_changed_at(FormId(src), seed, Some(wearing.unwrap_or(&app.worn)), None, change, level) {
+                Ok(mut copy) => {
+                    copy.npc = app.npc;
+                    copy.edid = app.edid.take();
+                    copy.height = app.height;
+                    app = copy;
+                }
+                Err(e) => warn!("appearance: BaseCopyFaceGenFrom source {src:08X} of {base:08X}: {e}"),
+            }
+        }
         let morphs = self.faces.lock().ok().and_then(|f| f.get(&reference).cloned());
         for m in morphs.unwrap_or_default() {
             self.morph_face(&mut app, &m);
@@ -913,8 +934,10 @@ pub(crate) fn arm_weapon(
 ) -> Option<WeaponHold> {
     let w = weapon.and_then(|id| world.actors.weapons.get(&id))?;
     let prefix = w.anim_type.as_deref().and_then(AnimType::from_name)?.prefix();
-    // A modded weapon's own model (weapon-mods.md §3 "In the world").
-    let model = w.model_for(false, weapon_mods)?;
+    // A modded weapon's own model (weapon-mods.md §3 "In the world"); the player's tweak
+    // gives NPCs the first-person (finer) model (docs/design/tweaks.md).
+    let fine = nvf_play::tweaks::HI_RES_NPC_WEAPONS.load(std::sync::atomic::Ordering::Relaxed);
+    let model = w.model_for(fine, weapon_mods)?;
     // A stance without a `Weapon` node is for body weapons only (`Stance::no_weapon_node`).
     let stance = world.anims.stance(ctx, skeleton, skel, prefix).filter(|s| !s.no_weapon_node);
     // With the weapon's alternate textures (texture-swaps.md §4).
@@ -948,7 +971,7 @@ pub(crate) fn arm_weapon(
         let models: Vec<&str> = w.addons.iter().filter_map(|a| world.actors.armors.get(a)).filter_map(|a| a.worn[0].as_deref()).collect();
         info!("actor weapons: {reference:08X} {path}: worn with its hand model(s) {models:?} in place of the bare hand");
     }
-    hold.gun = shapes.gun.into_iter().map(|(e, n)| (e, n, None)).collect();
+    hold.visibility = shapes.visibility;
     hold.back = shapes.back;
     if !shapes.posed.is_empty() {
         info!("actor weapons: {reference:08X} {path}: {} shape(s) under parts the aim or draw clip moves", shapes.posed.len());

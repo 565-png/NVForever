@@ -21,7 +21,8 @@
 //!   A/X to exit]: Left/Right or A/D lower/raise the page's attribute (on the review page
 //!   the chosen row's), Up/Down or W/S choose the row, Tab or Page Down the next page,
 //!   Shift+Tab or Page Up the previous one, Enter or E Done; the → button on the review
-//!   page is Done too. Clicks on the model's buttons, found by their outlines on the
+//!   page is Done too. A controller's D-pad and left stick are the arrow keys
+//!   (`crate::pad::menu_stick`, #2313). Clicks on the model's buttons, found by their outlines on the
 //!   screen.
 //! - Done only with every point given out (`SpecialSheet::complete`); then the sheet is
 //!   written to the player and the menu answered (`chargen::finish`).
@@ -143,6 +144,7 @@ fn open_close(
     mut ctx: SpawnCtx,
     mut camera: Query<(Entity, &mut Projection), With<PlayerCamera>>,
     mut stats: ResMut<VigorStats>,
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
     let code = crate::chargen::open_code(&script);
     if code != Some(menus::LOVE_TESTER) {
@@ -186,10 +188,20 @@ fn open_close(
         ctx.commands.entity(r).insert((VigorPart, Visibility::Hidden, view::model_in_camera(1.0)));
         ctx.commands.entity(cam).add_child(r);
     }
-    let vigor = Vigor::new(sheet);
+    let mut vigor = Vigor::new(sheet);
     // The Attract page: the stored pose, as the end of the turn back to it holds it.
+    // The player's tweak opens on the review page instead, in the end pose of the turn
+    // to it [design: docs/design/tweaks.md].
     let clips = menu.clips.clone().unwrap_or_default();
-    let flip = clips.get(model::ATTRACT_POSE).map(|c| Playing::new(ACTIVATE, c, |n| nodes.get(n).copied()).at_phase(1.0));
+    let mut pose = model::ATTRACT_POSE;
+    if tweaks.is_some_and(|t| t.vigor_review_first) {
+        if let Some(seq) = model::sequence(Page::Stat(6), Page::Review).filter(|s| clips.contains_key(*s)) {
+            vigor.page = Page::Review;
+            pose = seq;
+            info!("vigor tester: opens on the review page (tweak)");
+        }
+    }
+    let flip = clips.get(pose).map(|c| Playing::new(ACTIVATE, c, |n| nodes.get(n).copied()).at_phase(1.0));
     info!(
         "vigor tester: open, S.P.E.C.I.A.L. {}, {} points remaining ({} sequences, {} parts)",
         vigor.values(),
