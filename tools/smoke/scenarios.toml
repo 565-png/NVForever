@@ -29998,12 +29998,12 @@ args = ["--play", "--cell", "16,5", "--world", "WastelandNV", "--npc-packages", 
 run_seconds = 45
 order = [
   [
-    { text = "script: test aid set VHDKimballSpeech.iKimballStage = 2", label = "natural speech state staged" },
+    { text = 'test aid: script Var("VHDKimballSpeech", "iKimballStage", 2.0)', label = "natural speech state staged" },
     { text = "VHDRangerKimballGuard01REF: package VHDKimballGuardSpeechIdlePackage", label = "guard one selects SpeechIdle from its own list" },
     { re = 'VHDRangerKimballGuard01REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "guard one takes its linked stage marker heading" },
   ],
   [
-    { text = "script: test aid set VHDKimballSpeech.iKimballStage = 2", label = "natural speech state staged" },
+    { text = 'test aid: script Var("VHDKimballSpeech", "iKimballStage", 2.0)', label = "natural speech state staged" },
     { text = "VHDRangerKimballGuard02REF: package VHDKimballGuardSpeechIdlePackage", label = "guard two selects SpeechIdle from its own list" },
     { re = 'VHDRangerKimballGuard02REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "guard two takes its linked stage marker heading" },
   ],
