@@ -83,6 +83,14 @@
 //! lattice corners, offsets only) and Hex3 (all three, offsets and rotations, the default),
 //! chosen with the test aid `NVF_PLAY_TEST_TERRAIN_TILING=triangle2|hex3`.
 //!
+//! The landscape's own NIF materials get the same reads ([`TerrainCtx::base_material`],
+//! [`TerrainCtx::layer_material`]: their texture repeat and the switch in
+//! `NifSurface::terrain_repeat` and `anti_tiling`; nvf_assets nif_material.rs "Landscape
+//! anti-tiling"): a quadrant's base without folded layers, the layers past
+//! [`folded_layers`] drawn blended over the folded result, and every layer where the GPU has
+//! no bindless textures. Their order, blending and depth bias are as before, and the same
+//! world lattice lines them up with the folded draw under them.
+//!
 //! Not anti-tiled: the depth prepass and the shadows (same depth either way), the normal
 //! prepass's normals (screen-space passes that read them keep the plain reads), and the
 //! distant LOD terrain's baked textures. Height blending stays within the folded draw.
@@ -338,12 +346,20 @@ fn anti_tiling_wanted(graphics: Option<&crate::graphics::Graphics>) -> bool {
     graphics.is_some_and(|g| g.terrain_anti_tiling)
 }
 
-/// Anti-tiling switched on or off: every folded material flipped in place (the pipeline
-/// follows its key), logged with how many there are and how many changed. New materials
-/// take the setting when they are made ([`TerrainCtx::folded_material`]). A texture repeat
-/// that cannot place the reads (not above 0) keeps the ordinary reads, said when it is
-/// switched on.
-pub fn sync_anti_tiling(graphics: Option<Res<crate::graphics::Graphics>>, settings: Option<Res<TerrainSettings>>, mut folded: ResMut<Assets<TerrainMaterial>>, mut last: Local<Option<bool>>) {
+/// Anti-tiling switched on or off: every folded material and every landscape NIF material
+/// (a texture repeat set, [`terrain_nif_material`]) flipped in place (the pipelines follow
+/// their keys), logged with how many of each there are and how many changed. New materials
+/// take the setting when they are made ([`TerrainCtx::folded_material`],
+/// [`TerrainCtx::base_material`], [`TerrainCtx::layer_material`]). A texture repeat that
+/// cannot place the reads (not above 0) keeps the ordinary reads, said when it is switched
+/// on.
+pub fn sync_anti_tiling(
+    graphics: Option<Res<crate::graphics::Graphics>>,
+    settings: Option<Res<TerrainSettings>>,
+    mut folded: ResMut<Assets<TerrainMaterial>>,
+    mut separate: Option<ResMut<Assets<NifMaterial>>>,
+    mut last: Local<Option<bool>>,
+) {
     let want = anti_tiling_wanted(graphics.as_deref());
     if *last == Some(want) {
         return;
@@ -352,6 +368,17 @@ pub fn sync_anti_tiling(graphics: Option<Res<crate::graphics::Graphics>>, settin
     for id in &stale {
         if let Some(mut m) = folded.get_mut(*id) {
             m.extension.anti_tiling = want;
+        }
+    }
+    let (mut landscape, mut stale_separate) = (0usize, 0usize);
+    if let Some(separate) = separate.as_deref_mut() {
+        let ids: Vec<(AssetId<NifMaterial>, bool)> = separate.iter().filter(|(_, m)| m.extension.terrain_repeat != 0.0).map(|(id, m)| (id, m.extension.anti_tiling != want)).collect();
+        landscape = ids.len();
+        for (id, _) in ids.iter().filter(|(_, stale)| *stale) {
+            if let Some(mut m) = separate.get_mut(*id) {
+                m.extension.anti_tiling = want;
+                stale_separate += 1;
+            }
         }
     }
     if want {
@@ -363,7 +390,7 @@ pub fn sync_anti_tiling(graphics: Option<Res<crate::graphics::Graphics>>, settin
         }
     }
     if last.is_some() || want {
-        info!("terrain: anti-tiling {} ({} folded quadrant materials, {} changed)", if want { "on" } else { "off" }, folded.len(), stale.len());
+        info!("terrain: anti-tiling {} ({} folded quadrant materials, {} changed) and {landscape} separate landscape materials ({stale_separate} changed)", if want { "on" } else { "off" }, folded.len(), stale.len());
     }
     *last = Some(want);
 }
@@ -434,12 +461,19 @@ impl TerrainCtx<'_, '_, '_> {
         surface_material(image, normal)
     }
 
+    /// A landscape NIF material: `base` with the texture repeat and the anti-tiling switch
+    /// (module notes, "Anti-tiling").
+    fn terrain_nif(&self, base: StandardMaterial) -> NifMaterial {
+        terrain_nif_material(base, self.tm.settings.tile, anti_tiling_wanted(self.tm.graphics.as_deref()))
+    }
+
     fn base_material(&mut self, tex: Option<String>) -> Handle<NifMaterial> {
         if let Some(h) = self.tm.cache.base.get(&tex) {
             return h.clone();
         }
         let m = self.surface(tex.as_deref());
-        let h = self.assets.materials.add(nif_material(m));
+        let m = self.terrain_nif(m);
+        let h = self.assets.materials.add(m);
         self.tm.cache.base.insert(tex, h.clone());
         h
     }
@@ -487,7 +521,8 @@ impl TerrainCtx<'_, '_, '_> {
             depth_bias: sort_first(2.0 * (rank as f32 + 1.0)),
             ..surface
         };
-        let h = self.assets.materials.add(nif_material(m));
+        let m = self.terrain_nif(m);
+        let h = self.assets.materials.add(m);
         self.tm.cache.layer.insert((tex, rank), h.clone());
         Some(h)
     }
@@ -508,6 +543,16 @@ fn surface_material(image: Option<Handle<Image>>, normal: Option<Handle<Image>>)
         reflectance: 0.2,
         ..default()
     }
+}
+
+/// A landscape NIF material (a quadrant's base or a layer drawn on its own): `base` with
+/// the texture repeat `repeat` (which marks it as the landscape's for [`sync_anti_tiling`])
+/// and the anti-tiling switch.
+fn terrain_nif_material(base: StandardMaterial, repeat: f32, anti_tiling: bool) -> NifMaterial {
+    let mut m = nif_material(base);
+    m.extension.terrain_repeat = repeat;
+    m.extension.anti_tiling = anti_tiling;
+    m
 }
 
 fn srgb_to_linear(c: u8) -> f32 {
@@ -1378,6 +1423,41 @@ mod tests {
         app.update();
         assert_eq!((get(&app, &a), get(&app, &b)), ((false, true), (false, true)));
         assert!(!anti_tiling_wanted(None));
+    }
+
+    #[test]
+    fn the_switch_reaches_the_landscapes_own_nif_materials_and_no_other() {
+        use crate::graphics::{Graphics, Preset};
+        let mut app = App::new();
+        app.insert_resource(Graphics::preset(Preset::Vanilla));
+        app.insert_resource(TerrainSettings { tile: 300.0 });
+        app.insert_resource(Assets::<TerrainMaterial>::default());
+        app.insert_resource(Assets::<NifMaterial>::default());
+        app.add_systems(Update, sync_anti_tiling);
+        let surface = || surface_material(None, None);
+        let (base, layer, other) = {
+            let mut nif = app.world_mut().resource_mut::<Assets<NifMaterial>>();
+            let base = nif.add(terrain_nif_material(surface(), 300.0, false));
+            let layer = nif.add(terrain_nif_material(StandardMaterial { alpha_mode: AlphaMode::Blend, depth_bias: sort_first(4.0), ..surface() }, 300.0, false));
+            (base, layer, nif.add(nif_material(StandardMaterial::default())))
+        };
+        let on = |app: &App, h: &Handle<NifMaterial>| app.world().resource::<Assets<NifMaterial>>().get(h).unwrap().extension.anti_tiling;
+        app.update();
+        assert!(!on(&app, &base) && !on(&app, &layer) && !on(&app, &other));
+        app.world_mut().resource_mut::<Graphics>().terrain_anti_tiling = true;
+        app.update();
+        assert!(on(&app, &base) && on(&app, &layer), "the landscape's materials flipped in place");
+        assert!(!on(&app, &other), "a shape's material is left alone (no texture repeat)");
+        // The layer keeps its blending and draw order; the key selects the separate path.
+        let nif = app.world().resource::<Assets<NifMaterial>>();
+        let l = nif.get(&layer).unwrap();
+        assert!(matches!(l.base.alpha_mode, AlphaMode::Blend) && l.base.depth_bias == sort_first(4.0));
+        assert!(nvf_assets::nif_material::NifSurfaceKey::from(&l.extension).anti_tiling);
+        assert!(!nvf_assets::nif_material::NifSurfaceKey::from(&nif.get(&other).unwrap().extension).anti_tiling);
+        assert_eq!(terrain_nif_material(surface(), 256.0, true).extension.terrain_repeat, 256.0);
+        app.world_mut().resource_mut::<Graphics>().terrain_anti_tiling = false;
+        app.update();
+        assert!(!on(&app, &base) && !on(&app, &layer));
     }
 
     #[test]

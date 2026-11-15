@@ -545,10 +545,17 @@ Reloaded's LOD noise are prior art only; no code was taken from any of them.
   `surface_material`, checked by a test); a wider material needs this changed too. With
   the switch off, both earlier paths (height blending off and on) are compiled as before:
   their `@if` conditions only gain `!TERRAIN_ANTI_TILING`.
-- **What it reaches.** The folded draw (base and folded layers) in this change. Not
-  anti-tiled: the depth prepass and shadows (the same depth either way), the normal
-  prepass's normals (screen-space passes that read them keep the plain reads), and the
-  distant LOD terrain's baked textures.
+- **What it reaches.** The folded draw (base and folded layers), and the landscape's own
+  NIF materials: a quadrant's base without folded layers, the layers past the fold limit
+  drawn blended over the folded result, and every layer where the GPU has no bindless
+  textures (nif_material.wesl with `TERRAIN_ANTI_TILING` and `TERRAIN_SEPARATE`; the
+  material carries its repeat in `NifSurface::terrain_repeat`). Their blending, draw order
+  and depth bias are unchanged; a blended layer whose coverage is exactly 0 reads nothing.
+  The same world lattice lines a separate layer up with the folded draw under it, but
+  height blending still does not compete across that boundary (§3.12), and a separately
+  lit layer is still lit on its own. Not anti-tiled: the depth prepass and shadows (the
+  same depth either way), the normal prepass's normals (screen-space passes that read them
+  keep the plain reads), and the distant LOD terrain's baked textures.
 - **Cost.** Per read texture, two (Triangle2) or three (Hex3) diffuse reads instead of one,
   the same for each contributing normal map, plus a little arithmetic; skipping brings the
   common case (a base and one or two layers) near today's count. With D diffuse-read
@@ -560,7 +567,8 @@ Reloaded's LOD noise are prior art only; no code was taken from any of them.
   `--graphics-only terrain-anti-tiling`. A pipeline key of the folded material
   (`TerrainLayersKey`); switching flips every folded material in place
   (`terrain::sync_anti_tiling`, logged as `terrain: anti-tiling on|off (<n> folded quadrant
-  materials, <m> changed)`), new materials take the setting, and the first switch compiles
+  materials, <m> changed) and <s> separate landscape materials (<c> changed)`), new
+  materials take the setting, and the first switch compiles
   the new pipeline (the pause menu waits for it). A texture repeat that is not above 0
   keeps the ordinary reads (a warning when it is switched on).
 - **Starting values** (NVForever's own, to be settled from pictures): lattice side 4
@@ -568,8 +576,12 @@ Reloaded's LOD noise are prior art only; no code was taken from any of them.
 - Whether `enhanced` turns it on is the owner's call; until then it is off in both presets
   and is not an effect of the Enhanced effects row. Smoke: `terrain-anti-tiling` (switched
   on, off and on while running), `terrain-anti-tiling-start` (on from the start) and
-  `terrain-anti-tiling-height-blend` (one folded pipeline with both switches); they want
-  `terrain anti-tiling pipeline <n> ready: path=folded height=on|off method=…`
+  `terrain-anti-tiling-height-blend` (one folded pipeline with both switches),
+  `terrain-anti-tiling-separate` (every layer drawn on its own,
+  `NVF_PLAY_TEST_TERRAIN_LAYERS=blended`, switched on and off) and
+  `terrain-anti-tiling-overflow` (`--terrain-tile 300`: four folded layers and the rest
+  drawn on their own); they want
+  `terrain anti-tiling pipeline <n> ready: path=folded|separate height=on|off method=…`
   (`NVF_PLAY_TEST_PIPELINE_LOG`, pipeline_gate.rs). The look and the cost are checked by
   pictures and Tracy.
 

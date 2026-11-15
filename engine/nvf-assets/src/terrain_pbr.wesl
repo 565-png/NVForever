@@ -16,7 +16,7 @@
 import bevy_pbr::{
     render::forward_io::VertexOutput,
     render::pbr_fragment::pbr_input_from_vertex_output,
-    render::pbr_types::{PbrInput, StandardMaterial, STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT, STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_TWO_COMPONENT_NORMAL_MAP, STANDARD_MATERIAL_FLAGS_FLIP_NORMAL_MAP_Y},
+    render::pbr_types::{PbrInput, StandardMaterial, STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT, STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_TWO_COMPONENT_NORMAL_MAP, STANDARD_MATERIAL_FLAGS_FLIP_NORMAL_MAP_Y, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND},
     render::pbr_functions::{winding_corrected_front_facing, calculate_tbn_mikktspace},
     render::pbr_lighting::perceptualRoughnessToRoughness,
     render::mesh_view_bindings::view,
@@ -25,7 +25,7 @@ import bevy_pbr::{
 @if(SCREEN_SPACE_AMBIENT_OCCLUSION) import bevy_pbr::render::mesh_view_bindings::screen_space_ambient_occlusion_texture;
 @if(SCREEN_SPACE_AMBIENT_OCCLUSION) import bevy_pbr::ssao::utils::ssao_multibounce;
 @if(BINDLESS) import bevy_render::bindless::{bindless_textures_2d, bindless_samplers_filtering};
-@if(BINDLESS) import bevy_pbr::render::pbr_bindings::material_indices;
+@if(BINDLESS) import bevy_pbr::render::pbr_bindings::{material_indices, material_array};
 @if(!BINDLESS) import bevy_pbr::render::pbr_bindings;
 import nvf_assets::terrain_sampling::{TerrainFootprint, TerrainTaps, terrain_triangle2, terrain_hex3, terrain_sample_diffuse, terrain_sample_normal, terrain_normal_tap, terrain_unit_normal, terrain_world_normal, terrain_world_uv};
 
@@ -140,6 +140,12 @@ fn terrain_pbr_begin(in: VertexOutput, is_front: bool, standard: StandardMateria
     return p;
 }
 
+// The StandardMaterial of the draw (either binding).
+fn terrain_standard_material(instance_index: u32) -> StandardMaterial {
+    @if(BINDLESS) return material_array[material_indices[terrain_slot(instance_index)].material];
+    @if(!BINDLESS) return pbr_bindings::material;
+}
+
 // Whether the back of a double-sided surface is in view (its tangent-space normals are
 // turned round, as in Bevy's apply_normal_mapping).
 fn terrain_back_face(p: PbrInput, is_front: bool) -> bool {
@@ -165,4 +171,33 @@ fn terrain_pbr_occlusion(p_in: PbrInput, n_pre: vec3<f32>) -> PbrInput {
     p.diffuse_occlusion = diffuse_occlusion;
     p.specular_occlusion = specular_occlusion;
     return p;
+}
+
+// A landscape draw of its own (nif_material.wesl with TERRAIN_SEPARATE: a quadrant's base
+// that has no folded layers, a layer drawn blended over it, every layer where the GPU has
+// no bindless textures): the surface as Bevy's pbr_input_from_standard_material would set
+// it up for the landscape's material, with the diffuse texture and normal map read
+// anti-tiled. Colour: vertex colour (a layer's opacity in its alpha) x material colour x
+// texture. A blended layer whose coverage before any read is exactly 0 adds nothing: it
+// reads nothing. An opaque base keeps its coverage whatever its texture's alpha (the
+// caller's alpha_discard makes it opaque). A blended layer whose texture alpha turns out 0
+// reads no normal map.
+fn terrain_pbr_standard(in: VertexOutput, is_front: bool, fp: TerrainFootprint) -> PbrInput {
+    let standard = terrain_standard_material(in.instance_index);
+    var p = terrain_pbr_begin(in, is_front, standard);
+    let n_pre = p.N;
+    p.N = normalize(p.world_normal);
+    let blended = (standard.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND;
+    if blended && p.material.base_color.a == 0.0 {
+        return terrain_pbr_occlusion(p, n_pre);
+    }
+    let taps = terrain_taps(fp.uv);
+    p.material.base_color = p.material.base_color * terrain_base_diffuse(in.instance_index, standard.flags, taps, fp);
+    @if(VERTEX_TANGENTS && STANDARD_MATERIAL_NORMAL_MAP) {
+        if !blended || p.material.base_color.a != 0.0 {
+            let tbn = calculate_tbn_mikktspace(p.world_normal, in.world_tangent);
+            p.N = terrain_world_normal(tbn, terrain_base_normal(in.instance_index, standard.flags, taps, fp), terrain_back_face(p, is_front));
+        }
+    }
+    return terrain_pbr_occlusion(p, n_pre);
 }
