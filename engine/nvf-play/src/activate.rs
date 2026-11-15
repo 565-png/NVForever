@@ -879,7 +879,7 @@ pub(crate) fn activate(
                 if let Some(s) = screen.as_deref_mut() {
                     s.arriving = true;
                 }
-                travel.write(TravelRequest(Travel { world, interior, feet, heading_deg }));
+                travel.write(TravelRequest(Travel { world, interior, feet, heading_deg, pitch_deg: None }));
             }
             Effect::OpenContainer(container) => {
                 open.write(OpenContainer { container });
