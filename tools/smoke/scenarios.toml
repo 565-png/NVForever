@@ -28799,6 +28799,23 @@ expect = [
 ]
 
 [[scenario]]
+name = "nav-walks-actor-slope"
+kind = "tool"
+source = "[design, #2511] docs/design/navmesh.md section 5: all seven headless routes must arrive with the actor slope limit of 56 degrees (physics.md section 6.9.2)"
+areas = ["nav", "physics"]
+paths = ["crates/fnv-nav/", "crates/fnvtool/src/nav_*.rs", "crates/fnv-phys/", "crates/fnv-collide/", "engine/nvf-play/src/phys.rs"]
+commands = [
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "EasyPeteRef", "--to", "TrudyRef", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "GSChetRef", "--to", "SunnyRef", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "DocMitchellREF", "--to", "GSChetRef", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "SunnyRef", "--to", "DocMitchellREF", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "DocMitchellREF", "--to", "0x0013BB0D", "--keys", "0x00119875", "--speed", "344", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "TrudyRef", "--to=-193,600,3456", "--space", "GSProspectorSaloonInterior", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from=1000,3400,-120", "--space", "RocketLabMid", "--to", "0x000CD684", "--max-slope", "56"],
+]
+expect = [{ json = "summary.outcome", schema = "fnv.nav.walk/1", equals = "arrived", count = 7, label = "all seven walks arrived with the actor slope limit" }]
+
+[[scenario]]
 name = "grass-fire"
 source = "owner request 2026-11-14 (#2567, docs/design/grass-fire.md): fire from a burning weapon spreads across grass, sets the actors in it alight and goes out within a hard limit; the grass blackens and sinks away and grows back when its cell reloads"
 note = "the player (god mode) fires the Flamer (0000432D, fuel 00029371) north at the grass by the Prospector Saloon (nearest tufts about 230 units north) for a second from 26 s (message boxes off: one open stops the trigger), then looks at the fire; Easy Pete is held in place and put 250 units in front, in the fire's path, at 27 s; the fire runs to its end. Frames for the eye: the front spreading, the black grass sinking, the scorched ground left behind"
