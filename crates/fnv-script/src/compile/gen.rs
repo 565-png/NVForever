@@ -481,6 +481,20 @@ impl<'a> Gen<'a> {
     }
 
     fn form(&self, name: &str) -> Option<FormInfo> {
+        // A quoted reference (`"Name".Function`, lex::tokens): the name inside, or a FormID
+        // in hex of any length when the load order has it [observed: Veronica Outfit
+        // Replacer.esp, `"E32A9".GetItemCount` calls on 0x000E32A9, #2275; hypothesis:
+        // the editor reads a quoted name as an Editor ID first].
+        if let Some(inner) = name.strip_prefix('"').and_then(|n| n.strip_suffix('"')) {
+            if let Some(f) = self.form(inner) {
+                return Some(f);
+            }
+            if !(1..=8).contains(&inner.len()) || !inner.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return None;
+            }
+            let g = self.env.local_form(u32::from_str_radix(inner, 16).ok()?)?;
+            return self.env.info(g);
+        }
         let low = name.to_ascii_lowercase();
         if PLAYER_NAMES.contains(&low.as_str()) {
             return Some(FormInfo { form: PLAYER, sig: *b"REFR" });
@@ -508,6 +522,20 @@ impl<'a> Gen<'a> {
             return None;
         }
         self.env.info(self.env.local_form(u32::from_str_radix(name, 16).ok()?)?)
+    }
+
+    /// A FormID of 1 to 8 hex digits, when the load order has that form (the player's
+    /// reference 0x14 included): an extender function's form parameter takes one
+    /// written bare ([`x`]'s xargs).
+    fn hex_form_id(&self, name: &str) -> Option<FormInfo> {
+        if !(1..=8).contains(&name.len()) || !name.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let id = self.env.local_form(u32::from_str_radix(name, 16).ok()?)?;
+        if id == PLAYER {
+            return Some(FormInfo { form: PLAYER, sig: *b"REFR" });
+        }
+        self.env.info(id)
     }
 
     /// The reference list entry for `slot` named as `spelling`. One form named two ways
@@ -799,6 +827,46 @@ impl<'a> Gen<'a> {
 
     // ------------------------------------------------------------------ expressions
 
+    /// A grouped argument belongs to this call, while the surrounding expression keeps
+    /// the vanilla operator stack (vanilla-inline-call-operands.md). Editor compilation
+    /// without the source/extender bridge retains its original byte emission.
+    fn inline_call_operand(&mut self, toks: &[Tok], at: usize, head: Option<&str>, f: &FnInfo) -> Option<(Vec<u8>, usize)> {
+        if !(self.extended || self.unknown_calls) || f.params.is_none()
+            || !toks[at + 1..].iter().any(|t| t.kind == Kind::Open)
+        {
+            return None;
+        }
+        // Keep the vanilla head binding. In particular its lexer already joined a
+        // spaced dot, and Gen::form resolves a quoted EditorID before a hex FormID.
+        let (all, spans) = lex::spanned_tokens(&self.text);
+        let first = all.len().checked_sub(toks.len())?;
+        if all.get(first..)? != toks { return None; }
+        let chars: Vec<char> = self.text.chars().collect();
+        let from = spans[first + at].end;
+        let original: String = chars[from..].iter().collect();
+        let args = lex::xtokens(&original);
+        // A later operand may contain parentheses while this call has none. Probe
+        // with the existing argument parser, then undo all name/diagnostic effects
+        // if its actual consumed range is not a grouped call operand.
+        let saved = (self.refs.clone(), self.claims.clone(), self.vars.clone(), self.ref_vars.clone(), self.lambda_seq, self.diags.len());
+        let operand = (|| {
+            let (e, consumed) = self.inline_bound_call(head, f.opcode, f.params?, &args)?;
+            if consumed == 0 { return None; }
+            let end = (at + 1..=toks.len()).find(|&end| {
+                let to = spans[first + end - 1].end;
+                let prefix: String = chars[from..to].iter().collect();
+                lex::xtokens(&prefix) == args[..consumed]
+            })?;
+            if !toks[at + 1..end].iter().any(|t| t.kind == Kind::Open) { return None; }
+            Some((self.xbytes(&e), end))
+        })();
+        if operand.is_none() {
+            (self.refs, self.claims, self.vars, self.ref_vars, self.lambda_seq) = (saved.0, saved.1, saved.2, saved.3, saved.4);
+            self.diags.truncate(saved.5);
+        }
+        operand
+    }
+
     fn expr(&mut self, toks: &[Tok]) -> Vec<u8> {
         let mut out = Vec::new();
         let mut ops: Vec<&'static str> = Vec::new();
@@ -845,6 +913,12 @@ impl<'a> Gen<'a> {
                 Kind::Punct => self.diag("stray_punctuation", false, t.text.clone()),
                 Kind::Word | Kind::Str => {
                     if let Some((head, f)) = self.function(t) {
+                        if let Some((operand, end)) = self.inline_call_operand(toks, i, head.as_deref(), &f) {
+                            out.extend_from_slice(&operand);
+                            i = end;
+                            prev_operand = true;
+                            continue;
+                        }
                         let mut args = Vec::new();
                         while f.params.is_none_or(|n| args.len() < n)
                             && toks.get(i + 1).is_some_and(|n| !matches!(n.kind, Kind::Op | Kind::Open | Kind::Close))
@@ -1275,7 +1349,17 @@ impl<'a> Gen<'a> {
                 // udf.return_value, ext-bytecode.md].
                 self.emit(None, op::RETURN, &[]);
             }
-            Kw::Set { target, expr } => {
+            Kw::Set { target, expr, on } => {
+                let on = match on {
+                    Some(h) => match self.reference(h) {
+                        Some(r) => Some(r),
+                        None => {
+                            self.diag("unresolved_name", true, h.clone());
+                            return;
+                        }
+                    },
+                    None => None,
+                };
                 let mut body = Vec::new();
                 let tv = if target.len() == 1 { self.atom(&target[0]) } else { None };
                 match tv {
@@ -1289,7 +1373,7 @@ impl<'a> Gen<'a> {
                 let e = self.expr(expr);
                 put16(&mut body, e.len() as u16);
                 body.extend_from_slice(&e);
-                self.emit(None, op::SET, &body);
+                self.emit(on, op::SET, &body);
             }
             Kw::Call(toks) if self.co || self.x_call_line(toks) => {
                 // An inline expression among the arguments, or an extender function: the

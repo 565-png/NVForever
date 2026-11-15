@@ -73,8 +73,10 @@
 //!   [`UNATTENDED_MENU_SECONDS`], so a check that does not answer the boxes is not held by
 //!   them [decision]; other runs to off.
 //! - `nvforever --play --no-messages` ([`NoMessages`]): a message box that asks nothing
-//!   (an OK button only) closes as soon as it is on screen, as OK would; a box with two
-//!   or more buttons stays for the player [decision: the flag never chooses an answer].
+//!   (an OK button only, or none) is answered with OK: one a script shows never opens
+//!   (`fnv_game::GameConfig::answer_ok_boxes`, so game time does not stop for it), one
+//!   the engine shows closes as soon as it is on screen; a box with two or more buttons
+//!   stays for the player [decision: the flag never chooses an answer].
 
 use crate::activate::outcome::{self, Destination, Effect};
 use crate::control::ControlLocks;
@@ -168,8 +170,8 @@ pub const UNATTENDED_MENU_SECONDS: f32 = 0.25;
 /// The game's periodic package choice, seconds [documented: GECK wiki; packages.md §3].
 pub const PACKAGE_INTERVAL: f64 = 10.0;
 
-/// `nvforever --play --no-messages`: message boxes that ask nothing close at once
-/// (inserted before the play plugin).
+/// `nvforever --play --no-messages`: message boxes that ask nothing are answered at once;
+/// scripts' never open (inserted before the play plugin).
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct NoMessages;
 
@@ -375,10 +377,13 @@ impl ScriptState {
             info!("test aid: menus and message boxes that scripts open close themselves after {s} s");
         }
         if no_messages {
-            info!("--no-messages: message boxes without a choice close at once");
+            info!("--no-messages: message boxes without a choice close at once; scripts' never open");
         }
         let trace = std::env::var_os("NVF_PLAY_SCRIPT_TRACE").map(PathBuf::from).and_then(|p| match TraceLog::create(&p) {
-            Ok(t) => Some(t),
+            Ok(t) => {
+                info!("script trace: {} (process {})", t.path.display(), std::process::id());
+                Some(t)
+            },
             Err(e) => {
                 warn!("NVF_PLAY_SCRIPT_TRACE {}: {e}", p.display());
                 None
@@ -1500,17 +1505,157 @@ impl TraceLog {
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }
-        let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
+        let (path, file) = Self::create_owned(path)?;
+        let mut out = std::io::BufWriter::new(file);
         let head = serde_json::json!({"format": "nvforever.play.script_log/1",
+            "processId": std::process::id(),
             "events": "one fnv.script.trace/1 event per line (frame, kind, ...), with t = seconds since scripts started and gt = game time (Game::time); aid, menu_answer and controls lines; a final line at exit"});
         writeln!(out, "{head}")?;
-        Ok(TraceLog { out, path: path.to_path_buf(), lines: 0 })
+        out.flush()?;
+        Ok(TraceLog { out, path, lines: 0 })
+    }
+
+    fn create_owned(requested: &std::path::Path) -> std::io::Result<(PathBuf, std::fs::File)> {
+        for attempt in 0..64 {
+            let path = if attempt == 0 {
+                requested.to_path_buf()
+            } else {
+                let mut name = requested.file_stem().unwrap_or_default().to_os_string();
+                name.push(format!("-{}-{attempt}", std::process::id()));
+                if let Some(ext) = requested.extension() {
+                    name.push(".");
+                    name.push(ext);
+                }
+                requested.with_file_name(name)
+            };
+            // Opening must not truncate: only the handle that acquires the OS lock
+            // owns this destination. Keep that handle locked inside the BufWriter.
+            let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path)?;
+            match file.try_lock() {
+                Ok(()) => {
+                    file.set_len(0)?;
+                    return Ok((path, file));
+                }
+                Err(std::fs::TryLockError::WouldBlock) => continue,
+                Err(std::fs::TryLockError::Error(error)) => return Err(error),
+            }
+        }
+        Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "all process trace filenames within the 64-file safety budget are locked"))
     }
 
     fn write(&mut self, v: &serde_json::Value) {
         if writeln!(self.out, "{v}").is_ok() {
             self.lines += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod trace_ownership_tests {
+    use super::TraceLog;
+    use std::io::Write;
+
+    #[test]
+    fn overlapping_trace_writers_never_truncate_or_share_the_requested_file() {
+        let root = std::env::temp_dir().join(format!("nvf-owned-trace-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let path = root.join("script-trace.jsonl");
+        let mut parent = TraceLog::create(&path).unwrap();
+        parent.write(&serde_json::json!({"kind":"before-load"}));
+        parent.out.flush().unwrap();
+        let mut child = TraceLog::create(&path).unwrap();
+        assert_ne!(parent.path, child.path);
+        child.write(&serde_json::json!({"kind":"successor"}));
+        parent.write(&serde_json::json!({"kind":"parent-exit"}));
+        parent.out.flush().unwrap();
+        child.out.flush().unwrap();
+        let parent_path = parent.path.clone();
+        let child_path = child.path.clone();
+        // Windows file locks also exclude reads through another handle. Inspect the
+        // completed traces after both owning handles have been closed.
+        drop((parent, child));
+        let parent_bytes = std::fs::read_to_string(&parent_path).unwrap();
+        let child_bytes = std::fs::read_to_string(&child_path).unwrap();
+        for bytes in [&parent_bytes, &child_bytes] {
+            assert!(!bytes.contains('\0'));
+            for line in bytes.lines() { serde_json::from_str::<serde_json::Value>(line).unwrap(); }
+        }
+        assert!(parent_bytes.contains("before-load") && parent_bytes.contains("parent-exit"));
+        assert!(!parent_bytes.contains("successor"));
+        assert!(child_bytes.contains("successor") && !child_bytes.contains("parent-exit"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn completed_trace_runs_reuse_and_truncate_the_exact_requested_path() {
+        let root = std::env::temp_dir().join(format!("nvf-sequential-trace-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("script-trace.jsonl");
+        std::fs::write(&path, b"stale prior-run bytes that are not JSON\n").unwrap();
+        for run in ["first-owned-run", "second-owned-run"] {
+            let mut trace = TraceLog::create(&path).unwrap();
+            assert_eq!(trace.path, path);
+            trace.write(&serde_json::json!({"kind":run}));
+            drop(trace);
+            let bytes = std::fs::read_to_string(&path).unwrap();
+            let rows: Vec<serde_json::Value> = bytes.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0]["format"], "nvforever.play.script_log/1");
+            assert_eq!(rows[1]["kind"], run);
+            assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1, "finished runs must not accumulate suffixed files");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn overlapping_trace_processes_hold_locks_until_their_writers_close() {
+        const TEST: &str = "script::trace_ownership_tests::overlapping_trace_processes_hold_locks_until_their_writers_close";
+        const CHILD: &str = "NVF_OWNED_TRACE_TEST_CHILD";
+        if let Some(path) = std::env::var_os(CHILD) {
+            let args: Vec<_> = std::env::args().collect();
+            assert!(args.iter().any(|arg| arg == TEST) && args.iter().any(|arg| arg == "--exact"));
+            let requested = std::path::PathBuf::from(path);
+            let mut trace = TraceLog::create(&requested).unwrap();
+            assert_ne!(trace.path, requested, "the parent process still owns the requested file");
+            trace.write(&serde_json::json!({"kind":"child-only"}));
+            let selected = trace.path.clone();
+            drop(trace);
+            println!("OWNED_TRACE_CHILD_PATH={}", selected.display());
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("nvf-process-trace-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let path = root.join("script-trace.jsonl");
+        let mut parent = TraceLog::create(&path).unwrap();
+        parent.write(&serde_json::json!({"kind":"parent-before-child"}));
+        parent.out.flush().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap()).args([TEST, "--exact", "--nocapture"]).env(CHILD, &path).output().unwrap();
+        assert!(output.status.success(), "child failed: {}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let child_path = stdout.lines().find_map(|line| line.split_once("OWNED_TRACE_CHILD_PATH=").map(|(_, path)| path)).map(std::path::PathBuf::from).expect("child path receipt");
+        assert_eq!(child_path.parent(), Some(root.as_path()));
+        assert_ne!(child_path, path);
+        parent.write(&serde_json::json!({"kind":"parent-after-child"}));
+        drop(parent);
+        let parent_bytes = std::fs::read_to_string(&path).unwrap();
+        let child_bytes = std::fs::read_to_string(&child_path).unwrap();
+        let parent_head: serde_json::Value = serde_json::from_str(parent_bytes.lines().next().unwrap()).unwrap();
+        let child_head: serde_json::Value = serde_json::from_str(child_bytes.lines().next().unwrap()).unwrap();
+        assert_eq!(parent_head["processId"], std::process::id());
+        assert_ne!(child_head["processId"], parent_head["processId"]);
+        for bytes in [&parent_bytes, &child_bytes] {
+            assert!(!bytes.contains('\0'));
+            for line in bytes.lines() { serde_json::from_str::<serde_json::Value>(line).unwrap(); }
+        }
+        assert!(parent_bytes.contains("parent-before-child") && parent_bytes.contains("parent-after-child"));
+        assert!(!parent_bytes.contains("child-only"));
+        assert!(child_bytes.contains("child-only") && !child_bytes.contains("parent-before-child"));
+        // OS close releases ownership without a sidecar lock or explicit unlock.
+        let mut next = TraceLog::create(&path).unwrap();
+        assert_eq!(next.path, path);
+        next.write(&serde_json::json!({"kind":"next-run"}));
+        drop(next);
+        let next_bytes = std::fs::read_to_string(&path).unwrap();
+        assert!(next_bytes.contains("next-run") && !next_bytes.contains("parent-before-child"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
 
@@ -1816,6 +1961,8 @@ pub(crate) fn run_scripts(
             Some(Ok((data, secs))) => {
                 st.loader = None;
                 let mut rt = Runtime::new(data, &mut sim, st.new_game, play.0.packages);
+                // A save loaded later keeps the game's configuration (`Runtime::restore_save`).
+                rt.game.cfg.answer_ok_boxes = st.no_messages;
                 rt.start = st.start.clone();
                 // Before any script runs, so the restart's and the load's questions count.
                 if crate::mod_log::on() {
@@ -2127,11 +2274,14 @@ pub(crate) fn run_scripts(
         // since the last frame before it, again every frame, so a countdown kept in an
         // OnTrigger block ran down while the game stood still (Hidden Valley's virus
         // purge, issue #2455) [hypothesis: OnTrigger is a game-mode block, as GameMode's
-        // are held under menus, scripts.md §7.7].
+        // are held under menus, scripts.md §7.7]. This frame's loading state is set first:
+        // on the first frame after a loading screen the triggers are looked at before the
+        // GameMode blocks run (a trigger waiting for its model holds its script,
+        // `script_trigger::update`, #2571).
+        rt.game.loading = loading;
         if !rt.game.paused() {
             crate::script_trigger::update(rt, &play, &phys, player_capsule);
         }
-        rt.game.loading = loading;
         rt.game.cfg.frame_seconds = dt;
         // Scripts' GetFallTimeElapsed (`fnv_game::nvse_gaps`).
         rt.game.gaps.air_times = phys
@@ -2156,6 +2306,9 @@ pub(crate) fn run_scripts(
     st.walks.extend(walks);
     st.console_out.extend(console_out);
     st.query_job = query_job;
+    for m in rt.game.take_answered_boxes() {
+        info!("--no-messages: answered message box {m} without opening it");
+    }
     let ms = t0.elapsed().as_secs_f64() * 1e3;
     rt.stats.frames += 1;
     rt.stats.total_ms += ms;

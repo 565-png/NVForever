@@ -14,6 +14,9 @@ use fnv_script::FunctionTable;
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde_json::{json, Value as Json};
 
+#[path = "common/inline_call_source_bridge.rs"]
+mod inline_call_source_bridge_tests;
+
 // ---- plugin builders ------------------------------------------------------------
 
 fn sub(sig: &[u8; 4], data: Vec<u8>) -> Subrecord {
@@ -1889,7 +1892,43 @@ fn a_scripts_say_does_not_fall_back_when_the_speakers_own_line_is_spent() {
     let mut g = game(&f);
     g.new_game();
     assert_eq!(g.say_by_script(speaker, Some(FormId::PLAYER_REF), FormId(TOPIC), true), Some(FormId(INFO_B)));
+    // Once the line is over (a repeat while it plays leaves it playing, #2582).
+    g.frames(120);
+    assert!(!g.is_talking(speaker));
     assert_eq!(g.say_by_script(speaker, Some(FormId::PLAYER_REF), FormId(TOPIC), true), None);
+}
+
+#[test]
+fn a_scripts_say_of_the_topic_being_said_leaves_the_line_playing() {
+    // #2582: the Strip gate's kill zone SayTos its topic every frame; the original renews
+    // the talking state without a queue (observer batch o30), and here the line being
+    // said goes on instead of restarting every frame.
+    let f = fixture();
+    let speaker = FormId(NPC_REF);
+    let mut g = game(&f);
+    g.new_game();
+    let started = |g: &Game| g.events.iter().filter(|e| matches!(e.kind, EventKind::LineStarted { .. })).count();
+    assert_eq!(g.say_by_script(speaker, Some(FormId::PLAYER_REF), FormId(TOPIC), true), Some(FormId(INFO_A)));
+    // A SayTo or a Say of the same topic every frame while it plays: the same line.
+    for k in 0..60 {
+        g.frames(1);
+        assert_eq!(g.say_by_script(speaker, Some(FormId::PLAYER_REF), FormId(TOPIC), k % 2 == 0), Some(FormId(INFO_A)));
+    }
+    assert_eq!(started(&g), 1);
+    // Said to its end: its end script ran (GLOBAL 3, as in the SayTo test above), and
+    // the next call says the topic's next line.
+    g.frames(120);
+    assert!(!g.is_talking(speaker));
+    assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 3.0);
+    assert_eq!(g.say_by_script(speaker, Some(FormId::PLAYER_REF), FormId(TOPIC), true), Some(FormId(INFO_B)));
+    assert_eq!(started(&g), 2);
+    // A line started otherwise (here a Say by the engine, `Game::say`) is no different:
+    // a script's repeat of its topic leaves it playing too, while `Game::say` still cuts.
+    let mut h = game(&f);
+    h.new_game();
+    assert_eq!(h.say(speaker, None, FormId(TOPIC), false), Some(FormId(INFO_A)));
+    assert_eq!(h.say_by_script(speaker, None, FormId(TOPIC), false), Some(FormId(INFO_A)));
+    assert_eq!(h.say(speaker, None, FormId(TOPIC), false), Some(FormId(INFO_B)));
 }
 
 #[test]
@@ -3531,6 +3570,60 @@ fn each_queued_box_keeps_its_own_button_count() {
 }
 
 #[test]
+fn answer_ok_boxes_answers_a_scripts_ok_box_without_opening_it() {
+    // `--no-messages` (GameConfig::answer_ok_boxes): the add-on packs' start-up boxes
+    // never open, so game time does not stop for them.
+    use fnv_game::game::menus;
+    let mut f = fixture();
+    f.data.messages.get_mut(&FormId(MESSAGE)).unwrap().buttons = vec!["Ok".into()];
+    let mut g = game(&f);
+    g.cfg.answer_ok_boxes = true;
+    g.new_game();
+    // The activator's ShowMessage (and SetStage Q 10, whose 1 s quest timer then runs).
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    assert_eq!((g.menu, g.boxes.len()), (None, 0), "the box never opened");
+    assert_eq!(g.message_box.as_ref().and_then(|m| m.pressed), Some(0), "answered with OK");
+    assert_eq!(g.take_answered_boxes(), vec![FormId(MESSAGE)]);
+    assert!(g.take_answered_boxes().is_empty(), "taken once");
+    let t0 = g.time;
+    g.frames(120);
+    assert!(g.time > t0, "game time runs on");
+    assert!(g.quest_state(q()).stages_done.contains(&20));
+    // Off (the default): the same box opens and holds the game.
+    let mut g = game(&f);
+    g.new_game();
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    assert_eq!((g.menu, g.boxes.clone()), (Some(menus::MESSAGE), vec![FormId(MESSAGE)]));
+    assert!(g.take_answered_boxes().is_empty());
+}
+
+#[test]
+fn answer_ok_boxes_leaves_a_box_with_a_choice_to_the_player() {
+    use fnv_game::game::menus;
+    use fnv_script::vm::XVal;
+    // The fixture's message asks Yes / No.
+    let f = fixture();
+    let mut g = game(&f);
+    g.cfg.answer_ok_boxes = true;
+    g.new_game();
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    assert_eq!((g.menu, g.boxes.clone()), (Some(menus::MESSAGE), vec![FormId(MESSAGE)]));
+    assert_eq!(g.message_box.as_ref().and_then(|m| m.pressed), None);
+    assert!(g.take_answered_boxes().is_empty());
+    // A form-less MessageBoxEx box: OK alone is answered (GetButtonPressed of the script
+    // that showed it reads 0), Yes / No waits.
+    let f = udf_fixture();
+    let mut g = game(&f);
+    g.cfg.answer_ok_boxes = true;
+    let ok = "Begin Function { }\nMessageBoxEx \"C|Ok\"\nSetFunctionValue (GetButtonPressed)\nEnd\n";
+    assert_eq!(g.run_query(ok, Default::default()), Ok(XVal::Num(0.0)));
+    assert_eq!((g.menu, g.boxes.len(), g.take_answered_boxes()), (None, 0, vec![FormId(0)]));
+    g.run_source("MessageBoxEx \"A|Yes|No\"", Default::default()).expect("compiles");
+    assert_eq!((g.menu, g.boxes.len()), (Some(menus::MESSAGE), 1));
+    assert!(g.take_answered_boxes().is_empty());
+}
+
+#[test]
 fn an_older_snapshots_boxes_restore_as_showings_of_unknown_count() {
     let f = udf_fixture();
     let mut g = game(&f);
@@ -3865,6 +3958,194 @@ fn console_functions_run_their_commands() {
     assert_eq!(g.console_out, ["fDefaultFOV:Display = 80"]);
     q(&mut g, "con_RefreshINI\ncon_SaveINI").unwrap();
     assert_eq!(num(&mut g), Ok(XVal::Num(75.0)), "the files' value again");
+}
+
+#[test]
+fn script_console_assignments_update_quest_variables_instead_of_calling_their_names() {
+    use fnv_script::vm::XVal;
+    let f = fixture();
+    let mut g = game(&f);
+    let timer = g.run_query("Begin Function {}\nConsole \"Q.fTimer = 2\"\nConsole \"Q.fTimer += 0.5\"\nConsole \"set Q.bRun to 7.8\"\nSetFunctionValue Q.fTimer\nEnd", Default::default()).unwrap();
+    assert_eq!(timer, XVal::Num(2.5));
+    let run_flag = g.run_query("Begin Function {}\nSetFunctionValue Q.bRun\nEnd", Default::default()).unwrap();
+    assert_eq!(run_flag, XVal::Num(7.0));
+    assert!(g.console_out.iter().all(|line| !line.starts_with("Script error:")), "{:?}", g.console_out);
+    assert!(g.events.iter().all(|e| !matches!(&e.kind, EventKind::ScriptError { .. })));
+}
+
+#[test]
+fn script_console_assignment_expressions_preserve_the_callers_next_statement() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let result = g.run_query("float result\nBegin Function {}\nConsole \"set TestGlobal to 5\"\nConsole \"TestGlobal += 3 * 2\"\nlet result := TestGlobal + 1\nSetFunctionValue result\nEnd", Default::default()).unwrap();
+    assert_eq!(result, XVal::Num(12.0));
+    assert_eq!(g.world.global(FormId(0x800)).unwrap(), 11.0);
+    assert!(g.console_out.is_empty(), "success is silent with echo off: {:?}", g.console_out);
+}
+
+#[test]
+fn script_console_classic_set_accepts_single_token_expressions() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    for (line, expected) in [("set TestGlobal to (5)", 5.0), ("set TestGlobal to 3*2", 6.0), ("set TestGlobal to -7", -7.0)] {
+        fnv_game::nvse::call(&mut g, &Default::default(), "console", None, &[XVal::Str(line.into())]).unwrap().unwrap();
+        assert_eq!(g.world.global(FormId(0x800)).unwrap(), expected);
+    }
+    assert!(g.console_out.is_empty(), "{:?}", g.console_out);
+}
+
+#[test]
+fn script_console_cache_limits_distinct_sources_but_reuses_existing_entries() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let run = |g: &mut fnv_game::Game, line: String| {
+        fnv_game::nvse::call(g, &Default::default(), "console", None, &[XVal::Str(line)]).unwrap().unwrap();
+    };
+    for i in 0..256 { run(&mut g, format!("TestGlobal = {i}")); }
+    assert!(g.console_out.is_empty());
+    run(&mut g, "TestGlobal = 999".into());
+    assert_eq!(g.console_out.len(), 1);
+    assert!(g.console_out[0].contains("256 distinct"));
+    assert_eq!(g.world.global(FormId(0x800)).unwrap(), 255.0);
+    run(&mut g, "TestGlobal = 3".into());
+    assert_eq!(g.console_out.len(), 1, "cache hits remain executable at the limit");
+    assert_eq!(g.world.global(FormId(0x800)).unwrap(), 3.0);
+}
+
+#[test]
+fn script_console_source_length_boundary_does_not_disable_shorter_lines() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let run = |g: &mut fnv_game::Game, line: String| {
+        fnv_game::nvse::call(g, &Default::default(), "console", None, &[XVal::Str(line)]).unwrap().unwrap();
+    };
+    let mut exact = "TestGlobal = 7".to_string();
+    exact.extend(std::iter::repeat_n(' ', 16 * 1024 - exact.len()));
+    run(&mut g, exact.clone());
+    assert!(g.console_out.is_empty());
+    assert_eq!(g.world.global(FormId(0x800)).unwrap(), 7.0);
+    exact.push(' ');
+    run(&mut g, exact);
+    assert_eq!(g.console_out.len(), 1);
+    assert!(g.console_out[0].contains("16 KiB"));
+    run(&mut g, "TestGlobal = 8".into());
+    assert_eq!(g.world.global(FormId(0x800)).unwrap(), 8.0);
+    assert_eq!(g.console_out.len(), 1);
+}
+
+#[test]
+fn script_console_unknown_plain_commands_still_report_errors_and_continue() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let result = g.run_query("Begin Function {}\nConsole \"OwnMissingCommand\"\nConsole \"set TestGlobal to 9\"\nSetFunctionValue TestGlobal\nEnd", Default::default()).unwrap();
+    assert_eq!(result, XVal::Num(9.0));
+    assert_eq!(g.console_out.len(), 1);
+    assert!(g.console_out[0].contains("OwnMissingCommand"));
+}
+
+#[test]
+fn script_console_repeated_expressions_reuse_their_compilation_and_read_live_state() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    g.world.set_global(FormId(0x800), 0.0).unwrap();
+    for _ in 0..300 {
+        fnv_game::nvse::call(&mut g, &Default::default(), "console", None, &[XVal::Str("TestGlobal += 1".into())]).unwrap().unwrap();
+    }
+    assert_eq!(g.world.global(FormId(0x800)).unwrap(), 300.0);
+    assert!(g.console_out.is_empty(), "the repeated expression must not exhaust its cache: {:?}", g.console_out);
+}
+
+#[test]
+fn script_console_runtime_and_syntax_failures_are_diagnostic_and_do_not_end_the_caller() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let result = g.run_query("Begin Function {}\nConsole \"TestGlobal = 1 / 0\"\nConsole \"TestGlobal +=\"\nConsole \"set TestGlobal to 13\"\nSetFunctionValue TestGlobal\nEnd", Default::default()).unwrap();
+    assert_eq!(result, XVal::Num(13.0));
+    assert_eq!(g.console_out.len(), 2, "{:?}", g.console_out);
+    assert!(g.console_out[0].contains("division by zero"));
+    assert!(g.console_out[1].starts_with("Script error: console:"));
+}
+
+#[test]
+fn script_console_changing_signed_number_words_preserve_word_dispatch() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let run = |g: &mut fnv_game::Game, line: String| {
+        fnv_game::nvse::call(g, &Default::default(), "console", None, &[XVal::Str(line)]).unwrap().unwrap();
+    };
+    for i in 1..=300 {
+        run(&mut g, format!("player.SetPos z -{i}"));
+        run(&mut g, format!("player.SetAngle z -{}", f64::from(i) / 10.0));
+        let player = g.world.get(FormId::PLAYER_REF).unwrap();
+        assert_eq!(player.pos[2], -(i as f32), "negative SetPos word {i}");
+        assert!((player.rot[2].to_degrees() + i as f32 / 10.0).abs() < 0.001, "negative SetAngle word {i}");
+    }
+    assert!(g.console_out.is_empty(), "ordinary numeric words: {:?}", g.console_out);
+}
+
+#[test]
+fn script_console_numeric_words_leave_the_expression_budget_and_post_budget_dispatch_available() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let run = |g: &mut fnv_game::Game, line: String| {
+        fnv_game::nvse::call(g, &Default::default(), "console", None, &[XVal::Str(line)]).unwrap().unwrap();
+    };
+    for i in 1..=300 {
+        run(&mut g, format!("player.SetPos z -{i}"));
+        run(&mut g, format!("player.SetAngle z -{}", f64::from(i) / 10.0));
+    }
+    assert!(g.console_out.is_empty(), "ordinary numeric words: {:?}", g.console_out);
+    // All expression slots remain available after more than 256 changing commands.
+    for i in 0..256 { run(&mut g, format!("TestGlobal = {i}")); }
+    assert!(g.console_out.is_empty(), "numeric words must not occupy expression slots: {:?}", g.console_out);
+    run(&mut g, "TestGlobal = 999".into());
+    assert_eq!(g.console_out.len(), 1);
+    assert!(g.console_out[0].contains("256 distinct"));
+    run(&mut g, "player.SetPos z -999".into());
+    assert_eq!(g.world.get(FormId::PLAYER_REF).unwrap().pos[2], -999.0);
+    assert_eq!(g.console_out.len(), 1, "word dispatch remains available after the expression budget");
+}
+
+#[test]
+fn script_console_compact_decimal_assignments_still_use_the_expression_compiler() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    g.world.set_global(FormId(0x800), 0.0).unwrap();
+    for _ in 0..300 {
+        fnv_game::nvse::call(&mut g, &Default::default(), "console", None, &[XVal::Str("TestGlobal+=0.5".into())]).unwrap().unwrap();
+    }
+    assert_eq!(g.world.global(FormId(0x800)).unwrap(), 150.0);
+    assert!(g.console_out.is_empty(), "{:?}", g.console_out);
+}
+
+#[test]
+fn script_console_unquoted_string_paths_reach_the_word_handler_without_compilation() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let run = |g: &mut fnv_game::Game, line: String| {
+        fnv_game::nvse::call(g, &Default::default(), "console", None, &[XVal::Str(line)]).unwrap().unwrap();
+    };
+    for i in 0..256 { run(&mut g, format!("TestGlobal = {i}")); }
+    assert!(g.console_out.is_empty());
+    // PlayIdle's declared string argument must reach its existing host lookup as one
+    // unchanged word. The authored missing name gives a discriminating host error.
+    run(&mut g, "player.PlayIdle Owned-Thing/path.kf".into());
+    assert_eq!(g.console_out.len(), 1);
+    assert!(g.console_out[0].contains("no form named Owned-Thing/path.kf"), "{:?}", g.console_out);
+    assert!(!g.console_out[0].contains("256 distinct"));
+    let failures = g.events.iter().filter(|e| matches!(&e.kind, EventKind::CallFailed { name, .. } if name.eq_ignore_ascii_case("PlayIdle"))).count();
+    assert_eq!(failures, 1, "a failed word handler is not retried through the compiler");
 }
 
 #[test]
@@ -4749,3 +5030,6 @@ set TestGlobal to TestNpcREF.GetItemCount r * 10 + TestNpcREF.GetItemCount TestW
     g.run_source(src, Default::default()).expect("runs");
     assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 10.0, "the clone counted, the weapon not");
 }
+
+#[path = "common/jip_callback_clock.rs"]
+mod jip_callback_clock_tests;

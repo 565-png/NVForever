@@ -147,7 +147,7 @@ unseals it (NVCRMrHouseSCRIPT's SetGhost 1, the terminal items' SetGhost 0), aft
 which House's body can be killed as the owner ruled. Before, a screen became hostile
 after House's death: the murder made it a crime enemy (`Game::crime_enemy` comes
 before Aggression) or a script's StartCombat or a hit did [hypothesis: which one the
-owner's game took is not in the report]. Observer check 139.
+owner's game took is not in the report]. Observer check 181.
 
 ## 10. Checks
 

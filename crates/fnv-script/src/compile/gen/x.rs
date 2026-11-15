@@ -620,6 +620,20 @@ impl Gen<'_> {
         params.and_then(|ps| ps.get(k)).is_some_and(|p| matches!(p.kind.as_str(), "form" | "reference") || p.name.to_ascii_lowercase().contains("global"))
     }
 
+    /// A vanilla source-bridge call keeps its already resolved head spelling;
+    /// only its arguments use the extended parser. Its cursor includes nested
+    /// calls, without consuming binary operators of the surrounding expression.
+    pub(super) fn inline_bound_call(&mut self, head: Option<&str>, opcode: u16, params: usize, toks: &[XTok]) -> Option<(XExpr, usize)> {
+        let on = match head {
+            Some(name) => Some(Box::new(XExpr::Ref { r: RefIndex(self.reference(name)?) })),
+            None => None,
+        };
+        let f = XFn { func: FuncId::Opcode(opcode), params: Some(params), opcode: Some(opcode), aware: false };
+        let mut p = P::new(toks);
+        let args = self.xargs(&mut p, &f)?;
+        Some((XExpr::Call { call: XCall { on, func: f.func, args } }, p.i))
+    }
+
     fn xargs(&mut self, p: &mut P<'_>, f: &XFn) -> Option<Vec<XExpr>> {
         let mut args = Vec::new();
         loop {
@@ -714,6 +728,21 @@ impl Gen<'_> {
                         p.next();
                         let r = self.ref_index(crate::unit::RefSlot::Form(fi.form), &t.text);
                         args.push(XExpr::Ref { r: RefIndex(r) });
+                        continue;
+                    }
+                }
+                // A word or number of hex digits that names nothing, given alone to a form
+                // parameter, is the form with that FormID when the load order has one
+                // [observed 2026-11-14, nvse-cmd-probes in the stock game, the runtime
+                // compiler: `AuxVarSetFlt "*_q" 7 0 f` reads back 7 under Caps001 (0xF),
+                // `a` under Lockpick (0xA), `14` under PlayerRef; `g` and `FFFFFF` (no form)
+                // do not compile; Armor Damage Fix's gr_CondDamFix.txt ships `… 0 f`].
+                if let Some(t) = p.peek().filter(|t| matches!(t.kind, XKind::Word | XKind::Num) && !t.text.contains('.')).cloned() {
+                    let alone = !p.peek2().is_some_and(|n| matches!(n.kind, XKind::LBracket | XKind::Op));
+                    let named = self.var(&t.text).is_some() || self.form(&t.text).is_some();
+                    if let (true, false, Some(fi)) = (alone, named, self.hex_form_id(&t.text)) {
+                        p.next();
+                        args.push(val_expr(self.form_val(fi, &t.text)));
                         continue;
                     }
                 }

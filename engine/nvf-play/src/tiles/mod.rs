@@ -46,6 +46,7 @@ pub mod runtime_images;
 mod item_menu;
 pub mod dialog_menu;
 pub mod draw;
+mod global_image_metrics;
 pub mod input;
 pub mod inventory_menu;
 pub mod item_card;
@@ -308,7 +309,7 @@ impl HudTiles<'_> {
         // reticle::draw: the prompt also goes under true sights/the scope, and when
         // the enemy bar names this target; only the crosshair obeys movement [design].
         let reticle = playing && !creating && !driven && !wheel && !self.sights.as_ref().is_some_and(|s| s.0) && !self.scope.as_ref().is_some_and(|s| s.on);
-        let info = reticle && !locks.rollover && self.target.as_ref().and_then(|t| t.0.as_ref()).is_some_and(|t| !enemy.is_some_and(|e| crate::reticle::under_bar(t, e.form_id)));
+        let info = reticle && !locks.rollover && self.target.as_ref().and_then(|t| t.0.as_ref()).is_some_and(|t| t.prompted() && !enemy.is_some_and(|e| crate::reticle::under_bar(t, e.form_id)));
         // corner_messages::draw and quest_messages::draw [design].
         let notices = !driven && *self.state.get() != PlayState::Dialogue && !self.panel.as_ref().is_some_and(|p| p.view.is_some());
         let quest = self.quests.as_ref().and_then(|q| q.showing());
@@ -1052,6 +1053,7 @@ impl Plugin for TilesPlugin {
             .add_systems(Update, selection_menu::write_system::<{ fnv_game::game::menus::TAG_SKILLS }>.after(write).before(input::feed))
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
             .add_systems(Update, input::feed.after(write).after(crate::menu::WheelHoldSet).before(PlaySet::Activation))
+            .add_systems(Update, global_image_metrics::update_globals.after(PlaySet::Scripts).before(update))
             .add_systems(Update, update.after(PlaySet::Scripts).before(PlaySet::Ui))
             .add_systems(Update, repair_services_menu::after_update.after(update).before(PlaySet::Ui))
             // The Pip-Boy's STATS page: written after the tile input and before the scripts;
