@@ -90,7 +90,7 @@ fn assisted_policy_child() {
     kill(&mut app);
     tick(&mut app, 6.0);
     if should_recover {
-        assert_eq!(requests(&app), [selected.clone()], "{mode}");
+        assert_eq!(requests(&app).as_slice(), std::slice::from_ref(&selected), "{mode}");
         assert!(app.world().resource::<Paused>().0);
         assert!(matches!(app.world().resource::<PageRequest>().0, Some(Page::Load { .. })));
         app.world_mut().resource_mut::<Messages<LoadRequest>>().clear();
