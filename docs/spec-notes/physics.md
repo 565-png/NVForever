@@ -2606,6 +2606,14 @@ creature. Widened eligibility uses the published BBX width against the character
 capsule radius (or `phys::npc_params` from its height once the character is removed),
 so stopping does not remove the ordinary walker's body gap.
 Pairs without a widened participant keep the existing drawn-block lookup.
+[design: `nvf_play::combat::PhysView::melee_targets_near`,
+`fnv_combat::projectile::swing_reaching`, #2535] The player's ground-reach fallback
+uses max(24, the target's published scaled BBX radius) in place of the fixed
+24-unit target margin. The player's own capsule radius remains part of its reach.
+Thus a short weapon still reaches a low creature at its widened blocking stop,
+looking level or down; ordinary targets keep their existing reach. The same
+per-target margin expands candidate lookup, and the obstruction rays still must
+meet the target first.
 The separate navmesh `fnv_ai::Ai::keep_apart` still uses 18 per actor; it does
 not read these blocks. The original's transient overlap, unseen shape, extra
 attack pause and backing-away cadence remain open in observer check 174.

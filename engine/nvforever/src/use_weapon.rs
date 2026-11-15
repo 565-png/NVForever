@@ -30,13 +30,16 @@
 //! melee fighters (`npc_combat`): the reach and spacing of `npc_combat::melee_spacing` /
 //! `creature_spacing`, which this sets on the game's use (`WeaponUse::reach`) for the AI
 //! to close in by (a script's use; a package's swings from where it stands); a blow every
-//! `npc_combat::STRIKE_SECONDS` over the weapon's attack speed, adjusted to the clip's
-//! `a:` key or held through its end without a key [design: SwingClip::ready_in, #2535].
-//! Volley pauses also hold the next blow [design: Swinger::advance]. A combo uses
-//! `attack_anims::SwingPick`, landing at its clip's `Hit` key while the
+//! `npc_combat::STRIKE_SECONDS` over the weapon's attack speed. Scripted swings do not
+//! establish an attack pose yet (`attack_anims::start` requires a fighter pitch or an
+//! existing attack), so no clip timing reaches them in play [design, #2535: open].
+//! If a clip is published, `SwingClip::ready_in` supplies its boundary [design, #2535].
+//! Volley pauses also hold the next blow [design: Swinger::advance]. With a published
+//! clip a combo uses `attack_anims::SwingPick` and its `Hit` key; otherwise the blow
+//! keeps the existing Hit delay (fallback `DEFAULT_HIT`) [design: swing]. It lands while the
 //! target is within reach. No block or attack-chance roll: the script wants the blows
 //! [hypothesis]. **Always Hit**: a blow lands even when the target stepped out of reach
-//! [hypothesis]. **Do No Damage**: the swing plays, its blow strikes nothing [design: a
+//! [hypothesis]. **Do No Damage**: the blow strikes nothing [design: a
 //! harmless blow has no sound or impact yet]. Hold Fire When Blocked and the target's
 //! place hold the swings as they hold shots; Crouch To Reload has nothing to reload.
 //! Thrown weapons fire their projectile as guns do (`is_gun`: they have one).
@@ -737,6 +740,32 @@ mod tests {
                 let creature_reach = creature_reach(Some(64.0), Some(r"Creatures\Radscorpion\Skeleton.nif"), scale);
                 assert!(away <= melee_range(&bodies, creature, person, tfeet, feet, true, creature_reach).1);
                 assert_eq!(phys.npcs[&person].ch.params.radius, 22.0);
+            }
+        }
+    }
+
+    #[test]
+    fn scripted_melee_without_a_clip_keeps_upstream_timer_and_volley_pauses() {
+        // Compare the production gate with upstream 63db0209c's single clock:
+        // max(base interval, volley pause), then decrement [design, #2535].
+        for speed in [0.25, 0.5, 1.0, 2.0, 4.0] {
+            for pause in [0.0_f32, 0.4, 1.2, 3.0, 6.0] {
+                let base = STRIKE_SECONDS / speed;
+                for dt in [0.01, 0.125, 0.7] {
+                    let mut old = base.max(pause);
+                    let mut sw = Swinger {
+                        seq: 1, strike_in: base, pause_in: pause, blows: Vec::new(),
+                        swing: Some(Swing { t: 0.0, clip: None, run: 1 }), held: None, spent: false,
+                    };
+                    // Include frames after the no-clip swing's expiry [design].
+                    for _ in 0..(8.0 / dt) as usize {
+                        old = (old - dt).max(0.0);
+                        sw.advance(dt, None);
+                        assert_eq!(sw.ready(), old <= 0.0, "speed={speed}, pause={pause}, dt={dt}");
+                        assert_eq!(sw.strike_in.max(sw.pause_in), old);
+                        assert!(sw.swing.is_none_or(|s| s.clip.is_none() && s.next().is_none()));
+                    }
+                }
             }
         }
     }

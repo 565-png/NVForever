@@ -654,9 +654,13 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     waits for the clip's end as well as the base timer. An earlier key still brings
     the decision forward for combos. Clip times use the existing playback clock
     (`attack_anims::CombatPose::layers`, `attack_anims::SwingClip::ready_in`) [design].
-    Ordinary combat and scripted melee share this boundary calculation; scripted
-    volley pauses use an independent clock, so an early combo key cannot shorten
-    them [design: `npc_combat::NpcSwing::ready_in`, `use_weapon::Swinger::advance`, #2535].
+    Ordinary combat uses this boundary calculation. Scripted melee has the shared
+    calculation available, but plays no attack clip yet: `attack_anims::start`
+    requires a fighter pitch or existing attack pose, and `npc_combat::fight`
+    clears poses and skips actors controlled by UseWeapon. Clip-bound scripted
+    cadence remains open; without a published clip its base timer and volley
+    pauses retain upstream main's behavior [design: `use_weapon::Swinger::advance`,
+    docs/design/use-weapon.md §3.1, #2535].
     The key's interrupt meaning is [documented: GECK wiki NiTextKeyExtraData, above];
     the lower bound is [observed: capture run15b_b2, 2026-11-15] for radscorpions,
     and [hypothesis] for NPC ordinary and power swings. Attack-chance rolls, style
@@ -734,6 +738,12 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   fix belongs to the AI's walk (swing on the way in, or end the walk at the stop). The player's fan of rays
   runs from the eye out to the reach plus the player's capsule radius (22: a knife 75.5,
   as long as with the old 150 × 0.5).
+  [design, #2535: `projectile::swing_reaching`, `nvf_play::combat::PhysView`]
+  The player's ground-reach fallback adds a target margin of max(24, its published
+  scaled skeleton BBX half-width), using the same width as actor blocking. Ordinary
+  targets retain 24; widened low creatures can be hit with a short weapon at the
+  blocking stop, looking level or down. Candidate lookup expands by the same margin;
+  the arc, height limits and first-hit obstruction rays remain unchanged.
   Measured 2026-11-01 (campaign o14_reach, `nvfairport` runway, god-mode player standing
   still, NCR troopers of the leveled list given one weapon each, every game loop) [observed]:
   the centre-to-centre distance at which a swing starts (GetAnimAction entering 2 or 3;
