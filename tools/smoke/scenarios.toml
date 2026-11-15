@@ -28934,6 +28934,25 @@ expect = [
 manual = "[design, #2534] If this passes but the reported conversation fails, run the full guard conversation in-game and inspect INFO begin/end execution and open menus; no engine cause was established by source inspection."
 
 [[scenario]]
+name = "pipboy-repair-enter"
+source = "[design, #2553] Real Enter through the repair and ITEMS key systems, using pipboy-repair's existing two-pistol setup; the last part closes the repair list without toggling the repaired row's worn state."
+areas = ["repair", "pipboy"]
+paths = ["engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/pipboy/repair.rs", "engine/nvf-play/src/pipboy/item_mod.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pad.rs", "engine/nvf-play/src/tiles/repair_menu.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVFOREVER_HOME = "pipboy-repair-enter-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:call:player:AddItemHealthPercent:Weap10mmPistol:1:0.4,9.5:call:player:AddItemHealthPercent:Weap10mmPistol:1:0.3", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=items,13.5:tab=0,15:repair=open,16:repair=down,20:close", NVF_PLAY_TEST_KEYS = "18:enter" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 23
+expect = [
+  { re = 'pipboy repair: open 10mm Pistol at [34]0% \(Repair \d+\): 10mm Pistol [34]0%', label = "the repair list opens with the other pistol as its part" },
+  { text = "test aid: real input Key(Enter) pressed", label = "Enter enters the real key handlers" },
+  { re = 'pipboy repair: 10mm Pistol [34]0% with 10mm Pistol [34]0% -> \d+% \(Repair \d+\)', count = 1, label = "Enter repairs once" },
+  { text = "pipboy repair: closed:", label = "using the last part closes the repair list" },
+]
+forbid = [
+  { re = 'menu: .*: (Equipped|Unequipped) 10mm Pistol', label = "the repair key must not toggle equipment" },
+]
+order = [["pipboy repair: open", "test aid: real input Key(Enter) pressed", "pipboy repair: 10mm Pistol", "pipboy repair: closed:"]]
+
+[[scenario]]
 name = "grass-fire"
 source = "owner request 2026-11-14 (#2567, docs/design/grass-fire.md): fire from a burning weapon spreads across grass, sets the actors in it alight and goes out within a hard limit; the grass blackens and sinks away and grows back when its cell reloads"
 note = "the player (god mode) fires the Flamer (0000432D, fuel 00029371) north at the grass by the Prospector Saloon (nearest tufts about 230 units north) for a second from 26 s (message boxes off: one open stops the trigger), then looks at the fire; Easy Pete is held in place and put 250 units in front, in the fire's path, at 27 s; the fire runs to its end. Frames for the eye: the front spreading, the black grass sinking, the scorched ground left behind"
