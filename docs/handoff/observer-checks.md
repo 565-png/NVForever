@@ -2663,7 +2663,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Answered 2026-11-15 (weather region lookup timing, #2531)
 
-188. **When does the weather follow a weather region: by its outline or the cell's
+199. **When does the weather follow a weather region: by its outline or the cell's
      region list, and when is it looked up?** (P2; #2531, world.md §6.) **Answered
      [observed: captures run15b_w and run15b_w2, 2026-11-15; first person, GameHour 12,
      xNVSE 6.4.9, JIP LN 57.30 GetCurrentWeather/GetCurrentWeatherPercent]:** script
