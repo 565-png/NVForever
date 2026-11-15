@@ -369,9 +369,11 @@ copying them by hand; the manual way stays ([dlss.md](../dlss.md)).
   install; staging folders an earlier run left (`.dlss-download-<digits>`, of an NVForever that is no
   longer running) are removed at the next start. An absent DLSS
   folder is made by renaming the staging folder; a present one gets only the listed files it
-  lacks, moved one by one and taken back if a later move fails. A folder that holds
-  `nvngx_update.exe` (any case) or a listed file with other bytes is left as it is: no file of
-  the player's is overwritten. Only the listed names are ever written; `nvngx_update.exe`
+  lacks, moved one by one and taken back if a later move fails. Only the files it lacked
+  when the download started are fetched, so a listed file already there is kept unexamined; a
+  folder that holds `nvngx_update.exe` (any case) or a folder of a listed name, or one where a
+  listed file with other bytes appeared during the download, is left as it is: no file of the
+  player's is overwritten. Only the listed names are ever written; `nvngx_update.exe`
   never is.
 - **Four-file folders.** The Upscaler row keeps Download DLSS… offered while any of the
   eight files is missing, including when upscaling is ready or only needs a restart
@@ -381,8 +383,8 @@ copying them by hand; the manual way stays ([dlss.md](../dlss.md)).
   before probing. If the folder cannot be resolved, only the loader's `FilesMissing` reason
   retains the offer; choosing it lets the download dialog report the folder error.
   Upscaling still needs only `dlss::FILES`, the first four; frame generation needs
-  `dlss::FG_FILES`, the other four. A second download checks all eight and adds only the
-  missing four, leaving the existing matching files in place (`install::place`).
+  `dlss::FG_FILES`, the other four. A second download fetches, checks and adds only the
+  missing files, leaving the files already there as they are (`install::still_missing`).
 - **Missing-file hints.** The dimmed Frame generation DLSS choice uses three states
   (`dlss::frame_generation_unavailable`): "Files missing: Download DLSS… on the Upscaler row"
   while the download is offered; "Restart to use DLSS Frame Generation" after a download

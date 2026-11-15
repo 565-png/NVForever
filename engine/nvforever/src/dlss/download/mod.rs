@@ -726,9 +726,9 @@ mod tests {
             let mut src = Memory::new(zip.clone());
             let shared = Shared::new();
             let checked = Cell::new(false);
-            let phase = run(&mut src, &files(), &target, &shared, &|dir, checked| {
+            let phase = run(&mut src, &files(), &target, &shared, &|dir, staged| {
                 assert_eq!(listing(dir), ["a.dll", "b.dll"], "the checks see both staged files");
-                assert_eq!(checked, files().as_slice());
+                assert_eq!(staged, files().as_slice());
                 checked.set(true);
                 Ok(())
             });

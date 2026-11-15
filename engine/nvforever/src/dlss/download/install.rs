@@ -157,7 +157,9 @@ fn same_name(a: &str, b: &str) -> bool {
 /// A listed file already there is kept and not compared with its pin, so a player who brought
 /// another DLSS version (the loader pins no `nvngx_*.dll`, `preflight.rs`) gets the files they
 /// lack instead of a download that ends in [`Failure::FolderHolds`]. Every file when `target`
-/// is absent. A folder holding the updater is refused here, as [`place`] refuses it.
+/// is absent. A folder holding the updater is refused here, as [`place`] refuses it, and so is
+/// a listed name that is there but not a file (a folder of that name): the offer counts it as
+/// missing (`dlss_download::files_missing`), so it may not count as installed here.
 pub(super) fn still_missing(target: &Path, files: &[DownloadFile]) -> Result<Vec<DownloadFile>, Failure> {
     let names: Vec<String> = match fs::read_dir(target) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(files.to_vec()),
@@ -167,7 +169,15 @@ pub(super) fn still_missing(target: &Path, files: &[DownloadFile]) -> Result<Vec
     if let Some(updater) = names.iter().find(|n| same_name(n, UPDATER_NAME)) {
         return Err(Failure::FolderHolds(updater.clone()));
     }
-    Ok(files.iter().filter(|file| !names.iter().any(|n| same_name(n, file.name))).copied().collect())
+    let mut wanted = Vec::new();
+    for file in files {
+        match names.iter().find(|n| same_name(n, file.name)) {
+            None => wanted.push(*file),
+            Some(existing) if !target.join(existing).is_file() => return Err(Failure::FolderHolds(existing.clone())),
+            Some(_) => {}
+        }
+    }
+    Ok(wanted)
 }
 
 /// The staged files moved into `target` (the module notes), `mv` doing each rename. Nothing
@@ -458,6 +468,10 @@ pub(super) mod tests {
         // [design] The player's own a.dll (other bytes, any case) is kept, not compared.
         fs::write(target.join("A.DLL"), b"the player's own build").unwrap();
         assert_eq!(still_missing(&target, &files), Ok(vec![files[1]]));
+        // A folder named like a listed file is neither installed nor replaced.
+        fs::create_dir(target.join("b.dll")).unwrap();
+        assert_eq!(still_missing(&target, &files), Err(Failure::FolderHolds("b.dll".into())));
+        fs::remove_dir(target.join("b.dll")).unwrap();
         fs::write(target.join("b.dll"), B).unwrap();
         assert_eq!(still_missing(&target, &files), Ok(Vec::new()));
         fs::write(target.join("NVNGX_UPDATE.EXE"), b"x").unwrap();
