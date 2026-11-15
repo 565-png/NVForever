@@ -552,6 +552,16 @@ the spec it links to.
     say where. Observer checks 144 and 163 ask the original.
     ([factions §4](spec-notes/factions.md))
 
+80. **Scripts cannot disable the player (#2617).** On the Legion route the intake tower
+    trigger VHDIntakeTowerLegionaryDespawnScript disables whoever walks in once the
+    Legion's intake tower strategy is 2, the player too; a disabled player's scripted
+    load doors do nothing, so the Power Plant 01 elevator never took the player through.
+    Ours now: Disable of the player does nothing, and a save holding the player disabled
+    loads with the player enabled. The other choice is to let the player be disabled and
+    only lift the Activate rule for the player (the player would then be hidden and
+    "gone" to scripts that test it). Observer check 166 asks the original.
+    ([doors §6](spec-notes/doors.md))
+
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 
 

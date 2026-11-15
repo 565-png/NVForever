@@ -6305,6 +6305,13 @@ impl<'a> Game<'a> {
         for r in &s.fading_out {
             let _ = g.world.set_enabled(*r, false);
         }
+        // A save from before the player could not be disabled may hold the player
+        // disabled (VHDIntakeTowerLegionaryDespawnScript's trigger, #2617): enabled again,
+        // as Disable now leaves the player (`functions::refs::disable_ref`) [design].
+        if g.world.peek(FormId::PLAYER_REF).is_some_and(|p| !p.enabled()) {
+            tracing::info!("load: the save holds the player disabled; enabled again (doors.md §6)");
+            let _ = g.world.set_enabled(FormId::PLAYER_REF, true);
+        }
         // Crime enmities an older save holds undated start their cooldown now (#2467).
         g.date_crimes();
         let pos: u128 = s.rng_word_pos.parse().map_err(|_| format!("bad rng_word_pos {:?}", s.rng_word_pos))?;
