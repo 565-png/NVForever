@@ -218,10 +218,68 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- **Grass fires: size, speed and regrowth (#2567).** [design] Burning weapons and blasts
+  light generated grass; a fire spreads in 64-unit patches (0.5-1.5 s a step, faster
+  downwind), each patch burns 6 s, and a fire stops at 1,024 units from its start or 500
+  patches, at most 8 fires at once. Anyone standing in it catches the source's burn,
+  credited to whoever started it. Burnt grass grows back whenever its cell reloads (not
+  kept in saves). Bigger reach, a slower front, fires that leave the ground scorched for a
+  game day, or trees and shrubs that burn too are each a figure or a follow-up away.
+  [grass-fire](design/grass-fire.md)
+
+- **NPC conversations go on past a Goodbye line that links on (#2451).** [hypothesis,
+  #2451] The editor's documentation says a Goodbye line ends a conversation between
+  NPCs; ours ends it only when the line links nowhere, because the data needs it:
+  Veronica and Ramos's exchange at the Hidden Valley intercom (all its lines Goodbye)
+  opens the bunker only at its third line, and Jason Bright's speech continues past a
+  Goodbye part. NPCs' Dialogue packages that talk to another NPC or an intercom are now
+  carried out too (also the Strip's street scenes). Check in game that Veronica walks
+  to the intercom, the exchange plays out and the inner door opens.
+  ([dialogue §5.1](spec-notes/dialogue.md))
+- **Trigger countdowns count game time once a frame, and wait under menus (#2455).**
+  [hypothesis, #2455] A trigger script runs once for each actor inside it; now only the
+  first of those runs in a frame counts the frame's time, and no trigger script runs
+  while a menu, message box or conversation holds the game. Ibsen's virus purge now
+  lasts its 20 s (his warning at 10 s left). Check in game that the purge gives you the
+  time to reach the terminals. ([scripts §5](spec-notes/scripts.md))
 - **Linux overlay GPU source priority (#2249).** [design, #2249] `GPU_SOURCE_ORDER`
   prefers whole-device NVML, then amdgpu, then game-only DRM client time. Choosing
   DRM first would make supporting Linux drivers show the game's contribution consistently.
   [Settings usage note](design/settings-page.md#performance-usage-availability-2249).
+- **Explosion-hit handlers on corpses (#2346).** [design, #2346] A blast now reaches a corpse
+  whose ragdoll has taken over, so ShowOff's OnExplosionHit handlers also run for corpses
+  it catches (no damage is taken). Whether the original calls them for a corpse is not
+  observed. Leave them out for corpses instead?
+  ([combat-rules §11](spec-notes/combat-rules.md))
+- **A script jumping the clock (#2353).** [design, #2353] A script's GameHour write of more
+  than `SCRIPT_HOUR_JUMP` (1 game hour) is handled like the end of a wait: everyone chooses
+  its package at once, residents out of sight are put at their new place, those in view
+  walk. The original's handling is unknown (observer check 132); a smaller threshold would
+  catch shorter jumps, a larger one fewer. ([packages §9](spec-notes/packages.md))
+- **Drinking from water holds nothing (#2349).** [design, #2349] Drinking from a sink or
+  pump now plays the tree's drinking idle (first or third person), but the player keeps
+  moving, looking and the HUD while it plays, and the water's healing and rads apply at
+  the activation, before it. Ruling otherwise would hold the player for the clip's 2.4 s
+  (as scripted first-person idles do) or apply the effect at its end. The original's
+  behaviour is observer check 131. ([idles section 16](spec-notes/idles.md))
+
+- **Goodbye lines finished in the world run their end script late (#2449).** [design,
+  #2449] With `goodbye_at_once` (the v0.7.0 rule, a switch that is off since #2157) a
+  chosen Goodbye line's end result script still runs when the actor finishes the line,
+  not when the menu closes. That is what kept the Boomers shelling the player in v0.7.0:
+  Pearl's last line (0x001050FD) starts Volare! from its end script about 40 s after the
+  menu closed, and a player back in the artillery field by then is never counted out
+  (NellisArtilleryScript passes over the player on leaving once Volare! runs). Kept as it
+  is because the switch is off; if you turn it back on, the end script should run as the
+  menu closes ([dialogue §5](spec-notes/dialogue.md)).
+- **Texture scrolls drive every shape sharing the property (#2450).** [design, #2450]
+  A sequence's texture offset, scale or rotation track now moves every shape that lists
+  the same `NiTexturingProperty`, as material tracks already did for a shared
+  `NiMaterialProperty`: the Hidden Valley storm's 18 dust sheets all scroll (only the
+  first did). This applies to every model whose sequences scroll a shared texture, not
+  only the storm; if some model should scroll one shape only, it would need its own
+  property, and ruling otherwise means a per-model exception. Check the storm in game at
+  night in HVDustStorm ([activators section 6.1](spec-notes/activators.md)).
 
 19. **Walking away from a conversation.** The world freezes while you talk, as in the
     original, and walking off does not end it. Should walking off end it where the line
@@ -403,6 +461,36 @@ the spec it links to.
     (item 5, second part) is not built yet.
     ([pickpocket §5](spec-notes/pickpocket.md))
 
+71. **Armour only ever worn has no look on the ground (#2439).** The two floating
+    backpacks at the Fort were not the slaves' packs. They are two placed references of
+    the Slave Backpack armour (0x0013732C and 0x0013732D), 565 and 913 units up with
+    nothing under them; the record has no ground model, so its worn model was drawn there.
+    Ours now: Non-Playable armour without a ground model is not drawn or collided as a
+    world object (the player can never pick it up). It is still drawn on the slaves who
+    wear it. Playable armour without a ground model still lies as its worn model. If you
+    would rather see these two packs, they would have to be dropped to the ground (they
+    have no collision of their own). Observer check 142 asks what the original shows.
+    ([simulation §3 Item models](spec-notes/simulation.md))
+72. **A sprung trap stays sprung when drawn again (#2420).** Ranger Station Charlie's
+    door and tripwire come in with an enable parent the station's trigger script turns
+    on. The door was drawn without its door animation, so it looked shut while it was
+    open and its collision had swung away; it now opens and closes as a door. The
+    tripwire went off once only, but each cell load drew it armed again: its script asks
+    an "Open" sequence its model does not have, and that was what it showed. Ours now
+    forgets a group the model lacks and shows the one before (the sprung wire). We did
+    not see the wire fire twice or a mine re-arm in our runs; if you still see fresh
+    explosions on a second pass, note where you stand (the frag mines at the entrance
+    and the bottle-cap mine behind the door are separate placed mines). Observer check
+    143. ([doors §2](spec-notes/doors.md), [activators §5](spec-notes/activators.md))
+74. **An actor whose package lies behind a disabled door stays where it is (#2566).**
+    With Volare! failed (a Boomer elder killed), Loyal's only valid package is the
+    B-29 hangar (NellisHangar1b), whose doors stay disabled until the B-29 is raised;
+    ours had put him in there, out of the player's reach, and the quest marker looped
+    between the hangar door and its inside. Now no path and no quest marker goes
+    through a disabled door: Loyal sets that package aside and stays in NellisHangar2
+    (the mess hall hangar), where the marker leads. If you would rather the engine
+    let him in anyway and open the way for the player, say so. Observer check 160.
+    ([navmesh §4](spec-notes/navmesh.md), [quests §2](spec-notes/quests-dialogue.md))
 61. **Holstered fidgets come rarer than in the original (#2026).** NPCs standing with the
     weapon away now bite their nails, smoke and so on, by the idle tree's factions and
     chances. The tree is asked every 2 s, the drawn-weapon fidgets' pace
@@ -411,6 +499,32 @@ the spec it links to.
     observer check 116. Until it is answered: keep 2 s, or ask more often (1 s would
     double every tree fidget, the drawn-weapon and furniture ones too)?
     ([idles §11.4](spec-notes/idles.md))
+64. **Scripts written for "not in the player's cell" now run there (#2445).** An actor
+    the AI processes out of the loaded cells runs its GameMode block at each low-process
+    update (about every 18 s, every 120 s beyond the cell buffer) and once in each waited
+    hour. This applies only when the block tests that the actor is not in the player's
+    cell (`GetInSameCell … == 0`). Eight object scripts in FalloutNV.esm do: Chauncey,
+    ED-E, the Hidden Valley scribe and Watkins, the Vault 22 spore carriers,
+    TecMineHostage and an SDO handler. Every other script runs in the loaded cells only,
+    as before. Beyond the Beef needs it: Chauncey reaches the steam room only through his
+    own script's warp. Running all far residents' scripts was the wider option, set aside
+    for now; observer check 135 asks what the original does. (`fnv_ai::process`)
+63. **Harmless hits run the target's hit scripts (#2433).** A Use Weapon package's or
+    UseWeapon's Do No Damage shot or blow now runs the target's OnHit and OnHitWith blocks,
+    and still deals no damage. G.I. Blues' ambush needs this: the thugs fall in their OnHit
+    block for Orris, and without it he fired once and stood for good. The other harmless
+    Use Weapon packages' targets now run their hit scripts too. Observer check 134 asks
+    whether the original does. His aim pose (the issue's "does not aim") was not changed.
+    ([use-weapon §3](spec-notes/use-weapon.md))
+62. **Freeside's missing residents (#2432, #2434) taken as fixed by #2239; please
+    retest on a build from 2026-11-13 or later.** Both reproduce in the engine only with
+    #2239's reset of the handed-over grid squares on a change of worldspace taken out
+    (Freeside's three worldspaces lie on the same squares): then the fort has 0 people
+    drawn and Orris and his bodyguard are missing at the north gate, as reported. Main
+    has them all, on your way there too (fast travel, King's School, bus door). v0.7.0
+    (2026-11-11) predates #2239 [hypothesis: your build was older than it; the log names
+    no version]. No other engine change was made; the smoke scenarios
+    `freeside-fort-residents-door` and `freeside-north-residents-door` keep it fixed.
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 
