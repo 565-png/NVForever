@@ -4952,6 +4952,38 @@ expect = [
   { text = "combat: 0x0016526B destruction stage", count = 3, label = "each of the bouquet's stages is reached exactly once" },
 ]
 
+[[scenario]]
+name = "gas-trap-gun-fired-inside"
+source = "#2687; GECK wiki Traps [documented]: a gas trap goes off when a weapon is fired inside it; engine/nvf-play/src/gas_traps.rs. The GasTrapDummy hit is a [hypothesis]"
+note = "Vault 22's spore purge gas (V22SporePurgeGasRef 0x000F0908, V22TrapGasFire01: a Gas Trap-layer sphere phantom, nothing solid) is enabled at 3 s, as Keely's line INFO 0x000F43F8 does. The player is moved into it at 5 s and fires a 10mm pistol at 9 s. The 10mm is in neither gas list, so the cloud is hit with GasTrapDummy (in ExplodesGasTrapsOnHit). Its script's DamageObject 5 takes it to stage 1 (burning), its self-damage to stage 2 and explosion 0x000348D0, and its OnDestructionStageChange completes There Stands the Grass (VMS06) objective 50. Before #2687 the phantom was dropped and nothing happened"
+areas = ["traps", "scripts", "combat"]
+paths = ["engine/nvf-play/src/gas_traps.rs", "engine/nvf-play/src/script_trigger.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:enable:0x000F0908,5:moveto:player:0x000F0908", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:30", NVF_PLAY_TEST_CONTROL = "6:weapon,9:fire", NVF_PLAY_TEST_CONSOLE = "16:getobjectivecompleted VMS06 50;0F0908.getdestructionstage;16.5:close" }
+args = ["--cell", "Vault22e", "--pos=3592,2200,8470", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 18
+order = [[
+  { re = 'script: .* has 1 gas volume\(s\) in its model' },
+  { re = 'combat: a shot fired inside it reaches gas cloud 0x000F0908, hit with GasTrapDummy: its hit blocks ran' },
+  "combat: 0x000F0908 destruction stage -1 -> 1",
+  { re = 'combat: 0x000F0908 destruction stage 1 -> 2, disabled, 1 explosion\(s\)' },
+  { re = 'console: GetObjectiveCompleted.* >> 1\.00' },
+]]
+
+[[scenario]]
+name = "gas-trap-shishkebab-walk-in"
+source = "#2687; V22TrapGasSCRIPT 0x000EF405 OnTriggerEnter: an actor with a weapon of ExplodesGasTrapsOnTouch drawn sets the cloud off [observed: fnvtool script decompile]; the Gas Trap-layer phantom kept as a trigger volume"
+note = "Vault 22's spore purge gas (V22SporePurgeGasRef 0x000F0908) is enabled at 3 s, as Keely's line does (the vault's other clouds hang on disabled enable parents until it burns). The player draws the Shishkebab (0000434E) at 4 s and is moved into the gas at 7 s. Its OnTriggerEnter (IsWeaponInList ExplodesGasTrapsOnTouch, IsWeaponOut) runs DamageObject 5, so it reaches stage 1, and its OnDestructionStageChange completes VMS06 objective 50"
+areas = ["traps", "scripts"]
+paths = ["engine/nvf-play/src/script_trigger.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvf-play/src/gas_traps.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:enable:0x000F0908,7:moveto:player:0x000F0908", NVF_PLAY_TEST_EQUIP = "0000434E", NVF_PLAY_TEST_CONTROL = "4:weapon", NVF_PLAY_TEST_CONSOLE = "14:getobjectivecompleted VMS06 50;14.5:close" }
+args = ["--cell", "Vault22e", "--pos=3592,2200,8470", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 16
+order = [[
+  "script: player entered trigger V22SporePurgeGasRef",
+  "combat: 0x000F0908 destruction stage -1 -> 1",
+  { re = 'console: GetObjectiveCompleted.* >> 1\.00' },
+]]
+
 # ------------------------------------------------------------------ dialogue, Pip-Boy, terminals
 
 [[scenario]]
@@ -19484,6 +19516,26 @@ expect = [
   { json = "given_errors.*", count = 0, label = "there-stands-the-grass: no given fails" },
 ]
 manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the side-quest walkthrough report (batch 4, issue #918)"
+
+[[scenario]]
+name = "mq-there-stands-the-grass-spore-purge"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/there-stands-the-grass-spore-purge.actions.json: There Stands the Grass (VMS06), Keely's spore purge: the purge gas lit completes objective 50 (#2687)"
+areas = ["quests", "scripts", "traps"]
+paths = ["crates/fnv-game/walkthrough/there-stands-the-grass-spore-purge.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/combat.rs", "crates/fnv-game/src/functions/objects.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/there-stands-the-grass-spore-purge.actions.json"]]
+expect = [
+  { json = "observations.?label=purge gas before Keely's line.disabled", equals = true, label = "the purge gas starts disabled" },
+  { json = "observations.?label=purge gas after Keely's line.disabled", equals = false, label = "Keely's line enables it" },
+  { json = "observations.?label=milestone: VMS06 objective 50 shown.objective.50.displayed", equals = true, label = "objective 50 shown" },
+  { json = "observations.?label=milestone: VMS06 objective 50 shown.objective.50.completed", equals = false, label = "and not done before the gas burns" },
+  { json = "observations.?label=laser through the purge gas.ran", equals = true, label = "the laser's hit runs the gas's OnHitWith" },
+  { json = "observations.?label=purge gas lit.destroyed", equals = true, label = "the gas reaches its Destroy stage" },
+  { json = "observations.?label=final: VMS06 objective 50.objective.50.completed", equals = true, label = "objective 50 completed" },
+  { json = "observations.?label=final: VMS06 objective 50.objective.60.displayed", equals = true, label = "objective 60 shown" },
+  { json = "steps.*.error", count = 0, label = "spore purge: no step fails" },
+  { json = "given_errors.*", count = 0, label = "spore purge: no given fails" },
+]
 
 [[scenario]]
 name = "mq-vault-21-tour"

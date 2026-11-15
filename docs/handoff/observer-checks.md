@@ -2811,3 +2811,23 @@ already talking takes over at once, same topic or another; nothing is queued or 
      glow, the glow's level next to the bowl and halfway up, and whether an outline of
      the card can be seen anywhere. Softer and dimmer than ours points at the
      display-value sum ("Additive blend") on a ONE / ONE card; the same agrees with ours.
+
+## Added 2026-11-15 (gas traps, #2687)
+
+202. **What sets a gas cloud off: a ballistic gun fired inside it, one fired through it,
+     a frag grenade?** (P1; #2687, `engine/nvf-play/src/gas_traps.rs`.) Ours since
+     #2687: a shot that passes through a cloud hits it with its weapon, which sets it off
+     only for the weapons of `ExplodesGasTrapsOnHit` (FLST 0x0007627F: energy, fire,
+     launchers, no plain guns). A gun fired from inside a cloud, and any blast that
+     reaches one, also hit it with `GasTrapDummy` (WEAP 0x000001F6), which sets it off
+     [hypothesis; GECK wiki Traps documents "fired inside" and "explosions"]. In
+     Vault22e, on a save taken after Keely's line INFO 0x000F43F8 (or after
+     `0F0908.enable`), stand outside `V22SporePurgeGasRef` (0x000F0908, at 3592, 2469,
+     8469) and fire a 10mm pistol through the gas at the wall behind it. Then reload,
+     step inside it and fire the 10mm at the floor. Then reload and throw a frag grenade
+     in. Each time, read `0F0908.getdestructionstage` and `GetObjectiveCompleted VMS06 50`.
+     Our rule holds if the shot through it does nothing and the shot from inside and the
+     grenade set it off. If the shot from outside sets it off too, a ballistic hit counts
+     anywhere in the cloud. If the shot from inside does nothing, the "fired inside" rule
+     is wrong for New Vegas, and the dummy hit for a gun fired inside goes; the owner
+     asked in #2687 that any spark set the gas off, so that would be a ruling for them.
