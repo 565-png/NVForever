@@ -3886,6 +3886,28 @@ expect = [
 ]
 
 [[scenario]]
+name = "vigor-tester-new-game"
+source = "#2406 (reports: Doc Mitchell's house has the most frame hitches): in a new game the Vigor Tester's machine is spawned hidden behind the start's loading screen and its first opening takes it (docs/spec-notes/vigor-tester.md §7, docs/design/streaming-hitches.md §6)"
+note = "vigor-tester's steps in a --new-game start (the opening's own menus held off; menu 1074 asked by the test aid 3 s after the screen comes down); the machine made ready is the one shown, turned and clicked"
+areas = ["chargen", "vigor", "menus"]
+paths = ["engine/nvf-play/src/chargen/vigor.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1074", NVF_PLAY_TEST_VIGOR = "2:click:LookInside_Btn:0,4.5:raise,4.6:raise,4.7:done,5.5:page:review,8:select:luck,8.1:raise,8.2:raise:L,8.3:raise:endurance,8.5:click:P1_RT_Btn:0" }
+args = ["--play", "--new-game", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
+run_seconds = 20
+order = [[
+  { re = 'vigor tester: made ready behind the loading screen in \d+ ms \(\d+ parts\)', label = "the machine is spawned behind the start's loading screen" },
+  "loading screen down after",
+  "vigor tester: the machine made ready behind the loading screen is used",
+  "vigor tester: open, S.P.E.C.I.A.L.",
+  "done, S.P.E.C.I.A.L. 7 5 6 5 5 5 7 (click)",
+]]
+expect = [
+  "Endurance 6, 0 points remaining",
+  "vigor tester summary: opened 1 times, 5 changes, 8 page turns, 2 clicks on its buttons, done 1 times",
+]
+
+[[scenario]]
 name = "vigor-sounds"
 source = "playtest list 5 item 39 (2026-10-16): the Vigor Tester's sounds between pages and raising and lowering an attribute (docs/spec-notes/vigor-tester.md §6)"
 note = "vigor-tester's steps with Luck lowered once and raised once more, so that every sound is heard; not shared with it (a launch of its own, as vigor-tester)"
