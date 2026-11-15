@@ -408,6 +408,68 @@ enhanced "Bloom" (§3.3), when on, stands in for it.
 Engineering choices made by eye against the original's frames; not used to explain
 differences in the parity frames.
 
+### 3.12 Terrain height blending (`terrain-height-blend`; off in both presets)
+
+[design, #2550] An addition of NVForever's own, not a fact about the original game. The
+landscape's layer opacities live on the 33 × 33 vertex grid, 128 units apart, so where a
+layer is painted at full strength on one vertex and not at all on the next the change is
+a straight 128-unit ramp that follows the triangle grid. With this switch the folded
+terrain shader (terrain.wesl, `TERRAIN_HEIGHT_BLEND`) shapes that ramp by the textures:
+the incoming texture's brighter texels (stones, clumps, cracked tops) come through first
+and the gaps between them fill last. Prior art for this engine family: the New Vegas
+Reloaded terrain shader's `HeightBlend` and Skyrim's Community Shaders; cited only as
+prior art, nothing of either was used.
+
+- **Height source.** The vanilla ground textures carry no height (most are DXT1 with no
+  alpha), so a texel's height is its brightness less its texture's mean brightness:
+  `clamp(gain × (luma(texel) − luma(mean)), −limit, limit)`, Rec. 709 luma on the linear
+  (sRGB-decoded) colour. The mean is the texture's coarsest mip (one texel for a full mip
+  chain), read in the shader with an explicit level: one extra cached texel read per
+  contributing texture (the base and each layer with a share above 0). This is
+  mean-centring, not a high-pass filter: a bright sand does not win for being bright, but
+  the broad shading painted into a texture stays. The texel and its mean are taken in the
+  same space; the coarsest mip is the authoring tool's average, so it is a near mean, not
+  an exact one, and a texture with a short mip chain gives a local value instead. The
+  base's diffuse is read once more for its colour before the vertex tint (the same
+  coordinate and bias as the standard material's read: texels already in cache). The
+  diffuse alpha keeps its old role (it multiplies a layer's share); reading it as height,
+  as texture replacers for terrain parallax supply, is a follow-up.
+- **Weights.** The ordered blend (each layer laid over what came before by opacity ×
+  alpha) is turned into a share for the base and each layer, which sum to 1. Each share is
+  boosted by 2^((height − share-weighted mean height) / band), the exponent held to ±4
+  bands, and the shares are made to sum to 1 again. Where the contributing heights are
+  about equal (share-weighted spread below the threshold, fully on at twice it), the shares
+  stay linear, so flat textures draw no hard triangle edges. A share of 0 stays 0 and a
+  sole contributor keeps 1: ground painted fully, or not at all, looks as with the switch
+  off. The normals blend with the same weights and are made unit length once.
+  terrain_weights.wesl holds this as plain WGSL; the engine's tests validate it with naga
+  and check a CPU mirror (terrain.rs tests).
+- **Starting values** (NVForever's own, to be settled from pictures): gain 1.0, limit
+  0.25, band 0.10, threshold 0.005.
+- **What it reaches.** Only the folded draw (terrain.rs "One draw for the base and its
+  first layers"): up to six layers where the repeat divides the cell, four otherwise. A
+  quadrant's later layers that keep their blended draws, and every layer on a GPU without
+  bindless textures, blend as before: their coverage over the folded result is unchanged,
+  but height does not compete across that draw boundary, so moving a layer across the
+  fold limit can change the outline there. Quadrant and cell edges: the weights come from
+  the stitched opacities (#2096) and the textures at the same world coordinate, so both
+  sides compute the same value.
+- **Switching.** The settings row Terrain height blending (Graphics > Picture), or
+  `--graphics-only terrain-height-blend`. It is a pipeline key of the folded material
+  (`TerrainLayersKey`); switching flips every folded material in place
+  (`terrain::sync_height_blend`, logged as `terrain: height blending on|off (<n> folded
+  quadrant materials, <m> changed; …)`), and the first switch compiles the new pipeline
+  (the pause menu waits for it). With the switch off the shader's path is the one there
+  always was, operation for operation.
+- **Cost.** No extra full-size texture reads beyond the base's second read (a cache hit);
+  one coarsest-mip texel per contributing texture, and a little arithmetic per layer per
+  pixel. To be measured with the Tracy build's GPU zones at a layer-heavy view (Goodsprings
+  roads, the Primm junction), off against on. Zero-share layers are still sampled, as with
+  the switch off; skipping them needs explicit-gradient reads and belongs with the
+  anti-tiling work (#2551).
+- Whether `enhanced` turns it on is the owner's call; until then it is off in both presets
+  and is not an effect of the Enhanced effects row. Smoke: `terrain-height-blend`.
+
 ## 4. Tried and dropped
 
 - **Bevy `ContactShadows`** on the sun (16 steps, 40 units, thickness 12): the right effect on

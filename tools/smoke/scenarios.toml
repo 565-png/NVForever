@@ -1035,6 +1035,38 @@ order = [[
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error while the HDR view's parts come and go" }]
 
 [[scenario]]
+name = "terrain-height-blend"
+source = "[design, #2550] engine/nvforever/src/terrain.rs \"Height blending\", terrain.wesl and terrain_weights.wesl: the Terrain height blending switch (off by default and in both presets) starts with --graphics-only, compiles the folded terrain pipeline with TERRAIN_HEIGHT_BLEND, and flips every folded material off and on again while the game runs, without a rendering or pipeline error"
+areas = ["renderer", "graphics", "terrain", "settings"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_weights.wesl",
+  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings_layout.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PIPELINE_DEFS = "1", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:terrain-height-blend,13:terrain-height-blend" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-height-blend"]
+run_seconds = 20
+expect = [
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless), so the height-blended shader is the one drawing" },
+  { re = 'pipeline \d+ shader-defs: .*TERRAIN_HEIGHT_BLEND', label = "a pipeline with the height-blend switch was asked for" },
+  { re = 'terrain: height blending off \(\d+ folded quadrant materials, (?P<n>\d+) changed', range = [1, 1e9], label = "switching off flipped the loaded folded materials" },
+]
+order = [[
+  { re = 'graphics: light glow, terrain height blending$' },
+  { re = 'terrain: height blending on \(' },
+  "settings: terrain-height-blend off",
+  { re = 'graphics: light glow$' },
+  { re = 'terrain: height blending off \(' },
+  "settings: terrain-height-blend on",
+  { re = 'graphics: light glow, terrain height blending$', label = "back on" },
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]\d* changed', label = "the loaded materials flipped back" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the height-blended terrain" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (a terrain.wesl that does not compile)" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap" },
+]
+
+[[scenario]]
 name = "fps-counter"
 source = "engine/nvforever/src/perf_overlay/ (issues #1087, #1704, #1868): --fps shows the frame rate counter (with CPU and GPU use) from the start, and the settings page's Frame rate counter switch hides and shows it while the game runs"
 areas = ["renderer", "settings"]

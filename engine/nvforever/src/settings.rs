@@ -968,7 +968,7 @@ fn register_graphics(app: &mut App) {
         },
     );
     nvf_play::settings::set_disabled_status(app, "latency-reduction", |w| (!crate::anti_lag::available(w)).then_some("Not on this GPU"));
-    let switches: [Switch; 11] = [
+    let switches: [Switch; 12] = [
         (
             "ambient-occlusion",
             "Ambient occlusion",
@@ -1037,6 +1037,14 @@ fn register_graphics(app: &mut App) {
             },
         ),
         (
+            "terrain-height-blend",
+            "Terrain height blending",
+            "On: where ground textures meet, the new one shows through its brighter stones and clumps first instead of an even fade. Fully painted ground is unchanged.",
+            "--graphics, --graphics-only",
+            |w| w.resource::<Graphics>().terrain_height_blend,
+            |w, on| w.resource_mut::<Graphics>().terrain_height_blend = on,
+        ),
+        (
             "light-shafts",
             "Sun shafts",
             "On: sunlight streams past what stands in front of the sun, stronger the hazier the weather's fog. Not in the original.",
@@ -1071,6 +1079,7 @@ fn register_pipeline_waits(app: &mut App) {
         "anti-aliasing", "shadow-filter", "upscaler", "upscaler-quality", "ambient-occlusion",
         "fine-shadows", "bloom", "glow", "eye-adaptation", "neon-glow", "sharpen",
         "light-shafts", "water-reflections", "water-mirror", "sun-shadows", "grade",
+        "terrain-height-blend",
     ] {
         nvf_play::settings::wait_for_pipelines(app, key);
     }
@@ -2179,6 +2188,7 @@ dlss-model=Preset K
             ("neon-glow", &["--graphics-only"]),
             ("sharpen", &["--graphics"]),
             ("anisotropic", &["--graphics"]),
+            ("terrain-height-blend", &["--graphics", "--graphics-only"]),
             ("light-shafts", &["--graphics"]),
             ("water-reflections", &["--graphics"]),
             ("water-mirror", &["--graphics-only"]),

@@ -41,6 +41,24 @@
 //! them [engineering choice: the interim technique above was to be replaced by this].
 //! Without bindless textures (a material would need eight more textures than such a GPU
 //! can bind beside the standard ones) every layer keeps its blended draw.
+//!
+//! # Height blending
+//!
+//! [design, #2550; docs/design/graphics-enhanced.md §3.12] The settings switch Terrain
+//! height blending (`Graphics::terrain_height_blend`, off by default and in both presets)
+//! gives the folded material's pipeline `TERRAIN_HEIGHT_BLEND` ([`TerrainLayersKey`]):
+//! terrain.wesl then turns the ordered blend into a weight for the base and each folded
+//! layer and boosts each by the texture's brightness at the texel less that texture's mean
+//! brightness (its coarsest mip, one texel read per contributing texture), so a layer comes
+//! in through its bright stones and clumps first (terrain_weights.wesl, mirrored on
+//! the CPU in the tests). A share of 0 stays 0 and a sole contributor keeps 1: fully painted
+//! and unpainted ground looks as without it. The switch flips the materials in place
+//! ([`sync_height_blend`]); new materials take the current setting.
+//!
+//! Only the folded draw is weighted: a quadrant's later layers that keep their blended
+//! draws (past [`folded_layers`]), and every layer where the GPU has no bindless textures,
+//! blend as before. Their coverage over the folded result is unchanged, but height does not
+//! compete across that draw boundary.
 
 use crate::world::WorldData;
 use fnv_esm::{LoadOrder, Schema as EsmSchema};
@@ -121,9 +139,13 @@ const SHADER: &str = "embedded://nvforever/terrain.wesl";
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 #[data(50, TerrainLayersUniform, binding_array(101))]
 #[bindless(limit(512), index_table(range(50..64), binding(100)))]
+#[bind_group_data(TerrainLayersKey)]
 pub struct TerrainLayers {
     /// Layers held (at most [`FOLDED_LAYERS`]).
     pub count: u32,
+    /// Height blending (module notes, "Height blending"): selects the pipeline
+    /// ([`TerrainLayersKey`]).
+    pub height_blend: bool,
     /// World units per texture repeat when the shader works the texture coordinate out
     /// (the mesh's first texture coordinate then holds the fifth and sixth opacities);
     /// 0 when the mesh carries it.
@@ -159,20 +181,49 @@ pub struct TerrainLayers {
 }
 
 /// What terrain.wesl reads of a [`TerrainLayers`]: `counts` x the layer count, y a bit for
-/// each layer that has a normal map, z 1 when it has the burn map; `tile` x
-/// [`TerrainLayers::tile`].
+/// each layer that has a normal map, z 1 when it has the burn map, w the feature bits
+/// ([`FEATURE_HEIGHT_BLEND`]); `tile` x [`TerrainLayers::tile`].
 #[derive(Clone, Default, ShaderType)]
 pub struct TerrainLayersUniform {
     pub counts: UVec4,
     pub tile: Vec4,
 }
 
+/// Bit of `counts.w` set while the material blends by height (the pipeline's
+/// `TERRAIN_HEIGHT_BLEND` decides what is drawn; the bit records the material's state).
+pub const FEATURE_HEIGHT_BLEND: u32 = 1;
+
 impl From<&TerrainLayers> for TerrainLayersUniform {
     fn from(l: &TerrainLayers) -> Self {
         let normals = [&l.normal0, &l.normal1, &l.normal2, &l.normal3, &l.normal4, &l.normal5];
         let bits = normals.iter().enumerate().filter(|(_, n)| n.is_some()).fold(0u32, |b, (i, _)| b | 1 << i);
         let most = if l.tile > 0.0 { FOLDED_LAYERS } else { FOLDED_LAYERS_WITH_UV };
-        TerrainLayersUniform { counts: UVec4::new(l.count.min(most as u32), bits, u32::from(l.burn.is_some()), 0), tile: Vec4::new(l.tile.max(0.0), 0.0, 0.0, 0.0) }
+        let features = if l.height_blend { FEATURE_HEIGHT_BLEND } else { 0 };
+        TerrainLayersUniform { counts: UVec4::new(l.count.min(most as u32), bits, u32::from(l.burn.is_some()), features), tile: Vec4::new(l.tile.max(0.0), 0.0, 0.0, 0.0) }
+    }
+}
+
+/// The part of [`TerrainLayers`] that selects the pipeline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TerrainLayersKey {
+    pub height_blend: bool,
+}
+
+impl From<&TerrainLayers> for TerrainLayersKey {
+    fn from(l: &TerrainLayers) -> Self {
+        TerrainLayersKey { height_blend: l.height_blend }
+    }
+}
+
+/// terrain.wesl's switch for height blending, in the main pass only (the prepass and the
+/// shadows draw the same depth either way).
+fn height_blend_def(descriptor: &mut RenderPipelineDescriptor, key: TerrainLayersKey) {
+    use bevy::shader::ShaderDefVal;
+    if !key.height_blend || descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
+        return;
+    }
+    if let Some(fragment) = descriptor.fragment.as_mut() {
+        fragment.shader_defs.push("TERRAIN_HEIGHT_BLEND".into());
     }
 }
 
@@ -189,17 +240,53 @@ impl MaterialExtension for TerrainLayers {
         // Land fades in and out with its cell (fade.rs), and is opaque.
         nvf_assets::fade_prepass(descriptor, key.mesh_key);
         nvf_assets::depth_equal(descriptor, key.mesh_key);
+        height_blend_def(descriptor, key.bind_group_data);
         Ok(())
     }
 }
+
+/// terrain_weights.wesl, imported by terrain.wesl as `nvforever::terrain_weights`.
+const WEIGHTS_SHADER: Handle<bevy::shader::Shader> = bevy::asset::uuid_handle!("8ec9dd26-246b-49a1-91f0-1368b1a56604");
 
 pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "terrain.wesl");
-        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default());
+        bevy::asset::load_internal_asset!(app, WEIGHTS_SHADER, "terrain_weights.wesl", |s, _| bevy::shader::Shader::from_wesl(s, "embedded://nvforever/terrain_weights.wesl"));
+        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default()).add_systems(PostUpdate, sync_height_blend);
     }
+}
+
+/// Whether the settings ask for height blending (module notes); false without the
+/// `Graphics` resource.
+fn height_blend_wanted(graphics: Option<&crate::graphics::Graphics>) -> bool {
+    graphics.is_some_and(|g| g.terrain_height_blend)
+}
+
+/// Height blending switched on or off: every folded material flipped in place (the
+/// pipeline follows its key), logged with how many there are. New materials take the
+/// setting when they are made ([`TerrainCtx::folded_material`]).
+pub fn sync_height_blend(graphics: Option<Res<crate::graphics::Graphics>>, mut materials: ResMut<Assets<TerrainMaterial>>, mut last: Local<Option<bool>>) {
+    let want = height_blend_wanted(graphics.as_deref());
+    if *last == Some(want) {
+        return;
+    }
+    let stale: Vec<AssetId<TerrainMaterial>> = materials.iter().filter(|(_, m)| m.extension.height_blend != want).map(|(id, _)| id).collect();
+    for id in &stale {
+        if let Some(mut m) = materials.get_mut(*id) {
+            m.extension.height_blend = want;
+        }
+    }
+    if last.is_some() || want {
+        info!(
+            "terrain: height blending {} ({} folded quadrant materials, {} changed; layers drawn separately keep the ordered blend)",
+            if want { "on" } else { "off" },
+            materials.len(),
+            stale.len()
+        );
+    }
+    *last = Some(want);
 }
 
 /// Terrain settings and caches; GPU assets come from the shared [`ModelCtx`].
@@ -210,6 +297,7 @@ pub struct TerrainMaterials<'w> {
     pub folded: ResMut<'w, Assets<TerrainMaterial>>,
     device: Option<Res<'w, bevy::render::renderer::RenderDevice>>,
     burn: Option<Res<'w, crate::grass::GrassBurn>>,
+    graphics: Option<Res<'w, crate::graphics::Graphics>>,
 }
 
 impl TerrainMaterials<'_> {
@@ -305,7 +393,8 @@ impl TerrainCtx<'_, '_, '_> {
         let mut next = || textures.next().map_or((None, None), |(d, n)| (Some(d), n));
         let ((diffuse0, normal0), (diffuse1, normal1), (diffuse2, normal2), (diffuse3, normal3), (diffuse4, normal4), (diffuse5, normal5)) = (next(), next(), next(), next(), next(), next());
         let burn = self.tm.burn.as_deref().map(|b| b.0.clone());
-        let extension = TerrainLayers { count: layers.len() as u32, tile, diffuse0, normal0, diffuse1, normal1, diffuse2, normal2, diffuse3, normal3, diffuse4, normal4, diffuse5, normal5, burn };
+        let height_blend = height_blend_wanted(self.tm.graphics.as_deref());
+        let extension = TerrainLayers { count: layers.len() as u32, tile, height_blend, diffuse0, normal0, diffuse1, normal1, diffuse2, normal2, diffuse3, normal3, diffuse4, normal4, diffuse5, normal5, burn };
         let base = self.surface(tex.as_deref());
         let h = self.tm.folded.add(TerrainMaterial { base, extension });
         self.tm.cache.folded.insert(key, h.clone());
@@ -780,6 +869,220 @@ mod tests {
         assert_eq!(TerrainLayersUniform::from(&TerrainLayers { count: 9, ..default() }).counts.x, FOLDED_LAYERS_WITH_UV as u32);
         let six = TerrainLayersUniform::from(&TerrainLayers { count: 9, tile: 256.0, normal5: Some(image), ..default() });
         assert_eq!((six.counts, six.tile.x), (UVec4::new(FOLDED_LAYERS as u32, 1 << 5, 0, 0), 256.0));
+    }
+
+    // CPU mirror of terrain_weights.wesl, line for line (its constants are checked against
+    // the file below).
+    const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
+    const HEIGHT_GAIN: f32 = 1.0;
+    const HEIGHT_LIMIT: f32 = 0.25;
+    const HEIGHT_BAND: f32 = 0.10;
+    const EQUAL_EPS: f32 = 0.005;
+
+    fn luma(c: [f32; 3]) -> f32 {
+        c[0] * LUMA[0] + c[1] * LUMA[1] + c[2] * LUMA[2]
+    }
+
+    fn terrain_height(texel: [f32; 3], mean: [f32; 3]) -> f32 {
+        (HEIGHT_GAIN * (luma(texel) - luma(mean))).clamp(-HEIGHT_LIMIT, HEIGHT_LIMIT)
+    }
+
+    fn ordered_shares(a: [f32; 6], n: usize) -> [f32; 7] {
+        let mut w = [0.0; 7];
+        let mut remaining = 1.0;
+        for i in (0..n.min(6)).rev() {
+            let s = a[i].clamp(0.0, 1.0);
+            w[i + 1] = s * remaining;
+            remaining *= 1.0 - s;
+        }
+        w[0] = remaining;
+        w
+    }
+
+    fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+        let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+
+    fn height_weights(w: [f32; 7], h: [f32; 7]) -> [f32; 7] {
+        let p: Vec<f32> = w.iter().map(|x| x.max(0.0)).collect();
+        let total: f32 = p.iter().sum();
+        if total <= 0.0 {
+            return [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        }
+        let p: Vec<f32> = p.iter().map(|x| x / total).collect();
+        let mean: f32 = p.iter().zip(&h).map(|(p, h)| p * h).sum();
+        let spread: f32 = p.iter().zip(&h).map(|(p, h)| p * (h - mean) * (h - mean)).sum();
+        let gate = smoothstep(EQUAL_EPS * EQUAL_EPS, 4.0 * EQUAL_EPS * EQUAL_EPS, spread);
+        let q: Vec<f32> = p.iter().zip(&h).map(|(p, h)| p * ((1.0 - gate) + ((h - mean) / HEIGHT_BAND).clamp(-4.0, 4.0).exp2() * gate)).collect();
+        let sum: f32 = q.iter().sum();
+        std::array::from_fn(|i| q[i] / sum)
+    }
+
+    fn close7(a: [f32; 7], b: [f32; 7], tol: f32) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() <= tol)
+    }
+
+    #[test]
+    fn the_weights_shader_is_valid_wgsl_and_matches_the_mirror() {
+        use wgpu::naga;
+        let source = include_str!("terrain_weights.wesl");
+        let module = naga::front::wgsl::parse_str(source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(source)));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap_or_else(|e| panic!("{e:?}"));
+        for line in [
+            "const TERRAIN_LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);",
+            "const TERRAIN_HEIGHT_GAIN: f32 = 1.0;",
+            "const TERRAIN_HEIGHT_LIMIT: f32 = 0.25;",
+            "const TERRAIN_HEIGHT_BAND: f32 = 0.10;",
+            "const TERRAIN_EQUAL_EPS: f32 = 0.005;",
+        ] {
+            assert!(source.contains(line), "terrain_weights.wesl must declare `{line}` (the tests' mirror)");
+        }
+        // terrain.wesl takes those functions by name, only with the switch on.
+        let terrain = include_str!("terrain.wesl");
+        assert!(terrain.contains("@if(TERRAIN_HEIGHT_BLEND) import nvforever::terrain_weights::{terrain_height, terrain_ordered_shares, terrain_height_weights};"));
+        for f in ["fn terrain_height(", "fn terrain_ordered_shares(", "fn terrain_height_weights("] {
+            assert!(source.contains(f), "{f}");
+        }
+    }
+
+    #[test]
+    fn ordered_shares_give_what_the_mix_chain_gives() {
+        // Synthetic colours and opacities (no texture's values), the chain of terrain.wesl's
+        // ordinary path against the weighted sum, within rounding.
+        let mut seed = 0x2550u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32
+        };
+        for case in 0..400 {
+            let n = case % 7;
+            let mut a = [0.0f32; 6];
+            for x in a.iter_mut().take(n) {
+                // Zeros, ones, tiny shares and the rest.
+                *x = match (next() * 5.0) as u32 {
+                    0 => 0.0,
+                    1 => 1.0,
+                    2 => 1e-4,
+                    _ => next(),
+                };
+            }
+            let colours: Vec<[f32; 3]> = (0..7).map(|_| [next(), next(), next()]).collect();
+            let mut chain = colours[0];
+            for (k, layer) in colours[1..=n].iter().enumerate() {
+                for (x, l) in chain.iter_mut().zip(layer) {
+                    *x = *x * (1.0 - a[k]) + l * a[k];
+                }
+            }
+            let w = ordered_shares(a, n);
+            assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5, "{w:?}");
+            assert!(w.iter().all(|x| *x >= 0.0) && w[n + 1..].iter().all(|x| *x == 0.0), "{w:?}");
+            for (c, want) in chain.iter().enumerate() {
+                let sum: f32 = w.iter().zip(&colours).map(|(w, colour)| w * colour[c]).sum();
+                assert!((sum - want).abs() < 1e-5, "case {case}: {sum} vs {want}");
+            }
+            // Equal heights: the height weights are those shares.
+            assert!(close7(height_weights(w, [0.1; 7]), w, 1e-6));
+        }
+    }
+
+    #[test]
+    fn height_weights_keep_what_the_data_paints() {
+        let heights = [0.2, -0.25, 0.25, 0.0, -0.1, 0.15, 0.05];
+        // Unpainted: the base alone, whatever the heights.
+        let none = ordered_shares([0.0; 6], 6);
+        assert_eq!(height_weights(none, heights), [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        // Every layer fully painted: the last wins, alone.
+        let full = ordered_shares([1.0; 6], 6);
+        assert_eq!(full, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(height_weights(full, heights), full);
+        // A layer fully painted over the base and the earlier layers: it alone.
+        let third = ordered_shares([0.5, 0.7, 1.0, 0.0, 0.0, 0.0], 6);
+        assert_eq!(height_weights(third, heights), [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]);
+        // A share of 0 stays 0, a tiny one survives, all are non-negative and sum to 1.
+        let w = ordered_shares([0.4, 0.0, 1e-4, 0.6, 0.0, 0.3], 6);
+        let f = height_weights(w, heights);
+        for (i, (fi, wi)) in f.iter().zip(w).enumerate() {
+            assert!(*fi >= 0.0 && fi.is_finite(), "{f:?}");
+            assert_eq!(*fi == 0.0, wi == 0.0, "{i}: {w:?} -> {f:?}");
+        }
+        assert!((f.iter().sum::<f32>() - 1.0).abs() < 1e-5);
+        // Height decides the transition band: of two equal shares the higher texture takes
+        // more, by 2^(difference / band).
+        let half = ordered_shares([0.5, 0.0, 0.0, 0.0, 0.0, 0.0], 1);
+        assert!(close7(half, [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0], 1e-7));
+        let f = height_weights(half, [-0.05, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        assert!((f[1] / f[0] - 2.0).abs() < 1e-4, "{f:?}: one band apart");
+        let f = height_weights(half, [-HEIGHT_LIMIT, HEIGHT_LIMIT, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        assert!((f[1] / f[0] - 32.0).abs() < 1e-2, "{f:?}: the height limit caps it at five bands apart");
+        // Nearly equal heights take the linear shares; the gate opens over a narrow spread.
+        let f = height_weights(half, [0.0, 0.004, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        assert!(close7(f, half, 1e-6), "{f:?}");
+        let f = height_weights(half, [0.0, 0.02, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        assert!(f[1] > 0.53, "{f:?}: the gate is open at a spread of twice the threshold");
+        // A height on a zero share changes nothing (the spread and the mean are by share).
+        let w = ordered_shares([0.5, 0.0, 0.0, 0.0, 0.0, 0.0], 6);
+        assert_eq!(height_weights(w, [0.0, 0.0, 0.25, -0.25, 0.25, -0.25, 0.25]), height_weights(w, [0.0; 7]));
+        // No share at all (never from the ordered shares, which sum to 1): the base.
+        assert_eq!(height_weights([0.0; 7], heights), [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_texel_height_is_its_brightness_over_its_textures_mean() {
+        assert_eq!(terrain_height([0.5; 3], [0.5; 3]), 0.0);
+        assert!((terrain_height([0.6; 3], [0.5; 3]) - 0.1).abs() < 1e-6);
+        // A bright texture does not stand higher for being bright: only the texel against
+        // its own texture's mean counts.
+        assert_eq!(terrain_height([0.9; 3], [0.9; 3]), terrain_height([0.1; 3], [0.1; 3]));
+        assert_eq!(terrain_height([1.0; 3], [0.0; 3]), HEIGHT_LIMIT);
+        assert_eq!(terrain_height([0.0; 3], [1.0; 3]), -HEIGHT_LIMIT);
+        // Green counts most, blue least.
+        assert!(terrain_height([0.0, 0.1, 0.0], [0.0; 3]) > terrain_height([0.1, 0.0, 0.0], [0.0; 3]));
+    }
+
+    #[test]
+    fn height_blending_selects_the_pipeline_and_the_feature_bit() {
+        let off = TerrainLayers { count: 2, ..default() };
+        let on = TerrainLayers { count: 2, height_blend: true, ..default() };
+        assert_eq!((TerrainLayersKey::from(&off), TerrainLayersKey::from(&on)), (TerrainLayersKey { height_blend: false }, TerrainLayersKey { height_blend: true }));
+        assert_eq!((TerrainLayersUniform::from(&off).counts.w, TerrainLayersUniform::from(&on).counts.w), (0, FEATURE_HEIGHT_BLEND));
+        assert_eq!(TerrainLayersUniform::from(&on).counts.truncate(), TerrainLayersUniform::from(&off).counts.truncate());
+        let main = || RenderPipelineDescriptor { fragment: Some(bevy::render::render_resource::FragmentState { shader_defs: vec!["VERTEX_UVS_A".into()], ..default() }), ..default() };
+        let has = |d: &RenderPipelineDescriptor| d.fragment.as_ref().unwrap().shader_defs.contains(&"TERRAIN_HEIGHT_BLEND".into());
+        let mut d = main();
+        height_blend_def(&mut d, TerrainLayersKey { height_blend: true });
+        assert!(has(&d));
+        let mut d = main();
+        height_blend_def(&mut d, TerrainLayersKey { height_blend: false });
+        assert!(!has(&d), "off: the pipeline there always was");
+        let mut prepass = main();
+        prepass.vertex.shader_defs.push("PREPASS_PIPELINE".into());
+        height_blend_def(&mut prepass, TerrainLayersKey { height_blend: true });
+        assert!(!has(&prepass), "the prepass draws the same depth either way");
+    }
+
+    #[test]
+    fn the_switch_flips_every_folded_material_in_place() {
+        use crate::graphics::{Graphics, Preset};
+        let mut app = App::new();
+        app.insert_resource(Graphics::preset(Preset::Vanilla));
+        app.insert_resource(Assets::<TerrainMaterial>::default());
+        app.add_systems(Update, sync_height_blend);
+        let material = || TerrainMaterial { base: StandardMaterial::default(), extension: TerrainLayers { count: 1, ..default() } };
+        let a = app.world_mut().resource_mut::<Assets<TerrainMaterial>>().add(material());
+        app.update();
+        let blends = |app: &App, h: &Handle<TerrainMaterial>| app.world().resource::<Assets<TerrainMaterial>>().get(h).unwrap().extension.height_blend;
+        assert!(!blends(&app, &a), "off by default");
+        assert!(!Graphics::preset(Preset::Enhanced).terrain_height_blend, "and in the enhanced preset");
+        app.world_mut().resource_mut::<Graphics>().terrain_height_blend = true;
+        let b = app.world_mut().resource_mut::<Assets<TerrainMaterial>>().add(material());
+        app.update();
+        assert!(blends(&app, &a) && blends(&app, &b));
+        app.world_mut().resource_mut::<Graphics>().terrain_height_blend = false;
+        app.update();
+        assert!(!blends(&app, &a) && !blends(&app, &b));
+        // Without the settings resource (a tool's world): off.
+        assert!(!height_blend_wanted(None));
     }
 
     fn triangles(mesh: &Mesh) -> Vec<[u32; 3]> {
