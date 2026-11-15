@@ -643,7 +643,7 @@ const STICK_SENSITIVITY_KEY: &str = "Stick Sensitivity";
 const VERTICAL_KEYS: [(&str, &str); 2] = [(SECTION, "Mouse Vertical Sensitivity"), (PAD_SECTION, "Stick Vertical Sensitivity")];
 /// Where each device's Aim Sensitivity is kept ([`Bindings::aim`]): a multiple, two
 /// decimals, under the same name in each device's section.
-const AIM_KEYS: [(&str, &str); 2] = [(SECTION, "Aim Sensitivity"), (PAD_SECTION, "Aim Sensitivity")];
+const AIM_KEYS: [(&str, &str); 2] = [(SECTION, "Mouse Aim Sensitivity"), (PAD_SECTION, "Stick Aim Sensitivity")];
 
 fn bit(on: bool) -> &'static str {
     if on {
@@ -1362,8 +1362,8 @@ mod tests {
         assert_eq!(app.world().resource::<Bindings>().vertical, [1.0, 1.0]);
     }
 
-    /// Each device's Aim Sensitivity (owner 2026-11-15) is kept under "Aim Sensitivity" in
-    /// its own section and read back apart; an INI written before it reads as 1, the look
+    /// Each device's Aim Sensitivity (owner 2026-11-15) is kept under "Mouse Aim Sensitivity" or "Stick Aim
+    /// Sensitivity" in its own section and read back apart; an INI written before it reads as 1, the look
     /// while aiming as before; the setter, the Changed list and its Defaults act on the
     /// device's own.
     #[test]
@@ -1377,26 +1377,26 @@ mod tests {
         b.device = InputDevice::Controller;
         assert!(near(b.aim_sensitivity(), 1.5));
         let text = with_controls("", &b);
-        assert_eq!(ini_get(&text, SECTION, "Aim Sensitivity").as_deref(), Some("0.60"), "{text}");
-        assert_eq!(ini_get(&text, PAD_SECTION, "Aim Sensitivity").as_deref(), Some("1.50"), "{text}");
+        assert_eq!(ini_get(&text, SECTION, "Mouse Aim Sensitivity").as_deref(), Some("0.60"), "{text}");
+        assert_eq!(ini_get(&text, PAD_SECTION, "Stick Aim Sensitivity").as_deref(), Some("1.50"), "{text}");
         let (mut back, mut bad) = (Bindings::game_defaults(), vec![]);
         let (found, changed) = read_controls(&text, &mut back, &mut bad);
         assert!(bad.is_empty(), "{bad:?}");
         assert_eq!(found, LINES);
         assert!(near(back.aim[0], 0.6) && near(back.aim[1], 1.5), "{changed:?}");
-        assert!(changed.contains(&"Aim Sensitivity 0.6".to_string()) && changed.contains(&"[Controller] Aim Sensitivity 1.5".to_string()), "{changed:?}");
+        assert!(changed.contains(&"Mouse Aim Sensitivity 0.6".to_string()) && changed.contains(&"[Controller] Stick Aim Sensitivity 1.5".to_string()), "{changed:?}");
         assert_eq!(back.vertical, [1.0, 1.0], "the vertical sensitivities untouched");
         // Without the lines: 1 each, and two lines fewer found (written at the start).
-        let old: String = text.lines().filter(|l| !l.starts_with("Aim Sensitivity")).map(|l| format!("{l}\n")).collect();
+        let old: String = text.lines().filter(|l| !l.contains("Aim Sensitivity")).map(|l| format!("{l}\n")).collect();
         let mut back = Bindings::game_defaults();
         let (found, _) = read_controls(&old, &mut back, &mut bad);
         assert_eq!((found, back.aim), (LINES - 2, [1.0, 1.0]));
         // Below the slider's least: clamped; not a number: refused.
-        let low = ini_set(&ini_set(&text, SECTION, "Aim Sensitivity", "0.01"), PAD_SECTION, "Aim Sensitivity", "x");
+        let low = ini_set(&ini_set(&text, SECTION, "Mouse Aim Sensitivity", "0.01"), PAD_SECTION, "Stick Aim Sensitivity", "x");
         let mut back = Bindings::game_defaults();
         read_controls(&low, &mut back, &mut bad);
         assert!(near(back.aim[0], SENSITIVITY_LEAST) && near(back.aim[1], 1.0));
-        assert_eq!(bad, ["[Controller] Aim Sensitivity=x (not a number above 0)"]);
+        assert_eq!(bad, ["[Controller] Stick Aim Sensitivity=x (not a number above 0)"]);
         // The setter sets the device in use's alone.
         let mut app = App::new();
         app.insert_resource(Bindings::game_defaults());

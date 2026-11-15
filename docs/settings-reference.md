@@ -1089,8 +1089,8 @@ None of these rows has a command-line switch.
   follows the aim's zoom: the chosen speed once the view is zoomed in (down the sights, or a
   scope up), the unzoomed look with no zoom, in step while the view zooms in or out. Aiming
   with a gun that does not zoom (no Sight FOV), blocking with a melee weapon, and the hip look
-  are left as they are. Kept as "Aim Sensitivity" in [Controls] and in [Controller] of
-  NVForever.ini [design: owner 2026-11-15].
+  are left as they are. Kept as "Mouse Aim Sensitivity" in [Controls] and "Stick Aim Sensitivity" in
+  [Controller] of NVForever.ini [design: owner 2026-11-15].
 
 ### Rumble
 

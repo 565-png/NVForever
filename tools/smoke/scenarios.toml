@@ -11623,7 +11623,7 @@ env = { NVFOREVER_HOME = "look-sensitivity-home", NVF_PLAY_TEST_SCRIPT_MENUS = "
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 12
 expect = [
-  { re = 'controls: 71 of 71 line\(s\) read from .*NVForever\.ini, 8 changed: Invert Y 1, Mouse Sensitivity 0\.003, Input Device Controller, \[Controller\] Stick Sensitivity 0\.5, Mouse Vertical Sensitivity 0\.8, \[Controller\] Stick Vertical Sensitivity 1\.2, Aim Sensitivity 0\.6, \[Controller\] Aim Sensitivity 1\.5; input device Controller', label = "the stored Invert Y, the two sensitivities, the two vertical sensitivities (#2201) and the two aim sensitivities are taken at the start" },
+  { re = 'controls: 71 of 71 line\(s\) read from .*NVForever\.ini, 8 changed: Invert Y 1, Mouse Sensitivity 0\.003, Input Device Controller, \[Controller\] Stick Sensitivity 0\.5, Mouse Vertical Sensitivity 0\.8, \[Controller\] Stick Vertical Sensitivity 1\.2, Mouse Aim Sensitivity 0\.6, \[Controller\] Stick Aim Sensitivity 1\.5; input device Controller', label = "the stored Invert Y, the two sensitivities, the two vertical sensitivities (#2201) and the two aim sensitivities are taken at the start" },
 ]
 
 [[scenario]]
