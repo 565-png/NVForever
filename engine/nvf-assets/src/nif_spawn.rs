@@ -598,7 +598,7 @@ pub(crate) fn fix_vertex_colors(mesh: &mut Mesh, vertex_alpha: bool) {
 /// Per fragment, not at the vertices (#2435): the game blends the stored values across
 /// a triangle [hypothesis: a DirectX 9 frame without sRGB conversion, as in nif.md §6
 /// "Additive blend"]. Made linear at the vertices, a colour falling to black across a
-/// triangle stayed bright almost to its black edge (display 0.12 at nine tenths of the
+/// triangle stayed bright almost to its black edge (display 0.096 at nine tenths of the
 /// way from 0.34 to 0, where the stored values give 0.034): the Gomorrah Suites' wall
 /// sconce glow (`neoclassicalsconce.nif`, `NeoclassicalSconce:9`, ONE / ONE, no texture,
 /// 0.34 at the bowl to black on its outline) was a pale board with a hard outline.
@@ -1329,12 +1329,12 @@ mod tests {
         assert_eq!(kept, &stored);
         // Nine tenths of the way to the black outline: blended as display values and made
         // linear there, the colour is a tenth of the bowl's display value; blended after
-        // being made linear (before #2435), 0.12 of display 0.34, a third of it.
+        // being made linear (before #2435), 0.096, almost three times as bright.
         let t = 0.9;
         let per_fragment = display_to_linear(0.34 * (1.0 - t));
         let per_vertex = display_to_linear(0.34) * (1.0 - t);
         assert!((Color::linear_rgb(per_fragment, 0.0, 0.0).to_srgba().red - 0.034).abs() < 1e-3);
-        assert!(Color::linear_rgb(per_vertex, 0.0, 0.0).to_srgba().red > 0.11);
+        assert!(Color::linear_rgb(per_vertex, 0.0, 0.0).to_srgba().red > 0.09);
         // At the vertices both readings agree.
         assert!((display_to_linear(0.34) - Color::srgb(0.34, 0.0, 0.0).to_linear().red).abs() < 1e-6);
         // A lit shape's vertex colours stay linear factors.

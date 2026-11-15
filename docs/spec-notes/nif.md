@@ -1129,7 +1129,7 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   `display_to_linear`) [hypothesis: the game blends the stored values; the vertices
   themselves draw as before]. Made linear at the vertices, a colour falling to black
   across a triangle stayed bright almost to its black edge: nine tenths of the way from
-  display 0.34 to 0 it was display 0.12, where the stored values give 0.034. That was
+  display 0.34 to 0 it was display 0.096, where the stored values give 0.034. That was
   half of the Gomorrah sconces' hard-edged glow ("Fog on added light").
 - **Vertex colours** [observed, `crates/fnv-nif/examples/vertex_alpha_survey.rs` over
   `Fallout - Meshes.bsa`, visible shapes with vertex colours and a shader property]:
