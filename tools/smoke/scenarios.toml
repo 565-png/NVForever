@@ -28960,3 +28960,22 @@ expect = [
   { re = 'console: IsEssential on EasyPeteRef >> 0\.00', label = "IsEssential still reads his flag" },
   { re = 'console: GetDead on EasyPeteRef >> 1\.00', label = "in Hardcore KillActor kills him" },
 ]
+
+[[scenario]]
+name = "enable-disabled-actor-talks"
+source = "#2616: an actor disabled when its cell loads and enabled by a script while a menu holds the game (the hatch terminal's result script) is drawn at once, body, head and face rig, and fades in; the conversation the same script starts shows it speaking, its mouth moving with the line (docs/spec-notes/enable-disabled-actor.md)"
+note = "Hoover Dam intake tower (HooverDamIntIntakeTower01 0x00133FB1): VHDIntakeTowerCenturionREF 0x0013CA6B (NPC_ VHDIntakeTowerCenturion, on the leveled template EncVHDCLCenturion) is placed persistent and initially disabled [observed: fnvtool world refs]. The player is put next to the hatch terminal VHDIntakeTowerHatchUnlockTerminalREF 0x0013CA6D at 5 s, opens it at 8 s and takes Unlock Maintenance Hatch at 10 s: its result script enables the Centurion and his Dialogue package starts the conversation in the same frame, about 70 units away. On main before the fix he was never drawn: the residents read who is enabled only after the AI's update, which a held game (terminal, conversation) skips"
+areas = ["scripts", "actors", "dialogue"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/lips.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOTO = "5:1925:2410:8260", NVF_PLAY_TEST_TERMINAL = "8:open:0013CA6D,10:item:0,12:exit" }
+args = ["--cell", "HooverDamIntIntakeTower01", "--play"]
+run_seconds = 16
+expect = [
+  { re = 'terminal: its result script: .*RefEnabled \{ reference: 0x0013CA6B, fade: true \}.*DialogueSta', label = "the terminal enables the Centurion and starts his conversation" },
+  { re = 'fade: 0x0013CA6B in over 2 s', count = 1, label = "the Centurion fades in" },
+  { text = "dialogue look: VHDIntakeTowerCenturionREF faces the player", label = "the Centurion is drawn and faces the player in the conversation" },
+  { text = "dialogue zoom: in on VHDIntakeTowerCenturionREF (its head as drawn)", label = "the view zooms in on his drawn head" },
+  { re = 'lip: animating \S*vhdlegionbattle_greeting_0013ca2a_1\.lip .*speaker VHDIntakeTowerCenturionREF', label = "his mouth moves with his first line" },
+  { re = 'lip: skipped \S*0013ca2a_1\.lip: speaker VHDIntakeTowerCenturionREF has no face rig', count = 0, label = "his first line is not left without lip sync" },
+]
+order = [["dialogue: conversation with VHDIntakeTowerCenturionREF started", "dialogue look: VHDIntakeTowerCenturionREF faces the player"]]
