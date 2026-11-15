@@ -758,7 +758,9 @@ impl Game<'_> {
         let drawn = self.package_has(actor, flags::WEAPON_DRAWN) || self.package_has(actor, flags::PRETEND_IN_COMBAT);
         // SetWeaponOut 1 holds it drawn (`crate::nvse_hud`).
         let held = self.hud.forced_out.contains(&actor);
-        !unequipped && !fleeing && (self.draws_weapon(actor) || drawn || held || self.active_weapon_use(actor).is_some())
+        // A child fighting or alerted keeps its weapon away: it never fights (#2438).
+        let child = self.never_fights(actor) && (fighting || self.draws_weapon(actor));
+        !unequipped && !fleeing && !child && (self.draws_weapon(actor) || drawn || held || self.active_weapon_use(actor).is_some())
     }
 
     /// A hit's limb damage on one limb ([`Game::damage_limb`]) with what crippling it
