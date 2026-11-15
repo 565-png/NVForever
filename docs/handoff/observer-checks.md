@@ -2379,3 +2379,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      clip. [hypothesis] NVForever keeps the set's idle on bones the active clips omit;
      confirm whether those beats continue and whether their phase restarts on a
      transition. Record clip names/times with the capture where available.
+
+## Added 2026-11-14 (actor stealth fields, #2557)
+
+170. **How do cloaked Nightkin and nightstalkers look and change state?** (P2; #2557,
+     refraction.md section 5.) [observed: owner's 2026-11-14 REPCONN playtest, issue #2557
+     comment] Nightkin there were drawn plain even as their uncloak sound/effect played.
+     [design, #2557] NVForever now refracts loaded living actors at Chameleon >= 1,
+     restoring the body, outfit and weapon when the value drops or the actor dies.
+     [hypothesis] The player's existing 0.03 screen shift and 2 s shimmer provisionally
+     apply to other actors. To check in the original: at REPCONN and in the caves near
+     Jacobstown, record the outline, weapon and outfit while cloaked, during an attack,
+     after combat and on death; compare the bend/shimmer to a player's Stealth Boy.
+     Check that Jacobstown's residents stay plain. Also record whether nightstalkers
+     cloak, which encountered variant does so, and under what conditions; the owner's
+     comment leaves that uncertain, and no nightstalker record facts were supplied.

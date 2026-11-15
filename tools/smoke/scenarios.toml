@@ -29009,6 +29009,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "nightkin-stealth-field"
+source = "[documented: issue #2557, supplied FalloutNV.esm records] CrSuperMutantNightkin (0x0007EA29) carries CrNightkinSCRIPT (0x0007EA22), which adds StealthBoyInvisibilitySpell (0x0007E474) on load: StealthBoyInvis (0x00043E95), Chameleon 95; [design, #2557] loaded living actors with Chameleon >= 1 get refracting material copies"
+note = "[design, #2557] Place the scripted Nightkin beside an unseen player, then restrain it to keep this cloak-on check out of an attack transition. The log must identify its base and dynamic reference; no game data fixture is shipped. Player regression scenarios retain their expectations unchanged."
+areas = ["aid", "actors"]
+paths = ["engine/nvforever/src/stealth_field.rs", "engine/nvforever/src/actor_materials.rs", "engine/nvforever/src/actors.rs", "crates/fnv-game/src/functions/magic.rs", "crates/fnv-game/src/aid.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:CrSuperMutantNightkin:1,3.2:call:0xFF000000:SetRestrained:1" }
+args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { re = 'ai \[[^\]]*\] CrSuperMutantNightkin 0xFF000000: created by a script \(PlaceAtMe\)', label = "the scripted Nightkin is the first created reference" },
+  { re = 'stealth field: CrSuperMutantNightkin 0xFF000000 on \(Chameleon 95\)', label = "the Nightkin gets the actor stealth field" },
+]
+manual = "[design, #2557] Inspect the refracting body and weapon. Unrestrain the actor and provoke an attack: plain during attack, cloaked after combat; a killed actor restores. Compare the player's Stealth Boy and Pip-Boy using aid-stealth-boy, stealth-boy-refraction and stealth-boy-pipboy. Original-game comparisons remain observer check 170."
+
+[[scenario]]
 name = "grass-fire"
 source = "owner request 2026-11-14 (#2567, docs/design/grass-fire.md): fire from a burning weapon spreads across grass, sets the actors in it alight and goes out within a hard limit; the grass blackens and sinks away and grows back when its cell reloads"
 note = "the player (god mode) fires the Flamer (0000432D, fuel 00029371) north at the grass by the Prospector Saloon (nearest tufts about 230 units north) for a second from 26 s (message boxes off: one open stops the trigger), then looks at the fire; Easy Pete is held in place and put 250 units in front, in the fire's path, at 27 s; the fire runs to its end. Frames for the eye: the front spreading, the black grass sinking, the scorched ground left behind"
