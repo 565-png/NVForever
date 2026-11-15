@@ -522,6 +522,8 @@ impl SkyState {
     /// Preserve the sampled cell and region across a climate-only rebuild [design,
     /// #2531; `worldspace::script_sky`]. Rebind the source by FormID into the new list.
     /// An invalidated travel placement stays invalidated (`Self::set_interior`).
+    /// The caller seeds current live gates before this selects weather [design, #2531;
+    /// `worldspace::carry_climate_sky`].
     pub(crate) fn carry_region_placement(&mut self, from: &Self) {
         self.region_cell = from.region_cell;
         self.source = from.source.and_then(|i| self.regions.iter().position(|r| r.region.form_id == from.regions[i].region.form_id));
@@ -2304,7 +2306,7 @@ mod tests {
         let mut rebuilt = climate_rebuild_test_sky(&sky);
         // A rebuilt list may have a different order [design: synthetic fixture].
         rebuilt.regions.insert(0, RegionList { region: RegionWeather { form_id: 13, ..Default::default() }, choices: Vec::new() });
-        crate::worldspace::carry_climate_sky(&sky, &mut rebuilt);
+        crate::worldspace::carry_climate_sky(&sky, &mut rebuilt, |_| None);
         assert_eq!(rebuilt.source, Some(1));
         assert!(rebuilt.placed);
         assert_eq!(rebuilt.region_cell, sky.region_cell);
@@ -2321,12 +2323,49 @@ mod tests {
     }
 
     #[test]
+    fn weather_region_climate_rebuild_seeds_current_gates_before_selecting() {
+        for previous_value in [None, Some(0.0), Some(1.0)] {
+            let gated_region = |sky: &mut SkyState| {
+                sky.regions[0].choices.push(Choice {
+                    weather: Weather { form_id: GATED, ..Default::default() },
+                    chance: 100,
+                    global: Some(Gate { id: GATE, edid: None, stored: Some(0.0) }),
+                });
+            };
+            let (mut sky, regions) = region_test_sky();
+            gated_region(&mut sky);
+            sky.set_live_global(GATE, 1.0);
+            sky.place_outdoors(&regions, 11, 150.0, 150.0);
+            assert_eq!(sky.weather.form_id, GATED);
+            // The old cache may lag a script's current gate [design: synthetic fixture].
+            sky.live_globals = previous_value.map(|v| (GATE, v)).into_iter().collect();
+            let mut rebuilt = climate_rebuild_test_sky(&sky);
+            gated_region(&mut rebuilt);
+            crate::worldspace::carry_climate_sky(&sky, &mut rebuilt, |id| {
+                assert_eq!(id, GATE);
+                Some(1.0)
+            });
+            let assert_retained = |s: &SkyState| {
+                assert_eq!((s.region(), s.weather.form_id, s.pick), (Some("TestRegion"), GATED, GATED));
+                assert_eq!((s.rolls, s.rng), (0, sky.rng), "previous gate: {previous_value:?}");
+                assert!(s.prev.is_none());
+                assert_eq!(s.fade, 1.0);
+            };
+            assert_retained(&rebuilt);
+            rebuilt.set_live_global(GATE, 1.0);
+            rebuilt.place_outdoors(&regions, 11, 250.0, 150.0);
+            rebuilt.set_hour(12.1, false);
+            assert_retained(&rebuilt);
+        }
+    }
+
+    #[test]
     fn weather_region_climate_rebuild_keeps_sample_inside_outline() {
         let (mut sky, regions) = region_test_sky();
         sky.place_outdoors(&regions, 11, 250.0, 150.0);
         sky.place_outdoors(&regions, 11, 150.0, 150.0);
         let mut rebuilt = climate_rebuild_test_sky(&sky);
-        crate::worldspace::carry_climate_sky(&sky, &mut rebuilt);
+        crate::worldspace::carry_climate_sky(&sky, &mut rebuilt, |_| None);
         rebuilt.place_outdoors(&regions, 11, 150.0, 150.0);
         assert_eq!((rebuilt.region(), rebuilt.weather.form_id, rebuilt.rolls), (None, 5, 1));
         assert!(rebuilt.placed);
@@ -2344,7 +2383,7 @@ mod tests {
                 sky.set_interior(None);
             }
             let mut rebuilt = climate_rebuild_test_sky(&sky);
-            crate::worldspace::carry_climate_sky(&sky, &mut rebuilt);
+            crate::worldspace::carry_climate_sky(&sky, &mut rebuilt, |_| None);
             if !travel_before_rebuild {
                 rebuilt.set_interior(None);
             }
@@ -2358,7 +2397,7 @@ mod tests {
         let (mut sky, regions) = region_test_sky();
         sky.place_outdoors(&regions, 11, 150.0, 150.0);
         let mut rebuilt = climate_rebuild_test_sky(&sky);
-        crate::worldspace::carry_climate_sky(&sky, &mut rebuilt);
+        crate::worldspace::carry_climate_sky(&sky, &mut rebuilt, |_| None);
         rebuilt.place_outdoors(&regions, 22, 150.0, 150.0);
         assert_eq!((rebuilt.region(), rebuilt.weather.form_id), (None, 5));
         assert!(rebuilt.prev.is_none());

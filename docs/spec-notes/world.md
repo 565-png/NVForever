@@ -299,7 +299,9 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
     walking and script MoveTo: same captures; hypothesis for the other travel cases].
     A same-world climate rebuild retains that sampled cell and region (rebound by
     FormID), so ForceClimate/SetCurrentClimate do not trigger a fresh outline lookup;
-    travel invalidation and worldspace rebuilds still refresh placement [design,
+    current simulation gate values seed the rebuilt sky before its first selection,
+    so a stored-zero/live-nonzero gate does not briefly select ungated weather or
+    consume extra rolls. Travel invalidation and worldspace rebuilds still refresh placement [design,
     #2531: sky.rs::carry_region_placement, worldspace.rs::carry_climate_sky and switch;
     implementation of the settled lookup rule, not an additional capture claim].
     Indoors the list stays as it was [hypothesis]. Among overlapping overriding regions,
