@@ -57,15 +57,28 @@ launcher tests use a real owned child only to verify the delivered EditorID, HOM
 and inherited-aid filtering; synthetic judge rows test acceptance rules and are not
 rendered/game results.
 
-Process qualification: the public composition adds the exact seven lease controls
-and seven physical/context controls from a separately qualified c28 source. Their
-23-control historical context includes the unchanged nine initial-launch controls.
-The two authored Python launcher/judge boundary checks passed in the source preparation.
-This public cut's Rust controls, fresh canonical CI and optional GAME scenario remain UNRUN. Qualification must be attached to this
-exact source and compatible dependency graph; private result counts are not fresh
-public passes. Original failed source-argument assumptions and setup errors remain
-historical evidence. Actual GAME execution is optional under CONTRIBUTING; a
-reviewed/typechecked meaningful consumer scenario is required before Ready.
+Process qualification: the pinned current2c source's seven lease controls,
+nine initial-launch controls and seven physical/context controls passed all23
+selected CPU cases in a coherent owned dependency graph. This result is specific
+to that source; it is not whole current-public canonical CI or GAME acceptance.
+The two Python launcher/judge boundary checks also passed against that source.
+Original failed source-argument assumptions and setup errors remain retained.
+
+[documented: authored engine/nvf-play/src/combat/projectile_launch_probe.rs::drive]
+The frame guards use strict greater-than comparisons against7200 waiting frames
+and300 active frames, checked before staging or restored-shot dispatch. Independent
+real-time guards remain120 waiting seconds and15 active seconds.
+
+[hypothesis: bounded diagnostic policy] Two additional direct boundary controls set
+the actual Probe counters near each cap, with real elapsed time below both separate
+timeouts. The wait control admits7200 without staging, aborts7201 and never fires.
+The active control admits the first real physical insertion at300, aborts301 before
+a restored second request, and requires exact absent-field restoration, original
+inventory counts and no repeated dispatch or cleanup. They use no7200/300-frame
+loops. All original23 control bodies are unchanged; these two new controls and the
+new whole public head are UNCOMPILED/UNRUN pending their own checks. Actual GAME
+execution remains optional under CONTRIBUTING; the meaningful consumer scenario
+must be source-reviewed/typechecked before Ready.
 Nothing here completes B42 startup, Quickthrow OS input/animation, temporary World
 reference placement/model lookup, TTL deletion, save ownership, native or rendered
 acceptance.

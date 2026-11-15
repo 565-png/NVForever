@@ -242,3 +242,126 @@ fn generated_form_expressions_preserve_getter_and_vanilla_statement_contexts() {
     assert_eq!((p.stage, p.requests, p.accepted), (Stage::Waiting, 0, 0), "this control does not fabricate probe acceptance");
     typed_unchanged(&a);
 }
+
+#[test]
+fn waiting_frame_cap_accepts_7200_then_aborts_7201_without_staging() {
+    assert_eq!(MAX_WAIT_FRAMES, 7200);
+    let scratch = Scratch::new();
+    let mut a = app(&scratch);
+    {
+        let now = a.world().resource::<Time<Real>>().elapsed_secs_f64();
+        let p = a.world().resource::<Probe>();
+        assert_eq!(p.stage, Stage::Waiting);
+        assert!(now - p.started.unwrap() < 20.0 && now - p.started.unwrap() < WAIT_SECONDS);
+        assert!(p.backup.is_none());
+    }
+    a.world_mut().resource_mut::<Probe>().frames = MAX_WAIT_FRAMES - 1;
+    a.update();
+    {
+        let p = a.world().resource::<Probe>();
+        assert_eq!((p.frames, p.stage, p.requests, p.accepted), (7200, Stage::Waiting, 0, 0));
+        assert!(p.failed.is_none() && p.backup.is_none() && !p.cleaned && !p.passed, "{}", probe_state(&a));
+        let c = a.world().resource::<Combat>();
+        assert!(c.script_shots.is_empty() && c.flying.is_empty());
+        let game = &a.world().resource::<ScriptState>().rt.as_ref().unwrap().game;
+        assert!(game.combat_requests.is_empty());
+        let fields = game.projectile_launch_traits(PROJ).unwrap();
+        assert_eq!((fields.speed, fields.impact_force), (None, None));
+    }
+    assert_eq!(query(&mut a, "SetFunctionValue (Player.GetItemCount OwnedGun)"), XVal::Num(20.0));
+    assert_eq!(query(&mut a, "SetFunctionValue (Player.GetItemCount OwnedAmmo)"), XVal::Num(0.0));
+    a.update();
+    {
+        let p = a.world().resource::<Probe>();
+        assert_eq!((p.frames, p.stage, p.requests, p.accepted), (7201, Stage::Done, 0, 0));
+        assert_eq!(p.failed.as_deref(), Some("bounded wait/stage deadline"));
+        assert!(p.cleaned && !p.passed && p.backup.is_none(), "{}", probe_state(&a));
+        assert_eq!(p.cleanup_attempts, 0, "waiting acquired no capsule to restore");
+    }
+    a.update();
+    {
+        let p = a.world().resource::<Probe>();
+        assert_eq!((p.frames, p.stage, p.requests, p.accepted), (7201, Stage::Done, 0, 0));
+        let c = a.world().resource::<Combat>();
+        assert!(c.script_shots.is_empty() && c.flying.is_empty());
+        assert!(a.world().resource::<ScriptState>().rt.as_ref().unwrap().game.combat_requests.is_empty());
+        let stats = a.world().resource::<CombatStats>();
+        assert_eq!((stats.shots, stats.projectiles, stats.actor_shots), (0, 0, 0));
+    }
+    assert_eq!(query(&mut a, "SetFunctionValue (Player.GetItemCount OwnedGun)"), XVal::Num(20.0));
+    assert_eq!(query(&mut a, "SetFunctionValue (Player.GetItemCount OwnedAmmo)"), XVal::Num(0.0));
+    typed_unchanged(&a);
+}
+
+#[test]
+fn active_frame_cap_accepts_300_then_aborts_301_cleans_without_second_fire() {
+    assert_eq!(MAX_ACTIVE_FRAMES, 300);
+    let scratch = Scratch::new();
+    let mut a = app(&scratch);
+    // One real staging update, not hundreds of simulated active frames.
+    a.world_mut().resource_mut::<Time<Real>>().advance_by(std::time::Duration::from_secs(20));
+    a.update();
+    {
+        let p = a.world().resource::<Probe>();
+        assert_eq!((p.stage, p.requests, p.accepted), (Stage::FirstPending, 0, 0));
+        assert!(p.failed.is_none() && p.backup.is_some(), "{}", probe_state(&a));
+        assert_eq!(a.world().resource::<Combat>().script_shots.len(), 1);
+        assert!(a.world().resource::<Combat>().flying.is_empty());
+    }
+    {
+        let mut p = a.world_mut().resource_mut::<Probe>();
+        p.frames = p.armed_frame + MAX_ACTIVE_FRAMES - 1;
+    }
+    tick(&mut a);
+    let (first_visual, counters, armed_frame) = {
+        let now = a.world().resource::<Time<Real>>().elapsed_secs_f64();
+        let p = a.world().resource::<Probe>();
+        assert!(now - p.armed_at < ACTIVE_SECONDS && now - p.started.unwrap() < WAIT_SECONDS);
+        assert_eq!(p.frames - p.armed_frame, 300);
+        assert!(p.frames < MAX_WAIT_FRAMES);
+        assert_eq!((p.stage, p.requests, p.accepted), (Stage::Restore, 1, 1));
+        assert!(p.failed.is_none() && p.backup.is_some() && !p.cleaned && !p.passed, "{}", probe_state(&a));
+        let c = a.world().resource::<Combat>();
+        assert!(c.script_shots.is_empty());
+        assert_eq!(c.flying.len(), 1);
+        let f = &c.flying[0];
+        assert_eq!((f.proj, f.p.speed, f.force), (PROJ, 500.0, 7.0));
+        assert!(a.world().resource::<ScriptState>().rt.as_ref().unwrap().game.combat_requests.is_empty());
+        let stats = a.world().resource::<CombatStats>();
+        (f.id, (stats.shots, stats.projectiles, stats.actor_shots), p.armed_frame)
+    };
+    assert_eq!(query(&mut a, "SetFunctionValue (Player.GetItemCount OwnedGun)"), XVal::Num(21.0));
+    assert_eq!(query(&mut a, "SetFunctionValue (Player.GetItemCount OwnedAmmo)"), XVal::Num(2.0));
+    tick(&mut a);
+    {
+        let now = a.world().resource::<Time<Real>>().elapsed_secs_f64();
+        let p = a.world().resource::<Probe>();
+        assert!(now - p.armed_at < ACTIVE_SECONDS && now - p.started.unwrap() < WAIT_SECONDS);
+        assert_eq!(p.frames - armed_frame, 301);
+        assert_eq!((p.stage, p.requests, p.accepted), (Stage::Done, 1, 1));
+        assert_eq!(p.failed.as_deref(), Some("bounded wait/stage deadline"));
+        assert!(p.cleaned && !p.passed && p.backup.is_none(), "{}", probe_state(&a));
+        assert_eq!(p.cleanup_attempts, 1);
+        let game = &a.world().resource::<ScriptState>().rt.as_ref().unwrap().game;
+        assert!(game.combat_requests.is_empty());
+        let fields = game.projectile_launch_traits(PROJ).unwrap();
+        assert_eq!((fields.speed, fields.impact_force), (None, None), "restore absence, not equal-valued replacement overrides");
+    }
+    assert_eq!(query(&mut a, "SetFunctionValue (Player.GetItemCount OwnedGun)"), XVal::Num(20.0));
+    assert_eq!(query(&mut a, "SetFunctionValue (Player.GetItemCount OwnedAmmo)"), XVal::Num(0.0));
+    assert_eq!(query(&mut a, "SetFunctionValue (GetProjectileTraitNumeric OwnedProjectile 2)"), XVal::Num(1000.0));
+    assert_eq!(query(&mut a, "SetFunctionValue (GetProjectileTraitNumeric OwnedProjectile 9)"), XVal::Num(10.0));
+    tick(&mut a);
+    {
+        let p = a.world().resource::<Probe>();
+        assert_eq!((p.frames - armed_frame, p.requests, p.accepted, p.cleanup_attempts), (301, 1, 1, 1));
+        let c = a.world().resource::<Combat>();
+        assert!(c.script_shots.is_empty());
+        assert_eq!(c.flying.len(), 1);
+        assert_eq!((c.flying[0].id, c.flying[0].p.speed, c.flying[0].force), (first_visual, 500.0, 7.0));
+        assert!(a.world().resource::<ScriptState>().rt.as_ref().unwrap().game.combat_requests.is_empty());
+        let stats = a.world().resource::<CombatStats>();
+        assert_eq!((stats.shots, stats.projectiles, stats.actor_shots), counters);
+    }
+    typed_unchanged(&a);
+}
