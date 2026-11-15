@@ -275,6 +275,11 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- [design, #2659] **Selected-part mesh boundary:** mixed-mesh triangles are selected at
+  a mean bone-weight share of `PART_TRIANGLE_SHARE = 0.5`, then filled at the same mask
+  opacity as whole parts. A different threshold changes the boundary, not its strength;
+  coarse meshes may need finer clipping. [Classic VATS §12](design/vats-classic.md#12-the-selected-part-lit-on-the-target-2026-11-10).
+
 - **An intercom nobody has set up speaks for the actor its script names (#2454).**
   [hypothesis, #2454] When a talking activator starts a conversation before any script
   told it who speaks, ours lets the one actor its scripts name speak (Ramos for the
