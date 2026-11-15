@@ -1174,7 +1174,7 @@ fn corrected_projection_catalogue_metadata_drives_the_real_source_vm() {
     let mut g = game(&f);
     let before = g.ui_tree.trait_write_counts();
     let context = fnv_game::game::RunCtx { self_ref: Some(FormId(REFERENCE)), ..Default::default() };
-    let returned = g.run_query("ref target\nfloat returned\nBegin Function { }\nlet target := GetSelf\nlet returned := target.ProjectUITile \"TestMenu/Box\" \"SCREEN\" -7 11 80 40\nSetFunctionValue returned\nEnd\n", context.clone()).unwrap();
+    let returned = g.run_query("ref target\nfloat returned\nBegin Function { }\nlet target := GetSelf\nlet returned := target.ProjectUITile \"TestMenu/Box\" \"SCREEN\" -7 11 80 40\nSetFunctionValue returned\nEnd\n", context).unwrap();
     assert_eq!(returned, x(0.));
     assert_eq!(g.ui_tree.trait_write_counts(), before);
     {
