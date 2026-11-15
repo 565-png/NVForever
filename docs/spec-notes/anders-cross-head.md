@@ -58,11 +58,13 @@ is NVForever's own. The freeing of Anders (#2472) is `anders-cross.md`.
   gets a pitch past ±90°, so the turn lifts it through the level instead of turning it
   over. Head tracking reads it the same way (`head_look::ChainPose::head_angles`)
   [design]. The `stops facing` line now gives the yaw from the chest and how many frames
-  the head, fully turned, was upside down.
+  the head, fully turned, was upside down. A head the right way up but rolled more
+  than a quarter turn would be read as upside down too; no clip we have seen does that
+  [hypothesis].
 - An actor standing within a shuffle (16 units) of a cross's entry point is put on it
   at once, as one found there: no steps and no getting-on clip
   (`furniture::found_on_cross`) [design]. One walked to a cross from further still
   climbs on.
 - Whether a crucified actor turns his head to the player at all, and whether the
-  original shows the climb onto the cross, are not known: observer check 171, owner
+  original shows the climb onto the cross, are not known: observer check 174, owner
   review item 83.
