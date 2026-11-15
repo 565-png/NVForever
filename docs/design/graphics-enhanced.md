@@ -486,33 +486,32 @@ repeats every landscape texture plainly every 256 world units, 16 times across a
 (docs/spec-notes/world.md §3 "Texture repeat" [observed]). From a hill or over the
 Mojave flats the same marks recur on that grid. With this switch the terrain shaders read
 each landscape texture at a few offset places and blend them, so the repeat no longer
-lines up into a grid. The techniques are published: Heitz & Neyret, "High-Performance
-By-Example Noise using a Histogram-Preserving Blending Operator" (HPG 2018); Mikkelsen,
-"Practical Real-Time Hex-Tiling" (JCGT 11(3), 2022); Quilez, "Texture repetition". This is
-NVForever's own small version (no histogram transform). Skyrim Community Shaders'
-"Terrain Variation" (the two strongest corners of the triangle grid) and New Vegas
-Reloaded's LOD noise are prior art only; no code was taken from any of them.
+lines up into a grid. NVForever keeps Hex3 [design, #2551], its own small version of
+Morten S. Mikkelsen's published technique, ["Practical Real-Time Hex-Tiling"](https://jcgt.org/published/0011/03/05/)
+(JCGT 11(3), 2022) [documented: cited publication]. It uses no histogram transform.
+Heitz & Neyret's histogram-preserving by-example noise (HPG 2018), Quilez's "Texture
+repetition", Skyrim Community Shaders' "Terrain Variation" and New Vegas Reloaded's
+LOD noise are prior art only; no code was taken from any of them.
 
 - **Lattice and hash.** The texture coordinate (u = game x / repeat, v = game y / repeat,
   as the meshes carry it) is laid on a lattice of equilateral triangles four repeats on a
   side (1,024 units at the game's repeat). Each lattice vertex is named by two signed whole
   numbers (floor, never truncation) and hashed (a 32-bit integer mixer, no `sin`) into an
-  offset of the texture and, for Hex3, one of six 60° rotations. The coordinate hangs on
+  offset of the texture and one of six 60° rotations. The coordinate hangs on
   the world, so neighbouring quadrants and cells read the same place the same way: no seam
   at quadrant or cell edges from the reads. Each read's coordinate is taken relative to its
   corner, so it stays small far from the origin; the tests compare it with an f64
   reference near ±200,000 units (f32 positions there are 1/64 unit apart, about 0.03 texel
   of a 512-texel texture over 256 units). No promise is made past that range.
-- **Candidates (temporary).** Both are built for the comparison and one will be kept:
-  - *Triangle2*: the two corners with the largest weights (ties to the smaller names),
-    offsets only, weights in proportion. Where the kept pair changes, one read is swapped
-    for another at a weight above 0: not continuous; the pictures decide whether it shows.
-  - *Hex3* (the default): all three corners as hex cells, offsets and rotations, the
-    barycentric weights to the fourth power made to sum to 1. Continuous (a corner's
-    weight is 0 on the edge across from it). The curve narrows the blend; it is not a
-    histogram transform and does not promise kept contrast.
-  The test aid `NVF_PLAY_TEST_TERRAIN_TILING=triangle2|hex3` picks one (read once, logged
-  as `terrain anti-tiling: candidate …`).
+- **Hex3.** All three corners as hex cells, offsets and rotations, the barycentric
+  weights to the fourth power made to sum to 1. Continuous (a corner's weight is 0 on
+  the edge across from it). The curve narrows the blend; it is not a histogram transform
+  and does not promise kept contrast. Hex3 is the sole method; the Triangle2 generator
+  and temporary comparison selector have been removed [design, #2551].
+- **Picture decision.** At noon on the flats of cell (-24,-9), 1280x720, anti-tiling off
+  shows the 256-unit repeat as regular stripes receding into the distance. Hex3 removes
+  them; Triangle2 leaves faint stripes [observed: main-session picture comparison,
+  2026-11-15]. This is why NVForever keeps Hex3 [design, #2551].
 - **Mip selection.** Every read takes explicit gradients: the plain coordinate's change
   across a pixel (taken before any branch or discard), turned with the read's rotation and
   scaled by 2^mip bias, since a gradient read takes no bias of its own (the upscalers set
@@ -524,7 +523,7 @@ Reloaded's LOD noise are prior art only; no code was taken from any of them.
   not go through Bevy's `apply_normal_mapping` again. Folded layers take the base
   material's decoding flags, as the ordinary path does (an image's format is not known
   when the material is made: textures decode on worker threads).
-- **Faint reads.** After the candidate's weights, each weight less 1/256 (held at 0) is
+- **Faint reads.** After Hex3's weights, each weight less 1/256 (held at 0) is
   made to sum to 1 again, so a read fades to nothing before it is skipped (no jump at the
   cut); at least one read always stays.
 - **Skipping.** The folded layers are walked last to first with the ordered blend's own
@@ -556,13 +555,25 @@ Reloaded's LOD noise are prior art only; no code was taken from any of them.
   lit layer is still lit on its own. Not anti-tiled: the depth prepass and shadows (the
   same depth either way), the normal prepass's normals (screen-space passes that read them
   keep the plain reads), and the distant LOD terrain's baked textures.
-- **Cost.** Per read texture, two (Triangle2) or three (Hex3) diffuse reads instead of one,
-  the same for each contributing normal map, plus a little arithmetic; skipping brings the
-  common case (a base and one or two layers) near today's count. With D diffuse-read
-  textures, N contributing normal maps and M contributing means: at most K·D + K·N + M
-  reads (K = 2 or 3 before faint reads drop). To be measured with the Tracy build's GPU
-  zones (main view's opaque pass and the frame) at the open-ground and layer-heavy views,
-  off against on, and each candidate with height blending against height blending alone.
+- **Read budget.** Per read texture, up to three diffuse reads instead of one, the
+  same for each contributing normal map, plus a little arithmetic; skipping brings the
+  common case (a base and one or two layers) near the ordinary count. With D diffuse-read
+  textures, N contributing normal maps and M contributing means: at most `3*D + 3*N + M`
+  reads before faint reads drop [design, #2551].
+- **Measured GPU frame cost.** At 2560x1440, unpaced (`--log-frame-times 8`,
+  `--graphics-cycle`), two passes each, one game on the machine, RTX 4070:
+
+  | View | Off | Hex3 added | Triangle2 added | Height blending (#2550) added | Hex3 with height blending added |
+  |---|---|---|---|---|---|
+  | Goodsprings hillside, several layers (-63488, 6144) | 4.37-4.40 ms | 0.12-0.13 ms | 1.2 ms | 0.28-0.31 ms | 0.23 ms |
+  | Flats | 2.01-2.03 ms | 0.11 ms | - | 0.00 ms | - |
+
+  Deltas are against off [observed: main-session GPU frame measurements, 2026-11-15].
+  The combined hillside cost is below height blending alone. The anti-tiled path skips
+  zero-share layers and does not read the base twice [design, #2551;
+  terrain.wesl anti-tiled branch, terrain_pbr.wesl surface set-up]. These measurements
+  support keeping Hex3 and removing Triangle2 [design, #2551]; they describe these views
+  and this GPU, not a general performance guarantee.
 - **Switching.** The settings row Terrain anti-tiling (Graphics > Picture), or
   `--graphics-only terrain-anti-tiling`. A pipeline key of the folded material
   (`TerrainLayersKey`); switching flips every folded material in place
@@ -571,7 +582,7 @@ Reloaded's LOD noise are prior art only; no code was taken from any of them.
   materials take the setting, and the first switch compiles
   the new pipeline (the pause menu waits for it). A texture repeat that is not above 0
   keeps the ordinary reads (a warning when it is switched on).
-- **Starting values** (NVForever's own, to be settled from pictures): lattice side 4
+- **Chosen values** (NVForever's own [design, #2551]): lattice side 4
   repeats, faint-read cut 1/256, Hex3's fourth-power curve, salts `0x25510001..3`.
 - Whether `enhanced` turns it on is the owner's call; until then it is off in both presets
   and is not an effect of the Enhanced effects row. Smoke: `terrain-anti-tiling` (switched
@@ -583,10 +594,10 @@ Reloaded's LOD noise are prior art only; no code was taken from any of them.
   drawn on their own; it wants `terrain: <n> layers drawn blended over folded quadrants`,
   logged by the first cell that has such layers, and the separate pipeline with
   `blend=on`); they want
-  `terrain anti-tiling pipeline <n> ready: path=folded|separate height=on|off method=…
+  `terrain anti-tiling pipeline <n> ready: path=folded|separate height=on|off
   blend=on|off`
-  (`NVF_PLAY_TEST_PIPELINE_LOG`, pipeline_gate.rs). The look and the cost are checked by
-  pictures and Tracy.
+  (`NVF_PLAY_TEST_PIPELINE_LOG`, pipeline_gate.rs). Picture and frame-cost evidence is
+  recorded above; future visual checks should cover both landscape draw paths.
 
 ## 4. Tried and dropped
 

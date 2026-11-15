@@ -1110,13 +1110,12 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hou
 run_seconds = 22
 expect = [
   { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless), so the anti-tiled folded shader is the one drawing" },
-  { re = 'terrain anti-tiling: candidate hex3 \(the default\)', label = "the default candidate, said once" },
 ]
 order = [[
   "settings: terrain-anti-tiling on",
   { re = 'graphics: light glow, terrain anti-tiling$' },
   { re = 'terrain: anti-tiling on \(\d+ folded quadrant materials, [1-9]\d* changed\)', label = "switching on flipped the loaded folded materials" },
-  { re = 'terrain anti-tiling pipeline \d+ ready: path=folded height=off method=hex3', label = "the folded TERRAIN_ANTI_TILING pipeline asked for after the switch compiled and is ready" },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=folded height=off', label = "the folded TERRAIN_ANTI_TILING pipeline asked for after the switch compiled and is ready" },
   "settings: terrain-anti-tiling off",
   { re = 'graphics: light glow$' },
   { re = 'terrain: anti-tiling off \(\d+ folded quadrant materials, [1-9]\d* changed\)', label = "switching off flipped them back" },
@@ -1202,7 +1201,7 @@ run_seconds = 22
 order = [[
   "settings: terrain-anti-tiling on",
   { re = 'terrain: anti-tiling on \(0 folded quadrant materials, 0 changed\) and \d+ separate landscape materials \([1-9]\d* changed\)', label = "nothing folded; switching on flipped the landscape's own NIF materials" },
-  { re = 'terrain anti-tiling pipeline \d+ ready: path=separate height=off method=hex3', label = "the separate TERRAIN_ANTI_TILING pipeline compiled and is ready" },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=separate height=off', label = "the separate TERRAIN_ANTI_TILING pipeline compiled and is ready" },
   "settings: terrain-anti-tiling off",
   { re = 'terrain: anti-tiling off \(0 folded quadrant materials, 0 changed\) and \d+ separate landscape materials \([1-9]\d* changed\)', label = "switching off flipped them back" },
 ]]
@@ -1230,7 +1229,7 @@ expect = [
   { re = 'terrain: the first 4 texture layers of a quadrant are folded into its base', label = "a repeat that does not divide the cell folds four layers" },
   { re = 'terrain anti-tiling pipeline \d+ ready: path=folded height=off', label = "the folded anti-tiled pipeline (the mesh carries the coordinate; the repeat comes from the material)" },
   { re = 'terrain: [1-9]\d* layers drawn blended over folded quadrants \(past the first 4 of a quadrant\)', label = "overflow layers exist: layers past the fourth drawn on their own over a folded quadrant" },
-  { re = 'terrain anti-tiling pipeline \d+ ready: path=separate height=off method=hex3 blend=on', label = "the separate anti-tiled pipeline of an alpha-blended layer draw (an unfolded base alone is opaque, blend=off)" },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=separate height=off blend=on', label = "the separate anti-tiled pipeline of an alpha-blended layer draw (an unfolded base alone is opaque, blend=off)" },
 ]
 order = [[
   { re = 'graphics: light glow, terrain anti-tiling$', label = "on from the start, at repeat 300" },

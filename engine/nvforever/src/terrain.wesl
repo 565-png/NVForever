@@ -23,7 +23,7 @@
 //
 // TERRAIN_ANTI_TILING (the Terrain anti-tiling switch, terrain.rs "Anti-tiling", [design,
 // #2551]): every texture (the base's and the layers', diffuse and normal map) is read at a
-// few offset (Hex3: and rotated) places hashed from where the fragment lies in the world
+// few offset and rotated places (Hex3) hashed from where the fragment lies in the world
 // and blended (nvf_assets terrain_sampling.wesl), so its repeat does not show as a grid.
 // The surface is set up by nvf_assets terrain_pbr.wesl instead of Bevy's
 // pbr_input_from_standard_material (which would read the base once more at the plain

@@ -32,7 +32,7 @@
 //! when it is done, for the smoke check that the variant compiled [design, #2550]. One
 //! with terrain anti-tiling (`TERRAIN_ANTI_TILING`, terrain.rs "Anti-tiling") logs
 //! `terrain anti-tiling pipeline <n> ready|failed: path=folded|separate height=on|off
-//! method=hex3|triangle2 blend=on|off`, read from its own fragment definitions and colour
+//! blend=on|off`, read from its own fragment definitions and colour
 //! targets (blend on: an alpha-blended layer draw) [design, #2551].
 //!
 //! **A travel's screen and the sun's shadows** (#1732). Twelve trips through new places took
@@ -260,7 +260,7 @@ fn log_each(cache: Res<PipelineCache>, mut seen: Local<Vec<(Instant, bool)>>, mu
                         let name: &str = match s {
                             bevy::shader::ShaderDefVal::Bool(s, _) | bevy::shader::ShaderDefVal::Int(s, _) | bevy::shader::ShaderDefVal::UInt(s, _) => s,
                         };
-                        matches!(name, "PIPBOY_SCREEN" | "ADD_LINEAR" | "FIRST_PERSON_DEPTH" | "HAS_PREVIOUS_SKIN" | "PREPASS_PIPELINE" | "TERRAIN_HEIGHT_BLEND" | "TERRAIN_ANTI_TILING" | "TERRAIN_SEPARATE" | "TERRAIN_TILING_TRIANGLE2") || name.starts_with("BLEND_")
+                        matches!(name, "PIPBOY_SCREEN" | "ADD_LINEAR" | "FIRST_PERSON_DEPTH" | "HAS_PREVIOUS_SKIN" | "PREPASS_PIPELINE" | "TERRAIN_HEIGHT_BLEND" | "TERRAIN_ANTI_TILING" | "TERRAIN_SEPARATE") || name.starts_with("BLEND_")
                     };
                     let fragment: Vec<_> = d.fragment.iter().flat_map(|f| f.shader_defs.iter()).filter(interesting).collect();
                     info!("pipeline {i} shader-defs: {fragment:?}: {}", label(&p.descriptor));
@@ -290,7 +290,7 @@ fn height_blend_variant(descriptor: &PipelineDescriptor) -> bool {
 
 /// For a terrain anti-tiling pipeline (its fragment stage has `TERRAIN_ANTI_TILING`,
 /// nvf_assets `terrain_sampling::anti_tiling_defs`), which one it is, from the same
-/// definitions: `path=folded|separate height=on|off method=hex3|triangle2`, and from its colour
+/// definitions: `path=folded|separate height=on|off`, and from its colour
 /// targets `blend=on|off` (on: a blended draw, a landscape layer over what lies under it).
 fn anti_tiling_variant(descriptor: &PipelineDescriptor) -> Option<String> {
     let PipelineDescriptor::RenderPipelineDescriptor(d) = descriptor else { return None };
@@ -300,10 +300,9 @@ fn anti_tiling_variant(descriptor: &PipelineDescriptor) -> Option<String> {
     }
     let blend = d.fragment.iter().flat_map(|f| f.targets.iter().flatten()).any(|t| t.blend.is_some());
     Some(format!(
-        "path={} height={} method={} blend={}",
+        "path={} height={} blend={}",
         if has("TERRAIN_SEPARATE") { "separate" } else { "folded" },
         if has("TERRAIN_HEIGHT_BLEND") { "on" } else { "off" },
-        if has("TERRAIN_TILING_TRIANGLE2") { "triangle2" } else { "hex3" },
         if blend { "on" } else { "off" }
     ))
 }
@@ -417,9 +416,9 @@ mod tests {
         };
         assert_eq!(anti_tiling_variant(&main(&["VERTEX_UVS_A"])), None);
         assert_eq!(anti_tiling_variant(&main(&["TERRAIN_HEIGHT_BLEND"])), None);
-        assert_eq!(anti_tiling_variant(&main(&["VERTEX_UVS_A", "TERRAIN_ANTI_TILING"])).as_deref(), Some("path=folded height=off method=hex3 blend=off"));
-        assert_eq!(anti_tiling_variant(&main(&["TERRAIN_HEIGHT_BLEND", "TERRAIN_ANTI_TILING"])).as_deref(), Some("path=folded height=on method=hex3 blend=off"));
-        assert_eq!(anti_tiling_variant(&main(&["TERRAIN_ANTI_TILING", "TERRAIN_TILING_TRIANGLE2", "TERRAIN_SEPARATE"])).as_deref(), Some("path=separate height=off method=triangle2 blend=off"));
+        assert_eq!(anti_tiling_variant(&main(&["VERTEX_UVS_A", "TERRAIN_ANTI_TILING"])).as_deref(), Some("path=folded height=off blend=off"));
+        assert_eq!(anti_tiling_variant(&main(&["TERRAIN_HEIGHT_BLEND", "TERRAIN_ANTI_TILING"])).as_deref(), Some("path=folded height=on blend=off"));
+        assert_eq!(anti_tiling_variant(&main(&["TERRAIN_ANTI_TILING", "TERRAIN_SEPARATE"])).as_deref(), Some("path=separate height=off blend=off"));
         // A blended layer draw says so (its colour target blends).
         let blended = PipelineDescriptor::RenderPipelineDescriptor(Box::new(bevy::render::render_resource::RenderPipelineDescriptor {
             label: Some("alpha_blend_mesh_pipeline".into()),
@@ -434,7 +433,7 @@ mod tests {
             }),
             ..default()
         }));
-        assert_eq!(anti_tiling_variant(&blended).as_deref(), Some("path=separate height=off method=hex3 blend=on"));
+        assert_eq!(anti_tiling_variant(&blended).as_deref(), Some("path=separate height=off blend=on"));
         // Both on in one folded pipeline is also a height blending variant.
         assert!(height_blend_variant(&main(&["TERRAIN_HEIGHT_BLEND", "TERRAIN_ANTI_TILING"])));
         // In the vertex stage only: not one.

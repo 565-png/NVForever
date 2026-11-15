@@ -692,7 +692,7 @@ impl MaterialExtension for NifSurface {
             }
         }
         if key.bind_group_data.anti_tiling {
-            crate::terrain_sampling::anti_tiling_defs(descriptor, crate::terrain_sampling::tiling_method(), true);
+            crate::terrain_sampling::anti_tiling_defs(descriptor, true);
         }
         if key.bind_group_data.refract {
             refraction_pipeline(descriptor);

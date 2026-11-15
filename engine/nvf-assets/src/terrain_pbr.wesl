@@ -27,7 +27,7 @@ import bevy_pbr::{
 @if(BINDLESS) import bevy_render::bindless::{bindless_textures_2d, bindless_samplers_filtering};
 @if(BINDLESS) import bevy_pbr::render::pbr_bindings::{material_indices, material_array};
 @if(!BINDLESS) import bevy_pbr::render::pbr_bindings;
-import nvf_assets::terrain_sampling::{TerrainFootprint, TerrainTaps, terrain_triangle2, terrain_hex3, terrain_sample_diffuse, terrain_sample_normal, terrain_normal_tap, terrain_unit_normal, terrain_world_normal, terrain_world_uv};
+import nvf_assets::terrain_sampling::{TerrainFootprint, TerrainTaps, terrain_hex3, terrain_sample_diffuse, terrain_sample_normal, terrain_normal_tap, terrain_unit_normal, terrain_world_normal, terrain_world_uv};
 
 // The fragment's footprint: its texture coordinate from where it is (u = game x / repeat,
 // v = game y / repeat, as the meshes carry it) through the material's coordinate transform,
@@ -40,12 +40,9 @@ fn terrain_footprint(world: vec4<f32>, repeat: f32, uv_transform: mat3x3<f32>) -
     return TerrainFootprint(uv, dpdx(uv) * mip_scale, dpdy(uv) * mip_scale);
 }
 
-// The fragment's reads, the same for every texture it reads: the candidate the pipeline
-// was specialised with (temporary, for the comparison: TERRAIN_TILING_TRIANGLE2 from
-// NVF_PLAY_TEST_TERRAIN_TILING=triangle2; Hex3 otherwise).
+// Hex3 reads, shared by every texture the fragment reads [design, #2551].
 fn terrain_taps(uv: vec2<f32>) -> TerrainTaps {
-    @if(TERRAIN_TILING_TRIANGLE2) return terrain_triangle2(uv);
-    @if(!TERRAIN_TILING_TRIANGLE2) return terrain_hex3(uv);
+    return terrain_hex3(uv);
 }
 
 // The material's slot in the bindless tables.

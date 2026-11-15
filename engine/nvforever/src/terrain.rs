@@ -67,7 +67,7 @@
 //! effect of the Enhanced effects row) gives the folded material's pipeline
 //! `TERRAIN_ANTI_TILING` ([`TerrainLayersKey`], nvf_assets `terrain_sampling::anti_tiling_defs`):
 //! every texture of the quadrant (the base's and the folded layers', diffuse and normal map)
-//! is read at two or three places offset (and, for Hex3, rotated) by a hash of a lattice
+//! is read at up to three offset and rotated places (Hex3) by a hash of a lattice
 //! four repeats on a side laid over the world, and the reads are blended, so the 256-unit
 //! repeat no longer shows as a grid (nvf_assets terrain_sampling.wesl and terrain_pbr.wesl).
 //! The lattice hangs on world coordinates, so neighbouring quadrants and cells read the
@@ -78,10 +78,6 @@
 //! materials in place ([`sync_anti_tiling`]); new materials take the current setting. The
 //! texture repeat travels in the material ([`TerrainLayers::texture_repeat`]), also where
 //! the mesh carries the coordinate (a repeat that does not divide the cell).
-//!
-//! Two candidates are built for the comparison (temporary): Triangle2 (the two nearest
-//! lattice corners, offsets only) and Hex3 (all three, offsets and rotations, the default),
-//! chosen with the test aid `NVF_PLAY_TEST_TERRAIN_TILING=triangle2|hex3`.
 //!
 //! The landscape's own NIF materials get the same reads ([`TerrainCtx::base_material`],
 //! [`TerrainCtx::layer_material`]: their texture repeat and the switch in
@@ -292,7 +288,7 @@ impl MaterialExtension for TerrainLayers {
         nvf_assets::depth_equal(descriptor, key.mesh_key);
         height_blend_def(descriptor, key.bind_group_data);
         if key.bind_group_data.anti_tiling {
-            nvf_assets::terrain_sampling::anti_tiling_defs(descriptor, nvf_assets::terrain_sampling::tiling_method(), false);
+            nvf_assets::terrain_sampling::anti_tiling_defs(descriptor, false);
         }
         Ok(())
     }
@@ -384,8 +380,6 @@ pub fn sync_anti_tiling(
         }
     }
     if want {
-        // The candidate's one log line (temporary, for the comparison).
-        nvf_assets::terrain_sampling::tiling_method();
         let repeat = settings.as_deref().map_or(0.0, |s| s.tile);
         if !nvf_assets::terrain_sampling::repeat_valid(repeat) {
             warn!("terrain: anti-tiling needs a texture repeat above 0 (it is {repeat}); the textures keep their ordinary reads");
@@ -1255,7 +1249,7 @@ mod tests {
                  var c = vec4<f32>(0.0);\n\
                  if o > 0.5 {{\n\
                      c = terrain_sample_diffuse(tex, samp, terrain_hex3(fp.uv), fp);\n\
-                     let n = terrain_sample_normal(tex, samp, terrain_triangle2(fp.uv), fp, o > 0.75, true);\n\
+                     let n = terrain_sample_normal(tex, samp, terrain_hex3(fp.uv), fp, o > 0.75, true);\n\
                      let tbn = mat3x3<f32>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0));\n\
                      c += vec4<f32>(terrain_world_normal(tbn, n, o > 0.9), 0.0);\n\
                  }}\n\

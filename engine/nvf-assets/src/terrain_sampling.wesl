@@ -7,17 +7,15 @@
 // The texture coordinate (game x, y over the texture repeat, as the landscape meshes carry
 // it) is laid on a lattice of equilateral triangles four repeats on a side. Each lattice
 // vertex (a "corner", named by two signed whole numbers) gives the texture its own offset
-// (and, for Hex3, one of six rotations), hashed from its name, so the same place always
+// and one of six rotations, hashed from its name, so the same place always
 // reads the same way, across quadrant and cell edges too. A fragment reads the texture once
-// for each corner of its triangle that it keeps (Triangle2: the two nearest; Hex3: all
-// three) and blends the reads by weights from its place in the triangle. The techniques
-// are published (Heitz & Neyret, HPG 2018, "High-Performance By-Example Noise using a
-// Histogram-Preserving Blending Operator"; Mikkelsen, JCGT 11(3) 2022, "Practical
-// Real-Time Hex-Tiling"; Quilez, "Texture repetition"); this is NVForever's own small
-// version of them (no histogram transform), and the two-strongest-corners variant is
-// known from Skyrim Community Shaders' "Terrain Variation" (prior art only; no code taken
-// from any of them). Every constant is NVForever's own starting choice, to be settled from
-// pictures; none is a fact about the original game, which repeats each texture plainly.
+// for each of its triangle's three corners (Hex3) and blends the reads by weights from
+// its place in the triangle. The published technique is Mikkelsen, JCGT 11(3) 2022,
+// "Practical Real-Time Hex-Tiling" (https://jcgt.org/published/0011/03/05/). This is
+// NVForever's own small version (no histogram transform); no code was taken from the
+// publication or other projects. Every constant is NVForever's own choice; none is a fact
+// about the original game, which repeats each texture plainly. The decision and picture
+// and cost evidence of 2026-11-15 are in graphics-enhanced.md section 3.13.
 
 // sqrt(3) / 2: the height of an equilateral triangle of side 1.
 const TERRAIN_HEX_H: f32 = 0.8660254037844386;
@@ -39,7 +37,7 @@ struct TerrainFootprint {
 }
 
 // One read: where (texture coordinate), the rotation from the surface's texture frame to
-// the read's (identity for Triangle2) and its weight (0: not read).
+// the read's and its weight (0: not read).
 struct TerrainTap {
     uv: vec2<f32>,
     rotation: mat2x2<f32>,
@@ -125,7 +123,7 @@ fn terrain_rotation(r: u32) -> mat2x2<f32> {
 
 // The faint-tap rule: each weight less TERRAIN_FAINT_TAP (held at 0), made to sum to 1
 // again, so a tap fades to 0 before its read is skipped (no jump at the cut). The largest
-// of two or three weights summing to 1 is at least 1/3, so one always survives.
+// of three weights summing to 1 is at least 1/3, so one always survives.
 fn terrain_drop_faint(taps: TerrainTaps) -> TerrainTaps {
     var out = taps;
     var total = 0.0;
@@ -138,43 +136,6 @@ fn terrain_drop_faint(taps: TerrainTaps) -> TerrainTaps {
         out.taps[j].weight = out.taps[j].weight / total;
     }
     return out;
-}
-
-// Triangle2: the two corners with the largest weights (equal weights: the smaller name,
-// x first, then y), offsets only. Where the kept pair changes, a read at a nonzero weight
-// is swapped for another: not continuous (the comparison decides whether it shows).
-fn terrain_triangle2(uv: vec2<f32>) -> TerrainTaps {
-    let l = terrain_lattice(uv);
-    var id = l.id;
-    var rel = l.rel;
-    var b = array<f32, 3>(l.bary.x, l.bary.y, l.bary.z);
-    // The corner left out: the weakest, ties going to the larger name.
-    var drop = 0;
-    for (var j = 1; j < 3; j += 1) {
-        let weaker = b[j] < b[drop];
-        let tie_larger = b[j] == b[drop] && (id[j].x > id[drop].x || (id[j].x == id[drop].x && id[j].y > id[drop].y));
-        if weaker || tie_larger {
-            drop = j;
-        }
-    }
-    var out: TerrainTaps;
-    out.count = 2u;
-    var n = 0u;
-    var total = 0.0;
-    for (var j = 0; j < 3; j += 1) {
-        if j != drop {
-            total += b[j];
-        }
-    }
-    let identity = mat2x2<f32>(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0));
-    for (var j = 0; j < 3; j += 1) {
-        if j != drop {
-            out.taps[n] = TerrainTap(rel[j] + terrain_corner_offset(id[j]), identity, b[j] / total);
-            n += 1u;
-        }
-    }
-    out.taps[2] = TerrainTap(vec2<f32>(0.0), identity, 0.0);
-    return terrain_drop_faint(out);
 }
 
 // Hex3: all three corners, each a hex cell's centre with its own offset and rotation; the

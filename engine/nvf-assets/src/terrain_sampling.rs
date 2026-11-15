@@ -4,7 +4,7 @@
 //! (in the tests).
 //!
 //! - `terrain_sampling.wesl` (plain WGSL, no imports or conditions): the triangle lattice,
-//!   the corner hash, the two candidate tap generators (Triangle2 and Hex3), the gradient
+//!   the corner hash, the Hex3 tap generator, the gradient
 //!   reads of a texture at the taps and the normal decoding and rotation. nvforever's
 //!   `terrain.rs` tests parse and validate this very file with naga (this crate has no naga).
 //! - `terrain_pbr.wesl`: the surface set-up that takes the place of Bevy's
@@ -30,50 +30,6 @@ pub const SAMPLING_SOURCE: &str = include_str!("terrain_sampling.wesl");
 /// The surface set-up module's source, for the contract tests.
 pub const PBR_SOURCE: &str = include_str!("terrain_pbr.wesl");
 
-/// The two candidate ways of reading the taps, compared by picture and cost before one is
-/// kept (#2551; temporary: the loser and this selector go once the comparison is made).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TilingMethod {
-    /// The two nearest corners of the lattice triangle, offsets only.
-    Triangle2,
-    /// All three corners as hex cells, offsets and rotations, a fourth-power weight curve.
-    Hex3,
-}
-
-impl TilingMethod {
-    /// The method a value of `NVF_PLAY_TEST_TERRAIN_TILING` names (`triangle2` or `hex3`);
-    /// Hex3 without one, and for any other value (`None` in the second place says so).
-    pub fn parse(value: Option<&str>) -> (TilingMethod, Option<&str>) {
-        match value.map(str::trim) {
-            Some("triangle2") => (TilingMethod::Triangle2, None),
-            None | Some("") | Some("hex3") => (TilingMethod::Hex3, None),
-            Some(other) => (TilingMethod::Hex3, Some(other)),
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            TilingMethod::Triangle2 => "triangle2",
-            TilingMethod::Hex3 => "hex3",
-        }
-    }
-}
-
-/// The candidate this process uses: test aid `NVF_PLAY_TEST_TERRAIN_TILING=triangle2|hex3`
-/// (default hex3), read once and logged once.
-pub fn tiling_method() -> TilingMethod {
-    static METHOD: std::sync::OnceLock<TilingMethod> = std::sync::OnceLock::new();
-    *METHOD.get_or_init(|| {
-        let value = std::env::var("NVF_PLAY_TEST_TERRAIN_TILING").ok();
-        let (method, unknown) = TilingMethod::parse(value.as_deref());
-        if let Some(other) = unknown {
-            warn!("terrain anti-tiling: NVF_PLAY_TEST_TERRAIN_TILING={other} is neither triangle2 nor hex3; hex3 is used");
-        }
-        info!("terrain anti-tiling: candidate {} ({})", method.name(), if value.is_some() { "NVF_PLAY_TEST_TERRAIN_TILING" } else { "the default" });
-        method
-    })
-}
-
 /// Whether `repeat` (world units per texture repeat) can place the anti-tiled reads: a
 /// finite number above 0. Anything else keeps the ordinary reads.
 pub fn repeat_valid(repeat: f32) -> bool {
@@ -81,19 +37,16 @@ pub fn repeat_valid(repeat: f32) -> bool {
 }
 
 /// The main-pass fragment definitions of an anti-tiled landscape pipeline:
-/// `TERRAIN_ANTI_TILING`, `TERRAIN_TILING_TRIANGLE2` for that candidate, and
+/// `TERRAIN_ANTI_TILING` and
 /// `TERRAIN_SEPARATE` for the terrain's own NifMaterial draws (`separate`), which the
 /// pipeline log reads to tell the two paths apart. The prepass and the shadows draw the same
 /// depth either way and are left alone.
-pub fn anti_tiling_defs(descriptor: &mut RenderPipelineDescriptor, method: TilingMethod, separate: bool) {
+pub fn anti_tiling_defs(descriptor: &mut RenderPipelineDescriptor, separate: bool) {
     if descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
         return;
     }
     let Some(fragment) = descriptor.fragment.as_mut() else { return };
     fragment.shader_defs.push("TERRAIN_ANTI_TILING".into());
-    if method == TilingMethod::Triangle2 {
-        fragment.shader_defs.push("TERRAIN_TILING_TRIANGLE2".into());
-    }
     if separate {
         fragment.shader_defs.push("TERRAIN_SEPARATE".into());
     }
@@ -197,28 +150,6 @@ mod tests {
         for t in taps.iter_mut() {
             t.weight /= total;
         }
-    }
-
-    fn triangle2(uv: [f32; 2]) -> Vec<Tap> {
-        let l = lattice(uv);
-        let mut drop = 0;
-        for j in 1..3 {
-            let weaker = l.bary[j] < l.bary[drop];
-            let tie_larger = l.bary[j] == l.bary[drop] && (l.id[j][0] > l.id[drop][0] || (l.id[j][0] == l.id[drop][0] && l.id[j][1] > l.id[drop][1]));
-            if weaker || tie_larger {
-                drop = j;
-            }
-        }
-        let total: f32 = (0..3).filter(|&j| j != drop).map(|j| l.bary[j]).sum();
-        let mut taps: Vec<Tap> = (0..3)
-            .filter(|&j| j != drop)
-            .map(|j| {
-                let o = offset(l.id[j]);
-                Tap { uv: [l.rel[j][0] + o[0], l.rel[j][1] + o[1]], rotation: IDENTITY, weight: l.bary[j] / total, id: l.id[j] }
-            })
-            .collect();
-        drop_faint(&mut taps);
-        taps
     }
 
     fn hex3(uv: [f32; 2]) -> Vec<Tap> {
@@ -350,11 +281,10 @@ mod tests {
                 let tol = 1e-3 * (1.0 + uv[0].abs().max(uv[1].abs()) / 16.0);
                 assert!((uv[0] - c[0] - l.rel[j][0]).abs() < tol && (uv[1] - c[1] - l.rel[j][1]).abs() < tol, "{uv:?} {j}: {l:?}");
             }
-            for taps in [triangle2(uv), hex3(uv)] {
-                let w: f32 = taps.iter().map(|t| t.weight).sum();
-                assert!((w - 1.0).abs() < 1e-5 && taps.iter().all(|t| t.weight.is_finite() && t.weight >= 0.0), "{uv:?} {taps:?}");
-                assert!(taps.iter().any(|t| t.weight > 0.0));
-            }
+            let taps = hex3(uv);
+            let w: f32 = taps.iter().map(|t| t.weight).sum();
+            assert!((w - 1.0).abs() < 1e-5 && taps.iter().all(|t| t.weight.is_finite() && t.weight >= 0.0), "{uv:?} {taps:?}");
+            assert!(taps.iter().any(|t| t.weight > 0.0));
         }
     }
 
@@ -427,50 +357,6 @@ mod tests {
         }
     }
 
-    fn pair(taps: &[Tap]) -> Vec<[i32; 2]> {
-        let mut v: Vec<[i32; 2]> = taps.iter().map(|t| t.id).collect();
-        v.sort();
-        v
-    }
-
-    #[test]
-    fn triangle2_swaps_a_read_where_its_pair_changes() {
-        // Not continuous by construction (the comparison judges whether it shows): walking a
-        // line, wherever the kept pair changes inside one lattice triangle the change is
-        // narrowed down by halving, and the blend on its two sides differs.
-        let mut changes = 0;
-        let mut jumps = 0;
-        let mut a = [-7.0f32, 1.3];
-        for _ in 0..1500 {
-            let b = [a[0] + 0.01, a[1]];
-            if lattice(a).id == lattice(b).id && pair(&triangle2(a)) != pair(&triangle2(b)) {
-                changes += 1;
-                let (mut lo, mut hi) = (a, b);
-                for _ in 0..24 {
-                    let mid = [(lo[0] + hi[0]) * 0.5, lo[1]];
-                    if pair(&triangle2(mid)) == pair(&triangle2(lo)) {
-                        lo = mid;
-                    } else {
-                        hi = mid;
-                    }
-                }
-                if (blended(&triangle2(lo)) - blended(&triangle2(hi))).abs() > 0.01 {
-                    jumps += 1;
-                }
-            }
-            a = b;
-        }
-        assert!(changes > 0 && jumps > 0, "{changes} pair changes, {jumps} with a jump");
-        // At the middle of an edge the corner across is out: the pair is that edge's ends
-        // (of the two equal weights, the order of names decides nothing here but is fixed).
-        let mid = [LATTICE * 0.5, 0.0];
-        assert_eq!(pair(&triangle2(mid)), vec![[0, 0], [1, 0]], "{:?}", lattice(mid));
-        // Triangle2 reads two places and turns nothing.
-        let t = triangle2([3.3, -2.1]);
-        assert_eq!(t.len(), 2);
-        assert!(t.iter().all(|t| t.rotation == IDENTITY));
-    }
-
     #[test]
     fn faint_taps_fade_to_nothing_and_one_always_stays() {
         let mut taps = vec![Tap { uv: [0.0; 2], rotation: IDENTITY, weight: 0.998, id: [0, 0] }, Tap { uv: [0.0; 2], rotation: IDENTITY, weight: 0.002, id: [1, 0] }];
@@ -525,23 +411,19 @@ mod tests {
     }
 
     #[test]
-    fn the_candidate_comes_from_the_test_aid() {
-        assert_eq!(TilingMethod::parse(None), (TilingMethod::Hex3, None));
-        assert_eq!(TilingMethod::parse(Some("hex3")), (TilingMethod::Hex3, None));
-        assert_eq!(TilingMethod::parse(Some("triangle2")), (TilingMethod::Triangle2, None));
-        assert_eq!(TilingMethod::parse(Some("tri")), (TilingMethod::Hex3, Some("tri")));
+    fn the_pipeline_definitions_cover_both_paths_and_leave_the_prepass_alone() {
         use bevy::render::render_resource::FragmentState;
         let main = || RenderPipelineDescriptor { fragment: Some(FragmentState { shader_defs: vec!["VERTEX_UVS_A".into()], ..default() }), ..default() };
         let defs = |d: &RenderPipelineDescriptor| d.fragment.as_ref().unwrap().shader_defs.clone();
         let mut d = main();
-        anti_tiling_defs(&mut d, TilingMethod::Hex3, false);
+        anti_tiling_defs(&mut d, false);
         assert_eq!(defs(&d), vec![ShaderDefVal::from("VERTEX_UVS_A"), "TERRAIN_ANTI_TILING".into()]);
         let mut d = main();
-        anti_tiling_defs(&mut d, TilingMethod::Triangle2, true);
-        assert_eq!(defs(&d), vec![ShaderDefVal::from("VERTEX_UVS_A"), "TERRAIN_ANTI_TILING".into(), "TERRAIN_TILING_TRIANGLE2".into(), "TERRAIN_SEPARATE".into()]);
+        anti_tiling_defs(&mut d, true);
+        assert_eq!(defs(&d), vec![ShaderDefVal::from("VERTEX_UVS_A"), "TERRAIN_ANTI_TILING".into(), "TERRAIN_SEPARATE".into()]);
         let mut prepass = main();
         prepass.vertex.shader_defs.push("PREPASS_PIPELINE".into());
-        anti_tiling_defs(&mut prepass, TilingMethod::Hex3, true);
+        anti_tiling_defs(&mut prepass, true);
         assert_eq!(defs(&prepass), vec![ShaderDefVal::from("VERTEX_UVS_A")], "the prepass draws the same depth either way");
         assert!(repeat_valid(256.0) && repeat_valid(300.0) && !repeat_valid(0.0) && !repeat_valid(-256.0) && !repeat_valid(f32::NAN) && !repeat_valid(f32::INFINITY));
     }
