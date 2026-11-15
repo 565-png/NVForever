@@ -2266,6 +2266,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
     subtitle flicker? The campaign `o30c_say` (tools/capture/observe) does the same by
     script with shots, if run with the window in front.
 
+## Added 2026-11-15 (Cottonwood Cove's explorers, #2548)
+
+162. **Does a fixed speaker give way to a faction condition?** (P2; #2548, dialogue.md,
+     the open case of check 29.) "Halt! What business have you in Cottonwood Cove,
+     outsider?" (0x0013AC97, VFreeformCottonwoodCove) names NVCCLegionaryGuardAAMExplorer
+     as its fixed speaker and has only `GetInFaction VCaesarsLegionCCoveExplorerFaction
+     == 1` [observed: the data]. At Cottonwood Cove with the Mark of Caesar, `prid
+     001364C3` then `disable` (the AAM explorer), and let NVCCExplorer2REF (0x00138A92)
+     walk up. Does he say the Halt line, voiced or silent, with the Mark of Caesar
+     choices, or "Move along."? Ours since #2548: the Halt line, in the AAM explorer's
+     voice [hypothesis].
+
 ## Added 2026-11-15 (Very Aggressive actors, Neutrals and the aggro radius, #2547)
 
 163. **Does the aggro radius bound whom a Very Aggressive actor attacks on sight?** (P2;
