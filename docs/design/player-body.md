@@ -417,6 +417,23 @@ the rebar club, a frag grenade, the flamer, the fists, a swap while drawn):
   while and then flipped, a 34-unit jump of the hand. This is in the shared animator, so
   every actor's clips blend this way.
 
+A melee block follows the aim's settling curve too (raised and lowered in about 0.5 s
+each; trace `movement-inertia-trace-block`), slower with Weapon weight in handling.
+
+The shimmer of a held gun down its sights (the owner's twelfth playtest, the Sturdy
+Caravan Shotgun) is mostly the drawing, not the motion [observed: traces
+`movement-inertia-trace-sights-shotgun` and `-still` at 3840x2160]. With Weapon breathing
+and the breathing camera off the gun does not move against the view at all, yet its
+pixels shift about 0.33 px a step at Goodsprings (x = -71680, where single-precision
+coordinates step by 0.008 units), 0.14 px at the world's origin and 0.05 px indoors. The
+cure would be drawing relative to a point near the player (a render origin); the owner
+left it out of this work (2026-11-15).
+
+Switching a part off or on while it acts leaves nothing stuck (smoke
+`advanced-movement-switches`): a draw or holster goes on at its rate, the zoom goes on
+from where it is, and a placement by the game starts the ground velocity from rest
+however near (`MovementInertia::check_game_placed`).
+
 All are on by default. Smoke: `advanced-movement-off` (the main switch off: no glide, no
 eased crouch, no weapon dip), `advanced-movement-parts` (Eased crouch off on the page: the
 glide stays, the crouch is not eased), `movement-inertia-off` (the eased crouch stays).
