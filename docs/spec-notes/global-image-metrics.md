@@ -49,21 +49,31 @@ GameData resource clears cached dimensions before resolution. The scheduled
 fixture first has UI without data, then inserts actual authored VFS data under
 the same UI identity. This differs from a decoded missing image.
 
-[observed: authored CPU controls, qualified Windows normal26e host plus six
-retained UI source leaves; result SHA256 prefix
-011a0bf6, independent audit SHA256 prefix 0fcc47c7] All six selected controls passed,
-each with zero failures/ignored cases and 1726 other tests filtered. They cover
-actual global expressions and child Piece/placed geometry, filename invalidation
-and recovery, live zoom/invalid products, UI replacement/no-op writes, bounded
-admission/untouched neighbors, and scheduled FontKit/VFS resolution before
-expression settle. The prior fixture String/&str compile failure executed zero
-tests and is retained separately. No game assets, installed XML or original
-game text are included in these authored controls.
+Implementation coverage is exercised by authored Rust fixtures for global
+expressions and actual child `Piece`/placement geometry; filename changes;
+zoom and invalid products; UI lifetime/no-op writes; full image/node admission;
+atlas/ordinary neighbors; and the real scheduled FontKit/VFS read before
+expression settle. These are repository implementation controls, not an
+observation of original-game or native timing. Private process history belongs
+in audit artifacts and the PR validation record.
 
-[observed: current public-port review state] This port's Rust build, strict
-Clippy, canonical CI and opt-in game smoke are unrun. The qualified CPU host is
-not whole public main, a pristine-main baseline pair or native/GPU acceptance.
-The 4096-node boundary has no dedicated case; the resource fixture tests initial
-absence then insertion, not replacement after an already cached decoded miss.
-A full Pip-Boy schedule, complete mod support and native rendering parity remain
-unproved.
+[hypothesis: unavailable-size tradeoff] Empty/missing/invalid input publishes
+zero metrics to prevent retaining another filename's old size. Zero is not a
+general neutral fallback for expressions: the existing UI `Div(0)` rule retains
+its accumulator, so a dependent ratio may still become large until a source is
+available. This leaf does not clamp the consuming expression, force a verifier,
+change Div semantics or claim that a complete popup/Pip-Boy is repaired.
+
+[hypothesis: writer ownership remains unchanged in this follow-up] The producer
+continues to compare the current numeric trait and restore decoded metadata
+when it differs. `Ui::write_changed` has a distinct existing `code_written`
+policy: an unchanged producer value does not overwrite a later script write.
+Switching between those policies needs an explicit sequential-owner control;
+it is not treated as a mechanical no-op here.
+
+The source-only follow-up adds an exact 4096-node positive case and a 4097-node
+negative case that requires no decode or trait write. Its seven selected
+controls, new-head strict checks, canonical CI and opt-in smoke have not been
+run by this preparation. Same-name external file replacement without a changed
+GameData/UI lifetime, full-menu/native/GPU acceptance, and complete mod support
+remain separate.

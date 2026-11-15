@@ -112,24 +112,6 @@ sep = ","
 # ------------------------------------------------------------------ checks before every push
 # Engine workspace uses the crates/ workspace, so crate changes call for its clippy too.
 
-[[scenario]]
-name = "ui-hidden-global-image-metrics"
-source = "[design] docs/spec-notes/global-image-metrics.md: a hidden own image under globals() supplies live fileheight before expression settling; authored injected XML, no installed mod text copied"
-note = "Opt in with NVF_GLOBAL_IMAGE_METRICS_TEXTURE naming a real readable own-image path relative to textures, using forward slashes. No texture is included. The console injects an invisible authored global image, records its positive height, halves numeric zoom, and then clears its filename. This checks actual scheduled metadata through the public UI functions; it does not claim rendered pixels, native parity or a full Pip-Boy fix. This new scenario has not run."
-areas = ["ui", "images"]
-paths = ["engine/nvf-play/src/tiles/global_image_metrics.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/interface.rs", "crates/fnv-ui/src/tree.rs", "docs/spec-notes/global-image-metrics.md"]
-requires = ["NVF_GLOBAL_IMAGE_METRICS_TEXTURE"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = '10:PrintC "nvf global metrics injected %g", (InjectUIComponent "globals()" "<image name=%qNVFSmokeGlobalMetrics%q><visible>0</visible><filename>{env:NVF_GLOBAL_IMAGE_METRICS_TEXTURE}</filename><zoom>100</zoom><_initialheight>0</_initialheight></image>");10.4:close;12:PrintC "nvf global metrics height %.3f", (GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight");12.1:SetUIFloat "globals()/NVFSmokeGlobalMetrics/_initialheight" (GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight");12.4:close;14:SetUIFloat "globals()/NVFSmokeGlobalMetrics/zoom" 50;14.4:close;16:PrintC "nvf global metrics half %.3f", ((GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight") / (GetUIFloat "globals()/NVFSmokeGlobalMetrics/_initialheight"));16.4:close;18:SetUIString "globals()/NVFSmokeGlobalMetrics/filename" "";18.4:close;20:PrintC "nvf global metrics cleared %g %g", (GetUIFloat "globals()/NVFSmokeGlobalMetrics/filewidth"), (GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight");20.4:close' }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
-run_seconds = 24
-expect = [
-  { text = 'script: print "nvf global metrics injected 1"', count = 1, label = "the hidden authored global image is actually inserted" },
-  { re = 'script: print "nvf global metrics height ([0-9.]+)"', range = [0.001, 100000000], count = 1, label = "the real own file supplies a positive height despite visibility zero" },
-  { text = 'script: print "nvf global metrics half 0.500"', count = 1, label = "a live zoom change halves its image metric" },
-  { text = 'script: print "nvf global metrics cleared 0 0"', count = 1, label = "clearing its filename cannot retain stale dimensions" },
-]
-order = [["nvf global metrics injected", "nvf global metrics height", "nvf global metrics half", "nvf global metrics cleared"]]
-
 [[check]]
 name = "root cargo test"
 paths = ["crates/", "Cargo.toml", "Cargo.lock", "schemas/", "deny.toml"]
@@ -3226,6 +3208,24 @@ order = [[
 expect = [{ re = 'SwapTexture: .* not found', count = 0, label = "no swapped texture missing" }]
 
 # ------------------------------------------------------------------ messages and menus
+
+[[scenario]]
+name = "ui-hidden-global-image-metrics"
+source = "[design] docs/spec-notes/global-image-metrics.md: a hidden own image under globals() supplies live fileheight before expression settling; authored injected XML, no installed mod text copied"
+note = "Opt in with NVF_GLOBAL_IMAGE_METRICS_TEXTURE naming a real readable own-image path relative to textures, using forward slashes. No texture is included. The console injects an invisible authored global image, records its positive height, halves numeric zoom, and then clears its filename. This checks actual scheduled metadata through the public UI functions; it does not claim rendered pixels, native parity or a full Pip-Boy fix. This new scenario has not run."
+areas = ["ui", "images"]
+paths = ["engine/nvf-play/src/tiles/global_image_metrics.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/interface.rs", "crates/fnv-ui/src/tree.rs", "docs/spec-notes/global-image-metrics.md"]
+requires = ["NVF_GLOBAL_IMAGE_METRICS_TEXTURE"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = '10:PrintC "nvf global metrics injected %g", (InjectUIComponent "globals()" "<image name=%qNVFSmokeGlobalMetrics%q><visible>0</visible><filename>{env:NVF_GLOBAL_IMAGE_METRICS_TEXTURE}</filename><zoom>100</zoom><_initialheight>0</_initialheight></image>");10.4:close;12:PrintC "nvf global metrics height %.3f", (GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight");12.1:SetUIFloat "globals()/NVFSmokeGlobalMetrics/_initialheight" (GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight");12.4:close;14:SetUIFloat "globals()/NVFSmokeGlobalMetrics/zoom" 50;14.4:close;16:PrintC "nvf global metrics half %.3f", ((GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight") / (GetUIFloat "globals()/NVFSmokeGlobalMetrics/_initialheight"));16.4:close;18:SetUIString "globals()/NVFSmokeGlobalMetrics/filename" "";18.4:close;20:PrintC "nvf global metrics cleared %g %g", (GetUIFloat "globals()/NVFSmokeGlobalMetrics/filewidth"), (GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight");20.4:close' }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
+expect = [
+  { text = 'script: print "nvf global metrics injected 1"', count = 1, label = "the hidden authored global image is actually inserted" },
+  { re = 'script: print "nvf global metrics height ([0-9.]+)"', range = [0.001, 100000000], count = 1, label = "the real own file supplies a positive height despite visibility zero" },
+  { text = 'script: print "nvf global metrics half 0.500"', count = 1, label = "a live zoom change halves its image metric" },
+  { text = 'script: print "nvf global metrics cleared 0 0"', count = 1, label = "clearing its filename cannot retain stale dimensions" },
+]
+order = [["nvf global metrics injected", "nvf global metrics height", "nvf global metrics half", "nvf global metrics cleared"]]
 
 [[scenario]]
 name = "corner-messages"

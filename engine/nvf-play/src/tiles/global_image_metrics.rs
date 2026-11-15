@@ -207,4 +207,36 @@ mod tests {
         assert_eq!(number(ui,calibration(ui),"fileheight"),512.);assert_eq!(number(ui,body,"zoom"),36.25);assert_eq!(ui.get_float("Owned/Other/fileheight"),Some(77.));
         let counts=ui.trait_write_counts();app.update();assert_eq!(app.world().resource::<ScriptState>().rt.as_ref().unwrap().game.ui_tree.trait_write_counts(),counts);
     }
+
+    #[test]
+    fn exact_global_node_budget_is_admitted_and_next_node_refuses_before_reads_or_writes() {
+        fn bounded(total: usize) -> Ui {
+            // The root and one hidden image each count as actual visited nodes.
+            let mut xml = String::from("<rect name=\"Globals\"><image name=\"Metric\"><visible>0</visible><filename>x.dds</filename><fileheight>73</fileheight></image>");
+            for i in 0..total - 2 { xml.push_str(&format!("<rect name=\"R{i}\"/>")); }
+            xml.push_str("</rect>");
+            let source = MemSource::default().with("menus\\globals.xml", &xml);
+            let mut ui = Ui::new();
+            assert!(ui.load_globals(&source));
+            ui
+        }
+        let mut exact = bounded(MAX_NODES);
+        let reads = std::cell::Cell::new(0);
+        let report = write(&mut exact, &mut Metrics::default(), &mut |_| {
+            reads.set(reads.get() + 1);
+            Some((128.0, 64.0))
+        });
+        assert_eq!(report, Report { images: 1, resolved: 1, ..Default::default() });
+        assert_eq!(reads.get(), 1);
+        let id = exact.tile(exact.globals()).children[0];
+        assert_eq!(number(&exact, id, "fileheight"), 64.0);
+        let mut overflow = bounded(MAX_NODES + 1);
+        let id = overflow.tile(overflow.globals()).children[0];
+        assert_eq!(number(&overflow, id, "fileheight"), 73.0);
+        let counts = overflow.trait_write_counts();
+        let report = write(&mut overflow, &mut Metrics::default(), &mut |_| panic!("reject complete frontier before any decode"));
+        assert!(report.limited);
+        assert_eq!(overflow.trait_write_counts(), counts);
+        assert_eq!(number(&overflow, id, "fileheight"), 73.0);
+    }
 }
