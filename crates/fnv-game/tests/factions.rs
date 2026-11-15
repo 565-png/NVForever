@@ -1774,12 +1774,15 @@ fn a_flag_on_the_friendly_faction_itself_still_counts() {
     assert!(!g.would_attack(loafer, player));
     call(&mut g, SET_PC_ENEMY_OF_FACTION, PLAYER, &[form(RATS), num(1.0)]);
     assert!(g.would_attack(loafer, player));
-    // A faction reaction of Enemy still comes first: the bandit (Raiders, who name the
-    // player's faction an enemy) is not shielded by a friendly faction.
+    // A faction reaction of Enemy yields to a shared friendly faction as well (#2560,
+    // factions.md §4: allies and friends "cannot attack each other under any
+    // circumstances"): the bandit (Raiders, who name the player's faction an enemy) is
+    // shielded once one of its factions is the player's ally.
     let bandit = FormId(BANDIT_REF);
+    assert!(g.would_attack(bandit, player));
     call(&mut g, ADD_TO_FACTION, BANDIT_REF, &[form(GANG_A), num(0.0)]);
     call(&mut g, SET_ALLY, PLAYER, &[form(PLAYER_FACTION), form(GANG_A), num(1.0), num(1.0)]);
-    assert!(g.would_attack(bandit, player));
+    assert!(!g.would_attack(bandit, player));
 }
 
 #[test]
