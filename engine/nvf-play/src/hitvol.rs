@@ -272,15 +272,22 @@ impl Plugin for HitVolumePlugin {
         // the comparison, `sync_volumes` looks up that its resource is missing and clones
         // nothing. Piped, the comparison is one system with the walk, so no sync point can
         // fall between them and change the meshes it compares [Bevy 0.20 `PipeSystem`].
-        if aid_on("NVF_PLAY_TEST_HITVOL_COMPARE") {
-            app.init_resource::<ScanCompare>().add_systems(Update, sync_volumes.pipe(compare_walks).after(PhysSystems).in_set(crate::PlaySet::Physics));
-        } else {
-            app.add_systems(Update, sync_volumes.after(PhysSystems).in_set(crate::PlaySet::Physics));
+        let compare = aid_on("NVF_PLAY_TEST_HITVOL_COMPARE");
+        if compare {
+            app.init_resource::<ScanCompare>();
         }
+        app.add_systems(Update, volume_systems(compare));
         if aid_on("NVF_PLAY_TEST_HITVOL_SCAN") {
             app.init_resource::<ScanLog>().add_systems(Update, log_scan.after(sync_volumes).in_set(crate::PlaySet::Physics));
         }
     }
+}
+
+fn volume_systems(compare: bool) -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    let systems = if compare { sync_volumes.pipe(compare_walks).into_configs() } else { sync_volumes.into_configs() };
+    // [design, #2531] Keep the whole comparison pipe before dismemberment, including
+    // when unrelated scheduling edges change (nvforever/src/main.rs travel/weather).
+    systems.after(PhysSystems).before(crate::dismember::resolve).in_set(crate::PlaySet::Physics)
 }
 
 fn aid_on(name: &str) -> bool {
@@ -666,6 +673,29 @@ fn report(mut exit: MessageReader<AppExit>, vols: Res<HitVolumes>, blocks: Res<A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn volume_sync_and_optional_comparison_explicitly_precede_dismemberment() {
+        use bevy::ecs::schedule::{IntoSystemSet, NodeId};
+
+        for compare in [false, true] {
+            let mut schedule = Schedule::default();
+            schedule.add_systems(crate::dismember::resolve);
+            schedule.add_systems(volume_systems(compare));
+            schedule.initialize(&mut World::new()).unwrap();
+            let systems: Vec<_> = schedule.systems().unwrap().map(|(key, s)| (key, s.name().to_string())).collect();
+            let sync = systems.iter().position(|(_, name)| name.contains("sync_volumes")).unwrap();
+            let resolve = systems.iter().position(|(_, name)| name.ends_with("dismember::resolve")).unwrap();
+            assert_eq!(systems[sync].1.contains("compare_walks"), compare);
+            assert!(sync < resolve, "comparison={compare}: {systems:?}");
+
+            // [design, #2531] Check the edge itself, independent of PlaySet ordering
+            // and any topological order Bevy could happen to choose without it.
+            let graph = schedule.graph();
+            let resolve_set = graph.system_sets.get_key(crate::dismember::resolve.into_system_set().intern()).unwrap();
+            assert!(graph.dependency().graph().contains_edge(NodeId::System(systems[sync].0), NodeId::Set(resolve_set)), "comparison={compare}");
+        }
+    }
 
     #[test]
     fn volume_from_bounds() {
