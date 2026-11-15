@@ -74,6 +74,8 @@ pub const SECTIONS: &[Section] = &[
     section("Gameplay", Some("Dialogue"), &["menu-pause", "dialogue-goodbye-hint", "dialogue-look", "dialogue-recentre", "dialogue-zoom", "lip-sync"]),
     section("Gameplay", Some("Reports"), &["send-reports", "reports-delete"]),
     section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-sway", "head-bob", "weapon-lower", "field-of-view", "viewmodel-field-of-view"]),
+    // After the tab's other headings, so the rows above keep their places (#2662).
+    section("Gameplay", Some("World"), &["grass-fire"]),
     section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "physics-rate", "ui-scale", "menu-scale"]),
     section(
         "Display",
@@ -316,6 +318,7 @@ mod tests {
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
         ("reload-slows", "Gameplay"),
+        ("grass-fire", "Gameplay"),
         ("music", "Gameplay"),
         ("voice", "Gameplay"),
         ("dialogue-look", "Gameplay"),
@@ -453,6 +456,8 @@ mod tests {
         all.sort_unstable();
         assert_eq!(all, (0..list.len()).collect::<Vec<_>>(), "each registered row once");
         assert_eq!(keys(&list, &l, "Gameplay")[..9], ["[Game]", "difficulty", "hardcore", "kill-camera", "vats-style", "vats-slowdown", "reload-slows", "UsePipBoy", "[Saving]"]);
+        let gameplay = keys(&list, &l, "Gameplay");
+        assert_eq!(gameplay[gameplay.len() - 2..], ["[World]", "grass-fire"]);
         assert_eq!(keys(&list, &l, "Audio"), ["volume-master", "volume-music", "volume-footstep", "volume-voice", "volume-effects", "volume-radio", "music", "voice", "reverb", "voice-reverb"]);
         assert_eq!(keys(&list, &l, "Controls"), CONTROLLER_KEYS);
         assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "scope-3d"]);
