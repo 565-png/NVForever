@@ -889,6 +889,7 @@ pub fn note_other_cameras(
 /// worldspace and an interior; streaming reloads around the camera, which the player
 /// systems have moved to the destination. With `--play` this happens behind a loading
 /// screen, which stays until `Streamer::settled` ([`loading_gate`]).
+#[allow(clippy::too_many_arguments)]
 pub fn travel(
     mut commands: Commands,
     mut msgs: MessageReader<nvf_play::Travel>,
