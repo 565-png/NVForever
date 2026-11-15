@@ -2709,3 +2709,24 @@ already talking takes over at once, same topic or another; nothing is queued or 
      #2538] Key/pick/script unlocking through either side changes the source lock;
      creating an own lock leaves the partner independent. Those mutations, key
      inheritance, broken-lock sharing and NPC use were not captured.
+
+## Answered 2026-11-15 (weather region lookup timing, #2531)
+
+199. **When does the weather follow a weather region: by its outline or the cell's
+     region list, and when is it looked up?** (P2; #2531, world.md §6.) **Answered
+     [observed: captures run15b_w and run15b_w2, 2026-11-15; first person, GameHour 12,
+     xNVSE 6.4.9, JIP LN 57.30 GetCurrentWeather/GetCurrentWeatherPercent]:** script
+     MoveTo to (110686, 19125), cell 27,4: NVWastelandClear; (109775, 18882), cell 26,4,
+     260 units outside NVLegateRegion's outline: clear for 40 s despite that cell's
+     XCLR listing the region [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-15].
+     MoveTo (109330, 18852), inside: NVlegateCampWeather;
+     back outside: clear. All complete (percent 1.0) at the first sample 4 s after
+     moving. Walking east at y 18849 kept camp weather past outline x 109513 and
+     fall-off distance x 110537: last camp sample x 110567.9, first clear x 110596.0
+     at percent 0.000, across cell border x 110592. Fade rose 0.033/s, complete in
+     about 30 s. Walking west entered cell 26,4 outside the outline and kept clear
+     to (109067, 18849), 450 units inside, for another 49 s standing. Thus membership
+     uses the outline, sampled on exterior cell entry; walking inside a cell holds
+     the result, while script moves resample and snap. [hypothesis: extend that
+     placement refresh to load doors, other teleports, fast travel, loaded games,
+     worldspace changes and coming outdoors; only script MoveTo was captured.]
