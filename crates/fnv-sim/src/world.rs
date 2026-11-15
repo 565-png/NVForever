@@ -1947,7 +1947,19 @@ impl<'a> World<'a> {
         Ok(())
     }
 
-    /// Goes up with every lock change ([`World::lock`], [`World::unlock`]): a reader that
+    /// [hypothesis, #2538] Change the applicable source lock's key without changing
+    /// its level or access state, as `unlock` shares the source. A reference with no
+    /// applicable lock gets an open level-zero lock [hypothesis: existing fallback].
+    pub fn set_open_key(&mut self, id: FormId, key: FormId) -> Result<(), SimError> {
+        let id = self.lock_source(id);
+        let s = self.get(id)?;
+        s.lock.get_or_insert(LockState { level: 0, key: None, locked: false }).key = Some(key);
+        self.lock_serial += 1;
+        Ok(())
+    }
+
+    /// [design] Goes up with every lock change ([`World::lock`], [`World::unlock`],
+    /// [`World::set_open_key`]): a reader that
     /// saw the same number has nothing new to learn about locks.
     pub fn lock_serial(&self) -> u64 {
         self.lock_serial

@@ -143,6 +143,9 @@ const REF_PLAIN: u32 = 0x305;
 const REF_NO_ACTIVATE: u32 = 0x306;
 const REF_NEST: u32 = 0x307;
 const NPC_REF: u32 = 0x310;
+// [design, #2538] Synthetic keys for script-driven lock replacement.
+const OLD_KEY: u32 = 0x940;
+const NEW_KEY: u32 = 0x941;
 
 /// `IsActionRef player == want`: the expression token.
 fn is_player(want: &str) -> Vec<u8> {
@@ -241,6 +244,10 @@ fn plugin_bytes() -> Vec<u8> {
         top(b"GLOB", &glob),
         top(b"SCPT", &scripts),
         top(b"DOOR", &doors),
+        top(b"KEYM", &[
+            record(b"KEYM", 0, OLD_KEY, &[sub(b"EDID", z("OldDoorKey"))]),
+            record(b"KEYM", 0, NEW_KEY, &[sub(b"EDID", z("NewDoorKey"))]),
+        ].concat()),
         top(b"NPC_", &npc),
         top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat()))),
     ]
@@ -605,4 +612,81 @@ fn load_door_lock_queries_picking_and_script_unlock_agree() {
     call(&mut g, 0x1072);
     assert_eq!(g.world.lock_source(a), a);
     assert_eq!(g.world.lock_status(b).unwrap(), 0);
+}
+
+/// [design, #2538] Script key changes keep the inherited lock's access and level.
+#[test]
+fn load_door_lock_set_open_key_preserves_inherited_state_and_updates_serial() {
+    use fnv_sim::refs::{Lock, Teleport};
+    use fnv_sim::world::Outcome;
+    let mut f = fixture();
+    let (a, b) = (FormId(REF_PLAIN), FormId(REF_LETS));
+    f.refs.refs.get_mut(&a).unwrap().teleport = Some(Teleport { door: b, pos: [1.0, 2.0, 3.0], rot: [0.0; 3], no_alarm: false });
+    f.refs.refs.get_mut(&b).unwrap().lock = Some(Lock { level: 75, key: Some(FormId(OLD_KEY)), leveled: false });
+    for locked in [true, false] {
+        for warm in [false, true] {
+            let mut g = game(&f);
+            if warm {
+                g.world.get(a).unwrap();
+                g.world.get(b).unwrap();
+            }
+            if !locked {
+                g.world.unlock(b).unwrap();
+            }
+            let serial = g.world.lock_serial();
+            g.run_source("DoorPlainREF.SetOpenKey NewDoorKey", Default::default()).unwrap();
+            assert!(g.world.lock_serial() > serial, "navigation must refresh its keys");
+            assert_eq!(g.world.lock_source(a), b);
+            assert!(g.world.peek(a).is_none_or(|s| s.lock.is_none()), "no local override");
+            for door in [a, b] {
+                let lock = g.world.lock_of(door).unwrap();
+                assert_eq!((lock.level, lock.locked, lock.key), (75, locked, Some(FormId(NEW_KEY))));
+            }
+            for source in ["DoorPlainREF.GetOpenKey", "DoorLetsREF.GetOpenKey"] {
+                let query = format!("Begin Function {{}}\nSetFunctionValue ({source})\nEnd");
+                assert_eq!(g.run_query(&query, Default::default()).unwrap(), fnv_script::vm::XVal::Ref(NEW_KEY));
+            }
+            if locked {
+                let player = FormId::PLAYER_REF;
+                let before = g.world.get(player).unwrap().pos;
+                assert_eq!(g.world.activate(player, a).unwrap().outcome, Outcome::Locked { level: 75 });
+                g.world.get(player).unwrap().inventory.get_or_insert_with(Default::default).add(FormId(OLD_KEY), 1);
+                assert_eq!(g.world.activate(player, a).unwrap().outcome, Outcome::Locked { level: 75 });
+                assert_eq!(g.world.get(player).unwrap().pos, before);
+                g.world.inventory_mut(player).unwrap().add(FormId(NEW_KEY), 1);
+                assert!(matches!(g.world.activate(player, a).unwrap().outcome, Outcome::Teleported { to_door, .. } if to_door == b));
+                assert!(!g.world.lock_of(b).unwrap().locked);
+            }
+        }
+    }
+}
+
+/// [design, #2538] Own locks stay independent; a wholly lockless pair keeps its fallback.
+#[test]
+fn load_door_lock_set_open_key_keeps_own_lock_precedence_and_empty_fallback() {
+    use fnv_sim::refs::{Lock, Teleport};
+    let mut f = fixture();
+    let (a, b) = (FormId(REF_PLAIN), FormId(REF_LETS));
+    f.refs.refs.get_mut(&a).unwrap().teleport = Some(Teleport { door: b, pos: [1.0, 2.0, 3.0], rot: [0.0; 3], no_alarm: false });
+    f.refs.refs.get_mut(&b).unwrap().lock = Some(Lock { level: 75, key: Some(FormId(OLD_KEY)), leveled: false });
+    let mut g = game(&f);
+    g.world.lock(a, Some(25)).unwrap();
+    let serial = g.world.lock_serial();
+    g.run_source("DoorPlainREF.SetOpenKey NewDoorKey", Default::default()).unwrap();
+    assert!(g.world.lock_serial() > serial);
+    assert_eq!(g.world.lock_source(a), a);
+    let own = g.world.lock_of(a).unwrap();
+    assert_eq!((own.level, own.locked, own.key), (25, true, Some(FormId(NEW_KEY))));
+    let partner = g.world.lock_of(b).unwrap();
+    assert_eq!((partner.level, partner.locked, partner.key), (75, true, Some(FormId(OLD_KEY))));
+
+    f.refs.refs.get_mut(&b).unwrap().lock = None;
+    let mut g = game(&f);
+    let serial = g.world.lock_serial();
+    g.run_source("DoorPlainREF.SetOpenKey NewDoorKey", Default::default()).unwrap();
+    assert!(g.world.lock_serial() > serial);
+    assert_eq!(g.world.lock_source(a), a);
+    let own = g.world.lock_of(a).unwrap();
+    assert_eq!((own.level, own.locked, own.key), (0, false, Some(FormId(NEW_KEY))));
+    assert!(g.world.lock_of(b).is_none());
 }

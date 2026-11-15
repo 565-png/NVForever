@@ -150,8 +150,18 @@ two locks on a pair remain independent. Broken-lock and Infiltrator second-try s
 also use the source reference. Only one XTEL hop is followed; an empty pair or a
 missing partner gives no lock [design, #2538: bounded lookup].
 
+[documented: GECK wiki SetOpenKey, offline snapshot 2026-10-28, revision 27705]
+`SetOpenKey` sets the key used to unlock the calling reference. [hypothesis, #2538:
+not tested in capture run15b_a] On a lockless load door it changes the applicable
+source lock's key, preserving that lock's level and locked/unlocked state. Only
+when there is no applicable lock does it create an open level-zero local lock
+[hypothesis: existing fallback]. [design, #2538: `World::set_open_key` in
+`crates/fnv-sim/src/world.rs`] Each successful key write advances `lock_serial`
+so NPC navigation refreshes its door keys; no partner lock is copied locally.
+
 [design: synthetic tests, #2538] `load_door_lock` tests in fnv-sim, fnv-game,
 fnv-ai and nvf-play cover refusal without movement, key/pick/script unlock, source
-identity, own-lock precedence, save restoration, prompts and navigation. Smoke
+identity, script key replacement without changing access or level, own-lock
+precedence, save restoration, prompts and navigation. Smoke
 `repconn-load-door-lock` exercises the reported tunnel door; it was written without
 running the game.
