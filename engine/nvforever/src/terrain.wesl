@@ -218,25 +218,37 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
 // the same UV, two levels beyond the estimated current LOD, never finer than mip 4.
 // Gradients are captured before any divergent control flow in fragment(), and scaled
 // by each texture's own dimensions here; explicit-level reads are safe in share branches.
-@if(TERRAIN_HEIGHT_BLEND) fn height_reference(t: texture_2d<f32>, s: sampler, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, source: f32) -> vec3<f32> {
-    let last_mip = f32(textureNumLevels(t) - 1u);
+// Where and at which level the reference is read: plain values only, so the bindless
+// callers index their texture array themselves (a texture taken out of a binding array
+// is never passed to a function: the index's non-uniformity is only known where the
+// array is indexed, and drivers have crashed on such arguments) [design, #2550].
+@if(TERRAIN_HEIGHT_BLEND) fn height_reference_at(levels: u32, size: vec2<u32>, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, source: f32) -> vec3<f32> {
+    let last_mip = f32(levels - 1u);
     var lod = last_mip;
     var coord = vec2(0.5);
     if source > 0.5 {
-        let size = vec2<f32>(textureDimensions(t, 0));
-        let gx = dx * size;
-        let gy = dy * size;
+        let fsize = vec2<f32>(size);
+        let gx = dx * fsize;
+        let gy = dy * fsize;
         let current_lod = 0.5 * log2(max(max(dot(gx, gx), dot(gy, gy)), 1e-12)) + view.mip_bias;
         lod = min(last_mip, max(4.0, current_lod + 2.0));
         coord = uv;
     }
-    return textureSampleLevel(t, s, coord, lod).rgb;
+    return vec3(coord, lod);
+}
+
+// The non-bindless reference read (plain texture bindings may be passed).
+@if(TERRAIN_HEIGHT_BLEND) fn height_reference(t: texture_2d<f32>, s: sampler, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, source: f32) -> vec3<f32> {
+    let at = height_reference_at(textureNumLevels(t), textureDimensions(t, 0), uv, dx, dy, source);
+    return textureSampleLevel(t, s, at.xy, at.z).rgb;
 }
 
 @if(TERRAIN_HEIGHT_BLEND) fn base_reference(instance_index: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, source: f32) -> vec3<f32> {
     @if(BINDLESS) {
         let slot = material_slot(instance_index);
-        return height_reference(bindless_textures_2d[material_indices[slot].base_color_texture], bindless_samplers_filtering[material_indices[slot].base_color_sampler], uv, dx, dy, source);
+        let t = material_indices[slot].base_color_texture;
+        let at = height_reference_at(textureNumLevels(bindless_textures_2d[t]), textureDimensions(bindless_textures_2d[t], 0), uv, dx, dy, source);
+        return textureSampleLevel(bindless_textures_2d[t], bindless_samplers_filtering[material_indices[slot].base_color_sampler], at.xy, at.z).rgb;
     }
     @if(!BINDLESS) {
         return height_reference(pbr_bindings::base_color_texture, pbr_bindings::base_color_sampler, uv, dx, dy, source);
@@ -253,7 +265,8 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
         if k == 3u { t = i.diffuse3; }
         if k == 4u { t = i.diffuse4; }
         if k == 5u { t = i.diffuse5; }
-        return height_reference(bindless_textures_2d[t], bindless_samplers_filtering[material_indices[slot].base_color_sampler], uv, dx, dy, source);
+        let at = height_reference_at(textureNumLevels(bindless_textures_2d[t]), textureDimensions(bindless_textures_2d[t], 0), uv, dx, dy, source);
+        return textureSampleLevel(bindless_textures_2d[t], bindless_samplers_filtering[material_indices[slot].base_color_sampler], at.xy, at.z).rgb;
     }
     @if(!BINDLESS) {
         if k == 1u { return height_reference(diffuse1, pbr_bindings::base_color_sampler, uv, dx, dy, source); }
@@ -277,12 +290,14 @@ fn fragment(
         @if(VERTEX_UVS_A) {
             // Before dither/standard-material discard or any per-fragment branch. Recreate
             // the same UV used below without a branch on the material's tile value.
-            let tile = layer_tile(in.instance_index);
-            let local_uv = (get_local_from_world(in.instance_index) * in.world_position).xy / select(1.0, tile, tile > 0.0);
-            let raw_uv = select(in.uv, local_uv, tile > 0.0);
-            let uv = (standard_material(in.instance_index).uv_transform * vec3(raw_uv, 1.0)).xy;
-            height_dx = dpdx(uv);
-            height_dy = dpdy(uv);
+            // Names of their own: an `@if` block's braces do not make a scope once the WESL
+            // conditions are resolved, so `tile` and `uv` below would be defined twice.
+            let height_tile = layer_tile(in.instance_index);
+            let height_local_uv = (get_local_from_world(in.instance_index) * in.world_position).xy / select(1.0, height_tile, height_tile > 0.0);
+            let height_raw_uv = select(in.uv, height_local_uv, height_tile > 0.0);
+            let height_uv = (standard_material(in.instance_index).uv_transform * vec3(height_raw_uv, 1.0)).xy;
+            height_dx = dpdx(height_uv);
+            height_dy = dpdy(height_uv);
         }
     }
     @if(VISIBILITY_RANGE_DITHER) visibility_range_dither(in.position, in.visibility_range_dither);

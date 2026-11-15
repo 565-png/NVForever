@@ -1019,9 +1019,12 @@ mod tests {
         // arguments and explicit LOD. Runtime smoke covers the active binding form.
         // Line endings as checked out (CRLF on Windows) normalised before cutting the function out.
         let terrain = include_str!("terrain.wesl").replace("\r\n", "\n");
-        let start = terrain.find("fn height_reference(").unwrap();
-        let end = start + terrain[start..].find("\n}\n").unwrap() + 2;
-        let source = format!("struct View {{ mip_bias: f32 }} @group(0) @binding(0) var<uniform> view: View;\n{}", &terrain[start..end]);
+        // From the plain-value helper through the non-bindless reader that calls it; the WESL
+        // conditions in front of each `fn` are left out of the cut.
+        let start = terrain.find("fn height_reference_at(").unwrap();
+        let reader = terrain.find("fn height_reference(").unwrap();
+        let end = reader + terrain[reader..].find("\n}\n").unwrap() + 2;
+        let source = format!("struct View {{ mip_bias: f32 }} @group(0) @binding(0) var<uniform> view: View;\n{}", terrain[start..end].replace("@if(TERRAIN_HEIGHT_BLEND) ", ""));
         let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap_or_else(|e| panic!("{e:?}"));
     }
