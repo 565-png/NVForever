@@ -60,7 +60,7 @@ Constraints that decide what fits:
 | Bevy atmosphere | Would replace the game's sky look | | Rejected |
 | Auto exposure, depth of field, motion blur | Change the look; the game's own HDR/eye-adapt values (IMGS DNAM) are not decoded | | Not now (§6) |
 | PCSS soft shadows | Medium | Needs the `experimental_pbr_pcss` feature, noisy without TAA | Not now |
-| Placed meshes blended into the landscape where they meet it (#2661) | Medium: road shoulders, rock feet and cliff bases lose their hard seam with the ground | Immutable front/back colour atlases (144 MiB together at 1024 before intermediates and retiring handles); copies for unchanged cells and rasterization for entering/dirty cells; a lookup in eligible fragments | **Built**, off by default and not in `enhanced` (§3.12) |
+| Placed meshes blended into the landscape where they meet it (#2661) | Medium: road shoulders, rock feet and cliff bases lose their hard seam with the ground | Immutable front/back colour atlases (144 MiB together at 1024 before intermediates and retiring handles); copies for unchanged cells and rasterization for entering/dirty cells; a lookup in eligible fragments; round 10a: about 0.66 MiB more height atlas per publication (detail rows), 1.6 KB more index table per enabled clone, and near contact fragments read the landscape's own layer textures (up to 13 diffuse and 13 normal reads) | **Built**, off by default and not in `enhanced` (§3.12) |
 
 ## 3. What was built
 
@@ -487,6 +487,101 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   emission, clear coat and anisotropy by `1 - w`. Alpha, discard, coverage, positions, depth,
   the prepass and the geometric normal used for shadow bias are untouched; `w <= 0` leaves
   every input exactly as it was.
+- *The landscape's own layers near the camera (round 10a)* [design: `terrain.rs`
+  `terrain_draws`, `terrain_surface.rs` `DetailPalette`, `encode_detail`;
+  `nif_surface_blend.rs` `NifSurfaceBlend`, `DetailQuadrant`; `nif_surface_bindings.wesl`
+  `mesh_terrain_detail`]. [observed: the user's play-test at 1920x1080 near a road edge,
+  round 9b] the colour cache alone reads as a smooth, slightly hazy band: it holds 4 game
+  units per texel at 1024, while the ground beside it is sharp gravel with normal maps.
+  So, within 4096 units of the camera, a contact fragment also reads the near landscape's
+  own layer textures at its game xy and composes them as the near draw does. *Capture*:
+  while the blend is on, each quadrant's capture also records what its near draw is made
+  of, from the very meshes and materials drawn (after `stitch_layers`, so stitched
+  neighbour layers are included): the base draw's source (the folded `TerrainMaterial` or
+  the single base material), the separately drawn overflow layers' materials in drawing
+  order, the base mesh's per-vertex linear colour, normal and tangent with the tangents'
+  handedness, and one opacity grid per drawn overlay (the folded ones, then the overflow
+  ones). Source material edits re-read it (`refresh_captures`); a source that is gone or
+  no longer matches the prepared layers leaves that quadrant on the colour cache. Its
+  images (normal maps included) join the cell's dependencies. *Publication*: with the
+  capability, each publication's height atlas gains 201 rows (576 by 300 RGBA8 instead of
+  576 by 99; the bytes keep their 32-bit words, read with `textureLoad`): a 32-word entry
+  per quadrant (flags with the folded and total overlay counts, palette numbers of the
+  base's diffuse and normal map and of each overlay's, the base diffuse and normal
+  samplers, normal decoding bits, the base material's colour and texture-coordinate
+  transform, the repeat, whether the coordinate is cell-local as in a six-layer folded
+  draw, the tangents' handedness), then 11 words per vertex of the quadrant's 17 by 17
+  grid (linear colour as unorm16, normal and tangent as snorm16, up to 12 opacities as
+  unorm16). A third texel in each cell's metadata row holds the four-bit mask of the
+  quadrants whose detail it supplies. The palette (`TerrainPalette`) lists the distinct
+  layer images and sampler descriptions (`ImageSampler` equality; texture.rs gives the
+  landscape textures one description) of the admitted quadrants; every replacement repacks
+  its own palette numbers. Quadrants are admitted whole, in a deterministic order (those the
+  previous publication admitted for unchanged cells first, then by grid and quadrant); a
+  quadrant that would overflow the palette, an image not loaded or an unresolved material
+  keeps the colour cache, with its reason on the publication line. *Binding*: the blend
+  type's bindless index table (binding 100) is 50..454 instead of 50..54: after the four
+  ordinary entries come 384 texture and 16 sampler entries, registered through the blend
+  material's own allocator (bindless slots are local to a material type's slab) and
+  resolved through the clone's own table row; unused entries hold the fallback image. No
+  binding is added, bindless or not, and without bindless the type's layout is exactly the
+  colour interface's (uniform 50, textures 51 and 53, sampler 52). Every clone of a
+  publication binds that publication's palette. *Composition* (`mesh_terrain_detail`): the
+  fragment's ground triangle and its barycentric weights come from the height lookup's own
+  square and diagonal (below the diagonal `(1-u) SW + (u-v) SE + v NE`, above it
+  `(1-v) SW + u NE + (v-u) NW`); the colour starts as the base diffuse x interpolated vertex
+  colour x base material colour, and each overlay in drawing order mixes in by
+  `saturate(opacity) x` its diffuse alpha (ordered opacities, not normalized weights), its
+  colour the texel x vertex colour x the base material colour for folded overlays (as
+  terrain.wesl) and x white for overflow ones (their own material's colour:
+  `layer_material` draws only a layer with a texture, white). With full shading the
+  normal starts as the base's mapped normal (or the plain interpolated one), Bevy's own
+  `calculate_tbn_mikktspace` and `apply_normal_mapping` on the interpolated, not
+  renormalized, normal and tangent, the normal maps decoded with green flipped and each
+  map's two-component flag (folded overlays with the base's, as terrain.wesl; overflow
+  ones with their own), mixed towards each overlay's mapped normal (or the plain one) by
+  the same shares and normalized once. Texture reads use explicit gradients
+  (`textureSampleGrad`): the derivatives of the fragment's game xy are taken in
+  `nif_material.wesl` at the function's top level, before the lookup's branches, then
+  mapped through `1 / repeat`, the base's texture transform and the view's mip bias; the
+  base diffuse sampler reads every diffuse and overlay normal map, the base normal sampler
+  the base normal map (terrain.wesl's rule; overflow layers draw with their own images'
+  samplers, of the same description). The target is never taken from the mesh pixel's
+  screen-space prepass normal. *Sources and distance*: colour validity (the quadrant and
+  the whole bilinear footprint) and detail validity (the quadrant's detail bit, live
+  coverage, nearer than 4096 units) are checked separately, so a valid detail lookup never
+  fails for an unused colour tap, and the `status` view shows success where either source
+  serves the fragment. With `d = 1 - smoothstep(2048, 4096, distance)`: both valid, the
+  target colour is `mix(cache, layers, d)` and the target normal
+  `normalize(mix(geometric, mapped, d))`; detail alone, the layers with the weight faded by
+  `d`; colour alone, the cache and the geometric normal; neither, no blend. The contact
+  weight and the residency fade are unchanged. *Overflow layers and the cap* (NVForever's
+  choice, round 10a): [observed: the main session's publication lines at the user's test
+  road] cell (-17, 0) publishes quadrants `folded+1-layers, folded+2-layers, folded,
+  folded+1-layers` and cell (-17, -1) `folded, folded+1-layers, folded, folded+2-layers`:
+  road cells routinely have overlays beyond the six that fold, because `stitch_layers`
+  adds neighbour textures, so sending such quadrants back to the colour cache would leave
+  exactly the user's spot blurry. The detail therefore also composes the separately drawn
+  overflow overlays, after the folded ones and in their drawing order, up to 12 overlays
+  plus the base (12 opacities fit three vec4s; a vertex record is 11 words with the colour,
+  normal and tangent); a quadrant with more keeps the colour cache, logged as
+  `overlays-over-cap`. This is an approximation: the near terrain alpha-blends each
+  overflow layer's *lit* result, while the detail composes albedo and normal before
+  lighting once. [hypothesis] The difference is small because the layers share the
+  surface's lighting and differ only in their mapped normals. Every match described here
+  is of prepared triangle attributes, texture mapping, ordered surface composition and the
+  normal-map convention for the supported quadrants; it does not promise identical final
+  pixels (filtering footprints on differently oriented mesh geometry, lighting position,
+  shadows, occlusion, the near landscape's prepass normals, scorch and coverage still
+  differ) and does not remove geometric silhouettes. *Budget*: 384 images and 16 sampler
+  descriptions per publication, so one material's resources (its standard textures, the
+  two atlases, the palette) stay inside the 512-resource bindless slab; a quadrant reads at
+  most 26 images (13 diffuse, 13 normal), so at least 14 entirely distinct quadrants fit,
+  and quadrants sharing LTEX textures share entries. *Capability*: the blend material
+  bindless on the device and non-uniform indexing of sampled-texture arrays
+  (`mesh_terrain_blend.rs::detail_capability`); otherwise, or with the aid below,
+  publications carry no detail rows and no palette and the colour cache alone serves, as
+  before. Nothing of this runs while the blend is off (no capture, no rows, no palette).
 
 **Selection** [design: `world.rs::spawn_model`, `blend_census`;
 `mesh_terrain_blend.rs::reference_reasons`, `material_reasons`]: rigid exterior STAT and
@@ -596,10 +691,14 @@ device's texture limit and refused when it does not fit. One RGBA16F atlas is 18
 render intermediates and retiring/extracted handles. There is one active replacement,
 fresh destinations rather than recycling referenced images, readiness admission and
 cancelled-job retirement; rapid replanning cannot enqueue an unbounded allocation list.
-There are still no gutters/mips or interpolated vertex-normal cache (round 10); geometric
-triangle normals remain the target. Scorch is excluded: capture has no burn-map binding or
-synchronization, so full shading still differs through terrain normal maps, scorch,
-separately lit layers, shadows/occlusion and mesh geometry/coverage. The row stays height-8.
+There are still no gutters or mips in the colour cache (round 10b); beyond 4096 units, and
+where a quadrant keeps the colour cache, geometric triangle normals remain the target.
+Round 10a's detail adds about 0.66 MiB of height atlas per publication (1.3 MiB front and
+back), 1600 bytes of index table per enabled clone and the palette's descriptor entries;
+the layer images are the landscape's own, not copied. Scorch is excluded: capture has no
+burn-map binding or synchronization, so full shading still differs through scorch,
+separately lit overflow layers (composed before lighting, above), shadows/occlusion and
+mesh geometry/coverage. The row stays height-8.
 
 **Test aid** `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution[:shading[:flat,steep]]]]`
 overrides the row for comparison runs and is not stored; a malformed value is refused in
@@ -615,19 +714,27 @@ the log and the row decides. Omitted parts take the row's look.
 | flat,steep | hybrid's widths, `flat <= band <= steep`; only with `hybrid` | `band / 16`, `6 band` |
 
 Old short forms keep working with these defaults (`24:status` is band 24, `height`, 1024,
-full). Log lines: `mesh terrain blend: start band=... variant=... resolution=... noise=0
-shape=... shading=...` then ` flat=... steep=... weight-version=2` for `hybrid` or
-` weight-version=1`; `colour atlas resolution=... atlas=WxW rgba16f colour-mib=...`;
+full). `NVF_PLAY_TEST_MESH_BLEND_DETAIL=colour` (round 10a) keeps the colour cache alone for
+comparisons (any other value is refused in the log). Log lines: `mesh terrain blend: start
+band=... variant=... resolution=... noise=0 shape=... shading=...` then ` flat=... steep=...
+weight-version=2` for `hybrid` or ` weight-version=1`, then round 10a's resolved detail mode,
+` detail=layers` or ` detail=colour detail-reason=aid|device|no-device`; `colour atlas resolution=... atlas=WxW rgba16f colour-mib=...`;
 `backfill tracked-shapes=... convertible-shapes=...` as it turns on; an
 `assembly epoch=... request=... copied=... baked=... retained-origin=... destination-origin=...`
 line per replacement and one `publication ...` line per commit (resident grids with each
 quadrant's capture path and colour mask, the
 excluded slots, a probe of the uploaded heights under the camera with its CPU lookup
-status and `probe-normal`, the image IDs, the resolution); `ready eligible-shapes=...
+status (the colour cache's classification), `probe-normal` and `probe-detail-mask`, the
+image IDs, the resolution, then round 10a's ` detail=layers|colour palette-images=N
+palette-samplers=N detail-quadrants=N colour-quadrants=[(x, y):qN:reason;...]` naming each
+quadrant that keeps the colour cache with its reason, or ` detail=colour
+detail-reason=capability` without the capability); `ready eligible-shapes=...
 resident-cells=... generation=... variant=... shape=... resolution=... shading=...`, the
 weight fields, then the census (`stat-shapes`, `excluded-shapes`,
 `pending-material-shapes`, one `excluded-<reason>` count per reason, `admitted-blend`,
-`-bias`, `-decal`, `-mask`, `-alpha-cut`, then `scol-shapes`), printed at each publication
+`-bias`, `-decal`, `-mask`, `-alpha-cut`, then `scol-shapes`) and round 10a's ` detail=layers
+detail-quadrants=N` (the publication supplies layer detail) or ` detail=colour`, printed at
+each publication
 and refreshed at most once per 60 frames; `census-shape ref=... base=... model=... shape=...
 status=eligible|excluded first-reason=... reasons=... base-type=STAT|SCOL`, one per distinct
 base, shape and reason mask, at most 2048 a run; `stop restored-shapes=... tracked-shapes=...
@@ -657,8 +764,18 @@ material readiness; settled requires the final publication's material switches t
 new material's acknowledgement by at most 120 render frames for deterministic pending work;
 it changes no appearance controls. These CPU/binding checks do not prove rendered pixels;
 `mesh-terrain-blend-crossing` also captures before/during/after/settled frames for review.
-Its rapid reversals move 384 units to either side of the boundary, beyond both hysteresis
-thresholds, with delayed material readiness; the summary requires at least four crossings
+`NVF_PLAY_TEST_MESH_BLEND_CROSSING=<y>:<z>:<delay>/<x>[,...]` (round 10a, after the round-9b
+review: the go-to aid ran on the aids' elapsed clock and its 0.1-second pairs could fall in
+one frame) lets the probe drive the crossing on its own world clock after arming: a step
+puts the player's feet at game `(x, y, z)` `delay` world seconds after the previous step
+(after arming for the first), and each later step also waits until the probe has seen the
+previous step's recentre in a later frame with work pending in the current one, so every
+reversal lands on a distinct later frame while a replacement is pending; a step still
+waiting 10 world seconds after it was due goes anyway and counts as a timeout. Lines:
+`continuity crossing step=N x=... y=... frame=N world-secs=... gated=BOOL pending=BOOL
+timeouts=N`, then `continuity crossing done steps=N timeouts=N`. The staging go-to before
+arming stays with `NVF_PLAY_TEST_GOTO`. Its rapid reversals move 384 units to either side
+of the boundary, beyond both hysteresis thresholds, with delayed material readiness; the summary requires at least four crossings
 and recentres, two reversals during pending work, and final settlement. Synthetic tests
 also count live images, meshes and capture materials across repeated cancellations and
 completion using Bevy asset retirement over real app updates (not just request replacement).
@@ -674,10 +791,16 @@ places in the render order, so the span pairs the same with `NVF_PLAY_TEST_PROFI
 it. Retained rectangle transfers are submitted after that camera span and are not included
 in it. The lookup in the meshes' fragments shows in the main opaque pass instead.
 
-**Limits** [hypothesis where marked]: the cache may soften contact detail, and a footprint
-turning invalid at a missing corner can make a narrow transition [hypothesis]; geometric
-triangle normals, not the landscape's normal maps, are the shading target, so faceting can
-show [hypothesis]; shadows, occlusion and the separately lit layer draws still differ from
+**Limits** [hypothesis where marked]: beyond 4096 units, and in quadrants that keep it, the
+colour cache may soften contact detail, and a footprint turning invalid at a missing corner
+can make a narrow transition [hypothesis]; there geometric triangle normals, not the
+landscape's normal maps, are the shading target, so faceting can show [hypothesis]; a
+quadrant on the colour cache beside one with layer detail can show a boundary
+[hypothesis]; the detail's distance thresholds are initial choices for play-test review,
+and its GPU cost (texture bandwidth, descriptor entries) is unmeasured; the visual
+acceptance (gravel frequency and mapped-normal response at the close road shoulder at
+1920x1080, grazing views, layer boundaries, the 2048-4096 transition, publication
+crossings) needs the main session's frames, which logs and naga do not prove; shadows, occlusion and the separately lit layer draws still differ from
 the landscape's own lighting; admitted Blend and decal shapes near the ground (glass,
 markings) take the landscape's colour; buried visible surfaces take its look; the census
 keeps scanning every tracked shape each frame while the blend is on (only its line is
@@ -685,11 +808,19 @@ limited); rigged STATs and SCOLs drawn while the blend was off are not counted u
 cell is drawn again (they never convert); the colour-coded `excluded` view was not built.
 
 **Tests and smoke**: `nvforever` test filters `mesh_terrain_blend` (switching off during a
-texture swap, a fade and an override: `switching_off_during`), `terrain_surface`,
-`terrain::tests`, `mesh_blend_shader_tests`, `graphics::tests::mesh_terrain_blend`,
+texture swap, a fade and an override: `switching_off_during`), `terrain_surface` (round 10a:
+`palette_admits_whole_quadrants_in_order_and_refuses_overflow`,
+`colour_only_publications_carry_no_detail`,
+`crossing_steps_wait_for_the_seen_recentre_and_pending_work`),
+`terrain::tests` (round 10a: `detail_capture_reconstructs_the_drawn_triangles`),
+`mesh_blend_shader_tests` (round 10a:
+`shader_detail_transcribes_the_mesh_triangles_and_the_record_layout`), `graphics::tests::mesh_terrain_blend`,
 `settings::tests::the_mesh_blend_row`, `texture_swap`, `nif_mirror`, `fade`,
 `draw_distance`, `door_fade`, `effect_shaders`, `shadow_thin`; `nvf-assets`
-`nif_surface_blend::tests`, `nif_material::tests`; `nvf-play` `settings_layout`, `fade`.
+`nif_surface_blend::tests` (round 10a: `detail_layout_fits_the_height_atlas_and_round_trips`,
+`detail_quadrant_words_name_folded_and_overflow_overlays`), `nif_material::tests`;
+`nvf-play` `settings_layout`, `fade`. Smoke: the `mesh-terrain-blend-*` scenarios, round 10a's
+`mesh-terrain-blend-detail-colour` (the aid's colour fallback) among them.
 The WGSL is composed and validated by naga in the tests, not executed. Smoke:
 `mesh-terrain-blend-crossing` (retained witnesses, pending work, replacement and zero
 publication/material/lookup outages), `mesh-terrain-blend-setting` (the row on from the

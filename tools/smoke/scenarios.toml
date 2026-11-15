@@ -39,7 +39,7 @@ masters = [
 
 # Test aids that hold no times (safe to keep as they are when a member is offset).
 untimed = [
-  "NVF_PLAY_TEST_MESH_BLEND",
+  "NVF_PLAY_TEST_MESH_BLEND", "NVF_PLAY_TEST_MESH_BLEND_DETAIL",
   "NVF_PLAY_TEST_SCRIPT_MENUS", "NVF_PLAY_TEST_GIVE", "NVF_PLAY_TEST_EQUIP", "NVF_PLAY_TEST_NEAR",
   "NVF_PLAY_TEST_MENU", "NVF_PLAY_TEST_BARTER", "NVF_PLAY_TEST_BARTER_DELAY", "NVF_PLAY_TEST_NO_SPREAD",
   "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_PROJECTILE_LAUNCH", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
@@ -29514,7 +29514,7 @@ expect = [
 name = "mesh-terrain-blend-setting"
 source = "[design] #2661 round 7: the Graphics row mesh-terrain-blend (Blend meshes into ground) on from the command line draws the default look, 8:surface:height:1024:full, with STAT and SCOL shapes in the census (engine/nvforever/src/mesh_terrain_blend.rs follow_setting, setting_config; graphics.rs; settings.rs)"
 areas = ["rendering", "terrain", "graphics"]
-paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvforever/src/terrain.*", "engine/nvforever/src/world.rs", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl"]
+paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvforever/src/terrain.*", "engine/nvforever/src/world.rs", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_material.wesl"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages", "--graphics-only", "mesh-terrain-blend"]
 run_seconds = 20
@@ -29526,6 +29526,10 @@ expect = [
   { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+ variant=surface shape=height resolution=1024 shading=full weight-version=1 stat-shapes=', range = [1, 1000000], label = "nonzero eligible shapes and a published cache in the row's look" },
   { re = 'mesh terrain blend: ready .* scol-shapes=[0-9]+', label = "the census counts SCOL shapes by their base type" },
   { re = 'mesh terrain blend: census-shape ref=0x[0-9A-F]{8} base=0x[0-9A-F]{8} model=.+ shape=[0-9]+ status=(eligible|excluded) first-reason=[a-z-]+ reasons=[a-z+-]+ base-type=(STAT|SCOL)', label = "census lines name the base type" },
+  { re = 'mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1 detail=layers', count = 1, label = "round 10a: the landscape's own layers are sampled near the camera (a bindless device)" },
+  { re = 'mesh terrain blend: publication .* detail=layers palette-images=([1-9][0-9]*) palette-samplers=[1-9][0-9]* detail-quadrants=[1-9][0-9]* colour-quadrants=', range = [1, 384], label = "round 10a: the publication's palette holds the layer images, within its 384 entries" },
+  { re = 'mesh terrain blend: ready .* scol-shapes=[0-9]+ detail=layers detail-quadrants=[1-9][0-9]*', label = "round 10a: the ready line says the publication supplies layer detail" },
+  { re = 'mesh terrain blend: publication .*colour-quadrants=\[[^\]]*:(palette-images-full|palette-samplers-full|image-not-loaded|unresolved-materials)', max = 0, label = "round 10a: no quadrant falls back for want of palette room, images or materials" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "nothing refused" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
 ]
@@ -29543,6 +29547,8 @@ expect = [
   { re = 'mesh terrain blend: start ', count = 1, label = "started once, by the row" },
   { re = 'mesh terrain blend: stop ', count = 1, label = "stopped once, by the row" },
   { re = 'mesh terrain blend: idle ', count = 1, label = "round 8: the material gate closed once, after the stop" },
+  { re = 'mesh terrain blend: start .* detail=layers', count = 1, label = "round 10a: switched on while the game runs, the layer detail is resolved with the start" },
+  { re = 'mesh terrain blend: ready .* detail=layers detail-quadrants=[1-9][0-9]*', label = "round 10a: the cells captured after the switch publish layer detail" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "nothing refused while switching" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors on or off" },
 ]
@@ -29562,10 +29568,10 @@ forbid = [
 [[scenario]]
 name = "mesh-terrain-blend-crossing"
 source = "[design] #2661 round 9b: immutable retained coverage, incremental copies after camera output, prepared enabled materials and 256-unit recentre hysteresis across repeated camera-cell reversals, including pending work (engine/nvforever/src/terrain_surface.rs, mesh_terrain_blend.rs)"
-note = "[hypothesis] The point just west of x=-65536 near Goodsprings and the eastward walk need visual review for a retained road contact. Rapid go-to pairs put x at -65152 and -65920, 384 units beyond either side of the boundary (past both 256-unit thresholds), and reverse while replacements prepare. The probe checks every frame after arming on initially prepared shapes in the starting camera cell; it cannot prove the pixels stayed unchanged."
+note = "[hypothesis] The point just west of x=-65536 near Goodsprings and the eastward walk need visual review for a retained road contact. The staging go-to (2 s, the aids' clock) puts x at -65632; after the probe arms, its own crossing sequence (NVF_PLAY_TEST_MESH_BLEND_CROSSING, the probe's world clock, round 10a) puts x at -65152 and -65920, 384 units beyond either side of the boundary (past both 256-unit thresholds): each reversal only after the probe has seen the previous recentre in a later frame with a replacement pending, so no two steps share a frame. The shot times are approximate for the steps. The probe checks every frame after arming on initially prepared shapes in the starting camera cell; it cannot prove the pixels stayed unchanged."
 areas = ["rendering", "terrain", "graphics"]
 paths = ["engine/nvforever/src/terrain_surface.*", "engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain.*", "engine/nvforever/src/mesh_blend_shader_tests.rs", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "2:-65632:4800:8600,12:-65152:4800:8600,12.1:-65920:4800:8600,15:-65152:4800:8600,15.1:-65920:4800:8600,18:-65152:4800:8600,18.1:-65920:4800:8600,21:-65152:4800:8600", NVF_PLAY_TEST_LOOK = "4:90:-20", NVF_PLAY_TEST_MOVE = "12:0.25:0:walk,17:0:0", NVF_PLAY_TEST_MESH_BLEND_CONTINUITY = "8:32", NVF_PLAY_TEST_MESH_BLEND_READY_DELAY = "120", NVF_PLAY_TEST_SHOTS = "11:mesh_blend_crossing_before.png,13.5:mesh_blend_crossing_during.png,19:mesh_blend_crossing_after.png,29:mesh_blend_crossing_settled.png,42:mesh_blend_crossing_final.png" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "2:-65632:4800:8600", NVF_PLAY_TEST_MESH_BLEND_CROSSING = "4800:8600:4/-65152,0.3/-65920,3/-65152,0.3/-65920,3/-65152,0.3/-65920,3/-65152", NVF_PLAY_TEST_LOOK = "4:90:-20", NVF_PLAY_TEST_MOVE = "12:0.25:0:walk,17:0:0", NVF_PLAY_TEST_MESH_BLEND_CONTINUITY = "8:32", NVF_PLAY_TEST_MESH_BLEND_READY_DELAY = "120", NVF_PLAY_TEST_SHOTS = "11:mesh_blend_crossing_before.png,13.5:mesh_blend_crossing_during.png,19:mesh_blend_crossing_after.png,29:mesh_blend_crossing_settled.png,42:mesh_blend_crossing_final.png" }
 args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages", "--graphics-only", "mesh-terrain-blend"]
 run_seconds = 44
 manual = "[design] Review before/during/after/settled frames at the retained road shoulder. The interior contact must keep the ground look while the atlas is pending. Newly entering cells and changing missing-neighbour border fades are outside the guarantee. Keep the row's height-8/1024/full look; no appearance override and no golden updates."
@@ -29577,5 +29583,28 @@ expect = [
   { re = 'mesh terrain blend: continuity summary frames=[1-9][0-9]* crossings=([4-9]|[1-9][0-9]+) pending-frames=[1-9][0-9]* retained-lookups=[1-9][0-9]* pending-retained-lookups=[1-9][0-9]* unwitnessed-pending-frames=0 replacements=[1-9][0-9]* published-false=0 missing-enabled=0 missing-prepared=0 failures=0 copied=[1-9][0-9]* baked=[1-9][0-9]* settled=true recentres=([4-9]|[1-9][0-9]+) pending-reversals=([2-9]|[1-9][0-9]+)', count = 1, label = "every frame counted, at least four crossings and recentres, two reversals of pending work, eventual settlement and zero continuity failures" },
   { re = 'mesh terrain blend: continuity frame=.*(published=false|missing-enabled=[1-9]|missing-prepared=[1-9]|failures=[1-9])', max = 0, label = "no per-frame publication, material or lookup outage" },
   { re = 'mesh terrain blend: rejected|mesh terrain blend: continuity rejected', max = 0, label = "no rejected configuration" },
+  { re = 'mesh terrain blend: continuity crossing step=[1-7] x=-65(152|920) y=4800 frame=[0-9]+ world-secs=[0-9.]+ gated=true ', count = 7, label = "round 10a: seven crossing steps on the probe's clock, each released by the seen recentre and pending work" },
+  { re = 'mesh terrain blend: continuity crossing step=([2-7]) .* gated=true pending=true ', count = 6, label = "round 10a: every reversal is issued in a later frame while a replacement is pending" },
+  { re = 'mesh terrain blend: continuity crossing done steps=7 timeouts=0', count = 1, label = "round 10a: the whole sequence ran, no step waited past its timeout" },
+  { re = 'mesh terrain blend: publication .*resident=\[.*\(-17, 0\):q=\[', label = "round 10a: the user's road cell (-17, 0) is in the region" },
+  { re = 'mesh terrain blend: publication .*colour-quadrants=\[[^\]]*\(-17, 0\):q[0-3]:', max = 0, label = "round 10a: every quadrant of the road cell (-17, 0) keeps layer detail, its separately drawn overflow layers included ([observed] folded+1 and folded+2 quadrants there)" },
+  { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
+]
+
+[[scenario]]
+name = "mesh-terrain-blend-detail-colour"
+source = "[design] #2661 round 10a: the test aid NVF_PLAY_TEST_MESH_BLEND_DETAIL=colour keeps the colour cache alone (no palette, no detail rows), for comparison with the landscape's own layers (engine/nvforever/src/mesh_terrain_blend.rs detail_capability; terrain_surface.rs update_cache)"
+areas = ["rendering", "terrain", "graphics"]
+paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvforever/src/terrain.*", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_material.wesl"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MESH_BLEND_DETAIL = "colour", NVF_PLAY_TEST_SHOTS = "14:mesh_terrain_blend_detail_colour.png" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages", "--graphics-only", "mesh-terrain-blend"]
+run_seconds = 20
+manual = "[design] Compare this frame with mesh-terrain-blend-setting's view without the aid at a road shoulder (1920x1080): with the aid the blended strip is the 4-unit colour cache (smooth); without it the near strip carries the ground's own gravel and normal-mapped relief, mixing back to the colour cache between 2048 and 4096 units (look at the transition and at layer boundaries in grazing views). No golden updates."
+expect = [
+  { re = 'mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1 detail=colour detail-reason=aid', count = 1, label = "the aid keeps the colour cache alone, said with the start" },
+  { re = 'mesh terrain blend: publication .* detail=colour detail-reason=capability', label = "publications carry no palette" },
+  { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+ variant=surface .* detail=colour', range = [1, 1000000], label = "the ready line says colour" },
+  { re = 'mesh terrain blend: (start|publication|ready) .*detail=layers', max = 0, label = "no layer detail anywhere" },
+  { re = 'mesh terrain blend: rejected', max = 0, label = "the aid's value is accepted" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
 ]
