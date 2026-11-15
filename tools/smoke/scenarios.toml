@@ -7682,10 +7682,10 @@ expect = [
 [[scenario]]
 name = "falling-loading"
 source = "playtest list 4 items 8, 9, 10, 2-3 (physics.md §6.4.2, docs/design/loading-screen.md §1): leaving the Goodsprings gas station the loading screen waits for the arrival's own cells and the player stands (no jump loop or landing after it); running down the owner's steep road at heading 150 keeps the ground; walking residents are drawn between physics steps"
-note = "Ringo greets at about 4 s and the door at 5 s waits for that conversation to end; --no-dialogue-look keeps the view on the door whether the greeting comes before or after the 4 s face aid (with the view turned to Ringo the door was behind the player and never used, run 2026-10-16); the hill run is at 40-50 s (heading 150 left the ground for 22 steps before the fix, `fnvtool phys walk`)"
+note = "Ringo greets at about 4 s and the door at 5 s waits for that conversation to end; --no-dialogue-look keeps the view on the door whether the greeting comes before or after the 4 s face aid (with the view turned to Ringo the door was behind the player and never used, run 2026-10-16); the hill run is at 40-50 s (heading 150 left the ground for 22 steps before the fix, `fnvtool phys walk`) The gas station's outside door GSGasStationDoorRef 0x00109040 carries XLOC level 255 and its inside door 0x0010903F none [observed: fnvtool esm decode]; since #2538 the inside door takes its partner's lock. In play a Goodsprings trigger script runs `0x00109040.unlock` before the player can enter [observed: fnvtool script decompile]; the --cell start skips it, so the run unlocks the door at 1 s."
 areas = ["physics", "loading", "player-body", "ai"]
 paths = ["crates/fnv-phys/src/character.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/world.rs", "engine/nvf-play/src/loading.rs", "engine/nvf-play/src/phys.rs", "engine/nvforever/src/nav.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_GOTO = "40:-64168:-8679:7737", NVF_PLAY_TEST_LOOK = "40.5:150:0,44:150:0", NVF_PLAY_TEST_MOVE = "45:1:0,50:0:0" }
+env = { NVF_PLAY_TEST_SCRIPT = "1:call:0x00109040:Unlock", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_GOTO = "40:-64168:-8679:7737", NVF_PLAY_TEST_LOOK = "40.5:150:0,44:150:0", NVF_PLAY_TEST_MOVE = "45:1:0,50:0:0" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "9", "--npc-packages", "all", "--no-dialogue-look"]
 run_seconds = 53
 order = [[
@@ -7702,10 +7702,10 @@ expect = [
 [[scenario]]
 name = "loading-screen-look"
 source = "docs/spec-notes/loading-screens.md §4: the loading screen laid out as the original's: the picture stretched, the tip on its band, the emblem turning; the shot NVF_PLAY_TEST_LOADING_SHOT saves is for looking at, the run only checks that the emblem's model reads as the original's model and that the screen comes and goes"
-note = "The emblem reads once a run though two screens come up, the start's and the door's: 4 pieces (the hidden plate left out), wheel and ball turning. The look itself is not judged here: see the shots in target/smoke (the run's folder; -2 is the door's)"
+note = "The emblem reads once a run though two screens come up, the start's and the door's: 4 pieces (the hidden plate left out), wheel and ball turning. The look itself is not judged here: see the shots in target/smoke (the run's folder; -2 is the door's) The gas station's outside door GSGasStationDoorRef 0x00109040 carries XLOC level 255 and its inside door 0x0010903F none [observed: fnvtool esm decode]; since #2538 the inside door takes its partner's lock. In play a Goodsprings trigger script runs `0x00109040.unlock` before the player can enter [observed: fnvtool script decompile]; the --cell start skips it, so the run unlocks the door at 1 s."
 areas = ["loading"]
 paths = ["engine/nvf-play/src/loading.rs", "engine/nvf-play/src/loading_look.rs", "engine/nvf-play/src/hud_breath.rs", "crates/fnv-world/src/loadscreen.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_LOADING_SHOT = "loading-screen-look.png" }
+env = { NVF_PLAY_TEST_SCRIPT = "1:call:0x00109040:Unlock", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_LOADING_SHOT = "loading-screen-look.png" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "9", "--no-dialogue-look"]
 run_seconds = 20
 order = [[
