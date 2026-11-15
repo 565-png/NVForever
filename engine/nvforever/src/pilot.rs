@@ -573,6 +573,8 @@ struct Walk {
     errand: Option<(Errand, Place)>,
     /// A switch being walked to, for the door, before the walk goes on.
     side: Option<(FormId, u32, Box<Walk>)>,
+    /// Since when a door not in the world, its switch used, is waited for (a lift's ride).
+    enable_wait: Option<f64>,
     /// Seconds stood watching scenes on this walk, and when a scene's line was last seen.
     scene_held: f64,
     scene_last: Option<f64>,
@@ -1230,6 +1232,16 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 return Walked::Going;
             }
             Ok(path) => {
+                // A door on the way that is out of the world (disabled), with no switch whose
+                // script enables it: another way round, as a player finds one. Lonesome Road's
+                // direct door into Ashton silo (0x0100CB7D) stays disabled until the player is
+                // down there; the way in is the lift, whose far door the lift's button enables.
+                let gone = h.game(|g| path.legs.iter().filter_map(|l| l.door).map(|d| d.door).find(|&d| is_disabled(g, d) && !door_switch(g, d, &[]).is_some_and(|s| s.4 == WORKS_DOOR))).flatten();
+                if let Some(d) = gone {
+                    info!("pilot: step {}: door {d:08X} on the way is not in the world and nothing the player can use enables it: another way round", p.i);
+                    w.tried.push((d, "not in the world, no switch".into()));
+                    return Walked::Going;
+                }
                 let legs: Vec<String> = path.legs.iter().map(|l| format!("{:?} {} pts{}", l.space, l.points.len(), l.door.map_or(String::new(), |d| format!(" door {:08X}", d.door)))).collect();
                 info!("pilot: step {}: walks {:.0} units over {} leg(s) to ({:.0}, {:.0}, {:.0}): {}", p.i, path.length, path.legs.len(), w.goal.pos[0], w.goal.pos[1], w.goal.pos[2], legs.join("; "));
                 w.locked_way = false;
@@ -1440,6 +1452,22 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
             }
         }
         Steer::Door(d) => {
+            // Out of the world, its switch used: the player waits at it, as for a lift's ride.
+            let gone = h.game(|g| is_disabled(g, d.door)).unwrap_or(false);
+            if gone && w.poked.iter().any(|(_, x)| *x == d.door) {
+                let since = *w.enable_wait.get_or_insert_with(|| {
+                    info!("pilot: step {}: door {:08X} is not in the world yet after the player used its switch: waits for it (up to {ENABLE_WAIT:.0} s)", p.i, d.door);
+                    p.now
+                });
+                if p.now - since < ENABLE_WAIT {
+                    (h.intent.forward, h.intent.right) = (0.0, 0.0);
+                    w.seen = (p.now, feet);
+                    return Walked::Going;
+                }
+            } else if !gone && w.enable_wait.take().is_some() {
+                info!("pilot: step {}: door {:08X} is in the world now: the player goes through", p.i, d.door);
+                w.door_since = None;
+            }
             if w.door_since.is_none() {
                 w.door_since = Some(p.now);
                 w.door_from = feet;
@@ -1494,7 +1522,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
 }
 
 fn walk_to(goal: Place, target: Option<FormId>, radius: f32, now: f64, feet: [f32; 3]) -> Walk {
-    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None }
+    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None }
 }
 
 /// What a player would use to open a door that stays locked (module notes), not used
@@ -1507,6 +1535,19 @@ type Switch = (FormId, Option<FormId>, [f32; 3], f32, &'static str);
 type DoorTerminal = (FormId, FormId, usize, Option<FormId>, [f32; 3]);
 /// Where an item was found: how far, the holder or the item, its cell, where, lying.
 type Found = (f32, FormId, Option<FormId>, [f32; 3], bool);
+
+/// What [`door_switch`] calls a reference whose activation script names the door.
+const WORKS_DOOR: &str = "its script works the door";
+
+/// How long a door that is not in the world is waited for after its switch was used: a
+/// lift's ride (Lonesome Road's Ashton silo lift enables its far door 75 s after the
+/// button, script 0x01003217).
+const ENABLE_WAIT: f64 = 150.0;
+
+/// Whether a reference is out of the world (disabled) now.
+fn is_disabled(g: &mut Game, r: u32) -> bool {
+    runner::reference_field(g, &format!("0x{r:08X}"), "disabled").ok() == Some(json!(true))
+}
 
 fn door_switch(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<Switch> {
     use fnv_script::unit::RefSlot;
@@ -1530,7 +1571,7 @@ fn door_switch(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<Switch> {
         let names_door = unit.is_some_and(|u| u.unit.refs.iter().any(|s| matches!(s, RefSlot::Form(f) if *f == door)));
         let actor = g.world.placed.get(r).is_some_and(|p| g.data.actors.contains_key(&p.base));
         if names_door && away < SWITCH_RANGE {
-            found.push((0, away, r, pos, "its script works the door"));
+            found.push((0, away, r, pos, WORKS_DOOR));
         } else if g.is_talking_activator(r) && away < BESIDE_DOOR {
             found.push((1, away, r, pos, "a talking activator beside the door"));
         } else if unit.is_some() && !actor && away < BESIDE_DOOR {

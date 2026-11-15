@@ -60,7 +60,10 @@ nearest container of the cell and talking again (Jed's "There's a chest over yon
 caravan to Zion: a `GetActorValue InventoryWeight` condition on the line said instead of the
 chain's; counted in `headless`), uses a load door from where a walk is held up within 320 units of it
 (Honest Hearts' Northern Passage door is an invisible slab 512 units wide that stops the player
-short of the door's point on the navmesh), and at a door that stays locked (or, unlocked, does
+short of the door's point on the navmesh), keeps off a door that is out of the world
+(disabled) unless a switch's script enables it, and after using that switch waits up to 150 s at
+the door for it to come (Lonesome Road's Ashton silo lift: its button enables the far door 75 s
+into the ride; the direct door stays disabled until the player is down there), and at a door that stays locked (or, unlocked, does
 not take the player: a vault door "activated elsewhere") tries the door's switch (a script that
 names the door), a talking activator beside it, any other scripted activator beside it, a terminal entry
 that names the door, then another way round.
