@@ -8530,6 +8530,40 @@ expect = [
 ]
 
 [[scenario]]
+name = "fort-vulpes-write"
+note = "Caesar's tent is in TheFortWorld's cell 0,0 (0x0013C715); Vulpes stands at (1588, 2022, 2184), the player a little west of him"
+source = "issue #2560: in Caesar's tent at The Fort, Caesar, Lucius, the Praetorians and the mongrels went into combat with Vulpes Inculta half a second after a load and killed him. Vulpes is in VCaesarsLegionFaction and ArmorNCRFactionNVEnemy, which VCaesarsLegionFaction names an Enemy; the Legion faction names itself an Ally, and an ally is never attacked (docs/spec-notes/factions.md §4). The first half: a save in the tent; fort-vulpes-load loads it, so run them together"
+areas = ["save", "ai", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/awareness.rs", "crates/fnv-game/src/provocation.rs"]
+env = { NVFOREVER_HOME = "fort-vulpes-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "18:FortCaesarRef.getfactionrelation FortVulpesIncultaRef;18.5:FortVulpesIncultaRef.getfactionrelation FortLuciusRef;20:save smoke-fort;21:close" }
+args = ["--play", "--world", "TheFortWorld", "--pos=1350,2022,2200", "--heading", "90", "--hour", "21", "--no-voice"]
+run_seconds = 23
+expect = [
+  { re = 'save: wrote .*smoke-fort\.nvfsave \(manual', label = "the save is written in the tent" },
+  { text = "script: FortVulpesIncultaRef entered trigger 0x00176F0A", label = "Vulpes is in the tent with Caesar" },
+  { re = 'console: GetFactionRelation on \S+ >> [23]\.00', count = 2, label = "Caesar and Vulpes, Vulpes and Lucius count each other as friends or allies (their shared ArmorVCaesarsLegionFaction and VCaesarsLegionFaction)" },
+  { re = 'alert: .*→ Combat: detects \S*FortVulpesInculta', count = 0, label = "nobody goes into combat with Vulpes" },
+  { re = 'alert: \S*FortVulpesInculta \S+ \S+ → Combat', count = 0, label = "Vulpes goes into combat with nobody" },
+]
+
+[[scenario]]
+name = "fort-vulpes-load"
+source = "issue #2560: the second half: --load the save fort-vulpes-write made in Caesar's tent; the Legion stays calm with Vulpes and he lives"
+areas = ["save", "ai", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/awareness.rs", "crates/fnv-game/src/provocation.rs"]
+env = { NVFOREVER_HOME = "fort-vulpes-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "12:FortCaesarRef.getfactionrelation FortVulpesIncultaRef;13:close" }
+args = ["--play", "--load", "smoke-fort", "--no-voice"]
+run_seconds = 18
+expect = [
+  { re = 'load: restored .*smoke-fort\.nvfsave: \d+ changed references', label = "the save in the tent is loaded" },
+  { text = "script: FortVulpesIncultaRef entered trigger 0x00176F0A", label = "Vulpes is back in the tent after the load" },
+  { re = 'console: GetFactionRelation on \S+ >> [23]\.00', label = "Caesar still counts Vulpes a friend after the load" },
+  { re = 'alert: .*→ Combat: detects \S*FortVulpesInculta', count = 0, label = "after the load nobody goes into combat with Vulpes (Caesar, Lucius, the Praetorians and the mongrels did half a second in)" },
+  { re = 'alert: \S*FortVulpesInculta \S+ \S+ → Combat', count = 0, label = "after the load Vulpes goes into combat with nobody" },
+  { re = 'killed by', count = 0, label = "nobody dies in the tent" },
+]
+
+[[scenario]]
 name = "save-refused-when-dead"
 source = "issue #1572: every way of saving is refused from the player's death on (docs/design/save-load.md)"
 areas = ["save"]
@@ -29187,6 +29221,28 @@ order = [[
 expect = [
   { re = 'far script summary: (?P<n>\d+) GameMode runs of residents out of the loaded cells', range = [1, 100000], label = "scripts of residents out of the loaded cells ran" },
 ]
+
+[[scenario]]
+name = "silver-rush-intro-customer-flees"
+source = "issue #2520: the Silver Rush intro ends with VFSVanGraffCustomerREF.startcombat player (INFO 0x0012423E); the customer (Cowardly, Unaggressive, Helps Nobody) runs out on his OnStartCombat flee package, and no Van Graff takes up his fight against a player who did nothing (crates/fnv-game/src/awareness.rs unprovoked_scripted_fight, provocation.rs call_allies, combat_group.rs raise_alarms and always_flees; engine/nvforever/src/npc_combat.rs). Before the fix Jean-Baptiste and a thug helped him, Jean-Baptiste's OnStartCombat set VMS29a stage 200 (Birds of a Feather failed on every first visit), and the customer swung at the player"
+note = "From the new-game state (VMS29a not started) the player stands still inside the Silver Rush door, where the quest pilot stood (chain birds-of-a-feather), and the intro plays by itself: Gloria and the customer, Jean-Baptiste and the volunteer, then the customer's startcombat about 50 s in. He reaches the trigger by the door that disables him. Nothing touches the customer, so his OnHit (SetEnemy VanGraffFaction PlayerFaction) never runs"
+areas = ["combat", "quests", "ai"]
+paths = ["crates/fnv-game/src/provocation.rs", "crates/fnv-game/src/combat_group.rs", "crates/fnv-game/src/awareness.rs", "engine/nvforever/src/provoked.rs", "engine/nvforever/src/npc_combat.rs"]
+env = { NVFOREVER_HOME = "silver-rush-intro-home" }
+args = ["--cell", "FreesideSilverRush", "--pos=2884,-3479,780", "--heading", "45", "--play", "--no-voice", "--no-messages", "--npc-packages", "all"]
+run_seconds = 100
+expect = [
+  { re = 'script: OnStartCombat of FalloutNV\.esm\|SCPT 0x0012424C ran', label = "the intro's startcombat reaches the customer's OnStartCombat" },
+  { re = "provocation: VFSVanGraffCustomer.*'s allies stay out of its fight against the player", label = "his allies leave the scripted fight alone" },
+  { re = 'npc combat: VFSVanGraffCustomer.* flees from the player: its confidence is Cowardly', label = "the coward flees, unhurt" },
+  { re = 'script: VFSVanGraffCustomerREF disabled', label = "he runs out to the trigger that disables him" },
+]
+forbid = [
+  { re = 'provocation: .* helps VFSVanGraffCustomer', label = "no one helps the customer against the player" },
+  { re = 'script: VMS29a stage 200 set', label = "Birds of a Feather is not failed" },
+  { re = 'npc combat: VFSVanGraffCustomerREF .* swings at the player', label = "the customer does not swing at the player" },
+]
+order = [["script: OnStartCombat of FalloutNV.esm|SCPT 0x0012424C ran", "script: VFSVanGraffCustomerREF disabled"]]
 
 [[scenario]]
 name = "house-screen-never-hostile"
