@@ -426,10 +426,16 @@ impl From<&NifSurfaceBlendColour> for NifSurfaceBlendKey {
 /// detail quadrants (nvforever terrain_surface.rs `DetailPalette`), in palette order. A
 /// sampler entry names an image whose GPU sampler stands for every palette image with an
 /// equal sampler description. Empty without landscape detail.
+///
+/// [design] Round 10a review: an entry is `None` when no quadrant still covered by the
+/// clones reads it (nvforever terrain_surface.rs `PublishedSurface::live_palette`, after a
+/// cell's coverage was masked, e.g. because one of its images was removed). It binds the
+/// fallback image or sampler, and its palette number stays reserved, so the numbers in
+/// the publication's height atlas keep meaning the same entries.
 #[derive(Clone, Debug, Default, PartialEq, Reflect)]
 pub struct TerrainPalette {
-    pub images: Vec<Handle<Image>>,
-    pub samplers: Vec<Handle<Image>>,
+    pub images: Vec<Option<Handle<Image>>>,
+    pub samplers: Vec<Option<Handle<Image>>>,
 }
 
 /// [design] The enabled blend extension: the colour interface ([`NifSurfaceBlendColour`],
@@ -477,14 +483,14 @@ impl AsBindGroup for NifSurfaceBlend {
         if force_no_bindless || !Self::bindless_supported(render_device) { return Ok(()); }
         let (images, fallback, _) = param;
         for k in 0..PALETTE_IMAGES {
-            let view = match self.palette.images.get(k) {
+            let view = match self.palette.images.get(k).and_then(Option::as_ref) {
                 Some(h) => images.get(h).ok_or(AsBindGroupError::RetryNextUpdate)?.texture_view.clone(),
                 None => fallback.d2.texture_view.clone(),
             };
             output.binding_resources.push((PALETTE_FIRST_INDEX + k as u32, UnpreparedBindingResource::TextureView(TextureViewDimension::D2, view)));
         }
         for j in 0..PALETTE_SAMPLERS {
-            let sampler = match self.palette.samplers.get(j) {
+            let sampler = match self.palette.samplers.get(j).and_then(Option::as_ref) {
                 Some(h) => images.get(h).ok_or(AsBindGroupError::RetryNextUpdate)?.sampler.clone(),
                 None => fallback.d2.sampler.clone(),
             };

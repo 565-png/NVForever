@@ -179,10 +179,11 @@ pub struct QuadrantDetail {
     /// The tangents' handedness (terrain.rs `TANGENT_SIGN`, from the mesh drawn).
     pub tangent_sign: f32,
     pub opacity: Vec<Vec<f32>>,
-    /// The textures and values read from the source materials; `None` when a source
-    /// material is gone or no longer matches the prepared layers (the quadrant then keeps
-    /// the colour cache).
-    pub resolved: Option<ResolvedDetail>,
+    /// The textures and values read from the source materials, or why they cannot serve
+    /// (a source material no longer matching the prepared layers, or an overflow layer the
+    /// detail does not reproduce): the quadrant then keeps the colour cache with that
+    /// reason, and a later material edit reads them again (`refresh_captures`).
+    pub resolved: Result<ResolvedDetail, &'static str>,
 }
 
 #[derive(Clone, Debug)]
@@ -204,24 +205,33 @@ pub struct ResolvedDetail {
 }
 
 impl ResolvedDetail {
-    /// From the base draw's material and the overflow layers' materials; `None` when an
-    /// overlay has no diffuse texture (the near draw would not have drawn it), an overflow
-    /// layer reads its normal map the other way up from the base, or the overlays do not
-    /// match the `layers` opacity grids prepared.
-    pub fn from_materials(base: &StandardMaterial, folded: Option<&crate::terrain::TerrainLayers>, overflow: &[&StandardMaterial], layers: usize) -> Option<Self> {
+    /// From the base draw's material and the overflow layers' materials.
+    /// `unresolved-materials` when an overlay has no diffuse texture (the near draw would
+    /// not have drawn it), an overflow layer reads its normal map the other way up from the
+    /// base, or the overlays do not match the `layers` opacity grids prepared.
+    /// `overflow-material` (round 10a review) when an overflow layer's own material has a
+    /// colour other than opaque white, or a texture-coordinate transform other than the
+    /// base's: the detail composes overflow layers with white at full alpha through the
+    /// base's transform (nif_surface_bindings.wesl `mesh_terrain_detail`), while the near
+    /// draw uses each layer's own values. terrain.rs `layer_material` makes them white with
+    /// the default transform, so only a later material edit (or a base transform edit)
+    /// reaches this.
+    pub fn from_materials(base: &StandardMaterial, folded: Option<&crate::terrain::TerrainLayers>, overflow: &[&StandardMaterial], layers: usize) -> Result<Self, &'static str> {
+        const UNRESOLVED: &str = "unresolved-materials";
         let mut overlays = Vec::new();
         if let Some(e) = folded {
             let pairs = [(&e.diffuse0, &e.normal0), (&e.diffuse1, &e.normal1), (&e.diffuse2, &e.normal2), (&e.diffuse3, &e.normal3), (&e.diffuse4, &e.normal4), (&e.diffuse5, &e.normal5)];
-            for (d, n) in pairs.into_iter().take(e.count as usize) { overlays.push((d.clone()?, n.clone())); }
+            for (d, n) in pairs.into_iter().take(e.count as usize) { overlays.push((d.clone().ok_or(UNRESOLVED)?, n.clone())); }
         }
         let folded = overlays.len();
         for m in overflow {
-            if m.flip_normal_map_y != base.flip_normal_map_y { return None; }
-            overlays.push((m.base_color_texture.clone()?, m.normal_map_texture.clone()));
+            if m.flip_normal_map_y != base.flip_normal_map_y { return Err(UNRESOLVED); }
+            if LinearRgba::from(m.base_color) != LinearRgba::WHITE || m.uv_transform != base.uv_transform { return Err("overflow-material"); }
+            overlays.push((m.base_color_texture.clone().ok_or(UNRESOLVED)?, m.normal_map_texture.clone()));
         }
-        if overlays.len() != layers { return None; }
+        if overlays.len() != layers { return Err(UNRESOLVED); }
         let c = LinearRgba::from(base.base_color);
-        Some(Self { base_diffuse: base.base_color_texture.clone(), base_normal: base.normal_map_texture.clone(), base_rgb: Vec3::new(c.red, c.green, c.blue), uv: base.uv_transform, overlays, folded, flip_y: base.flip_normal_map_y })
+        Ok(Self { base_diffuse: base.base_color_texture.clone(), base_normal: base.normal_map_texture.clone(), base_rgb: Vec3::new(c.red, c.green, c.blue), uv: base.uv_transform, overlays, folded, flip_y: base.flip_normal_map_y })
     }
     fn images(&self) -> impl Iterator<Item = &Handle<Image>> {
         self.base_diffuse.iter().chain(&self.base_normal).chain(self.overlays.iter().flat_map(|(d, n)| std::iter::once(d).chain(n)))
@@ -311,6 +321,47 @@ pub struct PublishedSurface {
     pub palette: nvf_assets::nif_surface_blend::TerrainPalette,
     /// The quadrants whose layer detail this publication supplies (grid, quadrant).
     pub detail: Vec<((i32, i32), u8)>,
+    /// Which palette entries each admitted quadrant reads, for [`Self::live_palette`].
+    pub(crate) palette_use: PaletteUse,
+}
+
+/// One admitted quadrant's cell, palette images read and its two palette samplers.
+type QuadrantReads = ((i32, i32), Vec<u16>, [u16; 2]);
+/// [design] Round 10a review: the publication's whole palette and which entries each
+/// admitted quadrant reads (its images, its two samplers), with each palette image's own
+/// sampler description as a palette sampler number (`None`: not one of the palette's).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PaletteUse {
+    full: nvf_assets::nif_surface_blend::TerrainPalette,
+    quadrants: Vec<QuadrantReads>,
+    own_sampler: Vec<Option<u16>>,
+}
+
+impl PublishedSurface {
+    /// [design] Round 10a review: the palette its clones bind while `coverage` (this
+    /// publication's coordinates) is enabled. Entries only masked cells' quadrants read
+    /// become `None` (the fallback; their numbers stay reserved, so the height atlas's
+    /// numbers keep their meaning), and a sampler still read takes as its representative
+    /// an image a covered quadrant reads with that description. So a masked cell's images
+    /// (e.g. one removed from `Assets<Image>`, which masks every cell depending on it, see
+    /// `update_cache`) are never needed again: rebuilding a retained clone for a coverage
+    /// update cannot wait for an image that is gone (Bevy drops the old prepared material
+    /// before preparing the new one).
+    pub fn live_palette(&self, coverage: u32) -> nvf_assets::nif_surface_blend::TerrainPalette {
+        let u = &self.palette_use;
+        let (mut images, mut samplers) = (vec![false; u.full.images.len()], vec![false; u.full.samplers.len()]);
+        for (grid, read, sampled) in &u.quadrants {
+            let slot = (grid.0 - self.origin.0, grid.1 - self.origin.1);
+            if !(0..3).contains(&slot.0) || !(0..3).contains(&slot.1) || coverage & (1 << (slot.1 * 3 + slot.0)) == 0 { continue; }
+            for &i in read { if let Some(b) = images.get_mut(i as usize) { *b = true; } }
+            for &j in sampled { if let Some(b) = samplers.get_mut(j as usize) { *b = true; } }
+        }
+        let representative = |j: usize| u.own_sampler.iter().zip(&images).position(|(own, &live)| live && *own == Some(j as u16)).and_then(|i| u.full.images[i].clone());
+        nvf_assets::nif_surface_blend::TerrainPalette {
+            images: u.full.images.iter().zip(&images).map(|(h, &live)| h.clone().filter(|_| live)).collect(),
+            samplers: u.full.samplers.iter().enumerate().map(|(j, h)| if samplers[j] { representative(j).or_else(|| h.clone()) } else { None }).collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -372,7 +423,14 @@ pub struct SurfaceCache {
     /// Round 10a: publications carry landscape detail (the blend material is bindless on
     /// this device, `mesh_terrain_blend.rs::detail_capability`); otherwise colour only.
     pub detail: bool,
+    /// Round 10a review: frames in a row the front's materials have not settled.
+    unsettled_frames: u32,
 }
+/// [design] Round 10a review: the longest the replacement guard waits for the front's
+/// materials to settle (frames in a row) before it starts the replacement anyway. Far
+/// above every settlement a working publication needs, including the 120-frame
+/// readiness delay aid and the crossing aid's held readiness (seconds at most).
+const SETTLE_FRAMES: u32 = 1800;
 impl Default for SurfaceCache {
     fn default() -> Self { Self::with_resolution(DEFAULT_RESOLUTION) }
 }
@@ -389,7 +447,7 @@ impl SurfaceCache {
         if self.context.is_none() { publication.coverage } else { retained_mask(publication, &self.current) }
     }
     pub fn with_resolution(resolution: u32) -> Self {
-        Self { generation: 0, signature: None, context: None, selected_centre: None, captured_inputs: default(), stitched_dirty: default(), epoch: 0, revision: 0, current: vec![], image_revisions: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false, detail: false }
+        Self { generation: 0, signature: None, context: None, selected_centre: None, captured_inputs: default(), stitched_dirty: default(), epoch: 0, revision: 0, current: vec![], image_revisions: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false, detail: false, unsettled_frames: 0 }
     }
 
     /// [design] Select independently of the immutable front, including while a job waits.
@@ -456,6 +514,7 @@ impl SurfaceCache {
         self.signature = None;
         self.ready = None;
         self.published = None;
+        self.unsettled_frames = 0;
         *self.submitted.lock().unwrap() = None;
     }
 }
@@ -647,6 +706,26 @@ fn two_component(image: &Image) -> bool {
         | TextureFormat::Astc { channel: wgpu::AstcChannel::Unorm, .. })
 }
 
+/// [design] Round 10a review: whether the detail's samplers are the ones the near draw
+/// reads with. The detail reads every diffuse and overlay normal map with one sampler, the
+/// base diffuse image's (the first overlay's without a base texture), and the base normal
+/// map with its own. The near draw reads the folded overlays with the base's diffuse
+/// sampler too (terrain.wesl), but a textureless base binds Bevy's fallback image and so
+/// its fallback sampler, which need not match any layer image's (with anisotropic
+/// filtering off the configured fallback is 1x while texture.rs gives landscape textures
+/// their own description), and each separately drawn overflow layer reads its diffuse and
+/// normal map with those images' own samplers. So a quadrant whose folded overlays sit on
+/// a textureless base, or whose overflow layer has a diffuse or normal image with a
+/// description other than the detail's diffuse one, is not reproduced (`sampler-mismatch`,
+/// the colour cache). The palette format stays as it is (no per-layer samplers). Every
+/// image is loaded (checked first).
+fn samplers_reproduced(r: &ResolvedDetail, images: &Assets<Image>) -> bool {
+    if r.base_diffuse.is_none() && r.folded > 0 { return false; }
+    let sampler = |h: &Handle<Image>| images.get(h).map(|i| &i.sampler);
+    let Some(diffuse) = r.base_diffuse.as_ref().or(r.overlays.first().map(|(d, _)| d)).and_then(sampler) else { return true };
+    r.overlays.iter().skip(r.folded).all(|(d, n)| sampler(d) == Some(diffuse) && n.as_ref().is_none_or(|n| sampler(n) == Some(diffuse)))
+}
+
 /// [design] Round 10a: one publication's palette ([`PALETTE_IMAGES`] images and
 /// [`PALETTE_SAMPLERS`] sampler descriptions at most) and the quadrants it admits, in a
 /// deterministic order: quadrants the previous publication admitted for unchanged cells
@@ -654,12 +733,14 @@ fn two_component(image: &Image) -> bool {
 /// colour cache, with the reason. Samplers are shared by description: a palette sampler
 /// stands for every image whose `ImageSampler` equals its representative's (texture.rs
 /// gives landscape textures one description).
+/// A quadrant of a cell: its grid and quadrant number.
+pub type QuadrantAt = ((i32, i32), u8);
 #[derive(Default)]
 pub struct DetailPalette {
     pub palette: nvf_assets::nif_surface_blend::TerrainPalette,
     sampler_keys: Vec<bevy::image::ImageSampler>,
-    pub admitted: Vec<(((i32, i32), u8), nvf_assets::nif_surface_blend::DetailQuadrant)>,
-    pub refused: Vec<(((i32, i32), u8), &'static str)>,
+    pub admitted: Vec<(QuadrantAt, nvf_assets::nif_surface_blend::DetailQuadrant)>,
+    pub refused: Vec<(QuadrantAt, &'static str)>,
 }
 use nvf_assets::nif_surface_blend::{PALETTE_IMAGES, PALETTE_SAMPLERS};
 impl DetailPalette {
@@ -678,8 +759,21 @@ impl DetailPalette {
         }
         out
     }
+    /// [design] Round 10a review: which entries each admitted quadrant reads and each
+    /// image's own sampler description, for [`PublishedSurface::live_palette`].
+    pub(crate) fn usage(&self, images: &Assets<Image>) -> PaletteUse {
+        let quadrants = self.admitted.iter().map(|((grid, _), q)| {
+            let read = q.base_diffuse.iter().chain(&q.base_normal).copied().chain(q.overlays.iter().flat_map(|(d, n, _)| std::iter::once(*d).chain(*n))).collect();
+            (*grid, read, [q.diffuse_sampler, q.normal_sampler])
+        }).collect();
+        let own_sampler = self.palette.images.iter().map(|h| {
+            let image = images.get(h.as_ref()?)?;
+            self.sampler_keys.iter().position(|k| *k == image.sampler).map(|j| j as u16)
+        }).collect();
+        PaletteUse { full: self.palette.clone(), quadrants, own_sampler }
+    }
     fn image(&self, h: &Handle<Image>, tentative: &mut Vec<Handle<Image>>) -> u16 {
-        let at = self.palette.images.iter().chain(tentative.iter()).position(|i| i == h).unwrap_or_else(|| { tentative.push(h.clone()); self.palette.images.len() + tentative.len() - 1 });
+        let at = self.palette.images.iter().map(Option::as_ref).chain(tentative.iter().map(Some)).position(|i| i == Some(h)).unwrap_or_else(|| { tentative.push(h.clone()); self.palette.images.len() + tentative.len() - 1 });
         at as u16
     }
     fn sampler(&self, image: &Image, h: &Handle<Image>, tentative: &mut Vec<(Handle<Image>, bevy::image::ImageSampler)>) -> u16 {
@@ -688,8 +782,10 @@ impl DetailPalette {
         at as u16
     }
     fn admit(&mut self, d: &QuadrantDetail, images: &Assets<Image>) -> Result<nvf_assets::nif_surface_blend::DetailQuadrant, &'static str> {
-        let r = d.resolved.as_ref().ok_or("unresolved-materials")?;
+        let r = d.resolved.as_ref().map_err(|reason| *reason)?;
         let loaded = |h: &Handle<Image>| images.get(h).ok_or("image-not-loaded");
+        for h in r.images() { loaded(h)?; }
+        if !samplers_reproduced(r, images) { return Err("sampler-mismatch"); }
         let (mut tentative, mut samplers) = (Vec::new(), Vec::new());
         let base_diffuse = r.base_diffuse.as_ref().map(|h| self.image(h, &mut tentative));
         let base_normal = r.base_normal.as_ref().map(|h| self.image(h, &mut tentative));
@@ -703,11 +799,10 @@ impl DetailPalette {
         let diffuse_rep = r.base_diffuse.as_ref().or(r.overlays.first().map(|(d, _)| d));
         let diffuse_sampler = match diffuse_rep { Some(h) => self.sampler(loaded(h)?, h, &mut samplers), None => 0 };
         let normal_sampler = match &r.base_normal { Some(h) => self.sampler(loaded(h)?, h, &mut samplers), None => diffuse_sampler };
-        for h in r.images() { loaded(h)?; }
         if self.palette.images.len() + tentative.len() > PALETTE_IMAGES { return Err("palette-images-full"); }
         if self.sampler_keys.len() + samplers.len() > PALETTE_SAMPLERS { return Err("palette-samplers-full"); }
-        self.palette.images.extend(tentative);
-        for (h, key) in samplers { self.palette.samplers.push(h); self.sampler_keys.push(key); }
+        self.palette.images.extend(tentative.into_iter().map(Some));
+        for (h, key) in samplers { self.palette.samplers.push(Some(h)); self.sampler_keys.push(key); }
         let base_two_component = r.base_normal.as_ref().map(|n| loaded(n).map(two_component)).transpose()?.unwrap_or(false);
         let t = r.uv;
         Ok(nvf_assets::nif_surface_blend::DetailQuadrant {
@@ -1020,23 +1115,32 @@ pub fn refresh_captures(
         }
         if missing { cell.paths = [CapturePath::HeightOnly("missing-source-material"); 4]; cell.quadrants.clear(); cell.sources.clear(); }
         // [design] Round 10a: the detail's textures and values come from the same source
-        // materials; read them again, or fall back to the colour cache when a source is gone
-        // or no longer matches the prepared layers (an unsupported edit).
+        // materials; read them again. A source gone sends the quadrant to the colour cache
+        // for good; an edit the detail cannot follow (layers no longer matching, or, round
+        // 10a review, an overflow layer's colour, alpha or texture transform, or the base's
+        // transform, `overflow-material`) keeps the capture with the reason, so the
+        // publication refuses it (`DetailPalette::admit`) until an edit makes it
+        // reproducible again.
         for d in &mut cell.detail {
             let DetailCapture::Layers(detail) = &mut *d else { continue };
-            let overflow: Option<Vec<&StandardMaterial>> = detail.overflow.iter().map(|h| ordinary.get(h).map(|m| &m.base)).collect();
-            let layers = detail.opacity.len();
-            detail.resolved = if missing { None } else {
-                overflow.and_then(|overflow| match &detail.base {
-                    DetailBase::Folded(h) => folded.get(h).and_then(|m| ResolvedDetail::from_materials(&m.base, Some(&m.extension), &overflow, layers)),
-                    DetailBase::Single(h) => ordinary.get(h).and_then(|m| ResolvedDetail::from_materials(&m.base, None, &overflow, layers)),
-                })
-            };
-            if detail.resolved.is_none() { *d = DetailCapture::Colour(if missing { "missing-source-material" } else { "unresolved-materials" }); }
+            if missing { *d = DetailCapture::Colour("missing-source-material"); continue; }
+            detail.resolved = resolve_detail(&detail.base, &detail.overflow, detail.opacity.len(), &folded, &ordinary);
         }
         cell.refresh_dependencies();
         // This is a source edit, not a LAND reconstruction; Changed catches it without
         // propagating a false stitched-LAND reconstruction to its neighbours.
+    }
+}
+/// [design] A quadrant's detail resolved against its source materials as they are now
+/// (capture, terrain.rs `DetailParts::capture`, and material refresh): the reasons of
+/// [`ResolvedDetail::from_materials`], or `unresolved-materials` when a source material
+/// is not in its assets.
+pub fn resolve_detail(base: &DetailBase, overflow: &[Handle<nvf_assets::NifMaterial>], layers: usize, folded: &Assets<TerrainMaterial>, ordinary: &Assets<nvf_assets::NifMaterial>) -> Result<ResolvedDetail, &'static str> {
+    const UNRESOLVED: &str = "unresolved-materials";
+    let overflow: Vec<&StandardMaterial> = overflow.iter().map(|h| ordinary.get(h).map(|m| &m.base)).collect::<Option<_>>().ok_or(UNRESOLVED)?;
+    match base {
+        DetailBase::Folded(h) => { let m = folded.get(h).ok_or(UNRESOLVED)?; ResolvedDetail::from_materials(&m.base, Some(&m.extension), &overflow, layers) }
+        DetailBase::Single(h) => ResolvedDetail::from_materials(&ordinary.get(h).ok_or(UNRESOLVED)?.base, None, &overflow, layers),
     }
 }
 fn modified_asset<A: Asset>(event: &AssetEvent<A>) -> Option<AssetId<A>> {
@@ -1105,8 +1209,18 @@ pub fn update_cache(
             front.coverage = coverage;
             front.cells = coverage.count_ones() as usize;
             front.revision = revision;
+            // [design] Round 10a review: new clones of the front bind only what covered
+            // quadrants read (a removed image masks its cells in this same update, through
+            // its dependency revision above), so they can always be prepared.
+            front.palette = front.live_palette(coverage);
         }
     }
+    // [design] Round 10a review: frames in a row the front's materials have not settled.
+    // The replacement guard below waits for settlement, but never for longer than
+    // `SETTLE_FRAMES`, so a candidate that can never be prepared cannot hold every later
+    // publication back.
+    let unsettled = cache.published.as_ref().is_some_and(|p| readiness.as_ref().is_some_and(|r| !r.settled(p.revision)));
+    cache.unsettled_frames = if unsettled { cache.unsettled_frames.saturating_add(1) } else { 0 };
     let signature = Request { epoch: cache.epoch, origin, cells: keys };
     if cache.signature.as_ref() != Some(&signature) {
         if let Some(old) = cache.job.take() {
@@ -1144,8 +1258,14 @@ pub fn update_cache(
         return;
     }
     // One fresh back allocation only after the previous publication's materials have
-    // switched. Combined with cancellation retirement this bounds rapid replanning.
-    if cache.published.as_ref().is_some_and(|p| readiness.as_ref().is_some_and(|r| !r.settled(p.revision))) { return; }
+    // switched. Combined with cancellation retirement this bounds rapid replanning. A wait
+    // past `SETTLE_FRAMES` starts the replacement anyway, with a line (at most one
+    // allocation per `SETTLE_FRAMES` frames that way).
+    if unsettled {
+        if cache.unsettled_frames <= SETTLE_FRAMES { return; }
+        warn!("mesh terrain blend: settlement wait expired revision={} frames={}; the replacement starts", cache.published.as_ref().map_or(0, |p| p.revision), cache.unsettled_frames);
+        cache.unsettled_frames = 0;
+    }
     cache.generation += 1;
     cache.signature = Some(signature.clone());
     let copied: HashSet<_> = cache.published.as_ref().map(|p| resident.iter().filter(|(_, c)| c.colour_mask() != 0 && signature.cells.iter().any(|k| k.grid == c.grid && p.keys.contains(k))).map(|(_, c)| c.grid).collect()).unwrap_or_default();
@@ -1242,12 +1362,13 @@ pub fn update_cache(
         RenderLayers::layer(BAKE_LAYER), ChildOf(root),
     )); }
     let report = publication_log(cache.generation, origin, &resident_report, &excluded, &probe, (colour.id(), height.id()), resolution) + &detail_log(detail.as_ref());
+    let palette_use = detail.as_ref().map(|d| d.usage(&images)).unwrap_or_default();
     let (palette, detail) = detail.map(|d| (d.palette, d.admitted.into_iter().map(|(at, _)| at).collect())).unwrap_or_default();
     cache.job = Some(BakeJob {
         root, receipt, copied: copied.len(), baked,
         publication: PublishedSurface { colour, height, origin, cells: resident.len(), resolution, revision: 0,
             coverage: signature.cells.iter().fold(0, |m, k| m | (1 << ((k.grid.1-origin.1)*3+k.grid.0-origin.0))), keys: signature.cells,
-            palette, detail },
+            palette, detail, palette_use },
         report,
     });
 }
@@ -1300,6 +1421,14 @@ pub fn install_continuity_probe(app: &mut App) {
 /// never in the same frame as the step before it. A step still waiting 10 world seconds
 /// after it was due goes anyway and counts as a timeout. The staging go-to before arming
 /// stays with `NVF_PLAY_TEST_GOTO`.
+///
+/// Round 10a review (P3): the replacement a step starts could settle before a later step
+/// with a long delay came due, and that step would then wait for pending work that never
+/// came, up to its timeout. So, until the next step is issued, the materials first seen
+/// after a step are held unacknowledged ([`Crossing::hold`], mesh_terrain_blend.rs
+/// `acknowledgeable`): that step's replacement stays pending until the driver has issued
+/// the step after it, whatever its delay; retained clones, seen before, are never held, and
+/// nothing is held after the last step or the probe's summary.
 struct Crossing {
     y: f32, z: f32,
     steps: Vec<(f64, f32)>,
@@ -1333,6 +1462,13 @@ impl Crossing {
         let seen = self.last_target.is_none_or(|target| frame > self.last_frame && selected == Some(target) && pending);
         if seen { Some(true) } else if now > due + Self::TIMEOUT { Some(false) } else { None }
     }
+    /// The readiness hold after the steps issued so far (mesh_terrain_blend.rs
+    /// `acknowledgeable`): the last step's number while another step follows, so the
+    /// materials its replacement makes stay pending until that next step is issued; 0
+    /// after the last step, so the sequence settles.
+    fn hold(&self) -> u64 {
+        if self.next < self.steps.len() { self.next as u64 } else { 0 }
+    }
 }
 
 /// [design] The crossing steps (see [`Crossing`]), after the probe in the same frame, so
@@ -1340,9 +1476,12 @@ impl Crossing {
 fn continuity_crossing(
     mut probe: ResMut<ContinuityProbe>, time: nvf_play::pause::AidTime, cache: Res<SurfaceCache>,
     phys: Option<ResMut<nvf_play::phys::PhysState>>, player: Option<ResMut<nvf_play::player::Player>>,
+    readiness: Res<crate::mesh_terrain_blend::BlendReadiness>,
 ) {
     let Some(now) = time.world_secs().map(f64::from) else { return };
-    if !probe.armed || probe.done { return; }
+    // The probe's summary ends the sequence: nothing is held after it.
+    if probe.done { readiness.hold(0); return; }
+    if !probe.armed { return; }
     let (frame, pending) = (probe.frames, probe.previous_pending);
     let Some(c) = probe.crossing.as_mut() else { return };
     let Some(gated) = c.ready(now, frame, cache.selected_centre, pending) else { return };
@@ -1355,6 +1494,7 @@ fn continuity_crossing(
     c.timeouts += u64::from(!gated);
     c.next += 1;
     (c.last_at, c.last_frame, c.last_target) = (now, frame, Some(fnv_world::cell_of(x, c.y)));
+    readiness.hold(c.hold());
     info!("mesh terrain blend: continuity crossing step={} x={x:.0} y={:.0} frame={frame} world-secs={now:.2} gated={gated} pending={pending} timeouts={}", c.next, c.y, c.timeouts);
     if c.next == c.steps.len() { info!("mesh terrain blend: continuity crossing done steps={} timeouts={}", c.next, c.timeouts); }
 }
@@ -1446,7 +1586,7 @@ fn continuity_probe(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     fn surface(paths: [CapturePath; 4]) -> SurfaceCell {
         SurfaceCell { world: 0, grid: (-17, 0), heights: vec![42.5; SIDE * SIDE], quadrants: vec![], paths, content_revision: 0, sources: vec![], dependencies: default(), detail: default() }
@@ -1811,7 +1951,7 @@ mod tests {
             base: DetailBase::Single(Handle::default()), overflow: vec![], cell_local: false, tile: 256.0,
             tint: vec![[1.0; 3]; n], normal: vec![[0.0, 0.0, 1.0]; n], tangent: vec![[1.0, 0.0, 0.0]; n], tangent_sign: -1.0,
             opacity: vec![vec![0.5; n]; overlays.len()],
-            resolved: Some(ResolvedDetail { base_diffuse: Some(base), base_normal: Some(normal), base_rgb: Vec3::ONE, uv: bevy::math::Affine2::IDENTITY, overlays, folded: 0, flip_y: true }),
+            resolved: Ok(ResolvedDetail { base_diffuse: Some(base), base_normal: Some(normal), base_rgb: Vec3::ONE, uv: bevy::math::Affine2::IDENTITY, overlays, folded: 0, flip_y: true }),
         }))
     }
     fn sampled(images: &mut Assets<Image>, anisotropy: u16) -> Handle<Image> {
@@ -1925,6 +2065,159 @@ mod tests {
         assert_eq!(c.ready(100.0, 50, east, true), None, "done");
     }
 
+    /// [design] Round 10a review (P3): a delayed step after the previous step's work was
+    /// prepared. The materials first seen after step 1 are held unacknowledged until step 2
+    /// is issued, so its replacement is still pending when the 3-second step comes due and
+    /// the step goes gated, without a timeout; then they are released, and nothing is held
+    /// after the last step. Materials seen before a step (retained clones) are never held.
+    #[test]
+    fn delayed_steps_find_the_previous_work_still_pending_after_it_prepared() {
+        use crate::mesh_terrain_blend::acknowledgeable;
+        let mut c = Crossing::parse("4800:8600:4/-65152,3/-65920,0.3/-65152").unwrap();
+        c.last_at = 10.0;
+        assert_eq!(c.hold(), 0, "nothing held before the first step");
+        assert_eq!(c.ready(14.0, 5, None, false), Some(true));
+        (c.next, c.last_at, c.last_frame, c.last_target) = (1, 14.0, 5, Some(fnv_world::cell_of(-65152.0, 4800.0)));
+        let hold = c.hold();
+        assert_eq!(hold, 1);
+        // The replacement's clone, first seen after step 1, prepared and bound 200 frames
+        // later (past the 120-frame delay aid), is still held; a clone seen before is not.
+        let (delay, candidate, retained) = (120, hold, 0);
+        assert!(!acknowledgeable(200, delay, candidate, hold), "held: its work stays pending");
+        assert!(acknowledgeable(200, delay, retained, hold), "a retained clone is never held");
+        assert!(!acknowledgeable(100, delay, retained, 0), "the delay aid still applies");
+        // So when the delayed step comes due (3 s later, long after the preparation) the
+        // probe still sees pending work and the step goes gated.
+        let east = c.last_target;
+        let pending = !acknowledgeable(200, delay, candidate, hold);
+        assert_eq!(c.ready(16.9, 400, east, pending), None, "its delay");
+        assert_eq!(c.ready(17.0, 400, east, pending), Some(true), "gated, no timeout");
+        (c.next, c.last_at, c.last_frame, c.last_target) = (2, 17.0, 400, Some(fnv_world::cell_of(-65920.0, 4800.0)));
+        assert_eq!(c.hold(), 2);
+        assert!(acknowledgeable(201, delay, candidate, c.hold()), "released once the next step is issued");
+        c.next = 3;
+        assert_eq!(c.hold(), 0, "nothing held after the last step");
+        assert!(acknowledgeable(1, 0, 2, c.hold()));
+    }
+
+    /// [design] Round 10a review (P2): a quadrant whose near draw reads with a sampler the
+    /// detail does not reproduce keeps the colour cache (`sampler-mismatch`): folded
+    /// overlays on a textureless base (Bevy's fallback sampler), and overflow layers whose
+    /// diffuse or normal image's description differs from the detail's diffuse sampler.
+    #[test]
+    fn samplers_the_detail_does_not_reproduce_keep_the_colour_cache() {
+        let mut images = Assets::<Image>::default();
+        let (base, normal) = (sampled(&mut images, 8), sampled(&mut images, 8));
+        let capture = |base: Option<Handle<Image>>, overlays: Vec<(Handle<Image>, Option<Handle<Image>>)>, folded: usize| {
+            let DetailCapture::Layers(mut d) = layers(Handle::default(), normal.clone(), overlays) else { unreachable!() };
+            let r = d.resolved.as_mut().unwrap();
+            (r.base_diffuse, r.folded) = (base, folded);
+            DetailCapture::Layers(d)
+        };
+        let mut cell = surface([CapturePath::Folded { layers: 1 }; 4]);
+        cell.detail[0] = capture(None, vec![(sampled(&mut images, 8), None)], 1);
+        cell.detail[1] = capture(Some(base.clone()), vec![(sampled(&mut images, 1), None)], 0);
+        cell.detail[2] = capture(Some(base.clone()), vec![(sampled(&mut images, 8), Some(sampled(&mut images, 16)))], 0);
+        cell.detail[3] = capture(Some(base.clone()), vec![(sampled(&mut images, 8), Some(sampled(&mut images, 8)))], 0);
+        let p = DetailPalette::assemble([&cell], &images, &[]);
+        assert_eq!(p.refused, vec![(((-17, 0), 0), "sampler-mismatch"), (((-17, 0), 1), "sampler-mismatch"), (((-17, 0), 2), "sampler-mismatch")],
+            "a textureless base under folded overlays; an overflow diffuse, an overflow normal map with another description");
+        assert_eq!(p.admitted.iter().map(|a| a.0).collect::<Vec<_>>(), vec![((-17, 0), 3)], "overflow images with the base diffuse's description");
+        // Folded overlays read with the base's sampler in both draws, whatever their own
+        // description; overflow layers alone over a textureless base read with the first
+        // overlay's, so every later one must share it.
+        let mut other = surface([CapturePath::Folded { layers: 2 }; 4]);
+        other.grid = (-16, 0);
+        other.detail[0] = capture(Some(base.clone()), vec![(sampled(&mut images, 1), Some(sampled(&mut images, 2)))], 1);
+        other.detail[1] = capture(None, vec![(sampled(&mut images, 4), None), (sampled(&mut images, 4), None)], 0);
+        other.detail[2] = capture(None, vec![(sampled(&mut images, 4), None), (sampled(&mut images, 2), None)], 0);
+        let o = DetailPalette::assemble([&other], &images, &[]);
+        assert_eq!(o.admitted.iter().map(|a| a.0).collect::<Vec<_>>(), vec![((-16, 0), 0), ((-16, 0), 1)]);
+        assert!(o.refused.contains(&(((-16, 0), 2), "sampler-mismatch")) && o.refused.contains(&(((-16, 0), 3), "not-captured")));
+    }
+
+    /// [design] Round 10a review (P2): an overflow layer's colour, alpha or texture
+    /// transform, or the base's transform alone, edited to what the detail does not
+    /// reproduce keeps the quadrant on the colour cache (`overflow-material`) after the
+    /// material refresh; an edit back (or the same transform on both) serves layer detail
+    /// again.
+    #[test]
+    fn overflow_material_edits_keep_the_colour_cache_until_reproducible_again() {
+        use bevy::ecs::system::RunSystemOnce;
+        use bevy::math::Affine2;
+        use nvf_assets::NifMaterial;
+        let (mut app, _files) = crate::outfits::tests::asset_fixture();
+        app.init_resource::<Assets<TerrainMaterial>>().init_resource::<Messages<AssetEvent<NifMaterial>>>();
+        let (diffuse, normal, layer_diffuse) = { let mut i = app.world_mut().resource_mut::<Assets<Image>>(); (sampled(&mut i, 8), sampled(&mut i, 8), sampled(&mut i, 8)) };
+        let (base, layer) = {
+            let mut m = app.world_mut().resource_mut::<Assets<NifMaterial>>();
+            let base = m.add(NifMaterial { base: StandardMaterial { base_color_texture: Some(diffuse), normal_map_texture: Some(normal), ..default() }, extension: default() });
+            let layer = m.add(NifMaterial { base: StandardMaterial { base_color_texture: Some(layer_diffuse), alpha_mode: AlphaMode::Blend, ..default() }, extension: default() });
+            (base, layer)
+        };
+        let n = nvf_assets::nif_surface_blend::QUAD_VERTICES;
+        let resolved = resolve_detail(&DetailBase::Single(base.clone()), std::slice::from_ref(&layer), 1, app.world().resource::<Assets<TerrainMaterial>>(), app.world().resource::<Assets<NifMaterial>>());
+        assert!(resolved.is_ok(), "the near draw's own materials: white, opaque, the default transform");
+        let mut cell = surface([CapturePath::Fallback { layers: 1 }; 4]);
+        cell.sources = vec![CaptureSource::Single(base.clone(), false), CaptureSource::Single(layer.clone(), true)];
+        cell.detail[0] = DetailCapture::Layers(Box::new(QuadrantDetail {
+            base: DetailBase::Single(base.clone()), overflow: vec![layer.clone()], cell_local: false, tile: 256.0,
+            tint: vec![[1.0; 3]; n], normal: vec![[0.0, 0.0, 1.0]; n], tangent: vec![[1.0, 0.0, 0.0]; n], tangent_sign: -1.0,
+            opacity: vec![vec![0.5; n]], resolved,
+        }));
+        let entity = app.world_mut().spawn(cell).id();
+        type Edit<'a> = &'a dyn Fn(&mut StandardMaterial, &mut StandardMaterial);
+        let refresh = |app: &mut App, edit: Edit| -> Option<&'static str> {
+            {
+                let mut m = app.world_mut().resource_mut::<Assets<NifMaterial>>();
+                let (mut b, mut l) = (m.get(&base).unwrap().base.clone(), m.get(&layer).unwrap().base.clone());
+                edit(&mut b, &mut l);
+                m.get_mut(&base).unwrap().base = b;
+                m.get_mut(&layer).unwrap().base = l;
+            }
+            for id in [base.id(), layer.id()] { app.world_mut().resource_mut::<Messages<AssetEvent<NifMaterial>>>().write(AssetEvent::Modified { id }); }
+            app.world_mut().run_system_once(refresh_captures).unwrap();
+            let p = DetailPalette::assemble([app.world().get::<SurfaceCell>(entity).unwrap()], app.world().resource::<Assets<Image>>(), &[]);
+            let reason = p.refused.iter().find(|(at, _)| *at == ((-17, 0), 0)).map(|(_, r)| *r);
+            assert_eq!(reason.is_none(), p.admitted.iter().any(|(at, _)| *at == ((-17, 0), 0)));
+            reason
+        };
+        let defaults = |b: &mut StandardMaterial, l: &mut StandardMaterial| {
+            (b.uv_transform, l.uv_transform, l.base_color) = (Affine2::IDENTITY, Affine2::IDENTITY, Color::WHITE);
+        };
+        let doubled = Affine2::from_scale(Vec2::splat(2.0));
+        let edits: [(&str, Edit); 4] = [
+            ("a tinted overflow layer", &|_, l| l.base_color = Color::srgb(1.0, 0.5, 0.5)),
+            ("a partly transparent overflow layer", &|_, l| l.base_color = Color::WHITE.with_alpha(0.5)),
+            ("an overflow layer's own transform", &|_, l| l.uv_transform = doubled),
+            ("the base's transform alone", &|b, _| b.uv_transform = doubled),
+        ];
+        for (what, edit) in edits {
+            assert_eq!(refresh(&mut app, &|b, l| { defaults(b, l); edit(b, l); }), Some("overflow-material"), "{what}");
+            assert_eq!(refresh(&mut app, &defaults), None, "{what}: back to layer detail once reverted");
+        }
+        assert_eq!(refresh(&mut app, &|b, l| { b.uv_transform = doubled; l.uv_transform = doubled; }), None, "the same transform on the base and the overflow layer");
+    }
+
+    /// [design] Round 10a review (P2): the replacement guard waits for the front's
+    /// materials to settle, but a front that never settles (a candidate that can never be
+    /// prepared) holds the replacement back for at most `SETTLE_FRAMES` frames.
+    #[test]
+    fn settlement_guard_waits_but_never_forever() {
+        let (mut app, _files) = cache_fixture();
+        // Settled at revision 0, never the front's.
+        app.insert_resource(crate::mesh_terrain_blend::BlendReadiness::default());
+        let entity = app.world().resource::<Streamer>().loaded[&(0, 0)];
+        app.world_mut().get_mut::<SurfaceCell>(entity).unwrap().heights[0] = 123.0;
+        for _ in 0..SETTLE_FRAMES {
+            tick(&mut app);
+            assert!(app.world().resource::<SurfaceCache>().job.is_none(), "waiting for settlement");
+        }
+        tick(&mut app);
+        assert!(app.world().resource::<SurfaceCache>().job.is_some(), "the replacement starts after the wait expires");
+        assert_eq!(app.world().resource::<SurfaceCache>().unsettled_frames, 0);
+    }
+
     #[test]
     fn rejected_resolution_bakes_and_publishes_nothing() {
         use bevy::ecs::system::RunSystemOnce;
@@ -1948,9 +2241,23 @@ mod tests {
     }
     fn cache_fixture() -> (App, impl Sized) { cache_fixture_with_tracking(false) }
     fn cache_fixture_with_tracking(tracking: bool) -> (App, impl Sized) {
+        let (app, files, _) = fixture(tracking, false);
+        (app, files)
+    }
+    /// [design] Round 10a review: [`cache_fixture`] with landscape detail, published:
+    /// quadrant 0 of cells (0, 0) and (1, 0) reads its own base and normal map, all four
+    /// images with one sampler description. Returns them as (0, 0)'s base and normal map,
+    /// then (1, 0)'s; the palette holds them in that order, its one sampler represented
+    /// by (0, 0)'s base.
+    pub(crate) fn detail_fixture() -> (App, impl Sized, [Handle<Image>; 4]) {
+        let (app, files, images) = fixture(false, true);
+        (app, files, images.try_into().unwrap())
+    }
+    fn fixture(tracking: bool, detail: bool) -> (App, impl Sized, Vec<Handle<Image>>) {
         let (mut app, files) = crate::outfits::tests::asset_fixture();
+        let mut detail_images = Vec::new();
         app.insert_resource(crate::outfits::tests::empty_world_data())
-            .insert_resource(SurfaceCache::with_resolution(512)).init_resource::<Assets<TerrainMaterial>>()
+            .insert_resource(SurfaceCache { detail, ..SurfaceCache::with_resolution(512) }).init_resource::<Assets<TerrainMaterial>>()
             .init_resource::<Assets<SurfaceCaptureMaterial>>()
             .init_resource::<Messages<AssetEvent<Image>>>();
         if tracking {
@@ -1969,6 +2276,12 @@ mod tests {
             cell.grid = (x, y);
             cell.quadrants.push((Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, RenderAssetUsages::default()),
                 CaptureDraw::Single(SurfaceCaptureMaterial::from_standard(&StandardMaterial { base_color_texture: Some(diffuse), ..default() }, false))));
+            if detail && y == 0 && (0..2).contains(&x) {
+                let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+                let (base, normal) = (sampled(&mut images, 8), sampled(&mut images, 8));
+                detail_images.extend([base.clone(), normal.clone()]);
+                cell.detail[0] = layers(base, normal, vec![]);
+            }
             cell.refresh_dependencies();
             let entity = app.world_mut().spawn(cell).id();
             app.world_mut().resource_mut::<Streamer>().loaded.insert((x, y), entity);
@@ -1976,13 +2289,17 @@ mod tests {
         app.world_mut().spawn((Camera3d::default(), crate::fly::FlyCam { yaw: 0.0, pitch: 0.0, speed: 0.0 }, GlobalTransform::from_translation(Vec3::new(1024.0, 600.0, -1024.0))));
         tick(&mut app);
         finish(&mut app);
-        (app, files)
+        (app, files, detail_images)
     }
-    fn tick(app: &mut App) {
+    pub(crate) fn tick(app: &mut App) {
         use bevy::ecs::system::RunSystemOnce;
         app.world_mut().run_system_once(update_cache).unwrap();
     }
-    fn finish(app: &mut App) {
+    /// The pending replacement's colour atlas, if one is pending.
+    pub(crate) fn job_colour(app: &App) -> Option<Handle<Image>> {
+        app.world().resource::<SurfaceCache>().job.as_ref().map(|j| j.publication.colour.clone())
+    }
+    pub(crate) fn finish(app: &mut App) {
         let cache = app.world_mut().resource_mut::<SurfaceCache>();
         *cache.submitted.lock().unwrap() = Some(cache.job.as_ref().unwrap().receipt);
         tick(app);

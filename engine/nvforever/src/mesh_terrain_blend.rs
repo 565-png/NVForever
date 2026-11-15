@@ -506,13 +506,31 @@ struct Variants {
 pub(crate) struct BlendReadiness {
     ready: Arc<std::sync::Mutex<HashSet<AssetId<NifBlendMaterial>>>>,
     settled: Arc<std::sync::atomic::AtomicU64>,
+    /// Test aid only (the crossing driver, terrain_surface.rs `Crossing`): the step whose
+    /// new materials are held unacknowledged, 0 for none ([`acknowledgeable`]).
+    hold: Arc<std::sync::atomic::AtomicU64>,
 }
 impl BlendReadiness {
     pub(crate) fn usable(&self, id: AssetId<NifBlendMaterial>) -> bool { self.ready.lock().unwrap().contains(&id) }
     pub(crate) fn settled(&self, revision: u64) -> bool { self.settled.load(Ordering::Acquire) == revision }
+    /// Test aid only: hold the materials first seen from now until the next call (0: hold
+    /// nothing). See [`acknowledgeable`].
+    pub(crate) fn hold(&self, step: u64) { self.hold.store(step, Ordering::Release); }
 }
 #[derive(Resource, Default)]
-struct ReadinessInput { ids: HashSet<AssetId<NifBlendMaterial>>, ages: HashMap<AssetId<NifBlendMaterial>, u32>, delay: u32 }
+struct ReadinessInput { ids: HashSet<AssetId<NifBlendMaterial>>, ages: HashMap<AssetId<NifBlendMaterial>, u32>, steps: HashMap<AssetId<NifBlendMaterial>, u64>, delay: u32 }
+
+/// [design] Round 10a review (P3): whether a prepared, bound material may be acknowledged:
+/// older than the readiness delay aid's frames and not held by the crossing aid. The
+/// crossing driver holds the materials first seen after its step `n` (`first_seen == n`,
+/// `hold == n`) until it issues the next step, so the replacement its step started stays
+/// pending until the step after it is issued; a delayed step can then never find the work
+/// already settled (it would wait for pending work that cannot come, up to its timeout).
+/// Materials seen before a step, the retained clones among them, are never held. Without
+/// the crossing aid `hold` stays 0.
+pub(crate) fn acknowledgeable(age: u32, delay: u32, first_seen: u64, hold: u64) -> bool {
+    age > delay && (hold == 0 || first_seen != hold)
+}
 
 fn install_readiness(app: &mut App, gate: MaterialGate) {
     use bevy::render::{ExtractSchedule, Render, RenderApp, RenderSystems};
@@ -536,12 +554,16 @@ fn acknowledge_materials(
 ) {
     let ids = input.ids.clone();
     input.ages.retain(|id, _| ids.contains(id));
+    input.steps.retain(|id, _| ids.contains(id));
+    let hold = shared.hold.load(Ordering::Acquire);
     let mut ready = shared.ready.lock().unwrap();
     ready.clear();
     for id in ids {
         let age = input.ages.entry(id).or_default();
         *age = age.saturating_add(1);
-        if *age <= input.delay { continue; }
+        let age = *age;
+        let first_seen = *input.steps.entry(id).or_insert(hold);
+        if !acknowledgeable(age, input.delay, first_seen, hold) { continue; }
         let Some(material) = materials.get(id) else { continue };
         let bound = allocators.get(&std::any::TypeId::of::<NifBlendMaterial>()).and_then(|a| a.get(material.binding.group)).is_some_and(|b| b.bind_group().is_some());
         if bound { ready.insert(id); }
@@ -753,11 +775,17 @@ fn apply_configured_variants(
         variants.materials.clear();
     }
     // [design] Restrict old drawable clones too, while their replacement prepares.
-    // Only uniform POD changes; the image handles remain fixed (no colour upload).
+    // Only uniform POD changes; the atlas handles remain fixed (no colour upload).
+    // [design] Round 10a review: and the palette follows the coverage, keeping only what
+    // covered quadrants read (`PublishedSurface::live_palette`), so the clone's rebuild
+    // never waits for a masked cell's image that is gone; the bound numbers keep their
+    // meaning.
     for (id, publication) in &variants.publications {
-        let coverage = cache.coverage_for(publication) as f32;
-        if blends.get(*id).is_some_and(|m| m.extension.mesh_terrain_origin.z != coverage) {
-            blends.get_mut(*id).unwrap().extension.mesh_terrain_origin.z = coverage;
+        let coverage = cache.coverage_for(publication);
+        if blends.get(*id).is_some_and(|m| m.extension.mesh_terrain_origin.z != coverage as f32) {
+            let extension = &mut blends.get_mut(*id).unwrap().extension;
+            extension.mesh_terrain_origin.z = coverage as f32;
+            extension.palette = publication.live_palette(coverage);
         }
     }
     // A producer can edit an owned source in place and republish the same handle
@@ -1546,6 +1574,74 @@ mod tests {
         assert_eq!(app.world().get::<BlendShape>(entity).unwrap().enabled.as_ref(), Some(&next));
         assert_eq!(app.world().resource::<Variants>().publications.len(), 1);
         assert!(ready.settled(8));
+    }
+    /// [design] Round 10a review (P2): one cell's normal map is removed from the image
+    /// assets while another cell stays covered. The removal masks only that cell; the
+    /// retained clone keeps drawing, its rebuilt palette (for the coverage update) and the
+    /// new candidates' bind only images that are still there, so neither can wait on the
+    /// removed one (`build_bind_group`'s retry); the palette numbers keep their entries;
+    /// once the front settles the replacement starts and publishes without the cell.
+    #[test]
+    fn removed_palette_image_keeps_retained_clones_drawable_and_the_replacement_publishes() {
+        let (mut app, _files, [a_base, a_normal, b_base, b_normal]) = crate::terrain_surface::tests::detail_fixture();
+        app.init_resource::<Assets<NifBlendMaterial>>().init_resource::<Variants>().add_systems(PostUpdate, conversion_order(configured));
+        let published = app.world().resource::<SurfaceCache>().published.clone().unwrap();
+        assert_eq!(published.origin, (-1, -1));
+        assert_eq!(published.detail, vec![((0, 0), 0), ((1, 0), 0)]);
+        assert_eq!(published.palette.images, vec![Some(a_base.clone()), Some(a_normal.clone()), Some(b_base.clone()), Some(b_normal.clone())]);
+        assert_eq!(published.palette.samplers, vec![Some(a_base.clone())]);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial::default());
+        let entity = app.world_mut().spawn((BlendShape::new(source.clone()), MeshMaterial3d(source))).id();
+        app.update();
+        let clone = app.world().get::<BlendShape>(entity).unwrap().enabled.clone().unwrap();
+        assert_eq!(app.world().resource::<Assets<NifBlendMaterial>>().get(&clone).unwrap().extension.palette, published.palette);
+        // From here the render world acknowledges only what the test says.
+        let ready = BlendReadiness::default();
+        ready.ready.lock().unwrap().insert(clone.id());
+        app.world_mut().resource_mut::<Variants>().readiness = Some(ready.clone());
+        app.insert_resource(ready.clone());
+        app.update();
+        assert!(ready.settled(published.revision));
+        // The removal (Assets::remove ignores strong handles) and its event.
+        app.world_mut().resource_mut::<Assets<Image>>().remove(&a_normal);
+        app.world_mut().resource_mut::<Messages<AssetEvent<Image>>>().write(AssetEvent::Removed { id: a_normal.id() });
+        crate::terrain_surface::tests::tick(&mut app);
+        let front = app.world().resource::<SurfaceCache>().published.clone().unwrap();
+        assert_eq!(((front.coverage >> 4) & 1, (front.coverage >> 5) & 1), (0, 1), "(0, 0) masked, (1, 0) still covered");
+        assert_eq!(front.palette.images, vec![None, None, Some(b_base.clone()), Some(b_normal.clone())], "same numbers, the masked cell's entries on the fallback");
+        assert_eq!(front.palette.samplers, vec![Some(b_base.clone())], "the sampler represented by an image a covered quadrant reads");
+        assert!(crate::terrain_surface::tests::job_colour(&app).is_none(), "the replacement waits for the front's materials to settle");
+        let bindable = |app: &App, h: &Handle<NifBlendMaterial>| {
+            let palette = &app.world().resource::<Assets<NifBlendMaterial>>().get(h).unwrap().extension.palette;
+            let images = app.world().resource::<Assets<Image>>();
+            palette.images.iter().chain(&palette.samplers).flatten().all(|i| images.contains(i))
+        };
+        for _ in 0..3 {
+            app.update();
+            assert_eq!(app.world().get::<BlendShape>(entity).unwrap().enabled.as_ref(), Some(&clone), "the retained clone keeps drawing");
+            let material = app.world().resource::<Assets<NifBlendMaterial>>().get(&clone).unwrap();
+            assert_eq!(material.extension.mesh_terrain_origin.z as u32, front.coverage);
+            assert_eq!(material.extension.palette, front.palette);
+            assert!(bindable(&app, &clone), "its rebuild needs no removed image");
+            let candidate = app.world().resource::<Variants>().materials.values().next().unwrap().0.clone();
+            assert_ne!(candidate, clone);
+            assert!(bindable(&app, &candidate), "nor does the new candidate's");
+        }
+        // The candidate prepared: the front settles and the replacement starts, then
+        // publishes, without the cell whose image is gone.
+        let candidate = app.world().resource::<Variants>().materials.values().next().unwrap().0.clone();
+        ready.ready.lock().unwrap().insert(candidate.id());
+        app.update();
+        assert_eq!(app.world().get::<BlendShape>(entity).unwrap().enabled.as_ref(), Some(&candidate));
+        assert!(ready.settled(front.revision));
+        crate::terrain_surface::tests::tick(&mut app);
+        let colour = crate::terrain_surface::tests::job_colour(&app).expect("the replacement started");
+        assert_ne!(colour, front.colour);
+        crate::terrain_surface::tests::finish(&mut app);
+        let next = app.world().resource::<SurfaceCache>().published.clone().unwrap();
+        assert_eq!(next.colour, colour, "the replacement published");
+        assert_eq!(next.detail, vec![((1, 0), 0)]);
+        assert_eq!(next.palette.images, vec![Some(b_base), Some(b_normal)]);
     }
     #[test]
     fn first_clone_same_handle_emissive_edit_rejects_superseded_acknowledgement() {

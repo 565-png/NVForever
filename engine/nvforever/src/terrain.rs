@@ -706,15 +706,11 @@ impl DetailParts {
     /// The capture, resolved against the materials the near draw uses; the colour cache
     /// with the reason otherwise.
     fn capture(self, tm: &TerrainCtx, tile: f32) -> crate::terrain_surface::DetailCapture {
-        use crate::terrain_surface::{DetailBase, DetailCapture, QuadrantDetail, ResolvedDetail};
+        use crate::terrain_surface::{DetailCapture, QuadrantDetail};
         let Some(DetailVertices { tint, normal, tangent, sign: tangent_sign }) = self.vertices else { return DetailCapture::Colour("missing-vertex-attributes") };
         if self.opacity.len() > nvf_assets::nif_surface_blend::DETAIL_MAX_OVERLAYS { return DetailCapture::Colour("overlays-over-cap"); }
-        let overflow: Option<Vec<&StandardMaterial>> = self.overflow.iter().map(|h| tm.assets.materials.get(h).map(|m| &m.base)).collect();
-        let resolved = overflow.and_then(|overflow| match &self.base {
-            DetailBase::Folded(h) => tm.tm.folded.get(h).and_then(|m| ResolvedDetail::from_materials(&m.base, Some(&m.extension), &overflow, self.opacity.len())),
-            DetailBase::Single(h) => tm.assets.materials.get(h).and_then(|m| ResolvedDetail::from_materials(&m.base, None, &overflow, self.opacity.len())),
-        });
-        if resolved.is_none() { return DetailCapture::Colour("unresolved-materials"); }
+        let resolved = crate::terrain_surface::resolve_detail(&self.base, &self.overflow, self.opacity.len(), &tm.tm.folded, &tm.assets.materials);
+        if let Err(reason) = resolved { return DetailCapture::Colour(reason); }
         DetailCapture::Layers(Box::new(QuadrantDetail { base: self.base, overflow: self.overflow, cell_local: self.cell_local, tile, tint, normal, tangent, tangent_sign, opacity: self.opacity, resolved }))
     }
 }

@@ -519,14 +519,24 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   its own palette numbers. Quadrants are admitted whole, in a deterministic order (those the
   previous publication admitted for unchanged cells first, then by grid and quadrant); a
   quadrant that would overflow the palette, an image not loaded or an unresolved material
-  keeps the colour cache, with its reason on the publication line. *Binding*: the blend
+  keeps the colour cache, with its reason on the publication line (round 10a review: also
+  `sampler-mismatch` and `overflow-material`, below). *Binding*: the blend
   type's bindless index table (binding 100) is 50..454 instead of 50..54: after the four
   ordinary entries come 384 texture and 16 sampler entries, registered through the blend
   material's own allocator (bindless slots are local to a material type's slab) and
   resolved through the clone's own table row; unused entries hold the fallback image. No
   binding is added, bindless or not, and without bindless the type's layout is exactly the
   colour interface's (uniform 50, textures 51 and 53, sampler 52). Every clone of a
-  publication binds that publication's palette. *Composition* (`mesh_terrain_detail`): the
+  publication binds that publication's palette, restricted to its live coverage (round 10a
+  review, `PublishedSurface::live_palette`): when cells are masked (a departing or changed
+  cell, or one whose image was removed: a removal bumps the image's dependency revision
+  and so masks every cell reading it in the same update), the entries only masked cells'
+  quadrants read become the fallback, keeping their numbers (the immutable height atlas's
+  numbers keep naming the same entries), and a sampler still read takes as its
+  representative an image a covered quadrant reads with that description. The coverage
+  update rebuilds retained clones (Bevy drops the old prepared material before preparing
+  the new one), and new clones of the front take the same restricted palette, so neither
+  can wait for an image that is gone and the retained clones keep drawing. *Composition* (`mesh_terrain_detail`): the
   fragment's ground triangle and its barycentric weights come from the height lookup's own
   square and diagonal (below the diagonal `(1-u) SW + (u-v) SE + v NE`, above it
   `(1-v) SW + u NE + (v-u) NW`); the colour starts as the base diffuse x interpolated vertex
@@ -545,8 +555,19 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   `nif_material.wesl` at the function's top level, before the lookup's branches, then
   mapped through `1 / repeat`, the base's texture transform and the view's mip bias; the
   base diffuse sampler reads every diffuse and overlay normal map, the base normal sampler
-  the base normal map (terrain.wesl's rule; overflow layers draw with their own images'
-  samplers, of the same description). The target is never taken from the mesh pixel's
+  the base normal map (terrain.wesl's rule for the folded overlays). *Samplers the detail
+  does not reproduce* (round 10a review; the palette format keeps one diffuse and one
+  normal sampler per quadrant): a textureless base binds Bevy's fallback image and so its
+  fallback sampler, which reads the folded overlays in the near draw and need not equal
+  any layer image's description (with anisotropic filtering off the configured fallback is
+  1x, while texture.rs gives landscape textures their own description); separately drawn
+  overflow layers read their diffuse and normal maps with those images' own samplers.
+  So a quadrant with folded overlays on a textureless base, or with an overflow layer whose
+  diffuse or normal image's description differs from the detail's diffuse sampler (the
+  base diffuse's, or the first overlay's without a base texture), keeps the colour cache,
+  logged as `sampler-mismatch` (`terrain_surface.rs::samplers_reproduced`). Toggling
+  anisotropic filtering between texture loads can make such descriptions differ in
+  ordinary play. The target is never taken from the mesh pixel's
   screen-space prepass normal. *Sources and distance*: colour validity (the quadrant and
   the whole bilinear footprint) and detail validity (the quadrant's detail bit, live
   coverage, nearer than 4096 units) are checked separately, so a valid detail lookup never
@@ -565,7 +586,15 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   overflow overlays, after the folded ones and in their drawing order, up to 12 overlays
   plus the base (12 opacities fit three vec4s; a vertex record is 11 words with the colour,
   normal and tangent); a quadrant with more keeps the colour cache, logged as
-  `overlays-over-cap`. This is an approximation: the near terrain alpha-blends each
+  `overlays-over-cap`. The detail composes every overflow layer with white at full alpha
+  through the base's texture transform; the near draw uses each layer's own material
+  colour, alpha and transform (`layer_material`: white, opaque, the default transform). A
+  quadrant whose overflow layer's material has another colour or alpha, or another
+  transform than the base's (a base transform edited alone included), keeps the colour
+  cache, logged as `overflow-material` (round 10a review,
+  `ResolvedDetail::from_materials`); the check runs at capture and again at every source
+  material refresh (`refresh_captures`), which keeps the capture with the reason, so an
+  edit back serves layer detail again. This is an approximation: the near terrain alpha-blends each
   overflow layer's *lit* result, while the detail composes albedo and normal before
   lighting once. [hypothesis] The difference is small because the layers share the
   surface's lighting and differ only in their mapped normals. Every match described here
@@ -691,6 +720,11 @@ device's texture limit and refused when it does not fit. One RGBA16F atlas is 18
 render intermediates and retiring/extracted handles. There is one active replacement,
 fresh destinations rather than recycling referenced images, readiness admission and
 cancelled-job retirement; rapid replanning cannot enqueue an unbounded allocation list.
+Readiness admission waits for the front's materials to settle, but never longer than 1800
+frames in a row (round 10a review, `SETTLE_FRAMES`): a candidate that can never be prepared
+cannot hold every later publication back; the replacement then starts with a
+`settlement wait expired revision=... frames=...` warning, so at most one allocation per
+1800 frames comes that way.
 There are still no gutters or mips in the colour cache (round 10b); beyond 4096 units, and
 where a quadrant keeps the colour cache, geometric triangle normals remain the target.
 Round 10a's detail adds about 0.66 MiB of height atlas per publication (1.3 MiB front and
@@ -771,7 +805,15 @@ puts the player's feet at game `(x, y, z)` `delay` world seconds after the previ
 (after arming for the first), and each later step also waits until the probe has seen the
 previous step's recentre in a later frame with work pending in the current one, so every
 reversal lands on a distinct later frame while a replacement is pending; a step still
-waiting 10 world seconds after it was due goes anyway and counts as a timeout. Lines:
+waiting 10 world seconds after it was due goes anyway and counts as a timeout. Round 10a
+review: a step's replacement could be prepared and settle (the 120-frame readiness delay
+is one second at 120 frames per second) before a step with a 3-second delay came due,
+which would then wait for pending work that never came, up to its timeout. So, while
+steps remain, the blend materials first seen after a step are held unacknowledged until
+the driver issues the next step (`BlendReadiness::hold`, `mesh_terrain_blend.rs::acknowledgeable`):
+the step's replacement stays pending until then, whatever the next delay. Materials seen
+before a step (the retained clones among them) are never held, and nothing is held after
+the last step or the probe's summary; without the aid nothing is held. Lines:
 `continuity crossing step=N x=... y=... frame=N world-secs=... gated=BOOL pending=BOOL
 timeouts=N`, then `continuity crossing done steps=N timeouts=N`. The staging go-to before
 arming stays with `NVF_PLAY_TEST_GOTO`. Its rapid reversals move 384 units to either side
@@ -796,7 +838,10 @@ colour cache may soften contact detail, and a footprint turning invalid at a mis
 can make a narrow transition [hypothesis]; there geometric triangle normals, not the
 landscape's normal maps, are the shading target, so faceting can show [hypothesis]; a
 quadrant on the colour cache beside one with layer detail can show a boundary
-[hypothesis]; the detail's distance thresholds are initial choices for play-test review,
+[hypothesis], including the quadrants refused as `sampler-mismatch` or `overflow-material`
+(round 10a review: the palette carries neither per-layer samplers nor the overflow
+layers' material colour, alpha and transform, so those quadrants are refused rather than
+approximated); the detail's distance thresholds are initial choices for play-test review,
 and its GPU cost (texture bandwidth, descriptor entries) is unmeasured; the visual
 acceptance (gravel frequency and mapped-normal response at the close road shoulder at
 1920x1080, grazing views, layer boundaries, the 2048-4096 transition, publication
@@ -811,7 +856,12 @@ cell is drawn again (they never convert); the colour-coded `excluded` view was n
 texture swap, a fade and an override: `switching_off_during`), `terrain_surface` (round 10a:
 `palette_admits_whole_quadrants_in_order_and_refuses_overflow`,
 `colour_only_publications_carry_no_detail`,
-`crossing_steps_wait_for_the_seen_recentre_and_pending_work`),
+`crossing_steps_wait_for_the_seen_recentre_and_pending_work`; round 10a review:
+`delayed_steps_find_the_previous_work_still_pending_after_it_prepared`,
+`samplers_the_detail_does_not_reproduce_keep_the_colour_cache`,
+`overflow_material_edits_keep_the_colour_cache_until_reproducible_again`,
+`settlement_guard_waits_but_never_forever`), `mesh_terrain_blend` (round 10a review:
+`removed_palette_image_keeps_retained_clones_drawable_and_the_replacement_publishes`),
 `terrain::tests` (round 10a: `detail_capture_reconstructs_the_drawn_triangles`),
 `mesh_blend_shader_tests` (round 10a:
 `shader_detail_transcribes_the_mesh_triangles_and_the_record_layout`), `graphics::tests::mesh_terrain_blend`,
