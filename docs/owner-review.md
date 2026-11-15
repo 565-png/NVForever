@@ -525,6 +525,19 @@ the spec it links to.
     (2026-11-11) predates #2239 [hypothesis: your build was older than it; the log names
     no version]. No other engine change was made; the smoke scenarios
     `freeside-fort-residents-door` and `freeside-north-residents-door` keep it fixed.
+77. **A Very Aggressive actor attacks a Neutral on sight only inside its aggro radius
+    (#2547).** HELIOS One's guard dogs are in no NCR faction (Neutral to the troopers)
+    and Very Aggressive, so by the wiki's rule they attack any Neutral they see; they
+    went for the troopers 2,800 units away again and again and pulled them off their
+    marks. Ours now: an actor with Aggro Radius Behavior on (the dogs' radius is 2,000)
+    starts such a fight only inside that radius; once fighting it chases anywhere, and a
+    hit or an Enemy still starts a fight at any range. This reaches 227 actor records of
+    FalloutNV.esm (226 creatures: night stalkers, geckos, Mister Gutsys, fire ant queens,
+    Legion mongrels …) that are Very Aggressive with a radius on; the 796 without one
+    still attack every Neutral they see. The player is not affected.
+    If you saw wild creatures and patrols ignore each other more than in the original,
+    say where. Observer checks 144 and 163 ask the original.
+    ([factions §4](spec-notes/factions.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 

@@ -7343,6 +7343,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "helios-dogs-troopers"
+source = "issue #2547: at HELIOS One the guard dogs (CrDogNCRAggressive: Very Aggressive, aggro radius 2,000, in no NCR faction, Neutral to the troopers) went into combat with the NCR troopers about 2,800 units west, and the troopers fought back. A Very Aggressive actor with an aggro radius now attacks a Neutral on sight only inside that radius (crates/fnv-game/src/awareness.rs neutral_out_of_reach)"
+note = "the dogs 0x000A695E/0x000A695F/0x000A6944 stand about (25700, 2050, 5230), TestTrooperREF4/5 about (22950, 1200, 5232); the player is put 3,000+ units south of both, in god mode, so that the dogs (GeneralHostileToPlayerFaction) leave him out"
+areas = ["ai", "combat"]
+paths = ["crates/fnv-game/src/awareness.rs", "crates/fnv-game/src/aggro.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--world", "WastelandNV", "--pos=24300,-2200,5600", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 45
+expect = [
+  { re = 'detection: CrDogNCRAggressive 000A69(5E|5F|44) → ', label = "the dogs are loaded and measure someone" },
+  { re = 'alert: CrDogNCRAggressive \S+ \S+ → Combat: detects (?!the player)', count = 0, label = "no dog goes into combat with a trooper" },
+  { re = 'alert: \S+ \S+ \S+ → Combat: detects CrDogNCRAggressive', count = 0, label = "no trooper goes into combat with a dog" },
+]
+
+[[scenario]]
 name = "goodbye-after-caravan"
 kind = "tool"
 source = "owner playtest list 4 item 22: Johnson Nash's topic list ends with a Goodbye; a Goodbye line with an end script (CaravanOffer) does not hold the generic GOODBYE back (fnv-game dialogue.rs build_choices)"
