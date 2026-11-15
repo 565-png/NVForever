@@ -2317,3 +2317,41 @@ already talking takes over at once, same topic or another; nothing is queued or 
      (`GetPlayerTeammate`). Then the same with `SetHardcore 1`. Knocked out, up again and
      still hired outside Hardcore, dead in it agrees with ours; IsEssential reading 1 for
      the teammate says the engine counts teammates as essential by IsEssential too.
+
+## Answered 2026-11-15 (combat distraction, #2573)
+
+175. **Does a fighter detect its own foe better than a bystander? Answered: yes.**
+     (P2; #2573, [actor-behaviour §2.1a](../spec-notes/actor-behaviour.md#21a-combat-distraction-2573-answered-observer-check-175), detection.md §9.)
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] xNVSE 6.4.9 and JIP LN
+     57.30 `GetDetectionValue`, Searchlight Airport's runway, GameHour 12; the player
+     sneaking, standing still, in god mode. Detectors GoodspringsSettler01Ref 0x00104F03
+     and GoodspringsSettler03Ref 0x00104F0A both had Perception 5 and line of sight.
+     "Fighter" used `StartCombat player` (IsInCombat 1, IsCombatTarget player 1);
+     "watcher" used `StartCombat` on a restrained gecko after RemoveFromAllFactions and
+     Assistance 0 (IsInCombat 1, IsCombatTarget player 0). Run 2 swapped the NPCs' roles.
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] Distances and readings:
+
+     | State of the detector | Distance to the player | GetDetectionValue player |
+     |---|---|---|
+     | Not in combat, facing the player (both NPCs, both runs) | 695 | 79 |
+     | Not in combat, walking (both NPCs) | 669-674 / 650 / 633-640 / 621-627 / 601 / 567 | 80 / 82 / 83 / 84 / 85 / 86-87 |
+     | In Combat, the player its combat target (run 1) | 687-693 / 672-685 / 650 / 627 | 83 / 83-84 / 85 / 87 |
+     | In Combat, the player its combat target (run 2, the other NPC) | 695 / 675-681 / 650 / 618-627 | 83 / 84-86 / 86 / 87-88 |
+     | In Combat with the gecko, the player not its target (run 1) | 609-636 | 81 |
+     | In Combat with the gecko, the player not its target (run 2) | 547-591 | 83-84 |
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] At comparable distances,
+     a fighter read its own target 3-4 higher than the same NPC out of combat, in both
+     role assignments. Fighting someone else read the player 2-4 lower; those samples
+     were fewer because line of sight came and went. This settles the direction in
+     favour of the setting's description: fSneakCombatMod applies to a detector in
+     Combat against actors outside its combat target list, giving 0.8 at defaults;
+     its own targets retain 1 + fSneakAlertMod = 1.2. The wiki formula's IsCombatTarget
+     reading and the Fallout Wiki's 0.8 / 1.2 table are reversed (§2.1).
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] `SetRestrained 1` on a
+     combatant ended combat (IsInCombat 0 from the next sample), as `tcai` did.
+     GetDetectionValue read -100 for a detector in combat without line of sight.
+     These captures did not time detection loss or the search after breaking sight.

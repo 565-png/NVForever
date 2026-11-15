@@ -28943,3 +28943,22 @@ expect = [
   { re = 'console: IsEssential on EasyPeteRef >> 0\.00', label = "IsEssential still reads his flag" },
   { re = 'console: GetDead on EasyPeteRef >> 1\.00', label = "in Hardcore KillActor kills him" },
 ]
+
+[[scenario]]
+name = "detection-sneak-combat-corner"
+source = "[observed: captures run15b_t1 and run15b_t2, 2026-11-15; docs/spec-notes/actor-behaviour.md section 2.1a] #2573: own combat targets keep the alert bonus; fSneakCombatMod distracts a fighter from bystanders"
+note = "[design, #2573] Authored without running the game. Reuses lost-fighter-two-searches' lone-gecko / Doc Mitchell interior setup, with detection enabled and no invisibility or restraint. The player sneaks; explicit Perception 5 and Sneak 0 keep the initial sight check simple. At 15 s and 16 s scripted relative moves turn a corner in two legs; that placement is [hypothesis: unrun geometry], so the blocked-sight expectation must be verified in the main session. The schedule and 60 s budget are fixture choices, not measured loss times. The original capture settled the modifier direction but did not time sight loss: expect band and state lines with no timing range."
+areas = ["detection", "alert"]
+paths = ["crates/fnv-game/src/detection.rs", "engine/nvforever/src/detection.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONTROL = "2:sneak", NVF_PLAY_TEST_SCRIPT = "2:call:DocMitchellREF:Disable,3:set_av:player:Sneak:0,4:call:player:PlaceAtMe:NVCrGecko:1,5:moveto:0xFF000000:player:0:300:0,5:set_av:0xFF000000:Perception:5,6:combat:0xFF000000:player,15:moveto:player:0xFF000000:600:0:0,16:moveto:player:0xFF000000:600:-600:0" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 60
+expect = [
+  { re = 'alert: .*FF000000 (Normal|Alert) → Combat', label = "the lone hostile enters Combat" },
+  "detection summary",
+]
+order = [[
+  { re = 'detection: .*FF000000 → the player: \w+ → detected .*sneaking', label = "the hostile detects the sneaking player" },
+  { re = 'detection: .*FF000000 → the player: detected → (noticed|hidden) .*out of sight \(blocked\).*sneaking', label = "the hostile loses sight of the sneaking player behind geometry" },
+  { re = 'alert: .*FF000000 Combat → Lost', label = "the hostile enters Lost after losing detection" },
+]]
