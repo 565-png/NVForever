@@ -2293,6 +2293,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      waits (aggro.rs, check 2); if the spawned dog fights at both, `MoveTo` one of
      HELIOS's placed dogs instead (check 144).
 
+## Added 2026-11-15 (That Lucky Old Sun's ARCHIMEDES strike, #2544)
+
+164. **How does ARCHIMEDES's armed strike play out?** (P3; #2544, use-weapon.md §2.) With
+     VMS03 at objective 70, `set VMS03.bArchimedesArmed to 1` and activate the Reflector
+     Control Panel 0x000E07DF on the observation deck between 9 and 15 h. Note the time
+     from the activation to the first trooper's death and between deaths (TestTrooperREF1
+     0x000E35D5, then 0x000E35D4, 0x000E35D1, 0x000E35D3, 0x000E35D2: `GetDead`), whether
+     ARCHIMEDESMarkerREF2 (0x000E07DD) visibly turns between targets, and whether the
+     troopers fire at the player before the first shot. Ours since #2544: the first
+     death about 37 s after the activation, one every 1-4 s after, the turret turning
+     to each [hypothesis: the script's timers, ours turns at the combat rate].
+
 ## Added 2026-11-15 (companions outside Hardcore, #2623)
 
 165. **Is an unflagged teammate knocked out, not killed, outside Hardcore?** (P2; #2623,
@@ -2306,6 +2318,19 @@ already talking takes over at once, same topic or another; nothing is queued or 
      still hired outside Hardcore, dead in it agrees with ours; IsEssential reading 1 for
      the teammate says the engine counts teammates as essential by IsEssential too.
 
+## Added 2026-11-14 (actors at thin walls, #2511)
+
+166. **Which thin walls can a person-sized actor and a small creature cross?** (P2;
+     #2511, physics.md §6.9.2.) [design] NVForever uses a 56° actor slope limit, below
+     the cone face's roughly 57.7°, to cross a 24-unit zero-thickness wall and block
+     25/26/28, with the same 24-unit step height for people and small creatures.
+     Original actors blocking the higher walls is [hypothesis]. To check: in a
+     controlled test cell with a level floor, lead a person-sized actor and a small
+     creature straight into thin walls of 24, 25, 26 and 28 units at walk and run
+     pace, without jumping. Record whether each crosses, the feet heights through
+     the crossing or stop, and whether it first detours; keep a clear run-up and
+     prevent routes around the ends. Also check a 46–49° ramp so the actor's slope
+     behavior can be separated from its stepping over an edge.
 
 ## Added 2026-11-14 (NPC launcher round visibility, #2512)
 
@@ -2320,3 +2345,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
      reload, wait in aim, and holster/draw again. Capture when the round disappears
      and returns, including a weapon redrawn before reload. No original capture was
      made in this writer run.
+
+## Added 2026-11-14 (Oliver's rigid cap frame, #2529)
+
+168. **Does Oliver's cap follow the full head frame, idle and speaking?** (P2; #2529,
+     actors.md §1.2.) [documented: #2529 writer brief, fnvtool FalloutNV.esm +
+     Fallout - Meshes.bsa] `VHDGeneralOliver` 0x001300A9 carries `NVGenOliverCap`
+     0x00134490; its worn `GenOliverCap.NIF` is unskinned, identity-root, with no
+     bone-naming extra data and vertices centred about +13 along X. [hypothesis]
+     It is authored in `Bip01 Head`'s local frame. [design, #2529] NVForever preserves
+     that frame when the bounds pass `BONE_LOCAL_HEAD_ALIGNMENT` (0.9), retaining
+     skeleton-axis attachment for other layouts. Check the original while Oliver is
+     idle, entering conversation, looking sideways/up/down while speaking, and leaving
+     conversation. Compare the cap's centre and orientation to the head throughout;
+     also compare a cowboy hat, beret and helmet using the skeleton-axis layout from
+     actors.md §1.2. Record which heads/items clip or shift, and the valid greeting's
+     quest/stage conditions for a repeatable conversation smoke setup. No original
+     capture or game run was made in the writer session.
