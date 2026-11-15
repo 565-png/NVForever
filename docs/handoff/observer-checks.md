@@ -2457,3 +2457,14 @@ already talking takes over at once, same topic or another; nothing is queued or 
      attacking until the ranger is near agrees with ours; everyone attacking at once
      says the flag beats the disguise (then the disguise works only through the
      reputation reset, reputation.md §4).
+174. **How does the observation window at Camp McCarran look from each side?** (P3;
+     #2462, nif.md §6 "Window glass and environment maps".) Ours since #2462: the pane
+     (VWindow01 0x000FB2F4 in CampMCTermInt02, `vwindow01.nif`) draws its environment
+     cube `ShinyBright_e.dds` added over its blend, not weighted by its texture alpha
+     (about 0.05 in the middle), so grey reflection streaks show from both sides
+     [hypothesis]. In CampMCTermInt02 take one frame from the observation side
+     (`player.setpos x 112`, `y 1200`, `z 18672`, facing north) and one from inside the
+     interrogation room (`x 112`, `y 1700`, `z 18672`, facing south), then a third from
+     the room side while strafing past, to see whether the streaks move with the view.
+     Streaks moving with the view as bright as the frame agree with ours; a pane that is
+     only a faint grey film, or nothing, says the reflection is weighted by alpha.
