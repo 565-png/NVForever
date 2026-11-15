@@ -255,7 +255,7 @@ impl LandCache {
         let s = self.cells.entry((ws, g.0, g.1)).or_insert_with(|| {
             let w = world.index.worldspaces.get(&ws)?;
             let ids = fnv_world::land_surface::land_ids(g, |n| w.grid.get(&n).and_then(|c| world.index.cells.get(c)).and_then(|c| c.land));
-            fnv_world::land_surface::load_surface(world.lo, world.schema, &ids, nvf_play::smooth_terrain::on())
+            fnv_world::land_surface::load_surface(world.lo, world.schema, &ids, nvf_play::smooth_terrain::spec())
         });
         let (ox, oy) = (g.0 as f32 * fnv_world::CELL_SIZE, g.1 as f32 * fnv_world::CELL_SIZE);
         s.as_ref().map(|s| s.height_at_clamped(x - ox, y - oy))

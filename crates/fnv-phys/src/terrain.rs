@@ -107,27 +107,36 @@ mod tests {
         assert_eq!(n, 800);
     }
 
-    /// The smoothed surface collides where it is drawn: rays down hit its own heights.
+    /// The smoothed surface collides where it is drawn: rays down hit its own heights,
+    /// for each mode and subdivision, at arbitrary points and along the fine grid lines.
     #[test]
     fn smoothed_collider_matches_the_surface() {
+        use fnv_world::land_surface::{SmoothMode, SmoothParams};
         let h = bumpy();
         let mut block: fnv_world::land_surface::Block = [[None; 3]; 3];
         block[1][1] = Some(&h);
-        let s = Surface::smoothed(&block).unwrap();
-        let grid = (4, -1);
-        let mut world = PhysicsWorld::default();
-        world.insert_collider(collider_surface(grid, &s, 1.0), None);
-        world.detect_collisions(&(), &());
-        let (x0, y0) = (grid.0 as f32 * CELL_SIZE, grid.1 as f32 * CELL_SIZE);
-        for k in 0..400 {
-            let x = 1.0 + (k as f32 * 97.31) % (CELL_SIZE - 2.0);
-            let y = 1.0 + (k as f32 * 61.17 + 13.0) % (CELL_SIZE - 2.0);
-            for (x, y) in [(x, y), ((k % 63 + 1) as f32 * s.spacing(), y)] {
-                let want = s.height_at(x, y).unwrap();
-                let ray = Ray::new(Vector::new(x0 + x, y0 + y, 10_000.0), Vector::new(0.0, 0.0, -1.0));
-                let (_, toi) = world.cast_ray(&ray, 20_000.0, true, QueryFilter::default()).unwrap_or_else(|| panic!("ray misses terrain at ({x}, {y})"));
-                let got = 10_000.0 - toi;
-                assert!((got - want).abs() < 0.05, "at ({x}, {y}): physics {got}, surface {want}");
+        for mode in [SmoothMode::Interpolate, SmoothMode::Fit] {
+            for (subdiv, max_deviation) in [(2, 8.0), (4, 16.0)] {
+                let p = SmoothParams { mode, subdiv, max_deviation };
+                let s = Surface::smoothed(&block, p).unwrap();
+                let grid = (4, -1);
+                let mut world = PhysicsWorld::default();
+                world.insert_collider(collider_surface(grid, &s, 1.0), None);
+                world.detect_collisions(&(), &());
+                let (x0, y0) = (grid.0 as f32 * CELL_SIZE, grid.1 as f32 * CELL_SIZE);
+                let inner = s.side() - 2;
+                for k in 0..400 {
+                    let x = 1.0 + (k as f32 * 97.31) % (CELL_SIZE - 2.0);
+                    let y = 1.0 + (k as f32 * 61.17 + 13.0) % (CELL_SIZE - 2.0);
+                    // Arbitrary, on a fine grid line, on a stored vertex's column.
+                    for (x, y) in [(x, y), ((k % inner + 1) as f32 * s.spacing(), y), ((k % 31 + 1) as f32 * SPACING, y)] {
+                        let want = s.height_at(x, y).unwrap();
+                        let ray = Ray::new(Vector::new(x0 + x, y0 + y, 10_000.0), Vector::new(0.0, 0.0, -1.0));
+                        let (_, toi) = world.cast_ray(&ray, 20_000.0, true, QueryFilter::default()).unwrap_or_else(|| panic!("{p:?}: ray misses terrain at ({x}, {y})"));
+                        let got = 10_000.0 - toi;
+                        assert!((got - want).abs() < 0.05, "{p:?} at ({x}, {y}): physics {got}, surface {want}");
+                    }
+                }
             }
         }
     }

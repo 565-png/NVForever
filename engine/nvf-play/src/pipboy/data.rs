@@ -2551,7 +2551,7 @@ fn advance_outline(st: &mut DataState, game: &mut Game, images: &mut Assets<Imag
         // the rays leave the loaded cells.
         let surface = lands.entry(g).or_insert_with(|| {
             let ids = fnv_world::land_surface::land_ids(g, |n| grid.get(&n).and_then(|c| index.cells.get(c)).and_then(|c| c.land));
-            fnv_world::land_surface::load_surface(lo, schema, &ids, crate::smooth_terrain::on())
+            fnv_world::land_surface::load_surface(lo, schema, &ids, crate::smooth_terrain::spec())
         });
         surface.as_ref()?.height_at(x - g.0 as f32 * model::CELL, y - g.1 as f32 * model::CELL)
     };

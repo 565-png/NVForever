@@ -1002,7 +1002,7 @@ impl PhysState {
             _ => Default::default(),
         };
         let models = refs.iter().filter_map(|r| self.destruction_models.get(r).map(|m| (*r, m.clone()))).collect();
-        Job { cell, refs, land, lands, smooth_terrain: crate::smooth_terrain::on(), poses: Vec::new(), scales: Vec::new(), models }
+        Job { cell, refs, land, lands, surface: crate::smooth_terrain::spec(), poses: Vec::new(), scales: Vec::new(), models }
     }
 
     fn source(&self, ctx: &LoadCtx) -> Source {

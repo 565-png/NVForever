@@ -21,8 +21,8 @@
 //!
 //! The meshes are built over the cell's landscape surface (`fnv_world::land_surface`): the
 //! LAND grid as stored, or smoothed (#2149, on by default, `nvf_play::smooth_terrain`),
-//! each grid square then cut into `SUBDIV` × `SUBDIV` squares on a smooth patch through the
-//! LAND vertices, the same surface the collision is built on. Smoothed, the normals are the
+//! each grid square then cut into `subdiv` × `subdiv` squares (2 by default) on a smooth
+//! patch over the LAND vertices, the same surface the collision is built on. Smoothed, the normals are the
 //! surface's own; the vertex colours and the layers' opacities are interpolated on the
 //! stored triangles, so the paint lies where it did [design, #2149]. Stored, the meshes are
 //! what they always were (VNML normals, the record's colours and opacities).
@@ -62,7 +62,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError};
 use bevy::shader::ShaderRef;
 use fnv_world::land::{land_texture, load_land, Land, LandParts, Layer, DEFAULT_DIFFUSE, DEFAULT_NORMAL, QUAD_SIDE, SIDE};
-use fnv_world::land_surface::{block_of, load_heights, LandIds, Surface};
+use fnv_world::land_surface::{block_of, load_heights, LandIds, Surface, SurfaceSpec};
 use nvf_assets::model::ModelCtx;
 use nvf_assets::nif_material::sort_first;
 use nvf_assets::{nif_material, NifMaterial};
@@ -648,19 +648,21 @@ pub struct TerrainPrep {
 /// Read LAND `land_id` of grid square `grid` and build its meshes (`tile`: world units per
 /// texture repeat, [`TerrainSettings::tile`]); `lands`: the LAND of the grid squares around
 /// it (`fnv_world::land_surface::LandIds`), whose texture layers its own are stitched to
-/// ([`NEIGHBOURS`]) and, with `smooth` (`nvf_play::smooth_terrain`), whose heights the
-/// smoothed surface reads along its edges. `None`: no landscape or no heights.
-pub fn prepare_terrain(lo: &LoadOrder, schema: &EsmSchema, land_id: u32, grid: (i32, i32), tile: f32, lands: LandIds, smooth: bool) -> Option<TerrainPrep> {
+/// ([`NEIGHBOURS`]) and, when `spec` (`nvf_play::smooth_terrain::spec`, taken when the job
+/// is made) smooths, whose heights the smoothed surface reads along its edges. `None`: no
+/// landscape or no heights.
+pub fn prepare_terrain(lo: &LoadOrder, schema: &EsmSchema, land_id: u32, grid: (i32, i32), tile: f32, lands: LandIds, spec: SurfaceSpec) -> Option<TerrainPrep> {
     let land = load_land(lo, schema, land_id, LandParts::ALL)?;
     let centre = land.heights.as_ref()?;
-    let surface = if smooth {
-        let mut ids = lands;
-        ids[1][1] = None;
-        let mut around = load_heights(lo, schema, &ids, true);
-        around[1][1] = Some(centre.clone());
-        Surface::smoothed(&block_of(&around))?
-    } else {
-        Surface::stored(centre)
+    let surface = match spec {
+        SurfaceSpec::Smoothed(params) => {
+            let mut ids = lands;
+            ids[1][1] = None;
+            let mut around = load_heights(lo, schema, &ids, true);
+            around[1][1] = Some(centre.clone());
+            Surface::smoothed(&block_of(&around), params)?
+        }
+        SurfaceSpec::Stored => Surface::stored(centre),
     };
     let parts = LandParts { heights: false, normals: false, colors: false, layers: true };
     let around = NEIGHBOURS.map(|(dx, dy)| lands[(dy + 1) as usize][(dx + 1) as usize].and_then(|id| load_land(lo, schema, id, parts)).map(|l| l.layers));
@@ -774,9 +776,20 @@ mod tests {
     }
 
     fn smoothed(land: &Land) -> Surface {
+        smoothed_with(land, fnv_world::land_surface::SmoothParams::DEFAULT)
+    }
+
+    fn smoothed_with(land: &Land, p: fnv_world::land_surface::SmoothParams) -> Surface {
         let mut block: fnv_world::land_surface::Block = [[None; 3]; 3];
         block[1][1] = land.heights.as_deref();
-        Surface::smoothed(&block).unwrap()
+        Surface::smoothed(&block, p).unwrap()
+    }
+
+    /// Each mode at each subdivision (the bound does not change the meshes' layout).
+    fn variants() -> Vec<fnv_world::land_surface::SmoothParams> {
+        use fnv_world::land_surface::{SmoothMode, SmoothParams, SUBDIVS};
+        let modes = [SmoothMode::Interpolate, SmoothMode::Fit];
+        modes.iter().flat_map(|&mode| SUBDIVS.map(|subdiv| SmoothParams { mode, subdiv, max_deviation: 12.0 })).collect()
     }
 
     fn attr3(mesh: &Mesh, a: bevy::mesh::MeshVertexAttribute) -> Vec<[f32; 3]> {
@@ -790,36 +803,41 @@ mod tests {
     #[test]
     fn a_smoothed_quadrant_is_drawn_on_the_collision_surface() {
         let land = hilly_land();
-        let s = smoothed(&land);
-        let qs = quad_side(s.sub());
-        for q in 0..4u8 {
-            let mesh = quadrant_mesh(&land, &s, q, None, Vec2::ZERO, 256.0).unwrap();
-            let pos = attr3(&mesh, Mesh::ATTRIBUTE_POSITION);
-            let nor = attr3(&mesh, Mesh::ATTRIBUTE_NORMAL);
-            assert_eq!((pos.len(), triangles(&mesh).len()), (qs * qs, (qs - 1) * (qs - 1) * 2));
-            let (qx, qy) = ((q % 2) as usize * (qs - 1), (q / 2) as usize * (qs - 1));
-            for (v, p) in pos.iter().enumerate() {
-                let i = (qy + v / qs) * s.side() + qx + v % qs;
-                assert_eq!(*p, s.vertex(i), "quadrant {q} vertex {v}");
-                let n = Vec3::from_array(nor[v]);
-                assert!(n.dot(Vec3::from_array(s.normals().unwrap()[i])) > 0.9999);
+        for p in variants() {
+            let s = smoothed_with(&land, p);
+            let (sub, qs) = (s.sub(), quad_side(s.sub()));
+            for q in 0..4u8 {
+                let mesh = quadrant_mesh(&land, &s, q, None, Vec2::ZERO, 256.0).unwrap();
+                let pos = attr3(&mesh, Mesh::ATTRIBUTE_POSITION);
+                let nor = attr3(&mesh, Mesh::ATTRIBUTE_NORMAL);
+                assert_eq!((pos.len(), triangles(&mesh).len()), (qs * qs, (qs - 1) * (qs - 1) * 2), "{p:?}");
+                let (qx, qy) = ((q % 2) as usize * (qs - 1), (q / 2) as usize * (qs - 1));
+                for (v, pt) in pos.iter().enumerate() {
+                    let i = (qy + v / qs) * s.side() + qx + v % qs;
+                    assert_eq!(*pt, s.vertex(i), "{p:?} quadrant {q} vertex {v}");
+                    let n = Vec3::from_array(nor[v]);
+                    assert!(n.dot(Vec3::from_array(s.normals().unwrap()[i])) > 0.9999);
+                }
+                // The triangles are the collision's, by vertex position: every one of them.
+                let all: std::collections::HashSet<[u32; 3]> = s.triangles().into_iter().collect();
+                for tri in triangles(&mesh) {
+                    let global = tri.map(|v| ((qy + v as usize / qs) * s.side() + qx + v as usize % qs) as u32);
+                    assert!(all.contains(&global), "{p:?} {global:?}");
+                }
             }
-            // The triangles are the collision's, by vertex position.
-            let all = s.triangles();
-            let tri = triangles(&mesh)[2 * (qs - 1) + 1];
-            let global = tri.map(|v| ((qy + v as usize / qs) * s.side() + qx + v as usize % qs) as u32);
-            assert!(all.contains(&global), "{global:?}");
-        }
-        let mesh = quadrant_mesh(&land, &s, 0, None, Vec2::ZERO, 256.0).unwrap();
-        let Some(VertexAttributeValues::Float32x4(col)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) else { panic!() };
-        let colors = land.colors.as_ref().unwrap();
-        // LAND vertex (1, 1) is mesh vertex (2, 2): its colour exactly; the point half way
-        // along the diagonal to (2, 2) the mean of the two (the stored triangles' paint).
-        let at = |r: usize, c: usize| colors[r * SIDE + c].map(srgb_to_linear);
-        assert_eq!(col[2 * qs + 2][..3], at(1, 1));
-        let mid = col[3 * qs + 3];
-        for ((m, a), b) in mid.iter().zip(at(1, 1)).zip(at(2, 2)) {
-            assert!((m - (a + b) / 2.0).abs() < 1e-6);
+            let mesh = quadrant_mesh(&land, &s, 0, None, Vec2::ZERO, 256.0).unwrap();
+            let Some(VertexAttributeValues::Float32x4(col)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) else { panic!() };
+            let colors = land.colors.as_ref().unwrap();
+            // LAND vertex (1, 1) is mesh vertex (sub, sub): its colour exactly; the point half
+            // way along the diagonal to (2, 2) the mean of the two (the stored triangles'
+            // paint), whether or not the fit moved the vertex's height.
+            let at = |r: usize, c: usize| colors[r * SIDE + c].map(srgb_to_linear);
+            assert_eq!(col[sub * qs + sub][..3], at(1, 1), "{p:?}");
+            let half = sub + sub / 2;
+            let mid = col[half * qs + half];
+            for ((m, a), b) in mid.iter().zip(at(1, 1)).zip(at(2, 2)) {
+                assert!((m - (a + b) / 2.0).abs() < 1e-6, "{p:?}");
+            }
         }
     }
 
@@ -838,6 +856,12 @@ mod tests {
         // Not across the other diagonal: the stored triangles never join those corners.
         assert_eq!((fine[11 * qs + 13], fine[9 * qs + 15]), (0.0, 0.0));
         assert_eq!(refine_quad(&alpha, 1), alpha);
+        // By 4: the vertex at (20, 28), a quarter and half of the way to its neighbours.
+        let (fine4, qs4) = (refine_quad(&alpha, 4), quad_side(4));
+        assert_eq!((fine4.len(), fine4[20 * qs4 + 28]), (qs4 * qs4, 0.8));
+        for (v, want) in [(20 * qs4 + 29, 0.6), (20 * qs4 + 30, 0.4), (22 * qs4 + 28, 0.4), (22 * qs4 + 30, 0.4), (22 * qs4 + 26, 0.0)] {
+            assert!((fine4[v] - want).abs() < 1e-6, "{v}: {}", fine4[v]);
+        }
         // A smoothed layer keeps only the triangles it paints: the 24 around the vertex.
         let land = hilly_land();
         let layer = quadrant_mesh(&land, &smoothed(&land), 0, Some(&fine), Vec2::ZERO, 256.0).unwrap();

@@ -18,7 +18,7 @@ use fnv_collide::{CollisionObject, Iso};
 use fnv_nif::file::NifFile;
 use fnv_nif::scene::Decoded;
 use fnv_phys::{ref_collision_with, ModelCollision, PhysParams, PreparedRef, PreparedTerrain, RefCollisionOptions, RefPose};
-use fnv_world::land_surface::{block_of, load_heights, LandIds, Surface};
+use fnv_world::land_surface::{block_of, load_heights, LandIds, Surface, SurfaceSpec};
 use fnv_world::placed::{base_object, placement};
 use fnv_world::Placement;
 use nvf_assets::GameData;
@@ -189,8 +189,9 @@ pub struct Job {
     /// The LAND records of the cell and the eight around it (`fnv_world::land_surface::LandIds`):
     /// a smoothed surface reads the neighbours' along its edges.
     pub lands: LandIds,
-    /// Whether the terrain is smoothed (`crate::smooth_terrain`, fixed for the run).
-    pub smooth_terrain: bool,
+    /// The surface the terrain is built on (`crate::smooth_terrain::spec`, fixed for the
+    /// run and taken when the job is made: the worker never reads the settings).
+    pub surface: SurfaceSpec,
     /// References the simulation holds at another pose than their placement (position,
     /// Euler angles; `SimState::moved_pose`), by FormID: their collision is built there.
     pub poses: Vec<(u32, [f32; 3], [f32; 3])>,
@@ -314,10 +315,10 @@ pub fn cell(src: &Source, job: &Job) -> Prepared {
         let t = Instant::now();
         let mut ids = job.lands;
         ids[1][1] = Some(land);
-        let heights = load_heights(d.lo, d.schema, &ids, job.smooth_terrain);
+        let heights = load_heights(d.lo, d.schema, &ids, job.surface.is_smoothed());
         times.records += ms_since(t);
         let t = Instant::now();
-        out.surface = Surface::new(&block_of(&heights), job.smooth_terrain);
+        out.surface = Surface::new(&block_of(&heights), job.surface);
         if let Some(s) = &out.surface {
             out.terrain = Some(PreparedTerrain::from_surface(&src.params, (x, y), s));
         }

@@ -478,23 +478,29 @@ mod tests {
     /// normals, not the stored triangles'.
     #[test]
     fn plants_stand_on_the_surface_they_are_drawn_on() {
+        use crate::land_surface::{SmoothMode, SmoothParams};
         let mut land = flat((0..4).map(|q| base(q, 0x10)).collect());
         let heights: Vec<f32> = (0..SIDE * SIDE).map(|i| (((i % SIDE) as f32 * 0.5).sin() * 80.0 / 8.0).round() * 8.0 + (i / SIDE) as f32 * 8.0).collect();
         land.heights = Some(heights.clone());
         let mut block: crate::land_surface::Block = [[None; 3]; 3];
         block[1][1] = Some(&heights);
-        let s = Surface::smoothed(&block).unwrap();
-        let map = HashMap::from([(0x10, vec![0])]);
-        let plants = place_on(&land, &s, (-3, 2), None, &[grass(100)], &map, &GrassSettings::default());
-        assert!(!plants.is_empty());
-        let mut off_stored = 0;
-        for p in &plants {
-            let [x, y, z] = p.position;
-            assert_eq!(z, s.height_at_clamped(x, y));
-            assert_eq!(p.normal, s.normal_at(x, y).unwrap());
-            off_stored += usize::from((z - height_at(&heights, x, y)).abs() > 0.1);
+        for mode in [SmoothMode::Interpolate, SmoothMode::Fit] {
+            for (subdiv, max_deviation) in [(2, 8.0), (4, 16.0)] {
+                let p = SmoothParams { mode, subdiv, max_deviation };
+                let s = Surface::smoothed(&block, p).unwrap();
+                let map = HashMap::from([(0x10, vec![0])]);
+                let plants = place_on(&land, &s, (-3, 2), None, &[grass(100)], &map, &GrassSettings::default());
+                assert!(!plants.is_empty());
+                let mut off_stored = 0;
+                for pl in &plants {
+                    let [x, y, z] = pl.position;
+                    assert_eq!(z, s.height_at_clamped(x, y), "{p:?}");
+                    assert_eq!(pl.normal, s.normal_at(x, y).unwrap(), "{p:?}");
+                    off_stored += usize::from((z - height_at(&heights, x, y)).abs() > 0.1);
+                }
+                assert!(off_stored > 0, "{p:?}: some stand where smoothing moved the ground");
+            }
         }
-        assert!(off_stored > 0, "some stand where smoothing moved the ground");
     }
 
     #[test]

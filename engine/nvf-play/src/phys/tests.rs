@@ -250,7 +250,7 @@ fn a_destroyed_reference_collides_as_its_destruction_model_and_back() {
 
 #[test]
 fn a_job_knows_its_references_destruction_models() {
-    let job = Job { cell: PhysCell::Exterior(0, 0), refs: vec![1, 5, 9], land: None, lands: Default::default(), smooth_terrain: false, poses: Vec::new(), scales: Vec::new(), models: vec![(5, "a.nif".into()), (9, "b.nif".into())] };
+    let job = Job { cell: PhysCell::Exterior(0, 0), refs: vec![1, 5, 9], land: None, lands: Default::default(), surface: fnv_world::land_surface::SurfaceSpec::Stored, poses: Vec::new(), scales: Vec::new(), models: vec![(5, "a.nif".into()), (9, "b.nif".into())] };
     assert_eq!(job.model_of(5), Some("a.nif"));
     assert_eq!(job.model_of(9), Some("b.nif"));
     assert_eq!(job.model_of(1), None);
@@ -553,7 +553,7 @@ fn placed_clutter_moved_by_physics_is_written_back_and_reloads_there() {
     assert!(!p.placed_dynamic.contains_key(&id));
     // (The made-up cells have no records, so the job names the crate itself.)
     let cell = PhysCell::Exterior(0, 0);
-    let job = with_poses(Job { cell, refs: vec![id], land: None, lands: Default::default(), smooth_terrain: false, poses: Vec::new(), scales: Vec::new(), models: Vec::new() }, &sim);
+    let job = with_poses(Job { cell, refs: vec![id], land: None, lands: Default::default(), surface: fnv_world::land_surface::SurfaceSpec::Stored, poses: Vec::new(), scales: Vec::new(), models: Vec::new() }, &sim);
     p.insert(&LoadCtx { d: &d, sim: &sim, data: None }, fake_cell(&job));
     let b = p.world.ref_bodies(id)[0];
     for i in 0..3 {
@@ -973,10 +973,31 @@ fn lifted_spots(s: &fnv_world::land_surface::Surface) -> Vec<(f32, f32)> {
     out
 }
 
-/// A made-up exterior cell on a smoothed landscape (#2149): hills in steps of 8, and a
-/// static box standing on the ground at the second of [`lifted_spots`], its top 12 units
-/// above the stored triangles there (above the smoothed surface too).
+/// The top of the static box [`smooth_cell_with`] stands at (`x`, `y`): above the stored
+/// triangles by the surface's bound and 4 units more, so above the smoothed surface too
+/// whatever the bound (12 units at the default's 8).
+fn box_top(s: &fnv_world::land_surface::Surface, x: f32, y: f32) -> f32 {
+    s.stored_height_at(x, y).unwrap() + s.bound() + 4.0
+}
+
+/// The default smoothing's made-up cell ([`smooth_cell_with`]).
 fn smooth_cell(job: &Job) -> Prepared {
+    smooth_cell_with(job, fnv_world::land_surface::SmoothParams::DEFAULT)
+}
+
+/// The same cell fitted, 4 × 4, within 16 units: its LAND vertices move ([`smooth_cell_with`]).
+fn fitted_cell(job: &Job) -> Prepared {
+    use fnv_world::land_surface::{SmoothMode, SmoothParams};
+    smooth_cell_with(job, SmoothParams { mode: SmoothMode::Fit, subdiv: 4, max_deviation: 16.0 })
+}
+
+/// The made-up smoothed cells the landscape tests run on, the default first.
+const SMOOTH_CELLS: [fn(&Job) -> Prepared; 2] = [smooth_cell, fitted_cell];
+
+/// A made-up exterior cell on a smoothed landscape (#2149): hills in steps of 8, and a
+/// static box standing on the ground at the second of [`lifted_spots`], its top at
+/// [`box_top`].
+fn smooth_cell_with(job: &Job, params: fnv_world::land_surface::SmoothParams) -> Prepared {
     let PhysCell::Exterior(gx, gy) = job.cell else { panic!("exterior cells only") };
     let heights: Vec<f32> = (0..SIDE * SIDE)
         .map(|i| {
@@ -986,11 +1007,11 @@ fn smooth_cell(job: &Job) -> Prepared {
         .collect();
     let mut block: fnv_world::land_surface::Block = [[None; 3]; 3];
     block[1][1] = Some(&heights);
-    let surface = fnv_world::land_surface::Surface::smoothed(&block).expect("heights");
+    let surface = fnv_world::land_surface::Surface::smoothed(&block, params).expect("heights");
     let params = PhysParams::default();
     let (x0, y0) = (gx as f32 * CELL_SIZE, gy as f32 * CELL_SIZE);
     let (bx, by) = lifted_spots(&surface)[1];
-    let top = surface.stored_height_at(bx, by).unwrap() + 12.0;
+    let top = box_top(&surface, bx, by);
     let pl = Placement {
         form_id: 0x0200_0000,
         sig: *b"REFR",
@@ -1017,9 +1038,15 @@ fn smooth_cell(job: &Job) -> Prepared {
 /// furniture, on a static or well above the ground it stays where its feet are (#2149).
 #[test]
 fn an_actor_standing_on_the_landscape_follows_the_smoothed_surface() {
+    for make in SMOOTH_CELLS {
+        an_actor_standing_on_the_landscape_follows(make);
+    }
+}
+
+fn an_actor_standing_on_the_landscape_follows(make: fn(&Job) -> Prepared) {
     let (d, sim) = (play_data(), sim());
     let ctx = LoadCtx { d: &d, sim: &sim, data: None };
-    let mut p = PhysState { fake: Some(smooth_cell), loader: loader::Loader::manual(), ..Default::default() };
+    let mut p = PhysState { fake: Some(make), loader: loader::Loader::manual(), ..Default::default() };
     p.stream(&ctx, centre(0, 0), CELLS_PER_FRAME);
     let s = p.cells[&PhysCell::Exterior(0, 0)].surface.clone().expect("terrain");
     let spots = lifted_spots(&s);
@@ -1043,11 +1070,22 @@ fn an_actor_standing_on_the_landscape_follows_the_smoothed_surface() {
     assert!((rest[2] - smooth).abs() < 0.1, "{rest:?}");
     // On the static box standing on the ground: where its feet are.
     let (bx, by) = spots[1];
-    let top = s.stored_height_at(bx, by).unwrap() + 12.0;
+    let top = box_top(&s, bx, by);
     // (On the box's top as the ray finds it: within a float's rounding of `top`.)
     let on_box = p.standing_drawn_feet(4, [bx, by, top], true);
     assert!(on_box[..2] == [bx, by] && (on_box[2] - top).abs() < 1e-3, "{on_box:?}, box top {top}");
     assert_eq!(p.landscape_lift([bx, by, top]), None);
+    // At a LAND vertex the fit moved: the collision and the lift are the moved height's.
+    if s.spec().knot_shift() > 0.0 {
+        let moved = (2..31).flat_map(|r| (2..31).map(move |c| (r, c))).find(|&(r, c)| (s.heights()[s.land_vertex(r, c)] - s.land_height(r, c)).abs() > 1.0);
+        let (r, c) = moved.expect("the fit moves some LAND vertex");
+        let (kx, ky) = (c as f32 * fnv_world::land::SPACING, r as f32 * fnv_world::land::SPACING);
+        let knot = s.heights()[s.land_vertex(r, c)];
+        assert_eq!(p.terrain_z(kx, ky), Some(knot));
+        assert!((s.lift_at(kx, ky).unwrap() - (knot - s.land_height(r, c))).abs() < 1e-3);
+        let drawn = p.standing_drawn_feet(6, [kx, ky, s.land_height(r, c)], true);
+        assert!((drawn[2] - knot).abs() < 1e-3, "{drawn:?}, moved knot {knot}");
+    }
     // Indoors nothing follows the landscape.
     p.space = Space::Interior(7);
     assert_eq!(p.landscape_lift([x, y, stored]), None);
@@ -1057,9 +1095,15 @@ fn an_actor_standing_on_the_landscape_follows_the_smoothed_surface() {
 /// has: the lift is not kept at none (#2149, review round 2).
 #[test]
 fn a_standing_actor_is_looked_at_again_when_its_collision_loads() {
+    for make in SMOOTH_CELLS {
+        a_standing_actor_is_looked_at_again_when_its_collision_loads_on(make);
+    }
+}
+
+fn a_standing_actor_is_looked_at_again_when_its_collision_loads_on(make: fn(&Job) -> Prepared) {
     let (d, sim) = (play_data(), sim());
     let ctx = LoadCtx { d: &d, sim: &sim, data: None };
-    let mut p = PhysState { fake: Some(smooth_cell), loader: loader::Loader::manual(), ..Default::default() };
+    let mut p = PhysState { fake: Some(make), loader: loader::Loader::manual(), ..Default::default() };
     p.stream(&ctx, centre(0, 0), CELLS_PER_FRAME);
     assert!(!p.cells.contains_key(&PhysCell::Exterior(1, 0)), "only the cell underfoot is in");
     // The made-up cells all have the same landscape: (0, 0)'s spots are (1, 0)'s too.
@@ -1085,9 +1129,15 @@ fn a_standing_actor_is_looked_at_again_when_its_collision_loads() {
 /// the landscape a second time (#2149, review round 2).
 #[test]
 fn feet_a_character_left_are_drawn_as_the_character_was() {
+    for make in SMOOTH_CELLS {
+        feet_a_character_left_are_drawn_as_the_character_was_on(make);
+    }
+}
+
+fn feet_a_character_left_are_drawn_as_the_character_was_on(make: fn(&Job) -> Prepared) {
     let (d, sim) = (play_data(), sim());
     let ctx = LoadCtx { d: &d, sim: &sim, data: None };
-    let mut p = PhysState { fake: Some(smooth_cell), loader: loader::Loader::manual(), ..Default::default() };
+    let mut p = PhysState { fake: Some(make), loader: loader::Loader::manual(), ..Default::default() };
     p.stream(&ctx, centre(0, 0), CELLS_PER_FRAME);
     let s = p.cells[&PhysCell::Exterior(0, 0)].surface.clone().expect("terrain");
     let spots = lifted_spots(&s);

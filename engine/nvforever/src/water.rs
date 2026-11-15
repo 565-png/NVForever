@@ -388,7 +388,7 @@ fn visible_surface(world: &WorldData, g: (i32, i32)) -> Option<(f32, u32, [f32; 
         let heights = load_land(world.lo, world.schema, land, LandParts::HEIGHTS)?.heights?;
         // A smoothed landscape (#2149) can dip up to its bound below the stored vertices, so a
         // vertex that close above the water may have wet ground beside it [design, #2149].
-        let slack = if nvf_play::smooth_terrain::on() { fnv_world::land_surface::MAX_DEVIATION } else { 0.0 };
+        let slack = nvf_play::smooth_terrain::spec().bound();
         let [i0, j0, i1, j1] = wet_vertices(&heights, height + slack)?;
         let step = CELL_SIZE / (SIDE - 1) as f32;
         wet = [x0 + i0 as f32 * step, y0 + j0 as f32 * step, x0 + i1 as f32 * step, y0 + j1 as f32 * step];

@@ -124,9 +124,9 @@ impl WorldData {
     }
 
     /// The landscape surface of grid square `g` as this run draws and collides it (smoothed
-    /// or as stored, `nvf_play::smooth_terrain`); `None` without landscape.
+    /// or as stored, `nvf_play::smooth_terrain::spec`); `None` without landscape.
     pub fn land_surface(&self, g: (i32, i32)) -> Option<fnv_world::land_surface::Surface> {
-        fnv_world::land_surface::load_surface(self.lo, self.schema, &self.land_ids(g), nvf_play::smooth_terrain::on())
+        fnv_world::land_surface::load_surface(self.lo, self.schema, &self.land_ids(g), nvf_play::smooth_terrain::spec())
     }
 
     /// Whether a reference is enabled at the start of a game: not deleted, and its enable
@@ -602,12 +602,12 @@ fn read_ahead(world: &WorldData, streamer: &mut Streamer, centre: (i32, i32), ri
             refs.extend(world.persistent_by_grid.get(&c).into_iter().flatten());
             let land = cell.land;
             let around = world.land_ids(c);
-            let smooth = nvf_play::smooth_terrain::on();
+            let spec = nvf_play::smooth_terrain::spec();
             let (lo, schema, hide) = (world.lo, world.schema, hide.clone());
             let task = nvf_assets::read_pool::read_pool().spawn(async move {
                 CellAhead {
                     models: cell_models(lo, schema, &refs, &hide),
-                    terrain: land.and_then(|l| prepare_terrain(lo, schema, l, c, tile, around, smooth)),
+                    terrain: land.and_then(|l| prepare_terrain(lo, schema, l, c, tile, around, spec)),
                     ready: false,
                 }
             });
@@ -774,7 +774,9 @@ pub fn report(mut exit: MessageReader<AppExit>, streamer: Res<Streamer>, models:
     );
     // The smoke scenario `terrain-smoothing` reads it (#2149).
     if let Some(t) = terrain {
-        info!("terrain summary: {} cells drawn smoothed, {} on the stored triangles", t.smoothed_cells, t.stored_cells);
+        // Cell draws counted over the run (a cell drawn again after it unloaded counts
+        // again), not the cells loaded now.
+        info!("terrain summary: {} cells drawn smoothed, {} on the stored triangles ({})", t.smoothed_cells, t.stored_cells, nvf_play::smooth_terrain::spec().describe());
     }
 }
 
@@ -1028,7 +1030,7 @@ fn begin_cell(
     let mut refs: Vec<u32> = cell.map(|c| c.refs.clone()).unwrap_or_default();
     if let CellKey::Exterior(g) = key {
         if let Some((c, land_id)) = cell.and_then(|c| Some((c, c.land?))) {
-            let prep = prep.or_else(|| prepare_terrain(world.lo, world.schema, land_id, g, tile, world.land_ids(g), nvf_play::smooth_terrain::on()));
+            let prep = prep.or_else(|| prepare_terrain(world.lo, world.schema, land_id, g, tile, world.land_ids(g), nvf_play::smooth_terrain::spec()));
             if let Some(prep) = prep {
                 let (land, surface) = spawn_terrain(commands, cell_e, world, prep, &mut TerrainCtx { tm: terrain, assets: models });
                 // Grass grows on the landscape's textures (grass.rs); the water surface
