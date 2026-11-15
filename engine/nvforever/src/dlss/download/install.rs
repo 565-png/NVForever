@@ -135,7 +135,7 @@ fn file_sha256(path: &Path) -> io::Result<[u8; 32]> {
 
 /// The staged files checked once more before they are moved: each one's SHA-256 read back
 /// from the disk, then `checks` (on Windows the signature checks, [`signature_checks`]).
-pub(super) fn verify_staged(staging: &Staging, files: &[DownloadFile], checks: &dyn Fn(&Path, &[DownloadFile]) -> Result<(), Failure>) -> Result<(), Failure> {
+pub(super) fn verify_staged(staging: &Staging, files: &[DownloadFile], checks: &super::StagedChecks<'_>) -> Result<(), Failure> {
     for file in files {
         let path = staging.dir.join(file.name);
         let digest = file_sha256(&path).map_err(|e| write_error(&path, &e))?;

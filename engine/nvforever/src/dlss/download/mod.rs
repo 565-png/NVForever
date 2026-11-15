@@ -339,6 +339,11 @@ fn finish(shared: &Shared, phase: Phase) {
     shared.set_phase(phase);
 }
 
+/// The checks run on the staging folder and the files staged in it before any move: on
+/// Windows the signature checks (`install::signature_checks`), anything in the tests.
+#[cfg(any(windows, test))]
+type StagedChecks<'a> = dyn Fn(&Path, &[DownloadFile]) -> Result<(), Failure> + 'a;
+
 /// The archive's bytes by range: HTTP in the game (`fetch.rs`), memory in the tests.
 #[cfg(any(windows, test))]
 trait RangeSource {
@@ -455,7 +460,7 @@ fn read_all<S: RangeSource>(src: &mut S, shared: &Shared, start: u64, len: u64) 
 /// every fetched file passed. A folder that already holds every file is done with nothing
 /// fetched.
 #[cfg(any(windows, test))]
-fn run<S: RangeSource>(src: &mut S, files: &[DownloadFile], target: &Path, shared: &Shared, checks: &dyn Fn(&Path, &[DownloadFile]) -> Result<(), Failure>) -> Phase {
+fn run<S: RangeSource>(src: &mut S, files: &[DownloadFile], target: &Path, shared: &Shared, checks: &StagedChecks<'_>) -> Phase {
     let wanted = match install::still_missing(target, files) {
         Ok(wanted) => wanted,
         Err(failure) => return Phase::Failed(failure),
@@ -474,7 +479,7 @@ fn run<S: RangeSource>(src: &mut S, files: &[DownloadFile], target: &Path, share
 }
 
 #[cfg(any(windows, test))]
-fn fetch_and_install<S: RangeSource>(src: &mut S, files: &[DownloadFile], target: &Path, shared: &Shared, checks: &dyn Fn(&Path, &[DownloadFile]) -> Result<(), Failure>) -> Result<(), Stop> {
+fn fetch_and_install<S: RangeSource>(src: &mut S, files: &[DownloadFile], target: &Path, shared: &Shared, checks: &StagedChecks<'_>) -> Result<(), Stop> {
     let go_on = || if shared.cancelled() { Err(Stop::Cancelled) } else { Ok(()) };
     shared.set_phase(Phase::Connecting);
     let size = src.size()?;
@@ -755,7 +760,7 @@ mod tests {
     }
 
     /// A run that must fail or be cancelled, and leave nothing behind.
-    fn refused(label: &str, src: &mut Memory<'_>, files: &[DownloadFile], shared: &Shared, checks: &dyn Fn(&Path, &[DownloadFile]) -> Result<(), Failure>) -> Phase {
+    fn refused(label: &str, src: &mut Memory<'_>, files: &[DownloadFile], shared: &Shared, checks: &StagedChecks<'_>) -> Phase {
         let root = scratch(label);
         let target = root.join("dlss");
         let phase = run(src, files, &target, shared, checks);
