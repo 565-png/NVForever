@@ -11,8 +11,8 @@
 //!   letters' drop shadow (`crate::interface::DROP`).
 //! - **Line boxes** ([`framed`]): a box's line over two dark rings round it and a dark copy of
 //!   it down and right, the letters' glow for a box.
-//! - **Filled bars** (the scroll bar's marker, a slider's meter) take a soft
-//!   [`BoxShadow`] ([`bar_shadow`]).
+//! - **Filled bars** (the scroll bar's marker and track, a slider's meter): dark rings
+//!   outside them and a drop shadow ([`bar_glow`]).
 
 use crate::interface::{u, DROP, DROP_ALPHA};
 use crate::vector_font::ENTRY_EM;
@@ -197,12 +197,23 @@ pub fn filling() -> Node {
     Node { position_type: PositionType::Absolute, left: u(0.0), right: u(0.0), top: u(0.0), bottom: u(0.0), ..default() }
 }
 
-/// The soft shadow under a filled bar (the scroll bar's marker and track, a slider's meter):
-/// the letters' drop, blurred, `dark` at its middle.
-pub fn bar_shadow(dark: f32) -> BoxShadow {
+/// The glow round a filled bar at `x`, `y`, `w` × `h` in its parent (the scroll bar's marker
+/// and track, a slider's meter), drawn before it: two dark rings outside it and its drop
+/// shadow along its right and bottom edges, as dark as `ink` [design: owner 2026-11-15, the
+/// fourth build: "the sliders do not have shadows behind them"]. Only outside the bar, so a
+/// see-through bar (a slider's ground) keeps its own shade.
+pub fn bar_glow(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, h: f32, ink: f32) {
+    let at_out = |out: f32| Node { position_type: PositionType::Absolute, left: u(x - out), top: u(y - out), width: u(w + 2.0 * out), height: u(h + 2.0 * out), ..default() };
+    for (out, band, dark) in BAR_RINGS {
+        p.spawn((GlowRing, Node { border: UiRect::all(u(band)), ..at_out(out) }, BorderColor::all(Color::BLACK.with_alpha(dark * ink)), Pickable::IGNORE));
+    }
     let d = DROP * ENTRY_EM;
-    BoxShadow::new(Color::BLACK.with_alpha(dark), u(d.x), u(d.y), u(1.5), u(5.0))
+    let drop = Node { position_type: PositionType::Absolute, left: u(x + d.x), top: u(y + d.y), width: u(w), height: u(h), border: UiRect { right: u(d.x), bottom: u(d.y), ..default() }, ..default() };
+    p.spawn((GlowRing, drop, BorderColor::all(Color::BLACK.with_alpha(DROP_ALPHA * ink)), Pickable::IGNORE));
 }
+
+/// A bar's rings: so far out, so wide a band, so dark (outside the bar only).
+const BAR_RINGS: [(f32, f32, f32); 2] = [(2.0, 2.0, 0.3), (4.5, 2.5, 0.14)];
 
 #[cfg(test)]
 mod tests {

@@ -1601,7 +1601,8 @@ impl Plugin for PausePlugin {
         app.init_resource::<MenuFont>();
         // The vector letters' glow, set from their laid-out size (`crate::interface::GLOW_RINGS`);
         // the highlight boxes drawn under what they box.
-        app.add_systems(PostUpdate, (crate::interface::glow_offsets.after(bevy::ui::UiSystems::Layout), draw_boxed.before(bevy::ui::UiSystems::Layout)));
+        app.add_systems(PostUpdate, crate::interface::glow_offsets.after(bevy::ui::UiSystems::Layout));
+        app.add_observer(draw_boxed);
         app.init_resource::<Paused>()
             .init_resource::<PageRequest>()
             .init_resource::<Page>()
@@ -1745,16 +1746,17 @@ fn boxed(node: Node, on: bool) -> (Node, Boxed) {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 struct Boxed(bool);
 
-/// The highlight box (with its glow, `crate::menu_shapes::framed`) of each new [`Boxed`] node
-/// that has it, put under its children.
-fn draw_boxed(mut commands: Commands, added: Query<(Entity, &Boxed), Added<Boxed>>) {
-    let (line, fill) = highlight_colors();
-    for (e, b) in &added {
-        if b.0 {
-            let frame = commands.spawn((crate::menu_shapes::filling(), Pickable::IGNORE)).with_children(|c| crate::menu_shapes::framed(c, line, fill, LINE)).id();
-            commands.entity(e).insert_children(0, &[frame]);
-        }
+/// The highlight box (with its glow, `crate::menu_shapes::framed`) of a [`Boxed`] node that
+/// has it, put under its children the moment the node is made (an observer: drawn with the
+/// page, so a page drawn again never shows a frame without it) [design: owner 2026-11-15, the
+/// fourth build: "the menu selection box flickers"].
+fn draw_boxed(add: On<Add<Boxed>>, boxed: Query<&Boxed>, mut commands: Commands) {
+    if !boxed.get(add.entity).is_ok_and(|b| b.0) {
+        return;
     }
+    let (line, fill) = highlight_colors();
+    let frame = commands.spawn((crate::menu_shapes::filling(), Pickable::IGNORE)).with_children(|c| crate::menu_shapes::framed(c, line, fill, LINE)).id();
+    commands.entity(add.entity).insert_children(0, &[frame]);
 }
 
 /// The darkened band behind a page's list.
@@ -1830,7 +1832,13 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
                     band(root, look, tall(Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(band_left, 0.0, band_w, 0.0) }));
                     soft_column(root, tall(Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(lb.left, 0.0, lb.width + BAR_GAP + BAR_W, 0.0) }), LIST_SHADE);
                 }
-                Page::Load { .. } => band(root, look, tall(Node { height: Val::Percent(100.0), ..from_right(RIGHT + COLUMN, 0.0, LOAD_WIDTH + BAND_MARGIN, 0.0) })),
+                // The band as far past the list's right side as past its left, the soft column
+                // over it as on the settings page [design: owner 2026-11-15, the fourth build].
+                Page::Load { .. } => {
+                    let node = || tall(Node { height: Val::Percent(100.0), ..from_right(RIGHT + COLUMN - BAND_MARGIN, 0.0, LOAD_WIDTH + 2.0 * BAND_MARGIN, 0.0) });
+                    band(root, look, node());
+                    soft_column(root, node(), LIST_SHADE);
+                }
                 // The mod's page is drawn from its tiles over this one (`crate::tiles::draw`).
                 Page::Main | Page::Mods => {}
             }
@@ -1851,12 +1859,14 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
                         // each on the line of its left line; all at the titles' size.
                         let lines = [(&f.title, tr(WARNING_TITLE)), (&f.entry, tr(WARNING)), (&f.entry, tr(QUESTION))];
                         let lw = lines.iter().map(|(face, t)| face.font.width(t)).fold(0.0, f32::max);
-                        let at = 280.0;
+                        let width = CONFIRM.iter().map(|c| f.title.font.width(tr(c))).fold(0.0, f32::max) + 2.0 * ENTRY_BOX_PAD;
+                        // The two columns centred in the view [design: owner 2026-11-15, the
+                        // fourth build: "center the quit menu also"].
+                        let at = (lw + 30.0 - width) / 2.0;
                         let top = page_h() / 2.0 - 1.5 * ITEM;
                         for (i, (face, t)) in lines.into_iter().enumerate() {
                             root.spawn(from_middle(at - 30.0 - lw, top + i as f32 * ITEM, lw, ITEM)).with_children(|r| sm_text(r, face, t, 0.0, crate::start_menu::entry_base(face), color(Shade::Bright)));
                         }
-                        let width = CONFIRM.iter().map(|c| f.title.font.width(tr(c))).fold(0.0, f32::max) + 2.0 * ENTRY_BOX_PAD;
                         for (i, c) in CONFIRM.iter().enumerate() {
                             root.spawn((Button, PauseButton::Confirm(i), boxed(from_middle(at, top + i as f32 * ITEM, width, ITEM), i == sel)))
                             .with_children(|t| sm_text(t, &f.title, tr(c), ENTRY_BOX_PAD, crate::start_menu::entry_base(&f.title), color(Shade::Bright)));
@@ -2595,14 +2605,16 @@ fn window_bar(root: &mut ChildSpawnerCommands, look: &PauseLook, rows: usize, fi
     // "the scrollbar is now the only element that is not vectorized"]: a faint track between
     // two chevrons, the marker on it.
     root.spawn(bar).with_children(|p| {
-        use crate::menu_shapes::{bar_shadow, shape};
-        p.spawn((at((BAR_W - BAR_TRACK_W) / 2.0, BAR_ARROW, BAR_TRACK_W, track), BackgroundColor(bright.with_alpha(0.25)), bar_shadow(0.3), Pickable::IGNORE));
+        use crate::menu_shapes::{bar_glow, shape};
+        bar_glow(p, (BAR_W - BAR_TRACK_W) / 2.0, BAR_ARROW, BAR_TRACK_W, track, 0.6);
+        p.spawn((at((BAR_W - BAR_TRACK_W) / 2.0, BAR_ARROW, BAR_TRACK_W, track), BackgroundColor(bright.with_alpha(0.25)), Pickable::IGNORE));
         for (step, dir, top) in [(-1, Dir::Up, 0.0), (1, Dir::Down, BAR_ARROW + track)] {
             shape(p, look.shapes.as_ref(), Kind::Chevron, dir, Vec2::new(BAR_W / 2.0, top + BAR_ARROW / 2.0), BAR_CHEVRON, bright);
             p.spawn((Button, PauseButton::ScrollStep(step), at(0.0, top, BAR_W, BAR_ARROW)));
         }
         p.spawn((Button, PauseButton::ScrollTrack, RelativeCursorPosition::default(), at(0.0, BAR_ARROW, BAR_W, track))).with_children(|t| {
-            t.spawn((at((BAR_W - BAR_MARKER_W) / 2.0, y, BAR_MARKER_W, h), BackgroundColor(bright), bar_shadow(0.5), Pickable::IGNORE));
+            bar_glow(t, (BAR_W - BAR_MARKER_W) / 2.0, y, BAR_MARKER_W, h, 1.0);
+            t.spawn((at((BAR_W - BAR_MARKER_W) / 2.0, y, BAR_MARKER_W, h), BackgroundColor(bright), Pickable::IGNORE));
         });
     });
 }
@@ -2646,7 +2658,8 @@ fn slider_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, 
     let my = (OPTION_ROW - METER_HEIGHT) / 2.0;
     let (meter_left, meter_w) = parts.meter;
     // The ground, then the ticks as far as the value.
-    r.spawn((at(meter_left, my, meter_w, METER_HEIGHT), BackgroundColor(bright.with_alpha(0.25)), crate::menu_shapes::bar_shadow(0.35 * bright.alpha())));
+    crate::menu_shapes::bar_glow(r, meter_left, my, meter_w, METER_HEIGHT, bright.alpha());
+    r.spawn((at(meter_left, my, meter_w, METER_HEIGHT), BackgroundColor(bright.with_alpha(0.25))));
     for t in 0..meter_ticks(v, meter_w) {
         let x = meter_left + t as f32 * METER_TICK;
         let w = METER_TICK.min(meter_left + meter_w - x);
@@ -2738,10 +2751,10 @@ fn load_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list:
     for (row, (i, (path, h))) in list.saves.iter().enumerate().skip(first).take(LOAD_ROWS).enumerate() {
         let node = from_right(RIGHT + COLUMN + LOAD_WIDTH - width, LOAD_TOP + row as f32 * ITEM, width, ITEM);
         root.spawn((Button, PauseButton::LoadRow(i), boxed(node, i == selected))).with_children(|r| {
-            sm_text(r, &f.entry, &stem(path), 10.0, BASE, color(Shade::Bright));
+            sm_text(r, &f.entry, &stem(path), 10.0, crate::start_menu::entry_base(&f.entry), color(Shade::Bright));
             let date = format!("{}  {}", kind_name(h.kind), crate::save::game_date(h));
             let w = f.small.font.width(&date);
-            sm_text(r, &f.small, &date, width - w - 14.0, BASE, color(Shade::Dim));
+            sm_text(r, &f.small, &date, width - w - 14.0, crate::start_menu::entry_base(&f.small), color(Shade::Dim));
         });
     }
 }
@@ -6582,7 +6595,7 @@ mod tests {
     #[test]
     fn the_highlight_box_goes_under_the_children_and_moves_nothing() {
         let mut app = App::new();
-        app.add_systems(Update, draw_boxed);
+        app.add_observer(draw_boxed);
         let world = app.world_mut();
         let on = world.spawn(boxed(at(0.0, 0.0, 100.0, 52.0), true)).with_children(|c| {
             c.spawn(at(10.0, 0.0, 50.0, 52.0));
