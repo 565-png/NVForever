@@ -548,7 +548,7 @@ fn script_runner(lo: &LoadOrderArgs, schema: &Path, functions: Option<PathBuf>, 
         g.new_game();
         let new_game = rows(g.run_script_runner(Moment::NewGame));
         doc["ran"] = json!({"restart": restart, "new_game": new_game});
-        doc["diagnostics"] = crate::runner_diagnostics::summarize(&g.events, detail).map_err(anyhow::Error::msg)?;
+        doc["diagnostics"] = crate::runner_diagnostics::document(&g.events, detail);
     }
     Ok(doc)
 }

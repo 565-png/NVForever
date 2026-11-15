@@ -50,7 +50,7 @@ class DiagnosticCliBoundary(unittest.TestCase):
         self.data.mkdir()
         (self.data / "Diagnostic.esm").write_bytes(authored_plugin())
 
-    def cli(self, *args, success=True):
+    def cli(self, *args, success=True, error_contains=None):
         result = subprocess.run([str(self.binary), *map(str, args)], capture_output=True, timeout=30, cwd=self.repo)
         # Test controller may preserve these raw streams before TemporaryDirectory
         # cleanup. They contain authored inputs only.
@@ -61,6 +61,8 @@ class DiagnosticCliBoundary(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr.decode("utf8", "replace"))
             return json.loads(result.stdout)
         self.assertNotEqual(result.returncode, 0)
+        self.assertIsNotNone(error_contains, "negative calls need their actual refusal boundary")
+        self.assertIn(error_contains, result.stderr.decode("utf8", "replace"))
         return result
 
     def test_connections_inspects_unreachable_real_compiled_call_without_running(self):
@@ -73,7 +75,7 @@ class DiagnosticCliBoundary(unittest.TestCase):
         self.assertEqual((use["units"], use["calls"]), (1, 1))
 
     def test_connections_unknown_filter_is_not_a_clean_empty_report(self):
-        self.cli("ext", "connections", self.data, "Diagnostic.esm", "--schema", self.schema, "--plugin", "Missing.esp", success=False)
+        self.cli("ext", "connections", self.data, "Diagnostic.esm", "--schema", self.schema, "--plugin", "Missing.esp", success=False, error_contains="Selected plugin is not in the load order")
 
     def test_log_digest_real_cli_redaction_detail_diff_and_new_file_guard(self):
         log = self.root / "run.log"
@@ -89,9 +91,9 @@ class DiagnosticCliBoundary(unittest.TestCase):
         detail = self.cli("ext", "mod-log", log, "--detail")
         self.assertIn("private words", json.dumps(detail))
         unchanged = log.read_bytes()
-        self.cli("ext", "mod-log", log, "--summary", log, success=False)
+        self.cli("ext", "mod-log", log, "--summary", log, success=False, error_contains="Summary requires a new output file")
         self.assertEqual(log.read_bytes(), unchanged)
-        self.cli("ext", "mod-log", log, "--previous", self.root / "missing.log", success=False)
+        self.cli("ext", "mod-log", log, "--previous", self.root / "missing.log", success=False, error_contains="Cannot open explicit mod-log input")
 
     def test_summary_recognizes_synthetic_install_without_a_data_argument(self):
         original = self.root / "synthetic-original/Data"
@@ -101,7 +103,7 @@ class DiagnosticCliBoundary(unittest.TestCase):
         log = self.root / "outside.log"
         log.write_text("2026-11-15T00:00:00.000000Z INFO test: no mod aid\n", encoding="utf8")
         summary = original / "new-summary.json"
-        self.cli("ext", "mod-log", log, "--summary", summary, success=False)
+        self.cli("ext", "mod-log", log, "--summary", summary, success=False, error_contains="inside the original game install")
         self.assertFalse(summary.exists())
         self.assertEqual(sorted(p.name for p in original.iterdir()), ["FalloutNV.esm"])
 
@@ -137,6 +139,22 @@ class DiagnosticCliBoundary(unittest.TestCase):
         doc = self.cli("ext", "report", self.data, "--mo2-profile", profile, "--schema", self.schema)
         self.assertEqual(doc["format"], "fnv.ext.report/1")
         self.assertEqual(doc["summary"]["units_picked"], 1)
+
+    def test_runner_summary_limit_preserves_actual_existing_success_rows(self):
+        scripts = self.root / "mods/NVSE/Plugins/Scripts"
+        scripts.mkdir(parents=True)
+        # More distinct prints than the summary cap, but within the existing VM step
+        # budget. Compiler/setup/runtime errors cannot satisfy the assertions below.
+        (scripts / "gr_many.txt").write_text("".join(f'PrintC "owned-{i}"\n' for i in range(4097)), encoding="utf8")
+        doc = self.cli("ext", "script-runner", self.data, "Diagnostic.esm", "--schema", self.schema,
+                       "--root", self.root / "mods", "--no-data-files", "--run")
+        self.assertEqual(doc["failed"], 0)
+        self.assertEqual(doc["ran"]["restart"], [{"file": "gr_many.txt", "ok": True}])
+        self.assertIn("diagnostics", doc)
+        self.assertFalse(doc["diagnostics"]["available"])
+        self.assertEqual(doc["diagnostics"]["reason"], "retention_limit")
+        self.assertNotIn("counts", doc["diagnostics"])
+        self.assertNotIn("entries", doc["diagnostics"])
 
     def test_existing_report_and_scan_positive_controls(self):
         report = self.cli("ext", "report", self.data, "Diagnostic.esm", "--schema", self.schema)

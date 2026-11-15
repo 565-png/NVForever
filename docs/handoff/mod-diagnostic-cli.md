@@ -13,7 +13,8 @@ fnvtool ext connections <Data> <plugins>... --schema schemas/fnv [--plugin name]
 The game library builds the units using its ordinary source compiler. The connection
 walk reads that compiled IR, including calls in branches that have not run. It does not
 create a Game, run startup scripts, or invoke placeholder arguments. Numbered calls
-report `registered`, `no_op`, `stub` or `unhandled` from the actual function registry.
+report `registered`, `no_op`, `stub` or `unhandled` from the actual opcode registry;
+only console-assigned numbers also use the console name registry, matching Game dispatch.
 Named calls report `unknown` when source compilation identified an unknown name;
 otherwise they remain `unchecked`, including VM intrinsics and catalogue-only names.
 A registered function can still reject real arguments or lack an engine consumer.
@@ -68,7 +69,10 @@ call failure: some calls continue with zero. Counts refer to trace events, not t
 runtime calls; the game already deduplicates some diagnostics before tracing them.
 Unit names and printed/error words in the new summary require `--detail`. The existing
 compile/result error fields retain their previous behavior and may themselves be private.
-The summary refuses more than 4,096 distinct entries or 8 MiB of retained words. It adds
+The summary admits borrowed payload lengths before formatting or copying words. More
+than 4,096 distinct entries or 8 MiB of unit/text bytes makes diagnostics unavailable
+(`available: false`, `reason: retention_limit`), without partial counts. The original
+command still returns its compile/run rows and keeps its previous exit behavior. It adds
 no runtime tracing hook, background scan or per-frame work.
 
 ## Portable validation and provenance

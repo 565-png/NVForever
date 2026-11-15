@@ -8,27 +8,68 @@ use std::collections::BTreeMap;
 const MAX_ENTRIES: usize = 4096;
 const MAX_WORD_BYTES: usize = 8 * 1024 * 1024;
 
-pub fn summarize(events: &[Event], detail: bool) -> Result<Value, String> {
-    let mut rows: BTreeMap<(&str, &str, String), usize> = BTreeMap::new();
-    let mut retained = 0;
-    for e in events {
-        let (kind, unit, words) = match &e.kind {
-            EventKind::CallFailed { name, unit, error, .. } => ("call_failed", unit, format!("{name}: {error}")),
-            EventKind::ScriptError { unit, error } => ("script_error", unit, error.clone()),
-            EventKind::Skipped { unit, what } => ("skipped", unit, what.clone()),
-            EventKind::Unhandled { name, unit, .. } => ("unhandled", unit, name.clone()),
-            EventKind::ArgUnread { name, unit, param, wanted, got, .. } => ("argument_unread", unit, format!("{name} parameter {param}: {got}, wanted {wanted}")),
-            EventKind::ScriptPrint { unit, text } => ("printed", unit, text.clone()),
-            _ => continue,
-        };
-        let key = (kind, unit.as_str(), words);
-        if !rows.contains_key(&key) {
-            retained += key.1.len() + key.2.len();
-            if rows.len() == MAX_ENTRIES || retained > MAX_WORD_BYTES {
-                return Err("runner diagnostic retention limit exceeded; no partial summary".into());
+/// Borrow event payloads while deciding whether a distinct row fits. Formatting a
+/// rejected payload would allocate before admission; default redacted output needs
+/// no copies of the words at all.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Words<'a> {
+    Text(&'a str),
+    Call { name: &'a str, error: &'a str },
+    Unread { name: &'a str, param: usize, got: &'a str, wanted: &'a str },
+}
+
+impl Words<'_> {
+    fn byte_len(self) -> Option<usize> {
+        match self {
+            Self::Text(text) => Some(text.len()),
+            Self::Call { name, error } => name.len().checked_add(": ".len())?.checked_add(error.len()),
+            Self::Unread { name, param, got, wanted } => {
+                let digits = if param == 0 { 1 } else { param.ilog10() as usize + 1 };
+                [name.len(), " parameter ".len(), digits, ": ".len(), got.len(), ", wanted ".len(), wanted.len()]
+                    .iter().try_fold(0usize, |sum, n| sum.checked_add(*n))
             }
         }
-        *rows.entry(key).or_default() += 1;
+    }
+
+    fn render(self) -> String {
+        match self {
+            Self::Text(text) => text.to_string(),
+            Self::Call { name, error } => format!("{name}: {error}"),
+            Self::Unread { name, param, got, wanted } => format!("{name} parameter {param}: {got}, wanted {wanted}"),
+        }
+    }
+}
+
+pub fn summarize(events: &[Event], detail: bool) -> Result<Value, String> {
+    let mut rows: BTreeMap<(&str, &str, Words<'_>), usize> = BTreeMap::new();
+    let mut retained = 0usize;
+    for e in events {
+        let (kind, unit, words) = match &e.kind {
+            EventKind::CallFailed { name, unit, error, .. } => ("call_failed", unit, Words::Call { name, error }),
+            EventKind::ScriptError { unit, error } => ("script_error", unit, Words::Text(error)),
+            EventKind::Skipped { unit, what } => ("skipped", unit, Words::Text(what)),
+            EventKind::Unhandled { name, unit, .. } => ("unhandled", unit, Words::Text(name)),
+            EventKind::ArgUnread { name, unit, param, wanted, got, .. } => ("argument_unread", unit, Words::Unread { name, param: *param, got, wanted }),
+            EventKind::ScriptPrint { unit, text } => ("printed", unit, Words::Text(text)),
+            _ => continue,
+        };
+        let Some(cost) = words.byte_len().and_then(|n| n.checked_add(unit.len())).filter(|n| *n <= MAX_WORD_BYTES) else {
+            return Err("runner diagnostic retention limit exceeded; no partial summary".into());
+        };
+        let key = (kind, unit.as_str(), words);
+        if let Some(count) = rows.get_mut(&key) {
+            *count += 1;
+            continue;
+        }
+        let next = retained.checked_add(cost);
+        let Some(next) = next.filter(|n| *n <= MAX_WORD_BYTES) else {
+            return Err("runner diagnostic retention limit exceeded; no partial summary".into());
+        };
+        if rows.len() == MAX_ENTRIES {
+            return Err("runner diagnostic retention limit exceeded; no partial summary".into());
+        }
+        retained = next;
+        rows.insert(key, 1);
     }
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     let entries: Vec<Value> = rows.into_iter().enumerate().map(|(id, ((kind, unit, words), count))| {
@@ -36,12 +77,22 @@ pub fn summarize(events: &[Event], detail: bool) -> Result<Value, String> {
         let mut row = json!({"id": id, "kind": kind, "trace_events": count});
         if detail {
             row["unit"] = json!(unit);
-            row["words"] = json!(words);
+            row["words"] = json!(words.render());
         }
         row
     }).collect();
     Ok(json!({"schema": "fnv.ext.runner_diagnostics/1", "detail": detail, "counts": counts, "entries": entries,
         "scope": "Recorded trace events only; some runtime diagnostics are deduplicated before tracing. No rendered/native/mod acceptance."}))
+}
+
+/// Optional diagnostics must not turn a previously successful Script Runner command
+/// into an error or discard its existing compile/run rows. No partial counts escape.
+pub fn document(events: &[Event], detail: bool) -> Value {
+    match summarize(events, detail) {
+        Ok(mut doc) => { doc["available"] = json!(true); doc }
+        Err(_) => json!({"schema": "fnv.ext.runner_diagnostics/1", "detail": detail,
+            "available": false, "reason": "retention_limit", "scope": "Diagnostics unavailable; existing command results are unchanged. No partial counts."}),
+    }
 }
 
 #[cfg(test)]
@@ -73,5 +124,18 @@ mod tests {
         assert!(summarize(std::slice::from_ref(&event), false).is_ok());
         if let EventKind::ScriptPrint { text, .. } = &mut event.kind { text.push('x'); }
         assert!(summarize(&[event], false).unwrap_err().contains("retention limit"));
+    }
+
+    #[test]
+    fn unavailable_diagnostics_are_explicit_and_never_partial() {
+        let event = Event { frame: 0, kind: EventKind::CallFailed {
+            opcode: "authored".into(), name: "F".into(), unit: "u".into(), error: "x".repeat(MAX_WORD_BYTES),
+        } };
+        let doc = document(&[event], true);
+        assert_eq!(doc["available"], false);
+        assert_eq!(doc["reason"], "retention_limit");
+        assert!(doc.get("counts").is_none());
+        assert!(doc.get("entries").is_none());
+        assert_eq!(document(&[], false)["available"], true);
     }
 }

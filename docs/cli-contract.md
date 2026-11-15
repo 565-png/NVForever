@@ -599,7 +599,9 @@ all messages and input paths. Summary files must not already exist.
 
 With `--run`, `ext script-runner` adds `diagnostics` (`fnv.ext.runner_diagnostics/1`)
 with category `counts` and grouped `entries`: `id`, `kind`, `trace_events`. `--detail`
-adds `unit` and `words`. Existing compile/result rows are unchanged. Trace counts may
+adds `unit` and `words`. `available` is true when the summary fits its bounds; otherwise
+`available: false`/`reason: retention_limit` omits counts/entries while preserving the
+existing command exit and compile/result rows. Trace counts may
 already be deduplicated by the runtime and are not total invocation counts.
 
 Limits, private-output boundaries, provenance and portable fixtures are described in

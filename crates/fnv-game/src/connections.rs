@@ -81,8 +81,11 @@ fn callees(program: &Program) -> Result<(BTreeMap<Callee, usize>, usize), String
 }
 
 pub fn opcode_status(table: &FunctionTable, opcode: u16) -> (Status, Option<&'static str>) {
-    use crate::functions::{lookup, lookup_name, Kind};
-    match lookup(opcode).or_else(|| lookup_name(&table.get(opcode)?.name)) {
+    use crate::functions::{lookup, lookup_console, Kind};
+    // Match Game's numbered dispatch. Catalogue names cannot grant an arbitrary
+    // numbered opcode the implementation registered under that name elsewhere.
+    let console = || (opcode >= fnv_script::table::CONSOLE_OPCODE_BASE).then(|| table.get(opcode)).flatten().and_then(|f| lookup_console(&f.name));
+    match lookup(opcode).or_else(console) {
         Some(Kind::Impl(_)) => (Status::Registered, None),
         Some(Kind::NoOp(why)) => (Status::NoOp, Some(why)),
         Some(Kind::Stub(why)) => (Status::Stub, Some(why)),
@@ -163,4 +166,24 @@ pub fn check(data: &GameData, only: &BTreeSet<String>) -> Result<Vec<PluginUse>,
         out.push(plugin);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_catalogue_name_does_not_grant_a_numbered_handler() {
+        let json = serde_json::json!({"schema": "fnv.script.functions/1", "functions": [
+            {"name": "GetSecondsPassed", "opcodes": ["0xDEAD"]},
+            {"name": "ToggleCollision", "categories": ["Console Functions"]}
+        ]});
+        let table = FunctionTable::from_json(&json.to_string(), fnv_script::table::ENCODINGS_JSON).unwrap();
+        assert!(crate::functions::lookup(0xDEAD).is_none());
+        assert!(crate::functions::lookup_name("GetSecondsPassed").is_some());
+        assert_eq!(opcode_status(&table, 0xDEAD).0, Status::Unhandled);
+        let console = table.by_name("ToggleCollision").unwrap();
+        assert!(console >= fnv_script::table::CONSOLE_OPCODE_BASE);
+        assert_eq!(opcode_status(&table, console).0, Status::Registered);
+    }
 }

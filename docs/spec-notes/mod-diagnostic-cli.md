@@ -7,7 +7,8 @@ The command formats and user workflow are in
 The existing source compiler selects source or retained bytes in `GameData::build`.
 The connection report consumes that result; it never substitutes a textual search for
 the compiled IR. Its registration labels refer only to
-`fnv_game::functions::{lookup,lookup_name}`. Named calls are left unchecked. There is
+`fnv_game::functions::lookup`, with `lookup_console` only in the console-number range,
+matching the actual numbered Game dispatcher. Named calls are left unchecked. There is
 no native compatibility conclusion from a response to guessed arguments, and this
 report does not issue those calls at all.
 
@@ -28,7 +29,10 @@ as trace events rather than promising exact call totals.
 
 The CLI's resource limits are repository choices: selected connection units/call sites,
 log bytes/line length/session count, and retained diagnostic entry/word sizes. Crossing
-a limit is an explicit error, not a truncated compatibility result. The authored
+a connection/log input limit is an explicit error, not a truncated compatibility
+result. Optional runner diagnostics instead report unavailable without partial counts
+and preserve the pre-existing command exit/results. Borrowed lengths are admitted
+before formatting or cloning event words. The authored
 controls cover representative retention and input boundaries. They contain no mod
 scripts, real logs, game assets or native implementation source.
 
