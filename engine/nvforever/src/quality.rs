@@ -13,7 +13,7 @@
 //! - The **Enhanced effects** row that set every effect switch at once (#1966) is gone [design:
 //!   owner 2026-11-15, the menu overhaul: "no need to have it twice"]; the effects keep
 //!   their own rows. The quality rows and the effects never overlap (a quality row is the
-//!   same in both looks, [`enhanced_keys`]), so a preset never touches an effect.
+//!   same in both looks, `enhanced_keys`), so a preset never touches an effect.
 //!
 //! **Read at run time, never written.** The values come from the player's install each run
 //! (`fnv_install::GameInstall::open(--data)`'s root folder, matched without case); nothing
@@ -34,7 +34,9 @@
 //! (`graphics::PLAY_DEFAULT`), and the Quality row reads whichever preset they match
 //! [design: #1966 point 4].
 
-use crate::graphics::{self, Graphics, Preset as Look};
+use crate::graphics;
+#[cfg(test)]
+use crate::graphics::{Graphics, Preset as Look};
 use crate::Args;
 use bevy::prelude::*;
 use nvf_play::settings::{self, add_choice_list, choice_index, choice_part, ChoiceList, Setting, Settings};
@@ -365,6 +367,7 @@ fn load_quality(_world: &mut World, text: &str) -> bool {
 
 /// The switches `--graphics enhanced` turns on and `vanilla` leaves off, by settings key
 /// (`graphics::KEYS` that are switches and differ between the two looks).
+#[cfg(test)]
 pub fn enhanced_keys() -> Vec<&'static str> {
     let (mut on, mut off) = (Graphics::preset(Look::Enhanced), Graphics::preset(Look::Vanilla));
     graphics::KEYS

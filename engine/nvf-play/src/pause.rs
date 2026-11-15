@@ -3553,7 +3553,7 @@ fn choose(
                     Some((_, v)) if value.is_some() => {
                         let text = v.trim().to_string();
                         commands.queue(move |world: &mut World| {
-                            let named = world.get_resource::<Settings>().and_then(|s| s.choices(i)).is_some_and(|c| (c.names)(world).iter().any(|n| *n == text));
+                            let named = world.get_resource::<Settings>().and_then(|s| s.choices(i)).is_some_and(|c| (c.names)(world).contains(&text));
                             if named {
                                 crate::settings::pick(world, i, &text);
                             } else {
