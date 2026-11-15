@@ -686,6 +686,17 @@ the spec it links to.
     "gone" to scripts that test it). Observer check 172 asks the original.
     ([doors §6](spec-notes/doors.md))
 
+67. **Idles now show over a standing actor's base idle whatever their priorities
+    (#2425).** Mr. House's chamber was drawn open from the start because his sealed and
+    opening idles carry lower track priorities than his base idle, whose pose is the open
+    pod; the blend by priority kept the base idle. Now an idle of an actor standing still
+    shows on every bone it drives (a drawn weapon's or an attack's clip still keeps its
+    own priority; over a walk nothing changes). That also changes 128 other idle files of
+    the base archive (Protectron, Robobrain, the penthouse screens' idles, the Hill Folk
+    dances' fingers): bones they drive at a lower priority than the base idle now move
+    with the idle. Please look at House's chamber (closed until the terminal, then
+    opening) and, if you see one, a Protectron or Robobrain playing an idle.
+    ([animation §9.4](spec-notes/animation.md))
 68. **Fixtures never fight: Mr. House's screens and chamber, and Festus (#2431).** An
     Immobile creature that is Unaggressive, Helps Nobody and carries no weapon is never
     hostile, takes no combat target and never turns, whatever the player did (murder,

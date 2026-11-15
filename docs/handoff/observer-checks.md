@@ -2541,6 +2541,17 @@ already talking takes over at once, same topic or another; nothing is queued or 
      player, does it turn? Then shoot it: does it take damage? The same for Festus
      (NVCRFestus) when shot.
 
+## Added 2026-11-14 (Mr. House's chamber, #2425)
+
+182. **Does a special idle replace the base idle on its bones, whatever the priorities?**
+     (P3; #2425, animation.md §9.4.) Ours: an idle of a standing actor shows on every bone
+     it drives, above the base idle (`mtidle.kf`), though Mr. House's sleeping idle (40)
+     and opening (30) are under his base idle (50) [hypothesis]. To check: in
+     Lucky38ControlRoom before the terminal is used, a screenshot of the chamber from the
+     catwalk (sealed, House hidden?); then a Protectron playing `mtspecialidle_lookleft`
+     (11 of its 35 tracks under its base idle's priority): does its whole upper body turn,
+     or only the bones above the base idle's priority?
+
 ## Added 2026-11-14 (talking activators with no talking actor set, #2454)
 
 185. **Who speaks through a talking activator no script has given an actor?** (P2; #2454,
