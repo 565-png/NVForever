@@ -266,13 +266,44 @@ location, in cell (radius ignored), near reference; the radius is editable.
   navmesh. Package idles play at the destination.
   - **At an xMarkerHeading** (built 2026-11-08) [documented: GECK wiki, NPC population,
     level-design.md: the heading version "shows which way an actor standing there will
-    face"]: an actor whose package location is "near reference" an xMarkerHeading (the
+    face"]: an actor whose package location resolves to a placed xMarkerHeading (the
     engine's base 0x34) turns, once there, to the marker's heading at the standing turn
     rate (`fnv_ai` `marker_heading`, set in `settle`, for every package type that
     settles there; a sandbox keeps its own). Owner report (TTW, the G.O.A.T.): Mr.
     Brotch at `CG03MrBrotchTeachMarker` (heading 22°, towards the desks) faced the lab
     bench, the heading he walked in with. Whether the original turns for a radius other
     than 0 (his `CG03MrBrotchGiveGOAT` has 20) is not known; ours turns for any.
+    [design, #2526: `fnv_ai::goal::location_reference`, `carry::marker_heading`]
+    Near reference, near linked reference, near object ID and near object type share
+    the destination-reference resolver for walking and arrival facing. Plain XMarkers
+    keep the walker's arrival heading; furniture, sandbox and guard-wander handling
+    retain precedence. [documented: #2526 writer brief, main session's fnvtool esm
+    decode / ai show of FalloutNV.esm] Kimball's guards `VHDRangerKimballGuard01REF`
+    (0012FCD4) and `02REF` (0012FCD5) use Travel `VHDKimballGuardSpeechIdlePackage`
+    (00131F13), near linked reference, radius 0; their linked stage markers 00131F0E/F
+    are xMarkerHeading base 00000034, z rotation 3.3832 rad.
+  - **At the editor position** [hypothesis, #2526, observer check 222]: Travel and
+    standing Guard with a near-editor location radius below `GUARD_WANDER_MIN_RADIUS`
+    (16 units, the existing #2027 cutoff) face the actor's placed editor z rotation.
+    [design: `carry::settle`, `marker_heading`] This excludes sandbox/wander and Guard
+    remaining near its target; it turns at the existing standing rate. A runtime-created
+    actor without a placed editor rotation has no arrival heading supplied by this rule.
+    [documented: #2526 supplied ai-show evidence] The speech crowd's
+    `VHDCivilianIdlePackage` (00133EC3) is Travel near editor location, radius 0.
+  - **Guard package selection audit** [documented: #2526 supplied `2526-ai.json`]:
+    both guards list `VHDKimballGuard02StageFrontPackage` (00135004, five conditions)
+    before `VHDKimballGuardKimballDeadPackage` (00134B20, one condition) and
+    `VHDKimballGuardSpeechIdlePackage` (00131F13, three conditions).
+    [documented: supplied `2526-records.md`, SCPT 00145EC2]
+    Moore's introduction sets speech quest 00130C78 `iKimballStage` to 2 and reevaluates
+    both guards. [hypothesis] SpeechIdle is the intended speech package; the supplied
+    counts cannot establish when StageFront wins. [design: `fnv_game::ai::select_package`,
+    `check_package`] Selection uses the first valid package, evaluating its conditions
+    with the actor as subject and the package target. No condition bug is established:
+    PACK 00135004, 00134B20 and 00131F13 CTDA expressions (functions, arguments, comparison,
+    AND/OR flags, run-on subject/reference) are needed to check the reported rear-stage
+    positioning; the supplied JSON contains counts only. The heading smoke explicitly
+    assigns SpeechIdle and does not verify natural package selection.
 - **Sandbox**: ambient behaviour within the location radius: it scores nearby objects
   (food, furniture, idle markers, other actors), weights them by a per-kind probability
   that drops to zero for the kind just chosen and rises for the others; sleep start

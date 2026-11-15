@@ -29966,3 +29966,22 @@ order = [[
 expect = [
   { re = 'vats mode summary: entered 1 times, 0 marks, 0 shots, 0 AP spent, 1 refused', label = "one stay, one refusal" },
 ]
+
+
+[[scenario]]
+name = "scene-kimball-guard-heading"
+source = "[documented: #2526 writer brief, main session fnvtool esm decode / ai show] Guard refs 0012FCD4/5 run Travel 00131F13 near linked stage markers 00131F0E/F (xMarkerHeading base 34, z 3.3832 rad). [design: fnv_ai carry.rs::settle] Reference-valued locations share goal.rs::location_reference and supply the marker heading on arrival."
+note = "[design, #2526] Hoover Dam cell 16,5: scene-kimball-speech's three dialogue setup aids, with both guards enabled and SpeechIdle explicitly assigned after placing them 150 units from their own stage markers. This isolates arrival facing; natural StageFront vs SpeechIdle selection requires the missing PACK CTDA expressions (packages.md section 3)."
+areas = ["ai", "quests", "nav"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/goal.rs", "crates/fnv-game/src/ai.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "3:info:0x00136DCE:VHDColonelMooreREF,6:info:0x001446A7:VHDCaptainGrahamREF,20:info:0x0014469F:VHDCaptainGrahamREF,23:call:VHDRangerKimballGuard01REF:Enable,23.1:call:VHDRangerKimballGuard02REF:Enable,24:moveto:VHDRangerKimballGuard01REF:VHDKimballGuard1StageMarkerREF:150:0:0,24.1:moveto:VHDRangerKimballGuard02REF:VHDKimballGuard2StageMarkerREF:150:0:0,25:call:VHDRangerKimballGuard01REF:AddScriptPackage:VHDKimballGuardSpeechIdlePackage,25.1:call:VHDRangerKimballGuard02REF:AddScriptPackage:VHDKimballGuardSpeechIdlePackage" }
+args = ["--play", "--cell", "16,5", "--world", "WastelandNV", "--npc-packages", "VHDKimballREF,VHDColonelMooreREF,VHDRangerKimballGuard01REF,VHDRangerKimballGuard02REF", "--hour", "9", "--no-voice", "--no-messages"]
+run_seconds = 65
+expect = [
+  { text = "script: VMQ03a stage 20 set", label = "speech visit setup calls the vertibird" },
+  { re = 'VHDRangerKimballGuard01REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "first guard takes its linked stage marker heading" },
+  { re = 'VHDRangerKimballGuard02REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "second guard takes its linked stage marker heading" },
+]
+forbid = [
+  { re = 'VHDRangerKimballGuard0[12]REF: cannot reach', label = "both guards reach their nearby stage markers" },
+]

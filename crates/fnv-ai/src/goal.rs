@@ -562,14 +562,13 @@ pub fn resolve(game: &Game, nav: &NavGraph, actor: FormId, def: &PackageDef) -> 
 fn stay_at(game: &Game, nav: &NavGraph, actor: FormId, loc: &Location) -> Goal {
     let refs = game.world.placed;
     let radius = loc.radius.max(0) as f32;
-    let linked = refs.get(actor).and_then(|r| r.linked);
     let near = |place: Option<Place>, why: &'static str| match place {
         Some(place) => Goal::Near { place, radius },
         None => Goal::Missing(why),
     };
     match loc.kind {
-        LocationKind::NearReference(Some(r)) if r == FormId::PLAYER_REF => near(place_of_ref(game, r), "the location is the player, who is nowhere yet"),
-        LocationKind::NearReference(Some(r)) => near(place_of_ref(game, r), "the location's reference is in no cell"),
+        LocationKind::NearReference(Some(r)) if r == FormId::PLAYER_REF => near(location_reference(game, actor, loc.kind).and_then(|r| place_of_ref(game, r)), "the location is the player, who is nowhere yet"),
+        LocationKind::NearReference(Some(_)) => near(location_reference(game, actor, loc.kind).and_then(|r| place_of_ref(game, r)), "the location's reference is in no cell"),
         LocationKind::NearReference(None) => Goal::Missing("the location's reference is not in the load order"),
         LocationKind::InCell(Some(c)) => match (cell_anchor(nav, refs, c), refs.world_of(c)) {
             (Some(at), None) => Goal::Inside { space: at.space, at },
@@ -580,11 +579,11 @@ fn stay_at(game: &Game, nav: &NavGraph, actor: FormId, loc: &Location) -> Goal {
         LocationKind::InCell(None) => Goal::Missing("the location's cell is not in the load order"),
         LocationKind::NearCurrent => Goal::Here,
         LocationKind::NearEditor => near(editor_place_of(game, actor), "the actor has no editor location"),
-        LocationKind::NearLinked => near(linked.and_then(|l| place_of_ref(game, l)), "the actor has no linked reference"),
-        LocationKind::ObjectId(Some(b)) => near(nearest_object(game, actor, Wanted::Base(b)), "no reference of the location's object is near the actor"),
+        LocationKind::NearLinked => near(location_reference(game, actor, loc.kind).and_then(|r| place_of_ref(game, r)), "the actor has no linked reference"),
+        LocationKind::ObjectId(Some(_)) => near(location_reference(game, actor, loc.kind).and_then(|r| place_of_ref(game, r)), "no reference of the location's object is near the actor"),
         LocationKind::ObjectId(None) => Goal::Missing("the location's object is not in the load order"),
         LocationKind::ObjectType(0) => Goal::NotCarriedOut("a location of object type None"),
-        LocationKind::ObjectType(c) => near(nearest_object(game, actor, Wanted::Type(c)), "no reference of the location's object type is near the actor"),
+        LocationKind::ObjectType(_) => near(location_reference(game, actor, loc.kind).and_then(|r| place_of_ref(game, r)), "no reference of the location's object type is near the actor"),
         // Location 1 is the package's location: as location 1 it names nothing else
         // (the masters use it as Eat's location 2 only, packages.md §7.7).
         LocationKind::AtPackageLocation => Goal::Here,
@@ -592,15 +591,28 @@ fn stay_at(game: &Game, nav: &NavGraph, actor: FormId, loc: &Location) -> Goal {
     }
 }
 
+/// The reference selected by a reference-valued location [design, #2526]: shared by
+/// `stay_at` and `carry::marker_heading` so linked and object locations also face
+/// their xMarkerHeading. Locations that describe a position or cell return none.
+pub(crate) fn location_reference(game: &Game, actor: FormId, kind: LocationKind) -> Option<FormId> {
+    match kind {
+        LocationKind::NearReference(r) => r,
+        LocationKind::NearLinked => game.world.placed.get(actor).and_then(|r| r.linked),
+        LocationKind::ObjectId(Some(b)) => nearest_object(game, actor, Wanted::Base(b)),
+        LocationKind::ObjectType(c) if c != 0 => nearest_object(game, actor, Wanted::Type(c)),
+        _ => None,
+    }
+}
+
 /// Stay-at locations given by an object (Near Object ID, Near Object Type) are looked for
 /// this far round the actor, game units [design: a cell; packages.md §7.7].
 pub const OBJECT_LOCATION_SEARCH: f32 = 4096.0;
 
-/// The place of the nearest reference round `actor` that `wanted` names (a base, the
+/// The nearest reference round `actor` that `wanted` names (a base, the
 /// bases of a form list, or an object type), present and enabled, within
 /// [`OBJECT_LOCATION_SEARCH`]; ties by FormID [hypothesis: no source says how the game
 /// picks the object, issue #961].
-fn nearest_object(game: &Game, actor: FormId, wanted: Wanted) -> Option<Place> {
+fn nearest_object(game: &Game, actor: FormId, wanted: Wanted) -> Option<FormId> {
     let at = place_of_ref(game, actor)?;
     let data = game.data;
     crate::errand::cells_around(game, at, OBJECT_LOCATION_SEARCH)
@@ -618,10 +630,10 @@ fn nearest_object(game: &Game, actor: FormId, wanted: Wanted) -> Option<Place> {
                 Wanted::Type(code) => crate::errand::of_type(game, r, base, &data.sig(base).unwrap_or(*b"    "), code),
                 _ => false,
             };
-            fits.then_some((d, r, p))
+            fits.then_some((d, r))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
-        .map(|(_, _, p)| p)
+        .map(|(_, r)| r)
 }
 
 /// The goal of a Follow or Accompany package: its target, a reference or the actor's

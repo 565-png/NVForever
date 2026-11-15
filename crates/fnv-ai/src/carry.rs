@@ -237,6 +237,8 @@ pub enum AiEvent {
     DoorWaitCancelled { door: FormId },
     /// The walk ended at the package's place, after `seconds` and `travelled` units.
     Arrived { package: FormId, seconds: f64, travelled: f32, patrol_point: Option<FormId> },
+    /// Arrival's standing heading target, radians [design, #2526; `Ai::settle`].
+    ArrivalFacing { heading: f32 },
     /// No way to the package's location: the package is set aside.
     Unreachable { package: FormId, why: String },
     /// Its feet at `at` do not fit its goal's height and no new path helped: its walk ends
@@ -2376,13 +2378,14 @@ impl Ai {
             self.set_using(game, actor, Some(f));
         } else if let Some((centre, radius)) = guard {
             sandbox = Some(Sandbox::guard(game, actor, package, def, centre, radius));
-        } else if let Some(heading) = marker_heading(game, def) {
+        } else if let Some(heading) = marker_heading(game, actor, def) {
             // At an xMarkerHeading it stands the way the marker faces [documented: GECK
             // wiki, NPC population, level-design.md: the heading version "shows which way
             // an actor standing there will face"]. Mr. Brotch's teaching spot in the
             // G.O.A.T. (CG03MrBrotchTeachMarker, 22°) faces the desks; before, he kept the
             // heading he walked in with and taught the wall.
             self.agents.get_mut(&actor).expect("listed").face_to = Some(heading);
+            self.log(game, actor, AiEvent::ArrivalFacing { heading });
         }
         if let Some(mut sandbox) = sandbox {
             if let Some(s) = self.restored_schedule(actor, package) {
@@ -3235,10 +3238,20 @@ pub fn guard_wander_radius(def: &fnv_game::package::PackageDef) -> Option<f32> {
 /// steps of a few units would only twitch the actor on the spot.
 pub const GUARD_WANDER_MIN_RADIUS: f32 = 16.0;
 
-/// The heading of the xMarkerHeading a package's location names ("near reference"), if
-/// it names one.
-fn marker_heading(game: &Game, def: &fnv_game::package::PackageDef) -> Option<f32> {
-    let fnv_game::package::LocationKind::NearReference(Some(r)) = def.location.as_ref()?.kind else { return None };
+/// Arrival's standing heading [documented: GECK wiki, Bethsoft Tutorial NPC population,
+/// linked xMarkerHeading destinations; docs/spec-notes/packages.md §3].
+fn marker_heading(game: &Game, actor: FormId, def: &fnv_game::package::PackageDef) -> Option<f32> {
+    let loc = def.location?;
+    // At a small editor location, Travel and standing Guard restore the placed
+    // heading [hypothesis, #2526, observer check 222]. Sandbox/wander choose their own;
+    // a Guard remaining near its target uses that target's place (`goal::resolve`).
+    if loc.kind == fnv_game::package::LocationKind::NearEditor
+        && (loc.radius as f32) < GUARD_WANDER_MIN_RADIUS
+        && (def.ty == PackageType::Travel || def.ty == PackageType::Guard && !def.remain_near_reference())
+    {
+        return game.world.placed.get(actor).map(|p| p.rot[2]);
+    }
+    let r = goal::location_reference(game, actor, loc.kind)?;
     game.world.placed.get(r).filter(|p| p.base == X_MARKER_HEADING).map(|p| p.rot[2])
 }
 

@@ -1103,6 +1103,102 @@ fn an_actor_at_an_xmarkerheading_turns_to_its_heading() {
     assert!(a.face_to == Some(2.0) || (a.walker.heading - 2.0).abs() < 1e-3, "{:?} {}", a.face_to, a.walker.heading);
 }
 
+// [design, #2526] Synthetic variants of the heading fixture exercise the same
+// destination lookup for walking and facing, including a missing linked reference.
+#[test]
+fn arrival_heading_uses_linked_and_object_locations() {
+    for kind in [LocationKind::NearLinked, LocationKind::ObjectId(Some(FormId(0x34)))] {
+        let mut f = fixture();
+        f.data.package_defs.get_mut(&FormId(P_TO_HEADING)).unwrap().location.as_mut().unwrap().kind = kind;
+        f.refs.refs.get_mut(&FormId(R_TO_HEADING)).unwrap().linked = Some(FormId(HEAD_MARK));
+        let mut s = sim(&f, &[R_TO_HEADING]);
+        s.run(30.0);
+        let a = &s.ai.agents[&FormId(R_TO_HEADING)];
+        assert_eq!(a.activity, Activity::There, "{kind:?}");
+        assert!(dist(a.walker.feet, [300.0, 200.0, 0.0]) < 1.0, "{kind:?}");
+        assert!(fnv_nav::follow::heading_delta(a.walker.heading, 2.0).abs() < 1e-3, "{kind:?}: {}", a.walker.heading);
+        assert!(s.events(R_TO_HEADING).iter().any(|e| matches!(e, AiEvent::ArrivalFacing { heading } if *heading == 2.0)));
+    }
+}
+
+#[test]
+fn arrival_heading_leaves_plain_xmarker_facing_unchanged() {
+    let mut f = fixture();
+    f.data.package_defs.get_mut(&FormId(P_TO_HEADING)).unwrap().location.as_mut().unwrap().kind = LocationKind::NearLinked;
+    f.refs.refs.get_mut(&FormId(R_TO_HEADING)).unwrap().linked = Some(FormId(HEAD_MARK));
+    // [design: fixture] A plain marker base, with an arbitrary placed heading.
+    f.refs.refs.get_mut(&FormId(HEAD_MARK)).unwrap().base = FormId(STAT);
+    let mut s = sim(&f, &[R_TO_HEADING]);
+    s.run(30.0);
+    let a = &s.ai.agents[&FormId(R_TO_HEADING)];
+    assert_eq!(a.activity, Activity::There);
+    assert_eq!(a.face_to, None);
+    assert!(!s.events(R_TO_HEADING).iter().any(|e| matches!(e, AiEvent::ArrivalFacing { .. })));
+    let heading = a.walker.heading;
+    s.run(10.0);
+    assert_eq!(s.ai.agents[&FormId(R_TO_HEADING)].walker.heading, heading);
+    assert!(fnv_nav::follow::heading_delta(heading, 2.0).abs() > 0.1);
+}
+
+#[test]
+fn arrival_heading_needs_an_existing_link() {
+    let mut f = fixture();
+    f.data.package_defs.get_mut(&FormId(P_TO_HEADING)).unwrap().location.as_mut().unwrap().kind = LocationKind::NearLinked;
+    let mut s = sim(&f, &[R_TO_HEADING]);
+    s.run(30.0);
+    assert!(!s.events(R_TO_HEADING).iter().any(|e| matches!(e, AiEvent::ArrivalFacing { .. })));
+    assert_eq!(s.ai.agents[&FormId(R_TO_HEADING)].face_to, None);
+}
+
+// [hypothesis, #2526, observer check 222] Travel and standing Guard restore the
+// editor heading on returning to a small editor location, using the standing turn.
+#[test]
+fn arrival_heading_at_small_editor_locations_restores_editor_rotation() {
+    use fnv_game::package::PackageType;
+    for ty in [PackageType::Travel, PackageType::Guard] {
+        for radius in [0, 15] {
+            let mut f = fixture();
+            let def = f.data.package_defs.get_mut(&FormId(P_TO_HEADING)).unwrap();
+            def.ty = ty;
+            let loc = def.location.as_mut().unwrap();
+            loc.kind = LocationKind::NearEditor;
+            loc.radius = radius;
+            f.refs.refs.get_mut(&FormId(R_TO_HEADING)).unwrap().rot[2] = 1.25;
+            let mut s = sim(&f, &[R_TO_HEADING]);
+            let actor = FormId(R_TO_HEADING);
+            let away = [200.0, 200.0, 0.0];
+            s.game.world.get(actor).unwrap().pos = away;
+            s.ai.agents.get_mut(&actor).unwrap().walker.feet = away;
+            s.run(30.0);
+            let a = &s.ai.agents[&actor];
+            assert_eq!(a.activity, Activity::There, "{ty:?}, {radius}");
+            assert!(dist(a.walker.feet, START) <= radius as f32 + 1.0);
+            assert!(fnv_nav::follow::heading_delta(a.walker.heading, 1.25).abs() < 1e-3, "{ty:?}, {radius}: {}", a.walker.heading);
+            assert!(s.events(R_TO_HEADING).iter().any(|e| matches!(e, AiEvent::ArrivalFacing { heading } if *heading == 1.25)));
+            assert!(a.sandbox.is_none());
+        }
+    }
+}
+
+#[test]
+fn arrival_heading_does_not_override_editor_sandbox_or_guard_wander() {
+    use fnv_game::package::PackageType;
+    for (ty, radius) in [(PackageType::Travel, 16), (PackageType::Guard, 16), (PackageType::Sandbox, 0), (PackageType::Wander, 0)] {
+        let mut f = fixture();
+        let def = f.data.package_defs.get_mut(&FormId(P_TO_HEADING)).unwrap();
+        def.ty = ty;
+        let loc = def.location.as_mut().unwrap();
+        loc.kind = LocationKind::NearEditor;
+        loc.radius = radius;
+        let mut s = sim(&f, &[R_TO_HEADING]);
+        s.run(30.0);
+        assert!(!s.events(R_TO_HEADING).iter().any(|e| matches!(e, AiEvent::ArrivalFacing { .. })), "{ty:?}, {radius}");
+        if ty != PackageType::Travel {
+            assert!(s.ai.agents[&FormId(R_TO_HEADING)].sandbox.is_some(), "{ty:?}");
+        }
+    }
+}
+
 #[test]
 fn always_run_packages_run() {
     let f = fixture();

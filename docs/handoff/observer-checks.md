@@ -2687,3 +2687,14 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
+222. **Does Kimball's speech crowd face its editor heading?** (P2; #2526;
+    `fnv_ai::carry::marker_heading`, `docs/spec-notes/packages.md` §3.)
+    [documented: #2526 writer brief, main session's fnvtool ai show of FalloutNV.esm]
+    `VHDSpeechNPC01REF` (0012FCDC) and `VHDSpeechNPC02REF` (0012FCE2) have Travel
+    `VHDCivilianIdlePackage` (00133EC3), near editor location, radius 0.
+    [hypothesis, #2526] NVForever makes Travel and standing Guard at an editor location
+    below the existing 16-unit guard-wander cutoff face their placed z rotation.
+    In the original, during Kimball's speech at Hoover Dam cell 16,5, record one crowd
+    member's current package, position and z angle against its placed position/rotation.
+    Move it off its editor spot and reevaluate: does it return and turn to the placed
+    heading? Also check a small-radius standing Guard if a test plugin is available.
