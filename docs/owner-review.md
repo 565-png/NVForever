@@ -525,6 +525,19 @@ the spec it links to.
     (2026-11-11) predates #2239 [hypothesis: your build was older than it; the log names
     no version]. No other engine change was made; the smoke scenarios
     `freeside-fort-residents-door` and `freeside-north-residents-door` keep it fixed.
+76. **A line's group condition on the speaker wins over its fixed speaker (#2548).**
+    Cottonwood Cove's "Halt! What business have you in Cottonwood Cove, outsider?"
+    (0x0013AC97) names the AAM explorer as its fixed speaker but tests the explorers'
+    faction, which all four explorers are in; the other three force-greeted the player
+    with the generic "Move along." and could never be shown the Mark of Caesar. Ours
+    now: a condition on the speaker naming a group (faction, class, race, voice type,
+    form list) decides who may say the line, as GetIsID already did. Nineteen lines
+    change: the explorers' greeting and its six answers, the Tops' random bartender (3)
+    and the Strip's Securitron messenger (9, still said by the messenger). The other
+    explorers speak the AAM explorer's recorded voice (the only file there is), so one
+    voice comes from four men; the other choice is silent subtitles. Say if you would
+    rather keep the fixed speaker. Observer check 162 asks the original.
+    ([dialogue §4](spec-notes/dialogue.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 

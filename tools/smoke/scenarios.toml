@@ -7371,6 +7371,27 @@ expect = [
 ]
 
 [[scenario]]
+name = "cc-explorers-halt"
+kind = "tool"
+source = "issue #2548: at Cottonwood Cove three of the four Legion explorers force-greeted with the generic \"Move along.\" (0x00175608): the Halt line 0x0013AC97 names the AAM explorer as fixed speaker (ANAM) and was refused to the others, although its condition is the faction all four are in. A condition on the speaker naming a group now decides (docs/spec-notes/dialogue.md §4)"
+note = "each command is a headless new game talking to one explorer (NVCCExplorer2REF 0x00138A92, 3 0x00138A91, 4 0x00138A93); each prints its trace on one line. The Mark of Caesar choice (Topic001) is not offered: the new-game player has no Mark"
+areas = ["dialogue"]
+paths = ["crates/fnv-game/src/dialogue.rs"]
+commands = [
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/cc-explorer2-halt.actions.json", "{data}", "FalloutNV.esm"],
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/cc-explorer3-halt.actions.json", "{data}", "FalloutNV.esm"],
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/cc-explorer4-halt.actions.json", "{data}", "FalloutNV.esm"],
+]
+expect = [
+  { json = "events.?kind=line_started.info", equals = "0x0013AC97", count = 3, label = "all three open with the Halt line" },
+  { json = "events.?kind=line_started.speaker", equals = "0x00138A92", count = 1, label = "Explorer 2 (CM2) speaks" },
+  { json = "events.?kind=line_started.speaker", equals = "0x00138A91", count = 1, label = "Explorer 3 (AM) speaks" },
+  { json = "events.?kind=line_started.speaker", equals = "0x00138A93", count = 1, label = "Explorer 4 (CM) speaks" },
+  { json = "events.?kind=choices_offered.choices.*.topic_edid", equals = "VFreeformCottonwoodCoveNVCCLegionaryGuardAAMExplorerTopic000", count = 3, label = "each offers the Halt line's choices (the Speech check among them)" },
+  { json = "events.?kind=line_started.info", equals = "0x00175608", count = 0, label = "none says the generic \"Move along.\"" },
+]
+
+[[scenario]]
 name = "falling-loading"
 source = "playtest list 4 items 8, 9, 10, 2-3 (physics.md §6.4.2, docs/design/loading-screen.md §1): leaving the Goodsprings gas station the loading screen waits for the arrival's own cells and the player stands (no jump loop or landing after it); running down the owner's steep road at heading 150 keeps the ground; walking residents are drawn between physics steps"
 note = "Ringo greets at about 4 s and the door at 5 s waits for that conversation to end; --no-dialogue-look keeps the view on the door whether the greeting comes before or after the 4 s face aid (with the view turned to Ringo the door was behind the player and never used, run 2026-10-16); the hill run is at 40-50 s (heading 150 left the ground for 22 steps before the fix, `fnvtool phys walk`)"
