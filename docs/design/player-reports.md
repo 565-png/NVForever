@@ -38,7 +38,7 @@ What exists already and is reused, not rewritten:
   - the summary's count of loose files in Data (§3.1; it needs the server's schema first);
   - breadcrumbs the log does not already carry (§4.2);
   - the AI's procedure and the most expensive scripts in the snapshot (§4.3);
-  - the actor-stuck, quest-stall and script-time detectors, and thresholds set from
+  - the script-time detector and thresholds set from
     `/v1/config` (§4.4);
   - symbolising dumps (§5.4: the release PDB is over the Workers request limit).
 
@@ -264,17 +264,18 @@ expensive scripts this second, loaded cells, memory (RAM, VRAM, asset cache size
 
 ### 4.4 Anomaly detectors
 
-Checks that run every second (or on the event) and log a `nvf::anomaly` event with a
-snapshot, so bugs that never crash still reach us. Each fires at most 3 times per kind per
-session.
+[design / file refs: `engine/nvforever/src/reports/{mod,anomaly,controls,snapshot}.rs`]
+Checks sampled each frame or from log events, recorded in the session summary's `events`
+with place, cell, position, game hour and state. The world snapshot is refreshed separately
+(§4.3). Each kind fires at most 3 times per session; `controls_locked` also fires only once
+per unchanged lock. The detectors are registered only while reports are enabled.
 
 | Anomaly | When |
 |---|---|
 | fell out of world | the player or an actor is below the land height by > 500 units, or outside the cell grid |
 | player stuck | movement input held for 5 s with < 16 units moved, not in a menu |
-| actor stuck | an actor on a travel package has not moved 32 units toward its goal in 30 s |
+| controls locked (`controls_locked`) | [design, #2403] unchanged dialogue, menu or scripted control groups for 60 real seconds, with at least 5 key/mouse/controller button press edges in the trailing 60 seconds |
 | path failure | pathfinding fails 3 times in a row for one actor |
-| quest stall | (opt-in, for the main quest) a stage's objective target is unreachable: the target ref is disabled, dead or in no cell |
 | script loop | one script runs > 5 ms in a frame, or the same script errors 100 times |
 | hitch | a frame > 250 ms outside a load |
 | slow load | a load > 20 s |
@@ -284,8 +285,43 @@ session.
 | audio | the device lost or a voice file missing for a spoken line |
 | soft lock | the player is held and nothing moves on to let them go: scripts hold the movement controls (or the player is restrained) for 30 s with no story event; a conversation with no line and no choice for 5 s; one response said for 120 s; a menu set under a conversation that never opens (`fnv_game::softlock`, #2365) |
 
-The detectors' thresholds are constants in `reports/anomaly.rs` [our choice] and can be
-tuned from the server's `/v1/config` without a new build.
+[design, #2403 / file refs: `reports/controls.rs`, `reports/anomaly.rs`]
+`controls_locked` resets its timer, input window and once-per-lock latch when the dialogue
+line/response or offered choices change, a menu/page/tab/selection changes, any effective
+control group changes (including a group re-enabled), or the hold ends. Loading clears the
+watch. Countdown and animation clocks do not count as progress. Keyboard auto-repeat and
+holding a button do not add presses; controller menu keys synthesized by `nvf_play::pad`
+are not counted again. It watches the runtime's dialogue and message-box serial, menu
+code/prompt, and the engine's pause, Pip-Boy, container/barter/inventory and wait state.
+It does not inspect pixels or arbitrary scripted tile values; a page change entirely
+inside a mod's tile tree is not currently a progress signal.
+
+[design, #2403 / file refs: `reports/controls.rs`, `fnv-game/src/nvse_other.rs`]
+The finding names the menu or speaker (reference and bounded name) and the current topic,
+INFO and response, if a line is active, plus up to ten offered topic IDs. It includes the
+locked groups, their known source API, and up to ten Alt-lock plugin sources, plus an
+omitted count. Standard
+`DisablePlayerControls` flags retain no caller, so their script is explicitly unknown
+(`null`); no script is inferred from a running quest. Up to ten running, uncompleted
+quests (including background quests), in FormID order, supply their IDs and current stages.
+Names are capped at 128 characters. No input key identities, dialogue text or quest text
+are added. These limits and the 60-second/five-press rule are named together in
+`reports/anomaly.rs`.
+
+[design, #2403 / file refs: `residents.rs`, `fnv-ai/src/carry.rs`,
+`fnv-nav/src/follow.rs`, `fnv-game/src/{quest,quest_targets}.rs`]
+Removed from this reports specification: `actor_stuck` and `quest_stall`. Reports can read
+actor positions and current package IDs, but not a travel goal/progress contract spanning
+detours, doors and replans; distance travelled alone is not progress toward the goal.
+That requires coordinated AI/navigation state beyond a small read-only reports hook.
+Quest target checks exist, but reports has no main-quest-only selection or separate
+quest-stall opt-in. Applying the old rule to all quests would broaden its scope and flag
+intentionally dead/disabled targets; an absent snapshot reference also does not establish
+that it has no cell. These detectors need those contracts before being specified again.
+The separate existing `softlock` watchdog remains built as listed above.
+
+[design / file refs: `reports/anomaly.rs`] Thresholds are local constants. Server
+`/v1/config` tuning is not built.
 
 ## 5. The server (Cloudflare)
 
