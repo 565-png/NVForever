@@ -435,12 +435,18 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
 
 - *A world-space cache of the landscape around the camera.* A dedicated orthographic camera
   on its own render layer (16, `BAKE_LAYER`) draws flat, unlit copies of the 3 by 3 cells
-  around the camera's cell into one RGBA16F atlas of `3 x resolution` texels a side, one
+  around the selected centre cell into one RGBA16F atlas of `3 x resolution` texels a side, one
   mip. Each quadrant's copies are its whole near-terrain stack in drawing order: the base
   (a folded base with its own `TerrainMaterial` in an unlit bake variant, any other base
   with the single-texture `SurfaceCaptureMaterial`) and every blended layer over it with
   its texture, vertex alpha and sort bias, composited by the GPU's own blend state. Nothing
-  is lit, fogged or scorched; weather and light changes need no rebake.
+  is lit, fogged or scorched; weather and light changes need no rebake. The selected centre
+  is held separately from the committed front publication, with 256 game units of
+  hysteresis per axis: retain coordinate `c` throughout the inclusive interval
+  `[c*4096 - 256, (c+1)*4096 + 256]`, otherwise select `floor(position/4096)`.
+  Backfill and cache assembly use this same selection, with southwest origin centre
+  minus `(1,1)`; epoch/off transitions reset it. At `y=-8192`, a northward recentre needs
+  `y > -7936`, and a southward return needs `y < -8448`. Teleports select directly.
 - *Exact heights.* Beside the colour, a 576 by 99 RGBA8 atlas holds the f32 coefficients of
   both triangles of every LAND square (`height_planes`), packed losslessly into bytes and
   read with `textureLoad`, never filtered; the shader picks the triangle with the mesh's own
@@ -511,9 +517,11 @@ its source shared per source handle and visible publication/configuration; the o
 unchanged (its 128-byte uniform, bindings 50-53), and the blend type binds no more textures
 than the ordinary pipeline it replaces (the atlases take the holes and FaceGen slots, which a
 blend clone never has). A source edited under the same handle (blended cut-outs flipping
-Blend and Mask, scripted NIF edits) rebuilds its clone in the same frame; texture swaps,
-fades, draw-distance ranges, door fades, effect shaders and shadow thinning follow the
-source. Replacement clones are prepared and acknowledged with a bound render material before
+Blend and Mask, scripted NIF edits) rebuilds its clone in the same frame. Ordinary-component
+change ticks are tracked even before a shape's first clone is ready, so an emissive edit
+and reinsertion evicts the pending candidate and its later acknowledgement cannot enable it.
+Texture swaps, fades, draw-distance ranges, door fades, effect shaders and shadow thinning
+follow the source. Replacement clones are prepared and acknowledged with a bound render material before
 existing shapes switch; their old enabled handles and image references stay alive meanwhile.
 Request restarts leave enabled clones alone. Coverage changes on already drawable clones
 change uniform POD only, at each clone's own publication origin; the colour image stays
@@ -564,9 +572,12 @@ entity incarnation, capture content revision, component change tick and the revi
 its captured diffuse-image dependencies. Residency is confirmed against `Streamer.loaded`.
 Terrain reconstruction replaces the capture with a new revision; reconstruction of an
 already captured resident input also makes its cardinal
-neighbours reprepare stitched layer inputs, retaining their primary revision so this
-cannot recursively dirty the whole world. Component replacement/in-place capture edits
-and modifications/removal of dependent diffuse images invalidate the affected cells.
+neighbours reprepare stitched layer inputs, including loaded captures outside the selected
+region, retaining their primary revision so this cannot recursively dirty the whole world.
+Failed refreshes remain pending by entity incarnation within the cache context, are excluded
+from coverage/copy/bake until refreshed, and clear on epoch/off transitions or unload.
+Component replacement/in-place capture edits and modifications/removal of dependent
+diffuse images invalidate the affected cells.
 Capture materials retain their source handles: source-material changes refresh the actual
 unlit clones and their diffuse dependencies before replanning, rather than rebaking stale
 copies. Source-material removal makes that capture height-only until reconstruction.
@@ -638,11 +649,19 @@ coverage, and checks render preparation acknowledgements. Frame lines are
 published=BOOL retained=N missing-enabled=N missing-prepared=N failures=N copied=N baked=N`.
 The final `continuity summary frames=N crossings=N pending-frames=N retained-lookups=N
 pending-retained-lookups=N unwitnessed-pending-frames=N replacements=N published-false=N
-missing-enabled=N missing-prepared=N failures=N copied=N baked=N settled=BOOL` totals the full interval. Pending includes atlas work, retirement and
+missing-enabled=N missing-prepared=N failures=N copied=N baked=N settled=BOOL recentres=N
+pending-reversals=N` totals the full interval. Recentres count selected-centre changes;
+pending reversals count direction reversals when work was pending in the preceding probed
+frame. Pending includes atlas work, retirement and
 material readiness; settled requires the final publication's material switches to finish. `NVF_PLAY_TEST_MESH_BLEND_READY_DELAY=N` delays each
 new material's acknowledgement by at most 120 render frames for deterministic pending work;
 it changes no appearance controls. These CPU/binding checks do not prove rendered pixels;
 `mesh-terrain-blend-crossing` also captures before/during/after/settled frames for review.
+Its rapid reversals move 384 units to either side of the boundary, beyond both hysteresis
+thresholds, with delayed material readiness; the summary requires at least four crossings
+and recentres, two reversals during pending work, and final settlement. Synthetic tests
+also count live images, meshes and capture materials across repeated cancellations and
+completion using Bevy asset retirement over real app updates (not just request replacement).
 Its boundary road-contact location remains a hypothesis until the main session runs it.
 
 **Cost**: GPU cost of round 9 is unmeasured (checks only, no game run). The bake is timed

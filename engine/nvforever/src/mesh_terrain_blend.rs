@@ -621,6 +621,8 @@ fn stop(mut commands: Commands, mut state: ResMut<BlendState>, mut cache: ResMut
 /// world in the first of them (vendored bevy_pbr `MaterialGate`).
 const IDLE_FRAMES: u32 = 3;
 
+type BlendDrawn<'w, 's> = Query<'w, 's, (), Or<(With<MeshMaterial3d<NifBlendMaterial>>, With<MeshMaterial3d<crate::terrain_surface::SurfaceCaptureMaterial>>)>>;
+
 /// [design] While off with the gate open: once nothing of the blend's two material types
 /// has been left for [`IDLE_FRAMES`] frames, the gate closes; the render world then drops
 /// their allocators and shader handles and puts Bevy's draw functions back
@@ -631,7 +633,7 @@ fn close_gate(
     gate: Res<BlendGate>,
     blends: Res<Assets<NifBlendMaterial>>,
     captures: Res<Assets<crate::terrain_surface::SurfaceCaptureMaterial>>,
-    drawn: Query<(), Or<(With<MeshMaterial3d<NifBlendMaterial>>, With<MeshMaterial3d<crate::terrain_surface::SurfaceCaptureMaterial>>)>>,
+    drawn: BlendDrawn,
 ) {
     let Some(frames) = state.draining.as_mut() else { return };
     *frames = if blends.is_empty() && captures.is_empty() && drawn.is_empty() { *frames + 1 } else { 0 };
@@ -721,7 +723,7 @@ fn apply_configured_variants(
     // (NIF block material edits). Evict once per source before creating shared clones.
     let mut ordinary_live = HashSet::new();
     for (entity, shape, _, drawn, _, _) in shapes.iter() {
-        if shape.is_none_or(|s| s.enabled.is_none()) { continue; }
+        if shape.is_none() { continue; }
         if let Some(drawn) = drawn {
             ordinary_live.insert(entity);
             if variants.ordinary_seen.insert(entity, drawn.last_changed().get()) != Some(drawn.last_changed().get()) {
@@ -1493,6 +1495,40 @@ mod tests {
         assert_eq!(app.world().get::<BlendShape>(entity).unwrap().enabled.as_ref(), Some(&next));
         assert_eq!(app.world().resource::<Variants>().publications.len(), 1);
         assert!(ready.settled(8));
+    }
+    #[test]
+    fn first_clone_same_handle_emissive_edit_rejects_superseded_acknowledgement() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let ready = BlendReadiness::default();
+        app.world_mut().resource_mut::<Variants>().readiness = Some(ready.clone());
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial::default());
+        let entity = app.world_mut().spawn((BlendShape::new(source.clone()), MeshMaterial3d(source.clone()))).id();
+        app.update();
+        let stale = app.world().resource::<Variants>().materials[&source.id()].0.clone();
+        assert!(app.world().get::<BlendShape>(entity).unwrap().enabled.is_none());
+        let emission = LinearRgba::rgb(0.7, 0.2, 0.1);
+        let stamp = SourceStamp::of(app.world().resource::<Assets<NifMaterial>>().get(&source).unwrap());
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&source).unwrap().base.emissive = emission;
+        assert_eq!(SourceStamp::of(app.world().resource::<Assets<NifMaterial>>().get(&source).unwrap()), stamp, "the component tick must catch this edit");
+        // The mirror republishes its owned source under the same handle.
+        app.world_mut().entity_mut(entity).insert(MeshMaterial3d(source.clone()));
+        ready.ready.lock().unwrap().insert(stale.id());
+        app.update();
+        let next = app.world().resource::<Variants>().materials[&source.id()].0.clone();
+        assert_ne!(next, stale);
+        for _ in 0..4 {
+            assert!(app.world().get::<BlendShape>(entity).unwrap().enabled.is_none());
+            assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(entity).is_none());
+            assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(entity).unwrap().0, source);
+            assert_eq!(app.world().resource::<Assets<NifBlendMaterial>>().get(&next).unwrap().base.emissive, emission);
+            app.update();
+            assert_eq!(app.world().resource::<Variants>().materials[&source.id()].0, next);
+        }
+        ready.ready.lock().unwrap().insert(next.id());
+        app.update();
+        assert_eq!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(entity).unwrap().0, next);
+        assert!(app.world().get::<MeshMaterial3d<NifMaterial>>(entity).is_none());
     }
     #[test]
     fn producer_replacement_while_preparing_keeps_one_drawable_material_and_new_source() {

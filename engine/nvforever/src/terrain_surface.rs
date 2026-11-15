@@ -258,6 +258,9 @@ pub struct SurfaceCache {
     pub generation: u64,
     signature: Option<Request>,
     context: Option<(u32, bool, u32, usize)>,
+    selected_centre: Option<(i32, i32)>,
+    captured_inputs: HashMap<Entity, u64>,
+    stitched_dirty: HashMap<Entity, (i32, i32)>,
     epoch: u64,
     revision: u64,
     current: Vec<CellKey>,
@@ -290,7 +293,35 @@ impl SurfaceCache {
         if self.context.is_none() { publication.coverage } else { retained_mask(publication, &self.current) }
     }
     pub fn with_resolution(resolution: u32) -> Self {
-        Self { generation: 0, signature: None, context: None, epoch: 0, revision: 0, current: vec![], image_revisions: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false }
+        Self { generation: 0, signature: None, context: None, selected_centre: None, captured_inputs: default(), stitched_dirty: default(), epoch: 0, revision: 0, current: vec![], image_revisions: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false }
+    }
+
+    /// [design] Select independently of the immutable front, including while a job waits.
+    /// The inclusive 256-unit margin suppresses boundary jitter on each axis separately.
+    fn selected_origin(&mut self, point: Vec2) -> (i32, i32) {
+        let cell = fnv_world::cell_of(point.x, point.y);
+        let centre = self.selected_centre.get_or_insert(cell);
+        for (coordinate, position, next) in [(&mut centre.0, point.x, cell.0), (&mut centre.1, point.y, cell.1)] {
+            if position < *coordinate as f32 * 4096.0 - 256.0 || position > (*coordinate as f32 + 1.0) * 4096.0 + 256.0 {
+                *coordinate = next;
+            }
+        }
+        (centre.0 - 1, centre.1 - 1)
+    }
+
+    fn track_stitched_inputs(&mut self, captures: impl Iterator<Item = CapturedInput>) {
+        let captures: Vec<_> = captures.collect();
+        let loaded: HashMap<_, _> = captures.iter().map(|&(grid, entity, _)| (entity, grid)).collect();
+        self.captured_inputs.retain(|e, _| loaded.contains_key(e));
+        self.stitched_dirty.retain(|e, grid| loaded.get(e) == Some(grid));
+        let affected = stitched_dependents(&mut self.captured_inputs, captures.into_iter());
+        self.stitched_dirty.extend(loaded.into_iter().filter(|(_, grid)| affected.contains(grid)));
+    }
+
+    fn refreshed_capture(&mut self, entity: Entity, old: Option<&SurfaceCell>, mut surface: SurfaceCell) -> SurfaceCell {
+        if let Some(old) = old { surface.content_revision = old.content_revision; }
+        self.stitched_dirty.remove(&entity);
+        surface
     }
 
     /// [design] The blend turned on: the atlas at `resolution`, checked against the
@@ -320,6 +351,9 @@ impl SurfaceCache {
         self.epoch += 1;
         self.revision += 1;
         self.context = None;
+        self.selected_centre = None;
+        self.captured_inputs.clear();
+        self.stitched_dirty.clear();
         self.current.clear();
         self.retirement = 3;
         self.signature = None;
@@ -329,10 +363,6 @@ impl SurfaceCache {
     }
 }
 
-pub fn cache_origin(point: Vec2) -> (i32, i32) {
-    let centre = fnv_world::cell_of(point.x, point.y);
-    (centre.0 - 1, centre.1 - 1)
-}
 // [design] One production height representation: the coefficients of both terrain
 // triangles, encoded losslessly. WGSL only selects the triangle and evaluates its plane.
 pub fn height_planes(a: f32, east: f32, north: f32, ne: f32) -> [[f32; 3]; 2] {
@@ -681,32 +711,32 @@ pub fn backfill_cells(
     streamer: Res<Streamer>,
     camera: Query<&GlobalTransform, crate::fly::WorldCamera>,
     captured: Query<&SurfaceCell>,
-    mut inputs: Local<HashMap<Entity, u64>>,
+    mut cache: ResMut<SurfaceCache>,
     mut terrain: crate::terrain::TerrainMaterials,
     mut models: nvf_assets::model::ModelCtx,
     mut state: ResMut<crate::mesh_terrain_blend::BlendState>,
 ) {
+    cache.ensure_context(&mut commands, &world, &streamer);
     if streamer.interior.is_some() { return; }
-    let Ok(camera) = camera.single() else { return };
-    let origin = cache_origin(bevy_to_game(camera.translation()).truncate());
-    inputs.retain(|e, _| captured.contains(*e));
-    let stitched = stitched_dependents(&mut inputs, streamer.loaded.iter().filter_map(|(grid, entity)| {
-        captured.get(*entity).ok().map(|c| (*grid, *entity, c.content_revision))
+    cache.track_stitched_inputs(streamer.loaded.iter().filter_map(|(grid, entity)| {
+        captured.get(*entity).ok().filter(|c| c.world == world.world).map(|c| (*grid, *entity, c.content_revision))
     }));
-    for y in origin.1..origin.1 + 3 { for x in origin.0..origin.0 + 3 {
-        let Some(&cell) = streamer.loaded.get(&(x, y)) else { continue };
+    let origin = camera.single().ok().map(|camera| cache.selected_origin(bevy_to_game(camera.translation()).truncate()));
+    // Refresh loaded affected captures even outside the requested region. Failed work
+    // stays scoped to this entity incarnation and is excluded from copying/publication.
+    for (&(x, y), &cell) in &streamer.loaded {
         let existing = captured.get(cell).ok();
-        if existing.is_some() && !stitched.contains(&(x, y)) { continue; }
+        if existing.is_some() && !cache.stitched_dirty.contains_key(&cell) { continue; }
+        if existing.is_none() && !origin.is_some_and(|o| (o.0..o.0 + 3).contains(&x) && (o.1..o.1 + 3).contains(&y)) { continue; }
         if existing.is_none() && !state.tried.insert(cell) { continue; }
         let Some(land) = world.grid_cell((x, y)).and_then(|c| c.land) else { continue };
         let tile = terrain.settings.tile;
         let Some(prep) = crate::terrain::prepare_terrain(world.lo, world.schema, land, (x, y), tile, world.neighbour_lands((x, y))) else { continue };
         let folds = terrain.folds();
-        if let Some(mut surface) = crate::terrain::capture_surface(&world, prep, &mut crate::terrain::TerrainCtx { tm: &mut terrain, assets: &mut models }, folds) {
-            if let Some(old) = existing { surface.content_revision = old.content_revision; }
-            commands.entity(cell).try_insert(surface);
+        if let Some(surface) = crate::terrain::capture_surface(&world, prep, &mut crate::terrain::TerrainCtx { tm: &mut terrain, assets: &mut models }, folds) {
+            commands.entity(cell).try_insert(cache.refreshed_capture(cell, existing, surface));
         }
-    }}
+    }
 }
 
 /// [design] Epoch changes clear publications before conversion, even with no camera.
@@ -808,9 +838,10 @@ pub fn update_cache(
     let width = atlas_width(resolution);
     let Ok(camera) = camera.single() else { return };
     let eye = bevy_to_game(camera.translation());
-    let origin = cache_origin(eye.truncate());
+    let origin = cache.selected_origin(eye.truncate());
     let mut resident: Vec<_> = cells.iter().filter(|(e, c)| {
         c.world == world.world && streamer.loaded.get(&c.grid) == Some(e)
+            && !cache.stitched_dirty.contains_key(e)
             && (origin.0..origin.0 + 3).contains(&c.grid.0)
             && (origin.1..origin.1 + 3).contains(&c.grid.1)
             && c.heights.len() == SIDE * SIDE
@@ -964,6 +995,7 @@ struct ContinuityProbe {
     start: f64, duration: f64, done: bool, armed: bool,
     witnesses: Vec<(Entity, CellKey, Vec2)>,
     camera: Option<(i32, i32)>, colour: Option<AssetId<Image>>, request: u64,
+    selected: Option<(i32, i32)>, direction: Option<(i32, i32)>, previous_pending: bool, recentres: u64, pending_reversals: u64,
     frames: u64, transitions: u64, pending: u64, retained: u64, pending_retained: u64, unwitnessed_pending: u64, replacements: u64,
     unpublished: u64, missing_enabled: u64, missing_prepared: u64, failures: u64,
     copied: usize, baked: usize,
@@ -976,6 +1008,7 @@ pub fn install_continuity_probe(app: &mut App) {
     if !start.is_finite() || !duration.is_finite() || start < 0.0 || !(1.0..=120.0).contains(&duration) { return; }
     app.insert_resource(ContinuityProbe {
         start, duration, done: false, armed: false, witnesses: vec![], camera: None, colour: None, request: 0,
+        selected: None, direction: None, previous_pending: false, recentres: 0, pending_reversals: 0,
         frames: 0, transitions: 0, pending: 0, retained: 0, pending_retained: 0, unwitnessed_pending: 0, replacements: 0,
         unpublished: 0, missing_enabled: 0, missing_prepared: 0, failures: 0, copied: 0, baked: 0,
     }).add_systems(PostUpdate, continuity_probe.after(crate::mesh_terrain_blend::BlendConversion).after(update_cache).run_if(crate::mesh_terrain_blend::active).run_if(resource_exists::<nvf_play::pause::PlayClock>));
@@ -993,7 +1026,7 @@ fn continuity_probe(
     if now >= probe.start + probe.duration || probe.frames >= 20000 {
         probe.done = true;
         let settled = cache.job.is_none() && cache.published.as_ref().is_some_and(|p| ready.settled(p.revision));
-        info!("mesh terrain blend: continuity summary frames={} crossings={} pending-frames={} retained-lookups={} pending-retained-lookups={} unwitnessed-pending-frames={} replacements={} published-false={} missing-enabled={} missing-prepared={} failures={} copied={} baked={} settled={settled}", probe.frames, probe.transitions, probe.pending, probe.retained, probe.pending_retained, probe.unwitnessed_pending, probe.replacements, probe.unpublished, probe.missing_enabled, probe.missing_prepared, probe.failures, probe.copied, probe.baked);
+        info!("mesh terrain blend: continuity summary frames={} crossings={} pending-frames={} retained-lookups={} pending-retained-lookups={} unwitnessed-pending-frames={} replacements={} published-false={} missing-enabled={} missing-prepared={} failures={} copied={} baked={} settled={settled} recentres={} pending-reversals={}", probe.frames, probe.transitions, probe.pending, probe.retained, probe.pending_retained, probe.unwitnessed_pending, probe.replacements, probe.unpublished, probe.missing_enabled, probe.missing_prepared, probe.failures, probe.copied, probe.baked, probe.recentres, probe.pending_reversals);
         return;
     }
     let camera_cell = camera.single().ok().map(|c| { let p = bevy_to_game(c.translation()); fnv_world::cell_of(p.x, p.y) });
@@ -1012,7 +1045,7 @@ fn continuity_probe(
             if probe.witnesses.len() == 32 { break; }
         }
         if probe.witnesses.is_empty() { return; }
-        probe.armed = true; probe.camera = camera_cell; probe.colour = Some(front.colour.id());
+        probe.armed = true; probe.camera = camera_cell; probe.colour = Some(front.colour.id()); probe.selected = cache.selected_centre;
         info!("mesh terrain blend: continuity armed witnesses={}", probe.witnesses.len());
     }
     probe.frames += 1;
@@ -1022,6 +1055,16 @@ fn continuity_probe(
     let colour = cache.published.as_ref().map(|p| p.colour.id());
     if colour.is_some() && colour != probe.colour { probe.replacements += 1; probe.colour = colour; }
     let pending = cache.job.is_some() || cache.retirement > 0 || cache.published.as_ref().is_some_and(|p| !ready.settled(p.revision));
+    let movement = probe.selected.zip(cache.selected_centre).filter(|(previous, selected)| previous != selected);
+    if let Some((previous, selected)) = movement {
+        let direction = ((selected.0 - previous.0).signum(), (selected.1 - previous.1).signum());
+        let reversal = probe.direction.is_some_and(|d| d.0 * direction.0 + d.1 * direction.1 < 0);
+        probe.pending_reversals += u64::from(reversal && probe.previous_pending);
+        probe.recentres += 1;
+        probe.direction = Some(direction);
+    }
+    probe.selected = cache.selected_centre;
+    probe.previous_pending = pending;
     probe.pending += u64::from(pending);
     probe.unpublished += u64::from(cache.published.is_none());
     if cache.generation != probe.request {
@@ -1214,10 +1257,10 @@ mod tests {
     }
     #[test]
     fn cache_origin_uses_negative_floor_and_covers_all_slots() {
-        assert_eq!(cache_origin(Vec2::new(-0.01, -0.01)), (-2, -2));
-        assert_eq!(cache_origin(Vec2::new(-8192.0, -4096.0)), (-3, -2));
-        assert_eq!(cache_origin(Vec2::ZERO), (-1, -1));
-        let origin = cache_origin(Vec2::new(-8192.0, -4096.0));
+        assert_eq!(SurfaceCache::default().selected_origin(Vec2::new(-0.01, -0.01)), (-2, -2));
+        assert_eq!(SurfaceCache::default().selected_origin(Vec2::new(-8192.0, -4096.0)), (-3, -2));
+        assert_eq!(SurfaceCache::default().selected_origin(Vec2::ZERO), (-1, -1));
+        let origin = SurfaceCache::default().selected_origin(Vec2::new(-8192.0, -4096.0));
         for y in 0..3 { for x in 0..3 {
             let cell = (origin.0 + x, origin.1 + y);
             let point = Vec2::new(cell.0 as f32 * 4096.0 + 64.0, cell.1 as f32 * 4096.0 + 64.0);
@@ -1417,12 +1460,17 @@ mod tests {
         assert!(cache.job.is_none() && cache.published.is_none() && cache.generation == 1);
         assert!(app.world().resource::<Assets<Image>>().is_empty());
     }
-    fn cache_fixture() -> (App, impl Sized) {
+    fn cache_fixture() -> (App, impl Sized) { cache_fixture_with_tracking(false) }
+    fn cache_fixture_with_tracking(tracking: bool) -> (App, impl Sized) {
         let (mut app, files) = crate::outfits::tests::asset_fixture();
         app.insert_resource(crate::outfits::tests::empty_world_data())
             .insert_resource(SurfaceCache::with_resolution(512)).init_resource::<Assets<TerrainMaterial>>()
             .init_resource::<Assets<SurfaceCaptureMaterial>>()
             .init_resource::<Messages<AssetEvent<Image>>>();
+        if tracking {
+            app.add_plugins((bevy::app::TaskPoolPlugin::default(), bevy::asset::AssetPlugin::default()))
+                .init_asset::<Image>().init_asset::<Mesh>().init_asset::<TerrainMaterial>().init_asset::<SurfaceCaptureMaterial>();
+        }
         app.insert_resource(Streamer {
             radius: 2, loaded: default(), fades: default(), fade_secs: 0.0, settled: true,
             arrival: None, per_frame: 1, spawning: default(), dying: default(), ahead: default(),
@@ -1457,8 +1505,11 @@ mod tests {
         assert!(app.world().resource::<SurfaceCache>().job.is_none());
     }
     fn move_camera(app: &mut App, cell: (i32, i32)) {
+        move_camera_point(app, Vec2::new(cell.0 as f32 * 4096.0 + 1024.0, cell.1 as f32 * 4096.0 + 1024.0));
+    }
+    fn move_camera_point(app: &mut App, point: Vec2) {
         let mut q = app.world_mut().query_filtered::<&mut GlobalTransform, With<crate::fly::FlyCam>>();
-        *q.single_mut(app.world_mut()).unwrap() = GlobalTransform::from_translation(Vec3::new(cell.0 as f32 * 4096.0 + 1024.0, 600.0, -(cell.1 as f32 * 4096.0 + 1024.0)));
+        *q.single_mut(app.world_mut()).unwrap() = GlobalTransform::from_translation(Vec3::new(point.x, 600.0, -point.y));
     }
     fn work_counts(app: &mut App) -> (usize, usize) {
         let view = app.world_mut().query::<&BakeView>().single(app.world()).unwrap();
@@ -1506,7 +1557,91 @@ mod tests {
         }
     }
     #[test]
-    fn rapid_crossings_reject_cancelled_receipts_and_bound_allocations() {
+    fn selected_centre_hysteresis_is_inclusive_per_axis_and_handles_teleports() {
+        let mut cache = SurfaceCache::default();
+        let x = -17.0 * 4096.0 + 1024.0;
+        assert_eq!(cache.selected_origin(Vec2::new(x, -8300.0)), (-18, -4));
+        for y in [-8193.0, -8191.0, -7936.0, -8192.0, -7936.0] {
+            assert_eq!(cache.selected_origin(Vec2::new(x, y)), (-18, -4));
+        }
+        assert_eq!(cache.selected_origin(Vec2::new(x, -7935.5)), (-18, -3));
+        for y in [-8191.0, -8193.0, -8448.0, -8192.0, -8448.0] {
+            assert_eq!(cache.selected_origin(Vec2::new(x, y)), (-18, -3));
+        }
+        assert_eq!(cache.selected_origin(Vec2::new(x, -8448.5)), (-18, -4));
+        assert_eq!(cache.selected_origin(Vec2::new(-16.0 * 4096.0 + 256.0, -8191.0)), (-18, -4));
+        assert_eq!(cache.selected_origin(Vec2::new(-16.0 * 4096.0 + 256.5, -8191.0)), (-17, -4));
+        assert_eq!(cache.selected_origin(Vec2::new(42000.0, -42000.0)), (9, -12));
+    }
+    #[test]
+    fn edge_jitter_does_no_camera_work_but_input_and_residency_still_invalidate() {
+        let (mut app, _files) = cache_fixture();
+        let generation = app.world().resource::<SurfaceCache>().generation;
+        for y in [4095.0, 4097.0, 4352.0, 4090.0, 4100.0] {
+            move_camera_point(&mut app, Vec2::new(1024.0, y)); tick(&mut app);
+            let cache = app.world().resource::<SurfaceCache>();
+            assert_eq!(cache.generation, generation);
+            assert!(cache.job.is_none());
+            assert_eq!(cache.published.as_ref().unwrap().origin, (-1, -1));
+        }
+        let cell = app.world().resource::<Streamer>().loaded[&(0, 0)];
+        app.world_mut().get_mut::<SurfaceCell>(cell).unwrap().heights[0] += 1.0;
+        tick(&mut app);
+        assert_eq!(work_counts(&mut app), (8, 1));
+        finish(&mut app);
+        app.world_mut().resource_mut::<Streamer>().loaded.remove(&(1, 1));
+        tick(&mut app);
+        assert_eq!(app.world().resource::<SurfaceCache>().published.as_ref().unwrap().coverage.count_ones(), 8);
+        move_camera_point(&mut app, Vec2::new(1024.0, 4352.5)); tick(&mut app);
+        let cache = app.world().resource::<SurfaceCache>();
+        assert_eq!(cache.job.as_ref().unwrap().publication.origin, (-1, 0));
+        assert_eq!(cache.published.as_ref().unwrap().origin, (-1, -1), "front stays at its committed origin");
+    }
+    #[test]
+    fn repeated_pending_reversals_retire_assets_over_real_app_updates() {
+        let (mut app, _files) = cache_fixture_with_tracking(true);
+        app.add_systems(Update, update_cache);
+        for _ in 0..6 { app.update(); }
+        let baseline = app.world().resource::<Assets<Image>>().len();
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 0);
+        assert_eq!(app.world().resource::<Assets<SurfaceCaptureMaterial>>().len(), 0);
+        for turn in 0..12 {
+            move_camera(&mut app, (if turn % 2 == 0 { 1 } else { -1 }, 0));
+            app.update();
+            assert!(app.world().resource::<Assets<Image>>().len() <= baseline + 4);
+            assert!(app.world().resource::<Assets<Mesh>>().len() <= 18);
+            assert!(app.world().resource::<Assets<SurfaceCaptureMaterial>>().len() <= 18);
+            let cancelled = app.world().resource::<SurfaceCache>().job.as_ref().unwrap().receipt;
+            move_camera(&mut app, (0, 0)); app.update();
+            assert!(app.world().resource::<Assets<Image>>().len() <= baseline + 4);
+            assert!(app.world().resource::<Assets<Mesh>>().len() <= 18);
+            assert!(app.world().resource::<Assets<SurfaceCaptureMaterial>>().len() <= 18);
+            *app.world().resource::<SurfaceCache>().submitted.lock().unwrap() = Some(cancelled);
+            for _ in 0..6 {
+                app.update();
+                assert!(app.world().resource::<Assets<Image>>().len() <= baseline + 4, "at most three live atlas pairs including retirement");
+                assert!(app.world().resource::<Assets<Mesh>>().len() <= 18);
+                assert!(app.world().resource::<Assets<SurfaceCaptureMaterial>>().len() <= 18);
+            }
+            assert!(app.world().resource::<SurfaceCache>().job.is_none());
+            assert_eq!(app.world().resource::<Assets<Image>>().len(), baseline, "cancelled images retired");
+            assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 0, "cancelled draw meshes retired");
+            assert_eq!(app.world().resource::<Assets<SurfaceCaptureMaterial>>().len(), 0, "cancelled draw materials retired");
+        }
+        // Finish a genuine replacement, then ensure the old front also retires.
+        move_camera(&mut app, (1, 0)); app.update();
+        let receipt = app.world().resource::<SurfaceCache>().job.as_ref().unwrap().receipt;
+        *app.world().resource::<SurfaceCache>().submitted.lock().unwrap() = Some(receipt);
+        for _ in 0..8 { app.update(); }
+        let cache = app.world().resource::<SurfaceCache>();
+        assert!(cache.job.is_none());
+        assert_eq!(cache.published.as_ref().unwrap().origin, (0, -1));
+        assert_eq!(app.world().resource::<Assets<Image>>().len(), baseline);
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 0);
+        assert_eq!(app.world().resource::<Assets<SurfaceCaptureMaterial>>().len(), 0);
+    }
+    #[test]
+    fn rapid_crossings_reject_cancelled_receipts() {
         let (mut app, _files) = cache_fixture();
         let colour = app.world().resource::<SurfaceCache>().published.as_ref().unwrap().colour.id();
         move_camera(&mut app, (1, 0)); tick(&mut app);
@@ -1588,6 +1723,7 @@ mod tests {
         tick(&mut app);
         let cache = app.world().resource::<SurfaceCache>();
         assert!(cache.published.is_none() && cache.job.is_none() && cache.ready.is_none());
+        assert!(cache.selected_centre.is_none() && cache.captured_inputs.is_empty() && cache.stitched_dirty.is_empty());
         assert_ne!(cache.epoch, stale.epoch);
         app.world_mut().resource_mut::<WorldData>().world = 0;
         tick(&mut app);
@@ -1635,6 +1771,66 @@ mod tests {
         assert_eq!(shared.lock().unwrap().as_ref().map(|r| (r.epoch, r.request)), Some((3, 4)));
         assert_eq!(colour_rectangle((-2, -3), (-3, -3), 1024), (1024, 2048));
         assert_eq!(colour_rectangle((-3, -1), (-3, -3), 1024), (0, 0));
+    }
+    #[test]
+    fn stitched_reconstruction_outside_region_stays_dirty_until_refreshed_after_entry() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut app, _files) = cache_fixture();
+        app.insert_resource(crate::terrain::TerrainSettings { tile: 256.0 })
+            .init_resource::<crate::terrain::TerrainCache>().init_resource::<crate::mesh_terrain_blend::BlendState>();
+        // No LAND records in this fixture: backfill must retain failed refresh work.
+        app.add_systems(Update, backfill_cells);
+        app.update();
+        let source = app.world().resource::<Streamer>().loaded[&(1, 0)];
+        let excluded = app.world().resource::<Streamer>().loaded[&(2, 0)];
+        let old_revision = app.world().get::<SurfaceCell>(excluded).unwrap().content_revision;
+        app.world_mut().get_mut::<SurfaceCell>(source).unwrap().content_revision += 1;
+        app.update();
+        assert_eq!(app.world().resource::<SurfaceCache>().stitched_dirty.get(&excluded), Some(&(2, 0)));
+        move_camera(&mut app, (1, 0)); app.update(); tick(&mut app);
+        assert!(app.world().resource::<SurfaceCache>().current.iter().all(|k| k.entity != excluded), "entry cannot copy or bake the stale captured neighbour");
+        assert!(app.world().resource::<SurfaceCache>().stitched_dirty.contains_key(&excluded));
+        // A successful retry uses the same capture/install path as backfill. It keeps
+        // the primary revision, while the replacement component tick invalidates pixels.
+        app.world_mut().run_system_once(move |mut commands: Commands, world: Res<WorldData>, mut terrain: crate::terrain::TerrainMaterials, mut models: nvf_assets::model::ModelCtx, mut cache: ResMut<SurfaceCache>, cells: Query<&SurfaceCell>| {
+            let old = cells.get(excluded).unwrap();
+            let land = fnv_world::land::Land { heights: Some(old.heights.clone()), ..default() };
+            let prep = crate::terrain::prepare_land(land, &[None, None, None, None], (2, 0), 256.0);
+            let capture = crate::terrain::capture_surface(&world, prep, &mut crate::terrain::TerrainCtx { tm: &mut terrain, assets: &mut models }, false).unwrap();
+            let capture = cache.refreshed_capture(excluded, Some(old), capture);
+            assert_eq!(capture.content_revision, old_revision);
+            commands.entity(excluded).insert(capture);
+        }).unwrap();
+        for _ in 0..5 { app.update(); tick(&mut app); }
+        let cache = app.world().resource::<SurfaceCache>();
+        assert!(!cache.stitched_dirty.contains_key(&excluded));
+        let fresh = cache.current.iter().find(|k| k.entity == excluded).unwrap();
+        assert!(cache.job.as_ref().unwrap().publication.keys.contains(fresh));
+        assert!(!work_sets(&mut app).0.contains(&(2, 0)), "the refreshed entering neighbour is never copied from stale pixels");
+    }
+    #[test]
+    fn stitched_pending_is_scoped_to_context_and_entity_incarnation() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut app, _files) = cache_fixture();
+        let a = app.world().resource::<Streamer>().loaded[&(1, 0)];
+        let b = app.world().resource::<Streamer>().loaded[&(2, 0)];
+        {
+            let mut cache = app.world_mut().resource_mut::<SurfaceCache>();
+            cache.track_stitched_inputs([((1, 0), a, 1), ((2, 0), b, 2)].into_iter());
+            cache.track_stitched_inputs([((1, 0), a, 3), ((2, 0), b, 2)].into_iter());
+            assert!(cache.stitched_dirty.contains_key(&b));
+        }
+        let replacement = app.world_mut().spawn_empty().id();
+        {
+            let mut cache = app.world_mut().resource_mut::<SurfaceCache>();
+            cache.track_stitched_inputs([((1, 0), a, 3), ((2, 0), replacement, 4)].into_iter());
+            assert!(cache.stitched_dirty.is_empty(), "old incarnation cannot dirty the new capture");
+            cache.track_stitched_inputs([((1, 0), a, 5), ((2, 0), replacement, 4)].into_iter());
+            assert!(cache.stitched_dirty.contains_key(&replacement));
+        }
+        app.world_mut().run_system_once(|mut commands: Commands, mut cache: ResMut<SurfaceCache>| cache.release(&mut commands)).unwrap();
+        let cache = app.world().resource::<SurfaceCache>();
+        assert!(cache.selected_centre.is_none() && cache.captured_inputs.is_empty() && cache.stitched_dirty.is_empty());
     }
     #[test]
     fn stitched_inputs_ignore_first_residency_and_dirty_cardinals_on_reconstruction_only() {
