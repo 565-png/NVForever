@@ -1108,7 +1108,7 @@ fn register_graphics(app: &mut App) {
         ),
         (
             "water-reflections",
-            "Screen-space water reflections",
+            "Screen-space reflections",
             "On: water the mirrored reflection does not reach (another height, interiors) reflects what is on the screen instead of only the sky.",
             "--graphics",
             |w| w.resource::<Graphics>().water_reflections,
@@ -1116,7 +1116,7 @@ fn register_graphics(app: &mut App) {
         ),
         (
             "water-mirror",
-            "Mirrored water reflections",
+            "Mirrored reflections",
             "On: water mirrors the world above it, as in the original, drawing the scene a second time. Off: it reflects the sky.",
             "--graphics-only",
             |w| w.resource::<Graphics>().water_mirror,

@@ -848,6 +848,53 @@ const KEYBOARD_SEARCH: &str = "Keyboard search";
 const CARET: &str = "_";
 /// The links over the rows to the heading before and after [design: #1953].
 const HEADING_LINKS: [&str; 2] = ["Previous Category", "Next Category"];
+/// The short words Title Case leaves in lower case inside a label (articles, the short
+/// conjunctions and prepositions) [design: owner 2026-11-15: "words like and, of, at etc
+/// should stay lowercase"].
+const MINOR_WORDS: [&str; 20] = ["a", "an", "the", "and", "but", "or", "nor", "for", "so", "yet", "as", "at", "by", "in", "of", "off", "on", "per", "to", "via"];
+
+/// `text` as the page shows a label, a heading or a list's words: in English, Title Case
+/// (each word capitalised but the short words of [`MINOR_WORDS`] inside it; each part of a
+/// hyphenated word; a word with a capital already, as "HUD", "Pip-Boy", "V.A.T.S.", and a
+/// word that starts with a figure, as "16x", left as they are); in another language as the
+/// language writes it [design: owner 2026-11-15, the menu overhaul: "the original uses
+/// Capitalized Case for the menus"]. The rows keep their words as registered (the INI, the
+/// log, the search and the translations go by them); only the page shows them so, so a new
+/// row is in Title Case without anyone writing it so.
+fn shown_case(text: &str) -> String {
+    if fnv_util::words::language() != fnv_util::words::ENGLISH {
+        return text.to_string();
+    }
+    let words: Vec<&str> = text.split(' ').collect();
+    let last = words.len().saturating_sub(1);
+    let mut after_colon = false;
+    let mut out = Vec::with_capacity(words.len());
+    for (k, w) in words.iter().enumerate() {
+        let letters: String = w.chars().filter(|c| c.is_alphabetic()).collect();
+        let bare = letters.to_lowercase();
+        let keep = letters.is_empty() || letters.chars().any(char::is_uppercase) || w.chars().next().is_some_and(|c| c.is_ascii_digit());
+        let minor = k > 0 && k < last && !after_colon && MINOR_WORDS.contains(&bare.as_str());
+        out.push(if keep || minor { (*w).to_string() } else { w.split('-').map(capitalise).collect::<Vec<_>>().join("-") });
+        after_colon = w.ends_with(':');
+    }
+    out.join(" ")
+}
+
+/// `part` with its first letter a capital (a leading bracket or quote kept before it).
+fn capitalise(part: &str) -> String {
+    let mut out = String::with_capacity(part.len());
+    let mut done = false;
+    for c in part.chars() {
+        if !done && c.is_alphabetic() {
+            out.extend(c.to_uppercase());
+            done = true;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// A switch's states, in the lists' casing [design: the menu overhaul, one casing].
 const ON: &str = "On";
 const OFF: &str = "Off";
@@ -1754,7 +1801,7 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     let (line, _) = highlight_colors();
     root.spawn((Node { border: UiRect::all(u(LINE)), ..from_middle(left + lb.row().list_left(), y, LIST_WIDTH, h) }, BorderColor::all(line), BackgroundColor(Color::BLACK), GlobalZIndex(111))).with_children(|b| {
         for (k, name) in names.iter().enumerate().skip(o.first).take(shown) {
-            let name = fit_text(|t| f.entry.font.width(t), tr_str(d.choice_words(o.row, k, name)), LIST_WIDTH - 2.0 * LINE - 2.0 * VALUE_PAD);
+            let name = fit_text(|t| f.entry.font.width(t), &shown_case(tr_str(d.choice_words(o.row, k, name))), LIST_WIDTH - 2.0 * LINE - 2.0 * VALUE_PAD);
             let name = name.as_str();
             let shade = if d.choice_reason(o.row, k).is_some() { Shade::Dim } else { Shade::Bright };
             let nw = f.entry.font.width(name);
@@ -1776,8 +1823,8 @@ const HEADING_ARROW: Vec2 = Vec2::new(10.0, 20.0);
 fn heading_line(root: &mut ChildSpawnerCommands, look: &PauseLook, d: &Drawn, p: crate::settings_layout::Placement, on: bool, lb: ListBox, y: f32) {
     let f = &look.faces;
     let (count, open) = d.heading(p);
-    let name = tr(p.heading.unwrap_or(p.tab));
-    let words = if open { name.to_string() } else { format!("{name} ({count})") };
+    let name = shown_case(tr(p.heading.unwrap_or(p.tab)));
+    let words = if open { name } else { format!("{name} ({count})") };
     root.spawn((HeadingLine, Text::new(words.clone()), Node { display: Display::None, ..default() }));
     let bright = color(Shade::Bright);
     root.spawn((Button, PauseButton::Row(RowId::Heading(p)), boxed(from_middle(lb.left, y, lb.width, OPTION_ROW), on))).with_children(|r| {
@@ -1875,7 +1922,8 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
             let Some(s) = list.get(i) else { return };
             let v = d.states.get(i).copied().unwrap_or(0.0);
             let disabled = d.disabled.get(i).copied().flatten();
-            let label = tr(s.label);
+            let label = shown_case(tr(s.label));
+            let label = label.as_str();
             let label_shade = color(if disabled.is_some() { Shade::Dim } else { Shade::Bright });
             root.spawn((Button, PauseButton::Row(id), node)).with_children(|r| {
                 // A greyed row (it cannot apply now) shows its value dim; why is the note's
@@ -1910,6 +1958,8 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
         }
         RowId::Control(c) => {
             let (name, value) = control_line(d, c);
+            let name = shown_case(tr(name));
+            let name = name.as_str();
             root.spawn((Button, PauseButton::Row(id), node)).with_children(|r| {
                 if let ControlRow::Sensitivity(_) | ControlRow::Vertical(_) | ControlRow::AimSensitivity(_) = c {
                     let m = match c {
@@ -1944,7 +1994,7 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
             let group = d.group.unwrap_or("");
             root.spawn((Button, PauseButton::Row(id), node)).with_children(|r| {
                 let parts = row_parts(x, ValueKind::List(width(tr(group))));
-                sm_text(r, &f.entry, &fit_text(width, tr(GROUP_ROW), parts.label_room()), parts.label.0, BASE + 2.0, color(Shade::Bright));
+                sm_text(r, &f.entry, &fit_text(width, &shown_case(tr(GROUP_ROW)), parts.label_room()), parts.label.0, BASE + 2.0, color(Shade::Bright));
                 list_row(r, look, &parts, id, group, (group, false), false, true);
             });
         }
@@ -2041,7 +2091,7 @@ fn list_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, i:
     }
     let (words, out_of_reach) = shown;
     let font = &look.faces.entry.font;
-    let words = fit_text(|t| font.width(t), tr_str(words), parts.text_room());
+    let words = fit_text(|t| font.width(t), &shown_case(tr_str(words)), parts.text_room());
     sm_text(r, &look.faces.entry, &words, parts.text_x(font.width(&words)), BASE + 2.0, if out_of_reach { color(Shade::Dim) } else { bright });
     // The right arrow turned to point down.
     let node = at(list_left + LIST_WIDTH - LIST_ARROW_STRIP, (OPTION_ROW - METER_ARROW.y) / 2.0, METER_ARROW.x, METER_ARROW.y);
@@ -2412,7 +2462,7 @@ fn slider_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, 
     }
     // A value with words ("Off" on the frame rate limit) in the language shown.
     let font = &look.faces.entry.font;
-    let value = fit_text(|t| font.width(t), tr_str(value), parts.text_room());
+    let value = fit_text(|t| font.width(t), &shown_case(tr_str(value)), parts.text_room());
     sm_text(r, &look.faces.entry, &value, parts.text_x(font.width(&value)), BASE + 2.0, bright);
 }
 
