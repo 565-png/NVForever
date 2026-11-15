@@ -2317,3 +2317,21 @@ already talking takes over at once, same topic or another; nothing is queued or 
      (`GetPlayerTeammate`). Then the same with `SetHardcore 1`. Knocked out, up again and
      still hired outside Hardcore, dead in it agrees with ours; IsEssential reading 1 for
      the teammate says the engine counts teammates as essential by IsEssential too.
+
+## Added 2026-11-15 (faction disguises, #2611)
+
+167. **Does the NCR armour fool the NCR when the player is an enemy of NCRFactionNV?**
+     (P2; #2611, disguises.md §3.) Ours since #2611: a faction enemy flag yields to the
+     disguise's friendship (ArmorNCRFactionNV, which every NCR soldier is in); only
+     sniffers (VNCRSnifferFaction) within the pulse's 25 ft (about 533 units) see
+     through [hypothesis]. At Hoover Dam by day, stand on the road at
+     VHDAssassinationSetupREF (0x0012FCF0), `player.additem 00129254 1`, equip it, then
+     `SetPCEnemyOfFaction 000A46E7 1`. For 30 s note whether the troopers and engineers
+     near (VHDPreBattleNCRTrooper4REF 0x0014633D, VHDPreBattleNCREngineer02REF
+     0x0014695E) attack, and read `VHDPreBattleNCRTrooper4REF.GetFactionRelation player`
+     and `GetCombatTarget` on the rangers by the vertibird pad (VHDPreBattleRanger04REF
+     0x0014694C, a sniffer about 2,000 units off). Then walk up to that ranger (under
+     500 units, in sight) and note whether it attacks and the others follow. Nobody
+     attacking until the ranger is near agrees with ours; everyone attacking at once
+     says the flag beats the disguise (then the disguise works only through the
+     reputation reset, reputation.md §4).
