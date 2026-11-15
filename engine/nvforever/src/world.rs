@@ -767,6 +767,9 @@ pub fn report(mut exit: MessageReader<AppExit>, streamer: Res<Streamer>, models:
         "streaming summary: {} cells loaded ({:.0} ms on the main thread), spread over {} frames; {} waited for their read-ahead, {} drawn before it was done; {} models cached, {} in flight; {} late-mesh marks",
         s.cells_loaded, s.load_ms, s.spawn_frames, s.cells_waited, s.cells_forced, models.held(), models.in_flight(), late.marked
     );
+    if s.billboards > 0 {
+        info!("world: {} placed billboard nodes turn to the camera ({} references)", s.billboards, s.refs_billboards);
+    }
 }
 
 /// Behind a loading screen (`nvf_play::loading`) cells are loaded one after another for
@@ -834,9 +837,9 @@ pub fn face_billboards(
 /// cards, whether their node hierarchy is spawned or their shapes baked, and the effect
 /// models of `shot_fx`) to the camera, each frame before transforms propagate
 /// (docs/spec-notes/billboard-nodes.md): about the node's own y axis for the "rotate
-/// about up" modes (1, 5, 9), its +z straight at the camera for the others
-/// [documented: nif.xml BillboardMode names; hypothesis: that the node's +z is the side
-/// shown and +y the "up" it turns about].
+/// about up" modes (1, 9: about the node's y; 5, BSROTATE_ABOUT_UP: about its z, +y
+/// shown), its +z straight at the camera for the others [documented: nif.xml
+/// BillboardMode names; hypothesis: the axes, docs/spec-notes/billboard-nodes.md §1].
 pub fn face_camera(
     camera: Query<Entity, crate::fly::WorldCamera>,
     boards: Query<(Entity, &nvf_assets::model::Billboard, &ChildOf)>,
@@ -865,7 +868,10 @@ pub fn face_camera(
         // The way to the camera in the node's own frame as the file has it.
         let d = b.bind.inverse() * (m.inverse().transform_point3(eye) - t.translation);
         let turn = match b.mode {
-            1 | 5 | 9 => Quat::from_rotation_y(d.x.atan2(d.z)),
+            1 | 9 => Quat::from_rotation_y(d.x.atan2(d.z)),
+            // About the node's z, its +y towards the camera (#2549: the torch's flame
+            // stands along +z under a mode-5 node).
+            5 => Quat::from_rotation_z((-d.x).atan2(d.y)),
             _ => Quat::from_rotation_arc(Vec3::Z, d.normalize_or(Vec3::Z)),
         };
         let rotation = b.bind * turn;
@@ -1878,5 +1884,22 @@ mod tests {
             app.update();
             assert!(faces(app.world(), card) > 0.999, "animated {animated}: the card faces the camera: {}", faces(app.world(), card));
         }
+    }
+
+    /// Issue #2549: the torch's flame stands along +z under a mode-5 node; turned, it
+    /// stays upright (about its z) with its +y towards the camera.
+    #[test]
+    fn a_mode_5_billboard_turns_about_its_z() {
+        let mut app = App::new();
+        app.add_systems(Update, face_camera);
+        let eye = Vec3::new(300.0, -300.0, 500.0);
+        app.world_mut().spawn((Camera3d::default(), Transform::from_translation(eye), crate::fly::FlyCam { yaw: 0.0, pitch: 0.0, speed: 0.0 }));
+        let holder = app.world_mut().spawn(Transform::IDENTITY).id();
+        let flame = app.world_mut().spawn((Transform::from_xyz(0.0, 0.0, 100.0), nvf_assets::model::Billboard { mode: 5, bind: Quat::IDENTITY }, ChildOf(holder))).id();
+        app.update();
+        let r = app.world().get::<Transform>(flame).unwrap().rotation;
+        assert!((r * Vec3::Z).abs_diff_eq(Vec3::Z, 1e-5), "upright: {}", r * Vec3::Z);
+        let level = Vec3::new(eye.x, eye.y, 0.0).normalize();
+        assert!((r * Vec3::Y).dot(level) > 0.9999, "+y to the camera: {}", r * Vec3::Y);
     }
 }

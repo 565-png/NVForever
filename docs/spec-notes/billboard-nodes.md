@@ -14,9 +14,14 @@ or a model enabled by a script. Implemented in `engine/nvf-assets/src/model.rs`
 - A billboard node turns its model-space +z towards the camera ("ALWAYS_FACE_CAMERA …
   model-space z-vector", "RIGID_FACE_CENTER … z-vector to point at the center of the
   camera") [documented: GECK wiki NiBillboardNode, as quoted in issue #2549].
-- Which axis a mode 1, 5 or 9 node turns about: its own +y [hypothesis, from
-  `shot_fx.rs` before #2549; the flame of the torch below stands along +z, so this is
-  not checked against a placed model].
+- Which axis a mode 1 or 9 node turns about: its own +y [hypothesis, from `shot_fx.rs`
+  before #2549: the pistol muzzle flash's mode-1 `HorizontalFlash10` is turned so that
+  its y lies across the barrel].
+- A mode 5 (BSROTATE_ABOUT_UP) node turns about its own +z, its +y towards the camera
+  [hypothesis: the torch's flame under its mode-5 node stands along +z, §2; turned
+  about y as modes 1 and 9 it fell over and was not seen (smoke frame of
+  torch-glow-billboard, first build of #2549); which side faces the camera is a guess,
+  the flame being a volume].
 
 ## 2. The torch at Cottonwood Cove
 
@@ -31,7 +36,8 @@ decode --schema schemas/nif`]:
   facing +z. Texture `textures\effects\FXPartTinyGlowy.dds`, `NiAlphaProperty` flags
   4109, its `NiMaterialProperty` (emissive 1.0, 0.77, 0.40) driven by a controller.
 - block 18 `FlameMesh`: `NiBillboardNode`, mode 5, at z 100.6, holding the flame shape
-  (`FXFireScroll.dds`) and the smoke particle system.
+  `FlameMesh:1` (`FXFireScroll.dds`; 70 vertices from x -10 to 10, y -7.6 to 9.0,
+  z -12.4 to 36.0: a volume standing along +z) and the smoke particle system.
 - The file's string table names the exporter's settings `billboardRigidCenter` and
   `billboardBSUp` beside them [observed].
 
@@ -59,10 +65,10 @@ Now:
   at nests them]. A model drawn in a stored ragdoll pose (`XRGD`) keeps its baked shapes.
 - `world::face_camera` turns every `Billboard` each frame in `PostUpdate` before
   transforms propagate, from that frame's transforms (the propagated ones are a frame
-  old): modes 1, 5 and 9 about the node's y axis, the others with +z straight at the
-  camera [documented: the mode names; hypothesis: the axes, §1].
+  old): modes 1 and 9 about the node's y axis, mode 5 about its z axis, the others with
+  +z straight at the camera [documented: the mode names; hypothesis: the axes, §1].
 - Render streaming logs `world: N placed billboard nodes turn to the camera (M
-  references)` once the first cells are drawn.
+  references)` at the exit, with its streaming summary.
 
 Not done: the difference between the "rigid" and the other modes (whether the card also
 keeps its up, or rolls freely) is not drawn; every non-up mode takes the shortest turn

@@ -24,9 +24,8 @@
 //!   end by the place of its `BeamEnd` node [hypothesis: the node's meaning, from its
 //!   name and its place at the far end of the beam's geometry].
 //! - **Billboards.** A `NiBillboardNode` of these models turns to the camera each
-//!   frame: about its own y axis for the "rotate about up" modes (1, 5, 9), freely for
-//!   the others [documented: nif.xml BillboardMode names; hypothesis: that the node's +z
-//!   is the side shown and +y the "up" it turns about].
+//!   frame (`crate::world::face_camera`, with placed models' ones; the turn per mode in
+//!   docs/spec-notes/billboard-nodes.md).
 //! - **Add-on nodes.** A `BSValueNode` of these models becomes an emitter of its ADDN's
 //!   particle effect for as long as the model is there (`crate::particles`): the sparks
 //!   and smoke of a flash, a missile's trail, the flamer's flame.

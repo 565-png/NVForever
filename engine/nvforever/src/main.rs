@@ -2430,9 +2430,6 @@ fn screenshot_and_exit(
             "cells loaded in {:.2}s ({:.0} ms loading): refs drawn {} (animated {}, doors {}, with named sequences {}, posed {}), disabled {}, not drawn {} {:?}, no model {} (error markers {}), shapes {}",
             *elapsed, s.load_ms, s.refs_drawn, s.refs_animated, s.refs_doors, s.refs_group_rigs, s.refs_posed, s.refs_skipped_disabled, s.refs_skipped_type, s.skipped_types, s.refs_no_model, s.refs_error_marker, s.shapes
         );
-        if s.billboards > 0 {
-            info!("world: {} placed billboard nodes turn to the camera ({} references)", s.billboards, s.refs_billboards);
-        }
     }
     let Some(r) = *ready_at else { return };
     // Pipelines compile during the first seconds; give them time after the last load.
