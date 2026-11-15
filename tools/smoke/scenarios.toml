@@ -2585,7 +2585,7 @@ expect = [
 ]
 order = [["combat: ammo swapped to", "combat: reloaded 13, magazine 13"]]
 
-# Authored field; output belongs to a fresh smoke --out directory.
+# Authored field; every invocation retains its own evidence under the same QA home.
 [[scenario]]
 name = "bc5-signed-normal-owned-field"
 source = "docs/spec-notes/dds-bc5.md: authored rendered material field; engineering comparator policy, not original-game pixels"
@@ -2606,8 +2606,8 @@ forbid = [
   { re = '(?i)bc5 field:.*(FAIL|timeout|missing|wrong byte count)' },
   { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
 ]
-note = "Use a fresh --out directory: the aid creates a new bc5-field-home/bc5-field-output and refuses to replace earlier evidence. Field DDS/geometry are authored in source; the normal world still needs read-only stock bootstrap data. No native filtering or installed-texture claim."
-manual = "Inspect both complete readback-1.ppm and readback-2.ppm under the owned home: signed and reference four-quadrant panels match; both differ from the flat negative. Pin raw RGBA files and authored DDS bytes, review all ROI reports, and retain failures. Queueing a readback is not a rendered result."
+note = "The aid reserves a new run-* child under bc5-field-home/bc5-field-output for every invocation; repeating --out preserves earlier evidence. Field DDS/geometry are authored in source; the normal world still needs read-only stock bootstrap data. No native filtering or installed-texture claim."
+manual = "Inspect both complete readback-1.ppm and readback-2.ppm under the evidence directory logged for this run: signed and reference four-quadrant panels match; both differ from the flat negative. Pin raw RGBA files and authored DDS bytes, review all ROI reports, and retain failures. Queueing a readback is not a rendered result."
 
 # ------------------------------------------------------------------ texture swaps
 

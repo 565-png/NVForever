@@ -212,3 +212,77 @@ fn foreign_layer_entering_after_second_request_prevents_success_and_survives_cle
     assert!(world.get_entity(second).is_err());
     assert!(world.get_entity(foreign).is_ok());
 }
+
+
+#[test]
+fn repeated_registered_launches_initialize_without_replacing_evidence() {
+    // The actual smoke loader/plan/run_launch starts a fresh Rust process twice.
+    // That child calls advance -> owned_data -> make_scene, with no render plugin.
+    let dir = Scratch::new();
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/smoke/tests/test_bc5_field.py");
+    let output = fs::File::create(dir.0.join("launcher.log")).unwrap();
+    let python = std::env::var_os("PYTHON").unwrap_or_else(|| if cfg!(windows) { "python".into() } else { "python3".into() });
+    let mut child = std::process::Command::new(python)
+        .arg(script).arg("--rust-child").arg(std::env::current_exe().unwrap()).arg(&dir.0)
+        .stdout(output.try_clone().unwrap()).stderr(output).spawn().unwrap();
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() { break status; }
+        if start.elapsed() >= Duration::from_secs(50) {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("registered launcher exceeded its bounded initialization deadline");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let log = fs::read_to_string(dir.0.join("launcher.log")).unwrap();
+    println!("{log}");
+    assert!(status.success(), "real registered repeated-launch control failed: {log}");
+    assert!(log.contains("two actual registered launches initialized distinct field recipients"), "{log}");
+}
+
+#[test]
+#[ignore = "fresh process entered only by repeated_registered_launches_initialize_without_replacing_evidence"]
+fn registered_launcher_child_initializes_actual_field() {
+    assert_eq!(std::env::var("NVF_PLAY_TEST_BC5_FIELD").as_deref(), Ok("1"));
+    let home = PathBuf::from(std::env::var_os("NVFOREVER_HOME").unwrap());
+    assert_eq!(home, PathBuf::from("bc5-field-home"));
+    fs::create_dir_all(&home).unwrap();
+    let mut world = World::new();
+    world.insert_resource(GameData { schema: schema(), vfs: Arc::new(fnv_vfs::Vfs::open(&home, &[]).unwrap()) });
+    world.init_resource::<Assets<Image>>();
+    world.init_resource::<Assets<Mesh>>();
+    world.init_resource::<Assets<NifMaterial>>();
+    world.insert_resource(RenderFrames::default());
+    let mut field = Field { started: None, output: None, scene: None, pending: None, completed: 0, after_frame: 0, done: false };
+    let result = advance(&mut world, &mut field, Duration::ZERO);
+    assert!(result.is_ok(), "actual advance initialization failed: {result:?}");
+    assert_eq!(field.scene.as_ref().unwrap().entities.len(), 5);
+    assert!(field.pending.is_none());
+    assert_eq!(field.completed, 0);
+    let out = field.output.as_ref().unwrap();
+    create_file(&out.join("cpu-initialization.txt"), b"actual field initialization only; no GPU or readback\n").unwrap();
+    println!("\nBC5_FIELD_CHILD_OUTPUT={}", std::env::current_dir().unwrap().join(out).display());
+}
+
+#[test]
+fn output_reservation_preserves_legacy_files_and_bounds_collisions() {
+    let dir = Scratch::new();
+    let root = dir.0.join("bc5-field-output");
+    fs::create_dir(&root).unwrap();
+    create_file(&root.join("readback-1.rgba"), b"legacy retained evidence").unwrap();
+    for ordinal in 0..64 {
+        let output = new_output(&dir.0, 1, 2).unwrap();
+        assert_eq!(output, root.join(format!("run-1-2-{ordinal}")));
+        create_file(&output.join("sentinel"), b"retained").unwrap();
+    }
+    assert!(new_output(&dir.0, 1, 2).unwrap_err().to_string().contains("collision limit"));
+    assert_eq!(fs::read(root.join("readback-1.rgba")).unwrap(), b"legacy retained evidence");
+    for ordinal in 0..64 {
+        assert_eq!(fs::read(root.join(format!("run-1-2-{ordinal}/sentinel"))).unwrap(), b"retained");
+    }
+    let other = Scratch::new();
+    create_file(&other.0.join("bc5-field-output"), b"foreign file").unwrap();
+    assert!(new_output(&other.0, 1, 2).is_err());
+    assert_eq!(fs::read(other.0.join("bc5-field-output")).unwrap(), b"foreign file");
+}

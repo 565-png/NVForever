@@ -5,7 +5,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::{Exposure, RenderTarget, ScalingMode, visibility::RenderLayers};
@@ -118,12 +118,12 @@ fn advance(world: &mut World, field: &mut Field, elapsed: Duration) -> Result<()
     if field.scene.is_none() {
         let Some(data) = world.get_resource::<GameData>().cloned() else { return Ok(()) };
         let home = std::env::var_os("NVFOREVER_HOME").ok_or("missing explicit owned NVFOREVER_HOME")?;
-        let output = PathBuf::from(home).join("bc5-field-output");
-        // Never reuse or overwrite an earlier run's assets or evidence.
-        fs::create_dir(&output).map_err(|e| format!("fresh output directory {}: {e}", output.display()))?;
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| format!("output clock: {e}"))?.as_nanos();
+        let output = new_output(Path::new(&home), stamp, std::process::id()).map_err(|e| format!("fresh run output: {e}"))?;
         write_fixture(&output).map_err(|e| format!("authored fixture: {e}"))?;
         let local = owned_data(&output, data.schema.clone())?;
         field.scene = Some(make_scene(world, &local)?);
+        info!("bc5 field: evidence directory {}", output.display());
         field.output = Some(output);
         info!("bc5 field: actual NIF material source, 3 authored panels, 4 quadrants");
     }
@@ -285,6 +285,31 @@ fn compare(bytes: &[u8]) -> Result<Report, String> {
 
 fn create_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     OpenOptions::new().write(true).create_new(true).open(path)?.write_all(bytes)
+}
+
+// Retain previous captures, including the old single-run layout. create_dir is
+// the reservation: even simultaneous runs cannot select the same evidence child.
+fn new_output(home: &Path, stamp: u128, process: u32) -> std::io::Result<PathBuf> {
+    let root = home.join("bc5-field-output");
+    match fs::create_dir(&root) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let meta = fs::symlink_metadata(&root)?;
+            if !meta.is_dir() || meta.file_type().is_symlink() {
+                return Err(std::io::Error::other("output parent is not an ordinary directory"));
+            }
+        }
+        Err(e) => return Err(e),
+    }
+    for attempt in 0..64 {
+        let path = root.join(format!("run-{stamp}-{process}-{attempt}"));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::other("output reservation collision limit"))
 }
 
 fn save_readback(out: &Path, ordinal: u8, frame: u64, bytes: &[u8], report: &Result<Report, String>) -> std::io::Result<()> {

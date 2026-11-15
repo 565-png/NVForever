@@ -533,7 +533,9 @@ impl TextureCache {
         self.load(raw_path, TextureUsage::from_srgb(srgb), true, data, images, formats).map(|(h, _)| h)
     }
 
-    pub(crate) fn normal(
+    /// Load for a material normal slot, returning the source's no-alpha flag.
+    /// Synthesized BC5 storage alpha must not become a specular mask.
+    pub fn normal(
         &mut self,
         raw_path: &str,
         data: &GameData,

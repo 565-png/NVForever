@@ -66,5 +66,65 @@ class Bc5FieldSetupTests(unittest.TestCase):
         self.assertEqual(judge(scenario, markers[:1] + [markers[2], markers[1]] + markers[3:], 0).status, "FAIL")
 
 
+def repeated_rust_initialization(exe: Path, out: Path):
+    """Called by the Rust parent test; actual runner/Popen, no game or GPU."""
+    suite, scenario = Bc5FieldSetupTests().scenario()
+    launch, = plan(suite, [scenario])
+    child = out / "rust-child.py"
+    child.write_text(
+        "import subprocess, sys\n"
+        f"result = subprocess.run([{str(exe)!r}, '--exact', "
+        "'bc5_field::tests::registered_launcher_child_initializes_actual_field', "
+        "'--ignored', '--nocapture'], timeout=20, check=False)\n"
+        "sys.exit(result.returncode)\n", encoding="utf-8")
+    if os.name == "nt":
+        wrapper = out / "rust-child.cmd"
+        wrapper.write_text(f'@"{sys.executable}" "{child}"\n', encoding="utf-8")
+    else:
+        wrapper = out / "rust-child.sh"
+        wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{child}"\n', encoding="utf-8")
+        wrapper.chmod(0o755)
+    env = Env(repo=HERE.parent.parent, out=out, exe=wrapper,
+              data="unused-authored-bootstrap-placeholder", fnvtool=None)
+    import re
+    records = []
+    outputs = []
+    for ordinal in (1, 2):
+        code, error, _ = run_launch(launch, env, None)
+        raw = (out / f"{launch.name}.log").read_text(encoding="utf-8")
+        (out / f"launch-{ordinal}.log").write_text(raw, encoding="utf-8")
+        print(f"registered launch {ordinal}: {code=} {error=}\n{raw}", flush=True)
+        if (code, error) != (0, ""):
+            raise AssertionError(f"actual Rust initialization {ordinal}: {code=} {error=}\n{raw}")
+        if len(re.findall(r"test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; \d+ filtered out;", raw)) != 1:
+            raise AssertionError(f"Rust child did not execute its exact ignored entrypoint: {raw}")
+        lines = [line.removeprefix("BC5_FIELD_CHILD_OUTPUT=") for line in raw.splitlines()
+                 if line.startswith("BC5_FIELD_CHILD_OUTPUT=")]
+        if len(lines) != 1:
+            raise AssertionError(f"missing/duplicate actual child output: {raw}")
+        output = Path(lines[0])
+        if not output.is_relative_to(out / "bc5-field-home" / "bc5-field-output"):
+            raise AssertionError(f"field escaped the delivered home: {output}")
+        if judge(scenario, raw.splitlines(), code).status != "FAIL":
+            raise AssertionError("CPU initialization must not certify rendered success")
+        files = {str(p.relative_to(output)): p.read_bytes()
+                 for p in output.rglob("*") if p.is_file()}
+        if len(files) != 6 or any(p.startswith("readback-") for p in files):
+            raise AssertionError(f"wrong initialization-only evidence: {files.keys()}")
+        outputs.append(output)
+        records.append(files)
+    if outputs[0] == outputs[1]:
+        raise AssertionError("two launches reused one evidence recipient")
+    for output, files in zip(outputs, records):
+        if {str(p.relative_to(output)): p.read_bytes() for p in output.rglob("*") if p.is_file()} != files:
+            raise AssertionError("a later launch replaced earlier evidence")
+    if records[0] != records[1]:
+        raise AssertionError("authored inputs differed across the repeated launches")
+    print("two actual registered launches initialized distinct field recipients; no GPU/readback credit")
+
+
 if __name__ == "__main__":
-    unittest.main()
+    if len(sys.argv) == 4 and sys.argv[1] == "--rust-child":
+        repeated_rust_initialization(Path(sys.argv[2]), Path(sys.argv[3]))
+    else:
+        unittest.main()
