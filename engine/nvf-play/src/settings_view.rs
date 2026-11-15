@@ -228,9 +228,17 @@ impl ViewEntry {
     pub fn selectable(self) -> Option<RowId> {
         match self {
             ViewEntry::Row(id) => Some(id),
-            ViewEntry::Heading(p) => Some(RowId::Heading(p)),
-            ViewEntry::Crumb(_) | ViewEntry::Gap => None,
+            // A crumb opens and closes its place on the search and the Changed list
+            // [design: owner 2026-11-15, the fifth build].
+            ViewEntry::Heading(p) | ViewEntry::Crumb(p) => Some(RowId::Heading(p)),
+            ViewEntry::Gap => None,
         }
+    }
+
+    /// A heading or a crumb: a line naming the rows after it (the page's heading links show
+    /// while there is one).
+    pub fn titles_line(self) -> bool {
+        self.titles()
     }
 
     /// A heading or a crumb: a line naming the rows after it.
@@ -398,6 +406,10 @@ pub struct Folding {
     pub set: Vec<(String, bool)>,
     /// The Tweaks tab's group shown (`None`: its first).
     pub group: Option<String>,
+    /// The places closed on the search and the Changed list (their crumbs' paths), for this
+    /// run only: every place opens again in a new run [design: owner 2026-11-15, the fifth
+    /// build: "in the searched and changed menu the categories cannot be collapsed"].
+    pub crumbs: Vec<String>,
 }
 
 impl Folding {
@@ -416,6 +428,26 @@ impl Folding {
         self.set.retain(|(k, _)| *k != path);
         if open == p.closed_by_default() {
             self.set.push((path, open));
+        }
+        true
+    }
+
+    /// Whether the place at `p` is open on the search and the Changed list.
+    pub fn crumb_open(&self, p: &Placement) -> bool {
+        !self.crumbs.contains(&p.path())
+    }
+
+    /// Open (`true`) or close the place at `p` on the search and the Changed list; false: it
+    /// already was.
+    pub fn put_crumb(&mut self, p: &Placement, open: bool) -> bool {
+        if self.crumb_open(p) == open {
+            return false;
+        }
+        let path = p.path();
+        if open {
+            self.crumbs.retain(|k| *k != path);
+        } else {
+            self.crumbs.push(path);
         }
         true
     }
@@ -476,8 +508,8 @@ pub struct Found {
 pub fn project(layout: &ResolvedLayout, list: &[Setting], scope: SettingsScope, vis: &Visibility, found: &Found, folding: &Folding) -> Vec<ViewEntry> {
     let tab = match scope {
         SettingsScope::Tab(tab) => tab,
-        SettingsScope::Search => return listing(layout, &shown_rows(layout, list, &found.search, vis)),
-        SettingsScope::Changed => return listing(layout, &shown_rows(layout, list, &found.changed, vis)),
+        SettingsScope::Search => return listing_folded(layout, &shown_rows(layout, list, &found.search, vis), |p| folding.crumb_open(p)),
+        SettingsScope::Changed => return listing_folded(layout, &shown_rows(layout, list, &found.changed, vis), |p| folding.crumb_open(p)),
     };
     let mut out = Vec::new();
     let groups = layout.tab(tab).map(|t| t.subgroups()).unwrap_or_default();
@@ -812,6 +844,11 @@ pub fn catalogue(layout: &ResolvedLayout) -> Vec<RowId> {
 /// saying where (its tab and category: `Gameplay > Dialogue`) [design: #1953], an empty line
 /// between the runs.
 pub fn listing(layout: &ResolvedLayout, ids: &[RowId]) -> Vec<ViewEntry> {
+    listing_folded(layout, ids, |_| true)
+}
+
+/// [`listing`] with the places `open` says are closed listed by their crumb alone.
+pub fn listing_folded(layout: &ResolvedLayout, ids: &[RowId], open: impl Fn(&Placement) -> bool) -> Vec<ViewEntry> {
     let mut out = Vec::new();
     let mut at: Option<Placement> = None;
     for &id in ids {
@@ -824,9 +861,17 @@ pub fn listing(layout: &ResolvedLayout, ids: &[RowId]) -> Vec<ViewEntry> {
             out.push(ViewEntry::Crumb(p));
             at = Some(p);
         }
-        out.push(ViewEntry::Row(id));
+        if open(&p) {
+            out.push(ViewEntry::Row(id));
+        }
     }
     out
+}
+
+/// How many of the search's or the Changed list's rows (`ids`, as shown with `vis`) live at
+/// `p` (what its crumb counts).
+pub fn place_count(layout: &ResolvedLayout, list: &[Setting], ids: &[RowId], vis: &Visibility, p: &Placement) -> usize {
+    shown_rows(layout, list, ids, vis).into_iter().filter(|id| placement(layout, *id) == *p).count()
 }
 
 /// The query's terms: split at whitespace, lowercased (Unicode) [design: #1953].
@@ -934,6 +979,22 @@ impl SettingsLayout {
 mod tests {
     use super::*;
     use crate::settings::Settings;
+
+    /// The owner's fifth build note: places on the search and the Changed list close to
+    /// their crumb (which the keys can choose), for the run only, apart from the tabs'.
+    #[test]
+    fn a_place_on_the_search_closes_to_its_crumb() {
+        let layout = ResolvedLayout::default();
+        let ids = [RowId::Setting(0), RowId::Setting(1)];
+        let p = placement(&layout, ids[0]);
+        let mut f = Folding::default();
+        assert_eq!(listing_folded(&layout, &ids, |q| f.crumb_open(q)), [ViewEntry::Crumb(p), ViewEntry::Row(ids[0]), ViewEntry::Row(ids[1])]);
+        assert!(f.put_crumb(&p, false) && !f.put_crumb(&p, false));
+        assert_eq!(listing_folded(&layout, &ids, |q| f.crumb_open(q)), [ViewEntry::Crumb(p)]);
+        assert_eq!(ViewEntry::Crumb(p).selectable(), Some(RowId::Heading(p)));
+        assert!(f.is_open(&p) && f.to_ini().is_empty(), "the tab's category and the INI are untouched");
+        assert!(f.put_crumb(&p, true) && f.crumbs.is_empty());
+    }
 
     const NONE: Found = Found { search: Vec::new(), changed: Vec::new() };
 

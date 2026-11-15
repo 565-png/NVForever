@@ -913,7 +913,7 @@ const OFF: &str = "Off";
 /// A category heading's note and the Tweaks tab's Category row's [design: the menu
 /// overhaul; NVForever's own words].
 const HEADING_NOTE: &str = "Enter or a click opens or closes this category; Left closes it, Right opens it.";
-const GROUP_NOTE: &str = "Which group of tweaks the list shows. The search finds every tweak.";
+const GROUP_NOTE: &str = "Which group of tweaks the list shows: Enter or a click opens the groups, Left and Right step. The search finds every tweak.";
 /// The Tweaks tab's Category row's label [design: owner 2026-11-15].
 const GROUP_ROW: &str = "Category";
 /// A control's value while it waits for its new key.
@@ -1011,6 +1011,9 @@ const STAND_IN_NAMES: usize = 3;
 /// second test: "remove the small line between menu options and description and move the
 /// description one empty space down"].
 const NOTE_GAP: f32 = 32.0 + OPTION_ROW;
+/// The empty line between the note's room and the heading links under it (a line of the
+/// note) [design: owner 2026-11-15, the fifth build].
+const LINKS_GAP: f32 = NOTE_STEP;
 /// The room between the band's right edge and the categories [design: #1210, the scroll
 /// bar and band ran under them at 16:9].
 const TABS_GAP: f32 = 20.0;
@@ -1515,7 +1518,7 @@ struct Window {
 /// ([`PauseView::lines`], [`Drawn::lines`]) to everything that draws, scrolls or points at
 /// the window, so a later layout can make it depend on the view.
 fn window_lines() -> usize {
-    let room = note_bottom() - OPTIONS_TOP - NOTE_GAP - NOTE_LINES as f32 * NOTE_STEP;
+    let room = note_bottom() - OPTIONS_TOP - NOTE_GAP - NOTE_LINES as f32 * NOTE_STEP - LINKS_GAP - ITEM;
     ((room / OPTION_ROW).floor().max(1.0)) as usize
 }
 
@@ -1765,9 +1768,22 @@ fn band(root: &mut ChildSpawnerCommands, look: &PauseLook, node: Node) {
     // sides fade out over [`BAND_FEATHER`] instead of ending in a hard edge [design: owner
     // 2026-11-15, the menu overhaul: "the black overlay behind the menu has hard edges"].
     let mut sheet = node.clone();
-    if let (Val::Vh(w), Val::Vh(m), Val::Vh(f)) = (sheet.width, sheet.margin.left, u(BAND_FEATHER)) {
+    // Placed from the view's middle (the settings page) or from its right (the load page):
+    // each widened by the fade both ways [design: owner 2026-11-15, the fifth build: the load
+    // page's band had hard sides].
+    let widened = match (sheet.width, sheet.margin.left, sheet.right, u(BAND_FEATHER)) {
+        (Val::Vh(w), Val::Vh(m), _, Val::Vh(f)) => {
+            sheet.margin.left = Val::Vh(m - f);
+            Some((w, f))
+        }
+        (Val::Vh(w), _, Val::Vh(r), Val::Vh(f)) => {
+            sheet.right = Val::Vh(r - f);
+            Some((w, f))
+        }
+        _ => None,
+    };
+    if let Some((w, f)) = widened {
         sheet.width = Val::Vh(w + 2.0 * f);
-        sheet.margin.left = Val::Vh(m - f);
         let edge = 100.0 * f / (w + 2.0 * f);
         let black = Color::BLACK.with_alpha(BAND_SHEET);
         let stops = vec![
@@ -1830,7 +1846,9 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
                 Page::Settings { .. } => {
                     let (band_left, band_w) = lb.band();
                     band(root, look, tall(Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(band_left, 0.0, band_w, 0.0) }));
-                    soft_column(root, tall(Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(lb.left, 0.0, lb.width + BAR_GAP + BAR_W, 0.0) }), LIST_SHADE);
+                    // The dark column over the whole band, as on the load page, so the two
+                    // pages' backgrounds match [design: owner 2026-11-15, the fifth build].
+                    soft_column(root, tall(Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(band_left, 0.0, band_w, 0.0) }), LIST_SHADE);
                 }
                 // The band as far past the list's right side as past its left, the soft column
                 // over it as on the settings page [design: owner 2026-11-15, the fourth build].
@@ -1954,11 +1972,9 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     }
     // On the search its line takes the links' place, the rows' whole width; Page Up/Down
     // (LB/RB) still go from heading to heading there [design: #1953].
-    let links = if d.search.is_none() && entries.iter().any(|e| matches!(e, ViewEntry::Heading(_))) { heading_links(root, f, lb, glyphs) } else { left + lb.width };
     if let Some((query, typing)) = &d.search {
-        search_line(root, f, query, *typing, left, links - 10.0 - left);
+        search_line(root, f, query, *typing, left, lb.width - 10.0);
     }
-    let crumbs = !matches!(d.scope, SettingsScope::Tab(_));
     let lines = d.lines.max(1);
     let first = d.scroll.min(entries.len().saturating_sub(lines));
     let drawn = crate::settings_view::drawn_slots(entries, first, lines);
@@ -1966,8 +1982,8 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     for (n, k) in drawn.clone().enumerate() {
         let y = top + n as f32 * OPTION_ROW;
         match entries[k] {
-            ViewEntry::Heading(p) => heading_line(root, look, d, p, selected == Some(RowId::Heading(p)), lb, y),
-            ViewEntry::Crumb(p) => crumb_line(root, look, &shown_case(&heading_words(p, crumbs)), lb, y),
+            ViewEntry::Heading(p) => heading_line(root, look, d, p, selected == Some(RowId::Heading(p)), lb, y, false),
+            ViewEntry::Crumb(p) => heading_line(root, look, d, p, selected == Some(RowId::Heading(p)), lb, y, true),
             ViewEntry::Row(id) => row_line(root, d, look, list, id, selected == Some(id), lb, y, glyphs),
             ViewEntry::Gap => {}
         }
@@ -1981,10 +1997,18 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     };
     root.spawn((SwitchNote, Text::new(note.clone()), Node { display: Display::None, ..default() }));
     let shown = (entries.len() - first.min(entries.len())).min(lines) as f32;
-    note_lines(root, f, &note, lb, top + shown * OPTION_ROW + NOTE_GAP);
+    let note_top = top + shown * OPTION_ROW + NOTE_GAP;
+    note_lines(root, f, &note, lb, note_top);
+    // Previous and Next Category under the note's room, after an empty line [design: owner
+    // 2026-11-15, the fifth build]; PgUp and PgDn (LB and RB) go from title to title on the
+    // search too.
+    if entries.iter().any(|e| e.titles_line()) {
+        heading_links(root, f, lb, glyphs, note_top + NOTE_LINES as f32 * NOTE_STEP + LINKS_GAP);
+    }
     // The open dropdown over the rows under its own (over those above near the bottom).
     let Some((o, names)) = d.dropdown.and_then(|o| Some((o, d.list(o.row)?.0))) else { return };
-    let Some(n) = drawn.clone().position(|k| entries[k] == ViewEntry::Row(RowId::Setting(o.row))) else { return };
+    let at_row = if o.row == GROUP_LIST { RowId::Group } else { RowId::Setting(o.row) };
+    let Some(n) = drawn.clone().position(|k| entries[k] == ViewEntry::Row(at_row)) else { return };
     let shown = names.len().min(DROP_ROWS);
     let h = shown as f32 * DROP_ITEM + 2.0 * LINE;
     let row_top = top + n as f32 * OPTION_ROW;
@@ -2008,10 +2032,10 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
 /// chosen; a click opens or closes it [design: the menu overhaul, owner 2026-11-15]. Bright,
 /// so a heading is never taken for a greyed row.
 #[allow(clippy::too_many_arguments)]
-fn heading_line(root: &mut ChildSpawnerCommands, look: &PauseLook, d: &Drawn, p: crate::settings_layout::Placement, on: bool, lb: ListBox, y: f32) {
+fn heading_line(root: &mut ChildSpawnerCommands, look: &PauseLook, d: &Drawn, p: crate::settings_layout::Placement, on: bool, lb: ListBox, y: f32, crumb: bool) {
     let (count, open) = d.heading(p);
-    let name = shown_case(tr(p.heading.unwrap_or(p.tab)));
-    title_line(root, look, &name, (!open).then_some(count), open, Some((PauseButton::Row(RowId::Heading(p)), on)), lb, y);
+    let name = if crumb { shown_case(&heading_words(p, true)) } else { shown_case(tr(p.heading.unwrap_or(p.tab))) };
+    title_line(root, look, &name, count, open, Some((PauseButton::Row(RowId::Heading(p)), on)), lb, y);
 }
 
 /// A category's or a crumb's line (module notes of [`heading_line`]): a soft dark box behind
@@ -2019,10 +2043,10 @@ fn heading_line(root: &mut ChildSpawnerCommands, look: &PauseLook, d: &Drawn, p:
 /// line takes the keys and the pointer, boxed when chosen [design: owner 2026-11-15, the menu
 /// overhaul: no rule under the words, "add same box blur to the category/section titles"].
 #[allow(clippy::too_many_arguments)]
-fn title_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, count: Option<usize>, open: bool, button: Option<(PauseButton, bool)>, lb: ListBox, y: f32) {
+fn title_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, count: usize, open: bool, button: Option<(PauseButton, bool)>, lb: ListBox, y: f32) {
     let f = &look.faces;
     // The aids read a closed category as "Screen (3)".
-    let read = count.map_or_else(|| words.to_string(), |n| format!("{words} ({n})"));
+    let read = if open { words.to_string() } else { format!("{words} ({count})") };
     root.spawn((HeadingLine, Text::new(read), Node { display: Display::None, ..default() }));
     let bright = color(Shade::Bright);
     let node = from_middle(lb.left, y, lb.width, OPTION_ROW);
@@ -2030,19 +2054,19 @@ fn title_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, co
         let (dir, size) = if open { (Dir::Down, HEADING_ARROW) } else { (Dir::Right, Vec2::new(HEADING_ARROW.y, HEADING_ARROW.x)) };
         crate::menu_shapes::shape(r, look.shapes.as_ref(), Kind::Triangle, dir, Vec2::new(12.0 + HEADING_ARROW.x / 2.0, OPTION_ROW / 2.0), size, bright);
         let x = 12.0 + HEADING_ARROW.x + 12.0;
-        // A closed category's count at the right, centred where the rows' values are, no
-        // brackets [design: owner 2026-11-15, third test]; gone while it is open.
+        // The count of its rows at the right, centred where the rows' values are, no brackets,
+        // only while the line is chosen (the pointer on it, or the keys); never a box round
+        // it, a click still opens and closes it [design: owner 2026-11-15, the fifth build].
         let row = lb.row();
-        let end = if count.is_some() { row.value_left() - LABEL_GAP } else { lb.width - 10.0 };
-        let words = fit_text(|t| f.title.font.width(t), words, end - x);
+        let words = fit_text(|t| f.title.font.width(t), words, row.value_left() - LABEL_GAP - x);
         sm_text(r, &f.title, &words, x, BASE + 2.0, bright);
-        if let Some(n) = count {
-            let n = n.to_string();
+        if button.is_some_and(|(_, on)| on) {
+            let n = count.to_string();
             sm_text(r, &f.title, &n, row.value_at() - f.title.font.width(&n) / 2.0, BASE + 2.0, bright);
         }
     };
     match button {
-        Some((b, on)) => root.spawn((Button, b, boxed(node, on))).with_children(content),
+        Some((b, _)) => root.spawn((Button, b, node)).with_children(content),
         None => root.spawn(node).with_children(content),
     };
 }
@@ -2067,13 +2091,6 @@ fn soft_column(root: &mut ChildSpawnerCommands, node: Node, alpha: f32) {
     });
 }
 
-/// On the search and the Changed list, the line saying where the rows after it live
-/// (`Gameplay > Dialogue`): drawn as a category's title, always open, nothing to choose
-/// [design: #1953; the owner 2026-11-15: "use the same section system in the changed and
-/// search menu so they look the same"].
-fn crumb_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, lb: ListBox, y: f32) {
-    title_line(root, look, words, None, true, None, lb, y);
-}
 
 /// A heading's words, translated: on a tab its heading's (`Saving`); on the search and the
 /// Changed list, which list rows of every tab, where its rows live (`Gameplay > Saving`,
@@ -2116,7 +2133,7 @@ struct SearchText;
 
 /// "Previous heading" and "Next heading" over the rows' right end, each with its key; the
 /// left edge they leave.
-fn heading_links(root: &mut ChildSpawnerCommands, f: &Faces, lb: ListBox, glyphs: &crate::pad::PadGlyphs) -> f32 {
+fn heading_links(root: &mut ChildSpawnerCommands, f: &Faces, lb: ListBox, glyphs: &crate::pad::PadGlyphs, top: f32) -> f32 {
     let mut right = lb.left + lb.width;
     for (k, key) in [(1, KeyCode::PageDown), (0, KeyCode::PageUp)] {
         // The keyboard's keys by their short names ("PgUp)"): the original's "R)" shape
@@ -2128,7 +2145,7 @@ fn heading_links(root: &mut ChildSpawnerCommands, f: &Faces, lb: ListBox, glyphs
         let label = format!("{}  {hint}", tr(HEADING_LINKS[k]));
         let w = crate::pad::hint_width(&f.small, &label, glyphs) + 20.0;
         right -= w;
-        right_entry(root, &f.small, &label, from_middle(right, LINKS_TOP, w, ITEM), w, Shade::Bright, false, PauseButton::HeadingStep(if k == 0 { -1 } else { 1 }), glyphs);
+        right_entry(root, &f.small, &label, from_middle(right, top, w, ITEM), w, Shade::Bright, false, PauseButton::HeadingStep(if k == 0 { -1 } else { 1 }), glyphs);
         right -= 10.0;
     }
     right
@@ -2220,7 +2237,7 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
             root.spawn((Button, PauseButton::Row(id), node)).with_children(|r| {
                 let parts = row_parts(x, ValueKind::List(width(tr(group))));
                 sm_text(r, &f.entry, &fit_text(width, &shown_case(tr(GROUP_ROW)), parts.label_room()), parts.label.0, BASE + 2.0, color(Shade::Bright));
-                list_row(r, look, &parts, id, group, (group, false), false, true);
+                list_row(r, look, &parts, id, group, (group, false), d.dropdown.is_some_and(|o| o.row == GROUP_LIST), true);
             });
         }
         // Drawn by `heading_line`.
@@ -2884,6 +2901,8 @@ struct RowEffects {
     picks: Vec<(usize, String)>,
     /// The Tweaks tab's Category row stepped: to the group after (1) or before (-1).
     group_step: Option<i32>,
+    /// The Category row's list is to open.
+    group_open: bool,
 }
 
 /// The controls' state a Controls row's action needs.
@@ -2988,18 +3007,25 @@ fn act_on_row(id: RowId, action: RowAction, settings: &Settings, view: &mut Paus
         // A category: Enter and a click open or close it, Left closes, Right opens [design:
         // the menu overhaul, owner 2026-11-15].
         RowId::Heading(p) => {
+            // On the search and the Changed list a place, for this run only.
+            let crumb = !matches!(view.scope, SettingsScope::Tab(_));
+            let now = if crumb { view.folding.crumb_open(&p) } else { view.folding.is_open(&p) };
             let open = match action {
-                Activate => !view.folding.is_open(&p),
+                Activate => !now,
                 Step(s) => s > 0,
                 Clear => return,
             };
-            if view.folding.put(&p, open) {
+            let changed = if crumb { view.folding.put_crumb(&p, open) } else { view.folding.put(&p, open) };
+            if changed {
                 info!("pause menu: category {} {}", p.path(), if open { "opened" } else { "closed" });
                 sounds.write(flipped);
             }
         }
+        // The Tweaks tab's Category row: Enter or a click opens the list of its groups,
+        // Left and Right step [design: owner 2026-11-15, the fifth build: "it switches to the
+        // next category but does not open"].
         RowId::Group => match action {
-            Activate => fx.group_step = Some(1),
+            Activate => fx.group_open = true,
             Step(s) => fx.group_step = Some(s),
             Clear => {}
         },
@@ -3219,7 +3245,7 @@ fn read_settings_tab(file: Option<Res<crate::settings::SettingsFile>>, mut store
         info!("settings page: [{TAB_SECTION}] {FOLDING_KEY}={fold}, {GROUP_KEY}={group} read from {}", path.display());
     }
     if let Some(mut view) = view {
-        view.folding = Folding { set: Folding::from_ini(&fold), group: (!group.is_empty()).then_some(group.clone()) };
+        view.folding = Folding { set: Folding::from_ini(&fold), group: (!group.is_empty()).then_some(group.clone()), crumbs: std::mem::take(&mut view.folding.crumbs) };
     }
     let folding = (!fold.is_empty() || !group.is_empty()).then_some((fold, group));
     *store = SettingsTabStore { path: Some(path), tab, folding };
@@ -4082,6 +4108,13 @@ fn choose(
             // Out of reach: the list stays open on it, its reason under the rows.
             refuse_choice(&mut commands, o.row, name.clone());
             o.at = k;
+        } else if let Some(name) = take.and_then(|k| names.get(k)).filter(|_| o.row == GROUP_LIST) {
+            // The Tweaks tab's group.
+            info!("pause menu: tweaks category {name}");
+            view.folding.group = Some(name.clone());
+            view.scroll = 0;
+            sounds.write(UiSound { menu: UiMenu::Settings, event: UiEvent::Flipped });
+            shut = true;
         } else if let Some(name) = take.and_then(|k| names.get(k)) {
             pick_choice(&mut commands, &mut sounds, o.row, name.clone());
             shut = true;
@@ -4742,6 +4775,9 @@ fn choose(
         sounds.write(UiSound { menu: UiMenu::Pause, event: UiEvent::Focus });
     }
     // The Tweaks tab's Category row: the group after or before, the list from its top.
+    if fx.group_open {
+        open_dropdown(&mut view, GROUP_LIST);
+    }
     if let (Some(step), SettingsScope::Tab(t)) = (fx.group_step, view.scope) {
         let groups = layout.tab(t).map(|t| t.subgroups()).unwrap_or_default();
         if !groups.is_empty() {
@@ -4805,6 +4841,10 @@ fn pick_choice(commands: &mut Commands, sounds: &mut MessageWriter<crate::ui_sou
         crate::settings::pick(world, i, &name);
     });
 }
+
+/// The Tweaks tab's Category row's list, in place of a list row's index ([`Dropdown::row`],
+/// [`Drawn::lists`]).
+const GROUP_LIST: usize = usize::MAX;
 
 /// Open list row `i`'s dropdown on its chosen one.
 fn open_dropdown(view: &mut PauseView, i: usize) {
@@ -4947,9 +4987,18 @@ fn drawn_now(world: &mut World) -> Drawn {
         let none = crate::settings_layout::ResolvedLayout::default();
         let layout = world.get_resource::<SettingsLayout>().map_or(&none, |l| &l.layout);
         let view = world.resource::<PauseView>();
+        let ids = match view.scope {
+            SettingsScope::Search => &view.found.search[..],
+            SettingsScope::Changed => &view.found.changed[..],
+            SettingsScope::Tab(_) => &[][..],
+        };
         let headings = lines
             .iter()
-            .filter_map(|e| if let ViewEntry::Heading(p) = e { Some((*p, crate::settings_view::category_count(layout, &list, p, &vis), view.folding.is_open(p))) } else { None })
+            .filter_map(|e| match e {
+                ViewEntry::Heading(p) => Some((*p, crate::settings_view::category_count(layout, &list, p, &vis), view.folding.is_open(p))),
+                ViewEntry::Crumb(p) => Some((*p, crate::settings_view::place_count(layout, &list, ids, &vis, p), view.folding.crumb_open(p))),
+                _ => None,
+            })
             .collect();
         let group = match view.scope {
             SettingsScope::Tab(t) => view.folding.group_of(&layout.tab(t).map(|t| t.subgroups()).unwrap_or_default()),
@@ -4957,10 +5006,15 @@ fn drawn_now(world: &mut World) -> Drawn {
         };
         (headings, group)
     };
-    let lists: Vec<(usize, Vec<String>, String)> = {
+    let mut lists: Vec<(usize, Vec<String>, String)> = {
         let settings = world.resource::<Settings>();
         (0..list.len()).filter_map(|i| settings.choices(i).map(|c| (i, (c.names)(world), (c.chosen)(world)))).collect()
     };
+    // The Tweaks tab's groups, for its Category row's list ([`GROUP_LIST`]).
+    if let (Some(g), SettingsScope::Tab(t)) = (group, world.resource::<PauseView>().scope) {
+        let groups = world.get_resource::<SettingsLayout>().and_then(|l| l.layout.tab(t)).map(|t| t.subgroups()).unwrap_or_default();
+        lists.push((GROUP_LIST, groups.iter().map(|s| s.to_string()).collect(), g.to_string()));
+    }
     let looks: Vec<(usize, ListLooks)> = {
         let settings = world.resource::<Settings>();
         lists
@@ -5563,17 +5617,19 @@ mod tests {
         assert_eq!((x.value_at(), x.value_left(), x.meter_left(), x.arrows(), x.list_left()), (VALUE_AT, LIST_LEFT, METER_LEFT, METER_ARROWS, LIST_LEFT));
         let x = RowX(1036.0);
         assert_eq!((x.0 - x.value_at(), x.0 - x.list_left(), x.0 - x.arrows()[1]), (ROW_BASE - VALUE_AT, ROW_BASE - LIST_LEFT, ROW_BASE - METER_ARROWS[1]));
-        // The window's lines (12 today: the note's empty line above it took one, the owner's
-        // second test) and a note of three lines fit above the view's bottom margin, and one
-        // more line would not (#2377, the menu overhaul).
+        // The window's lines (11 today: the note's empty line above it took one, the owner's
+        // second test; the heading links under the note another, the fifth build) and a note
+        // of three lines and the links fit above the view's bottom margin, and one more line
+        // would not (#2377, the menu overhaul).
         let lines = window_lines();
-        assert_eq!(lines, 12);
+        assert_eq!(lines, 11);
         let note_top = OPTIONS_TOP + lines as f32 * OPTION_ROW + NOTE_GAP;
+        let below = NOTE_LINES as f32 * NOTE_STEP + LINKS_GAP + ITEM;
         assert_eq!(note_fit(2, note_top), 2);
         assert_eq!(note_fit(30, note_top), NOTE_LINES);
         assert_eq!(note_fit(30, OPTIONS_TOP + NOTE_GAP), NOTE_LINES, "a short list's note is no longer either");
-        assert!(note_top + NOTE_LINES as f32 * NOTE_STEP <= note_bottom() && note_bottom() < 960.0);
-        assert!(note_top + OPTION_ROW + NOTE_LINES as f32 * NOTE_STEP > note_bottom(), "a 13th line would leave no room for the note");
+        assert!(note_top + below <= note_bottom() && note_bottom() < 960.0);
+        assert!(note_top + OPTION_ROW + below > note_bottom(), "a 12th line would leave no room for the note and the links");
     }
 
     /// The systems that read or write the world aids' clock (directly or through
