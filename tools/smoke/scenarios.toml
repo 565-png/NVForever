@@ -29169,6 +29169,22 @@ order = [[
 forbid = [{ text = "EDE1Ref: does not talk", label = "ED-E has a greeting to say" }]
 
 [[scenario]]
+name = "mod-diagnostic-log-tool"
+kind = "tool"
+source = "docs/handoff/mod-diagnostic-cli.md: actual bounded mod-log CLI over two authored log files; log records differ from reported exit totals, and private words are opt-in"
+areas = ["scripts", "extender", "mods"]
+paths = ["crates/fnvtool/src/mod_log_digest.rs", "crates/fnvtool/src/ext_cmd.rs", "tools/smoke/fixtures/mod-diagnostics/"]
+commands = [["ext", "mod-log", "{repo}/tools/smoke/fixtures/mod-diagnostics/run.txt", "--previous", "{repo}/tools/smoke/fixtures/mod-diagnostics/before.txt"]]
+expect = [
+  { json = "detail", schema = "fnv.ext.mod_log/1", equals = false },
+  { json = "run.sessions.#", schema = "fnv.ext.mod_log/1", equals = 1 },
+  { json = "run.sessions.0.exit_rows_present", schema = "fnv.ext.mod_log/1", equals = true },
+  { json = "run.sessions.0.log_records.script_failure", schema = "fnv.ext.mod_log/1", equals = 1 },
+  { json = "run.sessions.0.reported_exit_counts.skipped_statements", schema = "fnv.ext.mod_log/1", equals = 47 },
+  { json = "changes.session", schema = "fnv.ext.mod_log/1", equals = 0 },
+]
+
+[[scenario]]
 name = "mccarran-boyd-one-body"
 source = "issue #2461 (owner): after the Silus interrogation Lt. Carrie Boyd (LieutenantBoydREF 0x000F0678, CampMCTermInt02) was drawn twice, one body in the room and one outside the door, and the one in the room talked as the other. The scene's records: Silus's GREETING (INFO 0x000F1873) MoveTo's her to BoydExitREF 0x000FA73E (325, 719); the assassin trick's line (INFO 0x000F2DDE) MoveTo's her to XMarker 0x000FB4E1 (467, 1386) by the room's door and its end script sets bBoydEnter, so VFreeformMcCarran2BoydPatrolReturn walks her to her linked ref 0x000FA73D (296, 1665) in the room; the trigger 0x000FA742 there starts the POW2Int exchange with Silus, whose last line sets bBoydExit, and VFreeformMcCarran2BoydPatrolExit walks her back to BoydExitREF. One body per reference throughout (engine/nvforever/src/residents.rs drawn_twice, nav.rs show_actor)"
 note = "the player stands in the interrogation room; Silus's greeting is said at 3 s and the trick's line at 8 s (as the dialogue would, conditions not required). The census is taken at exit; the warnings name a body spawned and lost before it was found"
@@ -30131,17 +30147,64 @@ forbid = [
 ]
 
 [[scenario]]
-name = "mod-diagnostic-log-tool"
-kind = "tool"
-source = "docs/handoff/mod-diagnostic-cli.md: actual bounded mod-log CLI over two authored log files; log records differ from reported exit totals, and private words are opt-in"
-areas = ["scripts", "extender", "mods"]
-paths = ["crates/fnvtool/src/mod_log_digest.rs", "crates/fnvtool/src/ext_cmd.rs", "tools/smoke/fixtures/mod-diagnostics/"]
-commands = [["ext", "mod-log", "{repo}/tools/smoke/fixtures/mod-diagnostics/run.txt", "--previous", "{repo}/tools/smoke/fixtures/mod-diagnostics/before.txt"]]
+name = "weather-region-cell-stairs"
+source = "#2531; docs/spec-notes/world.md §6 [observed: captures run15b_w and run15b_w2, 2026-11-15]: walking across NVLegateRegion's outline inside cell 26,4 holds the region weather until another exterior cell is entered"
+note = "[design, #2531] Written without running the game. Start on the Legate's stairs, face east, move forward for 1 s (about 270 units, across outline x 109513 but short of cell border x 110592), then stand. The console reads player x after the move to verify the outline was crossed; [hypothesis: movement distance is provisional until the main session runs this scenario]."
+areas = ["sky", "weather"]
+paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/world.rs", "crates/fnv-world/src/sky.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_LOOK = "2:90:0", NVF_PLAY_TEST_MOVE = "6:1:0,7:0:0", NVF_PLAY_TEST_CONSOLE = "9:player.getpos x;9.5:close" }
+args = ["--cell", "Goodsprings", "--pos=109330,18852,5470", "--play", "--hour", "17.4", "--no-voice", "--no-messages"]
+run_seconds = 18
 expect = [
-  { json = "detail", schema = "fnv.ext.mod_log/1", equals = false },
-  { json = "run.sessions.#", schema = "fnv.ext.mod_log/1", equals = 1 },
-  { json = "run.sessions.0.exit_rows_present", schema = "fnv.ext.mod_log/1", equals = true },
-  { json = "run.sessions.0.log_records.script_failure", schema = "fnv.ext.mod_log/1", equals = 1 },
-  { json = "run.sessions.0.reported_exit_counts.skipped_statements", schema = "fnv.ext.mod_log/1", equals = 47 },
-  { json = "changes.session", schema = "fnv.ext.mod_log/1", equals = 0 },
+  { re = 'weather roll: NVlegateCampWeather .*from region NVLegateRegion .*at the start', label = "the start samples the camp region" },
+  { re = 'console: GetPos on player >> (?P<n>[\d.]+)', range = [109514, 110591], label = "the player crossed the outline and stayed in cell 26,4" },
+]
+forbid = [{ text = "on leaving a weather region", label = "crossing the outline inside the cell keeps camp weather" }]
+
+[[scenario]]
+name = "detection-combat-target-sneak"
+source = "[observed: captures run15b_t1/run15b_t2, 2026-11-15; docs/handoff/observer-checks.md check 200; docs/spec-notes/actor-behaviour.md section 2.1a] #2573: the player's own attacker reads the sneaking player higher than a fighter busy with someone else at comparable distances"
+note = "[design, #2573] `detection-combat-target-sneak` uses the cleared Searchlight Airport runway at hour 12 with god mode. The player sneaks from 2 s and stands still. Fighter GoodspringsSettler01Ref (00104F03) and watcher GoodspringsSettler03Ref (00104F0A) have Perception 5 and Assistance 0; the watcher is removed from all factions. A gecko is created at the watcher with Aggression 0 and Perception 0, then positioned 150 units toward the player. Both settlers reset to mirrored 690-unit offsets at 5.8 s and the gecko resets at 5.9 s. At 6 s the fighter starts combat with the player and the watcher with the gecko. Five paired GetDetectionValue/GetDistance reads run every 0.5 s from 6.6 to 8.6 s. Every fighter value must exceed its paired watcher value; distances are logged without absolute ranges. [observed: smoke runs on the combined build, 2026-11-15] With the fix, both detectors at 690 units read fighter 64 / watcher 56; the fighter closing to 610 read 69 (PASS). With both detection.rs files reverted to upstream main, fighter 84-88 / watcher 91 in all five pairs (FAIL)."
+areas = ["detection", "alert"]
+paths = ["crates/fnv-game/src/detection.rs", "engine/nvforever/src/detection.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "1:killall;1.3:close", NVF_PLAY_TEST_CONTROL = "2:sneak", NVF_PLAY_TEST_SCRIPT = "3:moveto:GoodspringsSettler01Ref:player:690:0:0,3:moveto:GoodspringsSettler03Ref:player:-690:0:0,3:set_av:GoodspringsSettler01Ref:Perception:5,3:set_av:GoodspringsSettler03Ref:Perception:5,3:set_av:GoodspringsSettler01Ref:Assistance:0,3:set_av:GoodspringsSettler03Ref:Assistance:0,3:call:GoodspringsSettler03Ref:RemoveFromAllFactions,4:call:GoodspringsSettler03Ref:PlaceAtMe:NVCrGecko:1,4.1:set_av:0xFF000000:Aggression:0,4.1:set_av:0xFF000000:Perception:0,5:moveto:0xFF000000:GoodspringsSettler03Ref:150:0:0,5.8:moveto:GoodspringsSettler01Ref:player:690:0:0,5.8:moveto:GoodspringsSettler03Ref:player:-690:0:0,5.9:moveto:0xFF000000:GoodspringsSettler03Ref:150:0:0,6:combat:GoodspringsSettler01Ref:player,6:combat:GoodspringsSettler03Ref:0xFF000000,6.6:call:GoodspringsSettler01Ref:GetDetectionValue:player,6.6:call:GoodspringsSettler01Ref:GetDistance:player,6.6:call:GoodspringsSettler03Ref:GetDetectionValue:player,6.6:call:GoodspringsSettler03Ref:GetDistance:player,7.1:call:GoodspringsSettler01Ref:GetDetectionValue:player,7.1:call:GoodspringsSettler01Ref:GetDistance:player,7.1:call:GoodspringsSettler03Ref:GetDetectionValue:player,7.1:call:GoodspringsSettler03Ref:GetDistance:player,7.6:call:GoodspringsSettler01Ref:GetDetectionValue:player,7.6:call:GoodspringsSettler01Ref:GetDistance:player,7.6:call:GoodspringsSettler03Ref:GetDetectionValue:player,7.6:call:GoodspringsSettler03Ref:GetDistance:player,8.1:call:GoodspringsSettler01Ref:GetDetectionValue:player,8.1:call:GoodspringsSettler01Ref:GetDistance:player,8.1:call:GoodspringsSettler03Ref:GetDetectionValue:player,8.1:call:GoodspringsSettler03Ref:GetDistance:player,8.6:call:GoodspringsSettler01Ref:GetDetectionValue:player,8.6:call:GoodspringsSettler01Ref:GetDistance:player,8.6:call:GoodspringsSettler03Ref:GetDetectionValue:player,8.6:call:GoodspringsSettler03Ref:GetDistance:player" }
+args = ["--cell", "Goodsprings", "--pos=39511,-116487,6180", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 12
+expect = [
+  { re = 'script: test aid calls GetDetectionValue on GoodspringsSettler01Ref = Num\((?P<n>-?[\d.]+)\)', count = 5, label = "all five fighter detection values were read" },
+  { re = 'script: test aid calls GetDetectionValue on GoodspringsSettler03Ref = Num\((?P<n>-?[\d.]+)\)', count = 5, label = "all five watcher detection values were read" },
+  { re = 'script: test aid calls GetDetectionValue on GoodspringsSettler01Ref = Num\((?P<n>-?[\d.]+)\)', above = 'script: test aid calls GetDetectionValue on GoodspringsSettler03Ref = Num\((?P<n>-?[\d.]+)\)', label = "the player's attacker reads the sneaking player higher than the distracted watcher in every pair" },
+  { re = 'script: test aid calls GetDistance on GoodspringsSettler01Ref = (?P<n>[\d.]+)', count = 5, label = "all five fighter distances were read for diagnosis" },
+  { re = 'script: test aid calls GetDistance on GoodspringsSettler03Ref = (?P<n>[\d.]+)', count = 5, label = "all five watcher distances were read for diagnosis" },
+  { re = 'alert: \S+ 00104F03 (Normal|Alert) → Combat: .*the player', label = "the fighter enters Combat with the player" },
+  "detection summary",
+]
+
+[[scenario]]
+name = "legion-assassins-armed"
+source = "#2683 (crates/fnv-game/src/resurrect.rs; crates/fnv-sim/src/world.rs World::restock_inventory): the Legion hit squad is four placed references the shipped script resurrects for every visit (VFactionSquadListSCRIPT); a resurrected dead actor has the items of its own list made up again, so a squad whose bodies were looted comes armed the next time"
+note = "the squad's leader (VEFR02LegionThugLeaderCMRef 0x00163414, his weapons in leveled lists of his own item list) is set on the player at 6 s: he takes up a weapon. Killed at 9 s and stripped at 10 s (RemoveAllItems, as a player who loots the body bare), resurrected at 11 s as the squad script does: his own items are made up again, a weapon among them. Set on the player again at 13 s: he takes up a weapon again. (The squad's own quest keeps him disabled here; none of this needs him drawn)"
+areas = ["ai", "combat", "scripts"]
+paths = ["crates/fnv-game/src/resurrect.rs", "crates/fnv-sim/src/world.rs", "engine/nvforever/src/resurrect.rs", "crates/fnv-game/src/style_weapon.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "4.5:moveto:VEFR02LegionThugLeaderCMRef:player:0:400:0,6:call:VEFR02LegionThugLeaderCMRef:StartCombat:player,9:kill:VEFR02LegionThugLeaderCMRef,10:call:VEFR02LegionThugLeaderCMRef:RemoveAllItems,11:call:VEFR02LegionThugLeaderCMRef:Resurrect,13:call:VEFR02LegionThugLeaderCMRef:StartCombat:player" }
+args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 18
+order = [[
+  { re = 'style weapon: VEFR02LegionThugLeaderCMRef 0x00163414 takes up \w+ 0x[0-9A-F]{8}', label = "the fresh leader takes up a weapon" },
+  { re = 'resurrect: 0x00163414 has its own items made up again: .*\d+ Weap\w+.*; it carries', label = "resurrected after being stripped, his own items are made up again, a weapon among them" },
+  { re = 'style weapon: VEFR02LegionThugLeaderCMRef 0x00163414 takes up \w+ 0x[0-9A-F]{8}', label = "the resurrected leader takes up a weapon again" },
+]]
+
+[[scenario]]
+name = "gomorrah-suite-sconce-glow"
+source = "issue #2435: the Gomorrah Suites (Gomorrah03) wall sconces (NeoclassicalSconce, clutter/neoclassical/neoclassicalsconce.nif) drew their glow card NeoclassicalSconce:9 (unlit, ONE / ONE, no texture, vertex colour 0.34 at the bowl to black on its outline) as a flat pale board with a hard outline: the shader added the room's fog colour over the whole card, and the unlit vertex colours, made linear at the vertices, stayed bright almost to the black edge (docs/spec-notes/nif.md section 6 'Fog on added light', 'Unlit vertex colours as display values'); frames in target/smoke facing the sconce 0011A90A (gomorrah_sconce_near.png) and from the side (gomorrah_sconce_side.png)"
+areas = ["materials", "interiors"]
+paths = ["engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_spawn.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOTO = "6:5900:2250:6384", NVF_PLAY_TEST_LOOK = "6.5:90:8,9:50:8", NVF_PLAY_TEST_SHOTS = "8:gomorrah_sconce_near.png,10.5:gomorrah_sconce_side.png" }
+args = ["--play", "--cell", "Gomorrah03", "--pos=6015,1700,6384", "--heading", "0", "--no-voice", "--no-messages"]
+run_seconds = 12
+manual = "gomorrah_sconce_near.png: the wash of light above the bowl is brightest at the bowl and fades out towards its outline, without a pale flat board of even brightness; the room stays dark but readable"
+expect = [
+  { re = 'test aid: screenshot .*gomorrah_sconce_near\.png', label = "the frame facing the sconce is saved" },
+  { re = 'test aid: screenshot .*gomorrah_sconce_side\.png', label = "the frame from the side is saved" },
 ]
