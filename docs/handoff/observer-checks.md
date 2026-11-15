@@ -2197,13 +2197,67 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      0x00084257 and 0x00084258 by the entrance)? Ours since #2420: shown sprung, fires
      once.
 
+## Added 2026-11-14 (HELIOS One's guard dogs and troopers, #2547)
+
+144. **Do HELIOS One's guard dogs fight the troopers in the original, and what holds
+     them if not?** (P2; #2547, factions.md §4-5, combat-ai.md §13.1.) The three dogs
+     0x000A695E, 0x000A695F and 0x000A6944 (CrDogNCRAggressive 0x000A692B, "NCR Guard
+     Dog", placed at about (25542, 1960), linked to patrol markers there) are in no NCR
+     faction: their own factions are GeneralHostileToPlayerFaction (Enemy of
+     PlayerFaction), CreatureHitDog, DogFaction and AnimalFriendFaction; the template
+     CrDogNCR, which is in ArmorNCRFactionNV and VNCRSnifferFaction, does not supply
+     the factions or the AI data (template flags Traits, Stats, Actor Effect List,
+     Model/Animation, Base Data, Inventory, Script). They are Very Aggressive, Foolhardy,
+     Aggro Radius Behavior on with radius 2,000 [observed: the records]. The troopers
+     TestTrooperREF1-5 (HeliosExtLvlNCRTrooperGun: VNCRHeliosFaction, NCRFactionNV)
+     stand about 2,800 units west at (22778, 1293). No faction of either side lists one
+     of the other's, so they are Neutral both ways, and by the documented rule a Very
+     Aggressive actor attacks Neutrals it detects. Ours: the dogs notice the troopers at
+     2,800-3,200 units and attack, again and again [observed: the log of #2547]. To
+     check, the player standing in the solar field for two game minutes (`tdetect` so
+     the dogs leave the player out of it): on each dog `GetDetected TestTrooperREF4`,
+     `IsInCombat`, `GetCombatTarget`, `GetDistance TestTrooperREF4`,
+     `GetFactionRelation TestTrooperREF4`, `GetAV Aggression`; then `MoveTo` one dog to
+     1,900 and to 900 units from TestTrooperREF4 and read the same. That tells apart: no
+     detection at that range or through the yard's fence; an aggro radius that bounds
+     who a Very Aggressive actor attacks on sight (a fight at 1,900 and none at 2,800);
+     a relation that is not Neutral; or a fight in the original too.
+
+## Added 2026-11-14 (unseen actors whose package place cannot be walked to, #2405)
+
+145. **Where does the original put an actor nobody sees whose package place has no way
+     to it?** (P2; #2405, packages.md §9, actor-behaviour.md "processing levels".)
+     `GomezREF` (0x0015A02E) is placed in a side room of SafehouseNCRINT at (7691, 742,
+     6127), on a navmesh island of two triangles; from a new game the quest script holds
+     `vSafehouse.GomezGoToSleep` at 1 on every day but his visiting day, so his Leave
+     package (Travel to `GomezDoor` 0x0015A02B at (2811, 951, 6438), on another island
+     of the cell, no door between) is the one that is valid [observed: the records,
+     `fnvtool nav path`]. Ours: he cannot walk there and stays, reporting it every hour.
+     To check, on a new game, far from the safehouse, after three game hours and again
+     after a day: `GomezREF.GetPos x`, `GetPos y`, `GetUnconscious`, `GetCurrentAIPackage`,
+     `GetActorProcessingLevel`. At (2811, 951) or at `GomezSleep` and unconscious: the
+     original places unseen actors at their package's place (and the door trigger
+     0x0015A031 then fires). Still at (7691, 742): it leaves them. The same for
+     `AtticusREF` (0x0015A04E, SafehouseLegionINT). And `SSHQMalcolmHolmesREF`
+     (0x0010651A): after he has met the player outdoors and walked out of sight, is he
+     back in RandomEncounterNPCs at (1825, 2079, 6976)?
+
+160. **Where is Loyal once Volare! has failed, and can the player reach him?** (P2; #2566,
+     navmesh.md §4 "Disabled load doors".) Kill Argyll (NellisArgyllREF) at Nellis
+     before the B-29 is raised: VMS15 stage 116 fails Volare!, which GetQuestCompleted
+     reads as 1, so Loyal's first package, NellisLoyalB29SandboxAIPackage, wants him in
+     NellisHangar1b, whose only doors (0x001093DB/0x001093DC) stay disabled until the
+     B-29 is up. Where is Loyal then (NellisHangar2, NellisHangar1, NellisHangar1b), and
+     where does Render Unto Caesar's Boomer-leadership marker point? [hypothesis: the
+     original does not move him through a disabled door; ours keeps him where he is.]
+
 ## Added 2026-11-14 (observer batch o30: Say / SayTo on a speaker already talking, #1858)
 
 Answered for the talking state (scripts.md §7.7): a Say or SayTo on a speaker that is
 already talking takes over at once, same topic or another; nothing is queued or ignored
 [observed: o30_say, o30b_say]. Open:
 
-144. **Do the voice and the subtitle restart with each call, as the talking state does?**
+161. **Do the voice and the subtitle restart with each call, as the talking state does?**
     (P2; the Strip gate's every-frame SayTo, scripts.md §7.7.) Needs the game in front (its
     sound and subtitles stop without focus), so the owner: stand in the gate kill zone at
     the Freeside -> Strip gate (VFSVegasAnnihilationVolumeREF, FreesideWorld near

@@ -1210,7 +1210,7 @@ at random, Say Once a Day), and a response is timed in one place
   IsTalking on without a break and lets it go one span after the last call. What these
   runs could not show is whether the voice and the subtitle restart with each call too:
   the game, not in front, played no sound into the loopback recording and the screenshots
-  caught the desktop. That is observer check 144, for the owner.
+  caught the desktop. That is observer check 161, for the owner.
 - What this reproduces [observed, §10.2–10.3]: Doc's SayTo VCG01Intro takes the next
   unsaid line each time; three lines' end scripts chain SayTo to reach the line that sets
   stage 10; the first line of the topic is said again at stage 60 when it was never said
