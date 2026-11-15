@@ -2468,6 +2468,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      says the flag beats the disguise (then the disguise works only through the
      reputation reset, reputation.md §4).
 
+## Added 2026-11-15 (Anders's head on the cross, #2471)
+
+174. **Does a crucified actor turn his head to the player, and is he ever seen climbing
+     onto the cross?** (P3; #2471, anders-cross-head.md.) At Cottonwood Cove, talk to
+     Anders (VRRCAndersREF 0x001413C3, cross 0x0013A4BA) from the front and from 90° to
+     his side. Note whether his head turns to the player in each, how far to the side it
+     goes, and whether it stays tilted down. Then leave the cell and come back (and, on
+     a new game, arrive by fast travel) and note whether he is ever seen getting onto the
+     cross (`GetSitting` reading 2) or always found on it (3). Ours since #2471: the head
+     turns up to 60° from his chest and up to 30° from the level; he is put on the cross
+     at once when he stands at it [design].
+
 ## Added 2026-11-14 (talking activators with no talking actor set, #2454)
 
 185. **Who speaks through a talking activator no script has given an actor?** (P2; #2454,
