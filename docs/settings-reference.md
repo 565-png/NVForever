@@ -890,11 +890,12 @@ After the Controls tab's own rows (see the end of this page):
 ### `smooth-terrain`: Smooth terrain
 
 - On the page: On: the ground between the landscape's points is drawn and walked on as a
-  smooth surface, at most one height step from the stored ground. Off: the stored triangles.
-  Takes effect at the next start.
+  smooth surface, by default within one height step of the stored ground. Off: the stored
+  triangles. Applies at the next start.
 - In full: On (the default, the maintainer's decision of 2026-11-13): each grid square of the
   landscape is drawn and collided as 2 × 2 squares on a smooth surface through the stored
-  points, never more than one height step (8 units) from the stored triangles, so slopes and
+  points, with the default recipe never more than one height step (8 units) from the stored
+  triangles (the test aids below allow up to 16), so slopes and
   ridges lose their steps and zig-zags; actors and objects stand on what is drawn. Off: the
   landscape's triangles as stored. It takes effect at the next start (loading a save starts
   the game again), so drawn ground and collision always change together. Not in the original.

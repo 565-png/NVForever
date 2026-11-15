@@ -27762,7 +27762,7 @@ forbid = [{ text = "player fell through", label = "the collision is where the gr
 
 [[scenario]]
 name = "terrain-smoothing-fit-s2-b8"
-source = "#2149 pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default stays interpolate, 2 x 2, bound 8"
+source = "[design, #2149] pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default stays interpolate, 2 x 2, bound 8"
 note = "Fitted LAND vertices at the default subdivision and bound: the start names the recipe, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
 areas = ["rendering", "terrain"]
 paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
@@ -27779,7 +27779,7 @@ forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test 
 
 [[scenario]]
 name = "terrain-smoothing-interpolate-s4-b8"
-source = "#2149 pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default stays interpolate, 2 x 2, bound 8"
+source = "[design, #2149] pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default stays interpolate, 2 x 2, bound 8"
 note = "The LAND vertices kept, 4 x 4 squares (four times the triangles): the start names the recipe, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
 areas = ["rendering", "terrain"]
 paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
@@ -27796,7 +27796,7 @@ forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test 
 
 [[scenario]]
 name = "terrain-smoothing-fit-s4-b12"
-source = "#2149 pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default stays interpolate, 2 x 2, bound 8"
+source = "[design, #2149] pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default stays interpolate, 2 x 2, bound 8"
 note = "Fitted, 4 x 4, within 12 units: the start names the recipe, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
 areas = ["rendering", "terrain"]
 paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
@@ -27813,7 +27813,7 @@ forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test 
 
 [[scenario]]
 name = "terrain-wireframe-live"
-source = "#2149 pass 2: the Debug row Terrain wireframe (engine/nvforever/src/terrain_wireframe.rs) draws the loaded landscape's triangle edges while on and keeps nothing once off"
+source = "[design, #2149] pass 2: the Debug row Terrain wireframe (engine/nvforever/src/terrain_wireframe.rs) draws the loaded landscape's triangle edges while on and keeps nothing once off"
 note = "off at the start; switched on and off again on the settings page in the pause menu"
 areas = ["rendering", "terrain", "settings"]
 paths = ["engine/nvforever/src/terrain_wireframe.rs"]
@@ -27835,7 +27835,7 @@ forbid = [{ text = "panicked", label = "no panic" }, { text = "Caught rendering 
 
 [[scenario]]
 name = "terrain-wireframe-stored"
-source = "#2149 pass 2: --terrain-wireframe with smoothing off outlines the stored LAND triangles (engine/nvforever/src/terrain_wireframe.rs)"
+source = "[design, #2149] pass 2: --terrain-wireframe with smoothing off outlines the stored LAND triangles (engine/nvforever/src/terrain_wireframe.rs)"
 note = "on from the start, smoothing off: 33 x 33 vertices a cell, 3,136 edges each"
 areas = ["rendering", "terrain"]
 paths = ["engine/nvforever/src/terrain_wireframe.rs", "engine/nvf-play/src/smooth_terrain.rs"]

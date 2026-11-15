@@ -16,6 +16,9 @@
 //!   world's one game → Bevy turn ([`crate::world::game_to_bevy`]), depth-tested, nearer
 //!   the camera by a hair ([`DEPTH_BIAS`], the collision view's) so they do not flicker in
 //!   the ground they outline; nothing lifts the vertices.
+//! - **When**: in `PostUpdate` after the visibility propagation, so a cell hidden this frame
+//!   loses its lines this frame; a new outline is spawned with its global transform set
+//!   (transforms were propagated before), so it is drawn in place from its first frame.
 //! - **Cost**: off, one run condition a frame and nothing else: no surfaces, line buffers
 //!   or jobs are kept, nothing is uploaded or drawn. Switching off drops the jobs not yet
 //!   done (a dropped task is cancelled), despawns the lines and frees their assets.
@@ -30,6 +33,7 @@
 //! assets` each time the set settles with a different count (the smoke scenario
 //! `terrain-wireframe-live` reads them).
 
+use bevy::camera::visibility::VisibilitySystems;
 use bevy::prelude::*;
 use bevy::tasks::{futures::check_ready, Task};
 use fnv_esm::{LoadOrder, Schema};
@@ -136,7 +140,7 @@ pub struct TerrainWireframePlugin {
 
 impl Plugin for TerrainWireframePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(TerrainWireframe::new(self.on)).add_systems(PostUpdate, sync.run_if(active));
+        app.insert_resource(TerrainWireframe::new(self.on)).add_systems(PostUpdate, sync.run_if(active).after(VisibilitySystems::VisibilityPropagate));
     }
 }
 
@@ -248,7 +252,11 @@ fn sync(mut wire: ResMut<TerrainWireframe>, source: Option<Res<WireSource>>, cel
             Some((asset, edges)) => {
                 let asset = assets.add(asset);
                 let line_config = GizmoLineConfig { width: LINE_WIDTH, ..default() };
-                let entity = commands.spawn((Name::new("Terrain wireframe"), Gizmo { handle: asset.clone(), line_config, depth_bias: DEPTH_BIAS }, crate::world::game_to_bevy())).id();
+                // The game → Bevy turn, and its global transform at once: this frame's
+                // transforms were propagated before this system.
+                let place = crate::world::game_to_bevy();
+                let gizmo = Gizmo { handle: asset.clone(), line_config, depth_bias: DEPTH_BIAS };
+                let entity = commands.spawn((Name::new("Terrain wireframe"), gizmo, place, GlobalTransform::from(place))).id();
                 WireCell::Drawn { entity, asset, edges }
             }
             None => WireCell::Empty,
@@ -325,7 +333,11 @@ mod tests {
 
     fn app(on: bool) -> App {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+        // Transforms and visibility as the game propagates them.
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default(), bevy::transform::TransformPlugin, bevy::camera::CameraPlugin))
+            .init_asset::<Mesh>()
+            // CameraPlugin's skinned-mesh bounds system reads this store (MeshPlugin adds it in the game).
+            .init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
             .init_asset::<GizmoAsset>()
             .add_plugins(TerrainWireframePlugin { on })
             .insert_resource(WireSource::new(|world, g, spec| (world == 7 && g.0 >= 0).then(|| surface(g, spec))));
@@ -333,7 +345,7 @@ mod tests {
     }
 
     fn cell(app: &mut App, x: i32, y: i32) -> Entity {
-        app.world_mut().spawn((RenderCell::Exterior { world: 7, x, y }, Visibility::Visible, InheritedVisibility::VISIBLE)).id()
+        app.world_mut().spawn((RenderCell::Exterior { world: 7, x, y }, Visibility::Visible)).id()
     }
 
     /// Run until the jobs are done (they run on the read pool).
@@ -351,6 +363,12 @@ mod tests {
 
     fn gizmos(app: &mut App) -> usize {
         app.world_mut().query::<&Gizmo>().iter(app.world()).count()
+    }
+
+    /// Every outline's global transform is the game → Bevy turn.
+    fn placed(app: &mut App) -> bool {
+        let want = GlobalTransform::from(crate::world::game_to_bevy());
+        app.world_mut().query_filtered::<&GlobalTransform, With<Gizmo>>().iter(app.world()).all(|g| *g == want)
     }
 
     /// Off: nothing; switched on with cells already in: each gets its lines; a cell loaded
@@ -372,19 +390,23 @@ mod tests {
         assert_eq!((c.drawn, c.empty), (2, 1));
         // Both cells on the run's surface: the same number of edges each.
         assert!(c.edges > 0 && c.edges.is_multiple_of(2), "{c:?}");
+        // Spawned by the update that just ran, after its transform propagation: in place.
+        assert_eq!(gizmos(&mut app), 2);
+        assert!(placed(&mut app), "the outlines' first-frame transform");
         app.update();
         assert_eq!(gizmos(&mut app), 2);
+        assert!(placed(&mut app));
 
         // Streaming while on.
         let d = cell(&mut app, 0, 1);
         let c = settle(&mut app);
         assert_eq!(c.drawn, 3);
-        // Unloaded, hidden.
+        // Unloaded, and hidden (its Visibility, propagated): both outlines go in that frame.
         app.world_mut().despawn(d);
-        *app.world_mut().get_mut::<InheritedVisibility>(a).unwrap() = InheritedVisibility::HIDDEN;
-        let c = settle(&mut app);
+        *app.world_mut().get_mut::<Visibility>(a).unwrap() = Visibility::Hidden;
         app.update();
-        assert_eq!((c.drawn, gizmos(&mut app)), (1, 1));
+        let c = app.world().resource::<TerrainWireframe>().counts();
+        assert_eq!((c.drawn, c.pending, gizmos(&mut app)), (1, 0, 1));
         assert_eq!(app.world().resource::<Assets<GizmoAsset>>().len(), 1);
 
         app.world_mut().resource_mut::<TerrainWireframe>().on = false;

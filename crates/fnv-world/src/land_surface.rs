@@ -243,8 +243,10 @@ pub fn grid_triangles(side: usize) -> Vec<[u32; 3]> {
 /// A cell's landscape surface (module notes).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Surface {
-    /// How it was built.
+    /// How it was built (diagnostics; the queries read [`Surface::sub`]'s scalar).
     spec: SurfaceSpec,
+    /// Squares per LAND grid square and side, fixed when built (1: as stored).
+    sub: usize,
     /// `side() * side()` heights, row-major, rows south → north.
     heights: Vec<f32>,
     /// Unit normals at the vertices, smoothed only (the stored grid is shaded by its
@@ -260,7 +262,7 @@ impl Surface {
     /// The LAND grid as stored (`heights`: `Land::heights`).
     pub fn stored(heights: &[f32]) -> Surface {
         assert_eq!(heights.len(), SIDE * SIDE, "LAND heights are {SIDE} x {SIDE}");
-        Surface { spec: SurfaceSpec::Stored, heights: heights.to_vec(), normals: None, stored: None }
+        Surface { spec: SurfaceSpec::Stored, sub: 1, heights: heights.to_vec(), normals: None, stored: None }
     }
 
     /// The surface of the cell at the centre of `block` as `spec` says; `None` when the
@@ -309,7 +311,7 @@ impl Surface {
             }
         }
         let stored = (params.mode == SmoothMode::Fit).then(|| block[1][1].map(|h| h.to_vec().into_boxed_slice())).flatten();
-        Some(Surface { spec: SurfaceSpec::Smoothed(params), heights, normals: Some(normals), stored })
+        Some(Surface { spec: SurfaceSpec::Smoothed(params), sub, heights, normals: Some(normals), stored })
     }
 
     /// How the surface was built.
@@ -319,11 +321,11 @@ impl Surface {
 
     /// Squares per LAND grid square and side (1: as stored).
     pub fn sub(&self) -> usize {
-        self.spec.subdiv()
+        self.sub
     }
 
     pub fn is_smoothed(&self) -> bool {
-        self.spec.is_smoothed()
+        self.sub > 1
     }
 
     /// How far the surface may leave the stored triangles (0 as stored).
@@ -333,12 +335,12 @@ impl Surface {
 
     /// Vertices per side.
     pub fn side(&self) -> usize {
-        (SIDE - 1) * self.sub() + 1
+        (SIDE - 1) * self.sub + 1
     }
 
     /// Distance between neighbouring vertices (world units).
     pub fn spacing(&self) -> f32 {
-        SPACING / self.sub() as f32
+        SPACING / self.sub as f32
     }
 
     /// The vertex heights, `side() * side()`, row-major, rows south → north.
@@ -354,7 +356,7 @@ impl Surface {
     /// The index among [`Surface::heights`] of the vertex at LAND vertex (`r`, `c`) (its
     /// height there is the stored one unless the surface was fitted: [`Surface::land_height`]).
     pub fn land_vertex(&self, r: usize, c: usize) -> usize {
-        r * self.sub() * self.side() + c * self.sub()
+        r * self.sub * self.side() + c * self.sub
     }
 
     /// The stored height of LAND vertex (`r`, `c`).

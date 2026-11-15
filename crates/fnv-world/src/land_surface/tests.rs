@@ -376,18 +376,21 @@ fn the_fit_evens_out_a_quantised_slope() {
 }
 
 /// Shared edges come out identical from both sides, heights and normals, with cells
-/// missing around them in every pattern near the edge, at negative grid squares too.
+/// missing around them in every pattern near the edge, at a negative grid square too.
+/// The cell itself and its east neighbour are always there (the east edge is always
+/// compared; the north one where the north cell is there).
 #[test]
 fn shared_cell_edges_are_identical_from_both_sides() {
-    // The cells next to (0, 0)'s east and north edges, and some only one side reads.
+    // Offsets from the cell of the cells next to its east and north edges, and some only
+    // one side reads; never the cell (0, 0) or its east neighbour (1, 0).
     let near = [(0, 1), (1, 1), (0, -1), (1, -1), (-1, 1), (-1, 0)];
     for p in combos() {
-        for mask in 0..1u32 << near.len() {
-            let missing: Vec<(i32, i32)> = near.iter().enumerate().filter(|(k, _)| mask & (1 << k) != 0).map(|(_, g)| *g).collect();
-            assert_edges_agree(world, (0, 0), &missing, p);
-        }
-        for missing in [&[][..], &[(-6, -3)][..], &[(-7, -2), (-5, -4)][..], &[(-6, -2), (-5, -3)][..]] {
-            assert_edges_agree(world, (-6, -3), missing, p);
+        for base in [(0, 0), (-6, -3)] {
+            for mask in 0..1u32 << near.len() {
+                let missing: Vec<(i32, i32)> = near.iter().enumerate().filter(|(k, _)| mask & (1 << k) != 0).map(|(_, d)| (base.0 + d.0, base.1 + d.1)).collect();
+                assert!(!missing.contains(&base) && !missing.contains(&(base.0 + 1, base.1)));
+                assert_edges_agree(world, base, &missing, p);
+            }
         }
     }
 }

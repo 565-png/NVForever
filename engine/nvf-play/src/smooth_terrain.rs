@@ -40,7 +40,7 @@ pub const SUBDIV_AID: &str = "NVF_PLAY_TEST_SMOOTH_SUBDIV";
 pub const BOUND_AID: &str = "NVF_PLAY_TEST_SMOOTH_BOUND";
 
 /// The settings row's note, NVForever's own words [design].
-pub const NOTE: &str = "On: the ground between the landscape's points is drawn and walked on as a smooth surface, at most one height step from the stored ground. Off: the stored triangles. Takes effect at the next start.";
+pub const NOTE: &str = "On: the ground between the landscape's points is drawn and walked on as a smooth surface, by default within one height step of the stored ground. Off: the stored triangles. Applies at the next start.";
 
 /// The state the settings page shows (what the next start uses).
 pub fn setting() -> bool {
