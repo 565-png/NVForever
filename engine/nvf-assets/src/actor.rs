@@ -61,6 +61,9 @@ pub struct PreparedSkeleton {
     /// Bind-pose world transforms relative to the root, NIF space.
     pub bind_world: Vec<Affine3A>,
     pub by_name: HashMap<String, usize>,
+    /// Named BSBound BBX half-width in skeleton units [documented:
+    /// schemas/nif/scene.json; observed: issue #2535 record/file facts].
+    pub bbx_half_width: Option<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -972,6 +975,17 @@ impl ActorCtx<'_, '_> {
     }
 }
 
+/// Read only named BSBound extras attached to skeleton nodes [design, #2535].
+fn skeleton_bbx(dec: &Decoded, nodes: &[usize]) -> Option<f32> {
+    nodes.iter().filter_map(|&b| dec.blocks.get(b)?.as_ref().ok()).flat_map(|n| n.refs("extra_data").unwrap_or_default()).find_map(|&e| {
+        let i = usize::try_from(e).ok()?;
+        let bound = dec.get(e).filter(|b| dec.is_a(i, "BSBound") && b.text("name").is_some_and(|n| n.eq_ignore_ascii_case("BBX")))?;
+        let dims = bound.floats("dimensions").filter(|d| d.len() == 3)?;
+        let x = dims[0];
+        (x.is_finite() && x > 0.0).then_some(x)
+    })
+}
+
 fn prepare_skeleton(nif: Nif) -> Result<PreparedSkeleton, String> {
     let (file, _bytes, dec) = nif?;
     let objects = scene_objects(&file, &dec);
@@ -981,7 +995,7 @@ fn prepare_skeleton(nif: Nif) -> Result<PreparedSkeleton, String> {
         return Err("no root node".into());
     }
     let index: HashMap<usize, usize> = order.iter().enumerate().map(|(i, &b)| (b, i)).collect();
-    let mut s = PreparedSkeleton::default();
+    let mut s = PreparedSkeleton { bbx_half_width: skeleton_bbx(&dec, &order), ..Default::default() };
     for (i, &b) in order.iter().enumerate() {
         let o = by_block.get(&b).ok_or_else(|| format!("block {b} is not a scene object"))?;
         let parent = o.parent.and_then(|p| index.get(&p).copied());
@@ -1380,6 +1394,30 @@ pub fn probe_skeleton(data: &GameData, path: &str) -> Result<PreparedSkeleton, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skeleton_bbx_reads_only_attached_named_bounds() {
+        use fnv_nif::value::Struct;
+        // Synthetic decoded blocks, without game assets [design, #2535].
+        let read = |name: &str, ty: &str, dims: Vec<f32>, attached: bool| {
+            let node = Struct { fields: vec![("extra_data".into(), Value::RefList(if attached { vec![-1, 1] } else { vec![] }))] };
+            let bound = Struct { fields: vec![
+                ("name".into(), Value::Str { index: None, text: Some(name.into()) }),
+                ("dimensions".into(), Value::Floats(dims)),
+            ] };
+            let dec = Decoded { blocks: vec![Ok(node), Ok(bound)], lineage: vec![vec!["NiNode".into()], vec![ty.into()]] };
+            skeleton_bbx(&dec, &[0])
+        };
+        assert_eq!(read("BBX", "BSBound", vec![80.0, 120.0, 40.0], true), Some(80.0));
+        assert_eq!(read("bbx", "BSBound", vec![35.0, 40.0, 20.0], true), Some(35.0));
+        assert_eq!(read("Other", "BSBound", vec![80.0; 3], true), None);
+        assert_eq!(read("BBX", "NiStringExtraData", vec![80.0; 3], true), None);
+        assert_eq!(read("BBX", "BSBound", vec![80.0; 3], false), None);
+        for x in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(read("BBX", "BSBound", vec![x, 40.0, 20.0], true), None);
+        }
+        assert_eq!(read("BBX", "BSBound", vec![80.0], true), None);
+    }
 
     #[test]
     fn a_severed_piece_takes_its_own_vertices_weighted_to_its_side_only() {

@@ -99,6 +99,24 @@ pub struct ScanCounts {
 #[component(storage = "SparseSet")]
 pub struct ActorBoundsCandidate;
 
+/// A creature skeleton's BBX half-width before base/reference scale [documented:
+/// schemas/nif/scene.json; design: attached only to creature roots in actors.rs, #2535].
+#[derive(Component)]
+pub struct CreatureBbx {
+    pub reference: u32,
+    pub half_width: f32,
+}
+
+impl CreatureBbx {
+    /// A circle fitted to the spacing [hypothesis: capture run15b_b2, 2026-11-15;
+    /// the original's shape was not seen]. Root scale includes base and reference
+    /// scale (`nvforever::actors::spawn_creature`) [design, #2535].
+    fn radius(&self, root: &GlobalTransform) -> Option<f32> {
+        let radius = self.half_width * root.affine().matrix3.x_axis.length();
+        (radius.is_finite() && radius > 0.0).then_some(radius)
+    }
+}
+
 /// Whether `entity` should have the mark now. Only with the simulation: [`crate::PlayPlugin`]
 /// brings it together with [`HitVolumePlugin`], so a run that is not `--play` keeps no
 /// volumes and spends nothing on marks. One that gets it late is marked by
@@ -355,6 +373,7 @@ fn sync_volumes(
     script: Option<Res<crate::script::ScriptState>>,
     posed: Res<ActorParts>,
     parts: Query<BoundsPart, With<ActorBoundsCandidate>>,
+    creatures: Query<(&CreatureBbx, &GlobalTransform, &InheritedVisibility)>,
     mut compare: Option<ResMut<ScanCompare>>,
     mut phys: ResMut<PhysState>,
     mut vols: ResMut<HitVolumes>,
@@ -377,6 +396,14 @@ fn sync_volumes(
     blocks.list.clear();
     vols.living.clear();
     phys.actor_heights.clear();
+    phys.actor_block_radii.clear();
+    for (bbx, root, vis) in &creatures {
+        if vis.get() && bounds.contains_key(&bbx.reference) && !crate::combat::is_dead(script.as_deref(), bbx.reference) {
+            if let Some(radius) = bbx.radius(root) {
+                phys.actor_block_radii.insert(bbx.reference, radius);
+            }
+        }
+    }
     for (&id, &(lo, hi)) in &bounds {
         let dead = crate::combat::is_dead(script.as_deref(), id);
         let v = volume_for(lo, hi, dead);
@@ -862,6 +889,7 @@ mod tests {
         let world = app.world();
         assert!(world.resource::<PhysState>().world.actor_volumes().next().is_none());
         assert!(world.resource::<PhysState>().actor_heights.is_empty());
+        assert!(world.resource::<PhysState>().actor_block_radii.is_empty());
         assert!(world.resource::<ActorBlocks>().list.is_empty());
         let vols = world.resource::<HitVolumes>();
         assert!(vols.living.is_empty());
@@ -874,6 +902,34 @@ mod tests {
         assert!(world.resource::<PhysState>().actor_heights.contains_key(&id));
         assert!(world.resource::<ActorBlocks>().list.iter().any(|b| b.actor == id));
         assert!(world.resource::<HitVolumes>().living.iter().any(|l| l.0 == id));
+    }
+
+    #[test]
+    fn creature_bbx_tracks_scale_visibility_and_removal_beside_heights() {
+        let mut app = app(sim());
+        let e = mesh(&mut app, ACRE_REF, [0.0; 3]);
+        let person = mesh(&mut app, ACHR_REF, [200.0, 0.0, 0.0]);
+        // Synthetic width and two independently composed scales [design, #2535].
+        app.world_mut().entity_mut(e).insert(CreatureBbx { reference: ACRE_REF, half_width: 80.0 });
+        for (base, reference) in [(0.6, 1.0), (1.0, 1.25), (0.5, 0.5)] {
+            let root = GlobalTransform::from(Transform::from_scale(Vec3::splat(base))) * Transform::from_scale(Vec3::splat(reference));
+            app.world_mut().entity_mut(e).insert(root);
+            app.update();
+            let phys = app.world().resource::<PhysState>();
+            assert!((phys.actor_block_radii[&ACRE_REF] - 80.0 * base * reference).abs() < 1e-4);
+            assert!(!phys.actor_block_radii.contains_key(&ACHR_REF));
+            assert!(phys.actor_heights.contains_key(&ACRE_REF));
+        }
+        app.world_mut().entity_mut(e).insert(InheritedVisibility::HIDDEN);
+        app.update();
+        assert!(app.world().resource::<PhysState>().actor_block_radii.is_empty());
+        app.world_mut().entity_mut(e).insert(InheritedVisibility::VISIBLE);
+        app.update();
+        assert!(app.world().resource::<PhysState>().actor_block_radii.contains_key(&ACRE_REF));
+        app.world_mut().entity_mut(e).despawn();
+        app.world_mut().entity_mut(person).despawn();
+        app.update();
+        assert_all_cleared(&app);
     }
 
     #[test]

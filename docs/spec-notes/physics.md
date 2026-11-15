@@ -2513,9 +2513,9 @@ rule above would replace it (left to the Layer 5 owner).
 
 ### 6.8 Actors in the player's way (`engine/nvf-play`, `blocking.rs`)
 
-How the game keeps characters apart is not captured [hypothesis: every actor has a
-character controller of its own on the Char Controller layer, 30; nothing here depends
-on it]. What the engine does is [design]:
+The original's collision shape is unseen [hypothesis: every actor has a character
+controller of its own on the Char Controller layer, 30; nothing here depends on it].
+Large-creature spacing is measured below (#2535). What the engine does is [design]:
 
 - Each frame, every drawn, living actor has a **block** where its body is now: the line
   on the ground under its torso's bones (pelvis to neck, from the posed skeleton that
@@ -2555,6 +2555,44 @@ on it]. What the engine does is [design]:
   walk took the standing player with him at his own speed, from 3.5 units away, all
   the way to the saloon door [observed: `--play --npc-packages EasyPeteRef --hour 12`
   with the player put on his way, 163 units, rapier 0.36.0].
+
+**Walking creatures' widths (#2535).** [hypothesis: fits the observed spacing; the
+original's shape was not seen] A creature with a skeleton `BSBound` extra named
+`BBX` blocks other walking actors and the player with a circle of radius at least
+its BBX half-width x × Base Scale × reference scale. The existing character radius
+wins when larger; NPC_ people and creatures without BBX keep their existing radii.
+The radius is used for both the walker and its block, including carried lunges and
+steps while the player is on furniture or has collision off [design: `player.rs`,
+`blocking::walking_radius`]. It changes neither the world capsule nor navmesh paths:
+larger world capsules would not fit the doors and paths actors walk [design:
+`phys::npc_params`]. `actor_block_radii` is refreshed beside `actor_heights` from
+visible living creature roots; their transforms already include both scales
+[design: `actors::spawn_creature`, `hitvol::sync_volumes`].
+
+[observed: FalloutNV.esm and Fallout - Meshes.bsa, fnvtool esm decode / nif decode,
+main session 2026-11-15] The radscorpion skeleton's BBX centre is (0, 0, 30.21),
+half sizes (70.56, 125.84, 30.21). Other skeleton half sizes: `characters\_male`
+(23.10, 17.64, 66.22), centre (0, 0, 66.22); deathclaw (50.00, 95.14, 76.18);
+dog (29.56, 62.75, 35.51); brahmin (40, 80, 40). The pair in combat-rules.md §10
+has base scales 0.6 and 1.0, giving radii 42.336 and 70.56, sum 112.896 (about
+113). Before #2535 NVForever's pair settled only 62–84 units centre to centre,
+despite drawn widths 85/141 [observed: main session's measured Searchlight runway
+run on 63db0209c, 2026-11-15].
+
+[observed: capture run15b_b2, 2026-11-15; xNVSE 6.4.9, JIP LN 57.30] The same
+pair against a standing god-mode player on Searchlight Airport's runway, sampled
+at 30 Hz for 17 s: while both were within 300 units of the player (452 samples),
+GetDistance between them had median 131, tenth percentile 93, ninetieth 283 and
+minimum 32 briefly. This measures spacing, not a rigid non-overlap invariant.
+
+[design: `npc_combat::creature_spacing`, `Fighters::lunge_room`, `attack_anims::carry`]
+Combat body gaps and lunge stopping use the walking block's radius too. Creature
+reach remains centre to centre, (RNAM + body reach) × scale: for this pair,
+(64 + 124) × 0.6 = 112.8 and × 1.0 = 188, beyond their respective blocks plus
+the player's radius (64.336/92.56). People count melee reach beyond body radii.
+The separate navmesh `fnv_ai::Ai::keep_apart` still uses 18 per actor; it does
+not read these blocks. The original's transient overlap, unseen shape, extra
+attack pause and backing-away cadence remain open in observer check 174.
 
 **Pushing** (2026-10-10, owner request: "the player or npc moving needs to be able to
 push another actor if they are stood still"). What the game does when one character

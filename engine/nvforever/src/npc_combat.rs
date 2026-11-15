@@ -1092,6 +1092,15 @@ pub fn creature_spacing(bodies: Option<f32>, reach: f32) -> (f32, f32) {
     ((b + MELEE_STOP_GAP).max(reach - MELEE_STOP_SHORT), (b + MELEE_HIT_GAP).max(reach))
 }
 
+/// The widened walking block, absent from the drawn-block list [design:
+/// nvf_play::player, #2535]. Non-widened actors retain their existing combat lookup.
+fn walking_creature_block(phys: &nvf_play::phys::PhysState, id: u32) -> Option<nvf_play::blocking::Block> {
+    let bbx = phys.actor_block_radii.get(&id).copied()?;
+    let n = phys.npcs.get(&id)?;
+    let radius = nvf_play::blocking::walking_radius(n.ch.params.radius, Some(bbx));
+    (radius > n.ch.params.radius).then(|| nvf_play::blocking::Block::character(id, n.ch.feet, radius, n.ch.params.height, false))
+}
+
 /// What a gun reaches and how near it is safe to fire (docs/design/combat-ai.md §16).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GunReach {
@@ -1470,7 +1479,15 @@ pub(crate) fn fight(
     }
     // The gap between an actor's body and its target's, when both are known.
     let player_radius = phys.as_deref().and_then(|p| p.player.as_ref()).map(|c| c.params.radius);
-    let body = |id: u32| blocks.as_deref().and_then(|b| b.list.iter().find(|x| x.actor == id).cloned());
+    // Walking creatures' BBX blocks are made in fixed steps, outside the drawn list
+    // [design: nvf_play::player, #2535]. Combat and lunge stops use the same radius;
+    // other actors keep the existing drawn-block lookup [design].
+    let walking_blocks: HashMap<u32, nvf_play::blocking::Block> = phys.as_deref().map(|p| {
+        p.actor_block_radii.keys().filter_map(|&id| walking_creature_block(p, id).map(|b| (id, b))).collect()
+    }).unwrap_or_default();
+    let body = |id: u32| {
+        walking_blocks.get(&id).copied().or_else(|| blocks.as_deref().and_then(|b| b.list.iter().find(|x| x.actor == id).copied()))
+    };
     let gap = |me: u32, target: u32, tfeet: V3| -> Option<f32> {
         let mine = body(me)?;
         let radius = if target == FormId::PLAYER_REF.0 { player_radius? } else { body(target)?.radius };
@@ -3566,6 +3583,38 @@ mod tests {
         assert_eq!(melee_spacing(44.0, 44.0, 0.0), (44.0 + MELEE_STOP_GAP, 44.0 + MELEE_HIT_GAP));
         // A long target's body ahead of its centre keeps the gaps from it.
         assert_eq!(melee_spacing(150.0, 44.0, 53.5), (150.0 + MELEE_STOP_GAP, 150.0 + MELEE_HIT_GAP));
+    }
+
+    #[test]
+    fn combat_reads_only_widened_walking_creature_blocks() {
+        use nvf_play::phys::{NpcBody, PhysState};
+        let mut phys = PhysState::default();
+        let id = 123;
+        let feet = [10.0, 20.0, 30.0];
+        let ch = phys.world.add_character(id, fnv_phys::CharacterParams::default(), feet);
+        phys.npcs.insert(id, NpcBody { ch, prev_feet: feet, velocity: [0.0; 2], jump: false, sink: 0.0, lift: Default::default() });
+        assert!(walking_creature_block(&phys, id).is_none());
+        phys.actor_block_radii.insert(id, 10.0);
+        assert!(walking_creature_block(&phys, id).is_none());
+        phys.actor_block_radii.insert(id, 70.0);
+        let body = walking_creature_block(&phys, id).unwrap();
+        assert_eq!((body.a, body.b, body.radius), ([10.0, 20.0], [10.0, 20.0], 70.0));
+        assert_eq!(phys.npcs[&id].ch.params.radius, 22.0);
+        phys.npcs.clear();
+        assert!(walking_creature_block(&phys, id).is_none());
+    }
+
+    #[test]
+    fn radscorpion_reach_stays_beyond_bbx_and_player_blocks() {
+        // Record and skeleton facts supplied in #2535 [observed: FalloutNV.esm and
+        // Fallout - Meshes.bsa, fnvtool esm decode / nif decode, 2026-11-15].
+        for scale in [0.6, 1.0] {
+            let bodies = nvf_play::blocking::walking_radius(22.0, Some(70.56 * scale)) + 22.0;
+            let reach = creature_reach(Some(64.0), Some(r"Creatures\Radscorpion\Skeleton.nif"), scale);
+            let (stop, strike) = creature_spacing(Some(bodies), reach);
+            assert!((strike - 188.0 * scale).abs() < 1e-4);
+            assert!(stop > bodies && strike > stop);
+        }
     }
 
     #[test]
