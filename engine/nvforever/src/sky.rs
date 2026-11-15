@@ -2076,6 +2076,10 @@ fn official_plugin(name: Option<&str>) -> bool {
 }
 
 #[cfg(test)]
+#[path = "sky_lighting_session_tests.rs"]
+mod session_lighting_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
