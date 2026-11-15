@@ -10603,6 +10603,25 @@ order = [[
 ]]
 
 [[scenario]]
+name = "creature-draw-holds-ghoul"
+source = "issue #2686 (docs/spec-notes/actors.md §8.10, engine/nvforever/src/creature_stance.rs): a ghoul set on the player stands while it roars (its h2hequip.kf draw) and runs at the player after; before the fix it slid across the floor roaring"
+note = "the feral ghoul 0x000CE9E7 at its corpse idle marker about 1,000 units north of the player (as in creature-sounds-ghoul) is set on the player at 3 s; god mode"
+areas = ["alert", "creatures", "combat"]
+paths = ["engine/nvforever/src/creature_stance.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:call:0x000CE9E7:StartCombat:player" }
+args = ["--pos=9244,-33900,7500", "--heading", "0", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 20
+expect = [
+  { re = 'npc combat: \S+ (0x)?000CE9E7 fights the player', label = "the ghoul fights the player" },
+]
+order = [[
+  { re = 'creature stance: LvlFeralGhoul 000CE9E7 Equipping' },
+  { re = 'actor 000CE9E7 holds still while it draws its stance', label = "it stands while it roars" },
+  { re = 'creature stance: LvlFeralGhoul 000CE9E7 Drawn' },
+  { re = 'actor 000CE9E7 drew its stance: free to move', label = "and moves again once the roar ends" },
+]]
+
+[[scenario]]
 name = "use-weapon"
 source = "UseWeapon (docs/design/use-weapon.md §5): a script has an actor fire a number of shots at a target from where it stands, always hitting and doing no damage"
 note = "Violet (FiendVioletRef 0x000F570B, placed at -46910,64897, hunting rifle) is told at 5 s to fire 3 shots at the player, about 1,400 units east of her, from her own place; nobody perceives the player (NVF_PLAY_TEST_UNSEEN), so no fight starts"
