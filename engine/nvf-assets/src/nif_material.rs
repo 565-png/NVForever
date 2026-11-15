@@ -917,14 +917,25 @@ impl Plugin for NifMaterialPlugin {
         app.add_plugins(MaterialPlugin::<NifMaterial>::default())
             .init_resource::<BlendedCutouts>()
             .add_systems(Startup, spawn_transmission_anchor)
-            .add_systems(PostUpdate, (apply_blended_cutouts, see_through_casts_no_shadow.in_set(SeeThroughShadowSystems)));
+            .add_systems(PostUpdate, (apply_blended_cutouts.in_set(BlendedCutoutSystems), see_through_casts_no_shadow.in_set(SeeThroughShadowSystems)));
     }
 }
+
+/// The blended cut-outs' alpha-mode edits ([`BlendedCutouts`]), which change materials in
+/// place under the same handle: systems that copy a material's state run after it
+/// (nvforever mesh_terrain_blend.rs, aid only).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BlendedCutoutSystems;
 
 /// The shadow bookkeeping of see-through shapes ([`SeeThroughNoShadow`]): systems that
 /// replace a mesh's [`NifMaterial`] component run after it, so it has seen the material.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SeeThroughShadowSystems;
+
+/// [`apply_blended_cutouts`] in its set, for tests of other crates' material consumers.
+pub fn blended_cutout_system() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    apply_blended_cutouts.in_set(BlendedCutoutSystems)
+}
 
 /// [`see_through_casts_no_shadow`] in its set, for tests of other crates' material producers.
 pub fn see_through_shadow_system() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {

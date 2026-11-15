@@ -138,7 +138,8 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
                     if members.first().is_some_and(|m| m.name.as_deref() == Some("surface")) { index_sizes.push(span); }
                 }
             }
-            assert_eq!(surface_sizes, vec![if blend { 160 } else { 128 }]);
+            // Round 6: one vec4 of hybrid v2 widths in the enabled uniform only.
+            assert_eq!(surface_sizes, vec![if blend { 176 } else { 128 }]);
             // The blend type reuses the ordinary table and slots (nif_surface_blend.rs notes).
             if bindless { assert_eq!(index_sizes, vec![16]); }
             if !bindless {
@@ -154,6 +155,41 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
     assert!(material.contains("let terrain = mesh_terrain_lookup(in.instance_index, in.world_position.xyz, pbr_input.world_normal);"), "the weight uses the unperturbed normal");
     assert!(material.find("let terrain = mesh_terrain_lookup(").unwrap() > material.find("alpha_discard(pbr_input.material.flags").unwrap(), "after the coverage tests");
     assert!(material.find("let terrain = mesh_terrain_lookup(").unwrap() < material.find("out.color = apply_pbr_lighting(pbr_input);").unwrap(), "before lighting");
+    // [design] Zero weight leaves every shading input as it was: the surface blend sits
+    // inside the positive-weight branch, which hybrid v2 keeps.
+    let branch = material.find("} else if terrain.status == LOOKUP_SUCCESS && terrain.weight > 0.0 {").expect("the positive-weight branch");
+    for input in ["pbr_input.material.base_color = vec4(mix(", "pbr_input.N = mesh_terrain_blend_normal(", "pbr_input.material.perceptual_roughness = mix(", "pbr_input.material.emissive = vec4(pbr_input.material.emissive.rgb * (1.0 - w)"] {
+        assert!(material.find(input).unwrap() > branch, "{input}");
+    }
+}
+
+/// [design] The WESL weight transcribes nif_surface_blend.rs::contact_weight and v2_band:
+/// stable shape numbers with hybrid v1 appended as 3, the widths read from the enabled
+/// uniform as (flat, band, steep), and the shared cosine definitions.
+#[test]
+fn shader_weight_matches_the_cpu_statement_of_hybrid_v2() {
+    let bindings = include_str!("../../nvf-assets/src/nif_surface_bindings.wesl");
+    for line in [
+        "let c = clamp(abs(cos_angle), 0.0, 1.0);",
+        "let shallow = 1.0 - smoothstep(V2_COS_PARALLEL, 1.0, c);",
+        "let steep = 1.0 - smoothstep(V2_COS_STEEP, COS_FULL, c);",
+        "return widths.x + (widths.y - widths.x) * shallow + (widths.z - widths.y) * steep;",
+        "if shape == 0u { return height; }",
+        "if shape == 1u { return penetration; }",
+        "if shape == 3u {",
+        "return max(1.0 - smoothstep(0.0, band, max(d, 0.0)), penetration);",
+        "let widths = vec3(s.mesh_terrain_widths.x, s.mesh_terrain.x, s.mesh_terrain_widths.y);",
+        "@if(NIF_SURFACE_BLEND) mesh_terrain_widths: vec4<f32>,",
+    ] {
+        assert!(bindings.contains(line), "{line}");
+    }
+    use nvf_assets::nif_surface_blend::ContactShape;
+    assert_eq!([ContactShape::Height, ContactShape::Penetration, ContactShape::Hybrid, ContactShape::HybridV1].map(|s| s.number()), [0.0, 1.0, 2.0, 3.0]);
+    let defs = nvf_assets::nif_surface_blend::blend_shader_defs();
+    for name in ["MESH_TERRAIN_V2_COS_PARALLEL_E6", "MESH_TERRAIN_V2_COS_STEEP_E6", "MESH_TERRAIN_COS_FULL_E6"] {
+        assert!(defs.iter().any(|d| matches!(d, ShaderDefVal::UInt(n, _) if n == name)), "{name}");
+        assert!(bindings.contains(&format!("constants::{name}")), "{name} reaches the shader");
+    }
 }
 
 fn nif_defs(bindless: bool, blend: bool, prepass: bool, soft_edges: bool) -> Vec<ShaderDefVal> {

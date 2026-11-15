@@ -1306,6 +1306,12 @@ pub fn spawn_model(
         for e in &drawn {
             commands.entity(*e).insert(RefVisual(r));
         }
+        // [design] Aid-only census (#2661): a rigged STAT's shapes are tracked, never converted.
+        if let Some(census) = blend_census(world, p, r, base, &path, &model, false) {
+            for (index, e) in drawn.iter().enumerate() {
+                commands.entity(*e).insert(crate::mesh_terrain_blend::BlendCensus { shape: index, ..census.clone() });
+            }
+        }
         if door.is_some() {
             commands.entity(root).insert(crate::doors::DoorRig::new(r, model.clone(), &path, nodes.clone(), p.open_by_default));
             stats.refs_doors += 1;
@@ -1357,20 +1363,9 @@ pub fn spawn_model(
         info!("clutter pose: 0x{r:08X} {path} drawn in its stored pose ({} bodies)", p.bodies);
     }
     stats.refs_posed += usize::from(posed.is_some());
-    // [design] Aid-only selection from the actual spawn path and prepared model.
-    // Record presence follows fnv-game/src/data.rs (DEST); no asset-name selection.
-    let blend_candidate = crate::mesh_terrain_blend::config().is_some() && {
-        let exterior = world.index.refs.get(&r).and_then(|r| world.index.cells.get(&r.cell))
-            .is_some_and(|c| !c.is_interior() && c.world == Some(world.world));
-        let destructible = fnv_world::fields::winner(world.lo, base.form_id)
-            .and_then(|(pi, record)| fnv_world::fields::Fields::new(record, pi, world.schema).ok())
-            .is_some_and(|f| f.raw(b"DEST").is_some());
-        let rigid = model.rig.is_none() && model.skinned == 0 && !model.particles
-            && !model.jointed && !model.loose && posed.is_none()
-            && model.nodes.iter().all(|n| n.damage_stages.is_none());
-        crate::mesh_terrain_blend::eligible_reference(&base.sig, exterior, rigid, destructible, p.imposter)
-    };
-    for s in &model.shapes {
+    // [design] Aid-only census of every STAT shape, before any selection (#2661).
+    let census = blend_census(world, p, r, base, &path, &model, posed.is_some());
+    for (index, s) in model.shapes.iter().enumerate() {
         let shape = nvf_play::clutter_pose::shape_transform(posed.as_ref(), s);
         let m = Mat4::from(rt * shape);
         // External emittance: the reference's XEMI source drives the colour.
@@ -1383,8 +1378,12 @@ pub fn spawn_model(
         // only (destroyed.rs); the holder's RefVisual follows the reference's presence.
         let stages = s.node.and_then(|n| nvf_assets::model::damage_stages_of(&model.nodes, n));
         // [design] Morphing meshes are registered independently of rigs (nvf-assets/src/morph.rs).
-        let blend_source = (blend_candidate && !s.external_emittance
-            && models.cache.morphs.ids().all(|id| id != s.mesh.id())).then(|| material.clone());
+        // Only shapes without reference or shape reasons may be converted (BlendShape).
+        let blend = census.as_ref().map(|c| {
+            let morph = models.cache.morphs.ids().any(|id| id == s.mesh.id());
+            let reasons = c.reasons | crate::mesh_terrain_blend::shape_reasons(s.external_emittance, morph);
+            (crate::mesh_terrain_blend::BlendCensus { shape: index, reasons, ..c.clone() }, material.clone())
+        });
         let e = match stages {
             Some(st) => {
                 let holder = commands.spawn((Transform::IDENTITY, Visibility::Inherited, RefVisual(r), ChildOf(parent))).id();
@@ -1392,8 +1391,11 @@ pub fn spawn_model(
             }
             None => commands.spawn((Mesh3d(s.mesh.clone()), MeshMaterial3d(material), Transform::from_matrix(m), RefVisual(r), ChildOf(parent))).id(),
         };
-        if let Some(original) = blend_source {
-            commands.entity(e).insert(crate::mesh_terrain_blend::BlendShape::new(original));
+        if let Some((tracked, original)) = blend {
+            if tracked.reasons == 0 {
+                commands.entity(e).insert(crate::mesh_terrain_blend::BlendShape::new(original));
+            }
+            commands.entity(e).insert(tracked);
         }
         // A mine's light parts: shown and hidden by its state (`nvf_play::mines`).
         if let Some(l) = nvf_play::mines::MineLight::of(s.name.as_deref(), &s.ancestors) {
@@ -1403,6 +1405,38 @@ pub fn spawn_model(
     }
     spawn_emitters(commands, parent, r, &model, &path, rt);
     stats.refs_drawn += 1;
+}
+
+/// [design] The mesh terrain blend's census of a STAT reference (aid only, #2661;
+/// mesh_terrain_blend.rs): its reference reasons from the actual spawn path and prepared
+/// model, before any selection; `None` without the aid or for another record type. Record
+/// presence follows fnv-game/src/data.rs (DEST); no asset-name selection. The shape index
+/// and shape reasons are the caller's.
+fn blend_census(world: &WorldData, p: &Placement, r: u32, base: &BaseObject, path: &str, model: &PreparedModel, posed: bool) -> Option<crate::mesh_terrain_blend::BlendCensus> {
+    if crate::mesh_terrain_blend::config().is_none() || &base.sig != b"STAT" {
+        return None;
+    }
+    let exterior = world.index.refs.get(&r).and_then(|r| world.index.cells.get(&r.cell))
+        .is_some_and(|c| !c.is_interior() && c.world == Some(world.world));
+    let destructible = fnv_world::fields::winner(world.lo, base.form_id)
+        .and_then(|(pi, record)| fnv_world::fields::Fields::new(record, pi, world.schema).ok())
+        .is_some_and(|f| f.raw(b"DEST").is_some());
+    let facts = crate::mesh_terrain_blend::ReferenceFacts {
+        exterior,
+        rigged: model.rig.is_some() || model.skinned != 0,
+        particles: model.particles,
+        posed: model.jointed || model.loose || posed,
+        damage_stages: model.nodes.iter().any(|n| n.damage_stages.is_some()),
+        destructible,
+        distant: p.imposter,
+    };
+    Some(crate::mesh_terrain_blend::BlendCensus {
+        reference: r,
+        base: base.form_id,
+        model: path.into(),
+        shape: 0,
+        reasons: crate::mesh_terrain_blend::reference_reasons(facts),
+    })
 }
 
 /// A placed model's own particle systems (a fire's flames: Gomorrah's roof,

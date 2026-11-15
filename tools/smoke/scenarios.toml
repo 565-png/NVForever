@@ -29462,6 +29462,11 @@ expect = [
   { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+', range = [1, 1000000], label = "nonzero eligible shapes and a published resident cache" },
   { re = 'mesh terrain blend: publication generation=[0-9]+ origin=.* resident=.* excluded=.* probe-cell=.* probe-height-bytes=.* probe-status=.* colour=.* height=', label = "publication reports coverage, probe bytes and image identities" },
   { re = 'mesh terrain blend: publication .*height-only:', max = 0, label = "every resident quadrant's colour is captured, layered and fallback stacks included (round 4)" },
+  { re = 'mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=1\.5 steep=144 weight-version=2', label = "round 6: hybrid v2 with its resolved widths (band/16 and 6 band)" },
+  { re = 'mesh terrain blend: ready eligible-shapes=[0-9]+ resident-cells=[1-9] generation=[0-9]+ variant=surface shape=hybrid resolution=1024 shading=full flat=1\.5 steep=144 weight-version=2 stat-shapes=([1-9][0-9]*) excluded-shapes=[0-9]+ pending-material-shapes=[0-9]+ excluded-world=[0-9]+ ', range = [1, 1000000], label = "round 6: the census counts resident STAT shapes after round 5's fields" },
+  { re = 'mesh terrain blend: ready .* admitted-blend=[0-9]+ admitted-bias=[0-9]+ admitted-decal=[0-9]+ admitted-mask=[0-9]+ admitted-alpha-cut=[0-9]+', label = "round 6: the ready line ends with the admitted material counts" },
+  { re = 'mesh terrain blend: census-shape ref=0x[0-9A-F]{8} base=0x[0-9A-F]{8} model=.+ shape=[0-9]+ status=eligible first-reason=none reasons=none', label = "round 6: per-shape census lines name eligible shapes" },
+  { re = 'mesh terrain blend: census-shape ref=0x[0-9A-F]{8} base=0x[0-9A-F]{8} model=.+ shape=[0-9]+ status=(eligible|excluded) first-reason=[a-z-]+ reasons=[a-z+-]+', max = 2048, label = "round 6: per-shape census lines stay within their cap" },
   { re = 'test aid: screenshot .*mesh_terrain_blend_goodsprings\.png', label = "the contact frame is saved" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
 ]
@@ -29480,5 +29485,23 @@ expect = [
   { re = 'mesh terrain blend: colour atlas resolution=2048 atlas=6144x6144 rgba16f colour-mib=288 ', label = "the 2048-texel atlas fits the device" },
   { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+ variant=status shape=penetration resolution=2048 shading=albedo', range = [1, 1000000], label = "the published atlas carries the requested resolution" },
   { re = 'mesh terrain blend: publication generation=[0-9]+ .* resolution=2048', label = "the publication line names the resolution" },
+  { re = 'mesh terrain blend: start band=8 variant=status resolution=2048 noise=0 shape=penetration shading=albedo weight-version=1', label = "round 6: the penetration formula is unchanged (weight version 1, no widths)" },
+  { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
+]
+
+[[scenario]]
+name = "mesh-terrain-blend-widths"
+source = "[design] #2661 round 6: hybrid v2's flat and steep band widths at the end of the aid's value, and the census of STAT shapes before filtering (engine/nvforever/src/mesh_terrain_blend.rs::parse, census; nif_surface_blend.rs::contact_weight)"
+areas = ["rendering", "terrain"]
+paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/world.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvf-assets/src/nif_material.*"]
+env = { NVF_PLAY_TEST_MESH_BLEND = "8:weight:hybrid:1024:full:0.5,32", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages"]
+run_seconds = 20
+manual = "[design] Round 6 comparison set (docs/handoff/mesh-terrain-blend-round1.md, Round 6): aid absent, 8:surface:height:1024:full, 8:surface:hybrid:1024:full:0.5,32, 8:surface:hybrid:1024:full:0.5,48, 8:surface:hybrid:1024:full:0.5,64, 8:weight:hybrid:1024:full:0.5,48 at the road view (A) and the rock foot (B); keep the start, ready and census-shape lines beside each frame. The colour-coded excluded view was not built in round 6: classify the road from its census-shape line (grep its model path). No golden updates."
+expect = [
+  { re = 'mesh terrain blend: start band=8 variant=weight resolution=1024 noise=0 shape=hybrid shading=full flat=0\.5 steep=32 weight-version=2', label = "the widths at the end of the value are resolved" },
+  { re = 'mesh terrain blend: ready eligible-shapes=[0-9]+ resident-cells=[1-9] generation=[0-9]+ variant=weight shape=hybrid resolution=1024 shading=full flat=0\.5 steep=32 weight-version=2 stat-shapes=([1-9][0-9]*) ', range = [1, 1000000], label = "the ready line carries the widths and the census" },
+  { re = 'mesh terrain blend: census-shape ref=0x[0-9A-F]{8} base=0x[0-9A-F]{8} model=.+ shape=[0-9]+ status=(eligible|excluded) first-reason=[a-z-]+ reasons=[a-z+-]+', label = "per-shape census lines with reference, base, model, shape and first reason" },
+  { re = 'mesh terrain blend: rejected NVF_PLAY_TEST_MESH_BLEND', max = 0, label = "the six-part value is accepted" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
 ]

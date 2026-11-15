@@ -1,13 +1,23 @@
 //! [design] NVForever's aid-only mesh/landscape blend: rigid exterior STATs, no noise,
 //! immutable source materials. `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution
-//! [:shading]]]`; omitted parts default to an 8-unit band, the hybrid contact shape, 1024
-//! colour texels per cell and full shading. These are NVForever's own choices.
+//! [:shading[:flat,steep]]]]`; omitted parts default to an 8-unit band, the hybrid (v2)
+//! contact shape, 1024 colour texels per cell, full shading and hybrid v2's widths
+//! `band / 16` and `6 band`. These are NVForever's own choices.
+//!
+//! [design] Census (round 6): every spawned STAT shape carries a [`BlendCensus`] with the
+//! reasons its reference and shape cannot blend, recorded before any filtering
+//! (world.rs::spawn_model); the conversion adds the material and ownership reasons each
+//! frame and reports counts on the ready line and bounded `census-shape` lines. The census
+//! is separate from [`BlendShape`]: only shapes without reference or shape reasons get a
+//! `BlendShape`, so tracking a shape never makes it convertible.
 
 use crate::terrain_surface::{SurfaceCache, update_cache};
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
-use nvf_assets::nif_material::{NifMaterial, Falloff};
-use nvf_assets::nif_surface_blend::{ContactShape, NifBlendMaterial, NifSurfaceBlend, Shading, DEFAULT_RESOLUTION, RESOLUTIONS};
-use std::{collections::HashMap, sync::OnceLock};
+use nvf_assets::nif_material::{Falloff, MaterialOverride, NifMaterial, SeeThroughNoShadow};
+use nvf_assets::nif_surface_blend::{ContactShape, ContactWidths, NifBlendMaterial, NifSurfaceBlend, Shading, DEFAULT_RESOLUTION, RESOLUTIONS};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Variant { Surface, Weight, Normal, Selection, Status }
@@ -32,8 +42,10 @@ pub const DEFAULT_BAND: f32 = 8.0;
 pub const DEFAULT_SHAPE: ContactShape = ContactShape::Hybrid;
 pub const DEFAULT_SHADING: Shading = Shading::Full;
 
+/// `flat` and `steep` are hybrid v2's widths (resolved: `band / 16` and `6 band` unless
+/// the value gives them); the other shapes do not read them.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BlendConfig { pub band: f32, pub variant: Variant, pub shape: ContactShape, pub resolution: u32, pub shading: Shading }
+pub struct BlendConfig { pub band: f32, pub variant: Variant, pub shape: ContactShape, pub resolution: u32, pub shading: Shading, pub flat: f32, pub steep: f32 }
 
 impl BlendConfig {
     /// The enabled material's controls (nif_surface_bindings.wesl `mesh_terrain`): band,
@@ -41,14 +53,24 @@ impl BlendConfig {
     pub fn controls(&self) -> Vec4 {
         Vec4::new(self.band, self.variant.number(), self.shape.number(), self.shading.number())
     }
+    /// The enabled material's `mesh_terrain_widths`: flat and steep widths, z and w unused.
+    pub fn width_controls(&self) -> Vec4 {
+        Vec4::new(self.flat, self.steep, 0.0, 0.0)
+    }
+    #[cfg(test)]
+    pub fn widths(&self) -> ContactWidths {
+        ContactWidths { flat: self.flat, band: self.band, steep: self.steep }
+    }
 }
 
-const SYNTAX: &str = "expected [positive band:]surface|weight|normal|selection|status[:height|penetration|hybrid[:512|1024|2048[:albedo|full]]]";
+const SYNTAX: &str = "expected [positive band:]surface|weight|normal|selection|status[:height|penetration|hybrid|hybrid-v1[:512|1024|2048[:albedo|full[:flat,steep]]]]";
+const WIDTHS: &str = "widths must be flat,steep: finite positive numbers with flat <= band <= steep, for the hybrid shape only";
 
-/// [design] `[band:]view[:shape[:resolution[:shading]]]`. The first part is the view when
-/// it names one, otherwise the band (empty: the default). An empty later part takes its
-/// default. Old short forms (`surface`, `:selection`, `24:status`) keep their meaning,
-/// with the new defaults for what they leave out.
+/// [design] `[band:]view[:shape[:resolution[:shading[:flat,steep]]]]`. The first part is
+/// the view when it names one, otherwise the band (empty: the default). An empty later
+/// part takes its default, except the widths: a sixth part must be a `flat,steep` pair,
+/// and only with the hybrid (v2) shape. Old short forms (`surface`, `:selection`,
+/// `24:status`) keep their meaning, with the new defaults for what they leave out.
 pub fn parse(value: &str) -> Result<BlendConfig, &'static str> {
     let mut parts: Vec<&str> = value.split(':').collect();
     let band = if Variant::parse(parts[0]).is_some() { DEFAULT_BAND } else {
@@ -60,7 +82,7 @@ pub fn parse(value: &str) -> Result<BlendConfig, &'static str> {
     let variant = parts.next().and_then(Variant::parse).ok_or(SYNTAX)?;
     let shape = match parts.next().unwrap_or("") {
         "" => DEFAULT_SHAPE, "height" => ContactShape::Height, "penetration" => ContactShape::Penetration,
-        "hybrid" => ContactShape::Hybrid, _ => return Err(SYNTAX),
+        "hybrid" => ContactShape::Hybrid, "hybrid-v1" => ContactShape::HybridV1, _ => return Err(SYNTAX),
     };
     let resolution = match parts.next().unwrap_or("") {
         "" => DEFAULT_RESOLUTION,
@@ -69,8 +91,18 @@ pub fn parse(value: &str) -> Result<BlendConfig, &'static str> {
     let shading = match parts.next().unwrap_or("") {
         "" => DEFAULT_SHADING, "albedo" => Shading::Albedo, "full" => Shading::Full, _ => return Err(SYNTAX),
     };
+    let widths = match parts.next() {
+        None => ContactWidths::from_band(band),
+        Some(pair) => {
+            if shape != ContactShape::Hybrid { return Err(WIDTHS); }
+            let (flat, steep) = pair.split_once(',').ok_or(WIDTHS)?;
+            let number = |w: &str| w.parse::<f32>().map_err(|_| WIDTHS);
+            ContactWidths { flat: number(flat)?, band, steep: number(steep)? }
+        }
+    };
+    if shape == ContactShape::Hybrid && !widths.valid() { return Err(WIDTHS); }
     if parts.next().is_some() { return Err(SYNTAX); }
-    Ok(BlendConfig { band, variant, shape, resolution, shading })
+    Ok(BlendConfig { band, variant, shape, resolution, shading, flat: widths.flat, steep: widths.steep })
 }
 
 pub fn config() -> Option<BlendConfig> {
@@ -91,35 +123,236 @@ pub fn config() -> Option<BlendConfig> {
     })
 }
 
-/// The resolved configuration; `start band=... variant=...` stays the line's prefix.
+/// Hybrid v2's resolved widths and the weight formula's version, appended to the start
+/// and ready lines: ` flat=... steep=... weight-version=2`, or ` weight-version=1` for the
+/// shapes round 6 left unchanged.
+fn weight_fields(c: &BlendConfig) -> String {
+    if c.shape == ContactShape::Hybrid {
+        format!(" flat={} steep={} weight-version={}", c.flat, c.steep, c.shape.weight_version())
+    } else {
+        format!(" weight-version={}", c.shape.weight_version())
+    }
+}
+
+/// The resolved configuration; `start band=... variant=...` stays the line's prefix and
+/// round 5's fields keep their order before the appended weight fields.
 fn start_line(c: &BlendConfig) -> String {
-    format!("mesh terrain blend: start band={} variant={} resolution={} noise=0 shape={} shading={}", c.band, c.variant.name(), c.resolution, c.shape.name(), c.shading.name())
+    format!("mesh terrain blend: start band={} variant={} resolution={} noise=0 shape={} shading={}{}", c.band, c.variant.name(), c.resolution, c.shape.name(), c.shading.name(), weight_fields(c))
 }
 
-// [design] Selection rules, not asset-path guesses. Callers supply code facts from
-// world.rs::spawn_model, fnv-world placed.rs/index.rs and model.rs::PreparedModel.
-pub fn eligible_reference(sig: &[u8; 4], exterior: bool, rigid: bool, destructible: bool, distant: bool) -> bool {
-    sig == b"STAT" && exterior && rigid && !destructible && !distant
+/// [design] Why a tracked shape cannot blend, one bit each; the order is the first-reason
+/// precedence of the `census-shape` lines and the order of the ready line's counts.
+/// Reference reasons (world.rs::spawn_model), shape reasons, the material's state and
+/// ownership, then each material predicate (from `world.rs`, fnv-world `placed.rs`,
+/// nvf-assets `model.rs::PreparedModel` and `nif_material.rs::NifSurface`).
+pub mod reason {
+    pub const WORLD: u32 = 1 << 0;
+    pub const RIG: u32 = 1 << 1;
+    pub const PARTICLES: u32 = 1 << 2;
+    pub const POSED: u32 = 1 << 3;
+    pub const DAMAGE_STAGES: u32 = 1 << 4;
+    pub const DEST: u32 = 1 << 5;
+    pub const DISTANT: u32 = 1 << 6;
+    pub const EMITTANCE: u32 = 1 << 7;
+    pub const MORPH: u32 = 1 << 8;
+    pub const MISSING_SOURCE: u32 = 1 << 9;
+    pub const TEMPORARY: u32 = 1 << 10;
+    pub const ALPHA_MODE: u32 = 1 << 11;
+    pub const UNLIT: u32 = 1 << 12;
+    pub const REFRACTION: u32 = 1 << 13;
+    pub const FIRST_PERSON: u32 = 1 << 14;
+    pub const DEPTH_WRITE: u32 = 1 << 15;
+    pub const SPECULAR_TRANSMISSION: u32 = 1 << 16;
+    pub const DIFFUSE_TRANSMISSION: u32 = 1 << 17;
+    pub const FALLOFF: u32 = 1 << 18;
+    pub const HOLES_VALUE: u32 = 1 << 19;
+    pub const HOLES_TEXTURE: u32 = 1 << 20;
+    pub const FACEGEN: u32 = 1 << 21;
+    pub const PIPBOY: u32 = 1 << 22;
+    pub const ADD_LINEAR: u32 = 1 << 23;
+    pub const SOFT: u32 = 1 << 24;
+    pub const DEPTH_BIAS: u32 = 1 << 25;
+    /// Bits and the names the logs use (`excluded-<name>=`).
+    pub const NAMES: [(u32, &str); 26] = [
+        (WORLD, "world"), (RIG, "rig"), (PARTICLES, "particles"), (POSED, "posed"),
+        (DAMAGE_STAGES, "damage-stages"), (DEST, "dest"), (DISTANT, "distant"),
+        (EMITTANCE, "emittance"), (MORPH, "morph"), (MISSING_SOURCE, "missing-source"),
+        (TEMPORARY, "temporary"), (ALPHA_MODE, "alpha-mode"), (UNLIT, "unlit"),
+        (REFRACTION, "refraction"), (FIRST_PERSON, "first-person"), (DEPTH_WRITE, "depth-write"),
+        (SPECULAR_TRANSMISSION, "specular-transmission"), (DIFFUSE_TRANSMISSION, "diffuse-transmission"),
+        (FALLOFF, "falloff"), (HOLES_VALUE, "holes-value"), (HOLES_TEXTURE, "holes-texture"),
+        (FACEGEN, "facegen"), (PIPBOY, "pipboy"), (ADD_LINEAR, "add-linear"), (SOFT, "soft"),
+        (DEPTH_BIAS, "depth-bias-nonfinite"),
+    ];
+    /// The first reason in precedence order, `none` for an empty mask.
+    pub fn first(mask: u32) -> &'static str {
+        NAMES.iter().find(|(bit, _)| mask & bit != 0).map_or("none", |(_, name)| name)
+    }
+    /// Every reason, `+`-joined, `none` for an empty mask.
+    pub fn list(mask: u32) -> String {
+        let names: Vec<&str> = NAMES.iter().filter(|(bit, _)| mask & bit != 0).map(|(_, name)| *name).collect();
+        if names.is_empty() { "none".into() } else { names.join("+") }
+    }
 }
 
+/// [design] Code facts of a placed reference (world.rs::spawn_model, fnv-world
+/// placed.rs/index.rs, model.rs::PreparedModel); no asset-name selection.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ReferenceFacts {
+    /// In an exterior cell of the world being drawn.
+    pub exterior: bool,
+    /// A rig or skinned shapes.
+    pub rigged: bool,
+    pub particles: bool,
+    /// Jointed, loose bodies, or drawn in a stored pose.
+    pub posed: bool,
+    pub damage_stages: bool,
+    /// The base record has DEST (fnv-game/src/data.rs).
+    pub destructible: bool,
+    /// Drawn as a distant imposter.
+    pub distant: bool,
+}
+
+/// Bits whose condition holds, combined.
+fn mask_of<const N: usize>(conditions: [(bool, u32); N]) -> u32 {
+    conditions.into_iter().filter(|c| c.0).fold(0, |mask, (_, bit)| mask | bit)
+}
+
+pub fn reference_reasons(f: ReferenceFacts) -> u32 {
+    use reason::*;
+    mask_of([(!f.exterior, WORLD), (f.rigged, RIG), (f.particles, PARTICLES), (f.posed, POSED),
+        (f.damage_stages, DAMAGE_STAGES), (f.destructible, DEST), (f.distant, DISTANT)])
+}
+
+/// [design] A shape driven by the reference's emittance, or a registered morph target.
+pub fn shape_reasons(external_emittance: bool, morph: bool) -> u32 {
+    mask_of([(external_emittance, reason::EMITTANCE), (morph, reason::MORPH)])
+}
+
+/// Selection of the reference: a STAT without reference reasons (the census records
+/// only STATs; world.rs::blend_census).
+#[cfg(test)]
+pub fn eligible_reference(sig: &[u8; 4], facts: ReferenceFacts) -> bool {
+    sig == b"STAT" && reference_reasons(facts) == 0
+}
+
+/// [design] Each material predicate the blend cannot take, one reason each. Admitted since
+/// round 6: ordinary `Blend` (its transparent phase, blend state, sorting and depth-write
+/// state stay the shared specialization's), a finite depth bias (copied exactly), the lit
+/// mesh decal flag (the shared specialization keeps its bias) and `alpha_cut` (the discard
+/// runs before terrain shading; copied unchanged); `Mask` was already admitted. Add,
+/// Multiply, Premultiplied and AlphaToCoverage stay out; holes and FaceGen always, because
+/// the blend type repurposes their slots (nif_surface_blend.rs module notes).
+pub fn material_reasons(m: &NifMaterial) -> u32 {
+    use reason::*;
+    let (b, s) = (&m.base, &m.extension);
+    mask_of([
+        (!matches!(b.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_) | AlphaMode::Blend), ALPHA_MODE),
+        (b.unlit, UNLIT), (s.refract, REFRACTION), (s.first_person, FIRST_PERSON), (s.depth_write, DEPTH_WRITE),
+        (b.specular_transmission != 0.0, SPECULAR_TRANSMISSION), (b.diffuse_transmission != 0.0, DIFFUSE_TRANSMISSION),
+        (s.falloff != Falloff::NONE.params, FALLOFF),
+        (s.holes != nvf_assets::nif_material::NO_HOLES, HOLES_VALUE), (s.holes_texture.is_some(), HOLES_TEXTURE),
+        (s.facegen_offset.is_some(), FACEGEN), (s.pipboy_screen, PIPBOY), (s.add_linear, ADD_LINEAR),
+        (s.soft != Vec4::ZERO, SOFT), (!b.depth_bias.is_finite(), DEPTH_BIAS),
+    ])
+}
+
+/// The conversion reads the full mask ([`shape_mask`]); this is its material part alone.
+#[cfg(test)]
 pub fn eligible_material(m: &NifMaterial) -> bool {
-    let s = &m.extension;
-    matches!(m.base.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_))
-        && !m.base.unlit && !s.refract && !s.decal && !s.first_person && !s.depth_write
-        && m.base.specular_transmission == 0.0 && m.base.diffuse_transmission == 0.0
-        && s.falloff == Falloff::NONE.params && s.alpha_cut == 0.0
-        && s.holes == nvf_assets::nif_material::NO_HOLES && s.holes_texture.is_none()
-        && s.facegen_offset.is_none() && !s.pipboy_screen && !s.add_linear
-        && s.soft == Vec4::ZERO && m.base.depth_bias == 0.0
+    material_reasons(m) == 0
 }
 
 pub use nvf_assets::nif_surface_blend::BlendShape;
 
+/// [design] Aid-only metadata of one spawned STAT shape (world.rs::spawn_model), recorded
+/// before any filtering: its reference, base and model, the shape's index in the model
+/// (in a rigged model, its index among the drawn shapes), and its reference and shape
+/// reasons. Diagnostics only: conversion follows [`BlendShape`] alone.
+#[derive(Component, Clone, Debug)]
+pub struct BlendCensus {
+    pub reference: u32,
+    pub base: u32,
+    pub model: Arc<str>,
+    pub shape: usize,
+    pub reasons: u32,
+}
+
+/// What an enabled clone was made from, compared each frame so that a producer editing
+/// the source under the same handle (blended cut-outs flipping Blend and Mask, NIF block
+/// edits) rebuilds the clone without inserting a new ordinary material component.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SourceStamp { alpha_mode: AlphaMode, alpha_cut: u32, alpha: u32, depth_bias: u32, decal: bool, roughness: u32, blended_cutout: Option<u32> }
+impl SourceStamp {
+    fn of(m: &NifMaterial) -> Self {
+        Self {
+            alpha_mode: m.base.alpha_mode, alpha_cut: m.extension.alpha_cut.to_bits(), alpha: m.base.base_color.alpha().to_bits(),
+            depth_bias: m.base.depth_bias.to_bits(), decal: m.extension.decal, roughness: m.base.perceptual_roughness.to_bits(),
+            blended_cutout: m.extension.blended_cutout.map(f32::to_bits),
+        }
+    }
+}
+
+/// [design] The census of the currently resident tracked shapes (not unique materials or
+/// cumulative spawns): `reasons` overlap, one count per [`reason::NAMES`] entry; `admitted`
+/// counts the enabled shapes whose source is Blend, has a depth bias, the decal flag, is
+/// Mask, or has an alpha cut.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Census {
+    /// The prefix's `eligible-shapes` (compared for refreshes, printed by `ready_line`).
+    eligible: usize,
+    stat_shapes: usize,
+    excluded: usize,
+    pending: usize,
+    reasons: [usize; reason::NAMES.len()],
+    admitted: [usize; 5],
+}
+impl Census {
+    fn count(&mut self, mask: u32) {
+        self.stat_shapes += 1;
+        self.excluded += usize::from(mask != 0);
+        self.pending += usize::from(mask & reason::MISSING_SOURCE != 0);
+        for (n, (bit, _)) in self.reasons.iter_mut().zip(reason::NAMES) {
+            *n += usize::from(mask & bit != 0);
+        }
+    }
+    fn admit(&mut self, m: &NifMaterial) {
+        let flags = [
+            m.base.alpha_mode == AlphaMode::Blend, m.base.depth_bias != 0.0, m.extension.decal,
+            matches!(m.base.alpha_mode, AlphaMode::Mask(_)), m.extension.alpha_cut != 0.0,
+        ];
+        for (n, f) in self.admitted.iter_mut().zip(flags) { *n += usize::from(f); }
+    }
+    /// Appended to the ready line after round 5's fields and the weight fields.
+    fn fields(&self) -> String {
+        use std::fmt::Write;
+        let mut out = format!(" stat-shapes={} excluded-shapes={} pending-material-shapes={}", self.stat_shapes, self.excluded, self.pending);
+        for ((_, name), n) in reason::NAMES.iter().zip(self.reasons) {
+            let _ = write!(out, " excluded-{name}={n}");
+        }
+        for (name, n) in ["blend", "bias", "decal", "mask", "alpha-cut"].iter().zip(self.admitted) {
+            let _ = write!(out, " admitted-{name}={n}");
+        }
+        out
+    }
+}
+
+/// [design] Census-only changes refresh the ready line at most once per this many frames
+/// (a publication reports at once), so cell streaming does not log every frame.
+const REFRESH_FRAMES: u32 = 60;
+/// [design] At most this many `census-shape` lines per run; each line is a distinct base
+/// form, shape index and reason mask (the first reference seen of it).
+const SHAPE_LINES: usize = 2048;
+
 #[derive(Resource, Default)]
 struct Variants {
     generation: u64,
-    materials: HashMap<AssetId<NifMaterial>, Handle<NifBlendMaterial>>,
+    materials: HashMap<AssetId<NifMaterial>, (Handle<NifBlendMaterial>, SourceStamp)>,
     reported: Option<u64>,
+    reported_census: Option<Census>,
+    frames_since_report: u32,
+    logged: HashSet<(u32, usize, u32)>,
+    shape_lines: usize,
 }
 
 pub struct MeshTerrainBlendPlugin;
@@ -136,13 +369,15 @@ impl Plugin for MeshTerrainBlendPlugin {
 
 /// [design] Where the conversion runs: ordinary producers (swaps, alpha, scripted fades)
 /// finish in Update; in PostUpdate it follows the scripted NIF edits (`nif_mirror`, their
-/// commands applied, so an edited source is never left beside the blend material) and the
-/// see-through shadow bookkeeping (which must see a restored ordinary material before it
-/// is swapped away, or a finished fade keeps its shadow markers), and precedes asset
-/// events and mesh/material change marking.
+/// commands applied, so an edited source is never left beside the blend material), the
+/// blended cut-outs' same-handle alpha-mode edits, and the see-through shadow bookkeeping
+/// (which must see a restored ordinary material before it is swapped away, or a finished
+/// fade keeps its shadow markers), and precedes asset events and mesh/material change
+/// marking.
 fn conversion_order<M>(system: impl IntoScheduleConfigs<bevy::ecs::system::ScheduleSystem, M>) -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
     system
         .after(crate::nif_mirror::MirrorSystems)
+        .after(nvf_assets::nif_material::BlendedCutoutSystems)
         .after(nvf_assets::nif_material::SeeThroughShadowSystems)
         .before(bevy::asset::AssetEventSystems)
         .before(bevy::mesh::mark_3d_meshes_as_changed_if_their_assets_changed)
@@ -151,10 +386,17 @@ fn conversion_order<M>(system: impl IntoScheduleConfigs<bevy::ecs::system::Sched
 fn enabled_material(source: &NifMaterial, c: BlendConfig, surface: &crate::terrain_surface::PublishedSurface) -> NifBlendMaterial {
     NifBlendMaterial {
         base: source.base.clone(),
-        extension: NifSurfaceBlend::from_source(&source.extension, c.controls(),
+        extension: NifSurfaceBlend::from_source(&source.extension, c.controls(), c.width_controls(),
             Vec4::new(surface.origin.0 as f32, surface.origin.1 as f32, 0.0, 0.0), surface.colour.clone(), surface.height.clone()),
     }
 }
+
+/// Temporary material owners (fades, actor alpha, overrides), whose copies never blend.
+type Temporary = (Has<nvf_play::fade::Fading>, Has<crate::effect_shaders::Faded>, Has<MaterialOverride>);
+/// The see-through shadow markers (nif_material.rs `see_through_casts_no_shadow`).
+type ShadowMarks = (Has<NotShadowCaster>, Has<SeeThroughNoShadow>);
+/// Every shape the aid tracks: convertible ones ([`BlendShape`]) and census-only ones.
+type Tracked<'w, 's> = Query<'w, 's, (Entity, Option<&'static mut BlendShape>, Option<&'static BlendCensus>, Option<&'static MeshMaterial3d<NifMaterial>>, Temporary, ShadowMarks), Or<(With<BlendShape>, With<BlendCensus>)>>;
 
 fn apply_variants(
     mut commands: Commands,
@@ -162,10 +404,18 @@ fn apply_variants(
     mut variants: ResMut<Variants>,
     materials: Res<Assets<NifMaterial>>,
     mut blends: ResMut<Assets<NifBlendMaterial>>,
-    mut shapes: Query<(Entity, &mut BlendShape, Option<&MeshMaterial3d<NifMaterial>>)>,
+    mut shapes: Tracked,
 ) {
     let Some(c) = config() else { return };
     apply_configured_variants(&mut commands, &cache, &mut variants, &materials, &mut blends, &mut shapes, c);
+}
+
+/// The full reason mask of a tracked shape this frame: its recorded reference and shape
+/// reasons, temporary ownership, and its source material's reasons (or that the source
+/// is not loaded).
+fn shape_mask(recorded: u32, temporary: bool, source: Option<&NifMaterial>) -> u32 {
+    let owned = if temporary { reason::TEMPORARY } else { 0 };
+    recorded | owned | source.map_or(reason::MISSING_SOURCE, material_reasons)
 }
 
 // [design] Explicit config boundary lets ECS tests publish without process-wide env state.
@@ -175,7 +425,7 @@ fn apply_configured_variants(
     variants: &mut Variants,
     materials: &Assets<NifMaterial>,
     blends: &mut Assets<NifBlendMaterial>,
-    shapes: &mut Query<(Entity, &mut BlendShape, Option<&MeshMaterial3d<NifMaterial>>)>,
+    shapes: &mut Tracked,
     c: BlendConfig,
 ) {
     if variants.generation != cache.generation {
@@ -184,49 +434,101 @@ fn apply_configured_variants(
     }
     // A producer can edit an owned source in place and republish the same handle
     // (NIF block material edits). Evict once per source before creating shared clones.
-    for (_, shape, drawn) in shapes.iter() {
-        if shape.enabled.is_none() { continue; }
+    for (_, shape, _, drawn, _, _) in shapes.iter() {
+        if shape.is_none_or(|s| s.enabled.is_none()) { continue; }
         if let Some(drawn) = drawn { variants.materials.remove(&drawn.0.id()); }
     }
-    let mut eligible = 0;
-    for (entity, mut shape, drawn) in shapes.iter_mut() {
+    let mut census = Census::default();
+    for (entity, shape, tracked, drawn, (fading, faded, overridden), (no_shadow, see_through_mark)) in shapes.iter_mut() {
+        let temporary = fading || faded || overridden;
+        let recorded = tracked.map_or(0, |t| t.reasons);
+        let Some(mut shape) = shape else {
+            // Census only: never converted.
+            let mask = shape_mask(recorded, temporary, drawn.and_then(|d| materials.get(&d.0)));
+            census.count(mask);
+            if let Some(t) = tracked { log_shape(variants, t, mask); }
+            continue;
+        };
         // [design] Respect a material override, retaining its actual source handle too.
         if let Some(drawn) = drawn {
             shape.original = drawn.0.clone();
         }
-        let allowed = materials.get(&shape.original).is_some_and(eligible_material);
-        eligible += usize::from(allowed);
-        let Some(surface) = cache.published.as_ref().filter(|_| allowed) else {
+        let source = materials.get(&shape.original);
+        let mask = shape_mask(recorded, temporary, source);
+        if let Some(t) = tracked {
+            census.count(mask);
+            log_shape(variants, t, mask);
+        }
+        let allowed = mask == 0;
+        census.eligible += usize::from(allowed);
+        let (Some(surface), Some(source), true) = (cache.published.as_ref(), source, allowed) else {
             if shape.enabled.is_some() {
                 commands.entity(entity).remove::<MeshMaterial3d<NifBlendMaterial>>().insert(MeshMaterial3d(shape.original.clone()));
             }
             shape.enabled = None;
             continue;
         };
-        let source = shape.original.id();
-        let handle = if let Some(handle) = variants.materials.get(&source) { handle.clone() } else {
-            let enabled = enabled_material(materials.get(source).unwrap(), c, surface);
-            let handle = blends.add(enabled);
-            variants.materials.insert(source, handle.clone());
-            handle
+        census.admit(source);
+        let id = shape.original.id();
+        let stamp = SourceStamp::of(source);
+        let handle = match variants.materials.get(&id) {
+            Some((handle, made)) if *made == stamp => handle.clone(),
+            _ => {
+                let handle = blends.add(enabled_material(source, c, surface));
+                variants.materials.insert(id, (handle.clone(), stamp));
+                handle
+            }
         };
         if shape.enabled.as_ref() != Some(&handle) || drawn.is_some() {
             commands.entity(entity).remove::<MeshMaterial3d<NifMaterial>>().insert(MeshMaterial3d(handle.clone()));
+            // [design] The shared bookkeeping runs on ordinary material changes only; a
+            // source edited under the same handle is checked here, by the same rule.
+            match (nvf_assets::nif_material::see_through(source), no_shadow, see_through_mark) {
+                (true, false, _) => { commands.entity(entity).try_insert((NotShadowCaster, SeeThroughNoShadow)); }
+                (false, true, true) => { commands.entity(entity).try_remove::<(NotShadowCaster, SeeThroughNoShadow)>(); }
+                _ => {}
+            }
         }
         shape.enabled = Some(handle);
     }
+    variants.frames_since_report = variants.frames_since_report.saturating_add(1);
     if let Some(surface) = &cache.published {
-        if eligible > 0 && variants.reported != Some(cache.generation) {
-            info!("{}", ready_line(eligible, surface, cache.generation, &c));
+        let published = variants.reported != Some(cache.generation);
+        let refreshed = variants.reported_census.as_ref() != Some(&census) && variants.frames_since_report >= REFRESH_FRAMES;
+        if published || refreshed {
+            info!("{}", ready_line(surface, cache.generation, &c, &census));
             variants.reported = Some(cache.generation);
+            variants.reported_census = Some(census);
+            variants.frames_since_report = 0;
         }
     }
 }
 
-/// `ready eligible-shapes=... resident-cells=... generation=...` stays the line's prefix;
-/// the resolution is the published atlas's.
-fn ready_line(eligible: usize, surface: &crate::terrain_surface::PublishedSurface, generation: u64, c: &BlendConfig) -> String {
-    format!("mesh terrain blend: ready eligible-shapes={eligible} resident-cells={} generation={generation} variant={} shape={} resolution={} shading={}", surface.cells, c.variant.name(), c.shape.name(), surface.resolution, c.shading.name())
+/// One bounded `census-shape` line per distinct base form, shape index and reason mask;
+/// shapes whose source material is not loaded yet are left for later.
+fn log_shape(variants: &mut Variants, t: &BlendCensus, mask: u32) {
+    if mask & reason::MISSING_SOURCE != 0 || variants.shape_lines > SHAPE_LINES { return; }
+    if !variants.logged.insert((t.base, t.shape, mask)) { return; }
+    variants.shape_lines += 1;
+    if variants.shape_lines > SHAPE_LINES {
+        info!("mesh terrain blend: census-shape lines stopped at {SHAPE_LINES}; the ready line still counts every shape");
+        return;
+    }
+    info!("{}", shape_line(t, mask));
+}
+
+/// `census-shape ref=0x... base=0x... model=... shape=N status=eligible|excluded
+/// first-reason=... reasons=a+b` (reference: the first seen with this base, shape and mask).
+fn shape_line(t: &BlendCensus, mask: u32) -> String {
+    format!("mesh terrain blend: census-shape ref=0x{:08X} base=0x{:08X} model={} shape={} status={} first-reason={} reasons={}",
+        t.reference, t.base, t.model, t.shape, if mask == 0 { "eligible" } else { "excluded" }, reason::first(mask), reason::list(mask))
+}
+
+/// `ready eligible-shapes=... resident-cells=... generation=...` stays the line's prefix and
+/// round 5's `variant= shape= resolution= shading=` follow unchanged; then the weight fields
+/// and the census. The resolution is the published atlas's.
+fn ready_line(surface: &crate::terrain_surface::PublishedSurface, generation: u64, c: &BlendConfig, census: &Census) -> String {
+    format!("mesh terrain blend: ready eligible-shapes={} resident-cells={} generation={generation} variant={} shape={} resolution={} shading={}{}{}", census.eligible, surface.cells, c.variant.name(), c.shape.name(), surface.resolution, c.shading.name(), weight_fields(c), census.fields())
 }
 
 #[cfg(test)]
@@ -237,7 +539,7 @@ mod tests {
     fn configured(
         mut commands: Commands, cache: Res<SurfaceCache>, mut variants: ResMut<Variants>,
         materials: Res<Assets<NifMaterial>>, mut blends: ResMut<Assets<NifBlendMaterial>>,
-        mut shapes: Query<(Entity, &mut BlendShape, Option<&MeshMaterial3d<NifMaterial>>)>,
+        mut shapes: Tracked,
     ) {
         apply_configured_variants(&mut commands, &cache, &mut variants, &materials, &mut blends, &mut shapes, parse("24:status").unwrap());
     }
@@ -417,7 +719,7 @@ mod tests {
 
     #[test]
     fn aid_parsing() {
-        let config = |band, variant, shape, resolution, shading| BlendConfig { band, variant, shape, resolution, shading };
+        let config = |band: f32, variant, shape, resolution, shading| BlendConfig { band, variant, shape, resolution, shading, flat: band / 16.0, steep: band * 6.0 };
         use ContactShape::*;
         // Old short forms keep working, with the new defaults for what they leave out.
         assert_eq!(parse("surface").unwrap(), config(8.0, Variant::Surface, Hybrid, 1024, Shading::Full));
@@ -444,52 +746,372 @@ mod tests {
             "surface:hybrid:768", "surface:hybrid:1024:shiny", "surface:hybrid:1024:full:extra", "8:surface:hybrid:1024:full:", "8:8:surface", "surface:24"] {
             assert!(parse(value).is_err(), "{value}");
         }
+        // Hybrid v1 keeps round 5's hybrid; its widths are the unused defaults.
+        assert_eq!(parse("8:surface:hybrid-v1:1024:full").unwrap(), config(8.0, Variant::Surface, HybridV1, 1024, Shading::Full));
+    }
+
+    #[test]
+    fn aid_widths_extend_the_value_only_at_its_end() {
+        let widths = |v: &str| parse(v).map(|c| (c.flat, c.band, c.steep));
+        // Omitted: band / 16 and 6 band; the default band gives 0.5 and 48.
+        assert_eq!(widths("surface"), Ok((0.5, 8.0, 48.0)));
+        assert_eq!(widths("24:surface"), Ok((1.5, 24.0, 144.0)));
+        // The comparison set (plan round 6, step 4).
+        for (value, steep) in [("8:surface:hybrid:1024:full:0.5,32", 32.0), ("8:surface:hybrid:1024:full:0.5,48", 48.0),
+            ("8:surface:hybrid:1024:full:0.5,64", 64.0), ("8:weight:hybrid:1024:full:0.5,48", 48.0)] {
+            assert_eq!(widths(value), Ok((0.5, 8.0, steep)), "{value}");
+        }
+        assert_eq!(widths("8:surface::::0.25,40"), Ok((0.25, 8.0, 40.0)), "empty parts before the widths take their defaults");
+        assert_eq!(widths("8:surface:hybrid:1024:full:8,8"), Ok((8.0, 8.0, 8.0)), "equal widths are ordered");
+        assert_eq!(parse("8:surface:hybrid:1024:full:0.5,32").unwrap().width_controls(), Vec4::new(0.5, 32.0, 0.0, 0.0));
+        assert_eq!(parse("8:surface:hybrid:1024:full:0.5,32").unwrap().widths(), ContactWidths { flat: 0.5, band: 8.0, steep: 32.0 });
+        for value in [
+            "8:surface:hybrid:1024:full:", "8:surface:hybrid:1024:full:0.5", "8:surface:hybrid:1024:full:0.5,", "8:surface:hybrid:1024:full:,48",
+            "8:surface:hybrid:1024:full:0.5,48,64", "8:surface:hybrid:1024:full:0.5;48", "8:surface:hybrid:1024:full:a,48",
+            "8:surface:hybrid:1024:full:0,48", "8:surface:hybrid:1024:full:-0.5,48", "8:surface:hybrid:1024:full:9,48",
+            "8:surface:hybrid:1024:full:0.5,4", "8:surface:hybrid:1024:full:NaN,48", "8:surface:hybrid:1024:full:0.5,inf",
+            "8:surface:hybrid:1024:full:0.5,48:extra",
+            // Only hybrid v2 takes widths.
+            "8:surface:height:1024:full:0.5,48", "8:surface:penetration:1024:full:0.5,48", "8:surface:hybrid-v1:1024:full:0.5,48",
+            // A derived width that is not finite.
+            "3e38:surface",
+        ] {
+            assert!(parse(value).is_err(), "{value}");
+        }
+        // The old shapes keep accepting what they accepted.
+        assert!(parse("3e38:surface:height").is_ok());
     }
 
     #[test]
     fn start_and_ready_lines_keep_their_prefixes_and_name_every_setting() {
         let c = parse("24:surface").unwrap();
-        assert_eq!(start_line(&c), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full");
+        assert_eq!(start_line(&c), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=1.5 steep=144 weight-version=2");
+        assert!(start_line(&c).starts_with("mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full"), "round 5's prefix");
+        assert_eq!(start_line(&parse("8:status:penetration:2048:albedo").unwrap()), "mesh terrain blend: start band=8 variant=status resolution=2048 noise=0 shape=penetration shading=albedo weight-version=1");
+        assert_eq!(start_line(&parse("8:surface:hybrid:1024:full:0.5,32").unwrap()), "mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=0.5 steep=32 weight-version=2");
         let mut images = Assets::<Image>::default();
         let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (0, 0), cells: 9, resolution: 512 };
-        assert_eq!(ready_line(12, &surface, 3, &parse("8:status:height:512:albedo").unwrap()), "mesh terrain blend: ready eligible-shapes=12 resident-cells=9 generation=3 variant=status shape=height resolution=512 shading=albedo");
+        let mut census = Census::default();
+        census.count(0);
+        census.count(reason::RIG | reason::PARTICLES);
+        census.count(reason::MISSING_SOURCE);
+        census.admit(&NifMaterial { base: StandardMaterial { alpha_mode: AlphaMode::Blend, depth_bias: 2.0, ..default() }, extension: NifSurface { decal: true, alpha_cut: 0.1, ..default() } });
+        census.eligible = 12;
+        let line = ready_line(&surface, 3, &parse("8:status:height:512:albedo").unwrap(), &census);
+        let prefix = "mesh terrain blend: ready eligible-shapes=12 resident-cells=9 generation=3 variant=status shape=height resolution=512 shading=albedo";
+        assert!(line.starts_with(&format!("{prefix} weight-version=1 stat-shapes=3 excluded-shapes=2 pending-material-shapes=1 excluded-world=0 excluded-rig=1 excluded-particles=1 excluded-posed=0")), "{line}");
+        assert!(line.contains(" excluded-missing-source=1 excluded-temporary=0 excluded-alpha-mode=0"), "{line}");
+        assert!(line.ends_with(" excluded-depth-bias-nonfinite=0 admitted-blend=1 admitted-bias=1 admitted-decal=1 admitted-mask=0 admitted-alpha-cut=1"), "{line}");
+        for (_, name) in reason::NAMES { assert!(line.contains(&format!(" excluded-{name}=")), "every reason is printed, zero included: {name}"); }
+        let v2 = ready_line(&surface, 3, &parse("8:surface").unwrap(), &Census::default());
+        assert!(v2.starts_with("mesh terrain blend: ready eligible-shapes=0 resident-cells=9 generation=3 variant=surface shape=hybrid resolution=512 shading=full flat=0.5 steep=48 weight-version=2 stat-shapes=0 "), "{v2}");
         assert_eq!(parse("6.5:normal:penetration").unwrap().controls(), Vec4::new(6.5, 2.0, 1.0, 1.0));
+        assert_eq!(parse("6.5:normal:hybrid-v1").unwrap().controls().z, 3.0);
+    }
+
+    #[test]
+    fn shape_lines_name_reference_base_model_shape_and_first_reason() {
+        let t = BlendCensus { reference: 0x0010_2A3B, base: 0x0001_F00D, model: "landscape/roads/road01.nif".into(), shape: 2, reasons: 0 };
+        assert_eq!(shape_line(&t, 0), "mesh terrain blend: census-shape ref=0x00102A3B base=0x0001F00D model=landscape/roads/road01.nif shape=2 status=eligible first-reason=none reasons=none");
+        assert_eq!(shape_line(&t, reason::SOFT | reason::UNLIT | reason::DEST), "mesh terrain blend: census-shape ref=0x00102A3B base=0x0001F00D model=landscape/roads/road01.nif shape=2 status=excluded first-reason=dest reasons=dest+unlit+soft");
+        // Bounded: one line per base, shape and mask; pending shapes wait; a hard cap.
+        let mut variants = Variants::default();
+        log_shape(&mut variants, &t, 0);
+        log_shape(&mut variants, &BlendCensus { reference: 7, ..t.clone() }, 0);
+        log_shape(&mut variants, &t, reason::MISSING_SOURCE);
+        assert_eq!(variants.shape_lines, 1);
+        log_shape(&mut variants, &t, reason::TEMPORARY);
+        assert_eq!(variants.shape_lines, 2);
+        for shape in 0..SHAPE_LINES + 10 { log_shape(&mut variants, &BlendCensus { shape: shape + 10, ..t.clone() }, 0); }
+        assert_eq!(variants.shape_lines, SHAPE_LINES + 1, "stops after the cap and its one notice");
+        // Every name is distinct and the precedence is the bit order.
+        let names: HashSet<&str> = reason::NAMES.iter().map(|(_, n)| *n).collect();
+        assert_eq!(names.len(), reason::NAMES.len());
+        for (i, (bit, _)) in reason::NAMES.iter().enumerate() { assert_eq!(*bit, 1 << i); }
+        assert!(!reason::NAMES.iter().any(|(_, n)| n.contains("error") || n.contains("shader")), "census lines never match the smoke error filter");
     }
 
     #[test]
     fn selection_excludes_other_records_interiors_animation_destruction_and_lod() {
-        assert!(eligible_reference(b"STAT", true, true, false, false));
+        let plain = ReferenceFacts { exterior: true, ..default() };
+        assert!(eligible_reference(b"STAT", plain));
         for sig in [b"MSTT", b"SCOL", b"DOOR", b"TREE", b"MISC", b"NPC_", b"PWAT"] {
-            assert!(!eligible_reference(sig, true, true, false, false));
+            assert!(!eligible_reference(sig, plain));
         }
-        for (exterior, rigid, destructible, distant) in [(false, true, false, false), (true, false, false, false), (true, true, true, false), (true, true, false, true)] {
-            assert!(!eligible_reference(b"STAT", exterior, rigid, destructible, distant));
+        // Every reference reason on its own, then all at once (independent bits).
+        let cases = [
+            (ReferenceFacts { exterior: false, ..plain }, reason::WORLD),
+            (ReferenceFacts { rigged: true, ..plain }, reason::RIG),
+            (ReferenceFacts { particles: true, ..plain }, reason::PARTICLES),
+            (ReferenceFacts { posed: true, ..plain }, reason::POSED),
+            (ReferenceFacts { damage_stages: true, ..plain }, reason::DAMAGE_STAGES),
+            (ReferenceFacts { destructible: true, ..plain }, reason::DEST),
+            (ReferenceFacts { distant: true, ..plain }, reason::DISTANT),
+        ];
+        for (facts, bit) in cases {
+            assert_eq!(reference_reasons(facts), bit, "{facts:?}");
+            assert!(!eligible_reference(b"STAT", facts));
         }
+        let all = ReferenceFacts { exterior: false, rigged: true, particles: true, posed: true, damage_stages: true, destructible: true, distant: true };
+        assert_eq!(reference_reasons(all), cases.iter().fold(0, |m, (_, b)| m | b));
+        assert_eq!(reason::first(reference_reasons(all)), "world");
+        assert_eq!(shape_reasons(false, false), 0);
+        assert_eq!(shape_reasons(true, false), reason::EMITTANCE);
+        assert_eq!(shape_reasons(false, true), reason::MORPH);
+        assert_eq!(shape_reasons(true, true), reason::EMITTANCE | reason::MORPH);
+    }
+
+    #[test]
+    fn every_material_predicate_has_its_own_reason() {
+        let m = |base: StandardMaterial, extension: NifSurface| NifMaterial { base, extension };
+        let image = Assets::<Image>::default().reserve_handle();
+        let cases: Vec<(NifMaterial, u32)> = vec![
+            (m(StandardMaterial { alpha_mode: AlphaMode::Add, ..default() }, default()), reason::ALPHA_MODE),
+            (m(StandardMaterial { alpha_mode: AlphaMode::Multiply, ..default() }, default()), reason::ALPHA_MODE),
+            (m(StandardMaterial { alpha_mode: AlphaMode::Premultiplied, ..default() }, default()), reason::ALPHA_MODE),
+            (m(StandardMaterial { alpha_mode: AlphaMode::AlphaToCoverage, ..default() }, default()), reason::ALPHA_MODE),
+            (m(StandardMaterial { unlit: true, ..default() }, default()), reason::UNLIT),
+            (m(default(), NifSurface { refract: true, ..default() }), reason::REFRACTION),
+            (m(default(), NifSurface { first_person: true, ..default() }), reason::FIRST_PERSON),
+            (m(default(), NifSurface { depth_write: true, ..default() }), reason::DEPTH_WRITE),
+            (m(StandardMaterial { specular_transmission: 0.5, ..default() }, default()), reason::SPECULAR_TRANSMISSION),
+            (m(StandardMaterial { diffuse_transmission: 0.5, ..default() }, default()), reason::DIFFUSE_TRANSMISSION),
+            (m(default(), NifSurface { falloff: Vec4::new(1.0, 0.0, 1.0, 0.0), ..default() }), reason::FALLOFF),
+            (m(default(), NifSurface { holes: Vec4::ZERO, ..default() }), reason::HOLES_VALUE),
+            (m(default(), NifSurface { holes_texture: Some(image.clone()), ..default() }), reason::HOLES_TEXTURE),
+            (m(default(), NifSurface { facegen_offset: Some(image.clone()), ..default() }), reason::FACEGEN),
+            (m(default(), NifSurface { pipboy_screen: true, ..default() }), reason::PIPBOY),
+            (m(default(), NifSurface { add_linear: true, ..default() }), reason::ADD_LINEAR),
+            (m(default(), NifSurface { soft: Vec4::X, ..default() }), reason::SOFT),
+            (m(StandardMaterial { depth_bias: f32::NAN, ..default() }, default()), reason::DEPTH_BIAS),
+        ];
+        for (material, bit) in &cases {
+            assert_eq!(material_reasons(material), *bit, "{}", reason::list(*bit));
+            assert!(!eligible_material(material));
+        }
+        // Overlapping reasons stay separate bits.
+        let both = m(StandardMaterial { unlit: true, alpha_mode: AlphaMode::Add, ..default() }, NifSurface { soft: Vec4::X, holes_texture: Some(image), ..default() });
+        assert_eq!(material_reasons(&both), reason::UNLIT | reason::ALPHA_MODE | reason::SOFT | reason::HOLES_TEXTURE);
+        // The ownership and missing-source states join the mask.
+        assert_eq!(shape_mask(reason::DEST, true, None), reason::DEST | reason::TEMPORARY | reason::MISSING_SOURCE);
+        assert_eq!(shape_mask(0, false, Some(&m(default(), default()))), 0);
     }
 
     #[test]
     fn enabled_clone_preserves_source_and_alpha_coverage_descriptors() {
         let mut images = Assets::<Image>::default();
         let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (-2, -1), cells: 1, resolution: 512 };
-        for alpha_mode in [AlphaMode::Opaque, AlphaMode::Mask(0.4)] {
-            let source = NifMaterial { base: StandardMaterial { alpha_mode, double_sided: true, cull_mode: None, ..default() }, extension: NifSurface::default() };
-            assert!(eligible_material(&source));
-            let enabled = enabled_material(&source, parse("24:surface").unwrap(), &surface);
+        // Round 6 admissions: Blend, a finite depth bias, the lit decal flag and alpha_cut,
+        // alone and combined, beside Opaque and Mask with hard and soft edges.
+        let mut sources = Vec::new();
+        for alpha_mode in [AlphaMode::Opaque, AlphaMode::Mask(0.4), AlphaMode::Blend] {
+            for (depth_bias, decal, alpha_cut, hard_edges, blended_cutout) in [(0.0, false, 0.0, false, None), (3.5, true, 0.2, true, Some(0.5)), (-1.25, false, 0.1, false, None), (0.0, true, 0.0, true, None)] {
+                sources.push(NifMaterial {
+                    base: StandardMaterial { alpha_mode, double_sided: true, cull_mode: None, depth_bias, base_color: Color::srgba(0.5, 0.4, 0.3, 0.7), ..default() },
+                    extension: NifSurface { decal, alpha_cut, hard_edges, blended_cutout, ..default() },
+                });
+            }
+        }
+        for source in &sources {
+            assert!(eligible_material(source), "{:?} {:?}", source.base.alpha_mode, source.extension.decal);
+            let c = parse("24:surface:hybrid:1024:full:1,100").unwrap();
+            let enabled = enabled_material(source, c, &surface);
             assert_eq!(source.base.alpha_mode, enabled.base.alpha_mode);
             assert_eq!(source.base.cull_mode, enabled.base.cull_mode);
             assert_eq!(source.base.double_sided, enabled.base.double_sided);
-            assert_eq!(source.base.depth_bias, enabled.base.depth_bias);
-            assert_eq!(source.extension.alpha_cut, enabled.extension.alpha_cut);
+            assert_eq!(source.base.depth_bias.to_bits(), enabled.base.depth_bias.to_bits(), "the exact bias");
+            assert_eq!(source.base.base_color, enabled.base.base_color);
+            assert_eq!(source.extension.alpha_cut.to_bits(), enabled.extension.alpha_cut.to_bits());
+            assert_eq!(source.extension.decal, enabled.extension.decal);
+            assert_eq!(source.extension.hard_edges, enabled.extension.hard_edges);
+            assert_eq!(source.extension.depth_write, enabled.extension.depth_write);
+            assert_eq!(source.extension.blended_cutout, enabled.extension.blended_cutout);
             assert_eq!(source.extension.holes, enabled.extension.holes);
             assert!(enabled.extension.mesh_terrain_colour.is_some());
+            assert_eq!(enabled.extension.mesh_terrain, c.controls());
+            assert_eq!(enabled.extension.mesh_terrain_widths, Vec4::new(1.0, 100.0, 0.0, 0.0));
             assert_eq!(nvf_assets::nif_material::NifSurfaceKey::from(&source.extension), nvf_assets::nif_surface_blend::NifSurfaceBlendKey::from(&enabled.extension).0);
         }
-        for alpha_mode in [AlphaMode::Blend, AlphaMode::Add, AlphaMode::Multiply, AlphaMode::AlphaToCoverage] {
+        for alpha_mode in [AlphaMode::Add, AlphaMode::Multiply, AlphaMode::Premultiplied, AlphaMode::AlphaToCoverage] {
             assert!(!eligible_material(&NifMaterial { base: StandardMaterial { alpha_mode, ..default() }, extension: default() }));
         }
-        for extension in [NifSurface { refract: true, ..default() }, NifSurface { decal: true, ..default() }, NifSurface { first_person: true, ..default() }, NifSurface { holes: Vec4::ZERO, ..default() }] {
+        for extension in [NifSurface { refract: true, ..default() }, NifSurface { first_person: true, ..default() }, NifSurface { holes: Vec4::ZERO, ..default() }, NifSurface { depth_write: true, ..default() }] {
             assert!(!eligible_material(&NifMaterial { base: default(), extension }));
         }
-        assert!(!eligible_material(&NifMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: default() }));
+        assert!(!eligible_material(&NifMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: NifSurface { decal: true, ..default() } }), "an unlit decal stays out");
+    }
+
+    /// An app with the conversion and nothing else; the cache exists but is not published.
+    fn conversion_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<Assets<NifMaterial>>().init_resource::<Assets<NifBlendMaterial>>()
+            .init_resource::<Assets<Image>>().init_resource::<Variants>().init_resource::<SurfaceCache>()
+            .add_systems(PostUpdate, conversion_order(configured));
+        app
+    }
+    fn tracked(shape: usize, reasons: u32) -> BlendCensus {
+        BlendCensus { reference: 0x42, base: 0x99, model: "synthetic.nif".into(), shape, reasons }
+    }
+    fn reported(app: &App) -> Census {
+        app.world().resource::<Variants>().reported_census.clone().expect("a ready line")
+    }
+    fn reason_count(census: &Census, bit: u32) -> usize {
+        census.reasons[reason::NAMES.iter().position(|(b, _)| *b == bit).unwrap()]
+    }
+    fn settle(app: &mut App) {
+        for _ in 0..REFRESH_FRAMES { app.update(); }
+    }
+
+    #[test]
+    fn census_counts_tracked_shapes_through_publication_arrivals_changes_and_removal() {
+        let mut app = conversion_app();
+        let (add, opaque, missing) = {
+            let mut m = app.world_mut().resource_mut::<Assets<NifMaterial>>();
+            let add = m.add(NifMaterial { base: StandardMaterial { alpha_mode: AlphaMode::Add, ..default() }, extension: default() });
+            let opaque = m.add(NifMaterial { base: default(), extension: default() });
+            (add, opaque, m.reserve_handle())
+        };
+        // A rigged STAT shape (census only), an Add material, a material not loaded yet.
+        let rigged = app.world_mut().spawn((tracked(0, reason::RIG), MeshMaterial3d(opaque.clone()))).id();
+        let added = app.world_mut().spawn((tracked(1, 0), BlendShape::new(add.clone()), MeshMaterial3d(add))).id();
+        let pending = app.world_mut().spawn((tracked(2, 0), BlendShape::new(missing.clone()), MeshMaterial3d(missing.clone()))).id();
+        app.update();
+        assert!(app.world().resource::<Variants>().reported.is_none(), "nothing is reported before a publication");
+        // A publication with no eligible shape is still reported.
+        publish(&mut app);
+        app.update();
+        assert_eq!(app.world().resource::<Variants>().reported, Some(7));
+        let c = reported(&app);
+        assert_eq!((c.stat_shapes, c.excluded, c.pending), (3, 3, 1));
+        assert_eq!((reason_count(&c, reason::RIG), reason_count(&c, reason::ALPHA_MODE), reason_count(&c, reason::MISSING_SOURCE)), (1, 1, 1));
+        assert_eq!(c.admitted, [0; 5]);
+        for e in [rigged, added, pending] { assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none()); }
+        assert!(app.world().get::<BlendShape>(rigged).is_none(), "tracking never adds a BlendShape");
+        // A late arrival converts at once; the census line refreshes after the interval.
+        let late = app.world_mut().spawn((tracked(3, 0), BlendShape::new(opaque.clone()), MeshMaterial3d(opaque.clone()))).id();
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(late).is_some());
+        assert_eq!(reported(&app).stat_shapes, 3, "rate-limited");
+        settle(&mut app);
+        assert_eq!((reported(&app).stat_shapes, reported(&app).excluded), (4, 3));
+        // The pending material loads: it converts and leaves the pending count.
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().insert(missing.id(), NifMaterial { base: StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() }, extension: default() }).unwrap();
+        settle(&mut app);
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(pending).is_some(), "an authored Blend material is admitted");
+        let c = reported(&app);
+        assert_eq!((c.stat_shapes, c.excluded, c.pending, c.admitted[0]), (4, 2, 0, 1));
+        // A source edited under the same handle: the converted shape goes back to it.
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&opaque).unwrap().base.unlit = true;
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(late).is_none());
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(late).unwrap().0, opaque);
+        settle(&mut app);
+        assert_eq!(reason_count(&reported(&app), reason::UNLIT), 2, "the rigged shape shares the source");
+        // Removal leaves the census.
+        app.world_mut().despawn(rigged);
+        settle(&mut app);
+        let c = reported(&app);
+        assert_eq!((c.stat_shapes, reason_count(&c, reason::RIG)), (3, 0));
+    }
+
+    #[test]
+    fn authored_blend_is_admitted_while_temporary_owners_are_not() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let authored = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() }, extension: default() });
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(authored.clone()), MeshMaterial3d(authored.clone()))).id();
+        app.update();
+        let enabled = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+        assert_eq!(app.world().resource::<Assets<NifBlendMaterial>>().get(&enabled).unwrap().base.alpha_mode, AlphaMode::Blend);
+        // An override's copy is a Blend material too; ownership, not alpha, keeps it out.
+        let cloak = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: StandardMaterial { alpha_mode: AlphaMode::Blend, base_color: Color::srgba(1.0, 1.0, 1.0, 0.3), ..default() }, extension: default() });
+        assert!(eligible_material(app.world().resource::<Assets<NifMaterial>>().get(&cloak).unwrap()));
+        app.world_mut().entity_mut(e).insert((MeshMaterial3d(cloak.clone()), MaterialOverride { source: authored.clone(), copy: cloak.clone() }));
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none());
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).unwrap().0, cloak);
+        assert_eq!(reason_count(&reported(&app), reason::TEMPORARY), 0, "not refreshed yet");
+        settle(&mut app);
+        assert_eq!(reason_count(&reported(&app), reason::TEMPORARY), 1);
+        // The owner restores the authored material: it blends again.
+        app.world_mut().entity_mut(e).remove::<MaterialOverride>().insert(MeshMaterial3d(authored.clone()));
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some());
+        assert_eq!(app.world().get::<BlendShape>(e).unwrap().original, authored);
+    }
+
+    #[test]
+    fn authored_blend_leaves_for_a_script_fade_and_returns_after_it() {
+        // As published_shape_joins_script_fade_and_returns_to_blending_afterwards, with an
+        // authored Blend source: the fade's copy is material-eligible, Fading keeps it out.
+        let mut app = App::new();
+        simulation_with(&mut app, disabled_reference());
+        app.init_resource::<Assets<NifMaterial>>().init_resource::<Assets<NifBlendMaterial>>()
+            .init_resource::<Assets<Image>>().init_resource::<Variants>().init_resource::<Time<Virtual>>()
+            .add_plugins(nvf_play::fade::FadePlugin).add_systems(PostUpdate, conversion_order(configured));
+        publish(&mut app);
+        let authored = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() }, extension: default() });
+        let e = app.world_mut().spawn((BlendShape::new(authored.clone()), MeshMaterial3d(authored.clone()), nvf_play::RefVisual(42), Visibility::Inherited)).id();
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some());
+        app.world_mut().write_message(nvf_play::fade::RefFade { form_id: 42, fade_in: false });
+        app.update();
+        let copy = app.world().get::<nvf_play::fade::Fading>(e).unwrap().copy().clone();
+        assert!(eligible_material(app.world().resource::<Assets<NifMaterial>>().get(&copy).unwrap()), "alpha mode alone would admit the copy");
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none());
+        app.world_mut().resource_mut::<Time<Virtual>>().advance_by(std::time::Duration::from_secs(3));
+        app.update();
+        assert!(app.world().get::<nvf_play::fade::Fading>(e).is_none());
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some());
+        assert_eq!(app.world().get::<BlendShape>(e).unwrap().original, authored, "the fade restored the authored source");
+    }
+
+    #[test]
+    fn blended_cutout_flips_rebuild_the_clone_in_the_same_frame() {
+        use nvf_assets::nif_material::BlendedCutouts;
+        let mut app = conversion_app();
+        app.init_resource::<BlendedCutouts>().add_message::<AssetEvent<NifMaterial>>()
+            .add_systems(PostUpdate, nvf_assets::nif_material::blended_cutout_system());
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial {
+            base: StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() },
+            extension: NifSurface { blended_cutout: Some(0.5), ..default() },
+        });
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(source.clone()), MeshMaterial3d(source.clone()))).id();
+        app.update();
+        let drawn = |app: &App| {
+            let handle = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+            (app.world().resource::<Assets<NifBlendMaterial>>().get(&handle).unwrap().base.alpha_mode, handle)
+        };
+        let (mode, blended) = drawn(&app);
+        assert_eq!(mode, AlphaMode::Blend);
+        for (on, want) in [(true, AlphaMode::Mask(0.5)), (false, AlphaMode::Blend)] {
+            app.world_mut().insert_resource(BlendedCutouts(on));
+            app.update();
+            assert_eq!(app.world().resource::<Assets<NifMaterial>>().get(&source).unwrap().base.alpha_mode, want, "edited under the same handle");
+            let (mode, handle) = drawn(&app);
+            assert_eq!(mode, want, "the clone follows in the same frame");
+            assert_ne!(handle, blended);
+            assert!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).is_none());
+            assert_eq!(app.world().get::<BlendShape>(e).unwrap().original, source, "no clone nesting: the source stays the original");
+        }
+    }
+
+    #[test]
+    fn same_handle_see_through_edits_refresh_the_shadow_markers() {
+        let mut app = conversion_app();
+        app.add_systems(PostUpdate, nvf_assets::nif_material::see_through_shadow_system());
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(source.clone()), MeshMaterial3d(source.clone()))).id();
+        app.update();
+        assert!(app.world().get::<NotShadowCaster>(e).is_none());
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&source).unwrap().base.alpha_mode = AlphaMode::Blend;
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some());
+        assert!(app.world().get::<SeeThroughNoShadow>(e).is_some() && app.world().get::<NotShadowCaster>(e).is_some(), "a see-through source casts no shadow");
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&source).unwrap().base.alpha_mode = AlphaMode::Opaque;
+        app.update();
+        assert!(app.world().get::<SeeThroughNoShadow>(e).is_none() && app.world().get::<NotShadowCaster>(e).is_none(), "and casts again when opaque");
     }
 }

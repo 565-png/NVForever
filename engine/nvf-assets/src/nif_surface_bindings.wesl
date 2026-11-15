@@ -44,9 +44,11 @@ struct NifSurface {
     // noise's reach (display values), z the canvas's share of the texture's width; w unused.
     pipboy_b: vec4<f32>,
     // [design] The enabled blend type (nif_surface_blend.rs): band, view, contact shape,
-    // shading; the cache's southwest cell in origin.xy.
+    // shading; the cache's southwest cell in origin.xy; hybrid v2's flat and steep band
+    // widths in widths.xy (z, w unused).
     @if(NIF_SURFACE_BLEND) mesh_terrain: vec4<f32>,
     @if(NIF_SURFACE_BLEND) mesh_terrain_origin: vec4<f32>,
+    @if(NIF_SURFACE_BLEND) mesh_terrain_widths: vec4<f32>,
 }
 
 // The extension's index table (indices 50-53 of NifSurface's bindless attribute). The
@@ -77,6 +79,8 @@ struct NifSurface {
 @if(MESH_TERRAIN_BLEND) const COS_FULL: f32 = f32(constants::MESH_TERRAIN_COS_FULL_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const COS_NONE: f32 = f32(constants::MESH_TERRAIN_COS_NONE_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const PENETRATION: f32 = f32(constants::MESH_TERRAIN_PENETRATION_E6) / 1e6;
+@if(MESH_TERRAIN_BLEND) const V2_COS_PARALLEL: f32 = f32(constants::MESH_TERRAIN_V2_COS_PARALLEL_E6) / 1e6;
+@if(MESH_TERRAIN_BLEND) const V2_COS_STEEP: f32 = f32(constants::MESH_TERRAIN_V2_COS_STEEP_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const LAND_ROUGHNESS: f32 = f32(constants::MESH_TERRAIN_ROUGHNESS_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const LAND_REFLECTANCE: f32 = f32(constants::MESH_TERRAIN_REFLECTANCE_E6) / 1e6;
 
@@ -139,15 +143,31 @@ struct NifSurface {
     return vec3(n.x, n.z, -n.y);
 }
 
+// [design] nif_surface_blend.rs::v2_band: widths are (flat, band, steep); flat within 5
+// degrees of the ground, the band from 5 to 35 degrees, steep from 75 degrees, smooth
+// ramps between; abs treats opposite parallel normals alike.
+@if(MESH_TERRAIN_BLEND) fn mesh_terrain_band(widths: vec3<f32>, cos_angle: f32) -> f32 {
+    let c = clamp(abs(cos_angle), 0.0, 1.0);
+    let shallow = 1.0 - smoothstep(V2_COS_PARALLEL, 1.0, c);
+    let steep = 1.0 - smoothstep(V2_COS_STEEP, COS_FULL, c);
+    return widths.x + (widths.y - widths.x) * shallow + (widths.z - widths.y) * steep;
+}
+
 // [design] nif_surface_blend.rs::contact_weight: shape 0 height band, 1 penetration,
-// 2 hybrid (the band times the larger of the orientation and penetration terms).
-@if(MESH_TERRAIN_BLEND) fn mesh_terrain_weight(shape: u32, band: f32, d: f32, cos_angle: f32) -> f32 {
-    let height = 1.0 - smoothstep(0.0, band, max(d, 0.0));
+// 2 hybrid v2 (the larger of the angle-widened height band and the penetration term),
+// 3 hybrid v1 (round 5: the band times the larger of the orientation and penetration
+// terms). Widths are (flat, band, steep); only hybrid v2 reads flat and steep.
+@if(MESH_TERRAIN_BLEND) fn mesh_terrain_weight(shape: u32, widths: vec3<f32>, d: f32, cos_angle: f32) -> f32 {
+    let height = 1.0 - smoothstep(0.0, widths.y, max(d, 0.0));
     let penetration = 1.0 - smoothstep(-PENETRATION, 0.0, d);
     if shape == 0u { return height; }
     if shape == 1u { return penetration; }
-    let turned = 1.0 - smoothstep(COS_FULL, COS_NONE, clamp(cos_angle, -1.0, 1.0));
-    return height * max(turned, penetration);
+    if shape == 3u {
+        let turned = 1.0 - smoothstep(COS_FULL, COS_NONE, clamp(cos_angle, -1.0, 1.0));
+        return height * max(turned, penetration);
+    }
+    let band = mesh_terrain_band(widths, cos_angle);
+    return max(1.0 - smoothstep(0.0, band, max(d, 0.0)), penetration);
 }
 
 // [design] nif_surface_blend.rs::blend_normal: exact at w <= 0, the ground normal where
@@ -217,7 +237,8 @@ struct NifSurface {
     let n_length = length(mesh_normal);
     let cos_angle = select(dot(mesh_normal / max(n_length, 1e-6), r.normal), 1.0, n_length < 1e-6);
     r.status = LOOKUP_SUCCESS;
-    r.weight = mesh_terrain_weight(u32(s.mesh_terrain.z), s.mesh_terrain.x, game.z - height, cos_angle) * smoothstep(0.0, SPACING, border);
+    let widths = vec3(s.mesh_terrain_widths.x, s.mesh_terrain.x, s.mesh_terrain_widths.y);
+    r.weight = mesh_terrain_weight(u32(s.mesh_terrain.z), widths, game.z - height, cos_angle) * smoothstep(0.0, SPACING, border);
     if r.weight > 0.0 { r.colour = terrain_colour_texel(instance_index, uv); }
     return r;
 }

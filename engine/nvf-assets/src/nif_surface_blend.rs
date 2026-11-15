@@ -30,6 +30,12 @@ pub const DEFAULT_RESOLUTION: u32 = 1024;
 pub const CONTACT_COS_FULL_E6: u32 = 819_152; // cos 35 degrees
 pub const CONTACT_COS_NONE_E6: u32 = 965_926; // cos 15 degrees
 pub const PENETRATION_E6: u32 = 2_000_000;
+/// [design] Hybrid v2's band-width limits (NVForever's round-6 tuning choices): surfaces
+/// within 5 degrees of the ground get the flat width, those turned 5 degrees or more the
+/// shallow width (the band), and those turned 75 degrees or more the steep width; the
+/// steep width ramps in between 35 and 75 degrees ([`CONTACT_COS_FULL_E6`] is cos 35).
+pub const V2_COS_PARALLEL_E6: u32 = 996_195; // cos 5 degrees
+pub const V2_COS_STEEP_E6: u32 = 258_819; // cos 75 degrees
 /// The landscape's own material values (nvforever `terrain.rs::surface` uses these), the
 /// targets of the full shading blend.
 pub const LAND_PERCEPTUAL_ROUGHNESS: f32 = 0.95;
@@ -47,21 +53,49 @@ pub fn blend_shader_defs() -> Vec<ShaderDefVal> {
         ShaderDefVal::UInt("MESH_TERRAIN_COS_FULL_E6".into(), CONTACT_COS_FULL_E6),
         ShaderDefVal::UInt("MESH_TERRAIN_COS_NONE_E6".into(), CONTACT_COS_NONE_E6),
         ShaderDefVal::UInt("MESH_TERRAIN_PENETRATION_E6".into(), PENETRATION_E6),
+        ShaderDefVal::UInt("MESH_TERRAIN_V2_COS_PARALLEL_E6".into(), V2_COS_PARALLEL_E6),
+        ShaderDefVal::UInt("MESH_TERRAIN_V2_COS_STEEP_E6".into(), V2_COS_STEEP_E6),
         ShaderDefVal::UInt("MESH_TERRAIN_ROUGHNESS_E6".into(), to_micro(LAND_PERCEPTUAL_ROUGHNESS)),
         ShaderDefVal::UInt("MESH_TERRAIN_REFLECTANCE_E6".into(), to_micro(LAND_REFLECTANCE)),
     ]
 }
 
 /// [design] How the contact weight is formed (`mesh_terrain_weight` in
-/// nif_surface_bindings.wesl, [`contact_weight`] here).
+/// nif_surface_bindings.wesl, [`contact_weight`] here). `Hybrid` is hybrid v2 (round 6,
+/// an angle-dependent band width); `HybridV1` keeps round 5's hybrid for comparisons.
+/// The shader numbers stay stable; the legacy mode is appended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ContactShape { Height, Penetration, Hybrid }
+pub enum ContactShape { Height, Penetration, Hybrid, HybridV1 }
 impl ContactShape {
     pub fn name(self) -> &'static str {
-        match self { Self::Height => "height", Self::Penetration => "penetration", Self::Hybrid => "hybrid" }
+        match self { Self::Height => "height", Self::Penetration => "penetration", Self::Hybrid => "hybrid", Self::HybridV1 => "hybrid-v1" }
     }
     pub fn number(self) -> f32 {
-        match self { Self::Height => 0.0, Self::Penetration => 1.0, Self::Hybrid => 2.0 }
+        match self { Self::Height => 0.0, Self::Penetration => 1.0, Self::Hybrid => 2.0, Self::HybridV1 => 3.0 }
+    }
+    /// The weight formula's version the logs name: 2 for hybrid v2, 1 for the formulas
+    /// round 5 introduced and round 6 left unchanged.
+    pub fn weight_version(self) -> u32 {
+        if self == Self::Hybrid { 2 } else { 1 }
+    }
+}
+
+/// [design] Hybrid v2's band widths in game units: `flat` for surfaces parallel to the
+/// ground, `band` (the aid's band, the shallow width) for shoulders turned 5-35 degrees,
+/// `steep` for faces turned 75 degrees or more. Omitted widths are `band / 16` and
+/// `6 band` (0.5 and 48 at the default band of 8); NVForever's own choices.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ContactWidths { pub flat: f32, pub band: f32, pub steep: f32 }
+impl ContactWidths {
+    pub const FLAT_SHARE: f32 = 1.0 / 16.0;
+    pub const STEEP_FACTOR: f32 = 6.0;
+    pub fn from_band(band: f32) -> Self {
+        Self { flat: band * Self::FLAT_SHARE, band, steep: band * Self::STEEP_FACTOR }
+    }
+    /// Finite, positive and ordered `flat <= band <= steep`.
+    pub fn valid(&self) -> bool {
+        [self.flat, self.band, self.steep].iter().all(|w| w.is_finite() && *w > 0.0)
+            && self.flat <= self.band && self.band <= self.steep
     }
 }
 /// [design] What the weight blends: the colour alone, or colour, normal and material.
@@ -81,18 +115,34 @@ pub fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
     let t = ((x - low) / (high - low)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
+/// [design] Hybrid v2's band width for the cosine `cos_angle` between the unperturbed mesh
+/// normal and the ground triangle's normal: `abs` treats opposite parallel normals alike;
+/// `shallow` rises from 0 at the parallel to 1 at 5 degrees, `steep` from 0 at 35 to 1 at
+/// 75 degrees, so the width is continuous in the angle with no on/off gate.
+pub fn v2_band(widths: ContactWidths, cos_angle: f32) -> f32 {
+    let c = cos_angle.abs().clamp(0.0, 1.0);
+    let shallow = 1.0 - smoothstep(micro(V2_COS_PARALLEL_E6), 1.0, c);
+    let steep = 1.0 - smoothstep(micro(V2_COS_STEEP_E6), micro(CONTACT_COS_FULL_E6), c);
+    widths.flat + (widths.band - widths.flat) * shallow + (widths.steep - widths.band) * steep
+}
+
 /// [design] The CPU statement of the shader's contact weight, before the residency fade:
 /// `d` is the height above the ground (negative below it), `cos_angle` the cosine between
-/// the unperturbed mesh normal and the ground triangle's normal.
-pub fn contact_weight(shape: ContactShape, band: f32, d: f32, cos_angle: f32) -> f32 {
-    let height = 1.0 - smoothstep(0.0, band, d.max(0.0));
+/// the unperturbed mesh normal and the ground triangle's normal. Height, penetration and
+/// hybrid v1 use only `widths.band`; hybrid v2 also the flat and steep widths.
+pub fn contact_weight(shape: ContactShape, widths: ContactWidths, d: f32, cos_angle: f32) -> f32 {
+    let height = 1.0 - smoothstep(0.0, widths.band, d.max(0.0));
     let penetration = 1.0 - smoothstep(-micro(PENETRATION_E6), 0.0, d);
     match shape {
         ContactShape::Height => height,
         ContactShape::Penetration => penetration,
-        ContactShape::Hybrid => {
+        ContactShape::HybridV1 => {
             let turned = 1.0 - smoothstep(micro(CONTACT_COS_FULL_E6), micro(CONTACT_COS_NONE_E6), cos_angle.clamp(-1.0, 1.0));
             height * turned.max(penetration)
+        }
+        ContactShape::Hybrid => {
+            let band = v2_band(widths, cos_angle);
+            (1.0 - smoothstep(0.0, band, d.max(0.0))).max(penetration)
         }
     }
 }
@@ -156,6 +206,9 @@ pub struct NifSurfaceBlend {
     /// `mesh_terrain_blend.rs::BlendConfig::controls`).
     pub mesh_terrain: Vec4,
     pub mesh_terrain_origin: Vec4,
+    /// Hybrid v2's flat and steep widths in x and y (game units); z, w unused
+    /// (`BlendConfig::widths`). Enabled-only: the ordinary uniform is unchanged.
+    pub mesh_terrain_widths: Vec4,
     /// In the ordinary type's holes texture and sampler slots (module notes).
     #[texture(51)]
     #[sampler(52)]
@@ -180,11 +233,12 @@ pub struct NifSurfaceBlendUniform {
     pub pipboy_b: Vec4,
     pub mesh_terrain: Vec4,
     pub mesh_terrain_origin: Vec4,
+    pub mesh_terrain_widths: Vec4,
 }
 
 impl From<&NifSurfaceBlend> for NifSurfaceBlendUniform {
     fn from(s: &NifSurfaceBlend) -> Self {
-        NifSurfaceBlendUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b, mesh_terrain: s.mesh_terrain, mesh_terrain_origin: s.mesh_terrain_origin }
+        NifSurfaceBlendUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b, mesh_terrain: s.mesh_terrain, mesh_terrain_origin: s.mesh_terrain_origin, mesh_terrain_widths: s.mesh_terrain_widths }
     }
 }
 
@@ -209,8 +263,8 @@ impl From<&NifSurfaceBlend> for NifSurfaceBlendKey {
 }
 impl NifSurfaceBlend {
     /// `source` has neither holes nor FaceGen (eligibility); `controls` are band, view,
-    /// contact shape and shading.
-    pub fn from_source(source: &NifSurface, controls: Vec4, origin: Vec4, colour: Handle<Image>, height: Handle<Image>) -> Self {
+    /// contact shape and shading, `widths` hybrid v2's flat and steep widths.
+    pub fn from_source(source: &NifSurface, controls: Vec4, widths: Vec4, origin: Vec4, colour: Handle<Image>, height: Handle<Image>) -> Self {
         debug_assert!(source.holes_texture.is_none() && source.facegen_offset.is_none(), "blend clones are made only without holes or FaceGen");
         Self {
             falloff: source.falloff,
@@ -235,6 +289,7 @@ impl NifSurfaceBlend {
             soft: source.soft,
             mesh_terrain: controls,
             mesh_terrain_origin: origin,
+            mesh_terrain_widths: widths,
             mesh_terrain_colour: Some(colour),
             mesh_terrain_height: Some(height),
         }
@@ -286,7 +341,8 @@ mod tests {
             assert_eq!(descriptor.fragment.as_ref().unwrap().targets, original.fragment.as_ref().unwrap().targets);
             assert_eq!(descriptor.fragment.as_ref().unwrap().shader_defs.contains(&"MESH_TERRAIN_BLEND".into()), !prepass);
         }}
-        assert_eq!(NifSurfaceBlendUniform::min_size().get(), 160);
+        assert_eq!(NifSurfaceBlendUniform::min_size().get(), 176, "one vec4 of widths after round 5's 160 bytes");
+        assert_eq!(crate::nif_material::NifSurfaceUniform::min_size().get(), 128, "the ordinary uniform is unchanged");
     }
 
     fn textures(descriptor: &BindlessDescriptor) -> usize {
@@ -308,7 +364,7 @@ mod tests {
         assert_eq!(blend.index_tables.len(), 1);
         let (b, o) = (&blend.index_tables[0], &ordinary.index_tables[0]);
         assert_eq!((b.indices.start.0, b.indices.end.0, b.binding_number.0), (o.indices.start.0, o.indices.end.0, o.binding_number.0));
-        assert_eq!((blend.buffers[0].binding_number.0, blend.buffers[0].bindless_index.0, blend.buffers[0].size), (101, 50, Some(160)));
+        assert_eq!((blend.buffers[0].binding_number.0, blend.buffers[0].bindless_index.0, blend.buffers[0].size), (101, 50, Some(176)));
         let source = include_str!("nif_surface_blend.rs");
         let fields = source.split("pub struct NifSurfaceBlend {").nth(1).unwrap().split("\n}").next().unwrap();
         assert_eq!(fields.matches("#[texture(").count(), 2);
@@ -318,29 +374,108 @@ mod tests {
 
     #[test]
     fn contact_weight_follows_band_orientation_and_penetration() {
+        // Round 5's shapes, unchanged in round 6 (hybrid v1 is round 5's hybrid).
         let cos = |deg: f32| deg.to_radians().cos();
         let (parallel, sloped, upright) = (1.0, cos(25.0), 0.0);
         // Heights -2, 0, 4, 8, 12 with the default band of 8.
         let heights = [-2.0, 0.0, 4.0, 8.0, 12.0];
-        let band = 8.0;
-        let height = heights.map(|d| contact_weight(ContactShape::Height, band, d, parallel));
+        let w = ContactWidths::from_band(8.0);
+        let height = heights.map(|d| contact_weight(ContactShape::Height, w, d, parallel));
         assert_eq!(height, [1.0, 1.0, 0.5, 0.0, 0.0]);
-        let penetration = heights.map(|d| contact_weight(ContactShape::Penetration, band, d, upright));
+        let penetration = heights.map(|d| contact_weight(ContactShape::Penetration, w, d, upright));
         assert_eq!(penetration, [1.0, 0.0, 0.0, 0.0, 0.0]);
-        assert_eq!(contact_weight(ContactShape::Penetration, band, -1.0, upright), 0.5, "continuous between -2 and 0");
-        // Hybrid: a parallel top above ground gets nothing, coplanar included.
-        assert_eq!(heights.map(|d| contact_weight(ContactShape::Hybrid, band, d, parallel)), [1.0, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(contact_weight(ContactShape::Penetration, w, -1.0, upright), 0.5, "continuous between -2 and 0");
+        // The flat and steep widths do not reach the old shapes.
+        let odd = ContactWidths { flat: 0.01, band: 8.0, steep: 500.0 };
+        for shape in [ContactShape::Height, ContactShape::Penetration, ContactShape::HybridV1] {
+            for d in heights { for c in [parallel, sloped, upright] {
+                assert_eq!(contact_weight(shape, odd, d, c), contact_weight(shape, w, d, c));
+            }}
+        }
+        let v1 = ContactShape::HybridV1;
+        // Hybrid v1: a parallel top above ground gets nothing, coplanar included.
+        assert_eq!(heights.map(|d| contact_weight(v1, w, d, parallel)), [1.0, 0.0, 0.0, 0.0, 0.0]);
         // An upright face gets the full band above ground, and full weight below.
-        assert_eq!(heights.map(|d| contact_weight(ContactShape::Hybrid, band, d, upright)), [1.0, 1.0, 0.5, 0.0, 0.0]);
+        assert_eq!(heights.map(|d| contact_weight(v1, w, d, upright)), [1.0, 1.0, 0.5, 0.0, 0.0]);
         // 25 degrees lies between the 15 and 35 degree limits: part weight.
-        let part = contact_weight(ContactShape::Hybrid, band, 0.0, sloped);
+        let part = contact_weight(v1, w, 0.0, sloped);
         assert!(part > 0.0 && part < 1.0, "{part}");
-        assert!((contact_weight(ContactShape::Hybrid, band, 0.0, cos(35.0)) - 1.0).abs() < 1e-6);
-        assert!(contact_weight(ContactShape::Hybrid, band, 0.0, cos(15.0)) < 1e-6);
+        assert!((contact_weight(v1, w, 0.0, cos(35.0)) - 1.0).abs() < 1e-6);
+        assert!(contact_weight(v1, w, 0.0, cos(15.0)) < 1e-6);
         // A road top 10-15 units above the ground gets nothing at the default band.
-        for d in [10.0, 15.0] { assert_eq!(contact_weight(ContactShape::Hybrid, band, d, upright), 0.0); }
+        for d in [10.0, 15.0] { assert_eq!(contact_weight(v1, w, d, upright), 0.0); }
         // Out-of-range cosines are clamped; a buried parallel surface still saturates.
-        assert_eq!(contact_weight(ContactShape::Hybrid, band, -3.0, 2.0), 1.0);
+        assert_eq!(contact_weight(v1, w, -3.0, 2.0), 1.0);
+        assert_eq!((ContactShape::HybridV1.number(), ContactShape::HybridV1.name()), (3.0, "hybrid-v1"));
+        assert_eq!([ContactShape::Height, ContactShape::Penetration, ContactShape::Hybrid].map(|s| s.number()), [0.0, 1.0, 2.0], "numbers stay stable");
+        assert_eq!([ContactShape::Hybrid, ContactShape::HybridV1, ContactShape::Height].map(|s| s.weight_version()), [2, 1, 1]);
+    }
+
+    #[test]
+    fn hybrid_v2_band_has_flat_shallow_and_steep_plateaus() {
+        let cos = |deg: f32| deg.to_radians().cos();
+        let w = ContactWidths::from_band(8.0);
+        assert_eq!(w, ContactWidths { flat: 0.5, band: 8.0, steep: 48.0 }, "the default widths");
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        // Parallel (either facing) gets the flat width; 5-35 degrees the band; 75-90 the steep.
+        assert!(close(v2_band(w, 1.0), 0.5) && close(v2_band(w, -1.0), 0.5));
+        for deg in [5.0, 10.0, 20.0, 35.0] { assert!(close(v2_band(w, cos(deg)), 8.0), "{deg}: {}", v2_band(w, cos(deg))); }
+        for deg in [75.0, 80.0, 90.0, 105.0] { assert!(close(v2_band(w, cos(deg)), 48.0), "{deg}"); }
+        // Ramps in between, monotonic in the angle.
+        let mut last = 0.0;
+        for tenth in 0..=900 {
+            let b = v2_band(w, cos(tenth as f32 / 10.0));
+            assert!(b >= last - 1e-4, "{tenth}: {b} < {last}");
+            assert!((0.5 - 1e-4..=48.0 + 1e-4).contains(&b));
+            last = b;
+        }
+        let mid = v2_band(w, cos(55.0));
+        assert!(mid > 8.0 && mid < 48.0, "{mid}");
+        // Explicit widths change only the flat and steep plateaus.
+        let wide = ContactWidths { flat: 0.5, band: 8.0, steep: 64.0 };
+        assert!(close(v2_band(wide, cos(20.0)), 8.0) && close(v2_band(wide, 0.0), 64.0));
+    }
+
+    #[test]
+    fn hybrid_v2_weight_is_continuous_saturates_below_and_leaves_tops_alone() {
+        let cos = |deg: f32| deg.to_radians().cos();
+        let w = ContactWidths::from_band(8.0);
+        let v2 = |d: f32, c: f32| contact_weight(ContactShape::Hybrid, w, d, c);
+        // Below the ground every orientation saturates (H = 1); penetration is redundant there.
+        for deg in [0.0, 3.0, 20.0, 60.0, 90.0] { for d in [-5.0, -2.0, -0.5, 0.0] {
+            assert_eq!(v2(d, cos(deg)), 1.0, "{deg} {d}");
+        }}
+        // A parallel asphalt top 10-15 units above the ground (and anything over 0.5) gets none;
+        // so does a top tilted by a few degrees.
+        for d in [0.5, 1.0, 10.0, 12.5, 15.0] { assert_eq!(v2(d, 1.0), 0.0, "{d}"); }
+        for d in [10.0, 12.5, 15.0] { for deg in [1.0, 3.0] {
+            assert_eq!(v2(d, cos(deg)), 0.0, "{deg} {d}");
+        }}
+        // Shoulders: round 5's successful 8-unit band; rock faces: 48 units.
+        assert_eq!(v2(4.0, cos(20.0)), contact_weight(ContactShape::Height, w, 4.0, 1.0));
+        assert!((v2(24.0, cos(90.0)) - 0.5).abs() < 1e-6 && v2(48.0, cos(90.0)) == 0.0);
+        // Continuous in height and angle: small steps change the weight by a little.
+        for deg10 in 0..900 { for d10 in -30..600 {
+            let (deg, d) = (deg10 as f32 / 10.0, d10 as f32 / 10.0);
+            let here = v2(d, cos(deg));
+            assert!((0.0..=1.0).contains(&here));
+            assert!((v2(d + 0.1, cos(deg)) - here).abs() < 0.35, "height jump at {deg} {d}");
+            assert!((v2(d, cos(deg + 0.1)) - here).abs() < 0.35, "angle jump at {deg} {d}");
+        }}
+        // The degenerate-normal fallback (cosine 1) is the flat width.
+        assert_eq!(v2(1.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn contact_widths_validate_order_and_finiteness() {
+        assert!(ContactWidths::from_band(8.0).valid());
+        assert!(ContactWidths { flat: 8.0, band: 8.0, steep: 8.0 }.valid(), "equal widths are ordered");
+        for bad in [
+            ContactWidths { flat: 0.0, band: 8.0, steep: 48.0 }, ContactWidths { flat: -1.0, band: 8.0, steep: 48.0 },
+            ContactWidths { flat: 9.0, band: 8.0, steep: 48.0 }, ContactWidths { flat: 0.5, band: 8.0, steep: 4.0 },
+            ContactWidths { flat: f32::NAN, band: 8.0, steep: 48.0 }, ContactWidths { flat: 0.5, band: 8.0, steep: f32::INFINITY },
+            ContactWidths::from_band(f32::MAX),
+        ] { assert!(!bad.valid(), "{bad:?}"); }
     }
 
     #[test]
@@ -389,6 +524,10 @@ mod tests {
         assert_eq!(uint("MESH_TERRAIN_COS_FULL_E6"), CONTACT_COS_FULL_E6);
         assert!((micro(CONTACT_COS_FULL_E6) - 35f32.to_radians().cos()).abs() < 1e-6);
         assert!((micro(CONTACT_COS_NONE_E6) - 15f32.to_radians().cos()).abs() < 1e-6);
+        assert_eq!(uint("MESH_TERRAIN_V2_COS_PARALLEL_E6"), V2_COS_PARALLEL_E6);
+        assert_eq!(uint("MESH_TERRAIN_V2_COS_STEEP_E6"), V2_COS_STEEP_E6);
+        assert!((micro(V2_COS_PARALLEL_E6) - 5f32.to_radians().cos()).abs() < 1e-6);
+        assert!((micro(V2_COS_STEEP_E6) - 75f32.to_radians().cos()).abs() < 1e-6);
         assert!(!defs.iter().any(|d| matches!(d, ShaderDefVal::UInt(n, _) if n.contains("RESOLUTION"))), "the shader reads the atlas size from the texture");
     }
 }

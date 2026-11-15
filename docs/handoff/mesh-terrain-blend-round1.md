@@ -1,4 +1,4 @@
-# Mesh terrain blend, rounds 1-5 (#2661)
+# Mesh terrain blend, rounds 1-6 (#2661)
 
 [design] This is NVForever's aid-only world-space colour blend, selected by
 `NVF_PLAY_TEST_MESH_BLEND=24:surface`. Band, selection, resolution and residency rules
@@ -688,3 +688,208 @@ filters `nif_material::tests`, `nif_surface_blend::tests`; engine clippy; smoke
 checks; then the comparison sheet. If the game starts with `WGPU_SETTINGS_PRIO=webgpu`
 (no optional features, 16 sampled textures per stage), a run of `8:status:hybrid:1024:full`
 there is the constrained-device capture check the unit tests cannot make.
+
+## Round 6: hybrid v2 band widths, the STAT census and wider material admission
+
+Round 6 supersedes round 5's statements that `hybrid` is the orientation-gated formula,
+that the enabled uniform is 160 bytes, that Blend, depth-biased, decal and alpha-cut
+materials are excluded, and that the ready line is printed once per generation with
+nonzero eligible shapes.
+
+[design] The plan this round implements is the reviewer's (round 6 plan): steps 1
+(weight shape and widths), 2 (census; the colour-coded view was not built, below), 3
+(admissions) and 5 (tests and this section).
+
+### Aid value
+
+[design] `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution[:shading[:flat,steep]]]]`
+(`mesh_terrain_blend.rs::parse`). The shape part also accepts `hybrid-v1` (round 5's
+hybrid, kept for regression comparisons). The sixth part is a `flat,steep` pair of
+game-unit widths for `hybrid` only; omitted, they are `band / 16` and `6 band` (0.5 and
+48 at the default band of 8). Both must be finite and positive with
+`flat <= band <= steep`; a malformed pair, an empty sixth part, a pair with another shape
+or a derived width that is not finite (a band of 3e38 with `hybrid`) is rejected in the
+log and leaves the aid off. Every value accepted in round 5 is still accepted, with the
+same meaning for `height`, `penetration` and every part but the meaning of `hybrid`. The
+defaults are NVForever's choices.
+
+Start and ready lines keep every round 5 field and prefix, then append
+` flat=... steep=... weight-version=2` for `hybrid`, or ` weight-version=1` for the
+shapes round 6 left unchanged (`height`, `penetration`, `hybrid-v1`), e.g.
+`mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=hybrid
+shading=full flat=0.5 steep=48 weight-version=2`.
+
+### Contact weight (hybrid v2)
+
+[design] With `d`, `F` and the unperturbed mesh normal as in round 5, the ground
+triangle's normal `n`, and `S` WGSL's `smoothstep`:
+
+```text
+c       = clamp(abs(dot(normalize(mesh normal), n)), 0, 1)
+shallow = 1 - S(cos 5 deg, 1, c)
+steep   = 1 - S(cos 75 deg, cos 35 deg, c)
+B       = flat + (band - flat) * shallow + (steep_width - band) * steep
+H       = 1 - S(0, B, max(d, 0));  P = 1 - S(-2, 0, d)
+hybrid (v2): w = F * max(H, P)
+```
+
+Surfaces within 5 degrees of the ground get the flat width (0.5), shoulders turned 5-35
+degrees round 5's successful 8-unit band, faces turned 75 degrees or more 48 units; the
+width ramps continuously between, so there is no angular on/off gate, and `abs` treats
+opposite parallel normals alike. The degenerate-normal fallback (cosine 1, the flat width)
+is retained. Below the ground H = 1, so P only matters to the `penetration` shape, whose
+ramp is unchanged. By the formula (not a run): a parallel asphalt top 10-15 units above
+the ground gets no weight. The 5, 35 and 75 degree limits and the width defaults are
+NVForever's tuning choices. Noise stays off (`noise=0`); the plan's next step if a rock
+contour shows is a deterministic world-space value noise on the steep width only.
+
+[design] CPU statement: `nvf-assets/src/nif_surface_blend.rs::{v2_band, contact_weight,
+ContactWidths}` (`ContactShape::Hybrid` = 2, `HybridV1` = 3 appended, numbers stable);
+shader: `mesh_terrain_band` and `mesh_terrain_weight` in `nif_surface_bindings.wesl`, the
+cosines through `blend_shader_defs` (`MESH_TERRAIN_V2_COS_PARALLEL_E6`,
+`MESH_TERRAIN_V2_COS_STEEP_E6`, `MESH_TERRAIN_COS_FULL_E6`). The widths reach the shader
+in one vec4 appended to the enabled-only uniform (`mesh_terrain_widths`: x flat, y steep):
+the enabled uniform is now 176 bytes, the ordinary NIF uniform stays 128, and the texture
+bindings stay 51/52/53. The zero-weight branch is unchanged: `w <= 0` leaves every
+shading input as it was. Terrain-triangle normal discontinuities and cache-validity
+boundaries remain discontinuities of the weight.
+
+### Census before filtering
+
+[design] `world.rs::spawn_model` gives every spawned STAT shape a
+`mesh_terrain_blend::BlendCensus` (aid only; `world.rs::blend_census`) before any
+selection: reference and base form IDs, model path, the shape's index in the model (for a
+rigged STAT, its index among the shapes `spawn_nodes` drew), and a reason mask. Reference
+reasons: `world` (not an exterior cell of the drawn world), `rig` (rig or skinning),
+`particles`, `posed` (jointed, loose or stored pose), `damage-stages`, `dest`, `distant`
+(imposter). Shape reasons: `emittance` (external emittance), `morph` (registered morph
+mesh). Only shapes with an empty mask get a `BlendShape`, as before (the selection is the
+same: `eligible_reference` and the old `blend_candidate` test are now derived from the
+mask), so tracking never makes a shape convertible. The conversion adds, each frame:
+`missing-source` (the material is not loaded), `temporary` (an active
+`nvf_play::fade::Fading`, `effect_shaders::Faded` or `MaterialOverride`), and one reason per
+material predicate: `alpha-mode` (Add, Multiply, Premultiplied, AlphaToCoverage), `unlit`,
+`refraction`, `first-person`, `depth-write`, `specular-transmission`,
+`diffuse-transmission`, `falloff`, `holes-value`, `holes-texture`, `facegen`, `pipboy`,
+`add-linear`, `soft`, `depth-bias-nonfinite` (`mesh_terrain_blend::reason`; the bit order
+is the first-reason precedence).
+
+Lines (grep `mesh terrain blend: census-shape` and `mesh terrain blend: ready`):
+
+```text
+mesh terrain blend: census-shape ref=0x%08X base=0x%08X model=<path> shape=<n> status=eligible|excluded first-reason=<name|none> reasons=<a+b|none>
+mesh terrain blend: ready eligible-shapes=N resident-cells=N generation=N variant=V shape=S resolution=R shading=H <weight fields> stat-shapes=N excluded-shapes=N pending-material-shapes=N excluded-<reason>=N ... admitted-blend=N admitted-bias=N admitted-decal=N admitted-mask=N admitted-alpha-cut=N
+```
+
+A `census-shape` line is printed once per distinct base form, shape index and mask (the
+reference is the first seen with them), not while the material is still loading, at most
+2048 per run (then one `census-shape lines stopped` notice). The ready line's counts are
+the currently resident tracked shapes, not unique materials or cumulative spawns; reason
+counts overlap and all 26 are printed, zeros included; `pending-material-shapes` equals
+`excluded-missing-source`; `admitted-*` count the enabled shapes whose source is Blend,
+has a nonzero depth bias, the decal flag, is Mask or has an alpha cut. The ready line is
+printed at each publication (also with zero eligible shapes) and refreshed when the
+census changes, at most once per 60 frames. A road with no `census-shape` line is not a
+tracked STAT shape (another record type, or not drawn through `spawn_model`): no material
+rejection may be inferred.
+
+[design] The colour-coded `excluded` view was not built: it needs a new field in the
+ordinary `NifSurfaceKey` (every NIF pipeline), owned diagnostic clones of rejected
+materials, and a restore-before-producers system interleaved with fades, swaps, overrides
+and NIF edits. The writer judged that not contained for this round; `excluded` is not an
+accepted view, and the `census-shape` lines classify a shape instead (grep its model path).
+
+### Admissions
+
+[design] Now admitted when otherwise eligible: ordinary `AlphaMode::Blend` (the blend
+material keeps the source's alpha mode, so its transparent phase, blend state, sorting
+and depth-write state stay the shared specialization's; the shared `depth_equal` skips
+blended targets), a finite nonzero `depth_bias` (copied exactly; the shared
+specialization applies the raster bias), the lit mesh `decal` flag (its bias stays the
+shared specialization's) and `alpha_cut` (the discard runs before terrain shading; copied
+unchanged). Mask was already admitted. Holes and FaceGen stay mandatory exclusions (their
+slots are repurposed); Add, Multiply, Premultiplied and AlphaToCoverage stay out.
+
+[design] Because a fade copy is an ordinary Blend material, ownership is now tested
+explicitly (`temporary` above) instead of through the alpha mode; restoration by the
+owners is unchanged. The conversion is ordered after
+`nvf_assets::nif_material::BlendedCutoutSystems` (new set holding `apply_blended_cutouts`),
+and each enabled clone records a stamp of its source (alpha mode, alpha cut, colour alpha,
+depth bias, decal, roughness, blended cut-out): a same-handle edit (the cut-outs flipping
+Blend and Mask with FSR, NIF block edits) rebuilds the clone in the same frame without a
+new ordinary component. When a clone is (re)assigned, the see-through shadow markers are
+refreshed by the shared rule (`see_through`), since the shared system only sees ordinary
+component changes.
+
+[hypothesis] Risks: a 48-64 unit band may flatten rock lighting (compare 32 first, keep
+`albedo`); very shallow shoulders may want a larger flat width, which also reaches nearly
+parallel surfaces; interpolated mesh normals and faceted LAND normals vary the width across
+triangles; admitted Blend and decal shapes (glass, markings) near the ground can take the
+landscape's colour; wider bands cannot repair a wrong lookup or a shape that is not
+eligible, which the census separates.
+
+### Tests, type-checked only
+
+- `nvf-assets` `nif_surface_blend::tests`: round 5's shapes unchanged and blind to the new
+  widths (`hybrid-v1` = round 5's hybrid); v2 flat, shallow and steep plateaus, monotonic
+  ramps; continuity in height and angle on a 0.1 grid; saturation below ground; zero
+  weight on parallel tops at 0.5-15 units and slightly tilted tops at 10-15; width
+  validation; the new shader definitions; 176/128-byte uniforms.
+- `nvforever` `mesh_terrain_blend::tests`: widths parsing (defaults, the comparison set,
+  every rejection, old forms kept); start/ready lines with their prefixes and all census
+  fields; `census-shape` format, dedupe, pending skip and cap; every reference, shape and
+  material reason alone and overlapping; admission combinations (Opaque/Mask/Blend with
+  bias, decal, alpha cut, hard edges, blended cut-out) preserving every descriptor; ECS:
+  census through publication with zero eligible, late arrival, a pending material
+  loading, a same-handle source edit, removal; authored Blend admitted while an override
+  owns it and after; authored Blend through a script fade (the copy is material-eligible,
+  Fading keeps it out); same-handle blended cut-out flips in both directions, no clone
+  nesting; same-handle see-through edits refresh the shadow markers. Round 5's swap, fade,
+  shadow and NIF-edit tests are kept. `effect_shaders::Faded` has private fields, so its
+  exclusion is covered by type only.
+- `nvforever` `mesh_blend_shader_tests`: 176-byte enabled struct; the positive-weight
+  branch holds every shading change; the WESL weight transcribes the CPU statement.
+
+[documented: round-6 command outputs] From `engine` with
+`CARGO_TARGET_DIR=E:/Games/NVForever/engine/target-2661-opus`: `cargo check -p nvf-assets
+--tests`, `cargo check -p nvforever --tests` and `cargo check -p nvforever` exit 0 without
+warnings. `python tools/smoke verify`: exit 0, `scenario file: 1519 scenarios, fine`. No
+cargo build/test/clippy, game run, smoke run or game-data access.
+
+### Smoke
+
+[design] `mesh-terrain-blend-goodsprings` (value unchanged, `24:surface`) also requires the
+start line's `flat=1.5 steep=144 weight-version=2`, a ready line with the census after
+round 5's fields, the admitted counts, an eligible `census-shape` line and at most 2048
+`census-shape` lines. `mesh-terrain-blend-options` also requires `weight-version=1`. New
+`mesh-terrain-blend-widths` runs `8:weight:hybrid:1024:full:0.5,32` and requires the
+resolved widths, a ready line with them and the census, `census-shape` lines, no
+rejection and no shader errors. Existing expectations, names and values are unchanged.
+
+### Comparison set for the main session
+
+[design] Identical camera, noon, 1280x720, publication and fades settled, at view A (the
+round-3/4/5 road shoulder) and view B (the rock foot): aid off once per view, then
+
+| `NVF_PLAY_TEST_MESH_BLEND` | Purpose |
+| --- | --- |
+| `8:surface:height:1024:full` | the successful shoulder reference |
+| `8:surface:hybrid:1024:full:0.5,32` | narrow rock band |
+| `8:surface:hybrid:1024:full:0.5,48` | proposed default (= `8:surface`) |
+| `8:surface:hybrid:1024:full:0.5,64` | wider rock band |
+| `8:weight:hybrid:1024:full:0.5,48` | shoulder, top and rock weight distribution |
+
+The plan's `8:excluded:...` frame is replaced by the B road's `census-shape` line (grep
+its model path in the log of any run) and the ready line's counts; `8:selection:hybrid:
+1024:full:0.5,48` shows which shapes are converted. Judge A for shoulder continuity and an
+unchanged asphalt top; B for a visible rock-foot transition and the road's classification.
+Keep the start, ready and census lines beside each frame. If the road is excluded, its
+reason comes before further width tuning; `8:surface:hybrid-v1:1024:full` reproduces
+round 5's frames.
+
+[design] Main session: the `nvforever` filters `mesh_terrain_blend`,
+`mesh_blend_shader_tests`, `terrain_surface`, `terrain::tests`, `texture_swap`,
+`nif_mirror`, `fade`, `draw_distance`, `door_fade`, `effect_shaders`, `shadow_thin`; the
+`nvf-assets` filters `nif_surface_blend::tests`, `nif_material::tests`; the `nvf-play`
+filter `fade`; engine clippy; smoke `mesh-terrain-blend-goodsprings`,
+`mesh-terrain-blend-options`, `mesh-terrain-blend-widths` and round 2's Off checks.
