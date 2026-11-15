@@ -143,9 +143,10 @@ struct NifSurface {
     return vec3(n.x, n.z, -n.y);
 }
 
-// [design] nif_surface_blend.rs::v2_band: widths are (flat, band, steep); flat within 5
-// degrees of the ground, the band from 5 to 35 degrees, steep from 75 degrees, smooth
-// ramps between; abs treats opposite parallel normals alike.
+// [design] nif_surface_blend.rs::v2_band: widths are (flat, band, steep); the flat width
+// only parallel to the ground, ramping smoothly to the band at 5 degrees (not held over
+// 0-5 degrees), the band from 5 to 35 degrees, ramping to steep at 75 degrees and beyond;
+// abs treats opposite parallel normals alike.
 @if(MESH_TERRAIN_BLEND) fn mesh_terrain_band(widths: vec3<f32>, cos_angle: f32) -> f32 {
     let c = clamp(abs(cos_angle), 0.0, 1.0);
     let shallow = 1.0 - smoothstep(V2_COS_PARALLEL, 1.0, c);

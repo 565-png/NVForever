@@ -217,9 +217,10 @@ pub struct TerrainPlugin;
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "terrain.wesl");
-        if crate::mesh_terrain_blend::config().is_some() {
-            load_internal_asset!(app, SURFACE_BAKE_SHADER, "terrain_surface.wesl", |s, _| Shader::from_wesl(s, "embedded://nvforever/terrain_surface.wesl"));
-        }
+        // [design] The bake's import module is loaded whether or not the mesh terrain blend
+        // is on (the settings row switches it while the game runs, #2661); only a bake
+        // copy's pipeline (`SURFACE_BAKE`) ever imports it.
+        load_internal_asset!(app, SURFACE_BAKE_SHADER, "terrain_surface.wesl", |s, _| Shader::from_wesl(s, "embedded://nvforever/terrain_surface.wesl"));
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default());
     }
 }
@@ -651,15 +652,34 @@ pub struct LandMesh;
 /// landscape (for the grass).
 pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx) -> Land {
     let folds = tm.tm.folds();
-    spawn_terrain_with(commands, cell, world, prep, tm, folds, crate::mesh_terrain_blend::config().is_some())
+    spawn_terrain_with(commands, cell, world, prep, tm, folds, crate::mesh_terrain_blend::recording())
 }
 
 /// [`spawn_terrain`] with the fold decision and the mesh terrain blend's capture given
-/// (`capture`: test aid `NVF_PLAY_TEST_MESH_BLEND` on, `mesh_terrain_blend.rs`). With it,
-/// the cell also gets a [`crate::terrain_surface::SurfaceCell`]: every quadrant's draws in
-/// their drawing order, the base (folded or not) and then each blended layer drawn over
-/// it, for the bake's flat unlit copies [design]. The near draws are the same either way.
+/// (`capture`: the blend is on, `mesh_terrain_blend.rs::recording`). With it, the cell
+/// also gets a [`crate::terrain_surface::SurfaceCell`]: every quadrant's draws in their
+/// drawing order, the base (folded or not) and then each blended layer drawn over it, for
+/// the bake's flat unlit copies [design]. The near draws are the same either way.
 pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx, folds: bool, capture: bool) -> Land {
+    let (land, surface) = terrain_draws(Some((&mut *commands, cell)), world, prep, tm, folds, capture);
+    if let Some(surface) = surface {
+        commands.entity(cell).insert(surface);
+    }
+    land
+}
+
+/// [design] The capture alone of a cell drawn while the mesh terrain blend was off
+/// (#2661: the settings row turns it on while the game runs): the same quadrant stacks
+/// as [`spawn_terrain_with`] gives, from the same prepared landscape and the same cached
+/// materials, without spawning a near draw again. `None` without heights.
+pub(crate) fn capture_surface(world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx, folds: bool) -> Option<crate::terrain_surface::SurfaceCell> {
+    terrain_draws(None, world, prep, tm, folds, true).1
+}
+
+/// The near draws of a cell (spawned under `near`'s cell when given) and, with `capture`,
+/// its [`crate::terrain_surface::SurfaceCell`]. The near-draw counters move only with
+/// `near`.
+fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx, folds: bool, capture: bool) -> (Land, Option<crate::terrain_surface::SurfaceCell>) {
     use crate::terrain_surface::{CaptureDraw, CapturePath, SurfaceCaptureMaterial, SurfaceCell};
     let TerrainPrep { grid, land, layers: drawn, mut meshes, mut folded, tile } = prep;
     let mut surface = capture.then(|| SurfaceCell {
@@ -672,7 +692,7 @@ pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &
     let shader_tile = if most == FOLDED_LAYERS { tile } else { 0.0 };
     for q in 0..4u8 {
         let base = drawn.iter().rev().find(|l| l.base && l.quadrant == q);
-        if base.is_none() {
+        if base.is_none() && near.is_some() {
             tm.tm.cache.quadrants_without_base += 1;
         }
         let tex = tm.texture_of(world, base.and_then(|b| b.texture));
@@ -694,10 +714,12 @@ pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &
             if surface.is_some() {
                 stack = Some((true, vec![(mesh.clone(), CaptureDraw::Folded(Box::new(tm.tm.folded.get(&mat).unwrap().clone())))]));
             }
-            let mesh = tm.assets.meshes.add(mesh);
-            commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
-            tm.tm.cache.folded_quadrants += 1;
-            tm.tm.cache.folded_layers += n;
+            if let Some((commands, cell)) = near.as_mut() {
+                let mesh = tm.assets.meshes.add(mesh);
+                commands.entity(*cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
+                tm.tm.cache.folded_quadrants += 1;
+                tm.tm.cache.folded_layers += n;
+            }
             blended_from = n;
         } else {
             let mat = tm.base_material(tex);
@@ -708,8 +730,10 @@ pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &
                     let capture = SurfaceCaptureMaterial::from_standard(&tm.assets.materials.get(&mat).unwrap().base, false);
                     stack = Some((false, vec![(mesh.clone(), CaptureDraw::Single(capture))]));
                 }
-                let mesh = tm.assets.meshes.add(mesh);
-                commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
+                if let Some((commands, cell)) = near.as_mut() {
+                    let mesh = tm.assets.meshes.add(mesh);
+                    commands.entity(*cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
+                }
             }
         }
         for (rank, (i, l)) in layers.into_iter().enumerate().skip(blended_from) {
@@ -722,9 +746,11 @@ pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &
                     let capture = SurfaceCaptureMaterial::from_standard(&tm.assets.materials.get(&mat).unwrap().base, true);
                     draws.push((mesh.clone(), CaptureDraw::Single(capture)));
                 }
-                let mesh = tm.assets.meshes.add(mesh);
-                commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
-                tm.tm.cache.layers += 1;
+                if let Some((commands, cell)) = near.as_mut() {
+                    let mesh = tm.assets.meshes.add(mesh);
+                    commands.entity(*cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
+                    tm.tm.cache.layers += 1;
+                }
             }
         }
         if let (Some(surface), Some((folded, draws))) = (&mut surface, stack) {
@@ -732,10 +758,7 @@ pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &
             surface.capture(q, draws, if folded { CapturePath::Folded { layers } } else { CapturePath::Fallback { layers } });
         }
     }
-    if let Some(surface) = surface {
-        commands.entity(cell).insert(surface);
-    }
-    land
+    (land, surface)
 }
 
 #[cfg(test)]

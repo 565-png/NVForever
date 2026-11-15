@@ -1,5 +1,7 @@
-//! [design] Aid-only, bounded 3x3 unlit colour atlas, using terrain.rs's prepared meshes
-//! and materials. Heights cover every prepared cell; colour validity is per quadrant.
+//! [design] The mesh terrain blend's bounded 3x3 unlit colour atlas (#2661), using
+//! terrain.rs's prepared meshes and materials; nothing is captured, baked or allocated
+//! while the blend is off (`mesh_terrain_blend.rs`: the settings row or the test aid).
+//! Heights cover every prepared cell; colour validity is per quadrant.
 //! A quadrant's colour is its whole near-terrain stack: the base draw (folded or not)
 //! and then every blended layer draw over it, as flat unlit copies with the near draws'
 //! textures, alpha and draw order (terrain.rs `spawn_terrain_with`). A folded base (only
@@ -8,7 +10,7 @@
 //! with the single-texture [`SurfaceCaptureMaterial`] (terrain_capture.wesl), whose
 //! material group binds one texture. The bake publishes only after every copy, opaque
 //! and blended, has drawn in one frame. The atlas is 512, 1024 (default) or 2048 texels
-//! per cell side, chosen by the aid and checked against the device's texture limit.
+//! per cell side (the settings row: 1024; the test aid chooses), checked against the device's texture limit.
 
 use crate::terrain::TerrainMaterial;
 use crate::world::{bevy_to_game, game_to_bevy, Streamer, WorldData};
@@ -18,7 +20,7 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::image::ImageSampler;
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
-use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
+use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::render::render_phase::{CachedRenderPipelinePhaseItem, DrawFunctions, RenderCommand, RenderCommandResult, RenderCommandState, PhaseItem, TrackedRenderPass};
 use bevy::core_pipeline::core_3d::{Opaque3d, Transparent3d};
@@ -65,7 +67,7 @@ pub const CAPTURE_SHADER: &str = "embedded://nvforever/terrain_capture.wesl";
 /// or non-bindless base, or a blended layer (terrain_capture.wesl). One diffuse texture,
 /// one sampler, one uniform: its material group fits a GPU without bindless textures,
 /// where [`TerrainMaterial`]'s (six standard and thirteen layer textures) does not.
-/// Registered only with the aid on; no prepass, no shadows.
+/// Registered in every run, drawn only while the blend bakes; no prepass, no shadows.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 #[bind_group_data(SurfaceCaptureKey)]
 pub struct SurfaceCaptureMaterial {
@@ -199,7 +201,7 @@ pub struct SurfaceCache {
     ready: Option<u64>,
     submitted: Arc<Mutex<Option<u64>>>,
     pub published: Option<PublishedSurface>,
-    /// Colour texels per cell side (the aid's resolution).
+    /// Colour texels per cell side (the blend's resolution).
     pub resolution: u32,
     /// The device cannot hold the requested atlas ([`check_resolution`]): nothing bakes.
     pub rejected: bool,
@@ -211,19 +213,35 @@ impl SurfaceCache {
     pub fn with_resolution(resolution: u32) -> Self {
         Self { generation: 0, signature: None, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false }
     }
-}
 
-/// [design] Startup: the requested atlas against the device's 2D texture limit. An
-/// unsupported request is rejected in the log and bakes nothing, so no material samples it.
-pub fn check_resolution(device: Option<Res<bevy::render::renderer::RenderDevice>>, mut cache: ResMut<SurfaceCache>) {
-    let Some(device) = device else { return };
-    let max = device.limits().max_texture_dimension_2d;
-    let (resolution, width) = (cache.resolution, atlas_width(cache.resolution));
-    if resolution_supported(resolution, max) {
-        info!("mesh terrain blend: colour atlas resolution={resolution} atlas={width}x{width} rgba16f colour-mib={} max-texture-dimension-2d={max}", colour_bytes(resolution) >> 20);
-    } else {
-        warn!("mesh terrain blend: rejected resolution={resolution}: atlas {width} texels wide exceeds max-texture-dimension-2d={max}; no colour cache is baked");
-        cache.rejected = true;
+    /// [design] The blend turned on: the atlas at `resolution`, checked against the
+    /// device's 2D texture limit (`None` without a render device: not checked, not
+    /// logged). An unsupported request is rejected in the log and bakes nothing, so no
+    /// material samples it. Nothing is allocated here; the first bake allocates.
+    pub fn start(&mut self, resolution: u32, max_texture_dimension_2d: Option<u32>) {
+        self.resolution = resolution;
+        self.rejected = false;
+        let Some(max) = max_texture_dimension_2d else { return };
+        let width = atlas_width(resolution);
+        if resolution_supported(resolution, max) {
+            info!("mesh terrain blend: colour atlas resolution={resolution} atlas={width}x{width} rgba16f colour-mib={} max-texture-dimension-2d={max}", colour_bytes(resolution) >> 20);
+        } else {
+            warn!("mesh terrain blend: rejected resolution={resolution}: atlas {width} texels wide exceeds max-texture-dimension-2d={max}; no colour cache is baked");
+            self.rejected = true;
+        }
+    }
+
+    /// [design] The blend turned off: the pending bake's copies and camera despawned, the
+    /// published atlas dropped (its images go with their last handle, the enabled clones'
+    /// included), and a new generation, so a receipt of the old bake can never publish.
+    /// The generation counter keeps counting across switches.
+    pub fn release(&mut self, commands: &mut Commands) {
+        if let Some(job) = self.job.take() { commands.entity(job.root).despawn(); }
+        self.generation += 1;
+        self.signature = None;
+        self.ready = None;
+        self.published = None;
+        *self.submitted.lock().unwrap() = None;
     }
 }
 
@@ -366,18 +384,48 @@ struct BakeView {
     submitted: Arc<Mutex<Option<u64>>>,
 }
 
+/// [design] Registered whether or not the blend is on, so the settings row can switch it
+/// while the game runs; while it is off no bake view exists, so none of this draws, and
+/// the draw functions stay Bevy's own until the first bake view is extracted.
 pub struct SurfaceBakePlugin;
 impl Plugin for SurfaceBakePlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "terrain_capture.wesl");
-        app.add_plugins((ExtractComponentPlugin::<BakeView>::default(), MaterialPlugin::<SurfaceCaptureMaterial>::default()))
-            .add_systems(Startup, check_resolution);
+        app.add_plugins((ExtractComponentPlugin::<BakeView>::default(), MaterialPlugin::<SurfaceCaptureMaterial>::default()));
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
-            render.add_systems(RenderStartup, (install_bake_receipt::<Opaque3d>, install_bake_receipt::<Transparent3d>))
+            render.add_systems(Render, install_bake_receipts.run_if(first_bake_view).in_set(RenderSystems::Prepare))
                 .add_systems(Render, reset_receipts.in_set(RenderSystems::Prepare))
-                .add_systems(Render, submit_receipts.in_set(RenderSystems::Cleanup));
+                .add_systems(Render, submit_receipts.in_set(RenderSystems::Cleanup))
+                .add_systems(bevy::core_pipeline::Core3d, (
+                    bake_span_begin.before(bevy::core_pipeline::Core3dSystems::Prepass),
+                    bake_span_end.after(bevy::core_pipeline::Core3dSystems::PostProcess),
+                ).run_if(any_bake_view));
         }
     }
+}
+
+/// A bake view is in the render world (the span systems run only then).
+fn any_bake_view(views: Query<(), With<BakeView>>) -> bool {
+    !views.is_empty()
+}
+
+/// The render world's note that the receipts wrap the draw functions now.
+#[derive(Resource)]
+struct BakeReceiptsInstalled;
+
+/// [design] A bake view is in the render world and the receipts are not installed yet:
+/// the blend has just baked for the first time this run (a run that never turns the blend
+/// on keeps Bevy's own draw functions).
+fn first_bake_view(views: Query<(), With<BakeView>>, installed: Option<Res<BakeReceiptsInstalled>>) -> bool {
+    installed.is_none() && !views.is_empty()
+}
+
+/// Both phases' receipts, once (before the bake's passes are recorded; `DrawFunctions`
+/// prepares each function when its phase renders).
+fn install_bake_receipts(world: &mut World) {
+    install_bake_receipt::<Opaque3d>(world);
+    install_bake_receipt::<Transparent3d>(world);
+    world.insert_resource(BakeReceiptsInstalled);
 }
 
 // [design] Base copies draw in Opaque3d, layer copies (alpha blended) in Transparent3d;
@@ -388,6 +436,40 @@ fn install_bake_receipt<P: CachedRenderPipelinePhaseItem>(world: &mut World) {
     let mut functions = functions.write();
     let id = functions.id::<bevy::pbr::DrawMaterial>();
     functions.draw_functions[id.0 as usize] = Box::new(command);
+}
+
+/// The GPU time span's name (Tracy's GPU zone and the `--log-frame-times` list, graphics.rs).
+pub const BAKE_SPAN: &str = "nvf_mesh_terrain_bake";
+/// What the bake's span systems read: the render context, the view being drawn and the
+/// bake views.
+type BakeSpanParams = (bevy::render::renderer::RenderContext<'static, 'static>, Option<Res<'static, bevy::render::renderer::CurrentView>>, Query<'static, 'static, (), With<BakeView>>);
+
+/// [design] A GPU time span around a bake view's whole draw ([`BAKE_SPAN`]; recorded only
+/// with the render diagnostics on: `--log-frame-times`, a Tracy build). The span opens
+/// before the view's first pass and closes after its last, so the bake's own passes nest
+/// in it. Both ends are exclusive systems: the executor runs those on its scope's thread,
+/// and the recorder keeps open spans per thread, so the end finds the span the begin
+/// opened. Any other view, or no recorder: nothing.
+fn bake_span_begin(world: &mut World, state: &mut bevy::ecs::system::SystemState<BakeSpanParams>) {
+    bake_span(world, state, true);
+}
+fn bake_span_end(world: &mut World, state: &mut bevy::ecs::system::SystemState<BakeSpanParams>) {
+    bake_span(world, state, false);
+}
+fn bake_span(world: &mut World, state: &mut bevy::ecs::system::SystemState<BakeSpanParams>, begin: bool) {
+    use bevy::render::diagnostic::RecordDiagnostics;
+    {
+        let Ok((mut ctx, view, bakes)) = state.get_mut(world) else { return };
+        if !view.is_some_and(|v| bakes.contains(v.0)) { return; }
+        let Some(recorder) = ctx.diagnostic_recorder() else { return };
+        let encoder = ctx.command_encoder();
+        if begin {
+            recorder.begin_time_span(encoder, BAKE_SPAN.into());
+        } else {
+            recorder.end_time_span(encoder);
+        }
+    }
+    state.apply(world);
 }
 fn reset_receipts(views: Query<&BakeView>, mut cameras: ResMut<bevy::render::camera::SortedCameras>) {
     // Freeze successful generations before another view pass can clear their target.
@@ -418,6 +500,39 @@ impl<P: PhaseItem> RenderCommand<P> for BakeReceipt {
         }
         RenderCommandResult::Success
     }
+}
+
+/// [design] Cells drawn while the blend was off have no [`SurfaceCell`]: each loaded
+/// exterior cell of the 3x3 region that lacks one gets its capture from its landscape
+/// prepared again (`terrain.rs::capture_surface`, the same quadrant stacks and cached
+/// materials as a cell drawn with the blend on), once per cell entity while the blend
+/// stays on (`BlendState::tried`, emptied when it turns off). Cells loaded while it is on
+/// are captured as they are drawn.
+#[allow(clippy::too_many_arguments)]
+pub fn backfill_cells(
+    mut commands: Commands,
+    world: Res<WorldData>,
+    streamer: Res<Streamer>,
+    camera: Query<&GlobalTransform, crate::fly::WorldCamera>,
+    captured: Query<(), With<SurfaceCell>>,
+    mut terrain: crate::terrain::TerrainMaterials,
+    mut models: nvf_assets::model::ModelCtx,
+    mut state: ResMut<crate::mesh_terrain_blend::BlendState>,
+) {
+    if streamer.interior.is_some() { return; }
+    let Ok(camera) = camera.single() else { return };
+    let origin = cache_origin(bevy_to_game(camera.translation()).truncate());
+    for y in origin.1..origin.1 + 3 { for x in origin.0..origin.0 + 3 {
+        let Some(&cell) = streamer.loaded.get(&(x, y)) else { continue };
+        if captured.contains(cell) || !state.tried.insert(cell) { continue; }
+        let Some(land) = world.grid_cell((x, y)).and_then(|c| c.land) else { continue };
+        let tile = terrain.settings.tile;
+        let Some(prep) = crate::terrain::prepare_terrain(world.lo, world.schema, land, (x, y), tile, world.neighbour_lands((x, y))) else { continue };
+        let folds = terrain.folds();
+        if let Some(surface) = crate::terrain::capture_surface(&world, prep, &mut crate::terrain::TerrainCtx { tm: &mut terrain, assets: &mut models }, folds) {
+            commands.entity(cell).try_insert(surface);
+        }
+    }}
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -801,7 +916,19 @@ mod tests {
                 crate::terrain::spawn_terrain_with(&mut commands, cell, &world, prep, &mut crate::terrain::TerrainCtx { tm: &mut terrain, assets: &mut models }, folds, true);
             }).unwrap();
             let near_draws = app.world_mut().query::<(&ChildOf, &crate::terrain::LandMesh)>().iter(app.world()).filter(|(parent, _)| parent.parent() == cell).count();
+            // Round 7: the capture of a cell drawn while the blend was off (the settings row
+            // turned on later) is the same stack, and draws nothing near again.
+            let again = land.clone();
+            let captured = app.world_mut().run_system_once(move |world: Res<WorldData>, mut terrain: crate::terrain::TerrainMaterials, mut models: nvf_assets::model::ModelCtx| {
+                let prep = crate::terrain::prepare_land(again.clone(), &[None, None, None, None], grid, 256.0);
+                crate::terrain::capture_surface(&world, prep, &mut crate::terrain::TerrainCtx { tm: &mut terrain, assets: &mut models }, folds)
+            }).unwrap().expect("heights give a capture");
+            let land_meshes = app.world_mut().query::<&crate::terrain::LandMesh>().iter(app.world()).count();
+            assert_eq!(land_meshes, near_draws, "folds={folds}: the capture alone spawns no near draw");
             let surface = app.world().get::<SurfaceCell>(cell).expect("capture inserts the cell's surface");
+            assert_eq!((captured.paths, captured.heights.len(), captured.quadrants.len()), (surface.paths, surface.heights.len(), surface.quadrants.len()), "folds={folds}");
+            let kind = |d: &CaptureDraw| match d { CaptureDraw::Folded(m) => (true, false, m.base.depth_bias.to_bits()), CaptureDraw::Single(m) => (false, m.layer, m.depth_bias.to_bits()) };
+            assert!(captured.quadrants.iter().zip(&surface.quadrants).all(|((_, a), (_, b))| kind(a) == kind(b)), "folds={folds}: the same copies in the same order");
             assert_eq!(surface.paths, expected, "folds={folds}");
             assert_eq!(surface.colour_mask(), 0xf, "folds={folds}: every quadrant's colour is captured");
             assert_eq!(surface.quadrants.len(), near_draws, "folds={folds}: one bake copy per near draw");

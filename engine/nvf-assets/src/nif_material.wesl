@@ -527,7 +527,7 @@ fn nif_fragment(
     // equality with it: nothing is left to test here.
     @if(PREPASS_COVERAGE) pbr_input.material.base_color.a = 1.0;
     @if(!SOFT_EDGES && !PREPASS_COVERAGE) pbr_input.material.base_color = alpha_discard(pbr_input.material.flags, pbr_input.material.alpha_cutoff, pbr_input.material.base_color);
-    // [design] Mesh terrain blend (nif_surface_blend.rs, test aid NVF_PLAY_TEST_MESH_BLEND),
+    // [design] Mesh terrain blend (nif_surface_blend.rs; the mesh-terrain-blend settings row),
     // forward only: after the existing coverage tests and normal mapping, before lighting.
     // The weight comes from the unperturbed world_normal; alpha, positions, depth and that
     // geometric normal (shadow bias) stay as they are. Full shading moves the material

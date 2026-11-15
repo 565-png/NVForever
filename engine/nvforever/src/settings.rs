@@ -817,6 +817,11 @@ pub(crate) const MODEL_NOTE: &str = "Which DLSS model rebuilds the picture (NVID
 /// The DLSS model row's command-line switch.
 pub(crate) const MODEL_SWITCHES: &str = "--dlss-model";
 
+/// The mesh terrain blend's row (#2661, mesh_terrain_blend.rs).
+pub(crate) const MESH_BLEND_KEY: &str = "mesh-terrain-blend";
+/// Its note, in NVForever's own words.
+pub(crate) const MESH_BLEND_NOTE: &str = "On: softens where outdoor roads, rocks and cliffs meet the landscape, giving them the ground's colour and light there. Not in the original.";
+
 /// The engine-level improvements of `graphics.rs` (`--graphics enhanced` starts with all
 /// of them on, `vanilla` with none).
 fn register_graphics(app: &mut App) {
@@ -968,7 +973,7 @@ fn register_graphics(app: &mut App) {
         },
     );
     nvf_play::settings::set_disabled_status(app, "latency-reduction", |w| (!crate::anti_lag::available(w)).then_some("Not on this GPU"));
-    let switches: [Switch; 11] = [
+    let switches: [Switch; 12] = [
         (
             "ambient-occlusion",
             "Ambient occlusion",
@@ -1060,6 +1065,17 @@ fn register_graphics(app: &mut App) {
             |w| w.resource::<Graphics>().water_mirror,
             |w, on| w.resource_mut::<Graphics>().water_mirror = on,
         ),
+        // #2661: off in both looks and not part of `enhanced`; switched while the game runs
+        // (mesh_terrain_blend.rs `follow_setting`); the test aid NVF_PLAY_TEST_MESH_BLEND
+        // overrides it.
+        (
+            MESH_BLEND_KEY,
+            "Blend meshes into ground",
+            MESH_BLEND_NOTE,
+            "--graphics-only",
+            |w| w.resource::<Graphics>().mesh_terrain_blend,
+            |w, on| w.resource_mut::<Graphics>().mesh_terrain_blend = on,
+        ),
     ];
     for (key, label, note, switches, get, set) in switches {
         add_setting(app, Setting { key, group: GROUP_GRAPHICS, label, note, switches, get, set, slider: None });
@@ -1071,6 +1087,7 @@ fn register_pipeline_waits(app: &mut App) {
         "anti-aliasing", "shadow-filter", "upscaler", "upscaler-quality", "ambient-occlusion",
         "fine-shadows", "bloom", "glow", "eye-adaptation", "neon-glow", "sharpen",
         "light-shafts", "water-reflections", "water-mirror", "sun-shadows", "grade",
+        MESH_BLEND_KEY,
     ] {
         nvf_play::settings::wait_for_pipelines(app, key);
     }
@@ -2182,6 +2199,7 @@ dlss-model=Preset K
             ("light-shafts", &["--graphics"]),
             ("water-reflections", &["--graphics"]),
             ("water-mirror", &["--graphics-only"]),
+            (MESH_BLEND_KEY, &["--graphics-only"]),
         ];
         for (key, switches) in want {
             let s = settings.list()[row(&app, key)];
@@ -2191,6 +2209,35 @@ dlss-model=Preset K
         assert!(settings.list().iter().all(|s| !s.note.contains("--")), "no Graphics row's note names a switch");
         assert_eq!(nvf_play::settings::note_switches(FPS_COUNTER_SWITCHES), ["--fps"]);
         assert!(nvf_play::settings::note_switches(FPS_SPLIT_SWITCHES).is_empty());
+    }
+
+    /// #2661: the mesh terrain blend's row stands among the Graphics switches, off in a
+    /// vanilla start, switches `Graphics::mesh_terrain_blend` on the page and is kept in
+    /// the INI, read back at the next start.
+    #[test]
+    fn the_mesh_blend_row_switches_the_blend_and_is_kept_in_the_ini() {
+        let mut app = rows_app();
+        let i = row(&app, MESH_BLEND_KEY);
+        let s = app.world().resource::<Settings>().list()[i];
+        assert_eq!((s.group, s.label, s.note, s.switches), (GROUP_GRAPHICS, "Blend meshes into ground", MESH_BLEND_NOTE, "--graphics-only"));
+        assert!(!(s.get)(app.world()), "off in a vanilla start");
+        assert_eq!(nvf_play::settings::flip(app.world_mut(), i), Some(true));
+        assert!(app.world().resource::<Graphics>().mesh_terrain_blend);
+        assert_eq!(nvf_play::settings::flip(app.world_mut(), i), Some(false));
+        assert!(!app.world().resource::<Graphics>().mesh_terrain_blend);
+
+        let dir = std::env::temp_dir().join(format!("nvf-mesh-blend-row-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("NVForever.ini");
+        let mut app = ini_app(&path, "[Settings]\nmesh-terrain-blend=1\n", UpscalerChoice::Off, GivenSwitches::default());
+        assert!(app.world().resource::<Graphics>().mesh_terrain_blend, "the stored row turns it on at the start");
+        let i = row(&app, MESH_BLEND_KEY);
+        nvf_play::settings::flip(app.world_mut(), i);
+        let ini = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(fnv_install::ini_get(&ini, nvf_play::settings::SECTION, MESH_BLEND_KEY), Some("0".to_string()), "{ini}");
+        assert!(!ini_app(&path, &ini, UpscalerChoice::Off, GivenSwitches::default()).world().resource::<Graphics>().mesh_terrain_blend, "and off again at the next");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A settings page with the INI at `path` holding `text`, `apply_stored` run once.

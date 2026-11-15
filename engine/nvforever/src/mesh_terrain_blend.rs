@@ -1,11 +1,22 @@
-//! [design] NVForever's aid-only mesh/landscape blend: rigid exterior STATs, no noise,
-//! immutable source materials. `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution
-//! [:shading[:flat,steep]]]]`; omitted parts default to an 8-unit band, the hybrid (v2)
-//! contact shape, 1024 colour texels per cell, full shading and hybrid v2's widths
-//! `band / 16` and `6 band`. These are NVForever's own choices.
+//! [design] NVForever's mesh/landscape blend (#2661, docs/design/graphics-enhanced.md
+//! §3.12): rigid exterior STAT and SCOL shapes, no noise, immutable source materials.
 //!
-//! [design] Census (round 6): every spawned STAT shape carries a [`BlendCensus`] with the
-//! reasons its reference and shape cannot blend, recorded before any filtering
+//! On with the Graphics settings row `mesh-terrain-blend` ("Blend meshes into ground";
+//! off by default, off in both looks, not part of `enhanced`), which draws
+//! [`setting_config`]: an 8-unit band of the `height` shape, 1024 colour texels per cell,
+//! full shading. The test aid `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution
+//! [:shading[:flat,steep]]]]` overrides the row for comparison runs (it is not stored);
+//! omitted parts take the same defaults, and hybrid v2's widths are `band / 16` and
+//! `6 band`. These are NVForever's own choices.
+//!
+//! [design] Live switching ([`follow_setting`]): turning the blend on records the census
+//! and the landscape captures of what is already drawn (world.rs::blend_backfill,
+//! terrain_surface.rs::backfill_cells) and lets the cache bake; turning it off puts every
+//! shape's ordinary material back and drops the census, the captures, the atlas and the
+//! enabled clones. While it is off no bake is scheduled and nothing is allocated.
+//!
+//! [design] Census (round 6): every spawned STAT or SCOL shape carries a [`BlendCensus`]
+//! with the reasons its reference and shape cannot blend, recorded before any filtering
 //! (world.rs::spawn_model); the conversion adds the material and ownership reasons each
 //! frame and reports counts on the ready line and bounded `census-shape` lines. The census
 //! is separate from [`BlendShape`]: only shapes without reference or shape reasons get a
@@ -17,6 +28,7 @@ use bevy::prelude::*;
 use nvf_assets::nif_material::{Falloff, MaterialOverride, NifMaterial, SeeThroughNoShadow};
 use nvf_assets::nif_surface_blend::{ContactShape, ContactWidths, NifBlendMaterial, NifSurfaceBlend, Shading, DEFAULT_RESOLUTION, RESOLUTIONS};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,9 +49,14 @@ impl Variant {
     }
 }
 
-/// [design] Defaults of the parts the aid's value leaves out.
+/// [design] Defaults of the parts the aid's value leaves out, and the settings row's look
+/// ([`setting_config`]). Round 7 made `height` the default shape: at a road shoulder it
+/// turned the broken asphalt edge into ground-lit dirt and left the road top alone, where
+/// the hybrid shapes lost the effect or striped the road's lip (the user's comparison
+/// pictures of round 7 [observed], #2661). `hybrid`, `hybrid-v1` and `penetration` stay
+/// for the aid.
 pub const DEFAULT_BAND: f32 = 8.0;
-pub const DEFAULT_SHAPE: ContactShape = ContactShape::Hybrid;
+pub const DEFAULT_SHAPE: ContactShape = ContactShape::Height;
 pub const DEFAULT_SHADING: Shading = Shading::Full;
 
 /// `flat` and `steep` are hybrid v2's widths (resolved: `band / 16` and `6 band` unless
@@ -105,22 +122,56 @@ pub fn parse(value: &str) -> Result<BlendConfig, &'static str> {
     Ok(BlendConfig { band, variant, shape, resolution, shading, flat: widths.flat, steep: widths.steep })
 }
 
-pub fn config() -> Option<BlendConfig> {
+/// The test aid's value, read once; `None` when it is not set or rejected (said once in the
+/// log), and the settings row decides then.
+pub fn aid() -> Option<BlendConfig> {
     static CONFIG: OnceLock<Option<BlendConfig>> = OnceLock::new();
     *CONFIG.get_or_init(|| {
         let value = match std::env::var("NVF_PLAY_TEST_MESH_BLEND") {
             Ok(value) => value,
             Err(std::env::VarError::NotPresent) => return None,
-            Err(_) => { warn!("mesh terrain blend: rejected NVF_PLAY_TEST_MESH_BLEND: value is not Unicode"); return None; }
+            Err(_) => { warn!("mesh terrain blend: rejected NVF_PLAY_TEST_MESH_BLEND: value is not Unicode; the settings row decides"); return None; }
         };
-        match parse(&value) {
-            Ok(c) => {
-                info!("{}", start_line(&c));
-                Some(c)
-            }
-            Err(e) => { warn!("mesh terrain blend: rejected NVF_PLAY_TEST_MESH_BLEND={value:?}: {e}"); None }
-        }
+        parse(&value).map_err(|e| warn!("mesh terrain blend: rejected NVF_PLAY_TEST_MESH_BLEND={value:?}: {e}; the settings row decides")).ok()
     })
+}
+
+/// [design] What the settings row draws: the aid's defaults, `8:surface:height:1024:full`.
+pub fn setting_config() -> BlendConfig {
+    parse("surface").expect("the default value parses")
+}
+
+/// [design] The blend wanted now: the aid's value when given (comparison runs), else the
+/// row's look while the row is on, else off.
+pub fn desired(aid: Option<BlendConfig>, row: bool) -> Option<BlendConfig> {
+    aid.or_else(|| row.then(setting_config))
+}
+
+/// Whether the blend is on, for the spawns that record its census and captures
+/// (world.rs::blend_census, terrain.rs::spawn_terrain); set by [`follow_setting`] only.
+static RECORDING: AtomicBool = AtomicBool::new(false);
+
+/// [design] The blend is on: a spawn records its census and landscape captures now.
+pub fn recording() -> bool {
+    RECORDING.load(Ordering::Relaxed)
+}
+
+/// [design] The blend's state while the game runs.
+#[derive(Resource, Default)]
+pub struct BlendState {
+    /// The look drawn; `None` while off.
+    pub active: Option<BlendConfig>,
+    /// The census of the shapes drawn while it was off is still to be taken
+    /// (world.rs::blend_backfill), set as it turns on.
+    pub shapes_pending: bool,
+    /// The cells whose capture was tried since it turned on
+    /// (terrain_surface.rs::backfill_cells).
+    pub tried: HashSet<Entity>,
+}
+
+/// Run condition: the blend is on.
+pub fn active(state: Res<BlendState>) -> bool {
+    state.active.is_some()
 }
 
 /// Hybrid v2's resolved widths and the weight formula's version, appended to the start
@@ -229,11 +280,31 @@ pub fn shape_reasons(external_emittance: bool, morph: bool) -> u32 {
     mask_of([(external_emittance, reason::EMITTANCE), (morph, reason::MORPH)])
 }
 
-/// Selection of the reference: a STAT without reference reasons (the census records
-/// only STATs; world.rs::blend_census).
+/// [design] The base record types whose rigid shapes can blend: STAT, and SCOL, a static
+/// collection drawn as the one model the editor generated from its statics
+/// [documented: GECK wiki "Static Collection", revision 40901, snapshot 2026-10-28:
+/// "composed of Static forms", "do not react to Havok physics and cannot be destroyed",
+/// its Model "the NIF file used for the object", usually generated on creation; GECK wiki
+/// "Bethsoft Tutorial Static Collections", revision 38886: grouping "creates a new .NIF"].
+/// world.rs draws a SCOL reference as that one model, as it draws a STAT (`spawn_model`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BaseType { Stat, Scol }
+impl BaseType {
+    /// The census's type of a base record signature; `None` for every other record.
+    pub fn of(sig: &[u8; 4]) -> Option<Self> {
+        match sig { b"STAT" => Some(Self::Stat), b"SCOL" => Some(Self::Scol), _ => None }
+    }
+    /// The record signature, as the `census-shape` lines name it.
+    pub fn name(self) -> &'static str {
+        match self { Self::Stat => "STAT", Self::Scol => "SCOL" }
+    }
+}
+
+/// Selection of the reference: a STAT or SCOL without reference reasons (the census
+/// records only those; world.rs::blend_census).
 #[cfg(test)]
 pub fn eligible_reference(sig: &[u8; 4], facts: ReferenceFacts) -> bool {
-    sig == b"STAT" && reference_reasons(facts) == 0
+    BaseType::of(sig).is_some() && reference_reasons(facts) == 0
 }
 
 /// [design] Each material predicate the blend cannot take, one reason each. Admitted since
@@ -265,14 +336,16 @@ pub fn eligible_material(m: &NifMaterial) -> bool {
 
 pub use nvf_assets::nif_surface_blend::BlendShape;
 
-/// [design] Aid-only metadata of one spawned STAT shape (world.rs::spawn_model), recorded
-/// before any filtering: its reference, base and model, the shape's index in the model
-/// (in a rigged model, its index among the drawn shapes), and its reference and shape
-/// reasons. Diagnostics only: conversion follows [`BlendShape`] alone.
+/// [design] Metadata of one spawned STAT or SCOL shape while the blend is on
+/// (world.rs::spawn_model, or blend_backfill for what was drawn while it was off),
+/// recorded before any filtering: its reference, base, base type and model, the shape's
+/// index in the model (in a rigged model, its index among the drawn shapes), and its
+/// reference and shape reasons. Diagnostics only: conversion follows [`BlendShape`] alone.
 #[derive(Component, Clone, Debug)]
 pub struct BlendCensus {
     pub reference: u32,
     pub base: u32,
+    pub base_type: BaseType,
     pub model: Arc<str>,
     pub shape: usize,
     pub reasons: u32,
@@ -294,22 +367,27 @@ impl SourceStamp {
 }
 
 /// [design] The census of the currently resident tracked shapes (not unique materials or
-/// cumulative spawns): `reasons` overlap, one count per [`reason::NAMES`] entry; `admitted`
-/// counts the enabled shapes whose source is Blend, has a depth bias, the decal flag, is
-/// Mask, or has an alpha cut.
+/// cumulative spawns): `stat_shapes` and `scol_shapes` by base type, `excluded`,
+/// `pending` and `reasons` over both; `reasons` overlap, one count per [`reason::NAMES`]
+/// entry; `admitted` counts the enabled shapes whose source is Blend, has a depth bias,
+/// the decal flag, is Mask, or has an alpha cut.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Census {
     /// The prefix's `eligible-shapes` (compared for refreshes, printed by `ready_line`).
     eligible: usize,
     stat_shapes: usize,
+    scol_shapes: usize,
     excluded: usize,
     pending: usize,
     reasons: [usize; reason::NAMES.len()],
     admitted: [usize; 5],
 }
 impl Census {
-    fn count(&mut self, mask: u32) {
-        self.stat_shapes += 1;
+    fn count(&mut self, base_type: BaseType, mask: u32) {
+        match base_type {
+            BaseType::Stat => self.stat_shapes += 1,
+            BaseType::Scol => self.scol_shapes += 1,
+        }
         self.excluded += usize::from(mask != 0);
         self.pending += usize::from(mask & reason::MISSING_SOURCE != 0);
         for (n, (bit, _)) in self.reasons.iter_mut().zip(reason::NAMES) {
@@ -323,7 +401,9 @@ impl Census {
         ];
         for (n, f) in self.admitted.iter_mut().zip(flags) { *n += usize::from(f); }
     }
-    /// Appended to the ready line after round 5's fields and the weight fields.
+    /// Appended to the ready line after round 5's fields and the weight fields; round 7's
+    /// `scol-shapes` comes last, after the admitted counts, so the earlier fields keep
+    /// their order and neighbours.
     fn fields(&self) -> String {
         use std::fmt::Write;
         let mut out = format!(" stat-shapes={} excluded-shapes={} pending-material-shapes={}", self.stat_shapes, self.excluded, self.pending);
@@ -333,6 +413,7 @@ impl Census {
         for (name, n) in ["blend", "bias", "decal", "mask", "alpha-cut"].iter().zip(self.admitted) {
             let _ = write!(out, " admitted-{name}={n}");
         }
+        let _ = write!(out, " scol-shapes={}", self.scol_shapes);
         out
     }
 }
@@ -355,16 +436,79 @@ struct Variants {
     shape_lines: usize,
 }
 
+/// [design] Registered in every run, so the settings row can switch the blend while the
+/// game runs: the materials' plugins and empty resources only; every system that
+/// captures, bakes or converts runs only while the blend is on ([`active`]).
 pub struct MeshTerrainBlendPlugin;
 
 impl Plugin for MeshTerrainBlendPlugin {
     fn build(&self, app: &mut App) {
-        let Some(c) = config() else { return };
         app.add_plugins((MaterialPlugin::<NifBlendMaterial>::default(), crate::terrain_surface::SurfaceBakePlugin))
-            .insert_resource(SurfaceCache::with_resolution(c.resolution)).init_resource::<Variants>()
-            .add_systems(Update, update_cache.after(crate::world::stream))
-            .add_systems(PostUpdate, conversion_order(apply_variants));
+            .init_resource::<SurfaceCache>().init_resource::<Variants>().init_resource::<BlendState>()
+            .add_systems(Update, (
+                follow_setting.before(crate::world::stream),
+                (crate::world::blend_backfill, crate::terrain_surface::backfill_cells).after(follow_setting).run_if(active),
+                update_cache.after(crate::world::stream).after(crate::terrain_surface::backfill_cells).run_if(active),
+            ))
+            .add_systems(PostUpdate, conversion_order(apply_variants.run_if(active)));
     }
+}
+
+/// The shapes the blend tracks, for switching it off.
+type Switched<'w, 's> = Query<'w, 's, (Entity, Option<&'static BlendShape>), Or<(With<BlendShape>, With<BlendCensus>)>>;
+
+/// [design] Each frame, before the world streams: the blend [`desired`] from the aid and
+/// the settings row (`Graphics::mesh_terrain_blend`), switched on or off when it differs
+/// from what is drawn. On: the start line, the atlas checked against the device, the
+/// census of what is already drawn queued. Off: [`stop`]. No restart either way.
+#[allow(clippy::too_many_arguments)]
+fn follow_setting(
+    mut commands: Commands,
+    graphics: Option<Res<crate::graphics::Graphics>>,
+    device: Option<Res<bevy::render::renderer::RenderDevice>>,
+    mut state: ResMut<BlendState>,
+    mut cache: ResMut<SurfaceCache>,
+    mut variants: ResMut<Variants>,
+    shapes: Switched,
+    cells: Query<Entity, With<crate::terrain_surface::SurfaceCell>>,
+) {
+    let want = desired(aid(), graphics.is_some_and(|g| g.mesh_terrain_blend));
+    if want == state.active { return; }
+    if state.active.is_some() {
+        stop(&mut commands, &mut state, &mut cache, &mut variants, &shapes, &cells);
+    }
+    let Some(c) = want else { return };
+    RECORDING.store(true, Ordering::Relaxed);
+    info!("{}", start_line(&c));
+    cache.start(c.resolution, device.map(|d| d.limits().max_texture_dimension_2d));
+    *variants = Variants::default();
+    state.active = Some(c);
+    state.shapes_pending = true;
+}
+
+/// [design] The blend off: every converted shape back on its ordinary material (the
+/// shared see-through shadow bookkeeping follows that change), the census and the
+/// landscape captures removed, the bake cancelled and the atlas and clones dropped
+/// ([`SurfaceCache::release`]), then one `stop` line.
+fn stop(commands: &mut Commands, state: &mut BlendState, cache: &mut SurfaceCache, variants: &mut Variants, shapes: &Switched, cells: &Query<Entity, With<crate::terrain_surface::SurfaceCell>>) {
+    RECORDING.store(false, Ordering::Relaxed);
+    let mut restored = 0;
+    for (entity, shape) in shapes.iter() {
+        let mut e = commands.entity(entity);
+        if let Some(enabled) = shape.filter(|s| s.enabled.is_some()) {
+            e.try_remove::<MeshMaterial3d<NifBlendMaterial>>().try_insert(MeshMaterial3d(enabled.original.clone()));
+            restored += 1;
+        }
+        e.try_remove::<(BlendShape, BlendCensus)>();
+    }
+    for cell in cells.iter() {
+        commands.entity(cell).try_remove::<crate::terrain_surface::SurfaceCell>();
+    }
+    let released = cells.iter().count();
+    cache.release(commands);
+    *variants = Variants::default();
+    *state = BlendState::default();
+    info!("mesh terrain blend: stop restored-shapes={restored} tracked-shapes={} released-cells={released}", shapes.iter().count());
 }
 
 /// [design] Where the conversion runs: ordinary producers (swaps, alpha, scripted fades)
@@ -395,18 +539,19 @@ fn enabled_material(source: &NifMaterial, c: BlendConfig, surface: &crate::terra
 type Temporary = (Has<nvf_play::fade::Fading>, Has<crate::effect_shaders::Faded>, Has<MaterialOverride>);
 /// The see-through shadow markers (nif_material.rs `see_through_casts_no_shadow`).
 type ShadowMarks = (Has<NotShadowCaster>, Has<SeeThroughNoShadow>);
-/// Every shape the aid tracks: convertible ones ([`BlendShape`]) and census-only ones.
+/// Every shape the blend tracks: convertible ones ([`BlendShape`]) and census-only ones.
 type Tracked<'w, 's> = Query<'w, 's, (Entity, Option<&'static mut BlendShape>, Option<&'static BlendCensus>, Option<&'static MeshMaterial3d<NifMaterial>>, Temporary, ShadowMarks), Or<(With<BlendShape>, With<BlendCensus>)>>;
 
 fn apply_variants(
     mut commands: Commands,
+    state: Res<BlendState>,
     cache: Res<SurfaceCache>,
     mut variants: ResMut<Variants>,
     materials: Res<Assets<NifMaterial>>,
     mut blends: ResMut<Assets<NifBlendMaterial>>,
     mut shapes: Tracked,
 ) {
-    let Some(c) = config() else { return };
+    let Some(c) = state.active else { return };
     apply_configured_variants(&mut commands, &cache, &mut variants, &materials, &mut blends, &mut shapes, c);
 }
 
@@ -445,8 +590,10 @@ fn apply_configured_variants(
         let Some(mut shape) = shape else {
             // Census only: never converted.
             let mask = shape_mask(recorded, temporary, drawn.and_then(|d| materials.get(&d.0)));
-            census.count(mask);
-            if let Some(t) = tracked { log_shape(variants, t, mask); }
+            if let Some(t) = tracked {
+                census.count(t.base_type, mask);
+                log_shape(variants, t, mask);
+            }
             continue;
         };
         // [design] Respect a material override, retaining its actual source handle too.
@@ -456,7 +603,7 @@ fn apply_configured_variants(
         let source = materials.get(&shape.original);
         let mask = shape_mask(recorded, temporary, source);
         if let Some(t) = tracked {
-            census.count(mask);
+            census.count(t.base_type, mask);
             log_shape(variants, t, mask);
         }
         let allowed = mask == 0;
@@ -518,10 +665,12 @@ fn log_shape(variants: &mut Variants, t: &BlendCensus, mask: u32) {
 }
 
 /// `census-shape ref=0x... base=0x... model=... shape=N status=eligible|excluded
-/// first-reason=... reasons=a+b` (reference: the first seen with this base, shape and mask).
+/// first-reason=... reasons=a+b base-type=STAT|SCOL` (reference: the first seen with this
+/// base, shape and mask; round 7's `base-type` last, so the earlier fields keep their
+/// order and neighbours).
 fn shape_line(t: &BlendCensus, mask: u32) -> String {
-    format!("mesh terrain blend: census-shape ref=0x{:08X} base=0x{:08X} model={} shape={} status={} first-reason={} reasons={}",
-        t.reference, t.base, t.model, t.shape, if mask == 0 { "eligible" } else { "excluded" }, reason::first(mask), reason::list(mask))
+    format!("mesh terrain blend: census-shape ref=0x{:08X} base=0x{:08X} model={} shape={} status={} first-reason={} reasons={} base-type={}",
+        t.reference, t.base, t.model, t.shape, if mask == 0 { "eligible" } else { "excluded" }, reason::first(mask), reason::list(mask), t.base_type.name())
 }
 
 /// `ready eligible-shapes=... resident-cells=... generation=...` stays the line's prefix and
@@ -721,12 +870,16 @@ mod tests {
     fn aid_parsing() {
         let config = |band: f32, variant, shape, resolution, shading| BlendConfig { band, variant, shape, resolution, shading, flat: band / 16.0, steep: band * 6.0 };
         use ContactShape::*;
-        // Old short forms keep working, with the new defaults for what they leave out.
-        assert_eq!(parse("surface").unwrap(), config(8.0, Variant::Surface, Hybrid, 1024, Shading::Full));
-        assert_eq!(parse(":selection").unwrap(), config(8.0, Variant::Selection, Hybrid, 1024, Shading::Full));
+        // Old short forms keep working, with the new defaults for what they leave out
+        // (round 7: the height shape).
+        assert_eq!(parse("surface").unwrap(), config(8.0, Variant::Surface, Height, 1024, Shading::Full));
+        assert_eq!(parse(":selection").unwrap(), config(8.0, Variant::Selection, Height, 1024, Shading::Full));
         assert_eq!(parse("12:weight").unwrap().variant, Variant::Weight);
         assert_eq!(parse("24:normal").unwrap().variant, Variant::Normal);
-        assert_eq!(parse("24:status").unwrap(), config(24.0, Variant::Status, Hybrid, 1024, Shading::Full));
+        assert_eq!(parse("24:status").unwrap(), config(24.0, Variant::Status, Height, 1024, Shading::Full));
+        // The settings row's look is the defaults, written out.
+        assert_eq!(setting_config(), parse("8:surface:height:1024:full").unwrap());
+        assert_eq!(DEFAULT_SHAPE, Height);
         // The comparison sheet's values (handoff, round 5).
         assert_eq!(parse("24:surface:height:512:albedo").unwrap(), config(24.0, Variant::Surface, Height, 512, Shading::Albedo));
         assert_eq!(parse("8:surface:height:512:albedo").unwrap(), config(8.0, Variant::Surface, Height, 512, Shading::Albedo));
@@ -740,8 +893,8 @@ mod tests {
         }
         // Without a band; empty parts take their defaults.
         assert_eq!(parse("weight:penetration").unwrap(), config(8.0, Variant::Weight, Penetration, 1024, Shading::Full));
-        assert_eq!(parse("surface::2048").unwrap(), config(8.0, Variant::Surface, Hybrid, 2048, Shading::Full));
-        assert_eq!(parse("6.5:surface:::albedo").unwrap(), config(6.5, Variant::Surface, Hybrid, 1024, Shading::Albedo));
+        assert_eq!(parse("surface::2048").unwrap(), config(8.0, Variant::Surface, Height, 2048, Shading::Full));
+        assert_eq!(parse("6.5:surface:::albedo").unwrap(), config(6.5, Variant::Surface, Height, 1024, Shading::Albedo));
         for value in ["", "24", "0:surface", "-1:weight", "NaN:surface", "inf:surface", "a:surface", "24:bad", "24:surface:weight",
             "surface:hybrid:768", "surface:hybrid:1024:shiny", "surface:hybrid:1024:full:extra", "8:surface:hybrid:1024:full:", "8:8:surface", "surface:24"] {
             assert!(parse(value).is_err(), "{value}");
@@ -761,7 +914,8 @@ mod tests {
             ("8:surface:hybrid:1024:full:0.5,64", 64.0), ("8:weight:hybrid:1024:full:0.5,48", 48.0)] {
             assert_eq!(widths(value), Ok((0.5, 8.0, steep)), "{value}");
         }
-        assert_eq!(widths("8:surface::::0.25,40"), Ok((0.25, 8.0, 40.0)), "empty parts before the widths take their defaults");
+        assert_eq!(widths("8:surface:hybrid:::0.25,40"), Ok((0.25, 8.0, 40.0)), "empty parts before the widths take their defaults");
+        assert!(parse("8:surface::::0.25,40").is_err(), "round 7: an empty shape part is height, which takes no widths");
         assert_eq!(widths("8:surface:hybrid:1024:full:8,8"), Ok((8.0, 8.0, 8.0)), "equal widths are ordered");
         assert_eq!(parse("8:surface:hybrid:1024:full:0.5,32").unwrap().width_controls(), Vec4::new(0.5, 32.0, 0.0, 0.0));
         assert_eq!(parse("8:surface:hybrid:1024:full:0.5,32").unwrap().widths(), ContactWidths { flat: 0.5, band: 8.0, steep: 32.0 });
@@ -785,25 +939,27 @@ mod tests {
     #[test]
     fn start_and_ready_lines_keep_their_prefixes_and_name_every_setting() {
         let c = parse("24:surface").unwrap();
-        assert_eq!(start_line(&c), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=1.5 steep=144 weight-version=2");
-        assert!(start_line(&c).starts_with("mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full"), "round 5's prefix");
+        assert_eq!(start_line(&c), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1");
+        assert!(start_line(&c).starts_with("mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=height shading=full"), "round 5's prefix");
+        assert_eq!(start_line(&parse("24:surface:hybrid").unwrap()), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=1.5 steep=144 weight-version=2");
+        assert_eq!(start_line(&setting_config()), "mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1", "the settings row's look");
         assert_eq!(start_line(&parse("8:status:penetration:2048:albedo").unwrap()), "mesh terrain blend: start band=8 variant=status resolution=2048 noise=0 shape=penetration shading=albedo weight-version=1");
         assert_eq!(start_line(&parse("8:surface:hybrid:1024:full:0.5,32").unwrap()), "mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=0.5 steep=32 weight-version=2");
         let mut images = Assets::<Image>::default();
         let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (0, 0), cells: 9, resolution: 512 };
         let mut census = Census::default();
-        census.count(0);
-        census.count(reason::RIG | reason::PARTICLES);
-        census.count(reason::MISSING_SOURCE);
+        census.count(BaseType::Stat, 0);
+        census.count(BaseType::Stat, reason::RIG | reason::PARTICLES);
+        census.count(BaseType::Scol, reason::MISSING_SOURCE);
         census.admit(&NifMaterial { base: StandardMaterial { alpha_mode: AlphaMode::Blend, depth_bias: 2.0, ..default() }, extension: NifSurface { decal: true, alpha_cut: 0.1, ..default() } });
         census.eligible = 12;
         let line = ready_line(&surface, 3, &parse("8:status:height:512:albedo").unwrap(), &census);
         let prefix = "mesh terrain blend: ready eligible-shapes=12 resident-cells=9 generation=3 variant=status shape=height resolution=512 shading=albedo";
-        assert!(line.starts_with(&format!("{prefix} weight-version=1 stat-shapes=3 excluded-shapes=2 pending-material-shapes=1 excluded-world=0 excluded-rig=1 excluded-particles=1 excluded-posed=0")), "{line}");
+        assert!(line.starts_with(&format!("{prefix} weight-version=1 stat-shapes=2 excluded-shapes=2 pending-material-shapes=1 excluded-world=0 excluded-rig=1 excluded-particles=1 excluded-posed=0")), "{line}");
         assert!(line.contains(" excluded-missing-source=1 excluded-temporary=0 excluded-alpha-mode=0"), "{line}");
-        assert!(line.ends_with(" excluded-depth-bias-nonfinite=0 admitted-blend=1 admitted-bias=1 admitted-decal=1 admitted-mask=0 admitted-alpha-cut=1"), "{line}");
+        assert!(line.ends_with(" excluded-depth-bias-nonfinite=0 admitted-blend=1 admitted-bias=1 admitted-decal=1 admitted-mask=0 admitted-alpha-cut=1 scol-shapes=1"), "round 7: SCOL shapes last: {line}");
         for (_, name) in reason::NAMES { assert!(line.contains(&format!(" excluded-{name}=")), "every reason is printed, zero included: {name}"); }
-        let v2 = ready_line(&surface, 3, &parse("8:surface").unwrap(), &Census::default());
+        let v2 = ready_line(&surface, 3, &parse("8:surface:hybrid").unwrap(), &Census::default());
         assert!(v2.starts_with("mesh terrain blend: ready eligible-shapes=0 resident-cells=9 generation=3 variant=surface shape=hybrid resolution=512 shading=full flat=0.5 steep=48 weight-version=2 stat-shapes=0 "), "{v2}");
         assert_eq!(parse("6.5:normal:penetration").unwrap().controls(), Vec4::new(6.5, 2.0, 1.0, 1.0));
         assert_eq!(parse("6.5:normal:hybrid-v1").unwrap().controls().z, 3.0);
@@ -811,9 +967,11 @@ mod tests {
 
     #[test]
     fn shape_lines_name_reference_base_model_shape_and_first_reason() {
-        let t = BlendCensus { reference: 0x0010_2A3B, base: 0x0001_F00D, model: "landscape/roads/road01.nif".into(), shape: 2, reasons: 0 };
-        assert_eq!(shape_line(&t, 0), "mesh terrain blend: census-shape ref=0x00102A3B base=0x0001F00D model=landscape/roads/road01.nif shape=2 status=eligible first-reason=none reasons=none");
-        assert_eq!(shape_line(&t, reason::SOFT | reason::UNLIT | reason::DEST), "mesh terrain blend: census-shape ref=0x00102A3B base=0x0001F00D model=landscape/roads/road01.nif shape=2 status=excluded first-reason=dest reasons=dest+unlit+soft");
+        let t = BlendCensus { reference: 0x0010_2A3B, base: 0x0001_F00D, base_type: BaseType::Stat, model: "landscape/roads/road01.nif".into(), shape: 2, reasons: 0 };
+        assert_eq!(shape_line(&t, 0), "mesh terrain blend: census-shape ref=0x00102A3B base=0x0001F00D model=landscape/roads/road01.nif shape=2 status=eligible first-reason=none reasons=none base-type=STAT");
+        assert_eq!(shape_line(&t, reason::SOFT | reason::UNLIT | reason::DEST), "mesh terrain blend: census-shape ref=0x00102A3B base=0x0001F00D model=landscape/roads/road01.nif shape=2 status=excluded first-reason=dest reasons=dest+unlit+soft base-type=STAT");
+        let scol = BlendCensus { base_type: BaseType::Scol, model: "scol/synthetic_road.nif".into(), ..t.clone() };
+        assert!(shape_line(&scol, 0).ends_with(" model=scol/synthetic_road.nif shape=2 status=eligible first-reason=none reasons=none base-type=SCOL"));
         // Bounded: one line per base, shape and mask; pending shapes wait; a hard cap.
         let mut variants = Variants::default();
         log_shape(&mut variants, &t, 0);
@@ -835,8 +993,12 @@ mod tests {
     fn selection_excludes_other_records_interiors_animation_destruction_and_lod() {
         let plain = ReferenceFacts { exterior: true, ..default() };
         assert!(eligible_reference(b"STAT", plain));
-        for sig in [b"MSTT", b"SCOL", b"DOOR", b"TREE", b"MISC", b"NPC_", b"PWAT"] {
+        // Round 7: a static collection is one prebuilt model of statics, drawn as a STAT is.
+        assert!(eligible_reference(b"SCOL", plain));
+        assert_eq!((BaseType::of(b"STAT"), BaseType::of(b"SCOL")), (Some(BaseType::Stat), Some(BaseType::Scol)));
+        for sig in [b"MSTT", b"DOOR", b"TREE", b"MISC", b"NPC_", b"PWAT", b"ACTI", b"FURN"] {
             assert!(!eligible_reference(sig, plain));
+            assert_eq!(BaseType::of(sig), None);
         }
         // Every reference reason on its own, then all at once (independent bits).
         let cases = [
@@ -851,6 +1013,7 @@ mod tests {
         for (facts, bit) in cases {
             assert_eq!(reference_reasons(facts), bit, "{facts:?}");
             assert!(!eligible_reference(b"STAT", facts));
+            assert!(!eligible_reference(b"SCOL", facts), "the same reference rules for a SCOL");
         }
         let all = ReferenceFacts { exterior: false, rigged: true, particles: true, posed: true, damage_stages: true, destructible: true, distant: true };
         assert_eq!(reference_reasons(all), cases.iter().fold(0, |m, (_, b)| m | b));
@@ -950,7 +1113,7 @@ mod tests {
         app
     }
     fn tracked(shape: usize, reasons: u32) -> BlendCensus {
-        BlendCensus { reference: 0x42, base: 0x99, model: "synthetic.nif".into(), shape, reasons }
+        BlendCensus { reference: 0x42, base: 0x99, base_type: BaseType::Stat, model: "synthetic.nif".into(), shape, reasons }
     }
     fn reported(app: &App) -> Census {
         app.world().resource::<Variants>().reported_census.clone().expect("a ready line")
@@ -1113,5 +1276,70 @@ mod tests {
         app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&source).unwrap().base.alpha_mode = AlphaMode::Opaque;
         app.update();
         assert!(app.world().get::<SeeThroughNoShadow>(e).is_none() && app.world().get::<NotShadowCaster>(e).is_none(), "and casts again when opaque");
+    }
+
+    #[test]
+    fn the_aid_overrides_the_row_and_the_row_draws_the_default_look() {
+        let aid = parse("24:weight:hybrid").unwrap();
+        assert_eq!(desired(None, false), None, "off by default");
+        assert_eq!(desired(None, true), Some(setting_config()));
+        assert_eq!(desired(Some(aid), false), Some(aid), "the aid turns it on for comparison runs");
+        assert_eq!(desired(Some(aid), true), Some(aid), "and wins over the row");
+    }
+
+    /// #2661 round 7: the settings row switches the blend while the game runs. Off, no
+    /// system converts and nothing is allocated; on, the row's look starts and the
+    /// conversion runs; off again, every converted shape gets its ordinary material back
+    /// and the census, the landscape captures, the published atlas and the clones go.
+    /// (The test aid is not set in unit tests: `aid()` is `None`.)
+    #[test]
+    fn the_row_switches_the_blend_on_and_off_while_the_game_runs() {
+        use crate::graphics::{Graphics, Preset};
+        use crate::terrain_surface::{CapturePath, SurfaceCell};
+        let mut app = App::new();
+        app.insert_resource(Graphics::preset(Preset::Vanilla))
+            .init_resource::<Assets<NifMaterial>>().init_resource::<Assets<NifBlendMaterial>>().init_resource::<Assets<Image>>()
+            .init_resource::<Variants>().init_resource::<SurfaceCache>().init_resource::<BlendState>()
+            .add_systems(Update, follow_setting)
+            .add_systems(PostUpdate, conversion_order(apply_variants.run_if(active)));
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        // Off: a published surface and a tracked shape left over would still not convert.
+        publish(&mut app);
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(source.clone()), MeshMaterial3d(source.clone()))).id();
+        app.update();
+        assert_eq!(app.world().resource::<BlendState>().active, None);
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none(), "nothing converts while off");
+        assert!(app.world().resource::<Assets<NifBlendMaterial>>().is_empty(), "no clone is made while off");
+        // On.
+        app.world_mut().resource_mut::<Graphics>().mesh_terrain_blend = true;
+        app.update();
+        let state = app.world().resource::<BlendState>();
+        assert_eq!(state.active, Some(setting_config()));
+        assert!(state.shapes_pending, "the census of what is drawn is queued");
+        assert!(recording(), "spawns record the census and captures now");
+        assert_eq!(app.world().resource::<SurfaceCache>().resolution, 1024);
+        publish(&mut app);
+        let cell = app.world_mut().spawn(SurfaceCell { world: 0, grid: (0, 0), heights: vec![], quadrants: vec![], paths: [CapturePath::HeightOnly("missing-base-mesh"); 4] }).id();
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some(), "the shape blends");
+        assert!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).is_none());
+        let generation = app.world().resource::<SurfaceCache>().generation;
+        // Off again.
+        app.world_mut().resource_mut::<Graphics>().mesh_terrain_blend = false;
+        app.update();
+        assert!(!recording());
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).map(|m| m.0.clone()), Some(source.clone()), "its ordinary material is back");
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none());
+        assert!(app.world().get::<BlendShape>(e).is_none() && app.world().get::<BlendCensus>(e).is_none(), "the census goes");
+        assert!(app.world().get::<SurfaceCell>(cell).is_none(), "the landscape captures go");
+        let cache = app.world().resource::<SurfaceCache>();
+        assert!(cache.published.is_none() && cache.generation > generation, "the atlas is dropped; an old receipt cannot publish");
+        assert!(app.world().resource::<Variants>().materials.is_empty(), "the clones are dropped");
+        assert_eq!(app.world().resource::<BlendState>().active, None);
+        // A stale publication while off converts nothing.
+        publish(&mut app);
+        app.world_mut().entity_mut(e).insert((tracked(0, 0), BlendShape::new(source.clone())));
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none());
     }
 }

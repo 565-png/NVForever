@@ -117,6 +117,7 @@ pub const SECTIONS: &[Section] = &[
             "light-shafts",
             "water-reflections",
             "water-mirror",
+            "mesh-terrain-blend",
         ],
     ),
     section("Graphics", Some("Distance"), &["distant-lod", "grass", "object-distance", "actor-distance", "item-distance", "shadow-distance", "grass-distance"]),
@@ -308,9 +309,9 @@ mod tests {
     /// quality and enhanced rows, #2014's counter rows, the two VATS rows and #2198's Upscaler
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
-    /// field of view row, the menu scale row and the Physics rate row), by the group it registers
-    /// with.
-    const KNOWN: [(&str, &str); 112] = [
+    /// field of view row, the menu scale row, the Physics rate row and #2661's mesh terrain blend
+    /// row), by the group it registers with.
+    const KNOWN: [(&str, &str); 113] = [
         ("detached-camera", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
@@ -407,6 +408,7 @@ mod tests {
         ("light-shafts", "Graphics"),
         ("water-reflections", "Graphics"),
         ("water-mirror", "Graphics"),
+        ("mesh-terrain-blend", "Graphics"),
         ("enhanced", "Graphics"),
         ("quality", "Graphics"),
         ("volume-master", "Sound"),
@@ -462,6 +464,7 @@ mod tests {
         assert_eq!(at("sky-clock"), "Graphics > World");
         assert_eq!(at("quality"), "Graphics > Quality");
         assert_eq!(at("enhanced"), "Graphics > Picture");
+        assert_eq!(at("mesh-terrain-blend"), "Graphics > Picture", "beside the enhanced look's rows (#2661)");
         assert_eq!(keys(&list, &l, "Graphics")[..4], ["[Quality]", "quality", "[Picture]", "enhanced"], "the presets first, under their own heading (#1966)");
         assert_eq!(at("button-style"), "Controls");
         // The registry itself is left as it was: its order and each row's group.

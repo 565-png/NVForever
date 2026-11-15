@@ -19,7 +19,8 @@ use bevy::shader::{ShaderRef, ShaderDefVal};
 pub const GRID: usize = fnv_world::land::SIDE - 1;
 pub const HEIGHT_TILE_WIDTH: usize = GRID * 6;
 pub const HEIGHT_TILE_HEIGHT: usize = GRID + 1;
-/// [design] Colour texels per cell side the aid accepts; the default is the middle one.
+/// [design] Colour texels per cell side the aid accepts; the default (and the settings
+/// row's) is the middle one.
 pub const RESOLUTIONS: [u32; 3] = [512, 1024, 2048];
 pub const DEFAULT_RESOLUTION: u32 = 1024;
 /// [design] NVForever's contact constants (initial tuning choices, not taken from another
@@ -30,10 +31,11 @@ pub const DEFAULT_RESOLUTION: u32 = 1024;
 pub const CONTACT_COS_FULL_E6: u32 = 819_152; // cos 35 degrees
 pub const CONTACT_COS_NONE_E6: u32 = 965_926; // cos 15 degrees
 pub const PENETRATION_E6: u32 = 2_000_000;
-/// [design] Hybrid v2's band-width limits (NVForever's round-6 tuning choices): surfaces
-/// within 5 degrees of the ground get the flat width, those turned 5 degrees or more the
-/// shallow width (the band), and those turned 75 degrees or more the steep width; the
-/// steep width ramps in between 35 and 75 degrees ([`CONTACT_COS_FULL_E6`] is cos 35).
+/// [design] Hybrid v2's band-width limits (NVForever's round-6 tuning choices): a surface
+/// parallel to the ground gets the flat width, ramping smoothly to the shallow width (the
+/// band) at 5 degrees (the flat width is not held over 0-5 degrees), those turned 5 to 35
+/// degrees the band, and those turned 75 degrees or more the steep width; the steep width
+/// ramps in between 35 and 75 degrees ([`CONTACT_COS_FULL_E6`] is cos 35).
 pub const V2_COS_PARALLEL_E6: u32 = 996_195; // cos 5 degrees
 pub const V2_COS_STEEP_E6: u32 = 258_819; // cos 75 degrees
 /// The landscape's own material values (nvforever `terrain.rs::surface` uses these), the

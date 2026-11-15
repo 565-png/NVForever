@@ -30,6 +30,10 @@
 //! - **Screen-space water reflections** where the mirrored reflection camera does not
 //!   reach: water at another height than the one it shows, and interiors (`water.wesl`).
 //!
+//! One switch is off in both looks and not part of `enhanced`: **Blend meshes into
+//! ground** (`mesh-terrain-blend`, `mesh_terrain_blend.rs`), outdoor roads, rocks and
+//! cliffs taking the landscape's colour and shading where they meet it (#2661).
+//!
 //! The game's own image space (the grade and the modifiers' blur, imagespace.rs) is left
 //! as it is: none of these replaces or repeats it. Every value here is an engineering
 //! choice made by eye, not a fact about the original game.
@@ -160,11 +164,15 @@ pub struct Graphics {
     pub water_mirror: bool,
     /// How the sun's shadow maps are filtered (Bevy's default, Gaussian, in vanilla).
     pub shadow_filter: ShadowFilteringMethod,
+    /// Placed meshes blend into the landscape where they meet it (`mesh_terrain_blend.rs`,
+    /// #2661): off in both looks and not part of `enhanced` (the maintainer decides that);
+    /// the test aid `NVF_PLAY_TEST_MESH_BLEND` overrides it.
+    pub mesh_terrain_blend: bool,
 }
 
 /// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing and
 /// shadow-filter choices that are not vanilla's, in the order of [`Graphics::describe`].
-pub const KEYS: [&str; 12] = [
+pub const KEYS: [&str; 13] = [
     "ambient-occlusion",
     "fine-shadows",
     "bloom",
@@ -175,6 +183,7 @@ pub const KEYS: [&str; 12] = [
     "taa",
     "light-shafts",
     "water-reflections",
+    "mesh-terrain-blend",
     "shadow-filter-hardware",
     "shadow-filter-temporal",
 ];
@@ -215,6 +224,8 @@ impl Graphics {
             water_reflections: on,
             water_mirror: true,
             shadow_filter: ShadowFilteringMethod::Gaussian,
+            // Off in both looks, so `enhanced` (quality.rs `enhanced_keys`) leaves it out.
+            mesh_terrain_blend: false,
         }
     }
 
@@ -232,6 +243,7 @@ impl Graphics {
             "anisotropic" => &mut self.anisotropic,
             "light-shafts" => &mut self.light_shafts,
             "water-reflections" => &mut self.water_reflections,
+            "mesh-terrain-blend" => &mut self.mesh_terrain_blend,
             _ => return None,
         })
     }
@@ -277,6 +289,7 @@ impl Graphics {
             (self.light_shafts, "sun shafts"),
             (self.water_reflections, "screen-space water reflections"),
             (!self.water_mirror, "no mirrored water"),
+            (self.mesh_terrain_blend, "meshes blended into the ground"),
             (self.shadow_filter == ShadowFilteringMethod::Hardware2x2, "hardware 2x2 shadow filtering"),
             (self.shadow_filter == ShadowFilteringMethod::Temporal, "temporal shadow filtering"),
         ];
@@ -1196,6 +1209,21 @@ mod tests {
         assert_eq!(off.describe(), "vanilla (no engine-level improvements)");
         // Bloom, when on, adds to the glow.
         assert!(Graphics::only(&["bloom".into()]).unwrap().describe().contains("light glow"));
+    }
+
+    /// #2661: the mesh terrain blend is off in both looks, so the enhanced look and its
+    /// settings row leave it out, and `--graphics-only` and the row's key switch it.
+    #[test]
+    fn mesh_terrain_blend_is_off_in_both_looks_and_not_enhanced() {
+        assert!(!Graphics::preset(Preset::Vanilla).mesh_terrain_blend);
+        assert!(!Graphics::preset(Preset::Enhanced).mesh_terrain_blend);
+        assert!(!crate::quality::enhanced_keys().contains(&"mesh-terrain-blend"), "not an enhanced effect");
+        let on = Graphics::only(&["mesh-terrain-blend".into()]).expect("a --graphics-only key");
+        assert!(on.mesh_terrain_blend);
+        assert_eq!(on.describe(), "light glow, meshes blended into the ground");
+        let mut g = Graphics::preset(Preset::Vanilla);
+        *g.switch("mesh-terrain-blend").expect("settings key") = true;
+        assert_eq!(g, on);
     }
 
     #[test]
