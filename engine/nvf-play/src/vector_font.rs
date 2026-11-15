@@ -312,7 +312,8 @@ fn read_cmap(c: &[u8]) -> Result<Vec<Range>, String> {
     let mut out = Vec::new();
     for s in 0..segs {
         let (Some(end), Some(start), Some(delta), Some(range_off)) = (u16_at(c, ends + 2 * s), u16_at(c, starts + 2 * s), i16_at(c, deltas + 2 * s), u16_at(c, offsets + 2 * s)) else { continue };
-        if start == 0xFFFF {
+        // The last segment (0xFFFF), and a broken one ending before it starts.
+        if start == 0xFFFF || end < start {
             continue;
         }
         let to = if range_off == 0 {

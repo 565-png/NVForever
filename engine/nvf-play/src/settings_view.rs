@@ -14,7 +14,9 @@
 //! [`search`] the rows whose words hold every term of the query, [`changed`] the rows set
 //! away from their default, each in the page's order ([`catalogue`]) under a line that
 //! says where it lives (its tab and category, [`ViewEntry::Crumb`], [`listing`]), every
-//! category open. A row hidden where it lives (a colour's channel, a controller's row, a
+//! category open; a crumb is a line the keys can choose, and Enter, a click, Left or Right
+//! close its place to the crumb alone and open it again, for the run only ([`Folding::crumbs`],
+//! [design: owner 2026-11-15, the fifth build]). A row hidden where it lives (a colour's channel, a controller's row, a
 //! control or sensitivity of the device not in use, a row its module hides) is listed as the
 //! row that stands for it there ([`shown_as`]), once, and the page names what it stands for
 //! ([`stands_for`]): a result of the other device is the Input Device row, so acting on it
@@ -216,7 +218,8 @@ pub enum ViewEntry {
     /// A category's heading on a tab: the keys can choose it ([`RowId::Heading`]).
     Heading(Placement),
     /// On the search and the Changed list, where the rows after it live (`Gameplay >
-    /// Dialogue`): a line the keys pass over.
+    /// Dialogue`): a line the keys can choose, which opens and closes its place
+    /// ([`RowId::Heading`]).
     Crumb(Placement),
     Row(RowId),
     /// The empty line after an open category.
@@ -237,12 +240,7 @@ impl ViewEntry {
 
     /// A heading or a crumb: a line naming the rows after it (the page's heading links show
     /// while there is one).
-    pub fn titles_line(self) -> bool {
-        self.titles()
-    }
-
-    /// A heading or a crumb: a line naming the rows after it.
-    fn titles(self) -> bool {
+    pub fn titles(self) -> bool {
         matches!(self, ViewEntry::Heading(_) | ViewEntry::Crumb(_))
     }
 }
@@ -529,7 +527,7 @@ pub fn project(layout: &ResolvedLayout, list: &[Setting], scope: SettingsScope, 
 }
 
 /// How many of the category at `p`'s rows are shown with `vis` (what its heading counts
-/// while it is closed).
+/// while it is chosen).
 pub fn category_count(layout: &ResolvedLayout, list: &[Setting], p: &Placement, vis: &Visibility) -> usize {
     layout.shown_count(p, |i| vis.shows_item(list, i))
 }
@@ -550,9 +548,9 @@ fn rows(entries: &[ViewEntry]) -> Vec<RowId> {
     entries.iter().filter_map(|e| e.selectable()).collect()
 }
 
-/// The line `step` lines after (1) or before (-1) `selected` that the keys can choose (rows
-/// and headings), round the ends, crumbs and empty lines passed; none chosen: the first (or
-/// last) one.
+/// The line `step` lines after (1) or before (-1) `selected` that the keys can choose (rows,
+/// headings and crumbs), round the ends, empty lines passed; none chosen: the first (or last)
+/// one.
 pub fn step_selectable(entries: &[ViewEntry], selected: Option<RowId>, step: i32) -> Option<RowId> {
     let rows = rows(entries);
     if rows.is_empty() {
@@ -566,9 +564,9 @@ pub fn step_selectable(entries: &[ViewEntry], selected: Option<RowId>, step: i32
     }
 }
 
-/// The stops of Page Up and Page Down: each category (or the rows before the first, without
-/// one) with its title, its first line to choose (its first row while it is open, else its
-/// heading) and the lines it spans.
+/// The stops of Page Up and Page Down: each category or place (or the rows before the first,
+/// without one) with its title, its first line to choose (its first row while it is open,
+/// else its heading or crumb) and the lines it spans.
 fn sections(entries: &[ViewEntry]) -> Vec<(Option<Placement>, RowId, std::ops::Range<usize>)> {
     let mut starts: Vec<usize> = entries.iter().enumerate().filter(|(_, e)| e.titles()).map(|(k, _)| k).collect();
     if entries.iter().position(|e| e.selectable().is_some()).is_some_and(|k| starts.first().is_none_or(|s| k < *s)) {
@@ -584,7 +582,7 @@ fn sections(entries: &[ViewEntry]) -> Vec<(Option<Placement>, RowId, std::ops::R
         let first_row = entries[start..end].iter().find_map(|e| if let ViewEntry::Row(id) = e { Some(*id) } else { None });
         let stop = match (first_row, entries[start]) {
             (Some(r), _) => Some(r),
-            (None, ViewEntry::Heading(p)) => Some(RowId::Heading(p)),
+            (None, ViewEntry::Heading(p) | ViewEntry::Crumb(p)) => Some(RowId::Heading(p)),
             _ => None,
         };
         if let Some(stop) = stop {
@@ -595,7 +593,7 @@ fn sections(entries: &[ViewEntry]) -> Vec<(Option<Placement>, RowId, std::ops::R
 }
 
 /// Page Down (`step` 1) or Page Up (-1): the category after or before `selected`'s (its
-/// first row while open, else its heading), round the ends, and its title (`None`: rows
+/// first row while open, else its heading or crumb), round the ends, and its title (`None`: rows
 /// without one). A tab without headings is one section: its first row. Nothing to choose:
 /// `None`.
 pub fn step_heading(entries: &[ViewEntry], selected: Option<RowId>, step: i32) -> Option<(RowId, Option<Placement>)> {
@@ -680,13 +678,14 @@ pub fn window_first(entries: &[ViewEntry], first: usize, selected: Option<RowId>
 }
 
 /// The lines drawn of a window of `shown` (at least 1) from `first`, less an empty line or a
-/// heading with rows after it on the last line (it is drawn with its first row in the next
-/// window) unless it is the window's only line.
+/// heading or crumb with rows after it on the last line (it is drawn with its first row in
+/// the next window) unless it is the window's only line. A closed one (no row after it) is
+/// drawn there: the keys can choose it.
 pub fn drawn_slots(entries: &[ViewEntry], first: usize, shown: usize) -> std::ops::Range<usize> {
     let first = first.min(entries.len());
     let mut end = (first + shown.max(1)).min(entries.len());
     // Never down to a window with no line the keys can choose (an empty line over a heading).
-    while end > first + 1 && (entries[end - 1] == ViewEntry::Gap || titles_rows(entries, end - 1) || matches!(entries[end - 1], ViewEntry::Crumb(_))) && entries[first..end - 1].iter().any(|e| e.selectable().is_some()) {
+    while end > first + 1 && (entries[end - 1] == ViewEntry::Gap || titles_rows(entries, end - 1)) && entries[first..end - 1].iter().any(|e| e.selectable().is_some()) {
         end -= 1;
     }
     first..end
@@ -717,7 +716,7 @@ pub fn clamp_into_window(entries: &[ViewEntry], first: usize, selected: Option<R
     }
     let shown: Vec<(usize, RowId)> = drawn.filter_map(|k| Some((k, entries[k].selectable()?))).collect();
     if shown.is_empty() {
-        // A window of one line on a crumb: no line to move the choice to.
+        // A window of one line on an empty line: no line to move the choice to.
         return selected;
     }
     match at {
@@ -792,7 +791,8 @@ fn shown_rows(layout: &ResolvedLayout, list: &[Setting], ids: &[RowId], vis: &Vi
         }
     }
     let order = catalogue(layout);
-    out.sort_by_key(|id| order.iter().position(|o| o == id).unwrap_or(usize::MAX));
+    // Each row's place looked up once (an empty search lists every row, each frame).
+    out.sort_by_cached_key(|id| order.iter().position(|o| o == id).unwrap_or(usize::MAX));
     out
 }
 
@@ -869,9 +869,18 @@ pub fn listing_folded(layout: &ResolvedLayout, ids: &[RowId], open: impl Fn(&Pla
 }
 
 /// How many of the search's or the Changed list's rows (`ids`, as shown with `vis`) live at
-/// `p` (what its crumb counts).
-pub fn place_count(layout: &ResolvedLayout, list: &[Setting], ids: &[RowId], vis: &Visibility, p: &Placement) -> usize {
-    shown_rows(layout, list, ids, vis).into_iter().filter(|id| placement(layout, *id) == *p).count()
+/// each place (what its crumb counts), the places in the page's order: the rows worked out
+/// once for every crumb.
+pub fn place_counts(layout: &ResolvedLayout, list: &[Setting], ids: &[RowId], vis: &Visibility) -> Vec<(Placement, usize)> {
+    let mut out: Vec<(Placement, usize)> = Vec::new();
+    for id in shown_rows(layout, list, ids, vis) {
+        let p = placement(layout, id);
+        match out.iter_mut().find(|(q, _)| *q == p) {
+            Some((_, n)) => *n += 1,
+            None => out.push((p, 1)),
+        }
+    }
+    out
 }
 
 /// The query's terms: split at whitespace, lowercased (Unicode) [design: #1953].
@@ -994,6 +1003,37 @@ mod tests {
         assert_eq!(ViewEntry::Crumb(p).selectable(), Some(RowId::Heading(p)));
         assert!(f.is_open(&p) && f.to_ini().is_empty(), "the tab's category and the INI are untouched");
         assert!(f.put_crumb(&p, true) && f.crumbs.is_empty());
+    }
+
+    /// A closed place's crumb is a line like a closed heading: drawn on a window's last line,
+    /// a stop of Page Up and Page Down, the choice once its rows close, and counted once per
+    /// place.
+    #[test]
+    fn a_closed_crumb_is_drawn_stepped_to_and_chosen_as_a_closed_heading_is() {
+        let list = worded(&WORDED);
+        let l = resolve_layout(&list);
+        let k = |n| key(&list, n);
+        let vis = Visibility::default();
+        let found = Found { search: Vec::new(), changed: vec![k("difficulty"), k("hud-colour"), k("god-mode")] };
+        let (game, colours) = (heading(&list, &l, "difficulty"), heading(&list, &l, "hud-colour"));
+        let mut f = open();
+        f.put_crumb(&colours, false);
+        let e = project(&l, &list, SettingsScope::Changed, &vis, &found, &f);
+        assert_eq!(names(&list, &e), ["<Game>", "difficulty", "", "<Colours>", "", "<Debug>", "god-mode"]);
+        // On the last line of a window: drawn, as the keys can choose it.
+        assert_eq!(drawn_slots(&e, 0, 4), 0..4);
+        let first = follow(&e, 0, slot_of(&e, RowId::Heading(colours)), 4);
+        assert!(drawn_slots(&e, first, 4).contains(&3), "{first}");
+        // Page Down from the row above stops on it, and from it goes on to the next place.
+        assert_eq!(step_heading(&e, Some(k("difficulty")), 1), Some((RowId::Heading(colours), Some(colours))));
+        assert_eq!(step_heading(&e, Some(RowId::Heading(colours)), 1).map(|(id, _)| id), Some(k("god-mode")));
+        assert_eq!(step_heading(&e, Some(k("god-mode")), -1).map(|(id, _)| id), Some(RowId::Heading(colours)));
+        // A row whose place closes: its crumb is chosen.
+        f.put_crumb(&game, false);
+        let (_, sel, _) = normalize(&l, &list, SettingsScope::Changed, Some(k("difficulty")), &vis, &found, &f);
+        assert_eq!(sel, Some(RowId::Heading(game)));
+        // Each place's rows, as listed.
+        assert_eq!(place_counts(&l, &list, &found.changed, &vis), [(game, 1), (colours, 1), (heading(&list, &l, "god-mode"), 1)]);
     }
 
     const NONE: Found = Found { search: Vec::new(), changed: Vec::new() };
@@ -1352,7 +1392,7 @@ mod tests {
         assert!(searched(&list, "freeze nothing", &vis).is_empty(), "every term must be found");
         assert!(searched(&list, "zzz", &vis).is_empty());
         // Rows of several tabs, in the page's order, each under where it lives; every
-        // category open on the search, and nothing for the keys to choose but the rows.
+        // category open on the search (a tab's closed one too), under crumbs, never headings.
         let l = resolve_layout(&list);
         let found = Found { search: search(&l, &list, "the", |_| String::new()), changed: Vec::new() };
         let mut closed = open();
@@ -1360,7 +1400,7 @@ mod tests {
         let e = project(&l, &list, SettingsScope::Search, &vis, &found, &closed);
         let heads: Vec<String> = e.iter().filter_map(|e| if let ViewEntry::Crumb(p) = e { Some(p.path()) } else { None }).collect();
         assert_eq!(heads, ["Gameplay > Game", "Gameplay > Dialogue", "Display > Colours", "Controls > Input", "Debug"]);
-        assert!(e.iter().all(|e| !matches!(e, ViewEntry::Heading(_))), "crumbs, nothing to choose but the rows");
+        assert!(e.iter().all(|e| !matches!(e, ViewEntry::Heading(_))), "crumbs, never a tab's headings");
         // A hidden colour channel is found as its colour, once; a controller's row as the Input Device row.
         // (The tweaks' Hide HUD key (#1892) is found by its words too, its controller button as
         // the Input Device row.)

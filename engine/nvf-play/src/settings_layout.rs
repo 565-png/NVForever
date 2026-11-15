@@ -1211,7 +1211,7 @@ impl ResolvedLayout {
     }
 
     /// How many of the category at `p`'s lines `visible` says are shown (what its heading
-    /// counts while closed).
+    /// counts while chosen).
     pub fn shown_count(&self, p: &Placement, visible: impl Fn(LayoutItem) -> bool) -> usize {
         self.section(p).map_or(0, |s| s.items.iter().filter(|&&i| visible(i)).count())
     }

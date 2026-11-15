@@ -33,19 +33,21 @@
 //! <path>`, `pause menu: delete cancelled`.
 //!
 //! **The settings page** (#1953; docs/design/settings-page.md) lists the rows of
-//! [`crate::settings`] and the controls of `crate::bindings` in seven tabs, the original's
-//! four categories first: Gameplay, Display, Audio, Controls, then Graphics, Tweaks and
-//! Debug (`crate::settings_layout` says each row's tab and heading; a row it does not name
-//! stays under the group it registered with) [design: #1953]. Left of the column, from the
-//! rows' top, the rail lists Search, Changed and the tabs; the chosen tab's rows are in
-//! the middle over the darkened band (from near the view's top, as wide as the room left of
-//! the rail allows up to 1300 units and centred in it, the band clear of the rail:
-//! [`ListBox::of`], #1210, #2377), under dim headings in the page's font (Gameplay: Game, Saving,
-//! Dialogue, Camera; Display: Screen, Interface, Performance; Graphics: Picture,
-//! Distance, World), which take a line of the window and the scroll bar but are never
-//! chosen; each row with its value as the game is using it now, the chosen row's note
-//! under them (three lines at most), Defaults and Back at the bottom right, the
-//! version at the bottom left. The view model is `crate::settings_view`.
+//! [`crate::settings`] and the controls of `crate::bindings` in eight tabs, the original's
+//! four categories first: Gameplay, Display, Audio, Controls, then Graphics, NVF Features,
+//! Tweaks and Debug (`crate::settings_layout` says each row's tab and category; a row it does
+//! not name stays under the group it registered with) [design: #1953, the menu overhaul].
+//! Left of the column, from the rows' top, the rail lists Search, Changed and the tabs; the
+//! chosen tab's rows are in the middle over the darkened band (from near the view's top, as
+//! wide as the room left of the rail allows up to 1300 units and centred in it, the band
+//! clear of the rail: [`ListBox::of`], #1210, #2377), under bright category headings in the
+//! titles' face that the keys and the pointer choose and that open and close
+//! (`crate::settings_view::Folding`; the Tweaks tab shows one group at a time, picked by
+//! its Category row's list); each row with its value as the game is using it now, the
+//! chosen line's note under them (three lines at most), Previous and Next Category under
+//! the note, Defaults and Back at the bottom right, "Report a Bug" and the version under
+//! the column [design: the menu overhaul, owner 2026-11-15]. The view model is
+//! `crate::settings_view`.
 //!
 //! **Where it opens** [design: #1953, the fork owner's request 2026-11-09]: Settings opens
 //! the page where it was left this run, its tab (or the Changed list), chosen row and first
@@ -58,10 +60,11 @@
 //! highlight box's line round it, unfilled, and the focus sound plays once as the pointer
 //! comes onto it (`pause menu: hover <line>`); the keys' line keeps its filled box.
 //!
-//! The keys [design: #1953]: Up/Down (or W/S) choose a row of the tab, round its ends,
-//! passing the headings; Page Up/Page Down the first row under the heading before or after
-//! (a controller's LB/RB; "Previous heading" and "Next heading" over the rows take a click
-//! too); Tab the next tab, Shift+Tab or F1 the one before (a controller's RT and LT); F6
+//! The keys [design: #1953, the menu overhaul]: Up/Down (or W/S) choose a row or heading of
+//! the tab, round its ends, passing the empty lines (Enter or a click on a heading opens or
+//! closes it, Left closes, Right opens); Page Up/Page Down the category before or after, its
+//! first row while open, else its heading (a controller's LB/RB; "Previous Category" and
+//! "Next Category" under the note take a click too); Tab the next tab, Shift+Tab or F1 the one before (a controller's RT and LT); F6
 //! (Y) puts the keys on the rail, where Up/Down choose among Search, Changed, the tabs,
 //! Defaults and Back, Enter (A) takes one and F6 gives the keys back to the rows; a click
 //! on a tab shows it. Enter, Space, Left or Right flip a switch, as does a click on it; a
@@ -90,7 +93,8 @@
 //! tab whose label or note (in the language shown or in English) or INI key holds each
 //! word typed, any case (`crate::settings_view::search`), the Controls tab's own rows too
 //! by their label, note and INI name; an empty text lists every row. The results are in
-//! the page's order, under dim headings saying where each lives ("Gameplay > Dialogue");
+//! the page's order, under crumbs saying where each lives ("Gameplay > Dialogue"), which
+//! open and close as headings do, for the run only;
 //! a hidden row is listed as the row that stands for it (a colour's channel as its colour;
 //! a controller's row, a binding or sensitivity of the device not in use, as Input Device,
 //! so it is never edited through the device in use), its note naming what it stands for.
@@ -538,8 +542,8 @@ pub fn shown_under(alpha: f32) -> f32 {
     if linear <= 0.003_130_8 { linear * 12.92 } else { 1.055 * linear.powf(1.0 / 2.4) - 0.055 }
 }
 
-/// The "Report a bug" entry at the pause menu's bottom left, over the version (owner
-/// 2026-11-12): `shown` when nvforever's hand-report form is there to open
+/// The "Report a Bug" entry under the pause menu's column, over the version (owner
+/// 2026-11-12; under the column since the menu overhaul): `shown` when nvforever's hand-report form is there to open
 /// (`reports/form.rs` sets it); a click sets `asked`, which the form takes. Only over a
 /// game, never under the main menu.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -778,7 +782,7 @@ enum PauseButton {
     Delete,
     /// An answer of the delete question: yes or no.
     DeleteAnswer(bool),
-    /// "Report a bug" at the bottom left ([`ReportEntry`]).
+    /// "Report a Bug" under the column ([`ReportEntry`]).
     Report,
 }
 
@@ -858,7 +862,8 @@ const NO_CHANGED: &str = "No changed settings.";
 const KEYBOARD_SEARCH: &str = "Keyboard search";
 /// The mark after the search's text while it has the keys [design].
 const CARET: &str = "_";
-/// The links over the rows to the heading before and after [design: #1953].
+/// The links under the note to the category before and after [design: #1953; the menu
+/// overhaul].
 const HEADING_LINKS: [&str; 2] = ["Previous Category", "Next Category"];
 /// The short words Title Case leaves in lower case inside a label (articles, the short
 /// conjunctions and prepositions) [design: owner 2026-11-15: "words like and, of, at etc
@@ -977,11 +982,12 @@ const VALUE_PAD: f32 = 6.0;
 const METER_MIN: f32 = 100.0;
 /// The settings page's rows' top: higher than the column's (360 with the pause menu's
 /// five entries), where nine rows and the note under them ran off the bottom [design:
-/// #1210]. The rail starts there too: Search, Changed and seven tabs are nine lines
-/// [design: #1953].
+/// #1210]. The rail starts there too: Search, Changed and eight tabs are ten lines
+/// [design: #1953, the menu overhaul].
 const OPTIONS_TOP: f32 = 120.0;
-/// The heading links' line over the rows [design: #1953].
-const LINKS_TOP: f32 = OPTIONS_TOP - ITEM - 8.0;
+/// The search's line over the rows [design: #1953; the heading links were there before the
+/// menu overhaul moved them under the note].
+const SEARCH_TOP: f32 = OPTIONS_TOP - ITEM - 8.0;
 /// The note under the rows: its lines this far apart, the last one above the view's bottom
 /// margin [design; "Report a Bug" and the version moved under the column, the menu
 /// overhaul].
@@ -1363,7 +1369,8 @@ enum PointAt {
     Choice(usize),
 }
 
-/// A list's open dropdown: its row, the choice the keys are on and the first shown.
+/// A list's open dropdown: its row (a list row's index, or [`GROUP_LIST`]: [`list_row_id`]),
+/// the choice the keys are on and the first shown.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Dropdown {
     row: usize,
@@ -1440,7 +1447,7 @@ struct Drawn {
     /// On the search and the Changed list: the rows listed as another row, by that row,
     /// their names as the page shows them (`crate::settings_view::stands_for`).
     stand_ins: Vec<(RowId, Vec<String>)>,
-    /// "Report a bug" at the bottom left ([`ReportEntry`]), and whether the pointer is on it.
+    /// "Report a Bug" under the column ([`ReportEntry`]), and whether the pointer is on it.
     report: Option<bool>,
     /// Each category listed: how many rows it holds now and whether it is open.
     headings: Vec<(crate::settings_layout::Placement, usize, bool)>,
@@ -1958,9 +1965,10 @@ fn keep_question(root: &mut ChildSpawnerCommands, f: &Faces, label: &str, left: 
 #[derive(Component)]
 struct KeepLine;
 
-/// The settings page (module notes): the rail left of the column, the heading links over
-/// the rows, the listed lines (headings and rows) in a window of [`Drawn::lines`] round the
-/// chosen row, the chosen row's note under them, the version at the bottom left.
+/// The settings page (module notes): the rail left of the column, the search's line over the
+/// rows while it is open, the listed lines (headings, crumbs and rows) in a window of
+/// [`Drawn::lines`] round the chosen line, the chosen line's note under them and the heading
+/// links under the note.
 fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: &[Setting], selected: Option<RowId>, lb: ListBox, glyphs: &crate::pad::PadGlyphs) {
     let f = &look.faces;
     rail_column(root, f, d, glyphs);
@@ -1970,8 +1978,7 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     if entries.is_empty() {
         root.spawn(from_middle(left, top, lb.width, OPTION_ROW)).with_children(|t| sm_text(t, &f.entry, tr(empty_words(d.scope)), 10.0, BASE, color(Shade::Dim)));
     }
-    // On the search its line takes the links' place, the rows' whole width; Page Up/Down
-    // (LB/RB) still go from heading to heading there [design: #1953].
+    // The search's line over the rows, their whole width [design: #1953].
     if let Some((query, typing)) = &d.search {
         search_line(root, f, query, *typing, left, lb.width - 10.0);
     }
@@ -1990,7 +1997,7 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     }
     // The chosen row's note under the rows; with its list open on a choice out of reach,
     // that choice's reason.
-    let reason = d.dropdown.filter(|o| selected == Some(RowId::Setting(o.row))).and_then(|o| d.choice_reason(o.row, o.at));
+    let reason = d.dropdown.filter(|o| selected == Some(list_row_id(o.row))).and_then(|o| d.choice_reason(o.row, o.at));
     let note = match reason {
         Some(r) => tr_str(r).to_string(),
         None => selected.map_or_else(String::new, |id| note_of(list, id, d)),
@@ -2002,13 +2009,12 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     // Previous and Next Category under the note's room, after an empty line [design: owner
     // 2026-11-15, the fifth build]; PgUp and PgDn (LB and RB) go from title to title on the
     // search too.
-    if entries.iter().any(|e| e.titles_line()) {
+    if entries.iter().any(|e| e.titles()) {
         heading_links(root, f, lb, glyphs, note_top + NOTE_LINES as f32 * NOTE_STEP + LINKS_GAP);
     }
     // The open dropdown over the rows under its own (over those above near the bottom).
     let Some((o, names)) = d.dropdown.and_then(|o| Some((o, d.list(o.row)?.0))) else { return };
-    let at_row = if o.row == GROUP_LIST { RowId::Group } else { RowId::Setting(o.row) };
-    let Some(n) = drawn.clone().position(|k| entries[k] == ViewEntry::Row(at_row)) else { return };
+    let Some(n) = drawn.clone().position(|k| entries[k] == ViewEntry::Row(list_row_id(o.row))) else { return };
     let shown = names.len().min(DROP_ROWS);
     let h = shown as f32 * DROP_ITEM + 2.0 * LINE;
     let row_top = top + n as f32 * OPTION_ROW;
@@ -2027,10 +2033,10 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
 }
 
 
-/// A category's heading (module notes): the arrow (right while closed, down while open), its
-/// words bright, while closed how many rows it holds, a rule under it; the box round it when
-/// chosen; a click opens or closes it [design: the menu overhaul, owner 2026-11-15]. Bright,
-/// so a heading is never taken for a greyed row.
+/// A category's heading or, on the search and the Changed list, a crumb (module notes): the
+/// arrow (right while closed, down while open), its words bright, how many rows it holds
+/// while chosen; a click opens or closes it [design: the menu overhaul, owner 2026-11-15].
+/// Bright, so a heading is never taken for a greyed row.
 #[allow(clippy::too_many_arguments)]
 fn heading_line(root: &mut ChildSpawnerCommands, look: &PauseLook, d: &Drawn, p: crate::settings_layout::Placement, on: bool, lb: ListBox, y: f32, crumb: bool) {
     let (count, open) = d.heading(p);
@@ -2038,10 +2044,11 @@ fn heading_line(root: &mut ChildSpawnerCommands, look: &PauseLook, d: &Drawn, p:
     title_line(root, look, &name, count, open, Some((PauseButton::Row(RowId::Heading(p)), on)), lb, y);
 }
 
-/// A category's or a crumb's line (module notes of [`heading_line`]): a soft dark box behind
-/// it, the arrow (right while closed, down while open), the words bright; with `button` the
-/// line takes the keys and the pointer, boxed when chosen [design: owner 2026-11-15, the menu
-/// overhaul: no rule under the words, "add same box blur to the category/section titles"].
+/// A category's or a crumb's line (module notes of [`heading_line`]): the arrow (right while
+/// closed, down while open), the words bright in the titles' face, the count at the right
+/// while chosen; with `button` the line takes the keys and the pointer, never boxed [design:
+/// owner 2026-11-15, the menu overhaul: no rule under the words; the fifth build: "no hover or
+/// selection box" on the category titles].
 #[allow(clippy::too_many_arguments)]
 fn title_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, count: usize, open: bool, button: Option<(PauseButton, bool)>, lb: ListBox, y: f32) {
     let f = &look.faces;
@@ -2124,16 +2131,16 @@ fn search_line(root: &mut ChildSpawnerCommands, f: &Faces, query: &str, typing: 
     }
     let words = line(&shown);
     root.spawn((SearchText, Text::new(words.clone()), Node { display: Display::None, ..default() }));
-    root.spawn((Button, PauseButton::SearchField, boxed(from_middle(left, LINKS_TOP, width, ITEM), typing))).with_children(|t| sm_text(t, &f.entry, &words, 10.0, BASE, color(Shade::Bright)));
+    root.spawn((Button, PauseButton::SearchField, boxed(from_middle(left, SEARCH_TOP, width, ITEM), typing))).with_children(|t| sm_text(t, &f.entry, &words, 10.0, BASE, color(Shade::Bright)));
 }
 
 /// The search's line, kept as text too (tests read it).
 #[derive(Component)]
 struct SearchText;
 
-/// "Previous heading" and "Next heading" over the rows' right end, each with its key; the
-/// left edge they leave.
-fn heading_links(root: &mut ChildSpawnerCommands, f: &Faces, lb: ListBox, glyphs: &crate::pad::PadGlyphs, top: f32) -> f32 {
+/// "Previous Category" and "Next Category" at the rows' right end from `top`, each with its
+/// key.
+fn heading_links(root: &mut ChildSpawnerCommands, f: &Faces, lb: ListBox, glyphs: &crate::pad::PadGlyphs, top: f32) {
     let mut right = lb.left + lb.width;
     for (k, key) in [(1, KeyCode::PageDown), (0, KeyCode::PageUp)] {
         // The keyboard's keys by their short names ("PgUp)"): the original's "R)" shape
@@ -2148,7 +2155,6 @@ fn heading_links(root: &mut ChildSpawnerCommands, f: &Faces, lb: ListBox, glyphs
         right_entry(root, &f.small, &label, from_middle(right, top, w, ITEM), w, Shade::Bright, false, PauseButton::HeadingStep(if k == 0 { -1 } else { 1 }), glyphs);
         right -= 10.0;
     }
-    right
 }
 
 /// A row's line: its label, its value (ON or OFF, a meter, a list's box, a key), the box
@@ -3025,7 +3031,10 @@ fn act_on_row(id: RowId, action: RowAction, settings: &Settings, view: &mut Paus
         // Left and Right step [design: owner 2026-11-15, the fifth build: "it switches to the
         // next category but does not open"].
         RowId::Group => match action {
-            Activate => fx.group_open = true,
+            Activate => {
+                fx.group_open = true;
+                sounds.write(UiSound { menu: UiMenu::Settings, event: UiEvent::Picked });
+            }
             Step(s) => fx.group_step = Some(s),
             Clear => {}
         },
@@ -4846,6 +4855,16 @@ fn pick_choice(commands: &mut Commands, sounds: &mut MessageWriter<crate::ui_sou
 /// [`Drawn::lists`]).
 const GROUP_LIST: usize = usize::MAX;
 
+/// The row whose list is `i` ([`Dropdown::row`]): list row `i`, or the Category row for
+/// [`GROUP_LIST`].
+fn list_row_id(i: usize) -> RowId {
+    if i == GROUP_LIST {
+        RowId::Group
+    } else {
+        RowId::Setting(i)
+    }
+}
+
 /// Open list row `i`'s dropdown on its chosen one.
 fn open_dropdown(view: &mut PauseView, i: usize) {
     if view_disabled(view, i) { return; }
@@ -4935,7 +4954,7 @@ fn settings_now(world: &mut World, list: &[Setting], selected: Option<RowId>) ->
     let at = sel.and_then(|id| sv::slot_of(&entries, id));
     let first = view.scroll.min(entries.len().saturating_sub(lines));
     view.scroll = if at.is_some_and(|k| !sv::drawn_slots(&entries, first, lines).contains(&k)) { sv::follow(&entries, first, at, lines) } else { first };
-    if view.dropdown.is_some_and(|o| sv::slot_of(&entries, RowId::Setting(o.row)).is_none()) {
+    if view.dropdown.is_some_and(|o| sv::slot_of(&entries, list_row_id(o.row)).is_none()) {
         view.dropdown = None;
     }
     if view.dragging.is_some_and(|id| sv::slot_of(&entries, id).is_none()) {
@@ -4992,11 +5011,12 @@ fn drawn_now(world: &mut World) -> Drawn {
             SettingsScope::Changed => &view.found.changed[..],
             SettingsScope::Tab(_) => &[][..],
         };
+        let places = if ids.is_empty() { Vec::new() } else { crate::settings_view::place_counts(layout, &list, ids, &vis) };
         let headings = lines
             .iter()
             .filter_map(|e| match e {
                 ViewEntry::Heading(p) => Some((*p, crate::settings_view::category_count(layout, &list, p, &vis), view.folding.is_open(p))),
-                ViewEntry::Crumb(p) => Some((*p, crate::settings_view::place_count(layout, &list, ids, &vis, p), view.folding.crumb_open(p))),
+                ViewEntry::Crumb(p) => Some((*p, places.iter().find(|(q, _)| q == p).map_or(0, |(_, n)| *n), view.folding.crumb_open(p))),
                 _ => None,
             })
             .collect();
@@ -5046,8 +5066,8 @@ fn drawn_now(world: &mut World) -> Drawn {
         let vis = Visibility::of_world(world);
         crate::settings_view::stands_for(&list, ids, &vis).into_iter().map(|(by, rows)| (by, rows.into_iter().map(|r| stand_in_name(&list, r)).collect())).collect()
     };
-    // Over a game only, on the first page and the settings page (the load page's rows
-    // and a mod's page have the bottom left).
+    // Over a game only, on the first page and the settings page (not over the load page's
+    // rows or a mod's page).
     let report_shown = main.is_none() && matches!(page, Page::Main | Page::Settings { .. }) && world.get_resource::<ReportEntry>().is_some_and(|r| r.shown);
     let view = world.resource::<PauseView>();
     let thumb = world.resource::<LoadList>().thumb.as_ref().map(|(i, h)| (*i, h.is_some()));
@@ -5783,7 +5803,7 @@ mod tests {
         assert_eq!(rows_drawn.len(), 5, "{rows_drawn:?}");
         assert_eq!(rows_drawn.iter().filter(|r| matches!(r, RowId::Heading(_))).count(), 2);
         assert!(!rows_drawn.contains(&RowId::Setting(3)));
-        // The rail: Search, Changed, the seven tabs; the heading links.
+        // The rail: Search, Changed, the eight tabs; the heading links.
         let rail: Vec<RailItem> = buttons.iter().filter_map(|b| if let PauseButton::Rail(r) = b { Some(*r) } else { None }).collect();
         assert_eq!(rail.len(), 2 + crate::settings_layout::TAB_ORDER.len());
         assert!(buttons.contains(&PauseButton::HeadingStep(-1)) && buttons.contains(&PauseButton::HeadingStep(1)));
@@ -6822,6 +6842,49 @@ mod tests {
         app.insert_resource(Paused(true)).insert_resource(Page::Settings { selected: Some(RowId::Setting(0)) }).init_resource::<PauseView>();
         app.add_systems(Update, (choose, draw).chain());
         app
+    }
+
+    /// The owner's fifth build: Enter on the Tweaks tab's Category row opens the list of its
+    /// groups, which stays open over the page drawn (the Category row's list is no list row:
+    /// [`GROUP_LIST`]), and a choice there shows that group.
+    #[test]
+    fn the_category_rows_list_opens_stays_open_and_takes_a_group() {
+        let mut app = App::new();
+        app.init_resource::<Lamp>().init_resource::<Time>().init_resource::<PlayClock>().init_resource::<PauseAid>();
+        app.init_resource::<ButtonInput<KeyCode>>().init_resource::<ButtonInput<MouseButton>>();
+        app.insert_resource(NextState::<PlayState>::default()).init_resource::<PageRequest>().init_resource::<Listening>().init_resource::<SettingsLayout>().init_resource::<crate::graphics_resume::GraphicsResume>();
+        app.init_resource::<LoadList>().init_resource::<Assets<Image>>().init_resource::<crate::save::SaveConfig>().init_resource::<PauseStatus>();
+        app.init_resource::<crate::pad::PadGlyphs>().insert_resource(PauseLook::plain());
+        app.add_message::<AppExit>().add_message::<crate::ui_sounds::UiSound>().add_message::<crate::save::SaveRequest>().add_message::<crate::save::LoadRequest>().add_message::<MainMenuRequest>();
+        // A tweak of the Gameplay group and one of Combat (`settings_layout::SECTIONS`).
+        for key in ["tweak-free-wild-wasteland", "tweak-no-combat-music"] {
+            add_setting(&mut app, Setting { key, group: "Tweaks", label: key, note: "", switches: "", get: |w| w.resource::<Lamp>().0, set: |w, on| w.resource_mut::<Lamp>().0 = on, slider: None });
+        }
+        app.insert_resource(Paused(true)).insert_resource(Page::Settings { selected: Some(RowId::Group) });
+        app.insert_resource(PauseView { scope: SettingsScope::Tab("Tweaks"), ..default() });
+        app.add_systems(Update, (choose, draw).chain());
+        app.update();
+        assert_eq!(app.world().resource::<PauseView>().drawn.as_ref().and_then(|d| d.group), Some("Gameplay"));
+        // Enter: the list open on the group shown, and still open once the page is drawn.
+        press_only(&mut app, KeyCode::Enter);
+        app.update();
+        let open = app.world().resource::<PauseView>().dropdown;
+        assert_eq!(open.map(|o| (o.row, o.at)), Some((GROUP_LIST, 0)));
+        assert_eq!(app.world().resource::<PauseView>().drawn.as_ref().and_then(|d| d.dropdown), open, "drawn open");
+        let choices = |app: &mut App| app.world_mut().query::<&PauseButton>().iter(app.world()).filter(|b| matches!(b, PauseButton::Choice(GROUP_LIST, _))).count();
+        assert_eq!(choices(&mut app), 2, "both groups listed");
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().reset_all();
+        app.update();
+        assert!(app.world().resource::<PauseView>().dropdown.is_some(), "still open a frame later");
+        // Down and Enter: Combat shown, the list closed, the Category row still chosen.
+        press_only(&mut app, KeyCode::ArrowDown);
+        app.update();
+        press_only(&mut app, KeyCode::Enter);
+        app.update();
+        let view = app.world().resource::<PauseView>();
+        assert_eq!((view.folding.group.as_deref(), view.dropdown), (Some("Combat"), None));
+        assert_eq!(view.drawn.as_ref().and_then(|d| d.group), Some("Combat"));
+        assert_eq!(*app.world().resource::<Page>(), Page::Settings { selected: Some(RowId::Group) });
     }
 
     fn texts(app: &mut App) -> Vec<(String, Color)> {

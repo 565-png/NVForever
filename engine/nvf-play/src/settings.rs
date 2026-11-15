@@ -769,8 +769,6 @@ pub fn pick(world: &mut World, i: usize, name: &str) -> bool {
     take(world, i, |w| pick(w, name))
 }
 
-/// List row `i`'s state changed by `apply` (false: not taken), then kept in the INI; a
-/// list that asks to be kept waits for it.
 /// The choice of `names` that `text` stands for: a name (any case), or the number an older
 /// slider of the row kept, read by `from_number` [design: the menu overhaul, owner
 /// 2026-11-15: a row of 7 or fewer values is a list; the number an INI or a test aid gave
@@ -794,6 +792,8 @@ pub fn load_text(world: &mut World, i: usize, text: &str) -> bool {
     take(world, i, |w| load(w, &t))
 }
 
+/// List row `i`'s state changed by `apply` (false: not taken), then kept in the INI; a
+/// list that asks to be kept waits for it.
 fn take(world: &mut World, i: usize, apply: impl FnOnce(&mut World) -> bool) -> bool {
     let Some(settings) = world.get_resource::<Settings>() else { return false };
     let (Some(s), Some(c)) = (settings.list().get(i).copied(), settings.choices(i)) else { return false };
