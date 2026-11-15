@@ -339,7 +339,7 @@ mod tests {
         assert!(app.world().resource::<SaveQueue>().0.is_empty());
         assert_eq!(std::fs::read(&path).unwrap(), original);
         tick(&mut app, 1.0);
-        assert_eq!(requests(&app), [path.clone()]);
+        assert_eq!(requests(&app).as_slice(), std::slice::from_ref(&path));
         assert_eq!(std::fs::read(path).unwrap(), original);
     }
 }

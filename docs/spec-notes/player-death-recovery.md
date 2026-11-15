@@ -41,8 +41,12 @@ manual/quick/auto ordering, one dispatch, invalid/dead save fallback, absent or
 unreadable profiles, pending loads and preservation of an existing autosave.
 These are historical CPU results, not a build or run of this public port.
 
-Current port qualification: Current-main compilation, strict Clippy, rendered death/menu recovery
-and child-window handoff remain unverified. The `death-recovery-handoff` smoke
+Current port qualification: The earlier public `e737ff0` source passed all ten recovery
+controls in [hosted CI](https://github.com/LootJunkieAzza/NVForever/actions/runs/43667829640):
+core reported 3019 passes and four existing ignored tests; engine reported 2918 passes.
+Strict engine Clippy failed on one redundant clone in an authored assertion. A
+fixture-only correction is prepared; its new-head checks remain pending. Rendered
+death/menu recovery and child-window handoff remain unverified. The `death-recovery-handoff` smoke
 scenario is authored and UNRUN. The existing camera-only checks keep every original acceptance condition, including
 `death-fade` black at six seconds. Their isolated fixture homes apply the loaded
 `fPlayerDeathReloadTime` setting as 120 seconds before killing the player and
