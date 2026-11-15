@@ -103,8 +103,6 @@ struct NifSurface {
 @if(MESH_TERRAIN_BLEND) const DETAIL_FAR: f32 = f32(constants::MESH_TERRAIN_DETAIL_FAR);
 @if(MESH_TERRAIN_BLEND) const FLAG_TWO_COMPONENT: u32 = u32(constants::MESH_TERRAIN_FLAG_TWO_COMPONENT);
 @if(MESH_TERRAIN_BLEND) const FLAG_FLIP_Y: u32 = u32(constants::MESH_TERRAIN_FLAG_FLIP_Y);
-// [design] Round 10b's colour read inset, in texels (nif_surface_blend.rs COLOUR_INSET_E6).
-@if(MESH_TERRAIN_BLEND) const COLOUR_INSET: f32 = f32(constants::MESH_TERRAIN_COLOUR_INSET_E6) / 1e6;
 
 // [design] Lookup classifications, in diagnostic precedence order.
 @if(MESH_TERRAIN_BLEND) const LOOKUP_OUT_OF_RANGE: u32 = 0u;
@@ -155,13 +153,8 @@ struct NifSurface {
     return bitcast<f32>(terrain_height_bits(instance_index, p));
 }
 
-// [design] Round 10b: a bilinear read of the colour atlas at an explicit level (no implicit
-// derivatives: the caller is inside the lookup's branches), and one texel of a level.
-@if(MESH_TERRAIN_BLEND) fn terrain_colour_texel(instance_index: u32, uv: vec2<f32>, level: f32) -> vec3<f32> {
-    @if(BINDLESS) let slot = material_slot(instance_index);
-    @if(BINDLESS) return textureSampleLevel(bindless_textures_2d[nif_indices[slot].holes_texture], bindless_samplers_filtering[nif_indices[slot].holes_sampler], uv, level).rgb;
-    @if(!BINDLESS) return textureSampleLevel(mesh_terrain_colour, mesh_terrain_sampler, uv, level).rgb;
-}
+// [design] Round 10b: one texel of a level of the colour atlas (the read's bilinear taps,
+// weighted by the caller: no implicit derivatives inside the lookup's branches).
 @if(MESH_TERRAIN_BLEND) fn terrain_colour_load(instance_index: u32, p: vec2<i32>, level: i32) -> vec3<f32> {
     @if(BINDLESS) return textureLoad(bindless_textures_2d[nif_indices[material_slot(instance_index)].holes_texture], p, level).rgb;
     @if(!BINDLESS) return textureLoad(mesh_terrain_colour, p, level).rgb;
@@ -366,8 +359,9 @@ struct NifSurface {
 
 // [design] Round 10b: the colour atlas has a mip chain per cell (terrain_surface.rs
 // `colour_levels`): level k holds `resolution >> k` texels per cell side, down to one, each
-// level a 3 by 3 grid of whole cells filtered from that cell's own texels only. The last
-// level is log2 of the texels per cell side.
+// level a 3 by 3 grid of whole cells filtered from that cell's own texels only (the read,
+// not the filter, crosses cell edges: `terrain_colour_taps`). The last level is log2 of the
+// texels per cell side.
 @if(MESH_TERRAIN_BLEND) fn terrain_last_level(resolution: i32) -> i32 {
     return i32(firstTrailingBit(u32(max(resolution, 1))));
 }
@@ -394,47 +388,84 @@ struct NifSurface {
     return TerrainColourLevels(low, min(low + 1, terrain_last_level(resolution)), lod - f32(low));
 }
 
-// [design] Round 10b (terrain_surface.rs `colour_read_point`): at a level with `size` texels
-// per cell side, the bilinear read's position in that level's atlas texels, clamped
-// COLOUR_INSET inside the centres of the cell's outermost texels, so no tap leaves the cell
-// `slot` (the atlas's rows run north to south: the bake camera's reversed Y).
-@if(MESH_TERRAIN_BLEND) fn terrain_colour_point(slot: vec2<i32>, uv: vec2<f32>, size: i32) -> vec2<f32> {
-    let corner = vec2<f32>(vec2(slot.x, 2 - slot.y) * size);
-    return clamp(uv * f32(3 * size), corner + vec2(0.5 + COLOUR_INSET), corner + vec2(f32(size) - 0.5 - COLOUR_INSET));
-}
-
-// [design] Round 10b: the cell's colour at one level, bilinear inside the cell; the last
-// level's single texel is read as it is.
-@if(MESH_TERRAIN_BLEND) fn terrain_colour_level(instance_index: u32, slot: vec2<i32>, uv: vec2<f32>, resolution: i32, level: i32) -> vec3<f32> {
-    let size = resolution >> u32(level);
-    if size <= 1 { return terrain_colour_load(instance_index, vec2(slot.x, 2 - slot.y), level); }
-    return terrain_colour_texel(instance_index, terrain_colour_point(slot, uv, size) / f32(3 * size), f32(level));
-}
-
-// [design] Round 10b (terrain_surface.rs `colour_level_valid`): every texel the read takes at
-// this level lies in a captured quadrant of the cell. A texel of a level with two or more
+// [design] Round 10b review (terrain_surface.rs `colour_tap_valid`): whether the texel `tap`
+// (atlas texels of a level with `size` texels per cell side; the atlas's rows run north to
+// south, the bake camera's reversed Y) can be read: inside the atlas, its cell live-covered
+// and the texel in a captured quadrant of that cell. A texel of a level with two or more
 // texels per cell side covers level-0 texels of one quadrant only, the quadrant its own
 // position names; the last level's single texel covers all four, so it needs all four.
-@if(MESH_TERRAIN_BLEND) fn terrain_colour_level_valid(instance_index: u32, slot: vec2<i32>, uv: vec2<f32>, resolution: i32, level: i32) -> bool {
-    let size = resolution >> u32(level);
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_tap_valid(instance_index: u32, tap: vec2<i32>, size: i32) -> bool {
+    if any(tap < vec2(0)) || any(tap >= vec2(3 * size)) { return false; }
+    let cell = tap / size;
+    let slot = vec2(cell.x, 2 - cell.y);
+    if !terrain_covered(instance_index, slot) { return false; }
     let mask = terrain_colour_mask(instance_index, slot);
     if size <= 1 { return (mask & 15u) == 15u; }
-    let corner = vec2(slot.x, 2 - slot.y) * size;
-    let tap = vec2<i32>(floor(terrain_colour_point(slot, uv, size) - vec2(0.5))) - corner;
+    let t = tap - cell * size;
     let middle = size / 2;
-    for (var y = 0; y < 2; y++) {
-        for (var x = 0; x < 2; x++) {
-            let t = clamp(tap + vec2(x, y), vec2(0), vec2(size - 1));
-            let quadrant = select(0u, 1u, t.x >= middle) + select(0u, 2u, t.y < middle);
-            if (mask & (1u << quadrant)) == 0u { return false; }
+    let quadrant = select(0u, 1u, t.x >= middle) + select(0u, 2u, t.y < middle);
+    return (mask & (1u << quadrant)) != 0u;
+}
+
+// [design] Round 10b review (terrain_surface.rs `colour_read_taps`): one level's bilinear
+// read, its first (north-west) tap and the four taps' weights in the order (0, 0), (1, 0),
+// (0, 1), (1, 1). Each level is filtered per cell, but the 3 by 3 atlas puts neighbouring
+// cells' texels side by side, so the read is the plain bilinear footprint at the fragment's
+// position, crossing a cell edge into the neighbour's adjacent texels (a texel grid as
+// regular across the edge as inside a cell: a smooth colour stays continuous there). A
+// tap that cannot be read (outside the atlas, an uncovered cell, an uncaptured quadrant)
+// gets no weight and the others are renormalized; where a whole neighbouring column or row
+// is missing that is the read clamped to the fragment's own cell. The weights depend on
+// the position and the taps' validity only, never on which cell the fragment is in, so
+// fragments on both sides of an edge between two valid cells read the same value. `valid`:
+// the footprint holds a tap of the fragment's own cell and every such tap can be read
+// (an uncaptured quadrant of its own cell rejects the read, as before).
+@if(MESH_TERRAIN_BLEND) struct TerrainColourTaps {
+    first: vec2<i32>,
+    weights: vec4<f32>,
+    valid: bool,
+}
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_taps(instance_index: u32, slot: vec2<i32>, uv: vec2<f32>, size: i32) -> TerrainColourTaps {
+    let p = uv * f32(3 * size) - vec2(0.5);
+    let first = vec2<i32>(floor(p));
+    let f = p - floor(p);
+    let own = vec2(slot.x, 2 - slot.y);
+    var weights = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+    var has_own = false;
+    var own_valid = true;
+    for (var i = 0; i < 4; i++) {
+        let tap = first + vec2(i % 2, i / 2);
+        let valid = terrain_colour_tap_valid(instance_index, tap, size);
+        if all(tap >= vec2(0)) && all(tap / size == own) {
+            has_own = true;
+            own_valid = own_valid && valid;
         }
+        if !valid { weights[i] = 0.0; }
     }
-    return true;
+    let total = weights.x + weights.y + weights.z + weights.w;
+    return TerrainColourTaps(first, weights / max(total, 1e-6), has_own && own_valid && total > 0.0);
+}
+
+// [design] Round 10b review: the colour at one level, the readable taps' renormalized
+// bilinear mix (the last level's texels sit at the cells' centres, so there it interpolates
+// between the centres of valid neighbouring cells).
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_level(instance_index: u32, slot: vec2<i32>, uv: vec2<f32>, resolution: i32, level: i32) -> vec3<f32> {
+    let t = terrain_colour_taps(instance_index, slot, uv, resolution >> u32(level));
+    var colour = vec3(0.0);
+    for (var i = 0; i < 4; i++) {
+        if t.weights[i] > 0.0 { colour += t.weights[i] * terrain_colour_load(instance_index, t.first + vec2(i % 2, i / 2), level); }
+    }
+    return colour;
+}
+
+// [design] Round 10b (terrain_surface.rs `colour_read_taps`): the level's read is valid.
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_level_valid(instance_index: u32, slot: vec2<i32>, uv: vec2<f32>, resolution: i32, level: i32) -> bool {
+    return terrain_colour_taps(instance_index, slot, uv, resolution >> u32(level)).valid;
 }
 
 // [design] Round 10b: the colour footprint is valid when both levels that contribute (the
-// upper only with a share) read captured quadrants only; the cell's own live coverage is
-// part of the quadrant check before it, and no tap reaches another cell.
+// upper only with a share) are; the cell's own live coverage is part of the height check
+// before it, and every neighbouring tap either level weights is covered and captured.
 @if(MESH_TERRAIN_BLEND) fn terrain_colour_footprint(instance_index: u32, slot: vec2<i32>, uv: vec2<f32>, resolution: i32, l: TerrainColourLevels) -> bool {
     if !terrain_colour_level_valid(instance_index, slot, uv, resolution, l.low) { return false; }
     return l.share <= 0.0 || l.high == l.low || terrain_colour_level_valid(instance_index, slot, uv, resolution, l.high);
@@ -524,18 +555,19 @@ struct NifSurface {
     let detail_valid = inputs.distance < DETAIL_FAR && terrain_detail_valid(instance_index, slot, quadrant);
     if !colour_quadrant && !detail_valid { r.status = LOOKUP_INVALID_COLOUR; return r; }
     // [design] Fade over one LAND grid interval next to missing slots (the region's edge).
-    // Round 10b: the colour read no longer leaves its cell, so a missing neighbour cannot
-    // reach it; the fade keeps the region's edge soft as before.
+    // Round 10b review: the colour read gives a missing neighbour's taps no weight (the read
+    // clamped to the cell there); the fade keeps the region's edge soft as before.
     let within = game.xy - vec2<f32>(cell) * CELL_SIZE;
     var border = CELL_SIZE;
     if !terrain_cell_resident(instance_index, slot + vec2(-1, 0)) { border = min(border, within.x); }
     if !terrain_cell_resident(instance_index, slot + vec2(1, 0)) { border = min(border, CELL_SIZE - within.x); }
     if !terrain_cell_resident(instance_index, slot + vec2(0, -1)) { border = min(border, within.y); }
     if !terrain_cell_resident(instance_index, slot + vec2(0, 1)) { border = min(border, CELL_SIZE - within.y); }
-    // Round 10b: the colour read takes two levels of the cell's own mip chain at the level of
-    // detail the derivatives give, each clamped inside the cell; every texel either level
-    // with a share reads must lie in a captured quadrant. The atlas Y axis is reversed by
-    // the bake camera.
+    // Round 10b: the colour read takes two levels of the per-cell mip chains at the level of
+    // detail the derivatives give, each bilinear across valid neighbouring cells (review);
+    // every own-cell tap either level with a share reads must lie in a captured quadrant,
+    // and neighbouring taps that do not get no weight. The atlas Y axis is reversed by the
+    // bake camera.
     let resolution = terrain_resolution(instance_index);
     let atlas = (game.xy / CELL_SIZE - s.mesh_terrain_origin.xy) / 3.0;
     let uv = vec2(atlas.x, 1.0 - atlas.y);

@@ -164,7 +164,11 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
             assert_eq!(nvf_assets::nif_surface_blend::PALETTE_ENTRIES, 400, "nif_surface_bindings.wesl spells out array<u32, 400>");
             if !bindless {
                 let bound = |binding| module.global_variables.iter().any(|(_, v)| v.binding.as_ref().is_some_and(|b| b.group == 3 && b.binding == binding));
-                for binding in [50, 51, 52, 53] { assert!(bound(binding), "bindless={bindless} blend={blend} binding {binding}"); }
+                // Round 10b review: the blend reads its colour atlas with textureLoad (weighted
+                // in the shader), so it need not reach its sampler (52, still in the layout
+                // AsBindGroup makes); the ordinary type's holes sampler is reached.
+                for binding in [50, 51, 53] { assert!(bound(binding), "bindless={bindless} blend={blend} binding {binding}"); }
+                if !blend { assert!(bound(52), "bindless={bindless} blend={blend} binding 52"); }
                 for binding in [54, 55, 56] { assert!(!bound(binding), "no binding past main's 53"); }
                 let extension: Vec<_> = texture_bindings(&source).into_iter().filter(|&(g, b)| g == 3 && b >= 50).collect();
                 assert_eq!(extension, vec![(3, 51), (3, 53)], "bindless={bindless} blend={blend}: textures only in slots 51 and 53");
@@ -203,17 +207,28 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
     }
     assert!(sample.contains("textureSampleGrad("));
     // [design] Round 10b: the colour cache is read at explicit levels chosen from the same
-    // derivatives (no implicit derivatives inside the lookup's branches), each level clamped
-    // inside the fragment's cell, and both contributing levels' footprints validated.
-    for name in ["terrain_colour_texel", "terrain_colour_level", "terrain_colour_mips", "terrain_colour_lod", "terrain_colour_level_valid", "terrain_colour_footprint"] {
+    // derivatives (no implicit derivatives inside the lookup's branches) and both
+    // contributing levels' footprints validated. Round 10b review: each level is the
+    // bilinear footprint at the fragment's position across valid neighbouring cells, its
+    // taps loaded and weighted in the shader, unreadable ones given no weight and the rest
+    // renormalized (terrain_surface.rs `colour_read_taps`).
+    for name in ["terrain_colour_tap_valid", "terrain_colour_taps", "terrain_colour_level", "terrain_colour_mips", "terrain_colour_lod", "terrain_colour_level_valid", "terrain_colour_footprint"] {
         let body = bindings.split(&format!("fn {name}(")).nth(1).unwrap_or_else(|| panic!("{name}")).split("\n}\n").next().unwrap();
-        assert!(!body.contains("textureSample(") && !body.contains("textureSampleBias(") && !body.contains("dpdx") && !body.contains("fwidth"), "{name}: no implicit derivatives");
+        assert!(!body.contains("textureSample") && !body.contains("dpdx") && !body.contains("fwidth"), "{name}: no implicit derivatives, no sampler");
     }
     assert!(bindings.contains("let levels = terrain_colour_levels(resolution, terrain_colour_lod(resolution, inputs));"));
     assert!(bindings.contains("let colour_valid = colour_quadrant && terrain_colour_footprint(instance_index, slot, uv, resolution, levels);"));
     assert!(bindings.contains("let footprint = max(length(inputs.ddx), length(inputs.ddy)) * f32(resolution) / CELL_SIZE;")
         && bindings.contains("return clamp(log2(max(footprint, 1e-6)) + inputs.bias, 0.0, f32(terrain_last_level(resolution)));"));
-    assert!(bindings.contains("return clamp(uv * f32(3 * size), corner + vec2(0.5 + COLOUR_INSET), corner + vec2(f32(size) - 0.5 - COLOUR_INSET));"));
+    let taps = bindings.split("fn terrain_colour_taps(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    for line in [
+        "let p = uv * f32(3 * size) - vec2(0.5);",
+        "var weights = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);",
+        "if !valid { weights[i] = 0.0; }",
+        "return TerrainColourTaps(first, weights / max(total, 1e-6), has_own && own_valid && total > 0.0);",
+    ] { assert!(taps.contains(line), "{line}"); }
+    assert!(!taps.contains("clamp("), "the footprint is not clamped into the cell");
+    assert!(bindings.contains("if t.weights[i] > 0.0 { colour += t.weights[i] * terrain_colour_load(instance_index, t.first + vec2(i % 2, i / 2), level); }"));
     assert!(bindings.contains("return l.share <= 0.0 || l.high == l.low || terrain_colour_level_valid(instance_index, slot, uv, resolution, l.high);"));
 }
 

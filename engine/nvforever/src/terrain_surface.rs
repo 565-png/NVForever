@@ -62,10 +62,6 @@ pub fn colour_bytes(resolution: u32) -> u64 {
 }
 /// `bytes` in MiB, rounded to the nearest (the mip chain is a few bytes short of 4/3 of level 0).
 pub fn mib(bytes: u64) -> u64 { (bytes + (1 << 19)) >> 20 }
-/// [design] Round 10b: a colour read keeps this far (in texels, 1/64) inside its cell's
-/// outermost texel centres, so the GPU's limited sub-texel precision cannot give a texel of
-/// the neighbouring cell a weight (the shader's `COLOUR_INSET`, the same shader def).
-pub const COLOUR_INSET: f32 = nvf_assets::nif_surface_blend::COLOUR_INSET_E6 as f32 / 1e6;
 const HEIGHT_WIDTH: usize = 3 * HEIGHT_TILE_WIDTH;
 const HEIGHT_HEIGHT: usize = 3 * HEIGHT_TILE_HEIGHT;
 pub const BAKE_LAYER: usize = 16;
@@ -616,9 +612,11 @@ fn height_texel(data: &[u8], p: (usize, usize)) -> f32 {
     let at = (p.1 * HEIGHT_WIDTH + p.0) * 4;
     f32::from_le_bytes(data[at..at + 4].try_into().unwrap())
 }
+fn colour_mask(data: &[u8], slot: (i32, i32)) -> u32 {
+    height_texel(data, (slot.0 as usize * HEIGHT_TILE_WIDTH + 1, slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID)) as u32
+}
 fn colour_valid(data: &[u8], slot: (i32, i32), quadrant: u32) -> bool {
-    let mask = height_texel(data, (slot.0 as usize * HEIGHT_TILE_WIDTH + 1, slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID)) as u32;
-    mask & (1 << quadrant) != 0
+    colour_mask(data, slot) & (1 << quadrant) != 0
 }
 // [design] CPU publication probe, with the same precedence/footprint as the shader.
 // This classifies uploaded bytes; it does not assert that GPU bindings are correct.
@@ -635,11 +633,11 @@ pub fn lookup_covered_status(data: &[u8], origin: (i32, i32), point: Vec2, resol
 }
 /// [design] Round 10b: the lookup of a fragment whose colour read has level of detail `lod`
 /// (the shader's `terrain_colour_lod`). The read takes the levels around it
-/// ([`colour_read_levels`]) and stays inside the fragment's own cell at each
-/// ([`colour_read_point`]), so the colour footprint is valid when every texel either level
-/// with a share reads lies in a captured quadrant of that cell ([`colour_level_valid`]); the
-/// cell's own live coverage is part of the height check before it. Neighbouring cells no
-/// longer enter the colour footprint (the shader's border fade still does).
+/// ([`colour_read_levels`]), each the bilinear footprint at the fragment's position across
+/// valid neighbouring cells ([`colour_read_taps`], round 10b review), so the colour footprint
+/// is valid when every own-cell tap either level with a share reads lies in a captured
+/// quadrant; neighbouring taps that are not covered and captured get no weight. The cell's
+/// own live coverage is part of the height check before it.
 pub fn lookup_level_status(data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32, coverage: u32, lod: f32) -> LookupStatus {
     let cell = fnv_world::cell_of(point.x, point.y);
     let slot = (cell.0 - origin.0, cell.1 - origin.1);
@@ -653,8 +651,8 @@ pub fn lookup_level_status(data: &[u8], origin: (i32, i32), point: Vec2, resolut
     let atlas = (point / 4096.0 - Vec2::new(origin.0 as f32, origin.1 as f32)) / 3.0;
     let uv = Vec2::new(atlas.x, 1.0 - atlas.y);
     let (low, high, share) = colour_read_levels(resolution, lod);
-    let valid = colour_level_valid(data, slot, uv, resolution, low)
-        && (share <= 0.0 || high == low || colour_level_valid(data, slot, uv, resolution, high));
+    let valid = colour_read_taps(data, coverage, slot, uv, resolution, low).is_some()
+        && (share <= 0.0 || high == low || colour_read_taps(data, coverage, slot, uv, resolution, high).is_some());
     if valid { LookupStatus::Success } else { LookupStatus::RejectedFootprint }
 }
 /// [design] Round 10b: the levels a colour read at level of detail `lod` takes, as the
@@ -666,33 +664,73 @@ pub fn colour_read_levels(resolution: u32, lod: f32) -> (u32, u32, f32) {
     let low = lod.floor() as u32;
     (low, (low + 1).min(last), lod - low as f32)
 }
-/// [design] Round 10b, as the shader's `terrain_colour_level`: at a level with `size`
-/// texels per cell side, the corner of the cell `slot`'s texels (atlas texels; the atlas's
-/// rows run north to south, the bake camera's reversed Y) and the bilinear read's position,
-/// the atlas coordinate `uv` in that level's texels clamped [`COLOUR_INSET`] inside the
-/// centres of the cell's outermost texels.
-pub fn colour_read_point(slot: (i32, i32), uv: Vec2, size: u32) -> (Vec2, Vec2) {
-    let corner = Vec2::new(slot.0 as f32, (2 - slot.1) as f32) * size as f32;
-    let p = (uv * 3.0 * size as f32).clamp(corner + Vec2::splat(0.5 + COLOUR_INSET), corner + Vec2::splat(size as f32 - 0.5 - COLOUR_INSET));
-    (corner, p)
+/// [design] Round 10b review, as the shader's `terrain_colour_taps`: at a level with `size`
+/// texels per cell side, the bilinear footprint of the atlas coordinate `uv`: its first
+/// (north-west) tap in that level's atlas texels (the atlas's rows run north to south, the
+/// bake camera's reversed Y) and the fraction towards the next column and row. Not clamped:
+/// it crosses cell edges into the neighbour's adjacent texels.
+pub fn colour_read_footprint(uv: Vec2, size: u32) -> (IVec2, Vec2) {
+    let p = uv * 3.0 * size as f32 - Vec2::splat(0.5);
+    let first = p.floor();
+    (first.as_ivec2(), p - first)
 }
-/// [design] Round 10b, as the shader's `terrain_colour_level_valid`: whether every texel a
-/// read of cell `slot` at `level` takes lies in one of its captured quadrants. A texel of a
-/// level with two or more texels per cell side covers level-0 texels of one quadrant only
-/// (each level halves whole quadrants), the quadrant its own position names; the last
-/// level's one texel covers all four, so it needs all four.
-pub fn colour_level_valid(data: &[u8], slot: (i32, i32), uv: Vec2, resolution: u32, level: u32) -> bool {
-    let size = resolution >> level;
-    let mask = height_texel(data, (slot.0 as usize * HEIGHT_TILE_WIDTH + 1, slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID)) as u32;
+/// The cell slot of the atlas texel `tap` at a level with `size` texels per cell side;
+/// `None` outside the atlas.
+fn colour_tap_slot(tap: IVec2, size: u32) -> Option<(i32, i32)> {
+    let size = size as i32;
+    if tap.cmplt(IVec2::ZERO).any() || tap.cmpge(IVec2::splat(3 * size)).any() { return None; }
+    Some((tap.x / size, 2 - tap.y / size))
+}
+/// [design] Round 10b review, as the shader's `terrain_colour_tap_valid`: whether the texel
+/// `tap` can be read: inside the atlas, its cell live-covered and the texel in a captured
+/// quadrant of that cell. A texel of a level with two or more texels per cell side covers
+/// level-0 texels of one quadrant only (each level halves whole quadrants), the quadrant its
+/// own position names; the last level's one texel covers all four, so it needs all four.
+pub fn colour_tap_valid(data: &[u8], coverage: u32, tap: IVec2, size: u32) -> bool {
+    let Some(slot) = colour_tap_slot(tap, size) else { return false };
+    if !covered(slot, coverage) { return false; }
+    let mask = colour_mask(data, slot);
     if size <= 1 { return mask & 0xf == 0xf; }
-    let (corner, p) = colour_read_point(slot, uv, size);
-    let tap = (p - Vec2::splat(0.5)).floor().as_ivec2() - corner.as_ivec2();
+    let t = tap - IVec2::new(slot.0, 2 - slot.1) * size as i32;
     let half = size as i32 / 2;
-    (0..4).all(|i| {
-        let t = (tap + IVec2::new(i % 2, i / 2)).clamp(IVec2::ZERO, IVec2::splat(size as i32 - 1));
-        let quadrant = u32::from(t.x >= half) + 2 * u32::from(t.y < half);
-        mask & (1 << quadrant) != 0
-    })
+    mask & (1 << (u32::from(t.x >= half) + 2 * u32::from(t.y < half))) != 0
+}
+/// One level's bilinear read: each tap's atlas texel and its weight, in the order (0, 0),
+/// (1, 0), (0, 1), (1, 1) from the first tap.
+pub type ColourTaps = [(IVec2, f32); 4];
+/// [design] Round 10b review, as the shader's `terrain_colour_taps` and
+/// `terrain_colour_level`: the read of cell `slot`'s fragment at `level`. Each level is
+/// filtered per cell, but the 3 by 3 atlas puts neighbouring cells' texels side by side, so
+/// the read is the plain bilinear footprint ([`colour_read_footprint`]), crossing a cell edge
+/// into the neighbour's adjacent texels. A tap that cannot be read ([`colour_tap_valid`])
+/// gets weight 0 and the others are renormalized; where a whole neighbouring column or row
+/// is missing that is the read clamped to the fragment's own cell, and at the last level
+/// (texels at the cells' centres) it interpolates between the centres of valid neighbours.
+/// The weights depend on the position and the taps' validity only, not on which cell the
+/// fragment is in, so both sides of an edge between valid cells read the same value. `None`
+/// (the footprint rejected) when no tap is the own cell's or one of the own cell's taps
+/// lies in an uncaptured quadrant.
+pub fn colour_read_taps(data: &[u8], coverage: u32, slot: (i32, i32), uv: Vec2, resolution: u32, level: u32) -> Option<ColourTaps> {
+    let size = resolution >> level;
+    let (first, f) = colour_read_footprint(uv, size);
+    let mut taps = [(IVec2::ZERO, 0.0); 4];
+    let mut own = false;
+    let along = |share: f32, next: bool| if next { share } else { 1.0 - share };
+    for (i, tap) in taps.iter_mut().enumerate() {
+        let offset = IVec2::new(i as i32 % 2, i as i32 / 2);
+        let texel = first + offset;
+        let valid = colour_tap_valid(data, coverage, texel, size);
+        if colour_tap_slot(texel, size) == Some(slot) {
+            if !valid { return None; }
+            own = true;
+        }
+        let weight = along(f.x, offset.x == 1) * along(f.y, offset.y == 1);
+        *tap = (texel, if valid { weight } else { 0.0 });
+    }
+    let total: f32 = taps.iter().map(|t| t.1).sum();
+    if !own || total <= 0.0 { return None; }
+    for tap in &mut taps { tap.1 /= total; }
+    Some(taps)
 }
 
 /// [design] Round 10a's end of the publication line: whether the publication supplies
@@ -1931,9 +1969,11 @@ pub(crate) mod tests {
         for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
         assert_eq!(status(&data, (0, 0), Vec2::new(-1.0, 100.0)), LookupStatus::OutOfRange);
         assert_eq!(status(&data, (0, 0), Vec2::splat(6144.0)), LookupStatus::InvalidHeight);
-        // Round 10b: the read stays inside its own cell, so the missing diagonal cell (1, 1)
-        // no longer rejects it (the shader's border fade handles missing cardinals only, as before).
-        assert_eq!(status(&data, (0, 0), Vec2::splat(4095.9)), LookupStatus::Success, "no tap reaches the missing diagonal");
+        // Round 10b review: the read crosses into valid neighbours, and the missing diagonal
+        // cell (1, 1) (no colour captured) only loses its tap's weight: the fragment keeps the
+        // colour of (0, 0), (1, 0) and (0, 1), the same value their fragments read beside it
+        // (before round 10b the whole read was rejected; round 10b clamped it to the cell).
+        assert_eq!(status(&data, (0, 0), Vec2::splat(4095.9)), LookupStatus::Success, "the missing diagonal's tap gets no weight");
         assert_eq!(status(&data, (0, 0), Vec2::splat(1024.0)), LookupStatus::Success);
         encode_colour_mask(&mut data, (0, 0), 0b1110);
         assert_eq!(status(&data, (0, 0), Vec2::splat(1024.0)), LookupStatus::InvalidColourQuadrant);
@@ -3014,7 +3054,7 @@ pub(crate) mod tests {
         }
     }
     #[test]
-    fn coverage_rejects_unloaded_diagonal_footprints_and_invalid_quadrants() {
+    fn coverage_drops_unloaded_diagonal_taps_and_rejects_invalid_quadrants() {
         let mut data = empty_height_atlas();
         let cell = surface([CapturePath::Fallback { layers: 0 }; 4]);
         let slots = HashSet::from([(0, 0), (1, 0), (0, 1), (1, 1)]);
@@ -3022,34 +3062,44 @@ pub(crate) mod tests {
         let full = 0x1ff;
         assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, full), LookupStatus::Success);
         let without_diagonal = full & !(1 << 4);
-        // Round 10b: the read stays inside the fragment's own cell, so a masked diagonal cell no
-        // longer rejects it; the cell's own coverage still does (below).
+        // Round 10b review: a masked (no longer covered) diagonal cell's tap gets no weight and
+        // the other three are renormalized, so the read stays valid and the same on both sides
+        // of the fragment's edges with its two covered neighbours (before round 10b it was
+        // rejected); the cell's own coverage still rejects (below).
         assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, without_diagonal), LookupStatus::Success);
+        let uv = Vec2::new((4096.0 - 0.1) / 12288.0, 1.0 - (4096.0 - 0.1) / 12288.0);
+        let taps = colour_read_taps(&data, without_diagonal, (0, 0), uv, 1024, 0).unwrap();
+        assert_eq!(taps.map(|t| colour_tap_slot(t.0, 1024)), [Some((0, 1)), Some((1, 1)), Some((0, 0)), Some((1, 0))], "north-west first: rows run north to south");
+        assert_eq!(taps[1].1, 0.0, "the masked diagonal");
+        assert!(taps.iter().all(|t| t.1 >= 0.0) && (taps.iter().map(|t| t.1).sum::<f32>() - 1.0).abs() < 1e-6);
         assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, full & !1), LookupStatus::InvalidHeight, "the cell's own coverage");
         assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-3072.0), 1024, without_diagonal), LookupStatus::InvalidHeight);
         encode_colour_mask(&mut data, (0, 0), 0b0111);
         assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, full), LookupStatus::InvalidColourQuadrant);
     }
-    /// [design] Round 10b: the colour read's levels and footprint. Every level's bilinear taps
-    /// stay in the fragment's own cell; a coarser level whose texels cover an uncaptured
-    /// quadrant rejects the read only when it contributes (the level below it alone at an
-    /// integer level of detail), and the last level (one texel per cell) needs all four.
+    /// [design] Round 10b: the colour read's levels and footprint. Every level's bilinear
+    /// footprint holds a tap of the fragment's own cell (round 10b review: it may cross into a
+    /// neighbour); a coarser level whose own-cell texels cover an uncaptured quadrant rejects
+    /// the read only when it contributes (the level below it alone at an integer level of
+    /// detail), and the last level (one texel per cell) needs all four.
     #[test]
-    fn colour_mips_stay_in_the_cell_and_validate_every_contributing_level() {
+    fn colour_mips_validate_every_contributing_level() {
         assert_eq!(colour_read_levels(512, -3.0), (0, 1, 0.0), "magnified: level 0 alone");
         assert_eq!(colour_read_levels(512, 2.25), (2, 3, 0.25));
         assert_eq!(colour_read_levels(512, 9.0), (9, 9, 0.0), "the last level stays the last");
         assert_eq!(colour_read_levels(512, 40.0), (9, 9, 0.0));
         assert_eq!(colour_read_levels(2048, 10.5), (10, 11, 0.5));
-        // Every level's read position keeps both bilinear taps inside the cell, at the cell's
-        // corners in negative cells too.
-        for resolution in RESOLUTIONS { for level in 0..colour_levels(resolution) - 1 {
+        // Every level's footprint has a tap of the fragment's cell, with at least a quarter of
+        // the weight (the tap holding the position is the nearest), at the cell's corners and
+        // the atlas's edges too.
+        for resolution in RESOLUTIONS { for level in 0..colour_levels(resolution) {
             let size = resolution >> level;
             for slot in [(0, 0), (2, 2), (1, 0)] { for local in [Vec2::ZERO, Vec2::splat(4095.999), Vec2::new(0.001, 4095.0)] {
                 let uv = Vec2::new((slot.0 as f32 * 4096.0 + local.x) / 12288.0, 1.0 - (slot.1 as f32 * 4096.0 + local.y) / 12288.0);
-                let (corner, p) = colour_read_point(slot, uv, size);
-                let tap = (p - Vec2::splat(0.5)).floor();
-                assert!(tap.cmpge(corner).all() && (tap + 1.0).cmplt(corner + size as f32).all(), "{resolution} level {level} {slot:?} {local:?}");
+                let (first, f) = colour_read_footprint(uv, size);
+                let weight = (0..4).map(|i| IVec2::new(i % 2, i / 2)).filter(|&o| colour_tap_slot(first + o, size) == Some(slot))
+                    .map(|o| (if o.x == 1 { f.x } else { 1.0 - f.x }) * (if o.y == 1 { f.y } else { 1.0 - f.y })).fold(-1.0, f32::max);
+                assert!(weight >= 0.25 - 1e-3, "{resolution} level {level} {slot:?} {local:?}: {weight}");
             }}
         }}
         let mut data = empty_height_atlas();
@@ -3066,17 +3116,98 @@ pub(crate) mod tests {
         assert_eq!(status(near_edge, 0.0), LookupStatus::Success);
         assert_eq!(status(near_edge, 2.0), LookupStatus::Success, "level 2 alone");
         assert_eq!(status(near_edge, 2.5), LookupStatus::RejectedFootprint, "level 3 contributes");
-        // In the middle of q3: levels to 7 (4 texels per cell side) read q3 alone; level 8's two
-        // texels per side are all read (the read is clamped inside the cell), q0's among them,
-        // and the last level's one texel covers all four quadrants.
+        // In q3, 512 units from both quadrant edges: levels to 7 (4 texels per cell side) read
+        // q3 and q1 (both captured); level 8 (two texels per side, quadrant-sized) reads the
+        // west column, q0's texel among them; the last level's one texel covers all four.
+        let quarter = Vec2::new(2560.0, 2560.0);
+        assert_eq!(status(quarter, 7.0), LookupStatus::Success);
+        assert_eq!(status(quarter, 7.5), LookupStatus::RejectedFootprint, "level 8 contributes");
+        assert_eq!(status(quarter, 9.0), LookupStatus::RejectedFootprint, "the last level alone");
+        // At the centre of q3 level 8's footprint is the east column (q3 and q1, at its texel
+        // centres) and the east neighbour's west column, with no weight on q0's texel. Round
+        // 10b's clamp inside the cell also took q0's texel there (with a 1/64 weight) and
+        // rejected; the exact footprint reads no uncaptured texel, so the read serves.
         let far = Vec2::new(3072.0, 3072.0);
-        assert_eq!(status(far, 7.0), LookupStatus::Success);
-        assert_eq!(status(far, 7.5), LookupStatus::RejectedFootprint, "level 8 contributes");
+        assert_eq!(status(far, 7.5), LookupStatus::Success, "level 8 reads q3, q1 and the neighbour");
         assert_eq!(status(far, 9.0), LookupStatus::RejectedFootprint, "the last level alone");
-        // All four captured: every level serves, the cell's neighbours never enter.
+        // All four captured: every level serves; the uncaptured west neighbour (0, 0) at the last
+        // level and the atlas's south edge only lose their taps' weight.
         assert_eq!(lookup_level_status(&data, origin, shift + Vec2::new(4096.0 + 1024.0, 1024.0), 512, 0x1ff, 9.0), LookupStatus::Success);
+        let uv = Vec2::new(1.25 / 3.0, 1.0 - 0.25 / 3.0);
+        let taps = colour_read_taps(&data, 0x1ff, (1, 0), uv, 512, 9).unwrap();
+        assert_eq!(taps.map(|t| (colour_tap_slot(t.0, 1), t.1 > 0.0)), [(Some((0, 0)), false), (Some((1, 0)), true), (None, false), (None, false)]);
         // The cell's own live coverage gates every level.
         assert_eq!(lookup_level_status(&data, origin, shift + Vec2::new(4096.0 + 1024.0, 1024.0), 512, 0x1ff & !(1 << 1), 0.0), LookupStatus::InvalidHeight);
+    }
+    /// [design] Round 10b review: the CPU statement of the shader's colour read
+    /// (`terrain_colour_mips` over `terrain_colour_level`) at `point` (game units from the
+    /// atlas's south-west corner, origin (0, 0)) for a test colour `ramp` of game position.
+    /// A linear colour's mean over a texel's block of level-0 texels (the per-cell mip
+    /// filter) is its value at the block's centre, so each level's texel holds `ramp` at
+    /// its own centre.
+    fn ramp_read(data: &[u8], coverage: u32, point: Vec2, resolution: u32, lod: f32, ramp: impl Fn(Vec2) -> f32) -> Option<f32> {
+        let slot = fnv_world::cell_of(point.x, point.y);
+        let uv = Vec2::new(point.x / 12288.0, 1.0 - point.y / 12288.0);
+        let (low, high, share) = colour_read_levels(resolution, lod);
+        let level = |level: u32| colour_read_taps(data, coverage, slot, uv, resolution, level).map(|taps| {
+            let size = (resolution >> level) as f32;
+            taps.iter().map(|&(t, w)| w * ramp(Vec2::new(t.x as f32 + 0.5, 3.0 * size - t.y as f32 - 0.5) * 4096.0 / size)).sum::<f32>()
+        });
+        let low_value = level(low)?;
+        if share <= 0.0 || high == low { return Some(low_value); }
+        Some(low_value + (level(high)? - low_value) * share)
+    }
+    /// [design] Round 10b review: a smooth colour ramp read across an internal cell edge is
+    /// continuous at every level of detail, fractional ones and the last level included,
+    /// when both cells are valid (round 10b's clamp into each cell jumped there by a texel's
+    /// worth of the ramp: 0.02 at level 0 of 2048 for the x slope below, a whole cell's,
+    /// about 41, at the last level). A linear colour read bilinearly across valid cells is
+    /// the colour itself. A missing diagonal's tap is dropped by the fragments on both
+    /// sides alike, so their shared edge stays continuous; beside a missing cardinal
+    /// neighbour the read is the one clamped to the cell.
+    #[test]
+    fn colour_reads_are_continuous_across_valid_cell_edges() {
+        let mut data = empty_height_atlas();
+        let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
+        let slots: HashSet<_> = (0..3).flat_map(|y| (0..3).map(move |x| (x, y))).collect();
+        for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
+        let ramp = |p: Vec2| 0.01 * p.x + 0.004 * p.y;
+        let across = |coverage: u32, edge: Vec2, normal: Vec2, resolution: u32, lod: f32| {
+            let before = ramp_read(&data, coverage, edge - normal * 0.01, resolution, lod, ramp).expect("valid before the edge");
+            let after = ramp_read(&data, coverage, edge + normal * 0.01, resolution, lod, ramp).expect("valid after the edge");
+            assert!((before - after).abs() < 1e-3, "{resolution} lod {lod} {edge:?} coverage {coverage:#x}: {before} against {after}");
+            before
+        };
+        for resolution in RESOLUTIONS {
+            let last = (colour_levels(resolution) - 1) as f32;
+            for lod in [0.0, 0.5, 2.25, 5.5, last - 1.25, last - 1.0, last - 0.5, last] {
+                // The edge between (0, 1) and (1, 1) at (0, 1)'s middle row, and the edge between
+                // (1, 1) and (1, 2) at (1, 1)'s middle column: every tap inside the atlas.
+                for (edge, normal) in [(Vec2::new(4096.0, 6144.0), Vec2::X), (Vec2::new(6144.0, 8192.0), Vec2::Y)] {
+                    let value = across(0x1ff, edge, normal, resolution, lod);
+                    assert!((value - ramp(edge)).abs() < 1e-3, "{resolution} lod {lod} {edge:?}: {value} against {}", ramp(edge));
+                }
+            }
+            // (1, 1) uncovered: at the corner it shares with (0, 0), (1, 0) and (0, 1), the
+            // fragments on both sides of (0, 0)'s edges read the same value, the diagonal's tap
+            // dropped (the read differs from the full one: the tap was in the footprint).
+            let without_diagonal = 0x1ff & !(1 << 4);
+            for (lod, inset) in [(0.0, 0.5), (last - 1.0, 100.0), (last - 0.5, 100.0), (last, 100.0)] {
+                let corner = Vec2::splat(4096.0);
+                let value = across(without_diagonal, corner - Vec2::Y * inset, Vec2::X, resolution, lod);
+                across(without_diagonal, corner - Vec2::X * inset, Vec2::Y, resolution, lod);
+                let full = ramp_read(&data, 0x1ff, corner - Vec2::Y * inset - Vec2::X * 0.01, resolution, lod, ramp).unwrap();
+                assert!((value - full).abs() > 1e-3, "{resolution} lod {lod}: the diagonal's tap had a weight");
+            }
+            // (1, 0) uncovered: (0, 0)'s read at its east edge is the one clamped to its last
+            // column (texel centres half a texel inside the edge), at level 0 and the last level.
+            let without_east = 0x1ff & !(1 << 1);
+            let edge = Vec2::new(4096.0 - 0.01, 2048.0);
+            let clamped = ramp_read(&data, without_east, edge, resolution, 0.0, ramp).unwrap();
+            assert!((clamped - ramp(Vec2::new(4096.0 - 2048.0 / resolution as f32, 2048.0))).abs() < 1e-3, "{resolution}: {clamped}");
+            let clamped = ramp_read(&data, without_east, edge, resolution, last, ramp).unwrap();
+            assert!((clamped - ramp(Vec2::splat(2048.0))).abs() < 1e-3, "{resolution}: the cell's own centre, {clamped}");
+        }
     }
     /// [design] Round 10b: the mip filter's uniform and workgroups: each baked cell's atlas
     /// column and row, its count, and one workgroup layer per cell covering that level's

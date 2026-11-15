@@ -76,10 +76,6 @@ pub const DETAIL_FAR: f32 = 4096.0;
 /// them (NVForever's choice, round-10 plan). The aid's explicit 1024 and 2048 stay.
 pub const RESOLUTIONS: [u32; 3] = [512, 1024, 2048];
 pub const DEFAULT_RESOLUTION: u32 = 512;
-/// [design] Round 10b: how far (millionths of a texel, 1/64) a colour read keeps inside the
-/// centres of its cell's outermost texels, so the GPU's limited sub-texel precision cannot
-/// give a neighbouring cell's texel a weight (nvforever terrain_surface.rs `COLOUR_INSET`).
-pub const COLOUR_INSET_E6: u32 = 15_625;
 /// [design] NVForever's contact constants (initial tuning choices, not taken from another
 /// renderer): surfaces turned at least 35 degrees from the ground get the full contact
 /// weight, those within 15 degrees none; 2 units below the ground count as penetrating.
@@ -130,8 +126,6 @@ pub fn blend_shader_defs() -> Vec<ShaderDefVal> {
         ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_FAR".into(), DETAIL_FAR as u32),
         ShaderDefVal::UInt("MESH_TERRAIN_FLAG_TWO_COMPONENT".into(), bevy::pbr::StandardMaterialFlags::TWO_COMPONENT_NORMAL_MAP.bits()),
         ShaderDefVal::UInt("MESH_TERRAIN_FLAG_FLIP_Y".into(), bevy::pbr::StandardMaterialFlags::FLIP_NORMAL_MAP_Y.bits()),
-        // Round 10b's colour read inset (nvforever terrain_surface.rs `COLOUR_INSET`).
-        ShaderDefVal::UInt("MESH_TERRAIN_COLOUR_INSET_E6".into(), COLOUR_INSET_E6),
     ]
 }
 

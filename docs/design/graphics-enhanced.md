@@ -456,18 +456,20 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   four-bit mask of the quadrants whose colour was captured. Every prepared cell gives its
   heights even where a quadrant's colour cannot be captured.
 - *Residency.* Before sampling, the shader needs the fragment's own cell's height and live
-  coverage and its quadrant's colour bit, and (round 10b) every texel the colour read takes
-  at each contributing mip level in a captured quadrant of that cell (below); a 128-unit
-  fade at the region's edges remains. Round 10b: the read never leaves the fragment's cell,
-  so neighbouring cells (a missing diagonal cell of an L-shaped region included) no longer
-  enter the colour footprint; the metadata row's residency mask is still written but no
-  longer read by the shader. A failed lookup leaves the fragment exactly as it was.
+  coverage and its quadrant's colour bit, and (round 10b) every own-cell texel the colour
+  read takes at each contributing mip level in a captured quadrant of that cell (below); a
+  128-unit fade at the region's edges remains. Round 10b review: the read crosses into
+  neighbouring cells, and a neighbouring texel counts only when its cell is live-covered
+  and the texel lies in a captured quadrant; one that does not (a missing diagonal cell of
+  an L-shaped region included) gets no weight instead of rejecting the read. The metadata
+  row's residency mask is still written but no longer read by the shader (live coverage
+  and the colour masks decide). A failed lookup leaves the fragment exactly as it was.
 - *Publication and continuity.* Each immutable front/back publication owns its images,
   southwest origin and cell identities. A camera crossing retains completed, resident,
   unchanged cells inside the new 3 by 3 region at the **old origin** until replacement
   commits. An enabled-only nine-bit coverage mask intersects baked height and quadrant
-  validity in the initial lookup (round 10b: which covers every tap of the colour read, all
-  inside the fragment's cell) and each border-fade neighbour check. Departing or dirty cells lose coverage without a colour-image upload.
+  validity in the initial lookup, in every tap of the colour read (round 10b review: own
+  and neighbouring cells' alike) and in each border-fade neighbour check. Departing or dirty cells lose coverage without a colour-image upload.
   Continuity covers retained interior footprints; new cells, genuinely invalidated cells,
   teleports without overlap and changing missing-neighbour border fades have no guarantee.
 - *Incremental assembly and receipts.* Unchanged cells are GPU rectangle copies into a
@@ -770,21 +772,40 @@ cannot hold every later publication back; the replacement then starts with a
 `settlement wait expired revision=... frames=...` warning, so at most one allocation per
 1800 frames comes that way.
 *Colour filtering (round 10b)* [design: `nif_surface_bindings.wesl` `terrain_colour_lod`,
-`terrain_colour_mips`, `terrain_colour_footprint`; `terrain_surface.rs`
-`lookup_level_status`]: the colour read's level of detail is log2 of the larger of the
-fragment's two screen-axis footprints in level-0 texels (the continuous game-xy
-derivatives `nif_material.wesl` takes at the function's top level, before every branch,
-times the texels per game unit) plus the view's mip bias, clamped to the atlas's levels.
-The read takes the level below it and the one above with the fraction as its share, each
-with `textureSampleLevel` (the last level's single texel with `textureLoad`) at a position
-clamped 1/64 texel inside the centres of the fragment's own cell's outermost texels, so no
-tap reaches another cell at any level, and the two are mixed. The colour is valid when
-every texel either contributing level reads lies in a captured quadrant of the cell: a
-texel of a level with two or more texels per cell side covers one quadrant (the one its
-position names), the last level's covers all four; the cell's own live coverage is part of
-the quadrant check, and the missing-region border fade stays. So a fragment whose
-footprint reaches a quadrant whose colour was not captured, at a level it reads, keeps
-the layers or no blend, never a darkened mix. There are still no gutters; beyond 4096
+`terrain_colour_taps`, `terrain_colour_mips`, `terrain_colour_footprint`; `terrain_surface.rs`
+`lookup_level_status`, `colour_read_taps`]: the colour read's level of detail is log2 of the
+larger of the fragment's two screen-axis footprints in level-0 texels (the continuous
+game-xy derivatives `nif_material.wesl` takes at the function's top level, before every
+branch, times the texels per game unit) plus the view's mip bias, clamped to the atlas's
+levels. The read takes the level below it and the one above with the fraction as its
+share, and mixes the two. Each level is filtered per cell (no texel of any level covers
+two cells), but the 3 by 3 atlas puts neighbouring cells' texels side by side, so a level's
+read is the plain bilinear footprint at the fragment's position: near an edge its taps are
+the cell's outermost texels and the neighbour's adjacent ones, on one grid as regular
+across the edge as inside a cell (round 10b review: round 10b clamped the read into the
+fragment's own cell, and since the two cells' edge texels stand for different places,
+a few units apart at level 0 and whole regions apart at coarse levels, even a smooth
+colour jumped at the edge, by a whole cell's average at the last level). The shader loads
+the four taps (`textureLoad`) and weights them itself. A tap counts when it lies inside the
+atlas, its cell is live-covered and the texel lies in a captured quadrant of that cell (a
+texel of a level with two or more texels per cell side covers one quadrant, the one its
+position names; the last level's covers all four); one that does not gets no weight and
+the others are renormalized. Where a whole neighbouring column or row is missing that is
+exactly the read clamped to the fragment's own cell, which with the missing-region border
+fade is the fallback at the region's edges; at a corner whose diagonal cell is missing the
+other three taps remain. At the last level, one texel per cell at the cell's centre, the
+read interpolates between the centres of valid neighbouring cells rather than taking one
+whole-cell average. The weights depend on the position and the taps' validity only, never
+on which cell the fragment is in, so the fragments on both sides of an edge between two
+valid cells read the same value: the colour is continuous there at every level and level
+of detail (`colour_reads_are_continuous_across_valid_cell_edges`, a linear ramp, which a
+bilinear read across valid cells returns unchanged). The colour is valid when, at each
+contributing level, the footprint holds a tap of the fragment's own cell and every own-cell
+tap lies in a captured quadrant (the tap holding the position always has at least a
+quarter of the weight); the cell's own live coverage is part of the height check. So a
+fragment whose footprint reaches an uncaptured quadrant of its own cell, at a level it
+reads, keeps the layers or no blend, and no texel of an uncaptured quadrant or uncovered
+cell ever gets a weight: never a darkened mix. There are still no gutters; beyond 4096
 units, and where a quadrant keeps the colour cache, geometric triangle normals remain the
 target.
 Round 10a's detail adds about 0.66 MiB of height atlas per publication (1.3 MiB front and
@@ -925,9 +946,11 @@ texture swap, a fade and an override: `switching_off_during`), `terrain_surface`
 `removed_images_never_leave_the_replacement_waiting_on_an_unpreparable_draw`; third review round:
 `a_normal_map_added_back_restores_the_detail_once`,
 `a_normal_map_loaded_late_ends_up_with_detail`; round 10b:
-`colour_mips_stay_in_the_cell_and_validate_every_contributing_level`,
+`colour_mips_validate_every_contributing_level`,
 `mip_dispatch_covers_each_baked_cell_and_no_more`,
-`copy_only_replacements_draw_nothing_and_copy_every_level`), `mesh_terrain_blend` (round 10a review:
+`copy_only_replacements_draw_nothing_and_copy_every_level`; round 10b review:
+`colour_reads_are_continuous_across_valid_cell_edges`,
+`coverage_drops_unloaded_diagonal_taps_and_rejects_invalid_quadrants`), `mesh_terrain_blend` (round 10a review:
 `removed_palette_image_keeps_retained_clones_drawable_and_the_replacement_publishes`),
 `terrain::tests` (round 10a: `detail_capture_reconstructs_the_drawn_triangles`; second
 review round: `an_initially_rejected_overflow_capture_recovers_when_the_edit_is_reverted`),
