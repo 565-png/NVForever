@@ -470,6 +470,9 @@ const MOTION_STEPS: usize = 120;
 /// A turn of a bone counts as this many units of motion per radian (about an arm's reach
 /// from the shoulder to the hand), a move as itself.
 const MOTION_REACH: f32 = 25.0;
+/// A turn of a hand counts as this many units of motion per radian: about how far the held
+/// weapon's muzzle or blade swings with it [hypothesis].
+const MOTION_HAND_REACH: f32 = 12.0;
 /// A step (or two in a row) moving this many times as much as any of the steps two to
 /// four away, and at least the share after it of the clip's motion, is a jump of its pose:
 /// a key the clip takes at once, not a quick swing (which builds up over several steps).
@@ -477,12 +480,95 @@ const MOTION_JUMP_RATIO: f32 = 6.0;
 const MOTION_JUMP_SHARE: f32 = 0.03;
 
 impl ClipMotion {
-    /// The motion of `clip`'s bones (the fingers left out: theirs is small and many).
-    fn of(clip: &Clip) -> ClipMotion {
+    /// The motion of `clip` on skeleton `skel`: how far the hands go, as seen from the eye
+    /// ([`Self::hand_steps`]), or, on a skeleton without hands, its bones' own motion
+    /// ([`Self::bone_steps`]).
+    fn of(clip: &Clip, skel: &PreparedSkeleton) -> ClipMotion {
+        let step = Self::hand_steps(clip, skel).unwrap_or_else(|| Self::bone_steps(clip));
+        Self::from_steps(step)
+    }
+
+    /// The motion of each step of `clip`'s time: both hands' moves and turns (a turn by
+    /// [`MOTION_HAND_REACH`] units a radian) in the space of the first-person camera node
+    /// (`Camera1st`; the skeleton's root without one), the clip's tracks posed through the
+    /// skeleton's hierarchy with its bind pose where the clip has no track. `None` without
+    /// a hand bone. What is seen moves, not what the bones do on their own: summed by bone,
+    /// a turn of the upper arm (that swings the hand over a long arm) counted as little as
+    /// one of the wrist, so the razor's draw raced through its swing (two pushes of 390 and
+    /// 360 units/s where the original makes one) and the frag mine's ended with a flick (the
+    /// traces `movement-inertia-trace-weapons` and `-rest` against their `-original`s,
+    /// 2026-11-16).
+    fn hand_steps(clip: &Clip, skel: &PreparedSkeleton) -> Option<Vec<f32>> {
+        let find = |name: &str| {
+            skel.by_name.get(name).copied().or_else(|| skel.names.iter().position(|n| n.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(name))))
+        };
+        let hands: Vec<usize> = ["Bip01 R Hand", "Bip01 L Hand"].into_iter().filter_map(find).collect();
+        if hands.is_empty() {
+            return None;
+        }
+        let camera = find("Camera1st");
+        let mut track = vec![None; skel.parents.len()];
+        for (name, k) in &clip.tracks {
+            if let Some(i) = find(name).filter(|&i| i < track.len()) {
+                track[i] = Some(k);
+            }
+        }
         let (start, stop) = (clip.start, clip.stop.max(clip.start));
-        // The arms only: the fingers' motion is small and many, and the weapon's node (the
-        // flamer swinging off the back while the hands hold still) made the playback all but
-        // stop with the hands (the trace `movement-inertia-trace-weapons`, 2026-11-15).
+        // The clip's local transform of node `n` at `t`, the bind pose where it has none.
+        let local = |n: usize, t: f32| -> Affine3A {
+            let mut l = skel.locals.get(n).copied().unwrap_or_default();
+            if let Some(k) = track[n] {
+                if let Some(p) = k.translation.sample(t) {
+                    l.translation = Vec3::from_array(p);
+                }
+                if let Some([w, x, y, z]) = k.rotation_at(t) {
+                    l.rotation = Quat::from_xyzw(x, y, z, w);
+                }
+                if let Some([s]) = k.scale.sample(t) {
+                    l.scale = Vec3::splat(s);
+                }
+            }
+            affine(l)
+        };
+        // Node `n` in the root's space (the root's own transform left out, as the animator
+        // poses it).
+        let model = |n: usize, t: f32| -> Affine3A {
+            let (mut m, mut cur, mut depth) = (Affine3A::IDENTITY, Some(n), 0);
+            while let Some(i) = cur.filter(|&i| i > 0 && depth < 256) {
+                m = local(i, t) * m;
+                cur = skel.parents.get(i).copied().flatten();
+                depth += 1;
+            }
+            m
+        };
+        let pose = |t: f32| -> Vec<(Vec3, Quat)> {
+            let eye = camera.map_or(Affine3A::IDENTITY, |c| model(c, t)).inverse();
+            hands
+                .iter()
+                .map(|&h| {
+                    let (_, r, p) = (eye * model(h, t)).to_scale_rotation_translation();
+                    (p, r)
+                })
+                .collect()
+        };
+        let mut last = pose(start);
+        let mut step = Vec::with_capacity(MOTION_STEPS);
+        for i in 1..=MOTION_STEPS {
+            let now = pose(start + (stop - start) * i as f32 / MOTION_STEPS as f32);
+            let moved: f32 = now.iter().zip(&last).map(|((p, q), (p0, q0))| p.distance(*p0) + MOTION_HAND_REACH * q.angle_between(*q0)).sum();
+            step.push(if moved.is_finite() { moved } else { 0.0 });
+            last = now;
+        }
+        Some(step)
+    }
+
+    /// The motion of each step of `clip`'s time as its bones' own moves and turns (a turn
+    /// by [`MOTION_REACH`] units a radian), summed: the arms only, the fingers' motion being
+    /// small and many, and the weapon's node (the flamer swinging off the back while the
+    /// hands hold still) made the playback all but stop with the hands (the trace
+    /// `movement-inertia-trace-weapons`, 2026-11-15).
+    fn bone_steps(clip: &Clip) -> Vec<f32> {
+        let (start, stop) = (clip.start, clip.stop.max(clip.start));
         let arms = |n: &str| {
             let n = n.to_ascii_lowercase();
             !n.contains("finger") && n != "weapon"
@@ -507,6 +593,11 @@ impl ClipMotion {
             step.push(moved);
             last = now;
         }
+        step
+    }
+
+    /// The motion done along the clip's time from each step's motion, its jumps left out.
+    fn from_steps(mut step: Vec<f32>) -> ClipMotion {
         let total: f32 = step.iter().sum();
         let jumped: Vec<usize> = (0..step.len())
             .filter(|&i| {
@@ -560,8 +651,13 @@ impl ClipInfo {
         ClipInfo { path, clip, keys, speed, weapon_track, motion: std::sync::OnceLock::new() }
     }
 
-    fn motion(&self) -> &ClipMotion {
-        self.motion.get_or_init(|| ClipMotion::of(&self.clip))
+    /// Its [`ClipMotion`] on skeleton `skel` (the rig's that plays it).
+    fn motion(&self, skel: &PreparedSkeleton) -> &ClipMotion {
+        self.motion.get_or_init(|| {
+            let m = ClipMotion::of(&self.clip, skel);
+            debug!("player rig: {} played by its motion, jumps of its pose at {:?}", self.path, m.jumps);
+            m
+        })
     }
 
     fn fade(&self) -> f32 {
@@ -2340,12 +2436,13 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     if let Some(at) = f.equip_at {
         let c = if f.hands.phase == WeaponPhase::Drawing { &draw } else { &put_away };
         let mut jumped = false;
+        let skel = a.skel.clone();
         for l in a.layers.iter_mut().filter(|l| l.tag == TAG_EQUIP) {
             let len = l.clip.length();
             let x = match c.as_ref().filter(|c| Arc::ptr_eq(&c.clip, &l.clip)) {
                 Some(c) => {
-                    let x = c.motion().time_for(at);
-                    jumped |= len > 0.0 && c.motion().jumps_between(l.time / len, x);
+                    let x = c.motion(&skel).time_for(at);
+                    jumped |= len > 0.0 && c.motion(&skel).jumps_between(l.time / len, x);
                     x
                 }
                 None => at.clamp(0.0, 1.0),
@@ -3148,9 +3245,10 @@ fn drive_body(
     // Played by its motion (`ClipMotion`): the moment is where the curve reaches the motion
     // done by then.
     let (draw_c, away_c) = (timing_rig.clip(&mut ctx, ClipKey::Equip(stance, prefix, true)), timing_rig.clip(&mut ctx, ClipKey::Equip(stance, prefix, false)));
+    let skel = timing_rig.animator.skel.clone();
     let quick = |t: fnv_actor::player_clips::Transition, c: Option<&Arc<ClipInfo>>| {
         let length = t.length / eq;
-        let moved = |x: f32| c.map_or(x, |c| c.motion().done_at(x));
+        let moved = |x: f32| c.map_or(x, |c| c.motion(&skel).done_at(x));
         let switch_at = if warped && t.length > 0.0 { length * nvf_play::ease::settle_inv(moved(t.switch_at / t.length)) } else { t.switch_at / eq };
         fnv_actor::player_clips::Transition { length, switch_at }
     };

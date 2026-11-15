@@ -271,9 +271,34 @@ itself turns exactly as the mouse says.
   - A clip's motion (`ClipMotion`) is measured on the arms only, not the `Weapon` node: the
     flamer swinging off the back while the hands held still all but stopped the playback,
     and the hands with it (147 to 19 units/s, then off again).
-  Left as they were: the fists' put-away hands over to arms down far from where its clip
-  ends (a second movement), and the straight razor's put-away has a jump in its own keys
-  (eased across).
+- Every first-person draw and put-away, one weapon per clip pair (owner, 2026-11-16: "1 test
+  for every unique animation"): the eleven clip prefixes, each shared by every weapon of its
+  animation type (`h2h` 62 weapons, `1hm` 51, `2hm` 43, `1hp` 108, `2hr` 64, `2ha` 57, `2hh` 22,
+  `2hl` 41, `1gt` 34, `1lm` 7, `1md` 7; no weapon has clips of its own; Lonesome Road
+  replaces the launcher's). Traces `movement-inertia-trace-weapons` and `-rest` (Assault
+  Carbine, Missile Launcher, Frag Mine, Bottlecap Mine), each against its `-original` twin
+  (the main switch off: the clips at the original's pace and blending), counting the
+  separate movements of each hand:
+  - `ClipMotion` measures the hands as the eye sees them: both hands' moves and turns in the
+    `Camera1st` node's space, the clip's tracks posed through the skeleton (its bind pose
+    where the clip has none). Summed bone by bone, a turn of the upper arm, which swings the
+    hand over a long arm, counted as little as one of the wrist, and the playback raced
+    through it: the razor's draw made two pushes (390 and 360 units/s) where the original
+    makes one, the frag mine's ended with a flick (16, 38, 15 units/s). Now the razor's is one
+    push, the flick gone, and the razor's put-away key jump is no longer one (none of the
+    clips has a jump of the hands).
+  - `anim_blend::Animator::pose` leaves out a layer whose fade shows as nothing: a leaving
+    smooth layer's last frame (its fade a hair over 0, the settling curve rounding it to
+    none) alone in its priority group shared 0 ÷ 0, and the bones it drove took their bind
+    pose for that frame (the left arm flung 45 units out and back during the grenade's
+    put-away; it depends on where the frames fall, so it came and went between runs).
+  - On screen no clip makes more movements than the original's, several fewer. The ones
+    left where the original has fewer happen with the hands out of view (80-140° off the
+    line of sight): the fists' put-away (a second push once the hands are below and behind
+    the camera), the pistol's put-away left hand, the rebar club's draw (the clip's own dip,
+    the original's too), the Bottlecap Mine's left hand (eased where the original snaps).
+    The change of holstered weapon moves the arms behind the view in one frame, as the
+    original does.
 - **Weapon weight in handling** (part of Weapon Handling since 2026-11-15, §1.4a.3:
   `--no-weapon-handling`, key `weapon-handling`; eighth playtest: "weapon weight slows handling"): with
   movement inertia the hand-back after a reload or an attack takes `inertia::handling` of
@@ -453,13 +478,13 @@ same curve"; trace `movement-inertia-trace-weapons`: the 10mm pistol, the straig
 the rebar club, a frag grenade, the flamer, the fists, a swap while drawn):
 
 - A draw or holster clip is played by how far its motion has got, not by its clock
-  (`player_body::ClipMotion`: the bones' moves and turns along the clip, the fingers left
-  out), so the motion as a whole follows the settling curve. The fists' draw has its arm
+  (`player_body::ClipMotion`: the hands' moves and turns as the eye sees them, below), so the motion as a whole follows the settling curve. The fists' draw has its arm
   up in its first fifth: played by its clock along the curve it still came up at
   980 units/s in 0.1 s; now at most 330. The weapon changes hands where the curve reaches
   the motion done at the clip's own key.
 - A key jump inside a clip (a step its keys take at once) is eased across
-  (`Animator::smooth_jump`); none in the first-person clips, a few in the third-person ones.
+  (`Animator::smooth_jump`); measured on the hands, none of the first- or third-person draw
+  and put-away clips has one (2026-11-16; summed by bone, the razor's put-away had one).
 - The hand-over to the hold or the arms down at a draw's or holster's end starts with no
   speed and no pull (`handover_share`, `6u⁵ − 15u⁴ + 10u³` from 35 % of the time): along the
   settling curve's sharp start, the nearly stopped arms set off again at 350 units/s within

@@ -1145,6 +1145,47 @@ expect = [
 ]
 
 [[scenario]]
+name = "movement-inertia-trace-weapons-rest"
+source = "owner 2026-11-15 (engine/nvforever/src/player_body.rs MotionTrace; \"check them all while skipping weapons that reuse the same one - 1 test for every unique animation\"): as movement-inertia-trace-weapons for the four first-person draw and put-away clip pairs it leaves out, one weapon each: an automatic rifle (Assault Carbine, `2ha`), a launcher (Missile Launcher, `2hl`, Lonesome Road's clips when it is loaded), a land mine (Frag Mine, `1lm`) and a mine drop (Bottlecap Mine, `1md`); drawn at 5/13/24/32 s, put away at 9/19/28/36 s (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-weapons-rest.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:WeapNVAssaultCarbine:1,2:call:player:AddItem:WeapMissileLauncher:1,2:call:player:AddItem:WeapMineFrag:3,2:call:player:AddItem:WeapMineBottlecap:3,4:call:player:EquipItem:WeapNVAssaultCarbine,12:call:player:EquipItem:WeapMissileLauncher,23:call:player:EquipItem:WeapMineFrag,31:call:player:EquipItem:WeapMineBottlecap", NVF_PLAY_TEST_CONTROL = "5:weapon,9:weapon,13:weapon,19:weapon,24:weapon,28:weapon,32:weapon,36:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 43
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the four weapons is written" },
+  { re = 'weapon handling: draws at .* \(6(\.0)? lb', label = "the Assault Carbine is drawn" },
+  { re = 'weapon handling: draws at .* \(20(\.0)? lb', label = "the Missile Launcher is drawn" },
+  { re = 'player body summary: weapon sway on', label = "the four weapons: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-weapons-original"
+source = "the reference for movement-inertia-trace-weapons: the same draws and put-aways with the Advanced Movement main switch off (--no-advanced-movement), the clips at the original's pace and blending, to tell a clip's own second movements from ours. owner 2026-11-15 (engine/nvforever/src/player_body.rs MotionTrace; eleventh playtest: \"some equip animations are not affected - check that every animation for guns/melee weapons is affected\"): a frame-by-frame trace of drawing, attacking with and putting away each weapon type (pistol, one- and two-handed melee, a grenade, a heavy weapon, fists) and a weapon swapped while drawn, for finding clips that do not follow the settling curve (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-weapons-original.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:Weap10mmPistol:1,2:call:player:AddItem:WeapNVStraightRazor:1,2:call:player:AddItem:WeapNVRebarClub:1,2:call:player:AddItem:WeapGrenadeFrag:3,2:call:player:AddItem:WeapFlamer:1,2:call:player:AddItem:WeapNVHuntingShotgun:1,4:call:player:EquipItem:Weap10mmPistol,10:call:player:EquipItem:WeapNVStraightRazor,17:call:player:EquipItem:WeapNVRebarClub,24:call:player:EquipItem:WeapGrenadeFrag,30:call:player:EquipItem:WeapFlamer,36:call:player:UnequipItem:WeapFlamer,43:call:player:EquipItem:Weap10mmPistol,47:call:player:EquipItem:WeapNVHuntingShotgun", NVF_PLAY_TEST_CONTROL = "5:weapon,8:weapon,11:weapon,13:fire,15:weapon,18:weapon,20:fire,22:weapon,25:weapon,28:weapon,31:weapon,34:weapon,37:weapon,39:fire,41:weapon,44:weapon,50:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--no-advanced-movement"]
+run_seconds = 53
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the weapons is written, Advanced Movement off" },
+  { re = 'player body summary: weapon sway on', label = "the weapons: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-weapons-rest-original"
+source = "the reference for movement-inertia-trace-weapons-rest: the same draws and put-aways with the Advanced Movement main switch off (--no-advanced-movement), the clips at the original's pace and blending, to tell a clip's own second movements from ours. owner 2026-11-15 (engine/nvforever/src/player_body.rs MotionTrace; \"check them all while skipping weapons that reuse the same one - 1 test for every unique animation\"): as movement-inertia-trace-weapons for the four first-person draw and put-away clip pairs it leaves out, one weapon each: an automatic rifle (Assault Carbine, `2ha`), a launcher (Missile Launcher, `2hl`, Lonesome Road's clips when it is loaded), a land mine (Frag Mine, `1lm`) and a mine drop (Bottlecap Mine, `1md`); drawn at 5/13/24/32 s, put away at 9/19/28/36 s (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-weapons-rest-original.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:WeapNVAssaultCarbine:1,2:call:player:AddItem:WeapMissileLauncher:1,2:call:player:AddItem:WeapMineFrag:3,2:call:player:AddItem:WeapMineBottlecap:3,4:call:player:EquipItem:WeapNVAssaultCarbine,12:call:player:EquipItem:WeapMissileLauncher,23:call:player:EquipItem:WeapMineFrag,31:call:player:EquipItem:WeapMineBottlecap", NVF_PLAY_TEST_CONTROL = "5:weapon,9:weapon,13:weapon,19:weapon,24:weapon,28:weapon,32:weapon,36:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--no-advanced-movement"]
+run_seconds = 43
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the four weapons is written, Advanced Movement off" },
+  { re = 'player body summary: weapon sway on', label = "the four weapons: the run reached its end" },
+]
+
+[[scenario]]
 name = "movement-inertia-trace-sights-shotgun"
 source = "owner 2026-11-15 (engine/nvforever/src/player_body.rs MotionTrace; twelfth playtest: \"the guns/hands are still micro-shimmering. Especially visible with the Sturdy Caravan Shotgun ... aim down sights\"): a frame-by-frame trace and full-resolution screenshots of the Sturdy Caravan Shotgun held still down its sights, for finding the gun's motion against the view frame to frame (tools/smoke/motion_trace.py reads the trace)"
 areas = ["player-body"]

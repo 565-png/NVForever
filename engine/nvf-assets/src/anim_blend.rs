@@ -680,6 +680,14 @@ impl Animator {
             }
             l.aligned.resize(l.bound.len(), None);
             let ease = l.shown_ease();
+            // A fade that shows as nothing adds nothing. A leaving smooth layer's last frame
+            // (its fade a hair over 0, the settling curve rounding it to none) alone in its
+            // priority group shared 0 ÷ 0 below, and the bones it drives took their bind pose
+            // for that frame: the left arm flung out for one frame of the grenade's put-away
+            // [observed: the trace `movement-inertia-trace-weapons`, 2026-11-16].
+            if ease <= 0.0 || ease.is_nan() {
+                continue;
+            }
             for (slot, &(bone, track, priority)) in l.bound.iter().enumerate() {
                 self.scratch.push(Contribution { bone, priority: (l.sequence_priority, priority), weight: l.weight * ease, ease, layer: li as u16, track, slot: slot as u16 });
             }
@@ -900,6 +908,23 @@ mod tests {
         a.layers.clear();
         a.pose();
         assert_eq!(a.locals[2].translation, Vec3::new(1.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_leaving_layer_shown_as_nothing_leaves_the_pose_to_the_others() {
+        let mut a = animator();
+        let base = clip(&[("A", [10.0, 0.0, 0.0], 10)], 1.0);
+        let top = clip(&[("A", [20.0, 0.0, 0.0], 30)], 1.0);
+        a.want(&base, 0, 1.0, Mode::Loop, 0.0);
+        a.want(&top, 1, 1.0, Mode::Loop, 0.0);
+        // Its fade a hair over nothing, on the way out along the settling curve: shown as 0.
+        let l = &mut a.layers[1];
+        l.smooth = true;
+        l.set_leaving(true);
+        l.ease = 1e-9;
+        assert_eq!(l.shown_ease(), 0.0, "the fade shows as nothing");
+        a.pose();
+        assert_eq!(a.locals[2].translation, Vec3::new(10.0, 0.0, 0.0), "the base takes the bone, not its bind pose");
     }
 
     /// A clip turning node `name` about z by `angle` (radians), at a priority.
