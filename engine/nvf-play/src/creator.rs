@@ -829,6 +829,32 @@ fn draw(
     st.hits = hits;
 }
 
+/// [design, #2403] Synthetic logical/ineffective states for detector regressions.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_progress_fixture(step: usize) -> CreatorMenu {
+    let look = fnv_actor::Look {
+        race: fnv_sim::FormId(42),
+        female: false,
+        hair: None,
+        hair_color: None,
+        eyes: None,
+        head_parts: vec![],
+        facegen: fnv_actor::creator::full(&FaceGen::default()),
+    };
+    let mut m = Model::new(Arc::new(Creator::default()), look);
+    if step >= 1 {
+        m.tab = Tab::Hair;
+    }
+    if step >= 2 {
+        m.look.female = true;
+    }
+    if step >= 3 {
+        m.view.turn = 0.5;
+    }
+    CreatorMenu { model: Some(m), dirty: step >= 4, last_pointer: (step >= 4).then_some(Vec2::ONE), ..Default::default() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -873,29 +899,4 @@ mod tests {
             assert!(crate::script::is_script_menu(m), "{m}");
         }
     }
-}
-/// [design, #2403] Synthetic logical/ineffective states for detector regressions.
-#[cfg(feature = "report-test-support")]
-#[doc(hidden)]
-pub fn report_progress_fixture(step: usize) -> CreatorMenu {
-    let look = fnv_actor::Look {
-        race: fnv_sim::FormId(42),
-        female: false,
-        hair: None,
-        hair_color: None,
-        eyes: None,
-        head_parts: vec![],
-        facegen: fnv_actor::creator::full(&FaceGen::default()),
-    };
-    let mut m = Model::new(Arc::new(Creator::default()), look);
-    if step >= 1 {
-        m.tab = Tab::Hair;
-    }
-    if step >= 2 {
-        m.look.female = true;
-    }
-    if step >= 3 {
-        m.view.turn = 0.5;
-    }
-    CreatorMenu { model: Some(m), dirty: step >= 4, last_pointer: (step >= 4).then_some(Vec2::ONE), ..Default::default() }
 }

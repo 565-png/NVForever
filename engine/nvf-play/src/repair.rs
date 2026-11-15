@@ -792,41 +792,6 @@ fn close(mut commands: Commands, mut menu: ResMut<RepairServices>, roots: Query<
     info!("repair menu: closed");
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn open() -> Open {
-        Open { vendor: FormId(1), selected: 0, first: 0, drawn: None, pointer_pick: false, navigated: 0, confirming: false }
-    }
-
-    #[test]
-    fn the_tiles_choose_rows_there_are_and_the_keys_take_it_back() {
-        let mut o = open();
-        o.chosen_on_tiles(&[RepairServicesInput::Hover(2)], 3);
-        assert_eq!((o.selected, o.pointer_pick), (2, true));
-        o.chosen_on_tiles(&[RepairServicesInput::Select(1), RepairServicesInput::Repair], 3);
-        assert_eq!(o.selected, 1);
-        o.chosen_on_tiles(&[RepairServicesInput::Select(3)], 3);
-        assert_eq!(o.selected, 1, "a row no longer there chooses nothing");
-        o.keyed();
-        assert_eq!((o.pointer_pick, o.navigated), (false, 1));
-    }
-
-    #[test]
-    fn a_repair_is_of_the_row_chosen_when_it_was_asked() {
-        let mut o = open();
-        o.chosen_on_tiles(&[RepairServicesInput::Select(1), RepairServicesInput::Repair, RepairServicesInput::Hover(2)], 3);
-        assert_eq!(o.selected, 1, "a pointer step after it in the frame moves nothing");
-    }
-
-    #[test]
-    fn asking_for_nothing_changes_nothing() {
-        let mut o = open();
-        o.chosen_on_tiles(&[RepairServicesInput::All, RepairServicesInput::Done], 3);
-        assert_eq!((o.selected, o.pointer_pick, o.navigated), (0, false, 0));
-    }
-}
 /// [design, #2403] Synthetic logical/ineffective states for detector regressions.
 #[cfg(feature = "report-test-support")]
 #[doc(hidden)]
@@ -866,4 +831,40 @@ pub fn report_progress_fixture(step: usize) -> RepairServices {
         labels: Default::default(),
     });
     RepairServices(Some(o))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open() -> Open {
+        Open { vendor: FormId(1), selected: 0, first: 0, drawn: None, pointer_pick: false, navigated: 0, confirming: false }
+    }
+
+    #[test]
+    fn the_tiles_choose_rows_there_are_and_the_keys_take_it_back() {
+        let mut o = open();
+        o.chosen_on_tiles(&[RepairServicesInput::Hover(2)], 3);
+        assert_eq!((o.selected, o.pointer_pick), (2, true));
+        o.chosen_on_tiles(&[RepairServicesInput::Select(1), RepairServicesInput::Repair], 3);
+        assert_eq!(o.selected, 1);
+        o.chosen_on_tiles(&[RepairServicesInput::Select(3)], 3);
+        assert_eq!(o.selected, 1, "a row no longer there chooses nothing");
+        o.keyed();
+        assert_eq!((o.pointer_pick, o.navigated), (false, 1));
+    }
+
+    #[test]
+    fn a_repair_is_of_the_row_chosen_when_it_was_asked() {
+        let mut o = open();
+        o.chosen_on_tiles(&[RepairServicesInput::Select(1), RepairServicesInput::Repair, RepairServicesInput::Hover(2)], 3);
+        assert_eq!(o.selected, 1, "a pointer step after it in the frame moves nothing");
+    }
+
+    #[test]
+    fn asking_for_nothing_changes_nothing() {
+        let mut o = open();
+        o.chosen_on_tiles(&[RepairServicesInput::All, RepairServicesInput::Done], 3);
+        assert_eq!((o.selected, o.pointer_pick, o.navigated), (0, false, 0));
+    }
 }

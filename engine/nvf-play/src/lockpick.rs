@@ -925,43 +925,6 @@ fn report(mut exit: MessageReader<AppExit>, stats: Res<LockpickStats>) {
     );
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_aid_reads_its_steps() {
-        let s = parse_aid("1:skill:30,2:open:0010B2D4,3:off:20,4:torque:2.5,5:spot,6:pin:45,7:force,8:force:99,9:exit,10:help").unwrap();
-        assert_eq!(s[9], (10.0, AidStep::Input(LockpickInput::CloseHelp)));
-        assert_eq!(s[0], (1.0, AidStep::Skill(30.0)));
-        assert_eq!(s[1], (2.0, AidStep::Open(0x0010B2D4)));
-        assert_eq!(s[2], (3.0, AidStep::Input(LockpickInput::Off(20.0))));
-        assert_eq!(s[3], (4.0, AidStep::Input(LockpickInput::Torque(2.5))));
-        assert_eq!(s[4], (5.0, AidStep::Input(LockpickInput::Spot)));
-        assert_eq!(s[5], (6.0, AidStep::Input(LockpickInput::Pin(45.0))));
-        assert_eq!(s[6], (7.0, AidStep::Input(LockpickInput::Force(None))));
-        assert_eq!(s[7], (8.0, AidStep::Input(LockpickInput::Force(Some(99.0)))));
-        assert_eq!(s[8], (9.0, AidStep::Input(LockpickInput::Exit)));
-        assert!(parse_aid("1:pick").is_err());
-        assert!(parse_aid("1:torque").is_err());
-    }
-
-    #[test]
-    fn refusals_say_why() {
-        assert_eq!(refusal_line(Refusal::Skill { needed: 50.0 }), "You need a Lockpick skill of 50 to pick this lock.");
-        assert!(refusal_line(Refusal::NoPins).contains("bobby pins"));
-        assert!(refusal_line(Refusal::Broken).contains("key"));
-    }
-
-    #[test]
-    fn the_random_spot_is_in_range() {
-        let mut rng = ChaCha8Rng::seed_from_u64(7);
-        for _ in 0..1000 {
-            let u = unit(&mut rng);
-            assert!((0.0..1.0).contains(&u));
-        }
-    }
-}
 /// [design, #2403] Synthetic logical/ineffective states for detector regressions.
 #[cfg(feature = "report-test-support")]
 #[doc(hidden)]
@@ -999,4 +962,42 @@ pub fn report_progress_fixture(step: usize) -> LockpickScreen {
         moved: step as f32,
         aid_torque_until: Some(step as f32),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_aid_reads_its_steps() {
+        let s = parse_aid("1:skill:30,2:open:0010B2D4,3:off:20,4:torque:2.5,5:spot,6:pin:45,7:force,8:force:99,9:exit,10:help").unwrap();
+        assert_eq!(s[9], (10.0, AidStep::Input(LockpickInput::CloseHelp)));
+        assert_eq!(s[0], (1.0, AidStep::Skill(30.0)));
+        assert_eq!(s[1], (2.0, AidStep::Open(0x0010B2D4)));
+        assert_eq!(s[2], (3.0, AidStep::Input(LockpickInput::Off(20.0))));
+        assert_eq!(s[3], (4.0, AidStep::Input(LockpickInput::Torque(2.5))));
+        assert_eq!(s[4], (5.0, AidStep::Input(LockpickInput::Spot)));
+        assert_eq!(s[5], (6.0, AidStep::Input(LockpickInput::Pin(45.0))));
+        assert_eq!(s[6], (7.0, AidStep::Input(LockpickInput::Force(None))));
+        assert_eq!(s[7], (8.0, AidStep::Input(LockpickInput::Force(Some(99.0)))));
+        assert_eq!(s[8], (9.0, AidStep::Input(LockpickInput::Exit)));
+        assert!(parse_aid("1:pick").is_err());
+        assert!(parse_aid("1:torque").is_err());
+    }
+
+    #[test]
+    fn refusals_say_why() {
+        assert_eq!(refusal_line(Refusal::Skill { needed: 50.0 }), "You need a Lockpick skill of 50 to pick this lock.");
+        assert!(refusal_line(Refusal::NoPins).contains("bobby pins"));
+        assert!(refusal_line(Refusal::Broken).contains("key"));
+    }
+
+    #[test]
+    fn the_random_spot_is_in_range() {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        for _ in 0..1000 {
+            let u = unit(&mut rng);
+            assert!((0.0..1.0).contains(&u));
+        }
+    }
 }

@@ -818,39 +818,6 @@ fn report(mut exit: MessageReader<AppExit>, stats: Res<BlackjackStats>) {
     );
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_aid_reads_its_steps() {
-        let s = parse_aid("1:seed:7,1:chips:140521:500,2:open:140521,2:open:144C3F:5:50,3:stack:Ah-Kd-9c-7s,4:bet:25,5:deal,6:hit,7:stay,8:auto,9:exit,9:earnings:140521:-20").unwrap();
-        assert_eq!(s[0], (1.0, AidStep::Seed(7)));
-        assert_eq!(s[1], (1.0, AidStep::Chips(0x140521, 500)));
-        assert_eq!(s[2], (2.0, AidStep::Open(BlackjackRequest { casino: FormId(0x140521), min_bet: 1, max_bet: 200, max_winnings: 0 })));
-        assert_eq!(s[3], (2.0, AidStep::Open(BlackjackRequest { casino: FormId(0x144C3F), min_bet: 5, max_bet: 50, max_winnings: 0 })));
-        assert_eq!(s[4].1, AidStep::Stack(["Ah", "Kd", "9c", "7s"].iter().map(|c| Card::parse(c).unwrap()).collect()));
-        assert_eq!(s[5].1, AidStep::Input(BlackjackInput::SetBet(25)));
-        assert_eq!(s[7].1, AidStep::Input(BlackjackInput::Play(Action::Hit)));
-        assert_eq!(s[9].1, AidStep::Auto);
-        assert_eq!(s[11].1, AidStep::Earnings(0x140521, -20));
-        assert!(parse_aid("1:fold").is_err());
-        assert!(parse_aid("1:stack:Zz").is_err());
-    }
-
-    #[test]
-    fn result_lines_say_what_happened() {
-        assert_eq!(result_line(&[(Outcome::Blackjack, 25)], 16, 15), "Blackjack. Dealer has 16. +15");
-        assert_eq!(result_line(&[(Outcome::Win, 20), (Outcome::Bust, 0)], 22, 0), "You win / Bust. Dealer busts. 0");
-        assert_eq!(result_line(&[(Outcome::Lose, 0)], 20, -10), "Dealer wins. Dealer has 20. -10");
-    }
-
-    #[test]
-    fn refusals_name_the_chip_and_the_casino() {
-        assert_eq!(refusal_line(Closed::NoChips, "Gommorah", "Gomorrah Chip"), "You need Gomorrah Chips to play here.");
-        assert!(refusal_line(Closed::Banned, "The Tops", "x").contains("The Tops"));
-    }
-}
 /// [design, #2403] Synthetic logical/ineffective states for detector regressions.
 #[cfg(feature = "report-test-support")]
 #[doc(hidden)]
@@ -883,4 +850,38 @@ pub fn report_progress_fixture(step: usize) -> BlackjackScreen {
         auto: false,
         leave_after: false,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_aid_reads_its_steps() {
+        let s = parse_aid("1:seed:7,1:chips:140521:500,2:open:140521,2:open:144C3F:5:50,3:stack:Ah-Kd-9c-7s,4:bet:25,5:deal,6:hit,7:stay,8:auto,9:exit,9:earnings:140521:-20").unwrap();
+        assert_eq!(s[0], (1.0, AidStep::Seed(7)));
+        assert_eq!(s[1], (1.0, AidStep::Chips(0x140521, 500)));
+        assert_eq!(s[2], (2.0, AidStep::Open(BlackjackRequest { casino: FormId(0x140521), min_bet: 1, max_bet: 200, max_winnings: 0 })));
+        assert_eq!(s[3], (2.0, AidStep::Open(BlackjackRequest { casino: FormId(0x144C3F), min_bet: 5, max_bet: 50, max_winnings: 0 })));
+        assert_eq!(s[4].1, AidStep::Stack(["Ah", "Kd", "9c", "7s"].iter().map(|c| Card::parse(c).unwrap()).collect()));
+        assert_eq!(s[5].1, AidStep::Input(BlackjackInput::SetBet(25)));
+        assert_eq!(s[7].1, AidStep::Input(BlackjackInput::Play(Action::Hit)));
+        assert_eq!(s[9].1, AidStep::Auto);
+        assert_eq!(s[11].1, AidStep::Earnings(0x140521, -20));
+        assert!(parse_aid("1:fold").is_err());
+        assert!(parse_aid("1:stack:Zz").is_err());
+    }
+
+    #[test]
+    fn result_lines_say_what_happened() {
+        assert_eq!(result_line(&[(Outcome::Blackjack, 25)], 16, 15), "Blackjack. Dealer has 16. +15");
+        assert_eq!(result_line(&[(Outcome::Win, 20), (Outcome::Bust, 0)], 22, 0), "You win / Bust. Dealer busts. 0");
+        assert_eq!(result_line(&[(Outcome::Lose, 0)], 20, -10), "Dealer wins. Dealer has 20. -10");
+    }
+
+    #[test]
+    fn refusals_name_the_chip_and_the_casino() {
+        assert_eq!(refusal_line(Closed::NoChips, "Gommorah", "Gomorrah Chip"), "You need Gomorrah Chips to play here.");
+        assert!(refusal_line(Closed::Banned, "The Tops", "x").contains("The Tops"));
+    }
 }

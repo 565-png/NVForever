@@ -907,45 +907,6 @@ fn close(mut commands: Commands, mut menu: ResMut<RecipeMenu>, roots: Query<Enti
     info!("recipe menu: closed");
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_most_that_can_be_made_is_set_by_the_scarcest_ingredient() {
-        let r = RecipeDef { ingredients: vec![(FormId(1), 2), (FormId(2), 1)], ..Default::default() };
-        let have = |i: FormId| if i == FormId(1) { 7 } else { 5 };
-        assert_eq!(times_possible(&r, have), 3);
-        assert_eq!(times_possible(&r, |_| 0), 0);
-        assert_eq!(times_possible(&RecipeDef::default(), |_| 0), 1);
-    }
-
-    #[test]
-    fn a_weight_drops_a_whole_numbers_point() {
-        assert_eq!(weight_text(2.0), "2");
-        assert_eq!(weight_text(0.5), "0.5");
-    }
-
-    #[test]
-    fn a_label_says_how_many_are_made_once() {
-        let r = |name: &str, n: u32| RecipeDef { name: name.into(), outputs: vec![(FormId(1), n)], ..Default::default() };
-        assert_eq!(label(&r("Antivenom", 2)), "Antivenom (2)");
-        assert_eq!(label(&r("Conversion, Fission Battery to SEC (25)", 25)), "Conversion, Fission Battery to SEC (25)");
-        assert_eq!(label(&r("Battle Brew", 1)), "Battle Brew");
-    }
-
-    #[test]
-    fn the_tiled_prompt_is_spawned_again_when_the_hints_names_change() {
-        use crate::pad::{set_labels, Labels};
-        set_labels(Labels::Xbox);
-        let was: WasTiled = Some(tiled_key(Some((1, 4))));
-        assert_eq!(was, Some(tiled_key(Some((1, 4)))), "same amount, same pad: kept");
-        set_labels(Labels::PlayStation);
-        assert_ne!(was, Some(tiled_key(Some((1, 4)))), "a PlayStation pad after an Xbox one: drawn again");
-        assert_ne!(tiled_key(Some((1, 4))), tiled_key(Some((2, 4))), "a new amount: drawn again");
-        set_labels(Labels::Keys);
-    }
-}
 /// [design, #2403] Synthetic logical/ineffective states for detector regressions.
 #[cfg(feature = "report-test-support")]
 #[doc(hidden)]
@@ -987,4 +948,44 @@ pub fn report_progress_fixture(step: usize) -> RecipeMenu {
     });
     o.pointer_pick = step >= 7;
     RecipeMenu(Some(o))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_most_that_can_be_made_is_set_by_the_scarcest_ingredient() {
+        let r = RecipeDef { ingredients: vec![(FormId(1), 2), (FormId(2), 1)], ..Default::default() };
+        let have = |i: FormId| if i == FormId(1) { 7 } else { 5 };
+        assert_eq!(times_possible(&r, have), 3);
+        assert_eq!(times_possible(&r, |_| 0), 0);
+        assert_eq!(times_possible(&RecipeDef::default(), |_| 0), 1);
+    }
+
+    #[test]
+    fn a_weight_drops_a_whole_numbers_point() {
+        assert_eq!(weight_text(2.0), "2");
+        assert_eq!(weight_text(0.5), "0.5");
+    }
+
+    #[test]
+    fn a_label_says_how_many_are_made_once() {
+        let r = |name: &str, n: u32| RecipeDef { name: name.into(), outputs: vec![(FormId(1), n)], ..Default::default() };
+        assert_eq!(label(&r("Antivenom", 2)), "Antivenom (2)");
+        assert_eq!(label(&r("Conversion, Fission Battery to SEC (25)", 25)), "Conversion, Fission Battery to SEC (25)");
+        assert_eq!(label(&r("Battle Brew", 1)), "Battle Brew");
+    }
+
+    #[test]
+    fn the_tiled_prompt_is_spawned_again_when_the_hints_names_change() {
+        use crate::pad::{set_labels, Labels};
+        set_labels(Labels::Xbox);
+        let was: WasTiled = Some(tiled_key(Some((1, 4))));
+        assert_eq!(was, Some(tiled_key(Some((1, 4)))), "same amount, same pad: kept");
+        set_labels(Labels::PlayStation);
+        assert_ne!(was, Some(tiled_key(Some((1, 4)))), "a PlayStation pad after an Xbox one: drawn again");
+        assert_ne!(tiled_key(Some((1, 4))), tiled_key(Some((2, 4))), "a new amount: drawn again");
+        set_labels(Labels::Keys);
+    }
 }

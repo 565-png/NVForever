@@ -1698,6 +1698,30 @@ fn compiled(g: &mut fnv_game::Game, call: &ConsoleCall, on: Option<FormId>) -> R
     Ok(ConsoleReply { lines, ..Default::default() })
 }
 
+/// [design, #2403] Synthetic logical/ineffective states for detector regressions.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_progress_fixture(step: usize) -> Console {
+    let mut c = Console { open: true, ..Default::default() };
+    if step >= 1 {
+        c.input = "synthetic".into();
+    }
+    if step >= 2 {
+        c.recall = Some(0);
+    }
+    if step >= 3 {
+        c.scroll = 1;
+    }
+    if step >= 4 {
+        c.selected = Some(42);
+    }
+    if step >= 5 {
+        c.lines.push("Synthetic result".into());
+    }
+    c.auto_output_done = step >= 6;
+    c
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1832,27 +1856,4 @@ mod tests {
         assert_eq!(a, vec![(10.0, "help stim".to_string()), (12.0, "player.additem f 5".to_string())]);
         assert!(parse_aid("nonsense").is_err());
     }
-}
-/// [design, #2403] Synthetic logical/ineffective states for detector regressions.
-#[cfg(feature = "report-test-support")]
-#[doc(hidden)]
-pub fn report_progress_fixture(step: usize) -> Console {
-    let mut c = Console { open: true, ..Default::default() };
-    if step >= 1 {
-        c.input = "synthetic".into();
-    }
-    if step >= 2 {
-        c.recall = Some(0);
-    }
-    if step >= 3 {
-        c.scroll = 1;
-    }
-    if step >= 4 {
-        c.selected = Some(42);
-    }
-    if step >= 5 {
-        c.lines.push("Synthetic result".into());
-    }
-    c.auto_output_done = step >= 6;
-    c
 }

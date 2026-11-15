@@ -762,71 +762,22 @@ fn draw_menus(
     });
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_test_aid_reads() {
-        let steps = parse_aid("5:pick:Four Eyes, 3:type:Six,4:clear,9:done,6:reset,7:raise:Luck").unwrap();
-        assert!(steps.contains(&(7.0, Op::Pick("+Luck".into()))));
-        assert_eq!(steps[0], (3.0, Op::Type("Six".into())));
-        assert_eq!(steps[2], (5.0, Op::Pick("Four Eyes".into())));
-        assert_eq!(steps.last().unwrap().1, Op::Done);
-        assert!(parse_aid("1:jump").is_err());
-    }
-
-    #[test]
-    fn a_tile_act_names_its_row_by_its_trait() {
-        use fnv_game::chargen::TraitSheet;
-        let sheet = TraitSheet { traits: vec![FormId(7), FormId(9)], chosen: Default::default(), max: 2, free: None };
-        let m = ListMenu { code: menus::TRAITS, sheet: lists::Sheet::Traits { now: sheet.clone(), start: sheet, allowed: vec![true, true] }, selected: 0, scroll: 0, hover: None };
-        assert_eq!(tile_ops(&m, TileAct::Hover(FormId(9))), vec![(Op::Select(1), "pointer")]);
-        assert_eq!(tile_ops(&m, TileAct::Click(FormId(9))), vec![(Op::Select(1), "pointer"), (Op::Click, "click")]);
-        assert!(tile_ops(&m, TileAct::Click(FormId(5))).is_empty(), "a trait no longer on the sheet");
-        assert_eq!(tile_ops(&m, TileAct::Done), vec![(Op::Done, "click")]);
-        assert!(tile_ops(&m, TileAct::ButtonFocus).is_empty());
-    }
-
-    #[test]
-    fn the_own_menus() {
-        assert!(has_own_menu(menus::NAME) && has_own_menu(menus::TRAITS) && has_own_menu(menus::TAG_SKILLS) && has_own_menu(menus::LOVE_TESTER));
-        assert!(!has_own_menu(menus::RACE) && !has_own_menu(menus::MESSAGE));
-    }
-    #[test]
-    fn tag_tile_acts_resolve_skill_codes_and_special_stays_hand_built() {
-        use fnv_game::chargen::{TagSheet, SpecialSheet};
-        let tags = TagSheet { skills: vec![32, 35], tagged: Default::default(), locked: Default::default(), count: 4 };
-        let menu = ListMenu { code: menus::TAG_SKILLS, sheet: lists::Sheet::Tags { now: tags.clone(), start: tags }, selected: 0, scroll: 0, hover: None };
-        assert_eq!(tile_ops(&menu, TileAct::SkillClick(35)), vec![(Op::Select(1), "pointer"), (Op::Click, "click")]);
-        assert_eq!(tile_ops(&menu, TileAct::SkillHover(32)), vec![(Op::Select(0), "pointer")]);
-        assert!(tile_ops(&menu, TileAct::Click(FormId(35))).is_empty());
-        assert!(tile_ops(&menu, TileAct::SkillClick(99)).is_empty());
-        let mut st = ChargenMenus { open: Some(OpenMenu::List(menu)), generation: 8, ..Default::default() };
-        assert_eq!(st.tags_open().unwrap().generation, 8); assert!(st.traits_open().is_none());
-        let special = SpecialSheet::new([5; 7]);
-        st.open = Some(OpenMenu::List(ListMenu { code: menus::TAG_SKILLS, sheet: lists::Sheet::Special { now: special, start: special }, selected: 0, scroll: 0, hover: None }));
-        assert!(st.tags_open().is_none());
-        let Some(OpenMenu::List(menu)) = st.open.as_ref() else { panic!("missing sheet") };
-        assert!(tile_ops(menu, TileAct::SkillClick(32)).is_empty());
-    }
-
-}
 /// [design, #2403] Synthetic logical/ineffective states for detector regressions.
 #[cfg(feature = "report-test-support")]
 #[doc(hidden)]
 pub fn report_progress_fixture(step: usize) -> ChargenMenus {
-    let mut c = ChargenMenus::default();
-    c.open = Some(OpenMenu::Name(NameMenu {
-        text: if step >= 1 { "Synthetic name".into() } else { String::new() },
-        hover_ok: step >= 2,
-        prompt: String::new(),
-        ok: String::new(),
-        script: None,
-        limit: 30,
-    }));
-    c.navigated = step as u32;
-    c
+    ChargenMenus {
+        open: Some(OpenMenu::Name(NameMenu {
+            text: if step >= 1 { "Synthetic name".into() } else { String::new() },
+            hover_ok: step >= 2,
+            prompt: String::new(),
+            ok: String::new(),
+            script: None,
+            limit: 30,
+        })),
+        navigated: step as u32,
+        ..Default::default()
+    }
 }
 
 /// [design, #2403] Synthetic allocation sheet for each script character list.
@@ -876,4 +827,55 @@ pub fn report_special_progress_fixture(step: usize) -> ChargenMenus {
         m.code = menus::TAG_SKILLS;
     }
     c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_test_aid_reads() {
+        let steps = parse_aid("5:pick:Four Eyes, 3:type:Six,4:clear,9:done,6:reset,7:raise:Luck").unwrap();
+        assert!(steps.contains(&(7.0, Op::Pick("+Luck".into()))));
+        assert_eq!(steps[0], (3.0, Op::Type("Six".into())));
+        assert_eq!(steps[2], (5.0, Op::Pick("Four Eyes".into())));
+        assert_eq!(steps.last().unwrap().1, Op::Done);
+        assert!(parse_aid("1:jump").is_err());
+    }
+
+    #[test]
+    fn a_tile_act_names_its_row_by_its_trait() {
+        use fnv_game::chargen::TraitSheet;
+        let sheet = TraitSheet { traits: vec![FormId(7), FormId(9)], chosen: Default::default(), max: 2, free: None };
+        let m = ListMenu { code: menus::TRAITS, sheet: lists::Sheet::Traits { now: sheet.clone(), start: sheet, allowed: vec![true, true] }, selected: 0, scroll: 0, hover: None };
+        assert_eq!(tile_ops(&m, TileAct::Hover(FormId(9))), vec![(Op::Select(1), "pointer")]);
+        assert_eq!(tile_ops(&m, TileAct::Click(FormId(9))), vec![(Op::Select(1), "pointer"), (Op::Click, "click")]);
+        assert!(tile_ops(&m, TileAct::Click(FormId(5))).is_empty(), "a trait no longer on the sheet");
+        assert_eq!(tile_ops(&m, TileAct::Done), vec![(Op::Done, "click")]);
+        assert!(tile_ops(&m, TileAct::ButtonFocus).is_empty());
+    }
+
+    #[test]
+    fn the_own_menus() {
+        assert!(has_own_menu(menus::NAME) && has_own_menu(menus::TRAITS) && has_own_menu(menus::TAG_SKILLS) && has_own_menu(menus::LOVE_TESTER));
+        assert!(!has_own_menu(menus::RACE) && !has_own_menu(menus::MESSAGE));
+    }
+    #[test]
+    fn tag_tile_acts_resolve_skill_codes_and_special_stays_hand_built() {
+        use fnv_game::chargen::{TagSheet, SpecialSheet};
+        let tags = TagSheet { skills: vec![32, 35], tagged: Default::default(), locked: Default::default(), count: 4 };
+        let menu = ListMenu { code: menus::TAG_SKILLS, sheet: lists::Sheet::Tags { now: tags.clone(), start: tags }, selected: 0, scroll: 0, hover: None };
+        assert_eq!(tile_ops(&menu, TileAct::SkillClick(35)), vec![(Op::Select(1), "pointer"), (Op::Click, "click")]);
+        assert_eq!(tile_ops(&menu, TileAct::SkillHover(32)), vec![(Op::Select(0), "pointer")]);
+        assert!(tile_ops(&menu, TileAct::Click(FormId(35))).is_empty());
+        assert!(tile_ops(&menu, TileAct::SkillClick(99)).is_empty());
+        let mut st = ChargenMenus { open: Some(OpenMenu::List(menu)), generation: 8, ..Default::default() };
+        assert_eq!(st.tags_open().unwrap().generation, 8); assert!(st.traits_open().is_none());
+        let special = SpecialSheet::new([5; 7]);
+        st.open = Some(OpenMenu::List(ListMenu { code: menus::TAG_SKILLS, sheet: lists::Sheet::Special { now: special, start: special }, selected: 0, scroll: 0, hover: None }));
+        assert!(st.tags_open().is_none());
+        let Some(OpenMenu::List(menu)) = st.open.as_ref() else { panic!("missing sheet") };
+        assert!(tile_ops(menu, TileAct::SkillClick(32)).is_empty());
+    }
+
 }

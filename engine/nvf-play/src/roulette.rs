@@ -675,32 +675,6 @@ fn report(mut exit: MessageReader<AppExit>, stats: Res<RouletteStats>) {
     );
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fnv_game::casino::Closed;
-
-    #[test]
-    fn the_aid_reads_its_steps() {
-        let s = parse_aid("1:chips:500,2:open,3:bet:25,4:at:d12,5:place,6:pocket:37,7:spin,8:exit,9:open:00140521,10:chips:9:140521").unwrap();
-        assert_eq!(s[0], (1.0, AidStep::Chips(500, THE_TOPS)));
-        assert_eq!(s[1], (2.0, AidStep::Open(THE_TOPS)));
-        assert_eq!(s[2], (3.0, AidStep::Input(RouletteInput::Bet(25))));
-        assert_eq!(s[3], (4.0, AidStep::Input(RouletteInput::At("D12".into()))));
-        assert_eq!(s[5], (6.0, AidStep::Input(RouletteInput::Pocket(37))));
-        assert_eq!(s[8], (9.0, AidStep::Open(0x0014_0521)));
-        assert_eq!(s[9], (10.0, AidStep::Chips(9, 0x0014_0521)));
-        assert!(parse_aid("1:at:Z9").is_err());
-        assert!(parse_aid("1:pocket:38").is_err());
-        assert!(parse_aid("1:deal").is_err());
-    }
-
-    #[test]
-    fn closed_lines_say_why() {
-        assert!(casino::closed_line(Closed::NoChips, "The Tops").contains("The Tops chips"));
-        assert!(casino::closed_line(Closed::Banned, "The Tops").contains("banned"));
-    }
-}
 /// [design, #2403] Synthetic logical/ineffective states for detector regressions.
 #[cfg(feature = "report-test-support")]
 #[doc(hidden)]
@@ -728,4 +702,31 @@ pub fn report_progress_fixture(step: usize) -> RouletteScreen {
         forced: None,
         rng: ChaCha8Rng::seed_from_u64(step as u64),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fnv_game::casino::Closed;
+
+    #[test]
+    fn the_aid_reads_its_steps() {
+        let s = parse_aid("1:chips:500,2:open,3:bet:25,4:at:d12,5:place,6:pocket:37,7:spin,8:exit,9:open:00140521,10:chips:9:140521").unwrap();
+        assert_eq!(s[0], (1.0, AidStep::Chips(500, THE_TOPS)));
+        assert_eq!(s[1], (2.0, AidStep::Open(THE_TOPS)));
+        assert_eq!(s[2], (3.0, AidStep::Input(RouletteInput::Bet(25))));
+        assert_eq!(s[3], (4.0, AidStep::Input(RouletteInput::At("D12".into()))));
+        assert_eq!(s[5], (6.0, AidStep::Input(RouletteInput::Pocket(37))));
+        assert_eq!(s[8], (9.0, AidStep::Open(0x0014_0521)));
+        assert_eq!(s[9], (10.0, AidStep::Chips(9, 0x0014_0521)));
+        assert!(parse_aid("1:at:Z9").is_err());
+        assert!(parse_aid("1:pocket:38").is_err());
+        assert!(parse_aid("1:deal").is_err());
+    }
+
+    #[test]
+    fn closed_lines_say_why() {
+        assert!(casino::closed_line(Closed::NoChips, "The Tops").contains("The Tops chips"));
+        assert!(casino::closed_line(Closed::Banned, "The Tops").contains("banned"));
+    }
 }

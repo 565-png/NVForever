@@ -3953,6 +3953,48 @@ fn highlight(p: &mut ChildSpawnerCommands, c: &mut Ctx, centre: Vec2, label: Opt
     }
 }
 
+/// [design, #2403] Synthetic logical/ineffective states for detector regressions.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_map_progress_fixture(step: usize) -> DataState {
+    let mut s = DataState::default();
+    if step >= 1 {
+        s.centre[1] = Some([0.5, 0.5]);
+    }
+    if step >= 2 {
+        s.magnify[1] = 2.0;
+    }
+    if step >= 3 {
+        s.cursor[1] = Some(Vec2::ONE);
+    }
+    if step >= 4 {
+        s.popup = Some(Popup::travel(42, "Synthetic question".into()));
+    }
+    if step >= 5 {
+        s.popup.as_mut().unwrap().step(1);
+    }
+    if step >= 6 {
+        s.active_quest = Some(43);
+    }
+    if step >= 7 {
+        s.custom = Some(CustomMarker { space: 42, pos: [1.0, 2.0, 3.0] });
+    }
+    s.navigated = step as u32;
+    s.poll = step as f32;
+    s
+}
+
+/// [design, #2403] The same logical map transitions on the Local Map tab.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_local_map_progress_fixture(step: usize) -> DataState {
+    let mut s = report_map_progress_fixture(step);
+    s.centre.swap(0, 1);
+    s.magnify.swap(0, 1);
+    s.cursor.swap(0, 1);
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5391,45 +5433,4 @@ mod tests {
         assert_eq!(marker_from_save(&v, Some(&gone)), None);
         assert_eq!(marker_from_save(&serde_json::to_value(m).unwrap(), Some(&gone)), Some(m));
     }
-}
-/// [design, #2403] Synthetic logical/ineffective states for detector regressions.
-#[cfg(feature = "report-test-support")]
-#[doc(hidden)]
-pub fn report_map_progress_fixture(step: usize) -> DataState {
-    let mut s = DataState::default();
-    if step >= 1 {
-        s.centre[1] = Some([0.5, 0.5]);
-    }
-    if step >= 2 {
-        s.magnify[1] = 2.0;
-    }
-    if step >= 3 {
-        s.cursor[1] = Some(Vec2::ONE);
-    }
-    if step >= 4 {
-        s.popup = Some(Popup::travel(42, "Synthetic question".into()));
-    }
-    if step >= 5 {
-        s.popup.as_mut().unwrap().step(1);
-    }
-    if step >= 6 {
-        s.active_quest = Some(43);
-    }
-    if step >= 7 {
-        s.custom = Some(CustomMarker { space: 42, pos: [1.0, 2.0, 3.0] });
-    }
-    s.navigated = step as u32;
-    s.poll = step as f32;
-    s
-}
-
-/// [design, #2403] The same logical map transitions on the Local Map tab.
-#[cfg(feature = "report-test-support")]
-#[doc(hidden)]
-pub fn report_local_map_progress_fixture(step: usize) -> DataState {
-    let mut s = report_map_progress_fixture(step);
-    s.centre.swap(0, 1);
-    s.magnify.swap(0, 1);
-    s.cursor.swap(0, 1);
-    s
 }
