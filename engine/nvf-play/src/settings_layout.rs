@@ -69,7 +69,7 @@ const fn section(tab: &'static str, heading: Option<&'static str>, keys: &'stati
 /// Every named row's tab and heading, in the order the page shows them [design: #1953's
 /// table; the colours' red, green and blue each after their colour].
 pub const SECTIONS: &[Section] = &[
-    section("Gameplay", Some("Game"), &["difficulty", "hardcore", "kill-camera", "vats-style", "vats-slowdown", "reload-slows", "UsePipBoy"]),
+    section("Gameplay", Some("Game"), &["difficulty", "hardcore", "kill-camera", "vats-style", "vats-slowdown", "reload-slows", "UsePipBoy", "sound-cover"]),
     section("Gameplay", Some("Saving"), &["autosave-travel", "autosave-fast-travel", "autosave-wait", "autosave-sleep", "autosave-scripts"]),
     section("Gameplay", Some("Dialogue"), &["menu-pause", "dialogue-goodbye-hint", "dialogue-look", "dialogue-recentre", "dialogue-zoom", "lip-sync"]),
     section("Gameplay", Some("Reports"), &["send-reports", "reports-delete"]),
@@ -308,10 +308,11 @@ mod tests {
     /// quality and enhanced rows, #2014's counter rows, the two VATS rows and #2198's Upscaler
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
-    /// field of view row, the menu scale row and the Physics rate row), by the group it registers
-    /// with.
-    const KNOWN: [(&str, &str); 112] = [
+    /// field of view row, the menu scale row, the Physics rate row and #2688's sound cover row), by
+    /// the group it registers with.
+    const KNOWN: [(&str, &str); 113] = [
         ("detached-camera", "Gameplay"),
+        ("sound-cover", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
         ("reload-slows", "Gameplay"),
@@ -450,7 +451,7 @@ mod tests {
         assert_eq!(all.len(), list.len());
         all.sort_unstable();
         assert_eq!(all, (0..list.len()).collect::<Vec<_>>(), "each registered row once");
-        assert_eq!(keys(&list, &l, "Gameplay")[..9], ["[Game]", "difficulty", "hardcore", "kill-camera", "vats-style", "vats-slowdown", "reload-slows", "UsePipBoy", "[Saving]"]);
+        assert_eq!(keys(&list, &l, "Gameplay")[..10], ["[Game]", "difficulty", "hardcore", "kill-camera", "vats-style", "vats-slowdown", "reload-slows", "UsePipBoy", "sound-cover", "[Saving]"]);
         assert_eq!(keys(&list, &l, "Audio"), ["volume-master", "volume-music", "volume-footstep", "volume-voice", "volume-effects", "volume-radio", "music", "voice", "reverb", "voice-reverb"]);
         assert_eq!(keys(&list, &l, "Controls"), CONTROLLER_KEYS);
         assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "scope-3d"]);

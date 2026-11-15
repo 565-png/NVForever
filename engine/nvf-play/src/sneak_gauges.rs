@@ -15,6 +15,12 @@
 //!   [`NOISE_FULL`]. A shot fills it at once and it falls back over [`NOISE_FALL`]
 //!   seconds, so a moment's sound can be seen.
 //!
+//! - **Cover** (#2688, [`crate::sound_cover`]): the loudest sound of the world heard at
+//!   the player, in the noise's units. The noise bar's segment at that level wears a
+//!   brighter, larger square ([`COVER_OUTLINE`]): noise up to it is not heard. It jumps up
+//!   and falls back as the noise does; no square without cover (or with the
+//!   `sound-cover` switch off).
+//!
 //! The values are written by the detection pass (four times a second); the bars ease
 //! towards them. They show what the player gives off, not whether anyone notices: the
 //! sneak word says that.
@@ -30,6 +36,9 @@ use bevy::prelude::*;
 pub const NOISE_FULL: f32 = 100.0;
 /// Seconds the noise bar takes to fall from full to empty [design].
 pub const NOISE_FALL: f32 = 1.5;
+/// The cover mark: its line's width and how far it stands out of the segment [design].
+const COVER_OUTLINE: f32 = 2.0;
+const COVER_OFFSET: f32 = 2.0;
 /// Seconds the light bar takes to follow a change across the whole bar [design].
 const LIGHT_FOLLOW: f32 = 0.5;
 /// Segments of each bar [design: as the stealth games' bars].
@@ -50,10 +59,15 @@ pub struct SneakGauges {
     pub light: f32,
     /// The player's noise, in the sound term's units (0 standing still).
     pub noise: f32,
-    /// What the bars show now, 0–1 each.
+    /// The sound cover at the player, in the same units (0: none; [`crate::sound_cover`]).
+    pub cover: f32,
+    /// What the bars show now, 0–1 each, and where the cover mark stands.
     shown: [f32; 2],
-    /// Seconds shown, and the most light and noise seen, for the exit line.
+    cover_shown: f32,
+    /// Seconds shown, of them with the cover mark, and the most light and noise seen, for
+    /// the exit line.
     secs: f32,
+    cover_secs: f32,
     most: [f32; 2],
 }
 
@@ -67,6 +81,19 @@ impl SneakGauges {
         let light = shown[0] + (l - shown[0]).clamp(-follow, follow);
         let noise = if n >= shown[1] { n } else { (shown[1] - dt / NOISE_FALL).max(n) };
         [light, noise]
+    }
+
+    /// Where the cover mark goes next, as the noise bar does: up at once, down over
+    /// [`NOISE_FALL`].
+    pub fn step_cover(shown: f32, cover: f32, dt: f32) -> f32 {
+        let c = (cover / NOISE_FULL).clamp(0.0, 1.0);
+        if c >= shown { c } else { (shown - dt / NOISE_FALL).max(c) }
+    }
+
+    /// The noise bar's segment the cover mark is on: the last one the bar lights at that
+    /// level (the noise up to it is covered); `None` below the first.
+    pub fn cover_segment(shown: f32) -> Option<usize> {
+        (0..SEGMENTS).rev().find(|&k| (k as f32 + 0.5) / SEGMENTS as f32 <= shown)
     }
 }
 
@@ -125,7 +152,12 @@ fn spawn(mut commands: Commands, root: Query<(), With<GaugeRoot>>) {
                 row.spawn((Node { width: u(LABEL), ..default() }, Text::new(name), TextFont { font_size: crate::interface::font_units(13.0), ..default() }, TextColor(amber(255.0))));
                 row.spawn(Node { width: u(WIDTH - LABEL), height: u(BAR), column_gap: u(3.0), ..default() }).with_children(|segs| {
                     for k in 0..SEGMENTS {
-                        segs.spawn((Segment { bar, k }, Node { flex_grow: 1.0, height: Val::Percent(100.0), ..default() }, BackgroundColor(amber(60.0))));
+                        segs.spawn((
+                            Segment { bar, k },
+                            Node { flex_grow: 1.0, height: Val::Percent(100.0), ..default() },
+                            BackgroundColor(amber(60.0)),
+                            Outline { width: u(COVER_OUTLINE), offset: u(COVER_OFFSET), color: Color::NONE },
+                        ));
                     }
                 });
             });
@@ -138,7 +170,7 @@ fn draw(
     view: Res<HudView>,
     mut gauges: ResMut<SneakGauges>,
     mut root: Query<&mut Visibility, With<GaugeRoot>>,
-    mut segments: Query<(&Segment, &mut BackgroundColor)>,
+    mut segments: Query<(&Segment, &mut BackgroundColor, &mut Outline)>,
 ) {
     let show = gauges.on && view.shown && view.sneak.is_some();
     let Ok(mut vis) = root.single_mut() else { return };
@@ -155,19 +187,43 @@ fn draw(
     let dt = time.delta_secs();
     let g = &mut *gauges;
     g.shown = SneakGauges::step(g.shown, g.light, g.noise, dt);
+    let was = SneakGauges::cover_segment(g.cover_shown);
+    g.cover_shown = SneakGauges::step_cover(g.cover_shown, g.cover, dt);
+    let mark = SneakGauges::cover_segment(g.cover_shown);
+    if mark != was {
+        debug!("sneak gauges: cover mark {} (cover {:.0}, noise {:.0})", mark.map_or("off".to_string(), |k| format!("on segment {}", k + 1)), g.cover, g.noise);
+    }
+    if mark.is_some() {
+        g.cover_secs += dt;
+    }
     g.secs += dt;
     g.most = [g.most[0].max(g.light), g.most[1].max(g.noise)];
-    for (s, mut c) in &mut segments {
+    for (s, mut c, mut o) in &mut segments {
         let lit = (s.k as f32 + 0.5) / SEGMENTS as f32 <= g.shown[s.bar];
         c.0 = amber(if lit { 255.0 } else { 60.0 });
+        let marked = s.bar == 1 && mark == Some(s.k);
+        let want = if marked { cover_colour() } else { Color::NONE };
+        if o.color != want {
+            o.color = want;
+        }
     }
+}
+
+/// The cover mark's colour: the HUD colour at full, half way to white, so it stands out
+/// from a lit segment in any HUD colour [design].
+fn cover_colour() -> Color {
+    let c = amber(255.0).to_srgba();
+    Color::srgb((c.red + 1.0) / 2.0, (c.green + 1.0) / 2.0, (c.blue + 1.0) / 2.0)
 }
 
 fn report(mut exit: MessageReader<AppExit>, gauges: Res<SneakGauges>) {
     if exit.read().next().is_none() {
         return;
     }
-    info!("sneak gauges summary: on {}, shown {:.1} s, most light {:.0}, most noise {:.0}", gauges.on, gauges.secs, gauges.most[0], gauges.most[1]);
+    info!(
+        "sneak gauges summary: on {}, shown {:.1} s, most light {:.0}, most noise {:.0}, cover mark {:.1} s",
+        gauges.on, gauges.secs, gauges.most[0], gauges.most[1], gauges.cover_secs
+    );
 }
 
 #[cfg(test)]
@@ -184,5 +240,19 @@ mod tests {
         assert_eq!(down[0], 1.0);
         let walk = SneakGauges::step([0.0, 0.0], 0.0, 31.2, 0.1);
         assert!((walk[1] - 0.312).abs() < 1e-5);
+    }
+
+    #[test]
+    fn the_cover_mark_stands_on_the_last_segment_the_cover_reaches() {
+        assert_eq!(SneakGauges::cover_segment(0.0), None);
+        assert_eq!(SneakGauges::cover_segment(0.04), None);
+        assert_eq!(SneakGauges::cover_segment(0.05), Some(0));
+        assert_eq!(SneakGauges::cover_segment(0.35), Some(2), "a walk's 31 lights three segments; a 35 cover marks the third");
+        assert_eq!(SneakGauges::cover_segment(1.0), Some(SEGMENTS - 1));
+        let up = SneakGauges::step_cover(0.0, 40.0, 0.1);
+        assert!((up - 0.4).abs() < 1e-5, "up at once");
+        let down = SneakGauges::step_cover(0.4, 0.0, 0.15);
+        assert!((down - 0.3).abs() < 1e-5, "down a tenth in 0.15 s");
+        assert_eq!(SneakGauges::step_cover(0.5, 200.0, 0.1), 1.0);
     }
 }

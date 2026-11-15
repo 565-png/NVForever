@@ -141,6 +141,7 @@ pub use test_aid::{drives_run, MEASURING_AIDS};
 pub mod sfx;
 pub mod start_read;
 pub mod sneak_gauges;
+pub mod sound_cover;
 pub mod sound_grid;
 pub mod ui_colour;
 pub mod language;
@@ -386,7 +387,7 @@ impl Plugin for PlayPlugin {
             .add_plugins((ui_sounds::UiSoundsPlugin, pad::PadPlugin, rumble::RumblePlugin, script_input::ScriptInputPlugin, aim_assist::AimAssistPlugin))
             .add_plugins(script_switches::ScriptSwitchesPlugin)
             .add_plugins((chargen::ChargenPlugin, creator::CreatorPlugin, fade::FadePlugin))
-            .add_plugins((levelup::LevelUpPlugin, sneak_gauges::SneakGaugesPlugin))
+            .add_plugins((levelup::LevelUpPlugin, sneak_gauges::SneakGaugesPlugin, sound_cover::SoundCoverPlugin))
             .add_plugins(perk_marks::PerkMarksPlugin)
             .add_plugins(sup_screen::SupScreenPlugin)
             .add_plugins(sup_shots::SupShotsPlugin)
