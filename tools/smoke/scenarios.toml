@@ -835,20 +835,20 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 [[scenario]]
 name = "ui-scale-write"
 source = "issue #1631: the settings page's Display row UI scale (ui-scale) sets the HUD's size, kept in NVForever.ini; the first half of the round trip, ui-scale-read starts with what this run keeps"
-note = "The home's INI may hold any scales from an earlier run: set both rows to 100%, then both to 75%. #2519 makes the menu row independent; the existing three following 75% drawing/pointer oracles are unchanged."
+note = "The home's INI may hold any scales from an earlier run: set both rows to 100%, then both to 70% (the rows are lists of 50-100% in tens since the menu overhaul, owner 2026-11-15; 75% was the slider's). #2519 makes the menu row independent; the existing three following 70% drawing/pointer oracles are unchanged."
 areas = ["hud", "settings"]
 paths = ["engine/nvf-play/src/interface.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs"]
-env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "10.5:menu-scale=1,11:ui-scale=0.5,12:ui-scale=0.25,12.5:menu-scale=0.5" }
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "10.5:menu-scale=100%,11:ui-scale=100%,12:ui-scale=70%,12.5:menu-scale=70%" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 16
 expect = [
   { re = 'interface: UI scale \d+% ', count = 1, label = "the run's UI scale is fixed once, at the start" },
-  { text = "settings: ui-scale 75%", label = "the row is set to 75%" },
+  { text = "settings: ui-scale 70%", label = "the row is set to 70%" },
 ]
 
 [[scenario]]
 name = "ui-scale-read"
-source = "issue #1631: the second half of the UI scale round trip: the next start reads ui-scale 75% from the home ui-scale-write kept it in and draws the HUD at that size, each piece kept at its edge"
+source = "issue #1631: the second half of the UI scale round trip: the next start reads ui-scale 70% from the home ui-scale-write kept it in and draws the HUD at that size, each piece kept at its edge"
 areas = ["hud", "settings"]
 paths = [
   "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs",
@@ -856,122 +856,122 @@ paths = [
   "engine/nvf-play/src/xp_meter.rs", "engine/nvf-play/src/radiation.rs", "engine/nvf-play/src/compass.rs",
   "engine/nvf-play/src/tiles/draw.rs", "crates/fnv-game/src/ui_hud.rs", "crates/fnv-game/src/ui_hud/**",
 ]
-env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "14:ui_scale_75.png" }
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "14:ui_scale_70.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 16
 expect = [
-  { re = 'settings: .* read from .*ui-scale 75%', label = "the INI's 75% is read at the start" },
-  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run's HUD is drawn at 75%" },
+  { re = 'settings: .* read from .*ui-scale 70%', label = "the INI's 70% is read at the start" },
+  { text = "interface: UI scale 70% (the HUD drawn at 70%, the menus at 70% of the original's size)", label = "the run's HUD is drawn at 70%" },
   { re = 'compass: heading at x ', label = "the HUD is drawn" },
 ]
-manual = "ui_scale_75.png: the HUD three quarters of its 100% size, the health and compass corner at the bottom left, the action points at the bottom right, the sneak word and other top pieces at the top; the text readable"
+manual = "ui_scale_70.png: the HUD seven tenths of its 100% size, the health and compass corner at the bottom left, the action points at the bottom right, the sneak word and other top pieces at the top; the text readable"
 
 [[scenario]]
 name = "ui-scale-menus"
-source = "issue #1631: at the UI scale ui-scale-write kept (75%) the menus are drawn three quarters of their size, in the middle of the view, and a real pointer press lands on what is drawn: the wait-pointer-press presses moved to where the 75% wait menu draws the slider and Accept still choose about 18 hours"
-note = "Runs after ui-scale-write and ui-scale-read in their home. The points are wait-pointer-press's, moved toward the middle of the 1280 x 720 view: 0.5 + (p - 0.5) x 0.75 (the slider 0.584:0.47 to 0.563:0.4775, Accept 0.677:0.576 to 0.63275:0.557); at 100% they would miss the slider's 72%"
+source = "issue #1631: at the UI scale ui-scale-write kept (70%) the menus are drawn seven tenths of their size, in the middle of the view, and a real pointer press lands on what is drawn: the wait-pointer-press presses moved to where the 70% wait menu draws the slider and Accept still choose about 18 hours"
+note = "Runs after ui-scale-write and ui-scale-read in their home. The points are wait-pointer-press's, moved toward the middle of the 1280 x 720 view: 0.5 + (p - 0.5) x 0.75 (the slider 0.584:0.47 to 0.5588:0.479, Accept 0.677:0.576 to 0.6239:0.5532); at 100% they would miss the slider's 72%"
 areas = ["menus", "settings", "wait"]
 paths = [
   "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/wait.rs", "engine/nvf-play/src/ui_pointer.rs",
   "engine/nvf-play/src/main_menu.rs", "engine/nvf-play/src/start_menu.rs",
   "engine/nvf-play/src/settings_layout.rs",
 ]
-env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:page", NVF_PLAY_TEST_SHOTS = "12.5:ui_scale_75_settings.png,17:ui_scale_75_wait.png", NVF_PLAY_TEST_WAIT = "16:open,17.5:point=0.563:0.4775,18:press,18.5:release,19:point=0.63275:0.557,19.5:press,20.5:release" }
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:page", NVF_PLAY_TEST_SHOTS = "12.5:ui_scale_70_settings.png,17:ui_scale_70_wait.png", NVF_PLAY_TEST_WAIT = "16:open,17.5:point=0.5588:0.479,18:press,18.5:release,19:point=0.6239:0.5532,19.5:press,20.5:release" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 24
 expect = [
-  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run draws the menus at 75%" },
+  { text = "interface: UI scale 70% (the HUD drawn at 70%, the menus at 70% of the original's size)", label = "the run draws the menus at 70%" },
   "pause menu: open",
   "wait menu: open",
-  { re = 'wait menu: waiting (?P<n>\d+) hour', range = [17, 19], label = "the press on the 75% slider's drawn 72% chose about 18 hours, and the press on the drawn Accept took it" },
+  { re = 'wait menu: waiting (?P<n>\d+) hour', range = [17, 19], label = "the press on the 70% slider's drawn 72% chose about 18 hours, and the press on the drawn Accept took it" },
 ]
-manual = "ui_scale_75_settings.png: the pause menu's settings page three quarters of its 100% size (pause_settings pictures of other runs), centred: the categories, the rows and the band behind them, the column and Back and Defaults moved toward the middle, the sheet and the screen picture still over the whole view. ui_scale_75_wait.png: the wait menu's box three quarters of its size, in the middle"
+manual = "ui_scale_70_settings.png: the pause menu's settings page seven tenths of its 100% size (pause_settings pictures of other runs), centred: the categories, the rows and the band behind them, the column and Back and Defaults moved toward the middle, the sheet and the screen picture still over the whole view. ui_scale_70_wait.png: the wait menu's box seven tenths of its size, in the middle"
 
 [[scenario]]
 name = "ui-scale-tile-menus"
-source = "issue #1631: at 75% a tile-drawn menu ([UI] TileMenus=SleepWaitMenu) is drawn three quarters of its size in the middle of the view and a real pointer press on its drawn slider page area is read as one on its tiles (tiles/input.rs to_menu_units), as tiles-sleep-wait's aid press at 1100:457 units is"
-note = "Runs after ui-scale-write in its home. 1100:457 units is 825:342.75 pixels of the 1280 x 720 view at 100%; at 75% in the middle that is 778.75:347.06, the window's 0.6084:0.4821"
+source = "issue #1631: at 70% a tile-drawn menu ([UI] TileMenus=SleepWaitMenu) is drawn seven tenths of its size in the middle of the view and a real pointer press on its drawn slider page area is read as one on its tiles (tiles/input.rs to_menu_units), as tiles-sleep-wait's aid press at 1100:457 units is"
+note = "Runs after ui-scale-write in its home. 1100:457 units is 825:342.75 pixels of the 1280 x 720 view at 100%; at 70% in the middle that is 769.5:347.93, the window's 0.6012:0.4832 (the UI scale row is a list of 50-100% in tens since the menu overhaul, owner 2026-11-15; 70% was the slider's)"
 areas = ["menus", "tiles", "wait"]
 paths = ["engine/nvf-play/src/interface.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/wait_menu.rs"]
-env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_TILE_MENUS = "SleepWaitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_WAIT = "10:open,11:point=0.6084:0.4821,11.5:press,12:release", NVF_PLAY_TEST_SHOTS = "13:ui_scale_75_tiles_wait.png" }
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_TILE_MENUS = "SleepWaitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_WAIT = "10:open,11:point=0.6012:0.4832,11.5:press,12:release", NVF_PLAY_TEST_SHOTS = "13:ui_scale_70_tiles_wait.png" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 16
 expect = [
-  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run draws the menus at 75%" },
+  { text = "interface: UI scale 70% (the HUD drawn at 70%, the menus at 70% of the original's size)", label = "the run draws the menus at 70%" },
   { re = 'tiles: SleepWaitMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "the menu's tree draws" },
   { text = "tiles: SleepWaitMenu Step(6) on its tiles", count = 1, label = "the real press on the drawn page area pages the slider" },
 ]
-manual = "ui_scale_75_tiles_wait.png: the tile-drawn wait menu three quarters of the size of tiles_sleep_wait.png, in the middle of the view, the slider at 7 hours"
+manual = "ui_scale_70_tiles_wait.png: the tile-drawn wait menu seven tenths of the size of tiles_sleep_wait.png, in the middle of the view, the slider at 7 hours"
 
 [[scenario]]
 name = "hud-menu-scale-write"
-source = "#2519: persist HUD 75% with menus 100%; changing HUD alone must not make menus follow on restart"
-note = "Set menu 50% then 100% and HUD 100% then 75%, so both independent keys are written even if this disposable home was used before. The following cases read this same home."
+source = "#2519: persist HUD 70% with menus 100%; changing HUD alone must not make menus follow on restart"
+note = "Set menu 50% then 100% and HUD 100% then 70%, so both independent keys are written even if this disposable home was used before. The following cases read this same home."
 areas = ["hud", "settings", "menus"]
 paths = ["engine/nvf-play/src/menu_scale.rs", "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/settings.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvforever/src/settings.rs"]
-env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "10.5:menu-scale=0,11:menu-scale=1,11.5:ui-scale=0.5,12:ui-scale=0.25" }
+env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "10.5:menu-scale=50%,11:menu-scale=100%,11.5:ui-scale=100%,12:ui-scale=70%" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 16
 expect = [
   { text = "settings: menu-scale 100%", label = "menus saved independently at full size" },
-  { text = "settings: ui-scale 75%", label = "HUD alone is subsequently reduced" },
+  { text = "settings: ui-scale 70%", label = "HUD alone is subsequently reduced" },
 ]
 
 [[scenario]]
 name = "hud-menu-scale-menus"
-source = "#2519: after hud-menu-scale-write, HUD 75% and handbuilt menus 100%; unchanged 100% wait pointer coordinates must still hit"
-note = "The slider and Accept points are wait-pointer-press's authored 100% positions, not the legacy 75% positions. Main/pause/settings/HUD screenshots require visual review."
+source = "#2519: after hud-menu-scale-write, HUD 70% and handbuilt menus 100%; unchanged 100% wait pointer coordinates must still hit"
+note = "The slider and Accept points are wait-pointer-press's authored 100% positions, not the legacy 70% positions. Main/pause/settings/HUD screenshots require visual review."
 areas = ["hud", "settings", "menus", "wait"]
 paths = ["engine/nvf-play/src/menu_scale.rs", "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/wait.rs", "engine/nvf-play/src/ui_pointer.rs", "engine/nvf-play/src/settings_layout.rs"]
-env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:page,12:layout", NVF_PLAY_TEST_SHOTS = "12.5:hud75_menu100_settings.png,17:hud75_menu100_wait.png", NVF_PLAY_TEST_WAIT = "16:open,17.5:point=0.584:0.47,18:press,18.5:release,19:point=0.677:0.576,19.5:press,20.5:release" }
+env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:page,12:layout", NVF_PLAY_TEST_SHOTS = "12.5:hud70_menu100_settings.png,17:hud70_menu100_wait.png", NVF_PLAY_TEST_WAIT = "16:open,17.5:point=0.584:0.47,18:press,18.5:release,19:point=0.677:0.576,19.5:press,20.5:release" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 24
 expect = [
-  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 100% of the original's size)", label = "restart keeps distinct sizes" },
-  "settings layout: ui-scale -> Display > Screen",
-  "settings layout: menu-scale -> Display > Screen",
+  { text = "interface: UI scale 70% (the HUD drawn at 70%, the menus at 100% of the original's size)", label = "restart keeps distinct sizes" },
+  "settings layout: ui-scale -> Display > Interface",
+  "settings layout: menu-scale -> Display > Interface",
   "pause menu: open",
   "wait menu: open",
   { re = 'wait menu: waiting (?P<n>\d+) hour', range = [17, 19], label = "the unscaled menu slider and Accept receive their drawn presses" },
 ]
-manual = "hud75_menu100_settings.png and hud75_menu100_wait.png: full-size centred menus, settings rows HUD scale and Menu scale in Display > Screen, smaller HUD kept at its edges. Compare 100% menu screenshots and ui_scale_75_settings/wait screenshots; no clipped Back/Defaults rows."
+manual = "hud70_menu100_settings.png and hud70_menu100_wait.png: full-size centred menus, settings rows HUD scale and Menu scale in Display > Interface, smaller HUD kept at its edges. Compare 100% menu screenshots and ui_scale_70_settings/wait screenshots; no clipped Back/Defaults rows."
 
 [[scenario]]
 name = "hud-menu-scale-tile-menus"
-source = "#2519: HUD 75% with tile menu 100%; the original 1100:457 tile-unit pointer must page the actual menu once"
+source = "#2519: HUD 70% with tile menu 100%; the original 1100:457 tile-unit pointer must page the actual menu once"
 note = "Reads hud-menu-scale-write's home. At 100%, 1100:457 units is 825:342.75 pixels of 1280x720, or 0.64453125:0.47604167."
 areas = ["hud", "menus", "tiles", "wait"]
 paths = ["engine/nvf-play/src/menu_scale.rs", "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/wait_menu.rs"]
-env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_TILE_MENUS = "SleepWaitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_WAIT = "10:open,11:point=0.64453125:0.47604167,11.5:press,12:release", NVF_PLAY_TEST_SHOTS = "13:hud75_menu100_tiles_wait.png" }
+env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_TILE_MENUS = "SleepWaitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_WAIT = "10:open,11:point=0.64453125:0.47604167,11.5:press,12:release", NVF_PLAY_TEST_SHOTS = "13:hud70_menu100_tiles_wait.png" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 16
 expect = [
-  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 100% of the original's size)", label = "restart retains full-size menus independently" },
+  { text = "interface: UI scale 70% (the HUD drawn at 70%, the menus at 100% of the original's size)", label = "restart retains full-size menus independently" },
   { re = 'tiles: SleepWaitMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "the actual menu tree draws" },
   { text = "tiles: SleepWaitMenu Step(6) on its tiles", count = 1, label = "the press on the full-size page area reaches the tiles" },
 ]
-manual = "hud75_menu100_tiles_wait.png: full-size centred tile wait menu at 7 hours with HUD still 75%; compare tiles_sleep_wait.png and ui_scale_75_tiles_wait.png."
+manual = "hud70_menu100_tiles_wait.png: full-size centred tile wait menu at 7 hours with HUD still 70%; compare tiles_sleep_wait.png and ui_scale_70_tiles_wait.png."
 
 [[scenario]]
 name = "hud-menu-scale-main-menu"
 source = "#2519: independent full-size main menu after the HUD-only reduction saved by hud-menu-scale-write"
 areas = ["menus", "settings"]
 paths = ["engine/nvf-play/src/menu_scale.rs", "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/main_menu.rs"]
-env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_SHOTS = "6:hud75_menu100_main.png" }
+env = { NVFOREVER_HOME = "hud-menu-scale-home", NVF_PLAY_TEST_SHOTS = "6:hud70_menu100_main.png" }
 args = ["--play", "--menu", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 8
 expect = [
-  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 100% of the original's size)", label = "main menu uses independently persisted size" },
+  { text = "interface: UI scale 70% (the HUD drawn at 70%, the menus at 100% of the original's size)", label = "main menu uses independently persisted size" },
   { re = 'main menu: open \(\d+ loading screens', label = "the actual main menu opens" },
 ]
-manual = "hud75_menu100_main.png: full-size main menu with all labels and buttons on screen; the saved HUD reduction must not shrink it."
+manual = "hud70_menu100_main.png: full-size main menu with all labels and buttons on screen; the saved HUD reduction must not shrink it."
 
 [[scenario]]
 name = "draw-distance-sliders"
 source = "engine/nvforever/src/draw_distance.rs (owner request 2026-10-16): the settings page's Display sliders set how far objects, actors and items are drawn and how far shadows and grass reach, while the game runs, without a rendering error"
 areas = ["renderer", "settings"]
 paths = ["engine/nvforever/src/draw_distance.rs", "engine/nvforever/src/fade.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:17", NVF_PLAY_TEST_SETTINGS = "11:object-distance=0.5,12:actor-distance=0.3,13:item-distance=0.25,14:shadow-distance=0.5,15:grass-distance=0.5,16:object-distance=1" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:17", NVF_PLAY_TEST_SETTINGS = "11:object-distance=0.5,12:actor-distance=0.3,13:item-distance=0.25,14:shadow-distance=0.6,15:grass-distance=0.5,16:object-distance=1" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
 run_seconds = 22
 order = [[
@@ -979,7 +979,7 @@ order = [[
   { re = 'draw distances: objects 50%, actors 100%, items 100% of \d+ units \((?P<n>\d+) meshes\)', range = [500, 1e9], label = "the objects' slider reaches the loaded cells' meshes" },
   "settings: actor-distance 30%",
   "settings: item-distance 25%",
-  "settings: shadow-distance 50%",
+  "settings: shadow-distance 60%",
   "settings: grass-distance 50%",
   "settings: object-distance 100%",
   { re = 'draw distances: objects 100%, actors 30%, items 25%' },
@@ -992,7 +992,8 @@ source = "engine/nvf-play/src/audio_out.rs (owner request 2026-10-17): the setti
 areas = ["audio", "settings"]
 paths = ["engine/nvf-play/src/audio_out.rs", "engine/nvf-play/src/sfx.rs", "engine/nvf-play/src/music.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "6:1:0,10:0:0", NVF_PLAY_TEST_PAUSE = "12:16", NVF_PLAY_TEST_SETTINGS = "13:volume-master=0.8,14:volume-footstep=0.25,15:volume-voice=0.5" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+args = ["--cell", "Goodsprings", "--play", "--no-messages", "--hour", "12"]
+note = "without --no-voice: the Voice volume row is greyed (and takes no change) while dialogue voice is off (the menu overhaul, owner 2026-11-15)"
 run_seconds = 18
 order = [[
   "settings: volume-master 80%",
@@ -1490,8 +1491,8 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hou
 run_seconds = 32
 order = [[
   "pause menu: open",
-  "settings: ambient-occlusion on",
   "settings: anti-aliasing TAA",
+  "settings: ambient-occlusion on",
   "test aid NVF_PLAY_TEST_PAUSE: Esc (resume)",
   { re = 'pause menu: resume after graphics change: pipelines waited [\d.]+ s, pending 0, capped false$' },
   { re = 'pause menu: resume$' },
@@ -11217,7 +11218,7 @@ order = [[
 [[scenario]]
 name = "settings-scroll-headings"
 source = "#1953: the mouse wheel moves the window of a tab with headings (Gameplay) as of one without, the chosen row brought into the window (the top row once the chosen one leaves it) and the window not pulled back to the chosen row's heading; a notch up moves it back one line"
-note = "Gameplay's first lines: [Game], difficulty, hardcore, kill-camera, vats-style, vats-slowdown, reload-slows, UsePipBoy, [Saving], the five autosave rows, [Dialogue] (line 15); the window is twelve lines (#2377), and a heading on its last line is drawn with its first row in the next window, so the window from line 4 draws lines 4-14"
+note = "Gameplay's first lines: [Game], difficulty, hardcore, reload-slows, UsePipBoy, an empty line, [V.A.T.S.] and its three rows, an empty line, [Camera] (the menu overhaul, owner 2026-11-15); the window is eleven lines (#2377, the heading links under the note)"
 areas = ["settings"]
 paths = ["engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/settings_layout.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:18", NVF_PLAY_TEST_SETTINGS = "11:tab:Gameplay", NVF_PLAY_TEST_PAUSE_MENU = "12:wheel-down,12.3:wheel-down,12.6:wheel-down,13.5:inspect,14:wheel-up,15:inspect" }
@@ -11225,18 +11226,18 @@ args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 20
 order = [[
   "pause menu: tab Gameplay; selected difficulty",
-  { re = 'pause menu: rows 2-13 of \d+ shown', label = "a notch of the wheel shows the next line" },
-  { re = 'pause menu: rows 3-14 of \d+ shown' },
-  { re = 'pause menu: rows 4-15 of \d+ shown', label = "three notches, three lines down" },
-  { re = 'pause menu: inspect: Gameplay, keys on the rows, selected kill-camera, lines 4-14 of \d+', label = "the window stays moved, the chosen row its top row ([Dialogue] on its last line left for the next window)" },
-  "pause menu: inspect: window 12 lines, 11 drawn",
-  { re = 'pause menu: rows 3-14 of \d+ shown', label = "a notch up moves it back one line" },
-  { re = 'pause menu: inspect: Gameplay, keys on the rows, selected kill-camera, lines 3-14 of \d+', label = "the chosen row still in the window" },
-  "pause menu: inspect: window 12 lines, 12 drawn",
+  { re = 'pause menu: rows 2-12 of \d+ shown', label = "a notch of the wheel shows the next line" },
+  { re = 'pause menu: rows 3-13 of \d+ shown' },
+  { re = 'pause menu: rows 4-14 of \d+ shown', label = "three notches, three lines down" },
+  { re = 'pause menu: inspect: Gameplay, keys on the rows, selected reload-slows, lines 4-14 of \d+', label = "the window stays moved, the chosen row its top row" },
+  "pause menu: inspect: window 11 lines, 11 drawn",
+  { re = 'pause menu: rows 3-13 of \d+ shown', label = "a notch up moves it back one line" },
+  { re = 'pause menu: inspect: Gameplay, keys on the rows, selected reload-slows, lines 3-13 of \d+', label = "the chosen row still in the window" },
+  "pause menu: inspect: window 11 lines, 11 drawn",
 ]]
 forbid = [
   { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
-  { re = 'pause menu: rows 1-12 of \d+ shown', label = "the window is never pulled back to the top (to the chosen row's heading)" },
+  { re = 'pause menu: rows 1-11 of \d+ shown', label = "the window is never pulled back to the top (to the chosen row's heading)" },
   { re = 'nvf_play::settings: settings: [a-zA-Z][\w-]* \S', label = "scrolling changes no setting" },
 ]
 
@@ -11321,7 +11322,7 @@ forbid = [
 
 [[scenario]]
 name = "settings-layout"
-source = "#1953: the settings page's seven tabs, the original's four first, and each row's tab and heading from one table (engine/nvf-play/src/settings_layout.rs; docs/design/settings-page.md); an empty Tweaks tab opens on no row"
+source = "#1953 and the menu overhaul (owner 2026-11-15): the settings page's eight tabs, the original's four first, and each row's tab and category from one table (engine/nvf-play/src/settings_layout.rs; docs/design/settings-page.md); the Tweaks tab opens on its Category row (#1892's rows in groups)"
 note = "the placements checked are of rows registered in every --play run; `0 not in the table` says every row this run registers has its place"
 areas = ["settings"]
 paths = ["engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs"]
@@ -11329,47 +11330,47 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_P
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 18
 expect = [
-  { text = "settings layout: tabs Gameplay, Display, Audio, Controls, Graphics, Tweaks, Debug", count = 1, label = "seven tabs, the original's four first" },
-  { re = 'settings layout: \d+ row\(s\) in 7 tab\(s\), 0 not in the table', label = "every registered row has its place in the table, no tab of its own" },
+  { text = "settings layout: tabs Gameplay, Display, Audio, Controls, Graphics, NVF Features, Tweaks, Debug", count = 1, label = "eight tabs, the original's four first" },
+  { re = 'settings layout: \d+ row\(s\) in 8 tab\(s\), 0 not in the table', label = "every registered row has its place in the table, no tab of its own" },
   "settings layout: difficulty -> Gameplay > Game",
   "settings layout: autosave-travel -> Gameplay > Saving",
   "settings layout: menu-pause -> Gameplay > Dialogue",
   "settings layout: detached-camera -> Gameplay > Camera",
   "settings layout: resolution -> Display > Screen",
-  "settings layout: hud-colour -> Display > Interface",
-  "settings layout: hud-red -> Display > Interface",
+  "settings layout: hud-colour -> Display > Colours",
+  "settings layout: hud-red -> Display > Colours",
   "settings layout: crosshair-style -> Display > Interface",
   "settings layout: language -> Display > Interface",
-  "settings layout: fps-counter -> Display > Performance",
-  "settings layout: music -> Audio",
-  "settings layout: button-style -> Controls",
-  "settings layout: aim-assist -> Controls",
-  "settings layout: grade -> Graphics > Picture",
-  "settings layout: grass -> Graphics > Distance",
-  "settings layout: sky-clock -> Graphics > World",
+  "settings layout: fps-counter -> Display > Performance Overlay",
+  "settings layout: music -> Audio > Sound",
+  "settings layout: button-style -> Controls > Input",
+  "settings layout: aim-assist -> Controls > Aim Assist",
+  "settings layout: grade -> Graphics > Lighting and Effects",
+  "settings layout: grass -> Graphics > Detail and Distance",
+  "settings layout: sky-clock -> Graphics > World and Animation",
   "settings layout: god-mode -> Debug",
   "settings layout: scope-3d -> Debug",
-  { text = "pause menu: tab Tweaks; selected none", label = "the empty Tweaks tab opens on no row" },
-  { text = "pause menu: inspect: Tweaks, keys on the rows, selected none, lines 0-0 of 0", label = "it lists nothing" },
-  { re = 'pause menu: inspect: words Search \| Changed \| Gameplay \| Display \| Audio \| Controls \| Graphics \| Tweaks \| Debug \| No settings here\.', label = "the rail and the empty tab's words" },
-  { text = "pause menu: settings window of 12 lines", count = 1, label = "the window's lines worked out from the layout, once (#2377)" },
+  { text = "pause menu: tab Tweaks; selected category", label = "the Tweaks tab opens on its Category row" },
+  { re = 'pause menu: inspect: Tweaks, keys on the rows, selected category, lines 1-\d+ of \d+', label = "its group's categories under it" },
+  { re = 'pause menu: inspect: words Search \| Changed \| Gameplay \| Display \| Audio \| Controls \| Graphics \| NVF Features \| Tweaks \| Debug \| ', label = "the rail's words" },
+  { text = "pause menu: settings window of 11 lines", count = 1, label = "the window's lines worked out from the layout, once (#2377)" },
   { re = 'pause menu: settings list (\d+) wide from \d+ in a view \d+ wide, band \d+-\d+', label = "the list's width from the view, logged (#2377)" },
-  "pause menu: inspect: window 12 lines, 0 drawn",
+  "pause menu: inspect: window 11 lines, 11 drawn",
 ]
 order = [[
   "settings layout: tabs Gameplay",
   "settings layout: difficulty -> Gameplay > Game",
-  "settings layout: autosave-travel -> Gameplay > Saving",
+  "settings layout: detached-camera -> Gameplay > Camera",
   "settings layout: menu-pause -> Gameplay > Dialogue",
+  "settings layout: autosave-travel -> Gameplay > Saving",
   "settings layout: resolution -> Display > Screen",
-  "settings layout: music -> Audio",
-  "settings layout: button-style -> Controls",
-  "settings layout: grade -> Graphics > Picture",
+  "settings layout: music -> Audio > Sound",
+  "settings layout: button-style -> Controls > Input",
+  "settings layout: grade -> Graphics > Lighting and Effects",
   "settings layout: god-mode -> Debug",
-  "pause menu: tab Tweaks; selected none",
+  "pause menu: tab Tweaks; selected category",
 ]]
 forbid = [{ re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" }]
-
 [[scenario]]
 name = "settings-layout-ultrawide"
 source = "#2377: at 3440x1440 (a view 2293 units wide) the settings list is as wide as it may be (1300 units), centred in the room left of the rail, the window twelve lines"
@@ -11408,7 +11409,7 @@ forbid = [
 
 [[scenario]]
 name = "settings-headings"
-source = "#1953: headings inside a tab, passed by Up/Down, jumped between with Page Up/Page Down (the aid's heading-down/heading-up press them); Tab the next tab (tab-down)"
+source = "#1953: headings inside a tab, chosen by Up/Down (the menu overhaul, owner 2026-11-15), jumped between with Page Up/Page Down (the aid's heading-down/heading-up press them); Tab the next tab (tab-down)"
 areas = ["settings"]
 paths = ["engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:19", NVF_PLAY_TEST_SETTINGS = "11:tab:Gameplay", NVF_PLAY_TEST_PAUSE_MENU = "12:heading-down,13:heading-down,14:heading-up,15:tab-down,16:heading-down,17:inspect,17.5:up,18:inspect" }
@@ -11416,13 +11417,14 @@ args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 21
 order = [[
   { text = "pause menu: tab Gameplay; selected difficulty", label = "Gameplay opens on its first row, under Game" },
-  { text = "pause menu: heading Gameplay > Saving; selected autosave-travel", label = "Page Down: the first row under Saving" },
-  { text = "pause menu: heading Gameplay > Dialogue; selected menu-pause", label = "Page Down again: under Dialogue" },
-  { text = "pause menu: heading Gameplay > Saving; selected autosave-travel", label = "Page Up: back under Saving" },
-  { text = "pause menu: tab Display; selected resolution", label = "Tab: Display, on its first row" },
-  { text = "pause menu: heading Display > Interface; selected hud-colour", label = "Page Down: under Interface" },
-  { text = "pause menu: inspect: Display, keys on the rows, selected hud-colour", label = "the row is chosen with the keys on the rows" },
-  { re = 'pause menu: inspect: shown .*\[Display > Interface\], hud-colour', label = "the heading is drawn over its first row" },  { text = "pause menu: inspect: Display, keys on the rows, selected menu-scale", label = "Up from the heading's first row passes the heading to the row above it (menu-scale, the last row under Screen since #2524)" },
+  { text = "pause menu: heading Gameplay > V.A.T.S.; selected vats-style", label = "Page Down: the first row under V.A.T.S." },
+  { text = "pause menu: heading Gameplay > Camera; selected detached-camera", label = "Page Down again: under Camera" },
+  { text = "pause menu: heading Gameplay > V.A.T.S.; selected vats-style", label = "Page Up: back under V.A.T.S." },
+  { text = "pause menu: tab Display; selected monitor", label = "Tab: Display, on its first row" },
+  { text = "pause menu: heading Display > Frame Rate; selected display-sync", label = "Page Down: under Frame Rate" },
+  { text = "pause menu: inspect: Display, keys on the rows, selected display-sync", label = "the row is chosen with the keys on the rows" },
+  { re = 'pause menu: inspect: shown .*\[Display > Frame Rate\], display-sync', label = "the heading is drawn over its first row" },
+  { text = "pause menu: inspect: Display, keys on the rows, selected [Display > Frame Rate]", label = "Up from the heading's first row chooses the heading (a category opens and closes from it)" },
 ]]
 forbid = [
   { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
@@ -11442,11 +11444,11 @@ expect = [
 ]
 order = [[
   { text = "pause menu: colour sliders HUD hidden, Pip-Boy hidden", label = "both colours amber: no sliders" },
-  { re = 'pause menu: inspect: rows .*\bhud-colour,pipboy-colour,language\b', label = "the lists without their sliders" },
+  { re = 'pause menu: inspect: rows .*\bhud-colour,pipboy-colour,fps-counter\b', label = "the lists without their sliders" },
   "settings: hud-colour Custom",
   { text = "pause menu: colour sliders HUD shown, Pip-Boy hidden", label = "Custom shows the HUD's sliders only" },
   { re = 'pause menu: inspect: Display, keys on the rows, selected hud-colour, ', label = "the choice stays on the colour" },
-  { re = 'pause menu: inspect: rows .*\bhud-colour,hud-red,hud-green,hud-blue,pipboy-colour,language\b', label = "red, green and blue under the HUD's colour" },
+  { re = 'pause menu: inspect: rows .*\bhud-colour,hud-red,hud-green,hud-blue,pipboy-colour,fps-counter\b', label = "red, green and blue under the HUD's colour" },
   "settings: hud-red 51",
   "interface colours: HUD [51, 182, 66], Pip-Boy [255, 182, 66]",
   "settings: hud-colour Green",
@@ -11454,7 +11456,7 @@ order = [[
   "interface colours: HUD [26, 255, 128], Pip-Boy [255, 182, 66]",
   "settings: pipboy-colour Custom",
   { text = "pause menu: colour sliders HUD hidden, Pip-Boy shown", label = "the Pip-Boy's alone" },
-  { re = 'pause menu: inspect: rows .*\bhud-colour,pipboy-colour,pipboy-red,pipboy-green,pipboy-blue,language\b' },
+  { re = 'pause menu: inspect: rows .*\bhud-colour,pipboy-colour,pipboy-red,pipboy-green,pipboy-blue,fps-counter\b' },
 ]]
 forbid = [{ re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" }]
 
@@ -11471,14 +11473,14 @@ order = [[
   "controls: input device Controller",
   "pause menu: tab Gameplay; selected difficulty",
   "pause menu: RB presses PageDown",
-  { text = "pause menu: heading Gameplay > Saving; selected autosave-travel", label = "RB: the next heading" },
+  { text = "pause menu: heading Gameplay > V.A.T.S.; selected vats-style", label = "RB: the next heading" },
   "pause menu: LB presses PageUp",
   { text = "pause menu: heading Gameplay > Game; selected difficulty", label = "LB: the heading before" },
   "pause menu: RT presses Tab",
-  { text = "pause menu: tab Display; selected resolution", label = "RT: the next tab" },
+  { text = "pause menu: tab Display; selected monitor", label = "RT: the next tab" },
   "pause menu: Y presses F6",
   { text = "pause menu: the keys on the rail (Display)", label = "Y: the keys on the rail" },
-  "pause menu: inspect: Display, keys on the rail (Display), selected resolution",
+  "pause menu: inspect: Display, keys on the rail (Display), selected monitor",
   "pause menu: rail Gameplay",
   "pause menu: rail Changed",
   { text = "pause menu: list Changed; selected device", label = "A on the rail: the Changed list, on the Input Device row (set to Controller)" },
@@ -11568,8 +11570,8 @@ order = [[
   "settings: crosshair-style Arrows",
   { text = "pause menu: list Changed; selected difficulty", label = "the Changed list opens on its first row" },
   { text = "pause menu: changed 3 row(s); keys difficulty,crosshair-style,god-mode", label = "exactly the three rows set, in the page's order" },
-  "pause menu: inspect: Changed, keys on the rows, selected difficulty, lines 1-6 of 6",
-  { text = "pause menu: inspect: shown [Gameplay > Game], difficulty, [Display > Interface], crosshair-style, [Debug], god-mode", label = "each under where it lives" },
+  "pause menu: inspect: Changed, keys on the rows, selected difficulty, lines 1-8 of 8",
+  { text = "pause menu: inspect: shown [Gameplay > Game], difficulty, , [Display > Interface], crosshair-style, , [Debug], god-mode", label = "each under where it lives, an empty line between places" },
   { text = "pause menu: changed defaults; keys difficulty,crosshair-style,god-mode", label = "Defaults on the list puts back those rows" },
   "settings: difficulty Normal",
   "settings: crosshair-style Cross",
@@ -11595,8 +11597,8 @@ run_seconds = 21
 order = [[
   "pause menu: tab Gameplay; selected difficulty",
   "pause menu: the pointer on heading-down",
-  { text = "pause menu: heading Gameplay > Saving; selected autosave-travel", label = "a click on Next heading: the first row under Saving" },
-  "pause menu: inspect: Gameplay, keys on the rows, selected autosave-travel",
+  { text = "pause menu: heading Gameplay > V.A.T.S.; selected vats-style", label = "a click on Next heading: the first row under V.A.T.S." },
+  "pause menu: inspect: Gameplay, keys on the rows, selected vats-style",
   "pause menu: the pointer on changed",
   { text = "pause menu: list Changed; selected none", label = "a click on Changed opens the list" },
   { text = "pause menu: changed 0 row(s); keys", label = "nothing changed in a clean run" },
@@ -11621,7 +11623,7 @@ order = [[
   "language: xx",
   "settings: language Smoke Language",
   { text = 'pause menu: search "menu-pause": 1 result(s); keys menu-pause', label = "the English key is found under another language" },
-  { text = "pause menu: inspect: words [xx] Search | [xx] Changed | [xx] Gameplay | [xx] Display | [xx] Audio | [xx] Controls | [xx] Graphics | [xx] Tweaks | [xx] Debug | [xx] Search: menu-pause | [xx] Gameplay > [xx] Dialogue", label = "the rail, the search's line and where the row lives, translated" },
+  { text = "pause menu: inspect: words [xx] Search | [xx] Changed | [xx] Gameplay | [xx] Display | [xx] Audio | [xx] Controls | [xx] Graphics | [xx] NVF Features | [xx] Tweaks | [xx] Debug | [xx] Search: menu-pause | [xx] Gameplay > [xx] Dialogue", label = "the rail, the search's line and where the row lives, translated" },
   'pause menu: search "zzzz": 0 result(s); keys',
   { re = 'pause menu: inspect: words .*\| \[xx\] Search: zzzz \| \[xx\] No results\.$', label = "nothing found, in the language" },
   "pause menu: search closed",
@@ -11634,7 +11636,7 @@ forbid = [{ re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (li
 [[scenario]]
 name = "settings-quality-presets"
 source = "#1966: the Graphics tab's Quality row, over its own heading at the top: each preset sets the rows its file's keys map to (docs/spec-notes/quality-presets.md), each logged with its value; a change to one of them reads Custom (engine/nvforever/src/quality.rs)"
-note = "the presets are the made-up files of tools/smoke/fixtures/quality-presets (NVF_PLAY_TEST_QUALITY_PRESETS), not an install's: a slider's part is the file's number against the largest of the four, so Very High is 100% and matches today's distances"
+note = "Shadow distance is a list of 0-100% in fifths (the menu overhaul, owner 2026-11-15): a file's part is taken to the nearest; the presets are the made-up files of tools/smoke/fixtures/quality-presets (NVF_PLAY_TEST_QUALITY_PRESETS), not an install's: a slider's part is the file's number against the largest of the four, so Very High is 100% and matches today's distances"
 areas = ["settings", "renderer"]
 paths = ["engine/nvforever/src/quality.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings.rs", "tools/smoke/fixtures/quality-presets/"]
 env = { NVF_PLAY_TEST_QUALITY_PRESETS = "{repo}/tools/smoke/fixtures/quality-presets", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:21", NVF_PLAY_TEST_SETTINGS = "11:layout,12:quality=Low,14:quality=Medium,15:quality=High,16:quality=Very High,18:object-distance=0.5" }
@@ -11643,44 +11645,43 @@ run_seconds = 23
 expect = [
   { re = 'quality presets: Low, Medium, High, Very High from .*quality-presets; 9 key\(s\) set rows, 32 not used', count = 1, label = "the four made-up files are read once, at the start" },
   { text = "settings layout: quality -> Graphics > Quality", label = "the Quality row under its own heading" },
-  { text = "settings layout: enhanced -> Graphics > Picture", label = "the Enhanced effects row under Picture" },
 ]
 order = [[
-  "settings: shadow-distance 25%",
-  { text = "settings: sun-shadows Off", label = "bDrawShadows=0: Sun shadows Off" },
+  "settings: shadow-distance 20%",
   "settings: shadow-filter Fast",
+  { text = "settings: grass-distance 10%", label = "0 in the file: the slider's least" },
+  { text = "settings: sun-shadows Off", label = "bDrawShadows=0: Sun shadows Off" },
   "settings: actor-distance 20%",
   "settings: object-distance 40%",
   "settings: item-distance 50%",
-  { text = "settings: grass-distance 10%", label = "0 in the file: the slider's least" },
   "settings: water-mirror off",
   "settings: glow off",
   { re = 'quality presets: Low from .*quality-presets: 9 row\(s\) set', label = "Low sets its nine rows" },
   "settings: quality Low",
   "quality presets: the Quality row reads Low",
-  "settings: shadow-distance 50%",
+  "settings: grass-distance 25%",
   { text = "settings: sun-shadows Quality", label = "bDrawShadows=1: Sun shadows Quality (the row is a choice now, #2182)" },
   "settings: actor-distance 40%",
   "settings: object-distance 50%",
   "settings: item-distance 60%",
-  "settings: grass-distance 25%",
   "settings: water-mirror on",
+  { text = "settings: shadow-distance 60%", label = "the shadows' distance once Sun shadows are on (it is greyed while they are off)" },
   "settings: quality Medium",
   "quality presets: the Quality row reads Medium",
-  "settings: shadow-distance 75%",
+  "settings: shadow-distance 80%",
   "settings: shadow-filter Smooth",
+  "settings: grass-distance 75%",
   "settings: actor-distance 60%",
   "settings: object-distance 80%",
   "settings: item-distance 70%",
-  "settings: grass-distance 75%",
   "settings: glow on",
   "settings: quality High",
   "quality presets: the Quality row reads High",
   "settings: shadow-distance 100%",
+  "settings: grass-distance 100%",
   "settings: actor-distance 100%",
   "settings: object-distance 100%",
   "settings: item-distance 100%",
-  "settings: grass-distance 100%",
   "settings: quality Very High",
   "quality presets: the Quality row reads Very High",
   { text = "settings: object-distance 50%", label = "a covered row changed on its own" },
@@ -11694,7 +11695,7 @@ forbid = [
 
 [[scenario]]
 name = "settings-quality-presets-missing"
-source = "#1966: without any of the preset files the Quality row is not registered, and the log says why once; the Enhanced effects row stays (engine/nvforever/src/quality.rs)"
+source = "#1966: without any of the preset files the Quality row is not registered, and the log says why once (engine/nvforever/src/quality.rs; the Enhanced effects row is gone, the menu overhaul, owner 2026-11-15)"
 note = "NVF_PLAY_TEST_QUALITY_PRESETS names a folder that does not exist; the aid's quality=Low then finds no such row"
 areas = ["settings"]
 paths = ["engine/nvforever/src/quality.rs", "engine/nvforever/src/settings.rs"]
@@ -11703,8 +11704,7 @@ args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 17
 expect = [
   { re = 'quality presets: none of low\.ini, medium\.ini, high\.ini, VeryHigh\.ini in .*quality-presets-none: the Quality row is not shown', count = 1, label = "said once" },
-  { text = "settings layout: enhanced -> Graphics > Picture", label = "the Enhanced effects row is there all the same" },
-  { re = 'settings layout: \d+ row\(s\) in 7 tab\(s\), 0 not in the table', label = "every row still has its place" },
+  { re = 'settings layout: \d+ row\(s\) in 8 tab\(s\), 0 not in the table', label = "every row still has its place" },
   { re = 'NVF_PLAY_TEST_SETTINGS: no switch "quality"', label = "there is no Quality row to take a preset" },
 ]
 forbid = [
@@ -11729,45 +11729,6 @@ expect = [
 ]
 order = [["settings: quality Low", "quality presets: the Quality row reads Low", "settings: quality High", "quality presets: the Quality row reads High"]]
 forbid = [{ text = "settings: quality Medium", label = "Medium is not taken" }]
-
-[[scenario]]
-name = "settings-enhanced-effects"
-source = "#1966: the Enhanced effects row under Graphics > Picture: On sets every effect --graphics enhanced turns on, Off every one off as vanilla, Custom when mixed; the Quality row reads the install's own preset files (engine/nvforever/src/quality.rs)"
-note = "test runs start with the vanilla look, so the row first reads Off; bloom flipped alone makes it Custom; Off then flips the six still on (bloom is off already)"
-areas = ["settings", "renderer"]
-paths = ["engine/nvforever/src/quality.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/graphics.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:18", NVF_PLAY_TEST_SETTINGS = "11:enhanced=On,13:bloom,15:enhanced=Off" }
-args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
-run_seconds = 20
-expect = [
-  { re = 'quality presets: Low, Medium, High, Very High from .+; 9 key\(s\) set rows, 32 not used', count = 1, label = "the install's four preset files are read from its folder" },
-]
-order = [[
-  { text = "quality presets: the Enhanced effects row reads Off", label = "the vanilla look at the start" },
-  "settings: ambient-occlusion on",
-  "settings: fine-shadows on",
-  "settings: bloom on",
-  "settings: sharpen on",
-  "settings: anisotropic on",
-  "settings: light-shafts on",
-  "settings: water-reflections on",
-  "settings: enhanced On",
-  "quality presets: the Enhanced effects row reads On",
-  "settings: bloom off",
-  { text = "quality presets: the Enhanced effects row reads Custom", label = "one effect off: Custom" },
-  "settings: ambient-occlusion off",
-  "settings: fine-shadows off",
-  "settings: sharpen off",
-  "settings: anisotropic off",
-  "settings: light-shafts off",
-  "settings: water-reflections off",
-  "settings: enhanced Off",
-  "quality presets: the Enhanced effects row reads Off",
-]]
-forbid = [
-  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
-  { re = 'settings: (glow|eye-adaptation|neon-glow|water-mirror|shadow-filter|anti-aliasing|fsr-upscaling|upscaler|upscaler-quality) ', label = "the row touches only the enhanced effects" },
-]
 
 [[scenario]]
 name = "controller-write"
@@ -28724,10 +28685,10 @@ order = [[
 [[scenario]]
 name = "settings-back-hint"
 source = "issue #1893: the settings page's Back carries its hint as the menu's Delete does, \"Back  B)\" with a controller, as the original's B (owner's play); with the keyboard \"Back\" alone (owner 2026-11-15, the menu overhaul's third test: \"Remove the Esc, leave only Back\"); pause.rs back_label"
-note = "The pause menu at 2 s, the Gameplay tab at 3 s, inspected with the keyboard at 4 s; Controller chosen at 5 s and inspected again at 6 s. Defaults keeps no hint (its Y is the rail key here, #1953). Before the fix Back was drawn bare"
+note = "Its home keeps the Controller it chose, so the keyboard is chosen first at 2.5 s. The pause menu at 2 s, the Gameplay tab at 3 s, inspected with the keyboard at 4 s; Controller chosen at 5 s and inspected again at 6 s. Defaults keeps no hint (its Y is the rail key here, #1953). Before the fix Back was drawn bare"
 areas = ["menus", "controller", "settings"]
 paths = ["engine/nvf-play/src/pause.rs"]
-env = { NVFOREVER_HOME = "settings-back-hint-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "2:9", NVF_PLAY_TEST_SETTINGS = "3:tab:Gameplay,5:device:Controller", NVF_PLAY_TEST_PAUSE_MENU = "4:inspect,6:inspect" }
+env = { NVFOREVER_HOME = "settings-back-hint-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "2:9", NVF_PLAY_TEST_SETTINGS = "2.5:device:Keyboard and Mouse,3:tab:Gameplay,5:device:Controller", NVF_PLAY_TEST_PAUSE_MENU = "4:inspect,6:inspect" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 11
 order = [[
