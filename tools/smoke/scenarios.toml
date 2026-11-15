@@ -29097,3 +29097,21 @@ expect = [
   { re = 'lip: skipped \S*0013ca2a_1\.lip: speaker VHDIntakeTowerCenturionREF has no face rig', count = 0, label = "his first line is not left without lip sync" },
 ]
 order = [["dialogue: conversation with VHDIntakeTowerCenturionREF started", "dialogue look: VHDIntakeTowerCenturionREF faces the player"]]
+
+[[scenario]]
+name = "anders-cross-head-limit"
+source = "issue #2471: Anders on the cross at Cottonwood Cove showed his head upside down in conversation and stepped sideways on a limping clip before climbing onto the cross. The cross clips hang his head chin on chest, past straight down; read from its forward alone that head faced the root's front upside down, and the turn to the player kept it upside down (in 20-30 frames at a time, measured before the fix). The head's yaw and pitch are now read with its up axis (dialogue_look::head_yaw_pitch, also head_look.rs), and an actor standing within a shuffle of its cross is put on it at once (furniture::found_on_cross); docs/spec-notes/anders-cross-head.md"
+note = "the player stands about 150 units north of Anders, about 90° off the way his chest faces on the cross (west), and talks to him twice, at 10 s and 40 s. The yaw from the chest is the limit (60°, his body part data) plus at most 20° of the talk clip's own head movement"
+areas = ["dialogue", "actors", "animation", "furniture"]
+paths = ["engine/nvforever/src/dialogue_look.rs", "engine/nvforever/src/head_look.rs", "engine/nvforever/src/furniture.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_TALK = "10:VRRCAndersREF=AndersCross|AndersDrugs|leave;40:VRRCAndersREF=AndersCross|leave", NVF_PLAY_TEST_SHOTS = "13:anders_cross_side.png" }
+args = ["--play", "--world", "WastelandNV", "--pos=55716,-95980,-480", "--heading", "159", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "001413C3"]
+run_seconds = 60
+manual = "anders_cross_side.png: his face turned towards the player, right side up"
+expect = [
+  { text = "furniture: 001413C3 is put on (a cross it stands at: no steps, no getting-on clip) 0013A4BA", label = "found on his cross, not stepping onto it" },
+  { re = 'limping: VRRCAndersREF 0x001413C3 moves \S+ on its limping clip', count = 0, label = "no limping clip plays on him" },
+  { text = "furniture: 001413C3 is on 0013A4BA", label = "he is on the cross" },
+  { re = 'dialogue look: VRRCAndersREF stops facing the player: .*the head was upside down in (?P<n>\d+) frames', count = 2, range = [0, 0], all = true, label = "his head is never upside down in either conversation" },
+  { re = 'dialogue look: VRRCAndersREF stops facing the player: the head \(yaw [+-]\d+°, pitch [+-]\d+°; (?P<n>[+-]\d+)° from its chest\)', count = 2, range = [-80, 80], all = true, label = "the head within its limit from the chest (60° and the clip's own 20°)" },
+]

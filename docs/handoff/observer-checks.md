@@ -2293,6 +2293,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      waits (aggro.rs, check 2); if the spawned dog fights at both, `MoveTo` one of
      HELIOS's placed dogs instead (check 144).
 
+## Added 2026-11-15 (Anders's head on the cross, #2471)
+
+170. **Does a crucified actor turn his head to the player, and is he ever seen climbing
+     onto the cross?** (P3; #2471, anders-cross-head.md.) At Cottonwood Cove, talk to
+     Anders (VRRCAndersREF 0x001413C3, cross 0x0013A4BA) from the front and from 90° to
+     his side. Note whether his head turns to the player in each, how far to the side it
+     goes, and whether it stays tilted down. Then leave the cell and come back (and, on
+     a new game, arrive by fast travel) and note whether he is ever seen getting onto the
+     cross (`GetSitting` reading 2) or always found on it (3). Ours since #2471: the head
+     turns up to 60° from his chest and up to 30° from the level; he is put on the cross
+     at once when he stands at it [design].
+
 ## Added 2026-11-15 (That Lucky Old Sun's ARCHIMEDES strike, #2544)
 
 164. **How does ARCHIMEDES's armed strike play out?** (P3; #2544, use-weapon.md §2.) With
