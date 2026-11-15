@@ -618,6 +618,10 @@ struct Args {
     /// game's own `--run-seconds` does not count time in menus and dialogue).
     #[arg(long, requires = "pilot")]
     pilot_minutes: Option<f64>,
+    /// The first chain begins at this step (0-based), from the game's state as loaded: a
+    /// stall replayed from a save near it (with --load).
+    #[arg(long, requires = "pilot")]
+    pilot_from: Option<usize>,
     /// Where the pilot writes its report (`fnv.pilot.report/1`).
     #[arg(long, requires = "pilot")]
     pilot_out: Option<PathBuf>,
@@ -1834,7 +1838,7 @@ fn main() -> AppExit {
             .add_systems(Last, furniture::report);
     }
     if !args.pilot.is_empty() {
-        app.add_plugins(pilot::PilotPlugin { chains: args.pilot.clone(), expect: args.pilot_expect.clone(), out: args.pilot_out.clone(), campaign: args.pilot_campaign, set_given: args.pilot_given, god: !args.pilot_no_god, known: args.pilot_known.clone(), save_load: args.pilot_save_load, minutes: args.pilot_minutes });
+        app.add_plugins(pilot::PilotPlugin { chains: args.pilot.clone(), expect: args.pilot_expect.clone(), out: args.pilot_out.clone(), campaign: args.pilot_campaign, set_given: args.pilot_given, god: !args.pilot_no_god, known: args.pilot_known.clone(), save_load: args.pilot_save_load, minutes: args.pilot_minutes, from: args.pilot_from });
     }
     if let Some(n) = nav_state {
         let follow = n.follow;

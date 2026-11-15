@@ -32,6 +32,9 @@ NVFOREVER_HOME=<a folder of its own> nvforever --data <Data> --play --new-game \
 - `--pilot-given` (with `--pilot-campaign`): a campaign's means, but each chain from its own
   `given`. For chains no campaign has reached yet; expect the false alarms a thin `given` brings
   (Doc Mitchell's OnActivate restarted the opening when VCG01 was only marked done).
+- `--pilot-from N` (with `--load`): the first chain begins at step N from the loaded game, to
+  replay a stall from a save near it (a batch run's autosave) in minutes rather than the
+  whole chain.
 - Set `NVFOREVER_HOME` to a folder of its own: the game autosaves after travel, and early runs
   overwrote the player's own autosave slot.
 - Test aids the runs use: `NVF_PLAY_TEST_SCRIPT_MENUS=900`, `NVF_PLAY_AIDS_FROM_SCRIPTS=1`,
@@ -41,10 +44,11 @@ NVFOREVER_HOME=<a folder of its own> nvforever --data <Data> --play --new-game \
 
 | step | in the pilot |
 |---|---|
-| `move_player`, `go_to_cell`, `trigger_enter` | a walk on the navmesh (`fnv_nav`) on the player's own movement controls, through doors; a long way out of doors is cut to its last 3,000 units (a fast-travel stand-in), only within the player's own worldspace or into the Mojave's (never a DLC's); a load door into its own worldspace (the Strip's gates) counts as gone through by the jump; never put where it could not walk |
+| `move_player`, `go_to_cell`, `trigger_enter` | a walk on the navmesh (`fnv_nav`) on the player's own movement controls, through doors; a long way out of doors is cut to its last 3,000 units (a fast-travel stand-in), only within the player's own worldspace or into the Mojave's (never a DLC's), and never past a door whose script runs on activation (it is cut to 3,000 units before that door, or not at all when the way to it is indoors: Lonesome Road's Divide east door takes the player's controls, and Ulysses' trigger beyond it gives them back); a load door into its own worldspace (the Strip's gates) counts as gone through by the jump; never put where it could not walk |
 | `talk`, `player_activate` | walk there, turn the view on it, ask the crosshair (`could_not_target` when it does not take it), activate as E does |
 | `choose`, `wait_talk`, `end_talk` | the dialogue screen's own calls; leaving is by the Goodbye choice with its line heard out (#2157), Tab on a topic list, `no_way_out` otherwise |
 | `say_info` (campaign) | the player brings the line about: keeps the speaker company, talks to it when it stands silent, picks the choices that lead to the line (`choice_toward`, up to 5 picks deep), or, with no known way, tries the choices on offer one topic at a time (up to 12) |
+| `hit` by the player with a weapon it carries | the weapon in hand, from 150 to 600 units off (a step back when nearer), aimed at the object, the trigger held until a shot runs its OnHit / OnHitWith blocks (Lonesome Road's laser detonator on the camp barrier's warhead, 30 shots); a weapon not carried, or 20 s of shots that run nothing, is the headless hit |
 | `kill` | a fight with the player's own weapon (a 9mm pistol is given once, god mode on by default); the body is searched for quest items and keys |
 | `terminal` | walk there, activate, the screen's own input: password on the hacking page, into the sub menu, the entry |
 | `add_item` to the player (campaign) | taken from whoever holds it in the loaded cells, or where it lies; `item_not_found` and the headless gift otherwise |
@@ -63,7 +67,11 @@ chain's; counted in `headless`), uses a load door from where a walk is held up w
 short of the door's point on the navmesh), keeps off a door that is out of the world
 (disabled) unless a switch's script enables it, and after using that switch waits up to 150 s at
 the door for it to come (Lonesome Road's Ashton silo lift: its button enables the far door 75 s
-into the ride; the direct door stays disabled until the player is down there), and at a door that stays locked (or, unlocked, does
+into the ride; the direct door stays disabled until the player is down there; when the only
+way there is such a door, out of the world and on a navmesh the ride enables, the player goes
+to its switch first, then waits and plans again), takes the navmesh's ledges (drops and climbs)
+when no way is walkable without them (Lonesome Road's Divide is ten areas joined by ledges),
+and at a door that stays locked (or, unlocked, does
 not take the player: a vault door "activated elsewhere") tries the door's switch (a script that
 names the door), a talking activator beside it, any other scripted activator beside it, a terminal entry
 that names the door, then another way round.

@@ -389,6 +389,8 @@ pub struct PilotPlugin {
     pub save_load: bool,
     /// Minutes of real time after which the run ends, report written.
     pub minutes: Option<f64>,
+    /// The first chain begins at this step (`--pilot-from`).
+    pub from: Option<usize>,
 }
 
 impl Plugin for PilotPlugin {
@@ -412,6 +414,10 @@ impl Plugin for PilotPlugin {
                 pilot.set_given = self.set_given;
                 pilot.save_load = self.save_load;
                 pilot.deadline = self.minutes.map(|m| m * 60.0);
+                if let Some(from) = self.from {
+                    info!("pilot: the first chain begins at step {from} (--pilot-from)");
+                    pilot.i = from;
+                }
                 if let Some(path) = &self.known {
                     match std::fs::read_to_string(path).map_err(|e| e.to_string()).and_then(|t| serde_json::from_str::<Json>(&t).map_err(|e| e.to_string())) {
                         Ok(Json::Array(list)) => pilot.known = list,
@@ -575,6 +581,8 @@ struct Walk {
     side: Option<(FormId, u32, Box<Walk>)>,
     /// Since when a door not in the world, its switch used, is waited for (a lift's ride).
     enable_wait: Option<f64>,
+    /// When the walk last said where the player is on its path (every [`WALK_REPORT_SECS`]).
+    reported: f64,
     /// Seconds stood watching scenes on this walk, and when a scene's line was last seen.
     scene_held: f64,
     scene_last: Option<f64>,
@@ -622,6 +630,20 @@ enum Phase {
     /// coming out to take the player to Pearl), or come near enough to walk to. Until
     /// `until`; `why` is what the walk said.
     Await { target: FormId, until: f64, why: String, tries: u8 },
+    /// A `hit` step the player makes: walks within range of the object, aims and fires the
+    /// step's weapon until a shot runs its hit script.
+    Shoot(Shoot, Walk),
+}
+
+/// A shot the player fires at an object ([`shoot_object`]).
+struct Shoot {
+    target: FormId,
+    /// The player's hits on it that ran its scripts when the step began.
+    from: u32,
+    /// Since when it has been firing.
+    firing: Option<f64>,
+    /// The walk is a step back from it, to [`SHOOT_OBJECT_NEAR`] or more.
+    backing: bool,
 }
 
 #[derive(Resource)]
@@ -720,6 +742,8 @@ struct Pilot {
     /// The chains in which the player already stored things to meet a line's carry-weight
     /// limit ([`stash_weight`]).
     stashed: Vec<String>,
+    /// Objects no shot of the player's landed on: the next hits on them are headless.
+    no_shot: Vec<FormId>,
     /// The step to go back to once the conversation is left, after storing things.
     retalk: Option<usize>,
     steps: Vec<Json>,
@@ -789,6 +813,7 @@ impl Pilot {
             line: None,
             heard: None,
             stashed: Vec::new(),
+            no_shot: Vec::new(),
             retalk: None,
             steps: Vec::new(),
             observations: Vec::new(),
@@ -1004,6 +1029,8 @@ struct Hands<'a, 'w> {
     terminal: &'a nvf_play::terminal::TerminalScreen,
     terminal_input: &'a mut MessageWriter<'w, nvf_play::terminal::TerminalInput>,
     travel: &'a mut MessageWriter<'w, TravelRequest>,
+    /// The player's shots on objects that ran their hit scripts, by object.
+    object_hits: Option<&'a std::collections::BTreeMap<u32, u32>>,
     dt: f32,
 }
 
@@ -1220,10 +1247,38 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
         }
         // The last stretch out of doors of a long way: only that is cut short.
         let outdoors = |path: &fnv_nav::Path| path.legs.iter().rposition(|l| matches!(l.space, Space::World(_)));
-        match nav.graph.find_path(here, w.goal, &params) {
-            Ok(path) if path.length > WALK_MAX && !w.cut && outdoors(&path).is_some_and(|i| fast_travel_to(here.space, path.legs[i].space)) => {
+        // No walk without them: the way with the navmesh's drops and climbs (ledge links),
+        // as a player jumps down a ledge. Lonesome Road's Divide is ten walkable areas
+        // joined by ledges: from its east door to the Temple of the Union none other leads.
+        let found = match nav.graph.find_path(here, w.goal, &params) {
+            Err(e) => match nav.graph.find_path(here, w.goal, &fnv_nav::PathParams { ledges: true, ..params.clone() }) {
+                Ok(path) => {
+                    info!("pilot: step {}: no way without the navmesh's ledges: the way takes its drops and climbs", p.i);
+                    Ok(path)
+                }
+                Err(_) => Err(e),
+            },
+            found => found,
+        };
+        // Never cut past a door whose script does something when used (it sets a stage,
+        // starts a scene): the cut stops short of that door, or there is none when the leg
+        // before it is indoors. Lonesome Road's Divide east door (script 0x01003E2A) sets
+        // NVDLC04MQ02 50 and takes the player's controls, which Ulysses' trigger beyond it
+        // gives back; cut past it, the trigger came first and the controls never came back.
+        let cut_at = match &found {
+            Ok(path) => {
+                let scripted: Vec<bool> = h.game(|g| path.legs.iter().map(|l| l.door.is_some_and(|d| door_scripted(g, d.door))).collect()).unwrap_or_default();
+                match (scripted.iter().position(|&x| x), outdoors(path)) {
+                    (Some(j), Some(i)) if j < i => matches!(path.legs[j].space, Space::World(_)).then_some(j),
+                    (_, i) => i,
+                }
+            }
+            Err(_) => None,
+        };
+        match found {
+            Ok(path) if path.length > WALK_MAX && !w.cut && cut_at.is_some_and(|i| fast_travel_to(here.space, path.legs[i].space)) => {
                 w.cut = true;
-                let leg = &path.legs[outdoors(&path).expect("checked")];
+                let leg = &path.legs[cut_at.expect("checked")];
                 let at = Place { space: leg.space, pos: tail_point(&leg.points, WALK_TAIL) };
                 info!("pilot: step {}: the way is {:.0} units: starts {WALK_TAIL:.0} units before the end of its last stretch out of doors (a stand-in for fast travel)", p.i, path.length);
                 h.put(at);
@@ -1295,6 +1350,31 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         w.seen = (p.now, feet);
                     }
                     Err(_) => {
+                        // A door out of the world was refused: another one into the same place
+                        // that a switch enables is the way (a lift: its button, then its ride).
+                        let gone: Vec<u32> = w.tried.iter().filter(|(_, l)| l.starts_with("not in the world")).map(|(d, _)| *d).collect();
+                        if let Some((door, (r, cell, pos, away, _))) = h.game(|g| gone.iter().find_map(|&d| door_instead(g, d))).flatten() {
+                            if !w.poked.iter().any(|(_, x)| *x == door) {
+                                w.poked.push((r.0, door));
+                                let space = cell.and_then(|c| crate::nav::space_of_cell(h.world, c.0)).unwrap_or(space_of(h.location));
+                                let name = h.game(|g| g.data.name(r)).unwrap_or_default();
+                                info!("pilot: step {}: the way there is door {door:08X}, out of the world until {name} is used ({away:.0} units from the door): the player goes to it", p.i);
+                                w.side = Some((r, door, Box::new(walk_to(Place { space, pos }, Some(r), NEAR_TARGET, p.now, feet))));
+                                return Walked::Going;
+                            }
+                            w.enable_wait.get_or_insert_with(|| {
+                                info!("pilot: step {}: door {door:08X} is not in the world yet after the player used its switch: waits for it (up to {ENABLE_WAIT:.0} s)", p.i);
+                                p.now
+                            });
+                        }
+                        // Waited for, the way planned again each frame: the door comes into the
+                        // world a frame or more before the navmesh its ride enables reaches the
+                        // graph (the silo lift's far door and navmesh 0x0100A556).
+                        if w.enable_wait.is_some_and(|since| p.now - since < ENABLE_WAIT) {
+                            (h.intent.forward, h.intent.right) = (0.0, 0.0);
+                            w.seen = (p.now, feet);
+                            return Walked::Going;
+                        }
                         let tried = if w.tried.is_empty() { "locked doors or not".to_string() } else { format!("the doors tried: {}", w.tried.iter().map(|(d, l)| format!("{d:08X} ({l})")).collect::<Vec<_>>().join(", ")) };
                         let why = format!("no way from ({:.0}, {:.0}, {:.0}) in {:?} to ({:.0}, {:.0}, {:.0}) in {:?} ({e:?}), {tried}: a player could not get there; the player stays where it is", feet[0], feet[1], feet[2], here.space, w.goal.pos[0], w.goal.pos[1], w.goal.pos[2], w.goal.space);
                         p.finding("unreachable", why.clone());
@@ -1323,8 +1403,13 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
             w.follower = None;
             w.replans += 1;
         }
-        Steer::Walk { dir, .. } => {
+        Steer::Walk { dir, target, .. } => {
             w.door_since = None;
+            if p.now - w.reported > WALK_REPORT_SECS {
+                w.reported = p.now;
+                let (leg, next, of) = w.follower.as_ref().map_or((0, 0, 0), |f| (f.leg, f.next, f.path.legs.get(f.leg).map_or(0, |l| l.points.len())));
+                info!("pilot: step {}: walking: at ({:.0}, {:.0}, {:.0}), leg {leg} point {next} of {of} at ({:.0}, {:.0}, {:.0}), {:.0} units on (movement locked {}, a menu {}, forward {:.1}, heading off by {:.2})", p.i, feet[0], feet[1], feet[2], target[0], target[1], target[2], hdist(feet, target), h.locks.movement, h.in_menu, h.intent.forward, heading_delta(h.player.heading, heading_of(dir)));
+            }
             let want = heading_of(dir);
             h.player.heading = turn_towards(h.player.heading, want, TURN_RATE * h.dt);
             h.player.pitch = turn_towards(h.player.pitch, 0.0, TURN_RATE * h.dt);
@@ -1522,7 +1607,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
 }
 
 fn walk_to(goal: Place, target: Option<FormId>, radius: f32, now: f64, feet: [f32; 3]) -> Walk {
-    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None }
+    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, reported: now }
 }
 
 /// What a player would use to open a door that stays locked (module notes), not used
@@ -1536,6 +1621,11 @@ type DoorTerminal = (FormId, FormId, usize, Option<FormId>, [f32; 3]);
 /// Where an item was found: how far, the holder or the item, its cell, where, lying.
 type Found = (f32, FormId, Option<FormId>, [f32; 3], bool);
 
+/// Whether a door has a script with an OnActivate block (it does something when used).
+fn door_scripted(g: &Game, door: u32) -> bool {
+    g.ref_script(FormId(door)).and_then(|s| g.data.scripts.get(&s)).is_some_and(|u| g.data.unit(*u).program.blocks.iter().any(|b| b.event == fnv_game::game::event::ON_ACTIVATE))
+}
+
 /// What [`door_switch`] calls a reference whose activation script names the door.
 const WORKS_DOOR: &str = "its script works the door";
 
@@ -1547,6 +1637,25 @@ const ENABLE_WAIT: f64 = 150.0;
 /// Whether a reference is out of the world (disabled) now.
 fn is_disabled(g: &mut Game, r: u32) -> bool {
     runner::reference_field(g, &format!("0x{r:08X}"), "disabled").ok() == Some(json!(true))
+}
+
+/// Another door out of the world into the place a refused door leads to, with a switch
+/// whose script enables it: the door and its switch. Lonesome Road's Ashton silo: the direct
+/// door (0x0100CB7D) is disabled; the lift's far door (0x01007877, on a navmesh the ride
+/// enables) leads to the same silo cell, and the lift's button names it.
+fn door_instead(g: &mut Game, gone: u32) -> Option<(u32, Switch)> {
+    let to = g.world.placed.get(FormId(gone))?.teleport.as_ref()?.door;
+    let (cell, _) = where_is(g, to)?;
+    let others: Vec<u32> = g.world.placed.by_cell.get(&cell?)?.iter().filter_map(|&r| Some(g.world.placed.get(r)?.teleport.as_ref()?.door.0)).filter(|&d| d != gone).collect();
+    for d in others {
+        if !is_disabled(g, d) {
+            continue;
+        }
+        if let Some(s) = door_switch(g, d, &[]).filter(|s| s.4 == WORKS_DOOR) {
+            return Some((d, s));
+        }
+    }
+    None
 }
 
 fn door_switch(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<Switch> {
@@ -2526,6 +2635,12 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             let name = target.clone().or_else(|| actor.clone()).expect("checked");
             fight(p, h, &name, &a)
         }
+        // The player's shot with a weapon it carries (Lonesome Road's laser detonator on the
+        // camp barrier's warhead): fired, not set off headless.
+        Action::Hit { target, attacker, weapon: Some(weapon), .. } if attacker.as_deref().is_none_or(|x| x.eq_ignore_ascii_case("player") || x.eq_ignore_ascii_case("playerref")) => {
+            let (target, weapon) = (target.clone(), weapon.clone());
+            shoot_object(p, h, &target, &weapon, &a)
+        }
         Action::SayInfo { info, speaker: Some(speaker), .. } if p.campaign => {
             // Begun since the chain began, not since this step did: the game does not wait
             // for the chain's steps, and a line said while an earlier step was still being
@@ -3228,6 +3343,109 @@ fn fight(p: &mut Pilot, h: &mut Hands, name: &str, a: &Action) -> Option<Option<
     None
 }
 
+/// How near the player goes to an object it shoots, game units [design].
+const SHOOT_OBJECT_FROM: f32 = 600.0;
+/// How often a walk says where the player is on its path, seconds.
+const WALK_REPORT_SECS: f64 = 20.0;
+/// Nearer than this the player steps back before it fires: from on top of the warhead
+/// (the step before walks to it) none of the detonator's shots met it [observed 2026-11-15].
+const SHOOT_OBJECT_NEAR: f32 = 150.0;
+/// How long the player fires at an object before the step is done the headless way.
+const SHOOT_OBJECT_SECS: f64 = 20.0;
+
+/// A `hit` step the player makes (module notes): the step's weapon in hand, within
+/// [`SHOOT_OBJECT_FROM`] of the object, aimed at it, the trigger held until one of its
+/// shots runs the object's OnHit / OnHitWith blocks. A weapon the player does not carry,
+/// or a shot that does not land in [`SHOOT_OBJECT_SECS`], is the headless hit.
+fn shoot_object(p: &mut Pilot, h: &mut Hands, name: &str, weapon: &str, a: &Action) -> Option<Option<String>> {
+    let headless = |p: &mut Pilot, h: &mut Hands, why: &str| {
+        h.control.trigger = false;
+        p.headless(why);
+        let mut applier = std::mem::take(&mut p.applier);
+        let r = h.game(|g| runner::apply_now(g, &mut applier, a));
+        p.applier = applier;
+        Some(r.and_then(|r| r.err()))
+    };
+    if matches!(p.phase, Phase::Begin) {
+        let (r, place) = match h.place_of(name) {
+            Ok(x) => x,
+            Err(e) => return Some(Some(e)),
+        };
+        if p.no_shot.contains(&r) {
+            return headless(p, h, "hit (no shot landed before)");
+        }
+        let Some(Ok(id)) = h.game(|g| runner::resolve(g, weapon)) else { return Some(Some(format!("no weapon {weapon}"))) };
+        let w = &mut h.sim.world;
+        if w.item_count(FormId::PLAYER_REF, id).unwrap_or(0) == 0 {
+            info!("pilot: step {}: the player does not carry {weapon}: the hit is set off as the headless run does", p.i);
+            return headless(p, h, "hit (the player does not carry the weapon)");
+        }
+        let held = w.inventory_mut(FormId::PLAYER_REF).is_ok_and(|inv| inv.equipped().into_iter().any(|i| i == id));
+        if !held {
+            match w.equip(FormId::PLAYER_REF, id) {
+                Ok(_) => info!("pilot: step {}: the player takes {weapon} in hand to fire at {name}", p.i),
+                Err(e) => warn!("pilot: step {}: could not take {weapon} in hand: {e}", p.i),
+            }
+        }
+        // The pilot's own weapon goes back in hand at the next fight (`keep_weapon`).
+        p.weapon_check = 0.0;
+        let from = h.object_hits.and_then(|m| m.get(&r.0)).copied().unwrap_or(0);
+        p.phase = Phase::Shoot(Shoot { target: r, from, firing: None, backing: false }, walk_to(place, Some(r), SHOOT_OBJECT_FROM, p.now, h.feet()));
+    }
+    let Phase::Shoot(mut s, mut w) = std::mem::replace(&mut p.phase, Phase::Begin) else { return Some(None) };
+    let hits = h.object_hits.and_then(|m| m.get(&s.target.0)).copied().unwrap_or(0);
+    if hits > s.from {
+        h.control.trigger = false;
+        info!("pilot: step {}: a shot with {weapon} hit {name} after {:.1} s", p.i, p.now - p.step_from);
+        return Some(None);
+    }
+    if s.firing.is_some_and(|t| p.now - t > SHOOT_OBJECT_SECS) {
+        p.no_shot.push(s.target);
+        p.finding("shot_not_landed", format!("{SHOOT_OBJECT_SECS:.0} s of firing {weapon} at {name} ran none of its hit scripts: hit as the headless run hits it"));
+        return headless(p, h, "hit (no shot landed)");
+    }
+    let Some((_, pos)) = h.game(|g| where_is(g, s.target)).flatten() else { return Some(Some(format!("{name} is not in the world"))) };
+    let eye = h.player.eye();
+    let away = hdist(eye, pos);
+    let in_range = (SHOOT_OBJECT_NEAR..=SHOOT_OBJECT_FROM).contains(&away) && (eye[2] - pos[2]).abs() < 400.0;
+    if s.firing.is_none() && away < SHOOT_OBJECT_NEAR && !s.backing {
+        // Back along the line from the object through the player (or the way it faces).
+        let feet = h.feet();
+        let (dx, dy) = if away > 1.0 { ((feet[0] - pos[0]) / away, (feet[1] - pos[1]) / away) } else { (-h.player.heading.sin(), -h.player.heading.cos()) };
+        let back = SHOOT_OBJECT_NEAR + 100.0;
+        let to = Place { space: space_of(h.location), pos: [pos[0] + dx * back, pos[1] + dy * back, feet[2]] };
+        info!("pilot: step {}: {away:.0} units from {name}: steps back to fire at it", p.i);
+        w = walk_to(to, None, 60.0, p.now, feet);
+        s.backing = true;
+    }
+    if s.firing.is_none() && !in_range {
+        match walk(p, &mut w, h) {
+            Walked::Going => {
+                h.control.trigger = false;
+                p.phase = Phase::Shoot(s, w);
+                return None;
+            }
+            Walked::No(why) => {
+                h.control.trigger = false;
+                return Some(Some(why));
+            }
+            Walked::There | Walked::Put => {}
+        }
+    }
+    (h.intent.forward, h.intent.right) = (0.0, 0.0);
+    h.control.weapon_out = true;
+    let cross: Option<Crosshair> = h.control.crosshair;
+    (h.player.heading, h.player.pitch) = Crosshair::aim_at(cross.as_ref(), eye, [pos[0], pos[1], pos[2] + 20.0]);
+    let since = *s.firing.get_or_insert_with(|| {
+        info!("pilot: step {}: fires {weapon} at {name} from {:.0} units", p.i, hdist(eye, pos));
+        p.now
+    });
+    // A moment to turn onto it, then the trigger held (an automatic weapon fires on).
+    h.control.trigger = p.now - since > 0.3;
+    p.phase = Phase::Shoot(s, w);
+    None
+}
+
 /// Whether nothing was found (for the `add_item` rule's reading).
 fn find_item_none(found: &Option<(FormId, Option<FormId>, [f32; 3], bool)>) -> bool {
     found.is_none()
@@ -3336,7 +3554,7 @@ fn drive(
     (mut script, mut sim, mut phys): (ResMut<ScriptState>, ResMut<SimState>, ResMut<PhysState>),
     (mut player, mut intent, mut control, locks): (ResMut<Player>, ResMut<MoveIntent>, ResMut<PlayerControl>, Res<ControlLocks>),
     (location, target, nav, world, doors): Places,
-    watch: Option<Res<nvf_play::softlock::SoftlockWatch>>,
+    (watch, combat): (Option<Res<nvf_play::softlock::SoftlockWatch>>, Option<Res<nvf_play::combat::CombatStats>>),
     (mut travel, mut save): (MessageWriter<TravelRequest>, MessageWriter<nvf_play::save::SaveRequest>),
     (terminal, mut terminal_input): (Res<nvf_play::terminal::TerminalScreen>, MessageWriter<nvf_play::terminal::TerminalInput>),
     (wait_menu, mut wait_open, mut wait_input): (Res<nvf_play::wait::WaitMenu>, MessageWriter<nvf_play::wait::OpenWait>, MessageWriter<nvf_play::wait::WaitInput>),
@@ -3375,6 +3593,7 @@ fn drive(
         terminal: &terminal,
         terminal_input: &mut terminal_input,
         travel: &mut travel,
+        object_hits: combat.as_deref().map(|c| &c.player_object_hits),
         dt,
     };
     if !p.given_applied {
@@ -3472,7 +3691,7 @@ fn drive(
         (None, _) => p.menu_since = None,
     }
     // Something attacks the player or the actor it is with: fought first (module notes).
-    if *state.get() == PlayState::Playing && !matches!(p.phase, Phase::Fight(..)) {
+    if *state.get() == PlayState::Playing && !matches!(p.phase, Phase::Fight(..) | Phase::Shoot(..)) {
         if p.defend.is_none() && p.now >= p.threat_check {
             p.threat_check = p.now + 0.5;
             let friend = match &p.phase {
