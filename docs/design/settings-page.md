@@ -185,8 +185,10 @@ alike, so the search and the Changed list act on their rows the same way, drawn 
 same `row_line`.
 
 [design, #2200; `settings_view.rs::ControlRow::rows`] The Controls tab lists Input Device,
-Automatic Input Switching (default ON), the 29 controls, Invert Y, the device's sensitivity
-and Vertical Sensitivity, and with a controller Rumble, then the four controller rows.
+Automatic Input Switching (default ON), the 29 controls, Invert Y, the device's sensitivity,
+Vertical Sensitivity and Aim Sensitivity (the look while aiming down the sights or through a
+scope, following the aim's zoom; 100% as unzoomed; owner 2026-11-15), and with a controller
+Rumble, then the four controller rows.
 Automatic Input Switching selects and saves Input Device on fresh use only when the old
 device was idle at frame start and has no release in that frame. Release its buttons and
 return sticks/triggers to neutral, then press again on a later frame. Only the switching

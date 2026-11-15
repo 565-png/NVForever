@@ -149,7 +149,10 @@
 //! about a tenth apart, a press or drag on the logarithmic meter the value under the
 //! pointer; `crate::bindings::SENSITIVITY_LEAST`..`SENSITIVITY_MOST`, 5%-300%), and under
 //! it Vertical Sensitivity, each device's own, sets the vertical look's speed as a
-//! percentage of the horizontal's on the same steps (100% as the game has it, #2201)
+//! percentage of the horizontal's on the same steps (100% as the game has it, #2201), and
+//! under that Aim Sensitivity, each device's own too, sets the look's speed while aiming
+//! down the sights or through a scope as a percentage of the unzoomed look's on the same
+//! steps (100% leaves it as unzoomed; owner 2026-11-15, `crate::player::aim_scale`)
 //! [design: owner 2026-11-03, #1451; #1632]; with a controller Rumble comes after, then
 //! the registered controller rows, Button style and the aim assist's (`crate::pad`,
 //! `crate::aim_assist`; shown with the controller only) [design: #1953].
@@ -195,7 +198,8 @@
 //! sets the controller's Rumble row, `invert:1` or `invert:0` the Invert Y row and
 //! `automatic-input:0|1` toggles automatic device selection [design, #2200];
 //! `sensitivity:<percent>` (`sensitivity:150`) the sensitivity slider of the device in use,
-//! `vertical:<percent>` (`vertical:80`) its Vertical Sensitivity;
+//! `vertical:<percent>` (`vertical:80`) its Vertical Sensitivity,
+//! `aim-sensitivity:<percent>` (`aim-sensitivity:50`) its Aim Sensitivity;
 //! `tab:<name>` (`tab:Tweaks`, an empty tab too) shows a tab on its first row,
 //! `select:<key>` chooses a row without changing it (a hidden one: the row that stands for
 //! it), `layout` logs the tabs and each row's place (`settings layout: menu-pause ->
@@ -870,6 +874,9 @@ const INVERT_ROW: &str = "Invert Y";
 const SENSITIVITY_ROWS: [&str; 2] = ["Mouse Sensitivity", "Stick Sensitivity"];
 /// The Controls tab's slider under the sensitivity, each device's own (#2201).
 const VERTICAL_ROW: &str = "Vertical Sensitivity";
+/// The Controls tab's slider under the vertical sensitivity, each device's own: the look
+/// while aiming down the sights or through a scope [design: owner 2026-11-15].
+const AIM_ROW: &str = "Aim Sensitivity";
 
 /// The settings page's rows: each this high [observed: 39 of 720 pixels], the list this
 /// wide and its left edge this far left of the view's middle, the switch's state centred
@@ -1245,6 +1252,8 @@ struct Drawn {
     sensitivity: f32,
     /// The device in use's Vertical Sensitivity, a multiple of its horizontal look.
     vertical: f32,
+    /// The device in use's Aim Sensitivity, a multiple of its unzoomed look.
+    aim: f32,
     /// The settings page's (or the load page's) first row shown ([`PauseView::scroll`]).
     scroll: usize,
     /// The settings page's window's lines ([`PauseView::lines`]).
@@ -1902,8 +1911,12 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
         RowId::Control(c) => {
             let (name, value) = control_line(d, c);
             root.spawn((Button, PauseButton::Row(id), node)).with_children(|r| {
-                if let ControlRow::Sensitivity(_) | ControlRow::Vertical(_) = c {
-                    let m = if matches!(c, ControlRow::Vertical(_)) { d.vertical } else { d.sensitivity };
+                if let ControlRow::Sensitivity(_) | ControlRow::Vertical(_) | ControlRow::AimSensitivity(_) = c {
+                    let m = match c {
+                        ControlRow::Vertical(_) => d.vertical,
+                        ControlRow::AimSensitivity(_) => d.aim,
+                        _ => d.sensitivity,
+                    };
                     let parts = row_parts(x, ValueKind::Slider(width(tr_str(&value))));
                     sm_text(r, &f.entry, &fit_text(width, name, parts.label_room()), parts.label.0, BASE + 2.0, color(Shade::Bright));
                     slider_row(r, look, &parts, id, crate::bindings::sensitivity_part(m), &value, Shade::Bright, true);
@@ -1955,6 +1968,7 @@ fn control_line(d: &Drawn, c: ControlRow) -> (&'static str, String) {
         ControlRow::Invert => (INVERT_ROW, on_off(d.invert_y)),
         ControlRow::Sensitivity(_) => (SENSITIVITY_ROWS[usize::from(controller)], crate::bindings::sensitivity_text(d.sensitivity)),
         ControlRow::Vertical(_) => (VERTICAL_ROW, crate::bindings::sensitivity_text(d.vertical)),
+        ControlRow::AimSensitivity(_) => (AIM_ROW, crate::bindings::sensitivity_text(d.aim)),
         ControlRow::Rumble => (RUMBLE_ROW, on_off(d.rumble)),
     }
 }
@@ -1989,6 +2003,16 @@ fn row_note(list: &[Setting], id: RowId, d: &Drawn) -> String {
         ),
         ControlRow::Vertical(_) => format!(
             "Left/Right or a click on the meter: how far the view turns up and down as the mouse moves, as a part of left and right ({} to {}).",
+            crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_LEAST),
+            crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_MOST)
+        ),
+        ControlRow::AimSensitivity(_) if controller => format!(
+            "Left/Right or a click on the meter: how fast the right stick turns the view while you aim down the sights or through a scope ({} to {}). 100%: as without aiming.",
+            crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_LEAST),
+            crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_MOST)
+        ),
+        ControlRow::AimSensitivity(_) => format!(
+            "Left/Right or a click on the meter: how far the view turns as the mouse moves while you aim down the sights or through a scope ({} to {}). 100%: as without aiming.",
             crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_LEAST),
             crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_MOST)
         ),
@@ -2597,6 +2621,7 @@ struct ControlState {
     invert: bool,
     sensitivity: f32,
     vertical: f32,
+    aim: f32,
 }
 
 /// Whether row `id` takes A and D as Left and Right (a slider, a list; a switch takes the
@@ -2604,7 +2629,7 @@ struct ControlState {
 fn takes_letters(settings: &Settings, id: RowId) -> bool {
     match id {
         RowId::Setting(i) => settings.choices(i).is_some() || settings.list().get(i).is_some_and(|s| s.slider.is_some()),
-        RowId::Control(c) => matches!(c, ControlRow::Sensitivity(_) | ControlRow::Vertical(_)),
+        RowId::Control(c) => matches!(c, ControlRow::Sensitivity(_) | ControlRow::Vertical(_) | ControlRow::AimSensitivity(_)),
         RowId::Group => true,
         RowId::Heading(_) => false,
     }
@@ -2677,6 +2702,11 @@ fn act_on_row(id: RowId, action: RowAction, settings: &Settings, view: &mut Paus
             (ControlRow::Vertical(_), Step(s)) => {
                 let m = crate::bindings::step_sensitivity(controls.vertical, s);
                 commands.queue(move |world: &mut World| crate::bindings::set_vertical(world, m));
+                sounds.write(flipped);
+            }
+            (ControlRow::AimSensitivity(_), Step(s)) => {
+                let m = crate::bindings::step_sensitivity(controls.aim, s);
+                commands.queue(move |world: &mut World| crate::bindings::set_aim_sensitivity(world, m));
                 sounds.write(flipped);
             }
             _ => {}
@@ -2955,12 +2985,12 @@ fn refresh_search(view: &mut PauseView, layout: &ResolvedLayout, list: &[Setting
 /// rows are not registered settings, so this stands in for their label and note].
 fn control_words(c: ControlRow) -> String {
     use crate::bindings::InputDevice;
-    let controller = matches!(c, ControlRow::Binding(_, InputDevice::Controller) | ControlRow::Sensitivity(InputDevice::Controller) | ControlRow::Vertical(InputDevice::Controller) | ControlRow::Rumble);
+    let controller = matches!(c, ControlRow::Binding(_, InputDevice::Controller) | ControlRow::Sensitivity(InputDevice::Controller) | ControlRow::Vertical(InputDevice::Controller) | ControlRow::AimSensitivity(InputDevice::Controller) | ControlRow::Rumble);
     let d = Drawn { device: ("", controller), ..default() };
     let (label, _) = control_line(&d, c);
     let key = match c {
         ControlRow::Binding(k, _) => crate::bindings::Bindings::name(k),
-        ControlRow::Device | ControlRow::AutomaticInput | ControlRow::Invert | ControlRow::Sensitivity(_) | ControlRow::Vertical(_) | ControlRow::Rumble => label,
+        ControlRow::Device | ControlRow::AutomaticInput | ControlRow::Invert | ControlRow::Sensitivity(_) | ControlRow::Vertical(_) | ControlRow::AimSensitivity(_) | ControlRow::Rumble => label,
     };
     let note = row_note(&[], RowId::Control(c), &d);
     crate::settings_view::haystack(&[label, note.as_str(), key])
@@ -3366,6 +3396,19 @@ fn choose(
             }
             continue;
         }
+        if let Some(v) = item.strip_prefix("aim-sensitivity:") {
+            // `aim-sensitivity:<percent>`: the device in use's Aim Sensitivity set to it (onto
+            // the sliders' steps).
+            match v.trim_end_matches('%').parse::<f32>() {
+                Ok(p) if p.is_finite() => {
+                    let m = crate::bindings::step_sensitivity(p / 100.0, 0);
+                    show_row(&mut page, &mut view, layout, control(ControlRow::AimSensitivity(device)));
+                    commands.queue(move |world: &mut World| crate::bindings::set_aim_sensitivity(world, m));
+                }
+                _ => warn!("NVF_PLAY_TEST_SETTINGS: {item:?}: expected aim-sensitivity:<percent>"),
+            }
+            continue;
+        }
         if let Some(d) = item.strip_prefix("device:") {
             match InputDevice::parse(d) {
                 Some(d) => {
@@ -3592,6 +3635,7 @@ fn choose(
         invert: bindings.as_ref().is_some_and(|b| b.invert_y),
         sensitivity: bindings.as_ref().map_or(1.0, |b| b.sensitivity()),
         vertical: bindings.as_ref().map_or(1.0, |b| b.vertical_sensitivity()),
+        aim: bindings.as_ref().map_or(1.0, |b| b.aim_sensitivity()),
     };
     // The settings page made whole for what the aids chose ([`sv::normalize`]).
     let mut rows: Vec<ViewEntry> = Vec::new();
@@ -4205,6 +4249,12 @@ fn choose(
                                 commands.queue(move |world: &mut World| crate::bindings::set_vertical(world, m));
                             }
                         }
+                        (RowId::Control(ControlRow::AimSensitivity(_)), Some(p)) => {
+                            let m = crate::bindings::sensitivity_at_part(p.x + 0.5);
+                            if (m - controls.aim).abs() > 1e-4 {
+                                commands.queue(move |world: &mut World| crate::bindings::set_aim_sensitivity(world, m));
+                            }
+                        }
                         _ => {}
                     }
                 } else {
@@ -4664,6 +4714,7 @@ fn drawn_now(world: &mut World) -> Drawn {
         invert_y: world.get_resource::<crate::bindings::Bindings>().is_some_and(|b| b.invert_y),
         sensitivity: world.get_resource::<crate::bindings::Bindings>().map_or(1.0, |b| b.sensitivity()),
         vertical: world.get_resource::<crate::bindings::Bindings>().map_or(1.0, |b| b.vertical_sensitivity()),
+        aim: world.get_resource::<crate::bindings::Bindings>().map_or(1.0, |b| b.aim_sensitivity()),
         scroll: view.scroll,
         lines: view.lines(),
         lists,
@@ -4688,11 +4739,11 @@ fn stand_in_name(list: &[Setting], id: RowId) -> String {
     match id {
         RowId::Setting(i) => list.get(i).map_or_else(String::new, |s| tr(s.label).to_string()),
         RowId::Control(c) => {
-            let controller = matches!(c, ControlRow::Binding(_, InputDevice::Controller) | ControlRow::Sensitivity(InputDevice::Controller) | ControlRow::Vertical(InputDevice::Controller) | ControlRow::Rumble);
+            let controller = matches!(c, ControlRow::Binding(_, InputDevice::Controller) | ControlRow::Sensitivity(InputDevice::Controller) | ControlRow::Vertical(InputDevice::Controller) | ControlRow::AimSensitivity(InputDevice::Controller) | ControlRow::Rumble);
             let d = Drawn { device: ("", controller), ..default() };
             let (label, _) = control_line(&d, c);
             match c {
-                ControlRow::Binding(_, dev) | ControlRow::Vertical(dev) => format!("{label} ({})", tr(dev.name())),
+                ControlRow::Binding(_, dev) | ControlRow::Vertical(dev) | ControlRow::AimSensitivity(dev) => format!("{label} ({})", tr(dev.name())),
                 _ => label.to_string(),
             }
         }
@@ -5473,6 +5524,10 @@ mod tests {
         let pad = control_words(ControlRow::Binding(Control::Jump, InputDevice::Controller));
         assert!(pad.contains("controller button"), "{pad}");
         assert!(control_words(ControlRow::Sensitivity(InputDevice::Controller)).contains("stick sensitivity"));
+        for device in [InputDevice::KeyboardMouse, InputDevice::Controller] {
+            let aim = control_words(ControlRow::AimSensitivity(device));
+            assert!(aim.contains("aim sensitivity") && aim.contains("scope") && aim.contains("sights"), "{aim}");
+        }
         assert!(control_words(ControlRow::Invert).contains("invert y"));
     }
 
@@ -5877,7 +5932,7 @@ mod tests {
         assert_eq!(crate::settings::note_over_budget(AUTOMATIC_INPUT_NOTE), None);
         for controller in [false, true] {
             for device in [InputDevice::KeyboardMouse, InputDevice::Controller] {
-                let mut rows = vec![ControlRow::Device, ControlRow::AutomaticInput, ControlRow::Invert, ControlRow::Sensitivity(device), ControlRow::Vertical(device), ControlRow::Rumble];
+                let mut rows = vec![ControlRow::Device, ControlRow::AutomaticInput, ControlRow::Invert, ControlRow::Sensitivity(device), ControlRow::Vertical(device), ControlRow::AimSensitivity(device), ControlRow::Rumble];
                 rows.extend(GAME_CONTROLS.iter().map(|(c, _, _)| ControlRow::Binding(*c, device)));
                 for listening in [None, Some(GAME_CONTROLS[0].0)] {
                     let d = Drawn { device: ("", controller), listening, ..default() };
@@ -6239,6 +6294,19 @@ mod tests {
         let mouse = control(ControlRow::Sensitivity(InputDevice::KeyboardMouse));
         let buttons: Vec<PauseButton> = app.world_mut().query::<&PauseButton>().iter(app.world()).copied().collect();
         assert!(buttons.contains(&PauseButton::Meter(mouse)) && buttons.contains(&PauseButton::SliderStep(mouse, 1)), "a meter with arrows: {buttons:?}");
+        // Aim Sensitivity, the unzoomed look's at first, a meter too, each device's own.
+        let is_aim = |r: &RowId| matches!(r, RowId::Control(ControlRow::AimSensitivity(_)));
+        choose_row(&mut app, ControlRow::AimSensitivity(InputDevice::KeyboardMouse));
+        assert_eq!(value_of(&mut app, is_aim).as_deref(), Some("100%"));
+        crate::bindings::set_aim_sensitivity(app.world_mut(), 0.5);
+        assert_eq!(value_of(&mut app, is_aim).as_deref(), Some("50%"));
+        let aim = control(ControlRow::AimSensitivity(InputDevice::KeyboardMouse));
+        let buttons: Vec<PauseButton> = app.world_mut().query::<&PauseButton>().iter(app.world()).copied().collect();
+        assert!(buttons.contains(&PauseButton::Meter(aim)) && buttons.contains(&PauseButton::SliderStep(aim, -1)), "a meter with arrows: {buttons:?}");
+        crate::bindings::set_device(app.world_mut(), InputDevice::Controller);
+        assert_eq!(value_of(&mut app, is_aim).as_deref(), Some("100%"), "the stick's own");
+        crate::bindings::set_device(app.world_mut(), InputDevice::KeyboardMouse);
+        assert_eq!(value_of(&mut app, is_aim).as_deref(), Some("50%"), "the mouse's kept");
         let is_invert = |r: &RowId| *r == RowId::Control(ControlRow::Invert);
         choose_row(&mut app, ControlRow::Invert);
         assert_eq!(value_of(&mut app, is_invert).as_deref(), Some("Off"));

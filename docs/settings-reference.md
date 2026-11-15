@@ -1080,6 +1080,18 @@ None of these rows has a command-line switch.
   Sensitivity" in [Controls] and "Stick Vertical Sensitivity" in [Controller] of
   NVForever.ini.
 
+### Aim Sensitivity
+
+- On the page: Left/Right or a click on the meter: how far the view turns as the mouse moves
+  (how fast the right stick turns it) while you aim down the sights or through a scope,
+  between the least and the most. 100%: as without aiming.
+- In full: each device's own, on the same steps as the sensitivities (5% to 300%). It
+  follows the aim's zoom: the chosen speed once the view is zoomed in (down the sights, or a
+  scope up), the unzoomed look with no zoom, in step while the view zooms in or out. Aiming
+  with a gun that does not zoom (no Sight FOV), blocking with a melee weapon, and the hip look
+  are left as they are. Kept as "Aim Sensitivity" in [Controls] and in [Controller] of
+  NVForever.ini [design: owner 2026-11-15].
+
 ### Rumble
 
 - On the page: A or a click: the controller shakes when you fire, take damage, land a hard
