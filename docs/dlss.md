@@ -36,8 +36,9 @@ Choosing it changes nothing in the row; it opens a dialog:
    NVIDIA's Streamline release 2.14.16 on GitHub
    (`https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.16/streamline-sdk-v2.14.16.zip`):
    it reads the archive's list of files from its end and asks for just those eight entries,
-   including the four frame generation files listed below. Those add about 4.6 MB over the
-   upscaling-only download [observed: the official zip, 2026-11-13]. The dialog shows the step,
+   including the four frame generation files listed below, or only the ones your `dlss` folder
+   does not hold yet [design: `dlss/download/install.rs`, `still_missing`]. The four frame
+   generation files are about 4.6 MB of the download [observed: the official zip, 2026-11-13]. The dialog shows the step,
    the file and the megabytes; **Hide** (Esc) closes it and the download goes on while you play (the Upscaler
    row then reads "Downloading DLSS… n%", and choosing it shows the dialog again);
    **Cancel download** stops it. Loading a save, going to the main menu or quitting the game
@@ -47,7 +48,7 @@ Choosing it changes nothing in the row; it opens a dialog:
    pinned in NVForever), its ZIP CRC-32 must match, and `sl.interposer.dll`, `nvngx_dlss.dll`
    and `nvngx_dlssg.dll` must pass the signature checks described below. The files are unpacked
    into a temporary folder beside the `dlss`
-   folder and moved in only when all eight passed; on any failure or cancel nothing is written
+   folder and moved in only when all the fetched files passed; on any failure or cancel nothing is written
    in the `dlss` folder and the temporary folder is removed. `nvngx_update.exe` is never
    written, and a file of yours already in the `dlss` folder is never overwritten.
 4. **The result.** "DLSS is ready: restart NVForever to use it." The restart is needed once,
@@ -59,8 +60,9 @@ Choosing it changes nothing in the row; it opens a dialog:
 
 [design: `settings.rs`, `dlss/download/install.rs`] If you already have the four upscaling
 files, DLSS upscaling keeps working and **Download DLSS…** stays offered for the missing frame
-generation files. Accepting again adds only files the folder lacks; a differing existing file
-is refused. Restart after adding the files to make frame generation available.
+generation files. Accepting again fetches and adds only the files the folder lacks: a file
+already there is kept as it is, so your own `nvngx_dlss.dll` of another DLSS version stays.
+Restart after adding the files to make frame generation available.
 
 [design: `dlss::frame_generation_unavailable`, `settings::dlss_download_offered`,
 `dlss_download::offered`] Beside the dimmed DLSS Frame Generation

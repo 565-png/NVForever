@@ -153,9 +153,13 @@ pub(crate) fn offered(reason: Option<crate::upscaler::Unavailable>) -> bool {
     if let Some(offered) = TEST_OFFER_PROBE.with(|probe| probe.borrow_mut().as_mut().map(|(cache, missing)| cache.offered(cfg!(windows), reason, phase.clone(), now, || *missing))) {
         return offered;
     }
-    OFFER_CACHE.lock().unwrap_or_else(PoisonError::into_inner).offered(cfg!(windows), reason, phase, now, || {
-        download::target_folder().ok().map(|folder| files_missing(&folder))
-    })
+    // [design] Tests without a TestOfferProbe never look at this machine's DLSS folder: the
+    // probe reads as unresolved, so the offer follows the loader's reason alone.
+    #[cfg(test)]
+    let probe = || None;
+    #[cfg(not(test))]
+    let probe = || download::target_folder().ok().map(|folder| files_missing(&folder));
+    OFFER_CACHE.lock().unwrap_or_else(PoisonError::into_inner).offered(cfg!(windows), reason, phase, now, probe)
 }
 
 fn files_missing(folder: &std::path::Path) -> bool {

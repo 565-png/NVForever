@@ -25239,7 +25239,7 @@ forbid = [{ text = "DLSS download: failed", label = "a failed download" }, { tex
 [[scenario]]
 name = "dlss-download-real-restart"
 source = "#2250, #2409, docs/dlss.md \"Download DLSS…\": after dlss-download-real, a restart with DLSS chosen loads Streamline from the downloaded files, sets up DLSS-G and Reflex, and DLSS draws"
-note = "runs after dlss-download-real in the same NVFOREVER_HOME and NVF_DLSS_DIR; needs NVF_DLSS_DOWNLOAD_REAL (and that run's files)"
+note = "runs after dlss-download-real in the same NVFOREVER_HOME and NVF_DLSS_DIR; needs NVF_DLSS_DOWNLOAD_REAL (and that run's files). The DLSS-G line needs an RTX 40 series or newer and Windows' GPU scheduling on, as dlssg-on does"
 areas = ["graphics"]
 paths = ["engine/nvforever/src/dlss_download/**", "engine/nvforever/src/dlss/download/**"]
 requires = ["NVF_DLSS_DOWNLOAD_REAL"]
