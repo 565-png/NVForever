@@ -197,8 +197,8 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
 
 - On the page: On: when choices appear the view returns to the speaker (with the close-up
   off). Needs "Turn to Each Other".
-- In full: On: with "Close in on the speaker in dialogue" off, after you look away the view
-  returns to the speaker when choices appear. Needs "Turn to each other in dialogue".
+- In full: On: with "Close In on the Speaker" off, after you look away the view
+  returns to the speaker when choices appear. Needs "Turn to Each Other".
 - Command-line switches: `--dialogue-recentre`
 - Registered in `engine/nvf-play/src/dialogue_look.rs`
 
@@ -501,7 +501,7 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
 ### `ui-scale`: HUD scale
 
 - On the page: Size of the in-game HUD, independent of menu scale. Takes effect at the next start.
-- In full: The in-game HUD keeps each piece at its screen edge, from 50% to 150%.
+- In full: The in-game HUD keeps each piece at its screen edge, from 50% to 100% in steps of 10% (150% before the menu overhaul).
   The existing `ui-scale` INI key is retained. Menu scale is independent. Loading a
   save starts the game again and applies the next-start settings.
 - Shown as a list since the menu overhaul; an older slider number in the INI still loads as
@@ -873,9 +873,9 @@ below cover them all.
   low.ini to VeryHigh.ini. Custom: those rows match none of them.
 - In full: Sets the rows the original's quality presets cover to the values of the game
   folder's low.ini, medium.ini, high.ini or VeryHigh.ini: Sun shadows, Shadow filtering,
-  Light glow, Mirrored water reflections and the object, actor, item, shadow and grass
+  Light glow, Mirrored reflections and the object, actor, item, shadow and grass
   distances. Custom: those rows match none of them. A preset whose file is missing is not
-  offered. The enhanced effects, anti-aliasing and FSR keep their own rows.
+  offered. The effects, anti-aliasing and the upscaler keep their own rows (the Enhanced effects row is gone since the menu overhaul).
 - More: docs/spec-notes/quality-presets.md
 - Registered in `engine/nvforever/src/quality.rs`
 
