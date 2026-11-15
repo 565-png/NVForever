@@ -13,13 +13,14 @@
 //! cut into `subdiv` × `subdiv` squares ([`SmoothParams`]; split along the same diagonal)
 //! whose new vertices lie on a Catmull-Rom bicubic patch over control heights at the LAND
 //! vertices, with their distance from the stored triangles held to `max_deviation`:
-//! - the control heights ([`SmoothMode`]): with `Interpolate` (the default) the LAND
+//! - the control heights ([`SmoothMode`]): with `Interpolate` the LAND
 //!   heights themselves, so every LAND vertex keeps its stored height (copied, not
 //!   computed); with `Fit` each LAND height moved towards the binomial mean of its 3 × 3
 //!   by at most [`FIT_KNOT_SHIFT`] (and never more than the bound), computed from the
 //!   stored heights only, so the 8-unit steps of quantised slopes even out
 //!   (`0, 0, 8, 8, 16, 16` → `…, 2, 6, 10, 14, …`) and a plane stays a plane; with
-//!   `Detail` the same, but only the part of the move that looks like a quantisation step:
+//!   `Detail` (the default) the same, but only the part of the move that looks like a
+//!   quantisation step:
 //!   a step on a slope is at most about 2 from the mean, a real bump, crest, ridge or dip
 //!   more, so the move is weighted down from full at `t0` to none at `t1` (smoothstep of
 //!   its size) and those features keep their height;
@@ -53,9 +54,10 @@
 use crate::land::{load_land, LandParts, HEIGHT_SCALE, SIDE, SPACING};
 use fnv_esm::{LoadOrder, Schema};
 
-/// New squares per grid square and side when smoothed, by default [design, #2149: the
-/// issue's "start at 2 × 2"; the frame cost of 4 × 4 is to be measured first].
-pub const DEFAULT_SUBDIV: usize = 2;
+/// New squares per grid square and side when smoothed, by default [design, #2149:
+/// the user's 2026-11-15 choice from in-game comparisons, for rounder silhouettes;
+/// frame cost and memory still to be measured].
+pub const DEFAULT_SUBDIV: usize = 4;
 
 /// The subdivisions a smoothed surface can be built with [design, #2149].
 pub const SUBDIVS: [usize; 2] = [2, 4];
@@ -63,7 +65,7 @@ pub const SUBDIVS: [usize; 2] = [2, 4];
 /// How far (world units, up or down) the smoothed surface may leave the stored triangles,
 /// by default [design, #2149: one stored height step (`HEIGHT_SCALE`), so the surface
 /// stays within the data's own resolution and placed rocks, roads and foundations neither
-/// float nor sink by more than that; to be tuned from pictures].
+/// float nor sink by more than that; kept by the user's 2026-11-15 choice].
 pub const DEFAULT_MAX_DEVIATION: f32 = HEIGHT_SCALE;
 
 /// The largest bound a smoothed surface can be built with: two stored height steps
@@ -78,14 +80,14 @@ pub const FIT_KNOT_SHIFT: f32 = HEIGHT_SCALE / 2.0;
 /// The control heights of a smoothed surface (module notes).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SmoothMode {
-    /// Through the LAND vertices: each keeps its stored height (the default).
+    /// Through the LAND vertices: each keeps its stored height.
     Interpolate,
     /// Near them: each moved towards the mean of its 3 × 3 by at most
     /// [`FIT_KNOT_SHIFT`].
     Fit,
     /// As `Fit`, but a move of `d` towards the mean is taken in full only up to `t0` units
     /// and not at all from `t1` (`d · (1 − smoothstep(t0, t1, |d|))`): quantisation steps
-    /// even out, bumps, crests, ridges and dips keep their height (module notes).
+    /// even out, bumps, crests, ridges and dips keep their height (the default; module notes).
     Detail { t0: f32, t1: f32 },
 }
 
@@ -132,8 +134,9 @@ pub struct SmoothParams {
 }
 
 impl SmoothParams {
-    /// Interpolate, [`DEFAULT_SUBDIV`], [`DEFAULT_MAX_DEVIATION`].
-    pub const DEFAULT: SmoothParams = SmoothParams { mode: SmoothMode::Interpolate, subdiv: DEFAULT_SUBDIV, max_deviation: DEFAULT_MAX_DEVIATION };
+    /// Detail with [`DEFAULT_DETAIL`], [`DEFAULT_SUBDIV`], [`DEFAULT_MAX_DEVIATION`]
+    /// [design, #2149: the user's 2026-11-15 choice from in-game comparisons].
+    pub const DEFAULT: SmoothParams = SmoothParams { mode: SmoothMode::DETAIL, subdiv: DEFAULT_SUBDIV, max_deviation: DEFAULT_MAX_DEVIATION };
 
     /// How far a LAND vertex's control height may move: 0 interpolating, the smaller of
     /// [`FIT_KNOT_SHIFT`] and the bound fitting (detail too).

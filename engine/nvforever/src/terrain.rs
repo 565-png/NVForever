@@ -21,8 +21,9 @@
 //!
 //! The meshes are built over the cell's landscape surface (`fnv_world::land_surface`): the
 //! LAND grid as stored, or smoothed (#2149, on by default, `nvf_play::smooth_terrain`),
-//! each grid square then cut into `subdiv` × `subdiv` squares (2 by default) on a smooth
-//! patch over the LAND vertices, the same surface the collision is built on. Smoothed, the normals are the
+//! each grid square then cut into `subdiv` × `subdiv` squares (4 by default) on a smooth
+//! detail patch (thresholds 2:6, bound 8 by default), the same surface the collision is
+//! built on. Smoothed, the normals are the
 //! surface's own; the vertex colours and the layers' opacities are interpolated on the
 //! stored triangles, so the paint lies where it did [design, #2149]. Stored, the meshes are
 //! what they always were (VNML normals, the record's colours and opacities).
@@ -399,8 +400,8 @@ fn refine_quad(grid: &[f32], sub: usize) -> Vec<f32> {
 }
 
 /// Mesh of one quadrant in cell-local game space, on `surface` (17 × 17 vertices as
-/// stored, 33 × 33 smoothed by 2); `alpha`: a layer's opacities on the same vertices
-/// ([`refine_quad`]).
+/// stored, 65 × 65 with the default 4 × 4 smoothing); `alpha`: a layer's opacities on
+/// the same vertices ([`refine_quad`]).
 fn quadrant_mesh(land: &Land, surface: &Surface, q: u8, alpha: Option<&[f32]>, cell_origin: Vec2, tile: f32) -> Option<Mesh> {
     let h = surface.heights();
     let (sub, side, spacing) = (surface.sub(), surface.side(), surface.spacing());
@@ -775,10 +776,6 @@ mod tests {
         Land { heights: Some(heights), normals: Some(vec![[0, 0, 127]; SIDE * SIDE]), colors: Some(colors), ..Default::default() }
     }
 
-    fn smoothed(land: &Land) -> Surface {
-        smoothed_with(land, fnv_world::land_surface::SmoothParams::DEFAULT)
-    }
-
     fn smoothed_with(land: &Land, p: fnv_world::land_surface::SmoothParams) -> Surface {
         let mut block: fnv_world::land_surface::Block = [[None; 3]; 3];
         block[1][1] = land.heights.as_deref();
@@ -798,8 +795,8 @@ mod tests {
     }
 
     /// Smoothed, each quadrant mesh lies exactly on the surface the collision is built on
-    /// (its vertices are the surface's), with the surface's normals and four times the
-    /// squares; the LAND vertices keep their heights and colours.
+    /// (its vertices are the surface's), with the surface's normals and subdiv² times the
+    /// squares; the LAND vertices keep their colours even when their heights move.
     #[test]
     fn a_smoothed_quadrant_is_drawn_on_the_collision_surface() {
         let land = hilly_land();
@@ -862,10 +859,15 @@ mod tests {
         for (v, want) in [(20 * qs4 + 29, 0.6), (20 * qs4 + 30, 0.4), (22 * qs4 + 28, 0.4), (22 * qs4 + 30, 0.4), (22 * qs4 + 26, 0.0)] {
             assert!((fine4[v] - want).abs() < 1e-6, "{v}: {}", fine4[v]);
         }
-        // A smoothed layer keeps only the triangles it paints: the 24 around the vertex.
+        // A smoothed layer keeps only the triangles it paints: six stored triangles,
+        // each split into subdiv² triangles. The opacity grid must match the surface.
         let land = hilly_land();
-        let layer = quadrant_mesh(&land, &smoothed(&land), 0, Some(&fine), Vec2::ZERO, 256.0).unwrap();
-        assert_eq!(triangles(&layer).len(), 24);
+        for (subdiv, alpha, count) in [(2, &fine, 24), (4, &fine4, 96)] {
+            let s = smoothed_with(&land, fnv_world::land_surface::SmoothParams { subdiv, ..Default::default() });
+            let layer = quadrant_mesh(&land, &s, 0, Some(alpha), Vec2::ZERO, 256.0).unwrap();
+            assert_eq!(attr3(&layer, Mesh::ATTRIBUTE_POSITION).len(), quad_side(subdiv).pow(2));
+            assert_eq!(triangles(&layer).len(), count);
+        }
     }
 
     /// Off: the stored surface draws exactly what was drawn before smoothing came.

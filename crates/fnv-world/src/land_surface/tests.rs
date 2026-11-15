@@ -92,7 +92,7 @@ fn assert_edges_agree(f: fn(i32, i32) -> f32, g: (i32, i32), missing: &[(i32, i3
 }
 
 /// The smoothing as it was before the parameters came (interpolating, 2 × 2, bound 8),
-/// written out again here so the default's arithmetic cannot drift unnoticed.
+/// written out again here so that mode's arithmetic cannot drift unnoticed.
 mod before {
     use super::super::{catmull_rom, world_vertex, Block, SIDE, SPACING};
 
@@ -194,15 +194,28 @@ mod before {
 }
 
 #[test]
-fn the_default_is_the_smoothing_it_was_bit_for_bit() {
-    assert_eq!(SurfaceSpec::DEFAULT, SurfaceSpec::Smoothed(SmoothParams { mode: SmoothMode::Interpolate, subdiv: 2, max_deviation: 8.0 }));
+fn interpolate_2_bound_8_is_the_smoothing_it_was_bit_for_bit() {
+    let spec = SurfaceSpec::Smoothed(SmoothParams { mode: SmoothMode::Interpolate, subdiv: 2, max_deviation: 8.0 });
     for (g, missing) in [((0, 0), &[][..]), ((-3, 2), &[(-4, 3), (-2, 1)][..]), ((5, -1), &[(5, 0)][..])] {
         let h = around_of(world, g, missing);
         let (heights, normals) = before::smoothed(&block_of(&h));
-        let s = Surface::new(&block_of(&h), SurfaceSpec::DEFAULT).unwrap();
+        let s = Surface::new(&block_of(&h), spec).unwrap();
         assert_eq!(s.heights(), &heights[..], "{g:?}");
         assert_eq!(s.normals().unwrap(), &normals[..], "{g:?}");
     }
+}
+
+/// The recipe chosen from the user's in-game comparisons on 2026-11-15 [design, #2149].
+#[test]
+fn the_default_is_detail_4_bound_8_thresholds_2_6() {
+    let want = SmoothParams { mode: SmoothMode::Detail { t0: 2.0, t1: 6.0 }, subdiv: 4, max_deviation: 8.0 };
+    assert_eq!(SmoothParams::DEFAULT, want);
+    assert_eq!(SmoothParams::default(), want);
+    assert_eq!(SurfaceSpec::DEFAULT, SurfaceSpec::Smoothed(want));
+    assert_eq!(SurfaceSpec::default(), SurfaceSpec::Smoothed(want));
+    let s = Surface::new(&block_of(&around_of(world, (0, 0), &[])), SurfaceSpec::DEFAULT).unwrap();
+    assert_eq!((s.spec(), s.side(), s.spacing()), (SurfaceSpec::Smoothed(want), 129, 32.0));
+    assert_eq!((s.heights().len(), s.triangles().len()), (16_641, 32_768));
 }
 
 #[test]
@@ -224,7 +237,7 @@ fn stored_is_the_land_grid_and_its_triangles() {
 
 #[test]
 fn the_spec_describes_itself() {
-    assert_eq!(SurfaceSpec::DEFAULT.describe(), "mode=interpolate subdiv=2 bound=8 land-shift=0");
+    assert_eq!(SurfaceSpec::DEFAULT.describe(), "mode=detail(2:6) subdiv=4 bound=8 land-shift=4");
     assert_eq!(SurfaceSpec::Stored.describe(), "mode=stored subdiv=1 bound=0 land-shift=0");
     let fit = SurfaceSpec::Smoothed(SmoothParams { mode: SmoothMode::Fit, subdiv: 4, max_deviation: 12.0 });
     assert_eq!(fit.describe(), "mode=fit subdiv=4 bound=12 land-shift=4");
@@ -414,6 +427,37 @@ fn detail_keeps_bumps_and_ridges_that_fit_lowers() {
             }
             // Flat ground away from them stays flat.
             assert_eq!(detail.heights()[detail.land_vertex(4, 4)], 0.0);
+        }
+    }
+}
+
+/// Known knot displacements through the detail transition, before the 4-unit cap
+/// [design, #2149]. Signed moves and near-threshold values catch weighting the capped
+/// move, using height instead of |d|, or replacing the smoothstep with a hard cutoff.
+#[test]
+fn detail_weights_knot_displacements_through_the_transition() {
+    let cases: [(SmoothMode, &[(f32, f32)]); 2] = [
+        (SmoothMode::DETAIL, &[
+            (1.875, 1.875), (2.0, 2.0), (2.125, 277729.0 / 131072.0),
+            (3.0, 2.53125), (4.0, 2.0), (5.0, 0.78125),
+            (5.875, 2209.0 / 131072.0), (6.0, 0.0), (6.125, 0.0),
+        ]),
+        (SmoothMode::Detail { t0: 1.0, t1: 5.0 }, &[(1.0, 1.0), (2.0, 1.6875), (3.0, 1.5), (4.0, 0.625), (5.0, 0.0)]),
+    ];
+    for (mode, moves) in cases {
+        for subdiv in SUBDIVS {
+            for &(d, want) in moves {
+                for sign in [-1.0, 1.0] {
+                    let mut h = vec![0.0; SIDE * SIDE];
+                    // At (16, 16), H = 0 and the binomial mean is exactly sign * d:
+                    // west and east each contribute 2/16 of their height, 4 * sign * d.
+                    h[16 * SIDE + 15] = 4.0 * sign * d;
+                    h[16 * SIDE + 17] = 4.0 * sign * d;
+                    let s = alone(&h, SmoothParams { mode, subdiv, max_deviation: 8.0 });
+                    let got = s.heights()[s.land_vertex(16, 16)] - s.land_height(16, 16);
+                    assert!((got - sign * want).abs() < 1e-6, "{mode:?}, subdiv {subdiv}, d={}: {got}, want {}", sign * d, sign * want);
+                }
+            }
         }
     }
 }

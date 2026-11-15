@@ -53,6 +53,11 @@ Audio and Controls, observed in the original's pause menu, 2026-11-09].
 | Tweaks | (none) | none named yet |
 | Debug | (none) | `overlay`, `hit-markers`, `god-mode`, `navmesh`, `terrain-wireframe` (#2149), `scope-3d` |
 
+The Smooth terrain row is on by default and applies at the next start. Its default
+recipe is detail, 4 × 4, bound 8, thresholds 2:6: smooth height steps while keeping
+bumps and ridges, with one surface for drawing and collision [design, #2149: the
+user's 2026-11-15 choice from in-game comparisons; world.md §3 "Smoothing"].
+
 The table names every row the registry can hold [documented: `settings_layout.rs::SECTIONS`],
 109 with #1966's `quality` and `enhanced`,
 #2014's nine `fps-counter-*` rows, #2242's `fps-counter-upscaling` and #2317's

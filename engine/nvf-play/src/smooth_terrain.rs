@@ -9,10 +9,11 @@
 //! collided as they load, so a change while the game runs would leave the loaded cells'
 //! ground and collision on the old surface beside new cells on the other [design].
 //!
-//! How it is smoothed is fixed for the run too ([`params`]): by default interpolating,
-//! 2 × 2, within 8 units (`fnv_world::land_surface::SmoothParams::DEFAULT`). Test aids
-//! choose another recipe for comparing them in the game [design, #2149: the maintainer
-//! picks a default from such runs; they are not settings rows or INI entries]:
+//! How it is smoothed is fixed for the run too ([`params`]): by default detail,
+//! 4 × 4, within 8 units, thresholds 2:6 (`fnv_world::land_surface::SmoothParams::DEFAULT`).
+//! [design, #2149: the user's 2026-11-15 choice from in-game comparisons.] Test aids
+//! choose another recipe for comparing them in the game; they are not settings rows
+//! or INI entries:
 //! - `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit|detail` (the LAND vertices kept, fitted,
 //!   or fitted where they look like quantisation steps only);
 //! - `NVF_PLAY_TEST_SMOOTH_DETAIL=<t0>:<t1>` (detail's thresholds, units, 0 ≤ t0 < t1 ≤ 16;
@@ -44,7 +45,7 @@ pub const BOUND_AID: &str = "NVF_PLAY_TEST_SMOOTH_BOUND";
 pub const DETAIL_AID: &str = "NVF_PLAY_TEST_SMOOTH_DETAIL";
 
 /// The settings row's note, NVForever's own words [design].
-pub const NOTE: &str = "On: the ground between the landscape's points is drawn and walked on as a smooth surface, by default within one height step of the stored ground. Off: the stored triangles. Applies at the next start.";
+pub const NOTE: &str = "Smooths height steps while keeping bumps and ridges, with 4 x 4 squares per landscape square and an 8-unit bound. Drawing and collision share the surface. Applies at the next start.";
 
 /// The state the settings page shows (what the next start uses).
 pub fn setting() -> bool {
@@ -167,6 +168,8 @@ mod tests {
         assert_eq!(p.mode, SmoothMode::Detail { t0: 2.0, t1: 6.0 });
         let (p, e) = parse_params(Some("detail"), None, None, Some(" 1.5 : 9 "));
         assert_eq!((p.mode, e.len()), (SmoothMode::Detail { t0: 1.5, t1: 9.0 }, 0));
+        // Detail is also the default when the mode aid is absent.
+        assert_eq!(parse_params(None, None, None, Some(" 1.5 : 9 ")), (p, Vec::new()));
         for bad in ["6:2", "3:3", "-1:4", "2:17", "2", "a:b", "NaN:4", "2:inf"] {
             let (p, e) = parse_params(Some("detail"), None, None, Some(bad));
             assert_eq!((p.mode, e.len()), (SmoothMode::DETAIL, 1), "{bad}");
@@ -187,8 +190,8 @@ mod tests {
             assert_eq!(e.len(), 1, "{mode} {subdiv} {bound}: {e:?}");
             assert!(p.is_valid());
             let want = SmoothParams {
-                mode: if mode == "fit" { SmoothMode::Fit } else { SmoothMode::Interpolate },
-                subdiv: if subdiv == "4" { 4 } else { 2 },
+                mode: if mode == "fit" { SmoothMode::Fit } else { SmoothParams::DEFAULT.mode },
+                subdiv: if subdiv == "4" { 4 } else { SmoothParams::DEFAULT.subdiv },
                 max_deviation: if bound == "12" { 12.0 } else { 8.0 },
             };
             assert_eq!(p, want, "{mode} {subdiv} {bound}");
@@ -200,7 +203,7 @@ mod tests {
 
     #[test]
     fn the_start_line_names_the_surface() {
-        assert_eq!(describe_spec(SurfaceSpec::DEFAULT, SmoothParams::DEFAULT), "terrain: mode=interpolate subdiv=2 bound=8 land-shift=0; drawing, collision and queries use this surface");
+        assert_eq!(describe_spec(SurfaceSpec::DEFAULT, SmoothParams::DEFAULT), "terrain: mode=detail(2:6) subdiv=4 bound=8 land-shift=4; drawing, collision and queries use this surface");
         let fit = SmoothParams { mode: SmoothMode::Fit, subdiv: 4, max_deviation: 16.0 };
         assert_eq!(describe_spec(SurfaceSpec::Smoothed(fit), fit), "terrain: mode=fit subdiv=4 bound=16 land-shift=4; drawing, collision and queries use this surface");
         assert_eq!(

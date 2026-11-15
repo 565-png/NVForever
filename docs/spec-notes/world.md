@@ -191,20 +191,26 @@ apart and the last row/column coincides with the neighbour's first.
   the same south-west → north-east diagonal (a [hypothesis] about the original), so ridges
   zig-zag and gentle slopes show steps; the VNML lighting is already smooth, the facets
   are in the geometry. The maintainer decided on 2026-11-13: "terrain smoothing should be
-  the default have the collision follow the smoothed surface". The rule
+  the default have the collision follow the smoothed surface". On 2026-11-15 the user
+  chose **detail, 4 × 4, bound 8, thresholds 2:6** from nine variants compared in game
+  and screenshots [design, #2149]. Interpolate keeps the 8-unit VHGT steps; fit flattens
+  real features; detail removes the steps while keeping bumps, crests and ridges.
+  The 4 × 4 subdivision gives rounder silhouettes, and bound 8 keeps placed objects
+  in contact by limiting the distance from the stored ground to one height step.
+  The rule
   (`crates/fnv-world/src/land_surface.rs`, one surface for drawing, collision and every
   height query; the run's recipe is a `SurfaceSpec` fixed at the start and carried by
   every job that builds a surface):
-  - each grid square is cut into `subdiv` × `subdiv` squares (2 by default, or 4), split
+  - each grid square is cut into `subdiv` × `subdiv` squares (4 by default, or 2), split
     along the same diagonal, so every new triangle lies inside one stored triangle;
   - the new vertices lie on a Catmull-Rom bicubic patch over control heights at the LAND
-    vertices. Interpolating (the default) the controls are the stored heights, so every
+    vertices. Interpolating the controls are the stored heights, so every
     LAND vertex keeps its stored height exactly. Fitting, each control is the stored
     height H moved towards the binomial mean A of its 3 × 3, (1 2 1) × (1 2 1) / 16, by
     at most K = min(4, bound): F = H + clamp(A − H, −K, K), every F from stored heights
     only, rows then columns in one fixed order; a plane stays a plane and the staircase
     `0, 0, 8, 8, 16, 16` becomes the even slope `…, 2, 6, 10, 14, …` (each knot moved
-    2 units); at a LAND vertex the surface is F. With detail (a feature-preserving fit)
+    2 units); at a LAND vertex the surface is F. With detail (the default, a feature-preserving fit)
     only the part of the move that looks like a quantisation step is taken: with
     d = A − H, F = H + clamp(d · (1 − smoothstep(t0, t1, |d|)), −K, K), t0 = 2 and t1 = 6
     units by default [design, #2149: the user found fit 4 × 4 within 8 the best
@@ -239,13 +245,13 @@ apart and the last row/column coincides with the neighbour's first.
   The setting `smooth-terrain` (Graphics, on by default; `--no-smooth-terrain`) takes
   effect at the next start: off, the stored triangles are drawn and collided exactly as
   before. Test aids choose another recipe for comparing them, without changing the
-  setting or the INI [design, #2149: the maintainer picks the default from such runs]:
+  setting or the INI [design, #2149]:
   `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit|detail`, `NVF_PLAY_TEST_SMOOTH_SUBDIV=2|4`,
   `NVF_PLAY_TEST_SMOOTH_BOUND=<0..16>`, `NVF_PLAY_TEST_SMOOTH_DETAIL=<t0>:<t1>` (detail's
   thresholds, 0 ≤ t0 < t1 ≤ 16; detail only) (a bad value warns once and keeps that
   field's default; with smoothing off they do nothing). Detail logs its thresholds:
-  `mode=detail(2:6)`. The start logs one line, e.g. `terrain:
-  mode=fit subdiv=4 bound=12 land-shift=4; drawing, collision and queries use this
+  `mode=detail(2:6)`. The start logs one line, by default `terrain:
+  mode=detail(2:6) subdiv=4 bound=8 land-shift=4; drawing, collision and queries use this
   surface` (off: `mode=stored subdiv=1 bound=0 land-shift=0`), and the exit's `terrain
   summary` counts cell draws over the run (a cell drawn again counts again) and names the
   recipe. The Pip-Boy local map's outline reads the same surface beyond the loaded
@@ -269,7 +275,7 @@ apart and the last row/column coincides with the neighbour's first.
   and ragdoll start-up as world coordinates. Distant LOD is not touched: its chunks are sunk
   under the loaded cells with skirts (§7), and the loaded edge moves by at most the bound
   (between the LAND vertices; fitting, the LAND vertices themselves by at most K). With
-  the default recipe, on Goodsprings' cells (−17, 0) and (−18, 0), 1,084 and
+  the previous interpolate/2/bound-8 recipe, on Goodsprings' cells (−17, 0) and (−18, 0), 1,084 and
   1,541 of the 3,136 new vertices move by more than half a unit, the 95th percentile by
   3.3 and 4.6 units, and 19 and 43 reach the bound [documented: `fnvtool world land`
   heights of the nine cells around each (FalloutNV.esm, WastelandNV), run through a

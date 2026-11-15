@@ -218,22 +218,19 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
-- **Terrain smoothing: how far and when (#2149).** [design, #2149] Smoothing is on by
-  default and collision follows it (your decision of 2026-11-13). Chosen here: each grid
-  square in 2 × 2, the surface through the stored points and held within 8 units (one
-  height step) of the stored triangles, and the setting taking effect at the next start
-  rather than at once (drawn ground and collision must change together). Played, a mound
-  and its ridge looked hardly smoother: the stored points keep the 8-unit steps. Three
-  axes can now be compared in the game by test aids, the default unchanged until one is
-  picked: through the points or fitted near them (each moved at most 4 units, which
-  evens a staircase into a slope), 2 × 2 or 4 × 4 (four times the triangles), and the
-  bound (8 to 16 units: more rounding, more distance from placed rocks and roads). Fit
-  4 × 4 within 8 looked the best compromise but too smooth; the candidate now is
-  *detail*, a fit that moves only what looks like a height step (moves up to 2 units in
-  full, fading out by 6) and keeps bumps, crests and ridges. The Debug row Terrain
-  wireframe draws the triangles to see the shape. Smoke scenarios
-  `terrain-smoothing-fit-s2-b8`, `-interpolate-s4-b8`, `-fit-s4-b12`, `-detail-s4-b8`
-  start each.
+- **Terrain smoothing: default chosen, costs to measure (#2149).** [design, #2149]
+  Your 2026-11-15 choice from nine variants compared in game and screenshots is now
+  the default: **detail, 4 × 4, bound 8, thresholds 2:6**. Interpolate keeps the 8-unit
+  height steps; fit flattens real features; detail evens the steps while keeping bumps,
+  crests and ridges (moves up to 2 units in full, fading out by 6). The 4 × 4 grid gives
+  rounder silhouettes, and bound 8 keeps placed objects in contact by holding the
+  surface within one height step of the stored triangles. Smoothing stays on by default
+  with collision following it (your 2026-11-13 decision); the setting applies at the
+  next start so drawn ground and collision change together. Frame cost and actual memory
+  cost remain to be measured: 4 × 4 has four times the triangles of 2 × 2. The test aids
+  still choose the other recipes, and the Debug row Terrain wireframe shows the triangles.
+  Smoke `terrain-smoothing` covers the default; `terrain-smoothing-fit-s2-b8`,
+  `-interpolate-s4-b8`, `-fit-s4-b12`, `-detail-s4-b8` cover explicit recipes.
   ([world §3 "Smoothing"](spec-notes/world.md#3-landscape-land))
 
 - **Grass fires: size, speed and regrowth (#2567).** [design] Burning weapons and blasts

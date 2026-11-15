@@ -985,6 +985,12 @@ fn smooth_cell(job: &Job) -> Prepared {
     smooth_cell_with(job, fnv_world::land_surface::SmoothParams::DEFAULT)
 }
 
+/// The previous default, kept explicitly so the interpolation mode stays covered.
+fn interpolated_cell(job: &Job) -> Prepared {
+    use fnv_world::land_surface::{SmoothMode, SmoothParams};
+    smooth_cell_with(job, SmoothParams { mode: SmoothMode::Interpolate, subdiv: 2, max_deviation: 8.0 })
+}
+
 /// The same cell fitted, 4 × 4, within 16 units: its LAND vertices move ([`smooth_cell_with`]).
 fn fitted_cell(job: &Job) -> Prepared {
     use fnv_world::land_surface::{SmoothMode, SmoothParams};
@@ -992,7 +998,7 @@ fn fitted_cell(job: &Job) -> Prepared {
 }
 
 /// The made-up smoothed cells the landscape tests run on, the default first.
-const SMOOTH_CELLS: [fn(&Job) -> Prepared; 2] = [smooth_cell, fitted_cell];
+const SMOOTH_CELLS: [fn(&Job) -> Prepared; 3] = [smooth_cell, interpolated_cell, fitted_cell];
 
 /// A made-up exterior cell on a smoothed landscape (#2149): hills in steps of 8, and a
 /// static box standing on the ground at the second of [`lifted_spots`], its top at

@@ -889,14 +889,16 @@ After the Controls tab's own rows (see the end of this page):
 
 ### `smooth-terrain`: Smooth terrain
 
-- On the page: On: the ground between the landscape's points is drawn and walked on as a
-  smooth surface, by default within one height step of the stored ground. Off: the stored
-  triangles. Applies at the next start.
-- In full: On (the default, the maintainer's decision of 2026-11-13): each grid square of the
-  landscape is drawn and collided as 2 × 2 squares on a smooth surface through the stored
-  points, with the default recipe never more than one height step (8 units) from the stored
-  triangles (the test aids below allow up to 16), so slopes and
-  ridges lose their steps and zig-zags; actors and objects stand on what is drawn. Off: the
+- On the page: Smooths height steps while keeping bumps and ridges, with 4 x 4 squares per
+  landscape square and an 8-unit bound. Drawing and collision share the surface. Applies at
+  the next start.
+- In full: [design, #2149] On by default (the maintainer's decision of 2026-11-13).
+  The default recipe is detail, 4 × 4 squares per landscape square, bound 8 units and
+  thresholds 2:6, chosen by the user on 2026-11-15 from in-game comparisons. Detail evens
+  out height steps while keeping bumps and ridges; 4 × 4 gives rounder silhouettes.
+  The surface stays within one height step (8 units) of the stored triangles to keep
+  placed objects in contact (the test aids below allow up to 16); actors and objects
+  stand on what is drawn. Off: the
   landscape's triangles as stored. It takes effect at the next start (loading a save starts
   the game again), so drawn ground and collision always change together. Not in the original.
   For comparing recipes, the test aids `NVF_PLAY_TEST_SMOOTH_MODE` (`interpolate`, `fit`,
