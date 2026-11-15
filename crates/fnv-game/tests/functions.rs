@@ -1613,6 +1613,28 @@ fn reset_3d_state_forgets_the_animation() {
     assert_eq!(g.anims.resets, vec![on]);
 }
 
+/// #2420: a tripwire's script plays `Forward` and activates itself, which asks "Open",
+/// a sequence its model lacks. The engine says so (`ObjectAnims::not_in_model`) and
+/// `Forward` is again what the sprung wire shows when drawn again; a name the model has
+/// and an unknown name the last ask does not carry change nothing.
+#[test]
+fn a_group_the_model_lacks_gives_back_the_one_it_replaced() {
+    let f = fixture();
+    let mut g = game(&f);
+    let on = FormId(ADULT_REF);
+    let ask = |g: &mut Game, group: u16, name: &str| g.ask_anim(fnv_game::anims::AnimRequest { on, group, name: Some(name.into()), start: fnv_game::anims::Start::Normal });
+    ask(&mut g, 1, "Forward");
+    ask(&mut g, 0xFF00, "Open");
+    assert_eq!(g.anims.asked(on), Some((0xFF00, "Open")));
+    g.anims.not_in_model(on, "Backward");
+    assert_eq!(g.anims.asked(on), Some((0xFF00, "Open")), "not the last asked: nothing changes");
+    g.anims.not_in_model(on, "open");
+    assert_eq!(g.anims.asked(on), Some((1, "Forward")), "the sprung wire shows Forward's end");
+    // Only one step back: a second missing name with nothing before it clears the ask.
+    g.anims.not_in_model(on, "Forward");
+    assert_eq!(g.anims.asked(on), None);
+}
+
 /// The HUD's compass leaves sneaking actors off (docs/spec-notes/hud.md §11): forced to
 /// sneak (SetForceSneak) or measured sneaking by the engine, an actor gets no tick; standing
 /// up again, or dead, as before.
@@ -2410,4 +2432,22 @@ End
     assert_eq!(q(&mut g, "SetFunctionValue (GenericDeleteForm 13, GunList, 0)"), XVal::Ref(NOTE));
     assert_eq!(count(&mut g), XVal::Num(1.0));
     assert_eq!(nth(&mut g, 0), XVal::Ref(MISC), "the other member stays");
+}
+
+#[test]
+fn luck_skill_setting_fallback_preserves_loaded_overrides() {
+    let mut f = fixture();
+    let mut g = game(&f);
+    assert_eq!(call(&mut g, 0x1100, None, &[ArgValue::Str("favdskillluckbonusmult".into())]), 0.5);
+    drop(g);
+    f.forms.settings.insert("favdskillluckbonusmult".into(), fnv_sim::settings::Setting::Float(0.75));
+    let mut g = game(&f);
+    assert_eq!(call(&mut g, 0x1100, None, &[ArgValue::Str("fAVDSkillLuckBonusMult".into())]), 0.75);
+    g.run_source("SetNumericGameSetting \"fAVDSkillLuckBonusMult\" 0.25", Default::default()).unwrap();
+    assert_eq!(call(&mut g, 0x1100, None, &[ArgValue::Str("fAVDSkillLuckBonusMult".into())]), 0.25);
+    let before = g.events.len();
+    let ctx = Ctx { unit: "owned setting".into(), opcode: 0x1100, on: None, self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+    g.call_function(&ctx, &[ArgValue::Str("fOwnedUnknownSetting".into())]);
+    assert!(g.events[before..].iter().any(|e| matches!(&e.kind, EventKind::CallFailed { error, .. } if error.contains("fOwnedUnknownSetting"))));
+
 }

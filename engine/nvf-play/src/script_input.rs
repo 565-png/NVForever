@@ -7,6 +7,8 @@
 
 use crate::bindings::{dik_key, Binding, Bindings, GAME_CONTROLS, GAME_INI_CONTROLS};
 use bevy::prelude::*;
+use bevy::input::mouse::MouseWheel;
+use bevy::window::PrimaryWindow;
 use fnv_sim::FormId;
 use fnv_game::script_input::MOUSE_BASE;
 
@@ -15,7 +17,9 @@ pub struct ScriptInputPlugin;
 impl Plugin for ScriptInputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ScriptBlocked>()
-            .add_systems(PreUpdate, script_input.after(bevy::input::InputSystems))
+            .add_message::<MouseWheel>()
+            // [design, #2200] Scripts see consumed switching presses as absent too.
+            .add_systems(PreUpdate, script_input.after(bevy::input::InputSystems).after(crate::pad::device::automatic))
             // The player's state the scripts read (sights up, for the HUD bars' aiming
             // condition) is handed over after combat has updated it this frame and before
             // the scripts run [design]. `tell_magazine` keeps its own place: it also
@@ -66,18 +70,31 @@ fn release(c: u16, keys: &mut ButtonInput<KeyCode>, mouse: &mut ButtonInput<Mous
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn script_input(
     mut script: Option<ResMut<crate::script::ScriptState>>,
     mut bindings: Option<ResMut<Bindings>>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut wheel: MessageReader<MouseWheel>,
+    primary: Query<Entity, With<PrimaryWindow>>,
     mut blocked: ResMut<ScriptBlocked>,
+    switching: Option<Res<crate::pad::SwitchingInput>>,
     mut tapped: Local<Vec<u16>>,
     mut script_held: Local<Vec<u16>>,
 ) {
     // Last frame's taps end.
     for c in tapped.drain(..) {
         release(c, &mut keys, &mut mouse);
+    }
+    // Wheel directions are physical pulses, not MouseButton::Other aliases. Drain
+    // current messages even without a runtime/window so they cannot replay later.
+    let window = primary.single().ok();
+    let mut wheel_codes = [false; 2];
+    for event in wheel.read() {
+        if Some(event.window) != window || !event.y.is_finite() { continue; }
+        if event.y > 0.0 { wheel_codes[0] = true; }
+        else if event.y < 0.0 { wheel_codes[1] = true; }
     }
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
     let input = &mut rt.game.input;
@@ -98,7 +115,14 @@ fn script_input(
             b.set(control, new);
         }
     }
-    input.held = keys.get_pressed().filter_map(|&k| key_code(k)).chain(mouse.get_pressed().filter_map(|&b| mouse_code(b))).collect();
+    let action_keys = switching.as_ref().map_or_else(|| std::borrow::Cow::Borrowed(&*keys), |s| s.filter(&keys));
+    let action_mouse = switching.as_ref().map_or_else(|| std::borrow::Cow::Borrowed(&*mouse), |s| s.filter(&mouse));
+    input.held = action_keys.get_pressed().filter_map(|&k| key_code(k)).chain(action_mouse.get_pressed().filter_map(|&b| mouse_code(b))).collect();
+    drop((action_keys, action_mouse));
+    // 264/265 are the documented up/down wheel codes. Rebuilding held each frame
+    // releases a direction immediately when that frame has no matching message.
+    input.held.extend(wheel_codes.into_iter().zip([MOUSE_BASE + 8, MOUSE_BASE + 9])
+        .filter_map(|(pressed, code)| pressed.then_some(code)));
     if let Some(b) = bindings.as_deref() {
         // The engine's controls are the extender's 0–27, in the same order.
         input.bindings = GAME_CONTROLS[..GAME_INI_CONTROLS].iter().map(|(c, _, _)| {
@@ -246,7 +270,7 @@ fn tell_player_state(
     control: Option<Res<crate::control::PlayerControl>>,
     combat: Option<Res<crate::combat::Combat>>,
     anim: Option<Res<crate::combat::WeaponAnim>>,
-    pads: Query<&Gamepad>,
+    pads: crate::pad::ActionPads,
     mut script: Option<ResMut<crate::script::ScriptState>>,
 ) {
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
@@ -302,3 +326,7 @@ fn mod_file_roots(data: Option<Res<nvf_assets::GameData>>, mut done: Local<bool>
         }));
     });
 }
+
+#[cfg(test)]
+#[path = "script_input_wheel_tests.rs"]
+mod wheel_tests;

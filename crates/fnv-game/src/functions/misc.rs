@@ -41,8 +41,11 @@ pub fn show_message(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> 
     // A message box (MESG flag Message Box, or buttons) is a menu until the player closes
     // it [observed: MenuMode 1001 while the pack plugins' boxes were open,
     // layer5-captures.md §10.1]; other messages are corner notifications.
+    // `--no-messages` answers a box that asks nothing as it is shown (`Game::answer_ok_box`).
     if is_box || !buttons.is_empty() {
-        g.show_box(m);
+        if !g.answer_ok_box(m, buttons.len()) {
+            g.show_box(m);
+        }
     } else {
         let icon = match icon.and_then(|i| crate::nvse::record_value(g, i, "ICON", "")) {
             Some(fnv_script::vm::XVal::Str(p)) => p,
@@ -162,12 +165,14 @@ pub fn get_game_setting(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, Str
 /// defaults itself), with the values the original returned [observed: `GetGameSetting`
 /// in the capture `fa_batch1_queries`, 2026-10-16; the 27 trap-plate scripts read the
 /// five `iLockLevelMax…` settings, docs/design/script-function-audit.md].
-pub const EXE_SETTINGS: [(&str, f32); 5] = [
+pub const EXE_SETTINGS: [(&str, f32); 6] = [
     ("iLockLevelMaxVeryEasy", 0.0),
     ("iLockLevelMaxEasy", 25.0),
     ("iLockLevelMaxAverage", 50.0),
     ("iLockLevelMaxHard", 75.0),
     ("iLockLevelMaxVeryHard", 100.0),
+    // [observed: builtin-luck-setting.md, own public script query, 2026-11-12].
+    ("fAVDSkillLuckBonusMult", 0.5),
 ];
 
 pub fn abs(_g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {

@@ -308,7 +308,7 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   files' 255 (`frame.rs` `TEXT`). The flat image shown when the Pip-Boy model has no screen
   is the device's drawing and keeps its 213 [design].
   The pages drawn from their menu files (`[UI] TileMenus=StatsMenu`, `InventoryMenu`,
-  `RepairMenu`, `ItemModMenu`, `MapMenu`; all off by default) take the same device
+  `RepairMenu`, `ItemModMenu`, `MapMenu`; on by default when the list is absent [design, #2215]) take the same device
   brightness, by role as the hand-built pages do, not by a flat factor [design: #2212,
   `tiles::draw::device_brightness`, applied in the tile painter before it compares the
   pieces, for every Pip-Boy page and the DATA page's map picture]: while the Pip-Boy is on
@@ -420,12 +420,17 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
     requirement) over VAL; the second row CND (a bar 62 in, 15 down, 20 high, 72 short
     of the card) and beside it, two cards and 10 wide, the ammunition ("20ga (2/30)":
     the AMMO short name, then what a clip holds of what is carried over what is
-    carried, hypothesis) or armour's class ("Light", "Medium", "Heavy"); EFFECTS across
+    carried, hypothesis) or armour's class ("Light", "Medium", "Heavy"); EFFECTS (a value too long for the room
+    beside the title, as an aid item's four Hardcore effects, goes on in right-aligned
+    lines under it, broken between effects: `frame::card_value_lines` [design, #2537; the
+    file's `CI_ValueText` has a `wrapwidth`, documented, its look is not captured]) across
     the three cards on the first free row: an aid item's own effects, apparel's or a
     weapon's enchantment's (EITM), written as the STATS EFF list writes them ("HP +40",
     "AGL -1") [observed: the owner's ITEMS screenshots, all five tabs]. WG and VAL are
     the stack's (the Stimpak's VAL 675 is 9 × 75; WG "--" for nothing) [observed: VAL;
     hypothesis: WG].
+  - Ammo effect card lines (#2502): see the formatting and shared-card rule below
+    [design, #2502].
   - Added 2026-10-19 (`items.rs`):
     - **DPS** [documented: `item_stats_display.xml` `DPSInfo`, `sInventoryDamagePerSecond`;
       hypothesis: formula]: the damage a shot does at the item's condition
@@ -612,7 +617,9 @@ is the top left 85 × 92 of `head.dds`) [observed].
     of type Apparel) of each worn piece of apparel, named by the enchantment's FULL
     ("Vault Jumpsuit"), its Value Modifier effects written "Speech +2, Melee Weap. +2"
     with the actor values' short names (AVIF `ANAM`) [observed: the screenshot and the
-    records]; then aid items (ALCH) with active effects. A detrimental effect (MGEF flag)
+    records], read from the game's active effects (aid-items.md §13): an effect whose
+    conditions fail or that a Dispel took off is not listed [design: #2495]; then aid
+    items (ALCH) with active effects. A detrimental effect (MGEF flag)
     is written with a minus [hypothesis]. "No Effects" when there is none [hypothesis:
     the words].
 - **Lists** (S.P.E.C.I.A.L., Skills, Perks): 35, 110, 325 / 350 / 420 wide (25 / 50 more
@@ -620,8 +627,9 @@ is the top left 85 × 92 of `head.dds`) [observed].
   15 in and 20 down, its number right-aligned 10 before a right buffer of 20 (55 when
   marked), the mark 10 after [documented]. Skills are in name order [observed: Guns
   between Explosives and Lockpick], Big Guns left out [observed: thirteen; its AVIF is
-  "Big Guns - OBSOLETE"]. A value shown is the current value plus worn apparel's changes
-  [design: the game does not apply worn enchantments to actor values yet], skills kept to
+  "Big Guns - OBSOLETE"]. A value shown is the game's actor value (base, permanent and
+  temporary modifiers, less damage), which holds the worn apparel's enchantments in the
+  temporary pool [documented: GECK wiki ActorValue; aid-items.md §13; #2495], skills kept to
   0–100; "(+)" or "(-)" when it differs from the permanent value [observed: "34 (+)";
   hypothesis: "(-)"]. Perks: the player's perks, playable and not hidden by PERK DATA
   [hypothesis: its bytes as trait, minimum level, ranks, playable, hidden], traits
@@ -684,8 +692,7 @@ is the top left 85 × 92 of `head.dds`) [observed].
   reaches `pad::menu_keys` and chooses the head, then torso on CND.
 - **Open**: the game settings the page's words come from (`sStatsCrippled`,
   `sStatsNoEffects`, `sPCMenuHint*`) are not in the masters; when each face shows;
-  whether the hints count 0 and when they are bright; whether worn enchantments should
-  change the actor values themselves (then the page needs no sum of its own); the
+  whether the hints count 0 and when they are bright; the
   highlight box's rule; General's list height, order and right buffer, the reputation
   list's rule and second line, the karma titles. (The misc statistics' codes: misc-stats.md §1.)
 
@@ -1033,7 +1040,8 @@ General's mode survives a load; effects overflowing the page; the switch's and h
 ### 5.2.1 ITEMS from its file: what the code writes
 
 The ITEMS page drawn from `menus\main\inventory_menu.xml`, in the Pip-Boy's image, behind
-`[UI] TileMenus=InventoryMenu`, off by default (`tiles/inventory_menu.rs`; issues #1513, #1468).
+`[UI] TileMenus=InventoryMenu`, on by default when the list is absent [design, #2215;
+ui-tile-tree.md section 6.2] (`tiles/inventory_menu.rs`; issues #1513, #1468).
 Off, nothing of it runs. The rules stay `menu::model`'s and `pipboy::items`'; the module writes
 values and says what a tile stands for [design]. Tile names and where they stand are
 [documented: the file, by `fnvtool ui tree`]. "The capture" below is the original at 1280x720 in the
@@ -1395,7 +1403,19 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
     McCarran 8, Hoover Dam 7]), flags `FNAM`, radius `XRDS`. Shown when the player has been
     within the radius (`XRDS`) in the marker's own worldspace with its type's icon,
     or when ShowMap or the Visible flag made it known, with the undiscovered icon
-    [hypothesis]. Icons `interface\icons\world map\icon_map_<type>.dds`, the inverted form
+    [hypothesis]. A marker without `XRDS` is found within `iMapMarkerRevealDistance`
+    [documented: GECK wiki "Complete List of GameSettings", the Fallout: New Vegas default
+    1000; no master sets it], that setting being this distance a [hypothesis] (#2338;
+    observer check 128); a plugin's value is used as it is, and 0 finds no such marker by
+    walking [design]; before #2338 such a marker was never found by walking up to it.
+    Named markers (`XMRK` and `FULL`) in each master's own worldspaces, and how many have no
+    `XRDS` [documented: fnvtool esm decode of each placed MapMarker reference]:
+    FalloutNV.esm 189 / 66 (WastelandNV 186 / 65, Coyote Den 0x00154A69 and the four
+    Powder Ganger Camps among them; FreesideWorld 1 / 1; WastelandNVmini 2 / 0; the
+    others carry XRDS 200-15000, median 2500 in WastelandNV); DeadMoney.esm 11 / 4;
+    HonestHearts.esm 55 / 26; OldWorldBlues.esm 35 / 16; LonesomeRoad.esm 28 / 18. None
+    carries an `XRDS` of 0, so an absent radius and a non-positive one are read alike
+    [design: `discovery_radius` in `engine/nvf-play/src/pipboy/data.rs`]. Icons `interface\icons\world map\icon_map_<type>.dds`, the inverted form
     under the highlight box [hypothesis: by the files' names]; 24 wide, 1.75 times and
     brightness 255 (else 220) under the box [documented: the template's 1.75 and
     brightness; observed: 24 fitted].
@@ -1572,7 +1592,8 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
 ### 5.3.1 DATA from its file: what the code writes
 
 The DATA page drawn from `menus\main\map_menu.xml`, in the Pip-Boy's image, behind
-`[UI] TileMenus=MapMenu`, off by default (`tiles/map_menu.rs`; issue #1513). Off, nothing of it
+`[UI] TileMenus=MapMenu`, on by default when the list is absent [design, #2215;
+ui-tile-tree.md section 6.2] (`tiles/map_menu.rs`; issue #1513). Off, nothing of it
 runs and the hand-built page (`pipboy/data.rs`) draws as before. The rules stay `pipboy::data`'s:
 the module writes values and says what a tile stands for; commands go where the hand-built page's
 go [design]. Tile names, places and expressions are [documented: `menus\main\map_menu.xml` and the
@@ -2097,3 +2118,51 @@ still need runtime checks after this review revision.
 - The mouse pointer: the screenshots show an amber arrow (`interface\icons\misc\
   glow_cursor.dds` is in the archives); NVForever now shows the game's own `cursor.dds`
   tinted amber everywhere in the window (`engine/nvf-play/src/cursor.rs`, 2026-10-16).
+
+## Ammo effect card lines (#2502)
+
+- [design, #2502] The shared item card reads AMMO RCIL in record order through the
+  loaded `CombatForms.ammo_effects` (`engine/nvf-play/src/pipboy/items.rs`). Each
+  resolved effect supplies one line below WG/VAL; no heading is added. Empty
+  lists retain the previous WG/VAL-only card. Unresolved IDs and unsupported
+  operations supply no line, rather than inventing a numeric meaning.
+- [documented: fnvtool esm inventory, FalloutNV.esm, main session 2026-11-14,
+  #2502 writer brief] All 54 base AMEF records have FULL. [design, #2502] Use that
+  name verbatim when nonempty. For an absent or whitespace-only FULL, our own
+  labels by kind are Damage, Damage resist, Damage threshold, Spread, Weapon wear,
+  Fatigue; an unknown kind uses Ammo effect. These English keys use
+  `fnv_util::words::tr` and `lang/{de,es,fr,it,ru}.toml`; FULL is never translated
+  by this fallback table.
+- [documented: offline GECK wiki Ammo Effect, revision 37444;
+  `schemas/fnv/combat.json`; `crates/fnv-combat/src/damage.rs::apply_effects`]
+  The operations are Add, Multiply, Subtract. [design, #2502, settled owner
+  choice] Multiply displays `x0.80` (two decimals); Add displays its signed
+  value, Subtract its negation (`+5`, `-5`, `-0.75`), with fractional digits
+  only when needed. These lines describe the record, including fatigue effects;
+  they do not alter combat.
+- [design / file refs] `Info` supplies the same text to the hand-built inventory,
+  barter and container cards and to `tiles/item_card.rs::write`, including the
+  default tile ITEMS page. Hand-built cards get a row per line because their
+  text helper draws one line. Tile cards use the multiline effect value and
+  hide only its title text for ammo, saving its prior visibility on that title
+  tile. Non-ammo and empty selections restore that value (including a hidden
+  title), or remove the code-created visibility trait if the menu omitted it.
+  Non-ammo selections before ammo leave the menu's title visibility untouched.
+- [design / file refs] Synthetic tests `pipboy::items::tests::ammo_` cover all
+  three operations, FULL/fallback labels, RCIL order, missing IDs and cards with
+  and without effects. `tiles::item_card::tests::ammo_` checks the text, first
+  free row, hidden heading and selection cleanup, including custom menus with
+  initially hidden or absent title visibility.
+- [documented: #2502 round-w2 writer brief, fnvtool esm decode, FalloutNV.esm,
+  main session 2026-11-14] `Ammo357MagnumHollowPoint` (0x0013E43C) references
+  AMEF 0x00157B54 ("Damage Bonus", Multiply 1.75) and 0x00157B56
+  ("Dam. Thresh. Increase", Multiply 3.0); `Ammo357Magnum` (0x0008ED02)
+  has no RCIL. [design, #2502] Smoke scenarios `pipboy-ammo-effects` and
+  `tiles-items-ammo-effects` give both rounds and select each on ITEMS > Ammo,
+  requiring `Damage Bonus x1.75` and `Dam. Thresh. Increase x3.00` in order,
+  then no effects after returning to the ordinary round. The former uses the
+  hand-built page; the latter uses the default tile menus without an override.
+  [design / file refs] They read existing selected-card logs from
+  `pipboy/items.rs::draw` and `tiles/inventory_menu.rs::describe`; screenshots
+  accompany both selections for visual review. Log checks verify card text
+  and selection cleanup; layout still needs the runtime screenshots.

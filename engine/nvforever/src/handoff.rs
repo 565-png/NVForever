@@ -19,7 +19,7 @@
 //!    screen from then on, alone. (Holding its script data build until then took the
 //!    swap's peak from 7.6 to 6.1 GB but the load from 6-12 s to 16 s: not done.) Only
 //!    the last step, making its game and putting the save back
-//!    (`nvf_play::script::ScriptState::held`), waits until the old run has taken the file
+//!    (`nvf_play::script::ScriptState::held`, set from the first frame: #2210), waits until the old run has taken the file
 //!    away as it ends, or [`ACK_WAIT_SECS`] after the file was written: on a busy machine
 //!    the screen's first frames were slow enough for the save to be put back before the
 //!    window was shown, while the old run still held its game (#1651).
@@ -220,6 +220,16 @@ pub fn new_run_args(keep: &[String], what: Option<&LoadRequest>, placement: Opti
     args
 }
 
+/// A successor keeps its profile and measuring aids, but does not repeat the
+/// script clock or driving aids from the run that requested the handoff.
+fn remove_driving_aids(command: &mut std::process::Command, keys: impl IntoIterator<Item = std::ffi::OsString>) {
+    for key in keys {
+        if key.to_str().is_some_and(|key| key == "NVF_PLAY_AIDS_FROM_SCRIPTS" || (nvf_play::drives_run(key) && key != EXIT_AID)) {
+            command.env_remove(&key);
+        }
+    }
+}
+
 /// Where the save starts, for the loading screen's picture.
 fn destination_of(r: &LoadRequest, here: nvf_play::Location) -> Option<fnv_world::loadscreen::Destination> {
     let f = fnv_save::read_header(&r.path).ok()?;
@@ -315,11 +325,7 @@ pub fn leave(
                     cmd.args(&args);
                     // The whole line, so a report shows what the new run was given (#1903).
                     info!("load: the new run's command line: {} {}", exe.display(), args.join(" "));
-                    for (k, _) in std::env::vars_os() {
-                        if k.to_str().is_some_and(|k| nvf_play::drives_run(k) && k != EXIT_AID) {
-                            cmd.env_remove(&k);
-                        }
-                    }
+                    remove_driving_aids(&mut cmd, std::env::vars_os().map(|(key, _)| key));
                     cmd.spawn().map_err(|e| format!("could not start {}: {e}", exe.display()))
                 });
             match started {
@@ -531,6 +537,9 @@ pub fn reveal(
         }
     }
 }
+
+#[cfg(test)]
+mod death_smoke_tests;
 
 #[cfg(test)]
 mod tests {

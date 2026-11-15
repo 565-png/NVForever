@@ -215,6 +215,16 @@ pub struct RefState {
     /// there picks this reference up ([`World::dropped_beside`]).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub dropped_by: Option<FormId>,
+    /// A reference created at run time ([`World::place`]): the cell and position it was
+    /// created at, its editor location for packages and `GetStartingPos`-like questions
+    /// that a placed reference answers from the plugins (#2278) [hypothesis].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub made_at: Option<(Option<FormId>, [f32; 3])>,
+    /// A shot's temporary reference for scripts (`fnv_game::nvse_proj`): the engine draws
+    /// the shot's flying model along its flight, so this reference is neither drawn nor
+    /// given collision as a dropped item (#2186).
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub shot: bool,
 }
 
 impl RefState {
@@ -249,6 +259,8 @@ pub enum SimError {
     UnknownRef(FormId),
     #[error("unknown base form {0}")]
     UnknownForm(FormId),
+    #[error("{0} is not a supported temporary scene base")]
+    UnsupportedTemporaryBase(FormId),
     #[error("{0} has no inventory")]
     NoInventory(FormId),
     #[error("{0} is not an inventory item")]
@@ -476,6 +488,14 @@ struct TimeGlobalIds {
     days_passed: Option<FormId>,
 }
 
+/// Session-only descriptor for a directly cloned non-actor scene base. It is not
+/// serialized; the Game layer refuses unsupported snapshots containing its refs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TemporarySceneBase {
+    pub original: FormId,
+    pub model_override: Option<String>,
+}
+
 pub struct World<'a> {
     pub forms: &'a FormStore,
     pub placed: &'a RefTable,
@@ -484,6 +504,7 @@ pub struct World<'a> {
     /// [`SimConfig::player_level`]. Not saved: the game sets it on a load and on each tick.
     roll_level: Option<u16>,
     refs: BTreeMap<FormId, RefState>,
+    temporary_scene_bases: BTreeMap<FormId, TemporarySceneBase>,
     /// Globals set at run time (scripts, the clock); others keep their authored value.
     globals: BTreeMap<FormId, f32>,
     /// The digits of the time globals their f32 cannot hold.
@@ -516,6 +537,9 @@ pub struct World<'a> {
     /// The inventory sources of references created at run time ([`World::give_items_of`]);
     /// saved.
     created_inventory_sources: BTreeMap<FormId, FormId>,
+    /// Items made at run time (TempCloneForm of an item), each with the item it copies:
+    /// a container takes them by their own ID ([`World::add_clone_item`]). Not saved.
+    clone_items: BTreeMap<FormId, FormId>,
     /// Game settings changed at run time (the console's `SetGameSetting`), by lower-case
     /// Editor ID; they replace the record's value for [`World::setting_value`] readers.
     /// Kept for the session, not saved ([`WorldSession`]).
@@ -571,6 +595,7 @@ impl<'a> World<'a> {
             cfg,
             roll_level: None,
             refs: BTreeMap::new(),
+            temporary_scene_bases: BTreeMap::new(),
             globals: BTreeMap::new(),
             fine_clock: clock::FineClock::default(),
             time_global_ids: TimeGlobalIds { hour: forms.by_edid(clock::GAME_HOUR), days_passed: forms.by_edid(clock::GAME_DAYS_PASSED) },
@@ -583,6 +608,7 @@ impl<'a> World<'a> {
             weight_rules: BTreeMap::new(),
             inventory_sources: BTreeMap::new(),
             created_inventory_sources: BTreeMap::new(),
+            clone_items: BTreeMap::new(),
             setting_changes: BTreeMap::new(),
             power_armor_training: false,
             zone_levels: BTreeMap::new(),
@@ -747,6 +773,8 @@ impl<'a> World<'a> {
             scale: None,
             equip_locks: BTreeMap::new(),
             dropped_by: None,
+            made_at: None,
+            shot: false,
             outfitted: false,
         })
     }
@@ -973,7 +1001,23 @@ impl<'a> World<'a> {
         s.inventory.as_mut().ok_or(SimError::NoInventory(id))
     }
 
+    /// `clone`, made at run time from `item`, is an item a container takes by its own ID
+    /// [documented: TempCloneForm; observed: MCM marks the mods it listed by adding them
+    /// to a container, MCM Extender's menus by temporary clones of Caps001, MCM's script
+    /// source and MCM Extender's OnPauseMenuOpen.gek]. False when `item` is no item.
+    pub fn add_clone_item(&mut self, clone: FormId, item: FormId) -> bool {
+        let item = self.clone_items.get(&item).copied().unwrap_or(item);
+        let ok = self.forms.item(item).is_some();
+        if ok {
+            self.clone_items.insert(clone, item);
+        }
+        ok
+    }
+
     fn check_item(&self, item: FormId) -> Result<(), SimError> {
+        if self.clone_items.contains_key(&item) {
+            return Ok(());
+        }
         match self.forms.item(item) {
             Some(_) => Ok(()),
             None if self.forms.sig(item).is_some() => Err(SimError::NotAnItem(item)),
@@ -1310,6 +1354,8 @@ impl<'a> World<'a> {
                     scale: None,
                     equip_locks: BTreeMap::new(),
                     dropped_by: None,
+                    made_at: None,
+                    shot: false,
                 },
             );
             out.push(id);
@@ -1955,9 +2001,36 @@ impl<'a> World<'a> {
                 scale: None,
                 equip_locks: BTreeMap::new(),
                 dropped_by: None,
+                made_at: Some((cell, pos)),
+                shot: false,
             },
         );
         Ok(id)
+    }
+
+    /// Admit a known original's direct temporary alias without losing its identity.
+    /// Inventory/actor/clone chains and changed descriptors are outside this preview.
+    pub fn place_temporary_scene_base(&mut self, alias: FormId, descriptor: TemporarySceneBase, cell: Option<FormId>, pos: [f32; 3], rot: [f32; 3], count: i32) -> Result<FormId, SimError> {
+        // Inert model admission only. Doors, furniture, activators and actors need
+        // additional interaction/script contracts beyond a selected model path.
+        let supported = self.forms.sig(descriptor.original).is_some_and(|sig| matches!(&sig, b"STAT" | b"MSTT" | b"PROJ"));
+        if !supported || self.forms.sig(alias).is_some() || self.temporary_scene_bases.get(&alias).is_some_and(|old| old != &descriptor) {
+            return Err(SimError::UnsupportedTemporaryBase(alias));
+        }
+        let reference = self.place(descriptor.original, cell, pos, rot, count)?;
+        self.refs.get_mut(&reference).expect("place inserted this reference").base = alias;
+        self.temporary_scene_bases.insert(alias, descriptor);
+        Ok(reference)
+    }
+
+    pub fn temporary_scene_base(&self, base: FormId) -> Option<&TemporarySceneBase> {
+        self.temporary_scene_bases.get(&base)
+    }
+
+    /// The preview freezes both a placed alias and the original it inherits from.
+    /// Descriptors remain for the session, including deleted-reference tombstones.
+    pub fn has_placed_temporary_base(&self, form: FormId) -> bool {
+        self.temporary_scene_bases.contains_key(&form) || self.temporary_scene_bases.values().any(|d| d.original == form)
     }
 
     /// The inventory of a reference, for callers that change extra data in place

@@ -20,11 +20,14 @@ pub mod audio_out;
 pub mod bindings;
 pub mod blocking;
 pub mod chargen;
+pub mod clutter_pose;
+pub mod collision_view;
 pub mod creator;
 pub mod combat;
 pub mod compass;
 pub mod compass_strip;
 pub mod console;
+pub mod editor;
 pub mod container_anim;
 pub mod control;
 pub mod corner_messages;
@@ -70,6 +73,7 @@ pub mod knockouts;
 pub mod loading;
 pub mod loading_look;
 pub mod main_menu;
+pub mod menu_scale;
 pub mod location_markers;
 pub mod lockpick;
 pub mod roulette;
@@ -80,6 +84,8 @@ pub mod caravan;
 pub mod challenges;
 pub mod poker;
 pub mod menu;
+pub mod mod_log;
+pub mod grass_fire;
 pub mod mines;
 pub mod thrown;
 pub mod perk_marks;
@@ -92,6 +98,7 @@ pub mod pause;
 pub mod graphics_resume;
 pub mod phys;
 pub mod phys_load;
+pub mod phys_rate;
 pub mod pickpocket;
 pub mod pipboy;
 pub mod player;
@@ -397,7 +404,9 @@ impl Plugin for PlayPlugin {
             .add_plugins(poker::PokerPlugin)
             .add_plugins((crime::CrimePlugin, reputation::ReputationPlugin, knockouts::KnockoutsPlugin, after_combat::AfterCombatPlugin))
             .add_plugins(console::ConsolePlugin)
+            .add_plugins(editor::EditorPlugin)
             .add_plugins(location_markers::LocationMarkersPlugin)
+            .add_plugins(collision_view::CollisionViewPlugin)
             .add_plugins(free_cam::FreeCamPlugin)
             .add_plugins(script_camera::ScriptCameraPlugin)
             .add_plugins(aim_zoom::AimZoomPlugin)
@@ -411,6 +420,7 @@ impl Plugin for PlayPlugin {
             .add_plugins(jip_physics::JipPhysicsPlugin)
             .add_plugins(script_quantity::ScriptQuantityPlugin)
             .add_plugins(mines::MinesPlugin)
+            .add_plugins(grass_fire::GrassFirePlugin)
             .add_plugins(thrown::ThrownPlugin)
             .add_plugins(falls::FallsPlugin)
             .add_plugins(swing_traps::SwingTrapsPlugin)

@@ -1009,6 +1009,34 @@ fn a_door_locked_and_unlocked_in_the_game_reaches_the_paths() {
     assert_eq!(s.ai.agents[&actor].walker.space, B);
 }
 
+/// A load door the game disables (a script's Disable, an enable parent's) is no way: the
+/// actor sets its package aside rather than going through it. Enabled again, the graph
+/// learns it, the package is chosen again at once and the actor gets through
+/// (`Ai::apply_door_presence`; issue #2566, Loyal put behind a disabled Nellis hangar door).
+#[test]
+fn a_door_disabled_and_enabled_in_the_game_reaches_the_paths() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_TRAVEL]);
+    let actor = FormId(R_TRAVEL);
+    // The first poll learns the doors as they are, all there: nothing changed.
+    assert_eq!(s.ai.apply_door_presence(&mut s.game, &mut s.nav), None);
+    s.game.world.set_enabled(FormId(DOOR_A), false).unwrap();
+    assert_eq!(s.ai.apply_door_presence(&mut s.game, &mut s.nav), Some(vec![]));
+    assert!(s.nav.disabled_doors.contains(&DOOR_A));
+    assert_eq!(s.ai.apply_door_presence(&mut s.game, &mut s.nav), None, "applied once");
+    s.run(1.0);
+    assert!(s.events(R_TRAVEL).iter().any(|e| matches!(e, AiEvent::Unreachable { package, .. } if package.0 == P_TRAVEL_B)), "{:?}", s.events(R_TRAVEL));
+    s.run(30.0);
+    assert_eq!(s.feet(R_TRAVEL), START);
+    // Enabled: the package is chosen again and the way is open.
+    s.game.world.set_enabled(FormId(DOOR_A), true).unwrap();
+    assert_eq!(s.ai.apply_door_presence(&mut s.game, &mut s.nav), Some(vec![actor]));
+    assert!(!s.nav.disabled_doors.contains(&DOOR_A));
+    s.run(40.0);
+    assert!(dist(s.feet(R_TRAVEL), [5250.0, 5250.0, 50.0]) < 5.0, "{:?}", s.feet(R_TRAVEL));
+    assert_eq!(s.ai.agents[&actor].walker.space, B);
+}
+
 /// A scripted door that does not let the actor through (its OnActivate block called no
 /// `Activate` for it, `fnv_game::npc_doors`) shuts the way as a lock does: asked as the
 /// actor comes near, it plans again without the door and, with no other way, sets the
@@ -2127,6 +2155,133 @@ fn an_alerted_actor_searches_where_the_alarm_is_and_goes_back_after() {
     assert!(s.ai.agents[&FormId(R_RADIUS)].search.is_none());
 }
 
+#[test]
+fn a_lost_search_walks_two_complete_shares_before_returning_to_normal() {
+    // [design, #2010] Synthetic navmesh and alarms exercise the walk/look completion
+    // path through Game::searched_once, rather than expiring an ordinary alarm.
+    use fnv_game::awareness::Target;
+    use fnv_game::combat_group::{GroupNote, GroupSettings};
+    let f = fixture();
+    let mut s = sim(&f, &[R_RADIUS]);
+    s.run(30.0);
+    let (actor, player, now) = (FormId(R_RADIUS), FormId::PLAYER_REF, s.game.time);
+    s.game.awareness.tactics.settings = Some(GroupSettings { remove_search_count: 2, search_interior: [80.0; 3], ..Default::default() });
+    let a = s.game.awareness.actors.entry(actor).or_default();
+    a.state = State::Lost;
+    a.since = now;
+    a.targets.insert(player, Target { band: Band::Hidden, value: -50.0, at: [150.0, 100.0, 0.0], detected: Some(now - 15.0), hidden_since: Some(now) });
+    a.alarm(player, [150.0, 100.0, 0.0], -50.0, Cause::LostTarget, now, &Timers::default());
+    for _ in 0..240 {
+        s.run(0.5);
+        s.game.settle_awareness();
+        if s.game.awareness.state(actor) == State::Normal {
+            break;
+        }
+    }
+    assert_eq!(s.game.awareness.state(actor), State::Normal);
+    let counts: Vec<_> = s.game.awareness.tactics.notes.iter().filter_map(|n| match n {
+        GroupNote::Searched { actor: who, count, needed, .. } if *who == actor => Some((*count, *needed)),
+        _ => None,
+    }).collect();
+    assert_eq!(counts, vec![(1, 2), (2, 2)]);
+    assert!(s.events(R_RADIUS).iter().filter(|e| matches!(e, AiEvent::SearchLook { .. })).count() >= 6);
+    s.run(0.5);
+    assert!(s.ai.agents[&actor].search.is_none());
+}
+
+#[test]
+fn nearby_lost_targets_each_need_two_complete_searches() {
+    // [design, #2010] Nearby synthetic alarms must not share a completed look or
+    // point count when finishing one target selects the other.
+    use fnv_game::awareness::Target;
+    use fnv_game::combat_group::{GroupNote, GroupSettings};
+    let f = fixture();
+    let mut s = sim(&f, &[R_RADIUS]);
+    s.run(30.0);
+    let (actor, player, other, now) = (FormId(R_RADIUS), FormId::PLAYER_REF, FormId(R_HERE), s.game.time);
+    s.game.awareness.tactics.settings = Some(GroupSettings { remove_search_count: 2, search_interior: [80.0; 3], ..Default::default() });
+    let a = s.game.awareness.actors.entry(actor).or_default();
+    a.state = State::Lost;
+    a.since = now;
+    for (target, at, refreshed) in [(other, [160.0, 100.0, 0.0], now - 0.5), (player, [150.0, 100.0, 0.0], now)] {
+        a.targets.insert(target, Target { band: Band::Hidden, value: -50.0, at, detected: Some(now - 15.0), hidden_since: Some(now) });
+        a.alarm(target, at, -50.0, Cause::LostTarget, refreshed, &Timers::default());
+    }
+    let mut completed = Vec::new();
+    let mut notes_at = s.game.awareness.tactics.notes.len();
+    for _ in 0..480 {
+        s.run(0.5);
+        let looks = s.events(R_RADIUS).iter().filter(|e| matches!(e, AiEvent::SearchLook { .. })).count();
+        for note in &s.game.awareness.tactics.notes[notes_at..] {
+            if let GroupNote::Searched { actor: who, about, count, needed } = note {
+                if *who == actor {
+                    assert_eq!(*needed, 2);
+                    completed.push((*about, *count, looks));
+                }
+            }
+        }
+        notes_at = s.game.awareness.tactics.notes.len();
+        s.game.settle_awareness();
+        if s.game.awareness.state(actor) == State::Normal {
+            break;
+        }
+    }
+    assert_eq!(completed, vec![(player, 1, 3), (player, 2, 6), (other, 1, 9), (other, 2, 12)]);
+    assert_eq!(s.game.awareness.state(actor), State::Normal);
+    s.run(0.5);
+    let events = s.events(R_RADIUS);
+    let over = events.iter().position(|e| matches!(e, AiEvent::SearchOver { .. })).expect("search ends");
+    assert!(matches!(events[over + 1], AiEvent::SearchBack { .. }), "{events:?}");
+    assert!(s.ai.agents[&actor].search.is_none());
+}
+
+#[test]
+fn switching_nearby_lost_targets_restarts_the_walk_and_look_progress() {
+    // [design, #2010] A newly selected owner starts fresh even within RECENTRE,
+    // whether the previous owner's third point is being walked to or looked at.
+    use fnv_ai::alert::Search;
+    use fnv_game::awareness::Target;
+    use fnv_game::combat_group::GroupSettings;
+    for looking in [false, true] {
+        let f = fixture();
+        let mut s = sim(&f, &[R_RADIUS]);
+        s.run(30.0);
+        let (actor, player, other, now) = (FormId(R_RADIUS), FormId::PLAYER_REF, FormId(R_HERE), s.game.time);
+        s.game.awareness.tactics.settings = Some(GroupSettings { remove_search_count: 2, search_interior: [80.0; 3], ..Default::default() });
+        let a = s.game.awareness.actors.entry(actor).or_default();
+        a.state = State::Lost;
+        a.since = now;
+        for (target, at, refreshed) in [(other, [160.0, 100.0, 0.0], now - 0.5), (player, [150.0, 100.0, 0.0], now)] {
+            a.targets.insert(target, Target { band: Band::Hidden, value: -50.0, at, detected: Some(now - 15.0), hidden_since: Some(now) });
+            a.alarm(target, at, -50.0, Cause::LostTarget, refreshed, &Timers::default());
+        }
+        let at_third_point = |s: &Sim<'_>| match s.ai.agents[&actor].search {
+            Some(Search::Going { points: 2, .. }) => !looking,
+            Some(Search::Looking { points: 2, .. }) => looking,
+            _ => false,
+        };
+        for _ in 0..120 {
+            s.run(0.5);
+            if at_third_point(&s) {
+                break;
+            }
+        }
+        assert!(at_third_point(&s), "looking={looking}");
+        let before = s.events(R_RADIUS).iter().filter(|e| matches!(e, AiEvent::SearchLook { .. })).count();
+        s.game.awareness.actors.get_mut(&actor).unwrap().alarms.iter_mut().find(|a| a.owner == other).unwrap().refreshed = s.game.time;
+        for _ in 0..120 {
+            s.run(0.5);
+            if s.game.searches_done(actor, other) > 0 {
+                break;
+            }
+        }
+        assert_eq!(s.game.searches_done(actor, other), 1, "looking={looking}");
+        assert_eq!(s.game.searches_done(actor, player), 0);
+        let after = s.events(R_RADIUS).iter().filter(|e| matches!(e, AiEvent::SearchLook { .. })).count();
+        assert_eq!(after - before, 3, "the replacement target needs three fresh looks; looking={looking}");
+    }
+}
+
 /// An alert takes an actor off its bed or chair; when the search ends inside its
 /// package's place it settles again (issue #2013) [observed: Easy Pete, fought off his
 /// chair, sat again about 5 real seconds after the fight, AI observer 2026-11-10].
@@ -2213,11 +2368,11 @@ fn continue_during_combat_keeps_the_package_going() {
         alert(&mut s, a, [100.0, 100.0, 0.0]);
     }
     s.run(30.0);
-    // The courier's package continues during combat: it walks on to cell B.
+    // The courier's package continues during combat while it is on its way: it walks on
+    // to cell B without searching; there the flag no longer holds it (alert.md §5.2).
     let steady = s.events(R_STEADY);
-    assert!(!steady.iter().any(|e| matches!(e, AiEvent::Search { .. } | AiEvent::Hold { .. })), "{steady:?}");
-    assert!(matches!(steady.last().unwrap(), AiEvent::Arrived { .. }), "{steady:?}");
-    assert!(dist(s.feet(R_STEADY), [5250.0, 5250.0, 50.0]) < 5.0);
+    let arrived = steady.iter().position(|e| matches!(e, AiEvent::Arrived { .. })).unwrap_or_else(|| panic!("{steady:?}"));
+    assert!(!steady[..arrived].iter().any(|e| matches!(e, AiEvent::Search { .. } | AiEvent::Hold { .. })), "{steady:?}");
     // The traveller's does not: it breaks off to search and never gets there.
     let travel = s.events(R_TRAVEL);
     assert!(travel.iter().any(|e| matches!(e, AiEvent::Search { .. })), "{travel:?}");
@@ -3047,6 +3202,37 @@ fn a_rooted_actor_in_combat_turns_to_its_target_in_place() {
     assert!(off(heading).abs() < 0.05, "{heading} against {want}");
     assert_eq!(s.feet(R_TRAVEL), start);
     assert_eq!(s.ai.agents[&FormId(R_TRAVEL)].activity, Activity::None);
+}
+
+/// A rooted actor given a script's UseWeapon (HELIOS One's ARCHIMEDES turret, #2544)
+/// uses it from where it stands: the use is in place at once, and it turns to the use's
+/// target, out of combat too, where it stays. Before, a rooted actor's use never got in
+/// place, so the engine's shooter never fired.
+#[test]
+fn a_rooted_actor_uses_a_weapon_from_where_it_stands_and_turns_to_the_target() {
+    use fnv_script::vm::{ArgValue, Value};
+    let f = fixture();
+    let mut s = sim(&f, &[R_LONER]);
+    let actor = FormId(R_LONER);
+    let start = s.feet(R_LONER);
+    s.ai.root(&s.game, actor);
+    let target = s.game.world.placed.get(FormId(R_HERE)).unwrap().pos;
+    let want = fnv_nav::follow::heading_of([target[0] - start[0], target[1] - start[1]]);
+    let off = |h: f32| (h - want + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    s.ai.agents.get_mut(&actor).unwrap().walker.heading = want + 2.5;
+    let opcode = s.game.data.table.by_name("UseWeapon").unwrap();
+    let ctx = fnv_game::functions::Ctx { unit: "test".into(), opcode, on: Some(actor), self_ref: Some(actor), action_ref: None, quest: None, inst: None, in_condition: false };
+    let r = |x: u32| ArgValue::Value(Value::Ref(x));
+    let n = |x: f64| ArgValue::Value(Value::Num(x));
+    // As ARCHIMEDES's: the weapon, standing on itself, the target, one shot, always hit.
+    s.game.call_function(&ctx, &[r(STAT), r(R_LONER), r(R_HERE), n(1.0), n(0.0), n(0.0), n(1.0)]);
+    assert!(!s.game.awareness.state(actor).in_combat());
+    s.run(0.5);
+    assert!(s.game.weapon_use(actor).unwrap().in_place, "in place where it stands");
+    s.run(5.0);
+    let heading = s.ai.agents[&actor].walker.heading;
+    assert!(off(heading).abs() < 0.05, "{heading} against {want}");
+    assert_eq!(s.feet(R_LONER), start);
 }
 
 /// A rooted actor that never turns (an Immobile creature with a Turning Speed of 0, Mr.
@@ -4555,23 +4741,22 @@ fn sandbox_interrupt_warning_cancels_a_walk_but_preserves_an_active_seat() {
     }
 }
 
+/// Continue During Combat does not hold a Sandbox package's actor ("the flags do not
+/// work" for Sandbox, GECK wiki "Combat Package Flags"; alert.md §5.2, #2155): it leaves
+/// its seat and fights as any other actor.
 #[test]
-fn sandbox_interrupt_continue_during_combat_preserves_pending_and_active_actions() {
+fn sandbox_continue_during_combat_does_not_hold() {
     let mut f = fixture();
     f.data.package_defs.get_mut(&FormId(P_SB_OBJECTS)).unwrap().flags |= flags::CONTINUE_DURING_COMBAT;
     for travelling in [true, false] {
         let mut s = sim(&f, &[R_SB_OBJECTS]);
         sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), travelling);
         let actor = FormId(R_SB_OBJECTS);
-        let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
-        let before = doings(&s, R_SB_OBJECTS).len();
         let at = s.feet(R_SB_OBJECTS);
         fighting(&mut s, R_SB_OBJECTS, [at[0], at[1] + 100.0, at[2]]);
         s.run(10.0);
-        assert_eq!(s.ai.agents[&actor].using, Some(FormId(CHAIR_C)));
-        assert_eq!(doings(&s, R_SB_OBJECTS).len(), before, "finish the original choice without restarting it");
-        assert_eq!(s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule(), saved);
-        assert!(!s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Hold { .. } | AiEvent::Close { .. })));
+        assert_ne!(s.ai.agents[&actor].using, Some(FormId(CHAIR_C)), "travelling {travelling}");
+        assert!(s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Hold { .. } | AiEvent::Close { .. })), "travelling {travelling}");
     }
 }
 
@@ -5947,4 +6132,68 @@ fn a_follower_standing_within_the_slack_stays() {
     assert!(!ev.iter().any(|e| matches!(e, AiEvent::Follow { .. })), "{ev:?}");
     assert_eq!(s.ai.agents[&mate].activity, Activity::There);
     assert!((dist(s.feet(R_COMPANION), s.game.world.peek(player).unwrap().pos) - 383.0).abs() < 1.0);
+}
+
+/// Puts the player at `at` in `actor`'s cell, detected by it in Combat, with a distance
+/// to close to of 100 units (alert.md §5.2 tests).
+fn player_fights(s: &mut Sim, actor: u32, at: [f32; 3]) {
+    let cell = s.game.world.peek(FormId(actor)).and_then(|m| m.cell);
+    {
+        let p = s.game.world.get(FormId::PLAYER_REF).unwrap();
+        (p.cell, p.pos) = (cell, at);
+    }
+    fighting(s, actor, at);
+    s.game.awareness.engage.insert(FormId(actor), (100.0, 150.0));
+}
+
+/// Continue During Combat on a Travel package the actor has already arrived at: it fights
+/// as any other actor, and goes back to its place after the fight [observed: Lanius left
+/// his marker and fought, then stood on it again; a knife trooper on a stand-in-place
+/// Travel chased 2,000 units; checks 105 to 108, alert.md §5.2, #2155].
+#[test]
+fn continue_during_combat_frees_an_actor_that_has_arrived() {
+    let mut f = fixture();
+    f.data.package_defs.get_mut(&FormId(P_RADIUS)).unwrap().flags |= flags::CONTINUE_DURING_COMBAT;
+    let mut s = sim(&f, &[R_RADIUS]);
+    s.run(30.0);
+    assert_eq!(s.ai.agents[&FormId(R_RADIUS)].activity, Activity::There);
+    let stood = s.feet(R_RADIUS);
+    let target = [stood[0] + 500.0, stood[1], stood[2]];
+    player_fights(&mut s, R_RADIUS, target);
+    s.run(4.0);
+    let ev = s.events(R_RADIUS);
+    assert!(ev.iter().any(|e| matches!(e, AiEvent::Close { target, .. } if *target == FormId::PLAYER_REF)), "{ev:?}");
+    assert!(dist(s.feet(R_RADIUS), target) < 400.0, "it went for the player: {:?}", s.feet(R_RADIUS));
+    // The fight over, it goes back to its package's place.
+    s.game.awareness.actors.remove(&FormId(R_RADIUS));
+    s.run(30.0);
+    assert!(dist(s.feet(R_RADIUS), [350.0, 350.0, 0.0]) <= 150.0, "{:?}", s.feet(R_RADIUS));
+}
+
+/// Continue During Combat on a Guard: a target inside the guard radius of the post (the
+/// package radius × 1.5, at least 384) is fought; one outside is not pursued, the actor
+/// staying on its package [documented: GECK wiki "Combat Package Flags"; observed: check
+/// 106, alert.md §5.2, #2155].
+#[test]
+fn continue_during_combat_guard_pursues_only_inside_its_radius() {
+    let mut f = fixture();
+    {
+        let d = f.data.package_defs.get_mut(&FormId(P_RADIUS)).unwrap();
+        d.ty = fnv_game::package::PackageType::Guard;
+        d.flags |= flags::CONTINUE_DURING_COMBAT;
+    }
+    for (off, pursues) in [(250.0, true), (700.0, false)] {
+        let mut s = sim(&f, &[R_RADIUS]);
+        s.run(30.0);
+        let post = [350.0, 350.0, 0.0];
+        let target = [post[0] + off, post[1], post[2]];
+        player_fights(&mut s, R_RADIUS, target);
+        s.run(4.0);
+        let ev = s.events(R_RADIUS);
+        let closed = ev.iter().any(|e| matches!(e, AiEvent::Close { target, .. } if *target == FormId::PLAYER_REF));
+        assert_eq!(closed, pursues, "player {off} from the post: {ev:?}");
+        if !pursues {
+            assert!(dist(s.feet(R_RADIUS), post) <= 200.0, "it stayed at its post: {:?}", s.feet(R_RADIUS));
+        }
+    }
 }

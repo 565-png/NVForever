@@ -327,8 +327,8 @@ fn input(
     mut st: ResMut<ChargenMenus>,
     mut aid: ResMut<ChargenAid>,
     time: AidTime,
-    keys: Res<ButtonInput<KeyCode>>,
-    mut typed: MessageReader<KeyboardInput>,
+    keys: crate::pad::ActionButtons<KeyCode>,
+    (mut typed, switching): (MessageReader<KeyboardInput>, Option<Res<crate::pad::SwitchingInput>>),
     mut wheel: MessageReader<MouseWheel>,
     rows: Query<(&PointerState, &ListRow), Changed<PointerState>>,
     buttons: Query<(&PointerState, &ListButton), Changed<PointerState>>,
@@ -339,8 +339,9 @@ fn input(
     mut traits: Option<ResMut<crate::tiles::trait_menu::TraitTiles>>,
     mut tags: Option<ResMut<crate::tiles::tag_menu::TagTiles>>,
 ) {
+    let keys = keys.snapshot();
     use KeyCode::*;
-    let typed: Vec<KeyboardInput> = typed.read().cloned().collect();
+    let typed: Vec<KeyboardInput> = typed.read().filter(|e| switching.as_ref().is_none_or(|s| s.allows(e))).cloned().collect();
     let wheel: f32 = wheel.read().map(|w| if w.unit == MouseScrollUnit::Line { w.y } else { w.y / 40.0 }).sum();
     let (Some(mut script), Some(mut sim)) = (script, sim) else { return };
     if st.open.is_none() || st.answered {
@@ -416,7 +417,8 @@ fn input(
                 }
             }
             if m.attributes() {
-                // The keyboard's Left and Right and the controller's D-pad (issue #1910).
+                // The keyboard's Left and Right and the controller's D-pad (issue #1910) and
+                // left stick (issue #2313, `pad::menu_stick`).
                 for right in crate::pad::sideways(&typed, &keys) {
                     ops.push((Op::Adjust(None, right), "key"));
                 }

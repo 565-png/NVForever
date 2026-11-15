@@ -374,6 +374,9 @@ pub enum AiEvent {
     Cornered { from: FormId, hides: bool },
     /// It stops searching or holding (`why`).
     SearchOver { why: &'static str },
+    /// In a combat state, its package's Continue During Combat flag now holds it on the
+    /// package (`held`), or no longer does and it fights (`crate::alert`).
+    PackageHolds { package: FormId, held: bool },
     /// After a search it goes back to its package's place, `away` units off.
     SearchBack { package: FormId, away: f32 },
     /// Back to its package inside the package's place (after a search, a push or a
@@ -659,6 +662,12 @@ pub struct Agent {
     /// The door it was last asked at and has not yet left behind, with the package it
     /// was walking for (`fnv_game::Game::npc_door_left`, [`Ai::ask_door`]).
     pub(crate) asked_door: Option<(u32, Option<FormId>)>,
+    /// Where it last stood out of a combat state: the post of a "near current location"
+    /// Guard that has no wander area (`crate::alert`, Continue During Combat).
+    pub(crate) calm_at: Option<Place>,
+    /// Its package's Continue During Combat flag held it at its last update in a combat
+    /// state (`crate::alert`): a change is logged.
+    pub(crate) held: bool,
 }
 
 #[derive(Default)]
@@ -701,6 +710,9 @@ pub struct Ai {
     /// The world's presence serial and the graph's obstacle stamp after the obstacles
     /// were last brought into the graph ([`Ai::obstacles_in_line`]).
     applied_obstacles: Option<(u64, u64)>,
+    /// The world's presence serial last brought into the graph's load doors
+    /// ([`Ai::apply_door_presence`]).
+    applied_presence: Option<u64>,
     /// The graph's locked doors as last brought in ([`Ai::apply_door_locks`]): the ones an
     /// actor owns are open to its paths ([`Ai::path_params`]).
     locked_doors: Vec<u32>,
@@ -786,7 +798,7 @@ fn hdist(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 impl Ai {
     pub fn new(cfg: AiConfig) -> Ai {
-        Ai { cfg, agents: BTreeMap::new(), events: Vec::new(), taken: BTreeMap::new(), furniture: Default::default(), social: Default::default(), low: BTreeMap::new(), process_stats: Default::default(), far: Default::default(), coming: Default::default(), loaded: None, speeds: BTreeMap::new(), paces: BTreeMap::new(), applied_switches: None, applied_locks: None, applied_obstacles: None, locked_doors: Vec::new(), unseen_greets: Default::default(), restrained: Default::default(), woken: Default::default(), columns: BTreeMap::new(), script_moved: BTreeMap::new(), restored: BTreeMap::new(), stalled: BTreeMap::new() }
+        Ai { cfg, agents: BTreeMap::new(), events: Vec::new(), taken: BTreeMap::new(), furniture: Default::default(), social: Default::default(), low: BTreeMap::new(), process_stats: Default::default(), far: Default::default(), coming: Default::default(), loaded: None, speeds: BTreeMap::new(), paces: BTreeMap::new(), applied_switches: None, applied_locks: None, applied_obstacles: None, applied_presence: None, locked_doors: Vec::new(), unseen_greets: Default::default(), restrained: Default::default(), woken: Default::default(), columns: BTreeMap::new(), script_moved: BTreeMap::new(), restored: BTreeMap::new(), stalled: BTreeMap::new() }
     }
 
     /// Give the AI what the assets say about furniture and skeletons ([`crate::furniture`]),
@@ -874,6 +886,56 @@ impl Ai {
         }
         if !changes.locked.is_empty() {
             again.extend(self.agents.iter().filter(|(_, a)| a.walker.follower.as_ref().is_some_and(|f| f.through_doors(&changes.locked))).map(|(id, _)| *id));
+        }
+        again.sort();
+        again.dedup();
+        for actor in &again {
+            if let Some(a) = self.agents.get_mut(actor) {
+                a.walker.follower = None;
+                a.walker.tri = fnv_nav::graph::NONE;
+                a.activity = Activity::None;
+                a.package = None;
+                a.goal = None;
+                a.sandbox = None;
+                a.errand = None;
+                a.following = None;
+            }
+        }
+        Some(again)
+    }
+
+    /// Bring the graph's load doors in line with whether the game has them in the world
+    /// now ([`Game::present`]: a script's Enable or Disable, an enable parent's), when the
+    /// world's presence serial moved since the last call (`fnv_sim::World::presence_serial`,
+    /// which every such change moves; a new world starts from a number of its own). A door
+    /// that is not there takes no part in paths (`fnv_nav::NavGraph::disabled_doors`), as
+    /// a locked one an actor cannot open: Nellis's hangar has a door into each of its two
+    /// versions on the same spot, one disabled until the B-29 is up, and Loyal, whose
+    /// package after a failed Volare! is in the B-29's hangar, was walked through the
+    /// disabled one into a hangar the player cannot enter (issue #2566).
+    ///
+    /// A door gone: the actors whose way goes through it plan again. A door back: the
+    /// packages set aside as out of reach may be chosen again (`Game::unblock_packages`)
+    /// [design: as for a door locked and unlocked, [`Ai::apply_door_locks`]]. Returns the
+    /// actors sent to plan again, `None` when no door changed.
+    pub fn apply_door_presence(&mut self, game: &mut Game, nav: &mut NavGraph) -> Option<Vec<FormId>> {
+        let serial = game.world.presence_serial();
+        if self.applied_presence == Some(serial) {
+            return None;
+        }
+        self.applied_presence = Some(serial);
+        // A door the world does not know (no placed reference) is left as the graph has it.
+        let states: Vec<(u32, bool)> = nav.door_refs_through().into_iter().filter(|&d| game.world.is_enabled(FormId(d)).is_ok()).map(|d| (d, game.present(FormId(d)))).collect();
+        let changes = nav.sync_door_presence(states);
+        if changes.is_empty() {
+            return None;
+        }
+        let mut again: Vec<FormId> = Vec::new();
+        if !changes.back.is_empty() {
+            again.extend(game.unblock_packages());
+        }
+        if !changes.gone.is_empty() {
+            again.extend(self.agents.iter().filter(|(_, a)| a.walker.follower.as_ref().is_some_and(|f| f.through_doors(&changes.gone))).map(|(id, _)| *id));
         }
         again.sort();
         again.dedup();
@@ -1026,7 +1088,7 @@ impl Ai {
             own_turning(&mut walker, s);
         }
         walker.pace = self.paces.get(&actor).copied().unwrap_or(1.0);
-        self.agents.insert(actor, Agent { walker, activity: Activity::None, package: None, goal: None, route_at: 0, trip_started: 0.0, trip_from: 0.0, waiting_at: None, using: None, held_seat: None, sandbox: None, wait_until: None, talk: None, pushed_at: None, chat: None, search: None, face_to: None, following: None, rooted: false, fixed: false, asked_door: None, weapon_order: None, errand: None, backing: None, walk_up: None, walk_pace: None, restarts: 0 });
+        self.agents.insert(actor, Agent { walker, activity: Activity::None, package: None, goal: None, route_at: 0, trip_started: 0.0, trip_from: 0.0, waiting_at: None, using: None, held_seat: None, sandbox: None, wait_until: None, talk: None, pushed_at: None, chat: None, search: None, face_to: None, following: None, rooted: false, fixed: false, asked_door: None, weapon_order: None, errand: None, backing: None, walk_up: None, walk_pace: None, restarts: 0, calm_at: None, held: false });
         Ok(())
     }
 
@@ -1256,7 +1318,7 @@ impl Ai {
         if a.rooted || a.activity == Activity::Travelling || a.talk.is_some() || a.chat.is_some() {
             return;
         }
-        let Some(home) = goal::editor_place(game.world.placed, actor) else { return };
+        let Some(home) = goal::editor_place_of(game, actor) else { return };
         let feet = Place { space: a.walker.space, pos: a.walker.feet };
         // Not one a script put somewhere else (MoveTo): only back from nearby.
         let away = if feet.space == home.space { hdist(feet.pos, home.pos) } else { f32::INFINITY };
@@ -1357,6 +1419,14 @@ impl Ai {
     /// original's actors do while the player waits.]
     pub fn pass_time(&mut self, game: &mut Game, nav: &NavGraph, seconds: f32, step: f32) -> usize {
         let step = step.max(1e-3);
+        // The actors processed out of the loaded cells run their scripts once in the
+        // hour, as at a low-process update (`Game::run_far_frame`) [design: the loaded
+        // cells' scripts wait for the game to go on; issue #2445, Chauncey's warp to the
+        // bathhouse at 15 h had to come while the player waited there].
+        let far: Vec<FormId> = self.low.iter().filter(|(_, owed)| owed.is_some()).map(|(a, _)| *a).collect();
+        for a in far {
+            self.process_stats.far_scripts += usize::from(game.run_far_frame(a));
+        }
         let mut walked: std::collections::BTreeSet<FormId> = Default::default();
         let (mut left, mut still) = (seconds, 0);
         // Two updates running with nobody on its way end it: one may only have set an
@@ -1445,6 +1515,15 @@ impl Ai {
             return;
         }
         if self.agents[&actor].rooted {
+            // A rooted actor's weapon use (a script's UseWeapon, or its Use Weapon
+            // package) is used from where it stands: it cannot walk to a place [design,
+            // as `weapon_step` does with no way there]. Before, a rooted turret's use
+            // never reached `weapon_step`, so it never fired: ARCHIMEDES at HELIOS One
+            // drew and holstered for good and That Lucky Old Sun's strike never came
+            // (#2544).
+            if game.active_weapon_use(actor).is_some_and(|w| !w.in_place) && !game.ai_off(actor) {
+                game.weapon_use_in_place(actor);
+            }
             self.rooted_turn(game, actor, dt);
             return;
         }
@@ -1453,9 +1532,15 @@ impl Ai {
             return;
         }
         let restrained = game.extra.get(&actor).is_some_and(|e| e.restrained);
-        // Released: its package begins again, now with the walk to its place.
+        // Released: its package begins again, now with the walk to its place. Not a
+        // Dialogue package that has already started its conversation in place: it would
+        // greet a second time (the line that releases the actor is said in that
+        // conversation, as in Hardin's power armor training, #2309).
         if !restrained && self.restrained.remove(&actor) {
-            self.agents.get_mut(&actor).expect("listed").package = None;
+            let a = self.agents.get_mut(&actor).expect("listed");
+            if !matches!(a.talk, Some(Talking::Speaking | Talking::Done)) {
+                a.package = None;
+            }
         }
         // Woken by the player talking to it (`Game::wake`): off its bed while it stays
         // up; afterwards its package begins again, and takes it back to bed.
@@ -1528,6 +1613,21 @@ impl Ai {
             let a = self.agents.get_mut(&actor).expect("listed");
             if a.activity == Activity::Travelling {
                 (a.walker.follower, a.activity, a.following) = (None, Activity::Staying, None);
+            }
+            // A Dialogue package still runs: the actor waits where it stands and talks
+            // once its target is within the activate distance, without going up to it
+            // [documented: GECK wiki SetRestrained, restrained actors "will not move from
+            // their current position, or enter combat, but will continue to \"think\"
+            // ... and go into dialogue"; docs/spec-notes/script-functions-catalogue.md,
+            // "still thinks and can talk"]. Stopped on its way to the wait location or
+            // the target, it waits where it stopped [hypothesis]. Before, the update ended
+            // here and Hardin's training package never spoke, so the player stayed
+            // restrained (#2309).
+            if matches!(a.talk, Some(Talking::ToWait | Talking::Approaching { .. })) {
+                a.talk = Some(Talking::Waiting);
+            }
+            if !quiet && self.agents[&actor].talk.is_some() {
+                self.talk_step(game, nav, actor, dt);
             }
             return;
         }
@@ -1659,6 +1759,8 @@ impl Ai {
         let travelling = a.activity == Activity::Travelling;
         // Seated at a wait location that is furniture (`settle`).
         let seated = a.using.is_some();
+        // Seated or restrained: it does not go up to the target (`step_actor_inner`).
+        let stays = seated || game.extra.get(&actor).is_some_and(|e| e.restrained);
         let target = goal::place_of_ref(game, talk.target).filter(|_| game.present(talk.target) && !game.extra.get(&talk.target).is_some_and(|e| e.dead));
         match phase {
             Talking::ToWait | Talking::Done => return,
@@ -1667,7 +1769,9 @@ impl Ai {
                 // (`Game::start_dialogue`): the actor talks for as long as it says the
                 // line [hypothesis: the package lasts as long as the line, as it lasts
                 // as long as a conversation].
-                if game.dialogue.as_ref().is_some_and(|c| c.actor == actor) || greets(game, actor) {
+                // A conversation with another actor lasts while either says its lines.
+                let with_actor = talk.target != FormId::PLAYER_REF && game.in_actor_conversation(actor);
+                if game.dialogue.as_ref().is_some_and(|c| c.actor == actor) || greets(game, actor) || with_actor {
                     // It turns to the one it talks to [documented: unless No
                     // Headtracking, speaker and target are "forced to look at each
                     // other by the package"; how fast is our choice]. Seated, only its
@@ -1703,7 +1807,7 @@ impl Ai {
                 let on_the_spot = talk.trigger != goal::Trigger::None && talk.wait_radius == 0.0;
                 if near && (triggered || on_the_spot) {
                     self.talk_start(game, actor, package, &talk, away);
-                } else if triggered && !seated {
+                } else if triggered && !stays {
                     self.approach(game, nav, actor, package, &talk, target, true);
                 }
             }
@@ -1974,10 +2078,10 @@ impl Ai {
         // Kendall's "There he is!" (TTW, CG04Security02Ambush, activate distance 1500)
         // came through the walls while the player was still in bed, and its end script's
         // stage 12 kept the wake-up's stage 3 from coming (docs/design/actor-behaviour.md).
-        // Only the player is measured, so a Say To line to an NPC is not held back. The
-        // actor stays as it is (waiting, or at the end of its walk) and tries again every
-        // update.
-        let needs_sight = !talk.say_to || talk.target == FormId::PLAYER_REF;
+        // Only the player is measured, so a Say To line or a conversation to anyone else
+        // (an actor, a talking activator) is not held back. The actor stays as it is
+        // (waiting, or at the end of its walk) and tries again every update.
+        let needs_sight = talk.target == FormId::PLAYER_REF;
         if needs_sight && !game.greet_sight(actor, talk.target) {
             if self.unseen_greets.insert(actor) {
                 self.log(game, actor, AiEvent::TalkUnseen { package, target: talk.target, away });
@@ -2001,6 +2105,21 @@ impl Ai {
             return;
         }
         if game.in_menu() || game.loading {
+            return;
+        }
+        // A conversation with another actor, or with a talking activator, which speaks
+        // for its talking actor (`Game::start_actor_conversation`): said in the world.
+        if talk.target != FormId::PLAYER_REF {
+            match game.start_actor_conversation(actor, talk.target, talk.topic) {
+                Ok(line) => {
+                    self.agents.get_mut(&actor).expect("listed").talk = Some(Talking::Speaking);
+                    self.log(game, actor, AiEvent::Talk { package, target: talk.target, line, away, say_to: false, greeting: false });
+                }
+                Err(why) => {
+                    self.log(game, actor, AiEvent::NoTalk { package, why });
+                    self.talk_done(game, actor);
+                }
+            }
             return;
         }
         // The force greet: a conversation also for a greeting with the Goodbye flag
@@ -2048,11 +2167,21 @@ impl Ai {
     /// detects, else the one detected last) or to the place of its alarm (Alert, Lost), as
     /// a fighter standing its ground does (`crate::alert`). Before, it never turned, so a
     /// HELIOS One ceiling turret kept its placed heading and the player stayed out of its
-    /// view (#1537). SetActorsAI 0 holds it as any other actor. One that never turns
-    /// ([`Ai::fix_heading`], Mr. House's screen) does not here either (#2150).
+    /// view (#1537). A weapon use's target comes before the fight's (#2544). SetActorsAI 0
+    /// holds it as any other actor. One that never turns ([`Ai::fix_heading`], Mr.
+    /// House's screen) does not here either (#2150).
     fn rooted_turn(&mut self, game: &mut Game, actor: FormId, dt: f32) {
         if game.ai_off(actor) || game.extra.get(&actor).is_some_and(|e| e.restrained) {
             return;
+        }
+        // Its weapon use's target first, unless the fight took the use over (#2544): the
+        // shooter fires only once it faces the target (`USE_FACING`).
+        let space = self.agents[&actor].walker.space;
+        if let Some(t) = game.active_weapon_use(actor).filter(|w| w.in_place && !w.taken).map(|w| w.target) {
+            if let Some(to) = goal::place_of_ref(game, t).filter(|p| p.space == space) {
+                self.combat_face(game, actor, to, dt);
+                return;
+            }
         }
         let state = game.awareness.state(actor);
         if !state.in_combat() {
@@ -2066,7 +2195,6 @@ impl Ai {
             aw.search_alarm().map(|a| a.at)
         };
         let Some(at) = at else { return };
-        let space = self.agents[&actor].walker.space;
         self.combat_face(game, actor, Place { space, pos: at }, dt);
     }
 
@@ -2462,12 +2590,27 @@ impl Ai {
         let Some(def) = game.data.package_defs.get(&package) else { return };
         let goal = goal::resolve(game, nav, actor, def);
         let feet = Place { space: self.agents[&actor].walker.space, pos: self.agents[&actor].walker.feet };
-        let near = match &goal {
+        let at = |place: &Goal| match place {
             Goal::Here => true,
             Goal::Near { place, radius } => place.space == feet.space && hdist(feet.pos, place.pos) <= radius.max(RESTRAINED_REACH) && (feet.pos[2] - place.pos[2]).abs() <= 256.0,
             Goal::Inside { space, .. } => *space == feet.space,
             _ => false,
         };
+        // A Dialogue package: the actor waits where it stands, on its wait location's
+        // furniture when that is within reach, and talks from there (`step_actor_inner`)
+        // [documented: GECK wiki SetRestrained, restrained actors still "go into
+        // dialogue"; hypothesis: a wait location out of reach is not waited for].
+        if let Goal::Talk(talk) = &goal {
+            let settle = at(&talk.wait);
+            let a = self.agents.get_mut(&actor).expect("listed");
+            (a.talk, a.activity) = (Some(Talking::Waiting), Activity::There);
+            a.goal = Some(goal);
+            if settle {
+                self.settle(game, actor);
+            }
+            return;
+        }
+        let near = at(&goal);
         self.agents.get_mut(&actor).expect("listed").goal = Some(goal);
         if near {
             self.agents.get_mut(&actor).expect("listed").activity = Activity::There;

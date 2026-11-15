@@ -41,6 +41,14 @@ Code: `crates/fnv-game/src/repair.rs` (the rules, `ShowRepairMenu`),
   leaves it.
 - Ten quests' scripts or dialogue call it, Raul's (`VDialogueRaul`) among them
   [observed: docs/design/script-function-coverage.md].
+- From a dialogue line's end script (issue #2308): FalloutNV.esm has ten lines whose end
+  script calls it; seven of them have no Goodbye flag (Mick's
+  `VFreeformFreesideVFSMickTopic008`, Old Lady Gibson's, Major Knight's two, Calamity's,
+  Dale Barton's, Samuel's at the 188) [observed: `fnvtool dialogue lines`]. Without the
+  flag the conversation does not end with the line, so the menu opens over the
+  conversation and the topic list comes back when it is closed [hypothesis: as the
+  barter menu does; the original's return is not captured]. With the flag (Raul's, the
+  safehouse paladin's) the conversation ends and the menu opens in play.
 
 ## 3. The vendor's menu
 
@@ -301,6 +309,19 @@ epairmenuPlayer, Repair 17]:
   Cancel [design: the owner's rule, playtest list 7 item 16; the original's screenshots
   show the ITEMS list back after one repair]. Log `pipboy repair: stays open: …` or
   `pipboy repair: closed: …`.
+- A physical repair or mod-menu key is consumed for the rest of its frame, including
+  when it closes the list. ITEMS keeps its open-list guards and also checks `KeysTaken`,
+  cleared once per frame in Bevy's `First` schedule; the closing Enter/Space (controller
+  A maps to Enter) cannot also toggle equipment. Mouse messages do not mark keys, and
+  a fresh press on the following frame reaches ITEMS normally [design, #2553:
+  `engine/nvf-play/src/pipboy.rs`, `pipboy/repair.rs`, `pipboy/item_mod.rs`,
+  `pipboy/items.rs`, `engine/nvf-play/src/pad.rs`]. The tile repair page retains these
+  physical keys, so it uses the same guard [design:
+  `engine/nvf-play/src/tiles/repair_menu.rs::HAND_BUILT_KEYS`].
+  Regression coverage: `repair_keys_closing_the_list_preserve_worn_state` drives the
+  real handlers with Enter, NumpadEnter and Space on synthetic inventories; smoke
+  `pipboy-repair-enter` injects real Enter through `NVF_PLAY_TEST_KEYS` [design:
+  `engine/nvf-play/src/pipboy/repair.rs`, `tools/smoke/scenarios.toml`].
 - The hint: "Maintain R)" from 75 % (weapons) or 50 % (apparel), "Repair R)" below;
   dim when R would do nothing. "Mod X)" is drawn under it for weapons with mod slots
   (pipboy.md §5); the mod menu itself is not built.
@@ -311,7 +332,8 @@ epairmenuPlayer, Repair 17]:
 
 ### 5.1 The page drawn from its file
 
-Behind `[UI] TileMenus=RepairMenu`, off by default, the repair list is drawn from
+Behind `[UI] TileMenus=RepairMenu`, on by default when the list is absent [design, #2215;
+ui-tile-tree.md section 6.2], the repair list is drawn from
 `menus\main\repair_menu.xml`, painted into the Pip-Boy's image (issue #1468) [design:
 `engine/nvf-play/src/tiles/repair_menu.rs`, in the way of the S.P.E.C.I.A.L. page, pipboy.md
 §5.1.1; the card pairs in `tiles/repair_cards.rs`]. Off, nothing here runs and the hand-built

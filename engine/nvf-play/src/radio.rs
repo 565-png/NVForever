@@ -636,13 +636,14 @@ fn pipboy_list(sim: &SimState, places: &RadioPlaces, l: &Listener) -> Vec<u32> {
 /// off), and the test aid.
 #[allow(clippy::too_many_arguments)]
 fn pipboy_controls(
-    keys: Res<ButtonInput<KeyCode>>,
+    keys: crate::pad::ActionButtons<KeyCode>,
     state: Res<State<PlayState>>,
     locks: Option<Res<ControlLocks>>,
     mut radio: ResMut<Radio>,
     places: Option<Res<RadioPlaces>>,
     mut script: ResMut<ScriptState>,
 ) {
+    let keys = keys.snapshot();
     let (Some(places), Some(rt)) = (places, script.rt.as_mut()) else { return };
     // The placed stations, for scripts' GetAvailableRadios (`fnv_game::nvse_gaps`).
     if rt.game.gaps.radio_sites.is_none() {
@@ -779,6 +780,8 @@ fn play(
         world: loc.world,
         interior: loc.interior,
         position: radio.outdoors.filter(|(w, _)| *w == loc.world).map_or(eye, |(_, p)| p),
+        // Tale of Two Wastelands' radio fix: a child worldspace hears its parent's stations.
+        parent: rt.game.small.ttw_radio_fix.then(|| pw.index.worldspaces.get(&loc.world).and_then(|w| w.parent)).flatten(),
     };
     let volume = settings.volume.max(0.0);
     let static_sound = radio.static_sound.get_or_insert_with(|| sfx.forms.sounds.values().find(|s| s.edid.as_deref() == Some(STATIC_SOUND)).cloned()).clone();
