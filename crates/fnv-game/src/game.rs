@@ -167,6 +167,14 @@ pub struct GameConfig {
     /// it [owner statement 2026-11-11, issue #2157].
     #[serde(default)]
     pub goodbye_at_once: bool,
+    /// `nvforever --play --no-messages`: a message box a script shows that asks nothing
+    /// (one button or none) is answered with OK as it is shown and never opens
+    /// ([`Game::answer_ok_box`]): no MenuMode 1001 frame, game time runs on. The add-on
+    /// packs' start-up boxes held GameMode for a frame each and came over several
+    /// seconds, so test aids timed in that span missed (smoke `impact-decals-bullets`)
+    /// [decision: test runs only; boxes with a choice still wait for the player].
+    #[serde(default)]
+    pub answer_ok_boxes: bool,
 }
 
 fn yes() -> bool {
@@ -175,7 +183,7 @@ fn yes() -> bool {
 
 impl Default for GameConfig {
     fn default() -> Self {
-        GameConfig { frame_seconds: 1.0 / 60.0, strict: false, trace_locals: false, seed: 0, max_steps: 100_000, modal_message_boxes: true, package_interval: None, goodbye_at_once: false }
+        GameConfig { frame_seconds: 1.0 / 60.0, strict: false, trace_locals: false, seed: 0, max_steps: 100_000, modal_message_boxes: true, package_interval: None, goodbye_at_once: false, answer_ok_boxes: false }
     }
 }
 
@@ -1224,6 +1232,13 @@ impl Speech {
     pub fn goodbye_at_player(&self) -> bool {
         (self.greeting || self.farewell) && self.target == Some(FormId::PLAYER_REF)
     }
+
+    /// A line started by Say or SayTo (a script's, or a combat or package bark said the
+    /// same way): not a line of a conversation between actors, a greeting, a farewell or
+    /// a hello (`Game::say_by_script`, #2582).
+    pub fn said_by_script(&self) -> bool {
+        self.conversation.is_none() && !self.greeting && !self.farewell && !self.hello
+    }
 }
 
 /// One actor turning to another while a line is said ([`Game::facings`]).
@@ -1731,6 +1746,9 @@ pub struct Game<'a> {
     pub queued: Vec<QueuedBox>,
     /// The last [`QueuedBox::serial`] given.
     pub box_serial: u64,
+    /// Boxes [`Game::answer_ok_box`] answered without opening them since the engine last
+    /// took them ([`Game::take_answered_boxes`]), for its log. Not saved.
+    pub answered_boxes: Vec<FormId>,
     /// Dialogue lines being said (SayTo, Say), one per speaker.
     pub speech: Vec<Speech>,
     /// SayTo calls that found no line the speaker could say, (speaker, topic): their
@@ -2526,6 +2544,7 @@ impl<'a> Game<'a> {
             boxes: Vec::new(),
             queued: Vec::new(),
             box_serial: 0,
+            answered_boxes: Vec::new(),
             speech: Vec::new(),
             say_to_unsaid: Vec::new(),
             moving_talkers: BTreeSet::new(),
@@ -4418,6 +4437,28 @@ impl<'a> Game<'a> {
         }
     }
 
+    /// With [`GameConfig::answer_ok_boxes`], a box a script shows that asks nothing
+    /// (`buttons` declared, 0 or 1) is answered with OK at once instead of being shown:
+    /// it never opens or waits in the queue, and [`Game::message_box`] of `message` gets
+    /// button 0, as OK on the open box gives it ([`Game::close_menu`]), so the script's
+    /// next GetButtonPressed returns 0. Returns whether the box was answered; when not,
+    /// the caller shows it ([`Game::show_box_buttons`]).
+    pub fn answer_ok_box(&mut self, message: FormId, buttons: usize) -> bool {
+        if !self.cfg.answer_ok_boxes || !self.cfg.modal_message_boxes || buttons > 1 {
+            return false;
+        }
+        if let Some(mb) = self.message_box.as_mut().filter(|mb| mb.message == message && mb.pressed.is_none()) {
+            mb.pressed = Some(0);
+        }
+        self.answered_boxes.push(message);
+        true
+    }
+
+    /// The boxes [`Game::answer_ok_box`] answered since the last call, in order.
+    pub fn take_answered_boxes(&mut self) -> Vec<FormId> {
+        std::mem::take(&mut self.answered_boxes)
+    }
+
     /// A box of a message not known, put in front of the others (a scenario's `given`
     /// menu): its buttons not known.
     pub fn put_box_in_front(&mut self, message: FormId) {
@@ -4621,7 +4662,7 @@ impl<'a> Game<'a> {
 
     /// [`Game::say`] for the script functions Say and SayTo: when no line of the topic
     /// passes the fixed-speaker check (the speaker is not the line's fixed speaker, and
-    /// the line has no GetIsID condition of its own), judged from the data alone
+    /// the line has no condition of its own naming who says it), judged from the data alone
     /// ([`Game::no_line_for_speaker`]; a line refused at run time by Say Once or a
     /// condition does not count), the lines are tried without that check, so the speaker the script names says the fixed speaker's line in its
     /// stead ([`crate::dialogue::Says::InStead`]); a topic with a line the speaker passes
@@ -4631,7 +4672,21 @@ impl<'a> Game<'a> {
     /// narrator saying Elijah's and Vera's slide lines among them; docs/spec-notes/
     /// dialogue.md §4, issue #965]. Combat barks, package and patrol topics keep
     /// [`Game::say`]: an actor with no Hit line does not say another's.
+    ///
+    /// A Say or SayTo of the topic its speaker is already saying by Say or SayTo (not a
+    /// line of a conversation, a greeting, a farewell or a hello) leaves that line playing
+    /// and returns it, as if said again [observed: observer batch o30, PR #2580: a repeat
+    /// renews the speaker's talking state from the call, a queue never builds, and a SayTo
+    /// every frame keeps it talking without a break; hypothesis: that the voice and the
+    /// subtitle do not restart with each call, observer check 144 open]. FalloutNV's Strip
+    /// gate kill zone (SCPT 0x00119786) SayTos its topic every frame the player is inside,
+    /// and the line restarted every frame before (#2582). Another topic cuts the line and
+    /// takes over, as o30 saw ([`Game::say_line`]). NVForever's talking state ends with
+    /// the line, not about 4.9 s after it as o30 measured in the original.
     pub fn say_by_script(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, say_to: bool) -> Option<FormId> {
+        if let Some(s) = self.speech.iter().find(|s| s.speaker == speaker && s.topic == topic && s.said_by_script()) {
+            return Some(s.info);
+        }
         self.say_with(speaker, target, topic, say_to, true)
     }
 
@@ -6653,7 +6708,9 @@ impl Host for Exec<'_, '_> {
         self.game.emit(EventKind::MessageShown { message: none, text: Some(text.to_string()), buttons, hidden: Vec::new() });
         if is_box {
             // Its own buttons: no Message form to count them from (`Game::queued`).
-            self.game.show_box_buttons(none, count);
+            if !self.game.answer_ok_box(none, count) {
+                self.game.show_box_buttons(none, count);
+            }
         } else {
             self.game.queue_corner_message(text, "", crate::nvse_hud::CORNER_SECONDS);
         }
