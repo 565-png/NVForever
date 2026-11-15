@@ -522,6 +522,9 @@ const WAIT_MENU_BLUR: f32 = 3.0;
 /// wait menu's [design: the original's shots show the world blurred behind the tutorial and
 /// container menus (docs/spec-notes/tutorial-menu.md §5), not how strongly or how fast].
 const TILE_MENU_BLUR: f32 = 3.0;
+/// The blur behind the pause menu: a third of a tile menu's [design: owner 2026-11-15, "the
+/// bluring of the box behind the whole menu is way too strong" at 3].
+const PAUSE_MENU_BLUR: f32 = 1.0;
 
 /// The blur of the world behind the Pip-Boy, in the same units [documented:
 /// `Fallout_default.ini` `[Pipboy] fBlurRadiusPipboy=3.5`; hypothesis: the same units as
@@ -728,12 +731,12 @@ fn tile_menu_blur(
     // reads over a busy picture [design: owner 2026-11-15, the menu overhaul].
     let pause = paused.is_some_and(|p| p.0) && !main_menu.is_some_and(|m| m.open);
     if pause != *was_paused {
-        info!("pause menu blur: {}", if pause { format!("radius {TILE_MENU_BLUR}") } else { "off".to_string() });
+        info!("pause menu blur: {}", if pause { format!("radius {PAUSE_MENU_BLUR}") } else { "off".to_string() });
         *was_paused = pause;
     }
     if pause {
         for mut grade in &mut grades {
-            grade.blur = grade.blur.max(TILE_MENU_BLUR);
+            grade.blur = grade.blur.max(PAUSE_MENU_BLUR);
         }
     }
     let now = drawing.as_deref().copied().unwrap_or_default();

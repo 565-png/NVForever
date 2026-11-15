@@ -324,6 +324,63 @@ pub fn menu_frame(anchor: Vec2) -> Option<Node> {
     })
 }
 
+/// How much of the room a smaller menu scale leaves the pause menu takes back, each way:
+/// its frame is `s × (1 + MENU_SPREAD × (1 − s))` of the view at menu scale `s` (25% more
+/// room at 50%, none at 100%) [design: owner 2026-11-15, the menu overhaul: "when the hud is
+/// scaled down at 50% ... extend the vertical/horizontal space by 25%"]. Only the pause
+/// menu's pages lay themselves out for it ([`menu_room`]); the other menus keep
+/// [`menu_frame`].
+pub const MENU_SPREAD: f32 = 0.5;
+
+/// The share of the view a spread frame takes (module notes of [`MENU_SPREAD`]).
+fn spread_share() -> f32 {
+    let s = unit_scale();
+    (s * (1.0 + MENU_SPREAD * (1.0 - s))).min(1.0)
+}
+
+/// How many times the original's 960 units each way a spread frame holds at the scale
+/// [`u`] applies (1 at 100%, 1.25 at 50%).
+pub fn menu_room() -> f32 {
+    spread_share() / unit_scale()
+}
+
+/// [`menu_frame`] for a page that spreads into the room a smaller scale leaves
+/// ([`MENU_SPREAD`]).
+pub fn spread_frame(anchor: Vec2) -> Option<Node> {
+    let f = spread_share();
+    (f != 1.0).then(|| Node {
+        position_type: PositionType::Absolute,
+        left: Val::Percent(anchor.x * 100.0 * (1.0 - f)),
+        top: Val::Percent(anchor.y * 100.0 * (1.0 - f)),
+        width: Val::Percent(100.0 * f),
+        height: Val::Percent(100.0 * f),
+        ..default()
+    })
+}
+
+/// [`in_menu_frame`] in a [`spread_frame`].
+pub fn in_spread_frame(p: &mut ChildSpawnerCommands, anchor: Vec2, content: impl FnOnce(&mut ChildSpawnerCommands)) {
+    match spread_frame(anchor) {
+        Some(frame) => {
+            p.spawn((frame, Pickable::IGNORE)).with_children(content);
+        }
+        None => content(p),
+    }
+}
+
+/// [`over_view`] for a piece of a [`spread_frame`].
+pub fn over_spread_view(node: Node, anchor: Vec2, across: bool) -> Node {
+    let f = spread_share();
+    if f == 1.0 {
+        return node;
+    }
+    let mut node = Node { top: Val::Percent(-anchor.y * 100.0 * (1.0 - f) / f), height: Val::Percent(100.0 / f), bottom: Val::Auto, ..node };
+    if across {
+        node = Node { left: Val::Percent(-anchor.x * 100.0 * (1.0 - f) / f), width: Val::Percent(100.0 / f), right: Val::Auto, margin: UiRect::default(), ..node };
+    }
+    node
+}
+
 /// Spawn a menu's pieces (`content`) under `p` in its [`menu_frame`] kept at `anchor`; at
 /// the original's size straight under `p`.
 pub fn in_menu_frame(p: &mut ChildSpawnerCommands, anchor: Vec2, content: impl FnOnce(&mut ChildSpawnerCommands)) {

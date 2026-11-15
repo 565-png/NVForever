@@ -809,13 +809,18 @@ pub fn catalogue(layout: &ResolvedLayout) -> Vec<RowId> {
 }
 
 /// Rows of several tabs as lines: before each run of rows that live in one place, a crumb
-/// saying where (its tab and category: `Gameplay > Dialogue`) [design: #1953].
+/// saying where (its tab and category: `Gameplay > Dialogue`) [design: #1953], an empty line
+/// between the runs.
 pub fn listing(layout: &ResolvedLayout, ids: &[RowId]) -> Vec<ViewEntry> {
     let mut out = Vec::new();
     let mut at: Option<Placement> = None;
     for &id in ids {
         let p = placement(layout, id);
         if at != Some(p) {
+            // An empty line between places, as after an open category [design: the overhaul].
+            if at.is_some() {
+                out.push(ViewEntry::Gap);
+            }
             out.push(ViewEntry::Crumb(p));
             at = Some(p);
         }
@@ -1294,16 +1299,16 @@ mod tests {
         let e = project(&l, &list, SettingsScope::Search, &vis, &found, &closed);
         let heads: Vec<String> = e.iter().filter_map(|e| if let ViewEntry::Crumb(p) = e { Some(p.path()) } else { None }).collect();
         assert_eq!(heads, ["Gameplay > Game", "Gameplay > Dialogue", "Display > Colours", "Controls > Input", "Debug"]);
-        assert!(e.iter().all(|e| !matches!(e, ViewEntry::Heading(_) | ViewEntry::Gap)));
+        assert!(e.iter().all(|e| !matches!(e, ViewEntry::Heading(_))), "crumbs, nothing to choose but the rows");
         // A hidden colour channel is found as its colour, once; a controller's row as the Input Device row.
         assert_eq!(searched(&list, "hud", &vis), ["<Colours>", "hud-colour"]);
         assert_eq!(searched(&list, "hud", &Visibility { colours: [true, false], ..Visibility::default() }), ["<Colours>", "hud-colour", "hud-red"]);
         assert_eq!(searched(&list, "button-style", &vis), ["<Input>", "device"]);
         // A Controls row is found by its words; a control of the device not in use as the
         // Input Device row.
-        assert_eq!(searched(&list, "bind:jump", &vis), ["<Input>", "device", "<Movement>", "bind:Jump"], "padbind:Jump holds the words too");
+        assert_eq!(searched(&list, "bind:jump", &vis), ["<Input>", "device", "", "<Movement>", "bind:Jump"], "padbind:Jump holds the words too");
         assert_eq!(searched(&list, "padbind:jump", &vis), ["<Input>", "device"]);
-        assert_eq!(searched(&list, "jump", &Visibility { device: InputDevice::Controller, ..Visibility::default() }), ["<Input>", "device", "<Movement>", "padbind:Jump"]);
+        assert_eq!(searched(&list, "jump", &Visibility { device: InputDevice::Controller, ..Visibility::default() }), ["<Input>", "device", "", "<Movement>", "padbind:Jump"]);
         // An empty query: every row.
         let all = search(&l, &list, " ", |_| String::new());
         assert_eq!(all.len(), list.len() + ControlRow::all().len());
@@ -1326,7 +1331,7 @@ mod tests {
         assert_eq!(rows, [k("difficulty"), k("hud-red"), RowId::Control(ControlRow::Rumble), k("god-mode")]);
         let found = Found { search: Vec::new(), changed: rows };
         let e = project(&l, &list, SettingsScope::Changed, &Visibility::default(), &found, &open());
-        assert_eq!(names(&list, &e), ["<Game>", "difficulty", "<Colours>", "hud-colour", "<Input>", "device", "<Debug>", "god-mode"]);
+        assert_eq!(names(&list, &e), ["<Game>", "difficulty", "", "<Colours>", "hud-colour", "", "<Input>", "device", "", "<Debug>", "god-mode"]);
         assert_eq!(heading_of(&e, k("hud-colour")).map(|p| p.path()).as_deref(), Some("Display > Colours"));
         // LB/RB go from place to place.
         assert_eq!(step_heading(&e, Some(k("difficulty")), 1).map(|(id, _)| id), Some(k("hud-colour")));
@@ -1352,7 +1357,7 @@ mod tests {
         assert_eq!(stands_for(&list, &rows, &vis), [(RowId::Control(ControlRow::Device), vec![stick, pad_jump])]);
         // With the controller in use they are their own rows.
         let pad = Visibility { device: InputDevice::Controller, ..Visibility::default() };
-        assert_eq!(names(&list, &project(&l, &list, SettingsScope::Changed, &pad, &found, &open())), ["<Look>", "sensitivity", "<Movement>", "padbind:Jump"]);
+        assert_eq!(names(&list, &project(&l, &list, SettingsScope::Changed, &pad, &found, &open())), ["<Look>", "sensitivity", "", "<Movement>", "padbind:Jump"]);
         assert!(stands_for(&list, &rows, &pad).is_empty());
     }
 

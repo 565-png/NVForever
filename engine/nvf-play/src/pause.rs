@@ -962,7 +962,6 @@ const CUT_MARK: &str = "...";
 /// A value's text keeps this far from the row's right end, and a slider's words this far
 /// from its right arrow [design: #2377].
 const VALUE_PAD: f32 = 6.0;
-const ARROW_PAD: f32 = 4.0;
 /// A slider's meter gives room to wide value words down to this width [design: #2377].
 const METER_MIN: f32 = 100.0;
 /// The settings page's rows' top: higher than the column's (360 with the pause menu's
@@ -976,7 +975,18 @@ const LINKS_TOP: f32 = OPTIONS_TOP - ITEM - 8.0;
 /// margin [design; "Report a Bug" and the version moved under the column, the menu
 /// overhaul].
 const NOTE_STEP: f32 = 26.0;
-const NOTE_BOTTOM: f32 = 940.0;
+const NOTE_BOTTOM_MARGIN: f32 = 20.0;
+
+/// The page's height in interface units: the original's 960, more where a smaller menu
+/// scale leaves room (`crate::interface::menu_room`) [design: the menu overhaul].
+fn page_h() -> f32 {
+    960.0 * crate::interface::menu_room()
+}
+
+/// The note's last line ends above this ([`NOTE_BOTTOM_MARGIN`] over the page's foot).
+fn note_bottom() -> f32 {
+    page_h() - NOTE_BOTTOM_MARGIN
+}
 /// The note's room under the window, in lines: two for a row's note and one for what it
 /// stands for or a choice's reason (#2377) [design]; never more are drawn.
 const NOTE_LINES: usize = 3;
@@ -1012,8 +1022,14 @@ const VALUE_AT: f32 = LIST_LEFT + (LIST_WIDTH - LIST_ARROW_STRIP) / 2.0;
 const METER_ARROW: Vec2 = Vec2::new(17.5, 35.0);
 const METER_ARROWS: [f32; 2] = [LIST_LEFT, LIST_LEFT + LIST_WIDTH - METER_ARROW.x];
 const METER_LEFT: f32 = LIST_LEFT + METER_ARROW.x + 7.5;
-/// A slider's number lane before its right arrow (wider words take room from the meter).
+/// A slider's number lane before its right arrow (wider words take room from the meter),
+/// and the room between the number and the arrow.
 const READOUT_W: f32 = 80.0;
+const READOUT_GAP: f32 = 14.0;
+/// How far the arrows' pictures are drawn below their box's middle: their triangle sits high
+/// in the picture, so this puts its point level with the meter's middle [observed: the
+/// owner's screenshot of 2026-11-15, the arrows about 5 units high].
+const ARROW_DROP: f32 = 5.0;
 const METER_WIDTH: f32 = 248.0;
 const METER_HEIGHT: f32 = 24.0;
 const DROP_ROWS: usize = 8;
@@ -1048,7 +1064,10 @@ const DETAILS_STEP: f32 = 41.0;
 /// [design].
 const DELETE_WIDTH: f32 = LOAD_WIDTH - THUMB_DRAWN.x - 20.0;
 /// The page's Defaults and Back at the bottom right [observed: the owner's screenshots].
-const BACK_TOP: f32 = 960.0 - 30.0 - ITEM;
+/// Back's top at the bottom right (Defaults a line over it).
+fn back_top() -> f32 {
+    page_h() - 30.0 - ITEM
+}
 /// The pause screen behind the menu in the world: the original shows a model,
 /// `meshes\interface\pausescreen\pausescreen01.nif`, whose textures are these [observed:
 /// the file's texture names]; drawn here flat over the held picture, the half picture
@@ -1402,12 +1421,12 @@ struct Window {
 }
 
 /// How many lines the settings page's window shows at once (headings count): as many as fit
-/// between the rows' top and a note of [`NOTE_LINES`] lines over [`NOTE_BOTTOM`], at least
+/// between the rows' top and a note of [`NOTE_LINES`] lines over [`note_bottom`], at least
 /// one; 13 with today's layout [design: #2377, the menu overhaul]. Worked out here only and carried as a value
 /// ([`PauseView::lines`], [`Drawn::lines`]) to everything that draws, scrolls or points at
 /// the window, so a later layout can make it depend on the view.
 fn window_lines() -> usize {
-    let room = NOTE_BOTTOM - OPTIONS_TOP - NOTE_GAP - NOTE_LINES as f32 * NOTE_STEP;
+    let room = note_bottom() - OPTIONS_TOP - NOTE_GAP - NOTE_LINES as f32 * NOTE_STEP;
     ((room / OPTION_ROW).floor().max(1.0)) as usize
 }
 
@@ -1585,12 +1604,23 @@ enum BoxLook {
 #[allow(clippy::too_many_arguments)]
 fn right_entry_look(p: &mut ChildSpawnerCommands, face: &Face, label: &str, node: Node, width: f32, shade: Shade, look: BoxLook, b: PauseButton, glyphs: &crate::pad::PadGlyphs) {
     let w = crate::pad::hint_width(face, label, glyphs);
-    let (node, line, fill) = boxed(node, look != BoxLook::None);
-    let fill = if look == BoxLook::Outline { BackgroundColor(Color::NONE) } else { fill };
-    p.spawn((Button, b, node, line, fill)).with_children(|t| {
-        crate::pad::set_hint(t, face, label, width - w - 10.0, BASE, color(shade), glyphs);
+    // The whole line takes the pointer; the box hugs the words with the same room each side,
+    // right-aligned as the words are [design: owner 2026-11-15, "the selection/hover box
+    // alignment does not look correct": the box was the rail's whole width].
+    let pad = ENTRY_BOX_PAD;
+    p.spawn((Button, b, node)).with_children(|t| {
+        if look != BoxLook::None {
+            let (line, fill) = highlight_colors();
+            let fill = if look == BoxLook::Outline { Color::NONE } else { fill };
+            let bw = (w + 2.0 * pad).min(width);
+            t.spawn((Node { border: UiRect::all(u(LINE)), ..at(width - bw, 0.0, bw, ITEM) }, BorderColor::all(line), BackgroundColor(fill)));
+        }
+        crate::pad::set_hint(t, face, label, width - w - pad, BASE, color(shade), glyphs);
     });
 }
+
+/// The room each side of an entry's words inside its box.
+const ENTRY_BOX_PAD: f32 = 12.0;
 
 /// A node with the highlight box round it when `on`.
 fn boxed(node: Node, on: bool) -> (Node, BorderColor, BackgroundColor) {
@@ -1666,9 +1696,9 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
         }
         // The page at the UI scale, in the middle of the view (`crate::interface::menu_frame`,
         // #1631); the sheet and the screen above keep to the view.
-        crate::interface::in_menu_frame(root, crate::interface::MIDDLE, |root| {
+        crate::interface::in_spread_frame(root, crate::interface::MIDDLE, |root| {
             // The band behind a page's list, from the view's top to its bottom.
-            let tall = |n: Node| crate::interface::over_view(n, crate::interface::MIDDLE, false);
+            let tall = |n: Node| crate::interface::over_spread_view(n, crate::interface::MIDDLE, false);
             match d.page {
                 Page::Settings { .. } => {
                     let (band_left, band_w) = lb.band();
@@ -1679,7 +1709,7 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
                 Page::Main | Page::Mods => {}
             }
             // The column: the keys' list on the first page, else half bright but for the page's entry.
-            let top = (960.0 - d.column.len() as f32 * ITEM) / 2.0;
+            let top = (page_h() - d.column.len() as f32 * ITEM) / 2.0;
             let on_column = d.page == Page::Main && d.confirm.is_none();
             let lit = d.page_entry();
             for (i, (label, ok)) in d.column.iter().enumerate() {
@@ -1693,11 +1723,12 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
                         let (warning, question) = (tr(WARNING), tr(QUESTION));
                         let qw = f.entry.font.width(question);
                         let at = 280.0;
-                        root.spawn(from_middle(at - 20.0 - qw, 480.0 - ITEM, 900.0, ITEM)).with_children(|t| sm_text(t, &f.entry, warning, 0.0, BASE, color(Shade::Bright)));
-                        root.spawn(from_middle(at - 20.0 - qw, 480.0, qw, ITEM)).with_children(|t| sm_text(t, &f.entry, question, 0.0, BASE, color(Shade::Bright)));
+                        let mid = page_h() / 2.0;
+                        root.spawn(from_middle(at - 20.0 - qw, mid - ITEM, 900.0, ITEM)).with_children(|t| sm_text(t, &f.entry, warning, 0.0, BASE, color(Shade::Bright)));
+                        root.spawn(from_middle(at - 20.0 - qw, mid, qw, ITEM)).with_children(|t| sm_text(t, &f.entry, question, 0.0, BASE, color(Shade::Bright)));
                         let width = CONFIRM.iter().map(|c| f.entry.font.width(tr(c))).fold(0.0, f32::max) + 30.0;
                         for (i, c) in CONFIRM.iter().enumerate() {
-                            root.spawn((Button, PauseButton::Confirm(i), boxed(from_middle(at, 480.0 + i as f32 * ITEM, width, ITEM), i == sel)))
+                            root.spawn((Button, PauseButton::Confirm(i), boxed(from_middle(at, mid + i as f32 * ITEM, width, ITEM), i == sel)))
                             .with_children(|t| sm_text(t, &f.entry, tr(c), 10.0, BASE, color(Shade::Bright)));
                         }
                     } else if !d.status.is_empty() {
@@ -1714,9 +1745,9 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
             // Back (and Defaults) at the bottom right.
             if d.page != Page::Main && !d.mod_window {
                 let on = |item| matches!(d.page, Page::Settings { .. }) && d.focus == SettingsFocus::Rail(item);
-                right_entry(root, &f.entry, &back_label(), from_right(RIGHT, BACK_TOP, 200.0, ITEM), 200.0, Shade::Bright, on(RailItem::Back), PauseButton::Back, glyphs);
+                right_entry(root, &f.entry, &back_label(), from_right(RIGHT, back_top(), 200.0, ITEM), 200.0, Shade::Bright, on(RailItem::Back), PauseButton::Back, glyphs);
                 if matches!(d.page, Page::Settings { .. }) {
-                    right_entry(root, &f.entry, tr("Defaults"), from_right(RIGHT, BACK_TOP - ITEM, 200.0, ITEM), 200.0, Shade::Bright, on(RailItem::Defaults), PauseButton::Defaults, glyphs);
+                    right_entry(root, &f.entry, tr("Defaults"), from_right(RIGHT, back_top() - ITEM, 200.0, ITEM), 200.0, Shade::Bright, on(RailItem::Defaults), PauseButton::Defaults, glyphs);
                 }
             }
             // Under the column's last entry, after an empty line: "Report a Bug" (over a
@@ -1741,7 +1772,7 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
 /// seconds left, Keep and Revert.
 fn keep_question(root: &mut ChildSpawnerCommands, f: &Faces, label: &str, left: u32, sel: usize) {
     // A sheet over the page that takes the pointer, so only the answers can be clicked.
-    root.spawn((crate::interface::over_view(full(), crate::interface::MIDDLE, true), BackgroundColor(Color::BLACK.with_alpha(0.6)), Button, GlobalZIndex(112)));
+    root.spawn((crate::interface::over_spread_view(full(), crate::interface::MIDDLE, true), BackgroundColor(Color::BLACK.with_alpha(0.6)), Button, GlobalZIndex(112)));
     let (w, h) = (640.0, 4.0 * ITEM + 40.0);
     let (line, _) = highlight_colors();
     // The row's name as the language writes it; English's in lower case ("Keep this resolution?").
@@ -1750,7 +1781,7 @@ fn keep_question(root: &mut ChildSpawnerCommands, f: &Faces, label: &str, left: 
     let question = fnv_util::words::trf("Keep this {row}?", &[("row", &row)]);
     let count = fnv_util::words::trf("Going back in {left} s.", &[("left", &left)]);
     root.spawn((KeepLine, Text::new(format!("{question} {count}")), Node { display: Display::None, ..default() }));
-    root.spawn((Node { border: UiRect::all(u(LINE)), ..from_middle(-w / 2.0, 480.0 - h / 2.0, w, h) }, BorderColor::all(line), BackgroundColor(Color::BLACK), GlobalZIndex(113))).with_children(|b| {
+    root.spawn((Node { border: UiRect::all(u(LINE)), ..from_middle(-w / 2.0, page_h() / 2.0 - h / 2.0, w, h) }, BorderColor::all(line), BackgroundColor(Color::BLACK), GlobalZIndex(113))).with_children(|b| {
         for (k, t) in [&question, &count].into_iter().enumerate() {
             let tw = f.entry.font.width(t);
             b.spawn(at(0.0, 20.0 + k as f32 * ITEM, w, ITEM)).with_children(|r| sm_text(r, &f.entry, t, (w - tw) / 2.0, BASE, color(Shade::Bright)));
@@ -1796,7 +1827,7 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
         let y = top + n as f32 * OPTION_ROW;
         match entries[k] {
             ViewEntry::Heading(p) => heading_line(root, look, d, p, selected == Some(RowId::Heading(p)), lb, y),
-            ViewEntry::Crumb(p) => crumb_line(root, f, &heading_words(p, crumbs), lb, y),
+            ViewEntry::Crumb(p) => crumb_line(root, look, &shown_case(&heading_words(p, crumbs)), lb, y),
             ViewEntry::Row(id) => row_line(root, d, look, list, id, selected == Some(id), lb, y, glyphs),
             ViewEntry::Gap => {}
         }
@@ -1841,33 +1872,72 @@ const HEADING_ARROW: Vec2 = Vec2::new(10.0, 20.0);
 /// so a heading is never taken for a greyed row.
 #[allow(clippy::too_many_arguments)]
 fn heading_line(root: &mut ChildSpawnerCommands, look: &PauseLook, d: &Drawn, p: crate::settings_layout::Placement, on: bool, lb: ListBox, y: f32) {
-    let f = &look.faces;
     let (count, open) = d.heading(p);
     let name = shown_case(tr(p.heading.unwrap_or(p.tab)));
     let words = if open { name } else { format!("{name} ({count})") };
-    root.spawn((HeadingLine, Text::new(words.clone()), Node { display: Display::None, ..default() }));
+    title_line(root, look, &words, open, Some((PauseButton::Row(RowId::Heading(p)), on)), lb, y);
+}
+
+/// A category's or a crumb's line (module notes of [`heading_line`]): a soft dark box behind
+/// it, the arrow (right while closed, down while open), the words bright; with `button` the
+/// line takes the keys and the pointer, boxed when chosen [design: owner 2026-11-15, the menu
+/// overhaul: no rule under the words, "add same box blur to the category/section titles"].
+fn title_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, open: bool, button: Option<(PauseButton, bool)>, lb: ListBox, y: f32) {
+    let f = &look.faces;
+    root.spawn((HeadingLine, Text::new(words.to_string()), Node { display: Display::None, ..default() }));
     let bright = color(Shade::Bright);
-    root.spawn((Button, PauseButton::Row(RowId::Heading(p)), boxed(from_middle(lb.left, y, lb.width, OPTION_ROW), on))).with_children(|r| {
-        let arrow = at(12.0, (OPTION_ROW - HEADING_ARROW.y) / 2.0, HEADING_ARROW.x, HEADING_ARROW.y);
+    soft_box(root, lb.left, y + 3.0, lb.width, OPTION_ROW - 6.0, TITLE_SHADE);
+    let node = from_middle(lb.left, y, lb.width, OPTION_ROW);
+    let content = |r: &mut ChildSpawnerCommands| {
+        // The closed arrow's triangle sits high in its picture (as the sliders'); turned, it
+        // is level.
+        let drop = if open { 0.0 } else { ARROW_DROP * HEADING_ARROW.y / METER_ARROW.y };
+        let arrow = at(12.0, (OPTION_ROW - HEADING_ARROW.y) / 2.0 + drop, HEADING_ARROW.x, HEADING_ARROW.y);
         let turn = if open { UiTransform::from_rotation(Rot2::radians(std::f32::consts::FRAC_PI_2)) } else { UiTransform::default() };
         match &look.arrows[1] {
             Some(image) => r.spawn((arrow, turn, ImageNode { color: bright, ..ImageNode::new(image.clone()) })),
             None => r.spawn((arrow, turn, BackgroundColor(bright.with_alpha(0.5)))),
         };
         let x = 12.0 + HEADING_ARROW.x + 12.0;
-        let words = fit_text(|t| f.entry.font.width(t), &words, lb.width - x - 10.0);
+        let words = fit_text(|t| f.entry.font.width(t), words, lb.width - x - 10.0);
         sm_text(r, &f.entry, &words, x, BASE + 2.0, bright);
-        // The rule under the words.
-        r.spawn((at(10.0, OPTION_ROW - 6.0, lb.width - 20.0, 1.0), BackgroundColor(bright.with_alpha(0.35))));
-    });
+    };
+    match button {
+        Some((b, on)) => root.spawn((Button, b, boxed(node, on))).with_children(content),
+        None => root.spawn(node).with_children(content),
+    };
 }
 
-/// On the search and the Changed list, the line saying where the rows after it live: its
-/// words dim in the page's font, nothing to choose [design: #1953].
-fn crumb_line(root: &mut ChildSpawnerCommands, f: &Faces, words: &str, lb: ListBox, y: f32) {
-    root.spawn((HeadingLine, Text::new(words), Node { display: Display::None, ..default() }));
-    let words = fit_text(|t| f.entry.font.width(t), words, lb.width - 20.0);
-    root.spawn(from_middle(lb.left, y, lb.width, OPTION_ROW)).with_children(|t| sm_text(t, &f.entry, &words, 10.0, BASE + 2.0, color(Shade::Dim)));
+/// How dark the soft box behind a title is at its middle.
+const TITLE_SHADE: f32 = 0.32;
+/// How dark the soft box behind the note is at its middle.
+const NOTE_SHADE: f32 = 0.38;
+/// How far a soft box's edges fade, in interface units, and in how many steps.
+const SOFT_EDGE: f32 = 10.0;
+const SOFT_STEPS: usize = 5;
+
+/// A dark box from `left` (from the view's middle), `top`, `w` × `h`, whose edges fade over
+/// [`SOFT_EDGE`] instead of ending hard (boxes inset by a step each, each a little dark),
+/// `alpha` dark at its middle [design: owner 2026-11-15, "blur a little bit the box behind the
+/// description text"].
+fn soft_box(root: &mut ChildSpawnerCommands, left: f32, top: f32, w: f32, h: f32, alpha: f32) {
+    let each = 1.0 - (1.0 - alpha).powf(1.0 / SOFT_STEPS as f32);
+    for k in 0..SOFT_STEPS {
+        let inset = SOFT_EDGE * k as f32 / SOFT_STEPS as f32;
+        let (bw, bh) = (w - 2.0 * inset, h - 2.0 * inset);
+        if bw <= 0.0 || bh <= 0.0 {
+            break;
+        }
+        root.spawn((from_middle(left + inset, top + inset, bw, bh), BackgroundColor(Color::BLACK.with_alpha(each)), Pickable::IGNORE));
+    }
+}
+
+/// On the search and the Changed list, the line saying where the rows after it live
+/// (`Gameplay > Dialogue`): drawn as a category's title, always open, nothing to choose
+/// [design: #1953; the owner 2026-11-15: "use the same section system in the changed and
+/// search menu so they look the same"].
+fn crumb_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, lb: ListBox, y: f32) {
+    title_line(root, look, words, true, None, lb, y);
 }
 
 /// A heading's words, translated: on a tab its heading's (`Saving`); on the search and the
@@ -2154,7 +2224,7 @@ fn note_lines(root: &mut ChildSpawnerCommands, f: &Faces, note: &str, lb: ListBo
     let bright = color(Shade::Bright);
     // The rule between the rows and the note, and a shade behind the note's lines.
     root.spawn((from_middle(left + 10.0, top - NOTE_GAP / 2.0, width, 1.0), BackgroundColor(bright.with_alpha(0.35))));
-    root.spawn((from_middle(left, top - 4.0, lb.width, NOTE_LINES as f32 * NOTE_STEP + 8.0), BackgroundColor(Color::BLACK.with_alpha(0.25))));
+    soft_box(root, left, top - 8.0, lb.width, NOTE_LINES as f32 * NOTE_STEP + 16.0, NOTE_SHADE);
     root.spawn(from_middle(left + 10.0, top, width, fit as f32 * NOTE_STEP)).with_children(|t| {
         for (i, line) in lines.iter().take(fit).enumerate() {
             crate::interface::set_line(t, &f.small, line, 0.0, NOTE_STEP * (i as f32 + 0.8), bright);
@@ -2184,9 +2254,9 @@ fn note_width(lb: ListBox) -> f32 {
 }
 
 /// How many of a note's `lines` are drawn from `top`: at most [`NOTE_LINES`], and only those
-/// above [`NOTE_BOTTOM`].
+/// above [`note_bottom`].
 fn note_fit(lines: usize, top: f32) -> usize {
-    lines.min(NOTE_LINES).min(((NOTE_BOTTOM - top) / NOTE_STEP).max(0.0) as usize)
+    lines.min(NOTE_LINES).min(((note_bottom() - top) / NOTE_STEP).max(0.0) as usize)
 }
 
 /// The rail's width: its widest line's, translated ([`rail_column`]).
@@ -2358,7 +2428,7 @@ fn row_parts(x: RowX, kind: ValueKind) -> RowParts {
         ValueKind::Slider(vw) => {
             // The number right-aligned before the right arrow; wide words take room from the
             // meter, down to its least.
-            let text_right = right_arrow - ARROW_PAD;
+            let text_right = right_arrow - READOUT_GAP;
             let extra = (vw - READOUT_W).clamp(0.0, METER_WIDTH - METER_MIN);
             let text = (text_right - READOUT_W - extra, text_right);
             ((left_arrow, right_arrow + METER_ARROW.x), text, text_right - vw / 2.0, METER_WIDTH - extra, right_arrow)
@@ -2467,7 +2537,7 @@ fn slider_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, 
         r.spawn((Button, PauseButton::Meter(i), RelativeCursorPosition::default(), at(meter_left, my - 6.0, meter_w, METER_HEIGHT + 12.0)));
     }
     for (k, (x, step)) in [(parts.value.0, -1), (parts.right_arrow, 1)].into_iter().enumerate() {
-        let node = at(x, (OPTION_ROW - METER_ARROW.y) / 2.0, METER_ARROW.x, METER_ARROW.y);
+        let node = at(x, (OPTION_ROW - METER_ARROW.y) / 2.0 + ARROW_DROP, METER_ARROW.x, METER_ARROW.y);
         let mut arrow = match &look.arrows[k] {
             Some(image) => r.spawn((node, ImageNode { color: bright, ..ImageNode::new(image.clone()) })),
             None => r.spawn((node, BackgroundColor(bright.with_alpha(0.5)))),
@@ -4696,7 +4766,9 @@ fn settings_now(world: &mut World, list: &[Setting], selected: Option<RowId>) ->
 
 /// What the page shows now.
 fn drawn_now(world: &mut World) -> Drawn {
-    let view_w = world.query_filtered::<&bevy::window::Window, With<bevy::window::PrimaryWindow>>().iter(world).next().filter(|w| w.height() > 0.0).map_or(VIEW_W, |w| 960.0 * w.width() / w.height()).round() as u32;
+    let view_w = world.query_filtered::<&bevy::window::Window, With<bevy::window::PrimaryWindow>>().iter(world).next().filter(|w| w.height() > 0.0).map_or(VIEW_W, |w| 960.0 * w.width() / w.height()) * crate::interface::menu_room();
+    // In the page's units: wider where a smaller menu scale leaves room (`page_h`).
+    let view_w = view_w.round() as u32;
     let list = world.resource::<Settings>().list().to_vec();
     let states: Vec<f32> = world.resource::<Settings>().values(world);
     if matches!(*world.resource::<Page>(), Page::Settings { .. }) {
@@ -5342,8 +5414,8 @@ mod tests {
         assert_eq!(note_fit(2, note_top), 2);
         assert_eq!(note_fit(30, note_top), NOTE_LINES);
         assert_eq!(note_fit(30, OPTIONS_TOP + NOTE_GAP), NOTE_LINES, "a short list's note is no longer either");
-        assert!(note_top + NOTE_LINES as f32 * NOTE_STEP <= NOTE_BOTTOM && NOTE_BOTTOM < 960.0);
-        assert!(note_top + OPTION_ROW + NOTE_LINES as f32 * NOTE_STEP > NOTE_BOTTOM, "a 14th line would leave no room for the note");
+        assert!(note_top + NOTE_LINES as f32 * NOTE_STEP <= note_bottom() && note_bottom() < 960.0);
+        assert!(note_top + OPTION_ROW + NOTE_LINES as f32 * NOTE_STEP > note_bottom(), "a 14th line would leave no room for the note");
     }
 
     /// The systems that read or write the world aids' clock (directly or through
@@ -5710,7 +5782,7 @@ mod tests {
         let world = app.world_mut();
         let view = world.resource::<PauseView>();
         assert_eq!(view.found.changed, [RowId::Setting(0), RowId::Setting(1)]);
-        assert_eq!(view.drawn.as_ref().unwrap().entries.len(), 4);
+        assert_eq!(view.drawn.as_ref().unwrap().entries.len(), 5, "two places, a row each, an empty line between");
         assert_eq!(view.changed_logged.as_deref(), Some(&[RowId::Setting(0), RowId::Setting(1)][..]));
         assert_eq!(*world.resource::<Page>(), Page::Settings { selected: Some(RowId::Setting(0)) });
         crate::settings::flip(world, 0);
@@ -5972,10 +6044,14 @@ mod tests {
         app.world_mut().resource_mut::<PauseView>().rail_hover = Some(RailItem::Tab("Debug"));
         app.update();
         let world = app.world_mut();
-        let looks: Vec<(PauseButton, Color, Color)> = world.query::<(&PauseButton, &BorderColor, &BackgroundColor)>().iter(world).map(|(b, l, f)| (*b, l.top, f.0)).collect();
-        let look = |item| looks.iter().find(|(b, ..)| *b == PauseButton::Rail(item)).map(|(_, l, f)| (*l != Color::NONE, *f != Color::NONE)).unwrap();
-        assert_eq!(look(RailItem::Tab("Debug")), (true, false), "the line, not filled");
-        assert_eq!(look(RailItem::Tab("Audio")), (false, false), "another tab: no box");
+        // The box is the line's child, hugging its words (the menu overhaul).
+        let look = |world: &mut World, item| {
+            let kids: Vec<Entity> = world.query::<(&PauseButton, &Children)>().iter(world).find(|(b, _)| **b == PauseButton::Rail(item)).map(|(_, c)| c.to_vec()).unwrap();
+            let mut boxes = world.query::<(&BorderColor, &BackgroundColor)>();
+            kids.iter().find_map(|e| boxes.get(world, *e).ok().map(|(l, f)| (l.top != Color::NONE, f.0 != Color::NONE))).unwrap_or((false, false))
+        };
+        assert_eq!(look(world, RailItem::Tab("Debug")), (true, false), "the line, not filled");
+        assert_eq!(look(world, RailItem::Tab("Audio")), (false, false), "another tab: no box");
         let texts: Vec<(String, Color)> = world.query::<(&Text, &TextColor)>().iter(world).map(|(t, c)| (t.0.clone(), c.0)).collect();
         assert!(texts.contains(&("Debug".to_string(), color(Shade::Bright))), "{texts:?}");
         assert!(texts.contains(&("Audio".to_string(), color(Shade::Dim))));
@@ -5983,8 +6059,7 @@ mod tests {
         world.resource_mut::<PauseView>().focus = SettingsFocus::Rail(RailItem::Tab("Debug"));
         app.update();
         let world = app.world_mut();
-        let debug = world.query::<(&PauseButton, &BorderColor, &BackgroundColor)>().iter(world).find(|(b, ..)| **b == PauseButton::Rail(RailItem::Tab("Debug"))).map(|(_, l, f)| (l.top != Color::NONE, f.0 != Color::NONE)).unwrap();
-        assert_eq!(debug, (true, true));
+        assert_eq!(look(world, RailItem::Tab("Debug")), (true, true));
     }
 
     #[test]
@@ -6136,7 +6211,7 @@ mod tests {
         let x = RowX(ROW_BASE);
         assert_eq!(row_parts(x, ValueKind::Centred(34.0)).text_x(34.0), VALUE_AT - 17.0);
         let p = row_parts(x, ValueKind::Slider(51.0));
-        assert_eq!((p.text_x(51.0), p.right_arrow, p.meter), (METER_ARROWS[1] - ARROW_PAD - 51.0, METER_ARROWS[1], (METER_LEFT, METER_WIDTH)), "the number right-aligned before the right arrow");
+        assert_eq!((p.text_x(51.0), p.right_arrow, p.meter), (METER_ARROWS[1] - READOUT_GAP - 51.0, METER_ARROWS[1], (METER_LEFT, METER_WIDTH)), "the number right-aligned clear of the right arrow");
         // The value cell: a list's words, a switch's state and a binding share one centre;
         // the slider ends where the list's box does.
         assert_eq!(row_parts(x, ValueKind::List(100.0)).centre, row_parts(x, ValueKind::Centred(100.0)).centre);
