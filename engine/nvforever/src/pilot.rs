@@ -314,8 +314,9 @@ pub const STEP_SECS: f64 = 240.0;
 pub const FAILED_IN_A_ROW: u32 = 12;
 /// Real seconds without the pilot being able to act that end the run.
 pub const HELD_SECS: f64 = 120.0;
-/// The longest any one wait lasts, seconds.
-const WAIT_CAP: f64 = 120.0;
+/// The longest any one wait lasts, seconds: under [`STEP_SECS`]. Honest Hearts' intro
+/// slides set the arrival stage (NVDLC02MQ00 100) 140 s after the slide room's trigger.
+const WAIT_CAP: f64 = 220.0;
 const ADVANCE_CAP: f64 = 20.0;
 const TURN_RATE: f32 = 6.0;
 /// Seconds a terminal's screen may take to come up, and between two inputs to it.
@@ -712,6 +713,13 @@ struct Pilot {
     now: f64,
     step_from: f64,
     line: Option<(u64, f64)>,
+    /// The last line heard in a conversation.
+    heard: Option<FormId>,
+    /// The chains in which the player already stored things to meet a line's carry-weight
+    /// limit ([`stash_weight`]).
+    stashed: Vec<String>,
+    /// The step to go back to once the conversation is left, after storing things.
+    retalk: Option<usize>,
     steps: Vec<Json>,
     observations: Vec<Json>,
     divergences: Vec<Json>,
@@ -777,6 +785,9 @@ impl Pilot {
             now: 0.0,
             step_from: 0.0,
             line: None,
+            heard: None,
+            stashed: Vec::new(),
+            retalk: None,
             steps: Vec::new(),
             observations: Vec::new(),
             divergences: Vec::new(),
@@ -1821,9 +1832,78 @@ fn aim(p: &Pilot, a: &mut Aim, h: &mut Hands) -> Option<bool> {
     None
 }
 
+/// The carried weight a line asks the player to stay under: a condition
+/// `GetActorValue InventoryWeight >= v` (or `> v`) run on the target, as Jed's "you ain't
+/// going nowhere loaded down" line has (Honest Hearts INFO of CaravanMasterTopic000,
+/// AV 46 >= 76 [observed]). The player must carry less than the value returned.
+fn weight_limit(g: &Game, info: FormId) -> Option<f64> {
+    use fnv_game::cond::{Cmp, Operand, RunOn};
+    const GET_ACTOR_VALUE: u16 = 14;
+    g.data.infos.get(&info)?.conditions.iter().find_map(|c| {
+        let av = match c.params.first()? {
+            fnv_script::vm::ArgValue::Enum(code) => f64::from(*code),
+            v => v.value()?.num(),
+        };
+        let Operand::Value(v) = c.rhs else { return None };
+        if c.function != GET_ACTOR_VALUE || av != f64::from(fnv_game::actor_values::INVENTORY_WEIGHT) || !matches!(c.run_on, RunOn::Target) {
+            return None;
+        }
+        match c.cmp {
+            Cmp::Ge => Some(v),
+            Cmp::Gt => Some(v + 0.01),
+            _ => None,
+        }
+    })
+}
+
+/// What the player leaves behind to carry less than `below`, as a player does at Jed's
+/// "There's a chest over yonder, you can store your extra in that": its things go into the
+/// nearest container of its cell, the heaviest first, weapons and ammunition last. The
+/// container, how far it stands, the stacks moved and the weight carried after; `None`:
+/// no container in the cell.
+fn stash_weight(g: &mut Game, below: f64) -> Option<(FormId, f32, usize, f64)> {
+    let player = FormId::PLAYER_REF;
+    let (cell, feet) = where_is(g, player)?;
+    let chest = g.world.placed.by_cell.get(&cell?)?.iter()
+        .filter_map(|&r| {
+            let base = g.world.peek(r).map(|s| s.base).or_else(|| g.world.placed.get(r).map(|p| p.base))?;
+            (g.world.forms.sig(base) == Some(*b"CONT")).then_some(r)
+        })
+        .filter_map(|r| where_is(g, r).map(|(_, at)| (r, hdist(at, feet))))
+        .min_by(|a, b| a.1.total_cmp(&b.1))?;
+    let stacks: Vec<(FormId, i32)> = g.world.peek(player).and_then(|s| s.inventory.as_ref()).map(|inv| inv.iter().filter(|&(_, n)| n > 0).collect()).unwrap_or_default();
+    let before = g.world.carried_weight(player).ok()?;
+    let mut weighed: Vec<(bool, f64, FormId, i32)> = Vec::new();
+    for (item, n) in stacks {
+        if g.world.transfer(player, chest.0, item, n).ok() != Some(n) {
+            continue;
+        }
+        let less = before - g.world.carried_weight(player).unwrap_or(before);
+        let _ = g.world.transfer(chest.0, player, item, n);
+        let kept = matches!(g.world.forms.sig(item).as_ref().map(|s| &s[..]), Some(b"WEAP" | b"AMMO"));
+        if less > 0.0 {
+            weighed.push((kept, less, item, n));
+        }
+    }
+    weighed.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)));
+    let mut moved = 0;
+    for (_, _, item, n) in weighed {
+        if g.world.carried_weight(player).unwrap_or(0.0) < below {
+            break;
+        }
+        if g.world.transfer(player, chest.0, item, n).is_ok() {
+            moved += 1;
+        }
+    }
+    Some((chest.0, chest.1, moved, g.world.carried_weight(player).unwrap_or(0.0)))
+}
+
 /// The conversation's lines are skipped after [`SKIP_AFTER`] s each. Whether a line is
 /// being said.
 fn hear(p: &mut Pilot, h: &mut Hands) -> bool {
+    if let Some(info) = h.game(|g| g.dialogue.as_ref().and_then(|c| c.line.as_ref()).map(|l| l.info)).flatten() {
+        p.heard = Some(info);
+    }
     let stamp = h.game(|g| g.dialogue.as_ref().filter(|c| c.line.is_some()).map(|c| fnv_game::dialogue::conversation_stamp(g.dialogue_serial, Some(c)))).flatten();
     let Some(stamp) = stamp else {
         p.line = None;
@@ -2249,6 +2329,16 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             (p.now - p.step_from > limit).then(|| Some("the line did not end".to_string()))
         }
         Action::Choose { topic, prompt, index, max_frames, label } => {
+            // Things stored for a line's weight limit: the conversation is left by its
+            // Goodbye, then the chain's talk with the actor is begun again.
+            if let Some(back) = p.retalk {
+                if leave_talk(p, h, false) {
+                    p.retalk = None;
+                    p.i = back;
+                    (p.phase, p.part, p.step_from) = (Phase::Begin, 0, p.now);
+                }
+                return None;
+            }
             let limit = (*max_frames as f64 / 60.0).clamp(5.0, WAIT_CAP);
             if hear(p, h) {
                 return (p.now - p.step_from > limit).then(|| Some("the line before the choice did not end".to_string()));
@@ -2271,6 +2361,32 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                     Some(None)
                 }
                 Some(Ok(None)) => (p.now - p.step_from > limit).then(|| Some("no choices were offered".to_string())),
+                // The line said instead asks the player to carry less (Jed's weight limit):
+                // the player stores things in the container beside it, as the line says
+                // to, and talks to the actor again from the chain's last `talk` with it.
+                // Once a chain.
+                Some(Err(e)) if !p.stashed.contains(&p.chain) => {
+                    let heard = p.heard;
+                    let limit = heard.and_then(|i| h.game(|g| weight_limit(g, i)).flatten());
+                    let back = p.actions[..p.i].iter().rposition(|a| matches!(a, Action::Talk { .. }));
+                    match (limit, back) {
+                        (Some(below), Some(back)) => {
+                            p.stashed.push(p.chain.clone());
+                            let done = h.game(|g| stash_weight(g, below)).flatten();
+                            match done {
+                                Some((chest, away, moved, now)) => {
+                                    let name = h.game(|g| g.data.name(chest)).unwrap_or_default();
+                                    info!("pilot: step {}: {e}; the line heard asks the player to carry less than {below:.0} lb: {moved} stack(s) put into {name} {chest:08X} ({away:.0} units away), {now:.0} lb carried; the talk is begun again from step {back}", p.i, chest = chest.0);
+                                    p.headless("stash (a line's carry-weight limit)");
+                                    p.retalk = Some(back);
+                                    None
+                                }
+                                None => Some(Some(format!("{e}; the line heard asks for less than {below:.0} lb carried and no container is in the cell"))),
+                            }
+                        }
+                        _ => Some(Some(e)),
+                    }
+                }
                 Some(Err(e)) => Some(Some(e)),
                 None => Some(Some("the scripts are not running".into())),
             }

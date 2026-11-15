@@ -55,7 +55,10 @@ NVFOREVER_HOME=<a folder of its own> nvforever --data <Data> --play --new-game \
 
 Of its own accord, between steps: it fights what attacks the player or the actor it is with,
 answers the level-up menu (points spread down the list, the first perk on offer), keeps its weapon
-whole, searches bodies, uses a load door from where a walk is held up within 320 units of it
+whole, searches bodies, meets a line's carry-weight limit by putting its heaviest things into the
+nearest container of the cell and talking again (Jed's "There's a chest over yonder" before the
+caravan to Zion: a `GetActorValue InventoryWeight` condition on the line said instead of the
+chain's; counted in `headless`), uses a load door from where a walk is held up within 320 units of it
 (Honest Hearts' Northern Passage door is an invisible slab 512 units wide that stops the player
 short of the door's point on the navmesh), and at a door that stays locked (or, unlocked, does
 not take the player: a vault door "activated elsewhere") tries the door's switch (a script that
@@ -71,7 +74,7 @@ Finding kinds: `unreachable`, `stuck`, `could_not_target`, `no_way_out`, `line_n
 `precondition`, `menu_closed`, `not_carried_out`, `step_timed_out`, `chain_abandoned`,
 `pilot_held`.
 
-Limits: a step 240 s; a fight 75 s; 12 failed steps in a row abandon a chain (a read, a note or a wait that passes between them does not break the run); 120 s of real time
+Limits: a step 240 s; a wait 220 s; a fight 75 s; 12 failed steps in a row abandon a chain (a read, a note or a wait that passes between them does not break the run); 120 s of real time
 in which the pilot cannot act end the run.
 
 ## 5. What it has found so far (2026-11-13/14)
@@ -117,10 +120,7 @@ state carries the false alarms a thin `given` brings (§2).
   school); waiting for an actor a schedule takes behind a locked door (Francine at the
   Atomic Wrangler); a chain's made-up `SetPos` off the navmesh (set onto the nearest
   point within 4,096 units); talking across a counter (the Gun Runners' Vendortron);
-  a goal no door reaches (Lucky 38's top floor, reached by scripted travel); meeting what a line's conditions ask of the
-  player, as a player would (Jed takes the caravan to Zion only under 75 lb carried; the start
-  save's player carries more, so "Yes, I'm sure" is not offered and Honest Hearts stops at the
-  Northern Passage); a walk
+  a goal no door reaches (Lucky 38's top floor, reached by scripted travel); a walk
   planned out of a place that locks behind the player (Dead Money's theater: the pilot
   walked out on the way to Dean's holotape, then met the theater door at lock level 255); waiting out the end of a fight before activating (ED-E's
   repair box refused "in combat"); the scripted activators near a door taken for its
