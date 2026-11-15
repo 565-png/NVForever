@@ -285,6 +285,8 @@ pub const SWITCH_RANGE: f32 = 4000.0;
 pub const SWITCHES: usize = 3;
 /// Seconds a locked door on the way is waited at, after the player tried it.
 pub const LOCKED_SECS: f64 = 8.0;
+/// Seconds after a fast-travel stand-in that the player's teammates are brought along.
+pub const FOLLOWERS_AFTER: f64 = 2.0;
 /// How far a door moves the player, within its own space, to count as gone through.
 pub const DOOR_JUMP: f32 = 500.0;
 /// How near its goal a walk that got stuck may end with the player set on the goal.
@@ -380,6 +382,8 @@ pub struct PilotPlugin {
     pub known: Option<PathBuf>,
     /// The game's state goes through a save and a load before each milestone is read.
     pub save_load: bool,
+    /// Minutes of real time after which the run ends, report written.
+    pub minutes: Option<f64>,
 }
 
 impl Plugin for PilotPlugin {
@@ -402,6 +406,7 @@ impl Plugin for PilotPlugin {
                 pilot.god = self.god;
                 pilot.set_given = self.set_given;
                 pilot.save_load = self.save_load;
+                pilot.deadline = self.minutes.map(|m| m * 60.0);
                 if let Some(path) = &self.known {
                     match std::fs::read_to_string(path).map_err(|e| e.to_string()).and_then(|t| serde_json::from_str::<Json>(&t).map_err(|e| e.to_string())) {
                         Ok(Json::Array(list)) => pilot.known = list,
@@ -409,7 +414,7 @@ impl Plugin for PilotPlugin {
                         Err(e) => error!("pilot: {}: {e}", path.display()),
                     }
                 }
-                app.insert_resource(pilot).add_systems(Update, (drive.in_set(PlaySet::Input).after(nvf_play::control::read_controls).before(nvf_play::control::enforce_locks), held, close_engine_menus)).add_systems(Last, report_on_exit);
+                app.insert_resource(pilot).add_systems(Update, (drive.in_set(PlaySet::Input).after(nvf_play::control::read_controls).before(nvf_play::control::enforce_locks), held, close_engine_menus, out_of_time)).add_systems(Last, report_on_exit);
             }
             Ok(_) => error!("pilot: no chain"),
             Err(e) => error!("pilot: {e}"),
@@ -585,6 +590,11 @@ struct Pilot {
     /// A `say_info` with no known way to its line: the step and the topics already tried
     /// in that conversation, as a player tries what is on offer.
     explored: (usize, Vec<FormId>),
+    /// Since when the player was put on a long way (the fast-travel stand-in): its
+    /// teammates follow a moment later, as fast travel brings them.
+    followers_due: Option<f64>,
+    /// Seconds of real time after which the run ends (`--pilot-minutes`).
+    deadline: Option<f64>,
     /// A campaign's chains have their given state set all the same (`--pilot-given`).
     set_given: bool,
     /// God mode is on, and when the weapon is looked at next.
@@ -662,6 +672,8 @@ impl Pilot {
             stuck_talk: None,
             talk_picks: 0,
             explored: (usize::MAX, Vec::new()),
+            followers_due: None,
+            deadline: None,
             set_given: false,
             god: false,
             weapon_check: 0.0,
@@ -825,6 +837,14 @@ fn where_is(g: &Game, r: FormId) -> Option<(Option<FormId>, [f32; 3])> {
     g.world.peek(r).map(|s| (s.cell, s.pos)).or_else(|| g.world.placed.get(r).map(|p| (p.cell, p.pos)))
 }
 
+/// Whether two references' cells are in one space: the same interior, or the same
+/// worldspace out of doors (an actor 147 units off can stand in the next grid cell:
+/// Boone at Bitter Springs came and was not counted).
+fn same_space(world: &crate::world::WorldData, a: Option<FormId>, b: Option<FormId>) -> bool {
+    let space = |c: Option<FormId>| c.and_then(|c| crate::nav::space_of_cell(world, c.0));
+    a == b || space(a).is_some_and(|s| Some(s) == space(b))
+}
+
 fn space_of(loc: &Location) -> Space {
     match loc.interior {
         Some(c) => Space::Interior(c),
@@ -947,6 +967,27 @@ enum Walked {
 fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
     let feet = h.feet();
     let here = h.here();
+    // The player's teammates come along a fast-travel stand-in, a moment after it (once
+    // the player stands there): Boone was left 107,000 units behind and "never came".
+    if p.followers_due.is_some_and(|t| p.now - t > FOLLOWERS_AFTER) {
+        p.followers_due = None;
+        let mut applier = std::mem::take(&mut p.applier);
+        let moved = h
+            .game(|g| {
+                let mut moved = Vec::new();
+                for r in g.teammates() {
+                    if runner::apply_now(g, &mut applier, &Action::Call { line: format!("{:08X}.MoveTo player", r.0), label: None }).is_ok() {
+                        moved.push(g.data.name(r));
+                    }
+                }
+                moved
+            })
+            .unwrap_or_default();
+        p.applier = applier;
+        if !moved.is_empty() {
+            info!("pilot: step {}: the player's teammates come along the fast-travel stand-in: {}", p.i, moved.join(", "));
+        }
+    }
     // An errand the walk asked for: handed to the pilot, and a new path afterwards.
     if let Some((errand, place)) = w.errand.take() {
         p.errand = Some((errand, walk_to(place, None, NEAR_TARGET, p.now, feet), p.now, 0));
@@ -1093,6 +1134,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 let at = Place { space: leg.space, pos: tail_point(&leg.points, WALK_TAIL) };
                 info!("pilot: step {}: the way is {:.0} units: starts {WALK_TAIL:.0} units before the end of its last stretch out of doors (a stand-in for fast travel)", p.i, path.length);
                 h.put(at);
+                p.followers_due = Some(p.now);
                 w.seen = (p.now, at.pos);
                 return Walked::Going;
             }
@@ -1130,6 +1172,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                                 let at = Place { space, pos: tail_point(&pts, WALK_TAIL) };
                                 info!("pilot: step {}: the way to the locked door is {:.0} units: starts {WALK_TAIL:.0} units before the door (a stand-in for fast travel)", p.i, path.length);
                                 h.put(at);
+                                p.followers_due = Some(p.now);
                                 w.seen = (p.now, at.pos);
                             }
                             // Nothing to cut that a player could fast travel to: the
@@ -1363,12 +1406,22 @@ fn door_terminal(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<DoorTermina
             continue;
         }
         let Some((_, pos)) = where_is(g, r) else { continue };
+        // A terminal linked to the door: an entry that unlocks the linked reference
+        // (`getlinkedref().unlock`: Vault 22's food cave, Black Mountain's prison cell).
+        let linked = g.linked_ref(r) == Some(FormId(door));
         // The terminal's own menu and the sub menus its entries open, one level down.
         let mut menus = vec![base];
         menus.extend((0..fnv_game::terminal::item_count(g, base)).filter_map(|i| fnv_game::terminal::item(g, base, i).and_then(|it| it.submenu)));
         for menu in menus {
             for i in 0..fnv_game::terminal::item_count(g, menu) {
-                let names = fnv_game::terminal::item(g, menu, i).and_then(|it| it.unit).is_some_and(|u| g.data.unit(u).unit.refs.iter().any(|s| matches!(s, RefSlot::Form(f) if *f == door)));
+                let names = fnv_game::terminal::item(g, menu, i).and_then(|it| it.unit).is_some_and(|u| {
+                    let unit = g.data.unit(u);
+                    unit.unit.refs.iter().any(|s| matches!(s, RefSlot::Form(f) if *f == door)) || linked && {
+                        let mut calls = std::collections::BTreeMap::new();
+                        fnv_game::intro::calls(&unit.program, &mut calls);
+                        calls.contains_key(&UNLOCK)
+                    }
+                });
                 if names {
                     found.push((hdist(pos, at), r, menu, i, pos));
                 }
@@ -1693,6 +1746,27 @@ fn choice_toward(g: &Game, wanted: FormId) -> Option<(usize, usize)> {
     best
 }
 
+/// Unlock's opcode [observed: schemas/script/command_opcodes.json].
+const UNLOCK: u16 = 4211;
+
+/// StartCombat's opcode [observed: schemas/script/command_opcodes.json, from
+/// GetCommandOpcode in the original].
+const START_COMBAT: u16 = 4118;
+
+/// A choice the pilot keeps off when it has another: one whose line starts a fight
+/// (Jessup's Goodbye "When I kill you…" ended Boulder City in a gunfight), or a
+/// companion's command (FollowersWait left Boone waiting behind; FollowersFire).
+fn choice_to_avoid(g: &Game, c: &fnv_game::dialogue::Choice) -> bool {
+    let fights = g.data.infos.get(&c.info).is_some_and(|d| {
+        d.begin.into_iter().chain(d.end).any(|u| {
+            let mut calls = std::collections::BTreeMap::new();
+            fnv_game::intro::calls(&g.data.unit(u).program, &mut calls);
+            calls.contains_key(&START_COMBAT)
+        })
+    });
+    fights || g.data.name(c.topic).starts_with("Followers")
+}
+
 /// One frame of leaving the open conversation as a player can (module notes). Whether no
 /// conversation is open any more.
 /// With `go_along`, a conversation in the player's way is first gone along with once (its
@@ -1711,7 +1785,7 @@ fn leave_talk(p: &mut Pilot, h: &mut Hands, go_along: bool) -> bool {
     }
     let serial = h.game(|g| g.dialogue_serial).unwrap_or(0);
     if go_along && p.went_along != Some(serial) {
-        let pick = h.game(|g| g.dialogue_choices().iter().position(|c| !c.goodbye && !c.darkened)).flatten();
+        let pick = h.game(|g| g.dialogue_choices().iter().position(|c| !c.goodbye && !c.darkened && !choice_to_avoid(g, c))).flatten();
         if let Some(i) = pick {
             p.went_along = Some(serial);
             let text = h.game(|g| g.dialogue_choices().get(i).map(|c| g.choice_text(c).to_string())).flatten().unwrap_or_default();
@@ -1733,7 +1807,8 @@ fn leave_talk(p: &mut Pilot, h: &mut Hands, go_along: bool) -> bool {
     let way = h
         .game(|g| match g.dialogue.as_ref() {
             Some(c) if c.choices.is_empty() => Way::NotYet,
-            Some(c) => match c.choices.iter().position(|x| x.goodbye) {
+            // A Goodbye that starts no fight and gives no companion an order first.
+            Some(c) => match c.choices.iter().position(|x| x.goodbye && !choice_to_avoid(g, x)).or_else(|| c.choices.iter().position(|x| x.goodbye)) {
                 Some(i) => Way::Goodbye(i),
                 None if c.topic_list => Way::TopicList,
                 None => match c.choices.iter().position(|x| g.data.infos.get(&x.info).is_some_and(|d| d.choices.is_empty() && d.follow_ups.is_empty() && d.add_topics.is_empty())) {
@@ -1818,10 +1893,11 @@ fn approach(p: &mut Pilot, h: &mut Hands, name: &str, what: &str) -> Result<Opti
         Phase::Await { target, until, why, tries } => {
             let (target, until, tries) = (*target, *until, *tries);
             let feet = h.feet();
+            let world = h.world;
             let (talking, near) = h
                 .game(|g| {
                     let talking = g.dialogue.as_ref().is_some_and(|c| c.actor == target);
-                    let near = where_is(g, target).zip(where_is(g, FormId::PLAYER_REF)).is_some_and(|((ca, a), (cp, _))| ca == cp && hdist(a, feet) < 1500.0);
+                    let near = where_is(g, target).zip(where_is(g, FormId::PLAYER_REF)).is_some_and(|((ca, a), (cp, _))| same_space(world, ca, cp) && hdist(a, feet) < 1500.0);
                     (talking, near)
                 })
                 .unwrap_or((false, false));
@@ -2219,7 +2295,7 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                         return None;
                     }
                     let offered = g.dialogue_choices();
-                    let i = offered.iter().position(|c| !c.goodbye && !c.darkened && !tried.contains(&c.topic))?;
+                    let i = offered.iter().position(|c| !c.goodbye && !c.darkened && !tried.contains(&c.topic) && !choice_to_avoid(g, c))?;
                     let (topic, text) = (offered[i].topic, g.choice_text(&offered[i]).to_string());
                     g.choose(i).ok().map(|_| (topic, text))
                 });
@@ -2275,7 +2351,13 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             // `X.MoveTo player`: X comes to the player (a follower): a minute is waited,
             // with no Wait menu.
             if marker.eq_ignore_ascii_case("player") || marker.eq_ignore_ascii_case("playerref") {
-                let near = h.game(|g| named(g, &who).ok().and_then(|r| where_is(g, r)).zip(where_is(g, FormId::PLAYER_REF)).is_some_and(|((ca, a), (cp, b))| ca == cp && hdist(a, b) < ARRIVED)) == Some(true);
+                // Come: beside the player, or talking to it (Boone walks up and starts
+                // his line).
+                let near = h.game(|g| {
+                    let r = named(g, &who).ok();
+                    let talking = r.is_some_and(|r| g.dialogue.as_ref().is_some_and(|c| c.actor == r));
+                    talking || r.and_then(|r| where_is(g, r)).zip(where_is(g, FormId::PLAYER_REF)).is_some_and(|((ca, a), (cp, b))| same_space(world, ca, cp) && hdist(a, b) < ARRIVED)
+                }) == Some(true);
                 if near {
                     info!("pilot: step {}: {who} is with the player", p.i);
                     return Some(None);
@@ -2893,6 +2975,18 @@ fn close_engine_menus(real: Res<Time<Real>>, mut pilot: ResMut<Pilot>, active: R
         info!("pilot: step {}: closes a menu of the engine's own (inventory or container) that no step works", p.i);
         *since = Some(now);
     }
+}
+
+/// `--pilot-minutes` of real time are up: the game exits, and [`report_on_exit`] writes
+/// the report with where the run stopped (`run_ended`). The batch's hard kill a few
+/// minutes later wrote nothing.
+fn out_of_time(real: Res<Time<Real>>, pilot: Res<Pilot>, mut exit: MessageWriter<AppExit>, mut told: Local<bool>) {
+    if pilot.done || *told || pilot.deadline.is_none_or(|d| real.elapsed_secs_f64() < d) {
+        return;
+    }
+    *told = true;
+    info!("pilot: {:.0} minutes of real time are up (--pilot-minutes): the run ends at step {}", real.elapsed_secs_f64() / 60.0, pilot.i);
+    exit.write(AppExit::Success);
 }
 
 /// The game exits before the pilot is done (`--run-seconds`, a script's ExitGame at the

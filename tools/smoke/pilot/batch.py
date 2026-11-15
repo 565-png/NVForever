@@ -124,7 +124,7 @@ def run_one(chain: Path, args: argparse.Namespace, slot: int) -> dict:
         shutil.copy2(start, saves / start.name)
     cmd = [str(args.exe), "--data", str(args.data), "--play", "--no-voice", "--no-music", "--run-seconds", str(args.minutes * 60)]
     cmd += ["--load", args.start] if start.exists() else ["--new-game"]
-    cmd += ["--pilot", str(chain), "--pilot-campaign", "--pilot-given", "--pilot-out", str(report)]
+    cmd += ["--pilot", str(chain), "--pilot-campaign", "--pilot-given", "--pilot-out", str(report), "--pilot-minutes", str(args.minutes)]
     if trace:
         cmd += ["--pilot-expect", str(trace)]
     if args.save_load:
