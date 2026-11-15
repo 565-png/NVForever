@@ -58,7 +58,7 @@ activator; the actor does not turn). Tests: `crates/fnv-game/tests/perk_talk.rs`
   reached speaks for the one actor the load order's scripts give it, when they name
   exactly one: the calls in its base's own script (on itself) and the calls of any
   script on that reference by name; several actors named, or none: itself
-  (`Game::scripted_talking_actor`) [hypothesis, issue #2454; observer check 130]. The
+  (`Game::scripted_talking_actor`) [hypothesis, issue #2454; observer check 185]. The
   Hidden Valley intercom (HVIntercomREF) needs it: after McNamara sends the player out
   for the equipment (INFO 0016329B, controls off) the inner door's script (SCPT
   000E3665) has the intercom start a conversation, and only Ramos's line 000E3664

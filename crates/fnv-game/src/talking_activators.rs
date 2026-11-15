@@ -23,7 +23,7 @@
 //!   start a conversation; on the routes into the bunker that never touch the intercom
 //!   (sneaking in) neither its OnActivate (SCPT 000A418A) nor Veronica's trigger (SCPT
 //!   0015B6D5) has set Ramos, and without a line the controls that line 0016329B took
-//!   never come back; observer check 130].
+//!   never come back; observer check 185].
 //! - **IsActorTalkingThroughActivator** is 1 on that actor while its lines are chosen
 //!   and while the conversation through the activator runs [documented: catalogue,
 //!   "returns true if the actor is speaking via an activator; the actor must first be
@@ -55,14 +55,20 @@ impl Game<'_> {
 
     /// Who speaks when the player talks to `r`, and through which activator (module
     /// notes): an actor is itself; a talking activator its talking actor while that one
-    /// lives, else the one actor its scripts name ([`Game::scripted_talking_actor`])
-    /// while that one lives, else itself.
+    /// lives, else (no SetTalkingActivatorActor has reached it) the one actor its
+    /// scripts name ([`Game::scripted_talking_actor`]) while that one lives, else itself.
+    /// A script that clears the actor gets the activator's own voice back.
     pub fn talker(&self, r: FormId) -> (FormId, Option<FormId>) {
         if !self.is_talking_activator(r) {
             return (r, None);
         }
-        let set = self.extra.get(&r).and_then(|e| e.talking_actor);
-        let actor = set.or_else(|| self.scripted_talking_actor(r)).filter(|&a| !self.is_dead(a));
+        // Set by script (cleared included: the activator's own voice, documented
+        // "reverts to normal behaviour"), else what its scripts name.
+        let actor = match self.extra.get(&r).filter(|e| e.talking_actor_set || e.talking_actor.is_some()) {
+            Some(e) => e.talking_actor,
+            None => self.scripted_talking_actor(r),
+        };
+        let actor = actor.filter(|&a| !self.is_dead(a));
         (actor.unwrap_or(r), Some(r))
     }
 
