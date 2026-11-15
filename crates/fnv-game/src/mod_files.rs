@@ -242,6 +242,24 @@ pub fn files_under(rel: &str) -> Vec<String> {
     list_files(rel, true)
 }
 
+/// The files and folders directly in a Data folder, through every read root (an earlier
+/// root hides the same name, compared without regard to case); kNVSE's GetDirectoryFiles
+/// (`crate::nvse_unlisted2`).
+pub fn entries_in(rel: &str) -> Vec<String> {
+    let (mut seen, mut out) = (std::collections::HashSet::new(), Vec::new());
+    for root in roots().read {
+        let Some(dir) = find_dir(&root, rel) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if seen.insert(name.to_ascii_lowercase()) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
 /// The loose files directly in a Data folder (no subfolders), as [`files_under`].
 pub fn files_in(rel: &str) -> Vec<String> {
     list_files(rel, false)
@@ -1300,27 +1318,21 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
                 zero
             }
         }
-        // `folder [filter]`: the file names (no path) of a folder under the game's
-        // folder and NVForever's layer [observed: "NVSE\Plugins" "*.dll" gives bare
-        // names]; a missing folder gives an empty array [observed: plugin-odds files.none,
-        // ar_Size 0, where an unset array reads -1].
-        // GetFoldersInFolder the same for folders [observed: gaps3, "NVSE" gives
-        // "Plugins"; a missing folder an empty array].
+        // [documented: file-enumeration-data-roots.md] Both APIs use Data-relative
+        // directories and optional name filters; read roots include the mods layer.
         "getfilesinfolder" | "getfoldersinfolder" => {
             let folders = name == "getfoldersinfolder";
             let p = text(args, 0).unwrap_or_default().replace('/', "\\");
             let filter = text(args, 1).unwrap_or_else(|| "*".into()).to_ascii_lowercase();
             let mut names: Vec<String> = Vec::new();
             for root in roots().read {
-                // A path under the game folder (NVSE\Plugins) or under Data.
-                for base in [root.parent().map(|x| x.to_path_buf()), Some(root.clone())].into_iter().flatten() {
-                    if let Ok(rd) = std::fs::read_dir(base.join(&p)) {
-                        for e in rd.flatten() {
-                            if e.path().is_dir() == folders {
-                                let n = e.file_name().to_string_lossy().to_string();
-                                if glob(&filter, &n.to_ascii_lowercase()) && !names.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
-                                    names.push(n);
-                                }
+                let Some(dir) = find_dir(&root, &p) else { continue };
+                if let Ok(rd) = std::fs::read_dir(dir) {
+                    for e in rd.flatten() {
+                        if e.path().is_dir() == folders {
+                            let n = e.file_name().to_string_lossy().to_string();
+                            if glob(&filter, &n.to_ascii_lowercase()) && !names.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+                                names.push(n);
                             }
                         }
                     }

@@ -169,6 +169,11 @@ pub trait Host {
     fn call(&mut self, opcode: u16, on: Option<Value>, args: &[ArgValue]) -> Result<Value, String>;
     /// An opcode that is not in the function table was skipped (non-strict runs).
     fn skipped(&mut self, _what: &VmError) {}
+    /// Diagnostic-only notification before a fatal no-reference call is returned.
+    /// `on` is already evaluated; implementations must not evaluate the call again.
+    /// Other hosts keep the default no-op and the original error contract.
+    fn no_reference_call(&mut self, _name: &str, _on: Option<Value>, _call: &XCall) {}
+
     /// The statement whose run caused the skips reported since the last call: the
     /// innermost that holds them (for the mod log, which names the line).
     fn skipped_in(&mut self, _stmt: &Stmt) {}
@@ -3055,7 +3060,11 @@ impl Vm<'_, '_> {
             for e in c.args.iter().take(at) {
                 first.push(self.xeval(e)?);
             }
-            let (t, _) = self.format_arg(c, at)?;
+            // Too few values for its specifiers: nothing happens (`formatted_host_call`).
+            let (t, _) = match self.format_arg(c, at) {
+                Err(VmError::Type(e)) if e.starts_with("the format string takes") => return Ok(XVal::Num(0.0)),
+                r => r?,
+            };
             first.push(XVal::Str(t));
             return match self.host.ext_call(&lname, None, &first) {
                 Some(r) => r.map_err(VmError::Host),
@@ -3093,6 +3102,12 @@ impl Vm<'_, '_> {
         // array of the return value and then each output, written to the variables here.
         if let Some(outs) = out_params(&lname) {
             return self.out_call(&lname, c, outs);
+        }
+        // ShowOff's string maps live with JIP's stores (`vm::jip`).
+        if lname.starts_with("auxstringmaparray") {
+            if let Some(v) = self.strmap_function(&lname, c)? {
+                return Ok(v);
+            }
         }
         if origin == "JIP" || origin == "LU" {
             return match self.jip_function(&lname, c)? {
@@ -3339,7 +3354,15 @@ impl Vm<'_, '_> {
         for e in c.args.iter().take(at) {
             args.push(self.xeval(e)?);
         }
-        let (t, k) = self.format_arg(c, at)?;
+        // A format string whose specifiers have fewer values after it than they take:
+        // the function does nothing and the script goes on [observed: #2430 probe
+        // 2026-11-14, SetFormDescription "test %.0f left" with no value left the text as
+        // it was, the script ran on; hypothesis: the same for the other functions that
+        // take a formatted string].
+        let (t, k) = match self.format_arg(c, at) {
+            Err(VmError::Type(e)) if e.starts_with("the format string takes") => return Ok(Some(XVal::Num(0.0))),
+            r => r?,
+        };
         args.push(XVal::Str(t));
         for e in c.args.iter().skip(k) {
             args.push(self.xeval(e)?);
@@ -3387,6 +3410,7 @@ impl Vm<'_, '_> {
         // Called on no reference, the function fails and stops the script [observed:
         // nvse-inv foreach.read.after, "script call failed"].
         if on.is_some_and(|v| v.as_form().is_none()) {
+            self.host.no_reference_call(lname, on, c);
             return Err(VmError::NoReference(lname.to_string()));
         }
         let mut args = Vec::with_capacity(c.args.len());
@@ -3400,7 +3424,10 @@ impl Vm<'_, '_> {
             // The host words a calling object that is no reference (a base form) as
             // NoReference does: that stops the script too [observed: jipppln clamp.base,
             // "script call failed"].
-            Some(Err(e)) if e == VmError::NoReference(lname.to_string()).to_string() => Err(VmError::NoReference(lname.to_string())),
+            Some(Err(e)) if e == VmError::NoReference(lname.to_string()).to_string() => {
+                self.host.no_reference_call(lname, on, c);
+                Err(VmError::NoReference(lname.to_string()))
+            },
             Some(r) => r.map(Some).map_err(VmError::Host),
             None => Ok(None),
         }

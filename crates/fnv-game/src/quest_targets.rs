@@ -73,16 +73,28 @@ impl Game<'_> {
     }
 }
 
-/// The door a marker for a target indoors stands at: the first of `doors` that is not
-/// locked in `world`, else the first; with `ignores_locks` the first [hypothesis: the
-/// Objectives Tab's path "will attempt to avoid locked doors if possible"; NVForever picks
-/// one door, quests-dialogue.md §2].
+/// The door a marker for a target indoors stands at: of `doors` in the world now
+/// ([`door_there`]), the first that is not locked in `world`, else the first; with
+/// `ignores_locks` the first [hypothesis: the Objectives Tab's path "will attempt to avoid
+/// locked doors if possible"; NVForever picks one door, quests-dialogue.md §2]. `None`
+/// when none of `doors` is there.
 pub fn marker_door(world: &World, doors: &[FormId], ignores_locks: bool) -> Option<FormId> {
-    let first = doors.first().copied();
+    let mut there = doors.iter().copied().filter(|&d| door_there(world, d));
+    let first = there.clone().next();
     if ignores_locks {
         return first;
     }
-    doors.iter().copied().find(|d| !door_locked(world, *d)).or(first)
+    there.find(|d| !door_locked(world, *d)).or(first)
+}
+
+/// The door is in the world now: enabled (with its enable parents) and not deleted. A
+/// marker never leads through a disabled door: Nellis's hangar has two pairs of doors on
+/// the same spot, one into each version of the hangar, and the marker for Loyal led
+/// through the disabled pair, so it pointed at the hangar door outside and back out of it
+/// inside (issue #2566) [hypothesis: the original's marker path takes only doors that
+/// are there]. The world map's door outdoors ([`marker_door`]) leaves such doors out too.
+pub fn door_there(world: &World, door: FormId) -> bool {
+    world.peek(door).is_none_or(|s| !s.deleted()) && world.is_enabled(door).unwrap_or(true)
 }
 
 /// The door outdoors where the world map marks a target in the interior `cell`: one of
@@ -133,11 +145,11 @@ impl DoorGraph {
     /// bounded search and lock preference; the caller appends the target itself.
     pub fn path(&self, world: &World, from: Place, to: Place, ignores_locks: bool) -> Option<Vec<FormId>> {
         if !ignores_locks {
-            if let Some(path) = self.search_path(from, to, |d| !door_locked(world, d)) {
+            if let Some(path) = self.search_path(from, to, |d| door_there(world, d) && !door_locked(world, d)) {
                 return Some(path);
             }
         }
-        self.search_path(from, to, |_| true)
+        self.search_path(from, to, |d| door_there(world, d))
     }
 
     fn search_path(&self, from: Place, to: Place, open: impl Fn(FormId) -> bool) -> Option<Vec<FormId>> {
@@ -166,11 +178,11 @@ impl DoorGraph {
 
     /// The door outdoors (standing in a worldspace) where the world map marks a target
     /// indoors at `to`: the first door of the shortest way into `to` from any worldspace
-    /// (at most [`MARKER_DOORS_MAX`] doors), a way without locked doors when there is one
+    /// (at most [`MARKER_DOORS_MAX`] doors, only doors in the world: [`door_there`]), a way without locked doors when there is one
     /// unless `ignores_locks`; `None` for a target outdoors or one no way leads to. A target
     /// several doors deep (Colonel Moore in Hoover Dam's power plant, #2458) is so marked
     /// at the door outdoors its building starts from [hypothesis: the original's world map
-    /// marker for such a target, observer-checks.md question 140].
+    /// marker for such a target, observer-checks.md question 179].
     pub fn outdoor_door(&self, world: &World, to: Place, ignores_locks: bool) -> Option<FormId> {
         if matches!(to, Place::World(_)) {
             return None;
@@ -178,11 +190,11 @@ impl DoorGraph {
         let worlds: Vec<Place> = self.edges.keys().copied().filter(|p| matches!(p, Place::World(_))).collect();
         let first = |open: &dyn Fn(FormId) -> bool| self.search_from(&worlds, to, open).and_then(|p| p.first().copied());
         if !ignores_locks {
-            if let Some(d) = first(&|d| !door_locked(world, d)) {
+            if let Some(d) = first(&|d| door_there(world, d) && !door_locked(world, d)) {
                 return Some(d);
             }
         }
-        first(&|_| true)
+        first(&|d| door_there(world, d))
     }
 
     pub fn build(refs: &fnv_sim::RefTable) -> DoorGraph {
@@ -196,16 +208,17 @@ impl DoorGraph {
     }
 
     /// The door of `from` that starts the way to `to` through the fewest doors (at most
-    /// [`MARKER_DOORS_MAX`]): a way without locked doors when there is one, unless
+    /// [`MARKER_DOORS_MAX`]) that are in the world ([`door_there`]): a way without locked
+    /// doors when there is one, unless
     /// `ignores_locks` [hypothesis: the Objectives Tab's marker "will attempt to avoid
     /// locked doors if possible" (GECK wiki), applied to every door on the way].
     pub fn first_door(&self, world: &World, from: Place, to: Place, ignores_locks: bool) -> Option<FormId> {
         if !ignores_locks {
-            if let Some(d) = self.search(from, to, |d| !door_locked(world, d)) {
+            if let Some(d) = self.search(from, to, |d| door_there(world, d) && !door_locked(world, d)) {
                 return Some(d);
             }
         }
-        self.search(from, to, |_| true)
+        self.search(from, to, |d| door_there(world, d))
     }
 
     /// Breadth-first over the places from `from`: the first door of the shortest way to

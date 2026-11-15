@@ -476,6 +476,9 @@ struct WeaponPart {
     shown: Option<bool>,
 }
 
+/// kNVSE replacement files by a clip file's name, in lower case (`Rig::overrides`).
+type Overrides = Arc<HashMap<String, Vec<String>>>;
+
 /// One skeleton with its parts, clips and weapon.
 struct Rig {
     view: View,
@@ -490,6 +493,9 @@ struct Rig {
     clips: HashMap<ClipKey, Option<Arc<ClipInfo>>>,
     /// The up and down forms of clips, by path (failures too).
     variants: HashMap<String, Option<Arc<ClipInfo>>>,
+    /// kNVSE's replacement files for this view ([`apply_anim_overrides`]): a clip's file
+    /// name, in lower case, to the replacement's path under meshes.
+    overrides: Overrides,
     /// Third person: the head bone and the eye in its space.
     head: Option<usize>,
     eye_local: Vec3,
@@ -667,7 +673,24 @@ impl Rig {
         if let Some(c) = self.clips.get(&key) {
             return c.clone();
         }
-        let mut path = key.candidates().into_iter().map(|c| format!("{}{c}", self.folder)).find(|p| ctx.models.data.vfs.exists(p));
+        // A kNVSE replacement of a candidate's file comes first [documented:
+        // SetActorAnimationPath, "the anim group that is overridden is specified in the
+        // KF file"; hypothesis: a replacement file is named as the clip it replaces, as
+        // in the mods' folders (`mtfastforward.kf`)].
+        // A replacement whose path ends as the candidate does (`locomotion\female\
+        // mtforward.kf`) beats one that only shares the file's name, so a folder with
+        // `male` and `female` files gives each body its own; among equals the later file
+        // (the stack's top) wins.
+        let replaced = key.candidates().into_iter().find_map(|c| {
+            let c = c.to_ascii_lowercase();
+            let name = c.rsplit('\\').next().unwrap_or(&c);
+            let found = self.overrides.get(name)?;
+            let tail = format!("\\{c}");
+            let other_sex = if c.contains("female\\") { "\\male\\" } else { "\\female\\" };
+            let pick = found.iter().rev().find(|p| p.to_ascii_lowercase().ends_with(&tail)).or_else(|| found.iter().rev().find(|p| !p.to_ascii_lowercase().contains(other_sex)));
+            pick.map(|p| format!("meshes\\{p}"))
+        });
+        let mut path = replaced.filter(|p| ctx.models.data.vfs.exists(p)).or_else(|| key.candidates().into_iter().map(|c| format!("{}{c}", self.folder)).find(|p| ctx.models.data.vfs.exists(p)));
         // A grip clip may carry the weapon's name after its number
         // (`2hrhandgrip3_combatshotgun.kf`): the folder's one for that prefix and number.
         if let (None, ClipKey::Grip(p, n)) = (&path, key) {
@@ -948,7 +971,14 @@ impl PlayerBody {
     /// The third-person rig as an actor's rig of the player's reference, for its ragdoll
     /// (`death_cam.rs`): its root entity and the rig.
     pub fn third_rig(&self) -> Option<(Entity, crate::limbs::ActorRig)> {
-        let r = &self.body.as_ref()?.third;
+        self.script_rig(false)
+    }
+
+    /// Each built player rig separately, including a hidden rig, for script model
+    /// selection. Its names and entities must stay with the same model (#2387).
+    pub fn script_rig(&self, first_person: bool) -> Option<(Entity, crate::limbs::ActorRig)> {
+        let body = self.body.as_ref()?;
+        let r = if first_person { body.first.as_ref()? } else { &body.third };
         let rig = crate::limbs::ActorRig {
             reference: FormId::PLAYER_REF.0,
             base: FormId::PLAYER_BASE.0,
@@ -959,6 +989,38 @@ impl PlayerBody {
             base_scale: 1.0,
         };
         Some((r.root, rig))
+    }
+
+    /// Authored CPU-only rigs for the real scene-mirror pipeline controls. This
+    /// bypasses asset loading, not script_rig/root/name/publication or edit dispatch.
+    #[cfg(test)]
+    pub(crate) fn synthetic_script_models(
+        third: (Entity, crate::limbs::ActorRig),
+        first: Option<(Entity, crate::limbs::ActorRig)>,
+    ) -> Self {
+        fn rig((root, actor): (Entity, crate::limbs::ActorRig), view: View) -> Rig {
+            Rig {
+                view, root, lens: None, folder: String::new(), skeleton: actor.skeleton,
+                animator: Animator::new(actor.skel, actor.nodes, None),
+                clips: HashMap::new(), variants: HashMap::new(), overrides: Arc::default(), head: None,
+                eye_local: Vec3::ZERO, looking: None, camera: None, translate: None,
+                weapon_node: None, weapon_parent: None, attached: None,
+                weapon_model: None, weapon_emitter: None, weapon_parts: Vec::new(),
+                idle_logged: false, sights_turned: None, muzzle: None, muzzle_entity: None,
+                casing: None, casing_entity: None, sighting: None, scope_eye: None,
+                use_lens: false, drawn: Vec::new(), shown: Some(false), seen: None,
+                furniture: None, since_attack: f32::INFINITY, attack_loop: None,
+                wound_up: None, attack_eject: None, ejected: false, carry: None,
+            }
+        }
+        Self {
+            body: Some(Body {
+                worn: Vec::new(), look: None, change: fnv_actor::Change::default(),
+                female: false, scale: 1.0, third: rig(third, View::Third),
+                first: first.map(|r| rig(r, View::First)),
+            }),
+            ..Self::default()
+        }
     }
 
     /// The clips heard (`anim_sounds.rs`): the animator of the rig in view (the
@@ -998,7 +1060,7 @@ impl Plugin for PlayerBodyPlugin {
             .init_resource::<crate::weapon_lower::Ahead>()
             .init_resource::<WarmPose>()
             .init_resource::<crate::script_sequences::PlayerSequences>()
-            .add_systems(Update, (restore_warm_pose, crate::furniture::drive_player, ensure_body, crate::weapon_lower::sense, crate::script_sequences::prepare, drive_body, drive_weapon_emitters, shade_light, draw_warm_pose).chain().in_set(nvf_play::player::BodySet))
+            .add_systems(Update, (restore_warm_pose, crate::furniture::drive_player, ensure_body, crate::weapon_lower::sense, apply_anim_overrides, crate::script_sequences::prepare, drive_body, drive_weapon_emitters, shade_light, draw_warm_pose).chain().in_set(nvf_play::player::BodySet))
             .add_systems(PostUpdate, near_shade_casters.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
             .add_systems(PostUpdate, sequence_pose_aid::observe.after(bevy::transform::TransformSystems::Propagate))
             .add_systems(Last, report);
@@ -1530,6 +1592,7 @@ fn build_rig(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &
         animator,
         clips: HashMap::new(),
         variants: HashMap::new(),
+        overrides: Arc::default(),
         head,
         eye_local,
         looking,
@@ -2309,6 +2372,40 @@ fn show_rigs(body: &mut Body, commands: &mut Commands, visibility: &mut Query<&m
 /// the clips hide (`NiVisController`) does not emit, nor does the rig the camera does not
 /// see: the third-person body stands behind the arms in first person, drawn for its
 /// shadow only.
+/// kNVSE's SetActorAnimationPath and AnimGroupOverride on the player
+/// (docs/design/knvse-anim.md): each frame the game says which replacement files apply
+/// now, conditions run (`Game::anim_overrides_now`); when that changes, each rig takes
+/// the new files and forgets the clips it chose, so the next pick finds them.
+fn apply_anim_overrides(mut script: Option<ResMut<nvf_play::script::ScriptState>>, sim: Option<ResMut<nvf_play::sim::SimState>>, mut state: ResMut<PlayerBody>, mut current: Local<[(Vec<String>, Overrides); 2]>) {
+    let (Some(rt), Some(mut sim)) = (script.as_deref_mut().and_then(|s| s.rt.as_mut()), sim) else { return };
+    let empty = rt.game.anim_paths.actor.is_empty() && rt.game.anim_paths.weapon.is_empty() && rt.game.anim_folders.active.is_empty() && current.iter().all(|c| c.0.is_empty());
+    if empty {
+        return;
+    }
+    let now = nvf_play::script::with_world(rt, &mut sim, |rt| [rt.game.anim_overrides_now(FormId::PLAYER_REF, false), rt.game.anim_overrides_now(FormId::PLAYER_REF, true)]);
+    for (i, paths) in now.into_iter().enumerate() {
+        if current[i].0 != paths {
+            // By file name, in stack order (a later file wins, `Rig::clip`).
+            let mut map: HashMap<String, Vec<String>> = HashMap::new();
+            for p in &paths {
+                map.entry(p.rsplit('\\').next().unwrap_or(p).to_ascii_lowercase()).or_default().push(p.clone());
+            }
+            info!("player {} rig: {} kNVSE replacement file(s){}", if i == 1 { "First" } else { "Third" }, paths.len(), if paths.is_empty() { String::new() } else { format!(": {}", paths.join(", ")) });
+            current[i] = (paths, Arc::new(map));
+        }
+    }
+    let Some(body) = state.body.as_mut() else { return };
+    let rigs = [Some(&mut body.third), body.first.as_mut()];
+    for (i, rig) in rigs.into_iter().enumerate() {
+        let Some(rig) = rig else { continue };
+        if !Arc::ptr_eq(&rig.overrides, &current[i].1) {
+            rig.overrides = current[i].1.clone();
+            rig.clips.clear();
+            rig.variants.clear();
+        }
+    }
+}
+
 fn drive_weapon_emitters(state: Res<PlayerBody>, mut emitters: Query<&mut crate::particles::ModelEmitter>) {
     let Some(body) = state.body.as_ref() else { return };
     let first_seen = body.first.as_ref().is_some_and(|f| f.shown == Some(true));
@@ -2358,7 +2455,7 @@ fn drive_body(
         ResMut<nvf_play::furniture::PlayerSeat>,
         Res<nvf_play::pipboy::PipBoy>,
         Query<&Projection, With<nvf_play::PlayerCamera>>,
-        Option<Res<nvf_play::free_cam::FirstPersonFov>>,
+        (Option<Res<nvf_play::free_cam::FirstPersonFov>>, Option<Res<crate::Args>>),
         Option<Res<nvf_play::combat::PlayerLimbs>>,
         (Res<crate::death_cam::DeathCam>, Res<crate::player_knockdown::PlayerKnockdown>),
         (Option<Res<nvf_play::aim_zoom::AimZoom>>, Option<Res<nvf_play::combat::Combat>>, Option<ResMut<nvf_play::aim_zoom::TrueSights>>, Option<Res<nvf_play::aim_zoom::Scope>>, Option<ResMut<nvf_play::aim_zoom::Scope3d>>, Option<Res<nvf_play::aim_zoom::LensSway>>),
@@ -2805,8 +2902,10 @@ fn drive_body(
             Projection::Perspective(p) => Some(p.fov),
             _ => None,
         });
-        // The console's `fov` can ask for another first-person field of view.
-        let first_fov = first_fov.and_then(|f| f.0).unwrap_or(FIRST_PERSON_FOV);
+        // The console's `fov` can ask for another first-person field of view; otherwise
+        // the settings page's (`--viewmodel-fov`).
+        let (asked_fov, args) = first_fov;
+        let first_fov = asked_fov.and_then(|f| f.0).or_else(|| args.map(|a| a.viewmodel_fov)).unwrap_or(FIRST_PERSON_FOV);
         let k = match (pip.on_arm() && pip.warming.is_none(), vfov) {
             (true, Some(v)) => {
                 let normal = arms_magnification(v, first_fov);
