@@ -165,7 +165,7 @@ pub const SECTIONS: &[Section] = &[
         Some("Hotkeys"),
         &["controls:bind:Hotkey1", "controls:bind:Hotkey3", "controls:bind:Hotkey4", "controls:bind:Hotkey5", "controls:bind:Hotkey6", "controls:bind:Hotkey7", "controls:bind:Hotkey8"],
     ),
-    section("Graphics", Some("Quality"), &["quality", "enhanced"]),
+    section("Graphics", Some("Quality"), &["quality"]),
     section("Graphics", Some("Shadows"), &["sun-shadows", "shadow-filter", "shadow-distance", "fine-shadows"]),
     section("Graphics", Some("Lighting and Effects"), &["ambient-occlusion", "light-shafts", "bloom", "grade", "glow", "eye-adaptation", "neon-glow"]),
     section("Graphics", Some("Water"), &["water-reflections", "water-mirror"]),
@@ -177,6 +177,37 @@ pub const SECTIONS: &[Section] = &[
     section(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     section(NVF_FEATURES_TAB, Some("World Interaction"), &["grass-fire"]),
     section("Debug", None, &["overlay", "hit-markers", "god-mode", "navmesh", "scope-3d"]),
+];
+
+/// Rows that cannot apply while another row is off: (the row, the row it needs, why), the
+/// row greyed with its value kept and the reason in its note while that row is off (a
+/// switch off, a list on its first choice) [design: the menu overhaul, owner 2026-11-15:
+/// "rows that can't apply: grey them out"]. `crate::settings::Settings::disabled_status`
+/// reads it; a row of a missing module is passed over.
+pub const NEEDS: &[(&str, &str, &str)] = &[
+    ("dialogue-recentre", "dialogue-look", "Needs Turn to Each Other."),
+    ("volume-music", "music", "Needs Play Music."),
+    ("volume-voice", "voice", "Needs Dialogue Voice."),
+    ("crosshair-style", "dynamic-crosshair", "Needs Dynamic Crosshair."),
+    ("aim-slowdown", "aim-assist", "Needs Aim Assist."),
+    ("aim-lock", "aim-assist", "Needs Aim Assist."),
+    ("shadow-filter", "sun-shadows", "Needs Sun Shadows."),
+    ("shadow-distance", "sun-shadows", "Needs Sun Shadows."),
+    ("fine-shadows", "sun-shadows", "Needs Sun Shadows."),
+    ("eye-adaptation", "glow", "Needs Light Glow (HDR)."),
+    ("neon-glow", "glow", "Needs Light Glow (HDR)."),
+    ("grass-distance", "grass", "Needs Grass."),
+    ("fps-counter-fps", "fps-counter", "Needs the Frame Rate Counter."),
+    ("fps-counter-graph", "fps-counter", "Needs the Frame Rate Counter."),
+    ("fps-counter-split", "fps-counter", "Needs the Frame Rate Counter."),
+    ("fps-counter-cpu", "fps-counter", "Needs the Frame Rate Counter."),
+    ("fps-counter-gpu", "fps-counter", "Needs the Frame Rate Counter."),
+    ("fps-counter-vram", "fps-counter", "Needs the Frame Rate Counter."),
+    ("fps-counter-ram", "fps-counter", "Needs the Frame Rate Counter."),
+    ("fps-counter-loaded", "fps-counter", "Needs the Frame Rate Counter."),
+    ("fps-counter-upscaling", "fps-counter", "Needs the Frame Rate Counter."),
+    ("fps-counter-low", "fps-counter", "Needs the Frame Rate Counter."),
+    ("fps-counter-low", "fps-counter-fps", "Needs Counter: Frame Rate."),
 ];
 
 /// The Controls tab's rows that are shown only while the input device is a controller
@@ -460,7 +491,7 @@ mod tests {
     /// library row, #2242's upscaling counter row, #2317's Generated frames row, the field of
     /// view rows, the menu scale and Physics rate rows, #2662's grass fires and #2550's
     /// terrain height blending), by the group it registers with.
-    const KNOWN: [(&str, &str); 114] = [
+    const KNOWN: [(&str, &str); 113] = [
         ("detached-camera", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
@@ -559,7 +590,6 @@ mod tests {
         ("light-shafts", "Graphics"),
         ("water-reflections", "Graphics"),
         ("water-mirror", "Graphics"),
-        ("enhanced", "Graphics"),
         ("quality", "Graphics"),
         ("volume-master", "Sound"),
         ("volume-music", "Sound"),

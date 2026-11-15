@@ -127,17 +127,41 @@ pub fn fit_ui_scale(s: f32) -> f32 {
 /// The settings page's UI scale choices: [`UI_SCALE_RANGE`] in steps of 5% [design].
 pub const UI_SCALE_CHOICES: usize = 21;
 
-/// The settings page's UI scale row, `ui-scale` in `NVForever.ini` (kept as the slider's
-/// part, [`ui_scale_part`]: `ui-scale=0.25` is 75%), under `group` (the renderer lists it
-/// with the Display rows) [design: #1631].
-pub fn ui_scale_row(group: &'static str) -> crate::settings::Setting {
-    crate::settings::Setting::slider(
-        "ui-scale",
-        group,
-        "HUD scale",
-        "Size of the in-game HUD, independent of menu scale. Takes effect at the next start.",
-        crate::settings::Slider::choice(UI_SCALE_CHOICES, |_| ui_scale_part(ui_scale_setting()), |_, v| set_ui_scale_setting(ui_scale_of_part(v)), |v| format!("{:.0}%", ui_scale_of_part(v) * 100.0)),
+/// The HUD Scale row's choices: 50% to 100% in steps of 10% [design: the menu overhaul,
+/// owner 2026-11-15; #1631's slider went to 150% in 5% steps].
+pub const UI_SCALE_LIST: [f32; 6] = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+
+/// The settings page's UI scale row, `ui-scale` in `NVForever.ini` (its choice's name,
+/// "80%"; an older slider's part, [`ui_scale_part`], still loads as the choice nearest it),
+/// under `group` (the renderer lists it with the Display rows) [design: #1631, the menu
+/// overhaul].
+pub fn ui_scale_row(group: &'static str) -> (crate::settings::Setting, crate::settings::ChoiceList) {
+    (
+        crate::settings::Setting { key: "ui-scale", group, label: "HUD scale", note: "Size of the in-game HUD, independent of menu scale. Takes effect at the next start.", switches: "", get: |_| false, set: |_, _| {}, slider: None },
+        crate::settings::ChoiceList {
+            names: |_| ui_scale_names(),
+            chosen: |_| ui_scale_names()[crate::settings::nearest(&UI_SCALE_LIST, ui_scale_setting())].clone(),
+            pick: |_, n| take_ui_scale(n),
+            save: |_| ui_scale_names()[crate::settings::nearest(&UI_SCALE_LIST, ui_scale_setting())].clone(),
+            load: |_, t| take_ui_scale(t),
+            ask_keep: false,
+        },
     )
+}
+
+fn ui_scale_names() -> Vec<String> {
+    UI_SCALE_LIST.iter().map(|s| format!("{:.0}%", s * 100.0)).collect()
+}
+
+/// The HUD scale `text` names (or an older slider's part stands for: past 100%, 100%).
+fn take_ui_scale(text: &str) -> bool {
+    match crate::settings::choice_of(text, &ui_scale_names(), |v| crate::settings::nearest(&UI_SCALE_LIST, ui_scale_of_part(v))) {
+        Some(i) => {
+            set_ui_scale_setting(UI_SCALE_LIST[i]);
+            true
+        }
+        None => false,
+    }
 }
 
 /// A UI scale as the settings slider's part (0 at 50%, 0.5 at 100%, 1 at 150%), to the
@@ -883,11 +907,18 @@ pub(crate) mod tests {
         }
         assert_eq!((fit_ui_scale(0.1), fit_ui_scale(9.0), fit_ui_scale(f32::NAN), fit_ui_scale(0.876)), (0.5, 1.5, 1.0, 0.88));
         assert_eq!((ui_scale_of_part(-3.0), ui_scale_of_part(7.0), ui_scale_of_part(f32::NAN)), (0.5, 1.5, 1.0));
-        let row = ui_scale_row("Display");
-        let slider = row.slider.unwrap();
-        assert_eq!((slider.text(0.5), slider.text(0.25), slider.text(1.0)), ("100%".to_string(), "75%".to_string(), "150%".to_string()));
-        // Out of range from the INI: the slider's fit brings it to an end.
-        assert_eq!((slider.fit(-1.0), slider.fit(2.0), slider.fit(0.26)), (0.0, 1.0, 0.25));
+        // The row is a list of 50% to 100% (the menu overhaul); an older slider's part loads
+        // as the nearest choice, past 100% as 100%.
+        let (row, list) = ui_scale_row("Display");
+        assert!(row.slider.is_none());
+        let w = World::new();
+        assert_eq!((list.names)(&w), ["50%", "60%", "70%", "80%", "90%", "100%"]);
+        // (The setting itself is set by settings.rs' test only: one global, tests in parallel.)
+        let of = |t: &str| crate::settings::choice_of(t, &ui_scale_names(), |v| crate::settings::nearest(&UI_SCALE_LIST, ui_scale_of_part(v))).map(|i| UI_SCALE_LIST[i]);
+        assert_eq!(of("0.3"), Some(0.8), "0.3 was 80%");
+        assert_eq!(of("1"), Some(1.0), "150%: 100%");
+        assert_eq!(of("60%"), Some(0.6));
+        assert_eq!(of("big"), None);
     }
 
     fn pct(v: Val) -> f32 {

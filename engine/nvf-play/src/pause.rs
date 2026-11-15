@@ -2747,9 +2747,13 @@ fn defaults(view: &PauseView, layout: &ResolvedLayout, list: &[Setting], command
         sounds.write(UiSound { menu: UiMenu::Settings, event: UiEvent::Flipped });
     } else if let Some(d) = view.defaults.clone() {
         info!("pause menu: settings back to their defaults");
+        // Twice over, so a row its parent held greyed (`settings_layout::NEEDS`) goes back
+        // once the parent has.
         commands.queue(move |world: &mut World| {
-            for (i, v) in d.into_iter().enumerate() {
-                crate::settings::restore(world, i, v);
+            for _ in 0..2 {
+                for (i, v) in d.iter().enumerate() {
+                    crate::settings::restore(world, i, *v);
+                }
             }
         });
         sounds.write(UiSound { menu: UiMenu::Settings, event: UiEvent::Flipped });
@@ -3432,6 +3436,18 @@ fn choose(
             (Some(i), _) if is_list(i) => {
                 show_row(&mut page, &mut view, layout, RowId::Setting(i));
                 match item.split_once('=') {
+                    // A number: as the INI takes it (a row that was a slider, the overhaul).
+                    Some((_, v)) if value.is_some() => {
+                        let text = v.trim().to_string();
+                        commands.queue(move |world: &mut World| {
+                            let named = world.get_resource::<Settings>().and_then(|s| s.choices(i)).is_some_and(|c| (c.names)(world).iter().any(|n| *n == text));
+                            if named {
+                                crate::settings::pick(world, i, &text);
+                            } else {
+                                crate::settings::load_text(world, i, &text);
+                            }
+                        });
+                    }
                     Some((_, v)) => fx.picks.push((i, v.trim().to_string())),
                     None => warn!("NVF_PLAY_TEST_SETTINGS: {key} is a list: give it a choice, {key}=<choice>"),
                 }
@@ -4704,7 +4720,14 @@ fn stand_in_name(list: &[Setting], id: RowId) -> String {
 /// Row `id`'s note, after the names of the rows it stands for on the search or the Changed
 /// list ("Stands for: Jump (Controller)."), so a choice there is plain [design: #1953].
 fn note_of(list: &[Setting], id: RowId, d: &Drawn) -> String {
-    let note = row_note(list, id, d);
+    let mut note = row_note(list, id, d);
+    // A greyed row: why, after its own note [design: the menu overhaul].
+    if let RowId::Setting(i) = id {
+        if let Some(why) = d.disabled.get(i).copied().flatten() {
+            let why = fnv_util::words::trf("Greyed out: {why}", &[("why", &tr(why))]);
+            note = if note.is_empty() { why } else { format!("{note} {why}") };
+        }
+    }
     match d.stand_ins.iter().find(|(by, _)| *by == id) {
         Some((_, names)) => {
             // Three names at most, so the head and the note keep to the note's lines (#2377);

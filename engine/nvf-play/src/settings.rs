@@ -449,7 +449,14 @@ impl Settings {
     /// value is kept intact and is still read/written by the settings file.
     pub fn disabled_status(&self, world: &World, i: usize) -> Option<&'static str> {
         let key = self.0.get(i)?.key;
-        (self.2.iter().find(|(k, _)| *k == key)?.1)(world)
+        if let Some(status) = self.2.iter().find(|(k, _)| *k == key).and_then(|(_, f)| f(world)) {
+            return Some(status);
+        }
+        // A row whose parent is off (`crate::settings_layout::NEEDS`).
+        crate::settings_layout::NEEDS.iter().filter(|(k, _, _)| *k == key).find_map(|(_, parent, why)| {
+            let p = self.index(parent)?;
+            (self.value(world, p) < 0.5).then_some(*why)
+        })
     }
 
     /// List row `i`'s words and reasons for its choices, when it has any ([`ChoiceLooks`]).
@@ -742,6 +749,29 @@ pub fn pick(world: &mut World, i: usize, name: &str) -> bool {
 
 /// List row `i`'s state changed by `apply` (false: not taken), then kept in the INI; a
 /// list that asks to be kept waits for it.
+/// The choice of `names` that `text` stands for: a name (any case), or the number an older
+/// slider of the row kept, read by `from_number` [design: the menu overhaul, owner
+/// 2026-11-15: a row of 7 or fewer values is a list; the number an INI or a test aid gave
+/// before still loads, as the choice nearest it].
+pub fn choice_of(text: &str, names: &[String], from_number: fn(f32) -> usize) -> Option<usize> {
+    let t = text.trim();
+    names.iter().position(|n| n.eq_ignore_ascii_case(t)).or_else(|| t.parse::<f32>().ok().filter(|v| v.is_finite()).map(|v| from_number(v).min(names.len().saturating_sub(1))))
+}
+
+/// The index of the value of `values` nearest `v`.
+pub fn nearest(values: &[f32], v: f32) -> usize {
+    values.iter().enumerate().min_by(|a, b| (a.1 - v).abs().total_cmp(&(b.1 - v).abs())).map_or(0, |(i, _)| i)
+}
+
+/// Take `text` on list row `i` as the INI does (its `load`, so an older slider's number
+/// too), logged and kept as a pick is: for the test aids' numbers on rows that were sliders.
+pub fn load_text(world: &mut World, i: usize, text: &str) -> bool {
+    let Some(c) = world.get_resource::<Settings>().and_then(|s| s.choices(i)) else { return false };
+    let load = c.load;
+    let t = text.to_string();
+    take(world, i, |w| load(w, &t))
+}
+
 fn take(world: &mut World, i: usize, apply: impl FnOnce(&mut World) -> bool) -> bool {
     let Some(settings) = world.get_resource::<Settings>() else { return false };
     let (Some(s), Some(c)) = (settings.list().get(i).copied(), settings.choices(i)) else { return false };
@@ -1260,7 +1290,8 @@ mod tests {
             crate::interface::set_ui_scale_setting(1.0);
             let mut app = App::new();
             app.insert_resource(SettingsFile(Some(path.to_path_buf())));
-            add_setting(&mut app, crate::interface::ui_scale_row("Display"));
+            let (row, list) = crate::interface::ui_scale_row("Display");
+            add_choice_list(&mut app, row, list);
             crate::menu_scale::register(&mut app, "Display");
             app.add_systems(PostStartup, apply_stored);
             app.update();
@@ -1269,14 +1300,15 @@ mod tests {
         let mut app = start(&path);
         assert_eq!(crate::interface::ui_scale_setting(), 1.0, "no INI yet: 100%");
         assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 1.0, "no INI yet: menus 100%");
-        set_slider(app.world_mut(), 0, 0.25);
-        assert_eq!(crate::interface::ui_scale_setting(), 0.75);
-        assert!(std::fs::read_to_string(&path).unwrap().contains("[Settings]
-ui-scale=0.25
-"));
+        // A list since the menu overhaul: kept by its name.
+        assert!(pick(app.world_mut(), 0, "80%"));
+        assert_eq!(crate::interface::ui_scale_setting(), 0.8);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("ui-scale=80%"));
         let _app = start(&path);
-        assert_eq!(crate::interface::ui_scale_setting(), 0.75, "the stored scale wins at the next start");
-        for (stored, scale) in [("7", 1.5), ("-2", 0.5), ("0.26", 0.75), ("big", 1.0)] {
+        assert_eq!(crate::interface::ui_scale_setting(), 0.8, "the stored scale wins at the next start");
+        // An older slider's part loads as the choice nearest it (past 100%: 100%); text that
+        // is neither is skipped.
+        for (stored, scale) in [("7", 1.0), ("-2", 0.5), ("0.3", 0.8), ("big", 1.0)] {
             std::fs::write(&path, format!("[Settings]
 ui-scale={stored}
 ")).unwrap();
@@ -1285,32 +1317,42 @@ ui-scale={stored}
         }
         // A legacy-only value seeds both effective sizes. Changing only the HUD
         // then saves the untouched menu value explicitly before the next restart.
-        std::fs::write(&path, "[Settings]\nui-scale=0.25\n[Other]\nkeep=yes\n").unwrap();
+        std::fs::write(&path, "[Settings]
+ui-scale=0.3
+[Other]
+keep=yes
+").unwrap();
         let mut app = start(&path);
-        assert_eq!(crate::interface::ui_scale_setting(), 0.75);
-        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.75);
-        set_slider(app.world_mut(), 0, 0.0);
+        assert_eq!(crate::interface::ui_scale_setting(), 0.8);
+        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.8);
+        assert!(pick(app.world_mut(), 0, "50%"));
         assert_eq!(crate::interface::ui_scale_setting(), 0.5);
-        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.75);
+        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.8);
         let saved = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(ini_get(&saved, SECTION, "menu-scale").unwrap().parse::<f32>().unwrap(), 0.5);
+        assert_eq!(ini_get(&saved, SECTION, "menu-scale").as_deref(), Some("80%"));
         assert_eq!(ini_get(&saved, "Other", "keep").as_deref(), Some("yes"));
         let mut app = start(&path);
         assert_eq!(crate::interface::ui_scale_setting(), 0.5);
-        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.75);
+        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.8);
         let menu = app.world().resource::<Settings>().index(crate::menu_scale::KEY).unwrap();
-        set_slider(app.world_mut(), menu, 1.0);
+        assert!(pick(app.world_mut(), menu, "100%"));
         let app = start(&path);
         assert_eq!(crate::interface::ui_scale_setting(), 0.5);
         assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 1.0);
         // The explicit new key wins even when the legacy HUD value is larger.
-        std::fs::write(&path, "[Settings]\nui-scale=0.75\nmenu-scale=0.5\n").unwrap();
+        std::fs::write(&path, "[Settings]
+ui-scale=0.75
+menu-scale=0.6
+").unwrap();
         let app = start(&path);
-        assert_eq!(crate::interface::ui_scale_setting(), 1.25);
-        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.75);
-        std::fs::write(&path, "[Settings]\nui-scale=0.25\nmenu-scale=bad\n").unwrap();
+        assert_eq!(crate::interface::ui_scale_setting(), 1.0);
+        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.8);
+        std::fs::write(&path, "[Settings]
+ui-scale=0.3
+menu-scale=bad
+").unwrap();
         let app = start(&path);
-        assert_eq!(crate::interface::ui_scale_setting(), 0.75);
+        assert_eq!(crate::interface::ui_scale_setting(), 0.8);
         assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 1.0, "invalid explicit menu text keeps its default, not the legacy HUD size");
         crate::interface::set_ui_scale_setting(1.0);
         let _ = std::fs::remove_dir_all(&dir);
