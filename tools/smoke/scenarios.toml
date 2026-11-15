@@ -28965,3 +28965,20 @@ expect = [
   { json = "events.?kind=line_started.info", equals = "0x00142AA6", count = 1, label = "his thanks follow by StartConversation" },
   { json = "final.quests.0x00140C3B.vars.AndersFreed", equals = 2, count = 1, label = "VMS46.AndersFreed ends at 2 (freed and thanked)" },
 ]
+
+[[scenario]]
+name = "anders-leaves-cross"
+source = "issue #2472: Anders on the cross at Cottonwood Cove could not be freed. Once AndersJackandDiane is known (Diane's errand line 0x00146698 adds it) the freeing choice AndersFree is offered; its end script (INFO 0x00142A9C) sets VMS46.AndersFreed to 1 and SetRestrained 0, and his thanks (0x00142AA6) set it to 2, and after the conversation his package VRRCAndersRRC (AndersFreed == 2) takes him off the cross and home (docs/spec-notes/anders-cross.md)"
+note = "the player starts about 150 units west of Anders; the topic Diane's line teaches is added by the console at 8 s (Red Rock Canyon is not loaded here); the player talks to him at 10 s and picks AndersJackandDiane, then AndersFree; his thanks (StartConversation) are left by the unattended rule"
+areas = ["dialogue", "ai"]
+paths = ["crates/fnv-game/src/dialogue.rs", "engine/nvforever/src/furniture.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "8:addtopic 00142A89;8.3:close", NVF_PLAY_TEST_TALK = "10:VRRCAndersREF=AndersJackandDiane|AndersFree" }
+args = ["--play", "--world", "WastelandNV", "--pos=55570,-96120,-480", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "001413C3"]
+run_seconds = 50
+order = [[
+  { re = 'offers \d+ choices: .*\[AndersJackandDiane\]', label = "with the topic known he offers Are you Anders?" },
+  { re = 'offers \d+ choices: .*\[AndersFree\]', label = "and then the freeing choice" },
+  { re = 'dialogue: VRRCAndersREF says \[GREETING\] 0x00142AA6', label = "his thanks follow (StartConversation; its begin script sets AndersFreed to 2)" },
+  { re = 'ai \[[\d:]+\] 001413C3: package VRRCAndersRRC', label = "after the talk his package is the one for AndersFreed 2: home to Red Rock Canyon" },
+  { re = 'furniture: 001413C3 (gets|got) off 0013A4BA', label = "and leaves the cross" },
+]]

@@ -69,6 +69,11 @@ His package list (VRRCAndersRRC, VRRCAndersNotCrucified, VRRCAndersCrucified) ch
 `andersfreed` [observed]: 0 travel to the cross 0x0013A4BA; 1 travel to an X marker
 0x00144684 about 45 units from it; 2 sandbox near 0x0015E8AF (Red Rock Canyon, 3000
 units). So he leaves the cross when the package of 1 or 2 replaces the crucified one.
+In ours the package is chosen again once the thanks conversation is over, when
+`andersfreed` is already 2, so he goes straight from the cross (exit clip
+SpecialIdle_NVCrucifixExit) towards Red Rock Canyon [observed: smoke run
+anders-leaves-cross, 2026-11-15]; whether the original first stops at the marker of 1 is
+not known [hypothesis: the thanks start at once, so it would not].
 
 ## 4. NVForever
 
