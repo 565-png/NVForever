@@ -2072,6 +2072,10 @@ fn official_plugin(name: Option<&str>) -> bool {
 }
 
 #[cfg(test)]
+#[path = "sky_weather_percent_tests.rs"]
+mod weather_percent_tests;
+
+#[cfg(test)]
 #[path = "sky_lighting_session_tests.rs"]
 mod session_lighting_tests;
 
