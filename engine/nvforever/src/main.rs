@@ -86,6 +86,7 @@ mod graphics;
 mod grass;
 mod grass_fire_fx;
 mod head_look;
+mod rigid_head_probe;
 mod idles;
 mod lights;
 mod limbs;
@@ -1720,6 +1721,7 @@ fn main() -> AppExit {
         };
         // Also with --no-head-tracking: the settings page can switch it on.
         app.add_plugins(head_look::HeadLookPlugin { enabled: !args.no_head_tracking, camera_is_player: args.head_track_camera, force_point });
+        rigid_head_probe::install(&mut app);
         app.add_plugins(turret_aim::TurretAimPlugin);
         // Also with --no-foot-ik: the settings page can switch it on.
         app.add_plugins(foot_ik::FootIkPlugin { enabled: !args.no_foot_ik });
