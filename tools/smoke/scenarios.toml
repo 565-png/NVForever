@@ -27737,7 +27737,7 @@ paths = ["crates/fnv-world/src/land_surface.rs", "crates/fnv-phys/src/terrain.rs
 args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
 run_seconds = 20
 expect = [
-  "terrain: smoothed, each grid square drawn and collided as 2 x 2, at most 8 units from the stored triangles",
+  "terrain: mode=interpolate subdiv=2 bound=8 land-shift=0; drawing, collision and queries use this surface",
   { re = 'terrain summary: (\d+) cells drawn smoothed', range = [9, 100000], label = "the loaded cells are drawn smoothed" },
   { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [0, 0], label = "none on the stored triangles" },
   { re = 'player placed: feet \(', label = "the player is placed on the ground" },
@@ -27753,12 +27753,101 @@ paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_ter
 args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--no-smooth-terrain"]
 run_seconds = 20
 expect = [
-  "terrain: the stored triangles, not smoothed",
+  "terrain: mode=stored subdiv=1 bound=0 land-shift=0; drawing, collision and queries use this surface (smoothing off",
   { re = 'terrain summary: (\d+) cells drawn smoothed', range = [0, 0], label = "no cell is smoothed" },
   { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [9, 100000], label = "the loaded cells are drawn on the stored triangles" },
   { re = 'player placed: feet \(', label = "the player is placed on the ground" },
 ]
 forbid = [{ text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-smoothing-fit-s2-b8"
+source = "#2149 pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default stays interpolate, 2 x 2, bound 8"
+note = "Fitted LAND vertices at the default subdivision and bound: the start names the recipe, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
+env = { NVF_PLAY_TEST_SMOOTH_MODE = "fit", NVF_PLAY_TEST_SMOOTH_SUBDIV = "2", NVF_PLAY_TEST_SMOOTH_BOUND = "8" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { text = "terrain: mode=fit subdiv=2 bound=8 land-shift=4; drawing, collision and queries use this surface", count = 1, label = "the start names the recipe, once" },
+  { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=fit subdiv=2 bound=8 land-shift=4\)', range = [9, 100000], label = "the loaded cells are drawn with it" },
+  { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [0, 0], label = "none on the stored triangles (fit 2/8)" },
+  { re = 'player placed: feet \(', label = "the player is placed on the fit 2/8 ground" },
+]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test aid value is taken (fit 2/8)" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-smoothing-interpolate-s4-b8"
+source = "#2149 pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default stays interpolate, 2 x 2, bound 8"
+note = "The LAND vertices kept, 4 x 4 squares (four times the triangles): the start names the recipe, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
+env = { NVF_PLAY_TEST_SMOOTH_MODE = "interpolate", NVF_PLAY_TEST_SMOOTH_SUBDIV = "4", NVF_PLAY_TEST_SMOOTH_BOUND = "8" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { text = "terrain: mode=interpolate subdiv=4 bound=8 land-shift=0; drawing, collision and queries use this surface", count = 1, label = "the start names the recipe, once" },
+  { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=interpolate subdiv=4 bound=8 land-shift=0\)', range = [9, 100000], label = "the loaded cells are drawn with it" },
+  { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [0, 0], label = "none on the stored triangles (interpolate 4/8)" },
+  { re = 'player placed: feet \(', label = "the player is placed on the interpolate 4/8 ground" },
+]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test aid value is taken (interpolate 4/8)" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-smoothing-fit-s4-b12"
+source = "#2149 pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default stays interpolate, 2 x 2, bound 8"
+note = "Fitted, 4 x 4, within 12 units: the start names the recipe, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
+env = { NVF_PLAY_TEST_SMOOTH_MODE = "fit", NVF_PLAY_TEST_SMOOTH_SUBDIV = "4", NVF_PLAY_TEST_SMOOTH_BOUND = "12" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { text = "terrain: mode=fit subdiv=4 bound=12 land-shift=4; drawing, collision and queries use this surface", count = 1, label = "the start names the recipe, once" },
+  { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=fit subdiv=4 bound=12 land-shift=4\)', range = [9, 100000], label = "the loaded cells are drawn with it" },
+  { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [0, 0], label = "none on the stored triangles (fit 4/12)" },
+  { re = 'player placed: feet \(', label = "the player is placed on the fit 4/12 ground" },
+]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test aid value is taken (fit 4/12)" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-wireframe-live"
+source = "#2149 pass 2: the Debug row Terrain wireframe (engine/nvforever/src/terrain_wireframe.rs) draws the loaded landscape's triangle edges while on and keeps nothing once off"
+note = "off at the start; switched on and off again on the settings page in the pause menu"
+areas = ["rendering", "terrain", "settings"]
+paths = ["engine/nvforever/src/terrain_wireframe.rs"]
+env = { NVF_PLAY_TEST_PAUSE = "8:15", NVF_PLAY_TEST_SETTINGS = "9:terrain-wireframe,12:terrain-wireframe" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = [
+  { text = "terrain wireframe: on (", count = 1, label = "switched on once" },
+  { text = "terrain wireframe: off;", count = 1, label = "switched off once" },
+]
+order = [[
+  { text = "settings: terrain-wireframe on", label = "the row is switched on" },
+  { text = "terrain wireframe: on (mode=interpolate subdiv=2 bound=8 land-shift=0)", label = "the wireframe follows, on the run's surface" },
+  { re = 'terrain wireframe: (9|[1-9]\d+) cells outlined, \d{6,} edges, \d+ without landscape, (9|[1-9]\d+) line assets', label = "the loaded cells are outlined" },
+  { text = "settings: terrain-wireframe off", label = "the row is switched off" },
+  { re = 'terrain wireframe: off; (9|[1-9]\d+) cell outlines let go, 0 line assets kept', label = "and nothing is kept" },
+]]
+forbid = [{ text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-wireframe-stored"
+source = "#2149 pass 2: --terrain-wireframe with smoothing off outlines the stored LAND triangles (engine/nvforever/src/terrain_wireframe.rs)"
+note = "on from the start, smoothing off: 33 x 33 vertices a cell, 3,136 edges each"
+areas = ["rendering", "terrain"]
+paths = ["engine/nvforever/src/terrain_wireframe.rs", "engine/nvf-play/src/smooth_terrain.rs"]
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--no-smooth-terrain", "--terrain-wireframe"]
+run_seconds = 20
+expect = [
+  { text = "terrain wireframe: on (mode=stored subdiv=1 bound=0 land-shift=0)", count = 1, label = "on from the start, on the stored triangles" },
+  { re = 'terrain wireframe: (\d+) cells outlined', range = [9, 100000], label = "the loaded cells are outlined" },
+  { re = 'terrain wireframe: \d+ cells outlined, (\d+) edges', range = [28224, 100000000], label = "3,136 edges a cell" },
+  { re = 'player placed: feet \(', label = "the player is placed on the ground" },
+]
+forbid = [{ text = "terrain wireframe: off", label = "it stays on" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
 
 [[scenario]]
 name = "reports-anomaly-fell-through"

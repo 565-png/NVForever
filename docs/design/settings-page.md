@@ -51,7 +51,7 @@ Audio and Controls, observed in the original's pause menu, 2026-11-09].
 | Graphics | Distance | `distant-lod`, `grass`, `object-distance`, `actor-distance`, `item-distance`, `shadow-distance`, `grass-distance` |
 | Graphics | World | `head-tracking`, `foot-ik`, `sky-clock` |
 | Tweaks | (none) | none named yet |
-| Debug | (none) | `overlay`, `hit-markers`, `god-mode`, `navmesh`, `scope-3d` |
+| Debug | (none) | `overlay`, `hit-markers`, `god-mode`, `navmesh`, `terrain-wireframe` (#2149), `scope-3d` |
 
 The table names every row the registry can hold [documented: `settings_layout.rs::SECTIONS`],
 109 with #1966's `quality` and `enhanced`,

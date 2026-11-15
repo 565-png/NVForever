@@ -193,33 +193,55 @@ apart and the last row/column coincides with the neighbour's first.
   are in the geometry. The maintainer decided on 2026-11-13: "terrain smoothing should be
   the default have the collision follow the smoothed surface". The rule
   (`crates/fnv-world/src/land_surface.rs`, one surface for drawing, collision and every
-  height query):
-  - each grid square is cut into `SUBDIV` × `SUBDIV` = 2 × 2 squares, split along the
-    same diagonal, so every new triangle lies inside one stored triangle;
-  - the new vertices lie on a Catmull-Rom bicubic patch through the LAND vertices; every
-    LAND vertex keeps its stored height exactly;
-  - the patch's distance from the stored triangle is clamped to ± `MAX_DEVIATION` = 8
-    units (one stored step): cliffs and sharp edges keep their shape, placed objects
-    neither float nor sink by more than that;
+  height query; the run's recipe is a `SurfaceSpec` fixed at the start and carried by
+  every job that builds a surface):
+  - each grid square is cut into `subdiv` × `subdiv` squares (2 by default, or 4), split
+    along the same diagonal, so every new triangle lies inside one stored triangle;
+  - the new vertices lie on a Catmull-Rom bicubic patch over control heights at the LAND
+    vertices. Interpolating (the default) the controls are the stored heights, so every
+    LAND vertex keeps its stored height exactly. Fitting, each control is the stored
+    height H moved towards the binomial mean A of its 3 × 3, (1 2 1) × (1 2 1) / 16, by
+    at most K = min(4, bound): F = H + clamp(A − H, −K, K), every F from stored heights
+    only, rows then columns in one fixed order; a plane stays a plane and the staircase
+    `0, 0, 8, 8, 16, 16` becomes the even slope `…, 2, 6, 10, 14, …` (each knot moved
+    2 units); at a LAND vertex the surface is F;
+  - the patch's distance from the *stored* triangle is clamped to ± the bound (8 units by
+    default, one stored step; 0 to 16 with the test aid): cliffs and sharp edges keep
+    their shape, placed objects neither float nor sink by more than that. The bound is
+    the whole of it, fitted or not (K ≤ bound);
   - along a cell edge the patch reads the neighbouring cells' LAND (all eight, so the
     corners too): a vertex outside the cell comes from the cell that owns it, else the
     other one that has it; where no loaded cell has it, it carries on the nearest lines
-    of present vertices (for the least step k of 1 or 2, the mean over the eight grid
-    directions of 2·a − b from the vertices k and 2k away), a rule of the world vertex
-    alone, so every cell that reads it gets the same value; each new vertex is worked out in one fixed square, so both
-    cells of an edge compute it from the same numbers and their edges are identical
-    (heights and normals);
-  - the normals are central differences of the smoothed heights (one vertex of margin
-    beyond the cell); the vertex colours and the texture layers' opacities are
-    interpolated on the stored triangles, so the paint lies where it did;
+    of present vertices (for the least step k of 1 up to the padding, 2 interpolating and
+    3 fitting, the mean over the eight grid directions of 2·a − b from the vertices k and
+    2k away, never an extrapolated one), a rule of the world vertex alone, so every cell
+    that reads it gets the same value; each new vertex is worked out in one fixed square,
+    so both cells of an edge compute it from the same numbers and their edges are
+    identical (heights and normals). Everything an edge's vertices read lies within 9
+    LAND vertices of the edge (2 for the patch and the normals' margin, 1 for the fit's
+    3 × 3, 6 for extrapolation), inside the cells both sides read; this assumes the two
+    LAND records of a shared edge agree on its heights, as the stored triangles do;
+  - the normals are central differences of the final (clamped) heights (one vertex of
+    margin beyond the cell); the vertex colours and the texture layers' opacities are
+    interpolated on the stored triangles, so the paint lies where it did; a fitted
+    surface keeps the stored heights (4.3 KiB a cell) so the lift is measured from the
+    stored triangles;
   - collision (`fnv-phys` terrain, `collider_surface`), `PhysState::terrain_z`, grass,
     the feet and detection probes use the same surface, so actors and objects stand on
     what is drawn.
   The setting `smooth-terrain` (Graphics, on by default; `--no-smooth-terrain`) takes
   effect at the next start: off, the stored triangles are drawn and collided exactly as
-  before. The Pip-Boy local map's outline reads the same surface beyond the loaded
-  collision; the console's CenterOnCell reads the stored grid, which is the same there
-  (the cell's centre is a LAND vertex). An actor standing without a physics character at
+  before. Test aids choose another recipe for comparing them, without changing the
+  setting or the INI [design, #2149: the maintainer picks the default from such runs]:
+  `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit`, `NVF_PLAY_TEST_SMOOTH_SUBDIV=2|4`,
+  `NVF_PLAY_TEST_SMOOTH_BOUND=<0..16>` (a bad value warns once and keeps that field's
+  default; with smoothing off they do nothing). The start logs one line, e.g. `terrain:
+  mode=fit subdiv=4 bound=12 land-shift=4; drawing, collision and queries use this
+  surface` (off: `mode=stored subdiv=1 bound=0 land-shift=0`), and the exit's `terrain
+  summary` counts cell draws over the run (a cell drawn again counts again) and names the
+  recipe. The Pip-Boy local map's outline reads the same surface beyond the loaded
+  collision, and so do the console's CenterOnWorld and CenterOnExterior (the cell's
+  centre on the run's surface; `coc` uses arrival markers). An actor standing without a physics character at
   an authored or navmesh height over the bare landscape (within 32 units of the stored
   triangles, the landscape the first collision under it, not walking up to, on or
   getting off furniture) is drawn as far above the smoothed surface as it stood above
@@ -230,19 +252,43 @@ apart and the last row/column coincides with the neighbour's first.
   #2149]: that "left by a character" record is not kept across a reset (a door to an
   interior and back) or a save and load, so an actor that stopped on displaced, sloping
   ground and has not moved since loses the character's drawing offset and is lifted again:
-  it can then be drawn off the drawn ground by the lift (at most 8 units) plus the
+  it can then be drawn off the drawn ground by the lift (at most the bound, 8 units by
+  default) plus the
   controller's slope clearance it stood with (for example 5 + 8 = 13 units) until it next
   walks. Keeping walker feet in stored-ground space instead was tried
   and dropped: the simulation's positions feed script moves, script shots and raycasts
   and ragdoll start-up as world coordinates. Distant LOD is not touched: its chunks are sunk
-  under the loaded cells with skirts (§7), and the loaded edge moves only between LAND
-  vertices, by at most 8 units. On Goodsprings' cells (−17, 0) and (−18, 0), 1,084 and
+  under the loaded cells with skirts (§7), and the loaded edge moves by at most the bound
+  (between the LAND vertices; fitting, the LAND vertices themselves by at most K). With
+  the default recipe, on Goodsprings' cells (−17, 0) and (−18, 0), 1,084 and
   1,541 of the 3,136 new vertices move by more than half a unit, the 95th percentile by
   3.3 and 4.6 units, and 19 and 43 reach the bound [documented: `fnvtool world land`
   heights of the nine cells around each (FalloutNV.esm, WastelandNV), run through a
-  Python port of the rule above on 2026-11-14; a calculation, not a game run]. Cost: four times the terrain vertices (17 × 17 → 33 × 33
-  per quadrant mesh, blended layers included) and nine LAND height reads per cell
-  instead of one; frame cost and memory to be measured.
+  Python port of the rule above on 2026-11-14; a calculation, not a game run]: that is
+  why a larger bound alone changes little there, and why the fit moves the controls.
+  Cost per cell [design, #2149: arithmetic from the grid sizes; frame cost and memory to
+  be measured]:
+
+  | | 2 × 2 | 4 × 4 |
+  |---|---:|---:|
+  | Vertex spacing | 64 units | 32 units |
+  | Surface and collision vertices | 4,225 | 16,641 |
+  | Collision triangles | 8,192 | 32,768 |
+  | Vertices per quadrant mesh | 1,089 | 4,225 |
+  | Heights and normals | 66.0 KiB | 260.0 KiB |
+  | Collision position and index arrays | 145.5 KiB | 579.0 KiB |
+  | Base render geometry (64-byte vertices, u32 indices) | 368.3 KiB | 1,440.3 KiB |
+
+  Blended layers and folded opacities add to the render figure; Rapier's own structures
+  are not counted. Nine LAND height reads per cell instead of one either way.
+  **Terrain wireframe** [design, #2149]: the Debug row `terrain-wireframe` (live, off by
+  default; `--terrain-wireframe`, engine/nvforever/src/terrain_wireframe.rs) draws every
+  triangle edge of the loaded, shown cells' surfaces once (rows, columns, diagonals as
+  line strips; not the texture layers, not distant LOD) as magenta 1-pixel gizmo lines,
+  depth-tested with a small bias. On switching on, a read-pool job per cell builds the
+  surface again from the LAND records with the run's recipe; cells loaded or shown while
+  on get one, cells unloaded or hidden lose theirs; off, nothing is built, kept, uploaded
+  or drawn (12,416 edges a cell at 2 × 2, 49,408 at 4 × 4, 3,136 stored).
 
 ## 4. Reference rotation convention
 

@@ -220,11 +220,17 @@ the spec it links to.
 
 - **Terrain smoothing: how far and when (#2149).** [design, #2149] Smoothing is on by
   default and collision follows it (your decision of 2026-11-13). Chosen here: each grid
-  square in 2 × 2, the surface held within 8 units (one height step, `MAX_DEVIATION`) of
-  the stored triangles, and the setting taking effect at the next start rather than at
-  once (drawn ground and collision must change together). A larger bound rounds more
-  but moves the ground further from placed rocks and roads; 4 × 4 costs four times the
-  vertices again. ([world §3 "Smoothing"](spec-notes/world.md#3-landscape-land))
+  square in 2 × 2, the surface through the stored points and held within 8 units (one
+  height step) of the stored triangles, and the setting taking effect at the next start
+  rather than at once (drawn ground and collision must change together). Played, a mound
+  and its ridge looked hardly smoother: the stored points keep the 8-unit steps. Three
+  axes can now be compared in the game by test aids, the default unchanged until one is
+  picked: through the points or fitted near them (each moved at most 4 units, which
+  evens a staircase into a slope), 2 × 2 or 4 × 4 (four times the triangles), and the
+  bound (8 to 16 units: more rounding, more distance from placed rocks and roads). The
+  Debug row Terrain wireframe draws the triangles to see the shape. Smoke scenarios
+  `terrain-smoothing-fit-s2-b8`, `-interpolate-s4-b8`, `-fit-s4-b12` start each.
+  ([world §3 "Smoothing"](spec-notes/world.md#3-landscape-land))
 
 - **Grass fires: size, speed and regrowth (#2567).** [design] Burning weapons and blasts
   light generated grass; a fire spreads in 64-unit patches (0.5-1.5 s a step, faster

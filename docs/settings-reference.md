@@ -898,6 +898,9 @@ After the Controls tab's own rows (see the end of this page):
   ridges lose their steps and zig-zags; actors and objects stand on what is drawn. Off: the
   landscape's triangles as stored. It takes effect at the next start (loading a save starts
   the game again), so drawn ground and collision always change together. Not in the original.
+  For comparing recipes, the test aids `NVF_PLAY_TEST_SMOOTH_MODE` (`interpolate`, `fit`),
+  `NVF_PLAY_TEST_SMOOTH_SUBDIV` (`2`, `4`) and `NVF_PLAY_TEST_SMOOTH_BOUND` (0 to 16 units)
+  override how it smooths for one run without changing this row or its saved default.
 - Command-line switches: `--no-smooth-terrain`
 - More: docs/spec-notes/world.md §3 "Smoothing"
 - Registered in `engine/nvforever/src/settings.rs` (state in `engine/nvf-play/src/smooth_terrain.rs`)
@@ -1003,6 +1006,18 @@ After the Controls tab's own rows (see the end of this page):
 - On the page: On: the navmesh near the camera and the walking NPCs' paths are drawn.
 - Command-line switches: `--show-navmesh`
 - Registered in `engine/nvforever/src/settings.rs`
+
+### `terrain-wireframe`: Terrain wireframe
+
+- On the page: On: draw triangle edges over the loaded landscape to inspect its shape.
+  Changes immediately. Distant terrain is not outlined.
+- In full: Off by default. On: every triangle edge of the loaded landscape, as it is drawn
+  and collided (smoothed or stored), is drawn as a thin magenta line over the ground, for
+  looking at the shape smoothing gives it. Cells that load while it is on are outlined as
+  they come; nothing is built or kept while it is off. Not in the original.
+- Command-line switches: `--terrain-wireframe`
+- More: docs/spec-notes/world.md §3 "Smoothing"
+- Registered in `engine/nvforever/src/settings.rs` (drawn by `engine/nvforever/src/terrain_wireframe.rs`)
 
 ### `scope-3d`: 3D scopes (test)
 
