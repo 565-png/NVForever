@@ -2332,6 +2332,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
      prevent routes around the ends. Also check a 46–49° ramp so the actor's slope
      behavior can be separated from its stepping over an edge.
 
+## Added 2026-11-14 (NPC launcher round visibility, #2512)
+
+167. **When does an NPC launcher show its loaded round?** (P2; #2512,
+     animation.md section 9.7.) [documented: issue #2512 and animation.md section 9.7]
+     The supplied missile launcher/Fat Man/dart-gun clips hide `##NifRound` in their
+     attack and show it during reload; the third-person launcher aim has no round
+     track. [hypothesis] The original retains the attack's hidden state through aim
+     until reload shows it, and restores the model default on equip/holster.
+     [design: #2512 settled owner decision] NVForever implements that provisional
+     rule. Record an NPC firing and reloading each weapon, then interrupt before
+     reload, wait in aim, and holster/draw again. Capture when the round disappears
+     and returns, including a weapon redrawn before reload. No original capture was
+     made in this writer run.
+
 ## Added 2026-11-14 (Oliver's rigid cap frame, #2529)
 
 168. **Does Oliver's cap follow the full head frame, idle and speaking?** (P2; #2529,

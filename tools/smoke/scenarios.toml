@@ -28971,6 +28971,26 @@ forbid = [
 order = [["pipboy repair: open", "test aid: real input Key(Enter) pressed", "pipboy repair: 10mm Pistol", "pipboy repair: closed:"]]
 
 [[scenario]]
+name = "npc-launcher-round"
+source = "[design, #2512] NPC attack/reload visibility on weapon-model targets (docs/spec-notes/animation.md section 9.7): the round stays hidden after the shot until reload shows it"
+note = "[design] Reuses melee-reach-lead-pipe's Violet combat setup on open ground, moved 2200 units from the god-mode player, with the launcher/ammo IDs from missile-explosion (00004340 / 00029383) [documented: those scenario setups]. No existing human NPC launcher setup was found; body-weapons-sentry-blast uses an embedded gun without this held model. Equipment reconciliation draws the launcher. Not yet run."
+areas = ["animation", "combat"]
+paths = ["engine/nvforever/src/weapons.rs", "engine/nvforever/src/actors.rs", "engine/nvforever/src/attack_anims.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "3:moveto:FiendVioletRef:player:0:2200:0,4:call:FiendVioletRef:RemoveAllItems,4.5:call:FiendVioletRef:AddItem:0x00004340:1,4.5:call:FiendVioletRef:AddItem:0x00029383:12,5:call:FiendVioletRef:EquipItem:0x00004340,7:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "FiendVioletRef"]
+run_seconds = 45
+expect = [
+  { re = 'outfit: actor 000F570B: weapon 0x00004340.*now held', label = "the launcher model is equipped on Violet" },
+  { re = 'attack anims: 000F570B plays .*2hlattack(right|left)\.kf', label = "Violet plays a launcher attack with a round visibility track" },
+  { re = 'attack anims: 000F570B plays .*2hlreload[ae]\.kf', label = "Violet plays a launcher reload with a round visibility track" },
+]
+order = [[
+  { re = 'npc weapon part: Actor 000F570B .* ##NifRound hidden', label = "the fired round is hidden" },
+  { re = 'npc weapon part: Actor 000F570B .* ##NifRound shown', label = "the reload shows the round again" },
+  { re = 'npc weapon part: Actor 000F570B .* ##NifRound hidden', label = "the next shot hides the round again" },
+]]
+
+[[scenario]]
 name = "grass-fire"
 source = "owner request 2026-11-14 (#2567, docs/design/grass-fire.md): fire from a burning weapon spreads across grass, sets the actors in it alight and goes out within a hard limit; the grass blackens and sinks away and grows back when its cell reloads"
 note = "the player (god mode) fires the Flamer (0000432D, fuel 00029371) north at the grass by the Prospector Saloon (nearest tufts about 230 units north) for a second from 26 s (message boxes off: one open stops the trigger), then looks at the fire; Easy Pete is held in place and put 250 units in front, in the fire's path, at 27 s; the fire runs to its end. Frames for the eye: the front spreading, the black grass sinking, the scorched ground left behind"
