@@ -9,7 +9,7 @@
 //! (`bhkSimpleShapePhantom`) on the Trigger layer (12), as in the bear trap, the
 //! tripwire and the pressure plate (`meshes\traps\beartrap01.nif` node "Trigger": a
 //! box 32 × 32 × 8 units half extents) [observed: `fnvtool nif decode`], and phantoms on
-//! the Gas Trap layer (24), the gas clouds (`meshes	raps	rapgasfire01.nif`: one
+//! the Gas Trap layer (24), the gas clouds (`meshes\traps\trapgasfire01.nif`: one
 //! sphere, nothing solid [observed]; their scripts set them off when an actor walks in
 //! with a flamer, an incinerator or a Shishkebab drawn, or burning; shots and blasts:
 //! `crate::gas_traps`, #2687). Each phantom
