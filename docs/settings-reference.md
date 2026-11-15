@@ -887,6 +887,19 @@ After the Controls tab's own rows (see the end of this page):
 - More: docs/design/graphics-enhanced.md
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `mesh-terrain-blend`: Blend meshes into ground
+
+- On the page: On: softens where outdoor roads, rocks and cliffs meet the landscape, giving
+  them the ground's colour and light there. Not in the original.
+- In full: On: rigid outdoor statics and static collections (roads, rocks, cliffs) take the
+  landscape's colour and shading over the lowest 8 units above the ground, from a cache of
+  the landscape around the camera. Off by default and in both looks, not part of Enhanced
+  effects; switches at once, no restart. The test aid `NVF_PLAY_TEST_MESH_BLEND` overrides
+  it.
+- Command-line switches: `--graphics-only` (`--graphics-only mesh-terrain-blend`)
+- More: docs/design/graphics-enhanced.md §3.12
+- Registered in `engine/nvforever/src/settings.rs`
+
 ## Graphics › Distance
 
 ### `distant-lod`: Distant terrain and objects
