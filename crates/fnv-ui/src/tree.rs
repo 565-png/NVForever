@@ -1053,6 +1053,8 @@ impl Ui {
     /// Atomically write 1..=8 distinct existing plain traits whose complete IDs and
     /// external-write tokens still match. Limits (4096-byte names, 65536-byte values)
     /// are engine policy. Validate all targets and counters before the first write.
+    /// Success calls `set_at` directly, without `set_trait`'s reshape-diagnostic entrypoint;
+    /// the batch neither creates traits nor reshapes the tree.
     pub fn set_existing_batch_if_unchanged(&mut self, writes: &[ConditionalTraitWrite<'_>]) -> Option<Vec<TraitWriteSerial>> {
         if writes.is_empty() || writes.len() > 8 { return None; }
         let count=u64::try_from(writes.len()).ok()?;
