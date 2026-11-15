@@ -1,6 +1,7 @@
 //! The launcher's icon in the Windows executable (Explorer, shortcuts); the window sets the
 //! same picture itself (main.rs). Common Controls 6 for the folder picker, as nvforever's
 //! build.rs embeds it.
+#[cfg(windows)]
 const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <dependency>
