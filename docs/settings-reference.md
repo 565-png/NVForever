@@ -237,6 +237,9 @@ are at the end.
 
 - On the page: The game's field of view in degrees across a 4:3 picture (75 as the
   original's default); wider screens see more at the sides.
+- In full: Scripts read the angle set here (GetCameraFOV 0, GetPlayerCamFOV 0) from the start
+  and after each change, as the original's scripts read its INI's; a console `fov` world
+  angle wins until the slider is moved again.
 - Command-line switches: `--fov`
 - Registered in `engine/nvforever/src/settings.rs`
 
@@ -248,8 +251,10 @@ are at the end.
   steps of 5, in degrees as the field of view counts them (across a 4:3 picture; 55 as the
   original's `fDefault1stPersonFOV`). Lower draws them bigger and closer, higher smaller and
   further off; it takes effect at once. The world's view, the Pip-Boy's own 47 and the
-  console's `fov` first-person angle are left as they are. Not on the original's settings
-  page.
+  console's `fov` first-person angle are left as they are. Scripts read it as the
+  first-person field of view (GetCameraFOV 1, GetPlayerCamFOV 1, and GetPlayerCamFOV 2 in
+  first person) from the start and after each change; a console `fov` first-person angle
+  wins there too. Not on the original's settings page.
 - Command-line switches: `--viewmodel-fov`
 - Registered in `engine/nvforever/src/settings.rs`
 
