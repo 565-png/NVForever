@@ -224,6 +224,13 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- **An intercom nobody has set up speaks for the actor its script names (#2454).**
+  [hypothesis, #2454] When a talking activator starts a conversation before any script
+  told it who speaks, ours lets the one actor its scripts name speak (Ramos for the
+  Hidden Valley intercom), instead of saying nothing. Without it, sneaking into the
+  bunker and being sent out for your gear by McNamara left your controls off for good.
+  Check in game that Ramos speaks on the intercom there on a sneak-in save.
+  ([talking-activators §2](spec-notes/talking-activators.md))
 - **Grass fires: size, speed and regrowth (#2567).** [design] Burning weapons and blasts
   light generated grass; a fire spreads in 64-unit patches (0.5-1.5 s a step, faster
   downwind), each patch burns 6 s, and a fire stops at 1,024 units from its start or 500
@@ -594,6 +601,17 @@ the spec it links to.
     offered, frees him and he leaves the cross. You remember freeing him at any stage: if
     you did so without having spoken to Diane, say so; observer check 175 asks the
     original. ([anders-cross](spec-notes/anders-cross.md))
+83. **Anders on the cross: his head no longer turns over, and he is found on the cross
+    (#2471).** His cross clips hang his head past straight down; ours read that head's
+    direction from its forward alone, got the opposite way, and turned it to you upside
+    down. The 60° limit did hold, measured from his chest (his body faces away from
+    his reference's heading on the cross; the logged yaw was the root's). Ours now: the
+    head is lifted to you right side up, within 60° of his chest (plus the talk clip's
+    own nods); the same reading fixes head tracking for any hanging head. He also used
+    to sidestep 8 units on a limping clip and climb onto the cross in front of you; an
+    actor standing at its cross is now put on it at once. Say if the crucified should
+    not turn their heads to you at all, or if you have seen the climb in the original.
+    Observer check 174 asks the original. ([anders-cross-head](spec-notes/anders-cross-head.md))
 81. **A faction disguise outranks the player's bad standing with that faction (#2611).**
     In NCR armour on the Legion route, every NCR soldier at Hoover Dam attacked: the
     player's enemy flag with NCRFactionNV (a crime, SetPCEnemyOfFaction) won over the
