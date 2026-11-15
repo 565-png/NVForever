@@ -2461,7 +2461,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-15 (REPCONN test-site load-door lock, #2538)
 
-172. **Is a load door without lock data locked as its other side is?** (P1; #2538,
+187. **Is a load door without lock data locked as its other side is?** (P1; #2538,
      cells-refs.md section 6.) **Answered [observed: capture run15b_a, 2026-11-15;
      xNVSE 6.4.9, JIP LN 57.30]: yes for reads and player activation.** Fresh
      `coc RocketLabBasement` (0x0007EA61, REPCONN Basement) from a Goodsprings save
