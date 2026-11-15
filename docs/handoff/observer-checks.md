@@ -2199,7 +2199,7 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
 
 ## Added 2026-11-14 (actor stealth fields, #2557)
 
-148. **How do cloaked Nightkin and nightstalkers look and change state?** (P2; #2557,
+170. **How do cloaked Nightkin and nightstalkers look and change state?** (P2; #2557,
      refraction.md section 5.) [observed: owner's 2026-11-14 REPCONN playtest, issue #2557
      comment] Nightkin there were drawn plain even as their uncloak sound/effect played.
      [design, #2557] NVForever now refracts loaded living actors at Chameleon >= 1,

@@ -28369,7 +28369,7 @@ expect = [
   { re = 'ai \[[^\]]*\] CrSuperMutantNightkin 0xFF000000: created by a script \(PlaceAtMe\)', label = "the scripted Nightkin is the first created reference" },
   { re = 'stealth field: CrSuperMutantNightkin 0xFF000000 on \(Chameleon 95\)', label = "the Nightkin gets the actor stealth field" },
 ]
-manual = "[design, #2557] Inspect the refracting body and weapon. Unrestrain the actor and provoke an attack: plain during attack, cloaked after combat; a killed actor restores. Compare the player's Stealth Boy and Pip-Boy using aid-stealth-boy, stealth-boy-refraction and stealth-boy-pipboy. Original-game comparisons remain observer check 148."
+manual = "[design, #2557] Inspect the refracting body and weapon. Unrestrain the actor and provoke an attack: plain during attack, cloaked after combat; a killed actor restores. Compare the player's Stealth Boy and Pip-Boy using aid-stealth-boy, stealth-boy-refraction and stealth-boy-pipboy. Original-game comparisons remain observer check 170."
 
 [[scenario]]
 name = "stalkers-new-game-morning"
