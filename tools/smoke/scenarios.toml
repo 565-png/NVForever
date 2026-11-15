@@ -30178,3 +30178,17 @@ order = [[
   { re = 'resurrect: 0x00163414 has its own items made up again: .*\d+ Weap\w+.*; it carries', label = "resurrected after being stripped, his own items are made up again, a weapon among them" },
   { re = 'style weapon: VEFR02LegionThugLeaderCMRef 0x00163414 takes up \w+ 0x[0-9A-F]{8}', label = "the resurrected leader takes up a weapon again" },
 ]]
+
+[[scenario]]
+name = "gomorrah-suite-sconce-glow"
+source = "issue #2435: the Gomorrah Suites (Gomorrah03) wall sconces (NeoclassicalSconce, clutter/neoclassical/neoclassicalsconce.nif) drew their glow card NeoclassicalSconce:9 (unlit, ONE / ONE, no texture, vertex colour 0.34 at the bowl to black on its outline) as a flat pale board with a hard outline: the shader added the room's fog colour over the whole card, and the unlit vertex colours, made linear at the vertices, stayed bright almost to the black edge (docs/spec-notes/nif.md section 6 'Fog on added light', 'Unlit vertex colours as display values'); frames in target/smoke facing the sconce 0011A90A (gomorrah_sconce_near.png) and from the side (gomorrah_sconce_side.png)"
+areas = ["materials", "interiors"]
+paths = ["engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_spawn.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOTO = "6:5900:2250:6384", NVF_PLAY_TEST_LOOK = "6.5:90:8,9:50:8", NVF_PLAY_TEST_SHOTS = "8:gomorrah_sconce_near.png,10.5:gomorrah_sconce_side.png" }
+args = ["--play", "--cell", "Gomorrah03", "--pos=6015,1700,6384", "--heading", "0", "--no-voice", "--no-messages"]
+run_seconds = 12
+manual = "gomorrah_sconce_near.png: the wash of light above the bowl is brightest at the bowl and fades out towards its outline, without a pale flat board of even brightness; the room stays dark but readable"
+expect = [
+  { re = 'test aid: screenshot .*gomorrah_sconce_near\.png', label = "the frame facing the sconce is saved" },
+  { re = 'test aid: screenshot .*gomorrah_sconce_side\.png', label = "the frame from the side is saved" },
+]
