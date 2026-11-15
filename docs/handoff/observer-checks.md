@@ -2687,10 +2687,134 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
+197. **What does a resurrected actor carry?** (P2; `fnv_game::resurrect`,
+    `fnv_sim::World::restock_inventory`, issue #2683.) NVForever makes the items of a
+    dead actor's own item list up again when it is resurrected (rolled anew; only what
+    it has fewer of is added) and keeps everything else it carries [hypothesis; capture
+    rs1 only showed that a given Stimpak stays and looted given ones do not come back].
+    Kill a Legionary Assassin of the reputation hit squad (or any NPC whose weapon is in
+    a leveled list of its own record, console `kill`), take everything from the body and
+    pick up its dropped weapon, then `resurrect` (and again with `resurrect 1`), kill it
+    and look: does it carry its weapons, armour and loot again? Same once more without
+    looting: is anything doubled, and is the weapon that fell beside the first body
+    still on the ground? Then with an NPC whose items are all fixed entries (Ringo):
+    do his own looted items come back?
+
+## Added 2026-11-15 (REPCONN test-site load-door lock, #2538)
+
+198. **Is a load door without lock data locked as its other side is?** (P1; #2538,
+     cells-refs.md section 6.) **Answered [observed: capture run15b_a, 2026-11-15;
+     xNVSE 6.4.9, JIP LN 57.30]: yes for reads and player activation.** Fresh
+     `coc RocketLabBasement` (0x0007EA61, REPCONN Basement) from a Goodsprings save
+     that never visited it: 0x000CE1AD, without XLOC, and its XTEL partner
+     0x0008F97C, with XLOC 255 / no key / flags 0, both read `GetLocked` 1 and
+     `GetLockLevel` 255. The tunnel-side door is at (9812, -2504, 7180); from
+     (9902, -2414, 7180), 130 units in front, `000CE1AD.Activate player` did not
+     move the player or teleport. Activating 0x0008F97C from inside the room was
+     refused too, with all four reads unchanged after each attempt. The hatch pair
+     0x000CD777 / 0x001694E6 read 0 / 0 on both sides. [observed: FalloutNV.esm,
+     fnvtool esm decode / world refs, 2026-11-15] The two load doors share base
+     UtlDoorBg01 0x0003D205 (no script); 0x0008F97C is at (9760, -2572, 7176),
+     85 units from 0x000CE1AD. The hatches use REPCONHatch2 0x001694DD (no name
+     or script), at (7756, -3644, 7316) / (8222, -3377, 6615); neither has XLOC.
+     No FalloutNV.esm script names any of these four references. [hypothesis,
+     #2538] Key/pick/script unlocking through either side changes the source lock;
+     creating an own lock leaves the partner independent. Those mutations, key
+     inheritance, broken-lock sharing and NPC use were not captured.
+
+## Answered 2026-11-15 (weather region lookup timing, #2531)
+
+199. **When does the weather follow a weather region: by its outline or the cell's
+     region list, and when is it looked up?** (P2; #2531, world.md §6.) **Answered
+     [observed: captures run15b_w and run15b_w2, 2026-11-15; first person, GameHour 12,
+     xNVSE 6.4.9, JIP LN 57.30 GetCurrentWeather/GetCurrentWeatherPercent]:** script
+     MoveTo to (110686, 19125), cell 27,4: NVWastelandClear; (109775, 18882), cell 26,4,
+     260 units outside NVLegateRegion's outline: clear for 40 s despite that cell's
+     XCLR listing the region [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-15].
+     MoveTo (109330, 18852), inside: NVlegateCampWeather;
+     back outside: clear. All complete (percent 1.0) at the first sample 4 s after
+     moving. Walking east at y 18849 kept camp weather past outline x 109513 and
+     fall-off distance x 110537: last camp sample x 110567.9, first clear x 110596.0
+     at percent 0.000, across cell border x 110592. Fade rose 0.033/s, complete in
+     about 30 s. Walking west entered cell 26,4 outside the outline and kept clear
+     to (109067, 18849), 450 units inside, for another 49 s standing. Thus membership
+     uses the outline, sampled on exterior cell entry; walking inside a cell holds
+     the result, while script moves resample and snap. [hypothesis: extend that
+     placement refresh to load doors, other teleports, fast travel, loaded games,
+     worldspace changes and coming outdoors; only script MoveTo was captured.]
+
+## Answered 2026-11-15 (combat distraction, #2573)
+
+200. **Does a fighter detect its own foe better than a bystander? Answered: yes.**
+     (P2; #2573, [actor-behaviour §2.1a](../spec-notes/actor-behaviour.md#21a-combat-distraction-2573-answered-observer-check-200), detection.md §9.)
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] xNVSE 6.4.9 and JIP LN
+     57.30 `GetDetectionValue`, Searchlight Airport's runway, GameHour 12; the player
+     sneaking, standing still, in god mode. Detectors GoodspringsSettler01Ref 0x00104F03
+     and GoodspringsSettler03Ref 0x00104F0A both had Perception 5 and line of sight.
+     "Fighter" used `StartCombat player` (IsInCombat 1, IsCombatTarget player 1);
+     "watcher" used `StartCombat` on a restrained gecko after RemoveFromAllFactions and
+     Assistance 0 (IsInCombat 1, IsCombatTarget player 0). Run 2 swapped the NPCs' roles.
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] Distances and readings:
+
+     | State of the detector | Distance to the player | GetDetectionValue player |
+     |---|---|---|
+     | Not in combat, facing the player (both NPCs, both runs) | 695 | 79 |
+     | Not in combat, walking (both NPCs) | 669-674 / 650 / 633-640 / 621-627 / 601 / 567 | 80 / 82 / 83 / 84 / 85 / 86-87 |
+     | In Combat, the player its combat target (run 1) | 687-693 / 672-685 / 650 / 627 | 83 / 83-84 / 85 / 87 |
+     | In Combat, the player its combat target (run 2, the other NPC) | 695 / 675-681 / 650 / 618-627 | 83 / 84-86 / 86 / 87-88 |
+     | In Combat with the gecko, the player not its target (run 1) | 609-636 | 81 |
+     | In Combat with the gecko, the player not its target (run 2) | 547-591 | 83-84 |
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] At comparable distances,
+     a fighter read its own target 3-4 higher than the same NPC out of combat, in both
+     role assignments. Fighting someone else read the player 2-4 lower; those samples
+     were fewer because line of sight came and went. This settles the direction in
+     favour of the setting's description: fSneakCombatMod applies to a detector in
+     Combat against actors outside its combat target list, giving 0.8 at defaults;
+     its own targets retain 1 + fSneakAlertMod = 1.2. The wiki formula's IsCombatTarget
+     reading and the Fallout Wiki's 0.8 / 1.2 table are reversed (§2.1).
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] `SetRestrained 1` on a
+     combatant ended combat (IsInCombat 0 from the next sample), as `tcai` did.
+     GetDetectionValue read -100 for a detector in combat without line of sight.
+     These captures did not time detection loss or the search after breaking sight.
+
+     [design, #2573; tools/smoke/scenarios.toml] `detection-combat-target-sneak`
+     uses the cleared Searchlight Airport runway at hour 12 with god mode. The
+     player sneaks from 2 s and stands still. Fighter GoodspringsSettler01Ref
+     (00104F03) and watcher GoodspringsSettler03Ref (00104F0A) have Perception 5 and
+     Assistance 0; the watcher is removed from all factions. A gecko is created at
+     the watcher with Aggression 0 and Perception 0, then positioned 150 units
+     toward the player. Both settlers reset to mirrored 690-unit offsets at 5.8 s
+     and the gecko resets at 5.9 s. At 6 s the fighter starts combat with the player
+     and the watcher with the gecko. Five paired GetDetectionValue/GetDistance reads
+     run every 0.5 s from 6.6 to 8.6 s. Every fighter value must exceed its paired
+     watcher value; distances are logged without absolute ranges.
+
+     [observed: smoke runs on the combined build, 2026-11-15] With the fix, both
+     detectors at 690 units read fighter 64 / watcher 56; the fighter closing to 610
+     read 69 (PASS). With both detection.rs files reverted to upstream main, fighter
+     84-88 / watcher 91 in all five pairs (FAIL).
+
+## Added 2026-11-15 (Gomorrah Suites wall-sconce glow, #2435)
+
+201. **How strong and how wide is the glow on the wall above a lit Gomorrah Suites
+     sconce?** (P3; #2435, nif.md §6 "Fog on added light".) Ours: the card
+     `NeoclassicalSconce:9` (ONE / ONE, no texture, vertex colour 0.34 at the bowl to
+     black on its outline) adds its colour in display values, fog only dimming it; next
+     to the bowl it is about 100 grey levels over the wall, near the outline 10 to 25
+     [observed in NVForever; hypothesis for the game]. In Gomorrah03 by any hour, stand
+     at 5900, 2250, 6384 facing east (heading 90, level) towards the sconce 0x0011A90A,
+     take one frame, then one from heading 50; note the wall's grey level beside the
+     glow, the glow's level next to the bowl and halfway up, and whether an outline of
+     the card can be seen anywhere. Softer and dimmer than ours points at the
+     display-value sum ("Additive blend") on a ONE / ONE card; the same agrees with ours.
 
 ## Added 2026-11-15 (gas traps, #2687)
 
-197. **What sets a gas cloud off: a ballistic gun fired inside it, one fired through it,
+202. **What sets a gas cloud off: a ballistic gun fired inside it, one fired through it,
      a frag grenade?** (P1; #2687, `engine/nvf-play/src/gas_traps.rs`.) Ours since
      #2687: a shot that passes through a cloud hits it with its weapon, which sets it off
      only for the weapons of `ExplodesGasTrapsOnHit` (FLST 0x0007627F: energy, fire,
