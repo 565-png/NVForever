@@ -20,6 +20,7 @@ pub mod audio_out;
 pub mod bindings;
 pub mod blocking;
 pub mod chargen;
+pub mod clutter_pose;
 pub mod creator;
 pub mod combat;
 pub mod compass;
@@ -71,6 +72,7 @@ pub mod knockouts;
 pub mod loading;
 pub mod loading_look;
 pub mod main_menu;
+pub mod menu_scale;
 pub mod location_markers;
 pub mod lockpick;
 pub mod roulette;
@@ -81,6 +83,8 @@ pub mod caravan;
 pub mod challenges;
 pub mod poker;
 pub mod menu;
+pub mod mod_log;
+pub mod grass_fire;
 pub mod mines;
 pub mod thrown;
 pub mod perk_marks;
@@ -413,6 +417,7 @@ impl Plugin for PlayPlugin {
             .add_plugins(jip_physics::JipPhysicsPlugin)
             .add_plugins(script_quantity::ScriptQuantityPlugin)
             .add_plugins(mines::MinesPlugin)
+            .add_plugins(grass_fire::GrassFirePlugin)
             .add_plugins(thrown::ThrownPlugin)
             .add_plugins(falls::FallsPlugin)
             .add_plugins(swing_traps::SwingTrapsPlugin)

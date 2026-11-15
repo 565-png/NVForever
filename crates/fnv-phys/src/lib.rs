@@ -35,6 +35,7 @@ pub mod convert;
 pub mod gore;
 pub mod grab;
 pub mod hull;
+mod islands;
 pub mod layers;
 pub mod placed;
 pub mod primitive;
