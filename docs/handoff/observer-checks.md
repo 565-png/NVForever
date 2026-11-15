@@ -2457,3 +2457,15 @@ already talking takes over at once, same topic or another; nothing is queued or 
      attacking until the ranger is near agrees with ours; everyone attacking at once
      says the flag beats the disguise (then the disguise works only through the
      reputation reset, reputation.md §4).
+
+## Added 2026-11-14 (talking activators with no talking actor set, #2454)
+
+185. **Who speaks through a talking activator no script has given an actor?** (P2; #2454,
+     talking-activators.md §2.) Ours: the one actor the load order's scripts name for it
+     in SetTalkingActivatorActor (Ramos for HVIntercomREF), else the activator itself
+     [hypothesis]. On a save from before the Hidden Valley bunker, get in without
+     touching HVIntercomREF (sneak in), go through Ramos's escort, accept McNamara's
+     ranger task: when the screen fades and the player stands at the inner door, record
+     whether the dialogue menu opens, which INFO is said (Ramos's 000E3664 or none),
+     and when the controls come back. Also `HVIntercomREF.IsTalkingActivatorActor
+     RamosREF` just before McNamara's line.

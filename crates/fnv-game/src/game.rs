@@ -462,6 +462,12 @@ pub struct RefExtra {
     /// SetTalkingActivatorActor.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub talking_actor: Option<FormId>,
+    /// Whether a SetTalkingActivatorActor has reached this reference, with an actor or
+    /// without (cleared: back to the activator's own voice); until then a talking
+    /// activator speaks for the actor its scripts name (`Game::talker`, #2454). A save
+    /// from before this field with an actor set reads as set (`Game::talker`).
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub talking_actor_set: bool,
     /// SetCriticalStage (0 none, 1 goo start, 2 goo end, 3 disintegrate start, 4 end).
     #[serde(skip_serializing_if = "is_zero", default)]
     pub critical_stage: u16,
