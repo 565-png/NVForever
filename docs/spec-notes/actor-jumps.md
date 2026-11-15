@@ -29,8 +29,10 @@ over FalloutNV.esm (2026-10-20). The player's own jump is physics.md ยง6.3 and ย
   of an elevation that will cause damage unless this flag is set." NVForever's packages
   let an actor's path use all downward ledge links with this flag (`fnv_ai::Ai::path_params`).
   [design, #2532] Without it, authored downward links up to `fJumpFallHeightMin` are
-  available when the ordinary area/door route is unavailable; existing climb rules stay
-  unchanged. [hypothesis, #2532] The planned takeoff-to-landing height predicts safety
+  available only after ordinary routing returns unreachable. Ordinary A* and path
+  smoothing disable these drops; search-limit failures do not enable them
+  (`fnv_nav::NavGraph::search_path`). Existing climb rules stay unchanged.
+  [hypothesis, #2532] The planned takeoff-to-landing height predicts safety
   for a single drop (physics.md section 6.10); observer check 224 checks this policy.
 - **Settings**: FalloutNV.esm holds four jump settings, all about falls: `fJumpFallHeightMin`,
   `fJumpFallHeightExponent`, `fJumpFallVelocityMin`, `fJumpSwimmingMult` [observed:

@@ -850,6 +850,58 @@ fn floor_with_deck_above() -> NavGraph {
     graph(&[(floor, W), (ramp, W), (landing, W), (deck, W)])
 }
 
+// [design, #2532] Synthetic ramp route with a shorter authored drop at the deck's west end.
+fn ramp_with_drop() -> NavGraph {
+    let mut floor = grid(1, [0.0, 0.0], 4, 4, 100.0, &[], flat);
+    let mut ramp = grid(2, [400.0, 0.0], 4, 1, 100.0, &[], |x, _| (x - 400.0) * 0.5);
+    let mut landing = grid(3, [800.0, 0.0], 1, 4, 100.0, &[], |_, _| 200.0);
+    let mut deck = grid(4, [0.0, 300.0], 8, 1, 100.0, &[], |_, _| 200.0);
+    seam(&mut floor, &mut ramp, link_kind::PORTAL);
+    seam(&mut ramp, &mut landing, link_kind::PORTAL);
+    seam(&mut deck, &mut landing, link_kind::PORTAL);
+    let (dt, de, ..) = edges_at(&deck, 0.0)[0];
+    let ft = edges_at(&floor, 0.0).into_iter().find(|(_, _, a, b)| a[1].min(b[1]) == 300.0).unwrap().0;
+    link(&mut deck, dt, de, floor.form_id, ft, link_kind::LEDGE_DOWN);
+    graph(&[(floor, W), (ramp, W), (landing, W), (deck, W)])
+}
+
+#[test]
+fn safe_drops_preserve_the_ordinary_ramp_and_its_smoothed_path() {
+    let g = ramp_with_drop();
+    let from = Place { space: W, pos: [50.0, 350.0, 200.0] };
+    let to = Place { space: W, pos: [50.0, 350.0, 0.0] };
+    let ordinary = g.find_path(from, to, &PathParams::default()).unwrap();
+    assert!(ordinary.legs[0].points.iter().any(|p| p[0] > 700.0));
+    assert!(ordinary.legs[0].hops.is_empty());
+    let safe = PathParams { safe_drop_max: Some(200.0), ..Default::default() };
+    assert_eq!(g.find_path(from, to, &safe).unwrap(), ordinary);
+    let shortcut = g.find_path(from, to, &PathParams { ledges: true, ..safe.clone() }).unwrap();
+    assert_eq!(shortcut.legs[0].hops.len(), 1);
+    assert!(!shortcut.legs[0].hops[0].up);
+    assert!(shortcut.length < ordinary.length);
+    let limited = PathParams { max_expanded: 1, ..safe };
+    assert!(matches!(g.find_path(from, to, &limited), Err(PathError::TooFar { .. })));
+}
+
+#[test]
+fn safe_drops_retry_when_the_ordinary_same_area_route_is_blocked() {
+    let mut g = ramp_with_drop();
+    // [design, #2532] Area labels still connect both levels, but this actor cannot use the ramp.
+    let ramp = g.by_form[&2];
+    for t in g.tris.iter_mut().filter(|t| t.mesh == ramp) {
+        t.flags |= tri_flags::WATER;
+    }
+    let from = Place { space: W, pos: [50.0, 350.0, 200.0] };
+    let to = Place { space: W, pos: [50.0, 350.0, 0.0] };
+    let ordinary = PathParams { water: false, ..Default::default() };
+    assert!(g.door_route(from, to, &ordinary).unwrap().is_empty());
+    assert!(matches!(g.find_path(from, to, &ordinary), Err(PathError::Unreachable { .. })));
+    let safe = PathParams { safe_drop_max: Some(200.0), ..ordinary };
+    let path = g.find_path(from, to, &safe).unwrap();
+    assert_eq!(path.legs[0].hops.len(), 1);
+    assert!(!path.legs[0].hops[0].up);
+}
+
 #[test]
 fn a_straight_line_does_not_reach_a_level_stacked_over_the_floor() {
     let g = floor_with_deck_above();

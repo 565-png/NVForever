@@ -85,21 +85,29 @@ triangles, its door stops and the door that ends it.
 [design, #2532: `fnv_nav::PathParams::safe_drop_max`, `NavGraph::search_path`]
 AI without Allow Falls can use authored downward links within the load order's
 `fJumpFallHeightMin`, measured between `ledge_ends`' planned takeoff and landing
-(fallback 600, matching `nvf-play/src/falls.rs`). Ordinary hierarchical routing is
-tried first; when no area/door route exists, bounded full A* can connect those islands
-by harmless drops. The navigation default remains opt-in, and unrestricted ledges and
+(fallback 600, matching `nvf-play/src/falls.rs`). Ordinary hierarchical routing and
+path smoothing run with safe drops disabled. Only an unreachable result enables a
+retry with bounded full A* and harmless drops, including when an area/door route exists
+but its triangle search cannot reach the goal. Search-limit errors are retained.
+The navigation default remains opt-in, and unrestricted ledges and
 climbs retain their existing policy. [hypothesis, #2532] Per-link height is a provisional
 safety estimate, not a measurement of the original (observer check 224).
 
 [documented: supplied #2532 record brief, main-session fnvtool 2026-11-15]
 The showdown controller enables rangers 0x001438DA/DB; their Patrol package 0x001438E8
 has no Allow Falls and visits markers 01 0x001438D3, 02 0x001438D4, 03 0x001438D1,
-04 0x001438D2 and a fifth marker whose ID was not supplied. No supplied script assigns
-that package with AddScriptPackage. [hypothesis, #2532] Rejecting all ledge links can
-strand them; this change fixes that general mismatch but cannot establish the camp's
-actual route. The main session must check both NPC_ package lists/conditions and NAVM
-links/heights from the rangers to marker 01, then between the patrol markers. The smoke
-`legate-rangers-showdown` tests natural package selection and first-marker arrival.
+04 0x001438D2 and 05 0x001438D5. No supplied script assigns that package with
+AddScriptPackage.
+[observed: supplied main-session fnvtool nav path, FalloutNV.esm at upstream 1790ab94a]
+The approach to marker 01 works without ledges (152 units). Marker 01 to 02 is
+unreachable without ledges and 987 units with them; marker heights 5939 and 5718
+differ by about 221 units. The next two legs, 02 to 03 (517 units) and 03 to 04
+(1011 units), also work without ledges. [design, #2532] The smoke
+`legate-rangers-showdown` requires natural package selection, marker 01 arrival,
+departure to marker 02, a per-ranger drop diagnostic and marker 02 arrival, in order.
+[hypothesis, #2532] The safe-drop fallback should permit this descent; natural package
+selection and physical traversal still need the main-session smoke, and original
+behavior remains observer check 224.
 
 ## 4. Following
 

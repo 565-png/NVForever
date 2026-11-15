@@ -29970,8 +29970,8 @@ expect = [
 
 [[scenario]]
 name = "legate-rangers-showdown"
-source = "[documented: #2532 supplied main-session fnvtool record brief, 2026-11-15] SCPT 001438CA enables 001438DA/DB for battle state 1, showdownstart 1 and controller 001438E3.spawnheroes 1; PACK 001438E8 is their intended patrol without Allow Falls. [design, #2532] Test natural package selection and arrival at marker 01; cannot-reach lines diagnose missing links or damaging drops."
-note = "[design: existing cdc-lanius-leaves-marker scenario] Start at its camp position in WastelandNV, then move only the player to the supplied VLegateWaitPlayerMarker. [documented: supplied SCPT 00142A7D] Set legatestarts to 9 before starting the scene. [hypothesis, #2532] Both rangers naturally choose E8 and can reach marker 01 using harmless authored drops; NPC_ package lists and NAVM geometry still need main-session inspection. No ranger package or position is injected."
+source = "[documented: #2532 supplied main-session fnvtool record brief, 2026-11-15] SCPT 001438CA enables 001438DA/DB for battle state 1, showdownstart 1 and controller 001438E3.spawnheroes 1; PACK 001438E8 is their intended patrol without Allow Falls. [design, #2532] Test natural package selection, marker 01 arrival, and descent to marker 02; cannot-reach lines diagnose missing links or damaging drops."
+note = "[design: existing cdc-lanius-leaves-marker scenario] Start at its camp position in WastelandNV, then move only the player to the supplied VLegateWaitPlayerMarker. [documented: supplied SCPT 00142A7D] Set legatestarts to 9 before starting the scene. [observed: supplied main-session fnvtool nav path at upstream 1790ab94a] The approach to marker 01 works without ledges; marker 01 (001438D3) to 02 (001438D4) needs ledges, about 221 units down, with a 987-unit route. [hypothesis, #2532] Both rangers naturally choose E8 and physically traverse this harmless authored drop. No ranger package or position is injected."
 areas = ["ai", "nav", "quests"]
 paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-nav/src/path.rs", "crates/fnv-nav/src/follow.rs", "engine/nvforever/src/residents.rs", "docs/spec-notes/packages.md", "docs/spec-notes/actor-jumps.md"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "1:moveto:player:VLegateWaitPlayerMarker:0:0:0,2:var:0x00133075:iBattleState:1,2.1:var:0x001438E6:legatestarts:9,2.2:var:0x001438E6:showdownstart:1,2.3:var:0x001438E3:spawnheroes:1" }
@@ -29982,11 +29982,17 @@ order = [
     { re = '001438DA: package VLegateRangerRunToCamp01', label = "first ranger naturally chooses the patrol" },
     { re = '001438DA: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "first ranger sets off to marker 01" },
     { re = '001438DA: arrived after .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "first ranger reaches marker 01" },
+    { re = '001438DA: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "first ranger sets off to marker 02" },
+    { re = 'actor jumps: 001438DA drops off a ledge at', label = "first ranger descends after marker 01" },
+    { re = '001438DA: arrived after .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "first ranger reaches marker 02 after the drop" },
   ],
   [
     { re = '001438DB: package VLegateRangerRunToCamp01', label = "second ranger naturally chooses the patrol" },
     { re = '001438DB: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "second ranger sets off to marker 01" },
     { re = '001438DB: arrived after .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "second ranger reaches marker 01" },
+    { re = '001438DB: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "second ranger sets off to marker 02" },
+    { re = 'actor jumps: 001438DB drops off a ledge at', label = "second ranger descends after marker 01" },
+    { re = '001438DB: arrived after .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "second ranger reaches marker 02 after the drop" },
   ],
 ]
 forbid = [
