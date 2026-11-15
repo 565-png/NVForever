@@ -60,7 +60,7 @@ Constraints that decide what fits:
 | Bevy atmosphere | Would replace the game's sky look | | Rejected |
 | Auto exposure, depth of field, motion blur | Change the look; the game's own HDR/eye-adapt values (IMGS DNAM) are not decoded | | Not now (§6) |
 | PCSS soft shadows | Medium | Needs the `experimental_pbr_pcss` feature, noisy without TAA | Not now |
-| Placed meshes blended into the landscape where they meet it (#2661) | Medium: road shoulders, rock feet and cliff bases lose their hard seam with the ground | Immutable front/back colour atlases (144 MiB together at 1024 before intermediates and retiring handles); copies for unchanged cells and rasterization for entering/dirty cells; a lookup in eligible fragments; round 10a: about 0.66 MiB more height atlas per publication (detail rows), 1.6 KB more index table per enabled clone, and near contact fragments read the landscape's own layer textures (up to 13 diffuse and 13 normal reads) | **Built**, off by default and not in `enhanced` (§3.12) |
+| Placed meshes blended into the landscape where they meet it (#2661) | Medium: road shoulders, rock feet and cliff bases lose their hard seam with the ground | Immutable front/back colour atlases (round 10b: about 48 MiB together at the default 512 texels per cell with their per-cell mip chains, against 144 MiB at 1024 without mips before; intermediates, the bake's single-level target while a replacement bakes and retiring handles aside); copies for unchanged cells and rasterization for entering/dirty cells; a lookup in eligible fragments; round 10a: about 0.66 MiB more height atlas per publication (detail rows), 1.6 KB more index table per enabled clone, and near contact fragments read the landscape's own layer textures (up to 13 diffuse and 13 normal reads) | **Built**, off by default and not in `enhanced` (§3.12) |
 
 ## 3. What was built
 
@@ -424,8 +424,8 @@ feature; the design is our own. Every band, angle, resolution and selection rule
 NVForever's choice [design], not a fact about the original game or another renderer.
 
 **The look the row draws** [design: `mesh_terrain_blend.rs::setting_config`]: the `height`
-shape with an 8-unit band, 1024 colour texels per cell, full shading
-(`8:surface:height:1024:full` in the test aid's terms). [observed: the main session's
+shape with an 8-unit band, 512 colour texels per cell (round 10b; 1024 before), full shading
+(`8:surface:height:512:full` in the test aid's terms). [observed: the main session's
 round-7 comparison pictures at a WastelandNV road shoulder] `height` turned the broken
 asphalt edge into ground-lit dirt and left the road top alone; the hybrid shapes either
 removed the effect or striped the road's lip. Rocks stay subtle with it; that was accepted.
@@ -435,8 +435,9 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
 
 - *A world-space cache of the landscape around the camera.* A dedicated orthographic camera
   on its own render layer (16, `BAKE_LAYER`) draws flat, unlit copies of the 3 by 3 cells
-  around the selected centre cell into one RGBA16F atlas of `3 x resolution` texels a side, one
-  mip. Each quadrant's copies are its whole near-terrain stack in drawing order: the base
+  around the selected centre cell into an RGBA16F target of `3 x resolution` texels a side
+  (round 10b: a single-level bake target; the published atlas below has a mip chain).
+  Each quadrant's copies are its whole near-terrain stack in drawing order: the base
   (a folded base with its own `TerrainMaterial` in an unlit bake variant, any other base
   with the single-texture `SurfaceCaptureMaterial`) and every blended layer over it with
   its texture, vertex alpha and sort bias, composited by the GPU's own blend state. Nothing
@@ -454,27 +455,47 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   cell's tile ends in a metadata row: a nine-bit mask of the resident neighbours and a
   four-bit mask of the quadrants whose colour was captured. Every prepared cell gives its
   heights even where a quadrant's colour cannot be captured.
-- *Residency.* Before sampling, the shader maps all four bilinear taps to their cells and
-  quadrants and needs every height and colour bit (a missing diagonal cell of an L-shaped
-  region included); a 128-unit fade at the region's edges remains. A failed lookup leaves
-  the fragment exactly as it was.
+- *Residency.* Before sampling, the shader needs the fragment's own cell's height and live
+  coverage and its quadrant's colour bit, and (round 10b) every texel the colour read takes
+  at each contributing mip level in a captured quadrant of that cell (below); a 128-unit
+  fade at the region's edges remains. Round 10b: the read never leaves the fragment's cell,
+  so neighbouring cells (a missing diagonal cell of an L-shaped region included) no longer
+  enter the colour footprint; the metadata row's residency mask is still written but no
+  longer read by the shader. A failed lookup leaves the fragment exactly as it was.
 - *Publication and continuity.* Each immutable front/back publication owns its images,
   southwest origin and cell identities. A camera crossing retains completed, resident,
   unchanged cells inside the new 3 by 3 region at the **old origin** until replacement
   commits. An enabled-only nine-bit coverage mask intersects baked height and quadrant
-  validity in the initial lookup, every bilinear footprint tap and each border-fade
-  neighbour check. Departing or dirty cells lose coverage without a colour-image upload.
+  validity in the initial lookup (round 10b: which covers every tap of the colour read, all
+  inside the fragment's cell) and each border-fade neighbour check. Departing or dirty cells lose coverage without a colour-image upload.
   Continuity covers retained interior footprints; new cells, genuinely invalidated cells,
   teleports without overlap and changing missing-neighbour border fades have no guarantee.
 - *Incremental assembly and receipts.* Unchanged cells are GPU rectangle copies into a
-  fresh back atlas; only entering/dirty cells have flat draw copies. Fully populated axial
+  fresh back atlas (round 10b: at every mip level); only entering/dirty cells have flat draw
+  copies. Fully populated axial
   and diagonal crossings copy/bake 6/3 and 4/5 cells; one changed cell copies/bakes 8/1.
   Removal alone changes coverage; unchanged frames allocate no atlas and do no copy/bake.
   The small height/metadata image is rebuilt for a replacement. Copies use the bake's
   reversed Y and run in render cleanup **after** `render_system` has submitted all final
   camera-target writes (`engine/vendor/bevy_render/src/lib.rs`), in a following queue
   submission. Exact dirty-draw receipts reset every frame; partial frames cannot accumulate.
-  Copy-only work also needs a transfer receipt and both GPU images. Completed views leave
+  Copy-only work also needs a transfer receipt and both GPU images. *Round 10b's assembly*
+  [design: `terrain_surface.rs::assemble_atlas`, `MipPipeline`, `terrain_surface_mips.wgsl`]:
+  a render attachment has one level, so the bake camera draws into a single-level bake target
+  of the atlas's size, held by the job alone, and the published atlas (every level, no CPU
+  copy, never a render target) is written only by the assembly. In the frame every bake draw
+  drew, one submission copies the retained cells at every level from the previous
+  publication, the baked cells' level 0 from the bake target, then runs one compute pass per
+  lower level over the baked cells only: each texel of level `k` is the linear mean of the 2
+  by 2 texels of level `k - 1` under it. The resolutions are powers of two and the chain
+  stops at one texel per cell (10, 11 or 12 levels), so every level is a 3 by 3 grid of whole
+  cells, every 2 by 2 block lies inside its cell and no level ever mixes two cells. The view
+  is complete, and the receipt can go, only after that submission is queued, so the receipt
+  covers the mip passes; a frame where a draw is missing, or where the mip pipeline does not
+  exist yet, assembles nothing and the bake camera draws again. A copy-only replacement (its
+  entering cells have heights but no colour capture) has no bake target, an inactive camera
+  (no target, no passes) and no mip pass. The pipeline is created when the first bake view
+  reaches the render world and dropped when the gate closes (below). Completed views leave
   the sorted cameras before another clear, and publication retains the extra main-frame
   delay. Receipts name epoch, request, destination and source revision; the current cell
   identities and source revision are revalidated before commit. No pixel readback or GPU wait.
@@ -492,7 +513,7 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   `nif_surface_blend.rs` `NifSurfaceBlend`, `DetailQuadrant`; `nif_surface_bindings.wesl`
   `mesh_terrain_detail`]. [observed: the user's play-test at 1920x1080 near a road edge,
   round 9b] the colour cache alone reads as a smooth, slightly hazy band: it holds 4 game
-  units per texel at 1024, while the ground beside it is sharp gravel with normal maps.
+  units per texel at 1024 (8 at round 10b's default 512), while the ground beside it is sharp gravel with normal maps.
   So, within 4096 units of the camera, a contact fragment also reads the near landscape's
   own layer textures at its game xy and composes them as the near draw does. *Capture*:
   while the blend is on, each quadrant's capture also records what its near draw is made
@@ -584,7 +605,7 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   anisotropic filtering between texture loads can make such descriptions differ in
   ordinary play. The target is never taken from the mesh pixel's
   screen-space prepass normal. *Sources and distance*: colour validity (the quadrant and
-  the whole bilinear footprint) and detail validity (the quadrant's detail bit, live
+  the whole footprint of the contributing mip levels, round 10b) and detail validity (the quadrant's detail bit, live
   coverage, nearer than 4096 units) are checked separately, so a valid detail lookup never
   fails for an unused colour tap, and the `status` view shows success where either source
   serves the fragment. With `d = 1 - smoothstep(2048, 4096, distance)`: both valid, the
@@ -692,7 +713,7 @@ own systems run (main world: change marking and the specialization check; render
 asset extraction and preparation, instance extraction and sweep, specialization
 extraction), their shaders are not loaded, no bind group allocator and no bindless
 fallback buffer exists for them, the bake view is not extracted, the draw functions are
-Bevy's own, and the receipt and span systems do not run (they need a bake view in the
+Bevy's own, round 10b's mip pipeline does not exist, and the receipt and span systems do not run (they need a bake view in the
 render world). Nothing is captured, baked, allocated or logged. What still runs that main
 does not have, every frame: `follow_setting` (the aid and the row compared with what is
 drawn); the run conditions themselves, an atomic load for each gated system or group, a
@@ -702,7 +723,7 @@ systems' once per view); and bevy_asset's tracking systems of the two asset type
 stores exist, empty (an asset type cannot be registered after startup). After the blend is
 turned off, the gate stays open until no material of either type, as an asset or on an
 entity, has been left for 3 frames (their removals extracted and unloaded); then the
-render world drops both allocators and shader handles, puts Bevy's own `DrawMaterial`
+render world drops both allocators and shader handles (and round 10b's mip pipeline), puts Bevy's own `DrawMaterial`
 command back in the opaque and transparent phases, and an `idle` line is logged, so the
 run is idle as above again. Pipelines compiled while it was on stay in Bevy's pipeline
 cache, as every pipeline does (Bevy never evicts them).
@@ -731,10 +752,16 @@ revisions are separate from that epoch. Source asset events are consumed after
 `AssetEventSystems` and before receipt acceptance; conversion uses the result next frame.
 The ready line's historical `generation` field now names the visible publication revision.
 
-Colour resolution remains 512, 1024 (default) or 2048 per cell side, checked against the
-device's texture limit and refused when it does not fit. One RGBA16F atlas is 18, 72 or
-288 MiB; front plus back at 1024 is **144 MiB of colour**, before CPU image copies, HDR
-render intermediates and retiring/extracted handles. There is one active replacement,
+Colour resolution is 512 (default since round 10b), 1024 or 2048 per cell side, checked
+against the device's texture limit (level 0's width) and refused when it does not fit; an
+explicit 1024 or 2048 from the aid keeps its meaning. One RGBA16F atlas with its mip chain
+(`terrain_surface.rs::colour_bytes`) is about 24, 96 or 384 MiB (level 0 alone 18, 72 or
+288); front plus back at the default 512 is **about 48 MiB of colour** (36 without mips),
+against 144 MiB at round 10a's default 1024 without mips. A baking replacement also holds
+its single-level bake target (18 MiB at 512) until it commits or is cancelled, so a
+crossing peaks at about 66 MiB of colour at 512 (front, back and target), and a cancelled
+replacement's images retire with it; neither atlas nor target keeps a CPU copy any more.
+HDR render intermediates and retiring/extracted handles come on top. There is one active replacement,
 fresh destinations rather than recycling referenced images, readiness admission and
 cancelled-job retirement; rapid replanning cannot enqueue an unbounded allocation list.
 Readiness admission waits for the front's materials to settle, but never longer than 1800
@@ -742,8 +769,24 @@ frames in a row (round 10a review, `SETTLE_FRAMES`): a candidate that can never 
 cannot hold every later publication back; the replacement then starts with a
 `settlement wait expired revision=... frames=...` warning, so at most one allocation per
 1800 frames comes that way.
-There are still no gutters or mips in the colour cache (round 10b); beyond 4096 units, and
-where a quadrant keeps the colour cache, geometric triangle normals remain the target.
+*Colour filtering (round 10b)* [design: `nif_surface_bindings.wesl` `terrain_colour_lod`,
+`terrain_colour_mips`, `terrain_colour_footprint`; `terrain_surface.rs`
+`lookup_level_status`]: the colour read's level of detail is log2 of the larger of the
+fragment's two screen-axis footprints in level-0 texels (the continuous game-xy
+derivatives `nif_material.wesl` takes at the function's top level, before every branch,
+times the texels per game unit) plus the view's mip bias, clamped to the atlas's levels.
+The read takes the level below it and the one above with the fraction as its share, each
+with `textureSampleLevel` (the last level's single texel with `textureLoad`) at a position
+clamped 1/64 texel inside the centres of the fragment's own cell's outermost texels, so no
+tap reaches another cell at any level, and the two are mixed. The colour is valid when
+every texel either contributing level reads lies in a captured quadrant of the cell: a
+texel of a level with two or more texels per cell side covers one quadrant (the one its
+position names), the last level's covers all four; the cell's own live coverage is part of
+the quadrant check, and the missing-region border fade stays. So a fragment whose
+footprint reaches a quadrant whose colour was not captured, at a level it reads, keeps
+the layers or no blend, never a darkened mix. There are still no gutters; beyond 4096
+units, and where a quadrant keeps the colour cache, geometric triangle normals remain the
+target.
 Round 10a's detail adds about 0.66 MiB of height atlas per publication (1.3 MiB front and
 back), 1600 bytes of index table per enabled clone and the palette's descriptor entries;
 the layer images are the landscape's own, not copied. Scorch is excluded: capture has no
@@ -760,19 +803,19 @@ the log and the row decides. Omitted parts take the row's look.
 | band | positive finite number | 8 |
 | view | `surface`; diagnostics `weight` (blue 0 to red 1, unlit), `normal` (the ground triangle's game-space normal as `0.5 + 0.5 n`, unlit), `selection` (a lit green tint on converted shapes), `status` (unlit: magenta outside the region, red no height, orange the quadrant's colour not captured, cyan a bilinear tap rejected, green success brightening with the weight) | (required) |
 | shape | `height`; aid-only `penetration` (`1 - smoothstep(-2, 0, d)`), `hybrid` (v2: the band widened with the angle between the unperturbed mesh normal and the ground, from the flat width parallel to the ground ramping to the band at 5 degrees, the band from 5 to 35 degrees, ramping to the steep width at 75 degrees; the larger of that height band and the penetration term), `hybrid-v1` (round 5's orientation-gated band) | `height` |
-| resolution | `512`, `1024`, `2048` | `1024` |
+| resolution | `512`, `1024`, `2048` | `512` (round 10b; `1024` before) |
 | shading | `albedo` (colour only), `full` | `full` |
 | flat,steep | hybrid's widths, `flat <= band <= steep`; only with `hybrid` | `band / 16`, `6 band` |
 
-Old short forms keep working with these defaults (`24:status` is band 24, `height`, 1024,
+Old short forms keep working with these defaults (`24:status` is band 24, `height`, 512,
 full). `NVF_PLAY_TEST_MESH_BLEND_DETAIL=colour` (round 10a) keeps the colour cache alone for
 comparisons (any other value is refused in the log). Log lines: `mesh terrain blend: start
 band=... variant=... resolution=... noise=0 shape=... shading=...` then ` flat=... steep=...
 weight-version=2` for `hybrid` or ` weight-version=1`, then round 10a's resolved detail mode,
-` detail=layers` or ` detail=colour detail-reason=aid|device|no-device`; `colour atlas resolution=... atlas=WxW rgba16f colour-mib=...`;
+` detail=layers` or ` detail=colour detail-reason=aid|device|no-device`; `colour atlas resolution=... atlas=WxW rgba16f colour-mib=... levels=...` (round 10b: the whole mip chain's MiB, rounded, and its level count);
 `backfill tracked-shapes=... convertible-shapes=...` as it turns on; an
-`assembly epoch=... request=... copied=... baked=... retained-origin=... destination-origin=...`
-line per replacement and one `publication ...` line per commit (resident grids with each
+`assembly epoch=... request=... copied=... baked=... retained-origin=... destination-origin=... levels=...`
+line per replacement (round 10b: the levels copied per retained cell and filtered per baked one) and one `publication ...` line per commit (resident grids with each
 quadrant's capture path and colour mask, the
 excluded slots, a probe of the uploaded heights under the camera with its CPU lookup
 status (the colour cache's classification), `probe-normal` and `probe-detail-mask`, the
@@ -881,12 +924,16 @@ texture swap, a fade and an override: `switching_off_during`), `terrain_surface`
 `a_textureless_survivor_never_restores_a_removed_sampler_representative`,
 `removed_images_never_leave_the_replacement_waiting_on_an_unpreparable_draw`; third review round:
 `a_normal_map_added_back_restores_the_detail_once`,
-`a_normal_map_loaded_late_ends_up_with_detail`), `mesh_terrain_blend` (round 10a review:
+`a_normal_map_loaded_late_ends_up_with_detail`; round 10b:
+`colour_mips_stay_in_the_cell_and_validate_every_contributing_level`,
+`mip_dispatch_covers_each_baked_cell_and_no_more`,
+`copy_only_replacements_draw_nothing_and_copy_every_level`), `mesh_terrain_blend` (round 10a review:
 `removed_palette_image_keeps_retained_clones_drawable_and_the_replacement_publishes`),
 `terrain::tests` (round 10a: `detail_capture_reconstructs_the_drawn_triangles`; second
 review round: `an_initially_rejected_overflow_capture_recovers_when_the_edit_is_reverted`),
 `mesh_blend_shader_tests` (round 10a:
-`shader_detail_transcribes_the_mesh_triangles_and_the_record_layout`), `graphics::tests::mesh_terrain_blend`,
+`shader_detail_transcribes_the_mesh_triangles_and_the_record_layout`; round 10b:
+`colour_mip_filter_validates_and_reads_only_its_cell`), `graphics::tests::mesh_terrain_blend`,
 `settings::tests::the_mesh_blend_row`, `texture_swap`, `nif_mirror`, `fade`,
 `draw_distance`, `door_fade`, `effect_shaders`, `shadow_thin`; `nvf-assets`
 `nif_surface_blend::tests` (round 10a: `detail_layout_fits_the_height_atlas_and_round_trips`,

@@ -103,6 +103,8 @@ struct NifSurface {
 @if(MESH_TERRAIN_BLEND) const DETAIL_FAR: f32 = f32(constants::MESH_TERRAIN_DETAIL_FAR);
 @if(MESH_TERRAIN_BLEND) const FLAG_TWO_COMPONENT: u32 = u32(constants::MESH_TERRAIN_FLAG_TWO_COMPONENT);
 @if(MESH_TERRAIN_BLEND) const FLAG_FLIP_Y: u32 = u32(constants::MESH_TERRAIN_FLAG_FLIP_Y);
+// [design] Round 10b's colour read inset, in texels (nif_surface_blend.rs COLOUR_INSET_E6).
+@if(MESH_TERRAIN_BLEND) const COLOUR_INSET: f32 = f32(constants::MESH_TERRAIN_COLOUR_INSET_E6) / 1e6;
 
 // [design] Lookup classifications, in diagnostic precedence order.
 @if(MESH_TERRAIN_BLEND) const LOOKUP_OUT_OF_RANGE: u32 = 0u;
@@ -153,10 +155,16 @@ struct NifSurface {
     return bitcast<f32>(terrain_height_bits(instance_index, p));
 }
 
-@if(MESH_TERRAIN_BLEND) fn terrain_colour_texel(instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
+// [design] Round 10b: a bilinear read of the colour atlas at an explicit level (no implicit
+// derivatives: the caller is inside the lookup's branches), and one texel of a level.
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_texel(instance_index: u32, uv: vec2<f32>, level: f32) -> vec3<f32> {
     @if(BINDLESS) let slot = material_slot(instance_index);
-    @if(BINDLESS) return textureSampleLevel(bindless_textures_2d[nif_indices[slot].holes_texture], bindless_samplers_filtering[nif_indices[slot].holes_sampler], uv, 0.0).rgb;
-    @if(!BINDLESS) return textureSampleLevel(mesh_terrain_colour, mesh_terrain_sampler, uv, 0.0).rgb;
+    @if(BINDLESS) return textureSampleLevel(bindless_textures_2d[nif_indices[slot].holes_texture], bindless_samplers_filtering[nif_indices[slot].holes_sampler], uv, level).rgb;
+    @if(!BINDLESS) return textureSampleLevel(mesh_terrain_colour, mesh_terrain_sampler, uv, level).rgb;
+}
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_load(instance_index: u32, p: vec2<i32>, level: i32) -> vec3<f32> {
+    @if(BINDLESS) return textureLoad(bindless_textures_2d[nif_indices[material_slot(instance_index)].holes_texture], p, level).rgb;
+    @if(!BINDLESS) return textureLoad(mesh_terrain_colour, p, level).rgb;
 }
 
 // [design] Round 10a: this publication supplies the quadrant's layer detail (texel 2 of the
@@ -348,10 +356,95 @@ struct NifSurface {
     return terrain_covered(instance_index, slot) && terrain_height_texel(instance_index, slot * HEIGHT_TILE) > -1e30;
 }
 
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_mask(instance_index: u32, slot: vec2<i32>) -> u32 {
+    return u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(1, GRID)));
+}
 @if(MESH_TERRAIN_BLEND) fn terrain_colour_valid(instance_index: u32, slot: vec2<i32>, quadrant: u32) -> bool {
     if !terrain_covered(instance_index, slot) { return false; }
-    let mask = u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(1, GRID)));
-    return (mask & (1u << quadrant)) != 0u;
+    return (terrain_colour_mask(instance_index, slot) & (1u << quadrant)) != 0u;
+}
+
+// [design] Round 10b: the colour atlas has a mip chain per cell (terrain_surface.rs
+// `colour_levels`): level k holds `resolution >> k` texels per cell side, down to one, each
+// level a 3 by 3 grid of whole cells filtered from that cell's own texels only. The last
+// level is log2 of the texels per cell side.
+@if(MESH_TERRAIN_BLEND) fn terrain_last_level(resolution: i32) -> i32 {
+    return i32(firstTrailingBit(u32(max(resolution, 1))));
+}
+
+// [design] Round 10b: the colour read's level of detail, as an implicit read would choose it:
+// log2 of the larger of the fragment's two screen-axis footprints in level-0 texels (the
+// game-xy derivatives, taken by the caller in uniform control flow before any lookup
+// branch, times the atlas's texels per game unit), plus the view's mip bias, clamped to the
+// atlas's levels.
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_lod(resolution: i32, inputs: MeshTerrainInputs) -> f32 {
+    let footprint = max(length(inputs.ddx), length(inputs.ddy)) * f32(resolution) / CELL_SIZE;
+    return clamp(log2(max(footprint, 1e-6)) + inputs.bias, 0.0, f32(terrain_last_level(resolution)));
+}
+
+// [design] Round 10b (terrain_surface.rs `colour_read_levels`): the level below the level of
+// detail, the one above it (the last stays the last) and the upper one's share.
+@if(MESH_TERRAIN_BLEND) struct TerrainColourLevels {
+    low: i32,
+    high: i32,
+    share: f32,
+}
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_levels(resolution: i32, lod: f32) -> TerrainColourLevels {
+    let low = i32(floor(lod));
+    return TerrainColourLevels(low, min(low + 1, terrain_last_level(resolution)), lod - f32(low));
+}
+
+// [design] Round 10b (terrain_surface.rs `colour_read_point`): at a level with `size` texels
+// per cell side, the bilinear read's position in that level's atlas texels, clamped
+// COLOUR_INSET inside the centres of the cell's outermost texels, so no tap leaves the cell
+// `slot` (the atlas's rows run north to south: the bake camera's reversed Y).
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_point(slot: vec2<i32>, uv: vec2<f32>, size: i32) -> vec2<f32> {
+    let corner = vec2<f32>(vec2(slot.x, 2 - slot.y) * size);
+    return clamp(uv * f32(3 * size), corner + vec2(0.5 + COLOUR_INSET), corner + vec2(f32(size) - 0.5 - COLOUR_INSET));
+}
+
+// [design] Round 10b: the cell's colour at one level, bilinear inside the cell; the last
+// level's single texel is read as it is.
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_level(instance_index: u32, slot: vec2<i32>, uv: vec2<f32>, resolution: i32, level: i32) -> vec3<f32> {
+    let size = resolution >> u32(level);
+    if size <= 1 { return terrain_colour_load(instance_index, vec2(slot.x, 2 - slot.y), level); }
+    return terrain_colour_texel(instance_index, terrain_colour_point(slot, uv, size) / f32(3 * size), f32(level));
+}
+
+// [design] Round 10b (terrain_surface.rs `colour_level_valid`): every texel the read takes at
+// this level lies in a captured quadrant of the cell. A texel of a level with two or more
+// texels per cell side covers level-0 texels of one quadrant only, the quadrant its own
+// position names; the last level's single texel covers all four, so it needs all four.
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_level_valid(instance_index: u32, slot: vec2<i32>, uv: vec2<f32>, resolution: i32, level: i32) -> bool {
+    let size = resolution >> u32(level);
+    let mask = terrain_colour_mask(instance_index, slot);
+    if size <= 1 { return (mask & 15u) == 15u; }
+    let corner = vec2(slot.x, 2 - slot.y) * size;
+    let tap = vec2<i32>(floor(terrain_colour_point(slot, uv, size) - vec2(0.5))) - corner;
+    let middle = size / 2;
+    for (var y = 0; y < 2; y++) {
+        for (var x = 0; x < 2; x++) {
+            let t = clamp(tap + vec2(x, y), vec2(0), vec2(size - 1));
+            let quadrant = select(0u, 1u, t.x >= middle) + select(0u, 2u, t.y < middle);
+            if (mask & (1u << quadrant)) == 0u { return false; }
+        }
+    }
+    return true;
+}
+
+// [design] Round 10b: the colour footprint is valid when both levels that contribute (the
+// upper only with a share) read captured quadrants only; the cell's own live coverage is
+// part of the quadrant check before it, and no tap reaches another cell.
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_footprint(instance_index: u32, slot: vec2<i32>, uv: vec2<f32>, resolution: i32, l: TerrainColourLevels) -> bool {
+    if !terrain_colour_level_valid(instance_index, slot, uv, resolution, l.low) { return false; }
+    return l.share <= 0.0 || l.high == l.low || terrain_colour_level_valid(instance_index, slot, uv, resolution, l.high);
+}
+
+// [design] Round 10b: the cached colour, the two levels' reads mixed by the upper's share.
+@if(MESH_TERRAIN_BLEND) fn terrain_colour_mips(instance_index: u32, slot: vec2<i32>, uv: vec2<f32>, resolution: i32, l: TerrainColourLevels) -> vec3<f32> {
+    let low = terrain_colour_level(instance_index, slot, uv, resolution, l.low);
+    if l.share <= 0.0 || l.high == l.low { return low; }
+    return mix(low, terrain_colour_level(instance_index, slot, uv, resolution, l.high), l.share);
 }
 
 // [design] nif_surface_blend.rs::terrain_game_normal and game_to_world_normal.
@@ -403,7 +496,7 @@ struct NifSurface {
 // is the interpolated vertex normal before normal mapping (pbr_input.world_normal), so
 // the weight does not follow the normal map's texture. Round 10a: two sources can serve
 // a fragment with valid heights, each checked on its own: the colour cache (its quadrant
-// and its whole bilinear footprint) and the landscape's layers (the quadrant's detail, the
+// and, round 10b, its whole footprint at both contributing mip levels) and the landscape's layers (the quadrant's detail, the
 // fragment nearer than DETAIL_FAR); a failed colour footprint no longer fails a fragment
 // the layers serve. `status` is LOOKUP_SUCCESS when either serves it.
 @if(MESH_TERRAIN_BLEND) fn mesh_terrain_lookup(instance_index: u32, world: vec3<f32>, mesh_normal: vec3<f32>, inputs: MeshTerrainInputs) -> MeshTerrainLookup {
@@ -430,38 +523,24 @@ struct NifSurface {
     let colour_quadrant = terrain_colour_valid(instance_index, slot, quadrant);
     let detail_valid = inputs.distance < DETAIL_FAR && terrain_detail_valid(instance_index, slot, quadrant);
     if !colour_quadrant && !detail_valid { r.status = LOOKUP_INVALID_COLOUR; return r; }
-    // [design] Fade over one LAND grid interval next to missing slots, before filtering
-    // can reach an empty colour texel. Mips/gutters and distance fading remain later work.
+    // [design] Fade over one LAND grid interval next to missing slots (the region's edge).
+    // Round 10b: the colour read no longer leaves its cell, so a missing neighbour cannot
+    // reach it; the fade keeps the region's edge soft as before.
     let within = game.xy - vec2<f32>(cell) * CELL_SIZE;
     var border = CELL_SIZE;
     if !terrain_cell_resident(instance_index, slot + vec2(-1, 0)) { border = min(border, within.x); }
     if !terrain_cell_resident(instance_index, slot + vec2(1, 0)) { border = min(border, CELL_SIZE - within.x); }
     if !terrain_cell_resident(instance_index, slot + vec2(0, -1)) { border = min(border, within.y); }
     if !terrain_cell_resident(instance_index, slot + vec2(0, 1)) { border = min(border, CELL_SIZE - within.y); }
-    // Validate every cell touched by the exact mip-0 bilinear footprint, including
-    // diagonals. The atlas Y axis is reversed by the bake camera.
+    // Round 10b: the colour read takes two levels of the cell's own mip chain at the level of
+    // detail the derivatives give, each clamped inside the cell; every texel either level
+    // with a share reads must lie in a captured quadrant. The atlas Y axis is reversed by
+    // the bake camera.
     let resolution = terrain_resolution(instance_index);
-    let atlas_width = 3 * resolution;
     let atlas = (game.xy / CELL_SIZE - s.mesh_terrain_origin.xy) / 3.0;
     let uv = vec2(atlas.x, 1.0 - atlas.y);
-    let tap = vec2<i32>(floor(uv * f32(atlas_width) - vec2(0.5)));
-    let residency = u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(0, GRID)));
-    var colour_valid = colour_quadrant;
-    if colour_quadrant {
-        for (var y = 0; y < 2; y++) {
-            for (var x = 0; x < 2; x++) {
-                let pixel = clamp(tap + vec2(x, y), vec2(0), vec2(atlas_width - 1));
-                let tap_slot = vec2(pixel.x / resolution, 2 - pixel.y / resolution);
-                let offset = tap_slot - slot + vec2(1);
-                let bit = u32(offset.y * 3 + offset.x);
-                let tap_quadrant = select(0u, 1u, pixel.x % resolution >= resolution / 2)
-                    + select(0u, 2u, pixel.y % resolution < resolution / 2);
-                if (residency & (1u << bit)) == 0u || !terrain_colour_valid(instance_index, tap_slot, tap_quadrant) {
-                    colour_valid = false;
-                }
-            }
-        }
-    }
+    let levels = terrain_colour_levels(resolution, terrain_colour_lod(resolution, inputs));
+    let colour_valid = colour_quadrant && terrain_colour_footprint(instance_index, slot, uv, resolution, levels);
     if !colour_valid && !detail_valid { r.status = LOOKUP_REJECTED_FOOTPRINT; return r; }
     let n_length = length(mesh_normal);
     let cos_angle = select(dot(mesh_normal / max(n_length, 1e-6), r.normal), 1.0, n_length < 1e-6);
@@ -475,7 +554,7 @@ struct NifSurface {
     if detail_valid && colour_valid { r.detail = near; } else if detail_valid { r.detail = 1.0; weight *= near; }
     r.weight = weight;
     if r.weight > 0.0 {
-        if colour_valid { r.colour = terrain_colour_texel(instance_index, uv); }
+        if colour_valid { r.colour = terrain_colour_mips(instance_index, slot, uv, resolution, levels); }
         @if(BINDLESS) if r.detail > 0.0 {
             let entry = u32(slot.y * 3 + slot.x) * 4u + quadrant;
             let d = mesh_terrain_detail(instance_index, entry, terrain_triangle(entry, quadrant, square, f, triangle), game.xy, cell, inputs);

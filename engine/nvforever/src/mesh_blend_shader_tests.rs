@@ -191,7 +191,7 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
     // share branch, with explicit gradients from the inputs, and normal maps only for full
     // shading; never from the screen-space prepass normal.
     let bindings = include_str!("../../nvf-assets/src/nif_surface_bindings.wesl").replace("\r\n", "\n");
-    let positive = bindings.find("    if r.weight > 0.0 {\n        if colour_valid { r.colour = terrain_colour_texel(instance_index, uv); }").expect("the positive-weight branch");
+    let positive = bindings.find("    if r.weight > 0.0 {\n        if colour_valid { r.colour = terrain_colour_mips(instance_index, slot, uv, resolution, levels); }").expect("the positive-weight branch");
     assert!(bindings.find("@if(BINDLESS) if r.detail > 0.0 {").unwrap() > positive);
     assert!(bindings.contains("let ddx = axes * inputs.ddx * scale;") && bindings.contains("let scale = exp2(inputs.bias) / tile;"));
     assert!(bindings.contains("if full && (flags & 8u) != 0u {") && bindings.contains("        if full {\n            var layer_n = plain;"));
@@ -202,6 +202,47 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
         assert!(!body.contains("textureSample(") && !body.contains("textureSampleBias(") && !body.contains("dpdx") && !body.contains("fwidth"), "no implicit derivatives in the divergent detail branch");
     }
     assert!(sample.contains("textureSampleGrad("));
+    // [design] Round 10b: the colour cache is read at explicit levels chosen from the same
+    // derivatives (no implicit derivatives inside the lookup's branches), each level clamped
+    // inside the fragment's cell, and both contributing levels' footprints validated.
+    for name in ["terrain_colour_texel", "terrain_colour_level", "terrain_colour_mips", "terrain_colour_lod", "terrain_colour_level_valid", "terrain_colour_footprint"] {
+        let body = bindings.split(&format!("fn {name}(")).nth(1).unwrap_or_else(|| panic!("{name}")).split("\n}\n").next().unwrap();
+        assert!(!body.contains("textureSample(") && !body.contains("textureSampleBias(") && !body.contains("dpdx") && !body.contains("fwidth"), "{name}: no implicit derivatives");
+    }
+    assert!(bindings.contains("let levels = terrain_colour_levels(resolution, terrain_colour_lod(resolution, inputs));"));
+    assert!(bindings.contains("let colour_valid = colour_quadrant && terrain_colour_footprint(instance_index, slot, uv, resolution, levels);"));
+    assert!(bindings.contains("let footprint = max(length(inputs.ddx), length(inputs.ddy)) * f32(resolution) / CELL_SIZE;")
+        && bindings.contains("return clamp(log2(max(footprint, 1e-6)) + inputs.bias, 0.0, f32(terrain_last_level(resolution)));"));
+    assert!(bindings.contains("return clamp(uv * f32(3 * size), corner + vec2(0.5 + COLOUR_INSET), corner + vec2(f32(size) - 0.5 - COLOUR_INSET));"));
+    assert!(bindings.contains("return l.share <= 0.0 || l.high == l.low || terrain_colour_level_valid(instance_index, slot, uv, resolution, l.high);"));
+}
+
+/// [design] Round 10b: the colour atlas's mip filter (terrain_surface.rs `MipPipeline`)
+/// parses and validates with naga, has the bindings the pipeline's layout gives it (a
+/// sampled level, a write-only RGBA16F storage level, the cells' uniform) and averages the
+/// 2 by 2 texels under each texel of the cells it is given, nothing else.
+#[test]
+fn colour_mip_filter_validates_and_reads_only_its_cell() {
+    let source = crate::terrain_surface::MIP_SHADER;
+    let module = naga::front::wgsl::parse_str(source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(source)));
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(&module).unwrap_or_else(|e| panic!("{e:?}"));
+    let entry = module.entry_points.iter().find(|e| e.name == "downsample").expect("the entry point");
+    assert_eq!(entry.stage, naga::ShaderStage::Compute);
+    assert_eq!(entry.workgroup_size, [crate::terrain_surface::MIP_WORKGROUP, crate::terrain_surface::MIP_WORKGROUP, 1]);
+    let mut bindings: Vec<_> = module.global_variables.iter().filter_map(|(_, v)| v.binding.as_ref().map(|b| (b.group, b.binding, module.types[v.ty].inner.clone()))).collect();
+    bindings.sort_by_key(|b| b.1);
+    assert_eq!(bindings.iter().map(|b| (b.0, b.1)).collect::<Vec<_>>(), vec![(0, 0), (0, 1), (0, 2)]);
+    assert!(matches!(bindings[0].2, naga::TypeInner::Image { class: naga::ImageClass::Sampled { .. }, .. }));
+    assert!(matches!(bindings[1].2, naga::TypeInner::Image { class: naga::ImageClass::Storage { format: naga::StorageFormat::Rgba16Float, access }, .. } if access == naga::StorageAccess::STORE));
+    for line in [
+        "let side = textureDimensions(destination).x / 3u;",
+        "let texel = cells.slots[id.z].xy * side + id.xy;",
+        "let below = 2u * texel;",
+        "textureStore(destination, texel, sum * 0.25);",
+    ] {
+        assert!(source.contains(line), "{line}");
+    }
 }
 
 /// [design] Round 10a: the shader's barycentric interpolation and record layout transcribe

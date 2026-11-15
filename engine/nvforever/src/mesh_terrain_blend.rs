@@ -3,8 +3,8 @@
 //!
 //! On with the Graphics settings row `mesh-terrain-blend` ("Blend meshes into ground";
 //! off by default, off in both looks, not part of `enhanced`), which draws
-//! [`setting_config`]: an 8-unit band of the `height` shape, 1024 colour texels per cell,
-//! full shading. The test aid `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution
+//! [`setting_config`]: an 8-unit band of the `height` shape, 512 colour texels per cell
+//! (round 10b; 1024 before), full shading. The test aid `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution
 //! [:shading[:flat,steep]]]]` overrides the row for comparison runs (it is not stored);
 //! omitted parts take the same defaults, and hybrid v2's widths are `band / 16` and
 //! `6 band`. These are NVForever's own choices.
@@ -140,7 +140,9 @@ pub fn aid() -> Option<BlendConfig> {
     })
 }
 
-/// [design] What the settings row draws: the aid's defaults, `8:surface:height:1024:full`.
+/// [design] What the settings row draws: the aid's defaults, `8:surface:height:512:full`
+/// (round 10b: 512 colour texels per cell, the colour cache being the fallback beyond the
+/// landscape's own layers).
 pub fn setting_config() -> BlendConfig {
     parse("surface").expect("the default value parses")
 }
@@ -1110,13 +1112,16 @@ mod tests {
         use ContactShape::*;
         // Old short forms keep working, with the new defaults for what they leave out
         // (round 7: the height shape).
-        assert_eq!(parse("surface").unwrap(), config(8.0, Variant::Surface, Height, 1024, Shading::Full));
-        assert_eq!(parse(":selection").unwrap(), config(8.0, Variant::Selection, Height, 1024, Shading::Full));
+        assert_eq!(parse("surface").unwrap(), config(8.0, Variant::Surface, Height, 512, Shading::Full));
+        assert_eq!(parse(":selection").unwrap(), config(8.0, Variant::Selection, Height, 512, Shading::Full));
         assert_eq!(parse("12:weight").unwrap().variant, Variant::Weight);
         assert_eq!(parse("24:normal").unwrap().variant, Variant::Normal);
-        assert_eq!(parse("24:status").unwrap(), config(24.0, Variant::Status, Height, 1024, Shading::Full));
-        // The settings row's look is the defaults, written out.
-        assert_eq!(setting_config(), parse("8:surface:height:1024:full").unwrap());
+        assert_eq!(parse("24:status").unwrap(), config(24.0, Variant::Status, Height, 512, Shading::Full));
+        // The settings row's look is the defaults, written out (round 10b: 512 colour texels
+        // per cell; an explicit 1024 stays 1024).
+        assert_eq!(setting_config(), parse("8:surface:height:512:full").unwrap());
+        assert_eq!(DEFAULT_RESOLUTION, 512);
+        assert_eq!(parse("8:surface:height:1024:full").unwrap().resolution, 1024);
         assert_eq!(DEFAULT_SHAPE, Height);
         // The comparison sheet's values (handoff, round 5).
         assert_eq!(parse("24:surface:height:512:albedo").unwrap(), config(24.0, Variant::Surface, Height, 512, Shading::Albedo));
@@ -1130,9 +1135,9 @@ mod tests {
             assert_eq!(parse(&format!("8:{view}:hybrid:1024:full")).unwrap(), config(8.0, Variant::parse(view).unwrap(), Hybrid, 1024, Shading::Full));
         }
         // Without a band; empty parts take their defaults.
-        assert_eq!(parse("weight:penetration").unwrap(), config(8.0, Variant::Weight, Penetration, 1024, Shading::Full));
+        assert_eq!(parse("weight:penetration").unwrap(), config(8.0, Variant::Weight, Penetration, 512, Shading::Full));
         assert_eq!(parse("surface::2048").unwrap(), config(8.0, Variant::Surface, Height, 2048, Shading::Full));
-        assert_eq!(parse("6.5:surface:::albedo").unwrap(), config(6.5, Variant::Surface, Height, 1024, Shading::Albedo));
+        assert_eq!(parse("6.5:surface:::albedo").unwrap(), config(6.5, Variant::Surface, Height, 512, Shading::Albedo));
         for value in ["", "24", "0:surface", "-1:weight", "NaN:surface", "inf:surface", "a:surface", "24:bad", "24:surface:weight",
             "surface:hybrid:768", "surface:hybrid:1024:shiny", "surface:hybrid:1024:full:extra", "8:surface:hybrid:1024:full:", "8:8:surface", "surface:24"] {
             assert!(parse(value).is_err(), "{value}");
@@ -1179,15 +1184,15 @@ mod tests {
     #[test]
     fn start_and_ready_lines_keep_their_prefixes_and_name_every_setting() {
         let c = parse("24:surface").unwrap();
-        assert_eq!(start_line(&c, DetailMode::Layers), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1 detail=layers");
+        assert_eq!(start_line(&c, DetailMode::Layers), "mesh terrain blend: start band=24 variant=surface resolution=512 noise=0 shape=height shading=full weight-version=1 detail=layers");
         // Round 10a: the resolved detail mode ends the line, with the reason for the colour cache alone.
         assert!(start_line(&c, DetailMode::Colour("aid")).ends_with(" weight-version=1 detail=colour detail-reason=aid"));
         assert!(start_line(&c, DetailMode::Colour("device")).ends_with(" detail=colour detail-reason=device"));
         assert_eq!(detail_capability(None, false), DetailMode::Colour("no-device"));
         assert_eq!(detail_capability(None, true), DetailMode::Colour("aid"), "the aid wins before the device is asked");
-        assert!(start_line(&c, DetailMode::Layers).starts_with("mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=height shading=full"), "round 5's prefix");
-        assert_eq!(start_line(&parse("24:surface:hybrid").unwrap(), DetailMode::Layers), "mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=1.5 steep=144 weight-version=2 detail=layers");
-        assert_eq!(start_line(&setting_config(), DetailMode::Layers), "mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1 detail=layers", "the settings row's look");
+        assert!(start_line(&c, DetailMode::Layers).starts_with("mesh terrain blend: start band=24 variant=surface resolution=512 noise=0 shape=height shading=full"), "round 5's prefix");
+        assert_eq!(start_line(&parse("24:surface:hybrid").unwrap(), DetailMode::Layers), "mesh terrain blend: start band=24 variant=surface resolution=512 noise=0 shape=hybrid shading=full flat=1.5 steep=144 weight-version=2 detail=layers");
+        assert_eq!(start_line(&setting_config(), DetailMode::Layers), "mesh terrain blend: start band=8 variant=surface resolution=512 noise=0 shape=height shading=full weight-version=1 detail=layers", "the settings row's look");
         assert_eq!(start_line(&parse("8:status:penetration:2048:albedo").unwrap(), DetailMode::Layers), "mesh terrain blend: start band=8 variant=status resolution=2048 noise=0 shape=penetration shading=albedo weight-version=1 detail=layers");
         assert_eq!(start_line(&parse("8:surface:hybrid:1024:full:0.5,32").unwrap(), DetailMode::Layers), "mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=0.5 steep=32 weight-version=2 detail=layers");
         let mut images = Assets::<Image>::default();
@@ -1803,7 +1808,7 @@ mod tests {
         assert!(state.shapes_pending, "the census of what is drawn is queued");
         assert!(recording(), "spawns record the census and captures now");
         assert!(gate_open(&app), "the gate opens before the first clone is made");
-        assert_eq!(app.world().resource::<SurfaceCache>().resolution, 1024);
+        assert_eq!(app.world().resource::<SurfaceCache>().resolution, 512, "round 10b: the row's 512 colour texels per cell");
         publish(&mut app);
         let cell = app.world_mut().spawn(SurfaceCell { world: 0, grid: (0, 0), heights: vec![], quadrants: vec![], paths: [CapturePath::HeightOnly("missing-base-mesh"); 4], content_revision: 0, sources: vec![], dependencies: default(), detail: default() }).id();
         app.update();

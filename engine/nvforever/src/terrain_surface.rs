@@ -10,12 +10,19 @@
 //! [`TerrainMaterial`] (terrain.wesl `SURFACE_BAKE`); every other base and every layer
 //! with the single-texture [`SurfaceCaptureMaterial`] (terrain_capture.wesl), whose
 //! material group binds one texture. The bake publishes only after every copy, opaque
-//! and blended, has drawn in one frame. The atlas is 512, 1024 (default) or 2048 texels
-//! per cell side (the settings row: 1024; the test aid chooses), checked against the device's texture limit.
+//! and blended, has drawn in one frame. The atlas is 512 (default), 1024 or 2048 texels
+//! per cell side (the settings row: 512 since round 10b; the test aid chooses), checked
+//! against the device's texture limit.
 //! Round 10a: with the detail capability a publication also packs, after the heights,
 //! each admitted quadrant's near-draw description (its layer images in a per-publication
 //! palette, prepared vertex attributes and opacities: [`QuadrantDetail`], [`DetailPalette`]),
 //! which the blend shader samples directly near the camera (graphics-enhanced.md §3.12).
+//! Round 10b: the colour atlas has a mip chain down to one texel per cell
+//! ([`colour_levels`]). The bake camera draws into a single-level bake target; the render
+//! world's assembly (`assemble_atlas`) then copies the retained cells at every level from
+//! the previous publication and the baked cells' level 0 from the bake target, and filters
+//! each baked cell's lower levels from its own texels only (terrain_surface_mips.wgsl),
+//! before the receipt.
 
 use crate::terrain::TerrainMaterial;
 use crate::world::{bevy_to_game, game_to_bevy, Streamer, WorldData};
@@ -43,8 +50,22 @@ pub fn atlas_width(resolution: u32) -> u32 { 3 * resolution }
 pub fn resolution_supported(resolution: u32, max_texture_dimension_2d: u32) -> bool {
     RESOLUTIONS.contains(&resolution) && atlas_width(resolution) <= max_texture_dimension_2d
 }
-/// Colour atlas storage in bytes (RGBA16F, one mip), CPU copies and render targets aside.
-pub fn colour_bytes(resolution: u32) -> u64 { u64::from(atlas_width(resolution)).pow(2) * 8 }
+/// [design] Round 10b: the colour atlas's mip levels, from `resolution` texels per cell side
+/// down to one texel per cell. Every level is a 3 by 3 grid of whole cells (the resolutions
+/// are powers of two), and no level below one texel per cell exists, so no texel of any
+/// level covers two cells.
+pub fn colour_levels(resolution: u32) -> u32 { resolution.ilog2() + 1 }
+/// Colour atlas storage in bytes (RGBA16F, every level), CPU copies, the bake's single-level
+/// target and render intermediates aside.
+pub fn colour_bytes(resolution: u32) -> u64 {
+    (0..colour_levels(resolution)).map(|level| u64::from(atlas_width(resolution) >> level).pow(2) * 8).sum()
+}
+/// `bytes` in MiB, rounded to the nearest (the mip chain is a few bytes short of 4/3 of level 0).
+pub fn mib(bytes: u64) -> u64 { (bytes + (1 << 19)) >> 20 }
+/// [design] Round 10b: a colour read keeps this far (in texels, 1/64) inside its cell's
+/// outermost texel centres, so the GPU's limited sub-texel precision cannot give a texel of
+/// the neighbouring cell a weight (the shader's `COLOUR_INSET`, the same shader def).
+pub const COLOUR_INSET: f32 = nvf_assets::nif_surface_blend::COLOUR_INSET_E6 as f32 / 1e6;
 const HEIGHT_WIDTH: usize = 3 * HEIGHT_TILE_WIDTH;
 const HEIGHT_HEIGHT: usize = 3 * HEIGHT_TILE_HEIGHT;
 pub const BAKE_LAYER: usize = 16;
@@ -392,11 +413,25 @@ struct Request { epoch: u64, origin: (i32, i32), cells: Vec<CellKey> }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Receipt { epoch: u64, request: u64, destination: AssetId<Image>, source_revision: u64 }
 
+/// A retained cell's level-0 rectangle corners in the previous and the new atlas.
 #[derive(Clone)]
 struct CellCopy { source: (u32, u32), destination: (u32, u32) }
 
+/// [design] Round 10b: what the render world's assembly writes into a replacement's fresh
+/// atlas (`destination`) once the bake camera has drawn every copy in one frame: the
+/// retained `cells` copied from the previous publication (`source`) at every level, the
+/// `baked` cells' level 0 (corners of their level-0 rectangles) copied from the
+/// single-level bake target (`bake`), then those cells' lower levels filtered from their own
+/// texels. A copy-only replacement has no bake target and nothing baked.
 #[derive(Clone)]
-struct Transfers { source: Handle<Image>, destination: Handle<Image>, cells: Vec<CellCopy>, resolution: u32 }
+struct Transfers {
+    source: Option<Handle<Image>>,
+    destination: Handle<Image>,
+    cells: Vec<CellCopy>,
+    bake: Option<Handle<Image>>,
+    baked: Vec<(u32, u32)>,
+    resolution: u32,
+}
 
 fn colour_rectangle(grid: (i32, i32), origin: (i32, i32), resolution: u32) -> (u32, u32) {
     ((grid.0 - origin.0) as u32 * resolution, (2 - (grid.1 - origin.1)) as u32 * resolution)
@@ -504,7 +539,8 @@ impl SurfaceCache {
         surface
     }
 
-    /// [design] The blend turned on: the atlas at `resolution`, checked against the
+    /// [design] The blend turned on: the atlas at `resolution` (its level 0; round 10b: the
+    /// line also gives the whole mip chain's size and level count), checked against the
     /// device's 2D texture limit (`None` without a render device: not checked, not
     /// logged). An unsupported request is rejected in the log and bakes nothing, so no
     /// material samples it. Nothing is allocated here; the first bake allocates.
@@ -515,7 +551,7 @@ impl SurfaceCache {
         let Some(max) = max_texture_dimension_2d else { return };
         let width = atlas_width(resolution);
         if resolution_supported(resolution, max) {
-            info!("mesh terrain blend: colour atlas resolution={resolution} atlas={width}x{width} rgba16f colour-mib={} max-texture-dimension-2d={max}", colour_bytes(resolution) >> 20);
+            info!("mesh terrain blend: colour atlas resolution={resolution} atlas={width}x{width} rgba16f colour-mib={} levels={} max-texture-dimension-2d={max}", mib(colour_bytes(resolution)), colour_levels(resolution));
         } else {
             warn!("mesh terrain blend: rejected resolution={resolution}: atlas {width} texels wide exceeds max-texture-dimension-2d={max}; no colour cache is baked");
             self.rejected = true;
@@ -592,7 +628,19 @@ pub fn lookup_status(data: &[u8], origin: (i32, i32), point: Vec2, resolution: u
 fn covered(slot: (i32, i32), coverage: u32) -> bool {
     (0..3).contains(&slot.0) && (0..3).contains(&slot.1) && coverage & (1 << (slot.1 * 3 + slot.0)) != 0
 }
+/// The lookup of a fragment whose colour read takes level 0 alone (a level of detail of 0
+/// or less: a close or face-on view), as [`lookup_level_status`].
 pub fn lookup_covered_status(data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32, coverage: u32) -> LookupStatus {
+    lookup_level_status(data, origin, point, resolution, coverage, 0.0)
+}
+/// [design] Round 10b: the lookup of a fragment whose colour read has level of detail `lod`
+/// (the shader's `terrain_colour_lod`). The read takes the levels around it
+/// ([`colour_read_levels`]) and stays inside the fragment's own cell at each
+/// ([`colour_read_point`]), so the colour footprint is valid when every texel either level
+/// with a share reads lies in a captured quadrant of that cell ([`colour_level_valid`]); the
+/// cell's own live coverage is part of the height check before it. Neighbouring cells no
+/// longer enter the colour footprint (the shader's border fade still does).
+pub fn lookup_level_status(data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32, coverage: u32, lod: f32) -> LookupStatus {
     let cell = fnv_world::cell_of(point.x, point.y);
     let slot = (cell.0 - origin.0, cell.1 - origin.1);
     if !(0..3).contains(&slot.0) || !(0..3).contains(&slot.1) { return LookupStatus::OutOfRange; }
@@ -603,20 +651,48 @@ pub fn lookup_covered_status(data: &[u8], origin: (i32, i32), point: Vec2, resol
     let quadrant = u32::from(local.x >= 0.5) + 2 * u32::from(local.y >= 0.5);
     if !colour_valid(data, slot, quadrant) { return LookupStatus::InvalidColourQuadrant; }
     let atlas = (point / 4096.0 - Vec2::new(origin.0 as f32, origin.1 as f32)) / 3.0;
-    let (resolution, width) = (resolution as i32, atlas_width(resolution) as i32);
-    let tap = (Vec2::new(atlas.x, 1.0 - atlas.y) * width as f32 - Vec2::splat(0.5)).floor().as_ivec2();
-    let residency = height_texel(data, (slot.0 as usize * HEIGHT_TILE_WIDTH, slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID)) as u32;
-    for y in 0..2 { for x in 0..2 {
-        let pixel = (tap + IVec2::new(x, y)).clamp(IVec2::ZERO, IVec2::splat(width - 1));
-        let tap_slot = (pixel.x / resolution, 2 - pixel.y / resolution);
-        let offset = (tap_slot.0 - slot.0 + 1, tap_slot.1 - slot.1 + 1);
-        let quadrant = u32::from(pixel.x % resolution >= resolution / 2)
-            + 2 * u32::from(pixel.y % resolution < resolution / 2);
-        if !covered(tap_slot, coverage) || residency & (1 << (offset.1 * 3 + offset.0)) == 0 || !colour_valid(data, tap_slot, quadrant) {
-            return LookupStatus::RejectedFootprint;
-        }
-    }}
-    LookupStatus::Success
+    let uv = Vec2::new(atlas.x, 1.0 - atlas.y);
+    let (low, high, share) = colour_read_levels(resolution, lod);
+    let valid = colour_level_valid(data, slot, uv, resolution, low)
+        && (share <= 0.0 || high == low || colour_level_valid(data, slot, uv, resolution, high));
+    if valid { LookupStatus::Success } else { LookupStatus::RejectedFootprint }
+}
+/// [design] Round 10b: the levels a colour read at level of detail `lod` takes, as the
+/// shader's `terrain_colour_mips`: `lod` clamped to the atlas's levels, the level below it,
+/// the one above (the last level stays the last) and the upper level's share.
+pub fn colour_read_levels(resolution: u32, lod: f32) -> (u32, u32, f32) {
+    let last = colour_levels(resolution) - 1;
+    let lod = lod.clamp(0.0, last as f32);
+    let low = lod.floor() as u32;
+    (low, (low + 1).min(last), lod - low as f32)
+}
+/// [design] Round 10b, as the shader's `terrain_colour_level`: at a level with `size`
+/// texels per cell side, the corner of the cell `slot`'s texels (atlas texels; the atlas's
+/// rows run north to south, the bake camera's reversed Y) and the bilinear read's position,
+/// the atlas coordinate `uv` in that level's texels clamped [`COLOUR_INSET`] inside the
+/// centres of the cell's outermost texels.
+pub fn colour_read_point(slot: (i32, i32), uv: Vec2, size: u32) -> (Vec2, Vec2) {
+    let corner = Vec2::new(slot.0 as f32, (2 - slot.1) as f32) * size as f32;
+    let p = (uv * 3.0 * size as f32).clamp(corner + Vec2::splat(0.5 + COLOUR_INSET), corner + Vec2::splat(size as f32 - 0.5 - COLOUR_INSET));
+    (corner, p)
+}
+/// [design] Round 10b, as the shader's `terrain_colour_level_valid`: whether every texel a
+/// read of cell `slot` at `level` takes lies in one of its captured quadrants. A texel of a
+/// level with two or more texels per cell side covers level-0 texels of one quadrant only
+/// (each level halves whole quadrants), the quadrant its own position names; the last
+/// level's one texel covers all four, so it needs all four.
+pub fn colour_level_valid(data: &[u8], slot: (i32, i32), uv: Vec2, resolution: u32, level: u32) -> bool {
+    let size = resolution >> level;
+    let mask = height_texel(data, (slot.0 as usize * HEIGHT_TILE_WIDTH + 1, slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID)) as u32;
+    if size <= 1 { return mask & 0xf == 0xf; }
+    let (corner, p) = colour_read_point(slot, uv, size);
+    let tap = (p - Vec2::splat(0.5)).floor().as_ivec2() - corner.as_ivec2();
+    let half = size as i32 / 2;
+    (0..4).all(|i| {
+        let t = (tap + IVec2::new(i % 2, i / 2)).clamp(IVec2::ZERO, IVec2::splat(size as i32 - 1));
+        let quadrant = u32::from(t.x >= half) + 2 * u32::from(t.y < half);
+        mask & (1 << quadrant) != 0
+    })
 }
 
 /// [design] Round 10a's end of the publication line: whether the publication supplies
@@ -853,7 +929,7 @@ struct BakeView {
     receipt: Receipt,
     height: Handle<Image>,
     resources_ready: Arc<AtomicBool>,
-    transfers: Option<Transfers>,
+    transfers: Transfers,
     expected: HashSet<Entity>,
     complete: Arc<AtomicBool>,
     drawn: Arc<Mutex<HashSet<Entity>>>,
@@ -882,7 +958,7 @@ impl Plugin for SurfaceBakePlugin {
                     .run_if(move |installed: Option<Res<BakeReceiptsInstalled>>| installed.is_some() && !closed.is_open())
                     .in_set(RenderSystems::Prepare))
                 .add_systems(Render, reset_receipts.run_if(any_bake_view).in_set(RenderSystems::Prepare))
-                .add_systems(Render, (copy_retained, submit_receipts).chain().run_if(any_bake_view).in_set(RenderSystems::Cleanup))
+                .add_systems(Render, (assemble_atlas, submit_receipts).chain().run_if(any_bake_view).in_set(RenderSystems::Cleanup))
                 .add_systems(bevy::core_pipeline::Core3d, (
                     bake_span_begin.before(bevy::core_pipeline::Core3dSystems::Prepass),
                     bake_span_end.after(bevy::core_pipeline::Core3dSystems::PostProcess),
@@ -916,19 +992,23 @@ fn first_bake_view(views: Query<(), With<BakeView>>, installed: Option<Res<BakeR
 }
 
 /// Both phases' receipts, once (before the bake's passes are recorded; `DrawFunctions`
-/// prepares each function when its phase renders).
+/// prepares each function when its phase renders), and round 10b's mip pipeline.
 fn install_bake_receipts(world: &mut World) {
     set_draw_material::<Opaque3d, (bevy::pbr::DrawMaterial, BakeReceipt)>(world);
     set_draw_material::<Transparent3d, (bevy::pbr::DrawMaterial, BakeReceipt)>(world);
+    let mips = MipPipeline::new(world.resource::<bevy::render::renderer::RenderDevice>().wgpu_device());
+    world.insert_resource(mips);
     world.insert_resource(BakeReceiptsInstalled);
 }
 
 /// [design] The gate closed (no bake view, no blend or capture material left): both
 /// phases get a new `DrawMaterial` command of Bevy's own, what bevy_pbr's
-/// `add_render_command::<P, DrawMaterial>` installs, so an idle run draws as main does.
+/// `add_render_command::<P, DrawMaterial>` installs, so an idle run draws as main does;
+/// round 10b's mip pipeline is dropped.
 fn uninstall_bake_receipts(world: &mut World) {
     set_draw_material::<Opaque3d, bevy::pbr::DrawMaterial>(world);
     set_draw_material::<Transparent3d, bevy::pbr::DrawMaterial>(world);
+    world.remove_resource::<MipPipeline>();
     world.remove_resource::<BakeReceiptsInstalled>();
 }
 
@@ -993,46 +1073,143 @@ fn reset_receipts(views: Query<&BakeView>, mut cameras: ResMut<bevy::render::cam
     cameras.0.retain(|camera| !views.get(camera.entity).is_ok_and(|view| view.complete.load(Ordering::Acquire)));
     for view in &views { view.drawn.lock().unwrap().clear(); }
 }
-fn complete_draws(expected: &HashSet<Entity>, drawn: &HashSet<Entity>) -> bool {
-    !expected.is_empty() && expected == drawn
+/// [design] Round 10b: the compute pipeline that filters a baked cell's lower colour levels
+/// (terrain_surface_mips.wgsl). Created when the first bake view reaches the render world
+/// (`install_bake_receipts`) and dropped when the gate closes (`uninstall_bake_receipts`),
+/// so a run that never turns the blend on never compiles it.
+#[derive(Resource)]
+struct MipPipeline { layout: wgpu::BindGroupLayout, pipeline: wgpu::ComputePipeline }
+
+/// The mip filter's source (terrain_surface_mips.wgsl).
+pub const MIP_SHADER: &str = include_str!("terrain_surface_mips.wgsl");
+/// [design] terrain_surface_mips.wgsl's workgroup side and its uniform's cell capacity.
+pub const MIP_WORKGROUP: u32 = 8;
+pub const MIP_CELLS: usize = 9;
+
+/// [design] The mip filter's uniform: each cell's atlas column and row (top row 0, the bake's
+/// reversed Y) in a `vec4<u32>`, then the cell count: terrain_surface_mips.wgsl `Cells`.
+pub fn mip_cells(baked: &[(u32, u32)], resolution: u32) -> [u32; MIP_CELLS * 4 + 4] {
+    let mut words = [0; MIP_CELLS * 4 + 4];
+    let cells = &baked[..baked.len().min(MIP_CELLS)];
+    for (i, &(x, y)) in cells.iter().enumerate() { words[i * 4] = x / resolution; words[i * 4 + 1] = y / resolution; }
+    words[MIP_CELLS * 4] = cells.len() as u32;
+    words
 }
+/// [design] One mip pass's workgroups: the level's texels per cell side in x and y, one
+/// layer of workgroups per baked cell in z.
+pub fn mip_workgroups(resolution: u32, level: u32, cells: u32) -> (u32, u32, u32) {
+    let side = (resolution >> level).div_ceil(MIP_WORKGROUP);
+    (side, side, cells)
+}
+
+impl MipPipeline {
+    fn new(device: &wgpu::Device) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("mesh terrain colour mips"), source: wgpu::ShaderSource::Wgsl(MIP_SHADER.into()) });
+        let entry = |binding, ty| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::COMPUTE, ty, count: None };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("mesh terrain colour mips"),
+            entries: &[
+                entry(0, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }),
+                entry(1, wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }),
+                entry(2, wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }),
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("mesh terrain colour mips"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("mesh terrain colour mips"), layout: Some(&pipeline_layout), module: &module,
+            entry_point: Some("downsample"), compilation_options: default(), cache: None,
+        });
+        Self { layout, pipeline }
+    }
+
+    /// [design] Records, after `encoder`'s copies, one compute pass per level below 0: each
+    /// writes level `k` of the `baked` cells (corners of their level-0 rectangles) as the
+    /// linear mean of the 2 by 2 texels of level `k - 1` under each texel, every block inside
+    /// its own cell (cells are whole at every level), so no cell's levels read another's.
+    fn record(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, atlas: &wgpu::Texture, baked: &[(u32, u32)], resolution: u32) {
+        use wgpu::util::DeviceExt;
+        let words = mip_cells(baked, resolution);
+        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let cells = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("mesh terrain colour mip cells"), contents: &bytes, usage: wgpu::BufferUsages::UNIFORM });
+        let level_view = |level| atlas.create_view(&wgpu::TextureViewDescriptor { label: Some("mesh terrain colour level"), base_mip_level: level, mip_level_count: Some(1), ..default() });
+        for level in 1..colour_levels(resolution) {
+            let (source, destination) = (level_view(level - 1), level_view(level));
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("mesh terrain colour mips"), layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&source) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&destination) },
+                    wgpu::BindGroupEntry { binding: 2, resource: cells.as_entire_binding() },
+                ],
+            });
+            let (x, y, z) = mip_workgroups(resolution, level, words[MIP_CELLS * 4]);
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("mesh terrain colour mips"), timestamp_writes: None });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(x, y, z);
+        }
+    }
+}
+
+/// [design] Round 10b: copies one cell's rectangle at `level` (corners given at level 0)
+/// from one texture to another.
+fn copy_cell(encoder: &mut wgpu::CommandEncoder, from: (&wgpu::Texture, (u32, u32)), to: (&wgpu::Texture, (u32, u32)), level: u32, resolution: u32) {
+    let mut src = from.0.as_image_copy();
+    src.mip_level = level; src.origin.x = from.1 .0 >> level; src.origin.y = from.1 .1 >> level;
+    let mut dst = to.0.as_image_copy();
+    dst.mip_level = level; dst.origin.x = to.1 .0 >> level; dst.origin.y = to.1 .1 >> level;
+    let side = resolution >> level;
+    encoder.copy_texture_to_texture(src, dst, Extent3d { width: side, height: side, depth_or_array_layers: 1 });
+}
+
 /// [design: bevy_render/src/lib.rs] Cleanup follows render_system, including the final
 /// camera output and queue submission. This separate submission is therefore AFTER all
-/// camera writes, never before a clear/upscale can erase the copied rectangles.
-fn copy_retained(
+/// camera writes (the bake target's draws of this frame included), never before a
+/// clear/upscale can erase them. Round 10b: in one submission, the retained cells at every
+/// level from the previous publication, the baked cells' level 0 from the bake target and
+/// then their lower levels ([`MipPipeline::record`]); only after it is the view complete,
+/// so the receipt ([`submit_receipts`]) covers the copies and the mip passes. A view whose
+/// bake draws did not all draw in this frame, or that needs the mip pipeline before it
+/// exists, waits for a later frame (the bake camera draws again until complete).
+fn assemble_atlas(
     views: Query<&BakeView>,
     images: Res<bevy::render::render_asset::RenderAssets<bevy::render::texture::GpuImage>>,
     device: Res<bevy::render::renderer::RenderDevice>,
     queue: Res<bevy::render::renderer::RenderQueue>,
+    mips: Option<Res<MipPipeline>>,
 ) {
     for view in &views {
+        let plan = &view.transfers;
         let available = images.get(&view.height).is_some() && images.get(view.receipt.destination).is_some()
-            && view.transfers.as_ref().is_none_or(|p| images.get(&p.source).is_some());
+            && images.get(&plan.destination).is_some()
+            && plan.source.as_ref().is_none_or(|s| images.get(s).is_some())
+            && plan.bake.as_ref().is_none_or(|b| images.get(b).is_some());
         view.resources_ready.store(available, Ordering::Release);
         if !available || view.complete.load(Ordering::Acquire) || !draws_ready(&view.expected, &view.drawn.lock().unwrap()) { continue; }
-        let Some(plan) = &view.transfers else { continue };
-        let (Some(source), Some(destination)) = (images.get(&plan.source), images.get(&plan.destination)) else { continue };
-        let mut encoder = device.create_command_encoder(&bevy::render::render_resource::CommandEncoderDescriptor { label: Some("mesh terrain retained copies") });
-        for cell in &plan.cells {
-            let mut src = source.texture.as_image_copy();
-            src.origin.x = cell.source.0; src.origin.y = cell.source.1;
-            let mut dst = destination.texture.as_image_copy();
-            dst.origin.x = cell.destination.0; dst.origin.y = cell.destination.1;
-            encoder.copy_texture_to_texture(src, dst, Extent3d { width: plan.resolution, height: plan.resolution, depth_or_array_layers: 1 });
+        let Some(destination) = images.get(&plan.destination) else { continue };
+        let filter = match (&mips, plan.baked.is_empty()) { (_, true) => None, (Some(m), false) => Some(m), (None, false) => continue };
+        let mut encoder = device.create_command_encoder(&bevy::render::render_resource::CommandEncoderDescriptor { label: Some("mesh terrain atlas assembly") });
+        if let Some(source) = plan.source.as_ref().and_then(|s| images.get(s)) {
+            for cell in &plan.cells { for level in 0..colour_levels(plan.resolution) {
+                copy_cell(&mut encoder, (&source.texture, cell.source), (&destination.texture, cell.destination), level, plan.resolution);
+            }}
         }
+        if let Some(bake) = plan.bake.as_ref().and_then(|b| images.get(b)) {
+            for &corner in &plan.baked { copy_cell(&mut encoder, (&bake.texture, corner), (&destination.texture, corner), 0, plan.resolution); }
+        }
+        if let Some(filter) = filter { filter.record(device.wgpu_device(), &mut encoder, &destination.texture, &plan.baked, plan.resolution); }
         queue.submit([encoder.finish()]);
         view.complete.store(true, Ordering::Release);
     }
 }
+/// [design] Every planned bake draw, and nothing else, drew in this frame (the drawn set is
+/// emptied every frame, so partial frames cannot add up). A copy-only view plans none.
 fn draws_ready(expected: &HashSet<Entity>, drawn: &HashSet<Entity>) -> bool { expected == drawn }
+/// [design] The receipt, once the assembly's submission (copies and mip passes) is queued
+/// and the view's GPU images exist.
 fn submit_receipts(views: Query<&BakeView>) {
     for view in &views {
-        if !view.resources_ready.load(Ordering::Acquire) { continue; }
-        let complete = if view.transfers.is_some() { view.complete.load(Ordering::Acquire) }
-            else { complete_draws(&view.expected, &view.drawn.lock().unwrap()) };
-        if complete {
-            view.complete.store(true, Ordering::Release);
-            // Includes the transfer submission, even for a copy-only request.
+        if view.resources_ready.load(Ordering::Acquire) && view.complete.load(Ordering::Acquire) {
             *view.submitted.lock().unwrap() = Some(view.receipt);
         }
     }
@@ -1329,12 +1506,16 @@ pub fn update_cache(
     cache.signature = Some(signature.clone());
     let copied: HashSet<_> = cache.published.as_ref().map(|p| resident.iter().filter(|(_, c)| c.colour_mask() != 0 && signature.cells.iter().any(|k| k.grid == c.grid && p.keys.contains(k))).map(|(_, c)| c.grid).collect()).unwrap_or_default();
 
-    let mut colour = Image::new_fill(
+    // [design] Round 10b: the published atlas has every level and is only ever written by
+    // the render world's assembly (copies and the mip filter's storage writes), never drawn
+    // into; it has no CPU copy (the GPU texture starts zeroed).
+    let mut colour = Image::new_uninit(
         Extent3d { width, height: width, depth_or_array_layers: 1 },
-        TextureDimension::D2, &[0; 8], TextureFormat::Rgba16Float,
+        TextureDimension::D2, TextureFormat::Rgba16Float,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
-    colour.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC | TextureUsages::COPY_DST;
+    colour.texture_descriptor.mip_level_count = colour_levels(resolution);
+    colour.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING | TextureUsages::COPY_SRC | TextureUsages::COPY_DST;
     colour.sampler = ImageSampler::linear();
     let colour = images.add(colour);
     // [design] Round 10a: with landscape detail the height atlas carries the detail rows.
@@ -1407,26 +1588,42 @@ pub fn update_cache(
     ));
     let source_revision = cache.published.as_ref().map_or(0, |p| p.revision);
     let receipt = Receipt { epoch: cache.epoch, request: cache.generation, destination: colour.id(), source_revision };
-    let transfers = cache.published.as_ref().filter(|_| !copied.is_empty()).map(|p| Transfers {
-        source: p.colour.clone(), destination: colour.clone(), resolution,
-        cells: copied.iter().map(|&grid| CellCopy { source: colour_rectangle(grid, p.origin, resolution), destination: colour_rectangle(grid, origin, resolution) }).collect(),
-    });
-    let baked = resident.iter().filter(|(_, c)| !copied.contains(&c.grid) && !c.quadrants.is_empty()).count();
-    info!("mesh terrain blend: assembly epoch={} request={} copied={} baked={} retained-origin={:?} destination-origin={origin:?}", cache.epoch, cache.generation, copied.len(), baked, cache.published.as_ref().map(|p| p.origin));
-    if expected.is_empty() && transfers.is_none() {
+    let baked_cells: Vec<_> = resident.iter().filter(|(_, c)| !copied.contains(&c.grid) && !c.quadrants.is_empty()).map(|(_, c)| colour_rectangle(c.grid, origin, resolution)).collect();
+    let baked = baked_cells.len();
+    info!("mesh terrain blend: assembly epoch={} request={} copied={} baked={} retained-origin={:?} destination-origin={origin:?} levels={}", cache.epoch, cache.generation, copied.len(), baked, cache.published.as_ref().map(|p| p.origin), colour_levels(resolution));
+    if expected.is_empty() && copied.is_empty() {
         cache.ready = Some(receipt);
-    } else { commands.spawn((
-        Camera3d::default(), bevy::render::view::NoIndirectDrawing,
-        BakeView { receipt, height: height.clone(), resources_ready: default(), transfers, expected, complete: default(), drawn: default(), submitted: cache.submitted.clone() },
-        Camera { order: -10, clear_color: ClearColorConfig::Custom(Color::NONE), ..default() },
-        RenderTarget::Image(colour.clone().into()), Hdr, Tonemapping::None, Msaa::Off,
-        Projection::Orthographic(OrthographicProjection {
-            scaling_mode: ScalingMode::Fixed { width: 12288.0, height: 12288.0 },
-            near: 0.0, far: 200.0, ..OrthographicProjection::default_3d()
-        }),
-        Transform::from_xyz(6144.0, 6144.0, 100.0).looking_at(Vec3::new(6144.0, 6144.0, 0.0), Vec3::Y),
-        RenderLayers::layer(BAKE_LAYER), ChildOf(root),
-    )); }
+    } else {
+        // [design] Round 10b: the bake camera draws into a single-level target of its own (a
+        // render attachment has one level; the published atlas's view has them all), held
+        // only by this job: the assembly copies the baked cells' level 0 from it.
+        let bake = (!expected.is_empty()).then(|| {
+            let mut target = Image::new_uninit(Extent3d { width, height: width, depth_or_array_layers: 1 }, TextureDimension::D2, TextureFormat::Rgba16Float, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD);
+            target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
+            images.add(target)
+        });
+        let transfers = Transfers {
+            source: cache.published.as_ref().filter(|_| !copied.is_empty()).map(|p| p.colour.clone()),
+            destination: colour.clone(), resolution,
+            cells: cache.published.as_ref().map(|p| copied.iter().map(|&grid| CellCopy { source: colour_rectangle(grid, p.origin, resolution), destination: colour_rectangle(grid, origin, resolution) }).collect()).unwrap_or_default(),
+            bake: bake.clone(), baked: baked_cells,
+        };
+        // A copy-only replacement draws nothing: its camera stays inactive (no target, no
+        // passes) and only carries the view to the render world's assembly.
+        let (is_active, target) = match bake { Some(bake) => (true, RenderTarget::Image(bake.into())), None => (false, RenderTarget::None { size: UVec2::ONE }) };
+        commands.spawn((
+            Camera3d::default(), bevy::render::view::NoIndirectDrawing,
+            BakeView { receipt, height: height.clone(), resources_ready: default(), transfers, expected, complete: default(), drawn: default(), submitted: cache.submitted.clone() },
+            Camera { order: -10, is_active, clear_color: ClearColorConfig::Custom(Color::NONE), ..default() },
+            target, Hdr, Tonemapping::None, Msaa::Off,
+            Projection::Orthographic(OrthographicProjection {
+                scaling_mode: ScalingMode::Fixed { width: 12288.0, height: 12288.0 },
+                near: 0.0, far: 200.0, ..OrthographicProjection::default_3d()
+            }),
+            Transform::from_xyz(6144.0, 6144.0, 100.0).looking_at(Vec3::new(6144.0, 6144.0, 0.0), Vec3::Y),
+            RenderLayers::layer(BAKE_LAYER), ChildOf(root),
+        ));
+    }
     let report = publication_log(cache.generation, origin, &resident_report, &excluded, &probe, (colour.id(), height.id()), resolution) + &detail_log(detail.as_ref());
     let palette_use = detail.as_ref().map(|d| d.usage(&images)).unwrap_or_default();
     let (palette, detail) = detail.map(|d| (d.palette, d.admitted.into_iter().map(|(at, _)| at).collect())).unwrap_or_default();
@@ -1693,10 +1890,16 @@ pub(crate) mod tests {
     #[test]
     fn resolutions_are_the_three_accepted_and_checked_against_the_device_limit() {
         assert_eq!(RESOLUTIONS, [512, 1024, 2048]);
-        assert_eq!(DEFAULT_RESOLUTION, 1024);
-        assert_eq!(SurfaceCache::default().resolution, 1024);
+        // Round 10b: the default is 512 colour texels per cell; the aid's 1024 and 2048 stay.
+        assert_eq!(DEFAULT_RESOLUTION, 512);
+        assert_eq!(SurfaceCache::default().resolution, 512);
         assert_eq!(RESOLUTIONS.map(atlas_width), [1536, 3072, 6144]);
-        assert_eq!(RESOLUTIONS.map(|r| colour_bytes(r) >> 20), [18, 72, 288], "MiB of the RGBA16F atlas");
+        // Every level down to one texel per cell: a 3 by 3 atlas last.
+        assert_eq!(RESOLUTIONS.map(colour_levels), [10, 11, 12]);
+        assert!(RESOLUTIONS.iter().all(|&r| atlas_width(r) >> (colour_levels(r) - 1) == 3));
+        assert_eq!(RESOLUTIONS.map(|r| (u64::from(atlas_width(r)).pow(2) * 8) >> 20), [18, 72, 288], "MiB of level 0 (the bake target's size)");
+        assert_eq!(RESOLUTIONS.map(|r| mib(colour_bytes(r))), [24, 96, 384], "MiB of the RGBA16F atlas with its mip chain");
+        assert_eq!(2 * mib(colour_bytes(DEFAULT_RESOLUTION)), 48, "the default front and back, against 144 MiB at 1024 without mips before round 10b");
         assert!(resolution_supported(2048, 8192) && resolution_supported(2048, 6144));
         assert!(!resolution_supported(2048, 6143) && !resolution_supported(1024, 2048));
         assert!(resolution_supported(512, 2048));
@@ -1728,7 +1931,9 @@ pub(crate) mod tests {
         for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
         assert_eq!(status(&data, (0, 0), Vec2::new(-1.0, 100.0)), LookupStatus::OutOfRange);
         assert_eq!(status(&data, (0, 0), Vec2::splat(6144.0)), LookupStatus::InvalidHeight);
-        assert_eq!(status(&data, (0, 0), Vec2::splat(4095.9)), LookupStatus::RejectedFootprint, "missing diagonal tap");
+        // Round 10b: the read stays inside its own cell, so the missing diagonal cell (1, 1)
+        // no longer rejects it (the shader's border fade handles missing cardinals only, as before).
+        assert_eq!(status(&data, (0, 0), Vec2::splat(4095.9)), LookupStatus::Success, "no tap reaches the missing diagonal");
         assert_eq!(status(&data, (0, 0), Vec2::splat(1024.0)), LookupStatus::Success);
         encode_colour_mask(&mut data, (0, 0), 0b1110);
         assert_eq!(status(&data, (0, 0), Vec2::splat(1024.0)), LookupStatus::InvalidColourQuadrant);
@@ -1847,25 +2052,36 @@ pub(crate) mod tests {
         let b = app.world_mut().spawn_empty().id();
         let drawn = Arc::new(Mutex::new(HashSet::new()));
         let submitted = Arc::new(Mutex::new(None));
+        let expected = HashSet::from([a, b]);
+        let transfers = Transfers { source: None, destination: default(), cells: vec![], bake: Some(default()), baked: vec![(0, 0)], resolution: 512 };
+        let complete = Arc::new(AtomicBool::new(false));
         let camera = app.world_mut().spawn(BakeView {
-            receipt: Receipt { epoch: 1, request: 7, destination: Handle::<Image>::default().id(), source_revision: 0 }, height: default(), resources_ready: Arc::new(AtomicBool::new(true)), transfers: None, expected: HashSet::from([a, b]), complete: default(),
+            receipt: Receipt { epoch: 1, request: 7, destination: Handle::<Image>::default().id(), source_revision: 0 }, height: default(), resources_ready: Arc::new(AtomicBool::new(true)), transfers, expected: expected.clone(), complete: complete.clone(),
             drawn: drawn.clone(), submitted: submitted.clone(),
         }).id();
         app.world_mut().resource_mut::<bevy::render::camera::SortedCameras>().0.push(bevy::render::camera::SortedCamera {
             entity: camera, order: 0, target: None, output_mode: default(),
         });
+        // Round 10b: the assembly (copies and mip passes) runs only in a frame where every
+        // planned draw drew (`draws_ready`); the drawn set restarts every frame.
         drawn.lock().unwrap().insert(a);
+        assert!(!draws_ready(&expected, &drawn.lock().unwrap()));
         app.world_mut().run_system_once(submit_receipts).unwrap();
         assert_eq!(*submitted.lock().unwrap(), None);
         app.world_mut().run_system_once(reset_receipts).unwrap();
+        assert!(drawn.lock().unwrap().is_empty());
         drawn.lock().unwrap().insert(b);
-        app.world_mut().run_system_once(submit_receipts).unwrap();
-        assert_eq!(*submitted.lock().unwrap(), None, "partial frames must not accumulate");
+        assert!(!draws_ready(&expected, &drawn.lock().unwrap()), "partial frames must not accumulate");
         drawn.lock().unwrap().insert(a);
+        assert!(draws_ready(&expected, &drawn.lock().unwrap()));
+        app.world_mut().run_system_once(submit_receipts).unwrap();
+        assert_eq!(*submitted.lock().unwrap(), None, "all draws alone are no receipt: the assembly's submission must be queued first");
+        // What `assemble_atlas` does after queueing its submission.
+        complete.store(true, Ordering::Release);
         app.world_mut().run_system_once(submit_receipts).unwrap();
         assert_eq!(submitted.lock().unwrap().as_ref().map(|r| r.request), Some(7));
         app.world_mut().run_system_once(reset_receipts).unwrap();
-        assert!(app.world().resource::<bevy::render::camera::SortedCameras>().0.is_empty(), "a later pass must not clear the completed atlas");
+        assert!(app.world().resource::<bevy::render::camera::SortedCameras>().0.is_empty(), "a later pass must not clear the completed bake target");
     }
     /// [design] Production path regression: `spawn_terrain_with` captures every quadrant's
     /// whole draw stack (folded or fallback base plus the blended layers drawn over it) and
@@ -2006,7 +2222,19 @@ pub(crate) mod tests {
             let single_copies = app.world_mut().query_filtered::<(), (With<RenderLayers>, With<MeshMaterial3d<SurfaceCaptureMaterial>>)>().iter(app.world()).count();
             assert_eq!((terrain_copies, single_copies), (folded_paths, near_draws - folded_paths), "folds={folds}: bake entities by material type");
             let colour = app.world().resource::<Assets<Image>>().get(&app.world().resource::<SurfaceCache>().job.as_ref().unwrap().publication.colour).unwrap();
-            assert_eq!(colour.texture_descriptor.size.width, atlas_width(DEFAULT_RESOLUTION), "the default 1024-texel cells");
+            assert_eq!(colour.texture_descriptor.size.width, atlas_width(DEFAULT_RESOLUTION), "the default 512-texel cells (round 10b)");
+            // Round 10b: the published atlas has its whole mip chain and is never a render
+            // target; the bake camera draws into a single-level target of the same size.
+            assert_eq!(colour.texture_descriptor.mip_level_count, colour_levels(DEFAULT_RESOLUTION));
+            assert!(colour.data.is_none(), "no CPU copy of the atlas");
+            assert!(colour.texture_descriptor.usage.contains(TextureUsages::STORAGE_BINDING | TextureUsages::COPY_DST | TextureUsages::COPY_SRC | TextureUsages::TEXTURE_BINDING));
+            assert!(!colour.texture_descriptor.usage.contains(TextureUsages::RENDER_ATTACHMENT));
+            let view = app.world_mut().query::<&BakeView>().single(app.world()).unwrap();
+            let bake = app.world().resource::<Assets<Image>>().get(view.transfers.bake.as_ref().expect("the bake target")).unwrap();
+            assert_eq!((bake.texture_descriptor.size.width, bake.texture_descriptor.mip_level_count), (atlas_width(DEFAULT_RESOLUTION), 1));
+            assert!(bake.texture_descriptor.usage.contains(TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC));
+            assert_eq!(view.transfers.baked, vec![colour_rectangle(grid, origin, DEFAULT_RESOLUTION)], "the baked cell's level-0 corner, its levels filtered after the copy");
+            assert!(view.transfers.cells.is_empty() && view.transfers.source.is_none());
         }
     }
     /// A detail capture whose base reads `base` and `normal` and whose overlays read the
@@ -2601,14 +2829,14 @@ pub(crate) mod tests {
     }
     fn work_counts(app: &mut App) -> (usize, usize) {
         let view = app.world_mut().query::<&BakeView>().single(app.world()).unwrap();
-        (view.transfers.as_ref().map_or(0, |p| p.cells.len()), view.expected.len())
+        (view.transfers.cells.len(), view.expected.len())
     }
     type CellSet = HashSet<(i32, i32)>;
     fn work_sets(app: &mut App) -> (CellSet, CellSet) {
         let origin = app.world().resource::<SurfaceCache>().job.as_ref().unwrap().publication.origin;
         let view = app.world_mut().query::<&BakeView>().single(app.world()).unwrap();
         let resolution = app.world().resource::<SurfaceCache>().resolution;
-        let copied = view.transfers.as_ref().map(|p| p.cells.iter().map(|c| (origin.0 + (c.destination.0 / resolution) as i32, origin.1 + 2 - (c.destination.1 / resolution) as i32)).collect()).unwrap_or_default();
+        let copied = view.transfers.cells.iter().map(|c| (origin.0 + (c.destination.0 / resolution) as i32, origin.1 + 2 - (c.destination.1 / resolution) as i32)).collect();
         let baked = view.expected.iter().map(|entity| {
             let t = app.world().get::<Transform>(*entity).unwrap().translation;
             (origin.0 + (t.x / 4096.0) as i32, origin.1 + (t.y / 4096.0) as i32)
@@ -2794,10 +3022,107 @@ pub(crate) mod tests {
         let full = 0x1ff;
         assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, full), LookupStatus::Success);
         let without_diagonal = full & !(1 << 4);
-        assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, without_diagonal), LookupStatus::RejectedFootprint);
+        // Round 10b: the read stays inside the fragment's own cell, so a masked diagonal cell no
+        // longer rejects it; the cell's own coverage still does (below).
+        assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, without_diagonal), LookupStatus::Success);
+        assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, full & !1), LookupStatus::InvalidHeight, "the cell's own coverage");
         assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-3072.0), 1024, without_diagonal), LookupStatus::InvalidHeight);
         encode_colour_mask(&mut data, (0, 0), 0b0111);
         assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, full), LookupStatus::InvalidColourQuadrant);
+    }
+    /// [design] Round 10b: the colour read's levels and footprint. Every level's bilinear taps
+    /// stay in the fragment's own cell; a coarser level whose texels cover an uncaptured
+    /// quadrant rejects the read only when it contributes (the level below it alone at an
+    /// integer level of detail), and the last level (one texel per cell) needs all four.
+    #[test]
+    fn colour_mips_stay_in_the_cell_and_validate_every_contributing_level() {
+        assert_eq!(colour_read_levels(512, -3.0), (0, 1, 0.0), "magnified: level 0 alone");
+        assert_eq!(colour_read_levels(512, 2.25), (2, 3, 0.25));
+        assert_eq!(colour_read_levels(512, 9.0), (9, 9, 0.0), "the last level stays the last");
+        assert_eq!(colour_read_levels(512, 40.0), (9, 9, 0.0));
+        assert_eq!(colour_read_levels(2048, 10.5), (10, 11, 0.5));
+        // Every level's read position keeps both bilinear taps inside the cell, at the cell's
+        // corners in negative cells too.
+        for resolution in RESOLUTIONS { for level in 0..colour_levels(resolution) - 1 {
+            let size = resolution >> level;
+            for slot in [(0, 0), (2, 2), (1, 0)] { for local in [Vec2::ZERO, Vec2::splat(4095.999), Vec2::new(0.001, 4095.0)] {
+                let uv = Vec2::new((slot.0 as f32 * 4096.0 + local.x) / 12288.0, 1.0 - (slot.1 as f32 * 4096.0 + local.y) / 12288.0);
+                let (corner, p) = colour_read_point(slot, uv, size);
+                let tap = (p - Vec2::splat(0.5)).floor();
+                assert!(tap.cmpge(corner).all() && (tap + 1.0).cmplt(corner + size as f32).all(), "{resolution} level {level} {slot:?} {local:?}");
+            }}
+        }}
+        let mut data = empty_height_atlas();
+        let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
+        let slots = HashSet::from([(0, 0), (1, 0), (0, 1), (1, 1)]);
+        for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
+        encode_colour_mask(&mut data, (0, 0), 0b1110);
+        let origin = (-18, -1);
+        let shift = Vec2::new(origin.0 as f32, origin.1 as f32) * 4096.0;
+        let status = |point: Vec2, lod: f32| lookup_level_status(&data, origin, shift + point, 512, 0x1ff, lod);
+        // 20 units east of q0 (uncaptured), in q1 at 512 texels per cell: levels 0-2 (texels
+        // of 8 to 32 units) keep both taps in q1; level 3's west tap (64-unit texels) is q0's.
+        let near_edge = Vec2::new(2048.0 + 20.0, 1024.0);
+        assert_eq!(status(near_edge, 0.0), LookupStatus::Success);
+        assert_eq!(status(near_edge, 2.0), LookupStatus::Success, "level 2 alone");
+        assert_eq!(status(near_edge, 2.5), LookupStatus::RejectedFootprint, "level 3 contributes");
+        // In the middle of q3: levels to 7 (4 texels per cell side) read q3 alone; level 8's two
+        // texels per side are all read (the read is clamped inside the cell), q0's among them,
+        // and the last level's one texel covers all four quadrants.
+        let far = Vec2::new(3072.0, 3072.0);
+        assert_eq!(status(far, 7.0), LookupStatus::Success);
+        assert_eq!(status(far, 7.5), LookupStatus::RejectedFootprint, "level 8 contributes");
+        assert_eq!(status(far, 9.0), LookupStatus::RejectedFootprint, "the last level alone");
+        // All four captured: every level serves, the cell's neighbours never enter.
+        assert_eq!(lookup_level_status(&data, origin, shift + Vec2::new(4096.0 + 1024.0, 1024.0), 512, 0x1ff, 9.0), LookupStatus::Success);
+        // The cell's own live coverage gates every level.
+        assert_eq!(lookup_level_status(&data, origin, shift + Vec2::new(4096.0 + 1024.0, 1024.0), 512, 0x1ff & !(1 << 1), 0.0), LookupStatus::InvalidHeight);
+    }
+    /// [design] Round 10b: the mip filter's uniform and workgroups: each baked cell's atlas
+    /// column and row, its count, and one workgroup layer per cell covering that level's
+    /// texels per cell side. The filter's WGSL is validated in mesh_blend_shader_tests.rs.
+    #[test]
+    fn mip_dispatch_covers_each_baked_cell_and_no_more() {
+        let words = mip_cells(&[colour_rectangle((-17, 0), (-18, -1), 512), colour_rectangle((-16, 1), (-18, -1), 512)], 512);
+        assert_eq!(&words[..8], &[1, 1, 0, 0, 2, 0, 0, 0]);
+        assert_eq!(words[MIP_CELLS * 4], 2);
+        assert!(words[8..MIP_CELLS * 4].iter().all(|&w| w == 0));
+        assert_eq!(mip_workgroups(512, 1, 2), (32, 32, 2), "256 texels per cell side at level 1");
+        assert_eq!(mip_workgroups(512, 7, 1), (1, 1, 1), "4 texels: one partial workgroup");
+        assert_eq!(mip_workgroups(512, 9, 9), (1, 1, 9), "the last level's one texel per cell");
+        assert!(MIP_SHADER.contains(&format!("@workgroup_size({MIP_WORKGROUP}, {MIP_WORKGROUP}, 1)")) && MIP_SHADER.contains(&format!("array<vec4<u32>, {MIP_CELLS}>")));
+    }
+    /// [design] Round 10b: a replacement that only copies (the entering cells have heights but
+    /// no colour capture, so nothing of theirs is drawn) gets no bake target and an inactive
+    /// camera: the assembly copies every level of the retained cells and needs no mip pass.
+    /// A baking one draws into its bake target with an active camera.
+    #[test]
+    fn copy_only_replacements_draw_nothing_and_copy_every_level() {
+        let (mut app, _files) = cache_fixture();
+        for y in -1..=1 {
+            let entity = app.world().resource::<Streamer>().loaded[&(2, y)];
+            let mut cell = app.world_mut().get_mut::<SurfaceCell>(entity).unwrap();
+            cell.quadrants.clear();
+            cell.paths = [CapturePath::HeightOnly("missing-base-mesh"); 4];
+        }
+        move_camera(&mut app, (1, 0));
+        tick(&mut app);
+        let colour = job_colour(&app).expect("a replacement");
+        let mut cameras = app.world_mut().query::<(&BakeView, &Camera, &RenderTarget)>();
+        let (view, camera, target) = cameras.single(app.world()).unwrap();
+        assert_eq!((view.transfers.cells.len(), view.expected.len()), (6, 0));
+        assert!(view.transfers.bake.is_none() && view.transfers.baked.is_empty() && view.transfers.source.is_some());
+        assert_eq!(view.transfers.destination.id(), colour.id());
+        assert!(!camera.is_active && matches!(target, RenderTarget::None { .. }));
+        finish(&mut app);
+        let (mut app, _files) = cache_fixture();
+        move_camera(&mut app, (1, 0));
+        tick(&mut app);
+        let mut cameras = app.world_mut().query::<(&BakeView, &Camera, &RenderTarget)>();
+        let (view, camera, target) = cameras.single(app.world()).unwrap();
+        assert!(camera.is_active);
+        assert_eq!(target.as_image().map(Handle::id), view.transfers.bake.as_ref().map(Handle::id), "the camera draws into the bake target, never the published atlas");
+        assert_eq!(view.transfers.baked.len(), 3);
     }
     #[test]
     fn epoch_invalidates_before_receipts_even_without_camera_and_off_on() {
@@ -2844,7 +3169,7 @@ pub(crate) mod tests {
             receipt: Receipt { epoch: 3, request: 4, destination: Handle::<Image>::default().id(), source_revision: 2 },
             height: default(), resources_ready: default(),
             expected: default(), drawn: default(), complete: default(), submitted: shared.clone(),
-            transfers: Some(Transfers { source: default(), destination: default(), cells: vec![CellCopy { source: (0, 0), destination: (1024, 2048) }], resolution: 1024 }),
+            transfers: Transfers { source: Some(default()), destination: default(), cells: vec![CellCopy { source: (0, 0), destination: (1024, 2048) }], bake: None, baked: vec![], resolution: 1024 },
         };
         let completed = view.complete.clone();
         let resources = view.resources_ready.clone();
@@ -2967,12 +3292,15 @@ pub(crate) mod tests {
         let a = world.spawn_empty().id();
         let b = world.spawn_empty().id();
         let expected = HashSet::from([a, b]);
-        assert!(!complete_draws(&expected, &HashSet::new()));
-        assert!(!complete_draws(&expected, &HashSet::from([a])));
-        assert!(!complete_draws(&expected, &HashSet::from([b])));
-        assert!(complete_draws(&expected, &expected));
-        assert!(!complete_draws(&HashSet::new(), &HashSet::new()));
+        assert!(!draws_ready(&expected, &HashSet::new()));
+        assert!(!draws_ready(&expected, &HashSet::from([a])));
+        assert!(!draws_ready(&expected, &HashSet::from([b])));
+        assert!(draws_ready(&expected, &expected));
+        // Round 10b: a copy-only view plans no draw (its camera is inactive), so it is ready
+        // at once; a view with neither copies nor draws is never spawned (`update_cache`
+        // publishes such a request without one).
+        assert!(draws_ready(&HashSet::new(), &HashSet::new()));
         let extra = world.spawn_empty().id();
-        assert!(!complete_draws(&expected, &HashSet::from([a, b, extra])), "unplanned draws can contaminate the destination");
+        assert!(!draws_ready(&expected, &HashSet::from([a, b, extra])), "unplanned draws can contaminate the bake target");
     }
 }
