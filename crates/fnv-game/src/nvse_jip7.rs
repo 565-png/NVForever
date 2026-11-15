@@ -19,6 +19,40 @@ pub struct ProjectileLaunchTraits {
     pub impact_force: Option<f32>,
 }
 
+/// Exact backup of the two supported launch fields for a bounded engine diagnostic.
+/// It cannot expose or replace unrelated record edits, and cannot restore into a
+/// different Game even if an allocator reuses that Game's former address.
+#[derive(Debug)]
+pub struct ProjectileLaunchFieldLease {
+    owner: std::sync::Arc<()>,
+    projectile: FormId,
+    before: Option<[Option<XVal>; 2]>,
+    effective: [f64; 2],
+}
+
+impl ProjectileLaunchFieldLease {
+    pub fn belongs_to(&self, game: &Game<'_>) -> bool {
+        std::sync::Arc::ptr_eq(&self.owner, &game.projectile_launch_restore_owner)
+    }
+
+    pub fn effective_values(&self) -> [f64; 2] { self.effective }
+
+    /// Restore exact entry presence and values once. Wrong-owner rejection leaves
+    /// the capsule available for cleanup by its actual owner.
+    pub fn restore(&mut self, game: &mut Game<'_>) -> Result<(), String> {
+        if !self.belongs_to(game) { return Err("projectile field lease belongs to another Game".into()); }
+        let before = self.before.take().ok_or("projectile field lease was already restored")?;
+        for (field, before) in ["DATA/speed", "DATA/impact_force"].into_iter().zip(before) {
+            let key = (self.projectile, field.to_string());
+            match before {
+                Some(value) => { game.field_overrides.insert(key, value); }
+                None => { game.field_overrides.remove(&key); }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// One climate weather (WLST): the weather, its chance, the global that gates it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClimateWeather {
@@ -259,6 +293,17 @@ impl Game<'_> {
     /// when it has none.
     pub fn num_field(&self, f: FormId, sub: &str, path: &str) -> f64 {
         crate::nvse::record_value(self, f, sub, path).and_then(|v| v.num().ok()).unwrap_or(0.0)
+    }
+
+    /// Preserve only the two existing projectile launch fields before a diagnostic
+    /// runs ordinary script setters. No field is changed by taking the capsule.
+    pub fn preserve_projectile_launch_fields(&self, projectile: FormId) -> Option<ProjectileLaunchFieldLease> {
+        if self.data.sig(projectile) != Some(*b"PROJ") { return None; }
+        Some(ProjectileLaunchFieldLease {
+            owner: self.projectile_launch_restore_owner.clone(), projectile,
+            before: Some(["DATA/speed", "DATA/impact_force"].map(|path| self.field_overrides.get(&(projectile, path.to_string())).cloned())),
+            effective: [self.num_field(projectile, "DATA", "speed"), self.num_field(projectile, "DATA", "impact_force")],
+        })
     }
 
     /// The selected projectile at launch, keeping the typed defaults when no session
@@ -621,3 +666,7 @@ fn impact_colour(g: &Game, i: FormId) -> f64 {
     let w = colour_word(g, i).or_else(set).unwrap_or(u32::MAX);
     f64::from(w & 0xFF) * 1_000_000.0 + f64::from((w >> 8) & 0xFF) * 1000.0 + f64::from(w >> 16)
 }
+
+#[cfg(test)]
+#[path = "nvse_jip7_launch_probe_tests.rs"]
+mod launch_probe_tests;

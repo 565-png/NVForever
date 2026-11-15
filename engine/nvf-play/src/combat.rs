@@ -142,6 +142,7 @@ use crate::{space, PlaySet, PlayState, PlayWorld};
 pub(crate) mod hit_effects;
 pub mod held_grenade_probe;
 mod projectile_launch;
+mod projectile_launch_probe;
 #[cfg(test)]
 mod projectile_launch_tests;
 
@@ -1602,6 +1603,7 @@ impl Plugin for CombatPlugin {
                 slider: None,
             },
         );
+        projectile_launch_probe::install(app);
         app.init_resource::<WeaponAnim>()
             .init_resource::<CombatStats>()
             .init_resource::<held_grenade_probe::Probe>()
@@ -4259,6 +4261,7 @@ fn actor_attacks(
     (control, anim, player): Guard,
     mut dm: ResMut<crate::dismember::Dismemberment>,
     mut grenade_probe: ResMut<held_grenade_probe::Probe>,
+    mut launch_probe: Option<ResMut<projectile_launch_probe::Probe>>,
     time: Res<Time>,
 ) {
     sync_condition_penalty(&mut c, script.as_deref());
@@ -4269,6 +4272,7 @@ fn actor_attacks(
     let player_guard = (c.melee && control.as_deref().is_some_and(|k| k.aiming) && anim.as_deref().is_some_and(|a| a.ready)).then(|| player.as_deref().map(|p| p.look_dir())).flatten().map(|d| [d[0], d[1]]);
     let script_shots = std::mem::take(&mut c.script_shots);
     for (s, scripted) in shots.read().map(|s| (s, false)).chain(script_shots.iter().map(|s| (s, true))) {
+        if let Some(probe) = launch_probe.as_deref_mut() { probe.request(s, scripted); }
         let probe_request = grenade_probe.request(s, &sim.world);
         // The shooter's own body is never hit: the player's is `PLAYER`, not its FormID (a
         // player's FireWeapon hit the player at the muzzle, 2026-10-27).
@@ -4328,6 +4332,7 @@ fn actor_attacks(
             c.flying.push(Flying { p, vats_aim: None, nearest: f32::INFINITY, told_off: false, id: c.next_visual, proj, shown, dir, from_muzzle: s.muzzle.is_some(), origin: leaving.origin, seen: leaving.seen, tracer, projectiles_per_shot: chain.projectiles_per_shot, force, by, rref: None, registered: false, speed_mult: 1.0, ended_at: None });
             if let Some(flying) = c.flying.last() {
                 grenade_probe.accepted(probe_request, s, &flying.p, flying.proj, flying.id);
+                if let Some(probe) = launch_probe.as_deref_mut() { probe.inserted(s, scripted, flying, &sim.world); }
             }
         }
         grenade_probe.finish_request(probe_request, probe_created);
