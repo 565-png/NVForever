@@ -1301,8 +1301,10 @@ mod tests {
         assert_eq!(heads, ["Gameplay > Game", "Gameplay > Dialogue", "Display > Colours", "Controls > Input", "Debug"]);
         assert!(e.iter().all(|e| !matches!(e, ViewEntry::Heading(_))), "crumbs, nothing to choose but the rows");
         // A hidden colour channel is found as its colour, once; a controller's row as the Input Device row.
-        assert_eq!(searched(&list, "hud", &vis), ["<Colours>", "hud-colour"]);
-        assert_eq!(searched(&list, "hud", &Visibility { colours: [true, false], ..Visibility::default() }), ["<Colours>", "hud-colour", "hud-red"]);
+        // (The tweaks' Hide HUD key (#1892) is found by its words too, its controller button as
+        // the Input Device row.)
+        assert_eq!(searched(&list, "hud", &vis), ["<Colours>", "hud-colour", "", "<Input>", "device", "", "<Tweak Keys>", "bind:Hide HUD"]);
+        assert_eq!(searched(&list, "hud", &Visibility { colours: [true, false], ..Visibility::default() }), ["<Colours>", "hud-colour", "hud-red", "", "<Input>", "device", "", "<Tweak Keys>", "bind:Hide HUD"]);
         assert_eq!(searched(&list, "button-style", &vis), ["<Input>", "device"]);
         // A Controls row is found by its words; a control of the device not in use as the
         // Input Device row.

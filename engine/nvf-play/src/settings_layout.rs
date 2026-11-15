@@ -177,11 +177,46 @@ pub const SECTIONS: &[Section] = &[
         Some("Hotkeys"),
         &["controls:bind:Hotkey1", "controls:bind:Hotkey3", "controls:bind:Hotkey4", "controls:bind:Hotkey5", "controls:bind:Hotkey6", "controls:bind:Hotkey7", "controls:bind:Hotkey8"],
     ),
+    // The tweaks' own keys (#1892, `crate::bindings::TWEAK_CONTROLS` on), none bound until the
+    // player binds one: their own category after the game's [design: the menu overhaul,
+    // merged with #1892; the name is the overhaul's, open to the owner].
+    section(
+        "Controls",
+        Some("Tweak Keys"),
+        &[
+            "controls:bind:Holster Weapon",
+            "controls:bind:Toggle Light",
+            "controls:bind:Toggle Crosshair",
+            "controls:bind:Toggle Sneak Label",
+            "controls:bind:Toggle Menus",
+            "controls:bind:Exit to Main Menu",
+            "controls:bind:Exit Game",
+            "controls:bind:No Collision",
+            "controls:bind:Pip-Boy Stats",
+            "controls:bind:Pip-Boy Items",
+            "controls:bind:Pip-Boy Data",
+            "controls:bind:Local Map",
+            "controls:bind:World Map",
+            "controls:bind:Quests",
+            "controls:bind:Radio",
+            "controls:bind:Toggle Iron Sights",
+            "controls:bind:Drop Weapon",
+            "controls:bind:Radio Volume Up",
+            "controls:bind:Radio Volume Down",
+            "controls:bind:Last Weapon",
+            "controls:bind:Smooth Camera",
+            "controls:bind:Repeat Activate",
+            "controls:bind:Toggle Sighting Node",
+            "controls:bind:Place Marker Here",
+            "controls:bind:Hide HUD",
+            "controls:bind:Skip Radio Song",
+        ],
+    ),
     section("Graphics", Some("Quality"), &["quality"]),
     section("Graphics", Some("Shadows"), &["sun-shadows", "shadow-filter", "shadow-distance", "fine-shadows"]),
     section("Graphics", Some("Lighting and Effects"), &["ambient-occlusion", "light-shafts", "bloom", "grade", "glow", "eye-adaptation", "neon-glow"]),
     section("Graphics", Some("Water"), &["water-reflections", "water-mirror"]),
-    section("Graphics", Some("Detail and Distance"), &["distant-lod", "grass", "anisotropic", "terrain-height-blend", "object-distance", "actor-distance", "item-distance", "grass-distance"]),
+    section("Graphics", Some("Detail and Distance"), &["distant-lod", "grass", "anisotropic", "terrain-height-blend", "terrain-anti-tiling", "object-distance", "actor-distance", "item-distance", "grass-distance"]),
     section("Graphics", Some("World and Animation"), &["head-tracking", "foot-ik", "sky-clock"]),
     // The owner's own layout of the movement work (tech/movement-inertia, 2026-11-15).
     section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement"]),
@@ -1218,12 +1253,13 @@ mod tests {
             .collect()
     }
 
-    /// Every row the registry can hold today (upstream main af16a793f: #1966's quality and
-    /// enhanced rows, #2014's counter rows, the VATS rows, #2198's upscaler rows, #2169's FSR
-    /// library row, #2242's upscaling counter row, #2317's Generated frames row, the field of
-    /// view rows, the menu scale and Physics rate rows, #2662's grass fires and #2550's
-    /// terrain height blending), by the group it registers with.
-    const KNOWN: [(&str, &str); 114] = [
+    /// Every row the registry can hold today (upstream main a2dd0e947: #1966's quality row
+    /// (its enhanced row removed by the menu overhaul), #2014's counter rows, the VATS rows,
+    /// #2198's upscaler rows, #2169's FSR library row, #2242's upscaling counter row, #2317's
+    /// Generated frames row, the field of view rows, the menu scale and Physics rate rows,
+    /// #2662's grass fires, #2550's terrain height blending, #2551's terrain anti-tiling and the
+    /// overhaul's menu font), by the group it registers with.
+    const KNOWN: [(&str, &str); 115] = [
         ("detached-camera", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
@@ -1320,6 +1356,7 @@ mod tests {
         ("sharpen", "Graphics"),
         ("anisotropic", "Graphics"),
         ("terrain-height-blend", "Graphics"),
+        ("terrain-anti-tiling", "Graphics"),
         ("light-shafts", "Graphics"),
         ("water-reflections", "Graphics"),
         ("water-mirror", "Graphics"),
@@ -1518,6 +1555,7 @@ mod tests {
         assert_eq!(at("sky-clock"), "Graphics > World and Animation");
         assert_eq!(at("grass-fire"), "NVF Features > World Interaction");
         assert_eq!(at("button-style"), "Controls > Input");
+        assert_eq!(at("terrain-anti-tiling"), "Graphics > Detail and Distance", "beside terrain height blending (#2551)");
         assert_eq!(l.control_placement("bind:Jump").unwrap().path(), "Controls > Movement");
         // The registry itself is left as it was: its order and each row's group.
         let again = registry(&KNOWN);
