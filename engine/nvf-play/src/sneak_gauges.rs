@@ -247,7 +247,8 @@ mod tests {
         assert_eq!(SneakGauges::cover_segment(0.0), None);
         assert_eq!(SneakGauges::cover_segment(0.04), None);
         assert_eq!(SneakGauges::cover_segment(0.05), Some(0));
-        assert_eq!(SneakGauges::cover_segment(0.35), Some(2), "a walk's 31 lights three segments; a 35 cover marks the third");
+        assert_eq!(SneakGauges::cover_segment(0.31), Some(2), "a 31 cover marks the third segment, the last a walk's 31 lights");
+        assert_eq!(SneakGauges::cover_segment(0.35), Some(3));
         assert_eq!(SneakGauges::cover_segment(1.0), Some(SEGMENTS - 1));
         let up = SneakGauges::step_cover(0.0, 40.0, 0.1);
         assert!((up - 0.4).abs() < 1e-5, "up at once");
