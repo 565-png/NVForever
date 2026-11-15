@@ -138,7 +138,11 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
                     if members.first().is_some_and(|m| m.name.as_deref() == Some("surface")) { index_sizes.push(span); }
                 }
             }
-            // Round 6: one vec4 of hybrid v2 widths in the enabled uniform only.
+            if blend {
+                assert!(source.contains("terrain_covered"), "enabled coverage survives bindless and ordinary composition");
+                assert!(source.contains("mesh_terrain_origin.z"), "coverage reuses the enabled uniform without another binding");
+            }
+            // Round 9 reuses origin.z; round 6's enabled width and ordinary layouts stay fixed.
             assert_eq!(surface_sizes, vec![if blend { 176 } else { 128 }]);
             // The blend type reuses the ordinary table and slots (nif_surface_blend.rs notes).
             if bindless { assert_eq!(index_sizes, vec![16]); }

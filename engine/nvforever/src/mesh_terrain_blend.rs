@@ -453,6 +453,9 @@ const SHAPE_LINES: usize = 2048;
 #[derive(Resource, Default)]
 struct Variants {
     generation: u64,
+    readiness: Option<BlendReadiness>,
+    publications: HashMap<AssetId<NifBlendMaterial>, crate::terrain_surface::PublishedSurface>,
+    ordinary_seen: HashMap<Entity, u32>,
     materials: HashMap<AssetId<NifMaterial>, (Handle<NifBlendMaterial>, SourceStamp)>,
     reported: Option<u64>,
     reported_census: Option<Census>,
@@ -460,6 +463,57 @@ struct Variants {
     logged: HashSet<(u32, usize, u32)>,
     shape_lines: usize,
 }
+
+/// [design] Asset IDs alone cross this acknowledgement boundary; main-world handles
+/// in candidates and BlendShape keep both image generations alive until the switch.
+#[derive(Resource, Clone, Default)]
+pub(crate) struct BlendReadiness {
+    ready: Arc<std::sync::Mutex<HashSet<AssetId<NifBlendMaterial>>>>,
+    settled: Arc<std::sync::atomic::AtomicU64>,
+}
+impl BlendReadiness {
+    pub(crate) fn usable(&self, id: AssetId<NifBlendMaterial>) -> bool { self.ready.lock().unwrap().contains(&id) }
+    pub(crate) fn settled(&self, revision: u64) -> bool { self.settled.load(Ordering::Acquire) == revision }
+}
+#[derive(Resource, Default)]
+struct ReadinessInput { ids: HashSet<AssetId<NifBlendMaterial>>, ages: HashMap<AssetId<NifBlendMaterial>, u32>, delay: u32 }
+
+fn install_readiness(app: &mut App, gate: MaterialGate) {
+    use bevy::render::{ExtractSchedule, Render, RenderApp, RenderSystems};
+    let shared = BlendReadiness::default();
+    app.insert_resource(shared.clone()).insert_resource(Variants { readiness: Some(shared.clone()), ..default() });
+    if let Some(render) = app.get_sub_app_mut(RenderApp) {
+        let delay = std::env::var("NVF_PLAY_TEST_MESH_BLEND_READY_DELAY").ok().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0).min(120);
+        let extract_gate = gate.clone();
+        render.insert_resource(shared).insert_resource(ReadinessInput { delay, ..default() })
+            .add_systems(ExtractSchedule, extract_readiness.run_if(move || extract_gate.is_open()))
+            .add_systems(Render, acknowledge_materials.run_if(move || gate.is_open()).in_set(RenderSystems::Cleanup));
+    }
+}
+fn extract_readiness(mut input: ResMut<ReadinessInput>, variants: bevy::render::Extract<Res<Variants>>) {
+    input.ids = variants.materials.values().map(|(h, _)| h.id()).chain(variants.publications.keys().copied()).collect();
+}
+fn acknowledge_materials(
+    mut input: ResMut<ReadinessInput>, shared: Res<BlendReadiness>,
+    materials: Res<bevy::render::erased_render_asset::ErasedRenderAssets<bevy::pbr::PreparedMaterial>>,
+    allocators: Res<bevy::render::material_bind_groups::MaterialBindGroupAllocators>,
+) {
+    let ids = input.ids.clone();
+    input.ages.retain(|id, _| ids.contains(id));
+    let mut ready = shared.ready.lock().unwrap();
+    ready.clear();
+    for id in ids {
+        let age = input.ages.entry(id).or_default();
+        *age = age.saturating_add(1);
+        if *age <= input.delay { continue; }
+        let Some(material) = materials.get(id) else { continue };
+        let bound = allocators.get(&std::any::TypeId::of::<NifBlendMaterial>()).and_then(|a| a.get(material.binding.group)).is_some_and(|b| b.bind_group().is_some());
+        if bound { ready.insert(id); }
+    }
+}
+
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct BlendConversion;
 
 /// [design] Registered in every run, so the settings row can switch the blend while the
 /// game runs: the materials' plugins behind the closed [`BlendGate`] and empty resources;
@@ -471,6 +525,8 @@ pub struct MeshTerrainBlendPlugin;
 impl Plugin for MeshTerrainBlendPlugin {
     fn build(&self, app: &mut App) {
         let gate = MaterialGate::new();
+        install_readiness(app, gate.clone());
+        crate::terrain_surface::install_continuity_probe(app);
         app.add_plugins((MaterialPlugin::<NifBlendMaterial>::gated(gate.clone()), crate::terrain_surface::SurfaceBakePlugin { gate: gate.clone() }))
             .insert_resource(BlendGate(gate))
             .init_resource::<SurfaceCache>().init_resource::<Variants>().init_resource::<BlendState>()
@@ -478,9 +534,12 @@ impl Plugin for MeshTerrainBlendPlugin {
                 follow_setting.before(crate::world::stream),
                 close_gate.after(follow_setting).run_if(draining),
                 (crate::world::blend_backfill, crate::terrain_surface::backfill_cells).after(follow_setting).run_if(active),
-                update_cache.after(crate::world::stream).after(crate::terrain_surface::backfill_cells).run_if(active),
             ))
-            .add_systems(PostUpdate, conversion_order((stop.run_if(stopping), apply_variants.run_if(active)).chain()));
+            .add_systems(PostUpdate, conversion_order((crate::terrain_surface::invalidate_context.run_if(active), stop.run_if(stopping), apply_variants.run_if(active)).chain().in_set(BlendConversion)))
+            // Source edits (including this frame's producers) must be versioned before
+            // accepting a bake receipt. Conversion consumes this publication next frame.
+            .add_systems(PostUpdate, (crate::terrain_surface::refresh_captures, update_cache).chain()
+                .after(bevy::asset::AssetEventSystems).after(bevy::transform::TransformSystems::Propagate).run_if(active));
     }
 }
 
@@ -516,7 +575,7 @@ fn follow_setting(
     RECORDING.store(true, Ordering::Relaxed);
     info!("{}", start_line(&c));
     cache.start(c.resolution, device.map(|d| d.limits().max_texture_dimension_2d));
-    *variants = Variants::default();
+    *variants = Variants { readiness: variants.readiness.take(), ..default() };
     state.active = Some(c);
     state.shapes_pending = true;
     state.draining = None;
@@ -552,7 +611,7 @@ fn stop(mut commands: Commands, mut state: ResMut<BlendState>, mut cache: ResMut
     }
     let released = cells.iter().count();
     cache.release(&mut commands);
-    *variants = Variants::default();
+    *variants = Variants { readiness: variants.readiness.take(), ..default() };
     *state = BlendState { draining: Some(0), ..default() };
     info!("mesh terrain blend: stop restored-shapes={restored} tracked-shapes={} released-cells={released} kept-producer-materials={kept}", shapes.iter().count());
 }
@@ -603,7 +662,7 @@ fn enabled_material(source: &NifMaterial, c: BlendConfig, surface: &crate::terra
     NifBlendMaterial {
         base: source.base.clone(),
         extension: NifSurfaceBlend::from_source(&source.extension, c.controls(), c.width_controls(),
-            Vec4::new(surface.origin.0 as f32, surface.origin.1 as f32, 0.0, 0.0), surface.colour.clone(), surface.height.clone()),
+            Vec4::new(surface.origin.0 as f32, surface.origin.1 as f32, surface.coverage as f32, 0.0), surface.colour.clone(), surface.height.clone()),
     }
 }
 
@@ -612,7 +671,7 @@ type Temporary = (Has<nvf_play::fade::Fading>, Has<crate::effect_shaders::Faded>
 /// The see-through shadow markers (nif_material.rs `see_through_casts_no_shadow`).
 type ShadowMarks = (Has<NotShadowCaster>, Has<SeeThroughNoShadow>);
 /// Every shape the blend tracks: convertible ones ([`BlendShape`]) and census-only ones.
-type Tracked<'w, 's> = Query<'w, 's, (Entity, Option<&'static mut BlendShape>, Option<&'static BlendCensus>, Option<&'static MeshMaterial3d<NifMaterial>>, Temporary, ShadowMarks), Or<(With<BlendShape>, With<BlendCensus>)>>;
+type Tracked<'w, 's> = Query<'w, 's, (Entity, Option<&'static mut BlendShape>, Option<&'static BlendCensus>, Option<Ref<'static, MeshMaterial3d<NifMaterial>>>, Temporary, ShadowMarks), Or<(With<BlendShape>, With<BlendCensus>)>>;
 
 fn apply_variants(
     mut commands: Commands,
@@ -645,23 +704,40 @@ fn apply_configured_variants(
     shapes: &mut Tracked,
     c: BlendConfig,
 ) {
-    if variants.generation != cache.generation {
-        variants.generation = cache.generation;
+    let revision = cache.published.as_ref().map_or(0, |p| p.revision);
+    if variants.generation != revision {
+        variants.generation = revision;
         variants.materials.clear();
+    }
+    // [design] Restrict old drawable clones too, while their replacement prepares.
+    // Only uniform POD changes; the image handles remain fixed (no colour upload).
+    for (id, publication) in &variants.publications {
+        let coverage = cache.coverage_for(publication) as f32;
+        if blends.get(*id).is_some_and(|m| m.extension.mesh_terrain_origin.z != coverage) {
+            blends.get_mut(*id).unwrap().extension.mesh_terrain_origin.z = coverage;
+        }
     }
     // A producer can edit an owned source in place and republish the same handle
     // (NIF block material edits). Evict once per source before creating shared clones.
-    for (_, shape, _, drawn, _, _) in shapes.iter() {
+    let mut ordinary_live = HashSet::new();
+    for (entity, shape, _, drawn, _, _) in shapes.iter() {
         if shape.is_none_or(|s| s.enabled.is_none()) { continue; }
-        if let Some(drawn) = drawn { variants.materials.remove(&drawn.0.id()); }
+        if let Some(drawn) = drawn {
+            ordinary_live.insert(entity);
+            if variants.ordinary_seen.insert(entity, drawn.last_changed().get()) != Some(drawn.last_changed().get()) {
+                variants.materials.remove(&drawn.0.id());
+            }
+        }
     }
+    variants.ordinary_seen.retain(|e, _| ordinary_live.contains(e));
+    let mut pending = false;
     let mut census = Census::default();
     for (entity, shape, tracked, drawn, (fading, faded, overridden), (no_shadow, see_through_mark)) in shapes.iter_mut() {
         let temporary = fading || faded || overridden;
         let recorded = tracked.map_or(0, |t| t.reasons);
         let Some(mut shape) = shape else {
             // Census only: never converted.
-            let mask = shape_mask(recorded, temporary, drawn.and_then(|d| materials.get(&d.0)));
+            let mask = shape_mask(recorded, temporary, drawn.as_ref().and_then(|d| materials.get(&d.0)));
             if let Some(t) = tracked {
                 census.count(t.base_type, mask);
                 log_shape(variants, t, mask);
@@ -669,7 +745,7 @@ fn apply_configured_variants(
             continue;
         };
         // [design] Respect a material override, retaining its actual source handle too.
-        if let Some(drawn) = drawn {
+        if let Some(drawn) = &drawn {
             shape.original = drawn.0.clone();
         }
         let source = materials.get(&shape.original);
@@ -694,10 +770,21 @@ fn apply_configured_variants(
             Some((handle, made)) if *made == stamp => handle.clone(),
             _ => {
                 let handle = blends.add(enabled_material(source, c, surface));
+                variants.publications.insert(handle.id(), surface.clone());
                 variants.materials.insert(id, (handle.clone(), stamp));
                 handle
             }
         };
+        // Keep the old enabled handle until the render world acknowledges a prepared,
+        // bound replacement. Source/temporary owners still take precedence above.
+        if variants.readiness.as_ref().is_some_and(|r| !r.usable(handle.id())) {
+            pending = true;
+            // A non-temporary producer may have republished an ordinary source. Its
+            // handle is recorded above; keep only the old drawable blend while the
+            // replacement prepares, so two material types never compete for the entity.
+            if shape.enabled.is_some() && drawn.is_some() { commands.entity(entity).remove::<MeshMaterial3d<NifMaterial>>(); }
+            continue;
+        }
         if shape.enabled.as_ref() != Some(&handle) || drawn.is_some() {
             commands.entity(entity).remove::<MeshMaterial3d<NifMaterial>>().insert(MeshMaterial3d(handle.clone()));
             // [design] The shared bookkeeping runs on ordinary material changes only; a
@@ -710,13 +797,18 @@ fn apply_configured_variants(
         }
         shape.enabled = Some(handle);
     }
+    let sources: HashSet<_> = shapes.iter().filter_map(|(_, s, _, _, _, _)| s.map(|s| s.original.id())).collect();
+    variants.materials.retain(|id, _| sources.contains(id));
+    let live: HashSet<_> = shapes.iter().filter_map(|(_, s, _, _, _, _)| s.and_then(|s| s.enabled.as_ref().map(Handle::id))).chain(variants.materials.values().map(|(h, _)| h.id())).collect();
+    variants.publications.retain(|id, _| live.contains(id));
+    if let Some(readiness) = variants.readiness.as_ref().filter(|_| !pending) { readiness.settled.store(revision, Ordering::Release); }
     variants.frames_since_report = variants.frames_since_report.saturating_add(1);
     if let Some(surface) = &cache.published {
-        let published = variants.reported != Some(cache.generation);
+        let published = variants.reported != Some(revision);
         let refreshed = variants.reported_census.as_ref() != Some(&census) && variants.frames_since_report >= REFRESH_FRAMES;
         if published || refreshed {
-            info!("{}", ready_line(surface, cache.generation, &c, &census));
-            variants.reported = Some(cache.generation);
+            info!("{}", ready_line(surface, revision, &c, &census));
+            variants.reported = Some(revision);
             variants.reported_census = Some(census);
             variants.frames_since_report = 0;
         }
@@ -766,7 +858,7 @@ mod tests {
     }
     fn publish(app: &mut App) {
         let mut images = app.world_mut().resource_mut::<Assets<Image>>();
-        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (-18, -1), cells: 9, resolution: 1024 };
+        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (-18, -1), cells: 9, resolution: 1024, revision: 7, coverage: 511, ..default() };
         app.init_resource::<SurfaceCache>();
         let mut cache = app.world_mut().resource_mut::<SurfaceCache>();
         cache.generation = 7;
@@ -1020,7 +1112,7 @@ mod tests {
         assert_eq!(start_line(&parse("8:status:penetration:2048:albedo").unwrap()), "mesh terrain blend: start band=8 variant=status resolution=2048 noise=0 shape=penetration shading=albedo weight-version=1");
         assert_eq!(start_line(&parse("8:surface:hybrid:1024:full:0.5,32").unwrap()), "mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=0.5 steep=32 weight-version=2");
         let mut images = Assets::<Image>::default();
-        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (0, 0), cells: 9, resolution: 512 };
+        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (0, 0), cells: 9, resolution: 512, revision: 3, coverage: 511, ..default() };
         let mut census = Census::default();
         census.count(BaseType::Stat, 0);
         census.count(BaseType::Stat, reason::RIG | reason::PARTICLES);
@@ -1137,7 +1229,7 @@ mod tests {
     #[test]
     fn enabled_clone_preserves_source_and_alpha_coverage_descriptors() {
         let mut images = Assets::<Image>::default();
-        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (-2, -1), cells: 1, resolution: 512 };
+        let surface = crate::terrain_surface::PublishedSurface { colour: images.add(Image::default()), height: images.add(Image::default()), origin: (-2, -1), cells: 1, resolution: 512, revision: 1, coverage: 511, ..default() };
         // Round 6 admissions: Blend, a finite depth bias, the lit decal flag and alpha_cut,
         // alone and combined, beside Opaque and Mask with hard and soft edges.
         let mut sources = Vec::new();
@@ -1353,6 +1445,111 @@ mod tests {
     }
 
     #[test]
+    fn request_restarts_keep_enabled_material_on_every_intermediate_frame() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let entity = app.world_mut().spawn((BlendShape::new(source.clone()), MeshMaterial3d(source))).id();
+        app.update();
+        let old = app.world().get::<BlendShape>(entity).unwrap().enabled.clone().unwrap();
+        for _ in 0..8 {
+            app.world_mut().resource_mut::<SurfaceCache>().generation += 1;
+            app.update();
+            assert_eq!(app.world().get::<BlendShape>(entity).unwrap().enabled.as_ref(), Some(&old));
+            assert_eq!(&app.world().get::<MeshMaterial3d<NifBlendMaterial>>(entity).unwrap().0, &old);
+            assert!(app.world().get::<MeshMaterial3d<NifMaterial>>(entity).is_none());
+            assert_eq!(app.world().resource::<Assets<NifBlendMaterial>>().len(), 1);
+        }
+    }
+    #[test]
+    fn replacement_keeps_old_clone_and_images_until_prepared_acknowledgement() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let entity = app.world_mut().spawn((BlendShape::new(source.clone()), MeshMaterial3d(source))).id();
+        app.update();
+        let old = app.world().get::<BlendShape>(entity).unwrap().enabled.clone().unwrap();
+        let old_colour = app.world().resource::<Assets<NifBlendMaterial>>().get(&old).unwrap().extension.mesh_terrain_colour.clone().unwrap();
+        let ready = BlendReadiness::default();
+        ready.ready.lock().unwrap().insert(old.id());
+        app.world_mut().resource_mut::<Variants>().readiness = Some(ready.clone());
+        publish(&mut app);
+        app.world_mut().resource_mut::<SurfaceCache>().published.as_mut().unwrap().revision = 8;
+        let mut replacement = None;
+        for _ in 0..6 {
+            app.update();
+            assert_eq!(app.world().get::<BlendShape>(entity).unwrap().enabled.as_ref(), Some(&old));
+            let variants = app.world().resource::<Variants>();
+            let next = variants.materials.values().next().unwrap().0.clone();
+            assert_ne!(next, old);
+            assert_eq!(*replacement.get_or_insert(next.clone()), next, "the prepared candidate is stable while waiting");
+            assert_eq!(variants.publications.len(), 2, "old images retained through preparation");
+            assert_eq!(app.world().resource::<Assets<NifBlendMaterial>>().get(&old).unwrap().extension.mesh_terrain_colour.as_ref(), Some(&old_colour));
+            assert!(!ready.settled(8));
+        }
+        let next = replacement.unwrap();
+        ready.ready.lock().unwrap().insert(next.id());
+        app.update();
+        assert_eq!(app.world().get::<BlendShape>(entity).unwrap().enabled.as_ref(), Some(&next));
+        assert_eq!(app.world().resource::<Variants>().publications.len(), 1);
+        assert!(ready.settled(8));
+    }
+    #[test]
+    fn producer_replacement_while_preparing_keeps_one_drawable_material_and_new_source() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let entity = app.world_mut().spawn((BlendShape::new(source.clone()), MeshMaterial3d(source))).id();
+        app.update();
+        let old = app.world().get::<BlendShape>(entity).unwrap().enabled.clone().unwrap();
+        let ready = BlendReadiness::default();
+        app.world_mut().resource_mut::<Variants>().readiness = Some(ready.clone());
+        let new_source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: StandardMaterial { perceptual_roughness: 0.3, ..default() }, extension: default() });
+        app.world_mut().entity_mut(entity).insert(MeshMaterial3d(new_source.clone()));
+        app.update();
+        let next = app.world().resource::<Variants>().materials[&new_source.id()].0.clone();
+        for _ in 0..4 {
+            assert!(app.world().get::<MeshMaterial3d<NifMaterial>>(entity).is_none());
+            assert_eq!(app.world().get::<BlendShape>(entity).unwrap().original, new_source);
+            assert_eq!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(entity).unwrap().0, old);
+            app.update();
+            assert_eq!(app.world().resource::<Variants>().materials[&new_source.id()].0, next);
+        }
+        ready.ready.lock().unwrap().insert(next.id());
+        app.update();
+        assert_eq!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(entity).unwrap().0, next);
+    }
+
+    #[test]
+    fn off_drops_preparing_candidates_and_on_requires_fresh_acknowledgement() {
+        let _switching = switching();
+        let mut app = App::new();
+        switch_systems(&mut app, true);
+        let ready = BlendReadiness::default();
+        app.world_mut().resource_mut::<Variants>().readiness = Some(ready.clone());
+        app.update();
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let entity = app.world_mut().spawn((BlendShape::new(source.clone()), MeshMaterial3d(source.clone()))).id();
+        app.update();
+        let stale = app.world().resource::<Variants>().materials.values().next().unwrap().0.clone();
+        assert!(app.world().get::<BlendShape>(entity).unwrap().enabled.is_none());
+        set_row(&mut app, false); app.update();
+        assert!(app.world().resource::<Variants>().materials.is_empty());
+        assert!(app.world().resource::<Variants>().publications.is_empty());
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(entity).unwrap().0, source);
+        ready.ready.lock().unwrap().insert(stale.id());
+        set_row(&mut app, true); app.update();
+        publish(&mut app);
+        // The normal census backfill would add BlendShape again in the live plugin.
+        app.world_mut().entity_mut(entity).insert(BlendShape::new(source));
+        app.update();
+        let candidate = app.world().resource::<Variants>().materials.values().next().unwrap().0.clone();
+        assert_ne!(candidate, stale);
+        assert!(app.world().get::<BlendShape>(entity).unwrap().enabled.is_none());
+    }
+
+    #[test]
     fn the_aid_overrides_the_row_and_the_row_draws_the_default_look() {
         let aid = parse("24:weight:hybrid").unwrap();
         assert_eq!(desired(None, false), None, "off by default");
@@ -1378,7 +1575,7 @@ mod tests {
             .init_resource::<Assets<crate::terrain_surface::SurfaceCaptureMaterial>>()
             .init_resource::<Variants>().init_resource::<SurfaceCache>().init_resource::<BlendState>()
             .add_systems(Update, (follow_setting, close_gate.after(follow_setting).run_if(draining)))
-            .add_systems(PostUpdate, conversion_order((stop.run_if(stopping), apply_variants.run_if(active)).chain()));
+            .add_systems(PostUpdate, conversion_order((stop.run_if(stopping), apply_variants.run_if(active)).chain().in_set(BlendConversion)));
     }
     fn set_row(app: &mut App, on: bool) {
         app.world_mut().resource_mut::<crate::graphics::Graphics>().mesh_terrain_blend = on;
@@ -1425,7 +1622,7 @@ mod tests {
         assert!(gate_open(&app), "the gate opens before the first clone is made");
         assert_eq!(app.world().resource::<SurfaceCache>().resolution, 1024);
         publish(&mut app);
-        let cell = app.world_mut().spawn(SurfaceCell { world: 0, grid: (0, 0), heights: vec![], quadrants: vec![], paths: [CapturePath::HeightOnly("missing-base-mesh"); 4] }).id();
+        let cell = app.world_mut().spawn(SurfaceCell { world: 0, grid: (0, 0), heights: vec![], quadrants: vec![], paths: [CapturePath::HeightOnly("missing-base-mesh"); 4], content_revision: 0, sources: vec![], dependencies: default() }).id();
         app.update();
         assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some(), "the shape blends");
         assert!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).is_none());

@@ -207,6 +207,7 @@ pub struct NifSurfaceBlend {
     /// Band, view, contact shape, shading (the aid's numbers, nvforever
     /// `mesh_terrain_blend.rs::BlendConfig::controls`).
     pub mesh_terrain: Vec4,
+    /// xy immutable publication origin, z enabled coverage (nine bits), w reserved.
     pub mesh_terrain_origin: Vec4,
     /// Hybrid v2's flat and steep widths in x and y (game units); z, w unused
     /// (`BlendConfig::widths`). Enabled-only: the ordinary uniform is unchanged.
@@ -234,6 +235,7 @@ pub struct NifSurfaceBlendUniform {
     pub pipboy_a: Vec4,
     pub pipboy_b: Vec4,
     pub mesh_terrain: Vec4,
+    /// xy immutable publication origin, z enabled coverage (nine bits), w reserved.
     pub mesh_terrain_origin: Vec4,
     pub mesh_terrain_widths: Vec4,
 }

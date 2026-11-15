@@ -125,12 +125,21 @@ struct NifSurface {
     return i32(size.x) / 3;
 }
 
+// [design] Enabled-only coverage at the retained publication's OLD origin. Baked
+// height/quadrant validity is immutable; every lookup intersects it with live coverage.
+@if(MESH_TERRAIN_BLEND) fn terrain_covered(instance_index: u32, slot: vec2<i32>) -> bool {
+    if any(slot < vec2(0)) || any(slot >= vec2(3)) { return false; }
+    let coverage = u32(nif_surface(instance_index).mesh_terrain_origin.z);
+    return (coverage & (1u << u32(slot.y * 3 + slot.x))) != 0u;
+}
+
 @if(MESH_TERRAIN_BLEND) fn terrain_cell_resident(instance_index: u32, slot: vec2<i32>) -> bool {
     if any(slot < vec2(0)) || any(slot >= vec2(3)) { return false; }
-    return terrain_height_texel(instance_index, slot * HEIGHT_TILE) > -1e30;
+    return terrain_covered(instance_index, slot) && terrain_height_texel(instance_index, slot * HEIGHT_TILE) > -1e30;
 }
 
 @if(MESH_TERRAIN_BLEND) fn terrain_colour_valid(instance_index: u32, slot: vec2<i32>, quadrant: u32) -> bool {
+    if !terrain_covered(instance_index, slot) { return false; }
     let mask = u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(1, GRID)));
     return (mask & (1u << quadrant)) != 0u;
 }
@@ -199,7 +208,7 @@ struct NifSurface {
     let a = terrain_height_texel(instance_index, base);
     let dx = terrain_height_texel(instance_index, base + vec2(1, 0));
     let dy = terrain_height_texel(instance_index, base + vec2(2, 0));
-    if a < -1e30 { r.status = LOOKUP_INVALID_HEIGHT; return r; }
+    if !terrain_covered(instance_index, slot) || a < -1e30 { r.status = LOOKUP_INVALID_HEIGHT; return r; }
     r.game_normal = terrain_game_normal(dx, dy);
     r.normal = game_to_world_normal(r.game_normal);
     let height = a + f.x * dx + f.y * dy;

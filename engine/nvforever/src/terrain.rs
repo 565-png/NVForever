@@ -685,6 +685,7 @@ fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, p
     let mut surface = capture.then(|| SurfaceCell {
         world: world.world, grid, heights: land.heights.clone().unwrap_or_default(), quadrants: Vec::new(),
         paths: [CapturePath::HeightOnly("missing-base-mesh"); 4],
+        content_revision: crate::terrain_surface::capture_revision(), sources: vec![], dependencies: default(),
     });
     let most = folded_layers(tile);
     // The repeat for the shader to work the texture coordinate out with, 0 when the mesh
@@ -711,7 +712,8 @@ fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, p
             None => None,
         };
         if let Some((mesh, mat, n)) = folded_mat {
-            if surface.is_some() {
+            if let Some(surface) = &mut surface {
+                surface.sources.push(crate::terrain_surface::CaptureSource::Folded(mat.clone()));
                 stack = Some((true, vec![(mesh.clone(), CaptureDraw::Folded(Box::new(tm.tm.folded.get(&mat).unwrap().clone())))]));
             }
             if let Some((commands, cell)) = near.as_mut() {
@@ -724,7 +726,8 @@ fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, p
         } else {
             let mat = tm.base_material(tex);
             if let Some(mesh) = meshes.remove(&(q, None)) {
-                if surface.is_some() {
+                if let Some(surface) = &mut surface {
+                    surface.sources.push(crate::terrain_surface::CaptureSource::Single(mat.clone(), false));
                     // [design] Not folded: the single-texture capture, never TerrainMaterial
                     // (whose layout a GPU without bindless textures cannot bind).
                     let capture = SurfaceCaptureMaterial::from_standard(&tm.assets.materials.get(&mat).unwrap().base, false);
@@ -743,6 +746,7 @@ fn terrain_draws(mut near: Option<(&mut Commands, Entity)>, world: &WorldData, p
                 // [design] The near layer's colour, texture, blending and depth bias (so its
                 // draw order), as a single-texture layer capture.
                 if let Some((_, draws)) = &mut stack {
+                    if let Some(surface) = &mut surface { surface.sources.push(crate::terrain_surface::CaptureSource::Single(mat.clone(), true)); }
                     let capture = SurfaceCaptureMaterial::from_standard(&tm.assets.materials.get(&mat).unwrap().base, true);
                     draws.push((mesh.clone(), CaptureDraw::Single(capture)));
                 }

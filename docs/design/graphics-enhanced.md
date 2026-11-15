@@ -60,7 +60,7 @@ Constraints that decide what fits:
 | Bevy atmosphere | Would replace the game's sky look | | Rejected |
 | Auto exposure, depth of field, motion blur | Change the look; the game's own HDR/eye-adapt values (IMGS DNAM) are not decoded | | Not now (§6) |
 | PCSS soft shadows | Medium | Needs the `experimental_pbr_pcss` feature, noisy without TAA | Not now |
-| Placed meshes blended into the landscape where they meet it (#2661) | Medium: road shoulders, rock feet and cliff bases lose their hard seam with the ground | A colour atlas of the landscape around the camera (72 MiB at the default) and a bake when the camera crosses a cell; a lookup in the eligible meshes' fragments | **Built**, off by default and not in `enhanced` (§3.12) |
+| Placed meshes blended into the landscape where they meet it (#2661) | Medium: road shoulders, rock feet and cliff bases lose their hard seam with the ground | Immutable front/back colour atlases (144 MiB together at 1024 before intermediates and retiring handles); copies for unchanged cells and rasterization for entering/dirty cells; a lookup in eligible fragments | **Built**, off by default and not in `enhanced` (§3.12) |
 
 ## 3. What was built
 
@@ -452,12 +452,26 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   quadrants and needs every height and colour bit (a missing diagonal cell of an L-shaped
   region included); a 128-unit fade at the region's edges remains. A failed lookup leaves
   the fragment exactly as it was.
-- *Publication.* The atlas is used only after every copy has drawn in one frame: a receipt
-  wraps Bevy's `DrawMaterial` in both phases, an expected-entity set names every copy, the
-  finished view is taken out of the sorted cameras before another pass can clear its
-  target, and publication waits one more main frame for queue order. A change of the cell
-  set, the camera's cell, interior or worldspace starts a new generation, so a stale receipt
-  never publishes. There is no pixel readback and no GPU wait.
+- *Publication and continuity.* Each immutable front/back publication owns its images,
+  southwest origin and cell identities. A camera crossing retains completed, resident,
+  unchanged cells inside the new 3 by 3 region at the **old origin** until replacement
+  commits. An enabled-only nine-bit coverage mask intersects baked height and quadrant
+  validity in the initial lookup, every bilinear footprint tap and each border-fade
+  neighbour check. Departing or dirty cells lose coverage without a colour-image upload.
+  Continuity covers retained interior footprints; new cells, genuinely invalidated cells,
+  teleports without overlap and changing missing-neighbour border fades have no guarantee.
+- *Incremental assembly and receipts.* Unchanged cells are GPU rectangle copies into a
+  fresh back atlas; only entering/dirty cells have flat draw copies. Fully populated axial
+  and diagonal crossings copy/bake 6/3 and 4/5 cells; one changed cell copies/bakes 8/1.
+  Removal alone changes coverage; unchanged frames allocate no atlas and do no copy/bake.
+  The small height/metadata image is rebuilt for a replacement. Copies use the bake's
+  reversed Y and run in render cleanup **after** `render_system` has submitted all final
+  camera-target writes (`engine/vendor/bevy_render/src/lib.rs`), in a following queue
+  submission. Exact dirty-draw receipts reset every frame; partial frames cannot accumulate.
+  Copy-only work also needs a transfer receipt and both GPU images. Completed views leave
+  the sorted cameras before another clear, and publication retains the extra main-frame
+  delay. Receipts name epoch, request, destination and source revision; the current cell
+  identities and source revision are revalidated before commit. No pixel readback or GPU wait.
 - *The blend.* With `d` the fragment's height above the ground triangle, `B` the band and `F`
   the residency fade, the `height` shape's weight is `w = F (1 - smoothstep(0, B, max(d, 0)))`.
   Where `w > 0` the forward fragment, after the existing coverage tests and normal mapping
@@ -492,13 +506,22 @@ activators, trees and grass, water.
 
 **Materials and switching** [design: `mesh_terrain_blend.rs`]: an eligible shape draws with
 a separate material type, `ExtendedMaterial<StandardMaterial, NifSurfaceBlend>`, a clone of
-its source shared per source handle and generation; the ordinary `NifSurface` interface is
+its source shared per source handle and visible publication/configuration; the ordinary
+`NifSurface` interface is
 unchanged (its 128-byte uniform, bindings 50-53), and the blend type binds no more textures
 than the ordinary pipeline it replaces (the atlases take the holes and FaceGen slots, which a
 blend clone never has). A source edited under the same handle (blended cut-outs flipping
 Blend and Mask, scripted NIF edits) rebuilds its clone in the same frame; texture swaps,
 fades, draw-distance ranges, door fades, effect shaders and shadow thinning follow the
-source. The row switches the blend while the game runs: on, it opens the material gate
+source. Replacement clones are prepared and acknowledged with a bound render material before
+existing shapes switch; their old enabled handles and image references stay alive meanwhile.
+Request restarts leave enabled clones alone. Coverage changes on already drawable clones
+change uniform POD only, at each clone's own publication origin; the colour image stays
+immutable. A fresh back allocation waits for the previous publication's material switches;
+a cancelled job has a three-main-frame retirement interval before another allocation.
+Transfer plans hold strong image handles and cancellation drops their main-world references;
+extracted views and material assets release theirs through Bevy's ordinary retirement.
+The row switches the blend while the game runs: on, it opens the material gate
 (below), logs its start line, checks the atlas against the device, records the census of
 the shapes already drawn and the captures of the cells already drawn around the camera
 (their landscape prepared again, the same quadrant stacks and cached materials as a cell
@@ -535,13 +558,37 @@ command back in the opaque and transparent phases, and an `idle` line is logged,
 run is idle as above again. Pipelines compiled while it was on stay in Bevy's pipeline
 cache, as every pipeline does (Bevy never evicts them).
 
-**Cache and selection rules** [design, NVForever's choices]: the 3 by 3 region follows the
-camera's cell; a change of it rebakes the whole atlas (no per-frame budget, no partial
-update); 512, 1024 (default) or 2048 texels per cell side, checked against the device's 2D
-texture limit and refused in the log when it does not fit (18, 72 or 288 MiB of colour, CPU
-copies and render targets aside); no gutters or mips; texture or layer changes do not
-rebake captured terrain; no normal cache (it would need the terrain's tangent frame and
-layer normals, about 36 MiB more at 1024).
+**Cache and invalidation rules** [design: `terrain_surface.rs`, `terrain.rs`]: the 3 by 3
+region follows the camera; cell identity includes session/worldspace epoch, grid, resident
+entity incarnation, capture content revision, component change tick and the revisions of
+its captured diffuse-image dependencies. Residency is confirmed against `Streamer.loaded`.
+Terrain reconstruction replaces the capture with a new revision; reconstruction of an
+already captured resident input also makes its cardinal
+neighbours reprepare stitched layer inputs, retaining their primary revision so this
+cannot recursively dirty the whole world. Component replacement/in-place capture edits
+and modifications/removal of dependent diffuse images invalidate the affected cells.
+Capture materials retain their source handles: source-material changes refresh the actual
+unlit clones and their diffuse dependencies before replanning, rather than rebaking stale
+copies. Source-material removal makes that capture height-only until reconstruction.
+This supports these engine reconstruction/material/image routes; arbitrary live
+LAND record editing, near-mesh mutation outside reconstruction and load-order editing are
+not implemented by this cache. Weather/light changes need no rebake. Worldspace/session,
+interior, off and incompatible-resolution transitions cancel jobs and clear publications
+before receipts are accepted, even without a camera. Request IDs and visible publication
+revisions are separate from that epoch. Source asset events are consumed after
+`AssetEventSystems` and before receipt acceptance; conversion uses the result next frame.
+The ready line's historical `generation` field now names the visible publication revision.
+
+Colour resolution remains 512, 1024 (default) or 2048 per cell side, checked against the
+device's texture limit and refused when it does not fit. One RGBA16F atlas is 18, 72 or
+288 MiB; front plus back at 1024 is **144 MiB of colour**, before CPU image copies, HDR
+render intermediates and retiring/extracted handles. There is one active replacement,
+fresh destinations rather than recycling referenced images, readiness admission and
+cancelled-job retirement; rapid replanning cannot enqueue an unbounded allocation list.
+There are still no gutters/mips or interpolated vertex-normal cache (round 10); geometric
+triangle normals remain the target. Scorch is excluded: capture has no burn-map binding or
+synchronization, so full shading still differs through terrain normal maps, scorch,
+separately lit layers, shadows/occlusion and mesh geometry/coverage. The row stays height-8.
 
 **Test aid** `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution[:shading[:flat,steep]]]]`
 overrides the row for comparison runs and is not stored; a malformed value is refused in
@@ -560,8 +607,10 @@ Old short forms keep working with these defaults (`24:status` is band 24, `heigh
 full). Log lines: `mesh terrain blend: start band=... variant=... resolution=... noise=0
 shape=... shading=...` then ` flat=... steep=... weight-version=2` for `hybrid` or
 ` weight-version=1`; `colour atlas resolution=... atlas=WxW rgba16f colour-mib=...`;
-`backfill tracked-shapes=... convertible-shapes=...` as it turns on; one `publication ...`
-line per bake (resident grids with each quadrant's capture path and colour mask, the
+`backfill tracked-shapes=... convertible-shapes=...` as it turns on; an
+`assembly epoch=... request=... copied=... baked=... retained-origin=... destination-origin=...`
+line per replacement and one `publication ...` line per commit (resident grids with each
+quadrant's capture path and colour mask, the
 excluded slots, a probe of the uploaded heights under the camera with its CPU lookup
 status and `probe-normal`, the image IDs, the resolution); `ready eligible-shapes=...
 resident-cells=... generation=... variant=... shape=... resolution=... shading=...`, the
@@ -578,13 +627,33 @@ stop at 2048, a shape whose material is still loading waits for its line, and a 
 printed once per base, shape and mask with the first reference seen, so a search by
 reference can miss it; the ready line's counts cover every resident shape.
 
-**Cost**: GPU cost: (measured in the pull request). The bake is timed as the GPU span
+**Continuity test aid** [design: `terrain_surface.rs::continuity_probe`]:
+`NVF_PLAY_TEST_MESH_BLEND_CONTINUITY=start-seconds:duration-seconds` (`--play` only, on
+the same world-aid clock as LOOK/MOVE/SHOTS, `nvf-play/src/pause.rs`) arms only after an
+initial publication and prepared shape witnesses in the starting camera cell; duration is
+bounded to 120 seconds and 20,000 counted frames. It counts every subsequent main frame,
+checks retained unchanged witnesses using their actual enabled clone's origin, height and
+coverage, and checks render preparation acknowledgements. Frame lines are
+`mesh terrain blend: continuity frame=N camera-cell=... transition=BOOL pending=BOOL
+published=BOOL retained=N missing-enabled=N missing-prepared=N failures=N copied=N baked=N`.
+The final `continuity summary frames=N crossings=N pending-frames=N retained-lookups=N
+pending-retained-lookups=N unwitnessed-pending-frames=N replacements=N published-false=N
+missing-enabled=N missing-prepared=N failures=N copied=N baked=N settled=BOOL` totals the full interval. Pending includes atlas work, retirement and
+material readiness; settled requires the final publication's material switches to finish. `NVF_PLAY_TEST_MESH_BLEND_READY_DELAY=N` delays each
+new material's acknowledgement by at most 120 render frames for deterministic pending work;
+it changes no appearance controls. These CPU/binding checks do not prove rendered pixels;
+`mesh-terrain-blend-crossing` also captures before/during/after/settled frames for review.
+Its boundary road-contact location remains a hypothesis until the main session runs it.
+
+**Cost**: GPU cost of round 9 is unmeasured (checks only, no game run). The bake is timed
+as the GPU span
 `nvf_mesh_terrain_bake` (Tracy's GPU zones and the `--log-frame-times` list,
 `terrain_surface.rs::bake_span`), from before the bake view's first pass to after its
 last. Its two timestamps go into command encoders of their own, queued at the two systems'
 places in the render order, so the span pairs the same with `NVF_PLAY_TEST_PROFILE_ENCODERS=1`
 (whose automatic `enc:<system>` span opens on a render context's own encoder) as without
-it. The lookup in the meshes' fragments shows in the main opaque pass instead.
+it. Retained rectangle transfers are submitted after that camera span and are not included
+in it. The lookup in the meshes' fragments shows in the main opaque pass instead.
 
 **Limits** [hypothesis where marked]: the cache may soften contact detail, and a footprint
 turning invalid at a missing corner can make a narrow transition [hypothesis]; geometric
@@ -603,7 +672,9 @@ texture swap, a fade and an override: `switching_off_during`), `terrain_surface`
 `draw_distance`, `door_fade`, `effect_shaders`, `shadow_thin`; `nvf-assets`
 `nif_surface_blend::tests`, `nif_material::tests`; `nvf-play` `settings_layout`, `fade`.
 The WGSL is composed and validated by naga in the tests, not executed. Smoke:
-`mesh-terrain-blend-setting` (the row on from the command line), `mesh-terrain-blend-live`
+`mesh-terrain-blend-crossing` (retained witnesses, pending work, replacement and zero
+publication/material/lookup outages), `mesh-terrain-blend-setting` (the row on from the
+command line), `mesh-terrain-blend-live`
 (on and off from the settings page, then the gate closing), the aid's `mesh-terrain-blend-goodsprings`,
 `-options` and `-widths`; `graphics-enhanced` and `settings-enhanced-effects` check that
 the enhanced look neither turns it on nor logs it.
