@@ -326,7 +326,7 @@ pub(crate) fn produce(
     mut script: Option<ResMut<ScriptState>>,
     mut state: ResMut<State>,
     commands: Commands,
-    models: ModelCtx,
+    models: Option<ModelCtx>,
     rigs: Rigs,
     visuals: Visuals,
     nodes: NodeQuery,
@@ -348,7 +348,7 @@ pub(crate) fn produce_game(
     game: Option<&mut fnv_game::Game<'_>>,
     state: &mut State,
     mut commands: Commands,
-    mut models: ModelCtx,
+    mut models: Option<ModelCtx>,
     rigs: Rigs,
     visuals: Visuals,
     nodes: NodeQuery,
@@ -519,6 +519,11 @@ pub(crate) fn produce_game(
         }
         let Some((suffix, path)) = model_path(&key.model) else {
             intent.failed = true;
+            continue;
+        };
+        // Mirror-only hosts may have no asset loader yet. Capture the recipient and
+        // process removals above even then; only model preparation waits for assets.
+        let Some(models) = models.as_mut() else {
             continue;
         };
         let Some(model) = models

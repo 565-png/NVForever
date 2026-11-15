@@ -1,6 +1,6 @@
 # Drawn script model attachments
 
-Implementation context: at pinned public main
+[documented: repository implementation] At public main
 `63db0209cc77ab7ce45eed44a90fecf925e47dd1`, `nif_blocks::call` records
 AttachModel specifications but `nvforever::nif_mirror` does not draw them. Modes
 and runtime lists are documented in [ext-jippp.md](ext-jippp.md); this change
@@ -32,7 +32,10 @@ a live instance does not duplicate geometry. Session replacement retires all
 old owned instances. Exact ownership, not a display label, controls mode 2.
 
 Implementation context: `ModelCtx` owns model preparation and
-its cache and sweeper. A separate attachment variant retains the source graph;
+its cache and sweeper. Mirror-only hosts may not yet have the asset resources;
+the producer still captures queued recipients and processes session/lifetime
+retirement and explicit removal. Only model preparation waits for those resources,
+so asset arrival does not revive an expired recipient. A separate attachment variant retains the source graph;
 ordinary and streamed models do not allocate it. Attachment node metadata and
 drawable indices are captured from the same decoded file during preparation; there is no second file read joined by
 name. Duplicate and absent names therefore do not collapse geometry, materials,

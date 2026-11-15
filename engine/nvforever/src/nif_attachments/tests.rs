@@ -2,7 +2,7 @@
 //! Authored files only. ScriptState acquisition and GPU drawing are not exercised.
 use super::*;
 use crate::nif_attachments::{self, Owned, State};
-use bevy::{camera::visibility::RenderLayers, ecs::system::SystemState};
+use bevy::{camera::visibility::RenderLayers, ecs::system::{RunSystemOnce, SystemState}};
 use fnv_game::{game::RunCtx, Game, GameConfig};
 use fnv_script::{vm::XVal, FunctionTable};
 use fnv_sim::{FormStore, RefTable};
@@ -343,7 +343,7 @@ fn produce(
     mut game: ResMut<TestGame>,
     mut state: ResMut<State>,
     commands: Commands,
-    models: ModelCtx,
+    models: Option<ModelCtx>,
     rigs: Rigs,
     visuals: Visuals,
     nodes: NodeQuery,
@@ -1417,5 +1417,83 @@ fn legacy_edit_drains_retire_the_side_queue_without_disabling_fresh_production()
         app.update(); assert!(meshes(&mut app).is_empty());
         attach(&mut app, "OwnedReference", 3, "Socket", "unique.nif"); app.update();
         assert_eq!(meshes(&mut app).len(), 1);
+    }
+}
+
+
+#[test]
+fn unavailable_assets_wait_without_losing_the_captured_parent_lifetime() {
+    for transition in ["same", "replacement", "reincarnation"] {
+        let (mut app, _files, root, socket) = fixture(false);
+        let cache = app.world_mut().remove_resource::<nvf_assets::ModelCache>().unwrap();
+        let data = app.world_mut().remove_resource::<GameData>().unwrap();
+        assert_eq!(attach(&mut app, "OwnedReference", 3, "Socket", "unique.nif"), XVal::Num(1.));
+        app.update();
+        assert!(members(&mut app).is_empty());
+        if transition == "replacement" {
+            app.world_mut().entity_mut(root).remove::<nvf_play::RefVisual>();
+            host(app.world_mut(), REFERENCE, "Socket");
+        } else if transition == "reincarnation" {
+            let transform = *app.world().get::<Transform>(socket).unwrap();
+            app.world_mut().entity_mut(socket).remove::<Transform>().insert(transform);
+        }
+        app.update();
+        assert!(members(&mut app).is_empty());
+        app.insert_resource(cache).insert_resource(data);
+        app.update();
+        if transition == "same" {
+            assert_eq!(meshes(&mut app).len(), 1, "asset arrival must retry the captured parent");
+            assert_eq!(scene(&mut app, "UniqueShape_Owned").info.unwrap().identity.unwrap().model, root.to_bits());
+        } else {
+            assert!(members(&mut app).is_empty(), "asset arrival cannot revive an expired recipient");
+            assert_eq!(attach(&mut app, "OwnedReference", 3, "Socket", "unique.nif"), XVal::Num(1.));
+            app.update();
+            assert_eq!(meshes(&mut app).len(), 1, "an explicit fresh request may use the current recipient");
+        }
+    }
+}
+
+#[test]
+fn unavailable_assets_do_not_skip_detach_lifetime_session_or_runtime_cleanup() {
+    for reason in ["detach", "lifetime", "session", "runtime"] {
+        let (mut app, _files, root, socket) = fixture(false);
+        assert_eq!(attach(&mut app, "OwnedReference", 3, "Socket", "unique.nif"), XVal::Num(1.));
+        app.update();
+        assert_eq!(meshes(&mut app).len(), 1);
+        let old = members(&mut app);
+        let foreign = app.world_mut().spawn((Name::new("Foreign child"), Transform::IDENTITY, ChildOf(old[0]))).id();
+        let cache = app.world_mut().remove_resource::<nvf_assets::ModelCache>().unwrap();
+        match reason {
+            "detach" => { assert_eq!(attach(&mut app, "OwnedReference", 2, "Socket", "unique.nif"), XVal::Num(0.)); }
+            "lifetime" => {
+                let transform = *app.world().get::<Transform>(socket).unwrap();
+                app.world_mut().entity_mut(socket).remove::<Transform>().insert(transform);
+            }
+            "session" => {
+                let game = &app.world().resource::<TestGame>().0;
+                let next = Game::new(game.data, fnv_sim::World::new(game.world.forms, game.world.placed, Default::default()), Default::default());
+                app.insert_resource(TestGame(next));
+            }
+            "runtime" => {
+                // The real registered entry sees no ScriptState here, as after its removal.
+                assert!(!app.world().contains_resource::<ScriptState>());
+                app.world_mut().run_system_once(nif_attachments::produce).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        if reason != "runtime" { app.update(); }
+        assert!(members(&mut app).is_empty(), "cleanup must run without a model cache: {reason}");
+        assert!(old.iter().all(|e| app.world().get::<Transform>(*e).is_none()));
+        assert!(app.world().get::<Transform>(foreign).is_some());
+        assert!(app.world().get::<ChildOf>(foreign).is_none());
+        assert!(app.world().get::<Transform>(root).is_some());
+        assert!(app.world().get::<Transform>(socket).is_some());
+        app.insert_resource(cache);
+        if reason == "runtime" {
+            app.world_mut().run_system_once(nif_attachments::produce).unwrap();
+        } else {
+            app.update();
+        }
+        assert!(members(&mut app).is_empty(), "asset restoration alone cannot recreate a retired instance: {reason}");
     }
 }
