@@ -1815,7 +1815,17 @@ fn meltdown(mut c: ResMut<Combat>, mut hits: MessageReader<ActorHit>, mut script
 /// The player's Modify Run Speed perks (Travel Light, Tunnel Runner, Implant M-5 …,
 /// perk-entry-points.md §8): their factor on the player's movement, walking and running
 /// alike, their conditions (armour, sneaking) asked every frame (`crate::player::PerkSpeed`).
-fn perk_speed(c: Res<Combat>, mut anim: ResMut<WeaponAnim>, mut script: Option<ResMut<ScriptState>>, mut sim: ResMut<SimState>, speed: Option<ResMut<crate::player::PerkSpeed>>) {
+fn perk_speed(c: Res<Combat>, mut anim: ResMut<WeaponAnim>, mut script: Option<ResMut<ScriptState>>, mut sim: ResMut<SimState>, speed: Option<ResMut<crate::player::PerkSpeed>>, inertia: Option<ResMut<crate::inertia::MovementInertia>>) {
+    // The player's Agility and Strength for the draw's and the aim's pace (the original's
+    // Agility rate, Weapon Handling's classes: `crate::inertia::MovementInertia::equip_rate`).
+    if let Some(mut inertia) = inertia {
+        let mut read = |code| actor_av(script.as_deref_mut(), &mut sim, FormId::PLAYER_REF, code).filter(|v| v.is_finite()).unwrap_or(5.0);
+        let (agility, strength) = (read(fnv_game::actor_values::AGILITY), read(fnv_game::actor_values::STRENGTH));
+        if inertia.agility != agility || inertia.strength != strength {
+            inertia.agility = agility;
+            inertia.strength = strength;
+        }
+    }
     // The Equip Speed perks (Quick Draw) on the weapon in hand: the draw and holster
     // clips play that much faster (`WeaponAnim::equip_rate`, perk-entry-points.md §10).
     if let Some(weapon) = c.weapon {

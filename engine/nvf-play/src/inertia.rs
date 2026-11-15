@@ -22,9 +22,22 @@
 //!   landing's weight), Weapon Handling (the slower draw, put-away and aim, the weapon's
 //!   weight in them) and Advanced Recoil; under Visual Only, Animation Smoothing here and
 //!   nvforever's Weapon Inertia and Camera Motion (`PlayerBody`) [design: the owner,
-//!   2026-11-15, "simplify the Advanced Movement menu ... add 2 categories"]. (An "Inertia
-//!   weight" dropdown scaled every time until the owner's eleventh playtest, 2026-11-15:
-//!   "remove the inertia weight option - current default will be the one we use"; 1.)
+//!   2026-11-15, "simplify the Advanced Movement menu ... add 2 categories"].
+//! - **Movement Weight** (a dropdown under the Global Toggle, [`MOVEMENT_WEIGHTS`]): 100 %
+//!   is the times below; 25 % makes the body's inertia four times as quick (starting,
+//!   stopping, crouching, the landing's stand-up and the speed it costs) and Weapon
+//!   Handling's extra time over the original's a quarter as long [design: the owner,
+//!   2026-11-15, after testers found it heavy: "Movement Weight under the global toggle ...
+//!   25-100% while 100% being the current values"]. (An "Inertia weight" dropdown from 0.5
+//!   to 2 was removed in the eleventh playtest.)
+//! - **Attributes** ([`MovementInertia::equip_rate`], [`MovementInertia::aim_seconds`]):
+//!   draws and put-aways play at the original's Agility rate, 0.5 + 0.1 × Agility
+//!   [documented: Fallout Wiki, Agility (Fallout: New Vegas): the draw and holster times as
+//!   the reload's, 10 ÷ (Agility + 5); docs/handoff/special-skills-audit-2026-10-23.md §2].
+//!   With Weapon Handling, Agility counts most for light weapons and Strength most for heavy
+//!   ones ([`attribute_rate`]), and the aim takes a smaller share of the same ([`aim_rate`])
+//!   [design: the owner, 2026-11-15]. The ground speed itself is the original's: its run
+//!   speed does not depend on Agility (docs/spec-notes/ext-last-core.md §4).
 //! - **The air keeps its own rules** (`fnv_phys::air`, the game's measured air control):
 //!   off the ground and swimming the keys' velocity goes to the controller as before, and
 //!   the spring follows what the character does, so a landing carries the air speed into
@@ -44,12 +57,89 @@ pub const START_SECONDS: f32 = 0.5;
 /// "stopping feels like the character is sliding on ice - make the stop time 2x speed of
 /// the start one"; 0.9 s before].
 pub const STOP_SECONDS: f32 = 0.25;
-/// Drawing and putting away a weapon take 1 ÷ this as long as their clips,
-/// played along the settling curve (about the clip's own speed at first, very
-/// slow at the end), so a switch has weight; the game's readiness waits for it
-/// [design: the owner's sixth playtest, 2026-11-14, "weapon switching/holstering: way too
-/// fast"; 0.6 measured 0.62 s for a 10mm pistol's draw, still too quick].
-pub const EQUIP_PACE: f32 = 0.45;
+/// With Weapon Handling, drawing and putting away a weapon of `weight` (pounds) take this
+/// many times as long as the original's at Agility 5, before the attributes
+/// ([`attribute_rate`]) and Movement Weight: light weapons (2 lb and under) 1.2, a rifle of
+/// about 8 lb 1.5, from 20 lb 2, smoothly between. Played along the settling curve (about
+/// the clip's own speed at first, very slow at the end), so a switch has weight; the game's
+/// readiness waits for it [design: the owner, 2026-11-15, testers: "the weapon draw speed is
+/// kinda brutal ... like pulling out a concrete slab", "make lighter/medium items faster to
+/// draw"; it was 2.2 times for a 10mm pistol, 2.4 for a rifle, 3.3 for heavy weapons].
+pub fn draw_weight(weight: f32) -> f32 {
+    use crate::ease::smoothstep;
+    1.2 + 0.3 * smoothstep(2.0, 8.0, weight) + 0.5 * smoothstep(8.0, 20.0, weight)
+}
+
+/// How much a weapon of `weight` (pounds) is light, medium and heavy, summing to 1: light up
+/// to 3 lb (pistols, knives), medium from 8 to 10 lb (rifles, shotguns), heavy from 18 lb
+/// (heavy weapons, two-handed hammers), smoothly between [design].
+pub fn weight_class(weight: f32) -> [f32; 3] {
+    use crate::ease::smoothstep;
+    let light = 1.0 - smoothstep(3.0, 8.0, weight);
+    let heavy = smoothstep(10.0, 18.0, weight);
+    [light, (1.0 - light - heavy).max(0.0), heavy]
+}
+
+/// How much Agility and Strength count for a light, medium and heavy weapon's draw: Agility
+/// most for light ones, Strength most for heavy ones [design: the owner, 2026-11-15].
+pub const AGILITY_SHARE: [f32; 3] = [1.0, 0.6, 0.3];
+pub const STRENGTH_SHARE: [f32; 3] = [0.3, 0.6, 1.0];
+
+/// With Weapon Handling, how fast the player draws and puts away a weapon of `weight` for
+/// their Agility and Strength, a multiple of the speed at 5 and 5: each point from 5 is
+/// the original's tenth (its 0.5 + 0.1 × Agility) times the attribute's share for the
+/// weapon's class ([`weight_class`]), so a light weapon at Agility 10 draws as the
+/// original's does (1.5), a heavy one at Strength 10 as well. Attributes are read within
+/// 1 to 10; never under [`ATTRIBUTE_RATE_MIN`].
+pub fn attribute_rate(weight: f32, agility: f32, strength: f32) -> f32 {
+    let class = weight_class(weight);
+    let share = |s: [f32; 3]| class.iter().zip(s).map(|(c, s)| c * s).sum::<f32>();
+    let (a, s) = (agility.clamp(1.0, 10.0) - 5.0, strength.clamp(1.0, 10.0) - 5.0);
+    (1.0 + 0.1 * (a * share(AGILITY_SHARE) + s * share(STRENGTH_SHARE))).max(ATTRIBUTE_RATE_MIN)
+}
+
+/// [`attribute_rate`]'s floor: the original's rate at Agility 1, so two low attributes
+/// together cost no more than one does in the original (Agility and Strength 1 with a
+/// minigun drew at 4.2 times its clip's time; review, 2026-11-15) [design].
+pub const ATTRIBUTE_RATE_MIN: f32 = 0.6;
+
+/// The share of [`attribute_rate`]'s gain or loss the aim takes, so even at 10 and 10 aiming
+/// a light weapon stays deliberate [design: the owner, 2026-11-15, "do not make the min-max
+/// difference huge"].
+pub const AIM_ATTRIBUTE_SHARE: f32 = 0.4;
+
+/// How fast aiming comes up and goes down for the attributes, a multiple of the speed at
+/// 5 and 5: 1.26 at most (light weapon, Agility and Strength 10), 0.84 at least.
+pub fn aim_rate(weight: f32, agility: f32, strength: f32) -> f32 {
+    1.0 + AIM_ATTRIBUTE_SHARE * (attribute_rate(weight, agility, strength) - 1.0)
+}
+
+/// How many times [`AIM_IN_SECONDS`] and [`AIM_OUT_SECONDS`] aiming a weapon of `weight`
+/// takes at 5 and 5: 0.9 at 0.5 lb, 1 for a pistol of about 3 lb, 1.07 for an 8 lb rifle,
+/// 1.35 from 20 lb (it was [`handling`], up to 1.5) [design: the owner, 2026-11-15].
+pub fn aim_weight(weight: f32) -> f32 {
+    use crate::ease::smoothstep;
+    0.9 + 0.1 * smoothstep(0.5, 3.0, weight) + 0.35 * smoothstep(3.0, 20.0, weight)
+}
+
+/// The Movement Weight dropdown's choices: the share of the full weight, and the name the
+/// page shows (module notes).
+pub const MOVEMENT_WEIGHTS: [(f32, &str); 4] = [(0.25, "25%"), (0.5, "50%"), (0.75, "75%"), (1.0, "100%")];
+
+/// The Movement Weight of a name or a number (`"75%"`, `"75"`, `"0.75"`).
+pub fn movement_weight_by_name(s: &str) -> Option<f32> {
+    let s = s.trim();
+    let number = match s.strip_suffix('%') {
+        Some(percent) => percent.trim().parse::<f32>().ok().map(|v| v / 100.0),
+        None => s.parse::<f32>().ok().map(|v| if v > 1.0 { v / 100.0 } else { v }),
+    };
+    MOVEMENT_WEIGHTS.iter().find(|(w, name)| *name == s || number.is_some_and(|v| (v - w).abs() < 1e-3)).map(|(w, _)| *w)
+}
+
+/// The name the page shows for a Movement Weight (the nearest offered).
+pub fn movement_weight_name(weight: f32) -> &'static str {
+    MOVEMENT_WEIGHTS.iter().min_by(|a, b| (a.0 - weight).abs().total_cmp(&(b.0 - weight).abs())).map_or("100%", |(_, n)| n)
+}
 /// With smooth weapon animations, aiming takes this long to come up and to go down,
 /// along the settling curve (`crate::ease::settle`: quick first, very slow at the
 /// end): the aim and block clips' cross-over, the true iron sights' move to the eye and
@@ -167,10 +257,18 @@ pub struct MovementInertia {
     /// Advanced Recoil ([`Self::soft_recoil`]): the view's kick eased in and partly settling
     /// back, the view's nudge back.
     pub recoil: bool,
-    /// Weapon Handling ([`Self::handles`]): the slower draw, put-away and aim, and the weapon
-    /// in hand's [`handling`] (1 with it off), kept by [`follow_weapon`].
+    /// Weapon Handling ([`Self::handles`]): the draw, put-away and aim by the weapon's weight
+    /// and the attributes, and the weapon in hand's [`handling`] for the hand-back after a
+    /// reload or an attack (1 with it off), kept by [`follow_weapon`].
     pub weapon_handling: bool,
     pub handling: f32,
+    /// Movement Weight, 0.25 to 1 ([`MOVEMENT_WEIGHTS`]): the share of the inertia's times.
+    pub weight: f32,
+    /// The weapon in hand's weight (pounds; none: fists or nothing known) and the player's
+    /// Agility and Strength now, kept by [`follow_weapon`] and `crate::combat`.
+    pub weapon_weight: Option<f32>,
+    pub agility: f32,
+    pub strength: f32,
     /// Horizontal velocity (game x, y), units/s, and its rate of change.
     axes: [Spring; 2],
     /// The keys' velocity at the last step.
@@ -193,7 +291,7 @@ pub struct MovementInertia {
 
 impl Default for MovementInertia {
     fn default() -> Self {
-        MovementInertia { advanced: true, on: true, smooth: true, recoil: true, weapon_handling: true, handling: 1.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None, last_placed: None }
+        MovementInertia { advanced: true, on: true, smooth: true, recoil: true, weapon_handling: true, handling: 1.0, weight: 1.0, weapon_weight: None, agility: 5.0, strength: 5.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None, last_placed: None }
     }
 }
 
@@ -225,8 +323,8 @@ impl MovementInertia {
         self.advanced && self.smooth
     }
 
-    /// Drawing, putting away and aiming take longer, more for heavier weapons (Weapon
-    /// Handling).
+    /// Drawing, putting away and aiming go by the weapon's weight and the attributes, never
+    /// quicker than the original's (Weapon Handling).
     pub fn handles(&self) -> bool {
         self.advanced && self.weapon_handling
     }
@@ -236,21 +334,72 @@ impl MovementInertia {
         self.advanced && self.recoil
     }
 
-    /// Seconds aiming takes to come up (`up`) or go down: Weapon Handling's slower pace with
-    /// the weapon's weight, else the game's own.
-    pub fn aim_seconds(&self, up: bool) -> f32 {
-        match (self.handles(), up) {
-            (true, true) => AIM_IN_SECONDS * self.hands(),
-            (true, false) => AIM_OUT_SECONDS * self.hands(),
-            (false, true) => AIM_IN_PLAIN_SECONDS,
-            (false, false) => AIM_OUT_PLAIN_SECONDS,
-        }
+    /// Movement Weight as a share, 0.25 to 1.
+    pub fn weight(&self) -> f32 {
+        self.weight.clamp(0.25, 1.0)
     }
 
-    /// How many times their base times the first-person hands take (the weapon's
-    /// handling).
+    /// `base` seconds of the body's inertia at the Movement Weight.
+    pub fn weighted(&self, base: f32) -> f32 {
+        base * self.weight()
+    }
+
+    /// `slower` times the original's time with only the part over it at the Movement Weight:
+    /// Weapon Handling's extra time shrinks, the original's stays; quicker than it stays as is.
+    fn weighted_extra(&self, slower: f32) -> f32 {
+        if slower > 1.0 { 1.0 + (slower - 1.0) * self.weight() } else { slower }
+    }
+
+    /// The weapon in hand's weight for the handling's formulas: a fist or an unknown weapon
+    /// as a light one (1 lb).
+    fn held_weight(&self) -> f32 {
+        self.weapon_weight.unwrap_or(1.0)
+    }
+
+    /// How fast the player draws and puts away the weapon in hand, a multiple of its clips'
+    /// own speed, before the Equip Speed perks: the original's 0.5 + 0.1 × Agility (module
+    /// notes); with Weapon Handling the weapon's weight ([`draw_weight`]) over the attributes
+    /// by its class ([`attribute_rate`]), never quicker than the original's at the same
+    /// Agility, its time over that at the Movement Weight.
+    pub fn equip_rate(&self) -> f32 {
+        let original = 1.0 / fnv_combat::attack::reload_rate(self.agility);
+        if !self.handles() {
+            return 1.0 / original;
+        }
+        let w = self.held_weight();
+        let handled = draw_weight(w) / attribute_rate(w, self.agility, self.strength);
+        1.0 / (original + (handled - original).max(0.0) * self.weight())
+    }
+
+    /// Seconds aiming takes to come up (`up`) or go down: with Weapon Handling the slower
+    /// pace by the weapon's weight ([`aim_weight`]) and the attributes ([`aim_rate`]), its
+    /// time over the game's own at the Movement Weight; else the game's own.
+    pub fn aim_seconds(&self, up: bool) -> f32 {
+        let plain = if up { AIM_IN_PLAIN_SECONDS } else { AIM_OUT_PLAIN_SECONDS };
+        if !self.handles() {
+            return plain;
+        }
+        let w = self.held_weight();
+        let handled = if up { AIM_IN_SECONDS } else { AIM_OUT_SECONDS } * aim_weight(w) / aim_rate(w, self.agility, self.strength);
+        plain + (handled - plain).max(0.0) * self.weight()
+    }
+
+    /// How many times their base times the first-person hands take to come back from a
+    /// reload or an attack (the weapon's handling, its part over 1 at the Movement Weight).
     pub fn hands(&self) -> f32 {
-        self.handling.max(0.1)
+        self.weighted_extra(self.handling).max(0.1)
+    }
+
+    /// Seconds the first-person view takes into a crouch (`down`) or out of one, at the
+    /// Movement Weight.
+    pub fn crouch_seconds(&self, down: bool) -> f32 {
+        self.weighted(if down { CROUCH_DOWN_SECONDS } else { CROUCH_UP_SECONDS })
+    }
+
+    /// How many times its own length the first-person landing clip takes after a landing at
+    /// `fall_speed` ([`land_stretch`], its part over 1 at the Movement Weight).
+    pub fn land_stretch(&self, fall_speed: f32) -> f32 {
+        self.weighted_extra(land_stretch(fall_speed))
     }
 
     /// The ground velocity now (game x, y), units/s.
@@ -336,7 +485,7 @@ impl MovementInertia {
         let want = key[0].hypot(key[1]);
         // Faster the same way: starting; slower, or against the way it goes: braking.
         let starting = want > speed && key[0] * v[0] + key[1] * v[1] >= 0.0;
-        let omega = omega_for(if starting { START_SECONDS } else { STOP_SECONDS });
+        let omega = omega_for(self.weighted(if starting { START_SECONDS } else { STOP_SECONDS }));
         for (s, k) in self.axes.iter_mut().zip(key) {
             s.step(k, omega, dt);
         }
@@ -370,7 +519,7 @@ impl MovementInertia {
     /// 2026-11-14, "landing compression"]. A hop (about 290 units/s) takes none.
     pub fn land(&mut self, fall_speed: f32) {
         let hard = crate::ease::smoothstep(LANDING_SOFT_SPEED, LANDING_HARD_SPEED, fall_speed);
-        let keep = 1.0 - LANDING_MOST_LOST * hard;
+        let keep = 1.0 - LANDING_MOST_LOST * hard * self.weight();
         for s in &mut self.axes {
             s.value *= keep;
             s.rate = 0.0;
@@ -407,8 +556,9 @@ impl MovementInertia {
 }
 
 
-/// Keep [`MovementInertia::handling`] on the weapon the player holds (or is drawing).
-pub fn follow_weapon(mut inertia: ResMut<MovementInertia>, combat: Option<Res<crate::combat::Combat>>) {
+/// Keep [`MovementInertia::handling`] and the weapon's weight on the weapon the player holds
+/// (or is drawing). Logs the draw's and the aim's pace when they change (a smoke check).
+pub fn follow_weapon(mut inertia: ResMut<MovementInertia>, combat: Option<Res<crate::combat::Combat>>, mut logged: Local<Option<(f32, f32)>>) {
     let weight = combat.as_deref().and_then(|c| c.forms.weapons.get(&c.player_weapon()?).map(|w| w.weight));
     let handling = match (inertia.handles(), weight) {
         (true, Some(w)) => handling(w),
@@ -416,6 +566,23 @@ pub fn follow_weapon(mut inertia: ResMut<MovementInertia>, combat: Option<Res<cr
     };
     if (inertia.handling - handling).abs() > 1e-4 {
         inertia.handling = handling;
+    }
+    if inertia.weapon_weight != weight {
+        inertia.weapon_weight = weight;
+    }
+    let now = (inertia.equip_rate(), inertia.aim_seconds(true));
+    if logged.is_none_or(|l| (l.0 - now.0).abs() > 1e-3 || (l.1 - now.1).abs() > 1e-3) {
+        *logged = Some(now);
+        info!(
+            "weapon handling: draws at x{:.2} before perks, aims in {:.2}s ({} lb, Agility {:.0}, Strength {:.0}, Movement Weight {}, Weapon Handling {})",
+            now.0,
+            now.1,
+            weight.map_or("-".to_string(), |w| format!("{w:.1}")),
+            inertia.agility,
+            inertia.strength,
+            movement_weight_name(inertia.weight()),
+            if inertia.handles() { "on" } else { "off" }
+        );
     }
 }
 #[cfg(test)]
@@ -488,10 +655,94 @@ mod tests {
         let still = MovementInertia { on: false, ..default() };
         assert!(!still.ground() && !still.eased_crouch() && !still.landing_weight() && still.smooth_hands());
         // Without Weapon Handling the aim keeps the game's pace, the weapon's weight none.
-        let plain = MovementInertia { weapon_handling: false, handling: 1.5, ..default() };
+        let plain = MovementInertia { weapon_handling: false, weapon_weight: Some(20.0), agility: 10.0, ..default() };
         assert_eq!((plain.aim_seconds(true), plain.aim_seconds(false)), (AIM_IN_PLAIN_SECONDS, AIM_OUT_PLAIN_SECONDS));
-        let heavy = MovementInertia { handling: 1.5, ..default() };
-        assert!((heavy.aim_seconds(true) - AIM_IN_SECONDS * 1.5).abs() < 1e-6);
+        let heavy = MovementInertia { weapon_weight: Some(20.0), ..default() };
+        assert!((heavy.aim_seconds(true) - AIM_IN_SECONDS * 1.35).abs() < 1e-5);
+        let pistol = MovementInertia { weapon_weight: Some(3.0), ..default() };
+        assert!((pistol.aim_seconds(true) - AIM_IN_SECONDS).abs() < 1e-5 && (pistol.aim_seconds(false) - AIM_OUT_SECONDS).abs() < 1e-5, "a pistol keeps the tuned aim");
+    }
+
+    #[test]
+    fn draws_follow_the_attributes_by_the_weapons_class() {
+        let at = |weight: f32, agility: f32, strength: f32| MovementInertia { weapon_weight: Some(weight), agility, strength, ..default() };
+        // The original's Agility rate without Weapon Handling, whatever the weapon.
+        for (agility, rate) in [(1.0, 0.6), (5.0, 1.0), (10.0, 1.5)] {
+            let off = MovementInertia { weapon_handling: false, ..at(25.0, agility, 1.0) };
+            assert!((off.equip_rate() - rate).abs() < 1e-5, "{agility}: {}", off.equip_rate());
+            let all_off = MovementInertia { advanced: false, ..at(2.0, agility, 10.0) };
+            assert!((all_off.equip_rate() - rate).abs() < 1e-5);
+        }
+        // At 5 and 5 only the weight: light 1.2 times the original's time, a rifle 1.5, heavy 2.
+        assert!((at(1.0, 5.0, 5.0).equip_rate() - 1.0 / 1.2).abs() < 1e-5);
+        assert!((at(8.0, 5.0, 5.0).equip_rate() - 1.0 / 1.5).abs() < 1e-5);
+        assert!((at(25.0, 5.0, 5.0).equip_rate() - 0.5).abs() < 1e-5);
+        assert_eq!(weight_class(2.0), [1.0, 0.0, 0.0]);
+        assert_eq!(weight_class(9.0), [0.0, 1.0, 0.0]);
+        assert_eq!(weight_class(30.0), [0.0, 0.0, 1.0]);
+        // Agility counts most for light weapons, Strength most for heavy ones.
+        let gain = |w: f32, a: f32, s: f32| attribute_rate(w, a, s) - 1.0;
+        assert!((gain(2.0, 10.0, 5.0) - 0.5).abs() < 1e-5, "a light weapon at Agility 10 as the original's");
+        assert!(gain(2.0, 10.0, 5.0) > gain(9.0, 10.0, 5.0) && gain(9.0, 10.0, 5.0) > gain(30.0, 10.0, 5.0));
+        assert!(gain(30.0, 5.0, 10.0) > gain(9.0, 5.0, 10.0) && gain(9.0, 5.0, 10.0) > gain(2.0, 5.0, 10.0));
+        assert!((gain(30.0, 5.0, 10.0) - 0.5).abs() < 1e-5);
+        assert_eq!(attribute_rate(30.0, 1.0, 1.0), ATTRIBUTE_RATE_MIN, "two low attributes cost no more than the original's Agility 1");
+        assert!(attribute_rate(9.0, 3.0, 4.0) > ATTRIBUTE_RATE_MIN && attribute_rate(9.0, 3.0, 4.0) < 1.0);
+        // Never quicker than the original's at the same Agility, whatever the Strength and
+        // the Movement Weight.
+        for weight in [0.5, 2.0, 8.0, 15.0, 30.0] {
+            for (agility, strength) in [(1.0, 10.0), (5.0, 10.0), (10.0, 10.0), (1.0, 1.0)] {
+                for share in [0.25, 1.0] {
+                    let m = MovementInertia { weight: share, ..at(weight, agility, strength) };
+                    let original = fnv_combat::attack::reload_rate(agility);
+                    assert!(m.equip_rate() <= original + 1e-5, "{weight} lb, {agility}/{strength}, {share}: {} over {original}", m.equip_rate());
+                    assert!(m.equip_rate().is_finite() && m.equip_rate() > 0.0);
+                }
+            }
+        }
+        assert_eq!(attribute_rate(2.0, 0.0, 99.0), attribute_rate(2.0, 1.0, 10.0), "read within 1 to 10");
+        // A light weapon at Agility 10 draws quicker than the original's at 5.
+        assert!(at(2.0, 10.0, 5.0).equip_rate() > 1.0);
+        // The aim takes a small share: never ultra quick, never very slow.
+        let quick = at(1.0, 10.0, 10.0).aim_seconds(true);
+        assert!(quick > AIM_IN_PLAIN_SECONDS && quick < AIM_IN_SECONDS, "{quick}");
+        assert!((aim_rate(1.0, 10.0, 10.0) - 1.26).abs() < 1e-4);
+        let slow = at(30.0, 1.0, 1.0).aim_seconds(true);
+        assert!(slow < 1.2, "{slow}");
+    }
+
+    #[test]
+    fn movement_weight_scales_the_inertia_and_the_extra_handling_only() {
+        let light = MovementInertia { weight: 0.25, ..default() };
+        // The start four times as quick.
+        let mut m = light.clone();
+        let mut t = 0.0;
+        while m.step([0.0, RUN], false, DT / 4.0)[1] < 0.95 * RUN {
+            t += DT / 4.0;
+        }
+        assert!((t - START_SECONDS / 4.0).abs() < 0.01, "{t}");
+        assert_eq!(light.crouch_seconds(true), CROUCH_DOWN_SECONDS / 4.0);
+        assert!((light.land_stretch(2000.0) - (1.0 + (HARD_LAND_STRETCH - 1.0) / 4.0)).abs() < 1e-5);
+        let mut m = MovementInertia { weight: 0.25, ..default() };
+        m.follow([0.0, RUN]);
+        m.land(LANDING_HARD_SPEED);
+        assert!((m.velocity()[1] - RUN * (1.0 - LANDING_MOST_LOST / 4.0)).abs() < 1e-3);
+        // Weapon Handling's time over the original's shrinks; the original's stays.
+        let rifle = |weight: f32| MovementInertia { weight, weapon_weight: Some(8.0), ..default() };
+        assert!((1.0 / rifle(0.25).equip_rate() - (1.0 + 0.5 / 4.0)).abs() < 1e-4);
+        assert!(rifle(0.25).equip_rate() <= 1.0, "never quicker than the original's at 5 and 5");
+        let aim = rifle(0.25).aim_seconds(true);
+        assert!(aim > AIM_IN_PLAIN_SECONDS && aim < rifle(1.0).aim_seconds(true));
+        // The dropdown's names and numbers.
+        assert_eq!(movement_weight_by_name("25%"), Some(0.25));
+        assert_eq!(movement_weight_by_name("75"), Some(0.75));
+        assert_eq!(movement_weight_by_name("0.5"), Some(0.5));
+        assert_eq!(movement_weight_by_name("60%"), None);
+        assert_eq!(movement_weight_by_name("1%"), None, "a percent sign means a percent");
+        assert_eq!(movement_weight_by_name("1"), Some(1.0));
+        assert_eq!(movement_weight_name(1.0), "100%");
+        assert_eq!(movement_weight_name(0.3), "25%");
+        assert_eq!(MovementInertia { weight: 0.0, ..default() }.weight(), 0.25, "held within the choices");
     }
 
     #[test]
@@ -577,6 +828,10 @@ mod tests {
         assert!((hard_landing(-1200.0) + 1200.0 * HARD_LANDING_GAIN).abs() < 1e-2);
         let m = MovementInertia { handling: 1.5, ..default() };
         assert_eq!(m.hands(), 1.5);
+        let m = MovementInertia { handling: 1.5, weight: 0.5, ..default() };
+        assert_eq!(m.hands(), 1.25, "the part over 1 at the Movement Weight");
+        let m = MovementInertia { handling: 0.85, weight: 0.25, ..default() };
+        assert_eq!(m.hands(), 0.85, "a light weapon's quicker hand-back stays");
     }
 
     #[test]

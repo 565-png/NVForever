@@ -231,9 +231,11 @@ itself turns exactly as the mouse says.
   the sights and back is one motion each, fast at first and slow to its end; the aim
   adds no lag of its own any more. The clips are not changed.
 - Weapon switching: drawing and putting away (6 units, smoothed by a spring settling in
-  0.25 s) push a spring (8/s): the gun trails and settles (shown at most 1.5 units); the
-  draw and holster clips take 1 / 0.45 of their time
-  (`inertia::EQUIP_PACE`; "way too fast", the sixth playtest), played by their place
+  0.25 s) push a spring (8/s): the gun trails and settles (shown at most 1.5 units); with
+  Weapon Handling the draw and holster clips take 1.2 (light) to 2 (heavy) times the
+  original's time at Agility and Strength 5 (`inertia::draw_weight`; 2.2 to 3.3 times
+  until testers found it "like pulling out a concrete slab", 2026-11-15), the attributes
+  then speeding them up by the weapon's class (§1.4a.3, Attributes), played by their place
   along the settling curve (`Frame::equip_at`), and the game's readiness waits for them
   (the moment the weapon changes hands is found through the curve's inverse). Over the
   last 65 % of that time the clip hands the arms over to the pose that follows (the hold
@@ -252,11 +254,12 @@ itself turns exactly as the mouse says.
   takes the movement clips' 0.45 s.
 - **Weapon weight in handling** (part of Weapon Handling since 2026-11-15, §1.4a.3:
   `--no-weapon-handling`, key `weapon-handling`; eighth playtest: "weapon weight slows handling"): with
-  movement inertia the draw, the holster, the aim (and its zoom) and the hand-back after a
-  reload or an attack take `inertia::handling` of the WEAP record's weight times as long:
-  0.85 for 1 lb and under, 1 for a 3 lb pistol (the 10mm pistol the times were tuned
-  with), 1.5 from 20 lb, smoothly between. The sway's springs keep their own weight
-  part (Weapon Inertia's, below).
+  movement inertia the hand-back after a reload or an attack takes `inertia::handling` of
+  the WEAP record's weight times as long: 0.85 for 1 lb and under, 1 for a 3 lb pistol
+  (the 10mm pistol the times were tuned with), 1.5 from 20 lb, smoothly between; the draw
+  and holster `inertia::draw_weight` (above), the aim (and its zoom) `inertia::aim_weight`
+  (0.9 to 1.35, 1 for the pistol), both with the attributes (§1.4a.3). The sway's springs
+  keep their own weight part (Weapon Inertia's, below).
 - Loop seams of the arms' clips (sixth playtest: "small hitching" in the idle): the trace
   showed the hand turning back in one frame each time the idle looped (every 2.46 s with
   a 10mm pistol). With movement inertia the first-person animator smooths its seams by
@@ -382,9 +385,10 @@ settings-page.md) [design]:
 | Heading | Key | Switch | What it covers |
 |---|---|---|---|
 | Advanced Movement | `advanced-movement` | Global Toggle | Over every switch below (`--no-advanced-movement`, `MovementInertia::advanced`): off, none acts, as in the original; each keeps its own choice |
+| | `movement-weight` | Movement Weight | A dropdown, 25 % / 50 % / 75 % / 100 % (`MovementInertia::weight`, 100 % by default): Movement Inertia's times (start, stop, crouch, the landing's stand-up and lost speed) at that share, so 25 % is four times as quick; of Weapon Handling's draw, holster, aim and hand-back only the time over the original's is cut, so a weapon is never quicker than the original's at the same attributes (owner, 2026-11-15) |
 | *(an empty line)* | | | |
 | Gameplay | `movement-inertia` | Movement Inertia | The ground speed's springs (starting, gliding to a stop, braking before turning back; the movement clips following a glide); the first-person stance cross-over (1.0 s / 1.1 s) and crouched jumps staying crouched; the view's take-off and landing dip, deeper for a higher fall (`hard_landing`), the longer landing clip (`land_stretch`) and the speed a hard landing takes (`MovementInertia::land`) (`--no-movement-inertia`) |
-| | `weapon-handling` | Weapon Handling | The slower draw and holster (`EQUIP_PACE`) and aim (0.6 s / 0.55 s), heavier weapons slower still (`handling`); off, the game's own timing (`--no-weapon-handling`, `MovementInertia::handles`, `aim_seconds`) |
+| | `weapon-handling` | Weapon Handling | The slower draw and holster (`draw_weight`: 1.2 to 2 times the original's) and aim (0.6 s / 0.55 s for a pistol, `aim_weight`), heavier weapons slower still, Agility and Strength by the weapon's class (`attribute_rate`, `aim_rate`); off, the game's own timing with its Agility rate (`--no-weapon-handling`, `MovementInertia::handles`, `equip_rate`, `aim_seconds`) |
 | | `advanced-recoil` | Advanced Recoil | The view's kick eased in and 40 % settling back (`nvf_play::combat`), the view's nudge back from a shot (head bob's springs) |
 | *(an empty line)* | | | |
 | Visual Only | `weapon-inertia` | Weapon Inertia | The arms' lag, steps, bob, jump and landing dip, the muzzle tip in the air, the breathing drift, the gun's recoil springs, the weapon's weight in all of it (§1.4a); `--no-weapon-sway`, a saved `weapon-sway` read as it |
@@ -396,7 +400,30 @@ the other tabs' lines are as they were. Smoke: `advanced-movement-menu` (the tab
 this order), `advanced-movement-switches` (every switch off part-way through a draw and on
 again while aimed), `advanced-movement-parts` (Camera Motion off: Movement Inertia's glide
 and eased crouch stay, the view no longer bobs), `advanced-movement-off` (the Global Toggle
-off), `movement-inertia-off`.
+off), `movement-inertia-off`, `weapon-handling-attributes`, `weapon-handling-off-agility`.
+
+**Attributes** (owner, 2026-11-15, after testers' reports: "the weapon draw speed is kinda
+brutal ... im at agility 10", "movement speed seems lower"; `MovementInertia::equip_rate`,
+`aim_seconds`, kept from the player's current Agility and Strength by `combat::perk_speed`):
+
+- Draws and holsters play at the original's Agility rate, 0.5 + 0.1 × Agility (1 at 5,
+  1.5 at 10, 0.6 at 1) [documented: Fallout Wiki, Agility (Fallout: New Vegas), the draw
+  and holster times 10 / (Agility + 5), as the reload's; special-skills-audit-2026-10-23
+  §2], times the Equip Speed perks; with Advanced Movement off too. Logged `weapon
+  handling: draws at x<rate>, aims in <s>s (<lb> lb, Agility <a>, Strength <s>, ...)`.
+- With Weapon Handling each point of Agility or Strength from 5 adds or takes the
+  original's tenth times its share for the weapon's class (`weight_class`: light to 3 lb,
+  medium 8 to 10 lb, heavy from 18 lb, blended between): Agility 1 / 0.6 / 0.3 for light /
+  medium / heavy, Strength 0.3 / 0.6 / 1 (`attribute_rate`, never under 0.6, the original's Agility 1 rate, so two low attributes cost no more than one). A light
+  weapon at Agility 10 gains as the original's does, a heavy one at Strength 10 as well. The handled time is never shorter than the original's at the same Agility, and Movement Weight cuts only the part over it.
+- The aim (and the block's cross-over, which runs on it) takes 40 % of that gain or loss
+  (`aim_rate`: 1.26 at most, 0.84 at least), so a light weapon at 10 and 10 still takes
+  0.43 s, more than the original's 0.35 s [design: "do not make the min-max difference
+  huge"]. Without Weapon Handling the aim is the game's own, as the original's.
+- The ground speed is the original's: its run speed does not depend on Agility
+  (ext-last-core.md §4), and the inertia reaches the keys' full speed (344 units/s running,
+  measured in the smoke runs' `movement inertia: up to` lines); what felt slower was the
+  half-second start, which Movement Weight now shortens.
 
 Every weapon type's draw and holster (owner, same day: "some equip animations are not
 affected - check that every animation for guns/melee weapons is affected, they can use the

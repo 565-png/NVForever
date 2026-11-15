@@ -425,6 +425,29 @@ impl Plugin for PlayerPlugin {
         ] {
             crate::settings::add_setting(app, s);
         }
+        // Under the Global Toggle: how heavy all of it is [design: the owner, 2026-11-15,
+        // "add it as Movement Weight under the global toggle ... a dropdown with 25-100%"].
+        crate::settings::add_choice_list(
+            app,
+            crate::settings::Setting {
+                key: "movement-weight",
+                group: crate::pause::GROUP_MENUS,
+                label: "Movement Weight",
+                note: "How heavy it all feels: 100% as made; lower makes speeding up, stopping and crouching quicker and cuts the extra time drawing and aiming take.",
+                switches: "",
+                get: |_| false,
+                set: |_, _| {},
+                slider: None,
+            },
+            crate::settings::ChoiceList {
+                names: |_| crate::inertia::MOVEMENT_WEIGHTS.iter().map(|(_, n)| n.to_string()).collect(),
+                chosen: |w| crate::inertia::movement_weight_name(w.resource::<Inertia>().weight()).to_string(),
+                pick: movement_weight_pick,
+                save: |w| crate::inertia::movement_weight_name(w.resource::<Inertia>().weight()).to_string(),
+                load: movement_weight_pick,
+                ask_keep: false,
+            },
+        );
         crate::settings::add_setting(
             app,
             crate::settings::Setting {
@@ -438,6 +461,17 @@ impl Plugin for PlayerPlugin {
                 slider: None,
             },
         );
+    }
+}
+
+/// The Movement Weight dropdown's choice, by its name or its number.
+fn movement_weight_pick(w: &mut World, name: &str) -> bool {
+    match crate::inertia::movement_weight_by_name(name) {
+        Some(weight) => {
+            w.resource_mut::<crate::inertia::MovementInertia>().weight = weight;
+            true
+        }
+        None => false,
     }
 }
 

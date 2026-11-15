@@ -1208,15 +1208,45 @@ forbid = [
 
 [[scenario]]
 name = "advanced-movement-menu"
-source = "owner 2026-11-15 (\"simplify the Advanced Movement menu\"; engine/nvf-play/src/settings_layout.rs, settings_view.rs; docs/design/player-body.md §1.4a.3): the NVF Features tab lists the Global Toggle under Advanced Movement, then an empty line, Gameplay's three switches, an empty line and Visual Only's three, in the owner's order"
+source = "owner 2026-11-15 (\"simplify the Advanced Movement menu\"; engine/nvf-play/src/settings_layout.rs, settings_view.rs; docs/design/player-body.md §1.4a.3): the NVF Features tab lists the Global Toggle and Movement Weight (owner 2026-11-15) under Advanced Movement, then an empty line, Gameplay's three switches, an empty line and Visual Only's three, in the owner's order"
 areas = ["player-body", "settings"]
 paths = ["engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/settings.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_PLAY_TEST_SETTINGS = "11:tab:NVF Features", NVF_PLAY_TEST_PAUSE_MENU = "12:inspect", NVF_PLAY_TEST_SHOTS = "13:advanced_movement_menu.png" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 16
 expect = [
-  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, , [NVF Features > Visual Only], weapon-inertia, animation-smoothing, camera-motion", label = "the Global Toggle, an empty line, Gameplay, an empty line, Visual Only, in the owner's order" },
+  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, movement-weight, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, , [NVF Features > Visual Only], weapon-inertia, animation-smoothing", label = "the Global Toggle, Movement Weight, an empty line, Gameplay, an empty line, Visual Only, in the owner's order (Camera Motion is the 13th line, below the 12 the window shows; settings-layout places it)" },
+  { re = 'pause menu: inspect: NVF Features, .*lines 1-12 of 13', label = "thirteen lines in the tab" },
 ]
+
+[[scenario]]
+name = "weapon-handling-attributes"
+source = "owner 2026-11-15, testers' feedback (engine/nvf-play/src/inertia.rs attribute_rate, aim_rate, draw_weight; docs/design/player-body.md §1.4a.3): with Weapon Handling a light weapon's draw follows Agility most and Strength a little, the aim a small share of it"
+note = "the 9mm pistol (000E3778, 1.5 lb) is drawn at 10 s; Agility goes to 10 at 12 s and Strength to 10 at 15 s. Draw rate = (1 + 0.1 x (Agility - 5) x 1.0 + 0.1 x (Strength - 5) x 0.3) / 1.2; aim = 0.6 s x 0.932 / (1 + 0.4 x (that attribute rate - 1))"
+areas = ["player-body", "combat"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/combat.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_CONSOLE = "12:player.setav agility 10;12.3:close;15:player.setav strength 10;15.3:close", NVF_PLAY_TEST_CONTROL = "10:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 19
+order = [[
+  { re = 'weapon handling: draws at x0\.83 before perks, aims in 0\.56s \(1\.5 lb, Agility 5, Strength 5, Movement Weight 100%, Weapon Handling on\)', label = "at 5 and 5 the pistol takes 1.2 times the original's draw" },
+  { re = 'weapon handling: draws at x1\.25 before perks, aims in 0\.47s \(1\.5 lb, Agility 10, Strength 5,', label = "Agility 10: the light weapon's full Agility gain (1.5 / 1.2), the aim a share of it" },
+  { re = 'weapon handling: draws at x1\.3[78] before perks, aims in 0\.45s \(1\.5 lb, Agility 10, Strength 10,', label = "Strength 10 adds little to a light weapon" },
+]]
+
+[[scenario]]
+name = "weapon-handling-off-agility"
+source = "owner 2026-11-15 (\"scaled with attributes just like in vanilla\"; docs/handoff/special-skills-audit-2026-10-23.md §2: draw and holster times 10 / (Agility + 5) [fandom]): without Weapon Handling draws play at the original's 0.5 + 0.1 x Agility, the aim at the game's own pace"
+areas = ["player-body", "combat"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/combat.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_CONSOLE = "12:player.setav agility 10;12.3:close;15:player.setav agility 1;15.3:close", NVF_PLAY_TEST_CONTROL = "10:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages", "--no-weapon-handling"]
+run_seconds = 19
+order = [[
+  { re = 'weapon handling: draws at x1\.00 before perks, aims in 0\.35s \(.* lb, Agility 5, .*Weapon Handling off\)', label = "Agility 5: the clip's own speed (logged before the pistol is in hand: the weight does not change the original's rate)" },
+  { re = 'weapon handling: draws at x1\.50 before perks, aims in 0\.35s \(1\.5 lb, Agility 10,', label = "Agility 10: 1.5 times, as the original" },
+  { re = 'weapon handling: draws at x0\.60 before perks, aims in 0\.35s \(1\.5 lb, Agility 1,', label = "Agility 1: 0.6 times" },
+]]
 
 [[scenario]]
 name = "movement-inertia-off"
@@ -11312,6 +11342,7 @@ expect = [
   "settings layout: menu-pause -> Gameplay > Dialogue",
   "settings layout: detached-camera -> Gameplay > Camera",
   "settings layout: advanced-movement -> NVF Features > Advanced Movement",
+  "settings layout: movement-weight -> NVF Features > Advanced Movement",
   "settings layout: movement-inertia -> NVF Features > Gameplay",
   "settings layout: weapon-handling -> NVF Features > Gameplay",
   "settings layout: advanced-recoil -> NVF Features > Gameplay",

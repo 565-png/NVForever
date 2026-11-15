@@ -48,7 +48,7 @@ NVF Features, NVForever's own features, the owner 2026-11-15].
 | Display | Performance | `fps-counter`, `fps-counter-fps`, `fps-counter-low`, `fps-counter-graph`, `fps-counter-split`, `fps-counter-cpu`, `fps-counter-gpu`, `fps-counter-vram`, `fps-counter-ram`, `fps-counter-loaded`, `fps-counter-upscaling` |
 | Audio | (none) | `volume-master`, `volume-music`, `volume-footstep`, `volume-voice`, `volume-effects`, `volume-radio`, `music`, `voice`, `reverb`, `voice-reverb` |
 | Controls | (none) | the Controls tab's own rows (§4), then `button-style`, `aim-assist`, `aim-slowdown`, `aim-lock` |
-| NVF Features | Advanced Movement | `advanced-movement` (the Global Toggle) |
+| NVF Features | Advanced Movement | `advanced-movement` (the Global Toggle), `movement-weight` (a dropdown, 25-100 %) |
 | NVF Features | Gameplay (after an empty line) | `movement-inertia`, `weapon-handling`, `advanced-recoil` |
 | NVF Features | Visual Only (after an empty line) | `weapon-inertia`, `animation-smoothing`, `camera-motion` (player-body.md §1.4a.3) |
 | Graphics | Quality | `quality` (#1966; only when the install has its preset files: docs/spec-notes/quality-presets.md) |

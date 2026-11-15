@@ -888,7 +888,7 @@ struct Motion {
     last_feet: Option<[f32; 3]>,
     airborne: f32,
     /// The fastest the character fell in this flight, and at the last landing (units/s):
-    /// a harder landing stands up slower (`nvf_play::inertia::land_stretch`).
+    /// a harder landing stands up slower (`nvf_play::inertia::MovementInertia::land_stretch`).
     fall_speed: f32,
     landed_speed: f32,
     /// Playing the jump loop: in the air long enough, with the ground far below
@@ -1886,7 +1886,7 @@ struct Frame {
     aim_fade: Option<f32>,
     /// While the first-person view goes into a crouch or out of one: the standing and
     /// sneaking clips (idle, movement, aim) cross over this long (seconds), so the view
-    /// and the arms' hold change together, slowly (`nvf_play::inertia::CROUCH_DOWN_SECONDS`).
+    /// and the arms' hold change together, slowly (`nvf_play::inertia::MovementInertia::crouch_seconds`).
     stance_fade: Option<f32>,
     /// With smooth weapon animations: the first-person idle and movement clips cross over
     /// this long (seconds), so stopping and starting ease the arms over.
@@ -3075,8 +3075,9 @@ fn drive_body(
     };
     let (draw_t, away_t) = timing_rig.transitions(&mut ctx, stance, prefix);
     // The Equip Speed perks (Quick Draw): the draw and holster take 1 ÷ the rate as long;
-    // with movement inertia they are slower still (`nvf_play::inertia::EQUIP_PACE`).
-    let equip_pace = inertia.as_deref().filter(|i| i.handles()).map_or(1.0, |i| nvf_play::inertia::EQUIP_PACE / i.hands());
+    // times the player's Agility (the original's), or with Weapon Handling the weapon's
+    // weight and the attributes by its class (`nvf_play::inertia::MovementInertia::equip_rate`).
+    let equip_pace = inertia.as_deref().map_or(1.0, |i| i.equip_rate());
     let eq = if anim.equip_rate > 0.0 { anim.equip_rate } else { 1.0 } * equip_pace;
     // With movement inertia the clip is played along the settling curve (`Frame::equip_at`):
     // the weapon changes hands when the curve reaches the clip's own moment for it.
@@ -3102,7 +3103,7 @@ fn drive_body(
     // The first-person view's way into a crouch and out of one (`Frame::stance_fade`): a
     // timer over the cross-over's time, for the clips' fades while it runs and for the log.
     let crouching = stance == Stance::Sneak;
-    let crouch_seconds = inertia.as_deref().filter(|i| i.eased_crouch() && stance != Stance::Swim).map(|_| if crouching { nvf_play::inertia::CROUCH_DOWN_SECONDS } else { nvf_play::inertia::CROUCH_UP_SECONDS });
+    let crouch_seconds = inertia.as_deref().filter(|i| i.eased_crouch() && stance != Stance::Swim).map(|i| i.crouch_seconds(crouching));
     let stance_fade = match crouch_seconds {
         Some(t) => {
             let goal = f32::from(u8::from(crouching));
@@ -3222,7 +3223,7 @@ fn drive_body(
         aim_fade: inertia.as_deref().filter(|i| i.smooth_hands() || i.handles()).map(|i| i.aim_seconds(control.aiming)),
         stance_fade,
         move_fade: smooth.then_some(nvf_play::inertia::MOVE_FADE_SECONDS),
-        land_stretch: inertia.as_deref().filter(|i| i.landing_weight()).map(|_| nvf_play::inertia::land_stretch(m.landed_speed)),
+        land_stretch: inertia.as_deref().filter(|i| i.landing_weight()).map(|i| i.land_stretch(m.landed_speed)),
         hands_pace: smooth_with.map(|i| i.hands()),
         equip_at,
         dt,

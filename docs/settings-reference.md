@@ -628,6 +628,16 @@ After the Controls tab's own rows (see the end of this page):
 - Command-line switches: `--no-advanced-movement`
 - Registered in `engine/nvf-play/src/player.rs`
 
+### `movement-weight`: Movement Weight
+
+- On the page: How heavy it all feels: 100% as made; lower makes speeding up, stopping and crouching quicker and cuts the extra time drawing and aiming take.
+- In full: a dropdown of 25%, 50%, 75% and 100% (saved as its name; 100% by default).
+  Movement Inertia's times (speeding up, gliding to a stop, crouching, standing up after a
+  landing, the speed a hard landing costs) are that share of the full ones, so 25% is four
+  times as quick. Of Weapon Handling's draw, put-away, aim and hand-back after a reload only
+  the time over the original's shrinks, so a weapon is never quicker than the original's.
+- Registered in `engine/nvf-play/src/player.rs`
+
 ## NVF Features › Gameplay
 
 ### `movement-inertia`: Movement Inertia

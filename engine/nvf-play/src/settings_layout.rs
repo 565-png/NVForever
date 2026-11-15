@@ -90,7 +90,7 @@ pub const SECTIONS: &[Section] = &[
     // "move the player inertia under its own category"; 2026-11-15: "simplify the Advanced
     // Movement menu ... add 2 categories - toggles for purely visual change and toggle for
     // changes that affect gameplay", the names and order theirs].
-    section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement"]),
+    section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement", "movement-weight"]),
     section_after_gap(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil"]),
     section_after_gap(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     // After the tab's other headings, so the rows above keep their places (#2662).
@@ -337,11 +337,12 @@ mod tests {
     /// quality and enhanced rows, #2014's counter rows, the two VATS rows and #2198's Upscaler
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
-    /// field of view row, the menu scale row, the Physics rate row and the Advanced movement rows), by the group
+    /// field of view row, the menu scale row, the Physics rate row and the Advanced movement rows with Movement Weight), by the group
     /// it registers with.
-    const KNOWN: [(&str, &str); 119] = [
+    const KNOWN: [(&str, &str); 120] = [
         ("detached-camera", "Gameplay"),
         ("advanced-movement", "Gameplay"),
+        ("movement-weight", "Gameplay"),
         ("movement-inertia", "Gameplay"),
         ("weapon-handling", "Gameplay"),
         ("advanced-recoil", "Gameplay"),
@@ -498,7 +499,7 @@ mod tests {
         assert_eq!(at("camera-motion"), "NVF Features > Visual Only");
         assert_eq!(
             keys(&list, &l, NVF_FEATURES_TAB),
-            ["[Advanced Movement]", "advanced-movement", "", "[Gameplay]", "movement-inertia", "weapon-handling", "advanced-recoil", "", "[Visual Only]", "weapon-inertia", "animation-smoothing", "camera-motion"],
+            ["[Advanced Movement]", "advanced-movement", "movement-weight", "", "[Gameplay]", "movement-inertia", "weapon-handling", "advanced-recoil", "", "[Visual Only]", "weapon-inertia", "animation-smoothing", "camera-motion"],
             "the Global Toggle, then Gameplay and Visual Only, each after an empty line (the owner's order)"
         );
         assert_eq!(TAB_ORDER[..5], ["Gameplay", "Display", "Audio", "Controls", "NVF Features"], "after the original's four");
