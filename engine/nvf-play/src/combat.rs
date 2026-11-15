@@ -2840,12 +2840,13 @@ fn weapon_sounds(
 }
 
 /// Turn the view by this frame's share of a kick `left` (pitch, heading; radians) and give
-/// what is still to come. With `seconds` (soft recoil) the share follows an
-/// exponential that has 95 % of the kick in by then: fastest at once, slower and slower to
-/// the end, never past it; a frame of no time shows none. Without, all of it at once.
-fn ease_kick(player: &mut Player, left: [f32; 2], seconds: Option<f32>, dt: f32) -> [f32; 2] {
+/// what is still to come and how far the view turned (less than asked at the pitch limit).
+/// With `seconds` (soft recoil) the share follows an exponential that has 95 % of the
+/// kick in by then: fastest at once, slower and slower to the end, never past it; a frame
+/// of no time shows none. Without, all of it at once.
+fn ease_kick(player: &mut Player, left: [f32; 2], seconds: Option<f32>, dt: f32) -> ([f32; 2], [f32; 2]) {
     if left == [0.0; 2] {
-        return left;
+        return (left, [0.0; 2]);
     }
     let share = match seconds {
         Some(s) if s > 0.0 => 1.0 - (-3.0 * dt.max(0.0) / s).exp(),
@@ -2854,9 +2855,20 @@ fn ease_kick(player: &mut Player, left: [f32; 2], seconds: Option<f32>, dt: f32)
     let rest = left.map(|v| v * (1.0 - share));
     // The last thousandth of a degree comes at once.
     let (share, rest) = if rest[0].abs() + rest[1].abs() < 2e-5 { (1.0, [0.0; 2]) } else { (share, rest) };
+    let before = player.pitch;
     player.pitch = (player.pitch + left[0] * share).clamp(-MAX_PITCH, MAX_PITCH);
     player.heading += left[1] * share;
-    rest
+    (rest, [player.pitch - before, left[1] * share])
+}
+
+/// With soft recoil, a share of the view's turn by a kick (`turned`, pitch and heading) to
+/// settle back down by ([`ease_back`]): of the turn the view made, so a kick lost at the
+/// pitch limit does not bring the view down after it (review, 2026-11-15).
+fn kick_back(goal: &mut [f32; 2], turned: [f32; 2], soft: bool) {
+    if soft {
+        goal[0] += crate::inertia::KICK_BACK_SHARE * turned[0];
+        goal[1] += crate::inertia::KICK_BACK_SHARE * turned[1];
+    }
 }
 
 /// Settle the view back down by the kicks' returning share `goal` (pitch, heading; radians)
@@ -2924,7 +2936,9 @@ pub(crate) fn fire(
     let soft = inertia.as_deref().is_some_and(|i| i.soft_recoil());
     let kick_seconds = soft.then_some(crate::inertia::KICK_EASE_SECONDS);
     let pending = std::mem::take(&mut c.kick_left);
-    c.kick_left = ease_kick(&mut player, pending, kick_seconds, dt);
+    let turned;
+    (c.kick_left, turned) = ease_kick(&mut player, pending, kick_seconds, dt);
+    kick_back(&mut c.kick_back_goal, turned, soft);
     let back_seconds = soft.then_some(crate::inertia::KICK_BACK_SECONDS);
     ease_back(&mut player, &mut c.kick_back_goal, &mut c.kick_back, back_seconds, dt);
     // Where the gun points: the view, turned by a 3D scope's sway (the view itself sways
@@ -3329,13 +3343,10 @@ pub(crate) fn fire(
                     // With soft recoil its first share shows this frame, the rest over the
                     // next ones; otherwise all at once, as the original.
                     let left = c.kick_left;
-                    c.kick_left = ease_kick(&mut player, [kick.pitch_deg.to_radians(), kick.yaw_deg.to_radians()], kick_seconds, dt);
-                    c.kick_left = [c.kick_left[0] + left[0], c.kick_left[1] + left[1]];
-                    // A share of it the view then settles back down by (soft recoil).
-                    if kick_seconds.is_some() {
-                        c.kick_back_goal[0] += crate::inertia::KICK_BACK_SHARE * kick.pitch_deg.to_radians();
-                        c.kick_back_goal[1] += crate::inertia::KICK_BACK_SHARE * kick.yaw_deg.to_radians();
-                    }
+                    let (rest, turned) = ease_kick(&mut player, [kick.pitch_deg.to_radians(), kick.yaw_deg.to_radians()], kick_seconds, dt);
+                    c.kick_left = [rest[0] + left[0], rest[1] + left[1]];
+                    // A share of the turn the view then settles back down by (soft recoil).
+                    kick_back(&mut c.kick_back_goal, turned, soft);
                     info!(
                         "combat: kick: shot {} in a row, bloom {:.2}, crosshair cone now {:.2} deg, view up {:.2} deg, sideways {:.2} deg",
                         c.kick.burst,
@@ -5526,6 +5537,33 @@ fn sound_edid(sfx: Option<&Sfx>, sound: FormId) -> String {
 mod tests {
     use super::*;
     use crate::phys::NpcBody;
+
+    #[test]
+    fn a_soft_kick_returns_a_share_of_the_turn_the_view_made() {
+        let mut player = Player { heading: 0.0, pitch: 0.0, eye_height: 0.0, feet: [0.0; 3], body_eye: None, body_view: None, placed: None };
+        let kick = [0.02, 0.01];
+        // Free to rise: it comes in over a few frames, all of it, and 40 % of it returns.
+        let (mut left, mut goal, mut turned_sum) = (kick, [0.0; 2], [0.0; 2]);
+        for _ in 0..120 {
+            let turned;
+            (left, turned) = ease_kick(&mut player, left, Some(crate::inertia::KICK_EASE_SECONDS), 1.0 / 60.0);
+            kick_back(&mut goal, turned, true);
+            turned_sum = [turned_sum[0] + turned[0], turned_sum[1] + turned[1]];
+        }
+        assert!(left == [0.0; 2] && (turned_sum[0] - kick[0]).abs() < 1e-6 && (player.pitch - kick[0]).abs() < 1e-6);
+        assert!((goal[0] - crate::inertia::KICK_BACK_SHARE * kick[0]).abs() < 1e-6);
+        // At the pitch limit the view cannot rise: nothing of the pitch returns after it.
+        let mut player = Player { pitch: MAX_PITCH, ..player };
+        let mut goal = [0.0; 2];
+        let (_, turned) = ease_kick(&mut player, kick, None, 1.0 / 60.0);
+        kick_back(&mut goal, turned, true);
+        assert_eq!((player.pitch, goal[0]), (MAX_PITCH, 0.0));
+        assert!((goal[1] - crate::inertia::KICK_BACK_SHARE * kick[1]).abs() < 1e-6, "the sideways part still turned");
+        // Soft recoil off: nothing returns.
+        let mut goal = [0.0; 2];
+        kick_back(&mut goal, [0.02, 0.01], false);
+        assert_eq!(goal, [0.0; 2]);
+    }
 
     #[test]
     fn melee_hold_refuses_switch_without_starting_a_swing() {

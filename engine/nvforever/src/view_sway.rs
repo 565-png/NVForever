@@ -263,11 +263,19 @@ const E: f32 = std::f32::consts::E;
 /// times as big on the screen too. The sway is tuned at the original's 55°; `share` (the
 /// tuned field of view's `k` over the chosen one's) keeps it the size it was tuned to at
 /// any viewmodel field of view [design: the viewmodel field of view slider, 2026-11-14].
+///
+/// The turn is made `share` as large and the grip's way across the view too
+/// ([`GRIP_PIVOT`]: the offset is what puts the grip there), so a turn about the grip (the
+/// jump's muzzle tip) stays about the grip: made smaller by its scaled offset alone, the
+/// grip slid in depth by the turn's depth part (review, 2026-11-15).
 pub fn rescale(p: SwayPose, share: f32) -> SwayPose {
     if (share - 1.0).abs() < 1e-6 {
         return p;
     }
-    SwayPose { rotation: Quat::from_scaled_axis(p.rotation.to_scaled_axis() * share), offset: Vec3::new(p.offset.x * share, p.offset.y, p.offset.z * share) }
+    let across = |v: Vec3| Vec3::new(v.x * share, v.y, v.z * share);
+    let rotation = Quat::from_scaled_axis(p.rotation.to_scaled_axis() * share);
+    let grip = p.rotation * GRIP_PIVOT + p.offset - GRIP_PIVOT;
+    SwayPose { rotation, offset: GRIP_PIVOT + across(grip) - rotation * GRIP_PIVOT }
 }
 
 /// How much slower and larger a weapon of `weight` pounds sways: 1 up to
@@ -1031,11 +1039,21 @@ mod tests {
 
     #[test]
     fn a_rescaled_pose_keeps_its_depth_and_scales_across_and_its_turn() {
+        let grip = |p: SwayPose| p.rotation * GRIP_PIVOT + p.offset;
+        // A move alone: across made half, depth kept.
+        let moved = SwayPose { rotation: Quat::IDENTITY, offset: Vec3::new(1.0, -2.0, 0.5) };
+        assert_eq!(rescale(moved, 1.0), moved);
+        assert!((rescale(moved, 0.5).offset - Vec3::new(0.5, -2.0, 0.25)).length() < 1e-5);
+        // A turn and a move: the turn made half, the grip's way across half, its depth kept.
         let p = SwayPose { rotation: Quat::from_rotation_z(0.1) * Quat::from_rotation_x(0.04), offset: Vec3::new(1.0, -2.0, 0.5) };
-        assert_eq!(rescale(p, 1.0), p);
         let half = rescale(p, 0.5);
-        assert_eq!(half.offset, Vec3::new(0.5, -2.0, 0.25));
         assert!((half.rotation.to_scaled_axis() - p.rotation.to_scaled_axis() * 0.5).length() < 1e-5);
+        let (way, half_way) = (grip(p) - GRIP_PIVOT, grip(half) - GRIP_PIVOT);
+        assert!((half_way - Vec3::new(way.x * 0.5, way.y, way.z * 0.5)).length() < 1e-4, "{half_way} against {way}");
+        // A turn about the grip (the jump's muzzle tip) stays about the grip.
+        let tip = Quat::from_rotation_x(-0.1);
+        let about = SwayPose { rotation: tip, offset: GRIP_PIVOT - tip * GRIP_PIVOT };
+        assert!((grip(rescale(about, 0.6)) - GRIP_PIVOT).length() < 1e-4);
         assert_eq!(rescale(SwayPose::NONE, 0.5), SwayPose::NONE);
     }
 

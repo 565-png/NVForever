@@ -56,6 +56,8 @@ pub struct AimZoom {
     /// With movement inertia: the zoom's progress along the settling curve, the same curve
     /// and times as the aim clips' cross-over and the true iron sights (`crate::inertia`).
     settled: crate::ease::Settled,
+    /// The zoom ran along the settling curve last frame (Smooth weapon animations on).
+    settled_on: bool,
     /// The full zoom has been reported (smoke tests read the line).
     told: bool,
 }
@@ -74,9 +76,29 @@ impl AimZoom {
 /// The field of view (vertical, radians) for `base`, the weapon's `sight` and `blend`
 /// (0–1), eased in and out.
 pub fn zoomed_fov(base: f32, sight: f32, blend: f32) -> f32 {
+    base + (sight - base) * zoom_ease(blend)
+}
+
+/// How far the straight zoom has taken the view at `blend` (0–1): eased in and out.
+fn zoom_ease(blend: f32) -> f32 {
     let b = blend.clamp(0.0, 1.0);
-    let s = b * b * (3.0 - 2.0 * b);
-    base + (sight - base) * s
+    b * b * (3.0 - 2.0 * b)
+}
+
+/// The `blend` at which the straight zoom has taken the view `share` of the way (by
+/// halving; [`zoom_ease`] only rises).
+fn zoom_ease_inv(share: f32) -> f32 {
+    let share = share.clamp(0.0, 1.0);
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..24 {
+        let mid = 0.5 * (lo + hi);
+        if zoom_ease(mid) < share {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
 }
 
 /// The gun in hand is lined up with the eye down its sights (true iron sights, set by
@@ -172,7 +194,13 @@ pub(crate) fn zoom(
     let was = z.blend;
     // With smooth weapon animations the zoom runs along the settling curve over the aim's
     // times; without, straight over ZOOM_SECONDS and eased by `zoomed_fov`.
+    // Smooth weapon animations switched on or off part-way through a zoom: the other way
+    // goes on from where the view is, instead of from the start (review, 2026-11-15).
     let settled = inertia.as_deref().filter(|i| i.smooth_hands()).map(|i| {
+        if !z.settled_on {
+            let at = zoom_ease(z.blend);
+            z.settled.place(at, sight.is_some());
+        }
         // The weapon's handling: heavier weapons come up slower.
         let w = i.hands();
         let v = z.settled.step(sight.is_some(), time.delta_secs().min(0.25), crate::inertia::AIM_IN_SECONDS * w, crate::inertia::AIM_OUT_SECONDS * w);
@@ -181,10 +209,13 @@ pub(crate) fn zoom(
         v
     });
     if settled.is_none() {
+        if z.settled_on {
+            z.blend = zoom_ease_inv(z.settled.value());
+        }
         let step = time.delta_secs().min(0.25) / ZOOM_SECONDS;
         z.blend = if sight.is_some() { (z.blend + step).min(1.0) } else { (z.blend - step).max(0.0) };
-        z.settled.reset();
     }
+    z.settled_on = settled.is_some();
     // The scope: up at full zoom in first person, down as soon as the aim is let go.
     let scoped = sight.filter(|_| !control.third_person_view()).and_then(|(w, deg)| {
         let stats = combat.as_deref()?.player_stats(w)?;
@@ -255,6 +286,20 @@ mod tests {
         assert!((zoomed_fov(base, sight, 0.5) - (base + sight) / 2.0).abs() < 1e-6);
         // Slow at the ends: the first tenth covers less than a tenth of the way.
         assert!(base - zoomed_fov(base, sight, 0.1) < (base - sight) * 0.1);
+    }
+
+    #[test]
+    fn a_zoom_changing_curves_part_way_goes_on_from_where_it_is() {
+        // Straight to the settling curve: the same share of the way, either direction.
+        for (blend, up) in [(0.3, true), (0.8, false), (1.0, true), (0.0, false)] {
+            let mut s = crate::ease::Settled::default();
+            s.place(zoom_ease(blend), up);
+            assert!((s.value() - zoom_ease(blend)).abs() < 1e-4, "{blend} {up}: {}", s.value());
+        }
+        // And back: the straight zoom's blend for the share the settling curve had.
+        for share in [0.0, 0.2, 0.5, 0.93, 1.0] {
+            assert!((zoom_ease(zoom_ease_inv(share)) - share).abs() < 1e-4, "{share}");
+        }
     }
 
     #[test]

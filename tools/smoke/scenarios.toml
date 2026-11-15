@@ -1036,6 +1036,27 @@ expect = [
 ]
 
 [[scenario]]
+name = "advanced-movement-switches"
+source = "owner 2026-11-15 (\"finish the Advanced Movement project ... a full bug check\"; engine/nvf-play/src/player.rs, engine/nvforever/src/settings.rs, docs/design/player-body.md §1.4a.3): every switch of NVF Features › Advanced movement turned off on the settings page part-way through a draw, then on again while aimed, with the rifle firing, the player running, jumping and crouching between, so a switch changed mid-motion leaves nothing stuck"
+areas = ["player-body", "settings"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/aim_zoom.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6,13.3:15", NVF_PLAY_TEST_SETTINGS = "4.4:movement-inertia,4.5:eased-crouch,4.6:landing-weight,4.7:smooth-weapon-animations,4.8:weapon-weight-handling,4.9:soft-recoil,5.0:weapon-sway,5.1:weapon-weight-sway,5.2:weapon-breathing,5.3:head-bob,5.4:breathing-camera,5.5:out-of-breath,5.6:hit-jolt,5.7:advanced-movement,13.4:advanced-movement,13.5:movement-inertia,13.6:eased-crouch,13.7:landing-weight,13.8:smooth-weapon-animations,13.9:weapon-weight-handling,14.0:soft-recoil,14.1:weapon-sway,14.2:weapon-weight-sway,14.3:weapon-breathing,14.4:head-bob,14.5:breathing-camera,14.6:out-of-breath,14.7:hit-jolt", NVF_PLAY_TEST_CONTROL = "4:weapon,7:jump,9:sneak,10:sneak,12:aim,15.5:fire,16:fire,17:aim,18:jump,20:weapon", NVF_PLAY_TEST_MOVE = "6.5:1:0,8.5:0:0,18:1:0,19.5:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 24
+expect = [
+  { text = "settings: advanced-movement off", label = "the main switch goes off" },
+  { text = "settings: hit-jolt off", label = "the last part switch goes off" },
+  { text = "settings: advanced-movement on", label = "the main switch comes back on" },
+  { text = "settings: hit-jolt on", label = "and the last part switch" },
+  { re = 'combat: kick: shot', label = "the rifle fired with every switch back on" },
+  { re = 'player body summary: weapon sway on', label = "the switches: the run reached its end" },
+]
+forbid = [
+  { re = 'NVF_PLAY_TEST_SETTINGS: ("|no switch|\S+ is a (list|slider):)', label = "every switch step is understood" },
+  { re = 'panicked', label = "nothing panics" },
+]
+
+[[scenario]]
 name = "movement-inertia-off"
 source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs): with --no-movement-inertia the player starts and stops at once, as the original; since 2026-11-15 the eased crouch is a switch of its own and stays"
 areas = ["player-body"]

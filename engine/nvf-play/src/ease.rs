@@ -115,6 +115,14 @@ impl Settled {
     pub fn reset(&mut self) {
         *self = Settled::default();
     }
+
+    /// At `v` (0–1) on its way up (`up`) or down: where a straight motion handing over to
+    /// this one is, so the value goes on from there.
+    pub fn place(&mut self, v: f32, up: bool) {
+        let v = v.clamp(0.0, 1.0);
+        self.up = up;
+        self.x = if up { settle_inv(v) } else { 1.0 - settle_inv(1.0 - v) };
+    }
 }
 
 /// A spring pushed by the changes of a velocity: the velocity is first smoothed by a

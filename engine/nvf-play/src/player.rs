@@ -1288,6 +1288,7 @@ fn step(
     let dt = p.world.params.dt;
     let n = p.stepper.advance(&p.world.params, time.delta_secs());
     let c = p.player.as_mut().expect("placed");
+    inertia.check_game_placed(player.placed);
     inertia.check_placed(c.feet);
     // The clip's travel owed, spread over this frame's steps (none: kept for the next).
     let carry = if n > 0 { lunge.owed.map(|o| o / (n as f32 * dt)) } else { [0.0; 2] };

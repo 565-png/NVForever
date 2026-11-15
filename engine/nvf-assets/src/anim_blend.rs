@@ -699,7 +699,7 @@ impl Animator {
             // The bone's rest pose (set above).
             let bind = self.locals[bone];
             let (mut t, mut q, mut s) = (Vec3::ZERO, Vec4::ZERO, 0.0f32);
-            let mut first: Option<Vec4> = self.last_rotations.get(bone).map(|r| Vec4::from(*r));
+            let first: Option<Vec4> = self.last_rotations.get(bone).map(|r| Vec4::from(*r));
             let mut free = 1.0f32;
             while i < self.scratch.len() && self.scratch[i].bone as usize == bone {
                 // One priority group.
@@ -725,14 +725,10 @@ impl Animator {
                     t += f * track.translation.sample(time).map_or(bind.translation, Vec3::from_array);
                     let r = track.rotation_after(time, l.cycles()).map_or(bind.rotation, |[w, x, y, z]| Quat::from_xyzw(x, y, z, w));
                     let mut v = Vec4::from(r);
-                    let reference = match l.aligned.get(c.slot as usize).copied().flatten() {
-                        Some(last) => last,
-                        None => *first.get_or_insert(v),
-                    };
+                    let reference = l.aligned.get(c.slot as usize).copied().flatten().or(first).unwrap_or(v);
                     if v.dot(reference) < 0.0 {
                         v = -v;
                     }
-                    first.get_or_insert(v);
                     q += f * v;
                     s += f * track.scale.sample(time).map_or(bind.scale.x, |[x]| x);
                     if let Some(a) = self.layers[c.layer as usize].aligned.get_mut(c.slot as usize) {

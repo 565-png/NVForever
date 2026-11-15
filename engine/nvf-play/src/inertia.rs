@@ -184,11 +184,13 @@ pub struct MovementInertia {
     pub grounded: bool,
     /// Feet at the end of the last step, to tell a placement from motion.
     last_feet: Option<[f32; 3]>,
+    /// Where the game last put the player (`crate::player::Player::placed`).
+    last_placed: Option<[f32; 3]>,
 }
 
 impl Default for MovementInertia {
     fn default() -> Self {
-        MovementInertia { advanced: true, on: true, crouch: true, smooth: true, recoil: true, landing: true, weapon_handling: true, handling: 1.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None }
+        MovementInertia { advanced: true, on: true, crouch: true, smooth: true, recoil: true, landing: true, weapon_handling: true, handling: 1.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None, last_placed: None }
     }
 }
 
@@ -246,6 +248,17 @@ impl MovementInertia {
         self.last_key = [0.0; 2];
         self.starting = None;
         self.gliding = None;
+    }
+
+    /// Before a frame's steps: the game put the player somewhere new (`placed`: a door, the
+    /// start, a load), however near, and the body starts from rest there. A door between
+    /// two interiors whose coordinates lie close together is under [`PLACED_DISTANCE`]
+    /// apart, and the run's speed came along into the new room (review, 2026-11-15).
+    pub fn check_game_placed(&mut self, placed: Option<[f32; 3]>) {
+        if placed.is_some() && placed != self.last_placed {
+            self.reset();
+        }
+        self.last_placed = placed;
     }
 
     /// Before a frame's steps: a character moved further than it can walk in a frame was
@@ -494,6 +507,14 @@ mod tests {
         assert!(m.velocity()[1] > 0.0, "walking distance keeps it");
         m.check_placed([5000.0, 0.0, 0.0]);
         assert_eq!(m.velocity(), [0.0, 0.0]);
+        // Put somewhere by the game, however near: from rest; the same place again keeps on.
+        m.follow([0.0, 300.0]);
+        m.check_game_placed(Some([10.0, 0.0, 0.0]));
+        assert_eq!(m.velocity(), [0.0, 0.0]);
+        m.follow([0.0, 300.0]);
+        m.check_game_placed(Some([10.0, 0.0, 0.0]));
+        m.check_game_placed(None);
+        assert_eq!(m.velocity(), [0.0, 300.0], "walking on after it");
     }
 
     #[test]

@@ -2337,6 +2337,12 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
         if jumped {
             a.smooth_jump();
         }
+    } else {
+        // Played by its rate again (Smooth weapon animations switched off part-way): the
+        // clip goes on from where it is instead of holding the place it was put at.
+        for l in a.layers.iter_mut().filter(|l| l.tag == TAG_EQUIP && l.rate == 0.0) {
+            l.rate = f.equip_rate;
+        }
     }
     // Clips that play once to their end once started: landing, attack, reload.
     for (tag, w) in [(TAG_LAND, 1.0), (TAG_ATTACK, aim_w[0].1), (TAG_ATTACK + 1, aim_w[1].1), (TAG_ATTACK + 2, aim_w[2].1), (TAG_RELOAD, 1.0)] {
