@@ -227,9 +227,13 @@ the spec it links to.
   axes can now be compared in the game by test aids, the default unchanged until one is
   picked: through the points or fitted near them (each moved at most 4 units, which
   evens a staircase into a slope), 2 × 2 or 4 × 4 (four times the triangles), and the
-  bound (8 to 16 units: more rounding, more distance from placed rocks and roads). The
-  Debug row Terrain wireframe draws the triangles to see the shape. Smoke scenarios
-  `terrain-smoothing-fit-s2-b8`, `-interpolate-s4-b8`, `-fit-s4-b12` start each.
+  bound (8 to 16 units: more rounding, more distance from placed rocks and roads). Fit
+  4 × 4 within 8 looked the best compromise but too smooth; the candidate now is
+  *detail*, a fit that moves only what looks like a height step (moves up to 2 units in
+  full, fading out by 6) and keeps bumps, crests and ridges. The Debug row Terrain
+  wireframe draws the triangles to see the shape. Smoke scenarios
+  `terrain-smoothing-fit-s2-b8`, `-interpolate-s4-b8`, `-fit-s4-b12`, `-detail-s4-b8`
+  start each.
   ([world §3 "Smoothing"](spec-notes/world.md#3-landscape-land))
 
 - **Grass fires: size, speed and regrowth (#2567).** [design] Burning weapons and blasts

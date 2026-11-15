@@ -18,7 +18,11 @@
 //!   computed); with `Fit` each LAND height moved towards the binomial mean of its 3 × 3
 //!   by at most [`FIT_KNOT_SHIFT`] (and never more than the bound), computed from the
 //!   stored heights only, so the 8-unit steps of quantised slopes even out
-//!   (`0, 0, 8, 8, 16, 16` → `…, 2, 6, 10, 14, …`) and a plane stays a plane;
+//!   (`0, 0, 8, 8, 16, 16` → `…, 2, 6, 10, 14, …`) and a plane stays a plane; with
+//!   `Detail` the same, but only the part of the move that looks like a quantisation step:
+//!   a step on a slope is at most about 2 from the mean, a real bump, crest, ridge or dip
+//!   more, so the move is weighted down from full at `t0` to none at `t1` (smoothstep of
+//!   its size) and those features keep their height;
 //! - the patch over a square reads the vertices one square beyond it (the fit one more,
 //!   for its 3 × 3), so it reads the neighbouring cells' LAND along the edges ([`Block`]):
 //!   a vertex outside the cell is read from the cell that owns it (the one where it is
@@ -72,22 +76,48 @@ pub const MAX_BOUND: f32 = 2.0 * HEIGHT_SCALE;
 pub const FIT_KNOT_SHIFT: f32 = HEIGHT_SCALE / 2.0;
 
 /// The control heights of a smoothed surface (module notes).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SmoothMode {
     /// Through the LAND vertices: each keeps its stored height (the default).
     Interpolate,
     /// Near them: each moved towards the mean of its 3 × 3 by at most
     /// [`FIT_KNOT_SHIFT`].
     Fit,
+    /// As `Fit`, but a move of `d` towards the mean is taken in full only up to `t0` units
+    /// and not at all from `t1` (`d · (1 − smoothstep(t0, t1, |d|))`): quantisation steps
+    /// even out, bumps, crests, ridges and dips keep their height (module notes).
+    Detail { t0: f32, t1: f32 },
 }
 
+/// The detail mode's thresholds by default, world units [design, #2149: a quantisation
+/// step on a slope moves a vertex by at most 2 (`0, 0, 8, 8` gives ±2); a lone vertex
+/// 16 above flat neighbours by 12, a ridge 16 high by 8; between 2 and 6 the move fades].
+pub const DEFAULT_DETAIL: (f32, f32) = (2.0, 6.0);
+
 impl SmoothMode {
-    /// Its name in the start's log line and the test aid.
+    /// The detail mode with [`DEFAULT_DETAIL`].
+    pub const DETAIL: SmoothMode = SmoothMode::Detail { t0: DEFAULT_DETAIL.0, t1: DEFAULT_DETAIL.1 };
+
+    /// Its name in the test aid.
     pub fn name(self) -> &'static str {
         match self {
             SmoothMode::Interpolate => "interpolate",
             SmoothMode::Fit => "fit",
+            SmoothMode::Detail { .. } => "detail",
         }
+    }
+
+    /// Its name with its thresholds, for the log: `detail(2:6)`.
+    pub fn label(self) -> String {
+        match self {
+            SmoothMode::Detail { t0, t1 } => format!("detail({t0}:{t1})"),
+            m => m.name().to_string(),
+        }
+    }
+
+    /// Whether the LAND vertices' control heights move (fit and detail).
+    pub fn moves_knots(self) -> bool {
+        !matches!(self, SmoothMode::Interpolate)
     }
 }
 
@@ -106,18 +136,29 @@ impl SmoothParams {
     pub const DEFAULT: SmoothParams = SmoothParams { mode: SmoothMode::Interpolate, subdiv: DEFAULT_SUBDIV, max_deviation: DEFAULT_MAX_DEVIATION };
 
     /// How far a LAND vertex's control height may move: 0 interpolating, the smaller of
-    /// [`FIT_KNOT_SHIFT`] and the bound fitting.
+    /// [`FIT_KNOT_SHIFT`] and the bound fitting (detail too).
     pub fn knot_shift(&self) -> f32 {
-        match self.mode {
-            SmoothMode::Interpolate => 0.0,
-            SmoothMode::Fit => FIT_KNOT_SHIFT.min(self.max_deviation),
+        if self.mode.moves_knots() {
+            FIT_KNOT_SHIFT.min(self.max_deviation)
+        } else {
+            0.0
         }
     }
 
-    /// A subdivision of [`SUBDIVS`] and a finite bound in 0..=[`MAX_BOUND`].
+    /// A subdivision of [`SUBDIVS`], a finite bound in 0..=[`MAX_BOUND`] and, for detail,
+    /// finite thresholds with 0 ≤ t0 < t1 ≤ [`MAX_BOUND`].
     pub fn is_valid(&self) -> bool {
-        SUBDIVS.contains(&self.subdiv) && self.max_deviation.is_finite() && (0.0..=MAX_BOUND).contains(&self.max_deviation)
+        let detail_ok = match self.mode {
+            SmoothMode::Detail { t0, t1 } => detail_thresholds_valid(t0, t1),
+            _ => true,
+        };
+        detail_ok && SUBDIVS.contains(&self.subdiv) && self.max_deviation.is_finite() && (0.0..=MAX_BOUND).contains(&self.max_deviation)
     }
+}
+
+/// Detail thresholds that can be used: finite, 0 ≤ `t0` < `t1` ≤ [`MAX_BOUND`].
+pub fn detail_thresholds_valid(t0: f32, t1: f32) -> bool {
+    t0.is_finite() && t1.is_finite() && 0.0 <= t0 && t0 < t1 && t1 <= MAX_BOUND
 }
 
 impl Default for SmoothParams {
@@ -174,9 +215,17 @@ impl SurfaceSpec {
         }
     }
 
+    /// `stored`, `interpolate`, `fit` or `detail(t0:t1)`.
+    pub fn mode_label(&self) -> String {
+        match self {
+            SurfaceSpec::Stored => "stored".to_string(),
+            SurfaceSpec::Smoothed(p) => p.mode.label(),
+        }
+    }
+
     /// `mode=… subdiv=… bound=… land-shift=…` (the start's log line and the exit summary).
     pub fn describe(&self) -> String {
-        format!("mode={} subdiv={} bound={} land-shift={}", self.mode_name(), self.subdiv(), self.bound(), self.knot_shift())
+        format!("mode={} subdiv={} bound={} land-shift={}", self.mode_label(), self.subdiv(), self.bound(), self.knot_shift())
     }
 }
 
@@ -283,7 +332,12 @@ impl Surface {
             SmoothMode::Interpolate => (padded(block, PAD)?, None),
             SmoothMode::Fit => {
                 let raw = padded(block, PAD + 1)?;
-                let ctl = fit_controls(&raw, params.knot_shift());
+                let ctl = fit_controls(&raw, params.knot_shift(), None);
+                (raw, Some(ctl))
+            }
+            SmoothMode::Detail { t0, t1 } => {
+                let raw = padded(block, PAD + 1)?;
+                let ctl = fit_controls(&raw, params.knot_shift(), Some((t0, t1)));
                 (raw, Some(ctl))
             }
         };
@@ -310,7 +364,7 @@ impl Surface {
                 normals.push(n.map(|k| k / len));
             }
         }
-        let stored = (params.mode == SmoothMode::Fit).then(|| block[1][1].map(|h| h.to_vec().into_boxed_slice())).flatten();
+        let stored = params.mode.moves_knots().then(|| block[1][1].map(|h| h.to_vec().into_boxed_slice())).flatten();
         Some(Surface { spec: SurfaceSpec::Smoothed(params), sub, heights, normals: Some(normals), stored })
     }
 
@@ -517,10 +571,11 @@ fn padded(block: &Block, pad: usize) -> Option<Padded> {
 
 /// The fit's control heights over `raw` (padded one vertex more than they are, module
 /// notes): each vertex's stored height moved towards the binomial (1 2 1 × 1 2 1) / 16
-/// mean of its 3 × 3 by at most `shift`. Every control height reads the stored heights
-/// only (never another control height), along each row first, then across the rows, the
-/// same order everywhere, so both cells of a shared edge get the same numbers.
-fn fit_controls(raw: &Padded, shift: f32) -> Padded {
+/// mean of its 3 × 3 by at most `shift`; with `detail` (t0, t1) only by the move times
+/// `1 − smoothstep(t0, t1, |move|)`. Every control height reads the stored heights only
+/// (never another control height), along each row first, then across the rows, the same
+/// order everywhere, so both cells of a shared edge get the same numbers.
+fn fit_controls(raw: &Padded, shift: f32, detail: Option<(f32, f32)>) -> Padded {
     let mut out = Padded::new(PAD);
     let (pad, last) = (PAD as isize, (SIDE - 1) as isize);
     for r in -pad..=last + pad {
@@ -528,11 +583,22 @@ fn fit_controls(raw: &Padded, shift: f32) -> Padded {
             let row = |rr: isize| raw.at(rr, c - 1) + 2.0 * raw.at(rr, c) + raw.at(rr, c + 1);
             let mean = (row(r - 1) + 2.0 * row(r) + row(r + 1)) / 16.0;
             let h = raw.at(r, c);
+            let d = mean - h;
+            let d = match detail {
+                Some((t0, t1)) => d * (1.0 - smoothstep(t0, t1, d.abs())),
+                None => d,
+            };
             let i = out.idx(r, c);
-            out.v[i] = h + (mean - h).clamp(-shift, shift);
+            out.v[i] = h + d.clamp(-shift, shift);
         }
     }
     out
+}
+
+/// 0 below `e0`, 1 above `e1`, the cubic `3t² − 2t³` between (`e0` < `e1`).
+fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// The grid directions [`extrapolated`] looks along, in the order it adds them up

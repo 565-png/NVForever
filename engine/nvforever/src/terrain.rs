@@ -788,7 +788,7 @@ mod tests {
     /// Each mode at each subdivision (the bound does not change the meshes' layout).
     fn variants() -> Vec<fnv_world::land_surface::SmoothParams> {
         use fnv_world::land_surface::{SmoothMode, SmoothParams, SUBDIVS};
-        let modes = [SmoothMode::Interpolate, SmoothMode::Fit];
+        let modes = [SmoothMode::Interpolate, SmoothMode::Fit, SmoothMode::DETAIL];
         modes.iter().flat_map(|&mode| SUBDIVS.map(|subdiv| SmoothParams { mode, subdiv, max_deviation: 12.0 })).collect()
     }
 

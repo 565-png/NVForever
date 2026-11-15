@@ -1,5 +1,5 @@
 //! Tests of the landscape surface (`super`): the stored grid, and every smoothing
-//! combination [design, #2149]: both modes × subdivisions 2 and 4 × bounds 8, 12, 16,
+//! combination [design, #2149]: the three modes × subdivisions 2 and 4 × bounds 8, 12, 16,
 //! looped over inside each test rather than one test per combination.
 
 use super::*;
@@ -18,17 +18,20 @@ fn stairs(x: i32, _y: i32) -> f32 {
     HEIGHT_SCALE * x.div_euclid(2) as f32
 }
 
+/// The modes, detail with its default thresholds.
+const MODES: [SmoothMode; 3] = [SmoothMode::Interpolate, SmoothMode::Fit, SmoothMode::DETAIL];
+
 /// Every combination the run can choose by the test aids (module notes).
 fn combos() -> Vec<SmoothParams> {
     let mut out = Vec::new();
-    for mode in [SmoothMode::Interpolate, SmoothMode::Fit] {
+    for mode in MODES {
         for subdiv in SUBDIVS {
             for max_deviation in [8.0, 12.0, 16.0] {
                 out.push(SmoothParams { mode, subdiv, max_deviation });
             }
         }
     }
-    assert_eq!(out.len(), 12);
+    assert_eq!(out.len(), 18);
     out
 }
 
@@ -227,6 +230,14 @@ fn the_spec_describes_itself() {
     assert_eq!(fit.describe(), "mode=fit subdiv=4 bound=12 land-shift=4");
     let small = SmoothParams { mode: SmoothMode::Fit, subdiv: 2, max_deviation: 2.5 };
     assert_eq!(small.knot_shift(), 2.5);
+    let detail = SurfaceSpec::Smoothed(SmoothParams { mode: SmoothMode::DETAIL, subdiv: 4, max_deviation: 8.0 });
+    assert_eq!(detail.describe(), "mode=detail(2:6) subdiv=4 bound=8 land-shift=4");
+    let odd = SmoothMode::Detail { t0: 1.5, t1: 9.0 };
+    assert_eq!((odd.name(), odd.label()), ("detail", "detail(1.5:9)".to_string()));
+    for (t0, t1) in [(3.0, 3.0), (4.0, 2.0), (-1.0, 2.0), (2.0, 16.5), (f32::NAN, 6.0), (2.0, f32::INFINITY)] {
+        assert!(!SmoothParams { mode: SmoothMode::Detail { t0, t1 }, ..SmoothParams::DEFAULT }.is_valid(), "{t0}:{t1}");
+    }
+    assert!(SmoothParams { mode: SmoothMode::Detail { t0: 0.0, t1: 16.0 }, ..SmoothParams::DEFAULT }.is_valid());
     assert!(SmoothParams::DEFAULT.is_valid());
     for bad in [SmoothParams { subdiv: 3, ..SmoothParams::DEFAULT }, SmoothParams { max_deviation: -1.0, ..SmoothParams::DEFAULT }, SmoothParams { max_deviation: 16.5, ..SmoothParams::DEFAULT }, SmoothParams { max_deviation: f32::NAN, ..SmoothParams::DEFAULT }] {
         assert!(!bad.is_valid(), "{bad:?}");
@@ -246,7 +257,7 @@ fn land_vertices_keep_their_height_interpolating_and_move_a_little_fitting() {
                 assert_eq!(s.land_height(r, c), stored);
                 match p.mode {
                     SmoothMode::Interpolate => assert_eq!(got, stored, "LAND vertex ({r}, {c}) {p:?}"),
-                    SmoothMode::Fit => assert!((got - stored).abs() <= p.knot_shift() + 1e-4, "LAND vertex ({r}, {c}) {p:?}: {got} vs {stored}"),
+                    _ => assert!((got - stored).abs() <= p.knot_shift() + 1e-4, "LAND vertex ({r}, {c}) {p:?}: {got} vs {stored}"),
                 }
                 moved += usize::from(got != stored);
                 let v = s.vertex(s.land_vertex(r, c));
@@ -256,6 +267,8 @@ fn land_vertices_keep_their_height_interpolating_and_move_a_little_fitting() {
         match p.mode {
             SmoothMode::Interpolate => assert_eq!(moved, 0),
             SmoothMode::Fit => assert!(moved > 200, "{p:?}: {moved} LAND vertices moved"),
+            // Detail moves the quantisation steps and leaves the features.
+            SmoothMode::Detail { .. } => assert!(moved > 50, "{p:?}: {moved} LAND vertices moved"),
         }
     }
 }
@@ -294,7 +307,7 @@ fn every_combination_stays_within_its_bound_of_the_stored_triangles() {
 fn small_bounds_hold_too() {
     let h = cell((2, 3));
     let stored = Surface::stored(&h);
-    for mode in [SmoothMode::Interpolate, SmoothMode::Fit] {
+    for mode in MODES {
         for subdiv in SUBDIVS {
             for max_deviation in [0.0, 0.75, 2.5] {
                 let p = SmoothParams { mode, subdiv, max_deviation };
@@ -362,7 +375,7 @@ fn the_fit_evens_out_a_quantised_slope() {
         let steps: Vec<f32> = (0..SIDE - 1).map(|c| land(c + 1) - land(c)).collect();
         match p.mode {
             SmoothMode::Interpolate => assert!(steps.chunks(2).all(|w| w == [8.0, 0.0] || w == [0.0, 8.0]), "{p:?}: {steps:?}"),
-            SmoothMode::Fit => {
+            SmoothMode::Fit | SmoothMode::Detail { .. } => {
                 assert!(steps.iter().all(|d| (d - 4.0).abs() < 1e-3), "{p:?}: {steps:?}");
                 // Between the LAND vertices too: equal rises vertex to vertex.
                 let fine = SPACING / s.sub() as f32 * 4.0 / SPACING;
@@ -371,6 +384,36 @@ fn the_fit_evens_out_a_quantised_slope() {
                     assert!((d - fine).abs() < 1e-3, "{p:?} column {c}: {d}");
                 }
             }
+        }
+    }
+}
+
+/// Flat ground at 0 with one LAND vertex 16 up at world vertex (16, 16) (a bump) and a
+/// ridge 16 high along world row 24.
+fn bump_and_ridge(x: i32, y: i32) -> f32 {
+    if (x, y) == (16, 16) || y == 24 {
+        16.0
+    } else {
+        0.0
+    }
+}
+
+/// Detail keeps a real bump and a ridge at their stored height (their moves towards the
+/// mean, 12 and 8, are past the thresholds), where fit lowers them by its knot shift; the
+/// staircase is evened out by both (`the_fit_evens_out_a_quantised_slope`).
+#[test]
+fn detail_keeps_bumps_and_ridges_that_fit_lowers() {
+    for subdiv in SUBDIVS {
+        for max_deviation in [8.0, 16.0] {
+            let detail = smoothed_of(bump_and_ridge, (0, 0), &[], SmoothParams { mode: SmoothMode::DETAIL, subdiv, max_deviation });
+            let fit = smoothed_of(bump_and_ridge, (0, 0), &[], SmoothParams { mode: SmoothMode::Fit, subdiv, max_deviation });
+            for (r, c) in [(16, 16), (24, 3), (24, 16), (24, 30)] {
+                let (d, f) = (detail.heights()[detail.land_vertex(r, c)], fit.heights()[fit.land_vertex(r, c)]);
+                assert!((d - 16.0).abs() <= 0.5, "detail {subdiv}/{max_deviation} ({r}, {c}): {d}");
+                assert!(f < 16.0 - 2.0, "fit {subdiv}/{max_deviation} ({r}, {c}): {f}");
+            }
+            // Flat ground away from them stays flat.
+            assert_eq!(detail.heights()[detail.land_vertex(4, 4)], 0.0);
         }
     }
 }
@@ -446,7 +489,7 @@ fn a_cell_without_neighbours_is_smoothed_too() {
         let corner = s.heights()[s.land_vertex(32, 32)];
         match p.mode {
             SmoothMode::Interpolate => assert_eq!(corner, h[SIDE * SIDE - 1]),
-            SmoothMode::Fit => assert!((corner - h[SIDE * SIDE - 1]).abs() <= p.knot_shift()),
+            _ => assert!((corner - h[SIDE * SIDE - 1]).abs() <= p.knot_shift()),
         }
         assert!(Surface::smoothed(&[[None; 3]; 3], p).is_none());
     }

@@ -10,17 +10,20 @@
 //! ground and collision on the old surface beside new cells on the other [design].
 //!
 //! How it is smoothed is fixed for the run too ([`params`]): by default interpolating,
-//! 2 × 2, within 8 units (`fnv_world::land_surface::SmoothParams::DEFAULT`). Three test aids
+//! 2 × 2, within 8 units (`fnv_world::land_surface::SmoothParams::DEFAULT`). Test aids
 //! choose another recipe for comparing them in the game [design, #2149: the maintainer
 //! picks a default from such runs; they are not settings rows or INI entries]:
-//! - `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit` (the LAND vertices kept, or fitted);
+//! - `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit|detail` (the LAND vertices kept, fitted,
+//!   or fitted where they look like quantisation steps only);
+//! - `NVF_PLAY_TEST_SMOOTH_DETAIL=<t0>:<t1>` (detail's thresholds, units, 0 ≤ t0 < t1 ≤ 16;
+//!   2:6 by default; used with `detail` only);
 //! - `NVF_PLAY_TEST_SMOOTH_SUBDIV=2|4` (new squares per grid square and side);
 //! - `NVF_PLAY_TEST_SMOOTH_BOUND=<units>` (0 to 16: how far from the stored triangles).
 //!
 //! A value out of range gives one warning at the start and that field's default. With
 //! smoothing off they do nothing: the run draws and collides the stored triangles.
 
-use fnv_world::land_surface::{SmoothMode, SmoothParams, SurfaceSpec, MAX_BOUND, SUBDIVS};
+use fnv_world::land_surface::{detail_thresholds_valid, SmoothMode, SmoothParams, SurfaceSpec, DEFAULT_DETAIL, MAX_BOUND, SUBDIVS};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
@@ -38,6 +41,7 @@ pub const KEY: &str = "smooth-terrain";
 pub const MODE_AID: &str = "NVF_PLAY_TEST_SMOOTH_MODE";
 pub const SUBDIV_AID: &str = "NVF_PLAY_TEST_SMOOTH_SUBDIV";
 pub const BOUND_AID: &str = "NVF_PLAY_TEST_SMOOTH_BOUND";
+pub const DETAIL_AID: &str = "NVF_PLAY_TEST_SMOOTH_DETAIL";
 
 /// The settings row's note, NVForever's own words [design].
 pub const NOTE: &str = "On: the ground between the landscape's points is drawn and walked on as a smooth surface, by default within one height step of the stored ground. Off: the stored triangles. Applies at the next start.";
@@ -67,7 +71,7 @@ pub fn fix() {
 pub fn params() -> SmoothParams {
     *PARAMS.get_or_init(|| {
         let var = |k: &str| std::env::var(k).ok();
-        let (p, problems) = parse_params(var(MODE_AID).as_deref(), var(SUBDIV_AID).as_deref(), var(BOUND_AID).as_deref());
+        let (p, problems) = parse_params(var(MODE_AID).as_deref(), var(SUBDIV_AID).as_deref(), var(BOUND_AID).as_deref(), var(DETAIL_AID).as_deref());
         for e in problems {
             bevy::log::warn!("{e}");
         }
@@ -87,14 +91,23 @@ pub fn spec() -> SurfaceSpec {
 
 /// The recipe the test aids' values give (`None`: not set), and a line for each value
 /// that was not taken (that field keeps its default).
-pub fn parse_params(mode: Option<&str>, subdiv: Option<&str>, bound: Option<&str>) -> (SmoothParams, Vec<String>) {
+pub fn parse_params(mode: Option<&str>, subdiv: Option<&str>, bound: Option<&str>, detail: Option<&str>) -> (SmoothParams, Vec<String>) {
     let mut p = SmoothParams::DEFAULT;
     let mut problems = Vec::new();
     if let Some(v) = mode.map(str::trim) {
         match v.to_ascii_lowercase().as_str() {
             "interpolate" => p.mode = SmoothMode::Interpolate,
             "fit" => p.mode = SmoothMode::Fit,
-            _ => problems.push(format!("{MODE_AID}={v:?}: expected interpolate or fit; using {}", p.mode.name())),
+            "detail" => p.mode = SmoothMode::DETAIL,
+            _ => problems.push(format!("{MODE_AID}={v:?}: expected interpolate, fit or detail; using {}", p.mode.name())),
+        }
+    }
+    if let Some(v) = detail.map(str::trim) {
+        let parsed = v.split_once(':').and_then(|(a, b)| Some((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?)));
+        match (parsed, p.mode) {
+            (Some((t0, t1)), SmoothMode::Detail { .. }) if detail_thresholds_valid(t0, t1) => p.mode = SmoothMode::Detail { t0, t1 },
+            (Some((t0, t1)), _) if detail_thresholds_valid(t0, t1) => problems.push(format!("{DETAIL_AID}={v:?} is used with {MODE_AID}=detail only; not used")),
+            _ => problems.push(format!("{DETAIL_AID}={v:?}: expected <t0>:<t1>, units, 0 <= t0 < t1 <= {MAX_BOUND}; using {}:{}", DEFAULT_DETAIL.0, DEFAULT_DETAIL.1)),
         }
     }
     if let Some(v) = subdiv.map(str::trim) {
@@ -137,19 +150,40 @@ mod tests {
 
     #[test]
     fn the_aids_choose_the_recipe() {
-        assert_eq!(parse_params(None, None, None), (SmoothParams::DEFAULT, Vec::new()));
-        let (p, e) = parse_params(Some("fit"), Some("4"), Some("12"));
+        assert_eq!(parse_params(None, None, None, None), (SmoothParams::DEFAULT, Vec::new()));
+        let (p, e) = parse_params(Some("fit"), Some("4"), Some("12"), None);
         assert_eq!((p, e.len()), (SmoothParams { mode: SmoothMode::Fit, subdiv: 4, max_deviation: 12.0 }, 0));
-        let (p, e) = parse_params(Some(" Interpolate "), Some("2"), Some("0"));
+        let (p, e) = parse_params(Some(" Interpolate "), Some("2"), Some("0"), None);
         assert_eq!((p, e.len()), (SmoothParams { mode: SmoothMode::Interpolate, subdiv: 2, max_deviation: 0.0 }, 0));
-        assert_eq!(parse_params(None, None, Some("2.5")).0.max_deviation, 2.5);
+        assert_eq!(parse_params(None, None, Some("2.5"), None).0.max_deviation, 2.5);
+    }
+
+    /// Detail and its thresholds: the default 2:6, another pair, a bad pair (warned,
+    /// the default), a pair without detail (warned, not used).
+    #[test]
+    fn detail_takes_its_thresholds() {
+        let (p, e) = parse_params(Some("detail"), Some("4"), Some("8"), None);
+        assert_eq!((p, e.len()), (SmoothParams { mode: SmoothMode::DETAIL, subdiv: 4, max_deviation: 8.0 }, 0));
+        assert_eq!(p.mode, SmoothMode::Detail { t0: 2.0, t1: 6.0 });
+        let (p, e) = parse_params(Some("detail"), None, None, Some(" 1.5 : 9 "));
+        assert_eq!((p.mode, e.len()), (SmoothMode::Detail { t0: 1.5, t1: 9.0 }, 0));
+        for bad in ["6:2", "3:3", "-1:4", "2:17", "2", "a:b", "NaN:4", "2:inf"] {
+            let (p, e) = parse_params(Some("detail"), None, None, Some(bad));
+            assert_eq!((p.mode, e.len()), (SmoothMode::DETAIL, 1), "{bad}");
+            assert!(e[0].starts_with(DETAIL_AID) && e[0].contains("expected"), "{bad}: {e:?}");
+        }
+        let (p, e) = parse_params(Some("fit"), None, None, Some("1:5"));
+        assert_eq!((p.mode, e.len()), (SmoothMode::Fit, 1));
+        assert!(e[0].contains("detail only"));
+        let detail = SmoothParams { mode: SmoothMode::Detail { t0: 1.5, t1: 9.0 }, subdiv: 4, max_deviation: 8.0 };
+        assert_eq!(describe_spec(SurfaceSpec::Smoothed(detail), detail), "terrain: mode=detail(1.5:9) subdiv=4 bound=8 land-shift=4; drawing, collision and queries use this surface");
     }
 
     /// Each bad field warns once and keeps its default; the good ones are still taken.
     #[test]
     fn bad_values_fall_back_field_by_field() {
         for (mode, subdiv, bound) in [("bicubic", "4", "12"), ("fit", "3", "12"), ("fit", "4", "-1"), ("fit", "4", "NaN"), ("fit", "4", "inf"), ("fit", "4", "16.5"), ("fit", "x", "12")] {
-            let (p, e) = parse_params(Some(mode), Some(subdiv), Some(bound));
+            let (p, e) = parse_params(Some(mode), Some(subdiv), Some(bound), None);
             assert_eq!(e.len(), 1, "{mode} {subdiv} {bound}: {e:?}");
             assert!(p.is_valid());
             let want = SmoothParams {
@@ -159,7 +193,7 @@ mod tests {
             };
             assert_eq!(p, want, "{mode} {subdiv} {bound}");
         }
-        let (_, e) = parse_params(Some("x"), Some("x"), Some("x"));
+        let (_, e) = parse_params(Some("x"), Some("x"), Some("x"), None);
         assert_eq!(e.len(), 3);
         assert!(e[0].starts_with(MODE_AID) && e[1].starts_with(SUBDIV_AID) && e[2].starts_with(BOUND_AID));
     }

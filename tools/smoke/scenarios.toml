@@ -27812,6 +27812,23 @@ expect = [
 forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test aid value is taken (fit 4/12)" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
 
 [[scenario]]
+name = "terrain-smoothing-detail-s4-b8"
+source = "[design, #2149] pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default stays interpolate, 2 x 2, bound 8"
+note = "Detail (fitted where the LAND vertices look like height steps, thresholds 2:6), 4 x 4, within 8 units: the start names the recipe, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
+env = { NVF_PLAY_TEST_SMOOTH_MODE = "detail", NVF_PLAY_TEST_SMOOTH_SUBDIV = "4", NVF_PLAY_TEST_SMOOTH_BOUND = "8" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { text = "terrain: mode=detail(2:6) subdiv=4 bound=8 land-shift=4; drawing, collision and queries use this surface", count = 1, label = "the start names the recipe, once" },
+  { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=detail\(2:6\) subdiv=4 bound=8 land-shift=4\)', range = [9, 100000], label = "the loaded cells are drawn with it" },
+  { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [0, 0], label = "none on the stored triangles (detail 4/8)" },
+  { re = 'player placed: feet \(', label = "the player is placed on the detail 4/8 ground" },
+]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test aid value is taken (detail 4/8)" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
 name = "terrain-wireframe-live"
 source = "[design, #2149] pass 2: the Debug row Terrain wireframe (engine/nvforever/src/terrain_wireframe.rs) draws the loaded landscape's triangle edges while on and keeps nothing once off"
 note = "off at the start; switched on and off again on the settings page in the pause menu"

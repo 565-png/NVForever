@@ -115,7 +115,7 @@ mod tests {
         let h = bumpy();
         let mut block: fnv_world::land_surface::Block = [[None; 3]; 3];
         block[1][1] = Some(&h);
-        for mode in [SmoothMode::Interpolate, SmoothMode::Fit] {
+        for mode in [SmoothMode::Interpolate, SmoothMode::Fit, SmoothMode::DETAIL] {
             for (subdiv, max_deviation) in [(2, 8.0), (4, 16.0)] {
                 let p = SmoothParams { mode, subdiv, max_deviation };
                 let s = Surface::smoothed(&block, p).unwrap();

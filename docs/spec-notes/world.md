@@ -204,7 +204,14 @@ apart and the last row/column coincides with the neighbour's first.
     at most K = min(4, bound): F = H + clamp(A − H, −K, K), every F from stored heights
     only, rows then columns in one fixed order; a plane stays a plane and the staircase
     `0, 0, 8, 8, 16, 16` becomes the even slope `…, 2, 6, 10, 14, …` (each knot moved
-    2 units); at a LAND vertex the surface is F;
+    2 units); at a LAND vertex the surface is F. With detail (a feature-preserving fit)
+    only the part of the move that looks like a quantisation step is taken: with
+    d = A − H, F = H + clamp(d · (1 − smoothstep(t0, t1, |d|)), −K, K), t0 = 2 and t1 = 6
+    units by default [design, #2149: the user found fit 4 × 4 within 8 the best
+    compromise but "overly smooths things"; an 8-unit step on a slope moves a vertex by
+    at most 2 (the staircase above gives ±2), while a lone vertex 16 above flat
+    neighbours moves by 12 and a ridge 16 high by 8, so steps even out as with fit and
+    bumps, crests, ridges and dips keep their height];
   - the patch's distance from the *stored* triangle is clamped to ± the bound (8 units by
     default, one stored step; 0 to 16 with the test aid): cliffs and sharp edges keep
     their shape, placed objects neither float nor sink by more than that. The bound is
@@ -223,8 +230,8 @@ apart and the last row/column coincides with the neighbour's first.
     LAND records of a shared edge agree on its heights, as the stored triangles do;
   - the normals are central differences of the final (clamped) heights (one vertex of
     margin beyond the cell); the vertex colours and the texture layers' opacities are
-    interpolated on the stored triangles, so the paint lies where it did; a fitted
-    surface keeps the stored heights (4.3 KiB a cell) so the lift is measured from the
+    interpolated on the stored triangles, so the paint lies where it did; a fitted (or
+    detail) surface keeps the stored heights (4.3 KiB a cell) so the lift is measured from the
     stored triangles;
   - collision (`fnv-phys` terrain, `collider_surface`), `PhysState::terrain_z`, grass,
     the feet and detection probes use the same surface, so actors and objects stand on
@@ -233,9 +240,11 @@ apart and the last row/column coincides with the neighbour's first.
   effect at the next start: off, the stored triangles are drawn and collided exactly as
   before. Test aids choose another recipe for comparing them, without changing the
   setting or the INI [design, #2149: the maintainer picks the default from such runs]:
-  `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit`, `NVF_PLAY_TEST_SMOOTH_SUBDIV=2|4`,
-  `NVF_PLAY_TEST_SMOOTH_BOUND=<0..16>` (a bad value warns once and keeps that field's
-  default; with smoothing off they do nothing). The start logs one line, e.g. `terrain:
+  `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit|detail`, `NVF_PLAY_TEST_SMOOTH_SUBDIV=2|4`,
+  `NVF_PLAY_TEST_SMOOTH_BOUND=<0..16>`, `NVF_PLAY_TEST_SMOOTH_DETAIL=<t0>:<t1>` (detail's
+  thresholds, 0 ≤ t0 < t1 ≤ 16; detail only) (a bad value warns once and keeps that
+  field's default; with smoothing off they do nothing). Detail logs its thresholds:
+  `mode=detail(2:6)`. The start logs one line, e.g. `terrain:
   mode=fit subdiv=4 bound=12 land-shift=4; drawing, collision and queries use this
   surface` (off: `mode=stored subdiv=1 bound=0 land-shift=0`), and the exit's `terrain
   summary` counts cell draws over the run (a cell drawn again counts again) and names the

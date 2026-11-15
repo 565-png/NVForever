@@ -899,9 +899,11 @@ After the Controls tab's own rows (see the end of this page):
   ridges lose their steps and zig-zags; actors and objects stand on what is drawn. Off: the
   landscape's triangles as stored. It takes effect at the next start (loading a save starts
   the game again), so drawn ground and collision always change together. Not in the original.
-  For comparing recipes, the test aids `NVF_PLAY_TEST_SMOOTH_MODE` (`interpolate`, `fit`),
-  `NVF_PLAY_TEST_SMOOTH_SUBDIV` (`2`, `4`) and `NVF_PLAY_TEST_SMOOTH_BOUND` (0 to 16 units)
-  override how it smooths for one run without changing this row or its saved default.
+  For comparing recipes, the test aids `NVF_PLAY_TEST_SMOOTH_MODE` (`interpolate`, `fit`,
+  `detail`: a fit that evens out the height steps but keeps bumps and ridges),
+  `NVF_PLAY_TEST_SMOOTH_SUBDIV` (`2`, `4`), `NVF_PLAY_TEST_SMOOTH_BOUND` (0 to 16 units) and
+  `NVF_PLAY_TEST_SMOOTH_DETAIL` (detail's thresholds, `2:6` by default) override how it
+  smooths for one run without changing this row or its saved default.
 - Command-line switches: `--no-smooth-terrain`
 - More: docs/spec-notes/world.md §3 "Smoothing"
 - Registered in `engine/nvforever/src/settings.rs` (state in `engine/nvf-play/src/smooth_terrain.rs`)
