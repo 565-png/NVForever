@@ -182,9 +182,12 @@ The light level decides most of the visual term, and its measure is a hypothesis
   read higher to its own fighter and lower to one fighting someone else [observed:
   captures run15b_t1 and run15b_t2, 2026-11-15; actor-behaviour.md §2.1a; answered
   observer check 175]. Still open here: GetDetected at night with the Pip-Boy light
-  on and off. The new `detection-sneak-combat-corner` smoke records band and state
-  changes without a time-range expectation [design, #2573: the capture did not time
-  loss; scenario authored without running the game].
+  on and off. The `detection-combat-target-sneak` smoke compares five paired JIP
+  GetDetectionValue reads: the player's attacker must read higher than a fighter
+  busy with a gecko. It logs distances without absolute ranges [design, #2573;
+  tools/smoke/scenarios.toml]. Authored without running the game; the main session
+  must confirm offsets, read times and whether the attacker closes before the reads
+  [design, #2573].
 - Not modelled: perk entry point "Ignore Running During Detection", melee blows' own
   sound (a blow's impact counts, §8), SetAllVisible, player.GetLineOfSight on objects
   that are not actors, the sneak meter on the HUD, fights in the low process (§7).

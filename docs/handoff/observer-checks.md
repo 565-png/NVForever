@@ -2355,3 +2355,10 @@ already talking takes over at once, same topic or another; nothing is queued or 
      combatant ended combat (IsInCombat 0 from the next sample), as `tcai` did.
      GetDetectionValue read -100 for a detector in combat without line of sight.
      These captures did not time detection loss or the search after breaking sight.
+
+     [design, #2573; tools/smoke/scenarios.toml] `detection-combat-target-sneak`
+     checks five paired GetDetectionValue reads, requiring the player's attacker
+     to read higher than the NPC fighting a gecko, and logs both distances without
+     absolute ranges. Authored without running the game; the main session must
+     confirm mirrored 690-unit offsets, read times and whether the attacker closes
+     before the reads. The answered capture evidence above is unchanged.

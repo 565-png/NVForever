@@ -230,6 +230,13 @@ combatant ended combat (IsInCombat 0 from the next sample), as `tcai` did.
 GetDetectionValue read -100 for a detector in combat without line of sight.
 These captures did not time detection loss or the search after breaking sight.
 
+[design, #2573; tools/smoke/scenarios.toml] `detection-combat-target-sneak` uses
+mirrored 690-unit starting offsets and five paired GetDetectionValue/GetDistance
+reads, requiring the player's own attacker to read higher than the NPC fighting
+a gecko. It was authored without running the game: the main session must confirm
+the offsets, read times and whether the attacker closes before the reads. No
+absolute value or distance ranges are inferred from the captures.
+
 ### 2.2 Detection events
 
 - An event has an owner (the actor who caused it), an action rating (its loudness, which
