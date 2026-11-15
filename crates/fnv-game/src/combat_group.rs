@@ -414,7 +414,7 @@ impl Game<'_> {
     /// its weapon away ([`Game::wants_weapon_out`]). It still turns hostile, so crime,
     /// faction and reputation rules are unchanged [owner decision 2026-11-13, #2438:
     /// "Children never fight. They always run away"; whether the original does the same
-    /// is observer-checks.md check 141].
+    /// is observer-checks.md check 178].
     pub fn never_fights(&self, actor: FormId) -> bool {
         actor != FormId::PLAYER_REF && self.actor_race(actor).is_some_and(|race| self.data.child_races.contains(&race))
     }
