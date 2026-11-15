@@ -195,7 +195,7 @@ visual term, and the detector's skill minus the target's skill times a factor
   not at others, not as a function of distance alone [observed: ai-observer.md §7]; the
   visual term (`seen`, light) would explain it [hypothesis].
 
-### 2.1a Combat distraction (#2573, answered observer check 175)
+### 2.1a Combat distraction (#2573, answered observer check 190)
 
 [observed: captures run15b_t1 and run15b_t2, 2026-11-15] xNVSE 6.4.9 and JIP LN
 57.30 `GetDetectionValue`, Searchlight Airport's runway, GameHour 12; the player

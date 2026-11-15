@@ -2460,8 +2460,8 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Answered 2026-11-15 (combat distraction, #2573)
 
-175. **Does a fighter detect its own foe better than a bystander? Answered: yes.**
-     (P2; #2573, [actor-behaviour §2.1a](../spec-notes/actor-behaviour.md#21a-combat-distraction-2573-answered-observer-check-175), detection.md §9.)
+190. **Does a fighter detect its own foe better than a bystander? Answered: yes.**
+     (P2; #2573, [actor-behaviour §2.1a](../spec-notes/actor-behaviour.md#21a-combat-distraction-2573-answered-observer-check-190), detection.md §9.)
 
      [observed: captures run15b_t1 and run15b_t2, 2026-11-15] xNVSE 6.4.9 and JIP LN
      57.30 `GetDetectionValue`, Searchlight Airport's runway, GameHour 12; the player

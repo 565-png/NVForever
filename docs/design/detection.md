@@ -181,7 +181,7 @@ The light level decides most of the visual term, and its measure is a hypothesis
   The fSneakCombatMod direction capture is taken: the sneaking, stationary player
   read higher to its own fighter and lower to one fighting someone else [observed:
   captures run15b_t1 and run15b_t2, 2026-11-15; actor-behaviour.md §2.1a; answered
-  observer check 175]. Still open here: GetDetected at night with the Pip-Boy light
+  observer check 190]. Still open here: GetDetected at night with the Pip-Boy light
   on and off.
 
   [design, #2573; tools/smoke/scenarios.toml] `detection-combat-target-sneak` uses
@@ -352,7 +352,7 @@ the start bonus and the armour class penalty 10 / 20; the thresholds −20 and 0
   (§6, captures).
   **2026-11-15 correction (#2573):** the capture is now taken [observed: captures
   run15b_t1 and run15b_t2, 2026-11-15; actor-behaviour.md §2.1a, answered observer
-  check 175]. With the NPC roles swapped, its own combat target read 3-4 higher
+  check 190]. With the NPC roles swapped, its own combat target read 3-4 higher
   than out of combat at comparable distances; a bystander read 2-4 lower (fewer
   samples as sight came and went). This reverses the 2026-10-24 decision: the
   GECK setting description was right, while the formula and Fallout Wiki table
