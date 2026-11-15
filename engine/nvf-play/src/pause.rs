@@ -231,7 +231,8 @@
 //! `heading-up`, `heading-down`, `tab:<name>`, `row:<key>`, `choice:<n>`), `press` and
 //! `release` (the left mouse button) [design: #1953].
 
-use crate::interface::{bc_supported, u, Face, Picture, Pictures};
+use crate::interface::{bc_supported, u, Face};
+use crate::menu_shapes::{Dir, Kind};
 use crate::settings::{add_choice_list, add_setting, Setting, Settings};
 use crate::settings_layout::{ResolvedLayout, CONTROLS_TAB};
 use crate::settings_view::{ControlRow, Folding, Found, RailItem, RowId, SettingsFocus, SettingsLayout, SettingsScope, ViewEntry, Visibility, NO_ROW_SOUND, SEARCH};
@@ -830,7 +831,8 @@ impl Entry {
 
 /// The quit question and its choices [observed: the owner's screenshot of the original's
 /// quit question].
-const WARNING: &str = "WARNING:  Any unsaved progress will be lost.";
+const WARNING_TITLE: &str = "Warning";
+const WARNING: &str = "Any unsaved progress will be lost.";
 const QUESTION: &str = "Are you sure you want to quit?";
 const CONFIRM: [&str; 3] = ["Main Menu", "Exit Game", "Cancel"];
 /// The keep question's answers [design].
@@ -940,7 +942,6 @@ const BAR_W: f32 = 32.0;
 const BAR_ARROW: f32 = 16.0;
 const BAR_GAP: f32 = 4.0;
 const BAR_MARKER_MIN: f32 = 32.0;
-const BAR_PICTURES: [&str; 3] = ["interface\\shared\\scrollbar\\arrow_up.dds", "interface\\shared\\scrollbar\\arrow_down.dds", "interface\\shared\\scrollbar\\vert_marker.dds"];
 /// Mouse wheel movement counted in pixels (a touchpad): this many make a notch.
 const WHEEL_PIXELS: f32 = 20.0;
 /// The settings list's band starts this far from the view's left edge where the list is as
@@ -1009,10 +1010,12 @@ const VIEW_W: f32 = 960.0 * 16.0 / 9.0;
 /// aligned the same"]: every row's value is drawn in one cell, the list's box (its left edge
 /// and width, [`LIST_LEFT`], [`LIST_WIDTH`]), and nothing outside it. A list's words, a
 /// switch's state, a binding and a greyed row's value are centred on one point, the list's
-/// words' centre left of its arrow ([`VALUE_AT`]); a slider runs from the cell's left edge
-/// (its left arrow) to its right edge (its right arrow), its number right-aligned in a lane
-/// before the right arrow, so numbers line up down the page. The places are in a
-/// [`ROW_BASE`] row; [`RowX`] keeps them at their distance from the row's right end.
+/// words' centre left of its arrow ([`VALUE_AT`]); a slider's meter lies between its two
+/// arrows from the cell's left edge, its number right-aligned after the right arrow at the
+/// cell's right end, so numbers line up down the page [design: owner 2026-11-15, third test:
+/// "the sliders should have the arrows on each side and the % values should be behind them
+/// aligned to the right side"]. The places are in a [`ROW_BASE`] row; [`RowX`] keeps them at
+/// their distance from the row's right end.
 const LIST_LEFT: f32 = 372.0;
 const LIST_WIDTH: f32 = 434.0;
 /// The strip at a list box's right end that holds its arrow.
@@ -1025,17 +1028,25 @@ const VALUE_AT: f32 = LIST_LEFT + (LIST_WIDTH - LIST_ARROW_STRIP) / 2.0;
 /// height) [design: the "How many?" meter's height and arrows (`crate::menu::look`), fitted
 /// into the value cell].
 const METER_ARROW: Vec2 = Vec2::new(17.5, 35.0);
-const METER_ARROWS: [f32; 2] = [LIST_LEFT, LIST_LEFT + LIST_WIDTH - METER_ARROW.x];
-const METER_LEFT: f32 = LIST_LEFT + METER_ARROW.x + 7.5;
-/// A slider's number lane before its right arrow (wider words take room from the meter),
-/// and the room between the number and the arrow.
-const READOUT_W: f32 = 96.0;
-const READOUT_GAP: f32 = 14.0;
-/// How far the arrows' pictures are drawn below their box's middle: their triangle sits high
-/// in the picture, so this puts its point level with the meter's middle [observed: the
-/// owner's screenshot of 2026-11-15, the arrows about 5 units high].
-const ARROW_DROP: f32 = 5.0;
+/// The room between an arrow and the meter.
+const METER_GAP: f32 = 7.5;
+const METER_LEFT: f32 = LIST_LEFT + METER_ARROW.x + METER_GAP;
 const METER_WIDTH: f32 = 264.0;
+const METER_ARROWS: [f32; 2] = [LIST_LEFT, METER_LEFT + METER_WIDTH + METER_GAP];
+/// A slider's number lane after its right arrow, to the cell's right end less [`VALUE_PAD`]
+/// (wider words take room from the meter, the right arrow moving with it), and the room
+/// between the arrow and the lane.
+const READOUT_GAP: f32 = 14.0;
+const READOUT_W: f32 = LIST_LEFT + LIST_WIDTH - VALUE_PAD - (METER_ARROWS[1] + METER_ARROW.x + READOUT_GAP);
+/// The drawn arrows: a slider's (each side of its meter), a list's (down, in its strip), a
+/// category's (right while closed, down while open), the scroll bar's (`crate::menu_shapes`).
+const SLIDER_ARROW: Vec2 = Vec2::new(10.0, 16.0);
+const LIST_ARROW: Vec2 = Vec2::new(14.0, 8.0);
+const HEADING_ARROW: Vec2 = Vec2::new(13.0, 8.0);
+const BAR_CHEVRON: Vec2 = Vec2::new(22.0, 12.0);
+/// The scroll bar's marker and track widths.
+const BAR_MARKER_W: f32 = 6.0;
+const BAR_TRACK_W: f32 = 2.0;
 const METER_HEIGHT: f32 = 24.0;
 const DROP_ROWS: usize = 8;
 const DROP_ITEM: f32 = 44.0;
@@ -1043,7 +1054,6 @@ const DROP_ITEM: f32 = 44.0;
 /// height (as the "How many?" meter's [observed]).
 const METER_TICK: f32 = 8.0;
 const TICK_TEXTURE: &str = "textures\\interface\\hud\\hud_tick_mark.dds";
-const ARROW_TEXTURES: [&str; 2] = ["textures\\interface\\main\\main_arrow_left.dds", "textures\\interface\\main\\main_arrow_right.dds"];
 /// The darkened band behind a page's list [documented: `container_background`
 /// `fuzzy.dds` at alpha 160 the height of the screen, a little wider than the list].
 const BAND: &str = "textures\\interface\\shared\\background\\fuzzy.dds";
@@ -1100,11 +1110,10 @@ struct PauseLook {
     faces: Faces,
     band: Option<Handle<Image>>,
     screen: Option<Handle<Image>>,
-    /// The sliders' tick mark and arrows (left, right).
+    /// The sliders' tick mark.
     tick: Option<Handle<Image>>,
-    arrows: [Option<Handle<Image>>; 2],
-    /// The scroll bar's arrows (up, down) and marker.
-    bar: [Option<Picture>; 3],
+    /// The arrows and the scroll bar's pieces, drawn (`crate::menu_shapes`); none in the tests.
+    shapes: Option<crate::menu_shapes::Shapes>,
 }
 
 impl PauseLook {
@@ -1118,11 +1127,7 @@ impl PauseLook {
                 band: pic(BAND, &mut images),
                 screen: pic(SCREEN, &mut images),
                 tick: pic(TICK_TEXTURE, &mut images),
-                arrows: ARROW_TEXTURES.map(|a| pic(a, &mut images)),
-                bar: {
-                    let mut pictures = Pictures::load(data);
-                    BAR_PICTURES.map(|b| pictures.picture(b, data, &mut images, bc))
-                },
+                shapes: Some(crate::menu_shapes::Shapes::make(&mut images)),
             };
             info!("pause menu: the original's look (band {}, pause screen {})", look.band.is_some(), look.screen.is_some());
             look
@@ -1131,7 +1136,7 @@ impl PauseLook {
 
     #[cfg(test)]
     fn plain() -> PauseLook {
-        PauseLook { faces: Faces::plain(), band: None, screen: None, tick: None, arrows: [None, None], bar: [None, None, None] }
+        PauseLook { faces: Faces::plain(), band: None, screen: None, tick: None, shapes: None }
     }
 }
 
@@ -1584,8 +1589,9 @@ impl Plugin for PausePlugin {
             crate::settings::ChoiceList { names: |_| MENU_FONTS.iter().map(|n| (*n).to_string()).collect(), chosen: menu_font_chosen, pick: take_menu_font, save: menu_font_chosen, load: take_menu_font, ask_keep: false },
         );
         app.init_resource::<MenuFont>();
-        // The vector letters' glow, set from their laid-out size (`crate::interface::GLOW_REACH`).
-        app.add_systems(PostUpdate, crate::interface::glow_offsets.after(bevy::ui::UiSystems::Layout));
+        // The vector letters' glow, set from their laid-out size (`crate::interface::GLOW_RINGS`);
+        // the highlight boxes drawn under what they box.
+        app.add_systems(PostUpdate, (crate::interface::glow_offsets.after(bevy::ui::UiSystems::Layout), draw_boxed.before(bevy::ui::UiSystems::Layout)));
         app.init_resource::<Paused>()
             .init_resource::<PageRequest>()
             .init_resource::<Page>()
@@ -1668,9 +1674,13 @@ fn back_label() -> String {
     back_label_as(crate::pad::labels())
 }
 
-/// [`back_label`] with the labels `l`.
+/// [`back_label`] with the labels `l`: with the keyboard "Back" alone [design: owner
+/// 2026-11-15, third test: "Remove the Esc, leave only Back"].
 fn back_label_as(l: crate::pad::Labels) -> String {
-    format!("{}  {}", tr("Back"), crate::pad::hint_as(&[KeyCode::Escape], crate::pad::PAUSE_AT, l))
+    match l {
+        crate::pad::Labels::Keys => tr("Back").to_string(),
+        _ => format!("{}  {}", tr("Back"), crate::pad::hint_as(&[KeyCode::Escape], crate::pad::PAUSE_AT, l)),
+    }
 }
 
 /// A right-aligned list entry: the whole row takes the pointer, the box round it when
@@ -1704,7 +1714,7 @@ fn right_entry_look(p: &mut ChildSpawnerCommands, face: &Face, label: &str, node
             let (line, fill) = highlight_colors();
             let fill = if look == BoxLook::Outline { Color::NONE } else { fill };
             let bw = (w + 2.0 * pad).min(width);
-            t.spawn((Node { border: UiRect::all(u(LINE)), ..at(width - bw, 0.0, bw, ITEM) }, BorderColor::all(line), BackgroundColor(fill)));
+            t.spawn((at(width - bw, 0.0, bw, ITEM), Pickable::IGNORE)).with_children(|c| crate::menu_shapes::framed(c, line, fill, LINE));
         }
         crate::pad::set_hint(t, face, label, width - w - pad, crate::start_menu::entry_base(face), color(shade), glyphs);
     });
@@ -1713,13 +1723,27 @@ fn right_entry_look(p: &mut ChildSpawnerCommands, face: &Face, label: &str, node
 /// The room each side of an entry's words inside its box.
 const ENTRY_BOX_PAD: f32 = 12.0;
 
-/// A node with the highlight box round it when `on`.
-fn boxed(node: Node, on: bool) -> (Node, BorderColor, BackgroundColor) {
+/// A node with the highlight box round it when `on` ([`Boxed`], [`draw_boxed`]): the box and
+/// its glow are drawn under the node's children and take no room, so the children stay where
+/// they are either way [design: owner 2026-11-15, third test: a chosen row's border moved
+/// its list box and words 2 units, "the dropdown menu is not really well aligned"].
+fn boxed(node: Node, on: bool) -> (Node, Boxed) {
+    (node, Boxed(on))
+}
+
+/// Whether a node has the highlight box ([`boxed`]).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+struct Boxed(bool);
+
+/// The highlight box (with its glow, `crate::menu_shapes::framed`) of each new [`Boxed`] node
+/// that has it, put under its children.
+fn draw_boxed(mut commands: Commands, added: Query<(Entity, &Boxed), Added<Boxed>>) {
     let (line, fill) = highlight_colors();
-    if on {
-        (Node { border: UiRect::all(u(LINE)), ..node }, BorderColor::all(line), BackgroundColor(fill))
-    } else {
-        (node, BorderColor::all(Color::NONE), BackgroundColor(Color::NONE))
+    for (e, b) in &added {
+        if b.0 {
+            let frame = commands.spawn((crate::menu_shapes::filling(), Pickable::IGNORE)).with_children(|c| crate::menu_shapes::framed(c, line, fill, LINE)).id();
+            commands.entity(e).insert_children(0, &[frame]);
+        }
     }
 }
 
@@ -1793,7 +1817,8 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
             match d.page {
                 Page::Settings { .. } => {
                     let (band_left, band_w) = lb.band();
-                    band(root, look, tall(Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(band_left, 0.0, band_w, 0.0) }))
+                    band(root, look, tall(Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(band_left, 0.0, band_w, 0.0) }));
+                    soft_column(root, tall(Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(lb.left, 0.0, lb.width + BAR_GAP + BAR_W, 0.0) }), LIST_SHADE);
                 }
                 Page::Load { .. } => band(root, look, tall(Node { height: Val::Percent(100.0), ..from_right(RIGHT + COLUMN, 0.0, LOAD_WIDTH + BAND_MARGIN, 0.0) })),
                 // The mod's page is drawn from its tiles over this one (`crate::tiles::draw`).
@@ -1810,17 +1835,21 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
             match d.page {
                 Page::Main => {
                     if let Some(sel) = d.confirm {
-                        // The question: its lines end left of the choices [observed: the owner's screenshot].
-                        let (warning, question) = (tr(WARNING), tr(QUESTION));
-                        let qw = f.entry.font.width(question);
+                        // The question in two columns of three lines [design: owner 2026-11-15,
+                        // third test]: at the left "Warning" (bold), what is lost and the
+                        // question, ending left of the answers; at the right the answers, bold,
+                        // each on the line of its left line; all at the titles' size.
+                        let lines = [(&f.title, tr(WARNING_TITLE)), (&f.entry, tr(WARNING)), (&f.entry, tr(QUESTION))];
+                        let lw = lines.iter().map(|(face, t)| face.font.width(t)).fold(0.0, f32::max);
                         let at = 280.0;
-                        let mid = page_h() / 2.0;
-                        root.spawn(from_middle(at - 20.0 - qw, mid - ITEM, 900.0, ITEM)).with_children(|t| sm_text(t, &f.entry, warning, 0.0, BASE, color(Shade::Bright)));
-                        root.spawn(from_middle(at - 20.0 - qw, mid, qw, ITEM)).with_children(|t| sm_text(t, &f.entry, question, 0.0, BASE, color(Shade::Bright)));
-                        let width = CONFIRM.iter().map(|c| f.entry.font.width(tr(c))).fold(0.0, f32::max) + 30.0;
+                        let top = page_h() / 2.0 - 1.5 * ITEM;
+                        for (i, (face, t)) in lines.into_iter().enumerate() {
+                            root.spawn(from_middle(at - 30.0 - lw, top + i as f32 * ITEM, lw, ITEM)).with_children(|r| sm_text(r, face, t, 0.0, crate::start_menu::entry_base(face), color(Shade::Bright)));
+                        }
+                        let width = CONFIRM.iter().map(|c| f.title.font.width(tr(c))).fold(0.0, f32::max) + 2.0 * ENTRY_BOX_PAD;
                         for (i, c) in CONFIRM.iter().enumerate() {
-                            root.spawn((Button, PauseButton::Confirm(i), boxed(from_middle(at, mid + i as f32 * ITEM, width, ITEM), i == sel)))
-                            .with_children(|t| sm_text(t, &f.entry, tr(c), 10.0, BASE, color(Shade::Bright)));
+                            root.spawn((Button, PauseButton::Confirm(i), boxed(from_middle(at, top + i as f32 * ITEM, width, ITEM), i == sel)))
+                            .with_children(|t| sm_text(t, &f.title, tr(c), ENTRY_BOX_PAD, crate::start_menu::entry_base(&f.title), color(Shade::Bright)));
                         }
                     } else if !d.status.is_empty() {
                         root.spawn((PauseStatusText, from_right(RIGHT, top + (d.column.len() + 3) as f32 * ITEM + 10.0, 700.0, ITEM))).with_children(|t| {
@@ -1953,9 +1982,6 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     });
 }
 
-/// The arrow before a category's heading: the slider's right arrow, smaller, turned down
-/// while the category is open [design: the menu overhaul].
-const HEADING_ARROW: Vec2 = Vec2::new(10.0, 20.0);
 
 /// A category's heading (module notes): the arrow (right while closed, down while open), its
 /// words bright, while closed how many rows it holds, a rule under it; the box round it when
@@ -1965,33 +1991,35 @@ const HEADING_ARROW: Vec2 = Vec2::new(10.0, 20.0);
 fn heading_line(root: &mut ChildSpawnerCommands, look: &PauseLook, d: &Drawn, p: crate::settings_layout::Placement, on: bool, lb: ListBox, y: f32) {
     let (count, open) = d.heading(p);
     let name = shown_case(tr(p.heading.unwrap_or(p.tab)));
-    let words = if open { name } else { format!("{name} ({count})") };
-    title_line(root, look, &words, open, Some((PauseButton::Row(RowId::Heading(p)), on)), lb, y);
+    title_line(root, look, &name, (!open).then_some(count), open, Some((PauseButton::Row(RowId::Heading(p)), on)), lb, y);
 }
 
 /// A category's or a crumb's line (module notes of [`heading_line`]): a soft dark box behind
 /// it, the arrow (right while closed, down while open), the words bright; with `button` the
 /// line takes the keys and the pointer, boxed when chosen [design: owner 2026-11-15, the menu
 /// overhaul: no rule under the words, "add same box blur to the category/section titles"].
-fn title_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, open: bool, button: Option<(PauseButton, bool)>, lb: ListBox, y: f32) {
+#[allow(clippy::too_many_arguments)]
+fn title_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, count: Option<usize>, open: bool, button: Option<(PauseButton, bool)>, lb: ListBox, y: f32) {
     let f = &look.faces;
-    root.spawn((HeadingLine, Text::new(words.to_string()), Node { display: Display::None, ..default() }));
+    // The aids read a closed category as "Screen (3)".
+    let read = count.map_or_else(|| words.to_string(), |n| format!("{words} ({n})"));
+    root.spawn((HeadingLine, Text::new(read), Node { display: Display::None, ..default() }));
     let bright = color(Shade::Bright);
-    soft_box(root, lb.left, y + 3.0, lb.width, OPTION_ROW - 6.0, TITLE_SHADE);
     let node = from_middle(lb.left, y, lb.width, OPTION_ROW);
     let content = |r: &mut ChildSpawnerCommands| {
-        // The closed arrow's triangle sits high in its picture (as the sliders'); turned, it
-        // is level.
-        let drop = if open { 0.0 } else { ARROW_DROP * HEADING_ARROW.y / METER_ARROW.y };
-        let arrow = at(12.0, (OPTION_ROW - HEADING_ARROW.y) / 2.0 + drop, HEADING_ARROW.x, HEADING_ARROW.y);
-        let turn = if open { UiTransform::from_rotation(Rot2::radians(std::f32::consts::FRAC_PI_2)) } else { UiTransform::default() };
-        match &look.arrows[1] {
-            Some(image) => r.spawn((arrow, turn, ImageNode { color: bright, ..ImageNode::new(image.clone()) })),
-            None => r.spawn((arrow, turn, BackgroundColor(bright.with_alpha(0.5)))),
-        };
+        let (dir, size) = if open { (Dir::Down, HEADING_ARROW) } else { (Dir::Right, Vec2::new(HEADING_ARROW.y, HEADING_ARROW.x)) };
+        crate::menu_shapes::shape(r, look.shapes.as_ref(), Kind::Triangle, dir, Vec2::new(12.0 + HEADING_ARROW.x / 2.0, OPTION_ROW / 2.0), size, bright);
         let x = 12.0 + HEADING_ARROW.x + 12.0;
-        let words = fit_text(|t| f.title.font.width(t), words, lb.width - x - 10.0);
+        // A closed category's count at the right, centred where the rows' values are, no
+        // brackets [design: owner 2026-11-15, third test]; gone while it is open.
+        let row = lb.row();
+        let end = if count.is_some() { row.value_left() - LABEL_GAP } else { lb.width - 10.0 };
+        let words = fit_text(|t| f.title.font.width(t), words, end - x);
         sm_text(r, &f.title, &words, x, BASE + 2.0, bright);
+        if let Some(n) = count {
+            let n = n.to_string();
+            sm_text(r, &f.title, &n, row.value_at() - f.title.font.width(&n) / 2.0, BASE + 2.0, bright);
+        }
     };
     match button {
         Some((b, on)) => root.spawn((Button, b, boxed(node, on))).with_children(content),
@@ -1999,28 +2027,24 @@ fn title_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, op
     };
 }
 
-/// How dark the soft box behind a title is at its middle.
-const TITLE_SHADE: f32 = 0.32;
-/// How dark the soft box behind the note is at its middle.
-const NOTE_SHADE: f32 = 0.38;
-/// How far a soft box's edges fade, in interface units, and in how many steps.
-const SOFT_EDGE: f32 = 10.0;
-const SOFT_STEPS: usize = 5;
+/// How dark the soft column behind the list is at its middle [design: owner 2026-11-15, third
+/// test: the boxes behind the titles and the note made one, "the whole menu section from
+/// bottom to the top of the screen and decrease its opacity by 15%": 0.38 × 0.85].
+const LIST_SHADE: f32 = 0.32;
+/// How far a soft box's sides fade, in interface units, and in how many steps.
+const SOFT_EDGE: f32 = 16.0;
+const SOFT_STEPS: usize = 6;
 
-/// A dark box from `left` (from the view's middle), `top`, `w` × `h`, whose edges fade over
-/// [`SOFT_EDGE`] instead of ending hard (boxes inset by a step each, each a little dark),
-/// `alpha` dark at its middle [design: owner 2026-11-15, "blur a little bit the box behind the
-/// description text"].
-fn soft_box(root: &mut ChildSpawnerCommands, left: f32, top: f32, w: f32, h: f32, alpha: f32) {
+/// A dark column in `node` (from the view's top to its bottom), `alpha` dark at its middle,
+/// its sides fading over [`SOFT_EDGE`] (boxes inset by a step each, each a little dark).
+fn soft_column(root: &mut ChildSpawnerCommands, node: Node, alpha: f32) {
     let each = 1.0 - (1.0 - alpha).powf(1.0 / SOFT_STEPS as f32);
-    for k in 0..SOFT_STEPS {
-        let inset = SOFT_EDGE * k as f32 / SOFT_STEPS as f32;
-        let (bw, bh) = (w - 2.0 * inset, h - 2.0 * inset);
-        if bw <= 0.0 || bh <= 0.0 {
-            break;
+    root.spawn((node, Pickable::IGNORE)).with_children(|c| {
+        for k in 0..SOFT_STEPS {
+            let inset = SOFT_EDGE * k as f32 / SOFT_STEPS as f32;
+            c.spawn((Node { position_type: PositionType::Absolute, left: u(inset), right: u(inset), top: u(0.0), bottom: u(0.0), ..default() }, BackgroundColor(Color::BLACK.with_alpha(each)), Pickable::IGNORE));
         }
-        root.spawn((from_middle(left + inset, top + inset, bw, bh), BackgroundColor(Color::BLACK.with_alpha(each)), Pickable::IGNORE));
-    }
+    });
 }
 
 /// On the search and the Changed list, the line saying where the rows after it live
@@ -2028,7 +2052,7 @@ fn soft_box(root: &mut ChildSpawnerCommands, left: f32, top: f32, w: f32, h: f32
 /// [design: #1953; the owner 2026-11-15: "use the same section system in the changed and
 /// search menu so they look the same"].
 fn crumb_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, lb: ListBox, y: f32) {
-    title_line(root, look, words, true, None, lb, y);
+    title_line(root, look, words, None, true, None, lb, y);
 }
 
 /// A heading's words, translated: on a tab its heading's (`Saving`); on the search and the
@@ -2264,7 +2288,8 @@ fn list_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, i:
     let bright = color(if live { Shade::Bright } else { Shade::Dim });
     let (line, fill) = highlight_colors();
     let list_left = parts.value.0;
-    r.spawn((Node { border: UiRect::all(u(LINE)), ..at(list_left, LIST_BOX_INSET, LIST_WIDTH, OPTION_ROW - 2.0 * LIST_BOX_INSET) }, BorderColor::all(line.with_alpha(if open { 1.0 } else if live { 0.6 } else { 0.25 })), BackgroundColor(if open { fill } else { Color::NONE })));
+    let line = line.with_alpha(if open { 1.0 } else if live { 0.6 } else { 0.25 });
+    r.spawn((at(list_left, LIST_BOX_INSET, LIST_WIDTH, OPTION_ROW - 2.0 * LIST_BOX_INSET), Pickable::IGNORE)).with_children(|c| crate::menu_shapes::framed(c, line, if open { fill } else { Color::NONE }, LINE));
     // The state kept as text stays the English name (tests and aids read it); the page
     // shows it in the language chosen.
     if live {
@@ -2274,13 +2299,11 @@ fn list_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, i:
     let font = &look.faces.entry.font;
     let words = fit_text(|t| font.width(t), &shown_case(tr_str(words)), parts.text_room());
     sm_text(r, &look.faces.entry, &words, parts.text_x(font.width(&words)), BASE + 2.0, if out_of_reach { color(Shade::Dim) } else { bright });
-    // The right arrow turned to point down.
-    let node = at(list_left + LIST_WIDTH - LIST_ARROW_STRIP, (OPTION_ROW - METER_ARROW.y) / 2.0, METER_ARROW.x, METER_ARROW.y);
-    let turned = UiTransform { rotation: Rot2::degrees(90.0), ..default() };
-    match &look.arrows[1] {
-        Some(image) => r.spawn((node, turned, ImageNode { color: bright, ..ImageNode::new(image.clone()) })),
-        None => r.spawn((node, turned, BackgroundColor(bright.with_alpha(0.5)))),
-    };
+    // The arrow pointing down, in the middle of its strip (inside the box's line) and of the
+    // row [design: owner 2026-11-15, third test: "the arrow down symbol is not aligned"].
+    let strip = LIST_ARROW_STRIP - LINE;
+    let centre = Vec2::new(list_left + LIST_WIDTH - LINE - strip / 2.0, OPTION_ROW / 2.0);
+    crate::menu_shapes::shape(r, look.shapes.as_ref(), Kind::Triangle, Dir::Down, centre, LIST_ARROW, bright);
 }
 
 /// The rail left of the column, from the rows' top: Search, Changed and the tabs, what the
@@ -2313,8 +2336,6 @@ fn note_lines(root: &mut ChildSpawnerCommands, f: &Faces, note: &str, lb: ListBo
     let lines = note_wrapped(&f.small.font, note, width);
     let fit = note_fit(lines.len(), top);
     let bright = color(Shade::Bright);
-    // A shade behind the note's lines.
-    soft_box(root, left, top - 8.0, lb.width, NOTE_LINES as f32 * NOTE_STEP + 16.0, NOTE_SHADE);
     root.spawn(from_middle(left + 10.0, top, width, fit as f32 * NOTE_STEP)).with_children(|t| {
         for (i, line) in lines.iter().take(fit).enumerate() {
             crate::interface::set_line(t, &f.small, line, 0.0, NOTE_STEP * (i as f32 + 0.8), bright);
@@ -2517,12 +2538,14 @@ fn row_parts(x: RowX, kind: ValueKind) -> RowParts {
             ((left, right), (left, right), x.value_at(), METER_WIDTH, right_arrow)
         }
         ValueKind::Slider(vw) => {
-            // The number right-aligned before the right arrow; wide words take room from the
-            // meter, down to its least.
-            let text_right = right_arrow - READOUT_GAP;
+            // The meter between its arrows, the number right-aligned after them at the cell's
+            // right end; wide words take room from the meter, down to its least, the right
+            // arrow moving left with its end.
+            let text_right = x.list_left() + LIST_WIDTH - VALUE_PAD;
             let extra = (vw - READOUT_W).clamp(0.0, METER_WIDTH - METER_MIN);
-            let text = (text_right - READOUT_W - extra, text_right);
-            ((left_arrow, right_arrow + METER_ARROW.x), text, text_right - vw / 2.0, METER_WIDTH - extra, right_arrow)
+            let right_arrow = right_arrow - extra;
+            let text = (right_arrow + METER_ARROW.x + READOUT_GAP, text_right);
+            ((left_arrow, text_right + VALUE_PAD), text, text_right - vw / 2.0, METER_WIDTH - extra, right_arrow)
         }
         ValueKind::List(_) => {
             let left = x.list_left();
@@ -2558,19 +2581,19 @@ fn window_bar(root: &mut ChildSpawnerCommands, look: &PauseLook, rows: usize, fi
     let Some((y, h)) = w.marker(rows, first) else { return };
     let bright = color(Shade::Bright);
     let track = w.track();
-    let piece = |p: &mut ChildSpawnerCommands, k: usize, node: Node, b: Option<PauseButton>| {
-        let mut e = match &look.bar[k] {
-            Some((image, rect)) => p.spawn((node, ImageNode { rect: *rect, color: bright, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) })),
-            None => p.spawn((node, BackgroundColor(bright.with_alpha(if k == 2 { 1.0 } else { 0.5 })))),
-        };
-        if let Some(b) = b {
-            e.insert((Button, b));
-        }
-    };
+    // Drawn, as sharp as the letters, with their glow [design: owner 2026-11-15, third test:
+    // "the scrollbar is now the only element that is not vectorized"]: a faint track between
+    // two chevrons, the marker on it.
     root.spawn(bar).with_children(|p| {
-        piece(p, 0, at(0.0, 0.0, BAR_W, BAR_ARROW), Some(PauseButton::ScrollStep(-1)));
-        p.spawn((Button, PauseButton::ScrollTrack, RelativeCursorPosition::default(), at(0.0, BAR_ARROW, BAR_W, track))).with_children(|t| piece(t, 2, at(12.0, y, 6.0, h), None));
-        piece(p, 1, at(0.0, BAR_ARROW + track, BAR_W, BAR_ARROW), Some(PauseButton::ScrollStep(1)));
+        use crate::menu_shapes::{bar_shadow, shape};
+        p.spawn((at((BAR_W - BAR_TRACK_W) / 2.0, BAR_ARROW, BAR_TRACK_W, track), BackgroundColor(bright.with_alpha(0.25)), bar_shadow(0.3), Pickable::IGNORE));
+        for (step, dir, top) in [(-1, Dir::Up, 0.0), (1, Dir::Down, BAR_ARROW + track)] {
+            shape(p, look.shapes.as_ref(), Kind::Chevron, dir, Vec2::new(BAR_W / 2.0, top + BAR_ARROW / 2.0), BAR_CHEVRON, bright);
+            p.spawn((Button, PauseButton::ScrollStep(step), at(0.0, top, BAR_W, BAR_ARROW)));
+        }
+        p.spawn((Button, PauseButton::ScrollTrack, RelativeCursorPosition::default(), at(0.0, BAR_ARROW, BAR_W, track))).with_children(|t| {
+            t.spawn((at((BAR_W - BAR_MARKER_W) / 2.0, y, BAR_MARKER_W, h), BackgroundColor(bright), bar_shadow(0.5), Pickable::IGNORE));
+        });
     });
 }
 
@@ -2613,7 +2636,7 @@ fn slider_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, 
     let my = (OPTION_ROW - METER_HEIGHT) / 2.0;
     let (meter_left, meter_w) = parts.meter;
     // The ground, then the ticks as far as the value.
-    r.spawn((at(meter_left, my, meter_w, METER_HEIGHT), BackgroundColor(bright.with_alpha(0.25))));
+    r.spawn((at(meter_left, my, meter_w, METER_HEIGHT), BackgroundColor(bright.with_alpha(0.25)), crate::menu_shapes::bar_shadow(0.35 * bright.alpha())));
     for t in 0..meter_ticks(v, meter_w) {
         let x = meter_left + t as f32 * METER_TICK;
         let w = METER_TICK.min(meter_left + meter_w - x);
@@ -2627,14 +2650,11 @@ fn slider_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, 
     if live {
         r.spawn((Button, PauseButton::Meter(i), RelativeCursorPosition::default(), at(meter_left, my - 6.0, meter_w, METER_HEIGHT + 12.0)));
     }
-    for (k, (x, step)) in [(parts.value.0, -1), (parts.right_arrow, 1)].into_iter().enumerate() {
-        let node = at(x, (OPTION_ROW - METER_ARROW.y) / 2.0 + ARROW_DROP, METER_ARROW.x, METER_ARROW.y);
-        let mut arrow = match &look.arrows[k] {
-            Some(image) => r.spawn((node, ImageNode { color: bright, ..ImageNode::new(image.clone()) })),
-            None => r.spawn((node, BackgroundColor(bright.with_alpha(0.5)))),
-        };
+    for (x, step, dir) in [(parts.value.0, -1, Dir::Left), (parts.right_arrow, 1, Dir::Right)] {
+        // The arrow level with the meter's middle; its old box takes the pointer.
+        crate::menu_shapes::shape(r, look.shapes.as_ref(), Kind::Triangle, dir, Vec2::new(x + METER_ARROW.x / 2.0, OPTION_ROW / 2.0), SLIDER_ARROW, bright);
         if live {
-            arrow.insert((Button, PauseButton::SliderStep(i, step)));
+            r.spawn((Button, PauseButton::SliderStep(i, step), at(x, (OPTION_ROW - METER_ARROW.y) / 2.0, METER_ARROW.x, METER_ARROW.y)));
         }
     }
     // A greyed slider's state as the aids read it is its reason (`row_line`).
@@ -5272,7 +5292,7 @@ mod tests {
     #[test]
     fn back_names_its_key_and_button() {
         use crate::pad::Labels;
-        assert_eq!(back_label_as(Labels::Keys), format!("{}  Esc)", tr("Back")));
+        assert_eq!(back_label_as(Labels::Keys), tr("Back"), "the keyboard's Back alone (owner, third test)");
         assert_eq!(back_label_as(Labels::Xbox), format!("{}  B)", tr("Back")));
         assert_eq!(back_label_as(Labels::PlayStation), format!("{}  Circle)", tr("Back")));
     }
@@ -6140,8 +6160,10 @@ mod tests {
         // The box is the line's child, hugging its words (the menu overhaul).
         let look = |world: &mut World, item| {
             let kids: Vec<Entity> = world.query::<(&PauseButton, &Children)>().iter(world).find(|(b, _)| **b == PauseButton::Rail(item)).map(|(_, c)| c.to_vec()).unwrap();
-            let mut boxes = world.query::<(&BorderColor, &BackgroundColor)>();
-            kids.iter().find_map(|e| boxes.get(world, *e).ok().map(|(l, f)| (l.top != Color::NONE, f.0 != Color::NONE))).unwrap_or((false, false))
+            // Its line (`crate::menu_shapes::LineBox`) in a frame with its glow.
+            let below: Vec<Entity> = kids.iter().flat_map(|k| std::iter::once(*k).chain(world.get::<Children>(*k).map(|c| c.to_vec()).unwrap_or_default())).collect();
+            let mut boxes = world.query_filtered::<(&BorderColor, &BackgroundColor), With<crate::menu_shapes::LineBox>>();
+            below.iter().find_map(|e| boxes.get(world, *e).ok().map(|(l, f)| (l.top != Color::NONE, f.0 != Color::NONE))).unwrap_or((false, false))
         };
         assert_eq!(look(world, RailItem::Tab("Debug")), (true, false), "the line, not filled");
         assert_eq!(look(world, RailItem::Tab("Audio")), (false, false), "another tab: no box");
@@ -6294,7 +6316,8 @@ mod tests {
                         assert!(width(&v) <= p.text_room() + 0.01 && tx >= p.text.0 - 0.01 && tx + width(&v) <= p.text.1 + 0.01 && tx + width(&v) <= lb.width, "{at}: value {v:?} at {tx}");
                         if let ValueKind::Slider(_) = kind {
                             let (ml, mw) = p.meter;
-                            assert!(p.value.0 + METER_ARROW.x <= ml && ml + mw <= p.text.0 && p.text.1 <= p.right_arrow && mw >= METER_MIN, "{at}: {p:?}");
+                            // ◀ meter ▶, then the number (the owner's third test).
+                            assert!(p.value.0 + METER_ARROW.x <= ml && ml + mw <= p.right_arrow && p.right_arrow + METER_ARROW.x <= p.text.0 && p.text.1 <= p.value.1 && mw >= METER_MIN, "{at}: {p:?}");
                         }
                     }
                 }
@@ -6304,11 +6327,13 @@ mod tests {
         let x = RowX(ROW_BASE);
         assert_eq!(row_parts(x, ValueKind::Centred(34.0)).text_x(34.0), VALUE_AT - 17.0);
         let p = row_parts(x, ValueKind::Slider(51.0));
-        assert_eq!((p.text_x(51.0), p.right_arrow, p.meter), (METER_ARROWS[1] - READOUT_GAP - 51.0, METER_ARROWS[1], (METER_LEFT, METER_WIDTH)), "the number right-aligned clear of the right arrow");
+        assert_eq!((p.text_x(51.0), p.right_arrow, p.meter), (LIST_LEFT + LIST_WIDTH - VALUE_PAD - 51.0, METER_ARROWS[1], (METER_LEFT, METER_WIDTH)), "the number right-aligned at the cell's end, after the right arrow");
+        assert_eq!(METER_ARROWS[1], METER_LEFT + METER_WIDTH + METER_GAP, "the right arrow just after the meter");
+        assert!(p.text.0 >= METER_ARROWS[1] + METER_ARROW.x + READOUT_GAP - 0.01 && READOUT_W >= 96.0);
         // The value cell: a list's words, a switch's state and a binding share one centre;
-        // the slider ends where the list's box does.
+        // a slider's number ends where the list's words may.
         assert_eq!(row_parts(x, ValueKind::List(100.0)).centre, row_parts(x, ValueKind::Centred(100.0)).centre);
-        assert_eq!(METER_ARROWS[1] + METER_ARROW.x, LIST_LEFT + LIST_WIDTH);
+        assert_eq!(p.text.1, LIST_LEFT + LIST_WIDTH - VALUE_PAD);
         assert_eq!(row_parts(x, ValueKind::List(100.0)).text_x(100.0), LIST_LEFT + (LIST_WIDTH - 30.0 - 100.0) / 2.0);
         assert_eq!(row_parts(x, ValueKind::Binding(60.0)).text.0, VALUE_AT - 30.0);
         assert_eq!(row_parts(x, ValueKind::Centred(34.0)).label, (10.0, LIST_LEFT - LABEL_GAP));
@@ -6416,8 +6441,8 @@ mod tests {
         let drawn = Drawn { page: Page::Load { selected: 1 }, column: entries(false).iter().map(|e| (e.label(), true)).collect(), device: ("Keyboard and Mouse", false), rumble: true, sensitivity: 1.0, view_w: VIEW_W as u32, ..default() };
         app.world_mut().run_system_cached_with(|In(d): In<Drawn>, mut commands: Commands, list: Res<LoadList>, glyphs: Res<crate::pad::PadGlyphs>| spawn_page(&mut commands, &d, &PauseLook::plain(), &[], &list, &glyphs), drawn).unwrap();
         let world = app.world_mut();
-        let mut rows = world.query::<(&PauseButton, &BorderColor)>();
-        let rows: Vec<(PauseButton, bool)> = rows.iter(world).filter(|(b, _)| matches!(b, PauseButton::LoadRow(_))).map(|(b, c)| (*b, c.top != Color::NONE)).collect();
+        let mut rows = world.query::<(&PauseButton, &Boxed)>();
+        let rows: Vec<(PauseButton, bool)> = rows.iter(world).filter(|(b, _)| matches!(b, PauseButton::LoadRow(_))).map(|(b, c)| (*b, c.0)).collect();
         assert_eq!(rows.len(), 2);
         // The chosen row has the box round it, and only it.
         assert!(rows.contains(&(PauseButton::LoadRow(1), true)) && rows.contains(&(PauseButton::LoadRow(0), false)));
@@ -6517,6 +6542,31 @@ mod tests {
         assert_eq!(meter_ticks(1.0, METER_WIDTH), 33);
         assert_eq!(meter_ticks(0.5, METER_WIDTH), 17);
         assert_eq!(meter_ticks(0.0, METER_WIDTH), 0);
+    }
+
+    /// The owner's third test (2026-11-15): a chosen row's border moved its children 2 units.
+    /// The highlight box is drawn under the children of a node that is on, taking no room;
+    /// a node that is off gets nothing.
+    #[test]
+    fn the_highlight_box_goes_under_the_children_and_moves_nothing() {
+        let mut app = App::new();
+        app.add_systems(Update, draw_boxed);
+        let world = app.world_mut();
+        let on = world.spawn(boxed(at(0.0, 0.0, 100.0, 52.0), true)).with_children(|c| {
+            c.spawn(at(10.0, 0.0, 50.0, 52.0));
+        }).id();
+        let off = world.spawn(boxed(at(0.0, 60.0, 100.0, 52.0), false)).with_children(|c| {
+            c.spawn(at(10.0, 0.0, 50.0, 52.0));
+        }).id();
+        app.update();
+        let world = app.world();
+        let kids = world.get::<Children>(on).unwrap().to_vec();
+        assert_eq!(kids.len(), 2, "the frame and the row's own child");
+        let frame = world.get::<Children>(kids[0]).unwrap();
+        assert!(frame.iter().any(|e| world.get::<crate::menu_shapes::LineBox>(e).is_some()), "the box first, under the child");
+        assert!(frame.iter().filter(|e| world.get::<crate::menu_shapes::GlowRing>(*e).is_some()).count() >= 2, "with its glow");
+        assert_eq!(world.get::<Node>(on).unwrap().border, UiRect::default(), "no border: the children keep their places");
+        assert_eq!(world.get::<Children>(off).unwrap().len(), 1);
     }
 
     /// The owner's second test (2026-11-15): "100%" was cut to "10..." in the sharp letters.

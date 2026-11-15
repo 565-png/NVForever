@@ -400,13 +400,15 @@ fn entry_label(p: &mut ChildSpawnerCommands, f: &Face, e: Entry) {
     if let Some(line) = f.font.lines(label, None).into_iter().next() {
         let w = f.font.width(label);
         let x = COLUMN - 5.0 - w - 10.0 - 2.0 * LINE;
+        // The box with its glow (`crate::menu_shapes::framed`), shown while the entry is chosen.
+        let (line_colour, fill) = highlight_colors();
         p.spawn((
             EntryBox,
-            Node { position_type: PositionType::Absolute, left: u(x - 12.0), top: u(-LINE), width: u(w + 24.0), height: u(ITEM), border: UiRect::all(u(LINE)), ..default() },
-            BorderColor::all(Color::NONE),
-            BackgroundColor(Color::NONE),
+            Node { position_type: PositionType::Absolute, left: u(x - 12.0), top: u(-LINE), width: u(w + 24.0), height: u(ITEM), ..default() },
+            Visibility::Hidden,
             Pickable::IGNORE,
-        ));
+        ))
+        .with_children(|c| crate::menu_shapes::framed(c, line_colour, fill, LINE));
         set_line(p, f, &line, x, entry_base(f) - LINE, color(Shade::Bright));
     }
 }
@@ -601,9 +603,9 @@ fn slideshow(
 fn show_entries(
     menu: Res<MainMenu>,
     page: Res<Page>,
-    mut entries: Query<(Entity, &EntryNode, &mut Visibility)>,
+    mut entries: Query<(Entity, &EntryNode, &mut Visibility), Without<EntryBox>>,
     children: Query<&Children>,
-    mut boxes: Query<(&mut BorderColor, &mut BackgroundColor), With<EntryBox>>,
+    mut boxes: Query<&mut Visibility, (With<EntryBox>, Without<EntryNode>, Without<Logo>)>,
     mut glyphs: Query<&mut ImageNode, Without<Slide>>,
     mut texts: Query<&mut TextColor, Without<crate::interface::Halo>>,
     mut logo: Query<&mut Visibility, (With<Logo>, Without<EntryNode>)>,
@@ -615,21 +617,18 @@ fn show_entries(
     for mut v in &mut logo {
         v.set_if_neq(if *page == Page::Main { Visibility::Inherited } else { Visibility::Hidden });
     }
-    let (line, fill) = highlight_colors();
     for (id, e, mut vis) in &mut entries {
         let shown = if *page == Page::Main { Visibility::Inherited } else { Visibility::Hidden };
         vis.set_if_neq(shown);
         let entry = Entry::ALL[e.0];
         let c = color(if entry.enabled(menu.saves) { Shade::Bright } else { Shade::Dim });
         let chosen = e.0 == menu.selected;
-        let want = if chosen { BorderColor::all(line) } else { BorderColor::all(Color::NONE) };
         let (mut ink, mut count) = (None, 0);
         // [design, #2247] set_line/set_marked put the coloured nodes below a line
         // anchor (interface.rs); reach them even when the label has extra containers.
         for child in children.iter_descendants(id) {
-            if let Ok((mut border, mut bg)) = boxes.get_mut(child) {
-                border.set_if_neq(want);
-                bg.set_if_neq(BackgroundColor(if chosen { fill } else { Color::NONE }));
+            if let Ok(mut b) = boxes.get_mut(child) {
+                b.set_if_neq(if chosen { Visibility::Inherited } else { Visibility::Hidden });
                 continue;
             }
             if let Ok(mut g) = glyphs.get_mut(child) {
@@ -725,10 +724,12 @@ mod tests {
                 }
                 let (line, fill) = highlight_colors();
                 let selected = *entry == Entry::New;
-                // The box hugging the words is lit, the row itself never.
+                // The box hugging the words shows on the chosen entry only, the row itself is
+                // never lit.
                 let boxed = app.world().get::<Children>(*id).unwrap().iter().find(|c| app.world().get::<EntryBox>(*c).is_some()).expect("the entry's box");
-                assert_eq!(*app.world().get::<BorderColor>(boxed).unwrap(), BorderColor::all(if selected { line } else { Color::NONE }));
-                assert_eq!(app.world().get::<BackgroundColor>(boxed).unwrap().0, if selected { fill } else { Color::NONE });
+                assert_eq!(*app.world().get::<Visibility>(boxed).unwrap(), if selected { Visibility::Inherited } else { Visibility::Hidden });
+                let lines: Vec<(BorderColor, Color)> = app.world().get::<Children>(boxed).unwrap().iter().filter(|c| app.world().get::<crate::menu_shapes::LineBox>(*c).is_some()).map(|c| (*app.world().get::<BorderColor>(c).unwrap(), app.world().get::<BackgroundColor>(c).unwrap().0)).collect();
+                assert_eq!(lines, [(BorderColor::all(line), fill)]);
                 assert_eq!(*app.world().get::<BorderColor>(*id).unwrap(), BorderColor::all(Color::NONE));
             }
         }

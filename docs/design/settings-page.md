@@ -94,12 +94,19 @@ every category open, nothing to choose but the rows.
 
 **The value cell** [design: the overhaul]: every row's value is drawn in one cell, the list's
 box; a list's words, a switch's On/Off, a binding and a greyed value share one centre; a
-slider runs across the cell, its number right-aligned before its right arrow. The note sits
-an empty line under the window behind a soft shade (no rule); "Report a Bug" and the version
-sit, in the small print, under the pause column's last entry after an empty line; the window
-holds 12 lines. In the sharp letters (`menu-font`) the column, the categories and the tab rail
-are bold, every line has a dark glow, and the hover and selection boxes hug the words with
-their capitals in the middle [design: owner 2026-11-15, second test].
+slider's meter lies between its two arrows, its number right-aligned after them at the
+cell's right end. The note sits an empty line under the window (no rule); one soft dark
+column runs behind the list, its titles and the note from the view's top to its bottom;
+"Report a Bug" and the version sit, in the small print, under the pause column's last entry
+after an empty line; the window holds 12 lines. A closed category shows its row count at the
+right, where the values are, without brackets. Back says "Back" alone with the keyboard. In
+the sharp letters (`menu-font`) the column, the categories and the tab rail are bold, every
+line has a soft dark glow; the arrows and the scroll bar are drawn shapes
+(`engine/nvf-play/src/menu_shapes.rs`), and they, the list boxes and the hover and selection
+boxes have the glow too; the selection box is drawn under a row and takes no room, so nothing
+moves when a row is chosen [design: owner 2026-11-15, second and third tests]. The quit
+question is two columns of three lines: "Warning", what is lost and the question at the left,
+the answers (bold) at the right.
 
 The earlier tables (#1953):
 

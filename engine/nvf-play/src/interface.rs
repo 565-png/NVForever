@@ -491,14 +491,16 @@ pub struct VectorFace {
 
 /// **The vector letters' dark glow** [design: owner 2026-11-15, second test: "the vanilla font
 /// has a slight dark glow effect with a drop shadow effect behind it so it is more visible on
-/// the background"; the game's fonts have it in their pictures, observed]: under each line a
-/// ring of eight dark copies [`GLOW_REACH`] of the em off it (four copies, each with a shadow
-/// on its other side) and a drop shadow down and right ([`DROP`]), their darkness a part of
-/// the words' alpha.
-pub const GLOW_REACH: f32 = 0.07;
-pub const GLOW_ALPHA: f32 = 0.24;
+/// the background"; the game's fonts have it in their pictures, observed]: under each line two
+/// rings of eight dark copies each ([`GLOW_RINGS`]: so far off it as a part of the em, so dark;
+/// four copies a ring, each with a shadow on its other side), the outer one fainter so the
+/// glow fades out, and a drop shadow down and right ([`DROP`]), their darkness a part of the
+/// words' alpha. Third test: "blur the text drop shadow glow a little bit more and decrease
+/// its opacity by 10%": two rings for the one (0.07 of the em, 0.24 a copy), about a tenth less
+/// dark where they meet the letters, and the drop shadow a tenth lighter.
+pub const GLOW_RINGS: [(f32, f32); 2] = [(0.045, 0.13), (0.095, 0.08)];
 pub const DROP: Vec2 = Vec2::new(0.045, 0.065);
-pub const DROP_ALPHA: f32 = 0.55;
+pub const DROP_ALPHA: f32 = 0.5;
 
 /// A dark copy of a vector line under it (its glow); recolouring passes it over.
 #[derive(Component)]
@@ -724,21 +726,23 @@ pub fn set_marked(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, x: f32
         let shadow = |part: Vec2, alpha: f32| (TextGlow(part), bevy::ui::widget::TextShadow { offset: Vec2::ZERO, color: Color::BLACK.with_alpha(alpha) });
         let ink = color.alpha();
         p.spawn((Node { position_type: PositionType::Absolute, left: u(x), top: u(base - v.base), ..default() }, Pickable::IGNORE)).with_children(|n| {
-            // The glow (module notes of `GLOW_REACH`): each copy off one way, its shadow the
-            // other way.
-            let (r, d) = (GLOW_REACH, GLOW_REACH * std::f32::consts::FRAC_1_SQRT_2);
-            let dark = Color::BLACK.with_alpha(GLOW_ALPHA * ink);
-            for at in [Vec2::new(-r, 0.0), Vec2::new(0.0, -r), Vec2::new(-d, -d), Vec2::new(d, -d)] {
-                n.spawn((
-                    Node { position_type: PositionType::Absolute, left: u(at.x * v.em), top: u(at.y * v.em), ..default() },
-                    Text::new(text.clone()),
-                    font.clone(),
-                    layout,
-                    TextColor(dark),
-                    shadow(-2.0 * at, GLOW_ALPHA * ink),
-                    Halo,
-                    Pickable::IGNORE,
-                ));
+            // The glow (module notes of `GLOW_RINGS`): each copy off one way, its shadow the
+            // other way; the outer ring first, under the inner.
+            for (r, alpha) in GLOW_RINGS.into_iter().rev() {
+                let d = r * std::f32::consts::FRAC_1_SQRT_2;
+                let dark = Color::BLACK.with_alpha(alpha * ink);
+                for at in [Vec2::new(-r, 0.0), Vec2::new(0.0, -r), Vec2::new(-d, -d), Vec2::new(d, -d)] {
+                    n.spawn((
+                        Node { position_type: PositionType::Absolute, left: u(at.x * v.em), top: u(at.y * v.em), ..default() },
+                        Text::new(text.clone()),
+                        font.clone(),
+                        layout,
+                        TextColor(dark),
+                        shadow(-2.0 * at, alpha * ink),
+                        Halo,
+                        Pickable::IGNORE,
+                    ));
+                }
             }
             n.spawn((Text::new(text), font, layout, TextColor(color), shadow(DROP, DROP_ALPHA * ink), mark));
         });

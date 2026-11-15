@@ -28470,7 +28470,7 @@ order = [[
 
 [[scenario]]
 name = "settings-back-hint"
-source = "issue #1893: the settings page's Back carries its hint as the menu's Delete does, \"Back  Esc)\" with the keyboard and \"Back  B)\" with a controller, as the original's B (owner's play); pause.rs back_label"
+source = "issue #1893: the settings page's Back carries its hint as the menu's Delete does, \"Back  B)\" with a controller, as the original's B (owner's play); with the keyboard \"Back\" alone (owner 2026-11-15, the menu overhaul's third test: \"Remove the Esc, leave only Back\"); pause.rs back_label"
 note = "The pause menu at 2 s, the Gameplay tab at 3 s, inspected with the keyboard at 4 s; Controller chosen at 5 s and inspected again at 6 s. Defaults keeps no hint (its Y is the rail key here, #1953). Before the fix Back was drawn bare"
 areas = ["menus", "controller", "settings"]
 paths = ["engine/nvf-play/src/pause.rs"]
@@ -28479,7 +28479,7 @@ args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 11
 order = [[
   { re = 'pause menu: inspect: Gameplay,', label = "the Gameplay tab is inspected" },
-  { re = 'pause menu: inspect: back \S+  Esc\)', label = "Back names the keyboard's Esc" },
+  { re = 'pause menu: inspect: back Back$', label = "Back alone with the keyboard" },
   { text = "controls: input device Controller", label = "the controller is picked" },
   { re = 'pause menu: inspect: back \S+  B\)', label = "Back names the controller's B" },
 ]]
