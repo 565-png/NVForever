@@ -278,7 +278,7 @@ to the player.
   enabled [hypothesis: the original's Legion route through the intake tower reaches the
   Power Plant, which the wiki's Activate rule could not allow if the trigger disabled
   the player; whether the original ignores Disable on the player, or its trigger never
-  fires for the player, is observer check 166; the load rule is design]. The owner's
+  fires for the player, is observer check 172; the load rule is design]. The owner's
   ruling: owner-review item 80.
 - **Related (#2621, not changed here).** The same tester's soft lock in General Oliver's
   room after a `coc` started from this state: a disabled player [hypothesis: not checked

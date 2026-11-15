@@ -67,7 +67,7 @@ pub fn disable(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
 /// [hypothesis: VHDIntakeTowerLegionaryDespawnScript disables whoever enters its trigger,
 /// the player too, and the original's Legion route still takes the player through the
 /// Power Plant 01 elevator, whose bare `Activate` a disabled actor cannot make;
-/// docs/spec-notes/doors.md §6, #2617, observer check 166].
+/// docs/spec-notes/doors.md §6, #2617, observer check 172].
 pub fn disable_ref(g: &mut Game, r: FormId, fade: bool) -> Result<Value, String> {
     if r == FormId::PLAYER_REF {
         tracing::info!("script: Disable of the player ignored: the player stays enabled (doors.md §6)");
