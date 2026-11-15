@@ -28,6 +28,11 @@
 //! [`Placement::subgroup`] is the Tweaks tab's group (Gameplay, Combat, … as Stewie's
 //! Tweaks sorts them): the tab shows one group at a time, chosen by its Category row
 //! (`crate::settings_view`), its categories closed until opened [design: owner 2026-11-15].
+//! Every row #1892 registers (`tweak-<key>`) has its group and category here already
+//! ([`group_section`]; the list for the owner's review: docs/design/settings-tweaks-layout.md):
+//! the group the plugin's catalogue gives its INI key, and in a category the lists first,
+//! then the switches, then the sliders, each by label, a row that only matters with
+//! another right after that one [design: owner 2026-11-15].
 //!
 //! What a row's visibility is (the colour sliders only for Custom, the controller rows only
 //! with a controller, a row its module hides) is not here: the page decides it each frame
@@ -85,6 +90,11 @@ const fn section(tab: &'static str, heading: Option<&'static str>, keys: &'stati
     Section { placement: Placement { tab, subgroup: None, heading }, keys }
 }
 
+/// A category of the Tweaks tab: under its group `subgroup`, headed `heading`.
+const fn group_section(subgroup: &'static str, heading: &'static str, keys: &'static [&'static str]) -> Section {
+    Section { placement: Placement { tab: TWEAKS_TAB, subgroup: Some(subgroup), heading: Some(heading) }, keys }
+}
+
 /// The rows the NVF Features tab may hold: only what the owner named there [design: owner
 /// 2026-11-15]. Adding a key needs the owner's word; a bigger gameplay change is offered to
 /// the owner for this tab, never moved here unasked (docs/design/settings-page.md).
@@ -102,7 +112,9 @@ pub const NVF_FEATURES_KEYS: [&str; 8] = [
 /// Every named row's tab and category, in the order the page shows them [design: the
 /// owner's menu overhaul, 2026-11-15, tab by tab; docs/design/settings-page.md §2]. A key
 /// not registered in a run is left out (`resolve_layout`), so rows of features still to
-/// come (the movement rows, #1892's tweaks) can have their place already.
+/// come (the movement rows, #1892's tweaks) can have their place already. The Tweaks tab's
+/// groups come in the plugin's order: Gameplay, Combat, Quality of Life, HUD, Menus,
+/// Hotkeys, Cheats, Misc.
 pub const SECTIONS: &[Section] = &[
     section("Gameplay", Some("Game"), &["difficulty", "hardcore", "reload-slows", "UsePipBoy"]),
     // "V.A.T.S." as the data spells it (MESG `HelpVATS`).
@@ -176,6 +188,713 @@ pub const SECTIONS: &[Section] = &[
     section(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil"]),
     section(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     section(NVF_FEATURES_TAB, Some("World Interaction"), &["grass-fire"]),
+    // The Tweaks tab (#1892), placed ahead of it: Stewie's Tweaks' groups, each in its
+    // categories (docs/design/settings-tweaks-layout.md) [design: owner 2026-11-15].
+    // Tweaks > Gameplay.
+    group_section(
+        "Gameplay",
+        "Character and Experience",
+        &[
+            "tweak-free-wild-wasteland",
+            "tweak-frenzy-kill-xp",
+            "tweak-no-skill-tags",
+            "tweak-custom-skill-points",
+            "tweak-skill-point-base",
+            "tweak-skill-points-per-int",
+            "tweak-cap-skills-by-special",
+            "tweak-cap-skills-spare-tagged",
+            "tweak-skill-cap-base",
+            "tweak-skill-cap-most",
+            "tweak-skill-cap-per-special",
+            "tweak-skill-cap-per-luck",
+            "tweak-xp-multiplier",
+            "tweak-key-xp-share",
+            "tweak-password-xp-share",
+            "tweak-kill-xp-per-level",
+            "tweak-max-level",
+            "tweak-perks-per-level",
+            "tweak-special-points",
+        ],
+    ),
+    group_section(
+        "Gameplay",
+        "Movement and Jumping",
+        &[
+            "tweak-armor-sinks",
+            "tweak-no-aiming-slowdown",
+            "tweak-jump-swims-up",
+            "tweak-speed-scales-jump",
+            "tweak-jump-ap-cost",
+            "tweak-run-ap-cost",
+            "tweak-agility-speed",
+            "tweak-agility-jump",
+            "tweak-back-pace",
+            "tweak-crippled-leg-jump",
+            "tweak-strafe-pace",
+            "tweak-breath-regain",
+            "tweak-walk-angle",
+            "tweak-wading-pace",
+        ],
+    ),
+    group_section(
+        "Gameplay",
+        "Weapons and Reloading",
+        &[
+            "tweak-aiming-draws-weapon",
+            "tweak-full-reload-swaps",
+            "tweak-hold-breath",
+            "tweak-breath-ap",
+            "tweak-breath-sway",
+            "tweak-jam-reload-pace",
+            "tweak-wheel-cycles-hotkeys",
+            "tweak-no-hotkeys-reloading",
+            "tweak-god-mode-no-jams",
+            "tweak-npcs-earn-casings",
+            "tweak-per-bullet-reload",
+            "tweak-reload-press-queue",
+            "tweak-reload-rounds-per-press",
+            "tweak-power-attack-if-blocking",
+            "tweak-ready-does-not-draw",
+            "tweak-reload-when-empty",
+            "tweak-reload-while-firing",
+            "tweak-weapons-unhurt-by-hits",
+            "tweak-no-wear-on-dead",
+            "tweak-scope-wheel-zoom",
+            "tweak-melee-reach",
+            "tweak-npc-weapon-volume",
+            "tweak-scope-zoom-time",
+            "tweak-semi-auto-queue",
+            "tweak-player-weapon-volume",
+        ],
+    ),
+    group_section(
+        "Gameplay",
+        "V.A.T.S.",
+        &[
+            "tweak-vats-target-projectiles",
+            "tweak-vats-target-mines",
+            "tweak-vats-ignore-non-explosive",
+            "tweak-vats-target-own-projectiles",
+            "tweak-vats-drops-disarmed-shots",
+            "tweak-vats-hip-fire",
+            "tweak-vats-throw-visibility",
+        ],
+    ),
+    group_section(
+        "Gameplay",
+        "Explosives",
+        &[
+            "tweak-contact-mines-npcs",
+            "tweak-contact-mines-player",
+            "tweak-disarm-needs-skill",
+            "tweak-disarm-mult",
+            "tweak-disarm-explode-mult",
+            "tweak-explosion-radius-buff",
+            "tweak-blasts-spare-items",
+            "tweak-mine-blasts-heard",
+            "tweak-npcs-drop-live-grenades",
+            "tweak-planting-needs-skill",
+            "tweak-knockdown-by-strength",
+        ],
+    ),
+    group_section(
+        "Gameplay",
+        "Damage and Health",
+        &[
+            "tweak-aid-at-full-health",
+            "tweak-crit-ignores-fire-rate",
+            "tweak-character-radiation",
+            "tweak-character-radiation-stages",
+            "tweak-crippling-never-disarms",
+            "tweak-fall-deaths-dismember",
+            "tweak-drowning-drains-ap",
+            "tweak-hardcore-tweaks",
+            "tweak-hardcore-ammo-weight",
+            "tweak-hardcore-essential-companions",
+            "tweak-hardcore-sleep-heals",
+            "tweak-keep-fall-height-on-load",
+            "tweak-no-npc-addiction",
+            "tweak-no-player-stagger",
+            "tweak-power-armor-radiation",
+            "tweak-power-armor-no-training",
+            "tweak-standing-sneak-attacks",
+            "tweak-armor-condition-penalty",
+            "tweak-crippled-fall-pain",
+            "tweak-fall-height-endurance",
+            "tweak-power-armor-fall",
+            "tweak-power-armor-limbs",
+            "tweak-sleep-heal-min-hours",
+        ],
+    ),
+    group_section(
+        "Gameplay",
+        "Weight",
+        &[
+            "tweak-grabbed-weighs",
+            "tweak-run-overencumbered",
+            "tweak-over-jump-ap",
+            "tweak-over-run-ap",
+            "tweak-weightless-worn-armor",
+            "tweak-weightless-worn-power-armor",
+            "tweak-encumbered-ap-regen",
+        ],
+    ),
+    group_section(
+        "Gameplay",
+        "Locks, Hacking and Stealing",
+        &[
+            "tweak-pickpocket-caught-detects",
+            "tweak-force-spares-lock",
+            "tweak-grabbing-is-theft",
+            "tweak-hack-dud-when-full",
+            "tweak-hack-spare-guessed",
+            "tweak-hack-no-repeat-words",
+            "tweak-hack-no-single-chars",
+            "tweak-key-name",
+            "tweak-no-grab-owned",
+            "tweak-no-terminal-lockout",
+            "tweak-pick-without-skill",
+            "tweak-pickpocket-overhaul",
+            "tweak-pp-reward-xp",
+            "tweak-pp-free-items",
+            "tweak-pp-agility",
+            "tweak-pp-base",
+            "tweak-pp-detection",
+            "tweak-pp-value",
+            "tweak-pp-weight",
+            "tweak-pp-luck",
+            "tweak-pp-sneak",
+            "tweak-pp-perception",
+            "tweak-pp-worn",
+            "tweak-pickpocket-fleeing",
+            "tweak-stealing-no-alarm",
+            "tweak-remember-pin-health",
+            "tweak-loot-unconscious",
+            "tweak-auto-unlock-terminals",
+            "tweak-auto-unlock-margin",
+            "tweak-skip-easy-locks",
+            "tweak-skip-lock-margin",
+            "tweak-lockpick-force-near",
+        ],
+    ),
+    group_section(
+        "Gameplay",
+        "Trading and Repair",
+        &[
+            "tweak-barter-by-kind",
+            "tweak-barter-water-unscaled",
+            "tweak-barter-buy-aid",
+            "tweak-barter-buy-ammo",
+            "tweak-barter-buy-armor",
+            "tweak-barter-buy-misc",
+            "tweak-barter-buy-weapon",
+            "tweak-barter-buy-weapon-mod",
+            "tweak-barter-sell-aid",
+            "tweak-barter-sell-ammo",
+            "tweak-barter-sell-armor",
+            "tweak-barter-sell-misc",
+            "tweak-barter-sell-weapon",
+            "tweak-barter-sell-weapon-mod",
+            "tweak-repair-scales-crafting",
+            "tweak-vendor-lists",
+            "tweak-repair-caps-container",
+            "tweak-repair-kits-in-list",
+            "tweak-repair-at-workbench",
+            "tweak-modding-needs-skill",
+            "tweak-barter-repair-discount",
+            "tweak-repair-xp",
+            "tweak-free-item-price",
+        ],
+    ),
+    group_section(
+        "Gameplay",
+        "Companions",
+        &[
+            "tweak-hostiles-prefer-player",
+            "tweak-prefer-player-start",
+            "tweak-prefer-player-mid",
+            "tweak-prefer-player-detection",
+            "tweak-light-step-companions",
+            "tweak-no-companion-item-damage",
+            "tweak-revive-companions",
+            "tweak-revive-down-seconds",
+            "tweak-map-summon-companions",
+            "tweak-summon-unconscious",
+        ],
+    ),
+    group_section(
+        "Gameplay",
+        "Travel and World",
+        &[
+            "tweak-travel-costs-bottle",
+            "tweak-fast-travel-encumbered",
+            "tweak-hold-activate",
+            "tweak-hold-containers",
+            "tweak-hold-furniture",
+            "tweak-hold-water",
+            "tweak-disable-fast-travel",
+            "tweak-no-travel-crippled-leg",
+            "tweak-quick-use",
+            "tweak-sleep-on-chairs",
+            "tweak-wait-only-seated",
+            "tweak-clear-marker-within",
+            "tweak-mark-nearby-places",
+        ],
+    ),
+    // Tweaks > Combat.
+    group_section("Combat", "In Combat", &["tweak-no-combat-music", "tweak-hide-enemy-markers", "tweak-no-healing-in-combat", "tweak-no-pipboy-in-combat", "tweak-kill-reward-ap"]),
+    group_section("Combat", "V.A.T.S.", &["tweak-first-person-vats", "tweak-vats-burst-stops-on-kill", "tweak-vats-ignores-companions", "tweak-vats-auto-head", "tweak-vats-entry-ap"]),
+    group_section(
+        "Combat",
+        "Criticals and Sneak Attacks",
+        &["tweak-fatal-crits-gib", "tweak-no-sneak-criticals", "tweak-npcs-sneak-crit-player", "tweak-sneak-criticals-head", "tweak-sneak-criticals-melee", "tweak-crit-damage-scale"],
+    ),
+    group_section(
+        "Combat",
+        "Weapons and Armour",
+        &[
+            "tweak-npcs-disarm-player",
+            "tweak-npc-melee-part-damage",
+            "tweak-hold-release-throws",
+            "tweak-no-condition-damage-buffer",
+            "tweak-no-condition-damage-penalty",
+            "tweak-no-spin-up",
+            "tweak-npc-dr-ignores-condition",
+            "tweak-npc-dt-ignores-condition",
+            "tweak-npc-weapons-whole",
+            "tweak-weapon-requirements-matter",
+            "tweak-power-attack-ap",
+        ],
+    ),
+    group_section(
+        "Combat",
+        "Companions and Blasts",
+        &["tweak-no-disarm-companions", "tweak-teammates-meltdown", "tweak-no-self-meltdown", "tweak-no-companion-kill-xp", "tweak-no-self-explosion-damage"],
+    ),
+    // Tweaks > Quality of Life.
+    group_section(
+        "Quality of Life",
+        "Controls and Movement",
+        &[
+            "tweak-seat-keeps-on-activate",
+            "tweak-console-skips-player",
+            "tweak-repeat-jumping",
+            "tweak-hold-to-sneak",
+            "tweak-hold-to-wait",
+            "tweak-move-during-pipboy-raise",
+            "tweak-no-knockdown-god",
+            "tweak-no-land-clip",
+            "tweak-toggle-device",
+            "tweak-seated-wide",
+        ],
+    ),
+    group_section(
+        "Quality of Life",
+        "Weapons and Aiming",
+        &[
+            "tweak-dpad-cycles-hotkeys",
+            "tweak-double-tap-ammo",
+            "tweak-hi-res-npc-weapons",
+            "tweak-holster-real-time",
+            "tweak-hotkey-toggles-in-hand",
+            "tweak-night-vision-toggle",
+            "tweak-night-vision-by-day",
+            "tweak-night-vision-off-first",
+            "tweak-no-sight-zoom",
+            "tweak-no-weapon-move-penalty",
+            "tweak-npcs-drop-holstered",
+            "tweak-empty-reload-swaps-ammo",
+            "tweak-vats-shift-ignores-friends",
+            "tweak-swap-ammo-holstered",
+            "tweak-deselect-hotkeys",
+            "tweak-vats-keeps-holstered",
+            "tweak-aim-turn-x",
+            "tweak-aim-turn-y",
+            "tweak-scope-delay",
+        ],
+    ),
+    group_section(
+        "Quality of Life",
+        "Items and Repair",
+        &[
+            "tweak-equip-broken-items",
+            "tweak-hide-misc-quest",
+            "tweak-keep-broken-equipped",
+            "tweak-no-poison-confirm",
+            "tweak-repair-needs-weapon-skill",
+            "tweak-unequip-broken-armor",
+            "tweak-stack-figures",
+        ],
+    ),
+    group_section("Quality of Life", "Companions", &["tweak-quiet-followers", "tweak-robots-heal-with-scrap", "tweak-robot-heal-base", "tweak-robot-heal-per-repair", "tweak-robot-heal-expert"]),
+    group_section(
+        "Quality of Life",
+        "Minigames and Machines",
+        &["tweak-faster-hacking", "tweak-no-tutorials", "tweak-pick-locks-with-key", "tweak-vigor-review-first", "tweak-show-current-skill", "tweak-slots-hold-to-spin"],
+    ),
+    group_section("Quality of Life", "Travel and Loading", &["tweak-unsafe-fast-travel", "tweak-midair-fast-travel", "tweak-pause-on-load", "tweak-plain-going-out"]),
+    group_section(
+        "Quality of Life",
+        "Messages and Sounds",
+        &[
+            "tweak-mark-unspoken",
+            "tweak-no-quest-set-on-complete",
+            "tweak-no-quest-set-on-objective",
+            "tweak-no-empty-book-message",
+            "tweak-god-mode-quiet-landing",
+            "tweak-no-reputation-messages",
+            "tweak-xp-sound-at-cap",
+            "tweak-player-pain-gap",
+        ],
+    ),
+    group_section("Quality of Life", "Conversations and Radio", &["tweak-no-auto-continue-dialogue", "tweak-select-unavailable-radios", "tweak-dialogue-music", "tweak-dialogue-radio"]),
+    group_section(
+        "Quality of Life",
+        "Screen and Camera",
+        &[
+            "tweak-faster-pad-orbit",
+            "tweak-move-during-vats-camera",
+            "tweak-no-chem-wore-off",
+            "tweak-no-explosion-blur",
+            "tweak-no-interior-fog",
+            "tweak-scale-explosion-shake",
+            "tweak-explosion-shake",
+            "tweak-shift-screenshot-hides",
+            "tweak-skip-death-cam",
+            "tweak-skip-death-cam-attack",
+            "tweak-kill-cam-exit-key",
+            "tweak-min-splatter",
+        ],
+    ),
+    // Tweaks > HUD.
+    group_section(
+        "HUD",
+        "Messages",
+        &[
+            "tweak-crit-message-limb",
+            "tweak-discovered-in-corner",
+            "tweak-descriptive-marker-added",
+            "tweak-no-caps-added",
+            "tweak-no-dehydration-messages",
+            "tweak-no-location-popup",
+            "tweak-no-objective-popup",
+            "tweak-no-quest-failed",
+            "tweak-no-sleep-messages",
+            "tweak-no-unconscious-message",
+            "tweak-no-xp-meter-combat",
+            "tweak-objectives-on-arrival",
+            "tweak-objectives-gap",
+            "tweak-no-xp-messages",
+            "tweak-no-karma-messages",
+            "tweak-item-added-seconds",
+        ],
+    ),
+    group_section(
+        "HUD",
+        "Compass and Place Names",
+        &[
+            "tweak-compass-fade-left",
+            "tweak-compass-pips-danger",
+            "tweak-hide-unmapped-places",
+            "tweak-compass-doors",
+            "tweak-compass-doors-fade",
+            "tweak-compass-doors-interior",
+            "tweak-compass-doors-exterior",
+            "tweak-compass-pips-fade",
+            "tweak-compass-places-fade",
+            "tweak-neutral-foes-compass",
+            "tweak-nearest-unfound",
+            "tweak-hud-marker-name",
+            "tweak-marker-name-hide-unfound",
+            "tweak-marker-name-units",
+            "tweak-marker-name-angle",
+            "tweak-compass-quest-height",
+            "tweak-hud-region-names",
+            "tweak-compass-marker-height",
+            "tweak-companion-pip",
+            "tweak-quest-marker-reach",
+            "tweak-recent-dead-secs",
+        ],
+    ),
+    group_section(
+        "HUD",
+        "Crosshair",
+        &["tweak-crosshair-when-aiming", "tweak-no-red-crosshair-cloaked", "tweak-hide-crosshair-first", "tweak-hide-crosshair-third", "tweak-hide-crosshair-reloading", "tweak-no-red-crosshair"],
+    ),
+    group_section(
+        "HUD",
+        "Bars and Indicators",
+        &[
+            "tweak-ammo-label-under",
+            "tweak-armor-condition",
+            "tweak-armor-in-weapon-place",
+            "tweak-armor-flash-below",
+            "tweak-armor-red-below",
+            "tweak-armor-visible-below",
+            "tweak-hud-fatigue",
+            "tweak-buffed-health-bars",
+            "tweak-no-grenade-indicator",
+            "tweak-grenade-indicator-destructibles",
+            "tweak-precise-rad-meter",
+            "tweak-rad-decimals",
+            "tweak-hide-ammo-label",
+            "tweak-no-limb-indicator",
+            "tweak-grenade-indicator-harmless",
+            "tweak-weapon-cnd-flash-below",
+            "tweak-red-ap-below",
+            "tweak-red-hp-below",
+            "tweak-weapon-cnd-red-below",
+        ],
+    ),
+    group_section("HUD", "Sneaking", &["tweak-detected-by-whom", "tweak-detected-names", "tweak-no-sneak-label", "tweak-shift-talks-sneaking", "tweak-sneak-label-standing"]),
+    group_section(
+        "HUD",
+        "Prompts and Subtitles",
+        &["tweak-hide-unknown-names", "tweak-mark-unvisited-doors", "tweak-terminal-password-prompt", "tweak-subtitle-names", "tweak-water-shows-h2o", "tweak-subtitle-distance"],
+    ),
+    group_section("HUD", "Other", &["tweak-female-facial-hair", "tweak-no-hotkey-wheel", "tweak-date-style"]),
+    // Tweaks > Menus.
+    group_section(
+        "Menus",
+        "Pip-Boy Items",
+        &[
+            "tweak-tab-click-sorts",
+            "tweak-compare-armor",
+            "tweak-compare-weapons",
+            "tweak-mark-other-ammo",
+            "tweak-hide-quest-item-figures",
+            "tweak-no-right-click-drop",
+            "tweak-single-item-figures",
+            "tweak-drop-key",
+            "tweak-remember-item-places",
+            "tweak-weapon-ammo-use",
+            "tweak-show-poison-effects",
+            "tweak-book-effects",
+            "tweak-usable-ammo-first",
+        ],
+    ),
+    group_section(
+        "Menus",
+        "Pip-Boy Stats and Data",
+        &[
+            "tweak-pipboy-12-hour",
+            "tweak-detailed-stats",
+            "tweak-effect-time-left",
+            "tweak-stats-xp-percent",
+            "tweak-hide-empty-reputation",
+            "tweak-hide-completed-quests",
+            "tweak-hide-read-notes",
+            "tweak-mark-notes-unread",
+            "tweak-mark-recurring-challenges",
+            "tweak-no-show-quest-location",
+            "tweak-notes-of-all-quests",
+            "tweak-quest-text-in-menus",
+            "tweak-show-fame-infamy",
+            "tweak-sort-misc-stats",
+            "tweak-embolden-tags",
+        ],
+    ),
+    group_section(
+        "Menus",
+        "Maps",
+        &[
+            "tweak-companions-location-font",
+            "tweak-no-min-companion-distance",
+            "tweak-map-door-kinds",
+            "tweak-map-unconscious-companions",
+            "tweak-local-map-reset-cells",
+            "tweak-map-marker-distance",
+            "tweak-map-recentre-key",
+            "tweak-map-remembers",
+            "tweak-map-zoom-at-pointer",
+            "tweak-recent-markers-red",
+            "tweak-no-marker-popup",
+            "tweak-marker-removed-on-it",
+            "tweak-marker-shift-removes",
+            "tweak-hide-marker-reputation",
+            "tweak-quiet-undiscovered",
+        ],
+    ),
+    group_section(
+        "Menus",
+        "Containers and Barter",
+        &[
+            "tweak-barter-caps-change",
+            "tweak-full-barter-total",
+            "tweak-containers-show-ammo",
+            "tweak-hide-hotkeyed-barter",
+            "tweak-hide-hotkeyed-containers",
+            "tweak-hide-equipped-barter",
+            "tweak-hide-equipped-containers",
+            "tweak-sync-categories",
+            "tweak-quantity-shows-price",
+            "tweak-quantity-shows-weight",
+            "tweak-quantity-companion-cap",
+            "tweak-title-case-categories",
+            "tweak-invert-title-wheel",
+            "tweak-right-click-previous-category",
+            "tweak-store-all",
+            "tweak-take-all-confirm",
+            "tweak-take-all-confirm-min",
+            "tweak-take-all-stays",
+            "tweak-warn-encumbrance",
+        ],
+    ),
+    group_section(
+        "Menus",
+        "Repair and Crafting",
+        &[
+            "tweak-hide-hotkeyed-repair",
+            "tweak-recipe-caps",
+            "tweak-repair-all-confirm",
+            "tweak-repair-all-threshold",
+            "tweak-repair-preview",
+            "tweak-repair-low-first",
+            "tweak-repair-same-first",
+            "tweak-repair-any-armor",
+        ],
+    ),
+    group_section(
+        "Menus",
+        "Level-Up and Perks",
+        &["tweak-levelup-wheel", "tweak-living-anatomy-dr", "tweak-hide-trait-ranks", "tweak-perk-plugin-names", "tweak-skip-skill-page", "tweak-preview-perks"],
+    ),
+    group_section(
+        "Menus",
+        "Terminals and Minigames",
+        &[
+            "tweak-blackjack-total",
+            "tweak-grey-read-notes",
+            "tweak-minigames-timescale",
+            "tweak-lockpick-move-keys",
+            "tweak-lockpick-mouse",
+            "tweak-no-exit-hacking",
+            "tweak-terminal-number-keys",
+            "tweak-tab-closes-terminals",
+        ],
+    ),
+    group_section("Menus", "Messages and Conversations", &["tweak-need-icons", "tweak-keep-acting-notes", "tweak-no-pointer-dialogue", "tweak-no-pointer-message-box"]),
+    group_section("Menus", "Main and Pause Menus", &["tweak-continue-shows-save", "tweak-no-loading-tips", "tweak-quick-load-in-menus", "tweak-tab-back-in-pause"]),
+    group_section(
+        "Menus",
+        "Keys and Mouse",
+        &["tweak-key-repeat-accel", "tweak-key-repeat-delay", "tweak-key-repeat-mult", "tweak-key-repeat-delay-alt", "tweak-key-repeat-mult-alt", "tweak-horizontal-look"],
+    ),
+    // Tweaks > Hotkeys.
+    group_section("Hotkeys", "Hide HUD Key", &["tweak-hide-hud-ammo", "tweak-hide-hud-needs", "tweak-hide-hud-compass", "tweak-hide-hud-on-load", "tweak-hide-hud-sneak"]),
+    group_section("Hotkeys", "Other Keys", &["tweak-place-marker-here-says", "tweak-repeat-activate-takes-only", "tweak-console-key", "tweak-screenshot-key"]),
+    // Tweaks > Cheats.
+    group_section("Cheats", "Weight", &["tweak-weightless-aid", "tweak-weightless-ammo", "tweak-weightless-armor", "tweak-weightless-misc", "tweak-weightless-weapons"]),
+    group_section(
+        "Cheats",
+        "Hacking, Stealing and Casinos",
+        &["tweak-hack-without-skill", "tweak-no-casino-bans", "tweak-no-max-casino-bet", "tweak-pickpocket-after-caught", "tweak-pickpocket-worn"],
+    ),
+    group_section(
+        "Cheats",
+        "Travel, Rest and Skills",
+        &["tweak-console-homes", "tweak-fast-travel-enemies", "tweak-god-mode-free-crafting", "tweak-reallocate-skill-points", "tweak-sleep-in-owned-beds", "tweak-wait-anywhere"],
+    ),
+    // Tweaks > Misc.
+    group_section(
+        "Misc",
+        "Sound and Radio",
+        &[
+            "tweak-level-sound-a",
+            "tweak-level-sound-every-a",
+            "tweak-level-sound-b",
+            "tweak-level-sound-every-b",
+            "tweak-discovered-sound",
+            "tweak-armor-sounds-3d",
+            "tweak-heartbeat-fade",
+            "tweak-heartbeat-fade-seconds",
+            "tweak-no-voice-filter",
+            "tweak-quiet-hotkeys",
+            "tweak-quiet-teammate-steps",
+            "tweak-radiation-radio-static",
+            "tweak-radio-music",
+            "tweak-radio-talk",
+        ],
+    ),
+    group_section(
+        "Misc",
+        "Camera",
+        &[
+            "tweak-kill-cam-hit-location",
+            "tweak-kill-cam-outside-vats",
+            "tweak-vats-stop-following-dead",
+            "tweak-vanity-returns-first",
+            "tweak-pov-follows-weapon",
+            "tweak-camera-wheel-pov",
+            "tweak-kill-cam-chance",
+        ],
+    ),
+    group_section(
+        "Misc",
+        "Effects and Animation",
+        &[
+            "tweak-armor-blocks-blood",
+            "tweak-scale-ash-piles",
+            "tweak-detached-beams",
+            "tweak-power-armor-no-screen-blood",
+            "tweak-no-stealth-shimmer-pipboy",
+            "tweak-no-turn-clip",
+            "tweak-splash-torso-gib",
+            "tweak-weapon-impacts",
+        ],
+    ),
+    group_section(
+        "Misc",
+        "Controller and Keys",
+        &[
+            "tweak-custom-dead-zones",
+            "tweak-left-dead-zone",
+            "tweak-right-dead-zone",
+            "tweak-invert-x",
+            "tweak-keys-with-pad",
+            "tweak-responsive-stick",
+            "tweak-no-weapon-hotkeys",
+            "tweak-pipboy-buzz",
+            "tweak-duplicate-binds",
+            "tweak-custom-trigger-dead-zones",
+            "tweak-lt-dead-zone",
+            "tweak-rt-dead-zone",
+        ],
+    ),
+    group_section(
+        "Misc",
+        "Console",
+        &[
+            "tweak-better-flycam",
+            "tweak-help-is-console",
+            "tweak-print-plugin-names",
+            "tweak-console-output-file",
+            "tweak-console-model-details",
+            "tweak-console-text-shadow",
+            "tweak-console-timestamps",
+            "tweak-console-compress-repeats",
+            "tweak-remember-console-history",
+        ],
+    ),
+    group_section("Misc", "Menus and Conversations", &["tweak-no-skip-dialogue", "tweak-pipboy-opens-items", "tweak-terminal-fade", "tweak-terminal-fade-seconds"]),
+    group_section("Misc", "Starting and Loading", &["tweak-auto-continue", "tweak-god-mode-off-on-load", "tweak-no-respec", "tweak-no-name-limit", "tweak-click-to-exit-loading"]),
+    group_section(
+        "Misc",
+        "World and Items",
+        &[
+            "tweak-no-travel-time",
+            "tweak-improved-weather",
+            "tweak-weather-trip-distance",
+            "tweak-lethal-knockdowns",
+            "tweak-no-selling",
+            "tweak-no-skill-books-at-max",
+            "tweak-no-ammo-casings",
+            "tweak-pick-up-disarmed",
+            "tweak-no-container-after-pick",
+            "tweak-no-door-after-pick",
+            "tweak-region-borders-message-only",
+        ],
+    ),
     section("Debug", None, &["overlay", "hit-markers", "god-mode", "navmesh", "scope-3d"]),
 ];
 
@@ -578,8 +1297,129 @@ mod tests {
     ];
 
     /// The rows the table places ahead of the change that registers them (the movement
-    /// rows of tech/movement-inertia).
+    /// rows of tech/movement-inertia; the tweaks: [`TWEAK_ROWS`]).
     const AHEAD: [&str; 7] = ["advanced-movement", "movement-inertia", "weapon-handling", "advanced-recoil", "weapon-inertia", "animation-smoothing", "camera-motion"];
+
+    /// What every tweak's key starts with (#1892's `tweaks.rs`: `concat!("tweak-", $key)`).
+    const TWEAK_PREFIX: &str = "tweak-";
+
+    /// Every row #1892 registers under Tweaks (PR head 25bc53a28, `engine/nvf-play/src/tweaks.rs`),
+    /// in its order, without [`TWEAK_PREFIX`]: what the table places ahead of it.
+    const TWEAK_ROWS: &str = "\
+        discovered-sound level-sound-every-a level-sound-a level-sound-every-b level-sound-b xp-multiplier \
+        no-xp-messages no-karma-messages no-quest-failed no-location-popup no-objective-popup disable-fast-travel \
+        midair-fast-travel fast-travel-enemies fast-travel-encumbered no-red-crosshair hide-enemy-markers \
+        no-sneak-label no-reputation-messages no-combat-music no-loading-tips no-explosion-blur no-chem-wore-off \
+        kill-cam-exit-key skip-skill-page no-empty-book-message recipe-caps weapon-ammo-use book-effects \
+        deselect-hotkeys map-remembers terminal-number-keys faster-hacking dialogue-music dialogue-radio \
+        console-skips-player holster-real-time power-armor-no-screen-blood no-red-crosshair-cloaked \
+        god-mode-quiet-landing console-compress-repeats console-timestamps living-anatomy-dr sync-categories \
+        perks-per-level special-points pick-without-skill hack-without-skill no-terminal-lockout no-casino-bans \
+        loot-unconscious revive-companions revive-down-seconds pickpocket-worn no-sneak-criticals reload-when-empty \
+        no-travel-time power-armor-fall weightless-armor weightless-aid weightless-ammo weightless-weapons \
+        weightless-misc weightless-worn-armor show-poison-effects no-poison-confirm map-summon-companions \
+        summon-unconscious no-min-companion-distance map-unconscious-companions companions-location-font \
+        map-door-kinds hostiles-prefer-player prefer-player-start prefer-player-mid prefer-player-detection \
+        equip-broken-items keep-broken-equipped hardcore-tweaks hardcore-ammo-weight hardcore-essential-companions \
+        hardcore-sleep-heals weightless-worn-power-armor no-travel-crippled-leg wait-only-seated kill-reward-ap \
+        jump-ap-cost run-ap-cost no-selling custom-skill-points skill-point-base skill-points-per-int \
+        no-unconscious-message no-voice-filter no-skip-dialogue lockpick-mouse no-max-casino-bet no-aiming-slowdown \
+        repeat-jumping hold-to-sneak vats-entry-ap power-attack-ap quest-marker-reach scope-zoom-time drop-key \
+        no-container-after-pick no-door-after-pick mark-unvisited-doors no-exit-hacking no-grab-owned agility-speed \
+        auto-unlock-terminals auto-unlock-margin weapons-unhurt-by-hits god-mode-no-jams knockdown-by-strength \
+        drowning-drains-ap aiming-draws-weapon walk-angle crippled-leg-jump aid-at-full-health grabbing-is-theft \
+        vendor-lists key-name no-skill-tags no-npc-addiction pickpocket-fleeing full-reload-swaps melee-reach \
+        repair-xp repair-caps-container no-wear-on-dead encumbered-ap-regen light-step-companions no-player-stagger \
+        ready-does-not-draw jam-reload-pace no-hotkeys-reloading wading-pace sleep-on-chairs stealing-no-alarm \
+        no-companion-kill-xp no-disarm-companions no-self-explosion-damage sneak-criticals-melee teammates-meltdown \
+        speed-scales-jump no-tutorials no-knockdown-god show-current-skill min-splatter xp-sound-at-cap hold-to-wait \
+        no-sight-zoom hide-misc-quest tab-click-sorts hotkey-toggles-in-hand no-interior-fog mark-unspoken \
+        no-caps-added subtitle-names compass-pips-danger neutral-foes-compass sneak-label-standing no-xp-meter-combat \
+        no-limb-indicator skip-death-cam skip-death-cam-attack help-is-console heartbeat-fade heartbeat-fade-seconds \
+        terminal-fade terminal-fade-seconds containers-show-ammo descriptive-marker-added no-grenade-indicator \
+        grenade-indicator-harmless grenade-indicator-destructibles keep-acting-notes hide-completed-quests \
+        hide-marker-reputation no-show-quest-location hide-trait-ranks hide-quest-item-figures single-item-figures \
+        mark-other-ammo show-fame-infamy take-all-confirm take-all-confirm-min repair-all-confirm repair-all-threshold \
+        take-all-stays hide-equipped-barter hide-equipped-containers title-case-categories no-right-click-drop \
+        quiet-undiscovered repair-any-armor sort-misc-stats effect-time-left perk-plugin-names item-added-seconds \
+        pipboy-12-hour notes-of-all-quests aim-turn-x aim-turn-y pickpocket-after-caught wait-anywhere radio-music \
+        radio-talk camera-wheel-pov quiet-hotkeys detached-beams god-mode-off-on-load no-stealth-shimmer-pipboy \
+        quiet-teammate-steps no-weapon-hotkeys pipboy-opens-items hide-crosshair-reloading kill-xp-per-level \
+        key-xp-share password-xp-share invert-x nearest-unfound discovered-in-corner power-armor-radiation \
+        power-armor-limbs fall-height-endurance invert-title-wheel armor-condition armor-visible-below armor-red-below \
+        armor-flash-below armor-in-weapon-place scale-explosion-shake explosion-shake toggle-device hud-fatigue \
+        key-repeat-accel key-repeat-delay key-repeat-mult key-repeat-delay-alt key-repeat-mult-alt precise-rad-meter \
+        rad-decimals compass-doors compass-doors-exterior compass-doors-interior compass-doors-fade detected-by-whom \
+        detected-names quest-text-in-menus continue-shows-save auto-continue hide-ammo-label barter-by-kind \
+        barter-water-unscaled barter-sell-armor barter-sell-weapon barter-sell-aid barter-sell-ammo barter-sell-misc \
+        barter-sell-weapon-mod barter-buy-armor barter-buy-weapon barter-buy-aid barter-buy-ammo barter-buy-misc \
+        barter-buy-weapon-mod free-item-price skip-easy-locks skip-lock-margin pick-up-disarmed npc-weapons-whole \
+        lethal-knockdowns duplicate-binds crippling-never-disarms no-spin-up god-mode-free-crafting pov-follows-weapon \
+        kill-cam-chance subtitle-distance sneak-criticals-head compare-weapons warn-encumbrance mark-nearby-places \
+        scale-ash-piles pipboy-buzz per-bullet-reload reload-rounds-per-press reload-press-queue reload-while-firing \
+        semi-auto-queue repair-scales-crafting no-healing-in-combat power-attack-if-blocking breath-regain \
+        vats-hip-fire pickpocket-caught-detects agility-jump lockpick-force-near contact-mines-player \
+        contact-mines-npcs sleep-heal-min-hours barter-repair-discount armor-condition-penalty vats-ignores-companions \
+        no-pipboy-in-combat frenzy-kill-xp free-wild-wasteland stats-xp-percent repair-same-first repair-low-first \
+        repair-kits-in-list repair-preview crippled-fall-pain quantity-companion-cap armor-blocks-blood embolden-tags \
+        pickpocket-overhaul pp-base pp-agility pp-luck pp-sneak pp-perception pp-detection pp-value pp-weight pp-worn \
+        pp-free-items pp-reward-xp hold-activate hold-containers hold-furniture hold-water quick-use \
+        vats-throw-visibility quiet-followers crit-message-limb no-dehydration-messages no-sleep-messages need-icons \
+        repair-at-workbench character-radiation character-radiation-stages reallocate-skill-points \
+        local-map-reset-cells hold-release-throws npcs-disarm-player npcs-drop-live-grenades water-shows-h2o no-respec \
+        weapon-impacts robots-heal-with-scrap robot-heal-base robot-heal-per-repair robot-heal-expert \
+        no-weapon-move-penalty unequip-broken-armor hide-crosshair-first hide-crosshair-third no-skill-books-at-max \
+        red-hp-below red-ap-below weapon-cnd-red-below weapon-cnd-flash-below blackjack-total player-pain-gap \
+        pause-on-load swap-ammo-holstered slots-hold-to-spin no-auto-continue-dialogue shift-talks-sneaking \
+        no-quest-set-on-objective no-quest-set-on-complete hide-read-notes console-key tab-closes-terminals \
+        tab-back-in-pause unsafe-fast-travel vats-auto-head vats-drops-disarmed-shots vats-target-projectiles \
+        vats-target-mines vats-target-own-projectiles vats-ignore-non-explosive vats-burst-stops-on-kill \
+        repair-needs-weapon-skill date-style hide-unknown-names vats-keeps-holstered no-hotkey-wheel ammo-label-under \
+        companion-pip female-facial-hair terminal-password-prompt lockpick-move-keys store-all map-recentre-key \
+        map-marker-distance quantity-shows-price quantity-shows-weight hide-empty-reputation quick-load-in-menus \
+        preview-perks pick-locks-with-key right-click-previous-category mark-notes-unread full-barter-total \
+        compass-fade-left custom-dead-zones left-dead-zone right-dead-zone custom-trigger-dead-zones lt-dead-zone \
+        rt-dead-zone responsive-stick faster-pad-orbit vanity-returns-first horizontal-look vats-shift-ignores-friends \
+        remember-console-history console-output-file console-text-shadow click-to-exit-loading \
+        select-unavailable-radios radiation-radio-static barter-caps-change no-self-meltdown max-level \
+        standing-sneak-attacks no-companion-item-damage modding-needs-skill planting-needs-skill travel-costs-bottle \
+        jump-swims-up armor-sinks remember-pin-health force-spares-lock no-condition-damage-penalty \
+        no-condition-damage-buffer crit-ignores-fire-rate crit-damage-scale npc-dr-ignores-condition \
+        npc-dt-ignores-condition explosion-radius-buff npcs-sneak-crit-player fatal-crits-gib fall-deaths-dismember \
+        splash-torso-gib npcs-drop-holstered npcs-earn-casings first-person-vats no-ammo-casings crosshair-when-aiming \
+        move-during-vats-camera stack-figures seated-wide no-turn-clip no-land-clip hide-unmapped-places \
+        vigor-review-first scope-delay no-pointer-message-box no-pointer-dialogue levelup-wheel compare-armor \
+        detailed-stats minigames-timescale no-name-limit seat-keeps-on-activate plain-going-out \
+        mark-recurring-challenges hide-hotkeyed-containers hide-hotkeyed-barter hide-hotkeyed-repair \
+        map-zoom-at-pointer console-homes screenshot-key shift-screenshot-hides print-plugin-names \
+        weapon-requirements-matter console-model-details back-pace strafe-pace hack-no-single-chars \
+        hack-no-repeat-words hack-dud-when-full hack-spare-guessed run-overencumbered over-run-ap over-jump-ap \
+        npc-melee-part-damage disarm-needs-skill disarm-mult disarm-explode-mult cap-skills-by-special skill-cap-base \
+        skill-cap-per-special skill-cap-per-luck skill-cap-most cap-skills-spare-tagged hold-breath breath-sway \
+        breath-ap scope-wheel-zoom wheel-cycles-hotkeys dpad-cycles-hotkeys keys-with-pad double-tap-ammo \
+        improved-weather vats-stop-following-dead night-vision-toggle night-vision-off-first night-vision-by-day \
+        kill-cam-outside-vats kill-cam-hit-location weather-trip-distance compass-pips-fade compass-places-fade \
+        buffed-health-bars recent-dead-secs armor-sounds-3d mine-blasts-heard blasts-spare-items grabbed-weighs \
+        usable-ammo-first better-flycam recent-markers-red compass-quest-height compass-marker-height hud-marker-name \
+        hud-region-names move-during-pipboy-raise region-borders-message-only marker-name-angle \
+        marker-name-hide-unfound marker-name-units hide-hud-compass hide-hud-ammo hide-hud-needs hide-hud-sneak \
+        hide-hud-on-load grey-read-notes remember-item-places player-weapon-volume npc-weapon-volume \
+        keep-fall-height-on-load no-marker-popup marker-shift-removes marker-removed-on-it clear-marker-within \
+        place-marker-here-says repeat-activate-takes-only hi-res-npc-weapons empty-reload-swaps-ammo \
+        objectives-on-arrival objectives-gap sleep-in-owned-beds power-armor-no-training";
+
+    /// [`TWEAK_ROWS`] as keys, under the Tweaks tab's group.
+    fn tweak_rows() -> Vec<(&'static str, &'static str)> {
+        TWEAK_ROWS.split_whitespace().map(|k| (&*Box::leak(format!("{TWEAK_PREFIX}{k}").into_boxed_str()), TWEAKS_TAB)).collect()
+    }
+
+    /// Whether `key` is one of [`TWEAK_ROWS`].
+    fn is_tweak(key: &str) -> bool {
+        key.strip_prefix(TWEAK_PREFIX).is_some_and(|k| TWEAK_ROWS.split_whitespace().any(|r| r == k))
+    }
+
+    /// Stewie's Tweaks' groups as the Tweaks tab lists them [design: owner 2026-11-15].
+    const TWEAK_GROUPS: [&str; 8] = ["Gameplay", "Combat", "Quality of Life", "HUD", "Menus", "Hotkeys", "Cheats", "Misc"];
 
     #[test]
     fn the_table_names_each_key_once_in_one_of_the_tabs() {
@@ -595,13 +1435,19 @@ mod tests {
         let headless = [section("Gameplay", Some("A"), &["a"]), section("Gameplay", None, &["b"])];
         assert!(check(&headless).is_err());
         // Every row there is has its place in the table; the table names no other but the
-        // Controls tab's own rows and the rows placed ahead.
+        // Controls tab's own rows and the rows placed ahead: the movement rows and #1892's
+        // tweaks, each of those on the Tweaks tab.
         let named: Vec<&str> = SECTIONS.iter().flat_map(|s| s.keys.iter().copied()).filter(|k| !k.starts_with(CONTROL_PREFIX)).collect();
         for (k, _) in KNOWN {
             assert!(named.contains(&k), "{k} has no place");
         }
         for k in &named {
-            assert!(KNOWN.iter().any(|(n, _)| n == k) || AHEAD.contains(k), "{k} is placed but no row has it");
+            assert!(KNOWN.iter().any(|(n, _)| n == k) || AHEAD.contains(k) || is_tweak(k), "{k} is placed but no row has it");
+        }
+        for s in SECTIONS {
+            for k in s.keys.iter().filter(|k| k.starts_with(TWEAK_PREFIX)) {
+                assert_eq!(s.placement.tab, TWEAKS_TAB, "{k} is a tweak");
+            }
         }
     }
 
@@ -695,5 +1541,52 @@ mod tests {
         assert_eq!(shown.len(), 650, "no heading: all in one run");
         assert!(shown.iter().zip(&names).all(|(a, b)| a == b), "in the order registered");
         assert_eq!(l.ordered_settings().count(), list.len());
+    }
+
+    #[test]
+    fn every_tweak_of_1892_has_its_group_and_category() {
+        let tweaks = tweak_rows();
+        assert_eq!(tweaks.len(), 560);
+        let mut rows: Vec<(&'static str, &'static str)> = KNOWN.to_vec();
+        rows.extend(&tweaks);
+        let list = registry(&rows);
+        let l = resolve_layout(&list);
+        assert_eq!(l.unnamed(), 0, "every tweak named");
+        assert_eq!(l.tab_names(), TAB_ORDER);
+        let t = l.tab(TWEAKS_TAB).unwrap();
+        for s in &t.sections {
+            assert!(s.placement.subgroup.is_some() && s.placement.heading.is_some(), "{}: a group and a heading", s.placement.path());
+            assert!(s.placement.closed_by_default());
+        }
+        assert_eq!(t.sections.iter().map(|s| s.rows.len()).sum::<usize>(), tweaks.len(), "the tweaks, and only they, on the tab");
+        let at = |k: &str| l.placement_of(list.iter().position(|s| s.key == k).unwrap()).unwrap().path();
+        assert_eq!(at("tweak-no-xp-messages"), "Tweaks > HUD > Messages");
+        assert_eq!(at("tweak-weightless-ammo"), "Tweaks > Cheats > Weight");
+        assert_eq!(at("tweak-weightless-worn-armor"), "Tweaks > Gameplay > Weight");
+        // A row that only matters with another comes right after it.
+        let next = |k: &str| list[l.ordered_settings().skip_while(|&i| list[i].key != k).nth(1).unwrap()].key;
+        assert_eq!(next("tweak-take-all-confirm"), "tweak-take-all-confirm-min");
+        assert_eq!(next("tweak-revive-companions"), "tweak-revive-down-seconds");
+        // The engine's own tabs are as they were.
+        assert_eq!(keys(&list, &l, "Audio"), keys(&registry(&KNOWN), &resolve_layout(&registry(&KNOWN)), "Audio"));
+    }
+
+    #[test]
+    fn the_tweaks_tab_lists_stewies_eight_groups_in_order_one_at_a_time() {
+        let list = registry(&tweak_rows());
+        let l = resolve_layout(&list);
+        let t = l.tab(TWEAKS_TAB).unwrap();
+        assert_eq!(t.subgroups(), TWEAK_GROUPS);
+        // Each group's categories together, in the table's order.
+        let mut runs: Vec<&str> = t.sections.iter().filter_map(|s| s.placement.subgroup).collect();
+        runs.dedup();
+        assert_eq!(runs, TWEAK_GROUPS, "no group split by another");
+        // One group at a time, its categories closed: only their headings.
+        let hotkeys = l.tab_entries(TWEAKS_TAB, Some("Hotkeys"), |_| true, |_| false);
+        let headings: Vec<&str> = hotkeys.iter().filter_map(|e| if let LayoutEntry::Heading(p) = e { p.heading } else { None }).collect();
+        assert_eq!(headings, ["Hide HUD Key", "Other Keys"]);
+        assert_eq!(hotkeys.len(), 2, "closed: no rows, no empty line");
+        // No other tab has a group.
+        assert!(l.tabs.iter().filter(|t| t.name != TWEAKS_TAB).all(|t| t.subgroups().is_empty()));
     }
 }
