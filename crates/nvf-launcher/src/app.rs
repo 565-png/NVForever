@@ -107,6 +107,7 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> App {
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        crate::fonts::install(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
         let home = EngineHome::user();
         let rows = catalog::rows();
@@ -253,7 +254,10 @@ impl App {
             let shot = fnv_save::read_header(&path).ok().map(|s| s.shot).filter(|s| !s.is_empty()).map(Arc::from);
             let name = if hd.player_name.is_empty() { path.file_stem().unwrap_or_default().to_string_lossy().into_owned() } else { hd.player_name.clone() };
             let hours = hd.play_seconds / 3600.0;
-            let detail = format!("Level {} · {} · {:.0} h played", hd.level, if hd.location.is_empty() { "Mojave Wasteland" } else { &hd.location }, hours);
+            let mut parts = vec![format!("Level {}", hd.level)];
+            parts.extend(shown_place(&hd.location).map(str::to_string));
+            parts.push(format!("{hours:.0} h played"));
+            let detail = parts.join(" · ");
             NewestSave { path, name, detail, shot }
         });
     }
@@ -428,7 +432,7 @@ impl App {
                 ui.add(egui::Image::from_bytes("bytes://nvf-logo.png", LOGO).fit_to_exact_size(Vec2::splat(44.0)));
                 ui.vertical(|ui| {
                     ui.add_space(2.0);
-                    ui.label(RichText::new("NVForever").size(22.0).strong().color(GOLD));
+                    ui.label(RichText::new("NVForever").font(crate::fonts::title(22.0)).color(GOLD));
                     ui.label(RichText::new("Launcher").small().color(WEAK));
                 });
                 self.countdown(ui);
@@ -439,7 +443,7 @@ impl App {
                         }
                     }
                     if let Some(l) = &self.latest {
-                        let b = egui::Button::new(RichText::new(format!("Update to v{}", l.version)).strong().color(Color32::from_rgb(0x1A, 0x14, 0x08))).fill(GOLD);
+                        let b = egui::Button::new(RichText::new(format!("Update to v{}", l.version)).strong().color(theme::ON_GOLD)).fill(GOLD);
                         if ui.add(b).on_hover_text(format!("v{} is out (this is v{VERSION})", l.version)).clicked() {
                             self.upd_open = true;
                         }
@@ -555,7 +559,7 @@ const REPO: &str = "https://github.com/LootJunkieAzza/NVForever";
 
 /// A page button of the left bar; the open page's has a gold edge and mark.
 fn nav_button(ui: &mut egui::Ui, name: &str, on: bool) -> egui::Response {
-    let text = RichText::new(name).size(15.0).strong().color(if on { GOLD } else { theme::TEXT });
+    let text = RichText::new(name).font(crate::fonts::title(15.0)).color(if on { GOLD } else { theme::TEXT });
     let b = egui::Button::new(text)
         .min_size(Vec2::new(ui.available_width(), 42.0))
         .fill(if on { Color32::from_rgb(0x2E, 0x29, 0x20) } else { theme::BUTTON })
@@ -574,19 +578,19 @@ fn big_button(ui: &mut egui::Ui, title: &str, sub: &str, primary: bool) -> egui:
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let enabled = ui.is_enabled();
     let fill = match (primary, resp.hovered() && enabled) {
-        (true, true) => Color32::from_rgb(0xF0, 0xC4, 0x58),
+        (true, true) => theme::GOLD_HOVER,
         (true, false) => GOLD,
         (false, true) => Color32::from_rgb(0x3A, 0x35, 0x2E),
         (false, false) => theme::BUTTON,
     };
     let fill = if enabled { fill } else { fill.gamma_multiply(0.5) };
-    let ink = if primary { Color32::from_rgb(0x1A, 0x14, 0x08) } else { theme::TEXT };
+    let ink = if primary { theme::ON_GOLD } else { theme::TEXT };
     let p = ui.painter();
     p.rect(rect, CornerRadius::same(4), fill, Stroke::new(1.0, if primary { GOLD } else { LINE }), egui::StrokeKind::Inside);
     let left = rect.left() + 18.0;
     let c = egui::pos2(left + 10.0, rect.center().y);
     p.add(egui::Shape::convex_polygon(vec![c + Vec2::new(-7.0, -9.0), c + Vec2::new(9.0, 0.0), c + Vec2::new(-7.0, 9.0)], ink, Stroke::NONE));
-    p.text(egui::pos2(left + 34.0, rect.top() + 10.0), egui::Align2::LEFT_TOP, title, egui::FontId::proportional(20.0), ink);
+    p.text(egui::pos2(left + 34.0, rect.top() + 10.0), egui::Align2::LEFT_TOP, title, crate::fonts::title(20.0), ink);
     let sub_font = egui::FontId::proportional(11.5);
     let max = rect.right() - left - 44.0;
     let mut s = sub.to_string();
@@ -683,7 +687,7 @@ impl App {
                         ui.add(egui::Image::from_bytes(format!("bytes://news/{i}/{}", post.title), Bytes::Shared(bytes)).max_width(w).max_height(360.0).corner_radius(4));
                     }
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(&post.title).size(24.0).color(GOLD));
+                        ui.label(RichText::new(&post.title).font(crate::fonts::title(24.0)).color(GOLD));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let by = [post.shown_date(), post.author.clone()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
                             ui.label(RichText::new(by).small().color(WEAK));
@@ -691,7 +695,15 @@ impl App {
                     });
                     let open = self.expanded.contains(&i);
                     let (text, cut) = preview(&post.body, open);
-                    CommonMarkViewer::new().show(ui, &mut self.md, text);
+                    // Room between lines and paragraphs: a bigger body size (the font's own
+                    // line height grows with it) and more space between blocks.
+                    ui.scope(|ui| {
+                        let s = ui.style_mut();
+                        s.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(16.0));
+                        s.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.0));
+                        s.spacing.item_spacing.y = 10.0;
+                        CommonMarkViewer::new().show(ui, &mut self.md, text);
+                    });
                     ui.horizontal(|ui| {
                         if cut && ui.button(if open { "Show less" } else { "Read more" }).clicked() {
                             if open {
@@ -1247,6 +1259,18 @@ fn pick_file(_: &str) -> Option<PathBuf> {
     None
 }
 
+/// A save's place as the Continue button shows it: the cell's name when the save holds one
+/// ("The Tops Presidential Suite"), else nothing. The game writes the cell's FULL name, else
+/// its Editor ID (`StripFSGate`), else its worldspace and grid (`WastelandNV (-15, -13)`)
+/// (`place_name` in engine/nvf-play/src/console.rs); the launcher has no data files to look
+/// the last two up in, and an Editor ID is no name to show a player.
+fn shown_place(location: &str) -> Option<&str> {
+    let l = location.trim();
+    let grid = l.ends_with(')') && l.rfind(" (").is_some_and(|i| l[i + 2..l.len() - 1].split(',').all(|n| n.trim().parse::<i32>().is_ok()));
+    let editor_id = !l.contains(' ');
+    (!l.is_empty() && !grid && !editor_id).then_some(l)
+}
+
 /// `body` cut after the paragraph that passes [`PREVIEW_CHARS`], unless `open`; whether it
 /// was long enough to cut.
 fn preview(body: &str, open: bool) -> (&str, bool) {
@@ -1271,6 +1295,16 @@ mod tests {
         assert_eq!(part_text(1.0 / 3.0), "0.333");
         assert_eq!(part_text(1.2), "1.00");
         assert_eq!(part_text(0.25), "0.25");
+    }
+
+    #[test]
+    fn only_real_place_names_are_shown() {
+        assert_eq!(shown_place("The Tops Presidential Suite"), Some("The Tops Presidential Suite"));
+        assert_eq!(shown_place("Goodsprings"), None);
+        assert_eq!(shown_place("StripFSGate"), None);
+        assert_eq!(shown_place("WastelandNV (-15, -13)"), None);
+        assert_eq!(shown_place(""), None);
+        assert_eq!(shown_place("Prospector Saloon"), Some("Prospector Saloon"));
     }
 
     #[test]

@@ -2,8 +2,14 @@
 
 use eframe::egui::{self, Color32, CornerRadius, FontId, Stroke, TextStyle};
 
-pub const GOLD: Color32 = Color32::from_rgb(0xE0, 0xB0, 0x40);
-pub const GOLD_DIM: Color32 = Color32::from_rgb(0x9A, 0x77, 0x2A);
+/// The site's brand colour (nv-forever.com `--accent`, its Download button).
+pub const GOLD: Color32 = Color32::from_rgb(0xF0, 0xA3, 0x2A);
+/// The site's `--accent-hover`.
+pub const GOLD_HOVER: Color32 = Color32::from_rgb(0xFF, 0xB8, 0x4D);
+/// The site's `--accent-text`: words on a gold button.
+pub const ON_GOLD: Color32 = Color32::from_rgb(0x15, 0x12, 0x0C);
+/// `GOLD` dimmed, for headings, edges and the selected tab.
+pub const GOLD_DIM: Color32 = Color32::from_rgb(0xA8, 0x72, 0x1D);
 pub const BG: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
 pub const PANEL: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x1D);
 pub const CARD: Color32 = Color32::from_rgb(0x20, 0x1F, 0x22);
@@ -18,10 +24,10 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
     let mut style = (*ctx.global_style()).clone();
     style.text_styles = [
-        (TextStyle::Heading, FontId::proportional(26.0)),
+        (TextStyle::Heading, crate::fonts::title(26.0)),
         (TextStyle::Body, FontId::proportional(15.0)),
         (TextStyle::Button, FontId::proportional(15.0)),
-        (TextStyle::Small, FontId::proportional(12.0)),
+        (TextStyle::Small, FontId::proportional(13.0)),
         (TextStyle::Monospace, FontId::monospace(13.0)),
     ]
     .into();

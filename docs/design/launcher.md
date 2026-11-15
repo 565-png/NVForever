@@ -41,6 +41,14 @@ without the launcher is the same as before.
   No `--data` is passed: the game reads its folder from the INI, so a launcher start is a
   player's start in every way (reports included, by the player's own choice).
 
+## Fonts
+
+The system's own interface font, read from its font folder at start and never shipped (Windows:
+Segoe UI, Semibold for titles; Linux: Noto Sans or DejaVu Sans when installed), else egui's
+built-in fonts. Their taller lines, a 16-point news body and wider paragraph spacing answer the
+contributors' note that the news read "very squished together" (2026-11-15). egui has no
+line-height setting for Markdown text, so the room comes from the font and its size.
+
 ## Rules it keeps
 
 - Writes only NVForever's own files (the INI, `plugins.txt`), through
