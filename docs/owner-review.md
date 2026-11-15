@@ -579,9 +579,9 @@ the spec it links to.
     the player's ally or friend (the disguise faction); only sniffers (the rangers, MPs,
     Captain Graham) within the disguise pulse's 25 ft, about 533 units, and in sight see
     through it, and then a fight they start blows the cover for the dam. A flag on the
-    disguise faction itself (a murder seen while disguised) still counts. Also: an NCR
-    soldier that only glimpses the player (noticed, not detected) no longer turns its
-    allies on the player; only a real fight does. If the disguise now seems too
+    disguise faction itself (a murder seen while disguised) still counts. The soldiers
+    it fools take the player for a friend, so a sniffer's alarm (a glimpse or a fight)
+    no longer turns them on the player. If the disguise now seems too
     forgiving (it fools after any crime but one done in disguise), say so. Observer
     check 167 asks the original. ([disguises §3, §4](spec-notes/disguises.md))
 

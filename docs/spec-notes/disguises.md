@@ -100,14 +100,15 @@ reputation.md.
 
 ## 4. Alarms and the disguise [design]
 
-Ours passes an alarm to an actor's allies (combat-groups.md §1, combat_group.rs): when it
-starts fighting, and (NVForever's own addition) when it only notices a hostile, so a camp
-wakes as one. A receiver that would not attack the foe itself took a grudge from either
-alarm and turned on the foe. Since #2611 only a fight passes such a grudge on: an ally
-that merely noticed something (Normal to Alert) alarms only those who would attack the
-foe anyway. Otherwise a sniffer glimpsing the player at the edge of its sight (#2611: the
-K9 ranger, a detection value of -14.9 at 3,519 units) turned every soldier within the
-alarm radius, Watson and the MPs who the disguise fools, on the player.
+Ours passes an alarm to an actor's allies when it starts fighting and (NVForever's own
+addition) when it only notices a hostile, so a camp wakes as one (combat-groups.md §1,
+`combat_group.rs` `raise_alarms`). A hearer that would not attack the foe itself joins
+with a grudge, but never against its own ally or friend (`comrades`). A soldier the
+disguise fools counts the player as a friend (ArmorNCRFactionNV), so no alarm, from a
+glimpse or a fight, turns it on the player; before #2611 the faction enemy flag made the
+player its enemy, and one sniffer's notice (#2611: the K9 ranger at 3,519 units, value
+-14.9) went round the dam. Only the sniffer scripts' SendAssaultAlarm (§2) speaks for the
+whole faction when a sniffer near the player starts fighting.
 
 ## 5. Open
 

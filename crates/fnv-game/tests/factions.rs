@@ -1756,28 +1756,28 @@ fn a_flag_on_the_friendly_faction_itself_still_counts() {
 }
 
 #[test]
-fn an_ally_that_only_noticed_the_player_turns_nobody_on_it() {
-    // #2611: an alarm from an actor that only noticed the player (Normal → Alert) reaches
-    // allies that would attack the player themselves; the helper, which would not, takes
-    // neither the alarm nor a grudge. The same alarm from a fight brings it in
-    // (an_actor_that_starts_fighting_alarms_its_allies_near_it).
+fn an_alarm_about_a_disguised_player_turns_nobody_the_disguise_fools() {
+    // #2611: Own (Rats, flagged) would attack the player and notices it; the helper
+    // (Rats too, Helps Allies) is in the disguise faction (Idlers here, the player's
+    // friend), so it takes the player for a friend: neither the noticed alarm nor the
+    // fight's gives it a grudge (`comrades`). Without the disguise faction the same
+    // fight's alarm brings it in (an_actor_that_starts_fighting_alarms_its_allies_near_it).
     use fnv_game::awareness::Change;
     let f = fixture();
     let mut g = game(&f);
     let (own, helper, player) = (FormId(OWN_REF), FormId(HELPER_REF), FormId::PLAYER_REF);
     only_near(&mut g, &[OWN_REF, HELPER_REF]);
-    assert!(g.attacked_by(own, player));
-    assert!(g.would_attack(own, player) && !g.would_attack(helper, player));
+    call(&mut g, SET_PC_ENEMY_OF_FACTION, PLAYER, &[form(RATS), num(1.0)]);
+    call(&mut g, ADD_TO_FACTION, HELPER_REF, &[form(IDLERS), num(0.0)]);
+    call(&mut g, SET_ALLY, PLAYER, &[form(PLAYER_FACTION), form(IDLERS), num(1.0), num(1.0)]);
+    assert!(g.would_attack(own, player) && !g.would_attack(helper, player), "the helper is fooled");
     let now = g.time;
-    g.awareness.changes.push(Change { actor: own, from: State::Normal, to: State::Alert, time: now, about: Some(player), cause: Some(Cause::Noticed), at: Some([3500.0, 0.0, 0.0]), value: Some(-14.9) });
     let near: std::collections::BTreeMap<FormId, [f32; 3]> = [(own, [0.0; 3]), (helper, [1000.0, 0.0, 0.0]), (player, [3500.0, 0.0, 0.0])].into_iter().collect();
-    assert_eq!(g.raise_alarms(&near), 0);
-    assert!(g.awareness.get(helper).is_none_or(|a| a.alarms.is_empty()));
-    assert!(!g.would_attack(helper, player), "no grudge from a glimpse");
-    // The same change as a fight: the helper joins (Assistance: Helps Allies).
+    g.awareness.changes.push(Change { actor: own, from: State::Normal, to: State::Alert, time: now, about: Some(player), cause: Some(Cause::Noticed), at: Some([3500.0, 0.0, 0.0]), value: Some(-14.9) });
+    assert_eq!(g.raise_alarms(&near), 0, "a glimpse");
     g.awareness.changes.clear();
     fighting(&mut g, OWN_REF, PLAYER);
     g.awareness.changes.push(Change { actor: own, from: State::Normal, to: State::Combat, time: now, about: Some(player), cause: None, at: Some([500.0, 0.0, 0.0]), value: Some(5.0) });
-    assert_eq!(g.raise_alarms(&near), 1);
-    assert!(g.would_attack(helper, player));
+    assert_eq!(g.raise_alarms(&near), 0, "a fight");
+    assert!(!g.would_attack(helper, player), "no grudge");
 }

@@ -27,11 +27,6 @@ town's side.
   measures only drawn actors]. Who among them answers is unchanged (combat-ai.md §12.3:
   its own kind, or an ally or friend whose Assistance helps the sender; never against its
   own ally or friend; a coward stays out).
-- **Noticed is not fought** [design, #2611]: an alarm from an actor that only noticed the
-  hostile (Normal to Alert) reaches only hearers that would attack it themselves; one that
-  would not (an ally helping by its Assistance) takes no alarm and no grudge from it, only
-  from an alarm of a fight. Before, a ranger's glimpse of a disguised player at 3,519
-  units turned every soldier the disguise fooled on the player (disguises.md §4).
 
 ## 2. Joiners fight the first of the foes to start
 

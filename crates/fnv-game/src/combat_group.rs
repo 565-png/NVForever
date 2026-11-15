@@ -27,9 +27,7 @@
 //! On top, NVForever's own design [design]:
 //! - an actor that **notices** a hostile (Normal → Alert) alarms its allies near it too,
 //!   so a camp wakes as one (the owner's list 2: "alerting their friends when they sense
-//!   an enemy presence"); such an alarm reaches only allies that would attack the
-//!   hostile themselves, while a fight's alarm also brings in those that would not
-//!   (by their Assistance, with a grudge) (#2611);
+//!   an enemy presence");
 //! - an actor whose current package skips Fallout behaviour without Observe Combat
 //!   Behavior takes no alarm [observed: HELIOS One's stasis protectrons on
 //!   ProtectronNotActive stay on their pods while one of them fights, #1977];
@@ -597,11 +595,7 @@ impl Game<'_> {
                 // out (`crate::provocation`, item 14 of playtest list 4).
                 let grudges: Vec<FormId> = [foe, about].into_iter().filter(|&x| !self.would_attack(receiver, x)).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
                 if !grudges.is_empty() {
-                    // Only a fight passes a grudge on: an ally that merely noticed someone
-                    // alarms only those who would attack it anyway, so one sniffer's
-                    // glimpse of a disguised player far off does not turn the soldiers the
-                    // disguise fools on the player (#2611, disguises.md §4) [design].
-                    if !combat || grudges.iter().any(|&x| self.comrades(receiver, x)) || self.stays_out(receiver, c.actor) {
+                    if grudges.iter().any(|&x| self.comrades(receiver, x)) || self.stays_out(receiver, c.actor) {
                         continue;
                     }
                     let now = self.time;
