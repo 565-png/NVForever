@@ -15,11 +15,13 @@
 //! stages and objectives, references enabled, disabled, moved or placed, activations,
 //! messages, menus, conversations and their lines, image modifiers, knock-outs. Not among
 //! them: variables and globals (a timer that counts forever would hide the hold), package
-//! choices and conversations between actors (the residents of a town make them all day),
-//! chatter ([`Game::chatter_topic`]: hellos and the lines of Combat and Detection topics,
+//! choices (the residents of a town make them all day), chatter ([`Game::chatter_topic`]: hellos and the lines of Combat and Detection topics,
 //! which say nothing about the scene; a fight beside a held player went on for a minute
 //! with no finding before they were left out), and items changing hands between others
-//! (a fighter's spent rounds). `Game::emit` counts them in [`Seen`].
+//! (a fighter's spent rounds). The lines of a conversation between two actors do count,
+//! like any other line that is not chatter: a scene among actors is a scene going on, so
+//! a town's talk beside a held player starts the wait again [design]. `Game::emit` counts
+//! them in [`Seen`].
 //!
 //! The clock is the caller's: seconds in which the game ran (not the pause menu, not a
 //! loading screen). One finding per hold; it is armed again when anything of the hold
