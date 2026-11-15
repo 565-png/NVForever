@@ -27,7 +27,12 @@ new model can replay structural intent that already produced an instance; old
 translation/rotation/scale holds retain the existing concrete-entity lifetime
 and are not replayed; attachment material values belong to each produced entity.
 A fresh explicit registration permits a parent-lifetime retry. Model preparation
-retains the existing cache and its remembered failures. Repeated registration of
+retains the existing cache and its remembered failures. Missing asset services
+can arrive while a request waits, but an attempted preparation cached as `None`
+is not retried merely because a file later appears. The ordinary sweeper keeps
+failed entries; model loading needs a fresh cache or explicit cache reset, and
+a failed intent requires fresh registration (or an eligible model
+replacement) before another preparation attempt. Repeated registration of
 a live instance does not duplicate geometry. Session replacement retires all
 old owned instances. Exact ownership, not a display label, controls mode 2.
 
@@ -56,7 +61,9 @@ producer preserves registration order for duplicate-name publication. Its bounde
 ancestry checks accept at most 255 parent links and refuse deeper attachments before
 spawning; checked instance IDs never wrap. The mirror publishes real resulting
 entities and attachment-local material/property metadata only after the Commands barrier. Newly created node metadata is not
-invented before the producer runs. The existing AttachLight path is independent.
+invented before the producer runs. The existing AttachLight path is independent. AttachFormModel retains its legacy
+runtime-list and ordinary-edit behavior; it does not enroll this per-reference
+producer. Its physical lifecycle remains unimplemented by this leaf.
 
 ## Bounded coverage
 
@@ -64,7 +71,10 @@ Authored controls use compiled AttachModel/NIF queries, synthetic NIF bytes,
 actual ModelCtx/mesh/material assets and the production producer/mirror. They
 cover missing files/parents, replacement and same-entity Transform removal,
 rename/namesake isolation, duplicate/unnamed shapes, multiple static roots,
-mode 0/1/2/3, cache source consistency and neighboring owners. No game assets,
+mode 0/1/2/3, cache source consistency and neighboring owners. Additional controls
+keep AttachFormModel mode 3 followed by 2/0 outside the physical consumer, with
+a real AttachModel positive, and queue a foreign-child despawn before actual
+attachment cleanup while preserving a surviving foreign sibling. No game assets,
 DLL implementation or native addresses are used. Qualification is tied to the
 exact source and execution receipt; source alone establishes no rendering result.
 

@@ -93,7 +93,7 @@ fn clean(instances: &[Instance], commands: &mut Commands, owned: &Owned) {
     for &e in &ours {
         if let Ok((_, Some(children))) = owned.get(e) {
             for child in children.iter().filter(|c| !ours.contains(c)) {
-                commands.entity(child).remove::<ChildOf>();
+                commands.entity(child).try_remove::<ChildOf>();
             }
         }
     }

@@ -406,7 +406,6 @@ impl Game<'_> {
             None => t.iter().find(|n| n.parent.is_none()).map(|n| n.name.clone()),
         };
         let Some(node) = node else { return false };
-        self.scene.attachment_change(r, ModelView::Reference, &node, model, 3);
         self.scene.queue_for(ModelView::Reference, SceneEdit::Attach { r, target: node, model: model.to_string() });
         true
     }

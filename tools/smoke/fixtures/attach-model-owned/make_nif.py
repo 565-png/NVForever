@@ -17,17 +17,17 @@ def node(name,position,children):
 def shape(name,position,data,material,shader):
  return av(name,position,[material,shader])+I32(data)+I32(-1)+U32(0)+I32(-1)+U8(0)
 def geometry(width):
- # Four authored vertices, two strip triangles, four UVs. Same public-schema
- # layout as the owned R3 producer fixture, never copied game geometry.
+ # Four authored vertices, two strip triangles, four UVs. The layout follows
+ # the public nif_attachments/tests.rs builder, never copied game geometry.
  return (I32(0)+U16(4)+U8(0)+U8(0)+U8(1)+F(0.,0.,0.,width,0.,0.,0.,32.,0.,width,32.,0.)
          +U16(1)+U8(0)+F(0.,0.,0.,100.)+U8(0)+F(0.,0.,0.,1.,1.,0.,1.,1.)
          +U16(0)+I32(-1)+U16(2)+U16(1)+U16(4)+U8(1)+U16(0)+U16(1)+U16(2)+U16(3))
 def material(gloss):
  return U32(0xffffffff)+U32(0)+I32(-1)+F(1.,0.,0.,0.,0.,0.,gloss,1.,1.)
 def lit_shader():
- # Exact field sequence from original Astra R5 and the existing public nif_spawn
- # authored builder. This prevents legitimate helper-shape classification;
- # ModelCtx admission remains UNRUN, and production filtering is unchanged.
+ # Field sequence from the public engine/nvf-assets/src/nif_spawn.rs
+ # authored shader builder. This prevents helper-shape classification;
+ # production filtering is unchanged and GAME qualification is separate.
  return U32(0xffffffff)+U32(0)+I32(-1)+U16(1)+U32(1)+U32(0)+U32(0)+F(1.)+U32(3)+I32(-1)+F(0.)+U32(0)+F(4.,1.)
 
 def build_nif():
