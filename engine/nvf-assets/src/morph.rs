@@ -216,8 +216,8 @@ mod tests {
             frequency: 1.0, phase: 0.0, update_normals: false, relative: true, num_vertices: 1,
             morphs: vec![target("Base", [1.0, 0.0, 0.0]), target("OwnedFrame", [0.0, 4.0, 0.0])],
         };
-        assert!(SequenceMorph::bind(&g, &[seq.clone()], "Other").is_none());
-        let morph = Arc::new(SequenceMorph::bind(&g, &[seq.clone()], "OwnedFog").unwrap());
+        assert!(SequenceMorph::bind(&g, std::slice::from_ref(&seq), "Other").is_none());
+        let morph = Arc::new(SequenceMorph::bind(&g, std::slice::from_ref(&seq), "OwnedFog").unwrap());
         let clip = Clip::from_sequence(&seq);
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>().add_systems(Update, play_sequence_morphs);

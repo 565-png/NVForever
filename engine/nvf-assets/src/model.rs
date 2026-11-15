@@ -1576,7 +1576,6 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     // (`material_sharers`, `texturing_sharers`).
     let sharers = material_sharers(&file, &dec);
     let texturing = texturing_sharers(&file, &dec);
-    let mut idle = idle;
     let mut effect = effect;
     if !sharers.is_empty() || !texturing.is_empty() {
         let names: HashMap<String, String> = objects.iter().filter_map(|o| o.name.clone()).map(|n| (n.to_ascii_lowercase(), n)).collect();
