@@ -41,7 +41,7 @@ masters = [
 untimed = [
   "NVF_PLAY_TEST_SCRIPT_MENUS", "NVF_PLAY_TEST_GIVE", "NVF_PLAY_TEST_EQUIP", "NVF_PLAY_TEST_NEAR",
   "NVF_PLAY_TEST_MENU", "NVF_PLAY_TEST_BARTER", "NVF_PLAY_TEST_BARTER_DELAY", "NVF_PLAY_TEST_NO_SPREAD",
-  "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
+  "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_PROJECTILE_LAUNCH", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
   "NVF_PLAY_AIDS_FROM_SCRIPTS", "NVF_PLAY_TEST_HELD_GRENADE",
   "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
   "NVF_PLAY_TEST_MELEE_KNOCKBACK",
@@ -1945,6 +1945,23 @@ expect = [
 manual = "the 24th 'sleep: hour' line ends one date later at the time of day the menu opened at"
 
 # ------------------------------------------------------------------ detection, alert, combat
+[[scenario]]
+name = "projectile-launch-physical-session-traits"
+source = "docs/spec-notes/projectile-launch-session-traits.md: authored opt-in two-stage physical launch consumer"
+note = "UNRUN authored diagnostic; loaded Weap10mmPistol EditorID must resolve uniquely to a finite typed nonbeam one-projectile weapon/ammo chain. Uses only a fresh b42-launch-probe-home under this smoke output; rejects prior save files, temporary aliases and unsupported original representations. Real compiled script setters and player FireWeapon reach actual Flying insertions before any acceptance. Script FireWeapon preserves ammo count; normal attack debit remains a separate CPU control. Exact prior field entries and captured item counts must be restored. This is not B42 startup, physical input, native or temporary-reference-spawn proof."
+areas = ["combat", "script"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/nvse_jip7.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/projectile_launch*.rs"]
+env = { RUST_LOG = "info", NVFOREVER_HOME = "b42-launch-probe-home", NVF_PLAY_TEST_PROJECTILE_LAUNCH = "Weap10mmPistol", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 90
+expect = [
+  { text = "projectile launch probe: armed loaded=Weap10mmPistol", count = 1, label = "actual loaded identities and staged sentinel captured" },
+  { re = 'projectile launch probe: physical stage=FirstPending .*velocity=.*speed=.*force=', count = 1, label = "edited values observed only after real insertion" },
+  { re = 'projectile launch probe: physical stage=SecondPending .*velocity=.*speed=.*force=', count = 1, label = "exact prior entries restored before the second real insertion" },
+  { text = "projectile launch probe: PASS stages=2 requests=2 physical_insertions=2 exact_fields_restored=true inventory_restored=true", count = 1, label = "strict physical oracle and cleanup both complete" },
+]
+order = [["projectile launch probe: physical stage=FirstPending", "projectile launch probe: physical stage=SecondPending", "projectile launch probe: PASS stages=2"]]
+forbid = [{ text = "projectile launch probe: FAIL", label = "configuration, script admission, identity, physical oracle, timeout and cleanup failures remain visible" }]
 
 [[scenario]]
 name = "detection-table"
@@ -3328,6 +3345,24 @@ order = [[
 expect = [{ re = 'SwapTexture: .* not found', count = 0, label = "no swapped texture missing" }]
 
 # ------------------------------------------------------------------ messages and menus
+
+[[scenario]]
+name = "ui-hidden-global-image-metrics"
+source = "[design] docs/spec-notes/global-image-metrics.md: a hidden own image under globals() supplies live fileheight before expression settling; authored injected XML, no installed mod text copied"
+note = "Opt in with NVF_GLOBAL_IMAGE_METRICS_TEXTURE naming a real readable own-image path relative to textures, using forward slashes. No texture is included. The console injects an invisible authored global image, records its positive height, halves numeric zoom, and then clears its filename. This checks actual scheduled metadata through the public UI functions; it does not claim rendered pixels, native parity or a full Pip-Boy fix. This new scenario has not run."
+areas = ["ui", "images"]
+paths = ["engine/nvf-play/src/tiles/global_image_metrics.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/interface.rs", "crates/fnv-ui/src/tree.rs", "docs/spec-notes/global-image-metrics.md"]
+requires = ["NVF_GLOBAL_IMAGE_METRICS_TEXTURE"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = '10:PrintC "nvf global metrics injected %g", (InjectUIComponent "globals()" "<image name=%qNVFSmokeGlobalMetrics%q><visible>0</visible><filename>{env:NVF_GLOBAL_IMAGE_METRICS_TEXTURE}</filename><zoom>100</zoom><_initialheight>0</_initialheight></image>");10.4:close;12:PrintC "nvf global metrics height %.3f", (GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight");12.1:SetUIFloat "globals()/NVFSmokeGlobalMetrics/_initialheight" (GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight");12.4:close;14:SetUIFloat "globals()/NVFSmokeGlobalMetrics/zoom" 50;14.4:close;16:PrintC "nvf global metrics half %.3f", ((GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight") / (GetUIFloat "globals()/NVFSmokeGlobalMetrics/_initialheight"));16.4:close;18:SetUIString "globals()/NVFSmokeGlobalMetrics/filename" "";18.4:close;20:PrintC "nvf global metrics cleared %g %g", (GetUIFloat "globals()/NVFSmokeGlobalMetrics/filewidth"), (GetUIFloat "globals()/NVFSmokeGlobalMetrics/fileheight");20.4:close' }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
+expect = [
+  { text = 'script: print "nvf global metrics injected 1"', count = 1, label = "the hidden authored global image is actually inserted" },
+  { re = 'script: print "nvf global metrics height ([0-9.]+)"', range = [0.001, 100000000], count = 1, label = "the real own file supplies a positive height despite visibility zero" },
+  { text = 'script: print "nvf global metrics half 0.500"', count = 1, label = "a live zoom change halves its image metric" },
+  { text = 'script: print "nvf global metrics cleared 0 0"', count = 1, label = "clearing its filename cannot retain stale dimensions" },
+]
+order = [["nvf global metrics injected", "nvf global metrics height", "nvf global metrics half", "nvf global metrics cleared"]]
 
 [[scenario]]
 name = "corner-messages"
@@ -7515,6 +7550,24 @@ order = [[
   { re = 'message box shown: .* \["Leave it alone\."\]$' },
   { re = 'script: message GSBrokenSMGMsg .* \(hidden by their conditions: \[1\]\)' },
 ]]
+
+[[scenario]]
+name = "archimedes-strike"
+source = "issue #2544: That Lucky Old Sun with ARCHIMEDES armed: the Reflector Control Panel's script (SCPT 0x000E07CE) has ARCHIMEDESMarkerREF2 (0x000E07DD, an Immobile ARCHIMEDESTurret) UseWeapon ARCHIMEDESI on TestTrooperREF1-5 one at a time and waits for each to die. A rooted actor's weapon use never got in place, so the turret drew and holstered for good. It now uses it from where it stands and turns to the target (crates/fnv-ai/src/carry.rs step_actor_inner, rooted_turn)"
+note = "the player on the observation deck beside the panel 0x000E07DF in god mode at noon (the panel wants 9-15 h and objective 70 shown). The strike starts about 36 s after the activation (fOffset 11.5 + 25 intervals), one target every 1-4 s, then the finale (a beam, KillActor on all, about 27 s)"
+areas = ["ai", "combat", "scripts", "quests"]
+paths = ["crates/fnv-ai/src/carry.rs", "engine/nvforever/src/use_weapon.rs", "crates/fnv-game/src/use_weapon.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "15:startquest VMS03;setobjectivedisplayed VMS03 70 1;set VMS03.bArchimedesArmed to 1;set VMS03.nPowerConfiguration to 4;16:close;125:TestTrooperREF1.getdead;TestTrooperREF5.getdead;126:close", NVF_PLAY_TEST_SCRIPT = "18:activate:0x000E07DF" }
+args = ["--play", "--world", "WastelandNV", "--pos=21050,-600,7900", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 128
+expect = [
+  { re = 'use weapon: \S* ?ARCHIMEDESMarkerREF2.* uses ARCHIMEDESI', min = 1, label = "the turret fires ARCHIMEDES" },
+  { re = 'combat: NCR Trooper 0x000E35D[1-5] killed by 0x000E07DD', count = 5, label = "the turret kills TestTrooperREF1-5 one by one" },
+  { re = 'reference 0x00122A69 drawn \(enabled at run time\)', label = "the finale's beam is drawn" },
+  { re = 'reputation: NCR .* -> ', min = 1, label = "the strike costs the player NCR reputation" },
+  { re = 'console: GetDead on \S+ >> 1\.00', count = 2, label = "the first and the last target are dead without a console kill" },
+  { re = 'use weapon: ARCHIMEDESMarkerREF2 0x000E07DD has fired its 1 shots at TestTrooperREF[1-5]', min = 5, label = "it fires one shot at each target" },
+]
 
 [[scenario]]
 name = "helios-dogs-troopers"
@@ -28798,6 +28851,163 @@ expect = [
   { re = 'far script summary: (?P<n>\d+) GameMode runs of residents out of the loaded cells', range = [1, 100000], label = "scripts of residents out of the loaded cells ran" },
 ]
 
+
+[[scenario]]
+name = "pipboy-ammo-effects"
+source = "[design, #2502] docs/spec-notes/pipboy.md, Ammo effect card lines: the hand-built ITEMS > Ammo card shows each RCIL effect below WG/VAL and clears them when a round without effects is selected. [documented: #2502 round-w2 writer brief, fnvtool esm decode, FalloutNV.esm, main session 2026-11-14] Ammo357MagnumHollowPoint has Damage Bonus Multiply 1.75 and Dam. Thresh. Increase Multiply 3.0; Ammo357Magnum has no RCIL."
+note = "[design / file refs] As perk-jury-rigging, RemoveAllItems at 11 s clears the starting kit before AddItem. menu/model.rs::sort_rows puts .357 Magnum Round before .357 Magnum, Hollow Point; Down selects the latter, Up returns. pipboy/items.rs::draw logs Info with an escaped newline. [hypothesis] Timing follows neighbouring Pip-Boy scenarios, pending runtime smoke."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "crates/fnv-combat/src/data.rs", "docs/spec-notes/pipboy.md"]
+env = { NVFOREVER_HOME = "", NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "11:call:player:RemoveAllItems,11.3:call:player:AddItem:Ammo357MagnumHollowPoint:24,11.6:call:player:AddItem:Ammo357Magnum:24", NVF_PLAY_TEST_PIPBOY = "15:open,16:page=items,17:tab=4,18:key=down,20:key=up,22:close", NVF_PLAY_TEST_SHOTS = "19:pipboy_ammo_effects.png,21:pipboy_ammo_no_effects.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 25
+expect = [
+  "pipboy: ITEMS Ammo",
+  { re = 'pipboy items: \.357 Magnum, Hollow Point selected: .*effects: Some\("Damage Bonus x1\.75\\nDam\. Thresh\. Increase x3\.00"\), ammo_effects: true', label = "hollow point: both FULL labels, exact multipliers and RCIL order" },
+  { re = 'pipboy items: \.357 Magnum Round selected: .*effects: None, ammo_effects: true', label = "ordinary round: no effect lines" },
+  { re = 'tiles: InventoryMenu page from tiles:', count = 0, label = "the hand-built card path is exercised" },
+  { re = 'pipboy items: \.357 Magnum Round selected: .*effects: Some', count = 0, label = "ordinary round never retains the hollow-point effects" },
+]
+order = [[
+  "pipboy: ITEMS Ammo",
+  { re = 'pipboy items: \.357 Magnum Round selected: .*effects: None, ammo_effects: true' },
+  "test aid: pipboy Key(Down)",
+  { re = 'pipboy items: \.357 Magnum, Hollow Point selected: .*effects: Some\("Damage Bonus x1\.75\\nDam\. Thresh\. Increase x3\.00"\)' },
+  "test aid: pipboy Key(Up)",
+  { re = 'pipboy items: \.357 Magnum Round selected: .*effects: None, ammo_effects: true' },
+]]
+
+[[scenario]]
+name = "tiles-items-ammo-effects"
+source = "[design, #2502] docs/spec-notes/pipboy.md, Ammo effect card lines: the default tile ITEMS > Ammo card shows both hollow-point effects and clears them on the ordinary round. [documented: #2502 round-w2 writer brief, fnvtool esm decode, FalloutNV.esm, main session 2026-11-14] Ammo357MagnumHollowPoint RCIL 0x00157B54 and 0x00157B56 supply Damage Bonus Multiply 1.75 and Dam. Thresh. Increase Multiply 3.0; Ammo357Magnum has no RCIL."
+note = "[design / file refs] Same setup and keyboard steps as pipboy-ammo-effects. As tiles-pipboy-default, empty NVFOREVER_HOME and no tile override select the default menus. inventory_menu.rs::describe logs the selected row and item_card.rs::describe logs visible values, preserving a literal newline between effects. Require only two WG/VAL figures after Up. [hypothesis] Timing pending runtime smoke; logs do not prove pixels, screenshots are supplied for review."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/tiles/item_card.rs", "engine/nvf-play/src/tiles/item_menu.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "crates/fnv-combat/src/data.rs", "docs/spec-notes/pipboy.md"]
+env = { NVFOREVER_HOME = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "11:call:player:RemoveAllItems,11.3:call:player:AddItem:Ammo357MagnumHollowPoint:24,11.6:call:player:AddItem:Ammo357Magnum:24", NVF_PLAY_TEST_PIPBOY = "15:open,16:page=items,17:tab=4,18:key=down,20:key=up,22:close", NVF_PLAY_TEST_SHOTS = "19:tiles_items_ammo_effects.png,21:tiles_items_ammo_no_effects.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 25
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=StatsMenu,InventoryMenu,RepairMenu,ItemModMenu,MapMenu,QuantityMenu \(from default\):', label = "the default tile path is exercised" },
+  "pipboy: ITEMS Ammo",
+  { re = 'tiles: InventoryMenu page from tiles: 2 rows, "\.357 Magnum, Hollow Point \(24\)" selected, tab 4, .*figures: [^\r\n]*, Damage Bonus x1\.75$', label = "hollow point: first effect with its exact FULL label and multiplier, no heading" },
+  { re = '^Dam\. Thresh\. Increase x3\.00, device$', label = "hollow point: second effect with its exact FULL label and multiplier" },
+  { re = 'tiles: InventoryMenu page from tiles: 2 rows, "\.357 Magnum Round \(24\)" selected, tab 4, .*figures: [^,\r\n]+, [^,\r\n]+, device$', label = "ordinary round: only WG and VAL, no effect block" },
+  { text = "pipboy items: ", count = 0, label = "the tile card draws without the hand-built body" },
+  { text = "InventoryMenu drawn by hand", count = 0, label = "the tile card does not fall back" },
+  { re = 'tiles: InventoryMenu page from tiles: .*"\.357 Magnum Round \(24\)" selected, tab 4, .*figures: .*(Damage Bonus|Dam\. Thresh\. Increase)', count = 0, label = "ordinary round never retains the hollow-point effects" },
+]
+order = [[
+  "pipboy: ITEMS Ammo",
+  { re = 'tiles: InventoryMenu page from tiles: 2 rows, "\.357 Magnum Round \(24\)" selected, tab 4, .*figures: [^,\r\n]+, [^,\r\n]+, device$' },
+  "test aid: pipboy Key(Down)",
+  { re = 'tiles: InventoryMenu page from tiles: 2 rows, "\.357 Magnum, Hollow Point \(24\)" selected, tab 4, .*figures: [^\r\n]*, Damage Bonus x1\.75$' },
+  { re = '^Dam\. Thresh\. Increase x3\.00, device$' },
+  "test aid: pipboy Key(Up)",
+  { re = 'tiles: InventoryMenu page from tiles: 2 rows, "\.357 Magnum Round \(24\)" selected, tab 4, .*figures: [^,\r\n]+, [^,\r\n]+, device$' },
+]]
+
+[[scenario]]
+name = "nav-walks-actor-slope"
+kind = "tool"
+source = "[design, #2511] docs/design/navmesh.md section 5: all seven headless routes must arrive with the actor slope limit of 56 degrees (physics.md section 6.9.2)"
+areas = ["nav", "physics"]
+paths = ["crates/fnv-nav/", "crates/fnvtool/src/nav_*.rs", "crates/fnv-phys/", "crates/fnv-collide/", "engine/nvf-play/src/phys.rs"]
+commands = [
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "EasyPeteRef", "--to", "TrudyRef", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "GSChetRef", "--to", "SunnyRef", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "DocMitchellREF", "--to", "GSChetRef", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "SunnyRef", "--to", "DocMitchellREF", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "DocMitchellREF", "--to", "0x0013BB0D", "--keys", "0x00119875", "--speed", "344", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from", "TrudyRef", "--to=-193,600,3456", "--space", "GSProspectorSaloonInterior", "--max-slope", "56"],
+  ["nav", "walk", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--from=1000,3400,-120", "--space", "RocketLabMid", "--to", "0x000CD684", "--max-slope", "56"],
+]
+expect = [{ json = "summary.outcome", schema = "fnv.nav.walk/1", equals = "arrived", count = 7, label = "all seven walks arrived with the actor slope limit" }]
+
+[[scenario]]
+name = "mq-fort-gear-returned"
+kind = "tool"
+source = "[documented: #2534 owner brief, fnvtool decode/decompile and headless run, main session 2026-11-14] Entrance confiscation followed by Caesar's bunker task and the weather-station guard's GREETING 0015BCA2 / Topic000 INFO 0015BCA1. [design] Regression chain in crates/fnv-game/walkthrough/fort-gear-returned.actions.json."
+areas = ["quests", "scripts", "dialogue", "inventory"]
+paths = ["crates/fnv-game/walkthrough/fort-gear-returned.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/items.rs", "crates/fnv-game/src/functions/quest.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/fort-gear-returned.actions.json"]]
+expect = [
+  { json = "observations.?label=pistol before confiscation.count", equals = 1, label = "one test pistol carried initially" },
+  { json = "observations.?label=pistol on player after confiscation.count", equals = 0, label = "pistol taken from the player" },
+  { json = "observations.?label=pistol in storage after confiscation.count", equals = 1, label = "pistol held in remote storage" },
+  { json = "observations.?label=weather guard greets.info", equals = "0x0015BCA2", label = "the return greeting is selected" },
+  { json = "observations.?label=weather guard returns equipment.info", equals = "0x0015BCA1", label = "the return choice runs its result scripts" },
+  { json = "observations.?label=pistol on player after return.count", equals = 1, label = "pistol returned to the player" },
+  { json = "observations.?label=pistol in storage after return.count", equals = 0, label = "pistol removed from storage" },
+  { json = "observations.?label=quest after return.running", equals = false, label = "equipment quest stopped after return" },
+  { json = "observations.?label=quest after return.var.bFortEquipmentStored", equals = 0, label = "stored flag cleared" },
+  { json = "observations.?label=quest after return.var.bGimme", equals = 0, label = "return flag cleared" },
+  { json = "steps.*.error", count = 0, label = "no action fails" },
+  { json = "given_errors.*", count = 0, label = "no setup fails" },
+]
+manual = "[design, #2534] Inspect the labeled counts and result scripts on failure; fort-gear-returned isolates the engine quest/inventory bridge without the dialogue chain."
+
+[[scenario]]
+name = "fort-gear-returned"
+source = "[documented: #2534 owner brief, fnvtool decode/decompile, main session 2026-11-14] FortEquipmentConfiscationQuest (00164762, script 00164763, delay 0.1) returns NVCCPlayerStorageREF's items when bFortEquipmentStored and bGimme are 1, clears both flags and stops. Storage REFR 00139B6B is persistent in Cottonwood Cove."
+note = "[design, #2534] Stay in Goodsprings with Cottonwood Cove unloaded. Stop the equipment quest, clear only the test pistol from both inventories, give one pistol and confiscate weapons into remote storage. Read 0/1, seed the return flags and start the quest, then close the console so GameMode can run. Read 1/0 and the stopped quest/reset flags after the return. This isolates the quest and shared inventory; mq-fort-gear-returned covers the dialogue result scripts."
+areas = ["quests", "scripts", "inventory", "console"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/console.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/pipboy/items.rs", "crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/items.rs", "crates/fnv-game/src/functions/quest.rs", "crates/fnv-sim/src/world.rs", "crates/fnv-sim/src/refs.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "8:StopQuest FortEquipmentConfiscationQuest;player.RemoveItem Weap10mmPistol 9999;NVCCPlayerStorageREF.RemoveItem Weap10mmPistol 9999;player.AddItem Weap10mmPistol 1;player.RemoveAllTypedItems NVCCPlayerStorageREF 1 0 40;player.GetItemCount Weap10mmPistol;NVCCPlayerStorageREF.GetItemCount Weap10mmPistol;9:set FortEquipmentConfiscationQuest.bFortEquipmentStored to 1;set FortEquipmentConfiscationQuest.bGimme to 1;StartQuest FortEquipmentConfiscationQuest;GetQuestRunning FortEquipmentConfiscationQuest;9.5:close;14:player.GetItemCount Weap10mmPistol;NVCCPlayerStorageREF.GetItemCount Weap10mmPistol;GetQuestRunning FortEquipmentConfiscationQuest;sqv FortEquipmentConfiscationQuest;14.5:close" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 22
+order = [[
+  { re = 'console: GetItemCount on player >> 0\.00', label = "pistol confiscated from player" },
+  { re = 'console: GetItemCount on NVCCPlayerStorageREF >> 1\.00', label = "remote storage holds the pistol" },
+  { re = 'console: GetQuestRunning >> 1\.00', label = "return quest started while console holds GameMode" },
+  { re = 'console: GetItemCount on player >> 1\.00', label = "quest returned the pistol to the played inventory" },
+  { re = 'console: GetItemCount on NVCCPlayerStorageREF >> 0\.00', label = "remote storage emptied" },
+  { re = 'console: GetQuestRunning >> 0\.00', label = "return quest stopped" },
+]]
+expect = [
+  { re = 'console: +bFortEquipmentStored = 0(?:\.0+)?$', label = "stored flag reset" },
+  { re = 'console: +bGimme = 0(?:\.0+)?$', label = "return flag reset" },
+]
+manual = "[design, #2534] If this passes but the reported conversation fails, run the full guard conversation in-game and inspect INFO begin/end execution and open menus; no engine cause was established by source inspection."
+
+[[scenario]]
+name = "pipboy-repair-enter"
+source = "[design, #2553] Real Enter through the repair and ITEMS key systems, using pipboy-repair's existing two-pistol setup; the last part closes the repair list without toggling the repaired row's worn state."
+areas = ["repair", "pipboy"]
+paths = ["engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/pipboy/repair.rs", "engine/nvf-play/src/pipboy/item_mod.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pad.rs", "engine/nvf-play/src/tiles/repair_menu.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVFOREVER_HOME = "pipboy-repair-enter-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:call:player:AddItemHealthPercent:Weap10mmPistol:1:0.4,9.5:call:player:AddItemHealthPercent:Weap10mmPistol:1:0.3", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=items,13.5:tab=0,15:repair=open,16:repair=down,20:close", NVF_PLAY_TEST_KEYS = "18:enter" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 23
+expect = [
+  { re = 'pipboy repair: open 10mm Pistol at [34]0% \(Repair \d+\): 10mm Pistol [34]0%', label = "the repair list opens with the other pistol as its part" },
+  { text = "test aid: real input Key(Enter) pressed", label = "Enter enters the real key handlers" },
+  { re = 'pipboy repair: 10mm Pistol [34]0% with 10mm Pistol [34]0% -> \d+% \(Repair \d+\)', count = 1, label = "Enter repairs once" },
+  { text = "pipboy repair: closed:", label = "using the last part closes the repair list" },
+]
+forbid = [
+  { re = 'menu: .*: (Equipped|Unequipped) 10mm Pistol', label = "the repair key must not toggle equipment" },
+]
+order = [["pipboy repair: open", "test aid: real input Key(Enter) pressed", "pipboy repair: 10mm Pistol", "pipboy repair: closed:"]]
+
+[[scenario]]
+name = "npc-launcher-round"
+source = "[design, #2512] NPC attack/reload visibility on weapon-model targets (docs/spec-notes/animation.md section 9.7): the round stays hidden after the shot until reload shows it"
+note = "[design] Reuses melee-reach-lead-pipe's Violet combat setup on open ground, moved 2200 units from the god-mode player, with the launcher/ammo IDs from missile-explosion (00004340 / 00029383) [documented: those scenario setups]. No existing human NPC launcher setup was found; body-weapons-sentry-blast uses an embedded gun without this held model. Equipment reconciliation draws the launcher. Not yet run."
+areas = ["animation", "combat"]
+paths = ["engine/nvforever/src/weapons.rs", "engine/nvforever/src/actors.rs", "engine/nvforever/src/attack_anims.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "3:moveto:FiendVioletRef:player:0:2200:0,4:call:FiendVioletRef:RemoveAllItems,4.5:call:FiendVioletRef:AddItem:0x00004340:1,4.5:call:FiendVioletRef:AddItem:0x00029383:12,5:call:FiendVioletRef:EquipItem:0x00004340,7:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "FiendVioletRef"]
+run_seconds = 45
+expect = [
+  { re = 'outfit: actor 000F570B: weapon 0x00004340.*now held', label = "the launcher model is equipped on Violet" },
+  { re = 'attack anims: 000F570B plays .*2hlattack(right|left)\.kf', label = "Violet plays a launcher attack with a round visibility track" },
+  { re = 'attack anims: 000F570B plays .*2hlreload[ae]\.kf', label = "Violet plays a launcher reload with a round visibility track" },
+]
+order = [[
+  { re = 'npc weapon part: Actor 000F570B .* ##NifRound hidden', label = "the fired round is hidden" },
+  { re = 'npc weapon part: Actor 000F570B .* ##NifRound shown', label = "the reload shows the round again" },
+  { re = 'npc weapon part: Actor 000F570B .* ##NifRound hidden', label = "the next shot hides the round again" },
+]]
+
 [[scenario]]
 name = "grass-fire"
 source = "owner request 2026-11-14 (#2567, docs/design/grass-fire.md): fire from a burning weapon spreads across grass, sets the actors in it alight and goes out within a hard limit; the grass blackens and sinks away and grows back when its cell reloads"
@@ -28942,4 +29152,46 @@ expect = [
   { re = 'console: GetDead on EasyPeteRef >> 0\.00', label = "outside Hardcore the teammate is not dead" },
   { re = 'console: IsEssential on EasyPeteRef >> 0\.00', label = "IsEssential still reads his flag" },
   { re = 'console: GetDead on EasyPeteRef >> 1\.00', label = "in Hardcore KillActor kills him" },
+]
+
+[[scenario]]
+name = "enable-disabled-actor-talks"
+source = "#2616: an actor disabled when its cell loads and enabled by a script while a menu holds the game (the hatch terminal's result script) is drawn at once, body, head and face rig, and fades in; the conversation the same script starts shows it speaking, its mouth moving with the line (docs/spec-notes/enable-disabled-actor.md)"
+note = "Hoover Dam intake tower (HooverDamIntIntakeTower01 0x00133FB1): VHDIntakeTowerCenturionREF 0x0013CA6B (NPC_ VHDIntakeTowerCenturion, on the leveled template EncVHDCLCenturion) is placed persistent and initially disabled [observed: fnvtool world refs]. The player is put next to the hatch terminal VHDIntakeTowerHatchUnlockTerminalREF 0x0013CA6D at 5 s, opens it at 8 s and takes Unlock Maintenance Hatch at 10 s: its result script enables the Centurion and his Dialogue package starts the conversation in the same frame, about 70 units away. On main before the fix he was never drawn: the residents read who is enabled only after the AI's update, which a held game (terminal, conversation) skips"
+areas = ["scripts", "actors", "dialogue"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/lips.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOTO = "5:1925:2410:8260", NVF_PLAY_TEST_TERMINAL = "8:open:0013CA6D,10:item:0,12:exit" }
+args = ["--cell", "HooverDamIntIntakeTower01", "--play"]
+run_seconds = 16
+expect = [
+  { re = 'terminal: its result script: .*RefEnabled \{ reference: 0x0013CA6B, fade: true \}.*DialogueSta', label = "the terminal enables the Centurion and starts his conversation" },
+  { re = 'fade: 0x0013CA6B in over 2 s', count = 1, label = "the Centurion fades in" },
+  { text = "dialogue look: VHDIntakeTowerCenturionREF faces the player", label = "the Centurion is drawn and faces the player in the conversation" },
+  { text = "dialogue zoom: in on VHDIntakeTowerCenturionREF (its head as drawn)", label = "the view zooms in on his drawn head" },
+  { re = 'lip: animating \S*vhdlegionbattle_greeting_0013ca2a_1\.lip .*speaker VHDIntakeTowerCenturionREF', label = "his mouth moves with his first line" },
+  { re = 'lip: skipped \S*0013ca2a_1\.lip: speaker VHDIntakeTowerCenturionREF has no face rig', count = 0, label = "his first line is not left without lip sync" },
+]
+order = [["dialogue: conversation with VHDIntakeTowerCenturionREF started", "dialogue look: VHDIntakeTowerCenturionREF faces the player"]]
+
+[[scenario]]
+name = "rigid-headgear-oliver"
+source = "[documented: #2529 writer brief, fnvtool FalloutNV.esm + Fallout - Meshes.bsa] VHDGeneralOliver 001300A9 wears rigid NVGenOliverCap 00134490, identity-root GenOliverCap:5 with bounds centre (13.30,1.64,0). [hypothesis: actors.md section 1.2] The mesh uses the head bone's own axes. [design, #2529] Preserve the full head transform for that layout at spawn and equipment changes."
+note = "PlaceAtMe follows hitvol-marked-created-actor. The sole created actor is Oliver; restrain him, move him near the player and use Look with rotateBody 0 while the player moves to change the head pose. The read-only probe logs cap world and head-relative centres and full-frame error after transform propagation. This does not assume any quest-conditioned Oliver greeting; observer check 168 requests a repeatable conversation setup."
+areas = ["actors", "head-tracking"]
+paths = ["engine/nvf-assets/src/actor.rs", "engine/nvforever/src/actors.rs", "engine/nvforever/src/outfits.rs", "engine/nvforever/src/rigid_head_probe.rs", "engine/nvforever/src/head_look.rs", "engine/nvforever/src/dialogue_look.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_RIGID_HEAD = "001300A9|GenOliverCap:5", NVF_PLAY_TEST_SCRIPT = "2:call:player:PlaceAtMe:VHDGeneralOliver:1,3:call:0xFF000000:SetRestrained:1,4:moveto:0xFF000000:player:0:160:0,5:call:0xFF000000:Look:player:0,10:moveto:player:0xFF000000:100:0:0,18:moveto:player:0xFF000000:-100:0:0,25:call:0xFF000000:StopLook" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 32
+expect = [
+  { re = 'ai \[[^\]]*\] VHDGeneralOliver 0xFF[0-9A-F]{6}: created by a script \(PlaceAtMe\)', count = 1, label = "Oliver is spawned from his base record" },
+  { re = 'ai \[[^\]]*\] .*: created by a script \(PlaceAtMe\)', count = 1, label = "the dynamic reference used by the aid is the only created actor" },
+  { re = 'rigid head check: .*parent_head=false', count = 0, label = "the rigid cap is parented directly to the head bone" },
+  { text = 'rigid head check: actor=', min = 10, label = "cap placement is logged throughout the run" },
+  { re = 'rigid head check: .*relative=\((?P<n>[-\d.]+),', range = [13.25, 13.35], all = true, label = "the cap stays above the head along its local X" },
+  { re = 'rigid head check: .*relative=\([-\d.]+,(?P<n>[-\d.]+),', range = [1.59, 1.69], all = true, label = "the authored local Y offset is kept" },
+  { re = 'rigid head check: .*relative=\([-\d.]+,[-\d.]+,(?P<n>[-\d.]+)\)', range = [-0.05, 0.05], all = true, label = "the authored local Z offset is kept" },
+  { re = 'rigid head check summary: samples=(?P<n>\d+)', range = [60, 100000000], label = "the probe sampled the moving head" },
+  { re = 'rigid head check summary: .*max_error=(?P<n>[\d.]+)', range = [0, 0.02], label = "every sampled centre follows the full head transform" },
+  { re = 'rigid head check summary: .*max_frame_error=(?P<n>[\d.]+)', range = [0, 0.001], label = "every sampled cap frame follows head rotation and scale" },
+  { re = 'rigid head check summary: .*turn_deg=(?P<n>[\d.]+)', range = [0.5, 180], label = "the head actually turned during the check" },
 ]

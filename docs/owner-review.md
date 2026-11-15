@@ -233,6 +233,13 @@ the spec it links to.
   game day, or trees and shrubs that burn too are each a figure or a follow-up away.
   [grass-fire](design/grass-fire.md)
 
+- **Rigid headgear frame detection (#2529).** [design, #2529] Choose bone-local axes
+  when a rigid head part's combined authored bounds straddle skeleton Z=0 and their
+  centre aligns at least 0.9 with bone-local up (`BONE_LOCAL_HEAD_ALIGNMENT`);
+  otherwise retain the skeleton-axis rule. This fixes Oliver's supplied +X cap layout
+  without naming a model. Keep this conservative geometry rule, or require explicit
+  model-frame metadata for ambiguous mod meshes? ([actors §1.2](spec-notes/actors.md#12-meshes))
+
 - **NPC conversations go on past a Goodbye line that links on (#2451).** [hypothesis,
   #2451] The editor's documentation says a Goodbye line ends a conversation between
   NPCs; ours ends it only when the line links nowhere, because the data needs it:
@@ -531,6 +538,17 @@ the spec it links to.
     (2026-11-11) predates #2239 [hypothesis: your build was older than it; the log names
     no version]. No other engine change was made; the smoke scenarios
     `freeside-fort-residents-door` and `freeside-north-residents-door` keep it fixed.
+78. **A turret that cannot move fires a script's weapon use from where it stands
+    (#2544).** ARCHIMEDES at HELIOS One (an Immobile turret) is told by the control
+    panel's script to shoot each NCR trooper in turn; ours never let a rooted actor's
+    weapon use start, so it drew and holstered forever and the strike never came. Ours
+    now: such a use starts at once where the turret is, and it turns to the target at
+    its combat turn rate (ARCHIMEDES turns 375 degrees a second) before firing; the
+    troopers' places do not matter to the script. The NCR troopers turning on the player
+    before the beam is the script's own SetEnemy (23 intervals after arming), not a
+    fault. Check the strike's pace looks right to you: one shot every 1-4 s, five
+    troopers, then the big beam. Observer check 164 asks the original's timing.
+    ([use-weapon §2](design/use-weapon.md))
 76. **A line's group condition on the speaker wins over its fixed speaker (#2548).**
     Cottonwood Cove's "Halt! What business have you in Cottonwood Cove, outsider?"
     (0x0013AC97) names the AAM explorer as its fixed speaker but tests the explorers'
