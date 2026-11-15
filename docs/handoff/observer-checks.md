@@ -2601,6 +2601,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      and when the controls come back. Also `HVIntercomREF.IsTalkingActivatorActor
      RamosREF` just before McNamara's line.
 
+## Added 2026-11-14 (Dialogue packages that control the target, #2453)
+
+186. **Does a Dialogue package walk the player into its trigger location?** (P2; #2453,
+     packages.md §3.) The GECK wiki says the target "will walk towards that location when
+     the dialogue package starts" when Do Not Control Target Movement is off [documented];
+     ours walks the player, once within the activate distance and in sight, to 48 units
+     inside the trigger box at walking pace and greets there [hypothesis]. On a save before the Hidden Valley bunker, sneak past the
+     intercom into HiddenValley01 and stop on the stairs about 300 units from Ramos's
+     RamosWaitingMarker: record the player's position every frame, whether the controls
+     are taken, the pace, and when the dialogue menu opens, relative to the box
+     HVRamosTargetDialogTriggerREF (y from -6132 to -5408).
+
 ## Added 2026-11-12 (the player's marker on the compass)
 
 187. **How does the compass show the custom map marker?** (P3; hud.md §11.) NVForever
