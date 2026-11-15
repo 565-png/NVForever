@@ -5,12 +5,14 @@ use crate::catalog::{self, Kind, Row};
 use crate::launch::{self, Start};
 use crate::news::{self, Post, Source};
 use crate::theme::{self, BAD, CARD, GOLD, GOOD, LINE, WEAK};
+use crate::update::{self, Msg, Phase};
 use eframe::egui::{self, load::Bytes, Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, Sense, Stroke, Vec2};
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use fnv_install::{guard_write, ini_get, ini_pairs, ini_set, plugins, write_whole, Config, EngineHome, GameInstall};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,6 +41,18 @@ enum NewsState {
 type NewsResult = Result<(Vec<Post>, Source), String>;
 type NextResult = Result<Option<news::NextRelease>, String>;
 type LatestResult = Result<Option<news::Latest>, String>;
+
+/// Where the updater is (docs/design/launcher.md "Updater").
+enum Upd {
+    Idle,
+    Working { phase: Phase, done: u64, total: u64 },
+    /// Downloaded and checked; installs as soon as the game is not running.
+    Ready(update::Ready),
+    Installing,
+    Failed(String),
+}
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 struct NewestSave {
     path: PathBuf,
@@ -76,6 +90,11 @@ pub struct App {
     latest: Option<news::Latest>,
     expanded: HashSet<usize>,
     md: CommonMarkCache,
+    // The updater.
+    upd: Upd,
+    upd_rx: Option<Receiver<Msg>>,
+    upd_cancel: Arc<AtomicBool>,
+    upd_open: bool,
     // Starting the game.
     newest: Option<NewestSave>,
     exe: Option<PathBuf>,
@@ -115,6 +134,10 @@ impl App {
             latest: None,
             expanded: HashSet::new(),
             md: CommonMarkCache::default(),
+            upd: Upd::Idle,
+            upd_rx: None,
+            upd_cancel: Arc::new(AtomicBool::new(false)),
+            upd_open: false,
             newest: None,
             exe: None,
             child: None,
@@ -124,6 +147,10 @@ impl App {
             Ok("settings") => Page::Settings,
             Ok("mods") => Page::Mods,
             Ok("game") => Page::Game,
+            Ok("update") => {
+                app.upd_open = true;
+                Page::Home
+            }
             _ => Page::Home,
         };
         if app.page == Page::Mods {
@@ -139,6 +166,23 @@ impl App {
         }
         if app.launcher_flag("News", true) {
             app.fetch_news(&cc.egui_ctx);
+        }
+        // Started by the updater (update::restart): say what changed.
+        for a in std::env::args().skip(1) {
+            match a.as_str() {
+                "--updated" => app.message = Some((format!("Updated to v{VERSION}. Your saves, settings and mods are as they were."), false)),
+                "--rolled-back" => app.message = Some((format!("Rolled back to v{VERSION}."), false)),
+                _ => {}
+            }
+        }
+        // Downloads of releases no newer than this one are done with.
+        if let Some(h) = &app.home {
+            let cache = h.cache();
+            std::thread::spawn(move || {
+                for d in update::stale_staging(&cache, VERSION) {
+                    let _ = std::fs::remove_dir_all(d);
+                }
+            });
         }
         app
     }
@@ -250,7 +294,7 @@ impl App {
         if let Some(r) = self.latest_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.latest_rx = None;
             match r {
-                Ok(l) => self.latest = l.filter(|l| news::is_newer(&l.version, env!("CARGO_PKG_VERSION"))),
+                Ok(l) => self.latest = l.filter(|l| news::is_newer(&l.version, VERSION)),
                 Err(e) => eprintln!("launcher: latest release: {e}"),
             }
         }
@@ -334,6 +378,7 @@ impl eframe::App for App {
         let ctx = &ui.ctx().clone();
         self.poll_news();
         let running = self.running();
+        self.poll_update(ctx, running);
         if running {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
@@ -341,6 +386,7 @@ impl eframe::App for App {
         self.bottom_bar(ui, ctx, running);
         self.nav(ui);
         self.test_shot(ctx);
+        self.update_window(ctx, running);
         egui::CentralPanel::default().frame(Frame::new().fill(theme::BG).inner_margin(Margin::symmetric(24, 16))).show(ui, |ui| match self.page {
             Page::Home => self.home_page(ui),
             Page::Settings => self.settings_page(ui),
@@ -394,8 +440,8 @@ impl App {
                     }
                     if let Some(l) = &self.latest {
                         let b = egui::Button::new(RichText::new(format!("Update to v{}", l.version)).strong().color(Color32::from_rgb(0x1A, 0x14, 0x08))).fill(GOLD);
-                        if ui.add(b).on_hover_text(format!("v{} is out (this is v{}): opens its download page", l.version, env!("CARGO_PKG_VERSION"))).clicked() {
-                            launch::open(&l.url);
+                        if ui.add(b).on_hover_text(format!("v{} is out (this is v{VERSION})", l.version)).clicked() {
+                            self.upd_open = true;
                         }
                     }
                 });
@@ -945,6 +991,29 @@ impl App {
             }
         });
         ui.add_space(12.0);
+        ui.label(RichText::new("VERSION").small().strong().color(theme::GOLD_DIM));
+        card(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(format!("NVForever v{VERSION}"));
+            let install = install_dir();
+            let kept = install.as_ref().ok().and_then(|d| update::previous_version(d));
+            match (&install, kept) {
+                (Ok(dir), Some((v, _))) => {
+                    let busy = !matches!(self.upd, Upd::Idle | Upd::Failed(_));
+                    let b = ui.add_enabled(!busy, egui::Button::new(format!("Roll back to v{v}")));
+                    if b.on_hover_text("Put the version the last update replaced back (this one is kept in its place). Saves, settings and mods are not touched.").clicked() {
+                        self.roll_back(dir.clone(), ui.ctx());
+                    }
+                }
+                (Ok(_), None) => {
+                    ui.label(RichText::new("No earlier version is kept: an update keeps the one it replaces, to roll back to.").small().color(WEAK));
+                }
+                (Err(e), _) => {
+                    ui.label(RichText::new(format!("Updates: {e}")).small().color(WEAK));
+                }
+            }
+        });
+        ui.add_space(12.0);
         ui.label(RichText::new("FOLDERS").small().strong().color(theme::GOLD_DIM));
         if let Some(h) = self.home.clone() {
             ui.horizontal_wrapped(|ui| {
@@ -965,6 +1034,195 @@ impl App {
             Err(e) => Err(e.to_string()),
         };
         self.after_write(r, Some("Game folder saved."));
+    }
+}
+
+/// The folder the launcher runs from, when the updater may change it ([`update::check_install`]).
+fn install_dir() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = exe.parent().ok_or("the launcher's folder is unknown")?.to_path_buf();
+    update::check_install(&dir)?;
+    Ok(dir)
+}
+
+fn megabytes(b: u64) -> String {
+    format!("{:.1} MB", b as f64 / 1_048_576.0)
+}
+
+// ---- The updater ----
+
+impl App {
+    /// Download, check and unpack the newest release in the background.
+    fn start_update(&mut self, ctx: &egui::Context) {
+        let (Some(latest), Some(home)) = (self.latest.clone(), self.home.clone()) else { return };
+        let (tx, rx) = channel();
+        self.upd_cancel = Arc::new(AtomicBool::new(false));
+        let (cancel, c) = (self.upd_cancel.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let send = |m: Msg| {
+                let _ = tx.send(m);
+                c.request_repaint();
+            };
+            let r = update::prepare(&latest, &home.cache(), &send, &cancel);
+            send(Msg::Ready(r));
+        });
+        self.upd_rx = Some(rx);
+        self.upd = Upd::Working { phase: Phase::Checking, done: 0, total: 0 };
+    }
+
+    fn start_install(&mut self, ctx: &egui::Context, ready: update::Ready) {
+        let dir = match install_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.upd = Upd::Failed(e);
+                return;
+            }
+        };
+        let (tx, rx) = channel();
+        let c = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(Msg::Installed(update::install(&dir, &ready, VERSION)));
+            c.request_repaint();
+        });
+        self.upd_rx = Some(rx);
+        self.upd = Upd::Installing;
+    }
+
+    fn roll_back(&mut self, dir: PathBuf, ctx: &egui::Context) {
+        if self.running() {
+            self.message = Some(("Close the game first, then roll back.".into(), true));
+            return;
+        }
+        match update::roll_back(&dir, VERSION) {
+            Ok(v) => match update::restart(&dir, "--rolled-back") {
+                Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                Err(e) => self.message = Some((format!("Rolled back to v{v}; start the launcher again ({e})."), false)),
+            },
+            Err(e) => self.message = Some((format!("Roll back failed, nothing was changed: {e}"), true)),
+        }
+    }
+
+    fn poll_update(&mut self, ctx: &egui::Context, running: bool) {
+        while let Some(m) = self.upd_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            match m {
+                Msg::Phase(p) => {
+                    if let Upd::Working { phase, .. } = &mut self.upd {
+                        *phase = p;
+                    }
+                }
+                Msg::Bytes(n, t) => {
+                    if let Upd::Working { done, total, .. } = &mut self.upd {
+                        (*done, *total) = (n, t);
+                    }
+                }
+                Msg::Ready(Ok(r)) => self.upd = Upd::Ready(r),
+                Msg::Ready(Err(e)) => self.upd = Upd::Failed(e),
+                Msg::Installed(Ok(v)) => {
+                    self.upd_rx = None;
+                    let restarted = install_dir().and_then(|d| update::restart(&d, "--updated").map_err(|e| e.to_string()));
+                    match restarted {
+                        Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                        Err(e) => {
+                            self.upd = Upd::Idle;
+                            self.latest = None;
+                            self.message = Some((format!("Updated to v{v}; start the launcher again ({e})."), false));
+                        }
+                    }
+                    return;
+                }
+                Msg::Installed(Err(e)) => self.upd = Upd::Failed(format!("{e} Nothing was changed.")),
+            }
+        }
+        if matches!(self.upd, Upd::Ready(_)) && !running {
+            if let Upd::Ready(r) = std::mem::replace(&mut self.upd, Upd::Idle) {
+                self.start_install(ctx, r);
+            }
+        }
+    }
+
+    /// The update dialog: what is new, Update now / Later, then the progress.
+    fn update_window(&mut self, ctx: &egui::Context, running: bool) {
+        if !self.upd_open {
+            return;
+        }
+        let Some(l) = self.latest.clone() else { return };
+        let size = update::target().and_then(|t| update::choose_asset(&l.assets, &l.tag, t)).map(|(a, _)| a.size);
+        let mut open = true;
+        egui::Window::new(format!("NVForever v{}", l.version))
+            .collapsible(false)
+            .resizable(false)
+            .default_width(560.0)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(format!("v{} is out; this is v{VERSION}.{}", l.version, size.map_or(String::new(), |s| format!(" Download: {}.", megabytes(s)))));
+                if !l.notes.trim().is_empty() {
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                        CommonMarkViewer::new().show(ui, &mut self.md, &l.notes);
+                    });
+                }
+                ui.add_space(8.0);
+                let install = install_dir();
+                match &self.upd {
+                    Upd::Idle => {
+                        let note = match &install {
+                            Ok(_) => "Your saves, settings and mods are not touched. The version you have now is kept, to roll back to from the Game folder page.".to_string(),
+                            Err(e) => e.clone(),
+                        };
+                        ui.label(RichText::new(note).small().color(WEAK));
+                        ui.horizontal(|ui| {
+                            if install.is_ok() && ui.button(RichText::new("Update now").strong()).clicked() {
+                                self.start_update(ui.ctx());
+                            }
+                            if ui.button("Later").clicked() {
+                                self.upd_open = false;
+                            }
+                            if ui.button("Release page").clicked() {
+                                launch::open(&l.url);
+                            }
+                        });
+                    }
+                    Upd::Working { phase, done, total } => {
+                        let (phase, done, total) = (*phase, *done, *total);
+                        let bar = if phase == Phase::Downloading && total > 0 {
+                            egui::ProgressBar::new(done as f32 / total as f32).text(format!("{} {} of {}", phase.words(), megabytes(done), megabytes(total)))
+                        } else {
+                            egui::ProgressBar::new(0.0).animate(true).text(phase.words())
+                        };
+                        ui.add(bar);
+                        if phase == Phase::Downloading && ui.button("Cancel").clicked() {
+                            self.upd_cancel.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    Upd::Ready(_) => {
+                        ui.label(RichText::new(if running { "Downloaded. It installs as soon as the game is closed." } else { "Downloaded." }).color(GOOD));
+                    }
+                    Upd::Installing => {
+                        ui.add(egui::ProgressBar::new(1.0).animate(true).text(Phase::Installing.words()));
+                    }
+                    Upd::Failed(e) => {
+                        ui.label(RichText::new(format!("The update did not go in: {e}")).color(BAD));
+                        ui.label(RichText::new("The NVForever folder is as it was. Try again, or download it from the release page.").small().color(WEAK));
+                        ui.horizontal(|ui| {
+                            if install.is_ok() && ui.button("Try again").clicked() {
+                                self.start_update(ui.ctx());
+                            }
+                            if ui.button("Release page").clicked() {
+                                launch::open(&l.url);
+                            }
+                        });
+                    }
+                }
+            });
+        // Closing the window while it works lets the download carry on; the Update button
+        // shows it again.
+        if !open {
+            self.upd_open = false;
+            if matches!(self.upd, Upd::Failed(_)) {
+                self.upd = Upd::Idle;
+            }
+        }
     }
 }
 

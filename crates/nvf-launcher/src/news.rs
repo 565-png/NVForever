@@ -108,17 +108,33 @@ pub fn parse_releases(text: &str) -> Result<Vec<Post>, String> {
         .collect())
 }
 
-fn agent() -> ureq::Agent {
-    let tls = ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).root_certs(ureq::tls::RootCerts::PlatformVerifier).build();
+fn tls() -> ureq::tls::TlsConfig {
+    ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).root_certs(ureq::tls::RootCerts::PlatformVerifier).build()
+}
+
+/// The agent of the small requests: 15 s for the whole of each.
+pub(crate) fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
-        .tls_config(tls)
+        .tls_config(tls())
         .timeout_global(Some(Duration::from_secs(15)))
         .user_agent(concat!("NVForever-Launcher/", env!("CARGO_PKG_VERSION")))
         .build()
         .into()
 }
 
-fn get_text(agent: &ureq::Agent, url: &str) -> Result<String, String> {
+/// The agent of a release download (100 MB and more): no limit on the whole, but 15 s to
+/// connect and 30 s for any one read, so a dead connection ends in an error.
+pub(crate) fn download_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .tls_config(tls())
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_per_read(Some(Duration::from_secs(30)))
+        .user_agent(concat!("NVForever-Launcher/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .into()
+}
+
+pub(crate) fn get_text(agent: &ureq::Agent, url: &str) -> Result<String, String> {
     let mut r = agent.get(url).header("Accept", "application/json").call().map_err(|e| format!("{url}: {e}"))?;
     r.body_mut().read_to_string().map_err(|e| format!("{url}: {e}"))
 }
@@ -252,42 +268,78 @@ pub fn countdown_text(left: i64) -> String {
 }
 
 
-/// The newest published release on GitHub: its version (`0.8.0`, the tag without its `v`)
-/// and its page, where the archives are.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A published release on GitHub: its version (`0.8.0`, the tag without its `v`), tag, page,
+/// notes and files (the archives and `SHA256SUMS.txt`, for the updater).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Latest {
     pub version: String,
+    pub tag: String,
     pub url: String,
+    pub notes: String,
+    pub assets: Vec<crate::update::Asset>,
 }
 
-pub fn parse_latest(text: &str) -> Result<Latest, String> {
-    #[derive(Deserialize)]
-    struct R {
-        tag_name: String,
-        html_url: String,
+#[derive(Deserialize)]
+struct ListedRelease {
+    tag_name: String,
+    #[serde(default)]
+    html_url: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    assets: Vec<crate::update::Asset>,
+}
+
+impl From<ListedRelease> for Latest {
+    fn from(r: ListedRelease) -> Latest {
+        Latest {
+            version: r.tag_name.trim_start_matches('v').to_string(),
+            tag: r.tag_name,
+            url: r.html_url,
+            notes: r.body.unwrap_or_default().replace("\r\n", "\n"),
+            assets: r.assets,
+        }
     }
-    let r: R = serde_json::from_str(text).map_err(|e| format!("latest release: {e}"))?;
-    Ok(Latest { version: r.tag_name.trim_start_matches('v').to_string(), url: r.html_url })
 }
 
-/// Whether version `a` (`0.8.0`, `0.10.1`) is later than `b`, part by part as numbers; a
-/// part that is not a number (a pre-release suffix) counts as 0.
-pub fn is_newer(a: &str, b: &str) -> bool {
+/// The release list's published releases (drafts left out).
+pub fn parse_release_list(text: &str) -> Result<Vec<Latest>, String> {
+    let v: Vec<ListedRelease> = serde_json::from_str(text).map_err(|e| format!("releases: {e}"))?;
+    Ok(v.into_iter().filter(|r| !r.draft).map(Latest::from).collect())
+}
+
+/// The release with the highest version (not the list's first: a fix of an older line
+/// published later would come first).
+pub fn newest(list: Vec<Latest>) -> Option<Latest> {
+    list.into_iter().max_by(|a, b| cmp_versions(&a.version, &b.version))
+}
+
+/// Versions (`0.8.0`, `v0.10.1`) compared part by part as numbers; a part that is not a
+/// number (a pre-release suffix) counts as 0.
+pub fn cmp_versions(a: &str, b: &str) -> std::cmp::Ordering {
     let parts = |v: &str| -> Vec<u64> { v.trim_start_matches('v').split(['.', '-', '+']).map(|p| p.parse().unwrap_or(0)).collect() };
     let (a, b) = (parts(a), parts(b));
     let n = a.len().max(b.len());
     let at = |v: &[u64], i: usize| v.get(i).copied().unwrap_or(0);
-    (0..n).map(|i| at(&a, i).cmp(&at(&b, i))).find(|o| o.is_ne()) == Some(std::cmp::Ordering::Greater)
+    (0..n).map(|i| at(&a, i).cmp(&at(&b, i))).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)
+}
+
+/// Whether version `a` is later than `b` ([`cmp_versions`]).
+pub fn is_newer(a: &str, b: &str) -> bool {
+    cmp_versions(a, b) == std::cmp::Ordering::Greater
 }
 
 /// The newest release, when GitHub answers.
 /// From the release list, not `releases/latest`: that one leaves pre-releases out, and every
 /// NVForever release so far is one (it answers 404).
 pub fn fetch_latest() -> Result<Option<Latest>, String> {
-    let text = get_text(&agent(), RELEASES)?;
-    let v: Vec<serde_json::Value> = serde_json::from_str(&text).map_err(|e| format!("releases: {e}"))?;
-    let newest = v.into_iter().find(|r| r["draft"] != serde_json::Value::Bool(true));
-    newest.map(|r| parse_latest(&r.to_string())).transpose()
+    // Test aid: a release list of a local server (docs/design/launcher.md), for trying the
+    // updater against a fixture release.
+    let url = std::env::var("NVF_LAUNCHER_RELEASES").ok().filter(|u| !u.is_empty());
+    let text = get_text(&agent(), url.as_deref().unwrap_or(RELEASES))?;
+    Ok(newest(parse_release_list(&text)?))
 }
 
 /// The site's next release, if it announces one.
@@ -317,8 +369,26 @@ mod tests {
         assert!(is_newer("0.7.1", "0.7"));
         assert!(!is_newer("0.7.0", "0.7.0"));
         assert!(!is_newer("0.6.9", "0.7.0"));
-        let l = parse_latest(r#"{"tag_name":"v0.8.0","html_url":"https://x/v0.8.0","assets":[]}"#).unwrap();
-        assert_eq!(l, Latest { version: "0.8.0".into(), url: "https://x/v0.8.0".into() });
+        let l = parse_release_list(r#"[{"tag_name":"v0.8.0","html_url":"https://x/v0.8.0","assets":[]}]"#).unwrap().remove(0);
+        assert_eq!(l, Latest { version: "0.8.0".into(), tag: "v0.8.0".into(), url: "https://x/v0.8.0".into(), ..Latest::default() });
+    }
+
+    #[test]
+    fn the_newest_release_by_version() {
+        let list = parse_release_list(
+            r#"[{"tag_name":"v0.7.1","html_url":"a","body":"fix\r\nes"},
+                {"tag_name":"v0.9.0","draft":true},
+                {"tag_name":"v0.8.0","html_url":"b","assets":[{"name":"SHA256SUMS.txt","browser_download_url":"https://x/s","size":225}]},
+                {"tag_name":"v0.7.0"}]"#,
+        )
+        .unwrap();
+        assert_eq!(list.len(), 3, "the draft is left out");
+        assert_eq!(list[0].notes, "fix\nes");
+        let n = newest(list).unwrap();
+        assert_eq!((n.version.as_str(), n.tag.as_str(), n.assets.len()), ("0.8.0", "v0.8.0", 1));
+        assert_eq!(n.assets[0].size, 225);
+        assert_eq!(newest(Vec::new()), None);
+        assert_eq!(cmp_versions("0.7", "0.7.0"), std::cmp::Ordering::Equal);
     }
 
     #[test]
