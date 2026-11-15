@@ -2509,6 +2509,14 @@ already talking takes over at once, same topic or another; nothing is queued or 
      coming, or coming only within some distance of his spot, says the search area is
      wrong; walking up and standing without a word says the talk is not the Find's.
 
+## Added 2026-11-14 (children in fights, #2438)
+
+178. **Does a child ever fight back?** (P3; #2438, combat-ai.md §12.2.) Ours, by the
+     owner's decision: a child (a race with the Child flag) set on the player flees at
+     once and never attacks. To check: `player.placeatme 0011E506` (a Legion child,
+     FortChildCM), `prid` it and `startcombat player`; then attack one with fists. Record whether it
+     draws a weapon, swings or runs, and its Flee line, if any.
+
 ## Added 2026-11-14 (talking activators with no talking actor set, #2454)
 
 185. **Who speaks through a talking activator no script has given an actor?** (P2; #2454,

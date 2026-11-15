@@ -524,6 +524,13 @@ the spec it links to.
     (item 5, second part) is not built yet.
     ([pickpocket §5](spec-notes/pickpocket.md))
 
+70. **Children never fight (#2438).** As you decided: every actor whose race has the
+    Child flag flees a fight at once and never attacks or draws, whatever its record's
+    confidence, aggression or combat style; it still turns hostile, so crime and faction
+    rules stay. The race's flag, not the actor's name, says who is a child. Two calls
+    of ours: the child flees even before it is hurt (children take no damage, so the "once hurt" rule would never start it), and a
+    scripted UseWeapon on a child in a fight no longer draws its weapon either. Observer
+    check 178 asks what the original does. ([combat-ai §12.2](design/combat-ai.md))
 71. **Armour only ever worn has no look on the ground (#2439).** The two floating
     backpacks at the Fort were not the slaves' packs. They are two placed references of
     the Slave Backpack armour (0x0013732C and 0x0013732D), 565 and 913 units up with

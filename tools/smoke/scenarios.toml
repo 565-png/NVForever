@@ -24428,6 +24428,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "child-flees-never-fights"
+source = "issue #2438 (owner decision 2026-11-13): children never fight, they always run away. A Legion child (FortChildCM 0x0011E506, a race with the Child flag) placed by the console at the player in Goodsprings and set on the player with StartCombat: it turns hostile, flees at once though unhurt and never swings, shoots, rushes or throws (fnv_game Game::never_fights; engine/nvforever/src/npc_combat.rs)"
+note = "god mode; the child is the first reference the console places (0xFF000000); 25 s of the fight"
+areas = ["combat", "ai"]
+paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-game/src/combat_group.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_CONSOLE = "8:player.placeatme 0011E506 1;9:ff000000.startcombat player;9.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 36
+expect = [
+  { re = 'console: PlaceAtMe on player >> 0xFF000000', label = "the child is placed" },
+  { re = 'npc combat: (FortChildCM )?0xFF000000 flees from the player', label = "the child flees at once, unhurt" },
+  { re = 'npc combat: (FortChildCM )?0xFF000000 (swings at|opens fire|fires a burst|power attack|rushes|throws|charges|goes on its combo|turns to fight|attacks)', max = 0, label = "the child never attacks or turns to fight" },
+]
+
+[[scenario]]
 name = "fort-slave-packs-not-floating"
 source = "issue #2439 (owner): at the Fort two slave backpacks hung in the sky with no NPC near. They are placed references of NVSlaveBackpack (0x0013732C, 0x0013732D; ARMO 0x00127C6A, Non-Playable, no world model MOD2) 565 and 913 units above the ground; their biped model was drawn at the reference. Armour only ever worn has no world look now (fnv_world::placed::worn_only; engine/nvforever/src/world.rs spawn_model)"
 note = "the owner's spot on the rise west of the camp, looking south-east at 17:00 as in the report's screenshot; frames in target/smoke (fort_packs.png). The two backpack slaves (LvlFortSlaveBackpack 0x00154414, 0x00154415) still wear theirs"
