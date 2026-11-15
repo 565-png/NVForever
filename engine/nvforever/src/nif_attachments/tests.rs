@@ -15,8 +15,7 @@ use std::{
         Arc,
     },
 };
-#[path = "../../../../crates/fnv-game/tests/common/mod.rs"]
-mod common;
+use crate::authored_test_records as common;
 const REFERENCE: FormId = FormId(0x401);
 const OTHER: FormId = FormId(0x402);
 const IDENTITY: [f32; 9] = [1., 0., 0., 0., 1., 0., 0., 0., 1.];
