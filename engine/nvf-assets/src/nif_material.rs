@@ -395,7 +395,7 @@ pub fn depth_equal(descriptor: &mut RenderPipelineDescriptor, mesh_key: MeshPipe
 /// the owner's settings (docs/design/streaming-hitches.md §3.1) [observed 2026-10-28].
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 #[data(50, NifSurfaceUniform, binding_array(101))]
-#[bindless(limit(512), index_table(range(50..54), binding(100)))]
+#[bindless(limit(512), index_table(range(50..57), binding(100)))]
 #[bind_group_data(NifSurfaceKey)]
 pub struct NifSurface {
     /// Start angle, stop angle (cosines), start opacity, stop opacity; constant opacity 1
@@ -489,6 +489,21 @@ pub struct NifSurface {
     /// arrays hold filterable textures, and the offsets are Rgba16Float, which is.
     #[texture(53)]
     pub facegen_offset: Option<Handle<Image>>,
+    /// Window environment map (`nif_spawn::window_env`; docs/spec-notes/nif.md §6 "Window
+    /// glass and environment maps"): x the scale of the reflection (0: none), y 1 when
+    /// [`env_mask`](Self::env_mask) is set; z, w unused. The reflection, the cube read in
+    /// the reflected view direction × the scale × the mask's red channel, is added to the
+    /// lit colour; on a premultiplied shape (a blended one that reflects) after the colour
+    /// is multiplied by its alpha [hypothesis, the note above].
+    pub env: Vec4,
+    /// The environment cube (texture-set slot 4), loaded as a cube map
+    /// (`texture::dds_cube_image`); `None` without a window environment map.
+    #[texture(54, dimension = "cube")]
+    #[sampler(55)]
+    pub env_cube: Option<Handle<Image>>,
+    /// The environment mask (texture-set slot 5); `None` when the set has none.
+    #[texture(56)]
+    pub env_mask: Option<Handle<Image>>,
 }
 
 /// The values of a [`NifSurface`] the shaders read (`nif_surface_bindings.wesl`, shared
@@ -508,6 +523,8 @@ pub struct NifSurfaceUniform {
     /// [`NifSurface::pipboy_a`], [`NifSurface::pipboy_b`].
     pub pipboy_a: Vec4,
     pub pipboy_b: Vec4,
+    /// [`NifSurface::env`].
+    pub env: Vec4,
 }
 
 /// Screen UV of shift per unit of refraction strength and of view-space tilt
@@ -519,7 +536,7 @@ pub const REFRACTION_SCREEN: f32 = 0.1;
 
 impl From<&NifSurface> for NifSurfaceUniform {
     fn from(s: &NifSurface) -> Self {
-        NifSurfaceUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b }
+        NifSurfaceUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b, env: s.env }
     }
 }
 
@@ -588,6 +605,9 @@ impl Default for NifSurface {
             soft: Vec4::ZERO,
             holes_texture: None,
             facegen_offset: None,
+            env: Vec4::ZERO,
+            env_cube: None,
+            env_mask: None,
         }
     }
 }

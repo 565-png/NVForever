@@ -83,7 +83,7 @@ import bevy_pbr::{
     render::shadow_sampling::sample_shadow_map,
 };
 
-import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel};
+import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel, env_cube_texel, env_mask_texel};
 
 // Main-pass geometry uses the render viewport, which can be smaller than the
 // display attachment when FSR is enabled. Transmission remains a full-size texture.
@@ -569,6 +569,24 @@ fn nif_fragment(
         }
         out.color = vec4(max(out.color.rgb - view.exposure * ambient_spec, vec3(0.0)), out.color.a);
         @if(!PREPASS_PIPELINE && !TONEMAP_IN_SHADER && !BLEND_MULTIPLY) out.color = vec4(hot_light(out.color.rgb, hot_e), out.color.a);
+        // Window environment map (nif_material.rs NifSurface::env; docs/spec-notes/nif.md
+        // §6 "Window glass and environment maps"): the cube read in the view direction
+        // reflected about the normal, × the scale × the mask, added to the lit colour. The
+        // game is Z-up and the cube's faces are laid out Y-up: the game-space direction
+        // (x, y, z) is looked up as (x, z, y), which from Bevy's Y-up world space
+        // (x, z, -y of the game) is (x, y, -z) [hypothesis]. A premultiplied shape (a
+        // blended one that reflects) has its colour multiplied by its alpha first, so the
+        // reflection lies over the blend whatever the alpha [hypothesis].
+        if surface.env.x > 0.0 {
+            let r = reflect(-pbr_input.V, pbr_input.N);
+            var mask = 1.0;
+            @if(VERTEX_UVS_A) if surface.env.y > 0.5 {
+                mask = env_mask_texel(in.instance_index, (standard_material(in.instance_index).uv_transform * vec3(in.uv, 1.0)).xy);
+            }
+            let reflection = env_cube_texel(in.instance_index, vec3(r.x, r.y, -r.z)) * surface.env.x * mask;
+            let premultiplied = (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_PREMULTIPLIED;
+            out.color = vec4(select(out.color.rgb, out.color.rgb * out.color.a, premultiplied) + reflection, out.color.a);
+        }
     } else {
         out.color = pbr_input.material.base_color;
         // An unlit shape with a non-black emissive colour is drawn at its emissive light:

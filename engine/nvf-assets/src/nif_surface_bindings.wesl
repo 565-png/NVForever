@@ -4,7 +4,7 @@
 
 
 import bevy_pbr::render::mesh_bindings::mesh;
-@if(BINDLESS) import bevy_render::bindless::{bindless_textures_2d, bindless_samplers_filtering};
+@if(BINDLESS) import bevy_render::bindless::{bindless_textures_2d, bindless_textures_cube, bindless_samplers_filtering};
 @if(BINDLESS) import bevy_pbr::render::pbr_bindings::{material_indices, material_array};
 @if(BINDLESS) import bevy_pbr::render::pbr_types::StandardMaterial;
 @if(!BINDLESS) import bevy_pbr::render::pbr_bindings;
@@ -43,6 +43,9 @@ struct NifSurface {
     // PIPBOY_SCREEN (NifSurface::pipboy_b): x the softening's reach (view pixels), y the
     // noise's reach (display values), z the canvas's share of the texture's width; w unused.
     pipboy_b: vec4<f32>,
+    // Window environment map (nif_material.rs NifSurface::env): x the scale (0: none), y 1
+    // with a mask; z, w unused.
+    env: vec4<f32>,
 }
 
 // The extension's index table (indices 50-53 of NifSurface's bindless attribute).
@@ -51,6 +54,9 @@ struct NifSurface {
     holes_texture: u32,    // 51
     holes_sampler: u32,    // 52
     facegen_offset: u32,   // 53
+    env_cube: u32,         // 54
+    env_sampler: u32,      // 55
+    env_mask: u32,         // 56
 }
 @if(BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<storage> nif_indices: array<NifSurfaceIndices>;
 @if(BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(101) var<storage> nif_surfaces: array<NifSurface>;
@@ -58,6 +64,9 @@ struct NifSurface {
 @if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(51) var holes_texture: texture_2d<f32>;
 @if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(52) var holes_sampler: sampler;
 @if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(53) var facegen_offset: texture_2d<f32>;
+@if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(54) var env_cube: texture_cube<f32>;
+@if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(55) var env_sampler: sampler;
+@if(!BINDLESS) @group(constants::MATERIAL_BIND_GROUP) @binding(56) var env_mask: texture_2d<f32>;
 
 // The material's slot in the bindless tables (unused without bindless).
 fn material_slot(instance_index: u32) -> u32 {
@@ -80,6 +89,20 @@ fn holes_alpha(instance_index: u32, uv: vec2<f32>) -> f32 {
     @if(BINDLESS) let i = nif_indices[material_slot(instance_index)];
     @if(BINDLESS) return textureSampleLevel(bindless_textures_2d[i.holes_texture], bindless_samplers_filtering[i.holes_sampler], uv, 0.0).a;
     @if(!BINDLESS) return textureSampleLevel(holes_texture, holes_sampler, uv, 0.0).a;
+}
+
+// The environment cube in the direction `dir` (cube space), at its top level.
+fn env_cube_texel(instance_index: u32, dir: vec3<f32>) -> vec3<f32> {
+    @if(BINDLESS) let i = nif_indices[material_slot(instance_index)];
+    @if(BINDLESS) return textureSampleLevel(bindless_textures_cube[i.env_cube], bindless_samplers_filtering[i.env_sampler], dir, 0.0).rgb;
+    @if(!BINDLESS) return textureSampleLevel(env_cube, env_sampler, dir, 0.0).rgb;
+}
+
+// The environment mask's red channel at `uv`, at its top level.
+fn env_mask_texel(instance_index: u32, uv: vec2<f32>) -> f32 {
+    @if(BINDLESS) let i = nif_indices[material_slot(instance_index)];
+    @if(BINDLESS) return textureSampleLevel(bindless_textures_2d[i.env_mask], bindless_samplers_filtering[i.env_sampler], uv, 0.0).r;
+    @if(!BINDLESS) return textureSampleLevel(env_mask, env_sampler, uv, 0.0).r;
 }
 
 // The size of the FaceGen offset image.

@@ -29376,11 +29376,11 @@ source = "docs/spec-notes/nif.md §6 \"Window glass and environment maps\" (issu
 areas = ["rendering"]
 paths = ["engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/texture.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:glass_mccarran_south.png" }
-args = ["--play", "--cell", "CampMCTermInt02", "--pos=112,1200,18672", "--heading", "0", "--no-voice", "--no-messages"]
+args = ["--play", "--cell", "CampMCTermInt02", "--pos=112,1200,18672", "--heading", "35", "--no-voice", "--no-messages"]
 run_seconds = 10
 manual = "glass_mccarran_south.png: the window in the wall ahead shows a pane: grey streaks of reflection over the room beyond, which stays readable through it"
 expect = [
-  { re = 'vwindow01\.nif: 1 shape\(s\) with a window environment map \(textures.effects.shinybright_e\.dds, scale 1\.00, over the blend\): VWindow01:0', label = "the pane is drawn with its environment map, added over its blend" },
+  { re = 'vwindow01\.nif: 1 shape\(s\) with a window environment map \(textures.effects.ShinyBright_e\.dds, scale 1\.00, over the blend\): VWindow01:0', label = "the pane is drawn with its environment map, added over its blend" },
   { re = 'test aid: screenshot .*glass_mccarran_south\.png', label = "the observation-side frame is saved" },
 ]
 
@@ -29390,10 +29390,10 @@ source = "docs/spec-notes/nif.md §6 \"Window glass and environment maps\" (issu
 areas = ["rendering"]
 paths = ["engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/texture.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:glass_mccarran_north.png" }
-args = ["--play", "--cell", "CampMCTermInt02", "--pos=112,1700,18672", "--heading", "180", "--no-voice", "--no-messages"]
+args = ["--play", "--cell", "CampMCTermInt02", "--pos=112,1700,18672", "--heading", "145", "--no-voice", "--no-messages"]
 run_seconds = 10
 manual = "glass_mccarran_north.png: the window ahead shows a pane over the dark lockers beyond (reflection streaks), not an empty opening"
 expect = [
-  { re = 'vwindow01\.nif: 1 shape\(s\) with a window environment map \(textures.effects.shinybright_e\.dds, scale 1\.00, over the blend\): VWindow01:0', label = "the pane is drawn with its environment map, added over its blend" },
+  { re = 'vwindow01\.nif: 1 shape\(s\) with a window environment map \(textures.effects.ShinyBright_e\.dds, scale 1\.00, over the blend\): VWindow01:0', label = "the pane is drawn with its environment map, added over its blend" },
   { re = 'test aid: screenshot .*glass_mccarran_north\.png', label = "the interrogation-side frame is saved" },
 ]
