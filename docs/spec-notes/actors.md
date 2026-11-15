@@ -191,7 +191,7 @@ actor meshes`]:
   no capture of it with this outfit is at hand]. A model with an `Arms…` shape keeps the
   name rule. Of the 247 upper-body worn models of FalloutNV.esm, 207 have an `Arms…`
   shape, 31 are drawn by their arm partitions (the trooper fatigues and MP outfits male and
-  female, Combat Armor (`mark1combat.nif`), Benny's suit, Boone's, Cass's, the centurion's, the Powder
+  female, Combat Armor, Reinforced (`mark1combat.nif`; plain Combat Armor's `outfitm.nif` has `Arms`), Benny's suit, Boone's, Cass's, the centurion's, the Powder
   Gangers', the Viva Las Vegas and NCR gambler outfits, among others) and 9 have neither
   [observed: `fnvtool actor meshes`, `upper_body_first_person`]. The Pip-Boy plays no part: the Pimp-Boy 3 Billion (`PimpBoy` 0x0011BACB, BMDT
   PipBoy slot, all four models `PimpBoy3Billion\PimpBoyArm.NIF`) is built like the Pip-Boy
