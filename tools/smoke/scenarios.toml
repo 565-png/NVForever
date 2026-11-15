@@ -41,7 +41,7 @@ masters = [
 untimed = [
   "NVF_PLAY_TEST_SCRIPT_MENUS", "NVF_PLAY_TEST_GIVE", "NVF_PLAY_TEST_EQUIP", "NVF_PLAY_TEST_NEAR",
   "NVF_PLAY_TEST_MENU", "NVF_PLAY_TEST_BARTER", "NVF_PLAY_TEST_BARTER_DELAY", "NVF_PLAY_TEST_NO_SPREAD",
-  "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
+  "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_PROJECTILE_LAUNCH", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
   "NVF_PLAY_AIDS_FROM_SCRIPTS", "NVF_PLAY_TEST_HELD_GRENADE",
   "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
   "NVF_PLAY_TEST_MELEE_KNOCKBACK",
@@ -1945,6 +1945,23 @@ expect = [
 manual = "the 24th 'sleep: hour' line ends one date later at the time of day the menu opened at"
 
 # ------------------------------------------------------------------ detection, alert, combat
+[[scenario]]
+name = "projectile-launch-physical-session-traits"
+source = "docs/spec-notes/projectile-launch-session-traits.md: authored opt-in two-stage physical launch consumer"
+note = "UNRUN authored diagnostic; loaded Weap10mmPistol EditorID must resolve uniquely to a finite typed nonbeam one-projectile weapon/ammo chain. Uses only a fresh b42-launch-probe-home under this smoke output; rejects prior save files, temporary aliases and unsupported original representations. Real compiled script setters and player FireWeapon reach actual Flying insertions before any acceptance. Script FireWeapon preserves ammo count; normal attack debit remains a separate CPU control. Exact prior field entries and captured item counts must be restored. This is not B42 startup, physical input, native or temporary-reference-spawn proof."
+areas = ["combat", "script"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/nvse_jip7.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/projectile_launch*.rs"]
+env = { RUST_LOG = "info", NVFOREVER_HOME = "b42-launch-probe-home", NVF_PLAY_TEST_PROJECTILE_LAUNCH = "Weap10mmPistol", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 90
+expect = [
+  { text = "projectile launch probe: armed loaded=Weap10mmPistol", count = 1, label = "actual loaded identities and staged sentinel captured" },
+  { re = 'projectile launch probe: physical stage=FirstPending .*velocity=.*speed=.*force=', count = 1, label = "edited values observed only after real insertion" },
+  { re = 'projectile launch probe: physical stage=SecondPending .*velocity=.*speed=.*force=', count = 1, label = "exact prior entries restored before the second real insertion" },
+  { text = "projectile launch probe: PASS stages=2 requests=2 physical_insertions=2 exact_fields_restored=true inventory_restored=true", count = 1, label = "strict physical oracle and cleanup both complete" },
+]
+order = [["projectile launch probe: physical stage=FirstPending", "projectile launch probe: physical stage=SecondPending", "projectile launch probe: PASS stages=2"]]
+forbid = [{ text = "projectile launch probe: FAIL", label = "configuration, script admission, identity, physical oracle, timeout and cleanup failures remain visible" }]
 
 [[scenario]]
 name = "detection-table"
