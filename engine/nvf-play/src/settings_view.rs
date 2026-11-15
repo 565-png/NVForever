@@ -64,6 +64,9 @@ pub enum ControlRow {
     Sensitivity(InputDevice),
     /// A device's Vertical Sensitivity, a multiple of its horizontal look (#2201).
     Vertical(InputDevice),
+    /// A device's Aim Sensitivity: its look while aiming down the sights or through a scope,
+    /// a multiple of the unzoomed look [design: owner 2026-11-15].
+    AimSensitivity(InputDevice),
     /// With a controller only.
     Rumble,
 }
@@ -71,11 +74,12 @@ pub enum ControlRow {
 impl ControlRow {
     /// The Controls tab's own rows with `device` in use: the device, automatic switching
     /// [design, #2200], every control, Invert
-    /// Y, the device's sensitivity and vertical sensitivity, and with a controller Rumble.
+    /// Y, the device's sensitivity, vertical sensitivity and aim sensitivity, and with a
+    /// controller Rumble.
     pub fn rows(device: InputDevice) -> Vec<ControlRow> {
         let mut out = vec![ControlRow::Device, ControlRow::AutomaticInput];
         out.extend(GAME_CONTROLS.iter().map(|(c, _, _)| ControlRow::Binding(*c, device)));
-        out.extend([ControlRow::Invert, ControlRow::Sensitivity(device), ControlRow::Vertical(device)]);
+        out.extend([ControlRow::Invert, ControlRow::Sensitivity(device), ControlRow::Vertical(device), ControlRow::AimSensitivity(device)]);
         if device == InputDevice::Controller {
             out.push(ControlRow::Rumble);
         }
@@ -90,7 +94,7 @@ impl ControlRow {
         }
         out.push(ControlRow::Invert);
         for d in [InputDevice::KeyboardMouse, InputDevice::Controller] {
-            out.extend([ControlRow::Sensitivity(d), ControlRow::Vertical(d)]);
+            out.extend([ControlRow::Sensitivity(d), ControlRow::Vertical(d), ControlRow::AimSensitivity(d)]);
         }
         out.push(ControlRow::Rumble);
         out
@@ -106,12 +110,13 @@ impl ControlRow {
             ControlRow::Invert => GAME_CONTROLS.len() + 2,
             ControlRow::Sensitivity(_) => GAME_CONTROLS.len() + 3,
             ControlRow::Vertical(_) => GAME_CONTROLS.len() + 4,
-            ControlRow::Rumble => GAME_CONTROLS.len() + 5,
+            ControlRow::AimSensitivity(_) => GAME_CONTROLS.len() + 5,
+            ControlRow::Rumble => GAME_CONTROLS.len() + 6,
         }
     }
 
     /// The row as the log and the test aids name it (`device`, `bind:Jump`,
-    /// `padbind:Jump`, `invert`, `sensitivity`, `vertical`, `rumble`).
+    /// `padbind:Jump`, `invert`, `sensitivity`, `vertical`, `aim-sensitivity`, `rumble`).
     pub fn name(self) -> String {
         match self {
             ControlRow::Device => "device".into(),
@@ -121,6 +126,7 @@ impl ControlRow {
             ControlRow::Invert => "invert".into(),
             ControlRow::Sensitivity(_) => "sensitivity".into(),
             ControlRow::Vertical(_) => "vertical".into(),
+            ControlRow::AimSensitivity(_) => "aim-sensitivity".into(),
             ControlRow::Rumble => "rumble".into(),
         }
     }
@@ -143,6 +149,7 @@ impl ControlRow {
             "invert" => ControlRow::Invert,
             "sensitivity" => ControlRow::Sensitivity(device),
             "vertical" => ControlRow::Vertical(device),
+            "aim-sensitivity" => ControlRow::AimSensitivity(device),
             "rumble" if device == InputDevice::Controller => ControlRow::Rumble,
             "rumble" => return None,
             _ => ControlRow::Binding(Bindings::by_name(name.strip_prefix("bind:")?)?, device),
@@ -706,6 +713,7 @@ pub fn normalize(layout: &ResolvedLayout, list: &[Setting], scope: SettingsScope
         RowId::Control(ControlRow::Binding(c, _)) => Some(RowId::Control(ControlRow::Binding(c, vis.device))),
         RowId::Control(ControlRow::Sensitivity(_)) => Some(RowId::Control(ControlRow::Sensitivity(vis.device))),
         RowId::Control(ControlRow::Vertical(_)) => Some(RowId::Control(ControlRow::Vertical(vis.device))),
+        RowId::Control(ControlRow::AimSensitivity(_)) => Some(RowId::Control(ControlRow::AimSensitivity(vis.device))),
         RowId::Control(ControlRow::Rumble) => Some(RowId::Control(ControlRow::Device)),
         RowId::Control(_) | RowId::Heading(_) | RowId::Group => None,
     });
@@ -736,7 +744,7 @@ pub fn shown_as(list: &[Setting], id: RowId, vis: &Visibility) -> Option<RowId> 
             RowId::Setting(j) if j != i => shown_as(list, p, vis),
             _ => Some(p),
         }),
-        RowId::Control(ControlRow::Binding(_, d) | ControlRow::Sensitivity(d) | ControlRow::Vertical(d)) if d != vis.device => Some(RowId::Control(ControlRow::Device)),
+        RowId::Control(ControlRow::Binding(_, d) | ControlRow::Sensitivity(d) | ControlRow::Vertical(d) | ControlRow::AimSensitivity(d)) if d != vis.device => Some(RowId::Control(ControlRow::Device)),
         RowId::Control(ControlRow::Rumble) if vis.device != InputDevice::Controller => Some(RowId::Control(ControlRow::Device)),
         RowId::Control(_) | RowId::Heading(_) | RowId::Group => Some(id),
     }
@@ -995,8 +1003,8 @@ mod tests {
         // The Controls tab: its own rows in the table's categories, the controller's with a controller only.
         let c = |device| names(&list, &project(&l, &list, SettingsScope::Tab(CONTROLS_TAB), &Visibility { device, ..Visibility::default() }, &NONE, &open()));
         let kb = c(InputDevice::KeyboardMouse);
-        assert_eq!(kb[..9], ["[Input]", "device", "automatic-input", "", "[Look]", "invert", "sensitivity", "vertical", ""]);
-        assert_eq!(kb[9..11], ["[Movement]", "bind:Forward"]);
+        assert_eq!(kb[..10], ["[Input]", "device", "automatic-input", "", "[Look]", "invert", "sensitivity", "vertical", "aim-sensitivity", ""]);
+        assert_eq!(kb[10..12], ["[Movement]", "bind:Forward"]);
         assert_eq!(kb.iter().filter(|n| n.starts_with("bind:")).count(), GAME_CONTROLS.len(), "every control once");
         let pad = c(InputDevice::Controller);
         assert_eq!(pad[..6], ["[Input]", "device", "button-style", "automatic-input", "rumble", ""]);
@@ -1233,7 +1241,7 @@ mod tests {
         for c in ControlRow::all() {
             assert!(l.control_placement(&c.table_name()).is_some(), "{} has no place", c.name());
             assert_eq!(ControlRow::of_table(&c.table_name(), match c {
-                ControlRow::Binding(_, d) | ControlRow::Sensitivity(d) | ControlRow::Vertical(d) => d,
+                ControlRow::Binding(_, d) | ControlRow::Sensitivity(d) | ControlRow::Vertical(d) | ControlRow::AimSensitivity(d) => d,
                 _ => InputDevice::Controller,
             }), Some(c));
         }

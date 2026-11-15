@@ -24,6 +24,10 @@
 //!   Scope from Mod with an Increase Zoom mod on) at full zoom in first person puts its
 //!   scope up ([`Scope`]); nvforever `scope_view.rs` draws the MOD3 picture, the night
 //!   vision and the sway, the arms rig and the crosshair go meanwhile.
+//! - **The look while aiming** [design: owner 2026-11-15]: the Controls tab's Aim
+//!   Sensitivity scales the mouse's and the right stick's turn by the zoom's own eased share
+//!   ([`AimZoom::share`], `crate::player::aim_scale`): the chosen speed at the full zoom
+//!   (down the sights, or a scope up), the unzoomed look with no zoom, in step between.
 
 use bevy::prelude::*;
 
@@ -66,14 +70,26 @@ impl AimZoom {
     pub fn base(&self) -> Option<f32> {
         self.base
     }
+
+    /// How far the view is zoomed for the aim, eased as the field of view moves
+    /// ([`zoom_share`] of [`AimZoom::blend`]): 0 unzoomed, 1 at the full zoom. The look's
+    /// Aim Sensitivity follows it (`crate::player::aim_scale`).
+    pub fn share(&self) -> f32 {
+        zoom_share(self.blend)
+    }
+}
+
+/// `blend` (0–1) eased in and out: the share of the way from the unzoomed field of view to
+/// the zoomed one ([`zoomed_fov`]).
+pub fn zoom_share(blend: f32) -> f32 {
+    let b = blend.clamp(0.0, 1.0);
+    b * b * (3.0 - 2.0 * b)
 }
 
 /// The field of view (vertical, radians) for `base`, the weapon's `sight` and `blend`
 /// (0–1), eased in and out.
 pub fn zoomed_fov(base: f32, sight: f32, blend: f32) -> f32 {
-    let b = blend.clamp(0.0, 1.0);
-    let s = b * b * (3.0 - 2.0 * b);
-    base + (sight - base) * s
+    base + (sight - base) * zoom_share(blend)
 }
 
 /// The gun in hand is lined up with the eye down its sights (true iron sights, set by
