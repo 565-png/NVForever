@@ -85,7 +85,7 @@ reputation.md.
   does not yet turn into hostility, reputation.md §4), a faction enemy flag
   (SetPCEnemyOfFaction NCRFactionNV, a witnessed murder), or a grudge of its own.
 - **The friendship outranks the player's bad standing** [hypothesis: what the pulse is
-  for, by the script's notes; the original not probed, observer-checks.md check 167]:
+  for, by the script's notes; the original not probed, observer-checks.md check 173]:
   the pulse would change nothing if the NCR's hostility won over ArmorNCRFactionNV's
   friendship, and VHDControlRoomGuardTrigger2SCRIPT, which turns the NCR on the player
   for good, makes both NCRFactionNV and ArmorNCRFactionNV enemies of the player. Ours:
@@ -114,7 +114,7 @@ whole faction when a sniffer near the player starts fighting.
 
 - Whether the original lets the disguise friendship outrank a faction enemy flag (a
   murder seen by the NCR, SetPCEnemyOfFaction) the way ours does: observer-checks.md
-  check 167, owner-review.md item 81.
+  check 173, owner-review.md item 81.
 - The "unknown" shot of #2611 (a hit on the player for 54.2 with no attacker logged, the
   NCR measured 4,960-4,990 units off and hidden): not reproduced without the owner's
   log; the hit log names no attacker when the shot came from no actor the engine knows
