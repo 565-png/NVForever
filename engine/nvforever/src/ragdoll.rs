@@ -937,7 +937,7 @@ mod tests {
             material: None,
             wind: false,
         };
-        let body = RagdollBody { object, linear_damping: 0.1, angular_damping: 0.05, stored: Iso::IDENTITY, unit: 7.0 };
+        let body = RagdollBody { object, linear_damping: 0.1, angular_damping: 0.05, stored: Iso::IDENTITY, unit: 7.0, inertia: None };
         let data = Arc::new(Ragdoll { bodies: vec![body], joints: vec![], problems: vec![] });
         let corpse = Corpse { data, bones: vec![1], body_of: vec![None, Some(0)], limit: MAX_AWAKE, ..Default::default() };
         let mut set = crate::locomotion::ClipSet::default();
