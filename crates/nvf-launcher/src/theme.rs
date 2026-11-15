@@ -8,8 +8,11 @@ pub const GOLD: Color32 = Color32::from_rgb(0xF0, 0xA3, 0x2A);
 pub const GOLD_HOVER: Color32 = Color32::from_rgb(0xFF, 0xB8, 0x4D);
 /// The site's `--accent-text`: words on a gold button.
 pub const ON_GOLD: Color32 = Color32::from_rgb(0x15, 0x12, 0x0C);
-/// `GOLD` dimmed, for headings, edges and the selected tab.
+/// `GOLD` dimmed, for edges and borders only (3:1 or more on every background; too dark for
+/// text, and white text on it is 3.4:1).
 pub const GOLD_DIM: Color32 = Color32::from_rgb(0xA8, 0x72, 0x1D);
+/// Small gold text (the dim headings): 5.1:1 on a card, 5.9:1 on the page (4.5:1 wanted).
+pub const GOLD_TEXT: Color32 = Color32::from_rgb(0xC0, 0x84, 0x24);
 // The site's dark blue scheme (nv-forever.com assets/css/style.css, :root).
 /// `--bg`: the page behind everything.
 pub const BG: Color32 = Color32::from_rgb(0x0F, 0x11, 0x15);

@@ -5,7 +5,7 @@ use crate::catalog::{self, Kind, Row};
 use crate::launch::{self, Start};
 use crate::news::{self, Post, Source};
 use crate::theme::{self, BAD, CARD, GOLD, GOOD, LINE, WEAK};
-use eframe::egui::{self, load::Bytes, Align, CornerRadius, Frame, Layout, Margin, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, load::Bytes, Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, Sense, Stroke, Vec2};
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use fnv_install::{guard_write, ini_get, ini_pairs, ini_set, plugins, write_whole, Config, EngineHome, GameInstall};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -526,6 +526,16 @@ fn nav_button(ui: &mut egui::Ui, name: &str, on: bool) -> egui::Response {
     r
 }
 
+/// A button in the site's primary style when `on` (gold, dark words, 9:1), else a plain one.
+fn gold_button(text: &str, on: bool) -> egui::Button<'static> {
+    let words = RichText::new(text.to_string()).strong();
+    if on {
+        egui::Button::new(words.color(theme::ON_GOLD)).fill(GOLD)
+    } else {
+        egui::Button::new(words)
+    }
+}
+
 /// A large two-line button (title and a small line under it), gold when `primary`.
 fn big_button(ui: &mut egui::Ui, title: &str, sub: &str, primary: bool) -> egui::Response {
     let size = Vec2::new(if primary { 280.0 } else { 190.0 }, 58.0);
@@ -683,7 +693,7 @@ impl App {
             ui.heading("Settings");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let dirty = !self.edits.is_empty();
-                if ui.add_enabled(dirty, egui::Button::new(RichText::new("Save").strong()).fill(if dirty { theme::GOLD_DIM } else { theme::BUTTON })).clicked() {
+                if ui.add_enabled(dirty, gold_button("Save", dirty)).clicked() {
                     let r = self.save_settings();
                     self.after_write(r, Some("Settings saved: the game uses them at its next start."));
                 }
@@ -707,7 +717,9 @@ impl App {
                 tabs.push("Other".into());
             }
             for (i, t) in tabs.iter().enumerate() {
-                if ui.selectable_label(self.tab == i, RichText::new(t).strong()).clicked() {
+                let on = self.tab == i;
+                let b = egui::Button::new(RichText::new(t).strong().color(if on { theme::ON_GOLD } else { theme::TEXT })).fill(if on { GOLD } else { Color32::TRANSPARENT }).stroke(Stroke::NONE);
+                if ui.add(b).clicked() {
                     self.tab = i;
                 }
             }
@@ -724,7 +736,7 @@ impl App {
                         if heading.as_ref() != Some(&r.heading) {
                             if let Some(h) = &r.heading {
                                 ui.add_space(8.0);
-                                ui.label(RichText::new(h.to_uppercase()).small().strong().color(theme::GOLD_DIM));
+                                ui.label(RichText::new(h.to_uppercase()).small().strong().color(theme::GOLD_TEXT));
                             }
                             heading = Some(r.heading.clone());
                         }
@@ -829,7 +841,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.heading("Mods");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add_enabled(self.mods_dirty, egui::Button::new(RichText::new("Save").strong())).clicked() {
+                if ui.add_enabled(self.mods_dirty, gold_button("Save", self.mods_dirty)).clicked() {
                     let r = self.save_mods();
                     match r {
                         Ok(()) => {
@@ -943,7 +955,7 @@ impl App {
             }
         });
         ui.add_space(12.0);
-        ui.label(RichText::new("PROGRAM").small().strong().color(theme::GOLD_DIM));
+        ui.label(RichText::new("PROGRAM").small().strong().color(theme::GOLD_TEXT));
         card(ui, |ui| {
             ui.set_width(ui.available_width());
             match &self.exe {
@@ -957,7 +969,7 @@ impl App {
             }
         });
         ui.add_space(12.0);
-        ui.label(RichText::new("FOLDERS").small().strong().color(theme::GOLD_DIM));
+        ui.label(RichText::new("FOLDERS").small().strong().color(theme::GOLD_TEXT));
         if let Some(h) = self.home.clone() {
             ui.horizontal_wrapped(|ui| {
                 for (name, dir) in [("Saves", h.saves()), ("Logs", h.logs()), ("Screenshots", h.screenshots()), ("Settings", h.root.clone())] {
