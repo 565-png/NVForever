@@ -1125,6 +1125,154 @@ forbid = [
 ]
 
 [[scenario]]
+name = "terrain-anti-tiling"
+source = "[design, #2551] engine/nvforever/src/terrain.rs \"Anti-tiling\", terrain.wesl and nvf-assets terrain_sampling.wesl/terrain_pbr.wesl: the Terrain anti-tiling switch (off by default and in both presets) switched on while the game runs flips the loaded folded materials and their TERRAIN_ANTI_TILING pipeline (folded path, height blending off) compiles and is ready; off and on again flips them back, without a rendering or pipeline error. Whether the already-loaded ground changes on screen (the cached pipeline reused) is checked in pictures by hand"
+areas = ["renderer", "graphics", "terrain", "settings"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvf-assets/src/terrain_sampling.wesl",
+  "engine/nvf-assets/src/terrain_pbr.wesl", "engine/nvf-assets/src/terrain_sampling.rs",
+  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/pipeline_gate.rs",
+  "engine/nvf-play/src/settings_layout.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:terrain-anti-tiling,13:terrain-anti-tiling,14:terrain-anti-tiling" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 22
+expect = [
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless), so the anti-tiled folded shader is the one drawing" },
+]
+order = [[
+  "settings: terrain-anti-tiling on",
+  { re = 'terrain: anti-tiling on \(\d+ folded quadrant materials, [1-9]\d* changed\)', label = "switching on flipped the loaded folded materials" },
+  { re = 'graphics: light glow, terrain anti-tiling$' },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=folded height=off', label = "the folded TERRAIN_ANTI_TILING pipeline asked for after the switch compiled and is ready" },
+  "settings: terrain-anti-tiling off",
+  { re = 'terrain: anti-tiling off \(\d+ folded quadrant materials, [1-9]\d* changed\)', label = "switching off flipped them back" },
+  { re = 'graphics: light glow$' },
+  "settings: terrain-anti-tiling on",
+  { re = 'terrain: anti-tiling on \(\d+ folded quadrant materials, [1-9]\d* changed\)', label = "flipped on again (the ready pipeline is reused)" },
+  { re = 'graphics: light glow, terrain anti-tiling$', label = "on again" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the anti-tiled terrain" },
+  { re = 'terrain anti-tiling pipeline \d+ failed', label = "a TERRAIN_ANTI_TILING pipeline failed" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (a terrain.wesl or terrain_pbr.wesl that does not compile)" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap" },
+  { text = "anti-tiling needs a texture repeat above 0", label = "the game's repeat places the reads" },
+]
+
+[[scenario]]
+name = "terrain-anti-tiling-start"
+source = "[design, #2551] engine/nvforever/src/terrain.rs \"Anti-tiling\": started with --graphics-only terrain-anti-tiling, the folded materials are made with it and their TERRAIN_ANTI_TILING pipeline (folded path) compiles and is ready, without a rendering or pipeline error"
+areas = ["renderer", "graphics", "terrain"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvf-assets/src/terrain_sampling.wesl",
+  "engine/nvf-assets/src/terrain_pbr.wesl", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/pipeline_gate.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-anti-tiling"]
+run_seconds = 14
+expect = [
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless)" },
+]
+order = [[
+  { re = 'graphics: light glow, terrain anti-tiling$', label = "the switch is on from the start" },
+  { re = 'terrain: anti-tiling on \(\d+ folded quadrant materials, 0 changed\)', label = "on from the first frame: every material was made with it" },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=folded height=off', label = "the materials made with it draw with the folded TERRAIN_ANTI_TILING pipeline, which compiled" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the terrain drawn anti-tiled from the start" },
+  { re = 'terrain anti-tiling pipeline \d+ failed', label = "the start's TERRAIN_ANTI_TILING pipeline failed" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (anti-tiled from the start)" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap (anti-tiled from the start)" },
+  { re = 'terrain: anti-tiling on \(\d+ folded quadrant materials, [1-9]', label = "no material made without the setting" },
+]
+
+[[scenario]]
+name = "terrain-anti-tiling-height-blend"
+source = "[design, #2551] engine/nvforever/src/terrain.wesl: started with both terrain switches (--graphics-only terrain-height-blend,terrain-anti-tiling), one folded pipeline carries TERRAIN_ANTI_TILING and TERRAIN_HEIGHT_BLEND together (the heights taken from the anti-tiled reads) and compiles, without a rendering or pipeline error"
+areas = ["renderer", "graphics", "terrain"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_weights.wesl",
+  "engine/nvf-assets/src/terrain_sampling.wesl", "engine/nvf-assets/src/terrain_pbr.wesl", "engine/nvforever/src/pipeline_gate.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-height-blend,terrain-anti-tiling"]
+run_seconds = 14
+expect = [
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless)" },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=folded height=on', label = "one folded pipeline with both definitions compiled and is ready (not two unrelated ones)" },
+]
+order = [[
+  { re = 'graphics: light glow, terrain height blending, terrain anti-tiling$', label = "both switches on from the start" },
+  { re = 'terrain: anti-tiling on \(\d+ folded quadrant materials, 0 changed\)', label = "every material made with anti-tiling" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with both terrain switches on" },
+  { re = 'terrain anti-tiling pipeline \d+ failed', label = "a TERRAIN_ANTI_TILING pipeline failed" },
+  { re = 'terrain height blending pipeline \d+ failed', label = "a TERRAIN_HEIGHT_BLEND pipeline failed" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (both terrain switches)" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap (both terrain switches)" },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=folded height=off', label = "a folded anti-tiled pipeline without height blending: the materials' two switches split" },
+]
+
+[[scenario]]
+name = "terrain-anti-tiling-separate"
+source = "[design, #2551] engine/nvforever/src/terrain.rs \"Anti-tiling\", nvf-assets nif_material.rs \"Landscape anti-tiling\", nif_material.wesl and terrain_pbr.wesl: with every landscape layer drawn on its own (test aid NVF_PLAY_TEST_TERRAIN_LAYERS=blended, as on a GPU without bindless textures), the Terrain anti-tiling switch flips the landscape's own NIF materials in place and their TERRAIN_ANTI_TILING TERRAIN_SEPARATE pipeline compiles and is ready; off flips them back, without a rendering or pipeline error. The look is checked in pictures by hand"
+areas = ["renderer", "graphics", "terrain"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl",
+  "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/terrain_pbr.wesl", "engine/nvf-assets/src/terrain_sampling.wesl",
+  "engine/nvforever/src/pipeline_gate.rs",
+]
+env = { NVF_PLAY_TEST_TERRAIN_LAYERS = "blended", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:terrain-anti-tiling,13:terrain-anti-tiling" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 22
+order = [[
+  "settings: terrain-anti-tiling on",
+  { re = 'terrain: anti-tiling on \(0 folded quadrant materials, 0 changed\) and \d+ separate landscape materials \([1-9]\d* changed\)', label = "nothing folded; switching on flipped the landscape's own NIF materials" },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=separate height=off', label = "the separate TERRAIN_ANTI_TILING pipeline compiled and is ready" },
+  "settings: terrain-anti-tiling off",
+  { re = 'terrain: anti-tiling off \(0 folded quadrant materials, 0 changed\) and \d+ separate landscape materials \([1-9]\d* changed\)', label = "switching off flipped them back" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the separately drawn landscape anti-tiled" },
+  { re = 'terrain anti-tiling pipeline \d+ failed', label = "a separate TERRAIN_ANTI_TILING pipeline failed" },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=folded', label = "a folded pipeline although every layer is drawn on its own" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (nif_material.wesl or terrain_pbr.wesl that does not compile)" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap (separate landscape draws)" },
+]
+
+[[scenario]]
+name = "terrain-anti-tiling-overflow"
+source = "[design, #2551] engine/nvforever/src/terrain.rs \"Anti-tiling\": with a texture repeat that does not divide the cell (--terrain-tile 300) a quadrant folds four layers and draws the rest on their own (the first cell with such layers logs how many); started with --graphics-only terrain-anti-tiling, the folded pipeline and the separate pipeline of the blended layer draws both compile and are ready, every landscape material made with the switch, without a rendering or pipeline error"
+areas = ["renderer", "graphics", "terrain"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvf-assets/src/nif_material.rs",
+  "engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/terrain_pbr.wesl", "engine/nvf-assets/src/terrain_sampling.wesl",
+  "engine/nvforever/src/pipeline_gate.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--terrain-tile", "300", "--graphics-only", "terrain-anti-tiling"]
+run_seconds = 14
+expect = [
+  { re = 'terrain: the first 4 texture layers of a quadrant are folded into its base', label = "a repeat that does not divide the cell folds four layers" },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=folded height=off', label = "the folded anti-tiled pipeline (the mesh carries the coordinate; the repeat comes from the material)" },
+  { re = 'terrain: [1-9]\d* layers drawn blended over folded quadrants \(past the first 4 of a quadrant\)', label = "overflow layers exist: layers past the fourth drawn on their own over a folded quadrant" },
+  { re = 'terrain anti-tiling pipeline \d+ ready: path=separate height=off blend=on', label = "the separate anti-tiled pipeline of an alpha-blended layer draw (an unfolded base alone is opaque, blend=off)" },
+]
+order = [[
+  { re = 'graphics: light glow, terrain anti-tiling$', label = "on from the start, at repeat 300" },
+  { re = 'terrain: anti-tiling on \(\d+ folded quadrant materials, 0 changed\) and \d+ separate landscape materials \(0 changed\)', label = "on from the first frame, before any landscape material" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the overflow layers anti-tiled" },
+  { re = 'terrain anti-tiling pipeline \d+ failed', label = "an anti-tiled pipeline failed at repeat 300" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (repeat 300)" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap (repeat 300)" },
+  { text = "anti-tiling needs a texture repeat above 0", label = "repeat 300 places the reads" },
+]
+
+[[scenario]]
 name = "terrain-height-blend-local-start"
 source = "[design, #2550] engine/nvforever/src/terrain.rs \"Height blending\": started with local height reference (0.10:4:local) and --graphics-only terrain-height-blend, the folded materials are made with it and their TERRAIN_HEIGHT_BLEND pipeline compiles and is ready, without a rendering or pipeline error"
 areas = ["renderer", "graphics", "terrain"]
