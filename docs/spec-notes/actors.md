@@ -1124,7 +1124,7 @@ sequences): 70 directly in it, 9 in `male\`, 9 in `female\`, 8 in `child\` and 2
   cycle, removing the oscillation as well as the linear travel; a zero-net move
   qualifies if its peak is positive. All other moving clips retain linear correction.
   [hypothesis] This in-place rendering is provisional: whether the original instead
-  moves the actor along these darts is unknown (observer check 147).
+  moves the actor along these darts is unknown (observer check 169).
   [design] The rule applies generally to moving clips, including weapon, hurt and
   script-replacement sets; actor movement, clip pace, root height/rotation correction,
   and carried attacks retain their existing rules (`locomotion.rs::bind_move`,
@@ -1191,7 +1191,7 @@ All rules here are engine choices unless tagged otherwise. Layer 6 replaces the 
   survey] `mtidle.kf` drives the bloatfly's wing bones (`Bip01 L/R UpperArm`,
   `Forearm`, priority 45); its movement, aim, attack and hover clips omit them.
   [hypothesis] The original keeps these bones animating from its idle (observer
-  check 147; animation.md §9.4). [design] People retain their existing layering.
+  check 169; animation.md §9.4). [design] People retain their existing layering.
   The existing summary `actor idle under movement: N actor frames …` now counts the
   under-layer during upper clips too (`drive_one`, `main.rs`).
 - **Phase sync**: between two walk/run clips, the incoming clip starts at the same
