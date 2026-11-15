@@ -451,9 +451,15 @@ prior art, nothing of either was used.
   quadrant's later layers that keep their blended draws, and every layer on a GPU without
   bindless textures, blend as before: their coverage over the folded result is unchanged,
   but height does not compete across that draw boundary, so moving a layer across the
-  fold limit can change the outline there. Quadrant and cell edges: the weights come from
-  the stitched opacities (#2096) and the textures at the same world coordinate, so both
-  sides compute the same value.
+  fold limit can change the outline there.
+- **Quadrant and cell edges.** The two sides of an edge give the same result only where
+  they have the same contributing textures, the same effective (ordered) shares and the
+  same fold partition. Stitching (#2096, terrain.rs `stitch_layers`) makes the painted
+  opacities agree along an edge, but each quadrant keeps its own base and layer order, so
+  equal opacities can still give different ordered shares, and a layer folded on one side
+  can be a separate draw on the other. Whether that shows is checked by pictures (the
+  edge-stitch location of `terrain-edge-stitch`, quadrants at the fold limit), not
+  claimed here.
 - **Switching.** The settings row Terrain height blending (Graphics > Picture), or
   `--graphics-only terrain-height-blend`. It is a pipeline key of the folded material
   (`TerrainLayersKey`); switching flips every folded material in place
@@ -468,7 +474,10 @@ prior art, nothing of either was used.
   the switch off; skipping them needs explicit-gradient reads and belongs with the
   anti-tiling work (#2551).
 - Whether `enhanced` turns it on is the owner's call; until then it is off in both presets
-  and is not an effect of the Enhanced effects row. Smoke: `terrain-height-blend`.
+  and is not an effect of the Enhanced effects row. Smoke: `terrain-height-blend` (switched
+  on, off and on while running) and `terrain-height-blend-start` (on from the start); both
+  want the variant's `terrain height blending pipeline <n> ready` line
+  (`NVF_PLAY_TEST_PIPELINE_LOG`, pipeline_gate.rs). The look itself is checked by pictures.
 
 ## 4. Tried and dropped
 

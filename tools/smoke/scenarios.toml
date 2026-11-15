@@ -1036,34 +1036,63 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 
 [[scenario]]
 name = "terrain-height-blend"
-source = "[design, #2550] engine/nvforever/src/terrain.rs \"Height blending\", terrain.wesl and terrain_weights.wesl: the Terrain height blending switch (off by default and in both presets) starts with --graphics-only, compiles the folded terrain pipeline with TERRAIN_HEIGHT_BLEND, and flips every folded material off and on again while the game runs, without a rendering or pipeline error"
+source = "[design, #2550] engine/nvforever/src/terrain.rs \"Height blending\", terrain.wesl and terrain_weights.wesl: the Terrain height blending switch (off by default and in both presets) switched on while the game runs flips the loaded folded materials and their TERRAIN_HEIGHT_BLEND pipeline compiles and is ready; off and on again flips them back, without a rendering or pipeline error. Pictures of the on/off look are taken by hand"
 areas = ["renderer", "graphics", "terrain", "settings"]
 paths = [
   "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_weights.wesl",
-  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings_layout.rs",
+  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/pipeline_gate.rs",
+  "engine/nvf-play/src/settings_layout.rs",
 ]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PIPELINE_DEFS = "1", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:terrain-height-blend,13:terrain-height-blend" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-height-blend"]
-run_seconds = 20
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:terrain-height-blend,13:terrain-height-blend,14:terrain-height-blend" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 22
 expect = [
   { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless), so the height-blended shader is the one drawing" },
-  { re = 'pipeline \d+ shader-defs: .*TERRAIN_HEIGHT_BLEND', label = "a pipeline with the height-blend switch was asked for" },
-  { re = 'terrain: height blending off \(\d+ folded quadrant materials, (?P<n>\d+) changed', range = [1, 1e9], label = "switching off flipped the loaded folded materials" },
 ]
 order = [[
+  "settings: terrain-height-blend on",
   { re = 'graphics: light glow, terrain height blending$' },
-  { re = 'terrain: height blending on \(' },
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]\d* changed', label = "switching on flipped the loaded folded materials" },
+  { re = 'terrain height blending pipeline \d+ ready', label = "the TERRAIN_HEIGHT_BLEND pipeline asked for after the switch compiled and is ready" },
   "settings: terrain-height-blend off",
   { re = 'graphics: light glow$' },
-  { re = 'terrain: height blending off \(' },
+  { re = 'terrain: height blending off \(\d+ folded quadrant materials, [1-9]\d* changed', label = "switching off flipped them back" },
   "settings: terrain-height-blend on",
-  { re = 'graphics: light glow, terrain height blending$', label = "back on" },
-  { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]\d* changed', label = "the loaded materials flipped back" },
+  { re = 'graphics: light glow, terrain height blending$', label = "on again" },
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]\d* changed', label = "flipped on again (the ready pipeline is reused)" },
 ]]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error with the height-blended terrain" },
+  { re = 'terrain height blending pipeline \d+ failed', label = "the TERRAIN_HEIGHT_BLEND pipeline failed" },
   { text = "failed and will not be tried again", label = "a pipeline that failed for good (a terrain.wesl that does not compile)" },
   { text = "still being retried after", label = "a pipeline still retried at the cap" },
+]
+
+[[scenario]]
+name = "terrain-height-blend-start"
+source = "[design, #2550] engine/nvforever/src/terrain.rs \"Height blending\": started with --graphics-only terrain-height-blend, the folded materials are made with it and their TERRAIN_HEIGHT_BLEND pipeline compiles and is ready, without a rendering or pipeline error"
+areas = ["renderer", "graphics", "terrain"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_weights.wesl",
+  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/pipeline_gate.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-height-blend"]
+run_seconds = 14
+expect = [
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless)" },
+]
+order = [[
+  { re = 'graphics: light glow, terrain height blending$', label = "the switch is on from the start" },
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, 0 changed', label = "on from the first frame: every material was made with it" },
+  { re = 'terrain height blending pipeline \d+ ready', label = "the materials made with it draw with the TERRAIN_HEIGHT_BLEND pipeline, which compiled" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the terrain drawn height-blended from the start" },
+  { re = 'terrain height blending pipeline \d+ failed', label = "the start's TERRAIN_HEIGHT_BLEND pipeline failed" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap" },
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]', label = "no material made without the setting" },
 ]
 
 [[scenario]]
