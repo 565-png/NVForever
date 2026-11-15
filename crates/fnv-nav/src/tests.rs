@@ -710,6 +710,32 @@ fn locked_door_overlap_allows_only_endpoints_outside_its_footprint() {
 }
 
 #[test]
+fn endpoint_exemptions_cannot_cross_a_refusing_door_footprint() {
+    // [design, #2716] Adjacent triangles on opposite sides are both exempt, but
+    // their generated segment crosses the synthetic rotated door's footprint.
+    let mut g = corridor_with_door(Some(crate::graph::DoorLock { level: 50, key: Some(0x4B) }));
+    for (door_x, from, to, same_triangle) in [
+        (500.0, [450.0, 25.0, 0.0], [550.0, 75.0, 0.0], false),
+        (450.0, [430.0, 10.0, 0.0], [475.0, 10.0, 0.0], true),
+    ] {
+        g.set_in_place_doors(vec![hinged(0xD00, door_x, 0.0)], |_| Some(crate::graph::DoorLock { level: 50, key: Some(0x4B) }));
+        let (s, t) = (g.locate(W, from, 1.0).unwrap(), g.locate(W, to, 1.0).unwrap());
+        assert_eq!(s == t, same_triangle);
+        let closed = PathParams::default();
+        assert!(g.door_endpoint_open(s, from, &closed));
+        assert!(g.door_endpoint_open(t, to, &closed));
+        for (a, b) in [(from, to), (to, from)] {
+            let (a, b) = (Place { space: W, pos: a }, Place { space: W, pos: b });
+            assert!(matches!(g.find_path(a, b, &closed), Err(PathError::Unreachable { .. })));
+            let refused = PathParams { keys: vec![0x4B], refused_doors: vec![0xD00], ..Default::default() };
+            assert!(matches!(g.find_path(a, b, &refused), Err(PathError::Unreachable { .. })));
+            assert!(g.find_path(a, b, &PathParams { keys: vec![0x4B], ..Default::default() }).is_ok());
+            assert!(g.find_path(a, b, &PathParams { open_doors: vec![0xD00], ..refused }).is_ok());
+        }
+    }
+}
+
+#[test]
 fn endpoint_must_be_outside_every_refusing_door_footprint() {
     // [design, #2716] The point clears the first rotated door but lies in the second.
     let mut g = corridor_with_door(None);

@@ -2488,7 +2488,13 @@ impl Ai {
         }
         let Some(door) = ahead else { return true };
         a.asked_door = Some((door, a.package));
-        if game.npc_door(actor, FormId(door)) != fnv_game::npc_doors::DoorAnswer::Refused {
+        let answer = game.npc_door(actor, FormId(door));
+        // [hypothesis, #2716] An already-open in-place door is no barrier, even with
+        // a cached or fresh script refusal (navmesh.md; observer check 210). [design]
+        // Ask first to preserve crossing events and use live state after the script.
+        let open_in_place = game.world.placed.get(FormId(door)).is_some_and(|r| r.teleport.is_none())
+            && game.world.get(FormId(door)).is_ok_and(|s| s.open);
+        if answer != fnv_game::npc_doors::DoorAnswer::Refused || open_in_place {
             return true;
         }
         a.walker.follower = None;

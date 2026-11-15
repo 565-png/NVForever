@@ -578,6 +578,11 @@ impl NavGraph {
             }
         };
         let legs = self.legs_of(&chain, s_at, g_at, from.space, to.space, p);
+        // [design, #2716] Check the final geometry after funneling, shortcuts and door
+        // approaches: exempt endpoint triangles can straddle the same closed door.
+        if legs.iter().any(|l| !self.door_segments_open(&l.corridor, &l.points, p)) {
+            return Err(PathError::Unreachable { expanded });
+        }
         let length = legs.iter().map(|l| l.points.windows(2).map(|w| dist(w[0], w[1])).sum::<f32>()).sum();
         Ok(Path { legs, length, expanded, start_snap: dist(from.pos, s_at), goal_snap: dist(to.pos, g_at) })
     }

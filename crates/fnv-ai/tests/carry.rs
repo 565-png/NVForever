@@ -1010,6 +1010,69 @@ fn a_door_locked_and_unlocked_in_the_game_reaches_the_paths() {
 }
 
 #[test]
+fn open_locked_in_place_door_allows_arrival_despite_script_refusal() {
+    use fnv_game::data::Compiled;
+    use fnv_game::npc_doors::DoorAnswer;
+    use fnv_script::compile::{compile, env::LoadOrderIndex};
+    use fnv_script::unit::{Header, ScriptKind, ScriptUnit, UnitOwner};
+
+    // [design, #2716] Compile an authored synthetic refusal: it counts attempts but
+    // never calls Activate. Exercise both a cached closed-door refusal and a fresh one.
+    for cached in [true, false] {
+        let mut f = fixture();
+        let plugins = vec![Plugin::parse(&plugin_bytes(), "Carry.esm".into()).unwrap()];
+        let lo = LoadOrder::new(&plugins).unwrap();
+        let names = LoadOrderIndex::build(&lo, &[]);
+        let source = "scn RefusingDoor\nbegin OnActivate\nset TestGlobal to TestGlobal + 1\nend\n";
+        let c = compile(source, &f.data.table, &names.env(0), None);
+        assert_eq!(c.errors().count(), 0, "{:?}", c.diags);
+        let decoded = fnv_script::decode(&c.bytes, &f.data.table);
+        assert_eq!(decoded.report.raw_total(), 0);
+        let script = FormId(0xF00);
+        let unit = ScriptUnit {
+            plugin: "Carry.esm".into(), owner: UnitOwner::Script { form: script.0 }, kind: ScriptKind::Object,
+            header: Header { ref_count: c.refs.len() as u32, compiled_size: c.bytes.len() as u32, variable_count: c.variables.len() as u32, flags: 0 },
+            variables: c.variables, refs: c.refs, has_scda: true, bytes: c.bytes, source: Some(source.into()),
+        };
+        let index = f.data.units.len();
+        let compiled = Compiled::new(unit, decoded.program, 0);
+        f.data.unit_by_key.insert(compiled.key(), index);
+        f.data.units.push(compiled);
+        f.data.scripts.insert(script, index);
+        f.data.form_script.insert(FormId(SCRIPT_DOOR_BASE), script);
+        let placed = f.refs.refs.get_mut(&FormId(M1)).unwrap();
+        placed.base = FormId(SCRIPT_DOOR_BASE);
+        placed.lock = Some(fnv_sim::refs::Lock { level: 255, key: None, leveled: false });
+
+        let mut s = sim(&f, &[R_TRAVEL]);
+        let actor = FormId(R_TRAVEL);
+        let door = FormId(M1);
+        s.nav.set_in_place_doors(vec![fnv_nav::InPlaceDoor {
+            door: M1, space: A, position: [200.0, 200.0, 0.0],
+            rotation: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], scale: 1.0,
+            bounds: ([-4.0, -200.0, 0.0], [4.0, 200.0, 200.0]),
+        }], |_| Some(DoorLock { level: 255, key: None }));
+        s.ai.apply_door_locks(&mut s.game, &mut s.nav);
+        if cached {
+            assert_eq!(s.game.npc_door(actor, door), DoorAnswer::Refused);
+            s.game.npc_door_left(actor, door);
+        }
+        s.game.set_ref_open(door, true).unwrap();
+        s.run(40.0);
+        let events = s.events(R_TRAVEL);
+        assert!(events.iter().any(|e| matches!(e, AiEvent::Arrived { .. })), "cached={cached}: {events:?}");
+        assert!(!events.iter().any(|e| matches!(e, AiEvent::DoorRefused { .. } | AiEvent::Unreachable { .. })), "cached={cached}: {events:?}");
+        assert_eq!(s.ai.agents[&actor].activity, Activity::There);
+        assert_eq!(s.ai.agents[&actor].walker.space, B);
+        assert!(dist(s.feet(R_TRAVEL), [5250.0, 5250.0, 50.0]) < 5.0);
+        assert!(s.game.refused_doors(actor).contains(&M1), "the refusal remains cached");
+        assert_eq!(s.game.world.global(FormId(0x807)).unwrap(), 1.0, "the refusal block ran once");
+        assert!(s.game.world.peek(door).unwrap().open);
+        assert!(s.game.world.lock_of(door).unwrap().locked);
+    }
+}
+
+#[test]
 fn open_locked_in_place_doors_reach_actor_path_parameters() {
     // [design, #2716] Synthetic barrier across cell A, using a fixture reference:
     // exercise closed, script-opened, untouched default-open, and script-closed states.

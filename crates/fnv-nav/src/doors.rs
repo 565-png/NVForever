@@ -310,4 +310,15 @@ impl NavGraph {
             self.in_place_door_open(d, p) || self.in_place.get(&d).is_some_and(|door| door.entry(at, at).is_none())
         })
     }
+
+    /// [design, #2716] Endpoint triangle exemptions never permit a generated segment
+    /// to enter a refusing door's oriented footprint, including within one triangle.
+    pub(crate) fn door_segments_open(&self, corridor: &[u32], points: &[[f32; 3]], p: &PathParams) -> bool {
+        let mut doors: Vec<u32> = corridor.iter().filter_map(|t| self.door_tris.get(t)).flatten().copied().collect();
+        doors.sort_unstable();
+        doors.dedup();
+        doors.into_iter().all(|d| {
+            self.in_place_door_open(d, p) || self.in_place.get(&d).is_some_and(|door| points.windows(2).all(|s| door.entry(s[0], s[1]).is_none()))
+        })
+    }
 }

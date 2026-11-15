@@ -166,6 +166,10 @@ the actor jumps or drops over them (actor-jumps.md §3).
   points lie outside every refusing door's oriented footprint. A point on the footprint's
   boundary is inside. Intermediate triangles retain the refusal; unrelated endpoints of
   teleport legs get no exemption (`path.rs::search_path`, `passable_for_path`).
+  [design, #2716] After funneling, shortcuts and door-stop insertion, `search_path`
+  rejects any generated segment entering a refusing door's oriented footprint
+  (`doors.rs::door_segments_open`). This also guards adjacent exempt endpoints on
+  opposite sides of a door and crossings within one exempt triangle.
   [documented: issue #2716, spooknik comment, 2026-11-15, supplied record findings]
   `SecretDoorMarkerREF` (0x0012791D, 3764,592,8872) is 31 units beyond the footprint of
   `MickSecretDoorREF` (0x00121FF2, x 3627..3733), but its triangle 75 in NAVM 0x00115DD6
@@ -181,7 +185,11 @@ the actor jumps or drops over them (actor-jumps.md §3).
   `VFSMickSecretSalesConversationPackage` (0x00127921), goes through that still-locked
   door to `SecretSalesMarkerREF` (0x0016CCA1). [design / file refs] `PathParams::open_doors`
   supplies live state to both triangle refusal and approach stops; `fnv_ai::Ai::path_params`
-  includes script-opened and untouched default-open locked doors. Original-game check:
+  includes script-opened and untouched default-open locked doors. [hypothesis, #2716]
+  Runtime passage also permits an already-open in-place door despite a cached or fresh
+  activation refusal. [design / `fnv_ai::Ai::ask_door`] The activation attempt still runs
+  for crossing events; live state afterward decides whether a refusal cancels movement.
+  Load-door behavior is unchanged. Original-game check:
   `docs/handoff/observer-checks.md` **210**.
 - A door's bounds can be wider than its opening: `UtlDoor01`'s span 249 units across
   (−69 to 180), more than the doorway the navmesh runs through at 0x0012C97C [observed];

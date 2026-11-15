@@ -87,18 +87,27 @@ original path's snapped start and goal triangles bypass door refusal when their 
 are outside every refusing door's oriented footprint (bounds edges count as inside).
 `search_path` checks both points and passes those two triangle IDs to A* across all legs;
 intermediate triangles and unrelated teleport-leg endpoints remain closed. Raycasts
-keep ordinary refusal, so the shortcut pass cannot open a new route through a closed
-locked door. [hypothesis, #2716] An already open in-place door refuses no triangle,
+keep ordinary refusal. After funneling, shortcuts and door-stop insertion, each final
+leg is checked against refusing doors on its corridor (`door_segments_open`): any
+segment entering their oriented footprints rejects the path. This covers adjacent
+exempt endpoints on opposite sides and crossings within one triangle.
+[hypothesis, #2716] An already open in-place door refuses no triangle,
 regardless of locks or a previous script refusal (observer check 210). [design / file refs]
 `door_tri_open` reads `PathParams::open_doors`, supplied by `Ai::path_params` from live
 world state, falling back to default-open placement for untouched locked doors.
+[hypothesis, #2716] Runtime passage through an open in-place door likewise wins over
+a cached or fresh activation refusal. [design / `Ai::ask_door`] The activation attempt
+and crossing bookkeeping still run; live state after the attempt decides whether the
+refusal cancels movement. Load doors retain their existing handling.
 
 [design, #2716] `fnvtool nav path` (and shared path options for `nav walk`) accepts
 repeatable `--open-door <formid>` without granting permission to open any other lock.
 Synthetic nav tests cover overlapping start/goal triangles beside rotated bounds,
 inside/boundary endpoints, multiple refusing doors, closed locked passage and open locked
 passage; `fnv-ai/tests/carry.rs::open_locked_in_place_doors_reach_actor_path_parameters`
-covers script-opened and untouched default-open state. Smoke scenarios
+covers script-opened and untouched default-open state;
+`open_locked_in_place_door_allows_arrival_despite_script_refusal` checks arrival with
+cached and fresh refusals while the door stays open and locked. Smoke scenarios
 `mick-secret-door-paths` and `mick-secret-door-packages` check the two routes and the
 Travel-arrival-to-secret-sales transition; record evidence is in spec-notes/navmesh.md §4.
 
