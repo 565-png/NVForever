@@ -46,6 +46,7 @@ untimed = [
   "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
   "NVF_PLAY_TEST_MELEE_KNOCKBACK",
   "NVF_PLAY_TEST_RAGDOLL_FAIL",
+  "NVF_PLAY_TEST_DEATH_RECOVERY",
 ]
 
 # Test aids whose value is a list of timed items (`<seconds>:<what>`), joined with sep.
@@ -194,6 +195,35 @@ paths = [".github/workflows/", "tools/release/"]
 cmd = ["python", "-m", "unittest", "discover", "-s", "tools/release/tests"]
 
 # ------------------------------------------------------------------ renderer, sky, image space
+
+[[scenario]]
+name = "death-recovery-handoff"
+source = "original death reload observed in campaign o29_dmg (2026-11-08, #1858), docs/handoff/observer-checks.md item 89; bounded recovery policy in docs/spec-notes/player-death-recovery.md"
+note = "UNRUN: an isolated NVForever home saves a living player before KillActor; the existing load handoff must take over once, without overwriting that save. This is separate from the unchanged camera-only fade timing scenario."
+areas = ["save", "combat"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/save/death_recovery.rs", "engine/nvf-play/src/loading.rs", "engine/nvforever/src/handoff.rs"]
+env = { NVFOREVER_HOME = "death-recovery-home", NVF_PLAY_TEST_DEATH_RECOVERY = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "20:save death-recovery-living;21:close;24:player.killactor;25:close", NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 90
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its world is in"
+expect = [
+  { re = 'save: wrote .*death-recovery-living\.nvfsave', count = 1, label = "one living save is written" },
+  { re = 'death recovery: loading .*death-recovery-living\.nvfsave after', count = 1, label = "death selects the living save once" },
+  { re = 'load: handing over to a new run with --load .*death-recovery-living\.nvfsave', count = 1, label = "one existing load handoff starts" },
+  { re = 'load: restored .*death-recovery-living\.nvfsave: \d+ changed references', count = 1, label = "the new run restores the living save" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown" },
+  { text = "the new run took over and its world is in; ending it", label = "the restored world comes in" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends after takeover" },
+  { text = "No living save could be loaded", count = 0, label = "the usable living save is not rejected" },
+  { re = 'before the world was in|before it was ready|the previous run did not end normally', count = 0, label = "no handoff timeout or crash" },
+]
+order = [[
+  { re = 'save: wrote .*death-recovery-living\.nvfsave', label = "save first" },
+  { re = 'death recovery: loading .*death-recovery-living\.nvfsave after', label = "then recover" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "new window shows" },
+  { re = 'load: restored .*death-recovery-living\.nvfsave', label = "restore after handoff" },
+  { text = "the new run took over and its world is in; ending it", label = "restored world ready" },
+]]
 
 [[scenario]]
 name = "memory-budget-capped"
@@ -1469,9 +1499,11 @@ expect = [
   { json = "verdicts.stays where it is", schema = "fnv.ai.reach/1", equals = 1571, known_failing = "main 2026-10-11: 1,602" },
   { json = "verdicts.never chosen: needs a linked reference the actor lacks", schema = "fnv.ai.reach/1", equals = 2810, known_failing = "main 2026-10-11: 3,185" },
   { json = "verdicts.nowhere to go: the location is the player, who is nowhere yet", schema = "fnv.ai.reach/1", equals = 177, known_failing = "main 2026-10-11: 182" },
-  { json = "verdicts.talks: goes up to its target from where it is", schema = "fnv.ai.reach/1", equals = 126 },
+  # 127 since fe707658d (2026-11-14, #2451): a Dialogue package talking to another actor or a talking activator is carried out; the 3 pairs "not carried out yet: a conversation between two actors" became 1 talks + 2 reachable (checked by putting that one goal.rs rule back: 126, 3, and reachable 10,590; issue #2571)
+  { json = "verdicts.talks: goes up to its target from where it is", schema = "fnv.ai.reach/1", equals = 127 },
   # issue #909 item 9 (2026-10-30): pairs unreachable from the editor placement but reached from a place a script MoveTo's the actor to (Yes Man's penthouse marker 0x00166304)
-  { json = "verdicts.reachable from where a script moves it (MoveTo)", schema = "fnv.ai.reach/1", equals = 120, label = "reached from a script's MoveTo target: 120 pairs" },
+  # 122 since 3ceeb49ff (2026-11-14, #2566): a disabled load door is no way through; 4 pairs reachable only through one became 2 reached from a MoveTo target + 2 with no way there (checked by letting disabled doors through again: 120, 183 no way, 10,596 reachable; issue #2571)
+  { json = "verdicts.reachable from where a script moves it (MoveTo)", schema = "fnv.ai.reach/1", equals = 122, label = "reached from a script's MoveTo target: 122 pairs" },
   # main on 2026-10-11, so any change shows here and gets explained
   { json = "actor_package_pairs", schema = "fnv.ai.reach/1", equals = 16935, label = "pairs as on main 2026-10-11: 16,935" },
   { json = "verdicts.reachable", schema = "fnv.ai.reach/1", equals = 10258, label = "reachable as on main 2026-10-11: 10,258", known_failing = "main 2026-10-17 (6a53e8e7): 10,403; with every package type carried out (Escort, Find, Use Item At, Ambush, Flee, actor-behaviour.md §5.10): 10,620" },
@@ -8345,6 +8377,7 @@ source = "issue #1572: every way of saving is refused from the player's death on
 areas = ["save"]
 paths = ["engine/nvf-play/src/save.rs"]
 note = "player.kill at 14 s; the QuickSave key at 15.5 s and 17 s (the second while the screen is going black) and a console save at 19 s are all refused, and nothing is written. NVFOREVER_HOME keeps the run off the real quicksave."
+forbid = [{ text = "death recovery:", label = "assisted death remains in this run without opening recovery or loading another save" }]
 env = { NVFOREVER_HOME = "save-dead-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.kill;14.3:close;19:save dead-save;19.5:close", NVF_PLAY_TEST_KEYS = "15.5:f5,17:f5" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
 run_seconds = 22
@@ -11470,7 +11503,7 @@ name = "death-cam-first"
 source = "owner 2026-10-16: when the player dies the body drops as a ragdoll with the first-person view fixed to its head, in slow motion and blurred (engine/nvforever/src/death_cam.rs)"
 areas = ["combat", "camera"]
 paths = ["engine/nvforever/src/death_cam.rs", "engine/nvforever/src/ragdoll.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/imagespace.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/audio_out.rs"]
-env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "10:player.killactor;11:close" }
+env = { NVFOREVER_HOME = "death-cam-first-recovery-delay-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "9:setgs fPlayerDeathReloadTime 120;9.5:close;10:player.killactor;11:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 22
 order = [[
@@ -11478,11 +11511,13 @@ order = [[
   { re = 'sound speed: 0\.\d\d -> 1\.00', label = "and come back to speed when it ends" },
 ]]
 expect = [
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
   "death camera: the player died in first person: the body drops as a ragdoll, the view stays on its head",
   "player controls: all held, the player is dead",
   { re = 'death camera: the body is on the ground [\d.]+ s after the death', label = "the ragdoll comes to rest" },
   "death camera: 1 death(s) shown, the player dead at exit",
 ]
+forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }]
 
 [[scenario]]
 name = "death-fade"
@@ -11490,27 +11525,31 @@ source = "owner todo 6 item 3 (2026-10-17): 2 s after the player dies the screen
 note = "killed at 10 s as death-cam-first; the fade starts 2 s of real time after the death and is black 4 s later; the slow motion runs meanwhile, so these are not game seconds"
 areas = ["combat", "camera"]
 paths = ["engine/nvforever/src/death_cam.rs", "engine/nvforever/src/imagespace.rs"]
-env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "10:player.killactor;11:close" }
+env = { NVFOREVER_HOME = "death-fade-recovery-delay-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "9:setgs fPlayerDeathReloadTime 120;9.5:close;10:player.killactor;11:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 22
 expect = [
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
   "death camera: the player died in first person: the body drops as a ragdoll, the view stays on its head",
   { re = 'death camera: the screen starts fading to black (?P<n>[\d.]+) s after the death', range = [2.0, 2.3], label = "the fade starts about 2 s after the death" },
   { re = 'death camera: the screen is black (?P<n>[\d.]+) s after the death', range = [6.0, 6.3], label = "the screen is black about 6 s after the death" },
 ]
+forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }]
 
 [[scenario]]
 name = "death-cam-third"
 source = "owner 2026-10-16: in third person the camera stays on the player's body as it drops, in slow motion and blurred; owner 2026-10-25: the camera keeps its place and only turns to the body (engine/nvforever/src/death_cam.rs)"
 areas = ["combat", "camera"]
 paths = ["engine/nvforever/src/death_cam.rs", "engine/nvforever/src/ragdoll.rs", "engine/nvforever/src/player_body.rs"]
-env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONTROL = "8:view", NVF_PLAY_TEST_CONSOLE = "10:player.killactor;11:close" }
+env = { NVFOREVER_HOME = "death-cam-third-recovery-delay-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONTROL = "8:view", NVF_PLAY_TEST_CONSOLE = "9:setgs fPlayerDeathReloadTime 120;9.5:close;10:player.killactor;11:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 22
 expect = [
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
   "death camera: the player died in third person: the body drops as a ragdoll, the camera stays put and looks at it",
   { re = 'death camera: the body is on the ground [\d.]+ s after the death', label = "the ragdoll comes to rest" },
 ]
+forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }]
 
 [[scenario]]
 name = "g5-self-kill-1"
@@ -11526,6 +11565,7 @@ expect = [
   { re = 'combat: the player died, killed by Player', label = "the player dies of it", known_failing = "#1581: the blast misses the player on some runs" },
 ]
 forbid = [
+  { text = "death recovery:", label = "assisted death remains in this run without opening recovery or loading another save" },
   { re = 'xp: \S+ XP from a kill', label = "no kill XP" },
   { re = 'challenge: (Lord Death|Kaboom|The Rifleman) ', label = "no kill challenge" },
 ]
@@ -11543,6 +11583,7 @@ order = [[
   { re = 'test aid: the player hits 0x00000014 for \d+ with ' },
 ]]
 forbid = [
+  { text = "death recovery:", label = "assisted death remains in this run without opening recovery or loading another save" },
   { re = 'XP from a kill', label = "no XP for their own death" },
   { re = 'challenge: (Lord Death|The Rifleman|Kaboom) ', label = "no challenge for their own death" },
 ]
@@ -11553,14 +11594,15 @@ source = "owner 2026-10-25: anything ragdolled floats to the surface in water (d
 note = "the player swims out from the Boulder Beach shore as wade-in-swim (on to x about 59300), is killed under the lake's surface (2600) at 19 s, and its body rises and comes to rest floating there"
 areas = ["ragdoll", "physics"]
 paths = ["crates/fnv-phys/src/buoyancy.rs", "crates/fnv-phys/src/ragdoll.rs", "crates/fnv-phys/src/water.rs", "engine/nvforever/src/ragdoll.rs", "engine/nvforever/src/death_cam.rs"]
-env = { NVF_PLAY_TEST_MOVE = "10:1:0,17:0:0", NVF_PLAY_TEST_CONSOLE = "19:player.killactor;20:close" }
+env = { NVFOREVER_HOME = "ragdoll-floats-recovery-delay-home", NVF_PLAY_TEST_MOVE = "10:1:0,17:0:0", NVF_PLAY_TEST_CONSOLE = "18:setgs fPlayerDeathReloadTime 120;18.5:close;19:player.killactor;20:close" }
 args = ["--play", "--pos=56992,37536,2745", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 50
 expect = [
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
   "death camera: the player died in first person: the body drops as a ragdoll, the view stays on its head",
   { re = 'ragdoll: actor 00000014 floats at \(5\d{4}, 37\d{3}, [\d.]+\), its trunk (?P<n>-?\d+) units under the surface at 2600', range = [-25, 25], label = "the body comes to rest floating, its trunk at the lake's surface (6 under, 13 s after the death, 2026-10-25)" },
 ]
-forbid = [{ re = 'ragdoll: actor 00000014 held at rest still moving', label = "the body is never frozen part way up" }]
+forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }, { re = 'ragdoll: actor 00000014 held at rest still moving', label = "the body is never frozen part way up" }]
 
 [[scenario]]
 name = "loose-items-float"
@@ -14189,6 +14231,38 @@ expect = [
 ]
 
 [[scenario]]
+name = "session-lighting-reentry"
+source = "docs/spec-notes/session-cell-lighting.md; Part of #2272: actual console session template/trait/inheritance writes reach the existing camera Projection when the cell is entered again. Application and zero-clip fallback are engine policy, not native timing observations."
+note = "Requires a non-null LoadOrder-backed template on 2ETopsPresidentialSuite and an initial GSDocMitchellHouse camera clip unequal to the authored 32123. These are checked admission conditions, not a silently substituted template. A real COC exit/return tests positive clip; then same-cell COC reapplies zero while the camera still has the positive clip, making the fallback transition observable without a new diagnostic. No immediate live-refresh, pixel or installed-mod assertion."
+areas = ["scripts", "sky", "world"]
+paths = ["crates/fnv-world/src/lighting.rs", "crates/fnv-game/src/nvse_jg1.rs", "engine/nvforever/src/world.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/sky.rs"]
+requires = ["NVF_PLAY_TEST_LIGHTING_HOME"]
+env = { NVFOREVER_HOME = "{env:NVF_PLAY_TEST_LIGHTING_HOME}", NVF_REPORTS = "0", RUST_LOG = "info,nvf_play::script=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = '8:PrintC "lighting-smoke template %i" (GetCellLightingTemplate 2ETopsPresidentialSuite);9:SetCellLightingTemplate GSDocMitchellHouse (GetCellLightingTemplate 2ETopsPresidentialSuite);10:SetCellFlag GSDocMitchellHouse 15 1;11:SetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15 32123;12:PrintC "lighting-smoke positive clip %g" (GetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15);13:PrintC "lighting-smoke inherit %g" (GetCellFlag GSDocMitchellHouse 15);14:close;20:coc Goodsprings;20.5:close;30:coc GSDocMitchellHouse;30.5:close;39:SetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15 0;40:PrintC "lighting-smoke zero clip %g" (GetLightingTemplateTraitNumeric (GetCellLightingTemplate GSDocMitchellHouse) 15);41:close;46:coc GSDocMitchellHouse;46.5:close' }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 58
+timeout = 180
+order = [[
+  { re = '''sky: the camera's far plane at (?!32123\b)(?P<n>\d+) units \(the cell's fog clip distance\)''', range = [500, 100000], label = "ordinary cold camera clipping is present and differs from the authored target" },
+  { re = 'console: lighting-smoke template (?!00000000\b)[0-9A-Fa-f]{8}$', label = "the donor cell resolves a non-null LoadOrder template" },
+  { text = 'console: SetCellLightingTemplate GSDocMitchellHouse (GetCellLightingTemplate 2ETopsPresidentialSuite) >> ran', label = "the real console compiles the template assignment" },
+  { re = 'console: lighting-smoke positive clip 32123(?:\.0+)?$', label = "the selected template trait getter sees the authored positive clip" },
+  { re = 'console: lighting-smoke inherit 1(?:\.0+)?$', label = "clip inheritance is enabled" },
+  { text = "console: Travelling to Goodsprings", label = "leave through the real console travel path" },
+  { text = "sky: the camera's far plane at 400000 units", label = "outdoor camera fallback remains intact" },
+  { text = "console: Travelling to GSDocMitchellHouse", label = "re-enter the edited cell" },
+  { text = "sky: the camera's far plane at 32123 units (the cell's fog clip distance)", label = "the actual camera consumer applies the session clip after re-entry" },
+  { re = 'console: lighting-smoke zero clip 0(?:\.0+)?$', label = "the template getter sees zero before the second cycle" },
+  { text = "console: Travelling to GSDocMitchellHouse", label = "same-cell COC reapplies zero while the camera still has the positive clip" },
+  { text = "sky: the camera's far plane at 400000 units", label = "the interior's zero clip keeps the existing engine fallback" },
+]]
+forbid = [
+  { re = 'script: .* failed in .*console', label = "no console CallFailed event is hidden by a zero result" },
+  { re = 'script error in .*console', label = "no compiled console script error" },
+  { re = 'script: unhandled .* in .*console|script: .* in .*console.*could not read parameter', label = "no unsupported call or argument-default fallback" },
+  { re = 'console: .*not built|console: No cell named|console: .*has no marker or door to arrive at', label = "no unsupported function or invalid travel admission" },
+]
+
+[[scenario]]
 name = "region-sounds"
 source = "ESM audit group 8 (docs/spec-notes/default-objects.md §2): in Doc Mitchell's house the sounds of the region its acoustic space names (AudioIntMitchellHouse, REGN RDSD) are tried every 10 s at their chance and some play"
 areas = ["audio"]
@@ -14204,13 +14278,14 @@ name = "death-music-dobj"
 source = "ESM audit group 8 (docs/spec-notes/default-objects.md §1): the default objects' Death Music (DefaultDeath, special\\death.mp3) is not shipped, so when the player dies the SOUN MUSDeath plays as before"
 areas = ["audio", "music"]
 paths = ["engine/nvf-play/src/music.rs", "crates/fnv-world/src/audio.rs"]
-env = { NVF_PLAY_TEST_CONSOLE = "8:player.kill;8.3:close" }
+env = { NVFOREVER_HOME = "death-music-dobj-recovery-delay-home", NVF_PLAY_TEST_CONSOLE = "7:setgs fPlayerDeathReloadTime 120;7.5:close;8:player.kill;8.3:close" }
 args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 16
 expect = [
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
   { re = 'music: the player died: the music stops, MUSDeath \(0x[0-9A-F]{8}\) plays', label = "the SOUN fallback plays: the DOBJ's death music names no shipped file" },
 ]
-forbid = [{ text = "the default objects' death music", label = "no default objects' death music file in the shipped data" }]
+forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }, { text = "the default objects' death music", label = "no default objects' death music file in the shipped data" }]
 
 [[scenario]]
 name = "anim-state-throw"
