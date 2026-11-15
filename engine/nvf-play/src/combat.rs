@@ -141,6 +141,9 @@ use crate::{space, PlaySet, PlayState, PlayWorld};
 
 mod hit_effects;
 pub mod held_grenade_probe;
+mod projectile_launch;
+#[cfg(test)]
+mod projectile_launch_tests;
 
 /// The shooter's id for projectiles (the player has no hit volume).
 const PLAYER: ActorId = u64::MAX;
@@ -3068,6 +3071,9 @@ pub(crate) fn fire(
                     }
                     with_world(rt, &mut sim, |rt| rt.game.attack_line(FormId::PLAYER_REF, None, false, c.self_ammo));
                 }
+                let launch = projectile_launch::resolve(&c.forms, &chain, script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game));
+                let chain = launch.chain;
+                let projectile = launch.projectile.as_ref();
                 let Some(proj) = chain.projectile else {
                     debug!("combat: {} fires no projectile", w.edid.as_deref().unwrap_or("?"));
                     continue;
@@ -3129,7 +3135,7 @@ pub(crate) fn fire(
                 let eye = player.eye();
                 let gravity = phys.world.params.gravity;
                 let (tracer_chance, force, range) =
-                    chain.projectile.and_then(|p| c.forms.projectiles.get(&p)).map_or((0.0, 0.0, 0.0), |p| (p.tracer_chance, p.impact_force, p.range));
+                    projectile.map_or((0.0, 0.0, 0.0), |p| (p.tracer_chance, p.impact_force, p.range));
                 // The aim is the view ray from the eye; the shot is drawn from the
                 // muzzle, and in third person leaves it when the barrel is behind cover
                 // (docs/design/combat.md §5.1).
@@ -3147,7 +3153,7 @@ pub(crate) fn fire(
                     // VATS mode's throw: from the eye on the low arc that lands on the mark
                     // (vats-mode.md §16.3), at 45° when it is out of reach; at the speed the
                     // throw will leave with.
-                    let (speed, g) = chain.projectile.and_then(|p| c.forms.projectiles.get(&p)).map_or((0.0, 0.0), |p| (p.speed * throw_mult, p.gravity * gravity));
+                    let (speed, g) = projectile.map_or((0.0, 0.0), |p| (p.speed * throw_mult, p.gravity * gravity));
                     let aim = fnv_combat::vats::lob_dir(eye, point, speed, g).unwrap_or_else(|| fnv_combat::vats::lob_far(eye, point));
                     shot::Leaving { origin: eye, aim, aim_point: point, aim_distance: vec::len(vec::sub(point, eye)), seen: Seen::ON_PATH, covered: false }
                 } else {
@@ -3179,7 +3185,7 @@ pub(crate) fn fire(
                     // combat-rules.md §5, issue #1471]. Not when the barrel is in a wall.
                     let arcing = vats_shot.is_none()
                         && chain.explosion.is_some()
-                        && chain.projectile.and_then(|p| c.forms.projectiles.get(&p)).is_some_and(|p| p.gravity > 0.0 && !p.has("Hitscan") && p.kind.as_deref() == Some("Missile"));
+                        && projectile.is_some_and(|p| p.gravity > 0.0 && !p.has("Hitscan") && p.kind.as_deref() == Some("Missile"));
                     match anim.muzzle {
                         Some(m) if arcing && !leaving.covered && world.ray(eye, m, &[PLAYER]).is_none() => shot::Leaving { origin: m, seen: Seen::ON_PATH, ..leaving },
                         _ => leaving,
@@ -3187,7 +3193,7 @@ pub(crate) fn fire(
                 };
                 let rng = &mut c.rng;
                 let mut rand = || rng.next_f32();
-                let mut shots = shot::fire(&c.forms, &chain, leaving.origin, leaving.aim, cone, Some(PLAYER), gravity, &c.tuning, &mut rand);
+                let mut shots = projectile.map_or_else(Vec::new, |p| shot::fire_projectile(p, &chain, leaving.origin, leaving.aim, cone, Some(PLAYER), gravity, &c.tuning, &mut rand));
                 // A mod's Increase Projectile Speed (weapon-data-fields.md §5).
                 if let Some(m) = w.projectile_speed_mult {
                     shots.iter_mut().for_each(|p| p.speed_up(m));
@@ -4260,9 +4266,12 @@ fn actor_attacks(
         let carried = |a: FormId| sim.world.peek(s.shooter).and_then(|st| st.inventory.as_ref()).is_some_and(|i| i.count(a) > 0);
         let ammo = c.forms.ammo_for(s.weapon, carried);
         let Some(chain) = c.forms.chain(s.weapon, ammo) else { grenade_probe.finish_request(probe_request, 0); continue };
+        let launch = projectile_launch::resolve(&c.forms, &chain, script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game));
+        let chain = launch.chain;
+        let projectile = launch.projectile.as_ref();
         let Some(proj) = chain.projectile else { grenade_probe.finish_request(probe_request, 0); continue };
         stats.actor_shots += 1;
-        let range = c.forms.projectiles.get(&proj).map_or(0.0, |p| p.range);
+        let range = projectile.map_or(0.0, |p| p.range);
         let reach = if range > 0.0 { range } else { AIM_REACH };
         let leaving = {
             let world = view(&mut phys, script.as_deref(), Some(&sim));
@@ -4287,11 +4296,11 @@ fn actor_attacks(
                 sounds.write(PlaySound { sound, at: Some(seen_from) });
             }
         }
-        let (tracer_chance, force) = c.forms.projectiles.get(&proj).map_or((0.0, 0.0), |p| (p.tracer_chance, p.impact_force));
+        let (tracer_chance, force) = projectile.map_or((0.0, 0.0), |p| (p.tracer_chance, p.impact_force));
         let by = By { actor: s.shooter, weapon: s.weapon, ammo, harmless: s.harmless, vats: false, sneaking: false };
         let rng = &mut c.rng;
         let mut rand = || rng.next_f32();
-        let mut ps = shot::fire(&c.forms, &chain, leaving.origin, leaving.aim, s.cone, Some(own), gravity, &c.tuning, &mut rand);
+        let mut ps = projectile.map_or_else(Vec::new, |p| shot::fire_projectile(p, &chain, leaving.origin, leaving.aim, s.cone, Some(own), gravity, &c.tuning, &mut rand));
         // The mods on the unit it uses: Increase Projectile Speed (weapon-data-fields.md §5).
         let mods = sim.world.peek(s.shooter).and_then(|st| st.inventory.as_ref()).map_or(0, |i| i.mods_in_use(s.weapon));
         if let Some(m) = c.forms.weapons.get(&s.weapon).filter(|_| mods != 0).and_then(|w| w.modded(mods).projectile_speed_mult) {

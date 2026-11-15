@@ -10,6 +10,15 @@ use fnv_sim::FormId;
 use serde_json::Value as Json;
 use std::collections::HashMap;
 
+/// The supported session-only numeric edits needed when a new shot is created.
+/// `original` supplies the typed record; the requested clone retains its own identity.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectileLaunchTraits {
+    pub original: FormId,
+    pub speed: Option<f32>,
+    pub impact_force: Option<f32>,
+}
+
 /// One climate weather (WLST): the weather, its chance, the global that gates it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClimateWeather {
@@ -250,6 +259,45 @@ impl Game<'_> {
     /// when it has none.
     pub fn num_field(&self, f: FormId, sub: &str, path: &str) -> f64 {
         crate::nvse::record_value(self, f, sub, path).and_then(|v| v.num().ok()).unwrap_or(0.0)
+    }
+
+    /// The selected projectile at launch, keeping the typed defaults when no session
+    /// field was edited. Clearing an ammo projectile falls back to the weapon's.
+    /// This does not change other ammo/weapon traits or mutate their typed records.
+    pub fn projectile_for_launch(&self, weapon: FormId, ammo: Option<FormId>, weapon_default: Option<FormId>, ammo_default: Option<FormId>) -> (Option<FormId>, Option<&'static str>) {
+        let changed = |form, path: &str| {
+            let key = path.to_string();
+            let v = self.field_overrides.get(&(form, key.clone())).or_else(|| self.field_overrides.get(&(self.unclone(form), key)))?;
+            match v {
+                XVal::Ref(id) => Some((*id != 0).then_some(FormId(*id))),
+                XVal::Num(n) if n.is_finite() && *n >= 0.0 && *n <= f64::from(u32::MAX) && n.fract() == 0.0 => Some((*n != 0.0).then_some(FormId(*n as u32))),
+                _ => None,
+            }
+        };
+        let ammo_projectile = ammo.and_then(|a| changed(a, "DAT2/projectile").unwrap_or(ammo_default));
+        let weapon_projectile = changed(weapon, "DNAM/projectile").unwrap_or(weapon_default);
+        match ammo_projectile {
+            Some(p) => (Some(p), Some("ammo")),
+            None => (weapon_projectile, weapon_projectile.map(|_| "weapon")),
+        }
+    }
+
+    /// Only speed/impact-force overrides, with the same clone-first/original fallback
+    /// as the record getters. Absent edits leave the typed consumer's values alone.
+    /// The finite conversion guard is an engineering boundary for physical values.
+    pub fn projectile_launch_traits(&self, projectile: FormId) -> Option<ProjectileLaunchTraits> {
+        let original = self.unclone(projectile);
+        if self.data.sig(original) != Some(*b"PROJ") {
+            return None;
+        }
+        let number = |path: &str| {
+            let key = format!("DATA/{path}");
+            match self.field_overrides.get(&(projectile, key.clone())).or_else(|| self.field_overrides.get(&(original, key))) {
+                Some(XVal::Num(n)) if n.is_finite() && (*n as f32).is_finite() => Some(*n as f32),
+                _ => None,
+            }
+        };
+        Some(ProjectileLaunchTraits { original, speed: number("speed"), impact_force: number("impact_force") })
     }
 
     fn set_field(&mut self, f: FormId, sub: &str, path: &str, v: XVal) {

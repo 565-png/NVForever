@@ -34,6 +34,8 @@ compared with independent readers and in-game captures) and the smoke runner
 (`tools/smoke`, the scenarios in `tools/smoke/scenarios.toml`; `python tools/smoke verify`
 counts them).
 
+Initial projectile launch session traits are **Partly**: the proposed supported speed and carried impact-force bridge feeds new actor and normal player shots ([spec](spec-notes/projectile-launch-session-traits.md)). Historical authored d9/c28 CPU results are separate from this public7201 port, whose build/tests/lint and rendered smoke remain pending. Temporary-base World-reference spawning, lifetime/save policy and full B42 startup remain separate gates.
+
 ## 1. Foundations
 
 | System | State | Specifics | Notes |
