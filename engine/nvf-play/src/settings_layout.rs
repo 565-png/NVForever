@@ -93,6 +93,8 @@ pub const SECTIONS: &[Section] = &[
     section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement"]),
     section_after_gap(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil"]),
     section_after_gap(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
+    // After the tab's other headings, so the rows above keep their places (#2662).
+    section("Gameplay", Some("World"), &["grass-fire"]),
     section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "physics-rate", "ui-scale", "menu-scale"]),
     section(
         "Display",
@@ -133,6 +135,7 @@ pub const SECTIONS: &[Section] = &[
             "neon-glow",
             "sharpen",
             "anisotropic",
+            "terrain-height-blend",
             "light-shafts",
             "water-reflections",
             "water-mirror",
@@ -336,7 +339,7 @@ mod tests {
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
     /// field of view row, the menu scale row, the Physics rate row and the Advanced movement rows), by the group
     /// it registers with.
-    const KNOWN: [(&str, &str); 117] = [
+    const KNOWN: [(&str, &str); 119] = [
         ("detached-camera", "Gameplay"),
         ("advanced-movement", "Gameplay"),
         ("movement-inertia", "Gameplay"),
@@ -346,6 +349,7 @@ mod tests {
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
         ("reload-slows", "Gameplay"),
+        ("grass-fire", "Gameplay"),
         ("music", "Gameplay"),
         ("voice", "Gameplay"),
         ("dialogue-look", "Gameplay"),
@@ -435,6 +439,7 @@ mod tests {
         ("neon-glow", "Graphics"),
         ("sharpen", "Graphics"),
         ("anisotropic", "Graphics"),
+        ("terrain-height-blend", "Graphics"),
         ("light-shafts", "Graphics"),
         ("water-reflections", "Graphics"),
         ("water-mirror", "Graphics"),
@@ -482,6 +487,8 @@ mod tests {
         all.sort_unstable();
         assert_eq!(all, (0..list.len()).collect::<Vec<_>>(), "each registered row once");
         assert_eq!(keys(&list, &l, "Gameplay")[..9], ["[Game]", "difficulty", "hardcore", "kill-camera", "vats-style", "vats-slowdown", "reload-slows", "UsePipBoy", "[Saving]"]);
+        let gameplay = keys(&list, &l, "Gameplay");
+        assert_eq!(gameplay[gameplay.len() - 2..], ["[World]", "grass-fire"]);
         assert_eq!(keys(&list, &l, "Audio"), ["volume-master", "volume-music", "volume-footstep", "volume-voice", "volume-effects", "volume-radio", "music", "voice", "reverb", "voice-reverb"]);
         assert_eq!(keys(&list, &l, "Controls"), CONTROLLER_KEYS);
         assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "scope-3d"]);
@@ -499,6 +506,7 @@ mod tests {
         assert_eq!(at("sky-clock"), "Graphics > World");
         assert_eq!(at("quality"), "Graphics > Quality");
         assert_eq!(at("enhanced"), "Graphics > Picture");
+        assert_eq!(at("terrain-height-blend"), "Graphics > Picture", "beside the texture filtering (#2550)");
         assert_eq!(keys(&list, &l, "Graphics")[..4], ["[Quality]", "quality", "[Picture]", "enhanced"], "the presets first, under their own heading (#1966)");
         assert_eq!(at("button-style"), "Controls");
         // The registry itself is left as it was: its order and each row's group.
