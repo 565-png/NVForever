@@ -24,8 +24,12 @@ use std::collections::HashMap;
 
 pub struct NifMirrorPlugin;
 
+#[path = "nif_attach_model_probe.rs"]
+mod attach_model_probe;
+
 impl Plugin for NifMirrorPlugin {
     fn build(&self, app: &mut App) {
+        attach_model_probe::install(app);
         crate::nif_attachments::install(app);
         app.add_systems(PostUpdate, (crate::nif_attachments::produce, mirror).chain().before(TransformSystems::Propagate));
     }

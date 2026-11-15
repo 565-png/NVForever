@@ -23444,6 +23444,50 @@ expect = [
 ]
 
 [[scenario]]
+name = "nif-reference-attach-owned"
+source = "[design: docs/spec-notes/nif-attachments.md] Authored duplicate-name geometry and unequal bound materials through real AttachModel dispatch. UNRUN; no native or pixel comparison."
+areas = ["scripts", "actors"]
+paths = ["crates/fnv-game/src/nif_blocks.rs", "engine/nvf-assets/src/model/attachment.rs", "engine/nvforever/src/nif_attachments.rs", "engine/nvforever/src/nif_attach_model_probe.rs", "tools/smoke/fixtures/attach-model-owned/"]
+requires = ["NVF_PLAY_TEST_ATTACH_MODEL_HOME", "NVF_PLAY_TEST_ATTACH_MODEL_ASSET_VIEW", "NVF_PLAY_TEST_ATTACH_MODEL_PROBE_PATH"]
+note = "Run exact manifest/Data/HOME admission before launch, then pass the owned Data view with CLI --data. The normal smoke CLI does not itself validate this manifest. HOME/mods is not a loose-mesh root. Run the field judge on the same complete log; scenario regexes alone do not establish geometry/material pairing or captured-entity retirement."
+env = { RUST_LOG = "info,nvf_play::script=debug", NVFOREVER_HOME = "{env:NVF_PLAY_TEST_ATTACH_MODEL_HOME}", NVF_PLAY_TEST_ATTACH_MODEL_ASSET_VIEW = "{env:NVF_PLAY_TEST_ATTACH_MODEL_ASSET_VIEW}", NVF_PLAY_TEST_ATTACH_MODEL_PROBE = "1", NVF_PLAY_TEST_ATTACH_MODEL_PROBE_PATH = "{env:NVF_PLAY_TEST_ATTACH_MODEL_PROBE_PATH}", NVF_PLAY_TEST_CONSOLE = '4:ToggleFirstPerson 0;4.3:close;5:player.GetChildBlocks "" 1;5.3:close;7:PrintC "nvf attach warm %g", (Ar_Size (player.GetChildBlocks "" 1));7.3:close;9:PrintC "nvf attach requested %g", (AttachModel player 3 "|*_nvfa*nvf_smoke/attach_model.nif");9.5:close;14:PrintC "nvf attach removal submitted %g", (AttachModel player 2 "|*_nvfa*nvf_smoke/attach_model.nif");14.5:close' }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages"]
+run_seconds = 20
+timeout = 180
+ends = "run log: the game exited normally"
+expect = [
+  { re = "nif attach probe: preflight prepared shapes=2 .* rig=0 ", count = 1, label = "ordinary baseline ModelCtx prepares two authored static drawables" },
+  { re = "nif attach probe: preflight shape .* vertices=4 .* positions_finite=1 .* roughness_finite=1", count = 2, label = "real prepared geometry and material fields before Attach" },
+  { re = 'script: print "nvf attach warm [1-9][0-9]*"', label = "real third-person recipient is published" },
+  { re = 'script: print "nvf attach requested [01]"', count = 1, label = "submission return only; physical fields are checked independently" },
+  { re = 'nif attach probe: present .* vertices=4 ', count = 2, label = "two actual mesh/material field rows" },
+  { re = 'nif attach probe: captured .* count=2 distinct_entities=1 distinct_meshes=1', count = 1, label = "physical entity and mesh identity" },
+  { re = 'nif attach probe: retained .* captured_count=2 matching_named=2 same_handles=1 same_ancestry=1', count = 1, label = "stable captured ownership before mode2" },
+  { re = 'script: print "nvf attach removal submitted [01]"', count = 1, label = "explicit authored removal submission before deferred producer execution" },
+  { re = 'nif attach probe: removed .* captured_count=2 gone=2 matching_named=0 host_live=1 selected_same=1', count = 1, label = "captured entities gone and recipient preserved" },
+]
+order = [[
+  { text = "nif attach probe: preflight prepared shapes=2 " },
+  { text = "nif attach probe: preflight shape " },
+  { re = 'script: print "nvf attach requested [01]"' },
+  { text = "nif attach probe: present " },
+  { text = "nif attach probe: captured " },
+  { text = "nif attach probe: retained " },
+  { re = 'script: print "nvf attach removal submitted [01]"' },
+  { text = "nif attach probe: removed " },
+]]
+forbid = [
+  { text = "nif attach probe: preflight unavailable " },
+  { text = "nif attach probe: terminal " },
+  { text = "nif attach probe: unavailable " },
+  { text = "nif attach probe: recipient " },
+  { re = "script error in " },
+  { re = "(?i)script: attachmodel failed in " },
+  { re = "NVF_PLAY_TEST_CONSOLE: .*: (?:expected <seconds>:<line>|bad seconds)" },
+  { re = 'attachment .*could not supply a complete graph' },
+]
+
+[[scenario]]
 name = "nif-blocks-mirror"
 source = "N6 (docs/design/nif-blocks.md): JIP's NIF block functions read the drawn nodes through the engine's mirror; a set node scale shows in the mirror and on the drawn node"
 areas = ["scripts", "actors"]

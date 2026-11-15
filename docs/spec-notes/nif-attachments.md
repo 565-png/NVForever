@@ -73,3 +73,29 @@ particle simulation, attached named-group dispatch, legacy alpha/stencil overrid
 lifetime, native parity and
 full B42 mod acceptance are outside this reference-consumer leaf. No capability/version spoofing or silent original-model
 fallback is introduced.
+
+## Opt-in physical fixture
+
+`nif-reference-attach-owned` uses a separately admitted, authored two-shape NIF
+and fresh HOME through the canonical smoke launcher. An opt-in child of the
+mirror reports ordinary `ModelCtx` preparation, first post-transform CPU mesh
+geometry and bound material fields, followed by actual recipient ancestry,
+captured entity identities, retention and removal. It does not consult producer
+ownership state to declare success, retain CPU meshes globally, or compare pixels.
+With the opt-in absent, it installs no system or resource.
+
+The scenario and `tools/smoke/fixtures/attach-model-owned/judge_fields.py` must
+both accept the same complete log. Neither a registered request, a getter, a
+manifest hash nor a recorder receipt substitutes for those physical fields.
+Input creation and admission refuse resolved output/source-Data overlap; selected
+masters and archives remain linked read-only by contract and checked hashes.
+The fixture README describes the explicit admission step required before launch.
+This authored diagnostic does not establish native behavior or a mod profile's
+acceptance. Execution qualification belongs to the exact source and artifact.
+
+For this empty-target fixture, the core queues the attachment change before
+looking up a mirrored node for its numeric return. With no empty-named node the
+return can be 0; with such a published descendant it can be 1. The physical
+producer separately accepts the model root when no captured node supplies the
+parent. The smoke accepts either submission return and does not use it as a
+physical-success oracle. No producer return or target policy is changed.
