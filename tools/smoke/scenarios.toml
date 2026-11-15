@@ -28943,3 +28943,17 @@ expect = [
   { re = 'console: IsEssential on EasyPeteRef >> 0\.00', label = "IsEssential still reads his flag" },
   { re = 'console: GetDead on EasyPeteRef >> 1\.00', label = "in Hardcore KillActor kills him" },
 ]
+
+[[scenario]]
+name = "cachino-find-greet"
+source = "issue #2473: Cachino's vGomorrahCachinoDialoguePackage (PACK 00119485) is a Find package for PlayerRef near his editor location with radius 0, valid while GetTalkedToPC is 0 and the player is in Gomorrah00-03; the lines asking about him only enable him (0011118D.enable). A radius 0 Find for one reference has no search area, and reaching the player starts a force greet (docs/spec-notes/packages.md section 10)"
+note = "Gomorrah01 (main level): the player stands about 900 units west of Cachino's spot (7159, 1281), by the gamblers; the console enables him at 1 s, as the lines asking about him do. Before the fix he found nothing within 512 units of his spot and stood still"
+areas = ["ai", "dialogue-packages"]
+paths = ["crates/fnv-ai/src/errand.rs", "crates/fnv-ai/src/goal.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "1:0011118D.enable;1.2:close" }
+args = ["--cell", "Gomorrah01", "--play", "--pos=6300,1450,6410", "--heading", "90", "--npc-packages", "VMS21CachinoREF", "--no-voice", "--no-messages"]
+run_seconds = 45
+order = [[
+  { re = 'VMS21CachinoREF: finds .*goes to it', label = "Cachino sets off for the player" },
+  { re = 'dialogue: conversation with VMS21CachinoREF started \(topic GREETING\)', label = "and starts his conversation on reaching them" },
+]]
