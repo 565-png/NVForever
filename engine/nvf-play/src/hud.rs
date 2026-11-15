@@ -28,6 +28,7 @@ use crate::script::{with_world, ScriptState};
 use crate::sim::SimState;
 use crate::tiles::vanilla::{DrawnByTiles, EnemyPiece};
 use crate::interface::{amber, at, bc_supported, face, plain_font, set_line, texture, u, Face, Picture, Pictures};
+use std::ops::DerefMut;
 use crate::{PlaySet, PlayState};
 use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
@@ -1002,17 +1003,37 @@ fn pips(
             // They blink, from faint to whole and back, in real time (the world may stand
             // still).
             let alpha = if after.is_some_and(|(from, to)| !(from..to).contains(&pip.index)) { sight_alpha(real.elapsed_secs()) } else { 1.0 };
-            if let Some(mut image) = image {
-                if image.color.alpha() != alpha {
-                    image.color = image.color.with_alpha(alpha);
-                }
-            }
-            if let Some(mut fill) = fill {
-                if fill.0.alpha() != alpha {
-                    fill.0 = fill.0.with_alpha(alpha);
-                }
+            set_tick_alpha(image, fill, alpha);
+        }
+    }
+}
+
+/// `colour` at a brightness (0 to 255, as the interface files give it), its alpha kept.
+fn at_brightness(colour: Color, brightness: f32) -> Color {
+    let c = colour.to_srgba();
+    let b = brightness / 255.0;
+    Color::srgba(c.red * b, c.green * b, c.blue * b, c.alpha)
+}
+
+/// An enemy tick's strength (`alpha`, the VATS blink): on its picture when it has one,
+/// else on its fill (the stand-in block drawn when the picture is missing). A pictured
+/// tick's fill is the transparent background every UI node carries and stays so: made
+/// opaque it was a solid block behind the picture, hiding the picture's fade, and the
+/// enemy's ticks stood solid while the health and action points ticks faded towards their
+/// tops [observed: smoke hud-enemy-bar-hurt-neutral, #2696].
+fn set_tick_alpha(image: Option<impl DerefMut<Target = ImageNode>>, fill: Option<impl DerefMut<Target = BackgroundColor>>, alpha: f32) {
+    match (image, fill) {
+        (Some(mut image), _) => {
+            if image.color.alpha() != alpha {
+                image.color = image.color.with_alpha(alpha);
             }
         }
+        (None, Some(mut fill)) => {
+            if fill.0.alpha() != alpha {
+                fill.0 = fill.0.with_alpha(alpha);
+            }
+        }
+        (None, None) => {}
     }
 }
 
@@ -1099,20 +1120,25 @@ fn texts(
 /// when only hostility changes [observed: private job hud_enemy3, n2_away (main),
 /// g2_gecko_half (alt)]. Previously always red [design]. Traverse after spawning so
 /// new and resized rows, names, anatomy and fallback blocks share the colour [design].
+/// The ticks are drawn at the meters' brightness, [`METER_BRIGHTNESS`], as the health and
+/// action points ticks [observed: the enemy meter's brightness 175, private jobs
+/// hud_enemy2 e5, hud_enemy3 n2, h1, g2; hud.md §14.8]; until #2696 at the full colour.
 #[allow(clippy::type_complexity)]
 fn enemy_colours(
     target: Res<HudTarget>,
     enemy: Query<Entity, With<EnemyPiece>>,
     children: Query<&Children>,
-    mut ink: Query<(Option<&mut ImageNode>, Option<&mut TextColor>, Option<&mut BackgroundColor>)>,
+    mut ink: Query<(Option<&mut ImageNode>, Option<&mut TextColor>, Option<&mut BackgroundColor>, Has<Pip>)>,
 ) {
-    let colour = if target.0.as_ref().is_some_and(|t| t.hostile) { crime_colour() } else { amber(255.0) };
-    // Only the hue changes: each node keeps its own alpha, so the transparent
-    // backgrounds every UI node carries stay transparent [design].
-    let hue = |old: Color| colour.with_alpha(old.alpha());
+    let full = if target.0.as_ref().is_some_and(|t| t.hostile) { crime_colour() } else { amber(255.0) };
+    let meter = at_brightness(full, METER_BRIGHTNESS);
     for root in &enemy {
         for entity in children.iter_descendants(root) {
-            if let Ok((image, text, fill)) = ink.get_mut(entity) {
+            if let Ok((image, text, fill, tick)) = ink.get_mut(entity) {
+                let colour = if tick { meter } else { full };
+                // Only the hue changes: each node keeps its own alpha, so the transparent
+                // backgrounds every UI node carries stay transparent [design].
+                let hue = |old: Color| colour.with_alpha(old.alpha());
                 if let Some(mut image) = image {
                     let new = hue(image.color);
                     if image.color != new {
@@ -1145,19 +1171,44 @@ mod tests {
         app.insert_resource(HudTarget(Some(TargetHealth { form_id: 1, name: "Target".into(), health: 0.5, hostile: false, anatomy: Some((50.0, 2.0)), after: None })))
             .add_systems(Update, enemy_colours);
         let bracket = app.world_mut().spawn(ImageNode::default()).id();
-        let tick = app.world_mut().spawn(BackgroundColor(Color::WHITE)).id();
+        // A stand-in tick (no picture) and a pictured one with its node's transparent
+        // background.
+        let block = app.world_mut().spawn((Pip { bar: Bar::Enemy, index: 0 }, BackgroundColor(Color::WHITE))).id();
+        let tick = app.world_mut().spawn((Pip { bar: Bar::Enemy, index: 1 }, ImageNode::default(), BackgroundColor(Color::NONE))).id();
         let name = app.world_mut().spawn(TextColor(Color::WHITE)).id();
         // A container's transparent background (every UI node has one) stays transparent.
-        let group = app.world_mut().spawn(BackgroundColor(Color::NONE)).add_children(&[tick, name]).id();
+        let group = app.world_mut().spawn(BackgroundColor(Color::NONE)).add_children(&[block, tick, name]).id();
         app.world_mut().spawn(EnemyPiece).add_children(&[bracket, group]);
         for hostile in [false, true, false] {
             app.world_mut().resource_mut::<HudTarget>().0.as_mut().unwrap().hostile = hostile;
             app.update();
             let colour = if hostile { crime_colour() } else { amber(255.0) };
+            // The ticks at the meters' brightness, as the health and action points ticks.
+            let meter = at_brightness(colour, METER_BRIGHTNESS);
             assert_eq!(app.world().get::<ImageNode>(bracket).unwrap().color, colour);
-            assert_eq!(app.world().get::<BackgroundColor>(tick).unwrap().0, colour);
+            assert_eq!(app.world().get::<BackgroundColor>(block).unwrap().0, meter);
+            assert_eq!(app.world().get::<ImageNode>(tick).unwrap().color, meter);
+            assert_eq!(app.world().get::<BackgroundColor>(tick).unwrap().0, Color::NONE);
             assert_eq!(app.world().get::<TextColor>(name).unwrap().0, colour);
             assert_eq!(app.world().get::<BackgroundColor>(group).unwrap().0, Color::NONE);
+        }
+        assert!((at_brightness(amber(255.0), METER_BRIGHTNESS).to_srgba().red - amber(METER_BRIGHTNESS).to_srgba().red).abs() < 1e-6);
+    }
+
+    /// The enemy ticks' strength goes on the picture and never on a pictured tick's
+    /// transparent background, which made a solid block that hid the picture's fade
+    /// (#2696); a stand-in block takes it on its fill.
+    #[test]
+    fn an_enemy_tick_keeps_its_background_clear_so_its_picture_fades() {
+        for alpha in [1.0, 0.3] {
+            let mut image = ImageNode::default();
+            let mut fill = BackgroundColor(Color::NONE);
+            set_tick_alpha(Some(&mut image), Some(&mut fill), alpha);
+            assert_eq!(image.color.alpha(), alpha);
+            assert_eq!(fill.0, Color::NONE);
+            let mut block = BackgroundColor(Color::WHITE);
+            set_tick_alpha(None::<&mut ImageNode>, Some(&mut block), alpha);
+            assert_eq!(block.0.alpha(), alpha);
         }
     }
 

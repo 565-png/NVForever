@@ -350,6 +350,12 @@ follows the actor shown: systemcolor 1 (HUD main) for a non-hostile, 2 (alternat
 for a hostile. [design] The hand-built bracket, ticks, name, Living Anatomy line and
 fallback blocks follow that flag, including a hostility change without a name change.
 History: §8 previously generalised the hostile screenshot to always red [hypothesis].
+[design: #2696] The hand-built ticks are drawn at the meters' brightness 175 (§14.8's
+enemy meter read), in the main or the alternative colour, with the tick picture's own
+fade (its alpha rising from 34 at the top to 255 by row 17 [observed: the texture]), as
+the health and action points ticks. Until #2696 they stood solid at full brightness:
+the VATS blink's alpha was also set on each tick's transparent node background, which
+made it an opaque block behind the picture.
 
 [owner, playtest list 5, item 32] The bar empties from both ends towards its middle:
 the lit ticks are the middle `ceil(value × 31)`, an odd one gone from the right first.
