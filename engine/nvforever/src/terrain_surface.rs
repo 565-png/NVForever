@@ -431,6 +431,10 @@ pub struct SurfaceCache {
     /// Round 10a review (second round): dependencies removed from the image assets and not
     /// added back, so a cell whose bake copies would bind one is planned without it.
     removed_images: HashSet<AssetId<Image>>,
+    /// Round 10a review (third round): detail images the last planned replacement found
+    /// not in the image assets (its quadrants refused, `image-not-loaded`). With
+    /// `removed_images`, the images whose return advances their dependency revision.
+    awaited_images: HashSet<AssetId<Image>>,
     image_events: bevy::ecs::message::MessageCursor<AssetEvent<Image>>,
     /// Cancelled render extraction gets three frames to retire before another allocation.
     retirement: u8,
@@ -469,7 +473,7 @@ impl SurfaceCache {
         if self.context.is_none() { publication.coverage } else { retained_mask(publication, &self.current) }
     }
     pub fn with_resolution(resolution: u32) -> Self {
-        Self { generation: 0, signature: None, context: None, selected_centre: None, captured_inputs: default(), stitched_dirty: default(), epoch: 0, revision: 0, current: vec![], image_revisions: default(), removed_images: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false, detail: false, unsettled_frames: 0 }
+        Self { generation: 0, signature: None, context: None, selected_centre: None, captured_inputs: default(), stitched_dirty: default(), epoch: 0, revision: 0, current: vec![], image_revisions: default(), removed_images: default(), awaited_images: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false, detail: false, unsettled_frames: 0 }
     }
 
     /// [design] Select independently of the immutable front, including while a job waits.
@@ -1204,6 +1208,7 @@ pub fn update_cache(
     for (_, cell) in &cells { dependencies.extend(cell.image_dependencies().iter().copied()); }
     cache.image_revisions.retain(|id, _| dependencies.contains(id));
     cache.removed_images.retain(|id| dependencies.contains(id));
+    cache.awaited_images.retain(|id| dependencies.contains(id));
     if let Some(events) = events {
         let changed: Vec<_> = cache.image_events.read(&events).filter(|e| match e {
             AssetEvent::Added { id } | AssetEvent::Modified { id } | AssetEvent::Removed { id } | AssetEvent::LoadedWithDependencies { id } => dependencies.contains(id),
@@ -1211,9 +1216,18 @@ pub fn update_cache(
         }).copied().collect();
         for event in changed {
             match event {
-                AssetEvent::Modified { id } => { *cache.image_revisions.entry(id).or_default() += 1; cache.removed_images.remove(&id); }
+                AssetEvent::Modified { id } => { *cache.image_revisions.entry(id).or_default() += 1; cache.removed_images.remove(&id); cache.awaited_images.remove(&id); }
                 AssetEvent::Removed { id } => { *cache.image_revisions.entry(id).or_default() += 1; cache.removed_images.insert(id); }
-                AssetEvent::Added { id } | AssetEvent::LoadedWithDependencies { id } => { cache.removed_images.remove(&id); }
+                // [design] Round 10a review (third round): an image that returns (added back
+                // after a removal) or arrives late (a replacement refused its quadrant,
+                // `image-not-loaded`) advances its revision, so the resident cell's request
+                // changes and the detail is rebuilt. Only the first of its Added /
+                // LoadedWithDependencies notifications does: it leaves both sets, so the
+                // second (in this frame or a later one) changes nothing.
+                AssetEvent::Added { id } | AssetEvent::LoadedWithDependencies { id } => {
+                    let returned = cache.removed_images.remove(&id);
+                    if cache.awaited_images.remove(&id) | returned { *cache.image_revisions.entry(id).or_default() += 1; }
+                }
                 _ => {}
             }
         }
@@ -1366,6 +1380,12 @@ pub fn update_cache(
         }
         assembled
     });
+    // [design] Round 10a review (third round): the detail images this replacement plans
+    // without (not in the image assets), whose arrival must rebuild it (see the events above).
+    cache.awaited_images = if cache.detail {
+        resident.iter().flat_map(|(_, c)| c.detail.iter()).filter_map(|d| match d { DetailCapture::Layers(d) => d.resolved.as_ref().ok(), DetailCapture::Colour(_) => None })
+            .flat_map(ResolvedDetail::images).map(Handle::id).filter(|id| !images.contains(*id)).collect()
+    } else { HashSet::new() };
     let resident_report: Vec<_> = resident.iter().map(|(_, cell)| format!("({}, {}):q=[{}] colour-mask={:#x}", cell.grid.0, cell.grid.1, cell.paths.map(CapturePath::label).join(","), cell.colour_mask())).collect();
     let mut excluded = Vec::new();
     for y in origin.1..origin.1 + 3 { for x in origin.0..origin.0 + 3 {
@@ -2301,6 +2321,104 @@ pub(crate) mod tests {
         tick(&mut app);
         assert!(job_colour(&app).is_some() && work_sets(&mut app).1.contains(&(0, 0)), "the cell bakes again");
         assert_eq!(unpreparable_bake_images(&mut app), Vec::<Handle<Image>>::new());
+    }
+
+    /// Cell (0, 0)'s quadrant 0 as a folded capture with detail: base diffuse and normal map,
+    /// one folded layer with its diffuse and normal map. Returns `[base normal, layer normal]`.
+    fn folded_detail_cell(app: &mut App) -> [Handle<Image>; 2] {
+        let (base, base_normal, diffuse, normal) = { let mut i = app.world_mut().resource_mut::<Assets<Image>>(); (sampled(&mut i, 8), sampled(&mut i, 8), sampled(&mut i, 8), sampled(&mut i, 8)) };
+        let entity = app.world().resource::<Streamer>().loaded[&(0, 0)];
+        let mut cell = app.world_mut().get_mut::<SurfaceCell>(entity).unwrap();
+        cell.quadrants.clear();
+        let material = TerrainMaterial {
+            base: StandardMaterial { base_color_texture: Some(base.clone()), normal_map_texture: Some(base_normal.clone()), ..default() },
+            extension: crate::terrain::TerrainLayers { count: 1, diffuse0: Some(diffuse.clone()), normal0: Some(normal.clone()), ..default() },
+        };
+        let DetailCapture::Layers(mut d) = layers(base, base_normal.clone(), vec![(diffuse, Some(normal.clone()))]) else { unreachable!() };
+        d.resolved.as_mut().unwrap().folded = 1;
+        cell.detail[0] = DetailCapture::Layers(d);
+        let mesh = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        cell.capture(0, vec![(mesh, CaptureDraw::Folded(Box::new(material)))], CapturePath::Folded { layers: 0 });
+        [base_normal, normal]
+    }
+    fn job_detail(app: &App) -> bool { app.world().resource::<SurfaceCache>().job.as_ref().unwrap().publication.detail.contains(&((0, 0), 0)) }
+    fn front_detail(app: &App) -> bool { app.world().resource::<SurfaceCache>().published.as_ref().unwrap().detail.contains(&((0, 0), 0)) }
+    fn image_event(app: &mut App, event: AssetEvent<Image>) { app.world_mut().resource_mut::<Messages<AssetEvent<Image>>>().write(event); }
+
+    /// [design] Round 10a review, third round (P2): a base or layer normal map removed from
+    /// the image assets rebakes the cell without its detail (`image-not-loaded`), and that
+    /// replacement publishes. Nothing else changes, so the cell stays resident and its request
+    /// is unchanged until the normal map is added back under the same id: then the return
+    /// rebuilds the detail, once for its Added and LoadedWithDependencies notifications
+    /// (a later second notification does not cancel the rebuilt replacement).
+    #[test]
+    fn a_normal_map_added_back_restores_the_detail_once() {
+        for which in 0..2 {
+            let (mut app, _files, _) = fixture(false, true);
+            let normal = folded_detail_cell(&mut app)[which].clone();
+            tick(&mut app);
+            finish(&mut app);
+            assert!(front_detail(&app), "case {which}: the first publication carries the detail");
+            let saved = app.world().resource::<Assets<Image>>().get(&normal).unwrap().clone();
+            app.world_mut().resource_mut::<Assets<Image>>().remove(&normal);
+            image_event(&mut app, AssetEvent::Removed { id: normal.id() });
+            tick(&mut app);
+            assert!(job_colour(&app).is_some() && !job_detail(&app), "case {which}: the removal rebakes the cell without its detail");
+            finish(&mut app);
+            assert!(!front_detail(&app), "case {which}: the replacement published on the colour cache");
+            for _ in 0..3 { tick(&mut app); }
+            assert!(job_colour(&app).is_none(), "case {which}: nothing else invalidates the request");
+            let generation = app.world().resource::<SurfaceCache>().generation;
+            assert!(app.world_mut().resource_mut::<Assets<Image>>().insert(normal.id(), saved).is_ok());
+            image_event(&mut app, AssetEvent::Added { id: normal.id() });
+            image_event(&mut app, AssetEvent::LoadedWithDependencies { id: normal.id() });
+            tick(&mut app);
+            assert!(job_colour(&app).is_some() && job_detail(&app), "case {which}: the return rebuilds the detail");
+            assert_eq!(app.world().resource::<SurfaceCache>().generation, generation + 1, "case {which}: one replacement for both notifications");
+            // A repeated notification a frame later: `finish` asserts the job survives it.
+            image_event(&mut app, AssetEvent::LoadedWithDependencies { id: normal.id() });
+            finish(&mut app);
+            assert!(front_detail(&app), "case {which}: the detail is restored");
+            for _ in 0..3 { tick(&mut app); }
+            assert!(job_colour(&app).is_none());
+            assert_eq!(app.world().resource::<SurfaceCache>().generation, generation + 1, "case {which}: no redundant bake");
+        }
+    }
+
+    /// [design] Round 10a review, third round (P2): a normal map not loaded when the first
+    /// replacement is planned (refused, `image-not-loaded`) ends up with detail when it
+    /// arrives: the base normal map after the colour-only publication, the layer normal map
+    /// while that replacement is still pending (cancelled and replanned). Its Added and,
+    /// a frame later, LoadedWithDependencies notifications cause one replacement.
+    #[test]
+    fn a_normal_map_loaded_late_ends_up_with_detail() {
+        for which in 0..2 {
+            let pending = which == 1;
+            let (mut app, _files, _) = fixture(false, true);
+            let normal = folded_detail_cell(&mut app)[which].clone();
+            // Not loaded yet: not in the image assets, and no event so far.
+            let saved = app.world_mut().resource_mut::<Assets<Image>>().remove(&normal).unwrap();
+            tick(&mut app);
+            assert!(job_colour(&app).is_some() && !job_detail(&app), "case {which}: refused while not loaded");
+            assert!(app.world().resource::<SurfaceCache>().awaited_images.contains(&normal.id()));
+            if !pending {
+                finish(&mut app);
+                assert!(!front_detail(&app));
+            }
+            let generation = app.world().resource::<SurfaceCache>().generation;
+            assert!(app.world_mut().resource_mut::<Assets<Image>>().insert(normal.id(), saved).is_ok());
+            image_event(&mut app, AssetEvent::Added { id: normal.id() });
+            tick(&mut app);
+            image_event(&mut app, AssetEvent::LoadedWithDependencies { id: normal.id() });
+            // A cancelled pending job retires for three frames before the replan.
+            for _ in 0..4 { if app.world().resource::<SurfaceCache>().generation > generation { break; } tick(&mut app); }
+            assert!(job_colour(&app).is_some() && job_detail(&app), "case {which}: the arrival rebuilds the detail");
+            finish(&mut app);
+            assert!(front_detail(&app), "case {which}: the late normal map ends up with detail");
+            for _ in 0..3 { tick(&mut app); }
+            assert!(job_colour(&app).is_none());
+            assert_eq!(app.world().resource::<SurfaceCache>().generation, generation + 1, "case {which}: one replacement for both notifications");
+        }
     }
 
     /// [design] Round 10a review (P2): an overflow layer's colour, alpha or texture

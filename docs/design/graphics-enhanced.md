@@ -546,7 +546,12 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   returns the base colour only), and a cell whose bake copies would bind a colour image
   removed from the image assets (and not added back) is planned without that cell,
   excluded as `missing-colour-image` (an image not loaded yet is still waited for); it
-  bakes again once the image is added back. *Composition* (`mesh_terrain_detail`): the
+  bakes again once the image is added back. A detail image that returns (added back after a
+  removal) or arrives late (a replacement planned without it refused its quadrants,
+  `image-not-loaded`) bumps its dependency revision too (third review round), so the
+  resident cell's request changes and the quadrant's detail is rebuilt instead of staying
+  on the colour cache; only the first of its Added / LoadedWithDependencies notifications
+  does, so one return makes one replacement. *Composition* (`mesh_terrain_detail`): the
   fragment's ground triangle and its barycentric weights come from the height lookup's own
   square and diagonal (below the diagonal `(1-u) SW + (u-v) SE + v NE`, above it
   `(1-v) SW + u NE + (v-u) NW`); the colour starts as the base diffuse x interpolated vertex
@@ -874,7 +879,9 @@ texture swap, a fade and an override: `switching_off_during`), `terrain_surface`
 `overflow_material_edits_keep_the_colour_cache_until_reproducible_again`,
 `settlement_guard_waits_but_never_forever`; second review round:
 `a_textureless_survivor_never_restores_a_removed_sampler_representative`,
-`removed_images_never_leave_the_replacement_waiting_on_an_unpreparable_draw`), `mesh_terrain_blend` (round 10a review:
+`removed_images_never_leave_the_replacement_waiting_on_an_unpreparable_draw`; third review round:
+`a_normal_map_added_back_restores_the_detail_once`,
+`a_normal_map_loaded_late_ends_up_with_detail`), `mesh_terrain_blend` (round 10a review:
 `removed_palette_image_keeps_retained_clones_drawable_and_the_replacement_publishes`),
 `terrain::tests` (round 10a: `detail_capture_reconstructs_the_drawn_triangles`; second
 review round: `an_initially_rejected_overflow_capture_recovers_when_the_edit_is_reverted`),
