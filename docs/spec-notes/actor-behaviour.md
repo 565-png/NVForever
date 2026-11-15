@@ -262,9 +262,12 @@ the sneak HUD's extra follower exclusion is not this query. The allocation-free
 scan stops at its first matching pair and costs O(cached pairs) in the worst case.
 No native opcode, sensing pass, cache or save field is added.
 
-[hypothesis: portable existing-query convention] Missing or nonactor receivers
-retain the previous numeric-zero fallback. This does not establish native invalid
-input behavior. Unmeasured/cold state reads zero. The query neither refreshes nor
+[hypothesis: selected portable query convention] Missing or nonactor receivers
+return numeric zero, matching neighboring implemented queries. This is a selected
+portable policy, not preservation of an old IsActorDetected zero: actual compiled
+public99 source calls refused the unsupported function. That authored CPU result
+is process evidence, not native invalid-input evidence. Native invalid-input
+behavior remains unknown. Unmeasured/cold state reads zero. The query neither refreshes nor
 expires detections and does not add an immediate dead/disabled check. The existing
 engine measurement round owns pruning: it runs every quarter-second and forgets
 pairs older than one game-time second. In a headless Game, merely advancing time

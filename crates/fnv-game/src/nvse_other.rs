@@ -312,8 +312,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
     let v = match name {
         // The receiver is the target; player perception and self-pairs do not count.
         // Read the existing measured cache, without another sensing pass or expiry rule
-        // (actor-behaviour.md §2.4). Missing/nonactor receivers keep the named query's
-        // numeric-zero convention; their native behavior is not established here.
+        // (actor-behaviour.md §2.4). Missing/nonactor zero is a selected portable
+        // convention matching neighboring queries; native invalid behavior is unknown.
         "isactordetected" => {
             let target = subject.filter(|&r| matches!(g.data.sig(base(g, r)), Some(sig) if sig == *b"NPC_" || sig == *b"CREA"));
             yes(target.is_some_and(|target| target != FormId::PLAYER_REF
