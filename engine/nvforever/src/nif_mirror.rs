@@ -26,9 +26,14 @@ pub struct NifMirrorPlugin;
 
 impl Plugin for NifMirrorPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostUpdate, mirror.before(TransformSystems::Propagate));
+        app.add_systems(PostUpdate, mirror.in_set(MirrorSystems).before(TransformSystems::Propagate));
     }
 }
+
+/// [design] The scripted NIF edits ([`mirror`]), for systems that must see their material
+/// changes applied (mesh_terrain_blend.rs converts after them).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct MirrorSystems;
 
 /// What the mirror keeps between frames: the references it logged, the held transforms,
 /// the models' material values, the scripts' material values and the shapes drawn with

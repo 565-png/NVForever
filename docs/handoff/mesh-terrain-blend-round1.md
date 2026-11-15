@@ -1,4 +1,4 @@
-# Mesh terrain blend, rounds 1-3 (#2661)
+# Mesh terrain blend, rounds 1-4 (#2661)
 
 [design] This is NVForever's aid-only world-space colour blend, selected by
 `NVF_PLAY_TEST_MESH_BLEND=24:surface`. Band, selection, resolution and residency rules
@@ -327,3 +327,118 @@ publication, Objects slider changes and a texture swap while enabled. Main-sessi
 filters should also include `draw_distance`, `fade`, `door_fade`, `effect_shaders` and
 `nif_mirror` in addition to the earlier filters. Existing Off/AA/upscaler checks above
 remain required. Unsupported colour quadrants and GPU/performance acceptance stay open.
+
+## Round 4: whole layer stacks, ordering, shadows and failing tests
+
+[documented: main-session runtime report supplied with the round-4 request] At the
+round-3 WastelandNV road view, `24:status` drew the road orange (invalid colour
+quadrant); the publication line gave `(-17,-1)` colour-mask=0x5 and `(-17,0)` 0x4 with
+`height-only:layered-overflow` quadrants, the others folded, `resident-cells=9`, no red.
+This writer has not run that view.
+
+[design] Colour now covers each quadrant's whole near-terrain stack, superseding the
+round-3 table above. `terrain.rs::spawn_terrain_with` (called by `spawn_terrain` with the
+fold decision and `config().is_some()`) collects, per quadrant and in drawing order, the
+base draw (folded `TerrainMaterial`, or the fallback/non-bindless base's StandardMaterial)
+and then every blended layer draw that the near terrain actually spawns, with that
+layer's own StandardMaterial: `AlphaMode::Blend`, texture, `sort_first` depth bias.
+Layers the near terrain skips (no texture, no painted triangles) are skipped too.
+`terrain_surface.rs::SurfaceCell::capture` flattens each copy and marks it
+`surface_bake`; copies after the first are `bake_layer`. No blend arithmetic is
+re-implemented in Rust: the GPU's alpha blend state for the material's alpha mode
+composites the layer copies, ordered by the same depth bias as the near layer draws
+(the bake's orthographic copies all have the same view distance).
+
+| Near-terrain path | Published colour | Label |
+| --- | --- | --- |
+| Folded base, no further layers | This quadrant | `folded` |
+| Folded base plus n blended (overflow) layers | This quadrant | `folded+n-layers` |
+| Fallback/non-bindless base, no layers | This quadrant | `fallback` |
+| Fallback/non-bindless base plus n blended layers | This quadrant | `fallback+n-layers` |
+| No base mesh (cannot occur for prepared land with heights) | Invalid | `height-only:missing-base-mesh` |
+
+[design] Shader: `terrain.wesl` keeps one fragment. With `SURFACE_BAKE_LAYER` it saves
+the vertex alpha (the layer opacity) before the folded path clears it, multiplies the
+material/texture alpha from `pbr_input_from_standard_material`, and
+`terrain_surface.wesl::surface_bake(colour, alpha)` returns unlit colour with that alpha;
+base copies return alpha 1. Near layer draws (`NifSurface` defaults: no falloff, cut 0,
+soft-fade distance 0, so factor 1) blend with alpha = material x texture x vertex alpha, the
+same factor [design: nif_material.wesl `nif_fragment`, `nif_material.rs` defaults].
+`TerrainLayersKey` carries `surface_bake` and `bake_layer`; bake pipelines also take the
+sort-only part out of the rasteriser depth bias, as `NifSurface::specialize` does with
+`raster_bias`. Ordinary terrain keys are both false, so ordinary pipelines are unchanged.
+
+[design] Receipts: `BakeReceipt` is generic over the phase and wraps `DrawMaterial` in
+both `Opaque3d` (base copies) and `Transparent3d` (layer copies). The expected entity
+set holds every copy, so the atlas publishes only after every quadrant's whole stack
+has drawn in one frame; per-quadrant validity follows from that single publication.
+
+[design] Other round-4 changes, by file:
+
+- `nvforever/src/mesh_terrain_blend.rs`: `conversion_order` places the conversion
+  after `nif_mirror::MirrorSystems` (scripted NIF edits, their commands applied) and
+  after `nvf_assets::nif_material::SeeThroughShadowSystems` (so a fade's restored
+  ordinary material clears its `SeeThroughNoShadow`/`NotShadowCaster` before it is
+  swapped for the blend material), and before asset events and mesh change marking.
+  Tests use the same ordering function.
+- `nvforever/src/nif_mirror.rs`: `mirror` is in the new `MirrorSystems` set.
+- `nvf-assets/src/nif_material.rs`: `see_through_casts_no_shadow` is in the new public
+  `SeeThroughShadowSystems` set; `see_through_shadow_system()` exposes it, in its set,
+  for other crates' tests. Its behaviour is unchanged.
+- `nvforever/src/texture_swap.rs`: the extra rescan triggers apply only to entities with
+  `BlendShape` and `RefVisual` (`NewSwapTargets`); with the aid absent no entity has
+  `BlendShape`, so only main's `Added<RefVisual>` can fire. Type aliases, not an allow,
+  answer `clippy::type_complexity` there.
+- `nvforever/src/outfits.rs`: the test helper `placed_ref` is `pub(crate)`.
+- `tools/smoke/scenarios.toml`: the Goodsprings scenario also requires that no
+  publication line names a `height-only:` quadrant (stricter, nothing loosened).
+
+[design] Failing tests reported on ec7dbd422:
+
+- `terrain_surface::tests::receipt_requires_all_draws_in_one_frame`: entities come from
+  `World::spawn_empty`, not `Entity::from_bits`.
+- `mesh_blend_shader_tests::composed_production_blend_module_validates_with_key_on_and_off`:
+  the synthetic bindless stub has `enable wgpu_binding_array;` under `@if(BINDLESS)`, as
+  the vendored `bindless.wesl` does.
+- `mesh_terrain_blend::tests::published_shape_joins_script_fade_and_returns_to_blending_afterwards`:
+  the test was wrong. `nvf_play/src/fade.rs::start` skips a fade out of a reference that
+  is not going out, and an unknown reference is present (`SimState::present`). The test
+  now uses a placed reference that starts disabled (`FLAG_INITIALLY_DISABLED`) and asserts
+  it is not present; its fade, alpha and end assertions are unchanged.
+
+[design] New tests, type-checked only:
+
+- `terrain_surface::tests::spawned_layered_quadrants_publish_whole_heights_full_colour_and_every_draw`:
+  synthetic land (7, 2, 0 layers and a quadrant without a base record) through
+  `prepare_land`, `spawn_terrain_with` (folding on and off) and `update_cache`: paths,
+  colour mask 0xf, one bake copy per near `LandMesh` draw, layer copies blended and
+  flat, every square's height in the uploaded atlas, CPU lookup success in all four
+  quadrants, and the `BakeView` expected set equal to the near draw count.
+- `mesh_terrain_blend::tests::finished_fade_in_restores_shadows_before_blending_again`:
+  production fade and shadow systems; markers present mid-fade, both removed and the
+  blend material back after completion.
+- `mesh_terrain_blend::tests::scripted_nif_edit_in_postupdate_is_converted_in_the_same_frame`:
+  an edit system in `MirrorSystems` republishes an edited source by command; after one
+  frame only the refreshed blend material remains.
+- `mesh_blend_shader_tests::terrain_surface_bake_composes_for_base_and_layer_copies`:
+  `terrain.wesl` composed and naga-validated for ordinary, bake-base and bake-layer
+  variants, bindless and not.
+
+[hypothesis] Remaining risks for the main session's runs: the non-bindless bake uses
+`TerrainMaterial` (as round 3's fallback capture did), whose non-bindless layout has 13
+extension textures; a GPU without bindless that cannot bind them all would fail that
+bake pipeline and never publish. The bake's layer order relies on equal view distances
+plus the layers' depth bias; it is checked by code reading, not by a captured frame.
+
+[documented: round-4 command outputs] Permitted checks, from `engine` with
+`CARGO_TARGET_DIR=E:/Games/NVForever/engine/target-2661-opus`:
+`cargo check -p nvforever --tests` exit 0; `cargo check -p nvf-assets --tests` exit 0.
+`python tools/smoke verify` from the worktree root: exit 0, `scenario file: 1517
+scenarios, fine`. No cargo build/test/clippy, game run, smoke run or game-data access.
+
+[design] Main session: run the `nvforever` filters `terrain_surface`, `terrain::tests`,
+`mesh_terrain_blend`, `mesh_blend_shader_tests`, `texture_swap`, `nif_mirror`, `fade`,
+`draw_distance`, `door_fade`, `effect_shaders`, `shadow_thin`, and the `nvf-assets` filters
+`nif_material::tests`, `nif_surface_blend::tests`; engine clippy. Then the
+`mesh-terrain-blend-goodsprings` scenario and the round-3 road view with `24:status`
+first: every resident cell should report `colour-mask=0xf`.

@@ -93,11 +93,22 @@ impl Plugin for MeshTerrainBlendPlugin {
         app.add_plugins((MaterialPlugin::<NifBlendMaterial>::default(), crate::terrain_surface::SurfaceBakePlugin))
             .init_resource::<SurfaceCache>().init_resource::<Variants>()
             .add_systems(Update, update_cache.after(crate::world::stream))
-            // Ordinary producers (swaps, alpha, scripted fades) finish in Update.
-            .add_systems(PostUpdate, apply_variants
-                .before(bevy::asset::AssetEventSystems)
-                .before(bevy::mesh::mark_3d_meshes_as_changed_if_their_assets_changed));
+            .add_systems(PostUpdate, conversion_order(apply_variants));
     }
+}
+
+/// [design] Where the conversion runs: ordinary producers (swaps, alpha, scripted fades)
+/// finish in Update; in PostUpdate it follows the scripted NIF edits (`nif_mirror`, their
+/// commands applied, so an edited source is never left beside the blend material) and the
+/// see-through shadow bookkeeping (which must see a restored ordinary material before it
+/// is swapped away, or a finished fade keeps its shadow markers), and precedes asset
+/// events and mesh/material change marking.
+fn conversion_order<M>(system: impl IntoScheduleConfigs<bevy::ecs::system::ScheduleSystem, M>) -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    system
+        .after(crate::nif_mirror::MirrorSystems)
+        .after(nvf_assets::nif_material::SeeThroughShadowSystems)
+        .before(bevy::asset::AssetEventSystems)
+        .before(bevy::mesh::mark_3d_meshes_as_changed_if_their_assets_changed)
 }
 
 fn enabled_material(source: &NifMaterial, c: BlendConfig, surface: &crate::terrain_surface::PublishedSurface) -> NifBlendMaterial {
@@ -196,9 +207,21 @@ mod tests {
         cache.published = Some(surface);
     }
     fn simulation(app: &mut App) {
+        simulation_with(app, fnv_sim::RefTable::default());
+    }
+    fn simulation_with(app: &mut App, refs: fnv_sim::RefTable) {
         let forms = Box::leak(Box::<fnv_sim::FormStore>::default());
-        let refs = Box::leak(Box::<fnv_sim::RefTable>::default());
+        let refs = Box::leak(Box::new(refs));
         app.insert_resource(nvf_play::sim::SimState { forms, refs, world: fnv_sim::World::new(forms, refs, default()) });
+    }
+    /// A placed reference 42 that starts disabled: a Disable fade (nvf_play fade.rs) runs
+    /// only for a reference on its way out.
+    fn disabled_reference() -> fnv_sim::RefTable {
+        let mut placed = crate::outfits::tests::placed_ref(42, *b"REFR");
+        placed.flags |= fnv_sim::refs::FLAG_INITIALLY_DISABLED;
+        let mut refs = fnv_sim::RefTable::default();
+        refs.refs.insert(fnv_sim::FormId(42), placed);
+        refs
     }
     #[test]
     fn publication_followed_by_scripted_swap_recreates_enabled_clone_and_restores_swap() {
@@ -210,7 +233,7 @@ mod tests {
             .init_resource::<Variants>().init_resource::<Assets<NifBlendMaterial>>()
             .init_resource::<crate::texture_swap::Swapped>().init_resource::<Swaps>()
             .add_systems(Update, |swaps: Res<Swaps>, sim: Res<nvf_play::sim::SimState>, world: Res<crate::world::WorldData>, mut drawing: crate::texture_swap::Swapping| drawing.sync(&swaps.0, &sim, &world))
-            .add_systems(PostUpdate, configured);
+            .add_systems(PostUpdate, conversion_order(configured));
         publish(&mut app);
         let original = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
         let range = crate::fade::drawn(8);
@@ -257,11 +280,15 @@ mod tests {
 
     #[test]
     fn published_shape_joins_script_fade_and_returns_to_blending_afterwards() {
+        // [design] nvf_play fade.rs `start` skips a fade out of a reference that is not
+        // going out (present, not held by a script's Disable); an unknown reference is
+        // present, so the reference here is a placed one that starts disabled.
         let mut app = App::new();
-        simulation(&mut app);
+        simulation_with(&mut app, disabled_reference());
+        assert!(!app.world().resource::<nvf_play::sim::SimState>().present(42));
         app.init_resource::<Assets<NifMaterial>>().init_resource::<Assets<NifBlendMaterial>>()
             .init_resource::<Assets<Image>>().init_resource::<Variants>().init_resource::<Time<Virtual>>()
-            .add_plugins(nvf_play::fade::FadePlugin).add_systems(PostUpdate, configured);
+            .add_plugins(nvf_play::fade::FadePlugin).add_systems(PostUpdate, conversion_order(configured));
         publish(&mut app);
         let original = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
         let e = app.world_mut().spawn((BlendShape::new(original.clone()), MeshMaterial3d(original), nvf_play::RefVisual(42), Visibility::Inherited)).id();
@@ -280,6 +307,69 @@ mod tests {
         assert!(app.world().get::<nvf_play::fade::Fading>(e).is_none());
         assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some());
         assert_eq!(app.world().get::<Visibility>(e), Some(&Visibility::Hidden));
+    }
+
+    #[test]
+    fn finished_fade_in_restores_shadows_before_blending_again() {
+        use bevy::light::NotShadowCaster;
+        use nvf_assets::nif_material::SeeThroughNoShadow;
+        let mut app = App::new();
+        simulation(&mut app); // reference 42 unknown, so present: a fade in runs
+        app.init_resource::<Assets<NifMaterial>>().init_resource::<Assets<NifBlendMaterial>>()
+            .init_resource::<Assets<Image>>().init_resource::<Variants>().init_resource::<Time<Virtual>>()
+            .add_plugins(nvf_play::fade::FadePlugin)
+            .add_systems(PostUpdate, (nvf_assets::nif_material::see_through_shadow_system(), conversion_order(configured)));
+        publish(&mut app);
+        let original = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let e = app.world_mut().spawn((BlendShape::new(original.clone()), MeshMaterial3d(original.clone()), nvf_play::RefVisual(42), Visibility::Inherited)).id();
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some());
+        assert!(app.world().get::<NotShadowCaster>(e).is_none());
+        app.world_mut().write_message(nvf_play::fade::RefFade { form_id: 42, fade_in: true });
+        app.update();
+        // The see-through copy drawn while fading casts no shadow.
+        assert!(app.world().get::<nvf_play::fade::Fading>(e).is_some());
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none());
+        assert!(app.world().get::<SeeThroughNoShadow>(e).is_some() && app.world().get::<NotShadowCaster>(e).is_some());
+        app.world_mut().resource_mut::<Time<Virtual>>().advance_by(std::time::Duration::from_secs(3));
+        app.update();
+        assert!(app.world().get::<nvf_play::fade::Fading>(e).is_none());
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some(), "blending again after the fade");
+        assert!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).is_none());
+        assert_eq!(app.world().get::<BlendShape>(e).unwrap().original, original);
+        assert!(app.world().get::<SeeThroughNoShadow>(e).is_none(), "the fade's shadow marker is gone");
+        assert!(app.world().get::<NotShadowCaster>(e).is_none(), "the restored mesh casts its shadow again");
+        assert_eq!(app.world().get::<Visibility>(e), Some(&Visibility::Inherited));
+        app.update(); // and it stays so
+        assert!(app.world().get::<NotShadowCaster>(e).is_none());
+    }
+
+    #[test]
+    fn scripted_nif_edit_in_postupdate_is_converted_in_the_same_frame() {
+        // [design] nif_mirror's material edits run in PostUpdate (MirrorSystems) and
+        // republish the edited source by command; the conversion follows them, so the
+        // frame never ends with the ordinary material beside the blend one.
+        #[derive(Resource)] struct Edit(Option<(Entity, Handle<NifMaterial>)>);
+        fn edit(mut commands: Commands, mut pending: ResMut<Edit>, mut materials: ResMut<Assets<NifMaterial>>) {
+            let Some((e, source)) = pending.0.take() else { return };
+            materials.get_mut(&source).unwrap().base.perceptual_roughness = 0.27;
+            commands.entity(e).insert(MeshMaterial3d(source));
+        }
+        let mut app = App::new();
+        app.init_resource::<Assets<NifMaterial>>().init_resource::<Assets<NifBlendMaterial>>()
+            .init_resource::<Assets<Image>>().init_resource::<Variants>().insert_resource(Edit(None))
+            .add_systems(PostUpdate, (edit.in_set(crate::nif_mirror::MirrorSystems), conversion_order(configured)));
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial { base: default(), extension: default() });
+        let e = app.world_mut().spawn((BlendShape::new(source.clone()), MeshMaterial3d(source.clone()))).id();
+        app.update();
+        let before = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+        app.world_mut().resource_mut::<Edit>().0 = Some((e, source.clone()));
+        app.update();
+        assert!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).is_none(), "no ordinary material left beside the blend one");
+        let after = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+        assert_ne!(after, before);
+        assert_eq!(app.world().resource::<Assets<NifBlendMaterial>>().get(&after).unwrap().base.perceptual_roughness, 0.27);
     }
 
     #[test]

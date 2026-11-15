@@ -917,8 +917,18 @@ impl Plugin for NifMaterialPlugin {
         app.add_plugins(MaterialPlugin::<NifMaterial>::default())
             .init_resource::<BlendedCutouts>()
             .add_systems(Startup, spawn_transmission_anchor)
-            .add_systems(PostUpdate, (apply_blended_cutouts, see_through_casts_no_shadow));
+            .add_systems(PostUpdate, (apply_blended_cutouts, see_through_casts_no_shadow.in_set(SeeThroughShadowSystems)));
     }
+}
+
+/// The shadow bookkeeping of see-through shapes ([`SeeThroughNoShadow`]): systems that
+/// replace a mesh's [`NifMaterial`] component run after it, so it has seen the material.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SeeThroughShadowSystems;
+
+/// [`see_through_casts_no_shadow`] in its set, for tests of other crates' material producers.
+pub fn see_through_shadow_system() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    see_through_casts_no_shadow.in_set(SeeThroughShadowSystems)
 }
 
 /// Keeps Bevy's copy of the opaque frame (the view transmission texture) in every 3D

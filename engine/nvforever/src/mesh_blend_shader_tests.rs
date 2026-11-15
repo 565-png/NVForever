@@ -39,9 +39,13 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
                 @if(!BINDLESS) @group(3) @binding(3) var normal_map_texture: texture_2d<f32>;
                 @if(!BINDLESS) @group(3) @binding(4) var normal_map_sampler: sampler;
             "#);
+            // As engine/vendor/bevy_render/src/bindless.wesl: binding arrays need the
+            // enable directive.
             add("bevy_render/bindless", r#"
-                @group(3) @binding(10) var bindless_textures_2d: binding_array<texture_2d<f32>>;
-                @group(3) @binding(11) var bindless_samplers_filtering: binding_array<sampler>;
+                @if(BINDLESS)
+                enable wgpu_binding_array;
+                @if(BINDLESS) @group(3) @binding(10) var bindless_textures_2d: binding_array<texture_2d<f32>>;
+                @if(BINDLESS) @group(3) @binding(11) var bindless_samplers_filtering: binding_array<sampler>;
             "#);
             add("nvf_assets/nif_surface_bindings", include_str!("../../nvf-assets/src/nif_surface_bindings.wesl"));
             let root = add("nvforever/blend_validation", r#"
@@ -144,4 +148,68 @@ fn complete_nif_forward_and_prepass_compose_with_both_interfaces() {
         cache.get(0, entry.unwrap().id(), &defs)
             .unwrap_or_else(|e| panic!("bindless={bindless} blend={blend} prepass={prepass}: {e:?}"));
     }}}
+}
+
+#[test]
+fn terrain_surface_bake_composes_for_base_and_layer_copies() {
+    // [design] terrain.wesl with the ordinary, bake-base and bake-layer variants
+    // (terrain.rs TerrainLayersKey), through the same CPU ShaderCache and naga validation.
+    fn sources(directory: &std::path::Path, package: &str, root: &std::path::Path, out: &mut Vec<(String, String)>) {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() { sources(&path, package, root, out); }
+            else if path.extension().is_some_and(|e| e == "wesl") {
+                let relative = path.strip_prefix(root).unwrap().with_extension("").to_string_lossy().replace('\\', "/");
+                out.push((format!("embedded://{package}/{relative}.wesl"), std::fs::read_to_string(path).unwrap()));
+            }
+        }
+    }
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut modules = Vec::new();
+    for package in ["bevy_pbr", "bevy_render"] {
+        let root = manifest.join("../vendor").join(package).join("src");
+        sources(&root, package, &root, &mut modules);
+    }
+    modules.push(("embedded://bevy_core_pipeline/fullscreen_vertex_shader.wesl".into(),
+        "struct FullscreenVertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> }".into()));
+    for name in ["terrain", "terrain_surface"] {
+        modules.push((format!("embedded://nvforever/{name}.wesl"), std::fs::read_to_string(manifest.join("src").join(format!("{name}.wesl"))).unwrap()));
+    }
+    for bindless in [false, true] { for (bake, layer) in [(false, false), (true, false), (true, true)] {
+        let mut cache = ShaderCache::new((), |_: &(), source, _| {
+            let ShaderCacheSource::Wgsl(source) = source else { panic!("expected WGSL") };
+            let module = naga::front::wgsl::parse_str(&source)
+                .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+            naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+                .validate(&module).unwrap_or_else(|e| panic!("{e:?}\n{source}"));
+            Ok(source)
+        });
+        let mut assets = Assets::<Shader>::default();
+        let mut entry = None;
+        for (path, source) in &modules {
+            let shader = Shader::from_wesl(source.clone(), path.clone());
+            let handle = assets.add(shader.clone());
+            cache.set_shader(handle.id(), shader);
+            if path == "embedded://nvforever/terrain.wesl" { entry = Some(handle); }
+        }
+        let mut defs = vec![
+            ShaderDefVal::Bool("BINDLESS".into(), bindless),
+            ShaderDefVal::Bool("SURFACE_BAKE".into(), bake),
+            ShaderDefVal::Bool("SURFACE_BAKE_LAYER".into(), layer),
+            "VERTEX_POSITIONS".into(), "VERTEX_NORMALS".into(), "VERTEX_UVS_A".into(),
+            "VERTEX_TANGENTS".into(), "VERTEX_COLORS".into(), "VERTEX_OUTPUT_INSTANCE_INDEX".into(),
+            "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3".into(), "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_6".into(),
+            ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 3),
+            ShaderDefVal::UInt("MAX_DIRECTIONAL_LIGHTS".into(), 10),
+            ShaderDefVal::UInt("MAX_CASCADES_PER_LIGHT".into(), 4),
+            ShaderDefVal::UInt("MAX_RECT_LIGHTS".into(), 1),
+        ];
+        // A folded base carries the second texture coordinate; a layer mesh does not.
+        if !layer { defs.push("VERTEX_UVS_B".into()); }
+        cache.get(0, entry.unwrap().id(), &defs)
+            .unwrap_or_else(|e| panic!("bindless={bindless} bake={bake} layer={layer}: {e:?}"));
+    }}
+    let shader = include_str!("terrain.wesl");
+    assert!(shader.contains("@if(SURFACE_BAKE_LAYER && VERTEX_COLORS) bake_alpha = in.color.a;"));
+    assert!(shader.find("bake_alpha = in.color.a;").unwrap() < shader.find("in.color = vec4(in.color.rgb, 1.0);").unwrap(), "the layer's vertex opacity is read before the folded path clears it");
 }

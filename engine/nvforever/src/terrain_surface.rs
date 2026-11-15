@@ -1,5 +1,10 @@
 //! [design] Aid-only, bounded 3x3 unlit colour atlas, using terrain.rs's prepared meshes
 //! and materials. Heights cover every prepared cell; colour validity is per quadrant.
+//! A quadrant's colour is its whole near-terrain stack: the base draw (folded or not)
+//! and then every blended layer draw over it, as flat unlit copies with the near draws'
+//! materials, alpha and draw order (terrain.rs `spawn_terrain_with`, terrain.wesl
+//! `SURFACE_BAKE`/`SURFACE_BAKE_LAYER`). The bake publishes only after every copy, opaque
+//! and blended, has drawn in one frame.
 
 use crate::terrain::TerrainMaterial;
 use crate::world::{bevy_to_game, game_to_bevy, Streamer, WorldData};
@@ -11,8 +16,8 @@ use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
-use bevy::render::render_phase::{DrawFunctions, RenderCommand, RenderCommandResult, RenderCommandState, PhaseItem, TrackedRenderPass};
-use bevy::core_pipeline::core_3d::Opaque3d;
+use bevy::render::render_phase::{CachedRenderPipelinePhaseItem, DrawFunctions, RenderCommand, RenderCommandResult, RenderCommandState, PhaseItem, TrackedRenderPass};
+use bevy::core_pipeline::core_3d::{Opaque3d, Transparent3d};
 use bevy::ecs::{query::ROQueryItem, system::SystemParamItem};
 use std::{collections::HashSet, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
@@ -25,12 +30,15 @@ const HEIGHT_HEIGHT: usize = 3 * HEIGHT_TILE_HEIGHT;
 pub const BAKE_LAYER: usize = 16;
 const INVALID_HEIGHT: f32 = -f32::MAX;
 
-#[derive(Clone, Copy, Debug)]
-pub enum CapturePath { Folded, Fallback, HeightOnly(&'static str) }
+/// [design] How a quadrant's colour is captured: its base draw, folded (bindless) or not
+/// (fallback, non-bindless), with `layers` blended layer draws over it; or not at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapturePath { Folded { layers: usize }, Fallback { layers: usize }, HeightOnly(&'static str) }
 impl CapturePath {
     fn label(self) -> String {
+        let with = |name: &str, layers: usize| if layers == 0 { name.to_string() } else { format!("{name}+{layers}-layers") };
         match self {
-            Self::Folded => "folded".into(), Self::Fallback => "fallback".into(),
+            Self::Folded { layers } => with("folded", layers), Self::Fallback { layers } => with("fallback", layers),
             Self::HeightOnly(reason) => format!("height-only:{reason}"),
         }
     }
@@ -47,15 +55,19 @@ pub struct SurfaceCell {
 }
 
 impl SurfaceCell {
-    pub fn push(&mut self, quadrant: u8, mesh: &Mesh, mut material: TerrainMaterial, path: CapturePath) {
-        let mut flat = mesh.clone();
-        if let Some(VertexAttributeValues::Float32x3(p)) = flat.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
-            for v in p { v[2] = 0.0; }
+    /// A quadrant's draws in their drawing order: its base first, then each blended layer.
+    /// Each becomes a flat unlit copy; a layer copy keeps its material's alpha blending.
+    pub fn capture(&mut self, quadrant: u8, draws: Vec<(Mesh, TerrainMaterial)>, path: CapturePath) {
+        for (i, (mut flat, mut material)) in draws.into_iter().enumerate() {
+            if let Some(VertexAttributeValues::Float32x3(p)) = flat.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
+                for v in p { v[2] = 0.0; }
+            }
+            material.extension.surface_bake = true;
+            material.extension.bake_layer = i > 0;
+            material.extension.burn = None;
+            material.base.fog_enabled = false;
+            self.quadrants.push((flat, material));
         }
-        material.extension.surface_bake = true;
-        material.extension.burn = None;
-        material.base.fog_enabled = false;
-        self.quadrants.push((flat, material));
         self.paths[quadrant as usize] = path;
     }
     fn colour_mask(&self) -> u32 {
@@ -213,16 +225,18 @@ impl Plugin for SurfaceBakePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(ExtractComponentPlugin::<BakeView>::default());
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
-            render.add_systems(RenderStartup, install_bake_receipt)
+            render.add_systems(RenderStartup, (install_bake_receipt::<Opaque3d>, install_bake_receipt::<Transparent3d>))
                 .add_systems(Render, reset_receipts.in_set(RenderSystems::Prepare))
                 .add_systems(Render, submit_receipts.in_set(RenderSystems::Cleanup));
         }
     }
 }
 
-fn install_bake_receipt(world: &mut World) {
-    let command = RenderCommandState::<Opaque3d, (bevy::pbr::DrawMaterial, BakeReceipt)>::new(world);
-    let functions = world.resource::<DrawFunctions<Opaque3d>>();
+// [design] Base copies draw in Opaque3d, layer copies (alpha blended) in Transparent3d;
+// both phases' DrawMaterial carries the receipt.
+fn install_bake_receipt<P: CachedRenderPipelinePhaseItem>(world: &mut World) {
+    let command = RenderCommandState::<P, (bevy::pbr::DrawMaterial, BakeReceipt)>::new(world);
+    let functions = world.resource::<DrawFunctions<P>>();
     let mut functions = functions.write();
     let id = functions.id::<bevy::pbr::DrawMaterial>();
     functions.draw_functions[id.0 as usize] = Box::new(command);
@@ -244,11 +258,11 @@ fn submit_receipts(views: Query<&BakeView>) {
     }
 }
 struct BakeReceipt;
-impl RenderCommand<Opaque3d> for BakeReceipt {
+impl<P: PhaseItem> RenderCommand<P> for BakeReceipt {
     type Param = ();
     type ViewQuery = Option<&'static BakeView>;
     type ItemQuery = ();
-    fn render<'w>(item: &Opaque3d, view: ROQueryItem<'w, '_, Self::ViewQuery>, _: Option<()>, _: SystemParamItem<'w, '_, Self::Param>, _: &mut TrackedRenderPass<'w>) -> RenderCommandResult {
+    fn render<'w>(item: &P, view: ROQueryItem<'w, '_, Self::ViewQuery>, _: Option<()>, _: SystemParamItem<'w, '_, Self::Param>, _: &mut TrackedRenderPass<'w>) -> RenderCommandResult {
         if let Some(view) = view {
             // NoAutomaticBatching + NoIndirectDrawing: one successful indexed draw
             // represents this exact quadrant, with no indirect culling ambiguity.
@@ -382,8 +396,8 @@ mod tests {
     fn unsupported_quadrants_and_height_only_cells_keep_all_prepared_heights() {
         let mut data = empty_height_atlas();
         let slots = HashSet::from([(0, 0), (1, 0)]);
-        let partial = surface([CapturePath::Folded, CapturePath::HeightOnly("layered-overflow"), CapturePath::Fallback, CapturePath::Folded]);
-        let height_only = surface([CapturePath::HeightOnly("non-bindless-layers"); 4]);
+        let partial = surface([CapturePath::Folded { layers: 0 }, CapturePath::HeightOnly("missing-base-mesh"), CapturePath::Fallback { layers: 2 }, CapturePath::Folded { layers: 1 }]);
+        let height_only = surface([CapturePath::HeightOnly("missing-base-mesh"); 4]);
         encode_surface_cell(&mut data, (0, 0), &partial, &slots);
         encode_surface_cell(&mut data, (1, 0), &height_only, &slots);
         assert_eq!(partial.colour_mask(), 0b1101);
@@ -399,7 +413,7 @@ mod tests {
     #[test]
     fn cpu_publication_probe_classifies_all_five_shader_outcomes() {
         let mut data = empty_height_atlas();
-        let cell = surface([CapturePath::Folded; 4]);
+        let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
         let slots = HashSet::from([(0, 0), (1, 0), (0, 1)]);
         for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
         assert_eq!(lookup_status(&data, (0, 0), Vec2::new(-1.0, 100.0)), LookupStatus::OutOfRange);
@@ -414,11 +428,11 @@ mod tests {
     #[test]
     fn publication_line_names_paths_exclusions_probe_and_asset_ids() {
         let id = Handle::<Image>::default().id();
-        let resident = vec![format!("(-17, 0):q=[{}] colour-mask=0x1", [CapturePath::Folded, CapturePath::HeightOnly("layered-overflow"), CapturePath::HeightOnly("fallback-layers"), CapturePath::HeightOnly("non-bindless-layers")].map(CapturePath::label).join(","))];
+        let resident = vec![format!("(-17, 0):q=[{}] colour-mask=0x7", [CapturePath::Folded { layers: 0 }, CapturePath::Folded { layers: 2 }, CapturePath::Fallback { layers: 3 }, CapturePath::HeightOnly("missing-base-mesh")].map(CapturePath::label).join(","))];
         let line = publication_log(7, (-18, -1), &resident, &["(-18, -1):not-loaded".into()], "probe-slot=(1, 1)", (id, id));
-        assert_eq!(line, format!("mesh terrain blend: publication generation=7 origin=(-18, -1) resident=[(-17, 0):q=[folded,height-only:layered-overflow,height-only:fallback-layers,height-only:non-bindless-layers] colour-mask=0x1] excluded=[(-18, -1):not-loaded] probe-slot=(1, 1) colour={id:?} height={id:?}"));
+        assert_eq!(line, format!("mesh terrain blend: publication generation=7 origin=(-18, -1) resident=[(-17, 0):q=[folded,folded+2-layers,fallback+3-layers,height-only:missing-base-mesh] colour-mask=0x7] excluded=[(-18, -1):not-loaded] probe-slot=(1, 1) colour={id:?} height={id:?}"));
         let mut data = empty_height_atlas();
-        let cell = surface([CapturePath::Folded; 4]);
+        let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
         encode_surface_cell(&mut data, (1, 1), &cell, &HashSet::from([(1, 1)]));
         let probe = publication_probe(&data, (-18, -1), Vec2::new(-17.0 * 4096.0 + 1024.0, 1024.0));
         assert!(probe.contains("probe-cell=(-17, 0) probe-slot=(1, 1)"));
@@ -512,10 +526,105 @@ mod tests {
         app.world_mut().run_system_once(reset_receipts).unwrap();
         assert!(app.world().resource::<bevy::render::camera::SortedCameras>().0.is_empty(), "a later pass must not clear the completed atlas");
     }
+    /// [design] Production path regression: `spawn_terrain_with` captures every quadrant's
+    /// whole draw stack (folded or fallback base plus the blended layers drawn over it) and
+    /// `update_cache` publishes the cell's complete heights with all four colour quadrants
+    /// valid, waiting for one receipt per near draw. A return to whole-cell or
+    /// per-layered-quadrant exclusion fails here. Synthetic land and a synthetic BC1
+    /// texture; no game data.
+    #[test]
+    fn spawned_layered_quadrants_publish_whole_heights_full_colour_and_every_draw() {
+        use bevy::ecs::system::RunSystemOnce;
+        use fnv_world::land::{Land, Layer, QUAD_SIDE};
+        let grid = (-17, 0);
+        let heights: Vec<f32> = (0..SIDE * SIDE).map(|i| ((i * 13 + i / SIDE * 7) % 59) as f32 * 2.5 - 40.0).collect();
+        // Layers paint only the quadrant's middle vertex, so stitching adds none across
+        // the quadrant edges: q0 has 7 layers (6 fold, 1 stays blended where folding is
+        // on), q1 2, q2 none, q3 no base record and no layers.
+        let centre = ((QUAD_SIDE / 2) * QUAD_SIDE + QUAD_SIDE / 2) as u16;
+        let mut layers = Vec::new();
+        for (q, count) in [(0u8, 7i16), (1, 2), (2, 0)] {
+            layers.push(Layer { quadrant: q, texture: None, layer: -1, base: true, alpha: vec![] });
+            for layer in 0..count {
+                layers.push(Layer { quadrant: q, texture: None, layer, base: false, alpha: vec![(centre, 0.75)] });
+            }
+        }
+        let land = Land { heights: Some(heights.clone()), layers, ..default() };
+        for (folds, expected) in [
+            (true, [CapturePath::Folded { layers: 1 }, CapturePath::Folded { layers: 0 }, CapturePath::Fallback { layers: 0 }, CapturePath::Fallback { layers: 0 }]),
+            (false, [CapturePath::Fallback { layers: 7 }, CapturePath::Fallback { layers: 2 }, CapturePath::Fallback { layers: 0 }, CapturePath::Fallback { layers: 0 }]),
+        ] {
+            let (mut app, _files) = crate::outfits::tests::asset_fixture();
+            app.insert_resource(crate::outfits::tests::empty_world_data())
+                .insert_resource(crate::terrain::TerrainSettings { tile: 256.0 })
+                .init_resource::<crate::terrain::TerrainCache>()
+                .init_resource::<Assets<TerrainMaterial>>()
+                .init_resource::<SurfaceCache>();
+            app.world_mut().resource_mut::<nvf_assets::TextureCache>()
+                .offer(fnv_vfs::texture_path(fnv_world::land::DEFAULT_DIFFUSE), synthetic_dds(), 0.0);
+            let cell = app.world_mut().spawn_empty().id();
+            let prep_land = land.clone();
+            app.world_mut().run_system_once(move |mut commands: Commands, world: Res<WorldData>, mut terrain: crate::terrain::TerrainMaterials, mut models: nvf_assets::model::ModelCtx| {
+                let prep = crate::terrain::prepare_land(prep_land.clone(), &[None, None, None, None], grid, 256.0);
+                crate::terrain::spawn_terrain_with(&mut commands, cell, &world, prep, &mut crate::terrain::TerrainCtx { tm: &mut terrain, assets: &mut models }, folds, true);
+            }).unwrap();
+            let near_draws = app.world_mut().query::<(&ChildOf, &crate::terrain::LandMesh)>().iter(app.world()).filter(|(parent, _)| parent.parent() == cell).count();
+            let surface = app.world().get::<SurfaceCell>(cell).expect("capture inserts the cell's surface");
+            assert_eq!(surface.paths, expected, "folds={folds}");
+            assert_eq!(surface.colour_mask(), 0xf, "folds={folds}: every quadrant's colour is captured");
+            assert_eq!(surface.quadrants.len(), near_draws, "folds={folds}: one bake copy per near draw");
+            let blended_layers: usize = expected.iter().map(|p| match p { CapturePath::Folded { layers } | CapturePath::Fallback { layers } => *layers, CapturePath::HeightOnly(_) => 0 }).sum();
+            let copies: Vec<_> = surface.quadrants.iter().map(|(_, m)| (m.extension.surface_bake, m.extension.bake_layer, m.base.alpha_mode)).collect();
+            assert!(copies.iter().all(|c| c.0), "every copy uses the unlit bake variant");
+            assert_eq!(copies.iter().filter(|c| c.1).count(), blended_layers, "folds={folds}");
+            assert!(copies.iter().filter(|c| c.1).all(|c| c.2 == AlphaMode::Blend), "layer copies keep the near layers' blending");
+            assert!(copies.iter().filter(|c| !c.1).all(|c| c.2 == AlphaMode::Opaque), "base copies stay opaque");
+            assert!(surface.quadrants.iter().all(|(mesh, _)| match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+                Some(VertexAttributeValues::Float32x3(p)) => p.iter().all(|v| v[2] == 0.0),
+                _ => false,
+            }), "copies are flat");
+
+            // The publication: the production cache update around a camera in the cell.
+            app.insert_resource(Streamer {
+                radius: 1, loaded: [(grid, cell)].into(), fades: default(), fade_secs: 0.0, settled: true,
+                arrival: None, per_frame: 1, spawning: default(), dying: default(), ahead: default(),
+                hide: default(), interior: None, light_scale: 1.0, managed: default(), manage_actors: false,
+                stats: default(), buffer: default(), centre: None, waiting: default(), model_overrides: default(),
+            });
+            let eye = Vec3::new(grid.0 as f32 * 4096.0 + 2048.0, grid.1 as f32 * 4096.0 + 2048.0, 600.0);
+            app.world_mut().spawn((Camera3d::default(), crate::fly::FlyCam { yaw: 0.0, pitch: 0.0, speed: 0.0 }, GlobalTransform::from_translation(Vec3::new(eye.x, eye.z, -eye.y))));
+            app.world_mut().run_system_once(update_cache).unwrap();
+            let cache = app.world().resource::<SurfaceCache>();
+            let job = cache.job.as_ref().expect("a bake is pending for the resident cell");
+            assert_eq!((job.publication.origin, job.publication.cells), ((grid.0 - 1, grid.1 - 1), 1));
+            assert!(job.report.contains("colour-mask=0xf"), "{}", job.report);
+            let height = app.world().resource::<Assets<Image>>().get(&job.publication.height).unwrap().data.clone().unwrap();
+            let origin = job.publication.origin;
+            for y in 0..GRID { for x in 0..GRID { for triangle in 0..2 {
+                let at = height_index((1, 1), (x, y), triangle, 0);
+                assert_eq!(f32::from_le_bytes(height[at..at + 4].try_into().unwrap()), heights[y * SIDE + x], "square ({x}, {y})");
+            }}}
+            for q in 0..4 {
+                let point = Vec2::new(grid.0 as f32 * 4096.0 + 1024.0 + 2048.0 * (q % 2) as f32, grid.1 as f32 * 4096.0 + 1024.0 + 2048.0 * (q / 2) as f32);
+                assert_eq!(lookup_status(&height, origin, point), LookupStatus::Success, "folds={folds} quadrant {q}");
+            }
+            let expected_draws = app.world_mut().query::<&BakeView>().single(app.world()).unwrap().expected.len();
+            assert_eq!(expected_draws, near_draws, "folds={folds}: the receipt waits for every copy, blended layers included");
+        }
+    }
+    fn synthetic_dds() -> Vec<u8> {
+        // A 4x4 BC1 DDS header and one block, as the texture-swap test's.
+        let mut dds = vec![0u8; 136];
+        dds[..4].copy_from_slice(b"DDS ");
+        for (at, value) in [(4, 124u32), (8, 0x1007), (12, 4), (16, 4), (28, 1), (76, 32), (80, 4), (108, 0x1000)] { dds[at..at + 4].copy_from_slice(&value.to_le_bytes()); }
+        dds[84..88].copy_from_slice(b"DXT1");
+        dds
+    }
     #[test]
     fn receipt_requires_all_draws_in_one_frame() {
-        let a = Entity::from_bits(1 << 32);
-        let b = Entity::from_bits((1 << 32) + 1);
+        let mut world = World::new();
+        let a = world.spawn_empty().id();
+        let b = world.spawn_empty().id();
         let expected = HashSet::from([a, b]);
         assert!(!complete_draws(&expected, &HashSet::new()));
         assert!(!complete_draws(&expected, &HashSet::from([a])));

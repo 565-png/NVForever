@@ -126,6 +126,10 @@ const SURFACE_BAKE_SHADER: Handle<Shader> = uuid_handle!("6da97f8c-732c-4697-b34
 pub struct TerrainLayers {
     /// [design] Dedicated unlit surface capture, terrain_surface.rs.
     pub surface_bake: bool,
+    /// [design] With `surface_bake`: an unlit copy of one blended layer draw. The output
+    /// keeps the layer's own alpha (material x texture x vertex opacity), so the near
+    /// terrain's alpha blend state composites it over the bake's base.
+    pub bake_layer: bool,
     /// Layers held (at most [`FOLDED_LAYERS`]).
     pub count: u32,
     /// World units per texture repeat when the shader works the texture coordinate out
@@ -190,9 +194,19 @@ impl MaterialExtension for TerrainLayers {
         _: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        if key.bind_group_data.0 {
+        let bake = key.bind_group_data;
+        if bake.surface_bake {
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader_defs.push("SURFACE_BAKE".into());
+                if bake.bake_layer {
+                    fragment.shader_defs.push("SURFACE_BAKE_LAYER".into());
+                }
+            }
+            // [design] A layer copy keeps the near layer's StandardMaterial, whose depth
+            // bias is sort order plus rasteriser bias (`sort_first`); the rasteriser gets
+            // only its own part, as NifSurface's specialize gives the near layer.
+            if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
+                depth_stencil.bias.constant = nvf_assets::nif_material::raster_bias(depth_stencil.bias.constant);
             }
         }
         // Land fades in and out with its cell (fade.rs), and is opaque.
@@ -203,10 +217,13 @@ impl MaterialExtension for TerrainLayers {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct TerrainLayersKey(bool);
+pub struct TerrainLayersKey {
+    surface_bake: bool,
+    bake_layer: bool,
+}
 
 impl From<&TerrainLayers> for TerrainLayersKey {
-    fn from(l: &TerrainLayers) -> Self { Self(l.surface_bake) }
+    fn from(l: &TerrainLayers) -> Self { Self { surface_bake: l.surface_bake, bake_layer: l.surface_bake && l.bake_layer } }
 }
 
 pub struct TerrainPlugin;
@@ -608,7 +625,13 @@ pub fn prepare_terrain(lo: &LoadOrder, schema: &EsmSchema, land_id: u32, grid: (
     land.heights.as_ref()?;
     let parts = LandParts { heights: false, normals: false, colors: false, layers: true };
     let around = neighbours.map(|n| n.and_then(|id| load_land(lo, schema, id, parts)).map(|l| l.layers));
-    let layers = stitch_layers(&land.layers, &around);
+    Some(prepare_land(land, &around, grid, tile))
+}
+
+/// [`prepare_terrain`] once the records are read: `land` with heights, the neighbours'
+/// layers by side ([`NEIGHBOURS`]).
+pub(crate) fn prepare_land(land: Land, around: &[Option<Vec<Layer>>; 4], grid: (i32, i32), tile: f32) -> TerrainPrep {
+    let layers = stitch_layers(&land.layers, around);
     let origin = Vec2::new(grid.0 as f32 * fnv_world::CELL_SIZE, grid.1 as f32 * fnv_world::CELL_SIZE);
     let mut meshes = HashMap::new();
     let mut folded = HashMap::new();
@@ -630,7 +653,7 @@ pub fn prepare_terrain(lo: &LoadOrder, schema: &EsmSchema, land_id: u32, grid: (
             }
         }
     }
-    Some(TerrainPrep { grid, land, layers, meshes, folded, tile })
+    TerrainPrep { grid, land, layers, meshes, folded, tile }
 }
 
 /// A mesh of a cell's land (its base or a texture layer over it).
@@ -640,12 +663,22 @@ pub struct LandMesh;
 /// Spawn a cell's terrain from its prepared landscape ([`prepare_terrain`]); returns the
 /// landscape (for the grass).
 pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx) -> Land {
-    let TerrainPrep { grid, land, layers: drawn, mut meshes, mut folded, tile } = prep;
-    let mut surface = crate::mesh_terrain_blend::config().map(|_| crate::terrain_surface::SurfaceCell {
-        world: world.world, grid, heights: land.heights.clone().unwrap_or_default(), quadrants: Vec::new(),
-        paths: [crate::terrain_surface::CapturePath::HeightOnly("missing-base-mesh"); 4],
-    });
     let folds = tm.tm.folds();
+    spawn_terrain_with(commands, cell, world, prep, tm, folds, crate::mesh_terrain_blend::config().is_some())
+}
+
+/// [`spawn_terrain`] with the fold decision and the mesh terrain blend's capture given
+/// (`capture`: test aid `NVF_PLAY_TEST_MESH_BLEND` on, `mesh_terrain_blend.rs`). With it,
+/// the cell also gets a [`crate::terrain_surface::SurfaceCell`]: every quadrant's draws in
+/// their drawing order, the base (folded or not) and then each blended layer drawn over
+/// it, for the bake's flat unlit copies [design]. The near draws are the same either way.
+pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx, folds: bool, capture: bool) -> Land {
+    use crate::terrain_surface::{CapturePath, SurfaceCell};
+    let TerrainPrep { grid, land, layers: drawn, mut meshes, mut folded, tile } = prep;
+    let mut surface = capture.then(|| SurfaceCell {
+        world: world.world, grid, heights: land.heights.clone().unwrap_or_default(), quadrants: Vec::new(),
+        paths: [CapturePath::HeightOnly("missing-base-mesh"); 4],
+    });
     let most = folded_layers(tile);
     // The repeat for the shader to work the texture coordinate out with, 0 when the mesh
     // carries the coordinate.
@@ -657,6 +690,9 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
         }
         let tex = tm.texture_of(world, base.and_then(|b| b.texture));
         let layers = quadrant_layers(&drawn, q);
+        // [design] The bake's copies of this quadrant's draws, in drawing order; `None`
+        // while no base is drawn (the quadrant's colour then stays invalid).
+        let mut stack: Option<(bool, Vec<(Mesh, TerrainMaterial)>)> = None;
         // The first layers folded into the base's draw (module notes), when each of them
         // has a texture; otherwise the base alone and every layer blended over it.
         let mut blended_from = 0;
@@ -668,15 +704,8 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
             None => None,
         };
         if let Some((mesh, mat, n)) = folded_mat {
-            // [design] Unsupported colour affects this quadrant only; heights are independent.
-            if let Some(surface) = &mut surface {
-                surface.paths[q as usize] = crate::terrain_surface::CapturePath::HeightOnly("layered-overflow");
-            }
-            if n == layers.len() {
-                if let Some(surface) = &mut surface {
-                    let material = tm.tm.folded.get(&mat).unwrap().clone();
-                    surface.push(q, &mesh, material, crate::terrain_surface::CapturePath::Folded);
-                }
+            if surface.is_some() {
+                stack = Some((true, vec![(mesh.clone(), tm.tm.folded.get(&mat).unwrap().clone())]));
             }
             let mesh = tm.assets.meshes.add(mesh);
             commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
@@ -684,16 +713,11 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
             tm.tm.cache.folded_layers += n;
             blended_from = n;
         } else {
-            if let Some(surface) = &mut surface {
-                surface.paths[q as usize] = crate::terrain_surface::CapturePath::HeightOnly(if folds { "fallback-layers" } else { "non-bindless-layers" });
-            }
             let mat = tm.base_material(tex);
             if let Some(mesh) = meshes.remove(&(q, None)) {
-                if layers.is_empty() {
-                    if let Some(surface) = &mut surface {
-                        let base = tm.assets.materials.get(&mat).unwrap().base.clone();
-                        surface.push(q, &mesh, TerrainMaterial { base, extension: default() }, crate::terrain_surface::CapturePath::Fallback);
-                    }
+                if surface.is_some() {
+                    let base = tm.assets.materials.get(&mat).unwrap().base.clone();
+                    stack = Some((false, vec![(mesh.clone(), TerrainMaterial { base, extension: default() })]));
                 }
                 let mesh = tm.assets.meshes.add(mesh);
                 commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
@@ -703,10 +727,20 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
             let Some(tex) = tm.texture_of(world, l.texture) else { continue };
             let Some(mat) = tm.layer_material(tex, rank) else { continue };
             if let Some(mesh) = meshes.remove(&(q, Some(i))) {
+                // [design] The same StandardMaterial (blend mode, texture, depth bias and
+                // so draw order) as the near layer; terrain_surface.rs marks it a layer copy.
+                if let Some((_, draws)) = &mut stack {
+                    let base = tm.assets.materials.get(&mat).unwrap().base.clone();
+                    draws.push((mesh.clone(), TerrainMaterial { base, extension: default() }));
+                }
                 let mesh = tm.assets.meshes.add(mesh);
                 commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
                 tm.tm.cache.layers += 1;
             }
+        }
+        if let (Some(surface), Some((folded, draws))) = (&mut surface, stack) {
+            let layers = draws.len() - 1;
+            surface.capture(q, draws, if folded { CapturePath::Folded { layers } } else { CapturePath::Fallback { layers } });
         }
     }
     if let Some(surface) = surface {

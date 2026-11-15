@@ -101,8 +101,14 @@ pub(crate) struct Swapping<'w, 's> {
     swapped: ResMut<'w, Swapped>,
     #[allow(clippy::type_complexity)]
     drawn: Query<'w, 's, (Entity, &'static RefVisual, Option<&'static MeshMaterial3d<NifMaterial>>, Option<&'static crate::mesh_terrain_blend::BlendShape>, Option<&'static ShapeName>, Option<&'static mut crate::effect_shaders::Faded>, Option<&'static Fading>, Option<&'static nvf_assets::nif_material::MaterialOverride>)>,
-    added: Query<'w, 's, (), Or<(Added<RefVisual>, Added<MeshMaterial3d<NifMaterial>>, Added<crate::mesh_terrain_blend::BlendShape>)>>,
+    added: Query<'w, 's, (), NewSwapTargets>,
 }
+
+/// What makes the retained swaps apply again: a reference's mesh drawn anew, as on main,
+/// and, for the mesh terrain blend's shapes only (test aid; no entity has `BlendShape`
+/// without it), their marker or a restored ordinary material arriving [design, #2661].
+type BlendShapeRef = (With<crate::mesh_terrain_blend::BlendShape>, With<RefVisual>);
+type NewSwapTargets = Or<(Added<RefVisual>, (Added<MeshMaterial3d<NifMaterial>>, BlendShapeRef), (Added<crate::mesh_terrain_blend::BlendShape>, With<RefVisual>))>;
 
 impl Swapping<'_, '_> {
     pub(crate) fn sync(&mut self, swaps: &fnv_game::functions::misc::TextureSwaps, sim: &SimState, world: &WorldData) {
