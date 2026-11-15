@@ -108,12 +108,13 @@
 //!   Rolled on their own sequence.
 //! - **Melee combos** (docs/design/combat-ai.md §15): a blow's clip with an `a:` text
 //!   key (`a:L` on the `AttackRight` clips, `a:R` on the `AttackLeft` ones; `fnv_combat::
-//!   melee`) brings the next melee decision forward to that key; a blow decided between
+//!   melee`) sets the next melee decision at that key; a blow decided between
 //!   the key and the clip's end goes on the combo with the group the key names (right,
 //!   left, right…, fists alternating hands), as the player's swings do, cutting the clip
 //!   short. A blow decided later, after a hold, a block or a recoil starts again from the
-//!   weapon's own attack group. A clip without an `a:` key keeps the [`STRIKE_SECONDS`]
-//!   pace [design; owner request 2026-10-16].
+//!   weapon's own attack group. Without an `a:` key, the next decision waits for both
+//!   the clip's end and the base [`STRIKE_SECONDS`] pace [observed: capture run15b_b2,
+//!   2026-11-15, radscorpions; hypothesis: the same lower bound for NPC swings, #2535].
 //!
 //! - **Its combat style** (CSTY, `fnv_game::combat_style`; docs/design/combat-ai.md
 //!   §10.4) [documented: GECK wiki Combat Style]: Weapon Restrictions "Melee Only" has
@@ -542,12 +543,31 @@ struct NpcSwing {
     clip: Option<crate::attack_anims::SwingClip>,
     /// Blows in this combo so far, this one included.
     run: u32,
+    /// Powers publish timing but do not continue combos [design: existing combo rule].
+    power: bool,
 }
 
 impl NpcSwing {
+    /// The next decision waits for the clip's interrupt key, or its end without one
+    /// [documented: GECK NiTextKeyExtraData; observed: capture run15b_b2, 2026-11-15,
+    /// radscorpions; hypothesis: NPC swings, #2535]. All times use the playing clip's
+    /// clock (`attack_anims::CombatPose::layers`) [design].
+    fn ready_in(&self, base_left: f32) -> f32 {
+        match self.clip {
+            Some(c) => match c.chain {
+                Some((at, _)) => (at - self.t).max(0.0),
+                None => base_left.max((c.len - self.t).max(0.0)),
+            },
+            None => base_left,
+        }
+    }
+
     /// What a blow begun now goes on with: the group its `a:` key named, between that key
     /// and the clip's end.
     fn next(&self) -> Option<fnv_combat::melee::NextAttack> {
+        if self.power {
+            return None;
+        }
         let c = self.clip?;
         c.chain.filter(|(at, _)| self.t >= *at && self.t <= c.len).map(|(_, n)| n)
     }
@@ -2898,9 +2918,7 @@ pub(crate) fn fight(
                             if let Some(b) = fighter.blows.last_mut() {
                                 b.0 = (clip.hit - sw.t + dt).max(0.0);
                             }
-                            if let Some((at, _)) = clip.chain {
-                                fighter.strike_in = fighter.strike_in.min((at - sw.t).max(0.0));
-                            }
+                            fighter.strike_in = sw.ready_in(fighter.strike_in);
                         }
                         if sw.t > sw.clip.map_or(STRIKE_SECONDS * 2.0, |c| c.len) {
                             fighter.swing = None;
@@ -3135,7 +3153,7 @@ pub(crate) fn fight(
                         }
                         f.stats.longest_combo = f.stats.longest_combo.max(run);
                         times.swings.remove(&id);
-                        fighter.swing = Some(NpcSwing { t: 0.0, clip: None, run });
+                        fighter.swing = Some(NpcSwing { t: 0.0, clip: None, run, power: power.is_some() });
                         let swing = SwingPick { next, rolls: [next_unit(&mut f.swing_rng), next_unit(&mut f.swing_rng)] };
                         anims.write(PlayAttack { actor: id, weapon, melee: true, sights: false, kind: Move::Attack, power: power.map(|p| p.0), swing: power.is_none().then_some(swing) });
                         f.stats.strikes += 1;
@@ -3659,18 +3677,42 @@ mod tests {
     }
 
     #[test]
+    fn melee_cadence_waits_for_late_keys_and_keyless_ends() {
+        use crate::attack_anims::SwingClip;
+        use fnv_combat::melee::NextAttack;
+        // Synthetic ordinary, power and keyless clips [design, #2535].
+        for (key, len, earliest) in [(Some(1.3), 1.5, 1.3), (Some(1.55), 1.7, 1.55), (None, 1.3, 1.3), (None, 0.8, STRIKE_SECONDS), (Some(0.6), 1.5, 0.6)] {
+            for speed in [0.5, 1.0, 2.0] {
+                let clip = SwingClip { hit: 0.4 / speed, chain: key.map(|at| (at / speed, NextAttack::Left)), len: len / speed };
+                // Clip timing can arrive after a frame or several [design].
+                for elapsed in [0.02, 0.15, 0.35] {
+                    let sw = NpcSwing { t: elapsed, clip: Some(clip), run: 1, power: false };
+                    let left = sw.ready_in((STRIKE_SECONDS / speed - elapsed).max(0.0));
+                    assert!((left - (earliest / speed - elapsed).max(0.0)).abs() < 1e-5, "{key:?}, {len}, x{speed}, t={elapsed}: {left}");
+                }
+            }
+        }
+        assert_eq!(NpcSwing::default().ready_in(0.7), 0.7);
+        let ended = NpcSwing { t: 2.0, clip: Some(SwingClip { hit: 0.4, chain: None, len: 1.5 }), run: 1, power: true };
+        assert_eq!(ended.ready_in(0.0), 0.0);
+    }
+
+    #[test]
     fn a_combo_goes_on_between_the_a_key_and_the_clips_end() {
         use fnv_combat::melee::NextAttack;
         // `h2hattackright_a.kf`: Hit 0.30, a:L 0.63, end 1.43 [observed, fnv_combat::melee].
         let clip = crate::attack_anims::SwingClip { hit: 0.30, chain: Some((0.63, NextAttack::Left)), len: 1.43 };
-        let at = |t| NpcSwing { t, clip: Some(clip), run: 1 }.next();
+        let at = |t| NpcSwing { t, clip: Some(clip), run: 1, power: false }.next();
         assert_eq!(at(0.5), None);
         assert_eq!(at(0.63), Some(NextAttack::Left));
         assert_eq!(at(1.4), Some(NextAttack::Left));
         assert_eq!(at(1.5), None);
         // Before its clip started, or a clip without an `a:` key: a new run.
-        assert_eq!(NpcSwing { t: 0.7, clip: None, run: 1 }.next(), None);
-        assert_eq!(NpcSwing { t: 0.7, clip: Some(crate::attack_anims::SwingClip { chain: None, ..clip }), run: 1 }.next(), None);
+        assert_eq!(NpcSwing { t: 0.7, clip: None, run: 1, power: false }.next(), None);
+        assert_eq!(NpcSwing { t: 0.7, clip: Some(crate::attack_anims::SwingClip { chain: None, ..clip }), run: 1, power: false }.next(), None);
+        let power = NpcSwing { t: 0.7, clip: Some(clip), run: 1, power: true };
+        assert_eq!(power.next(), None);
+        assert_eq!(power.ready_in(0.5), 0.0);
     }
 
     #[test]

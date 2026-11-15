@@ -256,8 +256,8 @@ pub struct AttackTimes {
     /// The power attacks each fighting person has clips for with the melee weapon (or
     /// fists, `None`) drawn on it (docs/spec-notes/combat-rules.md §10.1).
     pub people_powers: HashMap<u32, (Option<FormId>, Vec<PowerClip>)>,
-    /// The clip each actor's last melee blow with a [`SwingPick`] started, until
-    /// `npc_combat` takes it.
+    /// The clip each actor's last melee blow started, powers included, until
+    /// `npc_combat` takes it [design, #2535].
     pub swings: HashMap<u32, SwingClip>,
     /// Each armed actor's reload clips in its own rig, for the weapon drawn on it: their
     /// length and `Hit` key and the opening clip's length (`fnv_combat::attack::
@@ -875,11 +875,13 @@ fn start(
             if a.melee {
                 times.hit.insert(id, hit_time(&clip).unwrap_or(DEFAULT_HIT).min(len));
             }
-            if let Some(p) = a.swing.filter(|_| a.kind == Move::Attack) {
+            // Powers need the selected clip's timing too [design, #2535]: the next
+            // melee decision uses its interrupt key or end (`NpcSwing::ready_in`).
+            if a.melee && a.kind == Move::Attack {
                 let keys = ClipKeys::parse(&clip.clip.text_keys);
                 let chain = keys.next_attack.and_then(|(t, v)| NextAttack::parse(&v).map(|n| ((t - clip.clip.start).clamp(0.0, len), n)));
                 times.swings.insert(id, SwingClip { hit: hit_time(&clip).unwrap_or(DEFAULT_HIT).min(len), chain, len });
-                if p.next.is_some() {
+                if a.swing.is_some_and(|p| p.next.is_some()) {
                     clips.stats.chained += 1;
                 }
             }

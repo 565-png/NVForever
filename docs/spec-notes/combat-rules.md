@@ -649,6 +649,48 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     has passed), playing the group the key names, so the fists alternate right and left.
     A press after the swing has ended starts again from the weapon's own attack group
     (`AttackRight` by default) [design: when the original resets a run is not known].
+  - **Actor melee cadence (#2535).** The next attack decision uses the playing
+    clip's `a:` key, even when later than the 1.2 s base timer; without a key it
+    waits for the clip's end as well as the base timer. An earlier key still brings
+    the decision forward for combos. Clip times use the existing playback clock
+    (`attack_anims::CombatPose::layers`, `npc_combat::NpcSwing::ready_in`) [design].
+    The key's interrupt meaning is [documented: GECK wiki NiTextKeyExtraData, above];
+    the lower bound is [observed: capture run15b_b2, 2026-11-15] for radscorpions,
+    and [hypothesis] for NPC ordinary and power swings. Attack-chance rolls, style
+    hold timers and attacks on the run (#2163) are unchanged [design].
+
+    [observed: FalloutNV.esm and Fallout - Meshes.bsa, fnvtool esm decode / nif decode,
+    main session 2026-11-15] VCrTier2RadscorpionMed 0x0014F403 (Radscorpion,
+    template CrRadscorpion1Small, BNAM 0.6) and VCrTier3GiantRadscorpionMed
+    0x0014F401 (Giant Radscorpion, template CrRadscorpion2Large, BNAM 1.0) both
+    use `Creatures\Radscorpion\Skeleton.nif`, RNAM 64, OBND x -70..70,
+    y -125..125, z 0..60. CSRadscorpion / CSGiantRadscorpion have attack chance
+    70 and power attack chance 50. Their clips (seconds):
+
+    | clips | end | Hit | `a:` |
+    |---|---|---|---|
+    | `h2hattackleft_high/_low/_mid` | 1.500 | 0.700 | R 1.267 |
+    | `h2hattackright_hight/_low/_mid` | 1.500 | 0.700 | L 1.300 |
+    | `h2hattackpower` | 1.667 | 0.933 | R 1.533 |
+    | `h2hattackforwardpower` (sting) | 1.267 | 1.100 | none |
+
+    [observed: main session's measured Searchlight runway run on 63db0209c,
+    2026-11-15] NVForever started each attack 1.20–1.21 s apart; 23 of 39 were
+    power attacks. Every clip, including the 1.267 s sting, was cut by the next
+    start. The min-only key adjustment and ordinary-only timing publication are
+    replaced by the common clip boundary above [design: `npc_combat`, `attack_anims`].
+
+    [observed: capture run15b_b2, 2026-11-15; xNVSE 6.4.9, JIP LN 57.30]
+    On Searchlight Airport's runway against a standing god-mode player, each of
+    this pair entered GetAnimAction 2 seven times in about 13 s. Start gaps were
+    2.82, 1.47, 1.39, 2.20, 2.67, 1.28 and 2.05, 3.74, 1.93, 2.15, 1.37,
+    2.00 s (median 2.0, minimum 1.28). Action 2 lasted 0.77–1.18 s, followed
+    by action 4 for 0.44–1.10 s. No new attack began during action 2; the shortest
+    gaps sit just past the ordinary clips' keys and the sting's end. The subsequent
+    pause is not implemented: three of fourteen attacks followed action 4 at once,
+    the others after 0.1–2.1 s. Against a player backing away for 10 s, one attacked
+    three times (3.5 s apart), the other never. Extra pauses and backing-away parity
+    remain open (observer check 174) [design].
   - **Variants.** The melee clips come as `_a` and `_b` (`h2hattackleft_a.kf`,
     `…_b.kf`; `h2hattack5` only `_a`, `h2hattack6`/`7` neither) [observed]; each swing
     picks one at random [hypothesis], falling back to the plain and `_a` forms.

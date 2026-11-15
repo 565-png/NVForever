@@ -2317,3 +2317,32 @@ already talking takes over at once, same topic or another; nothing is queued or 
      (`GetPlayerTeammate`). Then the same with `SetHardcore 1`. Knocked out, up again and
      still hired outside Hardcore, dead in it agrees with ours; IsEssential reading 1 for
      the teammate says the engine counts teammates as essential by IsEssential too.
+
+## Added 2026-11-15 (radscorpion spacing and melee cadence, #2535)
+
+174. **How close do two large creatures come, and how often does a creature attack?**
+     (P2; physics.md §6.8, combat-rules.md §10.) **Answered in part
+     [observed: capture run15b_b2, 2026-11-15; xNVSE 6.4.9, JIP LN 57.30]:**
+     VCrTier2RadscorpionMed and VCrTier3GiantRadscorpionMed on Searchlight Airport's
+     runway against a standing god-mode player, GetDistance between the pair and
+     GetAnimAction of each at 30 samples/s for 17 s. While both were within 300 units
+     of the player (452 samples), centre spacing was median 131, tenth percentile 93,
+     ninetieth 283, minimum 32 briefly. Each entered action 2 seven times in about
+     13 s. Successive attack-start gaps: 2.82, 1.47, 1.39, 2.20, 2.67, 1.28 and
+     2.05, 3.74, 1.93, 2.15, 1.37, 2.00 s (median 2.0, least 1.28). Action 2 lasted
+     0.77–1.18 s, then action 4 for 0.44–1.10 s. No attack began during action 2.
+     The shortest gaps (1.28, 1.37, 1.39, 1.47) are just past the ordinary clips'
+     `a:` keys (1.267/1.300) and the sting's end (1.267).
+
+     [design, #2535] Ours now holds the next melee decision until the playing clip's
+     `a:` key, or its end without one; earlier keys still shorten the base timer.
+     This lower bound for NPC swings is [hypothesis]. Walking creatures use a BBX
+     half-width × actor scale circle when larger than their previous block radius
+     [hypothesis: fits the observed spacing; the original's shape was not seen].
+     The world capsule is unchanged [design: `phys::npc_params`].
+
+     **Still open:** the original's extra pause after action 4 (3/14 attacks at once,
+     others after 0.1–2.1 s) is not built; what chooses its duration? Against a player
+     backing away for 10 s, one creature attacked three times (3.5 s apart), the
+     other never [observed: capture run15b_b2, 2026-11-15]. Backing-away cadence
+     parity and the unseen collision shape remain open [design].
