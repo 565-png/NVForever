@@ -117,7 +117,10 @@ state carries the false alarms a thin `given` brings (§2).
   school); waiting for an actor a schedule takes behind a locked door (Francine at the
   Atomic Wrangler); a chain's made-up `SetPos` off the navmesh (set onto the nearest
   point within 4,096 units); talking across a counter (the Gun Runners' Vendortron);
-  a goal no door reaches (Lucky 38's top floor, reached by scripted travel); a walk
+  a goal no door reaches (Lucky 38's top floor, reached by scripted travel); meeting what a line's conditions ask of the
+  player, as a player would (Jed takes the caravan to Zion only under 75 lb carried; the start
+  save's player carries more, so "Yes, I'm sure" is not offered and Honest Hearts stops at the
+  Northern Passage); a walk
   planned out of a place that locks behind the player (Dead Money's theater: the pilot
   walked out on the way to Dean's holotape, then met the theater door at lock level 255); waiting out the end of a fight before activating (ED-E's
   repair box refused "in combat"); the scripted activators near a door taken for its

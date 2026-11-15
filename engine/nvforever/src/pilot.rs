@@ -1219,7 +1219,8 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 return Walked::Going;
             }
             Ok(path) => {
-                info!("pilot: step {}: walks {:.0} units over {} leg(s) to ({:.0}, {:.0}, {:.0})", p.i, path.length, path.legs.len(), w.goal.pos[0], w.goal.pos[1], w.goal.pos[2]);
+                let legs: Vec<String> = path.legs.iter().map(|l| format!("{:?} {} pts{}", l.space, l.points.len(), l.door.map_or(String::new(), |d| format!(" door {:08X}", d.door)))).collect();
+                info!("pilot: step {}: walks {:.0} units over {} leg(s) to ({:.0}, {:.0}, {:.0}): {}", p.i, path.length, path.legs.len(), w.goal.pos[0], w.goal.pos[1], w.goal.pos[2], legs.join("; "));
                 w.locked_way = false;
                 w.snapped = path.end();
                 w.follower = Some(Follower::new(path));
@@ -1321,16 +1322,58 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
             // Northern Passage door is an invisible slab 512 units wide (DOOR 0x01011470,
             // OBND y -256..256) across the cave mouth; the player stopped 252 units from its
             // middle and replanned into it for the whole run.
+            // Or a load door the navmesh does not list, standing across the way to the
+            // same place: Honest Hearts puts its own "Entrance" (0x010115A1, XTEL into the
+            // Northern Passage beside Jed) 960 units in front of the base game's cave door
+            // the path goes to, and the player walks into it.
             let door_ahead = w.follower.as_ref().and_then(|f| f.path.legs.get(f.leg)).and_then(|l| l.door).map(|d| d.door);
-            let door_near = door_ahead.filter(|&d| h.game(|g| where_is(g, FormId(d))).flatten().is_some_and(|(_, at)| hdist(feet, at) < DOOR_PRESS_REACH));
+            let next_space = w.follower.as_ref().and_then(|f| f.path.legs.get(f.leg + 1)).map(|l| l.space);
+            let door_near = match door_ahead.filter(|_| p.now - w.seen.0 > STUCK_SECS && hdist(feet, w.seen.1) <= STUCK_UNITS) {
+                Some(d) => {
+                    let found = h.game(|g| {
+                        let (cell, at) = where_is(g, FormId(d))?;
+                        if hdist(feet, at) < DOOR_PRESS_REACH {
+                            return Some((d, None));
+                        }
+                        let doors: Vec<(FormId, FormId)> = g.world.placed.by_cell.get(&cell?)?.iter()
+                            .filter_map(|&r| Some((r, g.world.placed.get(r)?.teleport.as_ref()?.door)))
+                            .filter(|&(r, _)| r.0 != d && where_is(g, r).is_some_and(|(_, at)| hdist(feet, at) < DOOR_PRESS_REACH))
+                            .collect();
+                        let mut near: Vec<(u32, FormId)> = Vec::new();
+                        for (r, to) in doors {
+                            if runner::reference_field(g, &format!("0x{:08X}", r.0), "disabled").ok() == Some(json!(true)) {
+                                continue;
+                            }
+                            if let Some((Some(cell), _)) = where_is(g, to) {
+                                near.push((r.0, cell));
+                            }
+                        }
+                        Some((d, Some(near)))
+                    }).flatten();
+                    match found {
+                        Some((d, None)) => Some((d, true)),
+                        // Each such door once a walk: one that does not take the player is
+                        // left to the replans below.
+                        Some((_, Some(near))) => near.into_iter().find(|&(r, cell)| next_space.is_some() && crate::nav::space_of_cell(h.world, cell.0) == next_space && !w.poked.contains(&(r, r))).map(|(r, _)| (r, false)),
+                        None => None,
+                    }
+                }
+                None => None,
+            };
             if h.locks.movement || h.in_menu || hdist(feet, w.seen.1) > STUCK_UNITS {
                 w.seen = (p.now, feet);
-            } else if let Some(door) = door_near.filter(|_| p.now - w.seen.0 > STUCK_SECS) {
-                info!("pilot: step {}: held up {:.0} units short of door {door:08X}'s end of the path, within reach of the door: uses it from here", p.i, w.follower.as_ref().map_or(0.0, |f| hdist(feet, *f.path.legs[f.leg].points.last().unwrap_or(&feet))));
-                if let Some(f) = w.follower.as_mut() {
-                    f.next = f.path.legs[f.leg].points.len();
-                }
+            } else if let Some((door, own)) = door_near {
                 w.seen = (p.now, feet);
+                if own {
+                    info!("pilot: step {}: held up short of door {door:08X}'s end of the path, within reach of the door: uses it from here", p.i);
+                    if let Some(f) = w.follower.as_mut() {
+                        f.next = f.path.legs[f.leg].points.len();
+                    }
+                } else {
+                    w.poked.push((door, door));
+                    let r = h.script.rt.as_mut().map(|rt| with_world(rt, h.sim, |rt| rt.activate_as_player(FormId(door))));
+                    info!("pilot: step {}: held up by load door {door:08X}, which leads where the path goes: uses it: {}", p.i, outcome(r.as_ref()));
+                }
             } else if p.now - w.seen.0 > STUCK_SECS && w.replans >= 2 && w.skips < SKIPS {
                 // Two jumps and steps aside did not free it: moved on along its own path,
                 // past what it is caught on, as the engine moves a stuck NPC on
@@ -1353,7 +1396,8 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 let side = if w.replans % 2 == 1 { 1.0 } else { -1.0 };
                 w.dodge = Some((p.now + 1.2, side));
                 h.intent.jump = true;
-                info!("pilot: step {}: not moving at ({:.0}, {:.0}, {:.0}): a jump, a step to the {} and a new path ({} of {REPLANS})", p.i, feet[0], feet[1], feet[2], if side > 0.0 { "right" } else { "left" }, w.replans);
+                let ahead = door_ahead.map(|d| (d, h.game(|g| where_is(g, FormId(d))).flatten().map(|(_, at)| hdist(feet, at))));
+                info!("pilot: step {}: not moving at ({:.0}, {:.0}, {:.0}): a jump, a step to the {} and a new path ({} of {REPLANS}); the leg's door {ahead:?}", p.i, feet[0], feet[1], feet[2], if side > 0.0 { "right" } else { "left" }, w.replans);
             }
         }
         Steer::OpenDoor { door, .. } => {
