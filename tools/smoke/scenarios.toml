@@ -7637,10 +7637,10 @@ expect = [
 [[scenario]]
 name = "ringo-comes-out"
 source = "playtest list 4 item 13 (docs/design/actor-behaviour.md §5.9, fnv_ai::process ProcessLevel::Coming): Ringo, sent out of the gas station by RingoTravelPackage after the player left, is moved every frame on his way into the loaded area and comes out of the door"
-note = "the player leaves through the gas station door at 7.5 s, after Ringo's greeting (the unattended run leaves his choices at about 5.2 s; while the zoomed conversation is up the view stays locked on him, #2254, so the door is faced at 6.5 s, after it); at 15 s the result script of INFO 0x00105D09 gives Ringo (0x00104C7D) RingoTravelPackage; he takes it up at his next 18 s update in the cell buffer, then walks every frame"
+note = "the player leaves through the gas station door at 7.5 s, after Ringo's greeting (the unattended run leaves his choices at about 5.2 s; while the zoomed conversation is up the view stays locked on him, #2254, so the door is faced at 6.5 s, after it); at 15 s the result script of INFO 0x00105D09 gives Ringo (0x00104C7D) RingoTravelPackage; he takes it up at his next 18 s update in the cell buffer, then walks every frame The gas station's outside door GSGasStationDoorRef 0x00109040 carries XLOC level 255 and its inside door 0x0010903F none [observed: fnvtool esm decode]; since #2538 the inside door takes its partner's lock, so Ringo would be shut in. In play a Goodsprings trigger script runs `0x00109040.unlock` before the player can enter [observed: fnvtool script decompile]; the --cell start skips it, so the run unlocks the door at 1 s."
 areas = ["ai", "process-levels"]
 paths = ["crates/fnv-ai/src/process.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/cell_buffer.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "1:call:0x00109040:Unlock,15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
 run_seconds = 60
 order = [[
@@ -10106,10 +10106,10 @@ expect = [
 [[scenario]]
 name = "npc-door-fade"
 source = "playtest list 5 item 3 (engine/nvforever/src/door_fade.rs, nvf-play world_sounds DoorPassed): an NPC going through a load door fades out at it and in at the other side, and the doors' open sounds play where the listener is"
-note = "the ringo-comes-out run: Ringo comes out of the gas station door into the drawn exterior where the player stands"
+note = "the ringo-comes-out run: Ringo comes out of the gas station door into the drawn exterior where the player stands The gas station's outside door GSGasStationDoorRef 0x00109040 carries XLOC level 255 and its inside door 0x0010903F none [observed: fnvtool esm decode]; since #2538 the inside door takes its partner's lock, so Ringo would be shut in. In play a Goodsprings trigger script runs `0x00109040.unlock` before the player can enter [observed: fnvtool script decompile]; the --cell start skips it, so the run unlocks the door at 1 s."
 areas = ["ai", "doors"]
 paths = ["engine/nvforever/src/door_fade.rs", "engine/nvforever/src/residents.rs", "engine/nvf-play/src/world_sounds.rs", "crates/fnv-nav/src/follow.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "1:call:0x00109040:Unlock,15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
 run_seconds = 60
 expect = [
@@ -10120,10 +10120,10 @@ expect = [
 [[scenario]]
 name = "npc-door-onactivate"
 source = "issue #2123 (crates/fnv-game/src/npc_doors.rs, docs/spec-notes/doors.md section 5.2): an NPC the AI walks through a door without a script is heard by the extender's OnActivate handlers, the door first and the NPC second, once for the walk through [documented: NVSE Event Handling; design for the once]"
-note = "the npc-door-fade run with an OnActivate handler set from the console at 1 s: Ringo (00104C7D) leaves the gas station by its door 0010903F (base OffDoorMetalSmL01, no script: XTEL to 00109040 [observed: fnvtool esm decode]); the handler prints both references"
+note = "the npc-door-fade run with an OnActivate handler set from the console at 1 s: Ringo (00104C7D) leaves the gas station by its door 0010903F (base OffDoorMetalSmL01, no script: XTEL to 00109040 [observed: fnvtool esm decode]); the handler prints both references The gas station's outside door GSGasStationDoorRef 0x00109040 carries XLOC level 255 and its inside door 0x0010903F none [observed: fnvtool esm decode]; since #2538 the inside door takes its partner's lock, so Ringo would be shut in. In play a Goodsprings trigger script runs `0x00109040.unlock` before the player can enter [observed: fnvtool script decompile]; the --cell start skips it, so the run unlocks the door at 1 s."
 areas = ["ai", "doors", "scripts"]
 paths = ["crates/fnv-game/src/npc_doors.rs", "crates/fnv-ai/src/carry.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_CONSOLE = "1:SetEventHandler \"OnActivate\" ({ref rT, ref rA} => PrintC \"nvf npc-door event %i %i\", rT, rA);1.5:close" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "1:call:0x00109040:Unlock,15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_CONSOLE = "1:SetEventHandler \"OnActivate\" ({ref rT, ref rA} => PrintC \"nvf npc-door event %i %i\", rT, rA);1.5:close" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
 run_seconds = 60
 expect = [
@@ -24271,10 +24271,10 @@ expect = [
 [[scenario]]
 name = "hitvol-marked-door-fade-in"
 source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
-note = "the npc-door-fade run: the player waits outside; Ringo (0x00104C7D) comes through the door into the drawn exterior and must get a volume there"
+note = "the npc-door-fade run: the player waits outside; Ringo (0x00104C7D) comes through the door into the drawn exterior and must get a volume there The gas station's outside door GSGasStationDoorRef 0x00109040 carries XLOC level 255 and its inside door 0x0010903F none [observed: fnvtool esm decode]; since #2538 the inside door takes its partner's lock, so Ringo would be shut in. In play a Goodsprings trigger script runs `0x00109040.unlock` before the player can enter [observed: fnvtool script decompile]; the --cell start skips it, so the run unlocks the door at 1 s."
 areas = ["combat", "actors"]
 paths = ["engine/nvf-play/src/hitvol.rs"]
-env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "1:call:0x00109040:Unlock,15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
 run_seconds = 60
 order = [[
@@ -24296,10 +24296,10 @@ expect = [
 [[scenario]]
 name = "hitvol-marked-door-fade-out"
 source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
-note = "as the npc-door-fade run, with the player staying inside the gas station, so that Ringo's drawn body fades out at the door: its root loses its RefVisual, its meshes keep theirs until it is gone, and he has no meshes left after that"
+note = "as the npc-door-fade run, with the player staying inside the gas station, so that Ringo's drawn body fades out at the door: its root loses its RefVisual, its meshes keep theirs until it is gone, and he has no meshes left after that The gas station's outside door GSGasStationDoorRef 0x00109040 carries XLOC level 255 and its inside door 0x0010903F none [observed: fnvtool esm decode]; since #2538 the inside door takes its partner's lock, so Ringo would be shut in. In play a Goodsprings trigger script runs `0x00109040.unlock` before the player can enter [observed: fnvtool script decompile]; the --cell start skips it, so the run unlocks the door at 1 s."
 areas = ["combat", "actors"]
 paths = ["engine/nvf-play/src/hitvol.rs"]
-env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "1:call:0x00109040:Unlock,15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
 run_seconds = 60
 order = [[
