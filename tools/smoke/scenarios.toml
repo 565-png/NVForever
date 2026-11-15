@@ -903,7 +903,6 @@ expect = [
 ]
 manual = "ui_scale_75_tiles_wait.png: the tile-drawn wait menu three quarters of the size of tiles_sleep_wait.png, in the middle of the view, the slider at 7 hours"
 
-
 [[scenario]]
 name = "hud-menu-scale-write"
 source = "#2519: persist HUD 75% with menus 100%; changing HUD alone must not make menus follow on restart"
@@ -1063,6 +1062,95 @@ order = [[
   { re = 'graphics: light glow$' },
 ]]
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error while the HDR view's parts come and go" }]
+
+[[scenario]]
+name = "terrain-height-blend"
+source = "[design, #2550] engine/nvforever/src/terrain.rs \"Height blending\", terrain.wesl and terrain_weights.wesl: the Terrain height blending switch (off by default and in both presets) switched on while the game runs flips the loaded folded materials and their TERRAIN_HEIGHT_BLEND pipeline compiles and is ready; off and on again flips them back, without a rendering or pipeline error. Pictures of the on/off look are taken by hand"
+areas = ["renderer", "graphics", "terrain", "settings"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_weights.wesl",
+  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/pipeline_gate.rs",
+  "engine/nvf-play/src/settings_layout.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:terrain-height-blend,13:terrain-height-blend,14:terrain-height-blend" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 22
+expect = [
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless), so the height-blended shader is the one drawing" },
+]
+order = [[
+  "settings: terrain-height-blend on",
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]\d* changed', label = "switching on flipped the loaded folded materials" },
+  { re = 'graphics: light glow, terrain height blending$' },
+  { re = 'terrain height blending pipeline \d+ ready', label = "the TERRAIN_HEIGHT_BLEND pipeline asked for after the switch compiled and is ready" },
+  "settings: terrain-height-blend off",
+  { re = 'terrain: height blending off \(\d+ folded quadrant materials, [1-9]\d* changed', label = "switching off flipped them back" },
+  { re = 'graphics: light glow$' },
+  "settings: terrain-height-blend on",
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]\d* changed', label = "flipped on again (the ready pipeline is reused)" },
+  { re = 'graphics: light glow, terrain height blending$', label = "on again" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the height-blended terrain" },
+  { re = 'terrain height blending pipeline \d+ failed', label = "the TERRAIN_HEIGHT_BLEND pipeline failed" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (a terrain.wesl that does not compile)" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap" },
+]
+
+[[scenario]]
+name = "terrain-height-blend-start"
+source = "[design, #2550] engine/nvforever/src/terrain.rs \"Height blending\": started with --graphics-only terrain-height-blend, the folded materials are made with it and their TERRAIN_HEIGHT_BLEND pipeline compiles and is ready, without a rendering or pipeline error"
+areas = ["renderer", "graphics", "terrain"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_weights.wesl",
+  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/pipeline_gate.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-height-blend"]
+run_seconds = 14
+expect = [
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless)" },
+]
+order = [[
+  { re = 'graphics: light glow, terrain height blending$', label = "the switch is on from the start" },
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, 0 changed', label = "on from the first frame: every material was made with it" },
+  { re = 'terrain height blending pipeline \d+ ready', label = "the materials made with it draw with the TERRAIN_HEIGHT_BLEND pipeline, which compiled" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the terrain drawn height-blended from the start" },
+  { re = 'terrain height blending pipeline \d+ failed', label = "the start's TERRAIN_HEIGHT_BLEND pipeline failed" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap" },
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]', label = "no material made without the setting" },
+]
+
+[[scenario]]
+name = "terrain-height-blend-local-start"
+source = "[design, #2550] engine/nvforever/src/terrain.rs \"Height blending\": started with local height reference (0.10:4:local) and --graphics-only terrain-height-blend, the folded materials are made with it and their TERRAIN_HEIGHT_BLEND pipeline compiles and is ready, without a rendering or pipeline error"
+areas = ["renderer", "graphics", "terrain"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_weights.wesl",
+  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/pipeline_gate.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_HEIGHT_BLEND = "0.10:4:local" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-height-blend"]
+run_seconds = 14
+expect = [
+  { text = "terrain: height blend parameters algorithm=depth depth=0.1 gain=4 source=local height_limit=0.25", label = "local reference: the start-up local reference parameters were parsed" },
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "local reference: the GPU folds the layers (bindless)" },
+]
+order = [[
+  { re = 'graphics: light glow, terrain height blending$', label = "local reference: the switch is on from the start" },
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, 0 changed', label = "local reference: on from the first frame: every material was made with it" },
+  { re = 'terrain height blending pipeline \d+ ready', label = "local reference: the materials made with it draw with the TERRAIN_HEIGHT_BLEND pipeline, which compiled" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "local reference: a rendering (validation) error with the terrain drawn height-blended from the start" },
+  { re = 'terrain height blending pipeline \d+ failed', label = "local reference: the start's TERRAIN_HEIGHT_BLEND pipeline failed" },
+  { text = "failed and will not be tried again", label = "local reference: a pipeline that failed for good" },
+  { text = "still being retried after", label = "local reference: a pipeline still retried at the cap" },
+  { re = 'terrain: height blending on \(\d+ folded quadrant materials, [1-9]', label = "local reference: no material made without the setting" },
+]
 
 [[scenario]]
 name = "fps-counter"
@@ -1977,6 +2065,7 @@ expect = [
 manual = "the 24th 'sleep: hour' line ends one date later at the time of day the menu opened at"
 
 # ------------------------------------------------------------------ detection, alert, combat
+
 [[scenario]]
 name = "projectile-launch-physical-session-traits"
 source = "docs/spec-notes/projectile-launch-session-traits.md: authored opt-in two-stage physical launch consumer"
@@ -2478,6 +2567,7 @@ expect = ["furniture summary: 1 of 1 actors sat down, 1 got up again"]
 # The range of repeats catches excess retries only: it does not prove their spacing (retries
 # every 3 s would pass). The 5 s spacing is proved by the unit tests of
 # crates/fnv-actor/src/furniture_retry.rs.
+
 [[scenario]]
 name = "resident-resettles-after-fight"
 source = "issue #2013 (packages.md, furniture.md): Easy Pete on his chair by day is drawn into a fight with a spawned gecko, which gets him up; the gecko is taken away (disabled, as in the capture) and when his search ends inside his package's place he sits again [observed in the original: AI observer 2026-11-10, Easy Pete sat again about 5 real seconds after the fight]"
@@ -2539,6 +2629,7 @@ expect = [
 ]
 
 # The same run without the settler: nothing refuses, he sits at his first order.
+
 [[scenario]]
 name = "resident-furniture-refusal-control"
 source = "issue #1506: the control of resident-furniture-refusal-retry, without the occupant"
@@ -2633,6 +2724,31 @@ expect = [
   { re = 'combat: reloaded 13, magazine 13\b', count = 1, label = "the swap's reload fills the magazine" },
 ]
 order = [["combat: ammo swapped to", "combat: reloaded 13, magazine 13"]]
+
+# Authored field; every invocation retains its own evidence under the same QA home.
+
+[[scenario]]
+name = "bc5-signed-normal-owned-field"
+source = "docs/spec-notes/dds-bc5.md: authored rendered material field; engineering comparator policy, not original-game pixels"
+areas = ["renderer", "textures", "nif"]
+paths = ["crates/fnv-dds/src/lib.rs", "engine/nvf-assets/src/texture.rs", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/bc5_field.rs", "engine/nvf-assets/src/bc5_field/", "engine/nvf-assets/src/nif_material.rs"]
+env = { NVF_PLAY_TEST_BC5_FIELD = "1", NVFOREVER_HOME = "bc5-field-home", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 20
+timeout = 180
+expect = [
+  { text = "bc5 field: actual NIF material source, 3 authored panels, 4 quadrants", count = 1 },
+  { text = "bc5 field: first rendered readback PASS", count = 1 },
+  { text = "bc5 field: second rendered readback PASS", count = 1 },
+  { text = "bc5 field: rendered comparison PASS", count = 1 },
+]
+order = [["bc5 field: first rendered readback PASS", "bc5 field: second rendered readback PASS", "bc5 field: rendered comparison PASS"]]
+forbid = [
+  { re = '(?i)bc5 field:.*(FAIL|timeout|missing|wrong byte count)' },
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
+]
+note = "The aid reserves a new run-* child under bc5-field-home/bc5-field-output for every invocation; repeating --out preserves earlier evidence. Field DDS/geometry are authored in source; the normal world still needs read-only stock bootstrap data. No native filtering or installed-texture claim."
+manual = "Inspect both complete readback-1.ppm and readback-2.ppm under the evidence directory logged for this run: signed and reference four-quadrant panels match; both differ from the flat negative. Pin raw RGBA files and authored DDS bytes, review all ROI reports, and retain failures. Queueing a readback is not a rendered result."
 
 # ------------------------------------------------------------------ texture swaps
 
@@ -3967,6 +4083,21 @@ run_seconds = 30
 expect = [
   { re = 'npc combat: .* fires a burst of (?P<n>\d+) rounds at .*, then lets go for', range = [3, 8], all = true, label = "every burst is 3 to 8 rounds" },
   { re = 'npc combat: .* fires a burst of \d+ rounds at .*, then lets go for', min = 2, label = "and bursts again after a pause" },
+]
+
+[[scenario]]
+name = "power-armour-footfalls"
+source = "#2541 (audio.md §10.2, observer check 140): a power-armour wearer's footfalls play FSTArmorPowerL/R beside the ground's step; IsSoundPlaying on the actor reads them; SetSoundSourceFile reaches the engine's sound (Titans of the New West's silencing)"
+areas = ["anim-sounds", "audio", "scripts"]
+paths = ["engine/nvforever/src/anim_sounds.rs", "crates/fnv-actor/src/anim_sounds.rs", "crates/fnv-game/src/nvse_sound.rs", "engine/nvf-play/src/world_sounds.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_LOOK = "5:180:0", NVF_PLAY_TEST_KEYS = "6:w:5", NVF_PLAY_TEST_CONSOLE = "3:SetPCCanUsePowerArmor 1;3.1:player.AddItem ArmorPowerT45d 1;3.2:player.EquipItem ArmorPowerT45d;3.5:close;7.0:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);7.2:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);7.4:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);7.6:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);7.8:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);8.0:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);8.2:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);8.4:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);8.6:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);8.8:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);9.0:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);9.2:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);9.4:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);9.6:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);9.8:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);10.0:PrintC \"nvfpa %g %g\", (IsSoundPlaying FSTArmorPowerL player), (IsSoundPlaying FSTArmorPowerR player);10.2:close;11:SetSoundSourceFile FSTArmorPowerR \"fx/fst/dirt/run/\";11.2:close" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
+run_seconds = 13
+expect = [
+  "anim sounds: the player's armour steps as Power (FSTArmorPowerL)",
+  { re = 'script: print "nvfpa (1 0|0 1|1 1)"', label = "IsSoundPlaying reads a power-armour footfall on the player" },
+  { re = 'anim sounds summary:.*; [1-9][0-9]* armour footfalls', label = "the walk's footfalls each add the armour's" },
+  { re = 'world sounds: FSTArmorPowerR plays from fx/fst/dirt/run/ [(]SetSoundSourceFile[)]', label = "SetSoundSourceFile changes the file the engine plays" },
 ]
 
 [[scenario]]
@@ -7659,6 +7790,19 @@ expect = [
 ]
 
 [[scenario]]
+name = "hv-intercom-push"
+kind = "tool"
+source = "issue #2454: a talking activator no SetTalkingActivatorActor has reached speaks for the one actor its scripts name (fnv-game talking_activators.rs scripted_talking_actor [hypothesis]): sent out of the Hidden Valley bunker by McNamara (INFO 0016329B: controls off) on a route that never used the intercom, the inner door's script (SCPT 000E3665) has HVIntercomREF start a conversation and Ramos says 000E3664, whose end script gives the controls back; before, the intercom spoke for itself, had no line (no_line) and the controls stayed off"
+areas = ["dialogue", "talking-activators"]
+paths = ["crates/fnv-game/src/talking_activators.rs", "crates/fnv-game/src/dialogue.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/hv-intercom-push.actions.json"]]
+expect = [
+  { json = "observations.?label=intercom push.actor", equals = "0x000E2807" },
+  { json = "events.?kind=line_started.info", equals = "0x000E3664" },
+  { json = "events.?kind=result_script.unit", equals = "FalloutNV.esm|INFO 0x000E3664 end" },
+]
+
+[[scenario]]
 name = "cc-explorers-halt"
 kind = "tool"
 source = "issue #2548: at Cottonwood Cove three of the four Legion explorers force-greeted with the generic \"Move along.\" (0x00175608): the Halt line 0x0013AC97 names the AAM explorer as fixed speaker (ANAM) and was refused to the others, although its condition is the faction all four are in. A condition on the speaker naming a group now decides (docs/spec-notes/dialogue.md §4)"
@@ -8264,6 +8408,23 @@ run_seconds = 16
 expect = [{ re = 'compass: 2 quest target\(s\) placed', label = "both targets marked at the first door of the way out" }]
 
 [[scenario]]
+name = "quest-marker-dam-from-strip"
+source = "#2458 (docs/spec-notes/quests-dialogue.md §2, targets several doors deep): For the Republic, Part 2 (VMQ05) objective 10 marks Colonel Moore, who stands in HooverDamIntPowerPlant01b, an interior no door outdoors leads into straight; from the Strip the World Map marks her at a door of the dam outdoors in the Mojave (before: no marker at all), the compass and Local Map at the Strip's gate to Freeside (0x0013BB0D), and sqt names the dam's door outdoors"
+areas = ["quests", "pipboy", "hud", "console"]
+paths = ["crates/fnv-game/src/quest_targets.rs", "engine/nvf-play/src/pipboy/data.rs", "engine/nvf-play/src/compass.rs", "crates/fnv-game/src/functions/console.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "7:startquest VMQ05;7.5:setobjectivedisplayed VMQ05 10 1;8:forceactivequest VMQ05;8.5:sqt;9:close", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=data,14:tab=1,17:close" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=1004,8722,1030", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 22
+expect = [
+  { re = 'quest targets: VMQ05 objective 10 target 0x001206FE VHDColonelMooreREF marked', label = "Moore is marked from the Strip (her conditions: not in the Mojave, not on the observation deck)" },
+  { re = 'console: VMQ05 objective 10: target 0x001206FE .* in 0x00175D68 ', label = "sqt finds her in the power plant" },
+  { re = 'console:\s+load door outdoors in 0x[0-9A-F]{8} .*\(exterior\)', label = "sqt names a door outdoors in the Mojave" },
+  { re = 'compass: quest target 0x001206FE placed at \(\S+ \S+ \S+\) at door 0x0013BB0D', label = "the compass marks the Strip's gate to Freeside" },
+  { re = 'quest targets: 0x001206FE in cell 0x00175D68 marked on the world map at door 0x[0-9A-F]{8} in worldspace 0x000DA726 ', label = "the World Map marks her at the dam's door in the Mojave" },
+  { re = 'pipboy data: world map draws [1-9]\d* quest marker\(s\)', label = "the World Map draws a quest marker (before: none for her)" },
+]
+
+[[scenario]]
 name = "end-credits"
 source = "GECK wiki ExitGame: \"plays credits and returns the game to the main menu\" (nvf-play credits.rs): the game's Credits.txt laid out by its own commands and rolled over credits_menu.xml's background (the run ends while they roll: their end starts the program again for the main menu)"
 areas = ["menus"]
@@ -8369,6 +8530,40 @@ expect = [
   { re = 'console: GetDisabled on 0x0010A202 >> 1\.00', label = "the disabled bottle stays disabled" },
   { re = 'console: GetActorValue on player >> 9\.00', label = "the player's Luck came back" },
   { re = 'console: GetPos on player >> -683\d\d\.', label = "the player stands where the save was made" },
+]
+
+[[scenario]]
+name = "fort-vulpes-write"
+note = "Caesar's tent is in TheFortWorld's cell 0,0 (0x0013C715); Vulpes stands at (1588, 2022, 2184), the player a little west of him"
+source = "issue #2560: in Caesar's tent at The Fort, Caesar, Lucius, the Praetorians and the mongrels went into combat with Vulpes Inculta half a second after a load and killed him. Vulpes is in VCaesarsLegionFaction and ArmorNCRFactionNVEnemy, which VCaesarsLegionFaction names an Enemy; the Legion faction names itself an Ally, and an ally is never attacked (docs/spec-notes/factions.md §4). The first half: a save in the tent; fort-vulpes-load loads it, so run them together"
+areas = ["save", "ai", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/awareness.rs", "crates/fnv-game/src/provocation.rs"]
+env = { NVFOREVER_HOME = "fort-vulpes-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "18:FortCaesarRef.getfactionrelation FortVulpesIncultaRef;18.5:FortVulpesIncultaRef.getfactionrelation FortLuciusRef;20:save smoke-fort;21:close" }
+args = ["--play", "--world", "TheFortWorld", "--pos=1350,2022,2200", "--heading", "90", "--hour", "21", "--no-voice"]
+run_seconds = 23
+expect = [
+  { re = 'save: wrote .*smoke-fort\.nvfsave \(manual', label = "the save is written in the tent" },
+  { text = "script: FortVulpesIncultaRef entered trigger 0x00176F0A", label = "Vulpes is in the tent with Caesar" },
+  { re = 'console: GetFactionRelation on \S+ >> [23]\.00', count = 2, label = "Caesar and Vulpes, Vulpes and Lucius count each other as friends or allies (their shared ArmorVCaesarsLegionFaction and VCaesarsLegionFaction)" },
+  { re = 'alert: .*→ Combat: detects \S*FortVulpesInculta', count = 0, label = "nobody goes into combat with Vulpes" },
+  { re = 'alert: \S*FortVulpesInculta \S+ \S+ → Combat', count = 0, label = "Vulpes goes into combat with nobody" },
+]
+
+[[scenario]]
+name = "fort-vulpes-load"
+source = "issue #2560: the second half: --load the save fort-vulpes-write made in Caesar's tent; the Legion stays calm with Vulpes and he lives"
+areas = ["save", "ai", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/awareness.rs", "crates/fnv-game/src/provocation.rs"]
+env = { NVFOREVER_HOME = "fort-vulpes-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "12:FortCaesarRef.getfactionrelation FortVulpesIncultaRef;13:close" }
+args = ["--play", "--load", "smoke-fort", "--no-voice"]
+run_seconds = 18
+expect = [
+  { re = 'load: restored .*smoke-fort\.nvfsave: \d+ changed references', label = "the save in the tent is loaded" },
+  { text = "script: FortVulpesIncultaRef entered trigger 0x00176F0A", label = "Vulpes is back in the tent after the load" },
+  { re = 'console: GetFactionRelation on \S+ >> [23]\.00', label = "Caesar still counts Vulpes a friend after the load" },
+  { re = 'alert: .*→ Combat: detects \S*FortVulpesInculta', count = 0, label = "after the load nobody goes into combat with Vulpes (Caesar, Lucius, the Praetorians and the mongrels did half a second in)" },
+  { re = 'alert: \S*FortVulpesInculta \S+ \S+ → Combat', count = 0, label = "after the load Vulpes goes into combat with nobody" },
+  { re = 'killed by', count = 0, label = "nobody dies in the tent" },
 ]
 
 [[scenario]]
@@ -10603,6 +10798,25 @@ order = [[
 ]]
 
 [[scenario]]
+name = "creature-draw-holds-ghoul"
+source = "issue #2686 (docs/spec-notes/actors.md §8.10, engine/nvforever/src/creature_stance.rs): a ghoul set on the player stands while it roars (its h2hequip.kf draw) and runs at the player after; before the fix it slid across the floor roaring"
+note = "the feral ghoul 0x000CE9E7 at its corpse idle marker about 1,000 units north of the player (as in creature-sounds-ghoul) is set on the player at 3 s; god mode"
+areas = ["alert", "creatures", "combat"]
+paths = ["engine/nvforever/src/creature_stance.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:call:0x000CE9E7:StartCombat:player" }
+args = ["--pos=9244,-33900,7500", "--heading", "0", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 20
+expect = [
+  { re = 'npc combat: \S+ (0x)?000CE9E7 fights the player', label = "the ghoul fights the player" },
+]
+order = [[
+  { re = 'creature stance: LvlFeralGhoul 000CE9E7 Equipping' },
+  { re = 'actor 000CE9E7 holds still while it draws its stance', label = "it stands while it roars" },
+  { re = 'creature stance: LvlFeralGhoul 000CE9E7 Drawn' },
+  { re = 'actor 000CE9E7 drew its stance: free to move', label = "and moves again once the roar ends" },
+]]
+
+[[scenario]]
 name = "use-weapon"
 source = "UseWeapon (docs/design/use-weapon.md §5): a script has an actor fire a number of shots at a target from where it stands, always hitting and doing no damage"
 note = "Violet (FiendVioletRef 0x000F570B, placed at -46910,64897, hunting rifle) is told at 5 s to fire 3 shots at the player, about 1,400 units east of her, from her own place; nobody perceives the player (NVF_PLAY_TEST_UNSEEN), so no fight starts"
@@ -10832,7 +11046,6 @@ order = [[
   { re = 'pause menu: rows 3-14 of \d+ shown', label = "a notch up shows the row before again" },
 ]]
 
-
 [[scenario]]
 name = "settings-scroll-headings"
 source = "#1953: the mouse wheel moves the window of a tab with headings (Gameplay) as of one without, the chosen row brought into the window (the top row once the chosen one leaves it) and the window not pulled back to the chosen row's heading; a notch up moves it back one line"
@@ -11041,7 +11254,7 @@ order = [[
   { text = "pause menu: tab Display; selected resolution", label = "Tab: Display, on its first row" },
   { text = "pause menu: heading Display > Interface; selected hud-colour", label = "Page Down: under Interface" },
   { text = "pause menu: inspect: Display, keys on the rows, selected hud-colour", label = "the row is chosen with the keys on the rows" },
-  { re = 'pause menu: inspect: shown .*\[Display > Interface\], hud-colour', label = "the heading is drawn over its first row" },  { text = "pause menu: inspect: Display, keys on the rows, selected ui-scale", label = "Up from the heading's first row passes the heading to the row above it" },
+  { re = 'pause menu: inspect: shown .*\[Display > Interface\], hud-colour', label = "the heading is drawn over its first row" },  { text = "pause menu: inspect: Display, keys on the rows, selected menu-scale", label = "Up from the heading's first row passes the heading to the row above it (menu-scale, the last row under Screen since #2524)" },
 ]]
 forbid = [
   { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
@@ -17286,7 +17499,6 @@ commands = [["ext", "report", "{data}", "--mo2-profile", "{env:NVF_MODLIST_HIGH_
 # compile lowers units_kept_bytes there; a rise fails this run.
 expect_file = "expected/modlist-high-dry.toml"
 manual = "a rise: compare the report's per_plugin failed lists with main's; a drop: write the new summary into expected/modlist-high-dry.toml"
-
 
 [[scenario]]
 name = "mq-old-world-blues"
@@ -23680,6 +23892,7 @@ expect = [
   { re = 'talk clip: .*001073E8 line over: \d+ frames, level mean 0[.](1\d|[2-9]\d), peak (0[.][5-9]\d|1[.]00)', label = "the chest's level moves with the words (mean above 0.1, peak above 0.5)" },
   { re = 'test aid: screenshot .*victor_talking[.]png', label = "the frames are saved" },
 ]
+
 [[scenario]]
 name = "melee-knockback"
 source = "#1070 (docs/spec-notes/combat-rules.md, Knockback): a melee blow pushes the living actor it hits back through its character, by the Melee Knockback Formula's force (a speed falling to rest over fKnockbackTime); #1386: one player power blow, isolated and tied to its report"
@@ -23820,7 +24033,6 @@ forbid = [
   { re = 'editor-home-mo2.mods.EditMo2', label = "not into NVForever's own mods folder" },
 ]
 
-
 [[scenario]]
 name = "editor-open-write"
 source = "local editor design §6.1: editor open lists the plugins and picks the target, refusing a master; editor save without a name writes into the target, which the home's INI remembers; editor-open-last reads it, so run them together"
@@ -23836,7 +24048,6 @@ expect = [
   { re = 'editor: saved 1 references and 0 new \(\) into .*EditOpen\.esp', label = "editor save without a name writes into the target" },
 ]
 
-
 [[scenario]]
 name = "editor-open-last"
 source = "local editor design §6.1: the next run's first editor opens the last target again, and editor save without a name writes into it"
@@ -23850,7 +24061,6 @@ expect = [
   { re = 'editor: target EditOpen\.esp \(loaded, 1 reference\(s\) of its own.*the last one used', label = "the last target is opened again, loaded with its reference" },
   { re = 'editor: saved 1 references and 0 new \(\) into .*EditOpen\.esp', label = "saved into it without a name" },
 ]
-
 
 [[scenario]]
 name = "editor-drag-drop"
@@ -23872,7 +24082,6 @@ expect = [
   { re = 'editor: off; 0 reference\(s\) moved, 0 deleted, 1 placed this session', label = "counted as placed" },
 ]
 
-
 [[scenario]]
 name = "editor-find-place"
 source = "local editor design §7.3: editor find lists placeable records by name (the console's record index), editor place #n places one, an actor base is refused (a new reference is written as a REFR)"
@@ -23891,7 +24100,6 @@ expect = [
   { re = 'editor: not placed: no record has the Editor ID "NoSuchEditorId"', label = "an unknown Editor ID is refused" },
   { re = 'editor: off; 0 reference\(s\) moved, 0 deleted, 1 placed this session', label = "one placed" },
 ]
-
 
 [[scenario]]
 name = "editor-why"
@@ -24266,6 +24474,21 @@ order = [[
   { text = "script: player left trigger NellisArtilleryActivatorREF", label = "travelling away (the field's cells unload) runs the trigger's OnTriggerLeave: the script counts the player out" },
   { text = "script: player entered trigger NellisArtilleryActivatorREF", label = "back in the field once Volare! runs" },
 ]]
+
+[[scenario]]
+name = "child-flees-never-fights"
+source = "issue #2438 (owner decision 2026-11-13): children never fight, they always run away. A Legion child (FortChildCM 0x0011E506, a race with the Child flag) placed by the console at the player in Goodsprings and set on the player with StartCombat: it turns hostile, flees at once though unhurt and never swings, shoots, rushes or throws (fnv_game Game::never_fights; engine/nvforever/src/npc_combat.rs)"
+note = "god mode; the child is the first reference the console places (0xFF000000); 25 s of the fight"
+areas = ["combat", "ai"]
+paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-game/src/combat_group.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_CONSOLE = "8:player.placeatme 0011E506 1;9:ff000000.startcombat player;9.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 36
+expect = [
+  { re = 'console: PlaceAtMe on player >> 0xFF000000', label = "the child is placed" },
+  { re = 'npc combat: (FortChildCM )?0xFF000000 flees from the player', label = "the child flees at once, unhurt" },
+  { re = 'npc combat: (FortChildCM )?0xFF000000 (swings at|opens fire|fires a burst|power attack|rushes|throws|charges|goes on its combo|turns to fight|attacks)', max = 0, label = "the child never attacks or turns to fight" },
+]
 
 [[scenario]]
 name = "fort-slave-packs-not-floating"
@@ -25621,6 +25844,7 @@ forbid = [{ text = "Validation Error", label = "a Vulkan validation error" }, { 
 # machine; the others need NVIDIA's four DLSS files, which NVForever does not ship: set NVF_DLSS_DIR
 # (an absolute path to their folder) in the runner's environment and the game inherits it. Without it
 # they are skipped (`requires`), not failed.
+
 [[scenario]]
 name = "dlss-no-files"
 source = "#2198, docs/design/dlss-upscaling.md: DLSS asked for with a DLSS folder that holds none of its files: the loader says so, the status says DLSS is unavailable and why, Streamline is never initialised and the camera draws natively"
@@ -25903,11 +26127,12 @@ expect = [
 forbid = [{ text = "DLSS: evaluate active", label = "a DLSS evaluate with FSR chosen" }, { re = 'graphics: DLSS \w+ active', label = "DLSS put on the camera" }, { text = "frame generation: on but not running", label = "frame generation held off" }, { text = "FSR dispatch failed", label = "FSR failing" }, { text = "FSR 3.1 unavailable", label = "FSR unavailable through the interposer" }, { text = "Validation Error", label = "a Vulkan validation error" }, { text = "Caught rendering error", label = "a rendering error" }]
 
 # Download DLSS... from the settings (#2250, docs/dlss.md): the Upscaler row's choice, NVIDIA's licence in a dialog, the
-# download of the four files from NVIDIA's release. dlss-download-decline, -offline and -404 need no network and no NVIDIA
+# download of the eight files from NVIDIA's release. dlss-download-decline, -offline and -404 need no network and no NVIDIA
 # file: their NVF_DLSS_DIR names a folder under target/ that holds none (so the choice is offered), and their download address
 # is the test aid's loopback one (NVF_DLSS_DOWNLOAD_URL, taken only for http on this machine). Off Windows the choice is not
 # offered (DLSS is Windows only; picking it logs "not taken"), so each expectation takes either outcome, as dlss-no-files does. dlss-download-real and
 # -real-restart fetch the real files from GitHub (about 60 MB): only with NVF_DLSS_DOWNLOAD_REAL set.
+
 [[scenario]]
 name = "dlss-download-decline"
 source = "#2250, docs/dlss.md \"Download DLSS…\": Download DLSS... picked on the Upscaler row opens NVIDIA's licence; Cancel closes it and nothing is downloaded: no network access before I accept"
@@ -25960,8 +26185,8 @@ forbid = [{ text = "DLSS download: installed in", label = "anything installed" }
 
 [[scenario]]
 name = "dlss-download-real"
-source = "#2250, docs/dlss.md \"Download DLSS…\": the real download from NVIDIA's Streamline 2.14.16 release: only the four entries fetched by ranges, each SHA-256 checked, installed in the DLSS folder, the dialog says to restart; NVIDIA's attribution joins the credits. dlss-download-real-restart then loads DLSS from them"
-note = "needs the network and NVF_DLSS_DOWNLOAD_REAL=1 (about 60 MB from GitHub). The first half of a pair with dlss-download-real-restart (they share NVFOREVER_HOME and NVF_DLSS_DIR, so they run in this order). The aid's clear deletes the four files from target/smoke-dlss-real at the start (it touches only a smoke-dlss-* folder), so the choice is offered every run; NVF_DLSS_PRELOAD=0 and --upscaler off keep the DLSS loader from holding a file left by the last run"
+source = "#2250, #2409, docs/dlss.md \"Download DLSS…\": the real download from NVIDIA's Streamline 2.14.16 release: only the eight entries fetched by ranges, each SHA-256 checked, installed in the DLSS folder, the dialog says to restart; NVIDIA's attribution joins the credits. dlss-download-real-restart then loads DLSS and sets up DLSS-G from them"
+note = "needs the network and NVF_DLSS_DOWNLOAD_REAL=1. The first half of a pair with dlss-download-real-restart (they share NVFOREVER_HOME and NVF_DLSS_DIR, so they run in this order). The aid's clear deletes the eight files from target/smoke-dlss-real at the start (it touches only a smoke-dlss-* folder), so the choice is offered every run; NVF_DLSS_PRELOAD=0 and --upscaler off keep the DLSS loader from holding a file left by the last run"
 areas = ["graphics", "ui"]
 paths = ["engine/nvforever/src/dlss_download/**", "engine/nvforever/src/dlss/download/**"]
 requires = ["NVF_DLSS_DOWNLOAD_REAL"]
@@ -25969,13 +26194,17 @@ env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlss-download-real-home", NVF
 args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--upscaler", "off", "--no-voice", "--no-lodgen"]
 run_seconds = 175
 expect = [
-  { re = 'test aid NVF_PLAY_TEST_DLSS_DOWNLOAD: clear: \d of the listed files deleted', label = "the folder emptied of the four files" },
+  { re = 'test aid NVF_PLAY_TEST_DLSS_DOWNLOAD: clear: \d of the listed files deleted', label = "the folder emptied of the eight files" },
   "DLSS download: licence accepted",
-  { re = 'DLSS download: 4 entries, \d+ bytes to fetch from https://github\.com/NVIDIA-RTX/Streamline/releases/download/v2\.14\.16/streamline-sdk-v2\.14\.16\.zip', label = "the four entries, from the pinned address" },
+  { re = 'DLSS download: 8 entries, \d+ bytes to fetch from https://github\.com/NVIDIA-RTX/Streamline/releases/download/v2\.14\.16/streamline-sdk-v2\.14\.16\.zip', label = "the eight entries, from the pinned address" },
   "DLSS download: sl.interposer.dll 652928 bytes, SHA-256 ok",
   "DLSS download: sl.common.dll 843904 bytes, SHA-256 ok",
   "DLSS download: sl.dlss.dll 422016 bytes, SHA-256 ok",
   "DLSS download: nvngx_dlss.dll 58956912 bytes, SHA-256 ok",
+  "DLSS download: sl.dlss_g.dll 637056 bytes, SHA-256 ok",
+  "DLSS download: nvngx_dlssg.dll 7506544 bytes, SHA-256 ok",
+  "DLSS download: sl.reflex.dll 388736 bytes, SHA-256 ok",
+  "DLSS download: sl.pcl.dll 360064 bytes, SHA-256 ok",
   { re = 'DLSS download: installed in .*smoke-dlss-real; restart NVForever to use DLSS', label = "installed in the folder" },
   "DLSS download: result shown (ready)",
   { text = "DLSS download: NVIDIA's attribution added to the credits", label = "the attribution once the files are there" },
@@ -25984,8 +26213,8 @@ forbid = [{ text = "DLSS download: failed", label = "a failed download" }, { tex
 
 [[scenario]]
 name = "dlss-download-real-restart"
-source = "#2250, docs/dlss.md \"Download DLSS…\": after dlss-download-real, a restart with DLSS chosen loads Streamline from the downloaded files and DLSS draws"
-note = "runs after dlss-download-real in the same NVFOREVER_HOME and NVF_DLSS_DIR; needs NVF_DLSS_DOWNLOAD_REAL (and that run's files)"
+source = "#2250, #2409, docs/dlss.md \"Download DLSS…\": after dlss-download-real, a restart with DLSS chosen loads Streamline from the downloaded files, sets up DLSS-G and Reflex, and DLSS draws"
+note = "runs after dlss-download-real in the same NVFOREVER_HOME and NVF_DLSS_DIR; needs NVF_DLSS_DOWNLOAD_REAL (and that run's files). The DLSS-G line needs an RTX 40 series or newer and Windows' GPU scheduling on, as dlssg-on does"
 areas = ["graphics"]
 paths = ["engine/nvforever/src/dlss_download/**", "engine/nvforever/src/dlss/download/**"]
 requires = ["NVF_DLSS_DOWNLOAD_REAL"]
@@ -25994,12 +26223,14 @@ args = ["--cell", "Goodsprings", "--size", "1280x720", "--upscaler", "dlss", "--
 run_seconds = 18
 expect = [
   "DLSS: route: interposer (the Vulkan instance was made through sl.interposer.dll)",
+  { text = "DLSS-G: ready: DLSS-G and Reflex set up (", label = "DLSS-G and Reflex ready from the downloaded files" },
   { re = 'DLSS: output observed: .*, generation 1, mean RGB', label = "DLSS's output seen, so NGX drew from the downloaded files" },
   "upscaler: DLSS Quality asked for, DLSS Quality draws",
 ]
 forbid = [{ re = 'DLSS: output not (observed|valid)' }, { text = "DLSS: inactive:", label = "the loader refusing the downloaded folder" }, { text = "slEvaluateFeature: ", label = "a failed evaluate" }, { text = "Validation Error", label = "a Vulkan validation error" }]
 
 # [design: issue #1803] Compare identical first raises with and without hidden draws.
+
 [[scenario]]
 name = "dlssg-on"
 source = "#2317, docs/design/dlss-frame-generation.md: DLSS Frame Generation chosen at the start over DLSS Quality in play: DLSS-G kept loaded, Reflex through Streamline, one generated frame per real frame presented, about two frames shown per real frame; the performance overlay (--fps, NVF_FPS_LOG) reads the frames shown and the rendered ones apart"
@@ -26236,6 +26467,7 @@ expect = [
 ]
 forbid = ["pipboy: warm-up start", "pipboy: warm-up asked", "pipboy: first raise held", "menu request ignored"]
 manual = "This control must ask new pipelines at the first raise; otherwise the comparison is inconclusive. Compare its first_a through first_d with the warm run for the old screen fault. Pipeline compile durations and the last screen/glare ready lines determine the faulty interval; do not infer an unmeasured duration from the shot schedule. The shader-defs line for the last screen/glare pipeline to become ready identifies the candidate variant in the blue/brown depth fight; confirm against the corresponding shots."
+
 [[scenario]]
 name = "tiles-repair-services"
 source = "[design] repair.md section 3.1, issue #1468: the vendor's repair services menu from its file, its rows, labels, cards, buttons and blur, the model's rules and sounds unchanged; the worn weapons of repair-services"
@@ -26990,7 +27222,6 @@ expect = [
   { re = 'tiles: InventoryMenu page from tiles: ', min = 1, label = "and the page comes from its tiles" },
 ]
 order = [["InventoryMenu drawn by hand: IM_InventoryListTemplate missing", "test aid: NVF_PLAY_TEST_INVENTORY_TILE_CUT over", { re = 'test aid: InventoryMenu built again from \S' }, { re = 'tiles: InventoryMenu page from tiles: ' }]]
-
 
 [[scenario]]
 name = "pipboy-world-map-child-family"
@@ -28415,7 +28646,6 @@ expect = [
   { json = "decode_errors.#", schema = "fnv.bsa.verify/1", equals = 0, label = "no decode errors" },
 ]
 
-
 [[scenario]]
 name = "dialogue-zoom-lock-hold"
 source = "[owner decision 2026-11-13, #2254] docs/design/dialogue-play.md section 8: the dialogue zoom locks the view, which follows the speaker throughout the conversation"
@@ -28915,6 +29145,41 @@ expect = [
 ]
 
 [[scenario]]
+name = "lucky38-elevator-stay-here"
+source = "issue #2424 (crates/fnv-game/src/functions/actor.rs add_script_package): the Lucky 38 elevator Victor's OnActivate (Lucky38VictorElevatorScript, SCPT 0x0015725D) adds his Dialogue package Lucky38VictorElevatorTalkToPlayer on every talk and waits for the conversation (MenuMode 1009) before its GameMode shows the floor box; Stay Here (button 0) does nothing more. A second talk before a package choice dropped the first, still current with its goal met, opened no conversation, and the script waited for one for ever: no floor box again (the owner's soft lock)"
+note = "the player starts on the casino floor by Victor at the elevator (as securitron-face-bright); he is activated at 6 s and again at 13 s, soon after Stay Here, before the 10 s package choice drops the finished package; the menu aid closes the conversation after 1 s and answers the floor box with its first button, Stay Here"
+areas = ["ai", "scripting"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/ai.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "6:activate:Lucky38VictorElevatorREF,13:activate:Lucky38VictorElevatorREF" }
+args = ["--cell", "Lucky38CasinoFloor01", "--play", "--pos=1087,-2290,7690", "--heading", "50", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 35
+order = [[
+  { text = "dialogue: conversation with Lucky38VictorElevatorREF started", label = "the first talk: Victor's package opens a conversation" },
+  { re = 'script: message Lucky38ElevatorMessageVictor .*buttons', label = "the floor box shows after it" },
+  { text = "script: menu 1001 (message Lucky38ElevatorMessageVictor) answered (OK)", label = "Stay Here (the first button) is picked" },
+  { text = "script: OnActivate of FalloutNV.esm|SCPT 0x0015725D ran on Some(0x0015725F)", label = "the second talk runs the elevator's OnActivate" },
+  { text = "dialogue: conversation with Lucky38VictorElevatorREF started", label = "and opens a conversation again (none without the fix)" },
+  { re = 'script: message Lucky38ElevatorMessageVictor .*buttons', label = "and the floor box comes back" },
+]]
+
+[[scenario]]
+name = "house-pod-sealed"
+source = "issue #2425 (engine/nvforever/src/locomotion.rs, nvf-assets anim_play.rs over_movement): Mr. House's life-support chamber is his own creature NVCRMrHouse (NVCRMrHouse01REF 0x0014B095, Lucky38ControlRoom). NVCRMrHouseSCRIPT (SCPT 0x00144627) seals it on load (housestate 1, PlayIdle MRHouseSleepingLoop, DynamicIdle_Sleeping.kf: Bip01 Shell turned about 126 degrees over him, Bip01 Yaw 0) and the terminal's unsealing item (Lucky38ControlTerminalWarning, TERM 0x0015C1A5) sets housestate 0 and plays MrHouseOpen (WakeUp.kf, 19.4 s, to the shell at about 25 degrees and Yaw 90, his mtidle.kf). Both idles' tracks are under mtidle.kf's priority, so before the fix the base idle's open pod showed throughout"
+note = "the player starts on the catwalk 1,300 units from the chamber looking at it (a 15 degree view); the node angles are read with GetNifBlockRotation (the first read only asks for the node tree); at 13 s the terminal item's two lines are stood in by the test aids (housestate 0, PlayIdle MrHouseOpen). Shots house_pod_sealed.png (12 s: the chamber closed, House not seen) and house_pod_opened.png (34 s: open, House seen)"
+areas = ["idles", "actors", "animation"]
+paths = ["engine/nvforever/src/locomotion.rs", "engine/nvf-assets/src/anim_play.rs", "engine/nvforever/src/idles.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SHOTS = "12:house_pod_sealed.png,34:house_pod_opened.png", NVF_PLAY_TEST_SCRIPT = "13:var:NVCRMrHouse01REF:housestate:0,13:play_idle:NVCRMrHouse01REF:MrHouseOpen", NVF_PLAY_TEST_CONSOLE = "9.5:PrintC \"nvf pod warmup shell %.0f yaw %.0f\", (NVCRMrHouse01REF.GetNifBlockRotation \"Bip01 Shell\" \"X\"), (NVCRMrHouse01REF.GetNifBlockRotation \"Bip01 Yaw\" \"Z\");10:PrintC \"nvf pod sealed shell %.0f yaw %.0f\", (NVCRMrHouse01REF.GetNifBlockRotation \"Bip01 Shell\" \"X\"), (NVCRMrHouse01REF.GetNifBlockRotation \"Bip01 Yaw\" \"Z\");10.3:close;36:PrintC \"nvf pod opened shell %.0f yaw %.0f\", (NVCRMrHouse01REF.GetNifBlockRotation \"Bip01 Shell\" \"X\"), (NVCRMrHouse01REF.GetNifBlockRotation \"Bip01 Yaw\" \"Z\");36.3:close" }
+args = ["--cell", "Lucky38ControlRoom", "--play", "--pos=1024,-2400,8010", "--heading", "180", "--pitch", "1.5", "--fov", "15", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 38
+order = [[
+  { re = 'idle: NVCRMrHouse01REF plays MRHouseSleepingLoop', label = "the chamber plays its sealed loop from the start" },
+  { re = 'console: nvf pod sealed shell (?P<n>-?\d+) ', range = [110, 140], label = "the shell is closed over him (about 126 degrees; 25, open, before the fix)" },
+  { re = 'idle: NVCRMrHouse01REF plays MrHouseOpen', label = "the unsealing plays the opening" },
+  { re = 'console: nvf pod opened shell (?P<n>-?\d+) ', range = [15, 35], label = "and leaves the shell open (about 25 degrees)" },
+]]
+manual = "house_pod_sealed.png: the chamber closed, House not to be seen; house_pod_opened.png: open, House in it"
+
+[[scenario]]
 name = "orris-escort-thugs"
 source = "issue #2433 (crates/fnv-game/src/combat.rs Game::harmless_hit; engine/nvf-play/src/combat.rs): G.I. Blues' staged ambush. Orris's Use Weapon packages VFSOrrisShootThug01-03Package are Always Hit and Do No Damage, and each thug falls only in its OnHit block for Orris (SCPT 0x00118A77), which sets his shootingthugsstate on to the next package. A harmless shot ran no OnHit, so he fired once at the first thug, his Once Per Day package was over, and he stood for good (the owner's soft lock)"
 note = "the player in FreesideWorld by Orris's detour; G.I. Blues at stage 10, Orris put beside the player at 3 s and hired by his line 0x00115C2C at 4 s (200 caps given: the thugs go to their first markers), his detourstage set to 1 at 5 s (the warning conversation skipped); the player is put beside him every 3 s from 9 s. His detour trigger sends the thugs to the alley, the ambush trigger knocks the fourth thug down and he says Leave them to me"
@@ -28956,6 +29221,20 @@ expect = [
   { re = 'far script summary: (?P<n>\d+) GameMode runs of residents out of the loaded cells', range = [1, 100000], label = "scripts of residents out of the loaded cells ran" },
 ]
 
+[[scenario]]
+name = "house-screen-never-hostile"
+source = "issue #2431 (crates/fnv-game/src/awareness.rs Game::is_fixture): Mr. House's screens and his chamber never fight. Here the after-death state the scripts leave (SetEnemy Lucky38Faction PlayerFaction, from the elevator Victor's OnHit/OnDeath and the penthouse Victor's death) and a StartCombat on the screen against the player, the player shooting at it meanwhile"
+note = "Lucky38MrHouseREF 0x001264C5 in the penthouse, the player 450 units in front of his screen (as dialogue-zoom-house) at 5 s, facing it at 7 s; SetEnemy at 8 s, StartCombat at 9 s; the screen never enters combat (detection's state lines), the elevator Victor beside it is not a fixture"
+areas = ["combat", "detection", "creatures"]
+paths = ["crates/fnv-game/src/awareness.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "5:-1357:5653:19100", NVF_PLAY_TEST_LOOK = "7:135:15", NVF_PLAY_TEST_SCRIPT = "8:call:-:SetEnemy:Lucky38Faction:PlayerFaction,9:combat:Lucky38MrHouseREF:player" }
+args = ["--play", "--world", "Lucky38World", "--pos=-2376,6057,19200", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { re = 'test aid: script .*Combat', label = "the StartCombat aid runs" },
+  { re = 'MrHouse 001264C5 \S+ → Combat', count = 0, label = "the screen never enters combat (it did when made an enemy before the fix)" },
+  { re = 'ai: \S*Lucky38MrHouseREF never turns', label = "and never turns" },
+]
 
 [[scenario]]
 name = "pipboy-ammo-effects"
@@ -29275,19 +29554,18 @@ expect = [
 ]
 
 [[scenario]]
-name = "weather-region-cell-stairs"
-source = "#2531; docs/spec-notes/world.md §6 [observed: captures run15b_w and run15b_w2, 2026-11-15]: walking across NVLegateRegion's outline inside cell 26,4 holds the region weather until another exterior cell is entered"
-note = "[design, #2531] Written without running the game. Start on the Legate's stairs, face east, move forward for 1 s (about 270 units, across outline x 109513 but short of cell border x 110592), then stand. The console reads player x after the move to verify the outline was crossed; [hypothesis: movement distance is provisional until the main session runs this scenario]."
-areas = ["sky", "weather"]
-paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/world.rs", "crates/fnv-world/src/sky.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_LOOK = "2:90:0", NVF_PLAY_TEST_MOVE = "6:1:0,7:0:0", NVF_PLAY_TEST_CONSOLE = "9:player.getpos x;9.5:close" }
-args = ["--cell", "Goodsprings", "--pos=109330,18852,5470", "--play", "--hour", "17.4", "--no-voice", "--no-messages"]
-run_seconds = 18
-expect = [
-  { re = 'weather roll: NVlegateCampWeather .*from region NVLegateRegion .*at the start', label = "the start samples the camp region" },
-  { re = 'console: GetPos on player >> (?P<n>[\d.]+)', range = [109514, 110591], label = "the player crossed the outline and stayed in cell 26,4" },
-]
-forbid = [{ text = "on leaving a weather region", label = "crossing the outline inside the cell keeps camp weather" }]
+name = "cachino-find-greet"
+source = "issue #2473: Cachino's vGomorrahCachinoDialoguePackage (PACK 00119485) is a Find package for PlayerRef near his editor location with radius 0, valid while GetTalkedToPC is 0 and the player is in Gomorrah00-03; the lines asking about him only enable him (0011118D.enable). A radius 0 Find for one reference has no search area, and reaching the player starts a force greet (docs/spec-notes/packages.md section 10)"
+note = "Gomorrah01 (main level): the player stands about 900 units west of Cachino's spot (7159, 1281), by the gamblers; the console enables him at 1 s, as the lines asking about him do. Before the fix he found nothing within 512 units of his spot and stood still"
+areas = ["ai", "dialogue-packages"]
+paths = ["crates/fnv-ai/src/errand.rs", "crates/fnv-ai/src/goal.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "1:0011118D.enable;1.2:close" }
+args = ["--cell", "Gomorrah01", "--play", "--pos=6300,1450,6410", "--heading", "90", "--npc-packages", "VMS21CachinoREF", "--no-voice", "--no-messages"]
+run_seconds = 45
+order = [[
+  { re = 'VMS21CachinoREF: finds .*goes to it', label = "Cachino sets off for the player" },
+  { re = 'dialogue: conversation with VMS21CachinoREF started \(topic GREETING\)', label = "and starts his conversation on reaching them" },
+]]
 
 [[scenario]]
 name = "enable-disabled-actor-talks"
@@ -29307,6 +29585,45 @@ expect = [
   { re = 'lip: skipped \S*0013ca2a_1\.lip: speaker VHDIntakeTowerCenturionREF has no face rig', count = 0, label = "his first line is not left without lip sync" },
 ]
 order = [["dialogue: conversation with VHDIntakeTowerCenturionREF started", "dialogue look: VHDIntakeTowerCenturionREF faces the player"]]
+
+[[scenario]]
+name = "anders-free-after-diane"
+kind = "tool"
+source = "issue #2472: Anders on the cross at Cottonwood Cove offered no choice to free him. In the data the freeing choice AndersFree is reached only through the topic AndersJackandDiane, which is not top-level and is added only by Diane's lines 0x00146698 (VMS46) and 0x00144651 (VMS45): before her errand he has none (docs/spec-notes/anders-cross.md)"
+note = "two headless new games: the first talks to Anders at once (no AndersJackandDiane, so no AndersFree); the second takes Diane's errand, saves and loads, then frees him. AndersFree's end script sets VMS46.AndersFreed to 1 and starts his thanks 0x00142AA6, whose begin script sets it to 2"
+areas = ["dialogue"]
+paths = ["crates/fnv-game/src/dialogue.rs"]
+commands = [
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/anders-cross-new-game.actions.json", "{data}", "FalloutNV.esm"],
+  ["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/anders-free-after-diane.actions.json", "{data}", "FalloutNV.esm"],
+]
+expect = [
+  { json = "events.?kind=line_started.info", equals = "0x00142AA5", count = 2, label = "both games: Anders greets from the cross" },
+  { json = "events.?kind=choices_offered.choices.*.topic_edid", equals = "AndersCross", min = 2, label = "both offer Who did this to you?" },
+  { json = "events.?kind=topic_added.topic_edid", equals = "AndersJackandDiane", count = 1, label = "only Diane's errand line teaches AndersJackandDiane" },
+  { json = "events.?kind=choice_made.topic_edid", equals = "AndersJackandDiane", count = 1, label = "after it (and a save and load) he offers it" },
+  { json = "events.?kind=choices_offered.choices.*.topic_edid", equals = "AndersFree", count = 1, label = "the freeing choice, in the second game only" },
+  { json = "events.?kind=result_script.unit", equals = "FalloutNV.esm|INFO 0x00142A9C end", count = 1, label = "AndersFree's end script runs (SetRestrained 0)" },
+  { json = "events.?kind=line_started.info", equals = "0x00142AA6", count = 1, label = "his thanks follow by StartConversation" },
+  { json = "final.quests.0x00140C3B.vars.AndersFreed", equals = 2, count = 1, label = "VMS46.AndersFreed ends at 2 (freed and thanked)" },
+]
+
+[[scenario]]
+name = "anders-leaves-cross"
+source = "issue #2472: Anders on the cross at Cottonwood Cove could not be freed. Once AndersJackandDiane is known (Diane's errand line 0x00146698 adds it) the freeing choice AndersFree is offered; its end script (INFO 0x00142A9C) sets VMS46.AndersFreed to 1 and SetRestrained 0, and his thanks (0x00142AA6) set it to 2, and after the conversation his package VRRCAndersRRC (AndersFreed == 2) takes him off the cross and home (docs/spec-notes/anders-cross.md)"
+note = "the player starts about 150 units west of Anders; the topic Diane's line teaches is added by the console at 8 s (Red Rock Canyon is not loaded here); the player talks to him at 10 s and picks AndersJackandDiane, then AndersFree; his thanks (StartConversation) are left by the unattended rule"
+areas = ["dialogue", "ai"]
+paths = ["crates/fnv-game/src/dialogue.rs", "engine/nvforever/src/furniture.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "8:addtopic 00142A89;8.3:close", NVF_PLAY_TEST_TALK = "10:VRRCAndersREF=AndersJackandDiane|AndersFree" }
+args = ["--play", "--world", "WastelandNV", "--pos=55570,-96120,-480", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "001413C3"]
+run_seconds = 50
+order = [[
+  { re = 'offers \d+ choices: .*\[AndersJackandDiane\]', label = "with the topic known he offers Are you Anders?" },
+  { re = 'offers \d+ choices: .*\[AndersFree\]', label = "and then the freeing choice" },
+  { re = 'dialogue: VRRCAndersREF says \[GREETING\] 0x00142AA6', label = "his thanks follow (StartConversation; its begin script sets AndersFreed to 2)" },
+  { re = 'ai \[[\d:]+\] 001413C3: package VRRCAndersRRC', label = "after the talk his package is the one for AndersFreed 2: home to Red Rock Canyon" },
+  { re = 'furniture: 001413C3 (gets|got) off 0013A4BA', label = "and leaves the cross" },
+]]
 
 [[scenario]]
 name = "rigid-headgear-oliver"
@@ -29329,6 +29646,24 @@ expect = [
   { re = 'rigid head check summary: .*max_error=(?P<n>[\d.]+)', range = [0, 0.02], label = "every sampled centre follows the full head transform" },
   { re = 'rigid head check summary: .*max_frame_error=(?P<n>[\d.]+)', range = [0, 0.001], label = "every sampled cap frame follows head rotation and scale" },
   { re = 'rigid head check summary: .*turn_deg=(?P<n>[\d.]+)', range = [0.5, 180], label = "the head actually turned during the check" },
+]
+
+[[scenario]]
+name = "anders-cross-head-limit"
+source = "issue #2471: Anders on the cross at Cottonwood Cove showed his head upside down in conversation and stepped sideways on a limping clip before climbing onto the cross. The cross clips hang his head chin on chest, past straight down; read from its forward alone that head faced the root's front upside down, and the turn to the player kept it upside down (in 20-30 frames at a time, measured before the fix). The head's yaw and pitch are now read with its up axis (dialogue_look::head_yaw_pitch, also head_look.rs), and an actor standing within a shuffle of its cross is put on it at once (furniture::found_on_cross); docs/spec-notes/anders-cross-head.md"
+note = "the player stands about 150 units north of Anders, about 90° off the way his chest faces on the cross (west), and talks to him twice, at 10 s and 40 s. The yaw from the chest is the limit (60°, his body part data) plus at most 20° of the talk clip's own head movement"
+areas = ["dialogue", "actors", "animation", "furniture"]
+paths = ["engine/nvforever/src/dialogue_look.rs", "engine/nvforever/src/head_look.rs", "engine/nvforever/src/furniture.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_TALK = "10:VRRCAndersREF=AndersCross|AndersDrugs|leave;40:VRRCAndersREF=AndersCross|leave", NVF_PLAY_TEST_SHOTS = "13:anders_cross_side.png" }
+args = ["--play", "--world", "WastelandNV", "--pos=55716,-95980,-480", "--heading", "159", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "001413C3"]
+run_seconds = 60
+manual = "anders_cross_side.png: his face turned towards the player, right side up"
+expect = [
+  { text = "furniture: 001413C3 is put on (a cross it stands at: no steps, no getting-on clip) 0013A4BA", label = "found on his cross, not stepping onto it" },
+  { re = 'limping: VRRCAndersREF 0x001413C3 moves \S+ on its limping clip', count = 0, label = "no limping clip plays on him" },
+  { text = "furniture: 001413C3 is on 0013A4BA", label = "he is on the cross" },
+  { re = 'dialogue look: VRRCAndersREF stops facing the player: .*the head was upside down in (?P<n>\d+) frames', count = 2, range = [0, 0], all = true, label = "his head is never upside down in either conversation" },
+  { re = 'dialogue look: VRRCAndersREF stops facing the player: the head \(yaw [+-]\d+°, pitch [+-]\d+°; (?P<n>[+-]\d+)° from its chest\)', count = 2, range = [-80, 80], all = true, label = "the head within its limit from the chest (60° and the clip's own 20°)" },
 ]
 
 [[scenario]]
@@ -29459,3 +29794,83 @@ forbid = [
   { re = 'alert: .* → Combat: detects the player', label = "an NCR soldier starts fighting the disguised player" },
   { re = 'combat group: .* about the player', label = "an alarm about the player goes round" },
 ]
+
+[[scenario]]
+name = "torch-glow-billboard"
+source = "issue #2549: the Cottonwood Cove torches (OasisTorch01, meshes/clutter/oasis/oasistorch01.nif) hold their glow card GlowMesh:0, a 122 x 144 quad in the xy plane of a mode-4 NiBillboardNode, which placed models drew in the file's pose: a flat sheet of light above the flame; placed models' billboard nodes now turn to the camera (engine/nvforever/src/world.rs face_camera, docs/spec-notes/billboard-nodes.md)"
+note = "the player 300 units east of torch 00163B5A-or-B (58240,-91332,-1456) at 22:00, looking west at it, level. Before the fix the glow was a thin bright horizontal line at the flame; after it a soft round glow facing the view"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/world.rs", "engine/nvf-assets/src/model.rs", "engine/nvforever/src/shot_fx.rs", "engine/nvf-play/src/script_draw.rs", "docs/spec-notes/billboard-nodes.md"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_LOOK = "3:270:0", NVF_PLAY_TEST_SHOTS = "9:torch_glow_billboard.png" }
+args = ["--play", "--world", "WastelandNV", "--pos=58540,-91332,-1440", "--hour", "22", "--no-voice", "--no-messages"]
+run_seconds = 12
+manual = "torch_glow_billboard.png: the torch's flame with a soft round orange glow around it, facing the view; no thin horizontal line of light across or above the flame"
+expect = [
+  { re = 'world: [1-9]\d* placed billboard nodes turn to the camera \([1-9]\d* references\)', label = "the placed models' billboard nodes are drawn turning" },
+  { re = 'test aid: screenshot .*torch_glow_billboard\.png', label = "the frame is saved" },
+]
+
+[[scenario]]
+name = "softlock-controls-held"
+source = "issue #2365 (fnv_game softlock.rs, nvf-play softlock.rs): scripts holding the movement controls outside any conversation or menu with no story event are a soft lock, logged once per hold (the hold #2309 leaves the player in); the test aid shortens the 30 s limit to 5 s"
+note = "Goodsprings, free at first: no finding in the 6 s before the console turns the controls off, then one"
+areas = ["scripts", "quests"]
+paths = ["crates/fnv-game/src/softlock.rs", "engine/nvf-play/src/softlock.rs", "engine/nvforever/src/reports/anomaly.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SOFTLOCK_SECS = "5", NVF_PLAY_TEST_CONSOLE = "6:DisablePlayerControls;6.3:close" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice"]
+run_seconds = 25
+order = [[
+  { re = 'player controls: movement, Pip-Boy, fighting, POV disabled by scripts', label = "the console turns the controls off" },
+  { re = 'softlock: controls_held for 5 s: scripts hold the controls \(movement, Pip-Boy, fighting, POV\), outside any conversation or menu, and no story event has happened', label = "5 s later the hold is reported" },
+]]
+expect = [
+  { re = 'WARN nvf_play::softlock: softlock: ', count = 1, label = "one finding for the one hold, none while the player was free" },
+]
+
+[[scenario]]
+name = "softlock-hardin-training"
+source = "issue #2309 (found by the watchdog of #2365): Hardin's power armor training restrains the player and Hardin, turns the controls off and, 4 s on, gives Hardin the Dialogue package HVHardinPowerArmorTrainingPackage; only the line that package opens releases them [observed: INFO 0x001633C9's result script, SCPT HVMcNamaraHardinConvoScript]"
+note = "The console does what the line's result script does (the conversation that leads to it needs the Brotherhood's quests). Hidden Valley bunker L2, beside Hardin; the player is unseen because a bare start has the Brotherhood hostile"
+areas = ["ai", "quests", "dialogue"]
+paths = ["crates/fnv-game/src/softlock.rs", "engine/nvf-play/src/softlock.rs", "crates/fnv-ai/src/carry.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "6:player.SetRestrained 1;6.2:EdgarHardinREF.SetRestrained 1;6.4:DisablePlayerControls;6.6:set HVMcNamaraHardinConvoTriggerREF.HardinTraining to 1;7:close" }
+args = ["--cell", "HiddenValley02", "--play", "--pos=3400,-3200,15546", "--hour", "12", "--no-voice"]
+run_seconds = 60
+expect = [
+  { re = 'player controls: movement, Pip-Boy, fighting, POV disabled by scripts', label = "the controls go off as the line's script turns them" },
+  { re = 'dialogue: conversation with EdgarHardinREF started', label = "Hardin, restrained, starts the training conversation", known_failing = "#2309: a restrained actor's Dialogue package never starts its conversation" },
+  { re = 'WARN nvf_play::softlock: softlock: ', count = 0, label = "the player is not left held", known_failing = "#2309: nothing releases the player; the watchdog reports controls_held after 30 s" },
+]
+
+[[scenario]]
+name = "vats-classic-melee-reach"
+source = "#2656 (GECK wiki VATS Settings: fVATSMeleeReachMult 2, fVATSMeleeMaxDistance 300; crates/fnv-combat/src/damage.rs vats_melee_reach): in the classic style a melee or unarmed weapon's targets are within the swing's reach doubled, at most 300, not Dead Eye's flat 350"
+note = "the Fists, no fight. Easy Pete is put 320 units in front of the player at 4 s and held: inside the old 350, outside the Fists' 214 plus the capsule (236 from the eye to his body), so V at 8 s is refused. He is put 150 units in front at 10 s: V at 13 s starts on him; V at 15 s leaves"
+areas = ["combat", "vats"]
+paths = ["engine/nvf-play/src/vats_mode.rs", "engine/nvf-play/src/vats_classic.rs", "engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/damage.rs", "crates/fnv-combat/src/tuning.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "4:moveto:EasyPeteRef:player:0:320:0,4.2:call:EasyPeteRef:SetRestrained:1,10:moveto:EasyPeteRef:player:0:150:0", NVF_PLAY_TEST_CONTROL = "3:weapon", NVF_PLAY_TEST_KEYS = "8:v,13:v,15:v", NVF_PLAY_TEST_VATS_STYLE = "classic" }
+args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 18
+order = [[
+  { re = 'vats mode: classic melee reach (?P<n>\d+) units from the eye \(swing \d+, in place of 350\)', range = [230, 242], label = "the Fists reach 214 from the body, 236 from the eye" },
+  { re = 'vats mode: refused: no target in sight \(classic\): \d+ beyond the reach of \d+ \(the nearest (?P<n>\d+) away\)', range = [270, 349], label = "Easy Pete at 320 units (to his body, his radius less), inside the old 350: refused" },
+  { text = "vats mode: classic: 1 targets, 00104C80 selected", label = "at 150 units V starts on him" },
+]]
+expect = [
+  { re = 'vats mode summary: entered 1 times, 0 marks, 0 shots, 0 AP spent, 1 refused', label = "one stay, one refusal" },
+]
+
+[[scenario]]
+name = "weather-region-cell-stairs"
+source = "#2531; docs/spec-notes/world.md §6 [observed: captures run15b_w and run15b_w2, 2026-11-15]: walking across NVLegateRegion's outline inside cell 26,4 holds the region weather until another exterior cell is entered"
+note = "[design, #2531] Written without running the game. Start on the Legate's stairs, face east, move forward for 1 s (about 270 units, across outline x 109513 but short of cell border x 110592), then stand. The console reads player x after the move to verify the outline was crossed; [hypothesis: movement distance is provisional until the main session runs this scenario]."
+areas = ["sky", "weather"]
+paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/world.rs", "crates/fnv-world/src/sky.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_LOOK = "2:90:0", NVF_PLAY_TEST_MOVE = "6:1:0,7:0:0", NVF_PLAY_TEST_CONSOLE = "9:player.getpos x;9.5:close" }
+args = ["--cell", "Goodsprings", "--pos=109330,18852,5470", "--play", "--hour", "17.4", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = [
+  { re = 'weather roll: NVlegateCampWeather .*from region NVLegateRegion .*at the start', label = "the start samples the camp region" },
+  { re = 'console: GetPos on player >> (?P<n>[\d.]+)', range = [109514, 110591], label = "the player crossed the outline and stayed in cell 26,4" },
+]
+forbid = [{ text = "on leaving a weather region", label = "crossing the outline inside the cell keeps camp weather" }]

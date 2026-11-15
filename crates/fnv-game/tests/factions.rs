@@ -314,6 +314,33 @@ fn rank(g: &mut Game, on: u32, faction: u32) -> f64 {
 }
 
 #[test]
+fn a_shared_ally_faction_wins_over_an_enemy_one() {
+    // #2560: FortVulpesInculta is in VCaesarsLegionFaction (an Ally of itself) and in
+    // ArmorNCRFactionNVEnemy (which VCaesarsLegionFaction names an Enemy); the Legion
+    // never attacks him. Allies and friends "cannot attack each other under any
+    // circumstances" [documented: GECK wiki GetFactionCombatReaction] (factions.md §4).
+    // Here the raiders name the player's faction an enemy; the bandit (raider, idler)
+    // attacks the watchman (player's faction, idler) until the idlers name themselves an
+    // ally.
+    let f = fixture();
+    let mut g = game(&f);
+    let (bandit, watchman) = (FormId(BANDIT_REF), FormId(WATCHMAN_REF));
+    assert_eq!(call(&mut g, GET_FACTION_RELATION, BANDIT_REF, &[form(WATCHMAN_REF)]), 1.0);
+    assert!(g.would_attack(bandit, watchman));
+    g.forms.faction_reactions.entry(FormId(IDLERS)).or_default().insert(FormId(IDLERS), 2);
+    assert_eq!(call(&mut g, GET_FACTION_RELATION, BANDIT_REF, &[form(WATCHMAN_REF)]), 2.0);
+    assert_eq!(call(&mut g, GET_FACTION_RELATION, WATCHMAN_REF, &[form(BANDIT_REF)]), 2.0);
+    assert!(!g.would_attack(bandit, watchman) && !g.would_attack(watchman, bandit));
+    // A friend pair wins as well, and before an ally one [hypothesis].
+    g.forms.faction_reactions.entry(FormId(RAIDERS)).or_default().insert(FormId(IDLERS), 3);
+    assert_eq!(call(&mut g, GET_FACTION_RELATION, BANDIT_REF, &[form(WATCHMAN_REF)]), 3.0);
+    // The player's crime enemies still come first.
+    g.forms.faction_reactions.entry(FormId(RAIDERS)).or_default().insert(FormId(PLAYER_FACTION), 2);
+    g.player.enemy_of.insert(FormId(RAIDERS));
+    assert_eq!(call(&mut g, GET_FACTION_RELATION, BANDIT_REF, &[form(PLAYER)]), 1.0);
+}
+
+#[test]
 fn the_records_are_read() {
     let f = fixture();
     let a = &f.data.actors;
@@ -1623,6 +1650,34 @@ fn an_old_save_has_no_live_plants_and_empty_plants_are_omitted() {
     assert_eq!(h.world.item_count(victim, item).unwrap(), 1);
 }
 
+#[test]
+fn the_pickpocket_tweak_leaves_the_caught_player_detected() {
+    // bPickpocketCaughtCausesDetection (docs/design/tweaks.md): without the tweak being
+    // caught changes nothing the sneak word reads; with it the victim detects the player.
+    let f = fixture();
+    for on in [false, true] {
+        let mut g = game(&f);
+        g.tweaks.pickpocket_caught_detects = on;
+        g.pickpocket_caught(FormId(WATCHMAN_REF));
+        assert_eq!(g.player_detected_for_sneak(), on, "tweak {on}");
+    }
+}
+
+#[test]
+fn the_frenzy_tweak_gives_a_frenzied_kill_to_the_player() {
+    // bFrenzyGrantsPlayerXP (docs/design/tweaks.md): Aggression 3 is Frenzied.
+    const SET_AV: u16 = 0x100F;
+    let f = fixture();
+    let watchman = FormId(WATCHMAN_REF);
+    for on in [false, true] {
+        let mut g = game(&f);
+        g.tweaks.frenzy_kill_xp = on;
+        assert!(!g.kill_earns_xp(watchman), "not frenzied, tweak {on}");
+        call(&mut g, SET_AV, WATCHMAN_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(fnv_script::vm::Value::Num(3.0))]);
+        assert_eq!(g.kill_earns_xp(watchman), on, "frenzied, tweak {on}");
+    }
+}
+
 /// #1538 (owner decision 2026-11-13; combat-ai.md §10.3.1): the player's attack on a member
 /// of an Evil faction turns every member in the area (the victim's interior cell) on the
 /// player, seen or not, and a crime-tracking one makes the player its enemy. Others in
@@ -1747,12 +1802,15 @@ fn a_flag_on_the_friendly_faction_itself_still_counts() {
     assert!(!g.would_attack(loafer, player));
     call(&mut g, SET_PC_ENEMY_OF_FACTION, PLAYER, &[form(RATS), num(1.0)]);
     assert!(g.would_attack(loafer, player));
-    // A faction reaction of Enemy still comes first: the bandit (Raiders, who name the
-    // player's faction an enemy) is not shielded by a friendly faction.
+    // A faction reaction of Enemy yields to a shared friendly faction as well (#2560,
+    // factions.md §4: allies and friends "cannot attack each other under any
+    // circumstances"): the bandit (Raiders, who name the player's faction an enemy) is
+    // shielded once one of its factions is the player's ally.
     let bandit = FormId(BANDIT_REF);
+    assert!(g.would_attack(bandit, player));
     call(&mut g, ADD_TO_FACTION, BANDIT_REF, &[form(GANG_A), num(0.0)]);
     call(&mut g, SET_ALLY, PLAYER, &[form(PLAYER_FACTION), form(GANG_A), num(1.0), num(1.0)]);
-    assert!(g.would_attack(bandit, player));
+    assert!(!g.would_attack(bandit, player));
 }
 
 #[test]
