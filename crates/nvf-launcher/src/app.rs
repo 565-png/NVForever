@@ -394,7 +394,7 @@ impl App {
                         }
                     }
                     if let Some(l) = &self.latest {
-                        let b = egui::Button::new(RichText::new(format!("Update to v{}", l.version)).strong().color(Color32::from_rgb(0x1A, 0x14, 0x08))).fill(GOLD);
+                        let b = egui::Button::new(RichText::new(format!("Update to v{}", l.version)).strong().color(theme::ON_GOLD)).fill(GOLD);
                         if ui.add(b).on_hover_text(format!("v{} is out (this is v{}): opens its download page", l.version, env!("CARGO_PKG_VERSION"))).clicked() {
                             launch::open(&l.url);
                         }
@@ -529,13 +529,13 @@ fn big_button(ui: &mut egui::Ui, title: &str, sub: &str, primary: bool) -> egui:
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let enabled = ui.is_enabled();
     let fill = match (primary, resp.hovered() && enabled) {
-        (true, true) => Color32::from_rgb(0xF0, 0xC4, 0x58),
+        (true, true) => theme::GOLD_HOVER,
         (true, false) => GOLD,
         (false, true) => Color32::from_rgb(0x3A, 0x35, 0x2E),
         (false, false) => theme::BUTTON,
     };
     let fill = if enabled { fill } else { fill.gamma_multiply(0.5) };
-    let ink = if primary { Color32::from_rgb(0x1A, 0x14, 0x08) } else { theme::TEXT };
+    let ink = if primary { theme::ON_GOLD } else { theme::TEXT };
     let p = ui.painter();
     p.rect(rect, CornerRadius::same(4), fill, Stroke::new(1.0, if primary { GOLD } else { LINE }), egui::StrokeKind::Inside);
     let left = rect.left() + 18.0;
