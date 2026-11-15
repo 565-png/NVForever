@@ -30129,3 +30129,19 @@ expect = [
 forbid = [
   { re = 'activate 0x000CE1AD .*Teleported', label = "the tunnel door must not teleport the player" },
 ]
+
+[[scenario]]
+name = "mod-diagnostic-log-tool"
+kind = "tool"
+source = "docs/handoff/mod-diagnostic-cli.md: actual bounded mod-log CLI over two authored log files; log records differ from reported exit totals, and private words are opt-in"
+areas = ["scripts", "extender", "mods"]
+paths = ["crates/fnvtool/src/mod_log_digest.rs", "crates/fnvtool/src/ext_cmd.rs", "tools/smoke/fixtures/mod-diagnostics/"]
+commands = [["ext", "mod-log", "{repo}/tools/smoke/fixtures/mod-diagnostics/run.txt", "--previous", "{repo}/tools/smoke/fixtures/mod-diagnostics/before.txt"]]
+expect = [
+  { json = "detail", schema = "fnv.ext.mod_log/1", equals = false },
+  { json = "run.sessions.#", schema = "fnv.ext.mod_log/1", equals = 1 },
+  { json = "run.sessions.0.exit_rows_present", schema = "fnv.ext.mod_log/1", equals = true },
+  { json = "run.sessions.0.log_records.script_failure", schema = "fnv.ext.mod_log/1", equals = 1 },
+  { json = "run.sessions.0.reported_exit_counts.skipped_statements", schema = "fnv.ext.mod_log/1", equals = 47 },
+  { json = "changes.session", schema = "fnv.ext.mod_log/1", equals = 0 },
+]
