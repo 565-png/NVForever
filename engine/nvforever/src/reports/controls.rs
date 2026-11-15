@@ -44,6 +44,8 @@ pub(super) struct Menus<'w> {
     pipboy: Option<Res<'w, nvf_play::pipboy::PipBoy>>,
     data: Option<Res<'w, nvf_play::pipboy::data::DataState>>,
     stats: Option<Res<'w, nvf_play::pipboy::stats::StatsView>>,
+    stats_snapshot: Option<Res<'w, nvf_play::pipboy::stats::Prepared>>,
+    holotape: Option<Res<'w, nvf_play::holotape::Holotape>>,
     repair: Option<Res<'w, nvf_play::pipboy::repair::PipRepair>>,
     item_mod: Option<Res<'w, nvf_play::pipboy::item_mod::PipItemMod>>,
     active: Option<Res<'w, nvf_play::menu::ActiveMenu>>,
@@ -51,6 +53,37 @@ pub(super) struct Menus<'w> {
     terminal: Option<Res<'w, nvf_play::terminal::TerminalScreen>>,
     levelup: Option<Res<'w, nvf_play::levelup::LevelUpMenu>>,
     dialogue: Option<Res<'w, nvf_play::dialogue::DialogueScreen>>,
+    builtins: Builtins<'w>,
+    games: Games<'w>,
+}
+
+/// [design, #2403 / file refs] Other holds audited against `script::hold_player`
+/// and `script::is_script_menu`; nested params keep each family read-only.
+#[derive(SystemParam)]
+struct Builtins<'w> {
+    recipe: Option<Res<'w, nvf_play::crafting::RecipeMenu>>,
+    lockpick: Option<Res<'w, nvf_play::lockpick::LockpickScreen>>,
+    repair: Option<Res<'w, nvf_play::repair::RepairServices>>,
+    message: Option<Res<'w, nvf_play::message_menu::MessagePanel>>,
+    console: Option<Res<'w, nvf_play::console::Console>>,
+    wheel: Option<Res<'w, nvf_play::companion_wheel::WheelScreen>>,
+    hud: Option<Res<'w, nvf_play::script_hud::ScriptHud>>,
+    chargen: Option<Res<'w, nvf_play::chargen::ChargenMenus>>,
+    creator: Option<Res<'w, nvf_play::creator::CreatorMenu>>,
+    tutorial: Option<Res<'w, nvf_play::tutorial_menu::TutorialView>>,
+    quantity: Option<Res<'w, nvf_play::script_quantity::ScriptQuantity>>,
+    vigor: Option<Res<'w, nvf_play::chargen::vigor::VigorMenu>>,
+    hotkey: Option<Res<'w, nvf_play::pipboy::hotkey_panel::HotkeyHold>>,
+    hotkeys: Option<Res<'w, nvf_play::hotkeys::Hotkeys>>,
+}
+
+#[derive(SystemParam)]
+struct Games<'w> {
+    blackjack: Option<Res<'w, nvf_play::blackjack::BlackjackScreen>>,
+    roulette: Option<Res<'w, nvf_play::roulette::RouletteScreen>>,
+    slots: Option<Res<'w, nvf_play::slots::SlotsScreen>>,
+    poker: Option<Res<'w, nvf_play::poker::PokerScreen>>,
+    caravan: Option<Res<'w, nvf_play::caravan::CaravanScreen>>,
 }
 
 fn hash_debug(value: &impl std::fmt::Debug, hash: &mut impl Hasher) {
@@ -143,11 +176,12 @@ impl Menus<'_> {
         let mut name = None;
         if let Some(model) = self.active.as_ref().and_then(|a| a.0.as_ref()) {
             hash_debug(&(model.mode, model.focus, model.selected, model.scroll, model.category, model.quantity, model.folder), hash);
+            hash_debug(&(&model.status, model.trade.as_ref().map(|t| (&t.offered, t.purse, t.balance)), model.confirming_take_all()), hash);
             for (list, selected) in model.lists.iter().zip(model.selected) {
                 // [design / file refs] Counts and selection change on transfers even
                 // when the menu's page stays open (`menu::model::Listing`).
                 hash_debug(&(list.rows.len(), list.value), hash);
-                list.rows.get(selected).map(|r| (r.item, r.count, r.equipped, r.mods)).hash(hash);
+                hash_debug(&list.rows.get(selected).map(|r| (r.item, r.count, r.equipped, r.mods, r.condition)), hash);
             }
             name = Some(menu_name(nvf_play::script::menu_code(model.mode)));
         }
@@ -156,17 +190,36 @@ impl Menus<'_> {
             if let Some(data) = self.data.as_ref().filter(|_| pip.page == nvf_play::pipboy::Page::Data) {
                 hash_debug(&data.progress(pip.tabs[pip.page.index()]), hash);
             }
-            if let Some(stats) = &self.stats {
+            if let Some(stats) = self.stats.as_ref().filter(|_| pip.page == nvf_play::pipboy::Page::Stats) {
                 hash_debug(&(stats.status, stats.selected, stats.top, stats.desc, stats.reputation, stats.limb), hash);
+                if let Some(s) = self.stats_snapshot.as_ref().and_then(|p| p.snap.as_ref()) {
+                    hash_debug(&(s.hp, s.ap, s.xp, s.limbs, s.rads, s.needs), hash);
+                }
             }
             if let Some(repair) = self.repair.as_ref().and_then(|r| r.0.as_ref()) {
-                hash_debug(&(repair.first, repair.selected, repair.preview), hash);
+                hash_debug(&repair, hash);
                 name = Some("RepairMenu".into());
             } else if let Some(item_mod) = self.item_mod.as_ref().and_then(|m| m.0.as_ref()) {
-                hash_debug(&(item_mod.first, item_mod.selected), hash);
+                hash_debug(&item_mod, hash);
                 name = Some("ItemModMenu".into());
             } else {
                 name = Some(format!("Pip-Boy {:?}", pip.page));
+            }
+            if pip.page == nvf_play::pipboy::Page::Items {
+                if let Some(hold) = &self.builtins.hotkey {
+                    hash_debug(&(hold.slot, &hold.said), hash);
+                }
+                if let Some(keys) = &self.builtins.hotkeys {
+                    hash_debug(&keys.0, hash);
+                }
+            }
+            if pip.page == nvf_play::pipboy::Page::Data {
+                if let Some(tape) = &self.holotape {
+                    hash_debug(&(tape.playing, tape.paused), hash);
+                }
+                if let Some(g) = g {
+                    hash_debug(&(g.radio.pipboy.on, g.radio.pipboy.station), hash);
+                }
             }
         }
         if let Some(wait) = self.wait.as_ref().and_then(|w| w.0.as_ref()) {
@@ -201,6 +254,8 @@ impl Menus<'_> {
             hash_debug(&progress, hash);
             name = Some("LevelUpMenu".into());
         }
+        self.games.screen(hash, &mut name);
+        self.builtins.screen(g, hash, &mut name);
         if g.is_some_and(|g| g.dialogue.is_some()) || self.state.as_ref().is_some_and(|s| *s.get() == nvf_play::PlayState::Dialogue) {
             if let Some(dialogue) = &self.dialogue {
                 hash_debug(&dialogue.progress(), hash);
@@ -226,6 +281,98 @@ impl Menus<'_> {
         }
         name.hash(hash);
         name
+    }
+}
+
+impl Builtins<'_> {
+    fn screen(&self, g: Option<&Game>, hash: &mut impl Hasher, name: &mut Option<String>) {
+        if let Some(progress) = self.recipe.as_ref().and_then(|m| m.progress()) {
+            hash_debug(&progress, hash);
+            *name = Some("RecipeMenu".into());
+        }
+        if let Some(s) = self.lockpick.as_ref().and_then(|m| m.0.as_ref()) {
+            // [design, #2403 / file refs: lockpick.rs] Phase identity and actual
+            // pin/cylinder movement count; PinBroken::since and fade clocks do not.
+            hash_debug(&(s.reference, s.game.pin, s.game.turn, s.game.pins, std::mem::discriminant(&s.game.phase),
+                &s.status, &s.help, s.leaving.is_some()), hash);
+            *name = Some("LockPickMenu".into());
+        }
+        if let Some(progress) = self.repair.as_ref().and_then(|m| m.progress()) {
+            hash_debug(&progress, hash);
+            *name = Some("RepairServicesMenu".into());
+        }
+        if let Some(panel) = self.message.as_ref().filter(|p| p.view.is_some()) {
+            hash_debug(&(&panel.view, panel.showing, panel.selected, panel.chosen), hash);
+            *name = Some("MessageMenu".into());
+        }
+        if let Some(progress) = self.console.as_ref().and_then(|m| m.progress()) {
+            hash_debug(&progress, hash);
+            *name = Some("Console".into());
+        }
+        if let Some(s) = self.wheel.as_ref().and_then(|m| m.0.as_ref()) {
+            hash_debug(&(s.companion, s.selected, &s.buttons), hash);
+            if let Some(hud) = &self.hud {
+                hud.wheel_line.hash(hash);
+            }
+            *name = Some("CompanionWheel".into());
+        }
+        if let Some((code, progress)) = self.chargen.as_ref().and_then(|m| m.progress()) {
+            hash_debug(&progress, hash);
+            *name = Some(menu_name(code));
+        }
+        if let Some(progress) = self.creator.as_ref().and_then(|m| m.progress()) {
+            hash_debug(&progress, hash);
+            *name = Some("RaceMenu".into());
+        }
+        if let Some(progress) = self.quantity.as_ref().and_then(|m| m.progress()) {
+            hash_debug(&progress, hash);
+            *name = Some("QuantityMenu".into());
+        }
+        if let Some(progress) = self.vigor.as_ref().and_then(|m| m.progress()) {
+            hash_debug(progress, hash);
+            *name = Some("VigorTesterMenu".into());
+        }
+        if let Some(g) = g.filter(|g| g.menu == Some(fnv_game::game::menus::TUTORIAL)) {
+            g.tutorial.hash(hash);
+            if let Some(t) = &self.tutorial {
+                hash_debug(&(t.page, t.scroll), hash);
+            }
+        }
+    }
+}
+
+impl Games<'_> {
+    fn screen(&self, hash: &mut impl Hasher, name: &mut Option<String>) {
+        // [design, #2403 / file refs: nvf-play/src/{blackjack,roulette,slots,poker,caravan}.rs]
+        // Keep game outcomes and choices; exclude scheduled sounds, RNG, animation
+        // timestamps and attempted-input counters from these local-only fingerprints.
+        if let Some(s) = self.blackjack.as_ref().and_then(|m| m.0.as_ref()) {
+            let t = &s.table;
+            hash_debug(&(s.casino, s.bet, s.chips, s.earnings, &s.status, &s.help), hash);
+            hash_debug(&(t.phase, &t.hands, t.active, &t.dealer, t.hole_shown, t.rounds, s.leaving.is_some()), hash);
+            *name = Some("BlackjackMenu".into());
+        }
+        if let Some(s) = self.roulette.as_ref().and_then(|m| m.0.as_ref()) {
+            hash_debug(&(s.casino, s.bet, &s.cursor, &s.table, std::mem::discriminant(&s.phase),
+                s.chips, s.earnings, &s.status, &s.help, s.last, s.banned), hash);
+            *name = Some("RouletteMenu".into());
+        }
+        if let Some(s) = self.slots.as_ref().and_then(|m| m.0.as_ref()) {
+            hash_debug(&(s.casino, s.bet, s.stops, std::mem::discriminant(&s.phase), s.chips,
+                s.earnings, &s.status, &s.help, s.payouts, s.banned), hash);
+            *name = Some("SlotsMenu".into());
+        }
+        if let Some(s) = self.poker.as_ref().and_then(|m| m.0.as_ref()) {
+            let t = &s.table;
+            hash_debug(&(s.casino, s.raise_to, &s.status, s.ended.as_ref().map(|(_, why)| why), s.leaving.is_some()), hash);
+            hash_debug(&(&t.seats, t.button, &t.community, t.street, t.to_act, t.current_bet, t.hand, &t.winners, t.showdown), hash);
+            *name = Some("PokerMenu".into());
+        }
+        if let Some(s) = self.caravan.as_ref().and_then(|m| m.0.as_ref()) {
+            hash_debug(&(s.opponent, s.stage, &s.bet, &s.deck, s.cursor, s.hand, &s.pick, s.forfeit_armed), hash);
+            hash_debug(&(&s.status, &s.help, s.game.as_ref().map(|g| (&g.sides, g.turn, g.phase, &g.winner)), s.leaving.is_some()), hash);
+            *name = Some("CaravanMenu".into());
+        }
     }
 }
 
@@ -347,6 +494,225 @@ mod tests {
         assert_eq!(events[0]["held_s"], 60.0);
         sample(&mut app, 180.0, 5);
         assert_eq!(app.world().resource::<Collector>().summary.events.len(), 1, "once per unchanged lock");
+    }
+
+    #[test]
+    fn detect_every_hold_player_screen_resets_for_progress_but_not_attempt_counters() {
+        use nvf_play::{blackjack, caravan, companion_wheel, console, crafting, creator, lockpick, poker, repair, roulette, slots};
+        macro_rules! check {
+            ($module:ident, $last:expr, $name:expr) => {
+                for step in 1..=$last {
+                    navigation_resets_detection($module::report_progress_fixture(step - 1), $module::report_progress_fixture(step),
+                        $module::report_progress_fixture(if step == $last { step + 1 } else { step }), |_| {}, $name);
+                }
+                let mut app = detector_app();
+                app.insert_resource($module::report_progress_fixture(0));
+                sample(&mut app, 0.0, 0);
+                sample(&mut app, 120.0, 0);
+                assert!(app.world().resource::<Collector>().summary.events.is_empty(), "idle {}", $name);
+            };
+        }
+        check!(crafting, 6, "RecipeMenu");
+        check!(lockpick, 7, "LockPickMenu");
+        check!(repair, 4, "RepairServicesMenu");
+        check!(console, 5, "Console");
+        check!(companion_wheel, 1, "CompanionWheel");
+        check!(blackjack, 3, "BlackjackMenu");
+        check!(roulette, 4, "RouletteMenu");
+        check!(slots, 4, "SlotsMenu");
+        check!(poker, 3, "PokerMenu");
+        check!(caravan, 4, "CaravanMenu");
+        check!(creator, 3, "RaceMenu");
+    }
+
+    #[test]
+    fn detect_script_character_menus_track_edits_and_allocations_not_redraws() {
+        use fnv_game::game::menus;
+        use nvf_play::chargen::{report_list_progress_fixture as list, report_progress_fixture as name};
+        navigation_resets_detection(name(0), name(1), name(2), |_| {}, "Name");
+        for code in [menus::TRAITS, menus::TAG_SKILLS] {
+            for step in 1..=3 {
+                navigation_resets_detection(list(code, step - 1), list(code, step), list(code, if step == 3 { 4 } else { step }), |_| {}, &menu_name(code));
+            }
+        }
+        use nvf_play::chargen::report_special_progress_fixture as special;
+        for step in 1..=3 {
+            navigation_resets_detection(special(step - 1), special(step), special(if step == 3 { 4 } else { step }), |_| {}, &menu_name(menus::TAG_SKILLS));
+        }
+    }
+
+    #[test]
+    fn detect_script_quantity_and_vigor_progress_but_not_redraw_or_animation_bookkeeping() {
+        use nvf_play::{script_quantity::ScriptQuantity, chargen::vigor::VigorMenu};
+        navigation_resets_detection(ScriptQuantity::report_progress_fixture(0), ScriptQuantity::report_progress_fixture(1), ScriptQuantity::report_progress_fixture(2), |_| {}, "QuantityMenu");
+        for step in 1..=3 {
+            navigation_resets_detection(VigorMenu::report_progress_fixture(step - 1), VigorMenu::report_progress_fixture(step), VigorMenu::report_progress_fixture(if step == 3 { 4 } else { step }), |_| {}, "VigorTesterMenu");
+        }
+    }
+
+    fn pip_page(w: &mut World, page: nvf_play::pipboy::Page, tab: usize) {
+        let mut pip = nvf_play::pipboy::PipBoy::default();
+        pip.phase = nvf_play::pipboy::Phase::Up;
+        pip.page = page;
+        pip.tabs[page.index()] = tab;
+        w.insert_resource(pip);
+    }
+
+    #[test]
+    fn detect_map_pan_zoom_cursor_questions_and_active_quest_reset() {
+        use nvf_play::pipboy::{data::report_map_progress_fixture as fixture, Page};
+        for tab in [0, 1] {
+            for step in 1..=7 {
+                // [design, #2403] Both map tabs use the same state contract.
+                let make = |n| {
+                    let mut f = fixture(n);
+                    if tab == 0 { f = nvf_play::pipboy::data::report_local_map_progress_fixture(n); }
+                    f
+                };
+                navigation_resets_detection(make(step - 1), make(step), make(if step == 7 { 8 } else { step }),
+                    |w| pip_page(w, Page::Data, tab), "Pip-Boy Data");
+            }
+        }
+    }
+
+    #[test]
+    fn detect_inventory_barter_container_navigation_quantity_transfers_and_confirmations() {
+        use nvf_play::menu::{model::{report_progress_fixture as fixture, Mode}, ActiveMenu};
+        let trade = |step| ActiveMenu(Some(nvf_play::menu::model::report_trade_progress_fixture(step)));
+        navigation_resets_detection(trade(0), trade(1), trade(2), |_| {}, "BarterMenu");
+        for mode in [Mode::Inventory, Mode::Barter(fnv_sim::FormId(42)), Mode::Container(fnv_sim::FormId(42))] {
+            for step in 1..=8 {
+                let make = |n| ActiveMenu(Some(fixture(mode, n)));
+                navigation_resets_detection(make(step - 1), make(step), make(if step == 8 { 9 } else { step }), |_| {}, &menu_name(nvf_play::script::menu_code(mode)));
+            }
+        }
+    }
+
+    #[test]
+    fn detect_message_selection_and_replacement_reset_but_boundary_presses_do_not() {
+        use nvf_play::message_menu::{MessagePanel, PanelView};
+        let fixture = |step| {
+            let mut panel = MessagePanel::default();
+            panel.show(Some(PanelView { text: "Synthetic question".into(), buttons: vec!["First".into(), "Second".into()], ..Default::default() }), Some(if step >= 3 { 2 } else { 1 }));
+            if step >= 1 { panel.chosen = true; }
+            if step >= 2 { panel.step(1); }
+            if step >= 4 { panel.step(1); }
+            panel
+        };
+        for step in 1..=3 {
+            navigation_resets_detection(fixture(step - 1), fixture(step), fixture(if step == 3 { 4 } else { step }), |_| {}, "MessageMenu");
+        }
+    }
+
+    #[test]
+    fn detect_wait_hours_and_completed_hours_reset_but_partial_hour_clock_does_not() {
+        use nvf_play::wait::{model::{Command, Model}, WaitMenu};
+        for sleep in [false, true] {
+            let fixture = |step| {
+                let mut m = Model::open(sleep);
+                if step >= 1 { m.apply(Command::Hours(3)); }
+                if step >= 2 { m.apply(Command::Accept); }
+                if step >= 3 { m.tick(1.0, 1.0); }
+                if step >= 4 { m.tick(0.1, 1.0); }
+                WaitMenu(Some(m))
+            };
+            for step in 1..=3 {
+                navigation_resets_detection(fixture(step - 1), fixture(step), fixture(if step == 3 { 4 } else { step }), |_| {}, "SleepWaitMenu");
+            }
+        }
+    }
+
+    #[test]
+    fn detect_tutorial_page_and_scroll_reset_but_hover_does_not() {
+        use nvf_play::tutorial_menu::TutorialView;
+        let fixture = |step| TutorialView::report_progress_fixture(step);
+        for step in 1..=2 {
+            navigation_resets_detection(fixture(step - 1), fixture(step), fixture(if step == 2 { 3 } else { step }),
+                |w| { w.insert_resource(nvf_play::script::report_progress_fixture(fnv_game::game::menus::TUTORIAL)); }, "TutorialMenu");
+        }
+    }
+
+    #[test]
+    fn detect_stats_navigation_and_visible_health_reset_but_hover_does_not() {
+        use nvf_play::pipboy::{stats::{Prepared, StatsView}, Page};
+        let fixture = |step| {
+            let mut s = StatsView::default();
+            if step >= 1 { s.status = 1; }
+            if step >= 2 { s.selected[1] = 1; }
+            if step >= 3 { s.top[1] = 1; }
+            if step >= 4 { s.desc = 1; }
+            if step >= 5 { s.reputation = false; }
+            if step >= 6 { s.choose_limb(0); }
+            s.highlight = step >= 7;
+            s
+        };
+        for step in 1..=6 {
+            navigation_resets_detection(fixture(step - 1), fixture(step), fixture(if step == 6 { 7 } else { step }),
+                |w| pip_page(w, Page::Stats, 0), "Pip-Boy Stats");
+        }
+        let fixture = |hp, redraw| Prepared { snap: Some(nvf_play::pipboy::stats::model::Snapshot { hp: Some((hp, 100.0)), ..Default::default() }), new: redraw };
+        navigation_resets_detection(fixture(50.0, false), fixture(60.0, false), fixture(60.0, true), |w| {
+            pip_page(w, Page::Stats, 0);
+            w.insert_resource(StatsView::default());
+        }, "Pip-Boy Stats");
+    }
+
+    #[test]
+    fn detect_repair_and_item_mod_navigation_and_outcomes_reset() {
+        use nvf_play::pipboy::{item_mod, repair, Page};
+        let fixture = |step| repair::PipRepair(Some(repair::Session {
+            offer: repair::Offer { item: fnv_sim::FormId(42), extra: Default::default(), name: "Synthetic item".into(),
+                gear: fnv_game::repair::Gear::Weapon, condition: if step >= 3 { 0.9 } else { 0.5 }, icon: None, parts: vec![] },
+            skill: 50.0, settings: Default::default(), first: usize::from(step >= 1), selected: usize::from(step >= 2), preview: false,
+        }));
+        for step in 1..=3 {
+            navigation_resets_detection(fixture(step - 1), fixture(step), fixture(step), |w| pip_page(w, Page::Items, 0), "RepairMenu");
+        }
+        let fixture = |step| item_mod::PipItemMod(Some(item_mod::Session {
+            offer: item_mod::Offer { item: fnv_sim::FormId(42), extra: fnv_sim::inventory::Extra { mods: if step >= 3 { 1 } else { 0 }, ..Default::default() },
+                name: "Synthetic item".into(), icon: None, choices: vec![] },
+            first: usize::from(step >= 1), selected: usize::from(step >= 2),
+        }));
+        for step in 1..=3 {
+            navigation_resets_detection(fixture(step - 1), fixture(step), fixture(step), |w| pip_page(w, Page::Items, 0), "ItemModMenu");
+        }
+    }
+
+    #[test]
+    fn detect_data_audio_pause_and_radio_tuning_reset_but_playback_counters_do_not() {
+        use nvf_play::{holotape::Holotape, pipboy::Page};
+        let fixture = |step| {
+            let mut tape = Holotape::default();
+            if step >= 1 { tape.playing = Some(fnv_sim::FormId(42)); }
+            if step >= 2 { tape.paused = true; }
+            tape.started = step as u64;
+            tape
+        };
+        for step in 1..=2 {
+            navigation_resets_detection(fixture(step - 1), fixture(step), fixture(if step == 2 { 3 } else { step }), |w| pip_page(w, Page::Data, 3), "Pip-Boy Data");
+        }
+        let fixture = |step| {
+            let mut s = nvf_play::script::report_progress_fixture(fnv_game::game::menus::MAP);
+            let g = &mut s.rt.as_mut().unwrap().game;
+            g.radio.pipboy.station = Some(fnv_sim::FormId(if step >= 2 { 43 } else { 42 }));
+            g.radio.pipboy.on = step >= 1;
+            g.frame = step as u64;
+            s
+        };
+        for step in 1..=2 {
+            navigation_resets_detection(fixture(step - 1), fixture(step), fixture(if step == 2 { 3 } else { step }), |w| pip_page(w, Page::Data, 4), "Pip-Boy Data");
+        }
+    }
+
+    #[test]
+    fn detect_hotkey_assignment_and_feedback_reset_but_aid_bookkeeping_does_not() {
+        use nvf_play::{hotkeys::{Hotkeys, Slot}, pipboy::{hotkey_panel::HotkeyHold, Page}};
+        let mut keys = Hotkeys::default();
+        let before = keys.clone();
+        keys.0[0] = Some(Slot { item: 42, mods: 0 });
+        navigation_resets_detection(before, keys.clone(), keys, |w| pip_page(w, Page::Items, 0), "Pip-Boy Items");
+        let fixture = |step| HotkeyHold { slot: Some(0), said: (step >= 1).then(|| "Synthetic assignment".into()), aid: (step >= 2).then_some(0) };
+        navigation_resets_detection(fixture(0), fixture(1), fixture(2), |w| pip_page(w, Page::Items, 0), "Pip-Boy Items");
     }
 
     fn terminal_fixture(step: usize) -> nvf_play::terminal::TerminalScreen {

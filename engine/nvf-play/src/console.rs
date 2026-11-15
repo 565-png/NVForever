@@ -152,6 +152,14 @@ pub struct Console {
     back: Option<Travel>,
 }
 
+impl Console {
+    /// [design, #2403 / file refs] Local-only editing/navigation fingerprint. Console
+    /// text stays in the hash; no command or output is attached to a report.
+    pub fn progress(&self) -> Option<impl std::fmt::Debug + '_> {
+        self.open.then_some((&self.input, self.recall, self.scroll, self.selected, &self.lines))
+    }
+}
+
 /// When the console's clock starts: the first line printed (the game's start, near
 /// enough) [design: docs/design/tweaks.md].
 static CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
@@ -1824,4 +1832,27 @@ mod tests {
         assert_eq!(a, vec![(10.0, "help stim".to_string()), (12.0, "player.additem f 5".to_string())]);
         assert!(parse_aid("nonsense").is_err());
     }
+}
+/// [design, #2403] Synthetic logical/ineffective states for detector regressions.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_progress_fixture(step: usize) -> Console {
+    let mut c = Console { open: true, ..Default::default() };
+    if step >= 1 {
+        c.input = "synthetic".into();
+    }
+    if step >= 2 {
+        c.recall = Some(0);
+    }
+    if step >= 3 {
+        c.scroll = 1;
+    }
+    if step >= 4 {
+        c.selected = Some(42);
+    }
+    if step >= 5 {
+        c.lines.push("Synthetic result".into());
+    }
+    c.auto_output_done = step >= 6;
+    c
 }
