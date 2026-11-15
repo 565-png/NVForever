@@ -5452,6 +5452,32 @@ mod tests {
         app
     }
 
+    /// The menu overhaul: the page shows English labels in Title Case, the short words inside
+    /// in lower case, and leaves words with a capital or a figure as they are.
+    #[test]
+    fn labels_are_shown_in_title_case() {
+        for (registered, shown) in [
+            ("Freeze the picture in dialogue and menus", "Freeze the Picture in Dialogue and Menus"),
+            ("Light and noise gauges while sneaking", "Light and Noise Gauges While Sneaking"),
+            ("Detached third-person camera", "Detached Third-Person Camera"),
+            ("Counter: frame rate", "Counter: Frame Rate"),
+            ("Anisotropic filtering 16x", "Anisotropic Filtering 16x"),
+            ("HUD colour", "HUD Colour"),
+            ("Light glow (HDR)", "Light Glow (HDR)"),
+            ("V.A.T.S. time slowdown", "V.A.T.S. Time Slowdown"),
+            ("Use Pip-Boy", "Use Pip-Boy"),
+            ("Close In on the Speaker", "Close In on the Speaker"),
+            ("Sky follows the game clock", "Sky Follows the Game Clock"),
+            ("Aim lock-on", "Aim Lock-On"),
+            ("38% slower", "38% Slower"),
+            ("Last enemy", "Last Enemy"),
+            ("a", "A"),
+            ("", ""),
+        ] {
+            assert_eq!(shown_case(registered), shown);
+        }
+    }
+
     #[test]
     fn a_tab_shows_bright_category_headings_the_keys_can_choose() {
         let rows = [("difficulty", "Gameplay"), ("hardcore", "Gameplay"), ("autosave-travel", "Saving"), ("god-mode", "Debug")];

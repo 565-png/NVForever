@@ -182,8 +182,24 @@ pub fn note_over_budget(note: &str) -> Option<String> {
     None
 }
 
+/// The most values a row may have and still not be a slider: a row of this many or fewer is a
+/// list [design: owner 2026-11-15, the menu overhaul: "make anything with 7 or less options a
+/// dropdown instead of a slider"].
+pub const LIST_MOST: usize = 7;
+
+/// How many values slider `s` has (its positions from `min` to 1 in `step`s).
+pub fn slider_values(s: &Slider) -> usize {
+    (((1.0 - s.min) / s.step.max(1e-3)).round() as usize) + 1
+}
+
+/// Whether row `s` is a slider that should be a list ([`LIST_MOST`] or fewer values).
+pub fn few_step_slider(s: &Setting) -> bool {
+    s.slider.as_ref().is_some_and(|sl| slider_values(sl) <= LIST_MOST)
+}
+
 /// The registered rows' notes checked against the budget ([`note_over_budget`]) once every
-/// row is registered (module notes) [design: #2377].
+/// row is registered (module notes) [design: #2377], and the sliders against
+/// [`LIST_MOST`] [design: the menu overhaul].
 pub fn check_notes(settings: Option<Res<Settings>>) {
     let Some(settings) = settings else { return };
     let mut bad = 0;
@@ -194,6 +210,12 @@ pub fn check_notes(settings: Option<Res<Settings>>) {
         }
     }
     info!("settings: {} notes checked, {bad} over the budget ({NOTE_BUDGET} characters)", settings.list().len());
+    let sliders: Vec<&Setting> = settings.list().iter().filter(|s| s.slider.is_some()).collect();
+    let few: Vec<&str> = sliders.iter().filter(|s| few_step_slider(s)).map(|s| s.key).collect();
+    for k in &few {
+        warn!("settings: `{k}` is a slider of {LIST_MOST} or fewer values: make it a list (docs/design/settings-page.md)");
+    }
+    info!("settings: {} sliders checked, {} with {LIST_MOST} or fewer values", sliders.len(), few.len());
 }
 
 /// One on/off switch of the settings page.
@@ -1276,6 +1298,19 @@ mod tests {
         let app = start(&path);
         assert!(app.world().resource::<Lamp>().0, "the stored state wins");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The menu overhaul: a slider of 7 or fewer values is to be a list.
+    #[test]
+    fn a_slider_of_seven_values_or_fewer_is_to_be_a_list() {
+        let s = |min: f32, step: f32| Setting::slider("x", "Test", "x", "", Slider { get: |_| 0.0, set: |_, _| {}, min, step, shown: None });
+        assert_eq!(slider_values(&s(0.0, 0.05).slider.unwrap()), 21);
+        assert!(!few_step_slider(&s(0.0, 0.05)), "a volume: 21 values");
+        assert!(few_step_slider(&s(0.0, 1.0 / 6.0)), "seven values");
+        assert!(!few_step_slider(&s(0.0, 1.0 / 7.0)), "eight values");
+        assert!(few_step_slider(&s(0.5, 0.25)), "three values");
+        let switch = Setting { slider: None, ..s(0.0, 0.5) };
+        assert!(!few_step_slider(&switch));
     }
 
     /// #1631: the UI scale row is kept in the INI as its part and read back at the next

@@ -2339,6 +2339,8 @@ dlss-model=Preset K
         assert!(settings.list().len() > 25, "{}", settings.list().len());
         for s in settings.list() {
             assert_eq!(nvf_play::settings::note_over_budget(s.note), None, "{}: {}", s.key, s.note);
+            // The menu overhaul: 7 or fewer values are a list, never a slider.
+            assert!(!nvf_play::settings::few_step_slider(s), "{}: a slider of 7 or fewer values; make it a list", s.key);
         }
         for note in [FPS_COUNTER_NOTE, FPS_UPSCALING_NOTE, FPS_SPLIT_NOTE] {
             assert_eq!(nvf_play::settings::note_over_budget(note), None, "{note}");
