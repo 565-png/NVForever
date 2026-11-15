@@ -100,7 +100,10 @@ def headless_trace(chain: Path, out: Path, fnvtool: Path, data: Path) -> Path | 
     if trace.exists() and trace.stat().st_mtime >= newest:
         return trace
     trace.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [str(fnvtool), "script", "run", str(data), "FalloutNV.esm", "--schema", str(REPO / "schemas" / "fnv"), "--actions", str(chain)]
+    # The chain's own plugins (a DLC chain's FormIDs count from them), the base game alone
+    # otherwise.
+    plugins = json.loads(chain.read_text(encoding="utf-8")).get("plugins") or ["FalloutNV.esm"]
+    cmd = [str(fnvtool), "script", "run", str(data), *plugins, "--schema", str(REPO / "schemas" / "fnv"), "--actions", str(chain)]
     with open(trace, "w", encoding="utf-8") as f:
         code = subprocess.run(cmd, stdout=f, stderr=subprocess.DEVNULL, cwd=REPO).returncode
     return trace if code == 0 else None

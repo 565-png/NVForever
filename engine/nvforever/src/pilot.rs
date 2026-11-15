@@ -426,6 +426,10 @@ impl Plugin for PilotPlugin {
 struct Chain {
     name: String,
     title: String,
+    /// The plugins the chain's FormIDs count from (its `plugins`), and the file as read,
+    /// to be read again with the FormIDs moved to the run's load order (`remap_chain`).
+    plugins: Vec<String>,
+    raw: Json,
     given: Vec<Json>,
     actions: Vec<Action>,
     ops: Vec<String>,
@@ -451,8 +455,66 @@ impl Chain {
             }
         }
         let name = chain.file_name().map(|n| n.to_string_lossy().trim_end_matches(".actions.json").to_string()).unwrap_or_default();
-        Ok(Chain { name, title: input.title.clone().unwrap_or_default(), given: raw["given"].as_array().cloned().unwrap_or_default(), actions: input.actions, ops, expect: expected })
+        Ok(Chain { name, title: input.title.clone().unwrap_or_default(), plugins: input.plugins.clone(), raw: raw.clone(), given: raw["given"].as_array().cloned().unwrap_or_default(), actions: input.actions, ops, expect: expected })
     }
+}
+
+/// A chain whose `plugins` count load-order indices otherwise than the run (Honest
+/// Hearts is 01 in its chains, 02 in a game with Dead Money before it): its FormIDs
+/// (`0x01xxxxxx`, and bare `01XXXXXX` in console lines) are moved to the run's indices
+/// and the chain read again.
+fn remap_chain(p: &mut Pilot, order: &[String]) {
+    let map: Vec<Option<u8>> = p.chain_plugins.iter().map(|name| order.iter().position(|o| o.eq_ignore_ascii_case(name)).and_then(|i| u8::try_from(i).ok())).collect();
+    if map.iter().enumerate().all(|(i, m)| *m == u8::try_from(i).ok()) {
+        return;
+    }
+    let raw = remap_json(&p.chain_raw, &map);
+    match serde_json::from_value::<runner::Input>(raw.clone()) {
+        Ok(input) => {
+            p.actions = input.actions;
+            p.given = raw["given"].as_array().cloned().unwrap_or_default();
+            let moved: Vec<String> = p.chain_plugins.iter().zip(&map).enumerate().filter(|(i, (_, m))| **m != u8::try_from(*i).ok()).map(|(i, (n, m))| format!("{n} {i:02X} → {}", m.map_or("not loaded".to_string(), |m| format!("{m:02X}")))).collect();
+            info!("pilot: chain {}: its FormIDs moved to this load order: {}", p.chain, moved.join(", "));
+        }
+        Err(e) => error!("pilot: chain {}: its FormIDs moved to this load order do not read: {e}", p.chain),
+    }
+}
+
+fn remap_json(v: &Json, map: &[Option<u8>]) -> Json {
+    match v {
+        Json::String(s) => Json::String(remap_ids(s, map)),
+        Json::Array(a) => Json::Array(a.iter().map(|x| remap_json(x, map)).collect()),
+        Json::Object(o) => Json::Object(o.iter().map(|(k, x)| (k.clone(), remap_json(x, map))).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Each 8-hex-digit word (with or without `0x`) whose top byte is a chain plugin's index
+/// gets the run's index of that plugin.
+fn remap_ids(s: &str, map: &[Option<u8>]) -> String {
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < b.len() {
+        let word = |at: usize| at + 8 <= b.len() && b[at..at + 8].iter().all(u8::is_ascii_hexdigit) && b.get(at + 8).is_none_or(|c| !c.is_ascii_alphanumeric());
+        let starts = i == 0 || !b[i - 1].is_ascii_alphanumeric();
+        let at = if starts && b[i..].starts_with(b"0x") { i + 2 } else { i };
+        if starts && word(at) {
+            let id = u32::from_str_radix(&s[at..at + 8], 16).unwrap_or(0);
+            let top = (id >> 24) as usize;
+            out.push_str(&s[i..at]);
+            match map.get(top).copied().flatten() {
+                Some(m) if top > 0 => out.push_str(&format!("{:08X}", (u32::from(m) << 24) | (id & 0x00FF_FFFF))),
+                _ => out.push_str(&s[at..at + 8]),
+            }
+            i = at + 8;
+        } else {
+            let c = s[i..].chars().next().expect("in the string");
+            out.push(c);
+            i += c.len_utf8();
+        }
+    }
+    out
 }
 
 /// Something the pilot does of its own accord (module notes).
@@ -593,6 +655,9 @@ struct Pilot {
     /// Since when the player was put on a long way (the fast-travel stand-in): its
     /// teammates follow a moment later, as fast travel brings them.
     followers_due: Option<f64>,
+    /// The current chain's plugins and file (`Chain::plugins`).
+    chain_plugins: Vec<String>,
+    chain_raw: Json,
     /// Seconds of real time after which the run ends (`--pilot-minutes`).
     deadline: Option<f64>,
     /// A campaign's chains have their given state set all the same (`--pilot-given`).
@@ -673,6 +738,8 @@ impl Pilot {
             talk_picks: 0,
             explored: (usize::MAX, Vec::new()),
             followers_due: None,
+            chain_plugins: Vec::new(),
+            chain_raw: Json::Null,
             deadline: None,
             set_given: false,
             god: false,
@@ -720,6 +787,7 @@ impl Pilot {
     fn next_chain(&mut self) -> bool {
         let Some(c) = self.queue.pop_front() else { return false };
         (self.chain, self.title, self.given, self.actions, self.ops, self.expect) = (c.name, c.title, c.given, c.actions, c.ops, c.expect);
+        (self.chain_plugins, self.chain_raw) = (c.plugins, c.raw);
         (self.i, self.phase, self.part, self.given_applied, self.step_from) = (0, Phase::Begin, 0, false, self.now);
         true
     }
@@ -3085,6 +3153,9 @@ fn drive(
     };
     if !p.given_applied {
         p.given_applied = true;
+        if let Some(order) = h.game(|g| g.data.load_order.clone()) {
+            remap_chain(p, &order);
+        }
         let all = p.given.clone();
         // In a campaign the given state is a precondition (module notes).
         let (given, checked): (Vec<Json>, Vec<Json>) = match (p.campaign && !p.set_given, p.chains_done) {
@@ -3307,6 +3378,17 @@ fn drive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chain_formids_move_to_the_runs_load_order() {
+        // FalloutNV 00, HonestHearts 01 in the chain; 00 and 02 in the run.
+        let map = [Some(0), Some(2)];
+        assert_eq!(remap_ids("0x0100F898", &map), "0x0200F898");
+        assert_eq!(remap_ids("0100F89C.MoveTo 0100F898", &map), "0200F89C.MoveTo 0200F898");
+        assert_eq!(remap_ids("0x00124121 and placed:VFSSimon", &map), "0x00124121 and placed:VFSSimon", "the base game's stay");
+        assert_eq!(remap_ids("x0100F898 0100F8981 12.5", &map), "x0100F898 0100F8981 12.5", "only whole words");
+        assert_eq!(remap_ids("0x0300F898", &map), "0x0300F898", "an index the chain does not name stays");
+    }
 
     #[test]
     fn the_tail_point_is_that_far_before_the_end() {
