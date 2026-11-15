@@ -1017,7 +1017,8 @@ mod tests {
         use wgpu::naga;
         // Validate the actual shared reference sampler, including its texture/sampler
         // arguments and explicit LOD. Runtime smoke covers the active binding form.
-        let terrain = include_str!("terrain.wesl");
+        // Line endings as checked out (CRLF on Windows) normalised before cutting the function out.
+        let terrain = include_str!("terrain.wesl").replace("\r\n", "\n");
         let start = terrain.find("fn height_reference(").unwrap();
         let end = start + terrain[start..].find("\n}\n").unwrap() + 2;
         let source = format!("struct View {{ mip_bias: f32 }} @group(0) @binding(0) var<uniform> view: View;\n{}", &terrain[start..end]);
