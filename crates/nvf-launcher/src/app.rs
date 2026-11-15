@@ -5,7 +5,7 @@ use crate::catalog::{self, Kind, Row};
 use crate::launch::{self, Start};
 use crate::news::{self, Post, Source};
 use crate::theme::{self, BAD, CARD, GOLD, GOOD, LINE, WEAK};
-use eframe::egui::{self, load::Bytes, Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, load::Bytes, Align, CornerRadius, Frame, Layout, Margin, RichText, Sense, Stroke, Vec2};
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use fnv_install::{guard_write, ini_get, ini_pairs, ini_set, plugins, write_whole, Config, EngineHome, GameInstall};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -424,7 +424,7 @@ impl App {
         let time_g = time.map(|t| p.layout_no_wrap(t, egui::FontId::proportional(18.0), GOLD));
         let w = lead_g.size().x + time_g.as_ref().map_or(0.0, |g| g.size().x + 12.0) + 40.0;
         let pill = egui::Rect::from_center_size(rect.center(), Vec2::new(w, 34.0));
-        p.rect(pill, CornerRadius::same(17), Color32::from_rgb(0x24, 0x20, 0x18), Stroke::new(1.0, theme::GOLD_DIM), egui::StrokeKind::Inside);
+        p.rect(pill, CornerRadius::same(17), theme::SELECTED, Stroke::new(1.0, theme::GOLD_DIM), egui::StrokeKind::Inside);
         let lead_w = lead_g.size().x;
         p.galley(egui::pos2(pill.left() + 16.0, pill.center().y - lead_g.size().y / 2.0), lead_g, WEAK);
         if let Some(g) = time_g {
@@ -516,7 +516,7 @@ fn nav_button(ui: &mut egui::Ui, name: &str, on: bool) -> egui::Response {
     let text = RichText::new(name).font(crate::fonts::title(15.0)).color(if on { GOLD } else { theme::TEXT });
     let b = egui::Button::new(text)
         .min_size(Vec2::new(ui.available_width(), 42.0))
-        .fill(if on { Color32::from_rgb(0x2E, 0x29, 0x20) } else { theme::BUTTON })
+        .fill(if on { theme::SELECTED } else { theme::BUTTON })
         .stroke(Stroke::new(1.0, if on { theme::GOLD_DIM } else { LINE }));
     let r = ui.add(b);
     if on {
@@ -534,7 +534,7 @@ fn big_button(ui: &mut egui::Ui, title: &str, sub: &str, primary: bool) -> egui:
     let fill = match (primary, resp.hovered() && enabled) {
         (true, true) => theme::GOLD_HOVER,
         (true, false) => GOLD,
-        (false, true) => Color32::from_rgb(0x3A, 0x35, 0x2E),
+        (false, true) => theme::BUTTON_HOVER,
         (false, false) => theme::BUTTON,
     };
     let fill = if enabled { fill } else { fill.gamma_multiply(0.5) };
@@ -566,7 +566,7 @@ fn toggle(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
         resp.mark_changed();
     }
     let t = ui.ctx().animate_bool_responsive(resp.id, *on);
-    let bg = Color32::from_rgb(0x3A, 0x36, 0x30).lerp_to_gamma(GOLD, t);
+    let bg = theme::BUTTON_ACTIVE.lerp_to_gamma(GOLD, t);
     let p = ui.painter();
     p.rect_filled(rect, CornerRadius::same(11), bg);
     let x = egui::lerp(rect.left() + 11.0..=rect.right() - 11.0, t);

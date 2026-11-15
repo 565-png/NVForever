@@ -10,13 +10,25 @@ pub const GOLD_HOVER: Color32 = Color32::from_rgb(0xFF, 0xB8, 0x4D);
 pub const ON_GOLD: Color32 = Color32::from_rgb(0x15, 0x12, 0x0C);
 /// `GOLD` dimmed, for headings, edges and the selected tab.
 pub const GOLD_DIM: Color32 = Color32::from_rgb(0xA8, 0x72, 0x1D);
-pub const BG: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
-pub const PANEL: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x1D);
-pub const CARD: Color32 = Color32::from_rgb(0x20, 0x1F, 0x22);
-pub const BUTTON: Color32 = Color32::from_rgb(0x2A, 0x28, 0x2B);
-pub const TEXT: Color32 = Color32::from_rgb(0xE8, 0xE2, 0xD2);
-pub const WEAK: Color32 = Color32::from_rgb(0x9C, 0x96, 0x88);
-pub const LINE: Color32 = Color32::from_rgb(0x34, 0x31, 0x2C);
+// The site's dark blue scheme (nv-forever.com assets/css/style.css, :root).
+/// `--bg`: the page behind everything.
+pub const BG: Color32 = Color32::from_rgb(0x0F, 0x11, 0x15);
+/// `--bg-alt`: the top, side and bottom bars.
+pub const PANEL: Color32 = Color32::from_rgb(0x15, 0x19, 0x22);
+/// `--surface`: cards and rows.
+pub const CARD: Color32 = Color32::from_rgb(0x1B, 0x20, 0x2B);
+/// A step above `--surface`, for buttons.
+pub const BUTTON: Color32 = Color32::from_rgb(0x21, 0x27, 0x34);
+/// Buttons under the pointer and pressed.
+pub const BUTTON_HOVER: Color32 = Color32::from_rgb(0x2A, 0x31, 0x40);
+pub const BUTTON_ACTIVE: Color32 = Color32::from_rgb(0x33, 0x3B, 0x4D);
+/// The open page's button and the countdown: `--surface` with a touch of the accent.
+pub const SELECTED: Color32 = Color32::from_rgb(0x26, 0x25, 0x24);
+/// `--text` and `--muted`.
+pub const TEXT: Color32 = Color32::from_rgb(0xE7, 0xE9, 0xEE);
+pub const WEAK: Color32 = Color32::from_rgb(0x9A, 0xA3, 0xB2);
+/// `--border`.
+pub const LINE: Color32 = Color32::from_rgb(0x2A, 0x31, 0x40);
 pub const BAD: Color32 = Color32::from_rgb(0xE0, 0x6A, 0x50);
 pub const GOOD: Color32 = Color32::from_rgb(0x8C, 0xC0, 0x6A);
 
@@ -39,6 +51,7 @@ pub fn apply(ctx: &egui::Context) {
     v.window_fill = PANEL;
     v.extreme_bg_color = BG;
     v.faint_bg_color = CARD;
+    v.code_bg_color = BUTTON;
     v.override_text_color = Some(TEXT);
     v.hyperlink_color = GOLD;
     v.selection.bg_fill = GOLD_DIM;
@@ -49,9 +62,9 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.inactive.weak_bg_fill = BUTTON;
     v.widgets.inactive.bg_fill = BUTTON;
     v.widgets.inactive.bg_stroke = Stroke::new(1.0, LINE);
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x36, 0x32, 0x2C);
+    v.widgets.hovered.weak_bg_fill = BUTTON_HOVER;
     v.widgets.hovered.bg_stroke = Stroke::new(1.0, GOLD_DIM);
-    v.widgets.active.weak_bg_fill = Color32::from_rgb(0x44, 0x3C, 0x2C);
+    v.widgets.active.weak_bg_fill = BUTTON_ACTIVE;
     v.widgets.active.bg_stroke = Stroke::new(1.0, GOLD);
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
     ctx.set_global_style(style);
