@@ -285,9 +285,7 @@ impl Plugin for HitVolumePlugin {
 
 fn volume_systems(compare: bool) -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
     let systems = if compare { sync_volumes.pipe(compare_walks).into_configs() } else { sync_volumes.into_configs() };
-    // [design, #2531] Keep the whole comparison pipe before dismemberment, including
-    // when unrelated scheduling edges change (nvforever/src/main.rs travel/weather).
-    systems.after(PhysSystems).before(crate::dismember::resolve).in_set(crate::PlaySet::Physics)
+    systems.after(PhysSystems).in_set(crate::PlaySet::Physics)
 }
 
 fn aid_on(name: &str) -> bool {
@@ -675,12 +673,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn volume_sync_and_optional_comparison_explicitly_precede_dismemberment() {
-        use bevy::ecs::schedule::{IntoSystemSet, NodeId};
-
+    fn volume_sync_and_optional_comparison_precede_activation() {
         for compare in [false, true] {
             let mut schedule = Schedule::default();
-            schedule.add_systems(crate::dismember::resolve);
+            schedule.configure_sets((crate::PlaySet::Physics, crate::PlaySet::Activation).chain());
+            schedule.add_systems(crate::dismember::resolve.in_set(crate::PlaySet::Activation));
             schedule.add_systems(volume_systems(compare));
             schedule.initialize(&mut World::new()).unwrap();
             let systems: Vec<_> = schedule.systems().unwrap().map(|(key, s)| (key, s.name().to_string())).collect();
@@ -688,12 +685,6 @@ mod tests {
             let resolve = systems.iter().position(|(_, name)| name.ends_with("dismember::resolve")).unwrap();
             assert_eq!(systems[sync].1.contains("compare_walks"), compare);
             assert!(sync < resolve, "comparison={compare}: {systems:?}");
-
-            // [design, #2531] Check the edge itself, independent of PlaySet ordering
-            // and any topological order Bevy could happen to choose without it.
-            let graph = schedule.graph();
-            let resolve_set = graph.system_sets.get_key(crate::dismember::resolve.into_system_set().intern()).unwrap();
-            assert!(graph.dependency().graph().contains_edge(NodeId::System(systems[sync].0), NodeId::Set(resolve_set)), "comparison={compare}");
         }
     }
 

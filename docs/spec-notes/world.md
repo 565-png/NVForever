@@ -304,10 +304,12 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
     consume extra rolls. Travel invalidation and worldspace rebuilds still refresh placement [design,
     #2531: sky.rs::carry_region_placement, worldspace.rs::carry_climate_sky and switch;
     implementation of the settled lookup rule, not an additional capture claim].
-    Travel stays before weather lookup and streaming; hit-volume sync (including its
-    optional comparison pipe) explicitly precedes dismemberment, keeping that local
-    order independent of travel/weather scheduling [design, #2531:
-    engine/nvforever/src/main.rs, engine/nvf-play/src/hitvol.rs::volume_systems;
+    Travel stays before weather lookup and streaming. The test-hit producer precedes
+    death handling so a test kill can start its ragdoll in that frame's PostUpdate;
+    the next frame's Physics volume sync (including its optional comparison pipe)
+    then precedes Activation dismemberment through the existing PlaySet chain [design,
+    #2531: engine/nvforever/src/main.rs, deaths.rs::DeathsPlugin, ragdoll.rs::RagdollPlugin;
+    engine/nvf-play/src/knockouts.rs::TestHitSet, lib.rs::PlayPlugin;
     regression scenario `hitvol-marked-corpse-parts`].
     Indoors the list stays as it was [hypothesis]. Among overlapping overriding regions,
     highest priority then lowest FormID wins [hypothesis: the flag is named by
