@@ -153,13 +153,14 @@ fn same_name(a: &str, b: &str) -> bool {
 }
 
 /// [design: the maintainer's review of #2565] The listed files `target` does not hold yet,
-/// in the list's order (names compared as the loader compares them): only these are fetched.
+/// in the list's order: only these are fetched.
 /// A listed file already there is kept and not compared with its pin, so a player who brought
 /// another DLSS version (the loader pins no `nvngx_*.dll`, `preflight.rs`) gets the files they
 /// lack instead of a download that ends in [`Failure::FolderHolds`]. Every file when `target`
 /// is absent. A folder holding the updater is refused here, as [`place`] refuses it, and so is
-/// a listed name that is there but not a file (a folder of that name): the offer counts it as
-/// missing (`dlss_download::files_missing`), so it may not count as installed here.
+/// a listed name that is there but not a file (a folder of that name). Each file is looked up
+/// by its own name, as the offer looks (`dlss_download::files_missing`), so a file counts as
+/// installed here exactly when the offer counts it present.
 pub(super) fn still_missing(target: &Path, files: &[DownloadFile]) -> Result<Vec<DownloadFile>, Failure> {
     let names: Vec<String> = match fs::read_dir(target) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(files.to_vec()),
@@ -171,10 +172,12 @@ pub(super) fn still_missing(target: &Path, files: &[DownloadFile]) -> Result<Vec
     }
     let mut wanted = Vec::new();
     for file in files {
-        match names.iter().find(|n| same_name(n, file.name)) {
-            None => wanted.push(*file),
-            Some(existing) if !target.join(existing).is_file() => return Err(Failure::FolderHolds(existing.clone())),
-            Some(_) => {}
+        let path = target.join(file.name);
+        match fs::metadata(&path) {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => return Err(Failure::FolderHolds(file.name.to_string())),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => wanted.push(*file),
+            Err(e) => return Err(write_error(&path, &e)),
         }
     }
     Ok(wanted)
@@ -465,8 +468,8 @@ pub(super) mod tests {
         assert_eq!(still_missing(&target, &files), Ok(files.clone()), "an absent folder wants every file");
         fs::create_dir(&target).unwrap();
         assert_eq!(still_missing(&target, &files), Ok(files.clone()));
-        // [design] The player's own a.dll (other bytes, any case) is kept, not compared.
-        fs::write(target.join("A.DLL"), b"the player's own build").unwrap();
+        // [design] The player's own a.dll (other bytes) is kept, not compared.
+        fs::write(target.join("a.dll"), b"the player's own build").unwrap();
         assert_eq!(still_missing(&target, &files), Ok(vec![files[1]]));
         // A folder named like a listed file is neither installed nor replaced.
         fs::create_dir(target.join("b.dll")).unwrap();

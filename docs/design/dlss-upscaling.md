@@ -339,7 +339,7 @@ copying them by hand; the manual way stays ([dlss.md](../dlss.md)).
   the eight entries `bin/x64/<name>` are fetched, by HTTP range requests: the archive's last
   64 KiB and a little more for its end record and central directory, then each entry from its
   local header to the next, and only the entries the DLSS folder lacks
-  (`install::still_missing`, names compared as the loader compares them): a listed file
+  (`install::still_missing`, each looked up by its name, as the offer looks): a listed file
   already there is kept and never compared with its pin, since players may bring another
   DLSS version (the maintainer's review of #2565). The four frame generation entries (`sl.dlss_g.dll`,
   `nvngx_dlssg.dll`, `sl.reflex.dll`, `sl.pcl.dll`) add about 4.6 MB compressed [observed: the
