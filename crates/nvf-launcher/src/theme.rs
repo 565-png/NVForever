@@ -18,10 +18,10 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
     let mut style = (*ctx.global_style()).clone();
     style.text_styles = [
-        (TextStyle::Heading, FontId::proportional(26.0)),
+        (TextStyle::Heading, crate::fonts::title(26.0)),
         (TextStyle::Body, FontId::proportional(15.0)),
         (TextStyle::Button, FontId::proportional(15.0)),
-        (TextStyle::Small, FontId::proportional(12.0)),
+        (TextStyle::Small, FontId::proportional(13.0)),
         (TextStyle::Monospace, FontId::monospace(13.0)),
     ]
     .into();

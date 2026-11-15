@@ -7,6 +7,7 @@
 
 mod app;
 mod catalog;
+mod fonts;
 mod launch;
 mod news;
 mod theme;
