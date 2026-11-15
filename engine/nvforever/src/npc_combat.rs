@@ -197,7 +197,7 @@ use fnv_game::awareness::State;
 use fnv_game::combat_style::{melee_attack_chance, melee_block_chance, Opponent};
 use fnv_game::detection::Band;
 use fnv_sim::FormId;
-use nvf_play::blocking::ActorBlocks;
+use nvf_play::blocking::{ActorBlocks, Block};
 use nvf_play::combat::{ActorFire, ActorStrike, BlockedBlow, Combat, CombatStats};
 use nvf_play::control::PlayerControl;
 use nvf_play::phys::PhysState;
@@ -1092,13 +1092,61 @@ pub fn creature_spacing(bodies: Option<f32>, reach: f32) -> (f32, f32) {
     ((b + MELEE_STOP_GAP).max(reach - MELEE_STOP_SHORT), (b + MELEE_HIT_GAP).max(reach))
 }
 
-/// The widened walking block, absent from the drawn-block list [design:
-/// nvf_play::player, #2535]. Non-widened actors retain their existing combat lookup.
-fn walking_creature_block(phys: &nvf_play::phys::PhysState, id: u32) -> Option<nvf_play::blocking::Block> {
-    let bbx = phys.actor_block_radii.get(&id).copied()?;
-    let n = phys.npcs.get(&id)?;
-    let radius = nvf_play::blocking::walking_radius(n.ch.params.radius, Some(bbx));
-    (radius > n.ch.params.radius).then(|| nvf_play::blocking::Block::character(id, n.ch.feet, radius, n.ch.params.height, false))
+/// Combat's snapshot of walking blocks, absent from the drawn-block list [design:
+/// nvf_play::player, #2535]. An ordinary walking character supplies the other body
+/// of a widened pair; ordinary pairs retain their existing drawn-block lookup.
+struct CombatBodies<'a> {
+    walking: HashMap<u32, (Block, bool)>,
+    drawn: &'a [Block],
+    player_radius: Option<f32>,
+}
+
+impl<'a> CombatBodies<'a> {
+    fn new(phys: Option<&PhysState>, blocks: Option<&'a ActorBlocks>) -> Self {
+        let walking = phys.map(|p| p.npcs.iter().map(|(&id, n)| {
+            let radius = nvf_play::blocking::walking_radius(n.ch.params.radius, p.actor_block_radii.get(&id).copied());
+            (id, (Block::character(id, n.ch.feet, radius, n.ch.params.height, false), radius > n.ch.params.radius))
+        }).collect()).unwrap_or_default();
+        Self {
+            walking,
+            drawn: blocks.map_or(&[], |b| b.list.as_slice()),
+            player_radius: phys.and_then(|p| p.player.as_ref()).map(|c| c.params.radius),
+        }
+    }
+
+    fn body(&self, id: u32, other: u32) -> Option<Block> {
+        self.walking.get(&id).filter(|(_, widened)| *widened).map(|(b, _)| *b)
+            .or_else(|| self.drawn.iter().find(|b| b.actor == id).copied())
+            .or_else(|| {
+                self.walking.get(&other).filter(|(_, widened)| *widened)?;
+                self.walking.get(&id).map(|(b, _)| *b)
+            })
+    }
+
+    fn pair(&self, me: u32, target: u32) -> Option<(Block, f32)> {
+        let mine = self.body(me, target)?;
+        let radius = if target == FormId::PLAYER_REF.0 { self.player_radius? } else { self.body(target, me)?.radius };
+        Some((mine, radius))
+    }
+
+    fn gap(&self, me: u32, target: u32, tfeet: V3) -> Option<f32> {
+        let (mine, radius) = self.pair(me, target)?;
+        Some(mine.room([tfeet[0], tfeet[1]], radius))
+    }
+
+    fn radii(&self, me: u32, target: u32) -> Option<f32> {
+        let (mine, radius) = self.pair(me, target)?;
+        Some(mine.radius + radius)
+    }
+}
+
+/// The strike-range decision shared by melee attacks and their pending blows
+/// [design: fight, melee_spacing, creature_spacing].
+fn in_melee_reach(arm: &Arm, away: f32, gap: Option<f32>, radii: Option<f32>, reach: f32) -> bool {
+    match (arm, gap) {
+        (Arm::Creature(..), gap) => away <= creature_spacing(gap.map(|gap| away - gap), reach).1,
+        (_, gap) => gap.map_or(away <= reach, |gap| away <= melee_spacing(away - gap, radii.unwrap_or(away - gap), reach).1),
+    }
 }
 
 /// What a gun reaches and how near it is safe to fire (docs/design/combat-ai.md §16).
@@ -1478,26 +1526,10 @@ pub(crate) fn fight(
         places.insert(FormId::PLAYER_REF.0, (p.feet, p.eye(), 1.0));
     }
     // The gap between an actor's body and its target's, when both are known.
-    let player_radius = phys.as_deref().and_then(|p| p.player.as_ref()).map(|c| c.params.radius);
-    // Walking creatures' BBX blocks are made in fixed steps, outside the drawn list
-    // [design: nvf_play::player, #2535]. Combat and lunge stops use the same radius;
-    // other actors keep the existing drawn-block lookup [design].
-    let walking_blocks: HashMap<u32, nvf_play::blocking::Block> = phys.as_deref().map(|p| {
-        p.actor_block_radii.keys().filter_map(|&id| walking_creature_block(p, id).map(|b| (id, b))).collect()
-    }).unwrap_or_default();
-    let body = |id: u32| {
-        walking_blocks.get(&id).copied().or_else(|| blocks.as_deref().and_then(|b| b.list.iter().find(|x| x.actor == id).copied()))
-    };
-    let gap = |me: u32, target: u32, tfeet: V3| -> Option<f32> {
-        let mine = body(me)?;
-        let radius = if target == FormId::PLAYER_REF.0 { player_radius? } else { body(target)?.radius };
-        Some(mine.room([tfeet[0], tfeet[1]], radius))
-    };
+    let bodies = CombatBodies::new(phys.as_deref(), blocks.as_deref());
+    let gap = |me: u32, target: u32, tfeet: V3| bodies.gap(me, target, tfeet);
     // The two bodies' radii summed, which a melee reach is counted beyond (`melee_spacing`).
-    let radii = |me: u32, target: u32| -> Option<f32> {
-        let radius = if target == FormId::PLAYER_REF.0 { player_radius? } else { body(target)?.radius };
-        Some(body(me)?.radius + radius)
-    };
+    let radii = |me: u32, target: u32| bodies.radii(me, target);
     let f = &mut *fighters;
     f.poses.clear();
     f.drawn_locks = std::mem::take(&mut f.locks);
@@ -2921,10 +2953,7 @@ pub(crate) fn fight(
                     }
                     f.stats.melee_closest = Some(f.stats.melee_closest.map_or(away, |c| c.min(away)));
                     fighter.strike_in = (fighter.strike_in - dt).max(0.0);
-                    let near = match (&arm, gap) {
-                        (Arm::Creature(..), gap) => away <= creature_spacing(gap.map(|gap| away - gap), reach).1,
-                        (_, gap) => gap.map_or(away <= reach, |gap| away <= melee_spacing(away - gap, radii.unwrap_or(away - gap), reach).1),
-                    };
+                    let near = in_melee_reach(&arm, away, gap, radii, reach);
                     // The last blow's clip, once started: its blow lands at its own `Hit`
                     // key, and the next decision comes at its `a:` key (module notes).
                     if let Some(sw) = fighter.swing.as_mut() {
@@ -3586,22 +3615,76 @@ mod tests {
     }
 
     #[test]
-    fn combat_reads_only_widened_walking_creature_blocks() {
+    fn combat_uses_ordinary_walking_blocks_only_in_widened_pairs() {
         use nvf_play::phys::{NpcBody, PhysState};
         let mut phys = PhysState::default();
         let id = 123;
         let feet = [10.0, 20.0, 30.0];
         let ch = phys.world.add_character(id, fnv_phys::CharacterParams::default(), feet);
         phys.npcs.insert(id, NpcBody { ch, prev_feet: feet, velocity: [0.0; 2], jump: false, sink: 0.0, lift: Default::default() });
-        assert!(walking_creature_block(&phys, id).is_none());
+        assert!(CombatBodies::new(Some(&phys), None).body(id, 456).is_none());
         phys.actor_block_radii.insert(id, 10.0);
-        assert!(walking_creature_block(&phys, id).is_none());
+        assert!(CombatBodies::new(Some(&phys), None).body(id, 456).is_none());
         phys.actor_block_radii.insert(id, 70.0);
-        let body = walking_creature_block(&phys, id).unwrap();
+        let body = CombatBodies::new(Some(&phys), None).body(id, 456).unwrap();
         assert_eq!((body.a, body.b, body.radius), ([10.0, 20.0], [10.0, 20.0], 70.0));
         assert_eq!(phys.npcs[&id].ch.params.radius, 22.0);
         phys.npcs.clear();
-        assert!(walking_creature_block(&phys, id).is_none());
+        assert!(CombatBodies::new(Some(&phys), None).body(id, 456).is_none());
+    }
+
+    #[test]
+    fn walking_humanoid_and_widened_creature_can_strike_at_their_blocked_distance() {
+        use nvf_play::phys::{NpcBody, PhysState};
+        // Synthetic walking pair and knife-like weapon [design, #2535]. BBX width,
+        // RNAM and scales supplied in #2535 [observed: FalloutNV.esm and Fallout -
+        // Meshes.bsa, fnvtool esm decode / nif decode, main session 2026-11-15].
+        let (person, creature) = (123, 456);
+        let weapon = WeaponStats { reach: 0.5, ..Default::default() };
+        let rules = fnv_combat::tuning::Rules { combat_distance: 107.0, ..fnv_combat::tuning::Rules::defaults() };
+        let knife_reach = fnv_combat::damage::melee_reach(&rules, &weapon, 1.0);
+        assert_eq!(knife_reach, 53.5);
+        for scale in [0.6, 1.0] {
+            let mut phys = PhysState::default();
+            let width = 70.56 * scale;
+            let combined = 22.0 + width;
+            let creature_reach = creature_reach(Some(64.0), Some(r"Creatures\Radscorpion\Skeleton.nif"), scale);
+            for (id, feet) in [(person, [0.0; 3]), (creature, [combined + 0.01, 0.0, 0.0])] {
+                let ch = phys.world.add_character(id, fnv_phys::CharacterParams::default(), feet);
+                phys.npcs.insert(id, NpcBody { ch, prev_feet: feet, velocity: [25.0, 0.0], jump: false, sink: 0.0, lift: Default::default() });
+            }
+            phys.actor_block_radii.insert(creature, width);
+            let blocks = ActorBlocks::default();
+            // Both walkers are absent from the drawn list [design: blocking.rs].
+            // Repeat after both have moved so the snapshot must follow their feet
+            // [design: CombatBodies::new].
+            for offset in [0.0, 15.0] {
+                for (distance, knife_near) in [(combined + 0.01, true), (combined + knife_reach - 0.01, true), (combined + knife_reach + 0.01, false)] {
+                    phys.npcs.get_mut(&person).unwrap().ch.feet = [offset, 0.0, 0.0];
+                    phys.npcs.get_mut(&creature).unwrap().ch.feet = [offset + distance, 0.0, 0.0];
+                    let bodies = CombatBodies::new(Some(&phys), Some(&blocks));
+                    for (me, target, arm, reach, near) in [
+                        (person, creature, Arm::Melee(None), knife_reach, knife_near),
+                        (creature, person, Arm::Creature(1.0, creature_reach), creature_reach, distance <= creature_reach.max(combined + MELEE_HIT_GAP)),
+                    ] {
+                        let feet = phys.npcs[&me].ch.feet;
+                        let tfeet = phys.npcs[&target].ch.feet;
+                        let away = flat(feet, tfeet);
+                        let gap = bodies.gap(me, target, tfeet);
+                        let radii = bodies.radii(me, target);
+                        assert!((radii.unwrap() - combined).abs() < 1e-4);
+                        assert!((gap.unwrap() - (away - combined)).abs() < 1e-4);
+                        assert_eq!(in_melee_reach(&arm, away, gap, radii, reach), near);
+                    }
+                }
+            }
+            // No widened participant: keep ordinary pairs' existing lookup
+            // [design, #2535].
+            phys.actor_block_radii.clear();
+            let bodies = CombatBodies::new(Some(&phys), Some(&blocks));
+            assert!(bodies.radii(person, creature).is_none());
+            assert!(bodies.gap(person, creature, phys.npcs[&creature].ch.feet).is_none());
+        }
     }
 
     #[test]

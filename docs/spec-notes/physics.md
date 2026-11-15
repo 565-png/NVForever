@@ -2590,6 +2590,11 @@ Combat body gaps and lunge stopping use the walking block's radius too. Creature
 reach remains centre to centre, (RNAM + body reach) × scale: for this pair,
 (64 + 124) × 0.6 = 112.8 and × 1.0 = 188, beyond their respective blocks plus
 the player's radius (64.336/92.56). People count melee reach beyond body radii.
+[design: `npc_combat::CombatBodies`, #2535] When either walking participant has
+a widened block, combat also supplies the other participant's ordinary character
+block if absent from the drawn list. Both attack directions therefore have a body
+gap and summed radii, including a walking humanoid against a walking creature.
+Pairs without a widened participant keep the existing drawn-block lookup.
 The separate navmesh `fnv_ai::Ai::keep_apart` still uses 18 per actor; it does
 not read these blocks. The original's transient overlap, unseen shape, extra
 attack pause and backing-away cadence remain open in observer check 174.
