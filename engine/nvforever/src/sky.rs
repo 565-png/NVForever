@@ -744,19 +744,39 @@ impl SkyState {
         }
     }
 
-    /// Show `w`: a fade from the weather shown, or at once.
+    /// Show `w`: a fade from the weather shown, or at once. A change while a fade is under
+    /// way starts from what the screen shows: back to the weather fading out, the fade
+    /// turns round where it stands; to a third one, it fades from whichever of the two
+    /// shows more (crossing a region's edge and back mid-fade jumped the whole way).
     fn switch_to(&mut self, w: Weather, instant: bool) {
         let h = self.hour;
+        self.fade_to(w, instant);
+        info!("weather: {} at {:02}:{:02}", self.weather.edid.as_deref().unwrap_or("?"), h as u32, (h.fract() * 60.0) as u32);
+        self.changed = true;
+    }
+
+    /// Make `w` the weather and set the fade to it ([`SkyState::switch_to`]).
+    fn fade_to(&mut self, w: Weather, instant: bool) {
         let old = std::mem::replace(&mut self.weather, w);
         if instant {
             self.prev = None;
             self.fade = 1.0;
         } else {
-            self.prev = Some(old);
-            self.fade = 0.0;
+            match self.prev.take() {
+                Some(p) if p.form_id == self.weather.form_id => {
+                    self.fade = 1.0 - self.fade.clamp(0.0, 1.0);
+                    self.prev = Some(old);
+                }
+                Some(p) if self.fade < 0.5 => {
+                    self.prev = Some(p);
+                    self.fade = 0.0;
+                }
+                _ => {
+                    self.prev = Some(old);
+                    self.fade = 0.0;
+                }
+            }
         }
-        info!("weather: {} at {:02}:{:02}", self.weather.edid.as_deref().unwrap_or("?"), h as u32, (h.fract() * 60.0) as u32);
-        self.changed = true;
     }
 
     /// A script's weather (SetWeather fades to it, ForceWeather is `instant`), held
@@ -773,14 +793,7 @@ impl SkyState {
         if w.form_id == self.weather.form_id {
             return;
         }
-        let old = std::mem::replace(&mut self.weather, w);
-        if instant {
-            self.prev = None;
-            self.fade = 1.0;
-        } else {
-            self.prev = Some(old);
-            self.fade = 0.0;
-        }
+        self.fade_to(w, instant);
         self.changed = true;
     }
 
@@ -2489,6 +2502,38 @@ mod tests {
         sky.place_outdoors(&regions, 11, 250.0, 150.0);
         assert_eq!((sky.weather.form_id, sky.pick), (HELD, LISTED));
         assert!(sky.script.is_some_and(|sw| sw.hold));
+    }
+
+    #[test]
+    fn stepping_back_out_of_a_region_mid_fade_turns_the_fade_round() {
+        const REGION: u32 = 500;
+        const CAMP: u32 = 3;
+        let mut sky = sky_started_on_held();
+        sky.resume = None;
+        sky.clock_seen = true;
+        let camp = Weather { form_id: CAMP, edid: Some("Camp".into()), ..Default::default() };
+        sky.regions = vec![RegionList {
+            region: RegionWeather { form_id: REGION, ..Default::default() },
+            choices: vec![Choice { weather: camp, chance: 100, global: None }],
+        }];
+        sky.place(Some(None), false);
+        assert_eq!((sky.weather.form_id, sky.prev.as_ref().map(|p| p.form_id)), (LISTED, None));
+        // Into the region: a fade from the climate's weather (30 s, a quarter game hour).
+        sky.place(Some(Some(REGION)), false);
+        assert_eq!((sky.weather.form_id, sky.prev.as_ref().map(|p| p.form_id), sky.fade), (CAMP, Some(LISTED), 0.0));
+        sky.follow_game_clock(12.1, 25.0);
+        assert!((sky.fade - 0.4).abs() < 1e-3, "{}", sky.fade);
+        // Back out before it ends: the screen shows 40 % camp, and stays there to fade back
+        // (it went to the whole camp look and faded from there).
+        sky.place(Some(None), false);
+        assert_eq!((sky.weather.form_id, sky.prev.as_ref().map(|p| p.form_id)), (LISTED, Some(CAMP)));
+        assert!((sky.fade - 0.6).abs() < 1e-3, "{}", sky.fade);
+        // A third weather mid-fade fades from the one showing more.
+        sky.fade_to(Weather { form_id: 4, ..Default::default() }, false);
+        assert_eq!((sky.weather.form_id, sky.prev.as_ref().map(|p| p.form_id), sky.fade), (4, Some(LISTED), 0.0));
+        sky.fade = 0.3;
+        sky.fade_to(Weather { form_id: 5, ..Default::default() }, false);
+        assert_eq!((sky.weather.form_id, sky.prev.as_ref().map(|p| p.form_id), sky.fade), (5, Some(LISTED), 0.0));
     }
 
     #[test]
