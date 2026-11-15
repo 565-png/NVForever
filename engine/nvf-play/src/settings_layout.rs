@@ -1000,14 +1000,22 @@ pub struct ResolvedTab {
     pub sections: Vec<ResolvedSection>,
 }
 
+/// The Tweaks tab's group for rows the table does not place in one yet (a tweak added after
+/// the table was written): listed last, so such a row is never out of sight [design].
+pub const UNGROUPED: &str = "Other";
+
 impl ResolvedTab {
-    /// The Tweaks tab's groups, in the table's order (none on another tab).
+    /// The Tweaks tab's groups, in the table's order, and [`UNGROUPED`] last while a row of
+    /// the tab has none (no groups on another tab).
     pub fn subgroups(&self) -> Vec<&'static str> {
         let mut out: Vec<&'static str> = Vec::new();
         for g in self.sections.iter().filter_map(|s| s.placement.subgroup) {
             if !out.contains(&g) {
                 out.push(g);
             }
+        }
+        if !out.is_empty() && self.sections.iter().any(|s| s.placement.subgroup.is_none()) {
+            out.push(UNGROUPED);
         }
         out
     }
@@ -1141,7 +1149,12 @@ impl ResolvedLayout {
         let mut out = Vec::new();
         let Some(t) = self.tab(name) else { return out };
         let mut after_open = false;
-        for s in t.sections.iter().filter(|s| subgroup.is_none() || s.placement.subgroup == subgroup) {
+        let of_group = |s: &&ResolvedSection| match subgroup {
+            None => true,
+            Some(UNGROUPED) => s.placement.subgroup.is_none(),
+            g => s.placement.subgroup == g,
+        };
+        for s in t.sections.iter().filter(of_group) {
             let items: Vec<LayoutItem> = s.items.iter().copied().filter(|&i| visible(i)).collect();
             if items.is_empty() {
                 continue;
@@ -1618,5 +1631,15 @@ mod tests {
         assert_eq!(hotkeys.len(), 2, "closed: no rows, no empty line");
         // No other tab has a group.
         assert!(l.tabs.iter().filter(|t| t.name != TWEAKS_TAB).all(|t| t.subgroups().is_empty()));
+        // A tweak the table does not place yet: under the last group, Other, never out of sight.
+        let mut rows = tweak_rows();
+        rows.push(("tweak-new-one", "Tweaks"));
+        let list = registry(&rows);
+        let l = resolve_layout(&list);
+        let t = l.tab(TWEAKS_TAB).unwrap();
+        assert_eq!(t.subgroups().last(), Some(&UNGROUPED));
+        let other = l.tab_entries(TWEAKS_TAB, Some(UNGROUPED), |_| true, |_| true);
+        assert_eq!(other, [LayoutEntry::Setting(list.iter().position(|s| s.key == "tweak-new-one").unwrap())]);
+        assert!(l.tab_entries(TWEAKS_TAB, Some("Hotkeys"), |_| true, |_| true).iter().all(|e| *e != other[0]));
     }
 }
