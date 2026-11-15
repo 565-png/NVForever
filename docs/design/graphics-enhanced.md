@@ -60,6 +60,7 @@ Constraints that decide what fits:
 | Bevy atmosphere | Would replace the game's sky look | | Rejected |
 | Auto exposure, depth of field, motion blur | Change the look; the game's own HDR/eye-adapt values (IMGS DNAM) are not decoded | | Not now (§6) |
 | PCSS soft shadows | Medium | Needs the `experimental_pbr_pcss` feature, noisy without TAA | Not now |
+| Placed meshes blended into the landscape where they meet it (#2661) | Medium: road shoulders, rock feet and cliff bases lose their hard seam with the ground | A colour atlas of the landscape around the camera (72 MiB at the default) and a bake when the camera crosses a cell; a lookup in the eligible meshes' fragments | **Built**, off by default and not in `enhanced` (§3.12) |
 
 ## 3. What was built
 
@@ -73,6 +74,8 @@ reflections` (or `graphics: vanilla (no engine-level improvements)`), again when
 changes. Anti-aliasing (`anti-aliasing`: multisampling off/2x/4x/8x, FXAA, SMAA or TAA) and
 shadow filtering (`shadow-filter`) are choices of their own, not part of `enhanced` (§3.6,
 §3.9); the field of view, the display sync and a frame-rate limit are on the Display page (§3.10).
+"Blend meshes into ground" (`mesh-terrain-blend`, §3.12) is a switch off in both looks and
+left out of `enhanced` until the maintainer decides.
 Code: `graphics.rs` (preset, switches, applying them), `ssao.rs`/`ssao.wesl`,
 `post.rs`/`post.wesl`, `taa.rs`/`taa.wesl`, `shafts.rs`/`shafts.wesl`, `water.wesl` (`ssr`),
 `sky.rs` (`shadow_reach`), `nvf_assets::texture::set_anisotropy`, `frame_pace.rs`, the rows in
@@ -407,6 +410,169 @@ enhanced "Bloom" (§3.3), when on, stands in for it.
 
 Engineering choices made by eye against the original's frames; not used to explain
 differences in the parity frames.
+
+### 3.12 Blend meshes into ground (`mesh-terrain-blend`; off in both looks, not part of `enhanced`)
+
+Where a placed road, rock or cliff meets the landscape, the mesh's lower edge takes the
+landscape's own colour and shading over a short height band, so a broken asphalt shoulder
+reads as ground-lit dirt instead of a hard seam (#2661). Off by default and in `vanilla`,
+left out of `enhanced` (false in both looks, so `quality.rs::enhanced_keys` leaves it out;
+a test says so) until the maintainer decides; the settings row is under Graphics > Picture
+after the enhanced look's rows, kept in the INI like them, `--graphics-only
+mesh-terrain-blend` on the command line. Skyrim Community Shaders has a Terrain Blending
+feature; the design is our own. Every band, angle, resolution and selection rule below is
+NVForever's choice [design], not a fact about the original game or another renderer.
+
+**The look the row draws** [design: `mesh_terrain_blend.rs::setting_config`]: the `height`
+shape with an 8-unit band, 1024 colour texels per cell, full shading
+(`8:surface:height:1024:full` in the test aid's terms). [observed: the main session's
+round-7 comparison pictures at a WastelandNV road shoulder] `height` turned the broken
+asphalt edge into ground-lit dirt and left the road top alone; the hybrid shapes either
+removed the effect or striped the road's lip. Rocks stay subtle with it; that was accepted.
+
+**Method** [design: `terrain_surface.rs`, `nvf-assets/src/nif_surface_blend.rs`,
+`nif_surface_bindings.wesl`, `nif_material.wesl`]:
+
+- *A world-space cache of the landscape around the camera.* A dedicated orthographic camera
+  on its own render layer (16, `BAKE_LAYER`) draws flat, unlit copies of the 3 by 3 cells
+  around the camera's cell into one RGBA16F atlas of `3 x resolution` texels a side, one
+  mip. Each quadrant's copies are its whole near-terrain stack in drawing order: the base
+  (a folded base with its own `TerrainMaterial` in an unlit bake variant, any other base
+  with the single-texture `SurfaceCaptureMaterial`) and every blended layer over it with
+  its texture, vertex alpha and sort bias, composited by the GPU's own blend state. Nothing
+  is lit, fogged or scorched; weather and light changes need no rebake.
+- *Exact heights.* Beside the colour, a 576 by 99 RGBA8 atlas holds the f32 coefficients of
+  both triangles of every LAND square (`height_planes`), packed losslessly into bytes and
+  read with `textureLoad`, never filtered; the shader picks the triangle with the mesh's own
+  diagonal and evaluates its plane, so the band follows the drawn landscape exactly. Each
+  cell's tile ends in a metadata row: a nine-bit mask of the resident neighbours and a
+  four-bit mask of the quadrants whose colour was captured. Every prepared cell gives its
+  heights even where a quadrant's colour cannot be captured.
+- *Residency.* Before sampling, the shader maps all four bilinear taps to their cells and
+  quadrants and needs every height and colour bit (a missing diagonal cell of an L-shaped
+  region included); a 128-unit fade at the region's edges remains. A failed lookup leaves
+  the fragment exactly as it was.
+- *Publication.* The atlas is used only after every copy has drawn in one frame: a receipt
+  wraps Bevy's `DrawMaterial` in both phases, an expected-entity set names every copy, the
+  finished view is taken out of the sorted cameras before another pass can clear its
+  target, and publication waits one more main frame for queue order. A change of the cell
+  set, the camera's cell, interior or worldspace starts a new generation, so a stale receipt
+  never publishes. There is no pixel readback and no GPU wait.
+- *The blend.* With `d` the fragment's height above the ground triangle, `B` the band and `F`
+  the residency fade, the `height` shape's weight is `w = F (1 - smoothstep(0, B, max(d, 0)))`.
+  Where `w > 0` the forward fragment, after the existing coverage tests and normal mapping
+  and before lighting, mixes the base colour towards the cached colour by `w`; full shading
+  also bends the normal towards the ground triangle's geometric normal and moves roughness
+  towards the landscape's 0.95, reflectance towards 0.2 and metallic towards 0, and fades
+  emission, clear coat and anisotropy by `1 - w`. Alpha, discard, coverage, positions, depth,
+  the prepass and the geometric normal used for shadow bias are untouched; `w <= 0` leaves
+  every input exactly as it was.
+
+**Selection** [design: `world.rs::spawn_model`, `blend_census`;
+`mesh_terrain_blend.rs::reference_reasons`, `material_reasons`]: rigid exterior STAT and
+SCOL shapes. A SCOL is a static collection: "composed of Static forms", "do not react to
+Havok physics and cannot be destroyed", its Model "the NIF file used for the object", which
+the editor generates when the collection is made [documented: GECK wiki "Static
+Collection", revision 40901, and "Bethsoft Tutorial Static Collections", revision 38886,
+offline snapshot 2026-10-28]. `world.rs` draws a SCOL reference as that one model, as it
+draws a STAT, so the same reference, shape and material rules apply to both. A reference is
+left out for any of: not in an exterior cell of the drawn world, a rig or skinning,
+particles, jointed or loose bodies or a stored pose, damage-stage nodes, a DEST record, an
+imposter; a shape for external emittance or a registered morph mesh. A material is left out
+for Add, Multiply, Premultiplied or AlphaToCoverage alpha, unlit, refraction, first person,
+depth write, transmission, falloff, holes, FaceGen, the Pip-Boy screen, linear add, soft
+edges or a non-finite depth bias; ordinary Blend, a finite depth bias, the lit decal flag,
+Mask and an alpha cut are admitted and keep their descriptors exactly. A material owned for
+the moment by a fade, an effect shader or a material override never blends; the owner's
+restore brings the blend back. Never by asset name.
+
+**Excluded altogether**: interiors, distant LOD and imposters, actors and creatures,
+first-person and interface meshes, movable clutter (MSTT, items, posed clutter), doors,
+activators, trees and grass, water.
+
+**Materials and switching** [design: `mesh_terrain_blend.rs`]: an eligible shape draws with
+a separate material type, `ExtendedMaterial<StandardMaterial, NifSurfaceBlend>`, a clone of
+its source shared per source handle and generation; the ordinary `NifSurface` interface is
+unchanged (its 128-byte uniform, bindings 50-53), and the blend type binds no more textures
+than the ordinary pipeline it replaces (the atlases take the holes and FaceGen slots, which a
+blend clone never has). A source edited under the same handle (blended cut-outs flipping
+Blend and Mask, scripted NIF edits) rebuilds its clone in the same frame; texture swaps,
+fades, draw-distance ranges, door fades, effect shaders and shadow thinning follow the
+source. The row switches the blend while the game runs: on, it logs its start line, checks
+the atlas against the device, records the census of the shapes already drawn and the
+captures of the cells already drawn around the camera (their landscape prepared again,
+the same quadrant stacks and cached materials as a cell drawn with the blend on), and
+bakes; off, every converted shape gets its ordinary material back, and the census, the
+captures, the atlas and the clones are dropped, with one `stop` line. While it is off no
+bake is scheduled, nothing is captured or allocated, nothing logs, and Bevy's draw
+functions stay its own (the receipt is installed when the first bake view appears).
+
+**Cache and selection rules** [design, NVForever's choices]: the 3 by 3 region follows the
+camera's cell; a change of it rebakes the whole atlas (no per-frame budget, no partial
+update); 512, 1024 (default) or 2048 texels per cell side, checked against the device's 2D
+texture limit and refused in the log when it does not fit (18, 72 or 288 MiB of colour, CPU
+copies and render targets aside); no gutters or mips; texture or layer changes do not
+rebake captured terrain; no normal cache (it would need the terrain's tangent frame and
+layer normals, about 36 MiB more at 1024).
+
+**Test aid** `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution[:shading[:flat,steep]]]]`
+overrides the row for comparison runs and is not stored; a malformed value is refused in
+the log and the row decides. Omitted parts take the row's look.
+
+| Part | Values | Default |
+| --- | --- | --- |
+| band | positive finite number | 8 |
+| view | `surface`; diagnostics `weight` (blue 0 to red 1, unlit), `normal` (the ground triangle's game-space normal as `0.5 + 0.5 n`, unlit), `selection` (a lit green tint on converted shapes), `status` (unlit: magenta outside the region, red no height, orange the quadrant's colour not captured, cyan a bilinear tap rejected, green success brightening with the weight) | (required) |
+| shape | `height`; aid-only `penetration` (`1 - smoothstep(-2, 0, d)`), `hybrid` (v2: the band widened with the angle between the unperturbed mesh normal and the ground, from the flat width parallel to the ground ramping to the band at 5 degrees, the band from 5 to 35 degrees, ramping to the steep width at 75 degrees; the larger of that height band and the penetration term), `hybrid-v1` (round 5's orientation-gated band) | `height` |
+| resolution | `512`, `1024`, `2048` | `1024` |
+| shading | `albedo` (colour only), `full` | `full` |
+| flat,steep | hybrid's widths, `flat <= band <= steep`; only with `hybrid` | `band / 16`, `6 band` |
+
+Old short forms keep working with these defaults (`24:status` is band 24, `height`, 1024,
+full). Log lines: `mesh terrain blend: start band=... variant=... resolution=... noise=0
+shape=... shading=...` then ` flat=... steep=... weight-version=2` for `hybrid` or
+` weight-version=1`; `colour atlas resolution=... atlas=WxW rgba16f colour-mib=...`;
+`backfill tracked-shapes=... convertible-shapes=...` as it turns on; one `publication ...`
+line per bake (resident grids with each quadrant's capture path and colour mask, the
+excluded slots, a probe of the uploaded heights under the camera with its CPU lookup
+status and `probe-normal`, the image IDs, the resolution); `ready eligible-shapes=...
+resident-cells=... generation=... variant=... shape=... resolution=... shading=...`, the
+weight fields, then the census (`stat-shapes`, `excluded-shapes`,
+`pending-material-shapes`, one `excluded-<reason>` count per reason, `admitted-blend`,
+`-bias`, `-decal`, `-mask`, `-alpha-cut`, then `scol-shapes`), printed at each publication
+and refreshed at most once per 60 frames; `census-shape ref=... base=... model=... shape=...
+status=eligible|excluded first-reason=... reasons=... base-type=STAT|SCOL`, one per distinct
+base, shape and reason mask, at most 2048 a run; `stop restored-shapes=... tracked-shapes=...
+released-cells=...`. A road without a `census-shape` line need not be untracked: the lines
+stop at 2048, a shape whose material is still loading waits for its line, and a line is
+printed once per base, shape and mask with the first reference seen, so a search by
+reference can miss it; the ready line's counts cover every resident shape.
+
+**Cost**: GPU cost: (measured in the pull request). The bake is timed as the GPU span
+`nvf_mesh_terrain_bake` (Tracy's GPU zones and the `--log-frame-times` list,
+`terrain_surface.rs::bake_span`); the lookup in the meshes' fragments shows in the main
+opaque pass instead.
+
+**Limits** [hypothesis where marked]: the cache may soften contact detail, and a footprint
+turning invalid at a missing corner can make a narrow transition [hypothesis]; geometric
+triangle normals, not the landscape's normal maps, are the shading target, so faceting can
+show [hypothesis]; shadows, occlusion and the separately lit layer draws still differ from
+the landscape's own lighting; admitted Blend and decal shapes near the ground (glass,
+markings) take the landscape's colour; buried visible surfaces take its look; the census
+keeps scanning every tracked shape each frame while the blend is on (only its line is
+limited); rigged STATs and SCOLs drawn while the blend was off are not counted until their
+cell is drawn again (they never convert); the colour-coded `excluded` view was not built.
+
+**Tests and smoke**: `nvforever` test filters `mesh_terrain_blend`, `terrain_surface`,
+`terrain::tests`, `mesh_blend_shader_tests`, `graphics::tests::mesh_terrain_blend`,
+`settings::tests::the_mesh_blend_row`, `texture_swap`, `nif_mirror`, `fade`,
+`draw_distance`, `door_fade`, `effect_shaders`, `shadow_thin`; `nvf-assets`
+`nif_surface_blend::tests`, `nif_material::tests`; `nvf-play` `settings_layout`, `fade`.
+The WGSL is composed and validated by naga in the tests, not executed. Smoke:
+`mesh-terrain-blend-setting` (the row on from the command line), `mesh-terrain-blend-live`
+(on and off from the settings page), the aid's `mesh-terrain-blend-goodsprings`,
+`-options` and `-widths`; `graphics-enhanced` and `settings-enhanced-effects` check that
+the enhanced look neither turns it on nor logs it.
 
 ## 4. Tried and dropped
 

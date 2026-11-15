@@ -831,7 +831,10 @@ order = [[
   { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, temporal anti-aliasing, screen-space water reflections$' },
   { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, screen-space water reflections$' },
 ]]
-forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error while the multisampling changes" }]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error while the multisampling changes" },
+  { re = 'mesh terrain blend: ', label = "#2661: the mesh terrain blend is not part of enhanced; off, it logs nothing and bakes nothing" },
+]
 
 [[scenario]]
 name = "ui-scale-write"
@@ -11387,6 +11390,7 @@ order = [[
 forbid = [
   { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
   { re = 'settings: (glow|eye-adaptation|neon-glow|water-mirror|shadow-filter|anti-aliasing|fsr-upscaling|upscaler|upscaler-quality) ', label = "the row touches only the enhanced effects" },
+  { re = 'settings: mesh-terrain-blend |mesh terrain blend: start', label = "#2661: On and Off leave the mesh terrain blend's row alone (not an enhanced effect)" },
 ]
 
 [[scenario]]
@@ -29455,15 +29459,15 @@ paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/ter
 env = { NVF_PLAY_TEST_MESH_BLEND = "24:surface", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "14:mesh_terrain_blend_goodsprings.png" }
 args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages"]
 run_seconds = 20
-manual = "[design] Value syntax [band:]view[:shape[:resolution[:shading]]], defaults 8, hybrid, 1024, full (24:surface here: band 24, the rest defaults). Shoot 8:status:hybrid:1024:full first: magenta out of range, red invalid height, orange invalid colour quadrant, cyan rejected bilinear footprint, green success (brightness follows weight); weight, normal and status draw unlit. Inspect publication grids, quadrant paths, exclusions and probe-normal. The comparison sheet (docs/handoff/mesh-terrain-blend-round1.md, Round 5): aid absent, 24:surface:height:512:albedo, 8:surface:height:512:albedo, 8:surface:hybrid:512:albedo, 8:surface:hybrid:512:full, 8:surface:hybrid:1024:full at one road view, then the last and aid absent at a rock foot and a cliff base. No golden updates."
+manual = "[design] Value syntax [band:]view[:shape[:resolution[:shading[:flat,steep]]]], defaults 8, height, 1024, full since round 7 (24:surface here: band 24, the rest defaults; docs/design/graphics-enhanced.md §3.12). Shoot 8:status:hybrid:1024:full first: magenta out of range, red invalid height, orange invalid colour quadrant, cyan rejected bilinear footprint, green success (brightness follows weight); weight, normal and status draw unlit. Inspect publication grids, quadrant paths, exclusions and probe-normal. The round-5 comparison sheet: aid absent, 24:surface:height:512:albedo, 8:surface:height:512:albedo, 8:surface:hybrid:512:albedo, 8:surface:hybrid:512:full, 8:surface:hybrid:1024:full at one road view, then the last and aid absent at a rock foot and a cliff base. No golden updates."
 expect = [
-  { re = 'mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full', label = "the effective aid configuration (round 5: 1024 is the default resolution, hybrid and full the default shape and shading)" },
+  { re = 'mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=height shading=full', label = "the effective aid configuration (1024 the default resolution, full the default shading; round 7: height the default shape)" },
   { re = 'mesh terrain blend: colour atlas resolution=1024 atlas=3072x3072 rgba16f colour-mib=72 ', label = "the default atlas fits the device" },
   { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+', range = [1, 1000000], label = "nonzero eligible shapes and a published resident cache" },
   { re = 'mesh terrain blend: publication generation=[0-9]+ origin=.* resident=.* excluded=.* probe-cell=.* probe-height-bytes=.* probe-status=.* colour=.* height=', label = "publication reports coverage, probe bytes and image identities" },
   { re = 'mesh terrain blend: publication .*height-only:', max = 0, label = "every resident quadrant's colour is captured, layered and fallback stacks included (round 4)" },
-  { re = 'mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=hybrid shading=full flat=1\.5 steep=144 weight-version=2', label = "round 6: hybrid v2 with its resolved widths (band/16 and 6 band)" },
-  { re = 'mesh terrain blend: ready eligible-shapes=[0-9]+ resident-cells=[1-9] generation=[0-9]+ variant=surface shape=hybrid resolution=1024 shading=full flat=1\.5 steep=144 weight-version=2 stat-shapes=([1-9][0-9]*) excluded-shapes=[0-9]+ pending-material-shapes=[0-9]+ excluded-world=[0-9]+ ', range = [1, 1000000], label = "round 6: the census counts resident STAT shapes after round 5's fields" },
+  { re = 'mesh terrain blend: start band=24 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1', label = "round 7: the default height shape (weight version 1, no hybrid widths)" },
+  { re = 'mesh terrain blend: ready eligible-shapes=[0-9]+ resident-cells=[1-9] generation=[0-9]+ variant=surface shape=height resolution=1024 shading=full weight-version=1 stat-shapes=([1-9][0-9]*) excluded-shapes=[0-9]+ pending-material-shapes=[0-9]+ excluded-world=[0-9]+ ', range = [1, 1000000], label = "round 6: the census counts resident STAT shapes after round 5's fields (round 7: the default height shape)" },
   { re = 'mesh terrain blend: ready .* admitted-blend=[0-9]+ admitted-bias=[0-9]+ admitted-decal=[0-9]+ admitted-mask=[0-9]+ admitted-alpha-cut=[0-9]+', label = "round 6: the ready line ends with the admitted material counts" },
   { re = 'mesh terrain blend: census-shape ref=0x[0-9A-F]{8} base=0x[0-9A-F]{8} model=.+ shape=[0-9]+ status=eligible first-reason=none reasons=none', label = "round 6: per-shape census lines name eligible shapes" },
   { re = 'mesh terrain blend: census-shape ref=0x[0-9A-F]{8} base=0x[0-9A-F]{8} model=.+ shape=[0-9]+ status=(eligible|excluded) first-reason=[a-z-]+ reasons=[a-z+-]+', max = 2048, label = "round 6: per-shape census lines stay within their cap" },
@@ -29497,11 +29501,58 @@ paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/wor
 env = { NVF_PLAY_TEST_MESH_BLEND = "8:weight:hybrid:1024:full:0.5,32", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages"]
 run_seconds = 20
-manual = "[design] Round 6 comparison set (docs/handoff/mesh-terrain-blend-round1.md, Round 6): aid absent, 8:surface:height:1024:full, 8:surface:hybrid:1024:full:0.5,32, 8:surface:hybrid:1024:full:0.5,48, 8:surface:hybrid:1024:full:0.5,64, 8:weight:hybrid:1024:full:0.5,48 at the road view (A) and the rock foot (B); keep the start, ready and census-shape lines beside each frame. The colour-coded excluded view was not built in round 6: classify the road from its census-shape line (grep its model path). No golden updates."
+manual = "[design] Round 6 comparison set: aid absent, 8:surface:height:1024:full, 8:surface:hybrid:1024:full:0.5,32, 8:surface:hybrid:1024:full:0.5,48, 8:surface:hybrid:1024:full:0.5,64, 8:weight:hybrid:1024:full:0.5,48 at the road view (A) and the rock foot (B); keep the start, ready and census-shape lines beside each frame. The colour-coded excluded view was not built in round 6: classify the road from its census-shape line (grep its model path; docs/design/graphics-enhanced.md §3.12 says when a line can be missing). No golden updates."
 expect = [
   { re = 'mesh terrain blend: start band=8 variant=weight resolution=1024 noise=0 shape=hybrid shading=full flat=0\.5 steep=32 weight-version=2', label = "the widths at the end of the value are resolved" },
   { re = 'mesh terrain blend: ready eligible-shapes=[0-9]+ resident-cells=[1-9] generation=[0-9]+ variant=weight shape=hybrid resolution=1024 shading=full flat=0\.5 steep=32 weight-version=2 stat-shapes=([1-9][0-9]*) ', range = [1, 1000000], label = "the ready line carries the widths and the census" },
   { re = 'mesh terrain blend: census-shape ref=0x[0-9A-F]{8} base=0x[0-9A-F]{8} model=.+ shape=[0-9]+ status=(eligible|excluded) first-reason=[a-z-]+ reasons=[a-z+-]+', label = "per-shape census lines with reference, base, model, shape and first reason" },
   { re = 'mesh terrain blend: rejected NVF_PLAY_TEST_MESH_BLEND', max = 0, label = "the six-part value is accepted" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
+]
+
+[[scenario]]
+name = "mesh-terrain-blend-setting"
+source = "[design] #2661 round 7: the Graphics row mesh-terrain-blend (Blend meshes into ground) on from the command line draws the default look, 8:surface:height:1024:full, with STAT and SCOL shapes in the census (engine/nvforever/src/mesh_terrain_blend.rs follow_setting, setting_config; graphics.rs; settings.rs)"
+areas = ["rendering", "terrain", "graphics"]
+paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvforever/src/terrain.*", "engine/nvforever/src/world.rs", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages", "--graphics-only", "mesh-terrain-blend"]
+run_seconds = 20
+manual = "[design] Compare the same view with the row off: road shoulders and rock feet take the ground's colour and light within 8 units of it, road tops stay as they are. No golden updates."
+expect = [
+  { re = 'graphics: .*meshes blended into the ground', label = "the row's switch is on" },
+  { re = 'mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1', count = 1, label = "the row's look: 8:surface:height:1024:full, started once" },
+  { re = 'mesh terrain blend: colour atlas resolution=1024 atlas=3072x3072 rgba16f colour-mib=72 ', label = "the default atlas fits the device" },
+  { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+ variant=surface shape=height resolution=1024 shading=full weight-version=1 stat-shapes=', range = [1, 1000000], label = "nonzero eligible shapes and a published cache in the row's look" },
+  { re = 'mesh terrain blend: ready .* scol-shapes=[0-9]+', label = "the census counts SCOL shapes by their base type" },
+  { re = 'mesh terrain blend: census-shape ref=0x[0-9A-F]{8} base=0x[0-9A-F]{8} model=.+ shape=[0-9]+ status=(eligible|excluded) first-reason=[a-z-]+ reasons=[a-z+-]+ base-type=(STAT|SCOL)', label = "census lines name the base type" },
+  { re = 'mesh terrain blend: rejected', max = 0, label = "nothing refused" },
+  { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
+]
+
+[[scenario]]
+name = "mesh-terrain-blend-live"
+source = "[design] #2661 round 7: the Graphics row mesh-terrain-blend switched on and off on the settings page while the game runs, no restart: on, the shapes and cells already drawn are taken in and the cache bakes; off, every converted shape gets its ordinary material back and nothing more is baked (engine/nvforever/src/mesh_terrain_blend.rs follow_setting, stop; world.rs blend_backfill; terrain_surface.rs backfill_cells)"
+note = "the row starts off (a test run's vanilla look); it is flipped on at 11 s and off again at 22 s, each time on the settings page"
+areas = ["rendering", "terrain", "settings"]
+paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvforever/src/terrain.*", "engine/nvforever/src/world.rs", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings_layout.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:12,21:23", NVF_PLAY_TEST_SETTINGS = "11:mesh-terrain-blend,22:mesh-terrain-blend" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages"]
+run_seconds = 26
+expect = [
+  { re = 'mesh terrain blend: start ', count = 1, label = "started once, by the row" },
+  { re = 'mesh terrain blend: stop ', count = 1, label = "stopped once, by the row" },
+  { re = 'mesh terrain blend: rejected', max = 0, label = "nothing refused while switching" },
+  { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors on or off" },
+]
+order = [[
+  { text = "settings: mesh-terrain-blend on", label = "the row on" },
+  { re = 'mesh terrain blend: start band=8 variant=surface resolution=1024 noise=0 shape=height shading=full weight-version=1', label = "the row's look starts without a restart" },
+  { re = 'mesh terrain blend: backfill tracked-shapes=([1-9][0-9]*) convertible-shapes=([1-9][0-9]*)', label = "the shapes drawn while it was off are taken in" },
+  { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+ variant=surface shape=height', label = "the cells drawn while it was off are captured and published" },
+  { text = "settings: mesh-terrain-blend off", label = "the row off" },
+  { re = 'mesh terrain blend: stop restored-shapes=([1-9][0-9]*) tracked-shapes=[0-9]+ released-cells=[1-9]', label = "the converted shapes get their ordinary materials back, the captures go" },
+]]
+forbid = [
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
 ]
