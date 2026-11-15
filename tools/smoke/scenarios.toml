@@ -16371,6 +16371,22 @@ forbid = [
 ]
 
 [[scenario]]
+name = "nellis-loyal-stays-reachable"
+source = "issue #2566: with Volare! failed (a Boomer elder killed), Loyal was put in NellisHangar1b, behind the B-29 hangar doors 001093DB/001093DC that stay disabled until the B-29 is up, and the quest marker looped between the hangar door and its inside"
+note = "SetStage VMS15 (000FF5DF) 116 at 8 s fails Volare!, which GetQuestCompleted reads as 1: Loyal's first package, NellisLoyalB29SandboxAIPackage (In cell NellisHangar1b), is valid and every other one of his is not. No path goes through a disabled load door (fnv_nav::NavGraph::disabled_doors, fnv_ai::Ai::apply_door_presence), so he sets it aside and stays in NellisHangar2, where the player starts; before the fix his walk went out through 00105488 and in through the disabled 001093DB"
+areas = ["ai", "nav", "quests"]
+paths = ["crates/fnv-nav/src/graph.rs", "crates/fnv-nav/src/path.rs", "crates/fnv-ai/src/carry.rs", "crates/fnv-game/src/quest_targets.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:setstage 000FF5DF 116;8.3:close" }
+args = ["--cell", "NellisHangar2", "--play", "--no-voice", "--no-messages", "--hour", "12", "--npc-packages", "all,NellisLoyalREF"]
+run_seconds = 30
+expect = [
+  { re = 'ai \[[^]]*\] NellisLoyalREF: cannot reach the place of NellisLoyalB29SandboxAIPackage', label = "Loyal sets the B-29 hangar package aside: its doors are disabled" },
+]
+forbid = [
+  { re = 'ai \[[^]]*\] NellisLoyalREF: .*in NellisHangar1b', label = "Loyal walked or put into the B-29 hangar" },
+]
+
+[[scenario]]
 name = "goodbye-greeting-stops-walker"
 source = "owner 2026-10-27 (the Goodsprings settler's water line 0010B3D6 said walking away): an actor saying its Goodbye greeting at the player stops and faces the player, its package going on after (docs/design/dialogue-play.md §1, Game::greets_player)"
 areas = ["dialogue", "residents"]
