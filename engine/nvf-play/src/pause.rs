@@ -1031,6 +1031,9 @@ const BAND_MARGIN: f32 = 30.0;
 /// The black under the band [design: the band alone left the main menu's logo and
 /// pictures showing through, observed 2026-10-16].
 const BAND_SHEET: f32 = 0.55;
+/// How far the sheet's sides fade out past the band, in interface units [design: the menu
+/// overhaul; by eye].
+const BAND_FEATHER: f32 = 90.0;
 /// The load page: rows shown at once, the panel's width, its rows' top, the thumbnail and
 /// the details' lines [documented: `saveload_container` width 650, y 521; the player's
 /// name, level and play time at y 347, 388, 429; the thumbnail above the name; design:
@@ -1601,8 +1604,25 @@ fn boxed(node: Node, on: bool) -> (Node, BorderColor, BackgroundColor) {
 
 /// The darkened band behind a page's list.
 fn band(root: &mut ChildSpawnerCommands, look: &PauseLook, node: Node) {
-    // Under it a sheet of black, so the list reads over a bright main menu screen too.
-    root.spawn((node.clone(), BackgroundColor(Color::BLACK.with_alpha(BAND_SHEET))));
+    // Under it a sheet of black, so the list reads over a bright main menu screen too; its
+    // sides fade out over [`BAND_FEATHER`] instead of ending in a hard edge [design: owner
+    // 2026-11-15, the menu overhaul: "the black overlay behind the menu has hard edges"].
+    let mut sheet = node.clone();
+    if let (Val::Vh(w), Val::Vh(m), Val::Vh(f)) = (sheet.width, sheet.margin.left, u(BAND_FEATHER)) {
+        sheet.width = Val::Vh(w + 2.0 * f);
+        sheet.margin.left = Val::Vh(m - f);
+        let edge = 100.0 * f / (w + 2.0 * f);
+        let black = Color::BLACK.with_alpha(BAND_SHEET);
+        let stops = vec![
+            bevy::ui::ColorStop::percent(Color::BLACK.with_alpha(0.0), 0.0),
+            bevy::ui::ColorStop::percent(black, edge),
+            bevy::ui::ColorStop::percent(black, 100.0 - edge),
+            bevy::ui::ColorStop::percent(Color::BLACK.with_alpha(0.0), 100.0),
+        ];
+        root.spawn((sheet, bevy::ui::BackgroundGradient(vec![bevy::ui::LinearGradient::to_right(stops).into()])));
+    } else {
+        root.spawn((sheet, BackgroundColor(Color::BLACK.with_alpha(BAND_SHEET))));
+    }
     match &look.band {
         Some(b) => {
             root.spawn((node, ImageNode { color: Color::WHITE.with_alpha(BAND_ALPHA), image_mode: NodeImageMode::Stretch, ..ImageNode::new(b.clone()) }));

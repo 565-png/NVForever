@@ -718,7 +718,24 @@ fn tile_menu_blur_text(now: TileMenuBlur) -> String {
 /// afresh each frame, so nothing stays when the menu goes. A 3D scope's lens has its own
 /// grade, which holds only the lens's modifiers, and `sharp`, what the Pip-Boy keeps sharp, is
 /// left alone. With nothing drawn from tiles no grade is touched.
-fn tile_menu_blur(drawing: Option<Res<TileMenuBlur>>, mut last: Local<TileMenuBlur>, mut grades: Query<&mut ImageSpaceGrade, Without<LensGrade>>) {
+fn tile_menu_blur(
+    drawing: Option<Res<TileMenuBlur>>,
+    mut last: Local<TileMenuBlur>,
+    mut grades: Query<&mut ImageSpaceGrade, Without<LensGrade>>,
+    (paused, main_menu, mut was_paused): (Option<Res<nvf_play::pause::Paused>>, Option<Res<nvf_play::main_menu::MainMenu>>, Local<bool>),
+) {
+    // The pause menu over a game blurs the world behind it as a tile menu does, so its text
+    // reads over a busy picture [design: owner 2026-11-15, the menu overhaul].
+    let pause = paused.is_some_and(|p| p.0) && !main_menu.is_some_and(|m| m.open);
+    if pause != *was_paused {
+        info!("pause menu blur: {}", if pause { format!("radius {TILE_MENU_BLUR}") } else { "off".to_string() });
+        *was_paused = pause;
+    }
+    if pause {
+        for mut grade in &mut grades {
+            grade.blur = grade.blur.max(TILE_MENU_BLUR);
+        }
+    }
     let now = drawing.as_deref().copied().unwrap_or_default();
     if now != *last {
         info!("tile menu blur: {}", tile_menu_blur_text(now));
