@@ -408,6 +408,8 @@ notes are the full account).
   (`fnv-game/src/ui_hud.rs::write`); it accepts the engine's visibility decision,
   including full-health classic targets. The hand-built HUD gives the enemy piece
   an independent root so hiding the corner root during playback cannot hide it.
+  [design, #2659; `free_cam.rs::hide_menus`, `hud.rs::draw`] Console `tm` also hides
+  this independent piece; undoing it lets normal HUD eligibility restore the bar.
 - [design, #2659] Pointer and click handling are outside this change (PR #2711).
   AP display, AP cost, the wider playback HUD and target-change timing remain open
   in observer check 225; no changes are made for those comparisons. Body-part keys
