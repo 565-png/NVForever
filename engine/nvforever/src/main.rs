@@ -182,6 +182,8 @@ mod perf_overlay;
 mod occlusion;
 mod rooms;
 mod terrain;
+mod terrain_lod;
+mod terrain_wireframe;
 mod texture_swap;
 mod effect_particles;
 mod effect_shaders;
@@ -399,6 +401,16 @@ struct Args {
     /// docs/spec-notes/world.md §3 "Texture repeat"]).
     #[arg(long, default_value_t = 256.0)]
     terrain_tile: f32,
+    /// Draw and collide the landscape on its stored triangles, not smoothed (#2149,
+    /// `nvf_play::smooth_terrain`; the settings page's Smooth terrain row); the same as
+    /// `--smooth-terrain off`, and wins over it.
+    #[arg(long)]
+    no_smooth_terrain: bool,
+    /// How the landscape is smoothed: `off`, `2x2`, `4x4` (the default) or `4x4-near` (4 x 4
+    /// near the camera, 2 x 2 further; #2676, `nvf_play::smooth_terrain`). Once any setting is
+    /// saved, NVForever.ini's Smooth terrain row wins over this flag, as for every row.
+    #[arg(long, value_name = "off|2x2|4x4|4x4-near", value_parser = parse_smoothing)]
+    smooth_terrain: Option<nvf_play::smooth_terrain::Smoothing>,
     /// Do not draw models whose path contains any of these texts (diagnostics).
     #[arg(long, value_delimiter = ',')]
     hide: Vec<String>,
@@ -529,6 +541,12 @@ struct Args {
     /// the display's refresh (no vsync).
     #[arg(long)]
     log_frame_times: Option<f32>,
+    /// Test aid with --log-frame-times: frames a second at most for this run (0: none), the
+    /// settings page's Frame rate limit, which --log-frame-times otherwise leaves off with
+    /// the page's row (frame_pace.rs). For checking a cap on purpose, e.g. DLSS Frame
+    /// Generation's Reflex limit (#2731, #2732: set before the window's swapchain exists).
+    #[arg(long, requires = "log_frame_times")]
+    frame_cap: Option<u32>,
     /// Test aid with --log-frame-times: after each logged period switch to the next of
     /// these sets of improvements, in a loop, starting with the first: `;`-separated,
     /// each `vanilla`, `enhanced` or keys as for --graphics-only; `no-sun-shadows` among
@@ -652,6 +670,10 @@ struct Args {
     /// Draw the navmesh near the camera and the travellers' paths.
     #[arg(long)]
     show_navmesh: bool,
+    /// Draw the loaded landscape's triangle edges over it (terrain_wireframe.rs; the
+    /// settings page's Debug row Terrain wireframe).
+    #[arg(long)]
+    terrain_wireframe: bool,
     /// With --play: draw the developer markers of shots: a cross at each impact and a
     /// line from the muzzle along each hitscan shot (settings page: Developer).
     #[arg(long)]
@@ -945,6 +967,10 @@ fn parse_frame_generation(value: &str) -> Result<frame_gen::FrameGenKind, String
     frame_gen::FrameGenKind::parse(value).ok_or_else(|| format!("{value:?} is none of fsr, dlss, off"))
 }
 
+fn parse_smoothing(value: &str) -> Result<nvf_play::smooth_terrain::Smoothing, String> {
+    nvf_play::smooth_terrain::Smoothing::parse(value).ok_or_else(|| format!("{value:?} is none of off, 2x2, 4x4, 4x4-near"))
+}
+
 fn main() -> AppExit {
     let mut line = with_default_mode(std::env::args().collect());
     if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf)) {
@@ -1168,6 +1194,9 @@ fn main() -> AppExit {
                     None => return fail(format!("no exterior cell {}", args.cell)),
                 },
             };
+            // A provisional camera seed 400 units over the stored centre vertex: the
+            // player is grounded later on the run's surface (`nvf_play::smooth_terrain`,
+            // fixed after the settings are read), at most its bound from this [design, #2149].
             let ground = world
                 .grid_cell(grid)
                 .and_then(|c| c.land)
@@ -1424,6 +1453,11 @@ fn main() -> AppExit {
     // PostStartup (settings.rs `upscaler_after_ini`). The DLSS loader runs for a DLSS choice or
     // when NVIDIA's four files are in the DLSS folder, so every later switch is live; the test
     // aid NVF_DLSS_PRELOAD=1 runs it always, =0 only for DLSS (upscaler.rs, "Start").
+    // Whether the landscape is smoothed (#2149): the command line's state, before any cell
+    // loads; with --play the INI may change it at PostStartup (nvf_play::settings
+    // `fix_smooth_terrain`), still before the first cell.
+    nvf_play::smooth_terrain::set_setting(if args.no_smooth_terrain { nvf_play::smooth_terrain::Smoothing::Off } else { args.smooth_terrain.unwrap_or(nvf_play::smooth_terrain::Smoothing::DEFAULT) });
+    nvf_play::smooth_terrain::fix();
     let start_upscaler = {
         let given = play.is_some().then(|| settings::given_switches(&args, &command_line()));
         let ini = given.as_ref().and_then(|_| settings::settings_text_at_start()).map(|text| settings::UpscalerIni::read(&text));
@@ -1511,8 +1545,9 @@ fn main() -> AppExit {
     // The switches the settings page weighs against the INI (`--play` only), for the
     // frame split's start-time decision (perf_overlay/split.rs).
     .add_plugins(perf_overlay::PerfOverlayPlugin(args.fps, play.is_some().then(|| settings::given_switches(&args, &command_line()))))
-    // Vsync as Bevy's default, off while frame times are measured; no frame-rate cap.
-    .add_plugins(frame_pace::FramePacePlugin(frame_pace::FramePace { sync: if args.log_frame_times.is_none() { frame_pace::DisplaySync::Vsync } else { frame_pace::DisplaySync::Off }, cap: 0 }))
+    // Vsync as Bevy's default, off while frame times are measured; no frame-rate cap unless
+    // --frame-cap asks for one (a measuring run only: the page's row decides otherwise).
+    .add_plugins(frame_pace::FramePacePlugin(frame_pace::FramePace { sync: if args.log_frame_times.is_none() { frame_pace::DisplaySync::Vsync } else { frame_pace::DisplaySync::Off }, cap: args.frame_cap.unwrap_or(0) }))
     .add_plugins(anti_lag::AntiLagPlugin(args.latency_reduction))
     // Defaults snapshots this command-line/default choice before apply_stored reads the INI.
     .add_plugins(frame_gen::FrameGenPlugin(args.frame_generation.unwrap_or_default()))
@@ -1548,6 +1583,9 @@ fn main() -> AppExit {
     .insert_resource(fly::AutoFly(args.auto_fly))
     .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen).with_origin(lod_origin))
     .insert_resource(TerrainSettings { tile: args.terrain_tile })
+    // The terrain wireframe (#2149), off unless asked for: it builds nothing while off.
+    .add_plugins(terrain_wireframe::TerrainWireframePlugin { on: args.terrain_wireframe })
+    .insert_resource(terrain_wireframe::WireSource::of_records(world.lo, world.schema, world.index))
     .init_resource::<TerrainCache>()
     .init_resource::<imposters::Imposters>()
     .insert_resource(Streamer {
@@ -1600,6 +1638,8 @@ fn main() -> AppExit {
     .add_systems(Update, sky::tell_sky_colors.after(sky::update_sky))
     .add_systems(Update, (fly::fly.run_if(move || play.is_none()), sky::sky_keys.run_if(move || play.is_none()), sky::weather_region.after(nvf_play::PlaySet::Physics), sky::update_sky, sky::interior_clip, sky::update_clouds, sky::update_night_sky, world::stream.run_if(world::world_not_held), imposters::update, fade::fade_cells, world::face_billboards, lod::update_lod, treelod::update_distant_trees, overlay, keys).chain())
     .add_systems(Update, world::note_other_cameras.after(world::stream))
+    // 4 x 4 near's redraws by distance (#2676): after streaming spawned this frame's cells.
+    .add_plugins(terrain_lod::TerrainLodPlugin)
     .add_systems(Update, (cell_buffer::remember, cell_buffer::tell_game).chain().after(world::stream))
     .add_systems(Update, world::script_markers.before(world::stream))
     .add_systems(Update, world::draw_waiting_actors.after(world::stream))
@@ -1609,8 +1649,11 @@ fn main() -> AppExit {
     .add_systems(Last, readahead::report)
     .init_resource::<AnimCost>()
     .add_systems(Update, advance_animations)
+    .add_systems(Update, particles::sync_idle_materials.after(anim_objects::hold).before(nvf_assets::material_anim::bind_rig_materials))
     // Vertex morphs (waving flags, sagging wires): docs/spec-notes/vertex-morphs.md.
     .add_systems(Update, nvf_assets::morph::play_vertex_morphs.after(world::stream))
+    // [design, #2685] Manager morphs follow the active rig, including restored groups.
+    .add_systems(Update, nvf_assets::morph::play_sequence_morphs.after(advance_animations))
     .init_resource::<activators::ActivatorStats>()
     .add_systems(
         Update,
@@ -1835,7 +1878,7 @@ fn main() -> AppExit {
         // The props idles hold (anim_objects.rs): after the idles started and ended.
         app.init_resource::<anim_objects::AnimObjects>()
             .add_systems(Startup, anim_objects::read)
-            .add_systems(Update, anim_objects::hold.after(idles::drive))
+            .add_systems(Update, anim_objects::hold.after(idles::drive).before(advance_animations))
             .add_systems(Update, idles::play_npc_sequences.after(idles::drive))
             .add_systems(Last, anim_objects::report);
     }
@@ -1981,6 +2024,9 @@ fn main() -> AppExit {
             }
         };
         app.add_systems(Update, summary);
+    }
+    if play.is_none() {
+        app.add_systems(Startup, || info!("{}", nvf_play::smooth_terrain::describe()));
     }
     if play.is_some() {
         settings::register(&mut app);
