@@ -537,8 +537,9 @@ fn publication_key(p: &crate::terrain_surface::PublishedSurface) -> PublicationK
 /// a shape that may blend (mask 0). [design] So a source only shapes kept out read (a
 /// fade's or an override's copy whose alpha moves every frame, a census-only shape's
 /// material) is watched without its stamp: such a shape becomes allowed only through a
-/// change of its reasons (this fingerprint), a temporary marker's removal, its ordinary
-/// material component or its `BlendCensus` changing, each a trigger of its own.
+/// change of its reasons or its source loading (this fingerprint), a temporary marker's
+/// removal, its ordinary material component, its `BlendShape` or its `BlendCensus` added,
+/// replaced or removed, each a trigger of its own.
 type Fingerprint = Option<(u32, Option<SourceStamp>)>;
 fn fingerprint(source: Option<&NifMaterial>, stamped: bool) -> Fingerprint {
     source.map(|m| (material_reasons(m), stamped.then(|| SourceStamp::of(m))))

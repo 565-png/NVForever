@@ -971,8 +971,8 @@ compared only when the material store was changed since the conversion last ran.
 is watched only for a source a shape that may blend read; a source only shapes kept out
 read (a fade's or an override's copy, whose alpha moves every frame; a census-only shape's
 material) is watched by its reasons and whether it is loaded, since such a shape becomes
-allowed only through its reasons, a temporary marker's removal or a change of its ordinary
-material or census, each a trigger. The first frame after the blend turns on always runs
+allowed only through its reasons, its source loading, a temporary marker's removal, or its
+ordinary material, `BlendShape` or `BlendCensus` added, replaced or removed, each a trigger. The first frame after the blend turns on always runs
 it. A pass's own commands can call for one more pass in the next frame, which changes
 nothing. Every frame, pass or not, follows the coverage of the recorded publications
 (`follow_coverage`: one check per publication, a walk over its clones only when its
