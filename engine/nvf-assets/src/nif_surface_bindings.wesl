@@ -51,7 +51,8 @@ struct NifSurface {
     // (both 0: no fade).
     env: vec4<f32>,
     // Environment map (NifSurface::env_how): x the cube orientation (0 #2669's lookup),
-    // y 1 scales by received light, z 1 for a window shape; w unused.
+    // y 1 scales by received light, 2 by the scene light, z 1 for a window shape, w 1 on
+    // every shape with an environment map.
     env_how: vec4<f32>,
 }
 

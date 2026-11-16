@@ -17,17 +17,21 @@
 //! interior's ambient plus directional colour, as display values, held to 1 per channel)
 //! [hypothesis, from captures of the original (jobs envmap2/envmap3, Primm, 2026-11-16):
 //! a streak on a static bottle kept its screen place under sun, fire and moon, took the
-//! light's colour and fell to about a third from day to night; fitted against
-//! NVForever's unscaled term it needed 3.75-7.75 times the term by day and about none at
-//! night; observer check 227]. Window shapes keep #2462's unscaled term by default.
+//! light's colour and fell to about a third from day to night; a fit against NVForever's
+//! unscaled term, itself a hypothesis, asked for 3.75-7.75 times the term by day and
+//! about none at night; observer check 227]. By day L is at most 1, so the default can
+//! only dim the strength-1 term, while that fit asks for up to 8.5 times more on some
+//! objects: the day strength is open and deliberately left at 1. L follows the sun
+//! light's fade near the horizon, so around sunrise and sunset the reflection dips
+//! towards the ambient part alone. Window shapes keep #2462's unscaled term by default.
 //!
 //! Debug switches (development aids for comparing frames with the original's, not part
 //! of a release; read once at start; the run stays attended, as with every
 //! `NVF_PLAY_DEBUG_*` switch, nvf-play `test_aid.rs`). Each defaults to the renderer's own
 //! choice. Unlike the repo's other debug switches, two are on by default and are turned
-//! off by `0` (`NON_WINDOW`, `DISTANCE_FADE`); an empty value turns those two off, as an
-//! empty value does elsewhere (`dialogue::debug_switch`), and leaves every other switch
-//! at its default:
+//! off by `0` (`NON_WINDOW`, `DISTANCE_FADE`). A set but empty value counts as not set
+//! for every switch, as it does elsewhere (`dialogue::debug_switch`), so it keeps the
+//! default:
 //!
 //! - `NVF_PLAY_DEBUG_ENV_NON_WINDOW=0`: shapes without the window flag do not reflect
 //!   (the pictures of #2669, from the same build). Default on.
@@ -57,7 +61,7 @@
 //!   `fade-flag` are rough stand-ins, **not** models of the original. Defaults `scene`
 //!   and `off`.
 //! - `NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=0`: no fade with distance ([`ENV_MAP_LOD1`],
-//!   [`ENV_MAP_LOD2`]; by the distance from the camera to the object's origin). Default
+//!   [`ENV_MAP_LOD2`]; by the distance from the camera to the shape node's origin). Default
 //!   on.
 
 use bevy::prelude::*;
@@ -77,7 +81,9 @@ pub const ENV_MAP_LOD1: f32 = 1500.0;
 /// to render Environment mapping effects (fake environment reflections) on objects"
 /// [documented: GECK wiki "INI Settings", Display section; the running original reported
 /// 1800, observed: capture job envmap]. Between the two the reflection fades linearly,
-/// by the distance from the camera to the object's origin, not to each fragment
+/// by the distance from the camera to the shape node's origin (its mesh instance's
+/// translation, usually the reference's), not to each fragment; a model whose parts sit
+/// under nodes of their own (the HELIOS One reflector row) fades part by part
 /// [hypothesis: the wiki gives the two distances and says "on objects", not the curve;
 /// observer check 228].
 pub const ENV_MAP_LOD2: f32 = 1800.0;
@@ -215,7 +221,7 @@ pub const ENV_SWITCHES: [&str; 10] = [
 fn on_off(v: &str) -> Option<bool> {
     match v {
         "1" | "on" | "true" | "yes" => Some(true),
-        "" | "0" | "off" | "false" | "no" => Some(false),
+        "0" | "off" | "false" | "no" => Some(false),
         _ => None,
     }
 }
@@ -283,8 +289,7 @@ impl EnvAids {
             let Some(raw) = get(name) else { continue };
             let v = raw.trim().to_ascii_lowercase();
             let v = v.as_str();
-            let on_off_switch = matches!(name, "NVF_PLAY_DEBUG_ENV_NON_WINDOW" | "NVF_PLAY_DEBUG_ENV_DISTANCE_FADE");
-            if v.is_empty() && !on_off_switch {
+            if v.is_empty() {
                 continue;
             }
             let ok = match name {
@@ -371,7 +376,9 @@ pub(crate) fn env_alpha_mode(alpha_mode: AlphaMode, window: Option<bool>, aids: 
 /// - env: x the scale × the strength switch, y the [`MaskMode`], z and w the distances
 ///   of the fade ([`ENV_MAP_LOD1`], [`ENV_MAP_LOD2`]; both 0: no fade);
 /// - env_how: x the [`Axes`] code, y what scales the reflection (0 nothing, 1 the
-///   fragment's received light, 2 the scene light), z 1 for a window shape, w unused.
+///   fragment's received light, 2 the scene light), z 1 for a window shape, w 1 on every
+///   reflecting shape (the shader premultiplies a Premultiplied one by it, even where the
+///   reflection has faded out or its strength is 0).
 pub(crate) fn env_uniforms(env: &ShapeEnv, mask: MaskMode, aids: &EnvAids) -> (Vec4, Vec4) {
     let (start, end) = if aids.distance_fade { (ENV_MAP_LOD1, ENV_MAP_LOD2) } else { (0.0, 0.0) };
     let light = match aids.light_for(env.window) {
@@ -383,14 +390,15 @@ pub(crate) fn env_uniforms(env: &ShapeEnv, mask: MaskMode, aids: &EnvAids) -> (V
     };
     (
         Vec4::new(env.scale * aids.strength, mask as u8 as f32, start, end),
-        Vec4::new(aids.axes_for(env.window) as u8 as f32, light, if env.window { 1.0 } else { 0.0 }, 0.0),
+        Vec4::new(aids.axes_for(env.window) as u8 as f32, light, if env.window { 1.0 } else { 0.0 }, 1.0),
     )
 }
 
-/// The share of the reflection left on an object whose origin (its mesh instance's
-/// world position) is `origin`, seen from `camera`, with the fade distances `start` and
-/// `end` (env z and w): 1 up to `start`, 0 from `end`, linear between; 1 when `end` is not
-/// past `start` (no fade). Every fragment of the object gets the same share. The CPU
+/// The share of the reflection left on a shape whose node's origin (its mesh instance's
+/// world position, usually the reference's) is `origin`, seen from `camera`, with the
+/// fade distances `start` and `end` (env z and w): 1 up to `start`, 0 from `end`, linear
+/// between; 1 when `end` is not past `start` (no fade). Every fragment of the shape gets
+/// the same share; the parts of a model under other nodes fade by their own. The CPU
 /// mirror of nif_material.wesl's fade.
 pub fn distance_fade(camera: Vec3, origin: Vec3, start: f32, end: f32) -> f32 {
     if end <= start {
@@ -496,11 +504,11 @@ mod tests {
         let (b, bad) = EnvAids::parse(set(&[("NVF_PLAY_DEBUG_ENV_STRENGTH", "-1"), ("NVF_PLAY_DEBUG_ENV_AXES", "sideways")]));
         assert_eq!(b, EnvAids::default());
         assert_eq!(bad.len(), 2);
-        // An empty value turns an on/off switch off (as `dialogue::debug_switch` reads
-        // one) and leaves every other switch at its default, without a complaint.
+        // A set but empty value counts as not set, for every switch (as
+        // `dialogue::debug_switch` reads one), without a complaint.
         let (c, bad) = EnvAids::parse(set(&[("NVF_PLAY_DEBUG_ENV_NON_WINDOW", ""), ("NVF_PLAY_DEBUG_ENV_LIGHT", " "), ("NVF_PLAY_DEBUG_ENV_DISTANCE_FADE", "")]));
         assert!(bad.is_empty());
-        assert_eq!(c, EnvAids { non_window: false, distance_fade: false, ..EnvAids::default() });
+        assert_eq!(c, EnvAids::default());
         assert_eq!((EnvAids::default().light, EnvAids::default().light_window), (EnvLight::Scene, EnvLight::Off));
     }
 
@@ -532,9 +540,10 @@ mod tests {
     }
 
     /// The fade: whole to fEnvMapLOD1, none from fEnvMapLOD2, linear between, by the
-    /// object's origin; no fade without the distances.
+    /// shape node's origin; no fade without the distances.
     #[test]
     fn distance_fade_is_linear_between_the_two_distances() {
+        // (A shape's node origin, as in the shader.)
         let fade = |d: f32| distance_fade(Vec3::ZERO, Vec3::new(0.0, 0.0, -d), ENV_MAP_LOD1, ENV_MAP_LOD2);
         assert_eq!(fade(0.0), 1.0);
         assert_eq!(fade(1500.0), 1.0);
@@ -544,10 +553,10 @@ mod tests {
         assert_eq!(distance_fade(Vec3::ZERO, Vec3::splat(40_000.0), 0.0, 0.0), 1.0);
     }
 
-    /// Per object, not per fragment: a 1,000-unit counter whose origin stands 1,000 units
-    /// away fades as a whole by its origin, so its far end (2,000 units off) still reflects
-    /// fully and its whole length is faded alike once the origin passes 1,500 (the shader
-    /// takes the mesh instance's translation, `get_world_from_local(..)[3]`).
+    /// Per shape node, not per fragment: a 1,000-unit counter whose node origin stands
+    /// 1,000 units away fades as a whole by it, so its far end (2,000 units off) still
+    /// reflects fully and its whole length is faded alike once the origin passes 1,500
+    /// (the shader takes the mesh instance's translation, `get_world_from_local(..)[3]`).
     #[test]
     fn distance_fade_is_per_object() {
         let camera = Vec3::new(10.0, 120.0, -30.0);
@@ -556,6 +565,25 @@ mod tests {
         let farther = camera + Vec3::new(1650.0, 0.0, 0.0);
         assert!((distance_fade(camera, farther, ENV_MAP_LOD1, ENV_MAP_LOD2) - 0.5).abs() < 1e-4);
         assert!(include_str!("nif_material.wesl").contains("get_world_from_local(in.instance_index)[3].xyz"), "the shader fades by the instance's origin");
+    }
+
+    /// A premultiplied environment-mapped shape (a blended window pane) is multiplied by
+    /// its alpha whether or not it still reflects: the premultiply sits in the branch of
+    /// the env-shape mark (env_how.w), before and outside the distance fade's gate, so a
+    /// pane beyond fEnvMapLOD2 is not drawn at its full texture colour (review B1 of
+    /// #2841: it once sat inside the gate).
+    #[test]
+    fn premultiply_is_outside_the_fade_gate() {
+        let shader = include_str!("nif_material.wesl").replace("\r\n", "\n");
+        let premultiply = "out.color.rgb * out.color.a, premultiplied)";
+        assert_eq!(shader.matches(premultiply).count(), 1, "one premultiply of env shapes");
+        let at = shader.find(premultiply).unwrap();
+        let gate = shader.find("if surface.env.x > 0.0 && env_fade > 0.0 {").expect("the fade's gate");
+        assert!(at < gate, "the premultiply comes before the fade's gate");
+        let mark = shader[..at].rfind("if surface.env_how.w > 0.5 {").expect("the env-shape mark's branch");
+        assert!(!shader[mark..at].contains('}'), "the premultiply is inside the mark's branch, nothing closed between");
+        let gated = shader[gate..].split("\n    } else {").next().unwrap();
+        assert!(!gated.contains("premultiplied"), "nothing premultiplies inside the gate");
     }
 
     /// The scene light: ambient + every directional light as display values (the uniforms
@@ -589,16 +617,18 @@ mod tests {
         let d = EnvAids::default();
         let (e, how) = env_uniforms(&env(true, false), MaskMode::Slot5, &d);
         assert_eq!(e, Vec4::new(1.2, 1.0, ENV_MAP_LOD1, ENV_MAP_LOD2));
-        assert_eq!(how, Vec4::new(0.0, 0.0, 1.0, 0.0));
+        assert_eq!(how, Vec4::new(0.0, 0.0, 1.0, 1.0));
         let (e, how) = env_uniforms(&env(false, true), MaskMode::Full, &d);
         assert_eq!(e, Vec4::new(1.2, 0.0, ENV_MAP_LOD1, ENV_MAP_LOD2));
-        assert_eq!(how, Vec4::new(0.0, 2.0, 0.0, 0.0), "scaled by the scene light by default");
+        assert_eq!(how, Vec4::new(0.0, 2.0, 0.0, 1.0), "scaled by the scene light by default");
         let a = EnvAids { strength: 2.0, axes: Axes::SwapYZ, light: EnvLight::FadeFlag, distance_fade: false, ..d };
         let (e, how) = env_uniforms(&env(false, true), MaskMode::NormalAlpha, &a);
         assert_eq!(e, Vec4::new(2.4, 2.0, 0.0, 0.0));
-        assert_eq!(how, Vec4::new(4.0, 1.0, 0.0, 0.0));
+        assert_eq!(how, Vec4::new(4.0, 1.0, 0.0, 1.0));
         let (_, how) = env_uniforms(&env(true, true), MaskMode::Full, &a);
-        assert_eq!(how, Vec4::new(0.0, 0.0, 1.0, 0.0), "the window orientation and no light: LIGHT names the other set");
+        assert_eq!(how, Vec4::new(0.0, 0.0, 1.0, 1.0), "the window orientation and no light: LIGHT names the other set");
+        let (e, how) = env_uniforms(&env(true, false), MaskMode::Full, &EnvAids { strength: 0.0, ..d });
+        assert_eq!((e.x, how.w), (0.0, 1.0), "strength 0 still marks the shape, so a premultiplied pane is premultiplied");
         let (_, how) = env_uniforms(&env(false, false), MaskMode::Full, &a);
         assert_eq!(how.y, 0.0, "fade-flag: no light on a shape without bit 15");
         let lit_windows = EnvAids { light_window: EnvLight::Scene, light: EnvLight::Off, ..d };

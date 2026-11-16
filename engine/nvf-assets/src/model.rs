@@ -1808,7 +1808,14 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
         let (material, _missing) = shape_material_with(&props, &mut mesh, sink);
         if material.extension.env.x > 0.0 && material.extension.env_how.z > 0.5 {
             let over = if matches!(material.base.alpha_mode, AlphaMode::Premultiplied) { "over the blend" } else { "added" };
-            env_how = format!("{}, scale {:.2}, {over}", props.textures.get(4).map_or("-", String::as_str), material.extension.env.x);
+            // Scaled by light only under a debug switch (env_map.rs `LIGHT_WINDOW`); the
+            // default line stays #2462's.
+            let light = match material.extension.env_how.y {
+                y if y > 1.5 => ", by scene light",
+                y if y > 0.5 => ", by received light",
+                _ => "",
+            };
+            env_how = format!("{}, scale {:.2}, {over}{light}", props.textures.get(4).map_or("-", String::as_str), material.extension.env.x);
             env_shapes.push(shape_name.clone());
         } else if material.extension.env.x > 0.0 {
             other_env.push(format!("{shape_name} ({})", crate::env_map::describe(props.textures.get(4).map_or("-", String::as_str), &material)));

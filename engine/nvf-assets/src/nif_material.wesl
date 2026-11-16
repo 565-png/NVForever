@@ -638,14 +638,24 @@ fn nif_fragment(
         // alpha first, so the reflection lies over the blend whatever the alpha; a blended
         // shape is weighted by its alpha, reflection included [hypothesis].
         // Distance fade (env_map.rs ENV_MAP_LOD1, ENV_MAP_LOD2: fEnvMapLOD1/2), linear
-        // between the two by the distance from the camera to the object's origin, the
-        // mesh instance's translation, so a long shape fades as a whole [hypothesis], in
-        // game units (the world's units); worked out first, so a faded-out object reads
-        // neither its cube nor its mask.
+        // between the two by the distance from the camera to the shape node's origin (the
+        // mesh instance's translation, usually the reference's; a model whose parts sit
+        // under nodes of their own fades part by part) [hypothesis], in game units (the
+        // world's units); worked out first, so a faded-out shape reads neither its cube
+        // nor its mask.
         var env_fade = 1.0;
         if surface.env.x > 0.0 && surface.env.w > surface.env.z {
             let d = distance(view.world_position, get_world_from_local(in.instance_index)[3].xyz);
             env_fade = 1.0 - saturate((d - surface.env.z) / (surface.env.w - surface.env.z));
+        }
+        // A premultiplied environment-mapped shape (a blended window shape, or another under
+        // NVF_PLAY_DEBUG_ENV_BLEND=premultiplied; env_how.w marks every env shape) has its
+        // colour multiplied by its alpha whether or not it still reflects: Bevy leaves a
+        // Premultiplied material's colour as it is and blends it ONE / 1 - alpha, so a
+        // faded-out or zero-strength pane would otherwise draw at its full texture colour.
+        if surface.env_how.w > 0.5 {
+            let premultiplied = (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_PREMULTIPLIED;
+            out.color = vec4(select(out.color.rgb, out.color.rgb * out.color.a, premultiplied), out.color.a);
         }
         if surface.env.x > 0.0 && env_fade > 0.0 {
             let r = reflect(-pbr_input.V, pbr_input.N);
@@ -681,8 +691,7 @@ fn nif_fragment(
                 let luma_weights = vec3(0.2126, 0.7152, 0.0722);
                 reflection *= saturate(dot(lit_rgb, luma_weights) / max(dot(pbr_input.material.base_color.rgb, luma_weights), 0.02));
             }
-            let premultiplied = (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_PREMULTIPLIED;
-            out.color = vec4(select(out.color.rgb, out.color.rgb * out.color.a, premultiplied) + reflection, out.color.a);
+            out.color = vec4(out.color.rgb + reflection, out.color.a);
         }
     } else {
         out.color = pbr_input.material.base_color;

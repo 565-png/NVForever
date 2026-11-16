@@ -518,8 +518,10 @@ pub struct NifSurface {
     pub env: Vec4,
     /// How the environment map is read (`env_map::env_uniforms`): x the cube orientation
     /// (`env_map::Axes`, 0 #2669's lookup), y 1 when the reflection is scaled by the light
-    /// the fragment receives (a debug switch's stand-in), z 1 for a window shape (the
-    /// Window_Environment_Mapping flag); w unused. All zero without an environment map.
+    /// the fragment receives (a debug switch's stand-in), 2 by the scene light, z 1 for a
+    /// window shape (the Window_Environment_Mapping flag), w 1 on every shape with an
+    /// environment map (a premultiplied one is premultiplied by it even where the
+    /// reflection has faded out). All zero without an environment map.
     pub env_how: Vec4,
     /// The environment cube (texture-set slot 4), loaded as a cube map
     /// (`texture::dds_cube_image`); `None` without an environment map.
