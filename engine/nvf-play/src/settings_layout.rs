@@ -98,8 +98,9 @@ const fn group_section(subgroup: &'static str, heading: &'static str, keys: &'st
 /// The rows the NVF Features tab may hold: only what the owner named there [design: owner
 /// 2026-11-15]. Adding a key needs the owner's word; a bigger gameplay change is offered to
 /// the owner for this tab, never moved here unasked (docs/design/settings-page.md).
-pub const NVF_FEATURES_KEYS: [&str; 8] = [
+pub const NVF_FEATURES_KEYS: [&str; 9] = [
     "advanced-movement",
+    "movement-weight",
     "movement-inertia",
     "weapon-handling",
     "advanced-recoil",
@@ -121,7 +122,7 @@ pub const SECTIONS: &[Section] = &[
     section("Gameplay", Some("Game"), &["difficulty", "hardcore", "reload-slows", "UsePipBoy", "sound-cover"]),
     // "V.A.T.S." as the data spells it (MESG `HelpVATS`).
     section("Gameplay", Some("V.A.T.S."), &["vats-style", "vats-slowdown", "kill-camera"]),
-    section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-sway", "head-bob", "weapon-lower", "field-of-view", "viewmodel-field-of-view"]),
+    section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-lower", "field-of-view", "viewmodel-field-of-view"]),
     section("Gameplay", Some("Dialogue"), &["dialogue-zoom", "dialogue-look", "dialogue-recentre", "menu-pause", "dialogue-goodbye-hint", "lip-sync"]),
     section("Gameplay", Some("Saving"), &["autosave-travel", "autosave-fast-travel", "autosave-wait", "autosave-sleep", "autosave-scripts"]),
     section("Gameplay", Some("Bug Reports"), &["send-reports", "reports-delete"]),
@@ -224,7 +225,7 @@ pub const SECTIONS: &[Section] = &[
     section("Graphics", Some("Detail and Distance"), &["distant-lod", "grass", "anisotropic", "terrain-height-blend", "terrain-anti-tiling", "smooth-terrain", "object-distance", "actor-distance", "item-distance", "grass-distance"]),
     section("Graphics", Some("World and Animation"), &["head-tracking", "foot-ik", "sky-clock"]),
     // The owner's own layout of the movement work (tech/movement-inertia, 2026-11-15).
-    section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement"]),
+    section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement", "movement-weight"]),
     section(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil"]),
     section(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     section(NVF_FEATURES_TAB, Some("World Interaction"), &["grass-fire"]),
@@ -1269,10 +1270,18 @@ mod tests {
     /// #2198's upscaler rows, #2169's FSR library row, #2242's upscaling counter row, #2317's
     /// Generated frames row, the field of view rows, the menu scale and Physics rate rows,
     /// #2662's grass fires, #2550's terrain height blending, #2551's terrain anti-tiling,
-    /// #2688's sound cover, #2149's smooth terrain and its Debug row terrain wireframe (upstream
-    /// main be9684824) and the overhaul's menu font), by the group it registers with.
-    const KNOWN: [(&str, &str); 118] = [
+    /// #2688's sound cover, #2149's smooth terrain and its Debug row terrain wireframe, the
+    /// overhaul's menu font, and the Advanced Movement rows of tech/movement-inertia, Weapon
+    /// Inertia and Camera Motion in place of weapon sway and head bob), by the group it
+    /// registers with.
+    const KNOWN: [(&str, &str); 124] = [
         ("detached-camera", "Gameplay"),
+        ("advanced-movement", "Gameplay"),
+        ("movement-weight", "Gameplay"),
+        ("movement-inertia", "Gameplay"),
+        ("weapon-handling", "Gameplay"),
+        ("advanced-recoil", "Gameplay"),
+        ("animation-smoothing", "Gameplay"),
         ("sound-cover", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
@@ -1321,8 +1330,8 @@ mod tests {
         ("borderless", "Display"),
         ("monitor", "Display"),
         ("first-person-body", "Display"),
-        ("weapon-sway", "Display"),
-        ("head-bob", "Display"),
+        ("weapon-inertia", "Display"),
+        ("camera-motion", "Display"),
         ("weapon-lower", "Display"),
         ("sun-shadows", "Display"),
         ("grass", "Display"),
@@ -1391,10 +1400,6 @@ mod tests {
         ("send-reports", "Reports"),
         ("reports-delete", "Reports"),
     ];
-
-    /// The rows the table places ahead of the change that registers them (the movement
-    /// rows of tech/movement-inertia; the tweaks: [`TWEAK_ROWS`]).
-    const AHEAD: [&str; 7] = ["advanced-movement", "movement-inertia", "weapon-handling", "advanced-recoil", "weapon-inertia", "animation-smoothing", "camera-motion"];
 
     /// What every tweak's key starts with (#1892's `tweaks.rs`: `concat!("tweak-", $key)`).
     const TWEAK_PREFIX: &str = "tweak-";
@@ -1531,14 +1536,13 @@ mod tests {
         let headless = [section("Gameplay", Some("A"), &["a"]), section("Gameplay", None, &["b"])];
         assert!(check(&headless).is_err());
         // Every row there is has its place in the table; the table names no other but the
-        // Controls tab's own rows and the rows placed ahead: the movement rows and #1892's
-        // tweaks, each of those on the Tweaks tab.
+        // Controls tab's own rows and #1892's tweaks, each of those on the Tweaks tab.
         let named: Vec<&str> = SECTIONS.iter().flat_map(|s| s.keys.iter().copied()).filter(|k| !k.starts_with(CONTROL_PREFIX)).collect();
         for (k, _) in KNOWN {
             assert!(named.contains(&k), "{k} has no place");
         }
         for k in &named {
-            assert!(KNOWN.iter().any(|(n, _)| n == k) || AHEAD.contains(k) || is_tweak(k), "{k} is placed but no row has it");
+            assert!(KNOWN.iter().any(|(n, _)| n == k) || is_tweak(k), "{k} is placed but no row has it");
         }
         for s in SECTIONS {
             for k in s.keys.iter().filter(|k| k.starts_with(TWEAK_PREFIX)) {
@@ -1560,7 +1564,10 @@ mod tests {
         assert_eq!(keys(&list, &l, "Gameplay")[..11], ["[Game]", "difficulty", "hardcore", "reload-slows", "UsePipBoy", "sound-cover", "", "[V.A.T.S.]", "vats-style", "vats-slowdown", "kill-camera"]);
         assert_eq!(keys(&list, &l, "Audio"), ["[Volume]", "volume-master", "volume-music", "volume-footstep", "volume-voice", "volume-effects", "volume-radio", "", "[Sound]", "music", "voice", "reverb", "voice-reverb"]);
         assert_eq!(keys(&list, &l, "Controls")[..6], ["[Input]", "@device", "button-style", "@automatic-input", "@rumble", ""]);
-        assert_eq!(keys(&list, &l, NVF_FEATURES_TAB), ["[World Interaction]", "grass-fire"], "the movement rows are not registered on main");
+        assert_eq!(
+            keys(&list, &l, NVF_FEATURES_TAB),
+            ["[Advanced Movement]", "advanced-movement", "movement-weight", "", "[Gameplay]", "movement-inertia", "weapon-handling", "advanced-recoil", "", "[Visual Only]", "weapon-inertia", "animation-smoothing", "camera-motion", "", "[World Interaction]", "grass-fire"]
+        );
         assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "terrain-wireframe", "scope-3d"]);
         assert!(keys(&list, &l, "Tweaks").is_empty(), "an empty tab is still a tab");
         let at = |k: &str| l.placement_of(list.iter().position(|s| s.key == k).unwrap()).unwrap().path();
@@ -1593,9 +1600,9 @@ mod tests {
     #[test]
     fn a_missing_row_and_an_empty_category_are_left_out() {
         // No lip sync, no player body; no head tracking, foot IK or sky clock at all.
-        let list = registry(&[("difficulty", "Gameplay"), ("menu-pause", "Gameplay"), ("head-bob", "Display"), ("god-mode", "Debug")]);
+        let list = registry(&[("difficulty", "Gameplay"), ("menu-pause", "Gameplay"), ("field-of-view", "Display"), ("god-mode", "Debug")]);
         let l = resolve_layout(&list);
-        assert_eq!(keys(&list, &l, "Gameplay"), ["[Game]", "difficulty", "", "[Camera]", "head-bob", "", "[Dialogue]", "menu-pause"]);
+        assert_eq!(keys(&list, &l, "Gameplay"), ["[Game]", "difficulty", "", "[Camera]", "field-of-view", "", "[Dialogue]", "menu-pause"]);
         assert!(keys(&list, &l, "Graphics").is_empty());
         // A hidden row hides its category when it is the only one, and keeps its place.
         let hidden = list.iter().position(|s| s.key == "menu-pause").unwrap();
