@@ -23,8 +23,6 @@ use super::{ASSET_SIZE, Failure};
 /// The hosts a redirect from [`super::ASSET_URL`] may lead to: GitHub's release asset hosts
 /// [observed: the asset's redirect, 2026-11-12, and GitHub's earlier asset host].
 pub(super) const ALLOWED_HOSTS: [&str; 2] = ["release-assets.githubusercontent.com", "objects.githubusercontent.com"];
-/// The test aid's variable.
-pub(super) use super::TEST_URL_VAR;
 const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "[::1]"];
 
 /// An absolute URL's scheme and host, both lower case (an IPv6 host with its brackets); `None`
@@ -100,8 +98,8 @@ mod http {
     use std::io::Read;
     use std::time::Duration;
 
-    use super::super::{ASSET_SIZE, ASSET_URL, Failure, RangeSource};
-    use super::{TEST_URL_VAR, check_range, is_loopback_http, redirect_allowed};
+    use super::super::{ASSET_SIZE, ASSET_URL, Failure, RangeSource, TEST_URL_VAR};
+    use super::{check_range, is_loopback_http, redirect_allowed};
 
     /// How long connecting (and resolving the name) may take.
     const CONNECT: Duration = Duration::from_secs(20);
