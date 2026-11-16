@@ -75,6 +75,37 @@ loading, the ScriptState acquisition wrapper, animation/GPU rendering and native
 controls. Its result must be reported separately from helper tests. Backend,
 asset, smoke and native acceptance remain unqualified.
 
+## ModelHasBlock and published reference models
+
+- [documented] `ModelHasBlock object blockName` accepts a base form or a
+  reference, compares block names with case sensitivity, and includes nodes
+  inserted into the model. Source:
+  <https://geckwiki.com/index.php?title=ModelHasBlock>.
+- [design] For an admitted reference with a published `SceneMirror` tree, query
+  that tree with exact name equality. An empty published tree is an available
+  model with no matching nodes. Do not replace its answer with the base file's.
+  Querying must register the existing mirror watch without queueing scene edits.
+- [design] Preserve the existing MODL/file query for base forms and references
+  whose tree has not been published. Empty or invalid required object arguments
+  must not become the running script's self. A base-form ID is not a reference
+  simply because a host published a tree under that ID.
+- [design] Use the mirror's existing default player model selection described
+  above. Host `forget` removes a reference's model publication; `Game::restore`
+  starts with an unpublished mirror. Saving leaves the running mirror intact.
+  This adds no new persistent model state or independent deletion/unload policy.
+- [hypothesis] Native cold-query timing and player-view selection remain
+  unmeasured. The existing fallback scans file strings rather than parsing block
+  ownership; its false-positive boundaries are unchanged. JIP PP sparse paths,
+  base-form runtime attachments, and full installed armor/Pip-Boy execution are
+  outside this bounded change.
+
+Authored source-VM fixtures cover reference-only and player names, exact case,
+same-base instance isolation, insert/rename/remove visibility, empty and invalid
+objects under a nonempty self context, host forget/deletion and save/restore.
+The established process-isolated file-query binary owns fallback controls under
+its existing Roots guard, including published-empty-tree authority and no file
+reads once a tree is available. These controls are authored but unexecuted.
+
 [observed: authored CPU controls] Six core controls pass in the iter profile with
 Rust 1.99.0, along with focused core Clippy. Restoring only the wrong rotation
 selector (argument 4) in otherwise corrected source gives three passes and three
