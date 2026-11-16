@@ -1631,7 +1631,8 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 w.door_since = Some(p.now);
                 return Walked::Going;
             } else if w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) {
-                p.finding("door", format!("door {door:08X} on the way, not locked, did not open in {LOCKED_SECS:.0} s: walks on as if it had"));
+                let parents = h.game(|g| g.world.placed.get(FormId(door)).map(|r| r.activate_parents.len())).flatten().unwrap_or(0);
+                p.finding("door", format!("door {door:08X} on the way, not locked, did not open in {LOCKED_SECS:.0} s ({parents} activate parents, none taken): walks on as if it had"));
                 f.door_opened();
                 w.door_since = None;
             }
@@ -1831,23 +1832,23 @@ fn door_switch(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<Switch> {
         return None;
     }
     let (cell, at) = where_is(g, FormId(door))?;
-    let refs = g.world.placed.by_cell.get(&cell?)?;
-    let scripted = |r: FormId| {
-        let unit = g.data.scripts.get(&g.ref_script(r)?).map(|u| g.data.unit(*u))?;
-        unit.program.blocks.iter().any(|b| b.event == fnv_game::game::event::ON_ACTIVATE).then_some(unit)
-    };
     let mut found: Vec<(u8, f32, FormId, [f32; 3], &'static str)> = Vec::new();
     // The door's activate parents (XAPR) set it off: a door that only they open (XAPD,
     // Vault 112's floor hatch Vault112SecretHatchREF under the Tenpenny wall switch
     // [observed]) refuses the player. A parent that is a trigger volume is not a switch.
     let parents: Vec<FormId> = g.world.placed.get(FormId(door)).map(|p| p.activate_parents.iter().map(|a| a.reference).collect()).unwrap_or_default();
     for r in parents {
-        if used.iter().any(|(u, d)| *u == r.0 && *d == door) || g.world.placed.get(r).is_none_or(|p| p.primitive.is_some() || p.cell != cell) {
+        if used.iter().any(|(u, d)| *u == r.0 && *d == door) || g.world.placed.get(r).is_none_or(|p| p.primitive.is_some()) {
             continue;
         }
         let Some((_, pos)) = where_is(g, r) else { continue };
         found.push((0, hdist(pos, at).hypot(pos[2] - at[2]), r, pos, "the door's activate parent"));
     }
+    let scripted = |r: FormId| {
+        let unit = g.data.scripts.get(&g.ref_script(r)?).map(|u| g.data.unit(*u))?;
+        unit.program.blocks.iter().any(|b| b.event == fnv_game::game::event::ON_ACTIVATE).then_some(unit)
+    };
+    let refs: &[FormId] = cell.and_then(|c| g.world.placed.by_cell.get(&c)).map(|v| v.as_slice()).unwrap_or(&[]);
     for &r in refs {
         if r.0 == door || used.iter().any(|(u, d)| *u == r.0 && *d == door) || g.is_dead(r) {
             continue;
