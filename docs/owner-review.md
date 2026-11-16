@@ -295,6 +295,13 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- **SayTo's "no target look" flag turns nobody (#2796).** [hypothesis, #2796] A SayTo with
+  `noTargetLookFlag` 1 now turns neither the speaker nor the target, so Curtis talks into
+  his radio in the McCarran tower without turning to the player below. Without the flag
+  the speaker still turns to whom it talks (your 2026-10-11 rule). This changes the 22
+  shipped SayTo calls to the player that carry the flag (the monorail guards would warn
+  you without turning). The narrower reading, the speaker stays only when the target is
+  the player, is a one-line change. ([dialogue-play §9.2](design/dialogue-play.md))
 - **Hold CLAMP effect idles (#2685).** [design, #2685] `HOLD_CLAMP_EFFECT_IDLES` keeps
   a CLAMP actor idle with material/emitter tracks at its exact end until replacement or
   stop, overriding repeat counts. This keeps attached chamber effects and pod glow;

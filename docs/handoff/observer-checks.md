@@ -3120,3 +3120,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      Guard05 (their health). Also: does a Securitron help when the player alone fights
      Oliver before the guards are down (it has its guard then)?
 
+## Added 2026-11-16 (SayTo's noTargetLookFlag, #2796)
+
+218. **Does `SayTo` with `noTargetLookFlag` 1 turn the speaker to its target?** (P2; #2796,
+     dialogue-play.md §9.2.) When an NPC runs `SayTo player <topic> 0 1`, does the speaker
+     turn to face the player? Ours: nobody turns, body or head [hypothesis]; without the
+     flag the speaker turns head and body to the target [owner decision 2026-10-11]. The
+     GECK wiki says only that the target "is not forced to look at the speaker"
+     [documented: GECK wiki SayTo]. Two places to watch: Camp McCarran's tower at night
+     during I Put a Spell on You (VMS08), entering the tower trigger with Curtis
+     (`CaptainCurtisREF` 0x000F6283) on the walkway behind the player's back: does he turn
+     for "Lupa, this is Frumentarius Picus, over." (VMS08CurtisRadio1) or keep talking
+     into the radio; and one of the McCarran monorail guards' warnings to the player.
+     Read his heading (`GetAngle Z`) and `GetHeadingAngle player` before and at the end of
+     the line. If he turns, the flag is the wiki's alone (only the target stays still).
+
