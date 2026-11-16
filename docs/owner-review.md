@@ -790,6 +790,19 @@ the spec it links to.
     "gone" to scripts that test it). Observer check 172 asks the original.
     ([doors §6](spec-notes/doors.md))
 
+65. **A murder's faction flag is short-lived (#2456, #2498).** A witnessed murder makes
+    the player an enemy of every crime-tracking faction of the victim's, the "no side"
+    armour faction ArmorVCaesarsLegionFaction too, as the original does; the flag clears
+    by itself 0.18 game hours (11 game minutes) after the crime instead of after
+    iCoolDownTimerSetting's 3 days. The witnesses' own grudges still last 3 days. In the
+    original a Cove murder flagged both VCaesarsLegionFaction and the armour faction, and
+    both read 0 again 0.18 game hours later; Karl at Red Rock then stayed seated, and
+    attacks only while the armour flag is up [observed: observer check 203, 2026-11-15].
+    That every crime's flag (a theft's, the Evil faction's area alert) lasts as long is a
+    [hypothesis]. #2498 first proposed never flagging a faction that is no side; that
+    rule is dropped. **Ruled 2026-11-16 (owner, on #2498, after check 203): "Short-lived
+    flag".** Smoke `crime-karl-flag-clears`, `crime-expiry-legion-calm`.
+    ([crime-karma §3.4, §3.7](spec-notes/crime-karma.md))
 66. **A script package added again after it is done starts over (#2424).** The Lucky
     38 elevator Victor's script adds his talk package on every talk and waits for the
     conversation before it shows the floor box; after Stay Here a second talk opened

@@ -882,8 +882,8 @@ pub struct PlayerState {
     #[serde(skip_serializing_if = "BTreeSet::is_empty", default)]
     pub enemy_of: BTreeSet<FormId>,
     /// For each faction a crime made the player an enemy of: GameDaysPassed at the last
-    /// such crime. The flag ends iCoolDownTimerSetting game days after it
-    /// (`Game::expire_crimes`). Absent in saves from before #2467 (`Game::date_crimes`).
+    /// such crime. The flag ends `crate::crime::FACTION_FLAG_DAYS` (0.18 game hours) after
+    /// it (`Game::expire_crimes`, #2498). Absent in saves from before #2467 (`Game::date_crimes`).
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub enemy_of_crimes: BTreeMap<FormId, f64>,
     /// Factions a script made the player an enemy of (SetPCEnemyOfFaction 1): kept until
