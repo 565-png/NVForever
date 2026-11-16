@@ -227,10 +227,14 @@ fn quest_targets(g: &mut Game, ctx: &ConsoleCtx) -> Vec<QuestTarget> {
     out
 }
 
-/// The door outdoors into an interior cell a marker stands at, if one leads there: (its
-/// cell, position) (`quest_targets::marker_door`).
-fn door_into(g: &Game, cell: FormId, ignores_locks: bool) -> Option<(FormId, [f32; 3])> {
-    let door = crate::quest_targets::marker_door(&g.world, &g.doors_into(cell), ignores_locks)?;
+/// The door outdoors a marker for a target in an interior cell stands at, if a way leads
+/// there: (its cell, position) (`quest_targets::outdoor_marker_door`: a door straight in,
+/// else the first door outdoors of the way through other interiors, #2458).
+fn door_into(g: &mut Game, cell: FormId, ignores_locks: bool) -> Option<(FormId, [f32; 3])> {
+    let direct = g.doors_into(cell);
+    let refs = g.world.placed;
+    let graph = g.other.objective_doors.get_or_insert_with(|| crate::quest_targets::DoorGraph::build(refs));
+    let door = crate::quest_targets::outdoor_marker_door(&g.world, graph, &direct, cell, ignores_locks)?;
     let d = g.world.placed.get(door)?;
     Some((d.cell?, d.pos))
 }
@@ -1014,7 +1018,7 @@ mod tests {
         let (console, other) = unhandled_unused(&j);
         eprintln!("unhandled console functions: {console:?}
 unhandled other vanilla functions: {other:?}");
-        assert_eq!((console.len(), other.len()), (33, 96), "docs/design/console.md, What the console does not handle, sorts them");
+        assert_eq!((console.len(), other.len()), (33, 92), "docs/design/console.md, What the console does not handle, sorts them");
         // `killall` reaches KillAllActors by its alias.
         assert_eq!(lookup_word(&t, "killall").map(|r| r.0).as_deref(), Some("KillAllActors"));
         assert_eq!(lookup_word(&t, "cam").map(|r| r.0).as_deref(), Some("CloseAllMenus"));

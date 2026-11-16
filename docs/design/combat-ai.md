@@ -300,6 +300,20 @@ Goodsprings' settlers share GoodspringsFaction and have Assistance 2 [observed:
 `fnvtool actor values`], so shooting one brings the others that see it; Violet's dogs
 share FiendsFactionNV with her (Assistance 2), so they now join her fights.
 
+**A fight a script gave** (#2520): an ally's fight is taken up only when the ally was
+attacked. A StartCombat on the player, who has not hit the actor and whom it would leave
+alone otherwise (no grudge, no hostility by its records), is the actor's own: no ally
+takes it up and it sends no alarm (`Game::unprovoked_scripted_fight`; log `provocation:
+…'s allies stay out of its fight against the player: a script started it …`)
+[hypothesis: Assistance answers an ally being attacked; observer-checks.md question 180].
+The case: the Silver Rush intro ends with `VFSVanGraffCustomerREF.startcombat player`
+(INFO 0012423E); the customer (Cowardly, Unaggressive, Helps Nobody) is meant to run out
+on his OnStartCombat flee package, and his script's OnHit player alone sets the Van
+Graffs against the player (SCPT 0012424C) [observed: `fnvtool esm decode`]. Before,
+Jean-Baptiste took up the fight and his own OnStartCombat failed Birds of a Feather
+(VMS29a stage 200) on every first visit. Once the player hits him, the fight counts as
+provoked (his Hurt alarm) and his allies help as before.
+
 ### 10.3.1 An Evil faction's area (#1538, owner decision 2026-11-13)
 
 **Owner decision** 2026-11-13, on #1538: "attacking the fiends should alert all fiends
@@ -615,6 +629,13 @@ a way that stops short.
 
 ### 12.2 Fleeing [documented: GECK wiki Confidence, Combat Flee]
 
+- **Cowards**: a Cowardly fighter (confidence 0, not raised in this fight) that is not
+  frenzied flees at once, hurt or not, whatever the ratios (`Game::always_flees`; log
+  `npc combat: … flees from …: its confidence is Cowardly`) [documented: Confidence,
+  "Cowardly … I will always flee from combat"; hypothesis: from the fight's start]. A
+  package that continues during combat still has it first (alert.md §5.2); the flight
+  takes over where the package lets go. Before (#2520), a foe that does no damage (an
+  unarmed player standing still) made the ratio infinite and the coward swung at it.
 - **When**: once hurt, every random 0 to fCombatThreatRatioUpdateTime (7.5 s) a fighter
   makes a flee check: its **group threat ratio** (the sum of its group's combat
   strengths, health × damage per second, over the sum of its foes') below its confidence
@@ -638,6 +659,13 @@ a way that stops short.
   [hypothesis: the wiki lists the setting without saying what it does]. Healing is not
   built, so the wiki's third case does not happen.
 - It does not attack while it flees.
+- **Children never fight** [owner decision 2026-11-13, #2438]: an actor whose race has
+  the Child flag (`Game::never_fights`) fails every flee check, whatever its confidence,
+  aggression or style, and makes its first one at once, unhurt (it takes no damage, so
+  the "once hurt" rule would never start it). At its flee spot it only flees on, and its
+  weapon stays away (`Game::wants_weapon_out`). It still turns hostile, so crime,
+  faction and reputation rules are unchanged. Smoke `child-flees-never-fights`; what the
+  original does is observer check 178.
 - Log: `npc combat: … flees from … : group threat ratio … below its confidence …`,
   `ai … flees from … away / to cover / through door …`, `reached its flee spot`,
   `is cornered`, `turns to fight … again (hurt at its flee spot …)`, `flees on`.
@@ -2039,6 +2067,22 @@ Combat is not a parity target; the rules are **[design]** unless tagged. Rules:
   nearer than 276, and the Incinerator again for one beyond 640 [observed: FalloutNV.esm,
   `fnvtool combat weapon`]. The weapon's own projectile is read: an ammunition that
   brings its own would change the reach (none of these two does).
+- **Too close for its blast** (#2745, owner 2026-11-15: Boomers in the Nellis barracks
+  "just stand there with grenade launchers and let you kill them"). Indoors a launcher's
+  step back (§16) can run into a wall, and with nothing of its own class that fires that
+  near the fighter held its fire for good. Now a fighter whose explosive weapon does not
+  fire because its target is inside the blast, and that carries nothing of its own class
+  that does, steps back as before; still too close after 2 s
+  (`fnv_game::rearm::CORNERED_SECONDS`; the target stayed close though it stepped back,
+  or the room left it no way back), it holds the best weapon of **any** class it carries
+  that fires there (a sidearm, a knife), and with none puts the explosive weapon away and
+  fights with its **fists**. While it fights with them neither empty-hand rule (re-arming's
+  best carried, `Game::arm_by_style`) puts the launcher back and it fetches nothing;
+  with its target clear of the blast again (64 units inside the limit, at most every 3 s)
+  or the fight over (`Game::calm_rearm`), it holds the explosive weapon again. A combat
+  style with Ignore Damaging Self fires through its own blast (§17.6), so it keeps its
+  weapon. Log: `rearm: puts away <weapon> for its fists: its target <n> units away is
+  inside its blast` [design].
 - **The fetch.** It runs there (the ammunition first when it is nearer), and holds its
   fire meanwhile (as a fleeing actor, `npc_combat`). At each item it stops and plays the
   pick-up idle, `LoosePickUpGroundObject` (`PickUpGroundObject_0.3.kf`), a child of
@@ -2060,7 +2104,8 @@ Combat is not a parity target; the rules are **[design]** unless tagged. Rules:
 class); `crates/fnv-ai/tests/carry.rs` (an unarmed fighter fetches a gun and a copy of its
 rounds; a gunman takes a weak gun over a strong knife, and the knife only with no rounds
 anywhere; a gun with no rounds is left; the weapon held is kept over other carried ones
-until lost); smoke `combat-npc-rearm`. Observed 2026-10-25: Violet, stripped of her items,
+until lost; a cornered incinerator user takes up its knife, and with nothing else its
+fists until the target is clear or the fight ends, #2745); smoke `combat-npc-rearm`. Observed 2026-10-25: Violet, stripped of her items,
 ran 1,638 units, copied a 5.56mm round from a placed `LootAmmoBox556mm` (nearer than the
 box laid for her), picked up the service rifle and fired with it; in `battle-ncr-fiends`
 seven fetches, none given up, and Cook-Cook kept his Incinerator.
@@ -2115,7 +2160,8 @@ target through every phase of the attack and fired only once turned to it
   `h2hfastleft.kf` (`fnv_actor::locomotion::weapon_moves`); the player's body takes
   `h2hleft.kf` walking (animation.md §9.6).
 - **Fire arc**: a gun fires only within 3° of straight ahead (`FIRE_FACING`, was 30°), or
-  its weapon's Aim Arc when above 0. A scripted weapon use keeps 30° (`USE_FACING`).
+  its weapon's Aim Arc when above 0. A scripted weapon use's shots have the same arc
+  (`use_weapon::shot_facing`, issue #2725); its blows keep 30° (`USE_FACING`).
 - **Measured**: the `npc combat facing` line at exit (how far off its target a gunman faced
   at each shot, and a person the AI runs in each frame it was locked on); `battle-ncr-fiends`
   and `combat-violet` check it. Before: a 2-minute NCR–Fiend battle had 84 frames over 10°

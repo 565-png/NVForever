@@ -50,11 +50,13 @@ pub mod fade;
 pub mod drowning;
 pub mod falls;
 pub mod file_bytes;
+pub mod key_repeat;
 pub mod query_job;
 pub mod swing_traps;
 pub mod flashlight;
 pub mod free_cam;
 pub mod script_camera;
+pub mod shake;
 pub mod game_start;
 pub mod furniture;
 pub mod grab;
@@ -68,6 +70,10 @@ pub mod hotkeys;
 pub mod hud;
 pub mod hud_breath;
 pub mod hud_limbs;
+pub mod heartbeat;
+pub mod marker_added;
+pub mod vanity;
+pub mod grenade_indicator;
 pub mod hud_needs;
 pub mod hud_target;
 pub mod aim_assist;
@@ -82,12 +88,14 @@ pub mod roulette;
 pub mod slots;
 pub mod softlock;
 pub mod blackjack;
+pub mod borders;
 pub mod companion_wheel;
 pub mod caravan;
 pub mod challenges;
 pub mod poker;
 pub mod menu;
 pub mod mod_log;
+pub mod gas_traps;
 pub mod grass_fire;
 pub mod mines;
 pub mod thrown;
@@ -136,6 +144,7 @@ pub mod space;
 pub mod terminal;
 pub mod tiles;
 pub mod tutorial_menu;
+pub mod tweaks;
 pub mod ui_pointer;
 pub mod credits;
 mod test_aid;
@@ -144,6 +153,7 @@ pub use test_aid::{drives_run, MEASURING_AIDS};
 pub mod sfx;
 pub mod start_read;
 pub mod sneak_gauges;
+pub mod sound_cover;
 pub mod sound_grid;
 pub mod ui_colour;
 pub mod language;
@@ -301,6 +311,11 @@ pub struct Travel {
     pub feet: [f32; 3],
     /// Compass heading in degrees on arrival.
     pub heading_deg: f32,
+    /// The view's pitch in degrees on arrival (negative looks down, as `Player::pitch`);
+    /// `None` keeps the pitch the player had. A script's MoveTo of the player sets it to
+    /// the marker's (`fnv_game` `move_ref`): the add-ons' intro slides and the ending's
+    /// slides are framed for a level view, and the player cannot look there (#2710).
+    pub pitch_deg: Option<f32>,
 }
 
 impl Travel {
@@ -385,11 +400,11 @@ impl Plugin for PlayPlugin {
             .configure_sets(Update, (PlaySet::Input, PlaySet::Physics, PlaySet::Activation, PlaySet::Scripts, PlaySet::Ui, PlaySet::Sync).chain())
             .add_plugins((sim::SimPlugin, phys::PhysPlugin, player::PlayerPlugin, activate::ActivatePlugin, menu::MenuPlugin, dropped::DroppedPlugin, moved::MovedPlugin, pause::PausePlugin, wait::WaitPlugin, flashlight::FlashlightPlugin))
             .add_plugins((script::ScriptPlugin, hitvol::HitVolumePlugin, combat::CombatPlugin, sfx::SfxPlugin, music::MusicPlugin, ambient::AmbientPlugin, radio::RadioPlugin, voice::VoicePlugin, holotape::HolotapePlugin, loading::LoadingPlugin, dialogue_look::DialogueLookPlugin, hud::HudPlugin, compass::CompassPlugin))
-            .add_plugins((world_sounds::WorldSoundsPlugin, effect_sounds::EffectSoundsPlugin, reticle::ReticlePlugin, xp_meter::XpMeterPlugin, radiation::RadiationPlugin))
-            .add_plugins((ui_sounds::UiSoundsPlugin, pad::PadPlugin, rumble::RumblePlugin, script_input::ScriptInputPlugin, aim_assist::AimAssistPlugin))
+            .add_plugins((world_sounds::WorldSoundsPlugin, effect_sounds::EffectSoundsPlugin, reticle::ReticlePlugin, xp_meter::XpMeterPlugin, radiation::RadiationPlugin, borders::BordersPlugin))
+            .add_plugins((ui_sounds::UiSoundsPlugin, pad::PadPlugin, key_repeat::KeyRepeatPlugin, rumble::RumblePlugin, shake::ShakePlugin, script_input::ScriptInputPlugin, aim_assist::AimAssistPlugin))
             .add_plugins(script_switches::ScriptSwitchesPlugin)
             .add_plugins((chargen::ChargenPlugin, creator::CreatorPlugin, fade::FadePlugin))
-            .add_plugins((levelup::LevelUpPlugin, sneak_gauges::SneakGaugesPlugin))
+            .add_plugins((levelup::LevelUpPlugin, sneak_gauges::SneakGaugesPlugin, sound_cover::SoundCoverPlugin))
             .add_plugins(perk_marks::PerkMarksPlugin)
             .add_plugins(softlock::SoftlockPlugin)
             .add_plugins(sup_screen::SupScreenPlugin)
@@ -437,6 +452,7 @@ impl Plugin for PlayPlugin {
             .add_plugins(weapon_wheel::WeaponWheelPlugin)
             .add_plugins(grab::GrabPlugin)
             .add_plugins(difficulty::DifficultyPlugin)
+            .add_plugins(tweaks::TweaksPlugin)
             .add_plugins(hardcore::HardcorePlugin)
             .add_plugins((ui_colour::UiColourPlugin, language::LanguagePlugin));
         test_aid::setup(app);
@@ -455,7 +471,7 @@ mod tests {
     const HOUSE: u32 = 0x100;
 
     fn travel(world: Option<u32>, interior: Option<u32>) -> Travel {
-        Travel { world, interior, feet: [0.0; 3], heading_deg: 0.0 }
+        Travel { world, interior, feet: [0.0; 3], heading_deg: 0.0, pitch_deg: None }
     }
 
     /// Every plugin of this crate is added somewhere (here or by nvforever): the crosshair's
