@@ -12820,6 +12820,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "house-escort-assist"
+source = "#2793: a Follow package with Defensive Combat joins its target's fights (fnv-game provocation.rs escorts_assist, CHARGE_PACKAGES; docs/spec-notes/packages.md section 3.1)"
+note = "the Hoover Dam escort Securitron VHDSecuritronEscort01REF (0x001554DB; its own package DefaultFollowPlayerFar 0x001554DC: Follow, target the player, Defensive Combat; VHDSecuritronFaction names VCaesarsLegionFaction an Enemy) is enabled and put 256 units from the player in Goodsprings, the Legion Centurion reference 0x0014392F (vHDLVLCLCenturionNCRBattle) is enabled, put 700 units off and set on the player with StartCombat; the player is in god mode. Defensive Combat keeps the escort from attacking the Centurion on sight; it takes up the player's fight against him. With #2794 its Assistance (Helps Friends and Allies, the player's ally) gives the same line, so this checks the scene, not which rule; the unit tests in crates/fnv-game/tests/factions.rs tell them apart. Not run by the writer: whether the two references come along from the dam's worldspace by MoveTo is for the first run to show"
+areas = ["ai", "packages", "combat"]
+paths = ["crates/fnv-game/src/provocation.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:call:VHDSecuritronEscort01REF:Enable,3.5:moveto:VHDSecuritronEscort01REF:player:256:0:0,6:call:0x0014392F:Enable,6.5:moveto:0x0014392F:player:700:0:0,8:call:0x0014392F:StartCombat:player" }
+args = ["--cell", "Goodsprings", "--pos=-71400,3600,8352", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "VHDSecuritronEscort01REF"]
+run_seconds = 40
+expect = [
+  "VHDSecuritronEscort01REF: package DefaultFollowPlayerFar",
+  { re = 'provocation: VHDSecuritronEscort01REF 0x001554DB helps the player against .*0x0014392F', label = "the escort takes up the player's fight against the Centurion" },
+]
+
+[[scenario]]
 name = "package-find"
 source = "Find packages (fnv-ai errand.rs; docs/spec-notes/packages.md §3.1): FFER24FindFood given to a Goodsprings settler"
 note = "mole rat meat is placed at the player and a settler 300 units off is given FFER24FindFood (find one MoleRatMeat within 1000 of where it is): it walks to the meat and takes it"

@@ -918,6 +918,56 @@ fn an_escort_joins_its_charges_fights() {
 }
 
 #[test]
+fn a_defensive_follower_joins_its_targets_fights_and_starts_none() {
+    // #2793, packages.md §3.1 [documented: GECK wiki Category:Packages, Defensive Combat,
+    // "The exception is for the Accompany, Escort and Follow packages. For these three, if
+    // the target is attacked, the actor will join into the combat"]. Ganger A (Very
+    // Aggressive, neutral to the rats) follows the loafer, its kin, on a Defensive Combat
+    // package: it leaves the helper (a rat) alone on sight, and takes up the loafer's
+    // fight once the rat attacks it. The same on an Accompany package; on a Travel
+    // package (the default type) it does not.
+    use fnv_game::package::{flags, PackageDef, PackageType, Target, TargetKind};
+    const FOLLOW_PACK: u32 = 0x8F2;
+    const ACCOMPANY_PACK: u32 = 0x8F3;
+    const TRAVEL_PACK: u32 = 0x8F4;
+    let mut f = fixture();
+    let charge = Some(Target { kind: TargetKind::Reference(Some(FormId(LOAFER_REF))), count_distance: 0 });
+    for (pack, ty) in [(FOLLOW_PACK, PackageType::Follow), (ACCOMPANY_PACK, PackageType::Accompany), (TRAVEL_PACK, PackageType::Travel)] {
+        f.data.package_defs.insert(FormId(pack), PackageDef { ty, target: charge, flags: flags::DEFENSIVE_COMBAT, ..Default::default() });
+    }
+    // The ganger's AI data says Cowardly (the fixture's `aidt`), and a coward stays out:
+    // Average here.
+    const SET_AV: u16 = 0x100F;
+    let average = |g: &mut Game| call(g, SET_AV, GANGER_A_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(2.0))]);
+    for pack in [FOLLOW_PACK, ACCOMPANY_PACK] {
+        let mut g = game(&f);
+        average(&mut g);
+        let (ganger, loafer, rat) = (FormId(GANGER_A_REF), FormId(LOAFER_REF), FormId(HELPER_REF));
+        assert!(g.would_attack(ganger, rat), "Very Aggressive: without the package it attacks the neutral rat");
+        g.extra.entry(ganger).or_default().current_package = Some(FormId(pack));
+        assert!(!g.would_attack(ganger, rat), "Defensive Combat: no attack on sight");
+        g.detection.pairs.insert((ganger, loafer), (Detection { value: -10.0, band: Band::Noticed, ..Default::default() }, g.time));
+        // Nobody attacks the loafer: nothing to join.
+        fighting(&mut g, HELPER_REF, OWN_REF);
+        assert_eq!(g.escorts_assist(), 0);
+        assert!(!g.would_attack(ganger, rat));
+        // The rat attacks the loafer: the follower takes the fight up.
+        fighting(&mut g, HELPER_REF, LOAFER_REF);
+        assert_eq!(g.escorts_assist(), 1);
+        assert!(g.would_attack(ganger, rat), "it holds a grudge against the attacker");
+        assert!(g.awareness.get(ganger).is_some_and(|a| a.alarms.iter().any(|x| x.owner == rat && x.cause == Cause::Ally)));
+        assert!(g.provocations.take_notes().iter().any(|n| matches!(n, Note::Assists { helper, victim, attacker } if *helper == ganger && *victim == loafer && *attacker == rat)));
+        assert_eq!(g.escorts_assist(), 0, "once");
+    }
+    let mut g = game(&f);
+    average(&mut g);
+    g.extra.entry(FormId(GANGER_A_REF)).or_default().current_package = Some(FormId(TRAVEL_PACK));
+    g.detection.pairs.insert((FormId(GANGER_A_REF), FormId(LOAFER_REF)), (Detection { value: -10.0, band: Band::Noticed, ..Default::default() }, g.time));
+    fighting(&mut g, HELPER_REF, LOAFER_REF);
+    assert_eq!(g.escorts_assist(), 0);
+}
+
+#[test]
 fn companions_seeing_the_player_do_not_set_the_sneak_word() {
     // #1159 (hud.md §9): a teammate, or an actor following the player, detecting the
     // player is no [DETECTED]; anyone else still is, and the pair stays for the AI.

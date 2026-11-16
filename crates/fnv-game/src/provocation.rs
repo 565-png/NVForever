@@ -63,17 +63,21 @@
 //!   between other actors are left to assistance and alarms (above, and
 //!   `crate::combat_group`): with this rule there too, every NCR trooper near Cook-Cook's
 //!   camp took the fight up on its own and fewer alarmed the others.
-//! - **Escorts** [documented: GECK wiki Defensive Combat, "The exception is for the
-//!   Accompany, Escort and Follow packages … if the target is attacked, the actor will
-//!   join into the combat"]: an actor whose current package is Escort takes up the fight
-//!   of the one it escorts (the package's target) against everyone attacking it: actors
-//!   in a combat state with the charge on their target list, and whoever hurt it. Its
-//!   Assistance does not matter; it never fights its own allies or friends, and a coward
-//!   stays out. Choices [hypothesis]: the escort must at least notice its charge (band
-//!   Noticed or Detected); a fight the charge starts is joined only once the foe
-//!   fights back; a charge that provoked the attacker is still helped; it holds for the
-//!   whole package, also once at the destination; the player's teammates are left to
-//!   `crate::followers`. Follow and Accompany (the same exception) are not built here.
+//! - **Escorts** [documented: GECK wiki Category:Packages, Defensive Combat, "The
+//!   exception is for the Accompany, Escort and Follow packages. For these three, if the
+//!   target is attacked, the actor will join into the combat"]: an actor whose current
+//!   package is Accompany, Escort or Follow ([`CHARGE_PACKAGES`]; "escort" below for all
+//!   three) takes up the fight of its charge (the package's target) against everyone
+//!   attacking it: actors in a combat state with the charge on their target list, and
+//!   whoever hurt it. Its Assistance does not matter; it never fights its own allies or
+//!   friends, and a coward stays out. It starts no fight of its own: with Defensive
+//!   Combat it still attacks nobody on sight (`Game::hostility`). Choices [hypothesis]:
+//!   the escort must at least notice its charge (band Noticed or Detected); a fight the
+//!   charge starts is joined only once the foe fights back; a charge that provoked the
+//!   attacker is still helped; it holds for the whole package, also once at the
+//!   destination; the player's teammates are left to `crate::followers` (#2793: the
+//!   Hoover Dam escort Securitron, on a Defensive Combat Follow package, never fought the
+//!   Legion attacking the player).
 //!
 //! - **An Evil faction's area** [design: owner decision 2026-11-13 on #1538, "attacking
 //!   the fiends should alert all fiends in the area that you are to be attacked";
@@ -100,6 +104,7 @@ use crate::awareness::{Cause, State};
 use crate::detection::Band;
 use crate::functions::actor::{actor_value, faction_relation, factions_of};
 use crate::game::Game;
+use crate::package::PackageType;
 use fnv_sim::FormId;
 use std::collections::{BTreeMap, HashMap};
 
@@ -107,6 +112,10 @@ const ASSISTANCE: u16 = crate::actor_values::ASSISTANCE;
 
 /// Whom an actor fights, and where each was last known to be.
 type Foes = Vec<(FormId, [f32; 3])>;
+
+/// The package types whose actor takes up its target's fights (module notes, "Escorts")
+/// [documented: GECK wiki Category:Packages, Defensive Combat].
+pub const CHARGE_PACKAGES: [PackageType; 3] = [PackageType::Accompany, PackageType::Escort, PackageType::Follow];
 
 /// Faction combat reactions [documented: GECK wiki GetFactionCombatReaction].
 pub const NEUTRAL: i64 = 0;
@@ -582,8 +591,9 @@ impl Game<'_> {
         joined + self.teammates_assist()
     }
 
-    /// An actor running an Escort package takes up its charge's fights (module notes,
-    /// "Escorts"; docs/spec-notes/packages.md §3.1): for each actor attacking the charge
+    /// An actor running an Accompany, Escort or Follow package ([`CHARGE_PACKAGES`]) takes
+    /// up its charge's fights (module notes, "Escorts"; docs/spec-notes/packages.md §3.1):
+    /// for each actor attacking the charge
     /// (in a combat state with the charge on its target list, or having hurt it), the
     /// escort holds a grudge and is alarmed at the attacker's position, as an assisting
     /// ally is. Returns how many joined.
@@ -593,7 +603,7 @@ impl Game<'_> {
             .iter()
             .filter_map(|(id, e)| {
                 let def = self.package_def(&e.current_package?)?;
-                (def.ty == crate::package::PackageType::Escort).then_some((*id, def))
+                CHARGE_PACKAGES.contains(&def.ty).then_some((*id, def))
             })
             .filter_map(|(id, def)| self.package_target(id, def).map(|t| (id, t)))
             .filter(|(id, charge)| id != charge)
