@@ -29393,6 +29393,22 @@ order = [[
 forbid = [{ text = "EDE1Ref: does not talk", label = "ED-E has a greeting to say" }]
 
 [[scenario]]
+name = "mod-diagnostic-log-tool"
+kind = "tool"
+source = "docs/handoff/mod-diagnostic-cli.md: actual bounded mod-log CLI over two authored log files; log records differ from reported exit totals, and private words are opt-in"
+areas = ["scripts", "extender", "mods"]
+paths = ["crates/fnvtool/src/mod_log_digest.rs", "crates/fnvtool/src/ext_cmd.rs", "tools/smoke/fixtures/mod-diagnostics/"]
+commands = [["ext", "mod-log", "{repo}/tools/smoke/fixtures/mod-diagnostics/run.txt", "--previous", "{repo}/tools/smoke/fixtures/mod-diagnostics/before.txt"]]
+expect = [
+  { json = "detail", schema = "fnv.ext.mod_log/1", equals = false },
+  { json = "run.sessions.#", schema = "fnv.ext.mod_log/1", equals = 1 },
+  { json = "run.sessions.0.exit_rows_present", schema = "fnv.ext.mod_log/1", equals = true },
+  { json = "run.sessions.0.log_records.script_failure", schema = "fnv.ext.mod_log/1", equals = 1 },
+  { json = "run.sessions.0.reported_exit_counts.skipped_statements", schema = "fnv.ext.mod_log/1", equals = 47 },
+  { json = "changes.session", schema = "fnv.ext.mod_log/1", equals = 0 },
+]
+
+[[scenario]]
 name = "mccarran-boyd-one-body"
 source = "issue #2461 (owner): after the Silus interrogation Lt. Carrie Boyd (LieutenantBoydREF 0x000F0678, CampMCTermInt02) was drawn twice, one body in the room and one outside the door, and the one in the room talked as the other. The scene's records: Silus's GREETING (INFO 0x000F1873) MoveTo's her to BoydExitREF 0x000FA73E (325, 719); the assassin trick's line (INFO 0x000F2DDE) MoveTo's her to XMarker 0x000FB4E1 (467, 1386) by the room's door and its end script sets bBoydEnter, so VFreeformMcCarran2BoydPatrolReturn walks her to her linked ref 0x000FA73D (296, 1665) in the room; the trigger 0x000FA742 there starts the POW2Int exchange with Silus, whose last line sets bBoydExit, and VFreeformMcCarran2BoydPatrolExit walks her back to BoydExitREF. One body per reference throughout (engine/nvforever/src/residents.rs drawn_twice, nav.rs show_actor)"
 note = "the player stands in the interrogation room; Silus's greeting is said at 3 s and the trick's line at 8 s (as the dialogue would, conditions not required). The census is taken at exit; the warnings name a body spawned and lost before it was found"
