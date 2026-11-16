@@ -672,6 +672,9 @@ struct Pilot {
     searched: Vec<FormId>,
     /// Hours waited in this step, and the wait under way: when the menu was asked for.
     waited: u32,
+    /// The stall watchdog's last sign of progress: when, where the player stood, the step,
+    /// the hours waited and the lines said then ([`STALL_SECS`]).
+    stall: (f64, [f32; 3], usize, u32, u64),
     waiting: Option<f64>,
     /// Steps done the headless way, by kind.
     headless: std::collections::BTreeMap<String, u32>,
@@ -773,6 +776,7 @@ impl Pilot {
             errand: None,
             searched: Vec::new(),
             waited: 0,
+            stall: (0.0, [0.0; 3], usize::MAX, 0, 0),
             waiting: None,
             headless: Default::default(),
             failed_in_a_row: 0,
@@ -3665,6 +3669,57 @@ const SHOOT_OBJECT_FROM: f32 = 600.0;
 /// The longest a `call_until` waits, seconds: past [`STEP_SECS`], as end slides run for
 /// minutes (the headless chains give them up to 30).
 const CALL_UNTIL_CAP: f64 = 1800.0;
+/// How long the run may go without a sign of progress before the stall watchdog gives the
+/// step up, seconds: the step moving on, the player walking [`STALL_MOVE`] units, a line
+/// said, an hour waited or the trigger pulled. Steps that wait on purpose (`call_until`,
+/// `advance_seconds`) are left to their own limits.
+const STALL_SECS: f64 = 90.0;
+/// How far the player has to walk from where it stood for that to count as progress.
+const STALL_MOVE: f32 = 150.0;
+
+/// The stall watchdog (owner 2026-11-16: "a better way for the bot to detect when its
+/// stalled"). The step's own limit ([`STEP_SECS`]) is reset by a step that keeps trying
+/// (a refused Wait menu asked 152 times in Gomorrah's lobby), and a walk that cannot move
+/// sat out its 240 s step after step: this one is reset by progress alone. On a stall it
+/// says what the run looked like, a `stalled` finding, and gives the step up. Whether it
+/// gave one up this frame.
+fn watch_stall(p: &mut Pilot, h: &mut Hands) -> bool {
+    let feet = h.feet();
+    let said = h.game(|g| g.softlock_seen.lines_begun).unwrap_or(0);
+    let (since, at, step, waited, lines) = p.stall;
+    let moved = hdist(feet, at) > STALL_MOVE || (feet[2] - at[2]).abs() > STALL_MOVE;
+    if step != p.i || moved || waited != p.waited || lines != said || h.control.trigger {
+        p.stall = (p.now, feet, p.i, p.waited, said);
+        return false;
+    }
+    let purposeful = matches!(p.actions.get(p.i), Some(Action::CallUntil { .. } | Action::AdvanceSeconds { .. }));
+    if purposeful || p.i >= p.actions.len() || p.now - since < STALL_SECS {
+        return false;
+    }
+    let op = p.actions.get(p.i).map(|a| format!("{a:?}").chars().take(80).collect::<String>()).unwrap_or_default();
+    let phase = match &p.phase {
+        Phase::Begin => "begin",
+        Phase::Walk(_) => "walking",
+        Phase::Wait { .. } => "waiting",
+        Phase::Fight(..) => "fighting",
+        Phase::Shoot(..) => "shooting",
+        _ => "other",
+    };
+    let (menu, talk) = h.game(|g| (g.menu, g.dialogue.is_some())).unwrap_or((None, false));
+    let why = format!(
+        "no progress in {STALL_SECS:.0} s on step {} ({op}): the player at ({:.0}, {:.0}, {:.0}) in {:?}, {phase}; movement locked {}, fighting locked {}, menu {menu:?}, a conversation {talk}, an errand {}",
+        p.i, feet[0], feet[1], feet[2], space_of(h.location), h.locks.movement, h.locks.fighting, p.errand.is_some()
+    );
+    warn!("pilot: stalled: {why}");
+    p.finding("stalled", why);
+    h.control.trigger = false;
+    (h.intent.forward, h.intent.right) = (0.0, 0.0);
+    p.errand = None;
+    p.next(Some(format!("stalled: no progress in {STALL_SECS:.0} s")));
+    p.stall = (p.now, feet, p.i, p.waited, said);
+    true
+}
+
 /// How many refusals of the Wait menu a step that waits for an actor takes before it
 /// gives up waiting.
 const WAIT_REFUSALS: u8 = 6;
@@ -3960,6 +4015,9 @@ fn drive(
             p.finding("given", e.to_string());
         }
         p.step_from = p.now;
+        return;
+    }
+    if watch_stall(p, &mut h) {
         return;
     }
     // A message box no step waits for: closed as a player presses OK.
