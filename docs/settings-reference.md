@@ -819,13 +819,18 @@ After the Controls tab's own rows (see the end of this page):
 
 ### `shadow-resolution`: Shadow resolution
 
-- On the page: Size of the sun's shadow maps: 4096 draws sharper shadows than 2048. It takes
-  more video memory and a little frame rate.
-- In full: The side of the sun's shadow maps, in texels: 2048 (the default) or 4096,
-  changed while the game runs. On Sun shadows Quality the cascades are laid out for the
-  size: with 4096 they end farther out (1,500, 3,500 and 7,000 of the default 8,000 units,
-  blended over a wider band) and stay sharp near the player; with 2048 nearer (700, 2,000
-  and 5,000). 4096 takes about 200 MB more video memory. No quality preset sets this row.
+- On the page: Size of the sun's and the flashlight's shadow maps: 4096 draws sharper
+  shadows than 2048. It takes more video memory and a little frame rate.
+- In full: The side of the shadow maps of the directional lights and the shadowed spot
+  lights, in texels: 2048 (the default) or 4096, changed while the game runs. They share
+  one texture: the sun's cascades, the first-person arms' shade light (on Quality) and the
+  flashlight while it is on. On Sun shadows Quality the cascades are laid out for the size:
+  with 4096 and Longer sun shadows they end at 1,500, 3,500 and 7,000 of the default 8,000
+  units (blended over a wider band) and stay sharp near the player; with 4096 alone at
+  1,500, 2,400 and 4,800; with 2048 nearer (700, 2,000 and 5,000). By arithmetic 4096
+  takes about 240 MiB more video memory on Quality (five layers of 64 MiB against 16 MiB),
+  144 MiB more on Performance, and 48 MiB more again with the flashlight on. No quality
+  preset sets this row.
 - Registered in `engine/nvforever/src/settings.rs`
 
 ### `ambient-occlusion`: Ambient occlusion

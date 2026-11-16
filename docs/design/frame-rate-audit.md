@@ -1250,16 +1250,29 @@ reach (longer shadows); the moon's single cascade unchanged.
 - **Quality**, 4 cascades (`DEFAULT_SHADOW_CASCADES`, 3 before), laid out by the maps'
   side (the Shadow resolution row, `shadow-resolution`): with 2048² maps 0.0875, 0.25
   and 0.625 of the distance (700, 2,000, 5,000), overlap 0.2; with 4096² maps 0.1875,
-  0.4375 and 0.875 (1,500, 3,500, 7,000) and a blend band (overlap) of 0.4. With 2048²
-  maps the wider layout's near shadow is softer than before, so 2048 keeps the nearer
-  seams. The schedule (shadow_rate.rs `STAGGERED_SCHEDULE`) draws the nearest every
+  0.4375 and 0.875, the second and third capped at 0.3 and 0.6 of the last bound, and a
+  blend band (overlap) of 0.4. With Longer shadows (reach 1.5) the caps leave 1,500,
+  3,500, 7,000, 12,000, the layout measured and pictured above. Without them (reach 1, the
+  play default) the uncapped bounds would be 1,500, 3,500, 7,000, 8,000, where the fourth
+  cascade (4,200-8,000 with the 0.4 band) adds almost nothing beside the third
+  (2,100-7,000) for a fourth draw; the caps give 1,500, 2,400, 4,800, 8,000. That reach-1
+  layout is derived by this rule [engineering choice, for the maintainer to decide] and
+  was neither measured nor pictured: only reach 1.5 was. With 2048² maps the wider
+  layout's near shadow is softer than before, so 2048 keeps the nearer seams. The schedule (shadow_rate.rs `STAGGERED_SCHEDULE`) draws the nearest every
   frame, the second every other frame, the third and the fourth every fourth frame on
   different frames: two cascades drawn in each frame, 2 of 4 on average against 1.75
   of 3.
-- **Shadow resolution** 2048 (as before, the default) or 4096: the sun's maps' side
-  (`DirectionalLightShadowMap`), changed in play. 4096² maps measured 0.2-0.3 ms on this
-  GPU and take about 200 MB more video memory by arithmetic (four layers of 4096² against
-  2048²); not measured on a slower GPU. No quality preset sets the row.
+- **Shadow resolution** 2048 (as before, the default) or 4096: the side of
+  `DirectionalLightShadowMap`, changed in play. Bevy keeps every directional light's
+  cascades and every shadowed spot light's map as layers of one 32-bit depth texture of
+  that side (the vendored bevy_pbr light.rs `prepare_lights`: the most cascades any view's
+  directional lights have, plus one layer per shadowed spot light), so the row sizes the
+  sun's cascades, the first-person arms' shade light's cascade (Quality only) and the
+  flashlight's shadow, whose pass draws 4096² too. By arithmetic a layer is 64 MiB at
+  4096² against 16 MiB: about 240 MiB more on Quality (five layers), 144 MiB on
+  Performance (three), and 48 MiB more again with the flashlight on; not measured. 4096²
+  maps measured 0.2-0.3 ms on this GPU (the table); not measured on a slower GPU. No
+  quality preset sets the row.
 - `--graphics-cycle cascades=<n>` (the test aid) asks for n cascades in the spacing of
   before (sky.rs `CascadeLayout::Spaced`), so `cascades=3` still measures the 3 cascades
   of before against the modes' layouts.
@@ -1276,6 +1289,9 @@ before. Whether 4096 is any preset's default is left open.
 
 At short distances (the slider goes down to a tenth of `--shadow-distance`) the first
 bound keeps its floor of 200 units, under half the last; each in-between bound is then
-the farther of its share and the geometric spacing between the first bound and the last,
-so the bounds always rise. The log says the layout whenever the bounds or the maps' side
+the farther of its (capped) share and a floor `first + (last − first) × (i / (n − 1))²`,
+so the bounds always rise. At the usual distances the shares win (at 8,000 units without
+Longer shadows the floor is about 2,222 and 4,389 against the 4096² layout's 2,400 and
+4,800); Bevy's geometric spacing, the floor until the review of this change, would have
+lifted that second bound to about 2,621. The log says the layout whenever the bounds or the maps' side
 change: `sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels [..] units`.

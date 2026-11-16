@@ -979,7 +979,7 @@ fn register_graphics(app: &mut App) {
             "shadow-resolution",
             GROUP_GRAPHICS,
             "Shadow resolution",
-            "Size of the sun's shadow maps: 4096 draws sharper shadows than 2048. It takes more video memory and a little frame rate.",
+            "Size of the sun's and the flashlight's shadow maps: 4096 draws sharper shadows than 2048. It takes more video memory and a little frame rate.",
             Slider::choice(
                 graphics::SHADOW_RESOLUTIONS.len(),
                 |w| choice_part(graphics::shadow_resolution_choice(w), graphics::SHADOW_RESOLUTIONS.len()),

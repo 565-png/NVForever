@@ -750,7 +750,9 @@ casters, as it did. Changed [engineering choices]:
   maintainer to decide]: Quality draws 4 cascades again, still to 8,000 units and
   staggered (never more than two drawn in a frame), with far bounds at 0.0875, 0.25 and
   0.625 of the distance (700, 2,000, 5,000) with 2048² maps, or 0.1875, 0.4375 and 0.875
-  (1,500, 3,500, 7,000) and a blend band of 0.4 with 4096² maps; Performance draws 3,
+  with the middle two capped at 0.3 and 0.6 of the last bound (1,500, 3,500, 7,000 with
+  Longer shadows, 1,500, 2,400, 4,800 without, the latter not measured) and a blend band
+  of 0.4 with 4096² maps (the Shadow resolution row); Performance draws 3,
   ending at 0.1875 and 0.5625 of it (1,500, 4,500), the third every fourth frame.
   `--graphics-cycle cascades=<n>` keeps the layout above. The measurements and the
   reasons: frame-rate-audit.md §12.
