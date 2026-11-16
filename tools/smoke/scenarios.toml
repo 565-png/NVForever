@@ -24856,6 +24856,38 @@ expect = [
 manual = "compare i2_before.png with i2_after.png in target/smoke: the box must stand about 150 units higher in the second; no log line proves it"
 
 [[scenario]]
+name = "helios-plaza-floor"
+source = "issue #2795 (player report): the player sank through HELIOS One's front plaza. The plaza is HeliosPowerPlant (REFR 0x000B0A0E, placed in square 5,-1), whose collision reaches down to y -8801, inside square 5,-3; physics loaded only the references placed in the 3x3 around the player, so a player in 5,-3 stood on the terrain (z 5435-5464) under the plaza (z 5476) [observed: fnvtool phys cell rays, #2795]. Each square now also loads the references whose bounds reach into it (crates/fnv-world/src/reach.rs, engine/nvf-play/src/phys.rs job)"
+note = "the start at (22200, -8500) lies on the plaza's south part in square 5,-3, two squares from the plant's own; the start waits for the 3x3 around it (#1103)"
+areas = ["physics", "loading"]
+paths = ["crates/fnv-world/src/reach.rs", "engine/nvf-play/src/phys.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "10:player.getpos z;11:close" }
+args = ["--play", "--world", "WastelandNV", "--pos=22200,-8500,5600", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'physics: worldspace 000DA726: \d+ references reach beyond their own square', label = "the reach index of WastelandNV is built (its time is on the line)" },
+  { re = 'player placed: feet \(22200, -8500, 54[78]\d\.\d\), ground z 547\d\.\d \(Ref \{ form_id: 723470,', label = "the start stands on the plaza (HeliosPowerPlant 0x000B0A0E), not on the terrain under it" },
+  { re = 'console: GetPos on player >> 54[78]\d\.', label = "and is still on the plaza at 10 s" },
+]
+
+[[scenario]]
+name = "helios-plaza-walk-on"
+source = "issue #2795: the second half of its Done-when, walking onto HELIOS One's front plaza from the south. The plaza's collision (HeliosPowerPlant 0x000B0A0E, placed in square 5,-1) ends at y -8801, where the sidewalk statics of square 5,-3 (top 5464) take over; rays at x 21600-22400, y -8300..-8800 hit the plaza at z 5476 [observed: fnvtool phys cell, #2795]"
+note = "[design, #2795] Written without running the game. Start at (22200, -8900), south of the plaza's edge (on the sidewalk or the terrain, below the plaza), facing north; run forward for 1 s (about 270-340 units [hypothesis: the run distance of weather-region-cell-stairs]) onto the plaza's ray-checked part, then stand; the console reads y, then z. The start's height and the distance are provisional until the main session runs this scenario."
+areas = ["physics", "loading"]
+paths = ["crates/fnv-world/src/reach.rs", "engine/nvf-play/src/phys.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_LOOK = "2:0:0", NVF_PLAY_TEST_MOVE = "6:1:0,7:0:0", NVF_PLAY_TEST_CONSOLE = "9:player.getpos y;9.3:player.getpos z;9.6:close" }
+args = ["--play", "--world", "WastelandNV", "--pos=22200,-8900,5600", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'player placed: feet \(22200, -8900, (?P<n>[\d.]+)\)', range = [5400, 5469], label = "the start stands south of the plaza, below its height" },
+]
+order = [[
+  { re = 'console: GetPos on player >> (?P<n>-[\d.]+)', range = [-8800, -8300], label = "the run ends over the plaza's ray-checked part (y -8800..-8300)" },
+  { re = 'console: GetPos on player >> (?P<n>[\d.]+)', range = [5470, 5489], label = "standing on the plaza (z about 5476), not on the terrain under it" },
+]]
+
+[[scenario]]
 name = "mccarran-monorail-arrival"
 source = "issue #1605 (owner): leaving Camp McCarran's Terminal Building by the door onto the monorail track put the player under and inside the building. The door 0x000F627D (CampMCTermInt02) leads to 0x001287F6 at (-9263, 70863, 4792) in WastelandNV, a platform about 460 units above the terrain; the arrival rule has to find that floor (crates/fnv-phys/src/arrival.rs, physics.md §6.2; the squares around an outdoor arrival load first since #1633)"
 note = "the player starts in the Terminal Building and takes the monorail door at 8 s"
