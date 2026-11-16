@@ -104,6 +104,22 @@ pub fn list_choices() -> HashMap<&'static str, &'static [&'static str]> {
     ])
 }
 
+/// A list row's value as one of its choices ([`list_choices`]): the older values a list took
+/// over from map to the choice they stand for (the Smooth terrain row's on/off of #2149:
+/// `1`, true, on, yes are `4x4`; `0`, false, off, no are `off`, as the engine reads them);
+/// anything else as it is (trimmed).
+pub fn list_value(key: &str, value: &str) -> String {
+    let v = value.trim();
+    if key == "smooth-terrain" {
+        match v.to_ascii_lowercase().as_str() {
+            "1" | "true" | "on" | "yes" => return "4x4".to_string(),
+            "0" | "false" | "off" | "no" => return "off".to_string(),
+            _ => {}
+        }
+    }
+    v.to_string()
+}
+
 /// The tabs in the page's order (engine/nvf-play/src/settings_layout.rs, `TAB_ORDER`), then
 /// any other tab the reference names, in its order.
 pub fn tabs(rows: &[Row]) -> Vec<String> {
@@ -150,6 +166,19 @@ mod tests {
                 assert!(src.contains(&format!("=> \"{name}\"")), "{key}: {name} is no longer a choice in {file}");
             }
         }
+    }
+
+    /// The Smooth terrain row's older on/off reads as its choices (4x4 and off), so a
+    /// launcher with an old INI offers the list, not a switch; other values stay as they are.
+    #[test]
+    fn older_values_map_to_list_choices() {
+        let choices = list_choices();
+        for (v, want) in [("1", "4x4"), ("0", "off"), (" TRUE ", "4x4"), ("no", "off"), ("2x2", "2x2"), ("4x4-near", "4x4-near")] {
+            let got = list_value("smooth-terrain", v);
+            assert_eq!(got, want, "{v}");
+            assert!(choices["smooth-terrain"].contains(&got.as_str()));
+        }
+        assert_eq!(list_value("kill-camera", " 1 "), "1");
     }
 
     #[test]
