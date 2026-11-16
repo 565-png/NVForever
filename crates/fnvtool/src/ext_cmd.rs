@@ -79,8 +79,8 @@ pub enum ExtCmd {
         #[arg(long)]
         functions: Option<PathBuf>,
         /// Only these plugin file names (case-insensitive); an unknown name is refused.
-        #[arg(long = "plugin")]
-        plugins: Vec<String>,
+        #[arg(id = "connections_selected_plugins", long = "plugin")]
+        selected_plugins: Vec<String>,
     },
     /// Read only an explicit played log; no game/profile scan. Bounded input and
     /// retention; default output contains counts, never message text or file paths.
@@ -235,7 +235,7 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
             let data = fnv_game::GameData::build(&order, &schema, table, &fjson, &refs);
             Ok(source_report(&data.source_units, order.plugins.iter().map(|p| p.name.clone()).collect(), detail))
         }
-        ExtCmd::Connections { lo, schema, functions, plugins: selected } => {
+        ExtCmd::Connections { lo, schema, functions, selected_plugins: selected } => {
             let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));
             let fjson: Value = serde_json::from_str(&std::fs::read_to_string(&fp)?)?;
             let table = FunctionTable::load(&fp)?;
@@ -1085,6 +1085,26 @@ End
         assert!(cat.0.contains_key("sv_length"));
         assert!(!cat.0.contains_key("getav"));
     }
+    #[test]
+    fn connections_cli_filter_names_are_separate_from_positional_load_order() {
+        use clap::Parser;
+        for (flags, expected) in [
+            (vec![], vec![]),
+            (vec!["--plugin", "Missing.esp"], vec!["Missing.esp"]),
+            (vec!["--plugin", "first.esm", "--plugin", "Missing.esp"], vec!["first.esm", "Missing.esp"]),
+        ] {
+            let mut args = vec!["fnvtool", "ext", "connections", "owned-data", "First.esm", "Second.esp", "--schema", "owned-schema"];
+            args.extend(flags);
+            let cli = crate::Cli::try_parse_from(args).unwrap();
+            let crate::Cmd::Ext(ExtCmd::Connections { lo, selected_plugins, .. }) = cli.cmd else {
+                panic!("expected the real connections command");
+            };
+            assert_eq!(lo.data_dir, std::path::PathBuf::from("owned-data"));
+            assert_eq!(lo.plugins, vec!["First.esm", "Second.esp"]);
+            assert_eq!(selected_plugins, expected);
+        }
+    }
+
     #[test]
     fn connections_walks_actual_source_compiled_units_without_executing_them() {
         let fp = root().join("schemas/script/functions.json");
