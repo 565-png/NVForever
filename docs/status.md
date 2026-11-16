@@ -261,3 +261,10 @@ retains it and the tested fixture blobs. Engine publication/acquisition,
 physical armor changes, native timing/view policy, installed Titans, rendered
 output and full mod compatibility remain unqualified.
 Contract and scope: [ModelHasBlock reference models](spec-notes/nif-player-model-selection.md#modelhasblock-and-published-reference-models).
+
+ModelHasBlock CI follow-up: hosted PR #2827 merge `43776f84` failed before tests
+because shared fixture imports were unresolved in the library's own test crate;
+Core Clippy was skipped. The earlier five target-specific passes remain scoped
+to integration/file consumers. A test-only self-crate alias addresses that
+compilation context without changing runtime or fixture bodies; its compilation,
+execution and hosted core results are pending.

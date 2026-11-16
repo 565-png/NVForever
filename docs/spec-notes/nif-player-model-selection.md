@@ -149,3 +149,18 @@ not exercise engine publication/acquisition, physical armor updates, native
 timing or view selection, installed Titans execution, rendered output or full
 mod compatibility. Those remain unqualified; the native hypotheses above are
 unchanged.
+
+### ModelHasBlock library-test compilation context
+
+Hosted PR #2827 core CI at merge `43776f84aded92bdb791d3377eec6b8c43e6ee39`
+failed before test execution: the library's `cfg(test)` inclusion of the common
+fixtures could not resolve their `fnv_game` imports. The earlier five passing
+integration/file controls did not compile that library-test context and remain
+limited to their recorded targets. Core Clippy was skipped after the compile
+failure.
+
+A test-only self-crate alias now admits the same shared fixture imports inside
+the library. Production behavior, the ModelHasBlock runtime blob and all fixture
+bodies/assertions are unchanged. This admission correction has not yet been
+compiled or executed; fresh own-library and hosted core validation remain
+required. It does not qualify engine publication, native or installed-mod paths.
