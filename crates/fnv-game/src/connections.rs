@@ -174,11 +174,15 @@ mod tests {
 
     #[test]
     fn custom_catalogue_name_does_not_grant_a_numbered_handler() {
-        let json = serde_json::json!({"schema": "fnv.script.functions/1", "functions": [
-            {"name": "GetSecondsPassed", "opcodes": ["0xDEAD"]},
-            {"name": "ToggleCollision", "categories": ["Console Functions"]}
-        ]});
+        // Keep every function required by the strict compiled-in encodings and
+        // the normal console catalogue; add only the custom numbered alias.
+        let mut json: serde_json::Value = serde_json::from_str(include_str!("../../../schemas/script/functions.json")).unwrap();
+        json["functions"].as_array_mut().unwrap().push(serde_json::json!({
+            "name": "GetSecondsPassed", "opcodes": ["0xDEAD"]
+        }));
         let table = FunctionTable::from_json(&json.to_string(), fnv_script::table::ENCODINGS_JSON).unwrap();
+        assert_eq!(table.get(0xDEAD).unwrap().name, "GetSecondsPassed");
+        assert_eq!(table.by_name("GetSecondsPassed"), Some(0x100C));
         assert!(crate::functions::lookup(0xDEAD).is_none());
         assert!(crate::functions::lookup_name("GetSecondsPassed").is_some());
         assert_eq!(opcode_status(&table, 0xDEAD).0, Status::Unhandled);
