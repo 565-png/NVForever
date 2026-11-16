@@ -606,12 +606,12 @@ fn read_ahead(world: &WorldData, streamer: &mut Streamer, centre: (i32, i32), ri
             refs.extend(world.persistent_by_grid.get(&c).into_iter().flatten());
             let land = cell.land;
             let around = world.land_ids(c);
-            let spec = nvf_play::smooth_terrain::spec();
+            let (spec, draw) = (nvf_play::smooth_terrain::spec(), crate::terrain_lod::first_draw());
             let (lo, schema, hide) = (world.lo, world.schema, hide.clone());
             let task = nvf_assets::read_pool::read_pool().spawn(async move {
                 CellAhead {
                     models: cell_models(lo, schema, &refs, &hide),
-                    terrain: land.and_then(|l| prepare_terrain(lo, schema, l, c, tile, around, spec)),
+                    terrain: land.and_then(|l| prepare_terrain(lo, schema, l, c, tile, around, spec, draw)),
                     ready: false,
                 }
             });
@@ -780,7 +780,9 @@ pub fn report(mut exit: MessageReader<AppExit>, streamer: Res<Streamer>, models:
     if let Some(t) = terrain {
         // Cell draws counted over the run (a cell drawn again after it unloaded counts
         // again), not the cells loaded now.
-        info!("terrain summary: {} cells drawn smoothed, {} on the stored triangles ({})", t.smoothed_cells, t.stored_cells, nvf_play::smooth_terrain::spec().describe());
+        // Under 4 x 4 near, after the recipe: its redraws (terrain_lod.rs, #2676).
+        let levels = t.lod.as_ref().map_or(String::new(), |l| format!("; {}", l.summary()));
+        info!("terrain summary: {} cells drawn smoothed, {} on the stored triangles ({}){levels}", t.smoothed_cells, t.stored_cells, nvf_play::smooth_terrain::spec().describe());
     }
     if s.billboards > 0 {
         info!("world: {} placed billboard nodes turn to the camera ({} references)", s.billboards, s.refs_billboards);
@@ -1116,7 +1118,7 @@ fn begin_cell(
     let mut refs: Vec<u32> = cell.map(|c| c.refs.clone()).unwrap_or_default();
     if let CellKey::Exterior(g) = key {
         if let Some((c, land_id)) = cell.and_then(|c| Some((c, c.land?))) {
-            let prep = prep.or_else(|| prepare_terrain(world.lo, world.schema, land_id, g, tile, world.land_ids(g), nvf_play::smooth_terrain::spec()));
+            let prep = prep.or_else(|| prepare_terrain(world.lo, world.schema, land_id, g, tile, world.land_ids(g), nvf_play::smooth_terrain::spec(), crate::terrain_lod::first_draw()));
             if let Some(prep) = prep {
                 let (land, surface) = spawn_terrain(commands, cell_e, world, prep, &mut TerrainCtx { tm: terrain, assets: models });
                 // Grass grows on the landscape's textures (grass.rs); the water surface

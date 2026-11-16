@@ -96,7 +96,12 @@ pub fn step_words() -> HashMap<&'static str, &'static [&'static str]> {
 /// `name()` in the engine; a test checks the engine still has every name). Other lists
 /// (the resolution, the monitor) depend on the machine and stay text.
 pub fn list_choices() -> HashMap<&'static str, &'static [&'static str]> {
-    HashMap::from([("kill-camera", &["Last enemy", "Every kill", "Off"][..]), ("vats-style", &["Classic", "Mark and Fire"][..])])
+    HashMap::from([
+        ("kill-camera", &["Last enemy", "Every kill", "Off"][..]),
+        ("vats-style", &["Classic", "Mark and Fire"][..]),
+        // As the INI keeps them (`Smoothing::stored`, #2676); the engine also reads its older 1/0.
+        ("smooth-terrain", &["off", "2x2", "4x4", "4x4-near"][..]),
+    ])
 }
 
 /// The tabs in the page's order (engine/nvf-play/src/settings_layout.rs, `TAB_ORDER`), then
@@ -139,7 +144,7 @@ mod tests {
     #[test]
     fn list_choices_match_the_engines_names() {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../engine/nvf-play/src/");
-        for (key, file) in [("kill-camera", "kill_cam.rs"), ("vats-style", "vats_classic.rs")] {
+        for (key, file) in [("kill-camera", "kill_cam.rs"), ("vats-style", "vats_classic.rs"), ("smooth-terrain", "smooth_terrain.rs")] {
             let src = std::fs::read_to_string(format!("{root}{file}")).unwrap();
             for name in list_choices()[key] {
                 assert!(src.contains(&format!("=> \"{name}\"")), "{key}: {name} is no longer a choice in {file}");
