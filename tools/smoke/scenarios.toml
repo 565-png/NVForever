@@ -30462,6 +30462,13 @@ expect = [
   { re = 'mesh terrain blend: verify skipped-frames=[1-9][0-9]* diverged=0 passes=[0-9]+ pass-first=1 pass-config=0 pass-publication=([2-9]|[1-9][0-9]+) pass-pending=[1-9][0-9]* pass-shapes=[1-9][0-9]* pass-materials=[0-9]+', label = "the triggers this case must fire did: the first publication and the crossing's replacements (at least one, its summary) each run a pass for the new publication; each new clone is pending a frame or more; the first conversion's removal of the ordinary materials (and the cells streaming in) runs a pass for the shapes; the look never changes while it is on, through the crossing" },
   { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[1-9]', max = 0, label = "no skipped frame would have changed a shape, a clone, the census or the settlement, through the crossing" },
   { re = 'mesh terrain blend: verify diverged', max = 0, label = "no divergence line, through the crossing" },
+  # [design] The readiness delay aid (120 frames) and the crossing's held steps keep each new
+  # set of clones pending for long stretches, so pass-pending legitimately reaches the
+  # thousands and is not bounded. Shape passes come from the cells streamed by seven
+  # crossings and the walk (spawn frames, each conversion's settling pass) where no
+  # replacement is pending; on 070c331fa animated STATs' republished looks made it 1768.
+  # Bounded below 1000.
+  { re = 'mesh terrain blend: verify skipped-frames=.* pass-shapes=[0-9]{4,} ', max = 0, label = "fewer than 1000 passes for a shape change in the run (an animated STAT's look published again is not one), through the crossing" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the crossing" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors, through the crossing" },
 ]
@@ -30514,6 +30521,16 @@ expect = [
   { re = 'mesh terrain blend: verify skipped-frames=[1-9][0-9]* diverged=0 passes=[0-9]+ pass-first=1 pass-config=0 pass-publication=([2-9]|[1-9][0-9]+) pass-pending=[1-9][0-9]* pass-shapes=[1-9][0-9]* pass-materials=[0-9]+', label = "the triggers this case must fire did: the first publication and the switched materials' (at least two, above) each run a pass for the new publication; each new clone is pending a frame or more; the first conversion's removal of the ordinary materials runs a pass for the shapes; the look never changes while it is on, through the terrain switches" },
   { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[1-9]', max = 0, label = "no skipped frame would have changed a shape, a clone, the census or the settlement, through the terrain switches" },
   { re = 'mesh terrain blend: verify diverged', max = 0, label = "no divergence line, through the terrain switches" },
+  # [design] Standing still with the blend on from the start, the gate is quiet. On
+  # 070c331fa, before census-only shapes' same-handle republications stopped counting, the
+  # run showed passes=1068 pass-shapes=1064 seven seconds after loading (animated STATs'
+  # looks, nvf-assets material_anim.rs), and only 4 passes for every other reason. What
+  # legitimately runs a pass here: the first pass, the cells spawned while loading, each
+  # publication (the first and the two switches' at least) with its new clones pending a
+  # few frames and one settling pass for the shapes it converts; standing still, no cell
+  # streams. Tens at most, so every count line stays below 100 passes and 100 shape passes.
+  { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[0-9]+ passes=[0-9]{3,} ', max = 0, label = "the gate stays quiet in standing play: fewer than 100 full passes in the run, through the terrain switches" },
+  { re = 'mesh terrain blend: verify skipped-frames=.* pass-shapes=[0-9]{3,} ', max = 0, label = "fewer than 100 passes for a shape change in the run (an animated STAT's look published again is not one), through the terrain switches" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the terrain switches" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors, through the terrain switches" },
 ]
