@@ -109,7 +109,7 @@ Whoever sets it must hand the lights the held cascades as the frame that drew th
 them, as the game does.
 Upstream has no way to draw a light's shadow map less often than every frame.
 
-Gated materials (#2661, docs/design/graphics-enhanced.md §3.12 "Off"), in `src/material.rs`,
+Gated materials (#2661, docs/design/graphics-enhanced.md §3.14 "Off"), in `src/material.rs`,
 each part marked `NVForever gated materials`: `MaterialPlugin::gated(MaterialGate)` (a new
 `gate` field, `None` by default). With a gate, the material type's own systems run only
 while it is open (main world: `mark_meshes_as_changed_if_their_materials_changed`,

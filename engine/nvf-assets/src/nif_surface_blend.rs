@@ -162,6 +162,28 @@ pub struct DetailQuadrant {
     pub tile: f32,
     /// The vertex tangents' handedness (word 27; nvforever terrain.rs `TANGENT_SIGN`).
     pub tangent_sign: f32,
+    /// Height blending and anti-tiling as the near draws have them (words 0, 28-31).
+    pub features: DetailFeatures,
+}
+
+/// [design] The near draws' height blending (#2550) and anti-tiling (#2551) for a
+/// quadrant's detail, read from the very materials drawn (nvforever terrain_surface.rs
+/// `ResolvedDetail::from_materials`), so the detail follows the settings rows exactly when
+/// the near draw does (the materials are flipped in place, nvforever terrain.rs
+/// `sync_height_blend`, `sync_anti_tiling`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DetailFeatures {
+    /// The folded base draw blends its folded overlays by height: its material's uniform
+    /// values (nvforever terrain.rs `TerrainLayersUniform::height`: depth, gain, source 0
+    /// global or 1 local, reserved). `None` without height blending or without a folded draw.
+    pub height_blend: Option<Vec4>,
+    /// The base draw (and so its folded overlays) reads its textures anti-tiled.
+    pub anti_tiling: bool,
+    /// Bit `k`: overlay `k`, a separately drawn overflow layer, reads anti-tiled.
+    pub overflow_anti_tiling: u32,
+    /// World units per texture repeat of every anti-tiled read (`TerrainLayers::
+    /// texture_repeat`, `NifSurface::terrain_repeat`); 0 when nothing is anti-tiled.
+    pub repeat: f32,
 }
 
 impl DetailQuadrant {
@@ -187,6 +209,19 @@ impl DetailQuadrant {
             w[5 + i] = v.to_bits();
         }
         w[27] = self.tangent_sign.to_bits();
+        // [design] #2550/#2551: word 0 bit 4 height blending (folded overlays only), bit 5
+        // the base draw anti-tiled, bit 6 the local height reference; word 28 the overflow
+        // overlays read anti-tiled; words 29, 30 depth and gain; word 31 the anti-tiled
+        // reads' repeat (nif_surface_bindings.wesl `mesh_terrain_detail`).
+        let f = &self.features;
+        let height = f.height_blend.filter(|_| self.folded.min(total) > 0);
+        w[0] |= u32::from(height.is_some()) << 4 | u32::from(f.anti_tiling) << 5 | u32::from(height.is_some_and(|h| h.z > 0.5)) << 6;
+        let below = |n: usize| (1u32 << n) - 1;
+        w[28] = f.overflow_anti_tiling & below(total) & !below(self.folded.min(total));
+        let h = height.unwrap_or(Vec4::ZERO);
+        w[29] = h.x.to_bits();
+        w[30] = h.y.to_bits();
+        w[31] = f.repeat.to_bits();
         w
     }
 }
@@ -356,6 +391,10 @@ pub struct NifSurfaceBlendColour {
     pub pipboy_screen: bool,
     pub pipboy_a: Vec4,
     pub pipboy_b: Vec4,
+    /// The source's landscape anti-tiling values (nif_material.rs `NifSurface::
+    /// terrain_repeat`, `anti_tiling`), as the ordinary type's uniform and key carry them.
+    pub terrain_repeat: f32,
+    pub anti_tiling: bool,
     pub blended_cutout: Option<f32>,
     pub holes: Vec4,
     pub holes_edge: Vec4,
@@ -390,6 +429,8 @@ pub struct NifSurfaceBlendUniform {
     pub soft: Vec4,
     pub pipboy_a: Vec4,
     pub pipboy_b: Vec4,
+    /// The ordinary uniform's `terrain` (nif_material.rs `NifSurfaceUniform`), in its place.
+    pub terrain: Vec4,
     pub mesh_terrain: Vec4,
     /// xy immutable publication origin, z enabled coverage (nine bits), w reserved.
     pub mesh_terrain_origin: Vec4,
@@ -398,7 +439,7 @@ pub struct NifSurfaceBlendUniform {
 
 impl From<&NifSurfaceBlendColour> for NifSurfaceBlendUniform {
     fn from(s: &NifSurfaceBlendColour) -> Self {
-        NifSurfaceBlendUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b, mesh_terrain: s.mesh_terrain, mesh_terrain_origin: s.mesh_terrain_origin, mesh_terrain_widths: s.mesh_terrain_widths }
+        NifSurfaceBlendUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b, terrain: Vec4::new(if crate::terrain_sampling::repeat_valid(s.terrain_repeat) { s.terrain_repeat } else { 0.0 }, 0.0, 0.0, 0.0), mesh_terrain: s.mesh_terrain, mesh_terrain_origin: s.mesh_terrain_origin, mesh_terrain_widths: s.mesh_terrain_widths }
     }
 }
 
@@ -421,6 +462,7 @@ impl From<&NifSurfaceBlendColour> for NifSurfaceBlendKey {
             first_person: s.first_person,
             add_linear: s.add_linear,
             pipboy_screen: s.pipboy_screen,
+            anti_tiling: s.anti_tiling && crate::terrain_sampling::repeat_valid(s.terrain_repeat),
         })
     }
 }
@@ -554,6 +596,8 @@ impl NifSurfaceBlendColour {
             pipboy_screen: source.pipboy_screen,
             pipboy_a: source.pipboy_a,
             pipboy_b: source.pipboy_b,
+            terrain_repeat: source.terrain_repeat,
+            anti_tiling: source.anti_tiling,
             blended_cutout: source.blended_cutout,
             holes: source.holes,
             holes_edge: source.holes_edge,
@@ -612,8 +656,8 @@ mod tests {
             assert_eq!(descriptor.fragment.as_ref().unwrap().targets, original.fragment.as_ref().unwrap().targets);
             assert_eq!(descriptor.fragment.as_ref().unwrap().shader_defs.contains(&"MESH_TERRAIN_BLEND".into()), !prepass);
         }}
-        assert_eq!(NifSurfaceBlendUniform::min_size().get(), 176, "one vec4 of widths after round 5's 160 bytes");
-        assert_eq!(crate::nif_material::NifSurfaceUniform::min_size().get(), 128, "the ordinary uniform is unchanged");
+        assert_eq!(NifSurfaceBlendUniform::min_size().get(), 192, "the ordinary 144 bytes (#2551's terrain row included), then three vec4s");
+        assert_eq!(crate::nif_material::NifSurfaceUniform::min_size().get(), 144, "the ordinary uniform is main's");
     }
 
     fn textures(descriptor: &BindlessDescriptor) -> usize {
@@ -634,7 +678,7 @@ mod tests {
         assert_eq!(textures(&colour), textures(&ordinary));
         assert_eq!(textures(&colour), 2);
         assert_eq!(&colour.resources[50..], &ordinary.resources[50..], "same slot types: 50 data, 51 texture, 52 sampler, 53 texture");
-        assert_eq!((colour.buffers[0].binding_number.0, colour.buffers[0].bindless_index.0, colour.buffers[0].size), (101, 50, Some(176)));
+        assert_eq!((colour.buffers[0].binding_number.0, colour.buffers[0].bindless_index.0, colour.buffers[0].size), (101, 50, Some(192)));
         let source = include_str!("nif_surface_blend.rs");
         let fields = source.split("pub struct NifSurfaceBlendColour {").nth(1).unwrap().split("\n}").next().unwrap();
         assert_eq!(fields.matches("#[texture(").count(), 2);
@@ -693,10 +737,11 @@ mod tests {
             cell_local: true, base_diffuse: Some(3), base_normal: Some(4), diffuse_sampler: 1, normal_sampler: 2,
             overlays: vec![(5, Some(6), true), (7, None, false), (8, Some(9), true)], folded: 2,
             base_two_component: false, flip_y: true, base_rgb: Vec3::new(0.5, 0.25, 1.0),
-            uv: [1.0, 0.0, 0.0, 1.0, 0.25, -0.5], tile: 256.0, tangent_sign: -1.0,
+            uv: [1.0, 0.0, 0.0, 1.0, 0.25, -0.5], tile: 256.0, tangent_sign: -1.0, features: DetailFeatures::default(),
         };
         let w = q.words();
         assert_eq!(w[0], 1 | 2 | 4 | 8 | 2 << 8 | 3 << 12);
+        assert_eq!(&w[28..], &[0, 0, 0, 0], "neither feature: words 28-31 zero");
         assert_eq!((w[1], w[2], w[3]), (3 | 4 << 16, 1 | 2 << 16, 0b101));
         // Base: flip only. Folded overlays 0 and 1 decode as the base (two-component off even
         // where their own map is one); overflow overlay 2 with its own two-component map.
@@ -705,8 +750,20 @@ mod tests {
         assert_eq!((w[15], w[16], w[17], w[18]), (5 | 6 << 16, 7, 8 | 9 << 16, 0));
         assert_eq!(f32::from_bits(w[27]), -1.0, "the tangents' handedness");
         // The cap: thirteen overlays keep twelve (the packer refuses such a quadrant first).
-        let many = DetailQuadrant { overlays: vec![(1, None, false); 13], folded: 6, ..q };
+        let many = DetailQuadrant { overlays: vec![(1, None, false); 13], folded: 6, ..q.clone() };
         assert_eq!((many.words()[0] >> 12) & 15, 12);
+        // #2550/#2551: the features in word 0 (bits 4-6) and words 28-31; the overflow mask
+        // keeps overflow overlays only (overlay 2 here), height blending needs folded ones.
+        let features = DetailFeatures { height_blend: Some(Vec4::new(0.1, 8.0, 1.0, 0.0)), anti_tiling: true, overflow_anti_tiling: 0b111, repeat: 256.0 };
+        let w = DetailQuadrant { features, ..q.clone() }.words();
+        assert_eq!(w[0], 1 | 2 | 4 | 8 | 2 << 8 | 3 << 12 | 1 << 4 | 1 << 5 | 1 << 6);
+        assert_eq!((w[28], f32::from_bits(w[29]), f32::from_bits(w[30]), f32::from_bits(w[31])), (0b100, 0.1, 8.0, 256.0));
+        let global = DetailFeatures { height_blend: Some(Vec4::new(0.1, 8.0, 0.0, 0.0)), ..features };
+        assert_eq!((DetailQuadrant { features: global, ..q.clone() }.words()[0] >> 4) & 7, 0b011, "global reference: bit 6 clear");
+        let unfolded = DetailQuadrant { features, folded: 0, ..q.clone() }.words();
+        assert_eq!(((unfolded[0] >> 4) & 7, unfolded[28], unfolded[29]), (0b010, 0b111, 0), "no folded overlays: no height blending, every overlay overflow");
+        let anti_only = DetailQuadrant { features: DetailFeatures { height_blend: None, ..features }, ..q }.words();
+        assert_eq!(((anti_only[0] >> 4) & 7, anti_only[29], anti_only[30]), (0b010, 0, 0));
     }
 
     #[test]

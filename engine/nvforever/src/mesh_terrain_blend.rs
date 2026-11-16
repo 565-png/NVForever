@@ -1,5 +1,5 @@
 //! [design] NVForever's mesh/landscape blend (#2661, docs/design/graphics-enhanced.md
-//! §3.12): rigid exterior STAT and SCOL shapes, no noise, immutable source materials.
+//! §3.14): rigid exterior STAT and SCOL shapes, no noise, immutable source materials.
 //!
 //! On with the Graphics settings row `mesh-terrain-blend` ("Blend meshes into ground";
 //! off by default, off in both looks, not part of `enhanced`), which draws
@@ -16,7 +16,7 @@
 //! after the material producers), drops the census, the captures, the atlas and the
 //! enabled clones, and closes the gate once their materials are gone ([`close_gate`]).
 //! While it is off no bake is scheduled and nothing is allocated; what still runs is
-//! listed in docs/design/graphics-enhanced.md §3.12.
+//! listed in docs/design/graphics-enhanced.md §3.14.
 //!
 //! [design] Census (round 6): every spawned STAT or SCOL shape carries a [`BlendCensus`]
 //! with the reasons its reference and shape cannot blend, recorded before any filtering
@@ -286,8 +286,11 @@ pub mod reason {
     pub const ADD_LINEAR: u32 = 1 << 23;
     pub const SOFT: u32 = 1 << 24;
     pub const DEPTH_BIAS: u32 = 1 << 25;
+    /// Drawn under a billboard holder that turns to the camera (#2549, nvf-assets
+    /// model.rs `BakedBillboards`); last, so earlier precedence is unchanged.
+    pub const BILLBOARD: u32 = 1 << 26;
     /// Bits and the names the logs use (`excluded-<name>=`).
-    pub const NAMES: [(u32, &str); 26] = [
+    pub const NAMES: [(u32, &str); 27] = [
         (WORLD, "world"), (RIG, "rig"), (PARTICLES, "particles"), (POSED, "posed"),
         (DAMAGE_STAGES, "damage-stages"), (DEST, "dest"), (DISTANT, "distant"),
         (EMITTANCE, "emittance"), (MORPH, "morph"), (MISSING_SOURCE, "missing-source"),
@@ -296,7 +299,7 @@ pub mod reason {
         (SPECULAR_TRANSMISSION, "specular-transmission"), (DIFFUSE_TRANSMISSION, "diffuse-transmission"),
         (FALLOFF, "falloff"), (HOLES_VALUE, "holes-value"), (HOLES_TEXTURE, "holes-texture"),
         (FACEGEN, "facegen"), (PIPBOY, "pipboy"), (ADD_LINEAR, "add-linear"), (SOFT, "soft"),
-        (DEPTH_BIAS, "depth-bias-nonfinite"),
+        (DEPTH_BIAS, "depth-bias-nonfinite"), (BILLBOARD, "billboard"),
     ];
     /// The first reason in precedence order, `none` for an empty mask.
     pub fn first(mask: u32) -> &'static str {
@@ -341,6 +344,12 @@ pub fn reference_reasons(f: ReferenceFacts) -> u32 {
 /// [design] A shape driven by the reference's emittance, or a registered morph target.
 pub fn shape_reasons(external_emittance: bool, morph: bool) -> u32 {
     mask_of([(external_emittance, reason::EMITTANCE), (morph, reason::MORPH)])
+}
+
+/// [design] A shape spawn_model put under a billboard holder (#2549): it turns to the
+/// camera, so it is counted and never blends (the backfill leaves such shapes out too).
+pub fn billboard_reason(billboard: bool) -> u32 {
+    mask_of([(billboard, reason::BILLBOARD)])
 }
 
 /// [design] The base record types whose rigid shapes can blend: STAT, and SCOL, a static
@@ -579,7 +588,7 @@ pub(crate) struct BlendConversion;
 /// game runs: the materials' plugins behind the closed [`BlendGate`] and empty resources;
 /// every system that captures, bakes or converts runs only while the blend is on
 /// ([`active`]), the restoration only in the frame it turns off, the gate's closing only
-/// after that. What still runs while it is off: graphics-enhanced.md §3.12 "Off".
+/// after that. What still runs while it is off: graphics-enhanced.md §3.14 "Off".
 pub struct MeshTerrainBlendPlugin;
 
 impl Plugin for MeshTerrainBlendPlugin {
@@ -1207,7 +1216,7 @@ mod tests {
         let prefix = "mesh terrain blend: ready eligible-shapes=12 resident-cells=9 generation=3 variant=status shape=height resolution=512 shading=albedo";
         assert!(line.starts_with(&format!("{prefix} weight-version=1 stat-shapes=2 excluded-shapes=2 pending-material-shapes=1 excluded-world=0 excluded-rig=1 excluded-particles=1 excluded-posed=0")), "{line}");
         assert!(line.contains(" excluded-missing-source=1 excluded-temporary=0 excluded-alpha-mode=0"), "{line}");
-        assert!(line.ends_with(" excluded-depth-bias-nonfinite=0 admitted-blend=1 admitted-bias=1 admitted-decal=1 admitted-mask=0 admitted-alpha-cut=1 scol-shapes=1 detail=colour"), "round 7: SCOL shapes after the census; round 10a: the detail mode last: {line}");
+        assert!(line.ends_with(" excluded-depth-bias-nonfinite=0 excluded-billboard=0 admitted-blend=1 admitted-bias=1 admitted-decal=1 admitted-mask=0 admitted-alpha-cut=1 scol-shapes=1 detail=colour"), "round 7: SCOL shapes after the census; round 10a: the detail mode last: {line}");
         let layered = crate::terrain_surface::PublishedSurface { detail: vec![((0, 0), 1), ((1, 0), 3)], ..surface.clone() };
         assert!(ready_line(&layered, 3, &parse("8:status:height:512:albedo").unwrap(), &census).ends_with(" scol-shapes=1 detail=layers detail-quadrants=2"));
         for (_, name) in reason::NAMES { assert!(line.contains(&format!(" excluded-{name}=")), "every reason is printed, zero included: {name}"); }
@@ -1274,6 +1283,8 @@ mod tests {
         assert_eq!(shape_reasons(true, false), reason::EMITTANCE);
         assert_eq!(shape_reasons(false, true), reason::MORPH);
         assert_eq!(shape_reasons(true, true), reason::EMITTANCE | reason::MORPH);
+        assert_eq!((billboard_reason(false), billboard_reason(true)), (0, reason::BILLBOARD));
+        assert_eq!(reason::first(reason::BILLBOARD | reason::DEPTH_BIAS), "depth-bias-nonfinite", "billboard is last in precedence");
     }
 
     #[test]

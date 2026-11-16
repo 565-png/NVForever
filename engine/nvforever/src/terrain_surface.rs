@@ -16,7 +16,7 @@
 //! Round 10a: with the detail capability a publication also packs, after the heights,
 //! each admitted quadrant's near-draw description (its layer images in a per-publication
 //! palette, prepared vertex attributes and opacities: [`QuadrantDetail`], [`DetailPalette`]),
-//! which the blend shader samples directly near the camera (graphics-enhanced.md §3.12).
+//! which the blend shader samples directly near the camera (graphics-enhanced.md §3.14).
 //! Round 10b: the colour atlas has a mip chain down to one texel per cell
 //! ([`colour_levels`]). The bake camera draws into a single-level bake target; the render
 //! world's assembly (`assemble_atlas`) then copies the retained cells at every level from
@@ -115,18 +115,36 @@ pub struct SurfaceCaptureUniform {
     pub uv_axes: Vec4,
     /// xy the transform's translation; z 1 with a diffuse texture; w 1 for a layer.
     pub uv_offset_flags: Vec4,
+    /// [design] #2551: x the world units per texture repeat of an anti-tiled source
+    /// (`NifSurface::terrain_repeat`), 0 when the source reads its texture plainly; y, z, w
+    /// unused.
+    pub anti_tiling: Vec4,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct SurfaceCaptureKey { layer: bool, raster_bias: i32 }
+pub struct SurfaceCaptureKey { layer: bool, raster_bias: i32, anti_tiling: bool }
 impl From<&SurfaceCaptureMaterial> for SurfaceCaptureKey {
     fn from(m: &SurfaceCaptureMaterial) -> Self {
-        Self { layer: m.layer, raster_bias: nvf_assets::nif_material::raster_bias(m.depth_bias as i32) }
+        Self { layer: m.layer, raster_bias: nvf_assets::nif_material::raster_bias(m.depth_bias as i32), anti_tiling: m.values.anti_tiling.x > 0.0 }
     }
 }
 
 impl SurfaceCaptureMaterial {
-    /// The capture of a near draw with `source` (terrain.rs `surface`, `layer_material`).
+    /// [design] The capture of a near draw with the landscape NIF material `source`: its
+    /// StandardMaterial's values ([`Self::from_standard`]) and, with terrain anti-tiling on
+    /// that material (#2551, `NifSurfaceKey::anti_tiling`), the same anti-tiled read of its
+    /// diffuse texture at the same world lattice (terrain_capture.wesl `TERRAIN_ANTI_TILING`,
+    /// nvf_assets terrain_pbr.wesl `terrain_pbr_standard`).
+    pub fn from_source(source: &nvf_assets::NifMaterial, layer: bool) -> Self {
+        let mut capture = Self::from_standard(&source.base, layer);
+        if nvf_assets::nif_material::NifSurfaceKey::from(&source.extension).anti_tiling {
+            capture.values.anti_tiling.x = source.extension.terrain_repeat;
+        }
+        capture
+    }
+
+    /// The capture of a near draw with `source` (terrain.rs `surface`, `layer_material`),
+    /// read plainly.
     pub fn from_standard(source: &StandardMaterial, layer: bool) -> Self {
         let colour = LinearRgba::from(source.base_color);
         let t = source.uv_transform;
@@ -135,6 +153,7 @@ impl SurfaceCaptureMaterial {
                 colour: Vec4::new(colour.red, colour.green, colour.blue, colour.alpha),
                 uv_axes: Vec4::new(t.matrix2.x_axis.x, t.matrix2.x_axis.y, t.matrix2.y_axis.x, t.matrix2.y_axis.y),
                 uv_offset_flags: Vec4::new(t.translation.x, t.translation.y, f32::from(u8::from(source.base_color_texture.is_some())), f32::from(u8::from(layer))),
+                anti_tiling: Vec4::ZERO,
             },
             diffuse: source.base_color_texture.clone(),
             layer,
@@ -155,6 +174,12 @@ impl Material for SurfaceCaptureMaterial {
         // specialize gives the near layer (`raster_bias`).
         if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
             depth_stencil.bias.constant = key.bind_group_data.raster_bias;
+        }
+        // [design] #2551: an anti-tiled source's capture reads its diffuse texture anti-tiled.
+        if key.bind_group_data.anti_tiling {
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("TERRAIN_ANTI_TILING".into());
+            }
         }
         Ok(())
     }
@@ -177,6 +202,12 @@ fn bake_copy(material: &mut TerrainMaterial) {
     for normal in [&mut e.normal0, &mut e.normal1, &mut e.normal2, &mut e.normal3, &mut e.normal4, &mut e.normal5] { *normal = None; }
     material.base.fog_enabled = false;
     material.base.normal_map_texture = None;
+}
+
+/// [design] The bake root's transform: game space to Bevy's, moved to the publication's
+/// south-west cell (`origin`), under which each slot `s` lies at `s` x 4096 game units.
+pub fn bake_root(origin: (i32, i32)) -> Transform {
+    game_to_bevy() * Transform::from_xyz(origin.0 as f32 * 4096.0, origin.1 as f32 * 4096.0, 0.0)
 }
 
 /// [design] A new reconstruction gets a new input revision, including stitched inputs.
@@ -233,6 +264,8 @@ pub struct ResolvedDetail {
     pub folded: usize,
     /// Normal maps are read with green pointing down the image (`flip_normal_map_y`).
     pub flip_y: bool,
+    /// Height blending and anti-tiling as these materials have them now (#2550, #2551).
+    pub features: nvf_assets::nif_surface_blend::DetailFeatures,
 }
 
 impl ResolvedDetail {
@@ -247,22 +280,47 @@ impl ResolvedDetail {
     /// draw uses each layer's own values. terrain.rs `layer_material` makes them white with
     /// the default transform, so only a later material edit (or a base transform edit)
     /// reaches this.
-    pub fn from_materials(base: &StandardMaterial, folded: Option<&crate::terrain::TerrainLayers>, overflow: &[&StandardMaterial], layers: usize) -> Result<Self, &'static str> {
+    ///
+    /// [design] #2550/#2551: the features are read from the same materials, as their
+    /// pipelines select them: a folded base's `TerrainLayersKey` (height blending, with its
+    /// uniform's depth, gain and source; anti-tiling), a single base's and each overflow
+    /// layer's `NifSurfaceKey::anti_tiling` (`base_surface`, the overflow materials'
+    /// extensions). Every anti-tiled draw of the quadrant must share one texture repeat,
+    /// since the detail reads them all at one lattice place (`anti-tiling-repeat`
+    /// otherwise; terrain.rs gives them all `TerrainSettings::tile`).
+    pub fn from_materials(base: &StandardMaterial, base_surface: Option<&nvf_assets::nif_material::NifSurface>, folded: Option<&crate::terrain::TerrainLayers>, overflow: &[&nvf_assets::NifMaterial], layers: usize) -> Result<Self, &'static str> {
         const UNRESOLVED: &str = "unresolved-materials";
         let mut overlays = Vec::new();
+        let mut features = nvf_assets::nif_surface_blend::DetailFeatures::default();
+        let mut repeats = Vec::new();
         if let Some(e) = folded {
             let pairs = [(&e.diffuse0, &e.normal0), (&e.diffuse1, &e.normal1), (&e.diffuse2, &e.normal2), (&e.diffuse3, &e.normal3), (&e.diffuse4, &e.normal4), (&e.diffuse5, &e.normal5)];
             for (d, n) in pairs.into_iter().take(e.count as usize) { overlays.push((d.clone().ok_or(UNRESOLVED)?, n.clone())); }
+            let key = crate::terrain::TerrainLayersKey::from(e);
+            features.height_blend = key.height_blend.then(|| crate::terrain::TerrainLayersUniform::from(e).height);
+            if key.anti_tiling { features.anti_tiling = true; repeats.push(e.texture_repeat); }
+        } else if let Some(s) = base_surface.filter(|s| nvf_assets::nif_material::NifSurfaceKey::from(*s).anti_tiling) {
+            features.anti_tiling = true;
+            repeats.push(s.terrain_repeat);
         }
         let folded = overlays.len();
-        for m in overflow {
+        for (k, material) in overflow.iter().enumerate() {
+            let m = &material.base;
             if m.flip_normal_map_y != base.flip_normal_map_y { return Err(UNRESOLVED); }
             if LinearRgba::from(m.base_color) != LinearRgba::WHITE || m.uv_transform != base.uv_transform { return Err("overflow-material"); }
             overlays.push((m.base_color_texture.clone().ok_or(UNRESOLVED)?, m.normal_map_texture.clone()));
+            if nvf_assets::nif_material::NifSurfaceKey::from(&material.extension).anti_tiling {
+                features.overflow_anti_tiling |= 1u32.checked_shl((folded + k) as u32).unwrap_or(0);
+                repeats.push(material.extension.terrain_repeat);
+            }
         }
         if overlays.len() != layers { return Err(UNRESOLVED); }
+        if let Some(&repeat) = repeats.first() {
+            if repeats.iter().any(|r| *r != repeat) { return Err("anti-tiling-repeat"); }
+            features.repeat = repeat;
+        }
         let c = LinearRgba::from(base.base_color);
-        Ok(Self { base_diffuse: base.base_color_texture.clone(), base_normal: base.normal_map_texture.clone(), base_rgb: Vec3::new(c.red, c.green, c.blue), uv: base.uv_transform, overlays, folded, flip_y: base.flip_normal_map_y })
+        Ok(Self { base_diffuse: base.base_color_texture.clone(), base_normal: base.normal_map_texture.clone(), base_rgb: Vec3::new(c.red, c.green, c.blue), uv: base.uv_transform, overlays, folded, flip_y: base.flip_normal_map_y, features })
     }
     fn images(&self) -> impl Iterator<Item = &Handle<Image>> {
         self.base_diffuse.iter().chain(&self.base_normal).chain(self.overlays.iter().flat_map(|(d, n)| std::iter::once(d).chain(n)))
@@ -955,7 +1013,7 @@ impl DetailPalette {
             cell_local: d.cell_local, base_diffuse, base_normal, diffuse_sampler, normal_sampler, overlays, folded: r.folded,
             base_two_component, flip_y: r.flip_y, base_rgb: r.base_rgb,
             uv: [t.matrix2.x_axis.x, t.matrix2.x_axis.y, t.matrix2.y_axis.x, t.matrix2.y_axis.y, t.translation.x, t.translation.y],
-            tile: d.tile, tangent_sign: d.tangent_sign,
+            tile: d.tile, tangent_sign: d.tangent_sign, features: r.features,
         })
     }
 }
@@ -1357,7 +1415,7 @@ pub fn refresh_captures(
                 }
                 CaptureSource::Single(h, layer) => {
                     let Some(m) = ordinary.get(h) else { missing = true; continue };
-                    CaptureDraw::Single(SurfaceCaptureMaterial::from_standard(&m.base, *layer))
+                    CaptureDraw::Single(SurfaceCaptureMaterial::from_source(m, *layer))
                 }
             };
         }
@@ -1385,10 +1443,10 @@ pub fn refresh_captures(
 /// is not in its assets.
 pub fn resolve_detail(base: &DetailBase, overflow: &[Handle<nvf_assets::NifMaterial>], layers: usize, folded: &Assets<TerrainMaterial>, ordinary: &Assets<nvf_assets::NifMaterial>) -> Result<ResolvedDetail, &'static str> {
     const UNRESOLVED: &str = "unresolved-materials";
-    let overflow: Vec<&StandardMaterial> = overflow.iter().map(|h| ordinary.get(h).map(|m| &m.base)).collect::<Option<_>>().ok_or(UNRESOLVED)?;
+    let overflow: Vec<&nvf_assets::NifMaterial> = overflow.iter().map(|h| ordinary.get(h)).collect::<Option<_>>().ok_or(UNRESOLVED)?;
     match base {
-        DetailBase::Folded(h) => { let m = folded.get(h).ok_or(UNRESOLVED)?; ResolvedDetail::from_materials(&m.base, Some(&m.extension), &overflow, layers) }
-        DetailBase::Single(h) => ResolvedDetail::from_materials(&ordinary.get(h).ok_or(UNRESOLVED)?.base, None, &overflow, layers),
+        DetailBase::Folded(h) => { let m = folded.get(h).ok_or(UNRESOLVED)?; ResolvedDetail::from_materials(&m.base, None, Some(&m.extension), &overflow, layers) }
+        DetailBase::Single(h) => { let m = ordinary.get(h).ok_or(UNRESOLVED)?; ResolvedDetail::from_materials(&m.base, Some(&m.extension), None, &overflow, layers) }
     }
 }
 fn modified_asset<A: Asset>(event: &AssetEvent<A>) -> Option<AssetId<A>> {
@@ -1560,7 +1618,11 @@ pub fn update_cache(
     let rows = if cache.detail { HEIGHT_HEIGHT + nvf_assets::nif_surface_blend::DETAIL_ROWS } else { HEIGHT_HEIGHT };
     let mut heights = empty_height_atlas_rows(rows);
     let mut expected = HashSet::new();
-    let root = commands.spawn((Name::new("Mesh terrain surface bake"), game_to_bevy(), Visibility::Inherited)).id();
+    // [design] #2551: the bake's copies and camera sit at the cells' true world places (the
+    // slots' offsets from the publication's origin, under a root moved to that origin), so
+    // a draw that hangs its reads on world coordinates (terrain anti-tiling's lattice,
+    // nvf_assets terrain_sampling.wesl) reads the same texels in the bake as near the camera.
+    let root = commands.spawn((Name::new("Mesh terrain surface bake"), bake_root(origin), Visibility::Inherited)).id();
     let slots = resident.iter().map(|(_, c)| (c.grid.0 - origin.0, c.grid.1 - origin.1)).collect();
     for (_, cell) in &resident {
         let slot = (cell.grid.0 - origin.0, cell.grid.1 - origin.1);
@@ -2285,7 +2347,7 @@ pub(crate) mod tests {
             base: DetailBase::Single(Handle::default()), overflow: vec![], cell_local: false, tile: 256.0,
             tint: vec![[1.0; 3]; n], normal: vec![[0.0, 0.0, 1.0]; n], tangent: vec![[1.0, 0.0, 0.0]; n], tangent_sign: -1.0,
             opacity: vec![vec![0.5; n]; overlays.len()],
-            resolved: Ok(ResolvedDetail { base_diffuse: Some(base), base_normal: Some(normal), base_rgb: Vec3::ONE, uv: bevy::math::Affine2::IDENTITY, overlays, folded: 0, flip_y: true }),
+            resolved: Ok(ResolvedDetail { base_diffuse: Some(base), base_normal: Some(normal), base_rgb: Vec3::ONE, uv: bevy::math::Affine2::IDENTITY, overlays, folded: 0, flip_y: true, features: default() }),
         }))
     }
     fn sampled(images: &mut Assets<Image>, anisotropy: u16) -> Handle<Image> {

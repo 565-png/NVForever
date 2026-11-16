@@ -12,6 +12,13 @@ import bevy_pbr::render::mesh_bindings::mesh;
 // [design] Round 10a's landscape detail uses Bevy's own TBN and normal-map helpers, as the
 // near landscape's draws do (terrain.wesl, StandardMaterial).
 @if(MESH_TERRAIN_BLEND && BINDLESS) import bevy_pbr::render::pbr_functions::{calculate_tbn_mikktspace, apply_normal_mapping};
+// [design] With the near landscape's height blending (#2550) or anti-tiling (#2551) on, the
+// detail composes with the very functions terrain.wesl uses: nvforever's terrain_weights.wesl
+// (loaded by nvforever terrain.rs, the crate whose blend pipelines set MESH_TERRAIN_BLEND)
+// and this crate's terrain_sampling.wesl (graphics-enhanced.md §3.14 "Height blending and
+// anti-tiling").
+@if(MESH_TERRAIN_BLEND && BINDLESS) import nvforever::terrain_weights::{terrain_height, terrain_ordered_shares, terrain_height_weights};
+@if(MESH_TERRAIN_BLEND && BINDLESS) import nvf_assets::terrain_sampling::{TerrainFootprint, TerrainTaps, terrain_hex3, terrain_normal_tap, terrain_unit_normal, terrain_world_normal};
 
 struct NifSurface {
     // x start angle (cosine), y stop angle (cosine), z start opacity, w stop opacity;
@@ -46,6 +53,9 @@ struct NifSurface {
     // PIPBOY_SCREEN (NifSurface::pipboy_b): x the softening's reach (view pixels), y the
     // noise's reach (display values), z the canvas's share of the texture's width; w unused.
     pipboy_b: vec4<f32>,
+    // Landscape anti-tiling (nif_material.rs NifSurface::terrain_repeat): x world units per
+    // texture repeat of a landscape material, 0 on every other shape; y, z, w unused.
+    terrain: vec4<f32>,
     // [design] The enabled blend type (nif_surface_blend.rs): band, view, contact shape,
     // shading; the cache's southwest cell in origin.xy; hybrid v2's flat and steep band
     // widths in widths.xy (z, w unused).
@@ -242,6 +252,72 @@ struct NifSurface {
     normal: vec3<f32>,
 }
 
+// [design] #2551: a palette texture read anti-tiled, at every kept tap of `taps` with the
+// footprint's gradients turned with the tap, blended by the taps' weights: the rule of
+// nvf_assets terrain_sampling.wesl `terrain_sample_diffuse` and terrain_pbr.wesl
+// `terrain_bindless_diffuse`, with the bindless table indexed here, where it is read
+// (through this material's palette row, as `detail_sample`).
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn detail_sample_taps(instance_index: u32, image: u32, palette_sampler: u32, taps: TerrainTaps, fp: TerrainFootprint) -> vec4<f32> {
+    let slot = material_slot(instance_index);
+    let image_slot = nif_indices[slot].palette[image & 0xffffu];
+    let sampler_slot = nif_indices[slot].palette[PALETTE_IMAGES + (palette_sampler & 0xffffu)];
+    var ts = taps;
+    var sum = vec4(0.0);
+    for (var j = 0u; j < ts.count; j += 1u) {
+        let tap = ts.taps[j];
+        if tap.weight > 0.0 {
+            sum += tap.weight * textureSampleGrad(bindless_textures_2d[image_slot], bindless_samplers_filtering[sampler_slot], tap.uv, tap.rotation * fp.dx, tap.rotation * fp.dy);
+        }
+    }
+    return sum;
+}
+
+// [design] #2551: a palette normal map read anti-tiled (terrain_pbr.wesl
+// `terrain_bindless_normal`'s rule: each tap decoded by `decode`'s StandardMaterial flags and
+// turned back, blended, unit length), in the frame `tbn` (terrain_sampling.wesl
+// `terrain_world_normal`; the landscape is never seen from behind).
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn detail_normal_taps(instance_index: u32, image: u32, palette_sampler: u32, decode: u32, tbn: mat3x3<f32>, taps: TerrainTaps, fp: TerrainFootprint) -> vec3<f32> {
+    let slot = material_slot(instance_index);
+    let image_slot = nif_indices[slot].palette[image & 0xffffu];
+    let sampler_slot = nif_indices[slot].palette[PALETTE_IMAGES + (palette_sampler & 0xffffu)];
+    let two_component = (decode & FLAG_TWO_COMPONENT) != 0u;
+    let flip_y = (decode & FLAG_FLIP_Y) != 0u;
+    var ts = taps;
+    var sum = vec3(0.0);
+    for (var j = 0u; j < ts.count; j += 1u) {
+        let tap = ts.taps[j];
+        if tap.weight > 0.0 {
+            let encoded = textureSampleGrad(bindless_textures_2d[image_slot], bindless_samplers_filtering[sampler_slot], tap.uv, tap.rotation * fp.dx, tap.rotation * fp.dy).rgb;
+            sum += tap.weight * terrain_normal_tap(encoded, two_component, flip_y, tap.rotation);
+        }
+    }
+    return terrain_world_normal(tbn, terrain_unit_normal(sum), false);
+}
+
+// [design] #2550: a palette texture's height reference, placed as terrain.wesl's
+// `height_reference_at` places it (global: the coarsest level, at the middle; local: two
+// levels past the read's own level at the same place, never finer than level 4, the
+// level from the coordinate's change across a view pixel `dx`, `dy` without the mip bias,
+// scaled by the texture's size, plus the view's mip bias), read with the palette sampler at
+// that explicit level.
+@if(MESH_TERRAIN_BLEND && BINDLESS) fn detail_height_reference(instance_index: u32, image: u32, palette_sampler: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, bias: f32, local: bool) -> vec3<f32> {
+    let slot = material_slot(instance_index);
+    let image_slot = nif_indices[slot].palette[image & 0xffffu];
+    let sampler_slot = nif_indices[slot].palette[PALETTE_IMAGES + (palette_sampler & 0xffffu)];
+    let last_mip = f32(textureNumLevels(bindless_textures_2d[image_slot]) - 1u);
+    var lod = last_mip;
+    var coord = vec2(0.5);
+    if local {
+        let fsize = vec2<f32>(textureDimensions(bindless_textures_2d[image_slot], 0));
+        let gx = dx * fsize;
+        let gy = dy * fsize;
+        let current_lod = 0.5 * log2(max(max(dot(gx, gx), dot(gy, gy)), 1e-12)) + bias;
+        lod = min(last_mip, max(4.0, current_lod + 2.0));
+        coord = uv;
+    }
+    return textureSampleLevel(bindless_textures_2d[image_slot], bindless_samplers_filtering[sampler_slot], coord, lod).rgb;
+}
+
 // [design] Round 10a: the near landscape's surface inputs at the fragment's game xy,
 // composed as its draw composes them (terrain.wesl; terrain.rs `quadrant_mesh`, `folded_mesh`):
 // the base diffuse x interpolated linear vertex colour x base material colour, then each
@@ -252,8 +328,23 @@ struct NifSurface {
 // normal (full shading only) starts as the base's mapped normal (or the plain interpolated
 // one) and mixes towards each overlay's mapped normal (or the plain one) by the same shares,
 // normalized once. Overflow layers are NVForever's approximation (graphics-enhanced.md
-// §3.12): the near draw blends their lit result, this composes albedo and normal and lights
+// §3.14): the near draw blends their lit result, this composes albedo and normal and lights
 // once. `place` is the fragment's game xy, `cell` its cell.
+//
+// [design] #2550/#2551 (graphics-enhanced.md §3.14 "Height blending and anti-tiling"): with
+// either switch on the near base draw (word 0 bits 4 and 5, nif_surface_blend.rs
+// `DetailQuadrant::words`), the base draw is composed as terrain.wesl's TERRAIN_HEIGHT_BLEND
+// and TERRAIN_ANTI_TILING paths compose it, with the same shared functions: the base and
+// folded overlays get weights (terrain_weights.wesl `terrain_ordered_shares`, or the
+// anti-tiled walk last to first that reads only where a share can be above 0), heights
+// from the same raw texels against their references compete within the depth
+// (`terrain_height`, `terrain_height_weights`; anti-tiled, the global reference always),
+// colour and normal take the same weights, and the normal is made unit length once. A single
+// base with anti-tiling reads as terrain_pbr.wesl `terrain_pbr_standard`. Anti-tiled reads
+// share one footprint (the place in the world over the repeat, then the base's transform,
+// as terrain_pbr.wesl `terrain_footprint`) and one set of Hex3 taps (`terrain_hex3`). The
+// overflow layers then mix in as above, each read anti-tiled where its own material is
+// (word 28); height blending never reaches them, as it does not in the near draw.
 @if(MESH_TERRAIN_BLEND && BINDLESS) fn mesh_terrain_detail(instance_index: u32, entry: u32, t: TerrainTriangle, place: vec2<f32>, cell: vec2<i32>, inputs: MeshTerrainInputs) -> TerrainDetail {
     let q = entry * DETAIL_QUADRANT_WORDS;
     let flags = terrain_detail_word(instance_index, q);
@@ -270,6 +361,11 @@ struct NifSurface {
     let offset = vec2(bitcast<f32>(terrain_detail_word(instance_index, q + 12u)), bitcast<f32>(terrain_detail_word(instance_index, q + 13u)));
     let tile = bitcast<f32>(terrain_detail_word(instance_index, q + 14u));
     let handedness = bitcast<f32>(terrain_detail_word(instance_index, q + 27u));
+    // #2550/#2551: the near draws' switches as their materials have them.
+    let height_blend = (flags & 16u) != 0u;
+    let anti = (flags & 32u) != 0u;
+    let overflow_anti = terrain_detail_word(instance_index, q + 28u);
+    let weighted = height_blend || anti;
     // The near draw's texture coordinate: the place in the world over the repeat, or in
     // the cell for a six-layer folded draw (terrain.wesl), then the base's transform. The
     // gradients follow the same linear map; the view's mip bias scales them, as
@@ -279,29 +375,143 @@ struct NifSurface {
     let scale = exp2(inputs.bias) / tile;
     let ddx = axes * inputs.ddx * scale;
     let ddy = axes * inputs.ddy * scale;
+    // The anti-tiled reads' footprint and taps, only where something reads anti-tiled.
+    var fp = TerrainFootprint(uv, ddx, ddy);
+    var taps: TerrainTaps;
+    if anti || overflow_anti != 0u {
+        let repeat = bitcast<f32>(terrain_detail_word(instance_index, q + 31u));
+        let at_scale = exp2(inputs.bias) / repeat;
+        fp = TerrainFootprint(axes * (place / repeat) + offset, axes * inputs.ddx * at_scale, axes * inputs.ddy * at_scale);
+        taps = terrain_hex3(fp.uv);
+    }
     let diffuse_sampler = samplers & 0xffffu;
     let normal_sampler = samplers >> 16u;
     let a = detail_attributes(instance_index, t);
-    var colour = a.tint * base_rgb;
-    if (flags & 4u) != 0u { colour *= detail_sample(instance_index, images, diffuse_sampler, uv, ddx, ddy).rgb; }
     // Bevy world space: game (x, y, z) is Bevy (x, z, -y), for the normal and the tangent.
     let world_n = game_to_world_normal(a.normal);
     let tbn = calculate_tbn_mikktspace(world_n, vec4(game_to_world_normal(a.tangent), handedness));
     let plain = normalize(world_n);
     let full = inputs.full != 0u;
+    var colour = a.tint * base_rgb;
     var normal = plain;
-    if full && (flags & 8u) != 0u {
-        normal = apply_normal_mapping(detail_decode(decode, 0u), tbn, false, true, detail_sample(instance_index, images >> 16u, normal_sampler, uv, ddx, ddy).rgb);
+    if !weighted {
+        if (flags & 4u) != 0u { colour *= detail_sample(instance_index, images, diffuse_sampler, uv, ddx, ddy).rgb; }
+        if full && (flags & 8u) != 0u {
+            normal = apply_normal_mapping(detail_decode(decode, 0u), tbn, false, true, detail_sample(instance_index, images >> 16u, normal_sampler, uv, ddx, ddy).rgb);
+        }
+    } else {
+        // The base draw's weights: base at 0, folded overlay k at k + 1 (terrain.wesl).
+        let n = min(folded, 6u);
+        var raw = array<vec4<f32>, 7>(vec4(1.0), vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0));
+        var w = array<f32, 7>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        if anti {
+            var remaining = 1.0;
+            for (var i = i32(n) - 1; i >= 0; i -= 1) {
+                if remaining == 0.0 {
+                    break;
+                }
+                let k = u32(i);
+                let o = saturate(detail_opacity(instance_index, t, k));
+                if o == 0.0 {
+                    continue;
+                }
+                raw[k + 1u] = detail_sample_taps(instance_index, terrain_detail_word(instance_index, q + 15u + k), diffuse_sampler, taps, fp);
+                let s = saturate(o * raw[k + 1u].a);
+                w[k + 1u] = s * remaining;
+                remaining *= 1.0 - s;
+            }
+            w[0] = remaining;
+        } else {
+            var paint = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+            for (var k = 0u; k < n; k += 1u) {
+                raw[k + 1u] = detail_sample(instance_index, terrain_detail_word(instance_index, q + 15u + k), diffuse_sampler, uv, ddx, ddy);
+                paint[k] = saturate(detail_opacity(instance_index, t, k)) * raw[k + 1u].a;
+            }
+            w = terrain_ordered_shares(paint, n);
+        }
+        // The base's raw diffuse (white without a texture), anti-tiled only where it shows.
+        if (flags & 4u) != 0u {
+            if !anti {
+                raw[0] = detail_sample(instance_index, images, diffuse_sampler, uv, ddx, ddy);
+            } else if w[0] != 0.0 {
+                raw[0] = detail_sample_taps(instance_index, images, diffuse_sampler, taps, fp);
+            }
+        }
+        var f = w;
+        if height_blend {
+            // Depth competition from the same raw texels. Anti-tiled, the global reference
+            // always (terrain.wesl: a local one would need the same offset taps).
+            let depth = bitcast<f32>(terrain_detail_word(instance_index, q + 29u));
+            let gain = bitcast<f32>(terrain_detail_word(instance_index, q + 30u));
+            let local_reference = (flags & 64u) != 0u && !anti;
+            let height_dx = axes * inputs.ddx / tile;
+            let height_dy = axes * inputs.ddy / tile;
+            var height = array<f32, 7>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+            if w[0] != 0.0 && (flags & 4u) != 0u {
+                height[0] = terrain_height(raw[0].rgb, detail_height_reference(instance_index, images, diffuse_sampler, uv, height_dx, height_dy, inputs.bias, local_reference), gain);
+            }
+            for (var k = 0u; k < n; k += 1u) {
+                if w[k + 1u] != 0.0 {
+                    height[k + 1u] = terrain_height(raw[k + 1u].rgb, detail_height_reference(instance_index, terrain_detail_word(instance_index, q + 15u + k), diffuse_sampler, uv, height_dx, height_dy, inputs.bias, local_reference), gain);
+                }
+            }
+            f = terrain_height_weights(w, height, depth);
+        }
+        // Colour and normal with the same weights; a normal map read only where its texture
+        // contributes, then the sum made unit length once.
+        var colour_sum = vec3(0.0);
+        var normal_sum = vec3(0.0);
+        if f[0] != 0.0 {
+            colour_sum += f[0] * raw[0].rgb * a.tint * base_rgb;
+            var base_n = plain;
+            if full && (flags & 8u) != 0u {
+                if anti {
+                    base_n = detail_normal_taps(instance_index, images >> 16u, normal_sampler, detail_decode(decode, 0u), tbn, taps, fp);
+                } else {
+                    base_n = apply_normal_mapping(detail_decode(decode, 0u), tbn, false, true, detail_sample(instance_index, images >> 16u, normal_sampler, uv, ddx, ddy).rgb);
+                }
+            }
+            normal_sum += f[0] * base_n;
+        }
+        for (var k = 0u; k < n; k += 1u) {
+            if f[k + 1u] != 0.0 {
+                colour_sum += f[k + 1u] * raw[k + 1u].rgb * a.tint * base_rgb;
+                var layer_n = plain;
+                if full && ((normals >> k) & 1u) != 0u {
+                    let pair = terrain_detail_word(instance_index, q + 15u + k);
+                    if anti {
+                        layer_n = detail_normal_taps(instance_index, pair >> 16u, diffuse_sampler, detail_decode(decode, k + 1u), tbn, taps, fp);
+                    } else {
+                        layer_n = apply_normal_mapping(detail_decode(decode, k + 1u), tbn, false, true, detail_sample(instance_index, pair >> 16u, diffuse_sampler, uv, ddx, ddy).rgb);
+                    }
+                }
+                normal_sum += f[k + 1u] * layer_n;
+            }
+        }
+        colour = colour_sum;
+        normal = select(plain, normalize(normal_sum), dot(normal_sum, normal_sum) > 1e-12);
     }
-    for (var k = 0u; k < total; k++) {
+    // The overlays not composed above, in drawing order: every overlay without either switch
+    // on the base draw, else the overflow ones.
+    for (var k = select(0u, folded, weighted); k < total; k++) {
         let pair = terrain_detail_word(instance_index, q + 15u + k);
-        let texel = detail_sample(instance_index, pair, diffuse_sampler, uv, ddx, ddy);
+        let anti_k = ((overflow_anti >> k) & 1u) != 0u;
+        var texel: vec4<f32>;
+        if anti_k {
+            texel = detail_sample_taps(instance_index, pair, diffuse_sampler, taps, fp);
+        } else {
+            texel = detail_sample(instance_index, pair, diffuse_sampler, uv, ddx, ddy);
+        }
         let share = saturate(detail_opacity(instance_index, t, k)) * texel.a;
         colour = mix(colour, texel.rgb * a.tint * select(vec3(1.0), base_rgb, k < folded), share);
         if full {
             var layer_n = plain;
             if ((normals >> k) & 1u) != 0u {
-                layer_n = apply_normal_mapping(detail_decode(decode, k + 1u), tbn, false, true, detail_sample(instance_index, pair >> 16u, diffuse_sampler, uv, ddx, ddy).rgb);
+                if anti_k {
+                    layer_n = detail_normal_taps(instance_index, pair >> 16u, diffuse_sampler, detail_decode(decode, k + 1u), tbn, taps, fp);
+                } else {
+                    layer_n = apply_normal_mapping(detail_decode(decode, k + 1u), tbn, false, true, detail_sample(instance_index, pair >> 16u, diffuse_sampler, uv, ddx, ddy).rgb);
+                }
             }
             normal = mix(normal, layer_n, share);
         }

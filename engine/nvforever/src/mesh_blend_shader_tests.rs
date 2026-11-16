@@ -107,6 +107,9 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
                     @if(BINDLESS) @group(3) @binding(11) var bindless_samplers_filtering: binding_array<sampler>;
                 "#.into()),
                 ("embedded://nvf_assets/nif_surface_bindings.wesl".into(), include_str!("../../nvf-assets/src/nif_surface_bindings.wesl").into()),
+                // #2550/#2551: the shared plain-WGSL modules the detail composes with.
+                ("embedded://nvf_assets/terrain_sampling.wesl".into(), nvf_assets::terrain_sampling::SAMPLING_SOURCE.into()),
+                ("embedded://nvforever/terrain_weights.wesl".into(), include_str!("terrain_weights.wesl").into()),
                 // Stand-ins with the signatures of Bevy's TBN and normal-map helpers (the
                 // complete composition below uses the vendored ones).
                 ("embedded://bevy_pbr/render/pbr_functions.wesl".into(), r#"
@@ -157,7 +160,8 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
                 assert_eq!(source.contains("textureSampleGrad"), bindless, "bindless={bindless}: detail reads with explicit gradients, none without bindless");
             }
             // Round 9 reuses origin.z; round 6's enabled width and ordinary layouts stay fixed.
-            assert_eq!(surface_sizes, vec![if blend { 176 } else { 128 }]);
+            // #2551 added the ordinary `terrain` row (144 bytes); the blend's three rows follow.
+            assert_eq!(surface_sizes, vec![if blend { 192 } else { 144 }]);
             // The blend type reuses the ordinary table and slots (nif_surface_blend.rs notes);
             // round 10a's bindless blend row is longer by the palette's 400 entries.
             if bindless { assert_eq!(index_sizes, vec![if blend { 16 + 4 * nvf_assets::nif_surface_blend::PALETTE_ENTRIES as u32 } else { 16 }]); }
@@ -363,6 +367,8 @@ fn complete_nif_forward_and_prepass_compose_with_both_interfaces() {
     let mut modules = vendored_modules();
     let root = manifest.join("../nvf-assets/src");
     sources(&root, "nvf_assets", &root, &mut modules);
+    // The detail's height blending functions (#2550) live in this crate.
+    modules.push(("embedded://nvforever/terrain_weights.wesl".into(), include_str!("terrain_weights.wesl").into()));
     for bindless in [false, true] { for blend in [false, true] { for prepass in [false, true] {
         let entry = if prepass { "embedded://nvf_assets/nif_prepass.wesl" } else { "embedded://nvf_assets/nif_material.wesl" };
         // SOFT_EDGES is a main-pass variant; the unlit diagnostics write its coverage.
@@ -390,13 +396,19 @@ fn terrain_surface_bake_composes_for_the_folded_base() {
     // TerrainLayersKey), through the same CPU ShaderCache and naga validation.
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut modules = vendored_modules();
-    for name in ["terrain", "terrain_surface"] {
+    for name in ["terrain", "terrain_surface", "terrain_weights"] {
         modules.push((format!("embedded://nvforever/{name}.wesl"), std::fs::read_to_string(manifest.join("src").join(format!("{name}.wesl"))).unwrap()));
     }
-    for bindless in [false, true] { for bake in [false, true] {
+    // #2550/#2551: the bake copy of a folded base keeps the near draw's height blending and
+    // anti-tiling (terrain.rs `TerrainLayersKey`), so terrain.wesl composes with them too.
+    let root = manifest.join("../nvf-assets/src");
+    sources(&root, "nvf_assets", &root, &mut modules);
+    for bindless in [false, true] { for bake in [false, true] { for (height, anti) in [(false, false), (true, false), (false, true), (true, true)] {
         let defs = vec![
             ShaderDefVal::Bool("BINDLESS".into(), bindless),
             ShaderDefVal::Bool("SURFACE_BAKE".into(), bake),
+            ShaderDefVal::Bool("TERRAIN_HEIGHT_BLEND".into(), height),
+            ShaderDefVal::Bool("TERRAIN_ANTI_TILING".into(), anti),
             "VERTEX_POSITIONS".into(), "VERTEX_NORMALS".into(), "VERTEX_UVS_A".into(), "VERTEX_UVS_B".into(),
             "VERTEX_TANGENTS".into(), "VERTEX_COLORS".into(), "VERTEX_OUTPUT_INSTANCE_INDEX".into(),
             "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3".into(), "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_6".into(),
@@ -406,15 +418,27 @@ fn terrain_surface_bake_composes_for_the_folded_base() {
             ShaderDefVal::UInt("MAX_RECT_LIGHTS".into(), 1),
         ];
         compose(&modules, "embedded://nvforever/terrain.wesl", &defs);
-    }}
+    }}}
     assert!(!include_str!("terrain.wesl").contains("SURFACE_BAKE_LAYER"), "layer copies use the single-texture capture");
+    // The bake's return comes after every composition path, so it stores what they compose.
+    let terrain = include_str!("terrain.wesl").replace("\r\n", "\n");
+    let bake = terrain.find("@if(SURFACE_BAKE) return surface_bake(pbr_input.material.base_color.rgb);").expect("the bake's return");
+    for path in ["@if(TERRAIN_HEIGHT_BLEND && !TERRAIN_ANTI_TILING) {", "@if(TERRAIN_ANTI_TILING) {\n            // One set of taps"] {
+        assert!(terrain.find(path).expect(path) < bake, "{path}");
+    }
 }
 
 fn capture_source(colours: bool, uvs: bool) -> String {
+    capture_source_with(colours, uvs, false)
+}
+
+fn capture_source_with(colours: bool, uvs: bool, anti_tiling: bool) -> String {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut modules = vendored_modules();
     modules.push(("embedded://nvforever/terrain_capture.wesl".into(), std::fs::read_to_string(manifest.join("src/terrain_capture.wesl")).unwrap()));
+    modules.push(("embedded://nvf_assets/terrain_sampling.wesl".into(), nvf_assets::terrain_sampling::SAMPLING_SOURCE.into()));
     let defs = vec![
+        ShaderDefVal::Bool("TERRAIN_ANTI_TILING".into(), anti_tiling),
         ShaderDefVal::Bool("VERTEX_COLORS".into(), colours), ShaderDefVal::Bool("VERTEX_UVS_A".into(), uvs),
         "VERTEX_POSITIONS".into(), "VERTEX_NORMALS".into(), "VERTEX_TANGENTS".into(),
         ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 3),
@@ -437,7 +461,83 @@ fn single_texture_capture_composes_for_base_and_layer_meshes() {
     assert!(capture.contains("out.color = vec4(colour.rgb, select(1.0, colour.a, surface_capture.uv_offset_flags.w > 0.5));"));
     assert!(capture.contains("colour *= select(vec4(1.0), texel, surface_capture.uv_offset_flags.z > 0.5);"));
     assert!(capture.find("colour *= in.color;").unwrap() < capture.find("out.color =").unwrap());
+    // #2551: an anti-tiled source's copy reads its one texture at the taps, at the world
+    // place over the repeat (as terrain_pbr.wesl `terrain_footprint`), with or without the
+    // mesh's coordinates; still only the diffuse texture.
+    for colours in [false, true] { for uvs in [false, true] {
+        let source = capture_source_with(colours, uvs, true);
+        assert_eq!(texture_bindings(&source).into_iter().collect::<Vec<_>>(), vec![(3, 1)], "colours={colours} uvs={uvs}");
+        assert!(source.contains("textureSampleGrad") && !source.contains("textureSample("), "the anti-tiled read only");
+    }}
+    assert!(capture.contains("let at_uv = mat2x2<f32>(surface_capture.uv_axes.xy, surface_capture.uv_axes.zw) * terrain_world_uv(in.world_position.xyz, surface_capture.anti_tiling.x) + surface_capture.uv_offset_flags.xy;"));
+    assert!(capture.contains("colour *= select(vec4(1.0), at_texel, surface_capture.uv_offset_flags.z > 0.5);"));
 }
+
+/// [design] #2661 with #2550/#2551: the detail's weighted composition (nif_surface_bindings.wesl
+/// `mesh_terrain_detail`) is the one terrain.wesl's TERRAIN_HEIGHT_BLEND and
+/// TERRAIN_ANTI_TILING paths make, through the same shared functions, its lines those of the
+/// CPU mirror in terrain.rs (`detail_mirror`), and its words those nif_surface_blend.rs packs.
+#[test]
+fn shader_detail_composes_height_blending_and_anti_tiling_as_the_near_draw() {
+    let bindings = include_str!("../../nvf-assets/src/nif_surface_bindings.wesl").replace("\r\n", "\n");
+    let terrain = include_str!("terrain.wesl").replace("\r\n", "\n");
+    assert!(bindings.contains("@if(MESH_TERRAIN_BLEND && BINDLESS) import nvforever::terrain_weights::{terrain_height, terrain_ordered_shares, terrain_height_weights};"));
+    assert!(bindings.contains("@if(MESH_TERRAIN_BLEND && BINDLESS) import nvf_assets::terrain_sampling::{TerrainFootprint, TerrainTaps, terrain_hex3, terrain_normal_tap, terrain_unit_normal, terrain_world_normal};"));
+    let detail = bindings.split("fn mesh_terrain_detail(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    for line in [
+        // The switches from the table words (DetailQuadrant::words).
+        "let height_blend = (flags & 16u) != 0u;",
+        "let anti = (flags & 32u) != 0u;",
+        "let overflow_anti = terrain_detail_word(instance_index, q + 28u);",
+        "let local_reference = (flags & 64u) != 0u && !anti;",
+        "let depth = bitcast<f32>(terrain_detail_word(instance_index, q + 29u));",
+        "let gain = bitcast<f32>(terrain_detail_word(instance_index, q + 30u));",
+        "let repeat = bitcast<f32>(terrain_detail_word(instance_index, q + 31u));",
+        // The anti-tiled footprint: the world place over the repeat, the base's transform.
+        "fp = TerrainFootprint(axes * (place / repeat) + offset, axes * inputs.ddx * at_scale, axes * inputs.ddy * at_scale);",
+        "taps = terrain_hex3(fp.uv);",
+        // terrain.wesl's walk and weights, line for line (terrain.rs `detail_mirror`).
+        "if remaining == 0.0 {",
+        "if o == 0.0 {",
+        "w[k + 1u] = s * remaining;",
+        "remaining *= 1.0 - s;",
+        "w = terrain_ordered_shares(paint, n);",
+        "f = terrain_height_weights(w, height, depth);",
+        "normal = select(plain, normalize(normal_sum), dot(normal_sum, normal_sum) > 1e-12);",
+        // The overlays left after the base draw: all without the switches, else overflow.
+        "for (var k = select(0u, folded, weighted); k < total; k++) {",
+        "let anti_k = ((overflow_anti >> k) & 1u) != 0u;",
+    ] {
+        assert!(detail.contains(line), "{line}");
+    }
+    for line in ["if remaining == 0.0 {", "if o == 0.0 {", "w[k + 1u] = a * remaining;", "remaining *= 1.0 - a;", "f = terrain_height_weights(w, height, anti_params.x);", "pbr_input.N = select(plain, normalize(normal_sum), dot(normal_sum, normal_sum) > 1e-12);"] {
+        assert!(terrain.contains(line), "terrain.wesl still: {line}");
+    }
+    // The height reference is placed as terrain.wesl's `height_reference_at` places it.
+    let reference = bindings.split("fn detail_height_reference(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    let near = terrain.split("fn height_reference_at(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    for line in [
+        "var lod = last_mip;",
+        "var coord = vec2(0.5);",
+        "let gx = dx * fsize;",
+        "let gy = dy * fsize;",
+        "lod = min(last_mip, max(4.0, current_lod + 2.0));",
+        "coord = uv;",
+    ] {
+        assert!(reference.contains(line) && near.contains(line), "{line}");
+    }
+    assert!(reference.contains("let current_lod = 0.5 * log2(max(max(dot(gx, gx), dot(gy, gy)), 1e-12)) + bias;")
+        && near.contains("let current_lod = 0.5 * log2(max(max(dot(gx, gx), dot(gy, gy)), 1e-12)) + view.mip_bias;"));
+    // The anti-tiled reads follow terrain_sampling.wesl's tap rule.
+    for name in ["detail_sample_taps", "detail_normal_taps"] {
+        let body = bindings.split(&format!("fn {name}(")).nth(1).unwrap().split("\n}\n").next().unwrap();
+        assert!(body.contains("if tap.weight > 0.0 {") && body.contains("tap.uv, tap.rotation * fp.dx, tap.rotation * fp.dy)"), "{name}");
+        assert!(!body.contains("textureSample(") && !body.contains("dpdx"), "{name}: explicit gradients only");
+    }
+    assert!(bindings.contains("sum += tap.weight * terrain_normal_tap(encoded, two_component, flip_y, tap.rotation);"));
+    assert!(bindings.contains("return terrain_world_normal(tbn, terrain_unit_normal(sum), false);"));
+}
+
 
 /// [design] The 16-texture stage limit of a GPU without bindless textures, against the
 /// material groups the aid creates (from the production types' resource tables, where
