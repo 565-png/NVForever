@@ -117,7 +117,7 @@ pub(crate) fn sorts_with_sky(sort_key: f32) -> bool {
     sort_key > SKY_SORT_BIAS * 1.5 && sort_key <= nvf_assets::nif_material::SORT_FIRST_BIAS * 1.5
 }
 /// How far the sun's shadows reach when they are switched on in a run started without
-/// them (game units): the default of `--shadow-distance`. With [`DEFAULT_SHADOW_CASCADES`]
+/// them (game units): the default of `--shadow-distance`. With the default cascades
 /// [engineering choice, 2026-10-12, owner's playtest "shadow rendering seriously affects
 /// performance"]: every cascade is a pass over its casters, and at Goodsprings by day the
 /// earlier 16,000 in 4 cascades took the frame from about 7.6 ms without sun shadows to
@@ -125,8 +125,11 @@ pub(crate) fn sorts_with_sky(sort_key: f32) -> bool {
 /// The original casts no sun shadows from the world, so shadows ending nearer are no
 /// further from its look.
 pub const DEFAULT_SHADOW_DISTANCE: f32 = 8_000.0;
-/// The sun's shadow cascades by default, Quality's (see [`DEFAULT_SHADOW_DISTANCE`]): 4,
-/// laid out by [`shadow_cascade_layout`] [engineering choice: the contributor's proposal in
+/// How the sun's shadow cascades are laid out ([`shadow_cascade_layout`]): the Sun shadows
+/// mode picks Quality or Performance (shadow_rate.rs `set_performance`); the test aid
+/// `--graphics-cycle cascades=<n>` asks for a count spaced as before #2843.
+///
+/// The default, Quality's (see [`DEFAULT_SHADOW_DISTANCE`]): 4 cascades, laid out by [`shadow_cascade_layout`] [engineering choice: the contributor's proposal in
 /// #2843, for the maintainer to decide; 3 from 2026-10-12 until then]. The 4 cascades of
 /// before 2026-10-12 reached 16,000 units, and every cascade was drawn every frame (8,000 in
 /// 4 then took 15.0-16.8 ms against 13.7-15.2 for 3: graphics-enhanced.md §5.3); now the
@@ -142,14 +145,9 @@ pub const DEFAULT_SHADOW_DISTANCE: f32 = 8_000.0;
 /// 0.4 (texels 0.86, 2.0, 4.0, 6.9) 3.43-3.48 ms (docs/design/frame-rate-audit.md §12).
 /// Without Longer shadows the 4096² layout is 1,500, 2,400, 4,800, 8,000, derived by
 /// [`SHADOW_CAPS_QUALITY_WIDE`]'s rule and neither measured nor pictured.
-pub const DEFAULT_SHADOW_CASCADES: usize = CascadeLayout::Quality.count();
-
-/// How the sun's shadow cascades are laid out ([`shadow_cascade_layout`]): the Sun shadows
-/// mode picks Quality or Performance (shadow_rate.rs `set_performance`); the test aid
-/// `--graphics-cycle cascades=<n>` asks for a count spaced as before #2843.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum CascadeLayout {
-    /// Quality's [`DEFAULT_SHADOW_CASCADES`], their bounds following the shadow maps' size.
+    /// Quality's 4 cascades (the default), their bounds following the shadow maps' size.
     #[default]
     Quality,
     /// Performance's 3 cascades (shadow_rate.rs, the Sun shadows row's middle choice).
@@ -1695,11 +1693,16 @@ const SHADOW_OVERLAP: f32 = 0.2;
 /// The first cascade's far bound is never nearer than this (game units), however short
 /// the shadow distance.
 const FIRST_CASCADE_FLOOR: f32 = 200.0;
+/// The least step between two neighbouring far bounds, as a share of the room between the
+/// first bound and the last ([`shadow_cascade_layout`]) [engineering choice: small enough
+/// to leave every layout's shares alone at the usual distances, and with at most 4
+/// cascades the steps fit the room three times over].
+const MIN_CASCADE_STEP: f32 = 0.05;
 /// The far bounds of all cascades but the last, as shares of the shadow distance
 /// [engineering choice: the contributor's proposal in #2843, for the maintainer to decide.
 /// The shadows were sharp only in a small radius around the player and coarse beyond,
 /// worst on Performance, where everything past the first bound's 667 units lay on the last
-/// cascade]. [observed 2026-11-16, the view and settings of [`DEFAULT_SHADOW_CASCADES`]]
+/// cascade]. [observed 2026-11-16, the view and settings of [`CascadeLayout`]]
 ///
 /// Performance's 3 cascades: at 8,000 units 1,500 and 4,500. With 2048² maps 3.09-3.11 ms
 /// a frame against 3.05-3.10 for the 2 cascades of before (667, 12,000), and a telegraph
@@ -1750,15 +1753,17 @@ const WIDE_SHADOW_OVERLAP: f32 = 0.4;
 ///
 /// At short distances (the Shadow distance slider goes down to a tenth of
 /// `--shadow-distance`) the first bound stays at [`FIRST_CASCADE_FLOOR`] but under half the
-/// last, and the last at four times the minimum distance at least; each in-between bound
-/// is then the farther of its (capped) share and a floor between the first bound and the
-/// last, `first + (last − first) × (i / (n − 1))²` for bound `i` of `n`. The floor rises
-/// strictly from the first to below the last, and the capped shares rise strictly and stay
-/// under the last, so the bounds always rise strictly. At the usual distances the shares
-/// win: at 8,000 units without Longer shadows the floor is about 1,511 and 3,944 against
-/// Quality's 2,000 and 5,000 with 2048² maps, 2,222 and 4,389 against 2,400 and 4,800 with
-/// 4096², and 3,125 against Performance's 4,500. (Bevy's geometric spacing, the floor
-/// before, would lift the 4096² second bound to about 2,621.) [engineering choice]
+/// last, and the last at four times the minimum distance at least. The floor on the first
+/// bound (or a cap) can then push a share to or past its neighbour, so each in-between
+/// bound `i` of `n` is its (capped) share held between `first + i × step` and
+/// `last − (n − 1 − i) × step`, a step being [`MIN_CASCADE_STEP`] of the room between the
+/// first bound and the last. Both limits rise by a step from one bound to the next and the
+/// capped shares rise strictly (with a distance above 0; at 0 they are all 0 and the lower
+/// limits decide), so the bounds always rise strictly, the first and the last included.
+/// The limits only act when a share comes within a step of them: at 8,000 units, with or
+/// without Longer shadows, every layout keeps its shares exactly (Quality with 4096² maps
+/// at reach 1, for one, has its second bound 2,400 against a lower limit of 1,825 and its
+/// third 4,800 against 2,150) [engineering choice].
 pub(crate) fn shadow_cascade_layout(distance: f32, reach: f32, layout: CascadeLayout, map: usize) -> (Vec<f32>, f32) {
     let count = layout.count();
     let last = (distance * reach.max(1.0)).max(4.0 * SHADOW_MINIMUM_DISTANCE);
@@ -1785,14 +1790,12 @@ pub(crate) fn shadow_cascade_layout(distance: f32, reach: f32, layout: CascadeLa
         .bounds;
         return (bounds, overlap);
     }
-    let floor = |i: usize| {
-        let t = i as f32 / (count - 1) as f32;
-        first + (last - first) * t * t
-    };
+    let step = MIN_CASCADE_STEP * (last - first);
     let bounds = std::iter::once(first)
         .chain(shares.iter().enumerate().skip(1).map(|(i, share)| {
             let cap = caps.get(i).map_or(f32::INFINITY, |c| c * last);
-            (distance * share).min(cap).max(floor(i))
+            let (low, high) = (first + i as f32 * step, last - (count - 1 - i) as f32 * step);
+            (distance * share).min(cap).min(high).max(low)
         }))
         .chain(std::iter::once(last))
         .collect();
@@ -3041,7 +3044,6 @@ mod tests {
         near(shadow_cascade_layout(16000.0, 1.0, Performance, 2048), &[3000.0, 9000.0, 16000.0], 0.2);
         // The counts.
         assert_eq!((Quality.count(), Performance.count(), Spaced(3).count(), Spaced(0).count()), (4, 3, 3, 1));
-        assert_eq!(DEFAULT_SHADOW_CASCADES, 4);
         // The config carries them with the layout's overlap and the minimum distance of before.
         let config = shadow_cascades(8000.0, 1.0, Quality, 4096);
         assert_eq!((config.bounds.clone(), config.overlap_proportion), shadow_cascade_layout(8000.0, 1.0, Quality, 4096));
@@ -3050,13 +3052,15 @@ mod tests {
         assert_eq!(map_side(None), 2048);
     }
 
-    /// At the slider's low end (a tenth of the default distance) and below, the bounds
-    /// still rise strictly and the first stays past the minimum distance, for every layout.
+    /// Over the slider's whole range and below (from 0 to twice the default distance, every
+    /// 25 units), the bounds rise strictly and the first stays past the minimum distance,
+    /// for every layout, reach and map size.
     #[test]
     fn cascade_bounds_rise_at_short_distances() {
         use CascadeLayout::{Performance, Quality, Spaced};
         let layouts = [Quality, Performance, Spaced(1), Spaced(2), Spaced(3), Spaced(4), Spaced(5)];
-        for distance in [8000.0, 2000.0, DEFAULT_SHADOW_DISTANCE * crate::draw_distance::MIN, 300.0, 100.0, 10.0, 0.0] {
+        let sweep = (0..=640).map(|k| k as f32 * 25.0);
+        for distance in sweep.chain([DEFAULT_SHADOW_DISTANCE * crate::draw_distance::MIN, 10.0, 3.0, 0.5]) {
             for reach in [1.0, 1.5] {
                 for layout in layouts {
                     for map in [2048, 4096] {
@@ -3068,11 +3072,15 @@ mod tests {
                 }
             }
         }
-        // At the slider's low end the first bound is held at the floor and the rest are
-        // the farther of their (capped) share and the floor between the first and the last.
-        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 2048).0, &[200.0, 266.7, 500.0, 800.0]);
-        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 4096).0, &[200.0, 266.7, 480.0, 800.0]);
+        // At the slider's low end the first bound is held at 200 and the room to the last
+        // is 600 (a step 30): Quality's second share (200) is lifted one step above the
+        // first; the 4096 caps (240, 480) and the other shares stay as they are.
+        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 2048).0, &[200.0, 230.0, 500.0, 800.0]);
+        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 4096).0, &[200.0, 240.0, 480.0, 800.0]);
         near_eq(&shadow_cascade_layout(800.0, 1.0, Performance, 2048).0, &[200.0, 450.0, 800.0]);
+        // With no distance at all: the last at 20, the first at half of it, the rest a step
+        // apart above it.
+        near_eq(&shadow_cascade_layout(0.0, 1.0, Quality, 2048).0, &[10.0, 10.5, 11.0, 20.0]);
         fn near_eq(got: &[f32], want: &[f32]) {
             assert!(got.len() == want.len() && got.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.5), "{got:?} against {want:?}");
         }

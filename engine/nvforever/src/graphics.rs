@@ -1284,8 +1284,12 @@ mod tests {
     fn a_new_resolution_puts_its_cascades_on_the_sun_at_once() {
         use crate::sky::CascadeLayout;
         let mut world = World::new();
+        // The test build's derived default leaves the distance and reach at 0 (the game's
+        // SkyState starts at DEFAULT_SHADOW_DISTANCE and a reach of 1).
         let mut sky = SkyState::default();
         sky.shadows = true;
+        sky.shadow_distance = crate::sky::DEFAULT_SHADOW_DISTANCE;
+        sky.shadow_reach = 1.0;
         // Indoors the sun casts the day's cascades whatever the hour.
         sky.interior = Some(Default::default());
         world.insert_resource(sky);

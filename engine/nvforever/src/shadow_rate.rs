@@ -13,7 +13,7 @@
 //!   rate (a quarter in the farthest cascade), and on a fast turn the edge of the view can
 //!   lie outside a held cascade for one frame (up to three in the farthest; unshadowed).
 //! - **The sun's shadows are split over 3 cascades** (`sky::CascadeLayout::Performance`;
-//!   2 until #2843) instead of `sky::DEFAULT_SHADOW_CASCADES` ([`set_performance`]): one
+//!   2 until #2843) instead of Quality's 4 ([`set_performance`]): one
 //!   shadow view less, and shadows near the camera coarser (the cascades end at 1,500 and
 //!   4,500 of 8,000 units instead of 700, 2,000 and 5,000 with 2048² maps:
 //!   `sky::shadow_cascade_layout`).

@@ -1247,7 +1247,7 @@ reach (longer shadows); the moon's single cascade unchanged.
   (1,500 and 4,500 of 8,000), whatever the maps' size, overlap 0.2. The schedule
   (shadow_rate.rs `PERFORMANCE_SCHEDULE`) draws the first two every other frame,
   together, and the third every fourth frame on a frame the first two are not drawn.
-- **Quality**, 4 cascades (`DEFAULT_SHADOW_CASCADES`, 3 before), laid out by the maps'
+- **Quality**, 4 cascades (sky.rs `CascadeLayout::Quality`, the default; 3 before), laid out by the maps'
   side (the Shadow resolution row, `shadow-resolution`): with 2048² maps 0.0875, 0.25
   and 0.625 of the distance (700, 2,000, 5,000), overlap 0.2; with 4096² maps 0.1875,
   0.4375 and 0.875, the second and third capped at 0.3 and 0.6 of the last bound, and a
@@ -1289,9 +1289,10 @@ before. Whether 4096 is any preset's default is left open.
 
 At short distances (the slider goes down to a tenth of `--shadow-distance`) the first
 bound keeps its floor of 200 units, under half the last; each in-between bound is then
-the farther of its (capped) share and a floor `first + (last − first) × (i / (n − 1))²`,
-so the bounds always rise. At the usual distances the shares win (at 8,000 units without
-Longer shadows the floor is about 2,222 and 4,389 against the 4096² layout's 2,400 and
-4,800); Bevy's geometric spacing, the floor until the review of this change, would have
-lifted that second bound to about 2,621. The log says the layout whenever the bounds or the maps' side
+its (capped) share held at least `i` steps above the first bound and `n − 1 − i` steps
+below the last, a step being 5 % of the room between them, so the bounds always rise. The
+limits act only when a share comes within a step of them: at 8,000 units every layout of
+the table keeps its shares exactly, with or without Longer shadows (at 800 units Quality
+with 2048² maps gets 200, 230, 500, 800: its second share, 200, is lifted a step above
+the first). The log says the layout whenever the bounds or the maps' side
 change: `sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels [..] units`.

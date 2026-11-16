@@ -738,7 +738,7 @@ casters, as it did. Changed [engineering choices]:
   between it and the sun, so walls and roofs still shade the arms; their shadows on the arms
   are finer than before.
 - **The sun's shadows default to 8,000 units in 3 cascades** (`sky::DEFAULT_SHADOW_DISTANCE`,
-  `DEFAULT_SHADOW_CASCADES`; `--shadow-distance` still sets the reach): 12.5-12.9 ms against
+  and then `DEFAULT_SHADOW_CASCADES`, since #2843 `CascadeLayout`; `--shadow-distance` still sets the reach): 12.5-12.9 ms against
   the old 19.0-20.8, about 7 ms (a third of the frame) saved; shadows off is 7.3-7.5. The first
   cascade, a twelfth of the reach, is now 667 units instead of 1,333, so shadows near the player
   are finer. Visible change: nothing farther than 8,000 units (about 114 m) casts a sun shadow;
