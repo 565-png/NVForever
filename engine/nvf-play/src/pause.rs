@@ -1053,7 +1053,7 @@ impl PauseLook {
 /// What the keys have on the first page and in the quit question, and what Defaults goes
 /// back to (taken when the settings page is first shown).
 #[derive(Resource, Default)]
-struct PauseView {
+pub struct PauseView {
     main_selected: usize,
     confirm: Option<usize>,
     defaults: Option<Vec<f32>>,
@@ -1104,6 +1104,12 @@ struct PauseView {
 }
 
 impl PauseView {
+    /// [design, #2403] Read-only logical progress for the reports watchdog. Excludes
+    /// hover, dragging and render caches; the caller hashes this without sending text.
+    pub fn progress(&self) -> impl std::fmt::Debug + '_ {
+        (self.main_selected, self.confirm, self.scroll, self.scope, self.focus, self.keep_selected, self.delete_ask, self.dropdown, &self.search.query)
+    }
+
     /// The settings page's window's lines: as set this frame ([`PauseView::set_lines`]), else
     /// the layout's.
     fn lines(&self) -> usize {
@@ -1215,6 +1221,8 @@ struct Drawn {
     states: Vec<f32>,
     /// Explanations replacing disabled rows' saved values.
     disabled: Vec<Option<&'static str>>,
+    /// The words a row's note gives now in place of its own (`crate::settings::set_note_now`).
+    notes: Vec<Option<String>>,
     status: String,
     /// The column's labels and whether each can be taken.
     column: Vec<(&'static str, bool)>,
@@ -1894,7 +1902,13 @@ fn row_note(list: &[Setting], id: RowId, d: &Drawn) -> String {
     use crate::bindings::label;
     let controller = d.device.1;
     let c = match id {
-        RowId::Setting(i) => return list.get(i).map_or_else(String::new, |s| tr(s.note).to_string()),
+        RowId::Setting(i) => {
+            // Other words for a while (`crate::settings::set_note_now`), else the row's own.
+            return match d.notes.get(i).cloned().flatten() {
+                Some(now) => now,
+                None => list.get(i).map_or_else(String::new, |s| tr(s.note).to_string()),
+            };
+        }
         RowId::Control(c) => c,
     };
     match c {
@@ -4440,6 +4454,7 @@ fn drawn_now(world: &mut World) -> Drawn {
         page => (page, Vec::new(), Vec::new()),
     };
     let disabled: Vec<_> = (0..list.len()).map(|i| world.resource::<Settings>().disabled_status(world, i)).collect();
+    let notes: Vec<_> = (0..list.len()).map(|i| world.resource::<Settings>().note_now(world, i)).collect();
     let lists: Vec<(usize, Vec<String>, String)> = {
         let settings = world.resource::<Settings>();
         (0..list.len()).filter_map(|i| settings.choices(i).map(|c| (i, (c.names)(world), (c.chosen)(world)))).collect()
@@ -4492,6 +4507,7 @@ fn drawn_now(world: &mut World) -> Drawn {
         confirm: view.confirm,
         states,
         disabled,
+        notes,
         status: world.resource::<PauseStatus>().line.clone(),
         under_main: main.is_some(),
         mod_window: page == Page::Mods && world.get_resource::<crate::tiles::mods::ModsPage>().is_some_and(|m| m.mcm_open),
@@ -4784,6 +4800,19 @@ fn finish_resume(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn report_progress_tracks_selection_and_confirmation_without_hover() {
+        let mut view = super::PauseView::default();
+        let first = format!("{:?}", view.progress());
+        view.report_hover = true;
+        assert_eq!(first, format!("{:?}", view.progress()));
+        view.main_selected = 1;
+        let selected = format!("{:?}", view.progress());
+        assert_ne!(first, selected);
+        view.confirm = Some(0);
+        assert_ne!(selected, format!("{:?}", view.progress()));
+    }
+
     #[test]
     fn the_console_entry_stands_where_help_was() {
         let labels: Vec<&str> = super::entries(true, true).iter().map(|e| e.label()).collect();
@@ -5734,6 +5763,25 @@ mod tests {
         let names: Vec<String> = ["A", "B", "C", "D", "E"].map(String::from).to_vec();
         let d = Drawn { stand_ins: vec![(id, names)], ..default() };
         assert!(note_of(&[], id, &d).starts_with("Stands for: A, B, C and 2 more. "), "{}", note_of(&[], id, &d));
+    }
+
+    /// #2731: a row's note gives other words while its `set_note_now` function says something.
+    #[test]
+    fn a_note_now_stands_in_for_the_rows_own() {
+        let row = Setting { key: "frames", group: "Graphics", label: "Frames", note: "The row's own note.", switches: "", get: |_| false, set: |_, _| {}, slider: None };
+        let d = Drawn::default();
+        assert_eq!(row_note(&[row], RowId::Setting(0), &d), "The row's own note.");
+        let d = Drawn { notes: vec![Some("Words for now.".to_string())], ..default() };
+        assert_eq!(row_note(&[row], RowId::Setting(0), &d), "Words for now.");
+        let d = Drawn { notes: vec![None], ..default() };
+        assert_eq!(row_note(&[row], RowId::Setting(0), &d), "The row's own note.");
+        // Through the registry.
+        let mut app = App::new();
+        crate::settings::add_setting(&mut app, row);
+        crate::settings::set_note_now(&mut app, "frames", |_| Some("Words for now.".to_string()));
+        let settings = app.world().resource::<Settings>();
+        assert_eq!(settings.note_now(app.world(), 0).as_deref(), Some("Words for now."));
+        assert_eq!(settings.note_now(app.world(), 1), None, "no such row");
     }
 
     /// #2377: a note line wider than the page (a word longer than the line, which wrapping
