@@ -603,7 +603,7 @@ fn tex_image(path: &str, tex: fnv_font::Tex, images: &mut Assets<Image>) -> Opti
 /// as the next.
 pub fn plain_font(size: f32, advance: f32) -> Font {
     let glyph = Glyph { after: advance, ..default() };
-    Font { size, texture: String::new(), glyphs: vec![glyph; 256] }
+    Font { size, texture: String::new(), glyphs: vec![glyph; 256], extra: Default::default() }
 }
 
 /// The install's own font files, by number (`None`: the default, [`FONT_FILES`]); set once
@@ -1191,7 +1191,7 @@ pub(crate) mod tests {
                 glyphs[code as usize] = Glyph::default();
             }
         }
-        Face { font: Font { size: 31.0, texture: String::new(), glyphs }, image: None, vector: None }
+        Face { font: Font { size: 31.0, texture: String::new(), glyphs, extra: Default::default() }, image: None, vector: None }
     }
 
     /// #1829: the hint glyphs sit on the x-height band, not the cap-height middle. The

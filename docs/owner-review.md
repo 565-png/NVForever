@@ -305,6 +305,10 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- [design, #2659] **Selected-part mesh boundary:** mixed-mesh triangles are selected at
+  a mean bone-weight share of `PART_TRIANGLE_SHARE = 0.5`, then filled at the same mask
+  opacity as whole parts. A different threshold changes the boundary, not its strength;
+  coarse meshes may need finer clipping. [Classic VATS §12](design/vats-classic.md#12-the-selected-part-lit-on-the-target-2026-11-10).
 - **SayTo's "no target look" flag turns nobody (#2796).** [hypothesis, #2796] A SayTo with
   `noTargetLookFlag` 1 now turns neither the speaker nor the target, so Curtis talks into
   his radio in the McCarran tower without turning to the player below. Without the flag
@@ -790,6 +794,19 @@ the spec it links to.
     "gone" to scripts that test it). Observer check 172 asks the original.
     ([doors §6](spec-notes/doors.md))
 
+65. **A murder's faction flag is short-lived (#2456, #2498).** A witnessed murder makes
+    the player an enemy of every crime-tracking faction of the victim's, the "no side"
+    armour faction ArmorVCaesarsLegionFaction too, as the original does; the flag clears
+    by itself 0.18 game hours (11 game minutes) after the crime instead of after
+    iCoolDownTimerSetting's 3 days. The witnesses' own grudges still last 3 days. In the
+    original a Cove murder flagged both VCaesarsLegionFaction and the armour faction, and
+    both read 0 again 0.18 game hours later; Karl at Red Rock then stayed seated, and
+    attacks only while the armour flag is up [observed: observer check 203, 2026-11-15].
+    That every crime's flag (a theft's, the Evil faction's area alert) lasts as long is a
+    [hypothesis]. #2498 first proposed never flagging a faction that is no side; that
+    rule is dropped. **Ruled 2026-11-16 (owner, on #2498, after check 203): "Short-lived
+    flag".** Smoke `crime-karl-flag-clears`, `crime-expiry-legion-calm`.
+    ([crime-karma §3.4, §3.7](spec-notes/crime-karma.md))
 66. **A script package added again after it is done starts over (#2424).** The Lucky
     38 elevator Victor's script adds his talk package on every talk and waits for the
     conversation before it shows the floor box; after Stay Here a second talk opened

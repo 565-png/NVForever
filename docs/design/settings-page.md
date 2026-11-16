@@ -37,8 +37,8 @@ one is broken. Read §1–§4 for how the page works.
    stands for it) only where the owner asked: the upscaler's own rows (Upscaling Mode, DLSS
    Model, FSR Library, Anti-Aliasing), Generated Frames, the colour channels unless Custom,
    the controller rows, and Advanced Movement's categories while its Global Toggle is off.
-7. **Words**: write the label in sentence case; the page shows it in Title Case in English
-   (`pause::shown_case`: the short words a, an, the, and, but, or, nor, for, so, yet, as,
+7. **Words**: write the label in sentence case; the page shows it in Title Case in English,
+   and so in another language until its file has a line for it (`pause::on_page`: the short words a, an, the, and, but, or, nor, for, so, yet, as,
    at, by, in, of, off, on, per, to, via stay lower case inside a label). A word written with
    a capital stays as written ("Close In on the Speaker", "HUD", "Pip-Boy"). States are
    On/Off. Under a category, leave out what the heading already says ("Mirrored reflections"
@@ -134,7 +134,7 @@ Audio and Controls, observed in the original's pause menu, 2026-11-09].
 | NVF Features | Gameplay (after an empty line) | `movement-inertia`, `weapon-handling`, `advanced-recoil` |
 | NVF Features | Visual Only (after an empty line) | `weapon-inertia`, `animation-smoothing`, `camera-motion` (player-body.md §1.4a.3) |
 | Graphics | Quality | `quality` (#1966; only when the install has its preset files: docs/spec-notes/quality-presets.md) |
-| Graphics | Picture | `enhanced` (#1966), `grade`, `sun-shadows`, `upscaler`, `upscaler-quality`, `dlss-model`, `fsr-library`, `frame-generation`, `frame-generation-frames`, `anti-aliasing`, `latency-reduction`, `shadow-filter`, `ambient-occlusion`, `fine-shadows`, `bloom`, `glow`, `eye-adaptation`, `neon-glow`, `sharpen`, `anisotropic`, `terrain-height-blend` (#2550), `terrain-anti-tiling` (#2551), `light-shafts`, `water-reflections`, `water-mirror`, `smooth-terrain` (#2149) |
+| Graphics | Picture | `enhanced` (#1966; removed by the overhaul), `grade`, `sun-shadows`, `upscaler`, `upscaler-quality`, `dlss-model`, `fsr-library`, `frame-generation`, `frame-generation-frames`, `anti-aliasing`, `latency-reduction`, `shadow-filter`, `ambient-occlusion`, `fine-shadows`, `bloom`, `glow`, `eye-adaptation`, `neon-glow`, `sharpen`, `anisotropic`, `terrain-height-blend` (#2550), `terrain-anti-tiling` (#2551), `light-shafts`, `water-reflections`, `water-mirror`, `smooth-terrain` (#2149) |
 | Graphics | Distance | `distant-lod`, `grass`, `object-distance`, `actor-distance`, `item-distance`, `shadow-distance`, `grass-distance` |
 | Graphics | World | `head-tracking`, `foot-ik`, `sky-clock` |
 | Tweaks | (none) | none named yet |
@@ -149,7 +149,7 @@ world.md §3 "Smoothing"]. 4 x 4 near draws 4 × 4 near the camera and 2 × 2 fu
 surface [design, #2676]; the INI's older on/off reads as 4 x 4 and Off.
 
 The table names every row the registry can hold [documented: `settings_layout.rs::SECTIONS`],
-118 with #1966's `quality` and `enhanced`,
+118 with #1966's `quality`, the overhaul's `menu-font` (#1966's `enhanced` is gone),
 #2014's nine `fps-counter-*` rows, #2242's `fps-counter-upscaling`, #2317's
 `frame-generation-frames`, #2550's `terrain-height-blend`, #2662's `grass-fire`, #2551's `terrain-anti-tiling`, #2688's `sound-cover`, and #2149's `smooth-terrain` and `terrain-wireframe` (`KNOWN` in
 `settings_layout.rs`); a test keeps

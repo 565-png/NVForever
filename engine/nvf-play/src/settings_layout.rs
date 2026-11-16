@@ -1169,7 +1169,6 @@ impl ResolvedLayout {
         self.tabs.iter().flat_map(|t| &t.sections).find(|s| s.items.iter().any(|i| matches!(i, LayoutItem::Control(c) if *c == name))).map(|s| s.placement)
     }
 
-    /// How many registered rows the table does not name.
     /// How many registered rows the table does not name, leaving out the Tweaks tab's
     /// ([`TWEAKS_TAB`]), which #1892 lists in registry order without naming them here
     /// [design: #1953, #1892].
@@ -1380,10 +1379,10 @@ mod tests {
         ("anisotropic", "Graphics"),
         ("terrain-height-blend", "Graphics"),
         ("terrain-anti-tiling", "Graphics"),
+        ("smooth-terrain", "Graphics"),
         ("light-shafts", "Graphics"),
         ("water-reflections", "Graphics"),
         ("water-mirror", "Graphics"),
-        ("smooth-terrain", "Graphics"),
         ("quality", "Graphics"),
         ("volume-master", "Sound"),
         ("volume-music", "Sound"),

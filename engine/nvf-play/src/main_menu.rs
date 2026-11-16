@@ -431,7 +431,7 @@ fn relabel(
     entries: Query<(Entity, &EntryNode)>,
     mut commands: Commands,
 ) {
-    let sharp = menu_font.as_deref().is_some_and(|m| m.sharp);
+    let sharp = menu_font.as_deref().is_some_and(crate::pause::MenuFont::drawn_sharp);
     let now = (fnv_util::words::generation(), sharp);
     if *seen == Some(now) {
         return;
@@ -745,7 +745,7 @@ mod tests {
         let mut app = App::new();
         let glyph = fnv_font::Glyph { uv: [0.0, 0.0, 0.5, 0.75], width: 8.0, height: 12.0, ascent: 10.0, after: 1.0, ..default() };
         let face = Face {
-            font: fnv_font::Font { size: 16.0, texture: String::new(), glyphs: vec![glyph; 256] },
+            font: fnv_font::Font { size: 16.0, texture: String::new(), glyphs: vec![glyph; 256], extra: Default::default() },
             image: bitmap.then(|| (Handle::default(), Vec2::splat(16.0))),
             vector: None,
         };

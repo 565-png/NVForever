@@ -2471,6 +2471,23 @@ already talking takes over at once, same topic or another; nothing is queued or 
      says the flag beats the disguise (then the disguise works only through the
      reputation reset, reputation.md §4).
 
+## Added 2026-11-14 (a murder's faction enemies, #2456)
+
+184. **Which of a murder victim's factions does the player become an enemy of?** (P2;
+     #2456, crime-karma.md §3.4.) Ours: every crime-tracking faction of the victim, once a
+     witness who cares turned, except one whose members include enemies of each other
+     (ArmorVCaesarsLegionFaction, which also holds the four NCR troopers of the Strip
+     scene VStripSS3) [hypothesis]. To check, with a character neutral to the Legion: kill
+     a Legionary in front of another (Cottonwood Cove), then read
+     `GetPCEnemyOfFaction VCaesarsLegionFaction` and `GetPCEnemyOfFaction
+     ArmorVCaesarsLegionFaction` (0x00134B6E); then enter the Strip by the north gate and
+     watch the four troopers (VStripSS3Girl01REF/02REF, VStripSS3Watcher01REF/02REF) and
+     the Securitrons. If neither flag is set, the original sets no faction enemy on
+     murder and only the witnesses turn. **Answered by check 203** [observed, 2026-11-15]:
+     both flags are set by the murder and both clear by themselves about 0.18 game hours
+     later; the Strip part was not run. NVForever now flags every crime-tracking faction
+     for 0.18 game hours (#2498).
+
 ## Added 2026-11-15 (Anders's head on the cross, #2471)
 
 174. **Does a crucified actor turn his head to the player, and is he ever seen climbing
@@ -2854,7 +2871,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
        GetActorCrimePlayerEnemy, IsPCAMurderer and the Legion's infamy and fame. With no
        crime, Karl detects the player, sits (GetSitting 3), stays at relation 0 and never
        fights, on entry and at noon on each of the next four days.
-     - **1. Seen murder.** The staging is #2498's `crime-karl-no-side`: the player at
+     - **1. Seen murder.** The staging is #2498's `crime-karl-no-side` (since renamed `crime-karl-flag-clears`): the player at
        (63363, -89150) at Cottonwood Cove, hour 12, NVCCAureliusREF 0x0012D6E2 about 400
        units off. Shots by TapControl never fired in the unfocused game, and FireWeapon
        never hit. The kill that worked is `NVCCLegionary4REF.Kill player`, with the
@@ -3072,6 +3089,19 @@ already talking takes over at once, same topic or another; nothing is queued or 
      Separately ask the main session for both rangers' NPC_ PKID/conditions and
      NAVM triangle/link/drop heights to marker 01 and between markers; no camp
      navmesh facts or original captures were available to this writer.
+
+## Added 2026-11-15 (classic VATS screen layout, #2659)
+
+215. **Classic VATS unresolved comparisons (#2659, items 6–9).**
+    [documented: issue #2659, original capture description; quoted below with its
+    numbering and wording.] [hypothesis] Keep the existing AP meter, AP cost and
+    target-change rules until these checks settle them. The bottom enemy bar during
+    playback is implemented under item 3; the wider playback comparison stays open.
+
+    6. **AP meter while queueing.** NVForever takes the reserved AP off the HUD's AP bar as attacks are queued. In the original's pictures (1280 wide) the bar did not visibly drop with four .357 attacks queued on 80 AP; a closer capture (a crop of the bar, or `GetUIFloatAlt` reads of the AP meter's tiles before and after each queue) should say whether it drops, dims a share or stays.
+    7. **AP cost of a shot.** The original queued four .357 shots on 80 AP, so 20 AP or less each; NVForever charges 26 AP a shot (`vats mode: on (WeapNV357Revolver, 26 AP a shot ...)`) and allows three. The capture's save (a level 1 character) may have perks or stats that lower the cost; that was not checked. Compare `GetCalculatedAPCost` [documented: GECK wiki] in the original with NVForever's `shot_ap_cost` for the same character.
+    8. **Playback HUD.** In the original, the whole HUD but the enemy bar (bottom centre) is hidden while the queued attacks play, and comes back after with the XP gained. NVForever's playback was not shot in this pass.
+    9. **After a target change.** The original showed the new target with no part boxes at once (the capture moves no pointer); whether they come with the pointer on the body, or after a moment, was not settled.
 
 ## Added 2026-11-15 (L'il Devil's crown, issue #2350)
 

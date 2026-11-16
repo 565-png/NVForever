@@ -371,6 +371,11 @@ impl Metrics {
     pub fn has(&self, c: char) -> bool {
         self.glyph(c) != 0
     }
+
+    /// Every character the font has a glyph of its own for.
+    pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
+        self.map.iter().flat_map(|r| r.start..=r.end).filter_map(char::from_u32).filter(|&c| self.has(c))
+    }
 }
 
 /// The font's metrics, read once.
@@ -389,22 +394,24 @@ pub fn metrics() -> Option<&'static Metrics> {
 /// A metric table of the font at `em` interface units and weight `w` for this run's code
 /// page, its lines `line` apart (the raster font's), as `fnv_font::Font` measures (module
 /// notes): each character's advance its width, a space's its room after; capitals and figures
-/// as tall as the cap height, small letters as the x-height.
+/// as tall as the cap height, small letters as the x-height. The font's characters the code
+/// page has no code for are measured too (`Font::extra`): the menus' text is laid out in the
+/// code page's codes, and a language the install was not made for (Russian on an English
+/// install, whose code page is Windows-1252) would otherwise read as `?`.
 pub fn metric_table(m: &Metrics, em: f32, line: f32, w: u16) -> Font {
     let page = fnv_util::text::code_page();
-    let glyphs = (0..=255u8)
-        .map(|code| {
-            let c = page.char_of(code);
-            let adv = m.advance_at(c, w) * em;
-            let rise = if c.is_lowercase() { m.x_height } else { m.cap_height } / m.units_per_em * em;
-            if c.is_whitespace() || code < 0x20 {
-                Glyph { after: adv, ..default() }
-            } else {
-                Glyph { width: adv, height: rise, ascent: rise, ..default() }
-            }
-        })
-        .collect();
-    Font { size: line, texture: String::new(), glyphs }
+    let glyph = |c: char| {
+        let adv = m.advance_at(c, w) * em;
+        let rise = if c.is_lowercase() { m.x_height } else { m.cap_height } / m.units_per_em * em;
+        if c.is_whitespace() || c.is_control() {
+            Glyph { after: adv, ..default() }
+        } else {
+            Glyph { width: adv, height: rise, ascent: rise, ..default() }
+        }
+    };
+    let glyphs = (0..=255u8).map(|code| glyph(page.char_of(code))).collect();
+    let extra = m.chars().filter(|&c| page.code_of(c).is_none()).map(|c| (c, glyph(c))).collect();
+    Font { size: line, texture: String::new(), glyphs, extra }
 }
 
 /// A face of the font at `em` units and weight `w`, measured by [`metric_table`], its lines
@@ -458,6 +465,13 @@ mod tests {
     fn the_table_measures_as_the_font_advances() {
         let m = read(FONT_BYTES).unwrap();
         let t = metric_table(&m, 32.0, 36.0, REGULAR);
+        // Russian on an English install (code page Windows-1252, no code for Cyrillic): the
+        // sharp letters measure and draw the words, not `?` (owner 2026-11-16).
+        assert_eq!(fnv_util::text::code_page(), fnv_util::text::CodePage::Windows1252);
+        assert!(t.extra.contains_key(&'Ж') && !t.extra.contains_key(&'A'), "only what the code page lacks");
+        assert_eq!(t.lines("Частота кадров", None)[0].text_spaced(&t), "Частота кадров");
+        let cyr: f32 = "Жя".chars().map(|c| m.advance(c) * 32.0).sum();
+        assert!((t.width("Жя") - cyr).abs() < 1e-3 && t.width("Жя") > t.width("??"), "measured as the font's own");
         let text = "Ambient Occlusion 16x";
         let sum: f32 = text.chars().map(|c| m.advance(c) * 32.0).sum();
         assert!((t.width(text) - sum).abs() < 1e-3, "{} vs {sum}", t.width(text));
