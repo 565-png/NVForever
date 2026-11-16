@@ -3073,3 +3073,121 @@ already talking takes over at once, same topic or another; nothing is queued or 
      NAVM triangle/link/drop heights to marker 01 and between markers; no camp
      navmesh facts or original captures were available to this writer.
 
+## Added 2026-11-15 (L'il Devil's crown, issue #2350)
+
+216. **Does L'il Devil's crown follow the hair colour?** (P3; nif.md §6 "Hair",
+     actors.md §3; #2350.) [documented: issue #2350, supplied `fnvtool esm decode`,
+     `fnvtool nif` and texture measurements] HAIR 0x000987DB `HairRaiderFCat`
+     "L'il Devil" uses `Characters\Hair\HairRaiderFCat.NIF`; Playable and Not Male
+     are set, Fixed Color is not. Its `NoHat` and `Hat` shapes have identical
+     BSShaderPPLightingProperty flags 0x82040101 (Specular, Alpha texture, Hair,
+     Remappable, Z-test), NiAlphaProperty blend + test, and textures
+     `HairRaider01.dds`, `HairRaider01_n.dds`, `HairRaider01_hl.dds`, matching the
+     other ten raider hairs' properties. At the crown, 9% of `NoHat`'s area samples
+     black, opaque diffuse texels (RGB ≈ 0.001, alpha ≈ 0.99); other raider hairs
+     have at most 1% there. The `_hl` texture carries strands there: 2,084 of the
+     2,506 black, opaque diffuse texels have `_hl` luma above 0.08; crown-region
+     luma is about 0.17 against diffuse 0.001, with overall luma correlation 0.97.
+     NVForever multiplies the diffuse by doubled HCLR and draws the model's solid
+     core at alpha ≥ 0.8 [design; `engine/nvforever/src/actors.rs::part_uses`,
+     `engine/nvf-assets/src/nif_spawn.rs::hair_model_cut_out`; provisional tint
+     hypothesis in actors.md §3]. The issue has no reproduction in NVForever or
+     observation of the original [documented: #2350]. The original may take crown
+     colour or brightness from `_hl` [hypothesis, #2350]. In the original's face
+     editor at Doc Mitchell's, select L'il Devil and capture the crown at two very
+     different hair colours, keeping the view and lighting fixed; compare with
+     NVForever at the same colours and view. Does the crown tint with the strands,
+     or stay black? Record both colours and frames in nif.md §6. Consider a shader
+     change only if the original tints it; then compare three or four other hairs
+     before choosing a rule [design, #2350].
+
+## Added 2026-11-16 (the Legate's camp Securitrons and General Oliver, #2794)
+
+217. **At the Legate's camp (House route), once their scripted guards are down, do the
+     four Securitrons fire on General Oliver and the fifth guard?** (P1; #2794,
+     combat-ai.md §10.3, owner-review item 85.) Ours: a faction ally of the player whose
+     Assistance helps allies takes up any fight against the player it sees, so the
+     Securitrons go on to Oliver and Guard05 [hypothesis: whether Assistance counts the
+     player as an ally to help is not documented; the maintainer expects them to help].
+     The scene: after the Legate, the camp trigger enables Oliver
+     (`vHDGeneralOliverRef2` 0x001483F1) and `LegateCampRangerOliverGuard01REF`..`05REF`;
+     `VHDLegateCampSecuritronMarker` 0x00155DC9 enables `LegateCampSecuritron01REF`..`04REF`
+     (0x00155DC2, C3, C4, C1; VHDSecuritronFaction, PlayerFaction Ally; Unaggressive,
+     Brave, Helps Allies). Pick the attack topic (INFO 0x0015993C): its end script runs
+     `StartCombat player` on Oliver and gives each Securitron one of Guard01-04, none
+     Guard05 or Oliver [documented: issue #2794, cited records]. Watch each Securitron's
+     `GetCombatTarget` every second once its guard is dead, and who damages Oliver and
+     Guard05 (their health). Also: does a Securitron help when the player alone fights
+     Oliver before the guards are down (it has its guard then)?
+
+## Added 2026-11-16 (SayTo's noTargetLookFlag, #2796)
+
+218. **Does `SayTo` with `noTargetLookFlag` 1 turn the speaker to its target?** (P2; #2796,
+     dialogue-play.md §9.2.) When an NPC runs `SayTo player <topic> 0 1`, does the speaker
+     turn to face the player? Ours: nobody turns, body or head [hypothesis]; without the
+     flag the speaker turns head and body to the target [owner decision 2026-10-11]. The
+     GECK wiki says only that the target "is not forced to look at the speaker"
+     [documented: GECK wiki SayTo]. Two places to watch: Camp McCarran's tower at night
+     during I Put a Spell on You (VMS08), entering the tower trigger with Curtis
+     (`CaptainCurtisREF` 0x000F6283) on the walkway behind the player's back: does he turn
+     for "Lupa, this is Frumentarius Picus, over." (VMS08CurtisRadio1) or keep talking
+     into the radio; and one of the McCarran monorail guards' warnings to the player.
+     Read his heading (`GetAngle Z`) and `GetHeadingAngle player` before and at the end of
+     the line. If he turns, the flag is the wiki's alone (only the target stays still).
+
+## Added 2026-11-16 (a talking activator's Say and SayTo, #2768)
+
+219. **When a talking activator given a talking actor says a line whose conditions test the
+     speaker (GetIsID), are the conditions tested on the talking actor?** (P2; #2768,
+     talking-activators.md §2, `Game::say`.) Ours: yes; the line is chosen with the actor
+     as the speaker and IsActorTalkingThroughActivator 1, said in the actor's voice from
+     the activator, its SayToDone blocks run on the activator and its result scripts on
+     the actor; with no line for the actor the activator's own lines are tried
+     [hypothesis]. Tale of Two Wastelands relies on it (Vault 101's intercom given Jonas,
+     CG02IntercomConv; the Pitt's Ashur intercom), FalloutNV.esm's talking activators may
+     not. With a talking activator placed near the player and a test topic whose one line
+     has GetIsID <an actor> (and nothing else), run `<activator>.SetTalkingActivatorActor
+     <that actor's ref>` then `<activator>.Say <topic>`: is the line said (subtitle,
+     voice)? Then without SetTalkingActivatorActor (cleared): nothing? While it plays,
+     read `<activator>.IsTalking` and `<actor>.IsTalking`, and note whether a SayToDone
+     block in the activator's script runs when it ends (a script print).
+
+## Added 2026-11-16 (an NPC saved while seated, #2797)
+
+220. **Does an NPC saved while seated come back seated after a load?** (P2; #2797,
+     save-load.md §3.4, furniture.md.) Ours: a load stands every actor up (the saved
+     furniture use is cleared, GetSitting reads 0) and the NPC's AI seats it again from
+     where it stands if its package still sends it to a seat; the provisional reading of
+     the original is the same, it stands up and re-seats through its AI [hypothesis].
+     In Goodsprings at 09:00, with Easy Pete (`EasyPeteRef`) on his porch chair
+     (0x0010634A, `GetSitting` 3), save, load that save at once and log
+     `EasyPeteRef.GetSitting` every half second from the first frame for 20 s, with
+     `GetPos x/y`. If it reads 3 from the first frame with no getting-on, the original
+     keeps the seat in the save and puts the body straight back on it; if it reads 0
+     then 2, 3 (or he walks first), ours matches. The same with Colonel Hsu on his office
+     chair (0x000FB33A, CampMCTermInt02) gives a second case.
+
+## Added 2026-11-16 (sentry bot missile pause, #2739)
+
+221. **How long does a sentry bot wait between two missile shots, and does it switch to its
+     gun between them?** (P1; #2739, combat-rules.md §4.1, combat-ai.md §19.) The owner saw
+     a pause between missiles in the original and none in NVForever [observed: owner
+     playtest]. The launcher `SentryBotMissileLauncher2HL` (0x00057E8F) has Clip Size 1,
+     Reload Animation ReloadB, 1.5789 Attack Shots/Sec and a Semi-Automatic Fire Delay of
+     0.1-0.5 s [documented: fnvtool esm decode, FalloutNV.esm]; the sentry bot's
+     `2hlattackleft.kf` runs 2.0 s with `Hit` at 0.067 s and `a:R` at 0.967 s, and its
+     folder has no reload clip [documented: fnvtool bsa list / nif decode, Fallout -
+     Meshes.bsa]. Ours now: a missile every 0.967 s (the player's rule: the next shot from
+     the `a:` key), no reload, the launcher kept until distance or a crippled limb makes
+     another gun suit [hypothesis]. Place a Hardened Sentry Bot (`CrSentryBotGLHard`
+     0x000E585D, launcher and laser gatling) about 1,500 units from the player in the
+     open, in combat with the player (god mode), and record a video of at least 30 s; then
+     the same with `CrSentryBotMGArmy` (0x000A5C6F, launcher and minigun), and once with
+     its gun arm crippled if the console allows. What to read off: the time from one
+     missile's launch to the next (0.97 s, 2.0 s for the whole clip, or longer); whether
+     anything like a reload plays between them; whether the gun fires between two
+     missiles and for how long; at what distances it uses the launcher at all; and how
+     many missiles it fires in a fight (does it run out: its inventory holds AmmoMissile
+     x1 plus up to four from AmmoMissilelauncher75). Also whether a robot whose folder has
+     no reload clip (Mister Gutsy's plasma gun or flamer) ever pauses as if reloading.
+

@@ -522,10 +522,16 @@ not work" on Escort]:
   player followed led the player to its location; our choice: the 64]. At the destination its goal is met. A target that is gone or dead
   is not waited for [our choice]. Without PKE2, 200 [our choice: the most common value].
   The target's own count / distance (256, 800) is not used [hypothesis: unknown meaning].
-- **Joining the target's fights** (since 2026-10-20, `Game::escorts_assist` in
-  `fnv_game::provocation`, called with `Game::call_allies`) [documented: Defensive Combat,
-  "if the target is attacked, the actor will join into the combat"]: while its current
-  package is Escort, the actor takes up its charge's fight against each actor attacking
+- **Joining the target's fights** (since 2026-10-20 for Escort, since 2026-11-16 for
+  Follow and Accompany too, #2793; `Game::escorts_assist` in `fnv_game::provocation`,
+  called with `Game::call_allies`) [documented: Category:Packages, Defensive Combat, "The
+  exception is for the Accompany, Escort and Follow packages. For these three, if the
+  target is attacked, the actor will join into the combat"]: while its current package is
+  Accompany, Escort or Follow (`provocation::CHARGE_PACKAGES`; the charge is the package
+  target, PTDT, a specific reference or the linked reference, the same field for all
+  three [documented: Follow Package and Accompany Package, "Specific Reference: actors
+  only", "Standard Reference selector, filtered to actors"]), the actor takes up its
+  charge's fight against each actor attacking
   the charge (in a combat state with the charge on its target list, or having hurt it):
   it holds a grudge against the attacker and is alarmed at its position, as an assisting
   ally (combat-ai.md §10.3), whatever its Assistance and whether or not the package is
@@ -538,8 +544,12 @@ not work" on Escort]:
   once the other side fights back (then it attacks the charge); a charge that provoked
   the attacker is helped all the same; it holds from the package's start to its end, also
   once the destination is reached; an escort that is the player's teammate is left to
-  the teammate rule (followers.md §3). Follow and Accompany share the documented
-  exception and are not built. No placed actor runs an Escort package without a quest
+  the teammate rule (followers.md §3). A Defensive Combat actor still starts no fight of
+  its own (`Game::hostility`): it only joins its charge's. Before #2793 only Escort was
+  built, so the Hoover Dam escort Securitron (`VHDSecuritronEscort01REF` 0x001554DB on
+  `DefaultFollowPlayerFar` 0x001554DC: Follow, target the player, Defensive Combat)
+  never fought the Legion attacking the player [observed: a tester's events file, issue
+  #2793]; smoke scenario `house-escort-assist`. No placed actor runs an Escort package without a quest
   stage (NellisRaquelIntroEscortAIPackage, GomezEscortTo*), so the smoke scenario
   `package-escort-fights` gives one by script. Log: `provocation: <escort> helps <charge>
   against <attacker>`.
