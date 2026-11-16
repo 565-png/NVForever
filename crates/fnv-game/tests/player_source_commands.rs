@@ -57,10 +57,22 @@ fn success(g: &mut Game<'_>, body: &str) -> XVal {
     )), "{body}: {:?}", &g.events[before..]);
     result
 }
-fn invalid(g: &mut Game<'_>, body: &str) {
+fn compile_control(g: &Game<'_>, body: &str) -> fnv_script::compile::Compiled {
+    fnv_script::compile::compile_runtime(&format!("Begin Function {{}}\n{body}\nEnd\n"), &g.data.table, &fnv_game::game::GameEnv { g })
+}
+fn runtime_failure(g: &mut Game<'_>, body: &str, reason: &str) {
+    let compiled = compile_control(g, body);
+    assert!(compiled.errors().next().is_none(), "runtime guard was never admitted: {body}: {:?}", compiled.diags);
     let before = g.events.len();
-    let result = query(g, body);
-    assert!(result.is_err() || g.events[before..].iter().any(|e| matches!(e.kind, EventKind::CallFailed { .. } | EventKind::ScriptError { .. })), "invalid call silently succeeded: {body}");
+    assert_eq!(query(g, body), Err(reason.to_string()), "wrong failure boundary: {body}");
+    assert!(!g.events[before..].iter().any(|e| matches!(e.kind,
+        EventKind::Stub { .. } | EventKind::Unhandled { .. } | EventKind::Skipped { .. } | EventKind::ArgUnread { .. }
+    )), "runtime guard was replaced by unsupported/unread input: {body}: {:?}", &g.events[before..]);
+    for event in &g.events[before..] {
+        if let EventKind::CallFailed { error, .. } | EventKind::ScriptError { error, .. } = &event.kind {
+            assert_eq!(error, reason, "unexpected runtime error trace: {body}");
+        }
+    }
 }
 
 #[test]
@@ -77,6 +89,14 @@ fn source_advance_and_alias_reach_the_existing_menu_without_awarding_xp() {
     assert_eq!(g.player_level(), level + 2);
     assert_eq!(g.player.xp, 123.5);
     assert_eq!(g.events.iter().filter(|e| matches!(e.kind, EventKind::MenuOpened { menu: fnv_game::game::menus::LEVEL_UP })).count(), menus + 1, "advancing while already open retains the existing menu event policy");
+    // Main's source compiler drops surplus call-line arguments with a warning.
+    // This input is an admitted advancement, not a runtime-invalid argument case.
+    let compiled = compile_control(&g, "AdvancePCLevel 1");
+    assert!(compiled.errors().next().is_none(), "{:?}", compiled.diags);
+    assert!(compiled.diags.iter().any(|d| !d.error && d.kind == "surplus_arguments" && d.detail == "1 dropped: 1"));
+    success(&mut g, "AdvancePCLevel 1");
+    assert_eq!(g.player_level(), level + 3);
+    assert_eq!(g.player.xp, 123.5);
 }
 
 #[test]
@@ -117,22 +137,53 @@ fn exact_removal_keeps_fractions_other_axis_other_reputation_and_events() {
 #[test]
 fn bad_arguments_and_explicit_empty_receivers_do_not_mutate_player_state() {
     let f = fixture(); let mut g = game(&f);
+    // A missing implementation could fail null-receiver admission in the VM too.
+    // Require actual supported dispatch first, on a separate stateful control game.
+    let mut admitted = game(&f);
+    success(&mut admitted, "ModPCAttribute Strength 1\nRemoveReputationExact ProgressionRep 0 0.5\nAdvancePCLevel");
+    assert_eq!(functions::actor_value_parts(&mut admitted, FormId::PLAYER_REF, av::STRENGTH).unwrap(), [6.0, 0.0, 0.0]);
+    assert_eq!(admitted.player.reputation[&REP], [0.0, 0.0]);
+    assert_eq!(admitted.player_level(), g.player_level() + 1);
     let level = g.player_level();
     let strength = functions::actor_value_parts(&mut g, FormId::PLAYER_REF, av::STRENGTH).unwrap();
-    for body in ["ModPCAttribute Repair 1", "ModPCAttribute NoSuchAttribute 1", "ModPCAttribute Strength \"bad\"", "RemoveReputationExact Player 0 1", "AdvancePCLevel 1",
-        "ref receiver\nreceiver.AdvancePCLevel", "ref receiver\nreceiver.ModPCAttribute Strength 1", "ref receiver\nreceiver.RemoveReputationExact ProgressionRep 0 1"] {
-        invalid(&mut g, body);
+    for (body, reason) in [
+        ("ModPCAttribute Repair 1", "ModPCAttribute requires a SPECIAL attribute"),
+        ("ModPCAttribute NoSuchAttribute 1", "no actor value named \"NoSuchAttribute\""),
+        ("ModPCAttribute Strength \"bad\"", "parameter 2 is missing"),
+        ("RemoveReputationExact Player 0 1", "Player is not a reputation"),
+        ("ref receiver\nreceiver.AdvancePCLevel", "advancepclevel called on no reference"),
+        ("ref receiver\nreceiver.ModPCAttribute Strength 1", "modpcattribute called on no reference"),
+        ("ref receiver\nreceiver.RemoveReputationExact ProgressionRep 0 1", "removereputationexact called on no reference"),
+        ("ref receiver\nlet receiver := 0x123456\nreceiver.ModPCAttribute Strength 1", "invalid calling reference"),
+    ] {
+        runtime_failure(&mut g, body, reason);
         assert_eq!(g.player_level(), level, "{body}");
         assert_eq!(functions::actor_value_parts(&mut g, FormId::PLAYER_REF, av::STRENGTH).unwrap(), strength, "{body}");
         assert!(g.player.reputation.is_empty(), "{body}");
     }
+    // A compiler rejection has its own oracle and cannot substitute for any runtime
+    // failure above. This malformed operand never dispatches a player command.
+    let malformed = "ModPCAttribute (";
+    let compiled = compile_control(&g, malformed);
+    assert!(compiled.errors().any(|d| d.kind == "syntax" && d.detail == "expression ends early"), "{:?}", compiled.diags);
+    let before = g.events.len();
+    assert_eq!(query(&mut g, malformed), Err("script did not compile".to_string()));
+    assert!(g.events[before..].iter().any(|e| matches!(&e.kind, EventKind::Skipped { unit, what } if unit == "query" && what == "query: syntax: expression ends early")));
+    assert_eq!(g.player_level(), level);
+    assert_eq!(functions::actor_value_parts(&mut g, FormId::PLAYER_REF, av::STRENGTH).unwrap(), strength);
+    assert!(g.player.reputation.is_empty());
 }
 
 #[test]
 fn exact_removal_invalid_axis_retains_the_existing_script_return_policy() {
     let f = fixture(); let mut g = game(&f);
     success(&mut g, "SetReputation ProgressionRep 0 2.5");
-    let _ = query(&mut g, "RemoveReputationExact ProgressionRep 2 0.5\nModPCAttribute Strength 1");
+    // Valid exact-removal dispatch must work before testing write_axis. Unsupported
+    // command errors cannot satisfy the exact axis-specific failure below.
+    success(&mut g, "RemoveReputationExact ProgressionRep 0 0.25");
+    assert_eq!(g.player.reputation[&REP], [2.25, 0.0]);
+    success(&mut g, "SetReputation ProgressionRep 0 2.5");
+    runtime_failure(&mut g, "RemoveReputationExact ProgressionRep 2 0.5\nModPCAttribute Strength 1", "reputation axis 2 is not 0 (infamy) or 1 (fame)");
     assert_eq!(g.player.reputation[&REP], [2.5, 0.0]);
     assert_eq!(functions::actor_value_parts(&mut g, FormId::PLAYER_REF, av::STRENGTH).unwrap(), [5.0, 0.0, 0.0]);
 }
