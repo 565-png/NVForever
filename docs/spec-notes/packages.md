@@ -674,8 +674,15 @@ different thing: `fnv_ai::alert`); ForceFlee]:
   way on land (it is still taken when there is no other) [our choice]; with it 3 times,
   as before.
 - **Allow Falls**: "Actors will not jump off of an elevation that will cause damage
-  unless this flag is set" [documented]: with it the way may use the navmesh's ledge links
-  [hypothesis: ledge links are those drops].
+  unless this flag is set" [documented: GECK wiki Category:Packages, Flags Tab].
+  [design, #2532: `fnv_ai::Ai::path_params`, `fnv_nav::PathParams::safe_drop_max`]
+  With it the existing unrestricted ledge policy applies. Without it, an authored
+  downward link may connect an otherwise unreachable route when its planned takeoff
+  to landing is no higher than `fJumpFallHeightMin` (fallback `SAFE_DROP_HEIGHT`, 600,
+  following `engine/nvf-play/src/falls.rs`; physics.md section 6.10).
+  [hypothesis, #2532] This individual-link height predicts a harmless fall; original
+  scene parity, collision along the arc and cumulative falls remain unverified
+  (observer check 214). No new links or ranger-specific package overrides are created.
 - **No Warn/Attack Behavior** (4 Ambush, 18 Dialogue, 6 Eat and others): no aggro-radius
   warnings or attack (`fnv_game::aggro`) [hypothesis: the flag's name, xEdit; no page
   describes it].

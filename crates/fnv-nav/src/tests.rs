@@ -186,6 +186,7 @@ fn unlinked_navmeshes_are_unreachable_and_ledges_are_opt_in() {
     let from = Place { space: W, pos: [50.0, 50.0, 0.0] };
     let to = Place { space: W, pos: [350.0, 50.0, -300.0] };
     assert!(matches!(g.find_path(from, to, &PathParams::default()), Err(PathError::Unreachable { .. })));
+    assert!(g.find_path(from, to, &PathParams { safe_drop_max: Some(300.0), ..Default::default() }).is_err());
     // The same two joined by a ledge down (and up, back).
     let (mut a, mut b) = (a, b);
     let (ea, eb) = (edges_at(&a, 200.0), edges_at(&b, 200.0));
@@ -198,6 +199,21 @@ fn unlinked_navmeshes_are_unreachable_and_ledges_are_opt_in() {
     let g = graph(&[(a, W), (b, W)]);
     assert!(g.stats.ledge_edges > 0);
     assert!(g.find_path(from, to, &PathParams::default()).is_err());
+    let safe = PathParams { safe_drop_max: Some(300.0), ..Default::default() };
+    let drop = g.find_path(from, to, &safe).unwrap();
+    assert_eq!(drop.legs[0].hops.len(), 1);
+    assert!(g.find_path(from, to, &PathParams { safe_drop_max: Some(299.0), ..safe.clone() }).is_err());
+    assert!(g.find_path(to, from, &safe).is_err());
+    let mut walker = Walker::new(W, from.pos, 0.0, 100.0);
+    walker.go_to(&g, to, &safe).unwrap();
+    let mut airborne = false;
+    for _ in 0..200 {
+        walker.update(&g, 0.05);
+        airborne |= walker.air.is_some();
+    }
+    assert!(airborne);
+    assert!((walker.feet[2] + 300.0).abs() < 1.0);
+    assert!((walker.feet[0] - to.pos[0]).abs() < 2.0);
     let ledges = PathParams { ledges: true, ..Default::default() };
     let p = g.find_path(from, to, &ledges).unwrap();
     assert_eq!(p.end().map(|e| e[2]), Some(-300.0));
@@ -242,6 +258,27 @@ fn walkers_take_off_from_the_ledge_links_point() {
         }
         assert_eq!(from, Some(off), "speed {speed}, step {dt}");
     }
+}
+
+#[test]
+fn safe_drop_limit_uses_the_sloping_landing_not_the_triangle_centre() {
+    let mut a = grid(1, [0.0, 0.0], 2, 2, 100.0, &[], flat);
+    let b = grid(2, [200.0, 0.0], 2, 2, 100.0, &[], |x, _| -300.0 - (x - 200.0) * 0.5);
+    let (ea, eb) = (edges_at(&a, 200.0), edges_at(&b, 200.0));
+    for &(at, ae, ..) in &ea {
+        link(&mut a, at, ae, 2, eb[0].0, link_kind::LEDGE_DOWN);
+    }
+    let g = graph(&[(a, W), (b, W)]);
+    let from = Place { space: W, pos: [50.0, 50.0, 0.0] };
+    let to = Place { space: W, pos: [350.0, 50.0, -375.0] };
+    let p = g.find_path(from, to, &PathParams { ledges: true, ..Default::default() }).unwrap();
+    let leg = &p.legs[0];
+    let h = leg.hops[0];
+    let height = leg.points[h.point][2] - leg.points[h.point + 1][2];
+    assert!(height > 300.0 && height < 320.0, "{height}");
+    let safe = PathParams { safe_drop_max: Some(height), ..Default::default() };
+    assert!(g.find_path(from, to, &safe).is_ok());
+    assert!(g.find_path(from, to, &PathParams { safe_drop_max: Some(299.0), ..safe }).is_err());
 }
 
 #[test]
@@ -933,6 +970,58 @@ fn floor_with_deck_above() -> NavGraph {
     seam(&mut ramp, &mut landing, link_kind::PORTAL);
     seam(&mut deck, &mut landing, link_kind::PORTAL);
     graph(&[(floor, W), (ramp, W), (landing, W), (deck, W)])
+}
+
+// [design, #2532] Synthetic ramp route with a shorter authored drop at the deck's west end.
+fn ramp_with_drop() -> NavGraph {
+    let mut floor = grid(1, [0.0, 0.0], 4, 4, 100.0, &[], flat);
+    let mut ramp = grid(2, [400.0, 0.0], 4, 1, 100.0, &[], |x, _| (x - 400.0) * 0.5);
+    let mut landing = grid(3, [800.0, 0.0], 1, 4, 100.0, &[], |_, _| 200.0);
+    let mut deck = grid(4, [0.0, 300.0], 8, 1, 100.0, &[], |_, _| 200.0);
+    seam(&mut floor, &mut ramp, link_kind::PORTAL);
+    seam(&mut ramp, &mut landing, link_kind::PORTAL);
+    seam(&mut deck, &mut landing, link_kind::PORTAL);
+    let (dt, de, ..) = edges_at(&deck, 0.0)[0];
+    let ft = edges_at(&floor, 0.0).into_iter().find(|(_, _, a, b)| a[1].min(b[1]) == 300.0).unwrap().0;
+    link(&mut deck, dt, de, floor.form_id, ft, link_kind::LEDGE_DOWN);
+    graph(&[(floor, W), (ramp, W), (landing, W), (deck, W)])
+}
+
+#[test]
+fn safe_drops_preserve_the_ordinary_ramp_and_its_smoothed_path() {
+    let g = ramp_with_drop();
+    let from = Place { space: W, pos: [50.0, 350.0, 200.0] };
+    let to = Place { space: W, pos: [50.0, 350.0, 0.0] };
+    let ordinary = g.find_path(from, to, &PathParams::default()).unwrap();
+    assert!(ordinary.legs[0].points.iter().any(|p| p[0] > 700.0));
+    assert!(ordinary.legs[0].hops.is_empty());
+    let safe = PathParams { safe_drop_max: Some(200.0), ..Default::default() };
+    assert_eq!(g.find_path(from, to, &safe).unwrap(), ordinary);
+    let shortcut = g.find_path(from, to, &PathParams { ledges: true, ..safe.clone() }).unwrap();
+    assert_eq!(shortcut.legs[0].hops.len(), 1);
+    assert!(!shortcut.legs[0].hops[0].up);
+    assert!(shortcut.length < ordinary.length);
+    let limited = PathParams { max_expanded: 1, ..safe };
+    assert!(matches!(g.find_path(from, to, &limited), Err(PathError::TooFar { .. })));
+}
+
+#[test]
+fn safe_drops_retry_when_the_ordinary_same_area_route_is_blocked() {
+    let mut g = ramp_with_drop();
+    // [design, #2532] Area labels still connect both levels, but this actor cannot use the ramp.
+    let ramp = g.by_form[&2];
+    for t in g.tris.iter_mut().filter(|t| t.mesh == ramp) {
+        t.flags |= tri_flags::WATER;
+    }
+    let from = Place { space: W, pos: [50.0, 350.0, 200.0] };
+    let to = Place { space: W, pos: [50.0, 350.0, 0.0] };
+    let ordinary = PathParams { water: false, ..Default::default() };
+    assert!(g.door_route(from, to, &ordinary).unwrap().is_empty());
+    assert!(matches!(g.find_path(from, to, &ordinary), Err(PathError::Unreachable { .. })));
+    let safe = PathParams { safe_drop_max: Some(200.0), ..ordinary };
+    let path = g.find_path(from, to, &safe).unwrap();
+    assert_eq!(path.legs[0].hops.len(), 1);
+    assert!(!path.legs[0].hops[0].up);
 }
 
 #[test]

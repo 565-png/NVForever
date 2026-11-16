@@ -54,6 +54,9 @@ pub struct PathParams {
     pub doors: bool,
     /// Whether ledge links may be used (drops down and climbs up a ledge).
     pub ledges: bool,
+    /// Additional downward ledge links allowed after ordinary routing fails, up to this
+    /// takeoff-to-landing height [design, #2532]. `None` preserves the navigation default.
+    pub safe_drop_max: Option<f32>,
     /// The highest ledge-up link used, game units from the middle of its edge to the
     /// landing triangle's centre: what the actor's jump reaches
     /// ([`crate::jump::LEDGE_RISE_MAX`]).
@@ -112,6 +115,7 @@ impl Default for PathParams {
             large: false,
             doors: true,
             ledges: false,
+            safe_drop_max: None,
             ledge_rise_max: crate::jump::LEDGE_RISE_MAX,
             preferred_cost: 0.85,
             water_cost: 3.0,
@@ -316,7 +320,10 @@ impl NavGraph {
         }
         match tri.kind[e] {
             EdgeKind::Internal | EdgeKind::Portal => {}
-            EdgeKind::LedgeDown if p.ledges => {}
+            EdgeKind::LedgeDown if p.ledges || p.safe_drop_max.is_some_and(|max| {
+                let (off, land) = self.ledge_ends(t, e, p.radius);
+                off[2] - land[2] <= max
+            }) => {}
             EdgeKind::LedgeUp if p.ledges && self.ledge_rise(t, e) <= p.ledge_rise_max => {}
             _ => return None,
         }
@@ -516,6 +523,8 @@ impl NavGraph {
     /// then A* for each leg; a leg that cannot be walked takes its door out of the route
     /// and the route is planned again. With ledges allowed, A* runs over everything at
     /// once (ledges join areas the area labels keep apart).
+    /// [design, #2532] With only `safe_drop_max`, try the ordinary route first and
+    /// search using harmless downward links only when it is unreachable.
     pub fn find_path(&self, from: Place, to: Place, p: &PathParams) -> Result<Path, PathError> {
         // A span for profiling and a count for diagnostics ([`probe`]); the search is
         // the same.
@@ -527,6 +536,15 @@ impl NavGraph {
 
     /// [`NavGraph::find_path`]'s search.
     fn search_path(&self, from: Place, to: Place, p: &PathParams) -> Result<Path, PathError> {
+        if !p.ledges && p.safe_drop_max.is_some() {
+            // [design, #2532] Exclude safe drops from both ordinary A* and smoothing.
+            // Retry only an unreachable route; retain search limits and snap errors.
+            let ordinary = PathParams { safe_drop_max: None, ..p.clone() };
+            match self.search_path(from, to, &ordinary) {
+                Err(PathError::Unreachable { .. }) => {}
+                result => return result,
+            }
+        }
         let (start, s_at) = self.nearest(from.space, from.pos, SNAP_RADIUS).ok_or(PathError::NoTriangle { which: "start", at: from.pos })?;
         let (goal, g_at) = self.nearest(to.space, to.pos, SNAP_RADIUS).ok_or(PathError::NoTriangle { which: "goal", at: to.pos })?;
         // [design, #2716] Test the points against every refusing oriented footprint,
@@ -550,13 +568,15 @@ impl NavGraph {
         } else {
             p
         };
-        let (chain, expanded) = if p.ledges {
+        let (chain, expanded) = if p.ledges || p.safe_drop_max.is_some() {
             self.search(start, s_at, goal, g_at, to.space, p, p.doors, &door_endpoints)?
         } else {
             let mut excluded: Vec<(u32, usize)> = Vec::new();
             let mut expanded = 0usize;
             loop {
-                let route = self.route_between(start, s_at, goal, g_at, p, &excluded).ok_or(PathError::Unreachable { expanded })?;
+                let Some(route) = self.route_between(start, s_at, goal, g_at, p, &excluded) else {
+                    return Err(PathError::Unreachable { expanded });
+                };
                 let mut chain: Vec<(u32, Via)> = Vec::new();
                 let (mut t, mut at) = (start, s_at);
                 let mut entered_by: Option<(u32, usize)> = None;

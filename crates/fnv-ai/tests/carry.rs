@@ -1747,6 +1747,55 @@ fn a_patrol_walks_its_linked_references_in_order_once() {
     assert!(s.game.extra[&actor].package_goal_met);
 }
 
+#[test]
+fn a_patrol_without_allow_falls_takes_only_harmless_authored_drops() {
+    use fnv_nav::record::{link_kind, EdgeLink};
+
+    for (min, height, falls, reaches) in [
+        (None, 600.0, false, true),
+        (None, 601.0, false, false),
+        (Some(250.0f32), 300.0, false, false),
+        (Some(300.0), 300.0, false, true),
+        (Some(250.0), 700.0, true, true),
+    ] {
+        let general = flags::MUST_COMPLETE | flags::MUST_REACH_LOCATION | flags::ALWAYS_RUN | if falls { flags::ALLOW_FALLS } else { 0 };
+        let refs = [
+            placed(b"ACHR", R_PATROL, "DropPatrollerRef", N_PATROL, START, None),
+            placed(b"REFR", M1, "DropMarkerRef", STAT, [650.0, 50.0, -height], None),
+        ].concat();
+        let cell = [
+            record(b"CELL", CELL_A, &[sub(b"EDID", z("DropCell")), sub(b"DATA", 1u16.to_le_bytes().to_vec())]),
+            group(CELL_A.to_le_bytes(), 6, &group(CELL_A.to_le_bytes(), 9, &refs)),
+        ].concat();
+        let mut bytes = [
+            tes4(),
+            group(*b"STAT", 0, &record(b"STAT", STAT, &[sub(b"EDID", z("DropMarker"))])),
+            group(*b"PACK", 0, &pack(P_PATROL, "DropPatrol", general, PATROL, (0, M1, 0), Some(false))),
+            group(*b"NPC_", 0, &npc(N_PATROL, "DropPatroller", &[P_PATROL])),
+            group(*b"CELL", 0, &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cell))),
+        ].concat();
+        if let Some(min) = min {
+            bytes.extend(group(*b"GMST", 0, &record(b"GMST", 0xF80, &[sub(b"EDID", z("fJumpFallHeightMin")), sub(b"DATA", min.to_le_bytes().to_vec())])));
+        }
+        let f = fixture_of(bytes);
+        let mut s = sim(&f, &[R_PATROL]);
+        let mut top = grid(1, [0.0, 0.0], 4, 0.0);
+        let bottom = grid(2, [400.0, 0.0], 4, -height);
+        top.triangles[6].flags |= tri_flags::EDGE_LINK_0 << 1;
+        top.triangles[6].edges[1] = 0;
+        top.edge_links.push(EdgeLink { kind: link_kind::LEDGE_DOWN, navmesh: Some(2), triangle: 1 });
+        s.nav = NavGraph::assemble(&[(&top, Some(CELL_A), Some(A)), (&bottom, Some(CELL_A), Some(A))]);
+        s.run(20.0);
+        let arrived = s.events(R_PATROL).iter().any(|e| matches!(e, AiEvent::Arrived { patrol_point: Some(p), .. } if p.0 == M1));
+        let unreachable = s.events(R_PATROL).iter().any(|e| matches!(e, AiEvent::Unreachable { .. }));
+        assert_eq!(arrived, reaches, "min={min:?}, height={height}, falls={falls}: {:?}", s.events(R_PATROL));
+        assert_eq!(unreachable, !reaches);
+        if reaches {
+            assert!((s.feet(R_PATROL)[2] + height).abs() < 1.0);
+        }
+    }
+}
+
 /// After a load (a new AI from the same game state) a patrol that does not repeat goes
 /// on to the point the save had it walk to, instead of starting again at its first
 /// (`fnv_ai::progress`, docs/design/save-load.md §5 item 4).
