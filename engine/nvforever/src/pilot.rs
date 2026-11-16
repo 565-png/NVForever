@@ -1281,10 +1281,21 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
         params.open_doors.extend(gone);
         // Standing off the navmesh (a given state's place, a ledge): onto the nearest
         // point of it within 500 units first, as the pilot's own clumsiness.
-        if nav.graph.locate(here.space, feet, 96.0).is_none() {
-            if let Some((_, on)) = nav.graph.nearest(here.space, feet, 500.0) {
-                if hdist(on, feet) > 4.0 {
-                    info!("pilot: step {}: off the navmesh at ({:.0}, {:.0}, {:.0}): set on its nearest point, {:.0} units off", p.i, feet[0], feet[1], feet[2], hdist(on, feet));
+        // Or, none within the search's own reach of the start (512 units), within 4,096:
+        // the Jefferson Memorial's intake pipe left the player with no triangle to start
+        // from after the Enclave's arrival [observed: its vertibirds' obstacle cut, #2846],
+        // and every later step failed there.
+        if nav.graph.locate(here.space, feet, 96.0).is_none() || nav.graph.nearest(here.space, feet, fnv_nav::path::SNAP_RADIUS).is_none() {
+            if let Some((_, on)) = nav.graph.nearest(here.space, feet, 500.0).or_else(|| nav.graph.nearest(here.space, feet, 4096.0)) {
+                // Off by height too: under the navmesh of the Jefferson Memorial's intake
+                // pipe the player stood 92 units below it, 0 units off across [observed].
+                let off = hdist(on, feet).hypot(on[2] - feet[2]);
+                if off > 4.0 {
+                    info!("pilot: step {}: off the navmesh at ({:.0}, {:.0}, {:.0}): set on its nearest point, {off:.0} units off", p.i, feet[0], feet[1], feet[2]);
+                    if off > 500.0 {
+                        // Not clumsiness: the ground went from under the player (#2846).
+                        p.finding("no_navmesh_under", format!("no usable navmesh within 512 units of ({:.0}, {:.0}, {:.0}) in {:?}: set on the nearest, {off:.0} units off", feet[0], feet[1], feet[2], here.space));
+                    }
                     h.put(Place { space: here.space, pos: on });
                     return Walked::Going;
                 }
