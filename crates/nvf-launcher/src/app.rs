@@ -1207,21 +1207,42 @@ impl App {
         let Some(l) = self.latest.clone() else { return };
         let size = update::target().and_then(|t| update::choose_asset(&l.assets, &l.tag, t)).map(|(a, _)| a.size);
         let mut open = true;
+        // A set width (most of the launcher's, at most 760): a window left to size itself
+        // shrinks to its text and wraps the notes into a narrow column.
+        let width = (ctx.content_rect().width() - 160.0).clamp(420.0, 760.0);
         egui::Window::new(format!("NVForever v{}", l.version))
             .collapsible(false)
             .resizable(false)
-            .default_width(560.0)
+            .min_width(width)
+            .max_width(width)
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .open(&mut open)
+            // Room around the text and between the rows: the default window margin is tight.
+            .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::symmetric(24, 20)))
+            // Our own heading and close button: egui's title bar does not reach across the
+            // wider margin.
+            .title_bar(false)
             .show(ctx, |ui| {
+                ui.set_width(width);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("NVForever v{}", l.version)).size(22.0).strong().color(GOLD));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.add(egui::Button::new(RichText::new("×").size(24.0).color(WEAK)).frame(false)).on_hover_text("Close").clicked() {
+                            open = false;
+                        }
+                    });
+                });
+                ui.separator();
+                ui.add_space(4.0);
+                ui.spacing_mut().item_spacing = Vec2::new(10.0, 8.0);
+                ui.spacing_mut().button_padding = Vec2::new(14.0, 6.0);
                 ui.label(format!("v{} is out; this is v{}.{}", l.version, version(), size.map_or(String::new(), |s| format!(" Download: {}.", megabytes(s)))));
                 if !l.notes.trim().is_empty() {
                     ui.add_space(6.0);
-                    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
                         CommonMarkViewer::new().show(ui, &mut self.md, &l.notes);
                     });
                 }
-                ui.add_space(8.0);
+                ui.add_space(14.0);
                 let install = install_dir();
                 match &self.upd {
                     Upd::Idle => {
