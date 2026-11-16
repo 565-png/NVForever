@@ -225,7 +225,7 @@ health bar at bottom centre, above the compass gap, including during attack came
 The other meters, compass, crosshair and prompt, corner messages, quest notices and
 queue marks stay hidden (`VatsMode::playing_back`, `hud::HudView::enemy_shown`).
 Dead Eye retains its previous playback HUD rule. The wider playback comparison is
-still observer check 225, item 8.
+still observer check 214, item 8.
 
 ## 9. Special attacks
 
@@ -412,5 +412,5 @@ notes are the full account).
   this independent piece; undoing it lets normal HUD eligibility restore the bar.
 - [design, #2659] Pointer and click handling are outside this change (PR #2711).
   AP display, AP cost, the wider playback HUD and target-change timing remain open
-  in observer check 225; no changes are made for those comparisons. Body-part keys
+  in observer check 214; no changes are made for those comparisons. Body-part keys
   (issue item 10) remain open as well.

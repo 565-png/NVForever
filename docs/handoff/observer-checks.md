@@ -2692,7 +2692,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
     edge?
 
 
-225. **Classic VATS unresolved comparisons (#2659, items 6–9).**
+214. **Classic VATS unresolved comparisons (#2659, items 6–9).**
     [documented: issue #2659, original capture description; quoted below with its
     numbering and wording.] [hypothesis] Keep the existing AP meter, AP cost and
     target-change rules until these checks settle them. The bottom enemy bar during
