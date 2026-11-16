@@ -187,7 +187,8 @@
 //! - **`kill` is a fight** [owner decision 2026-11-13]: the player walks to within
 //!   [`FIGHT_RANGE`] of the actor, draws ([`PILOT_WEAPON`], given once with its ammo),
 //!   keeps the view on the actor's trunk and pulls the trigger until it is dead, closer
-//!   after [`FIGHT_CLOSER_SECS`]. The shots are the player's own (`nvf_play::combat`):
+//!   after [`FIGHT_CLOSER_SECS`] in which its shots did not lower the actor's health
+//!   (hits landing: it keeps its distance, as from the Chimera tank's shells). The shots are the player's own (`nvf_play::combat`):
 //!   the weapon's cycle, spread, damage and the target's armour decide. An actor still
 //!   alive after [`FIGHT_SECS`] is a `fight_not_won` finding and is killed as the
 //!   headless run kills it, so the chain goes on. The line of fire is the NPCs' own
@@ -621,6 +622,9 @@ struct Fight {
     began: f64,
     /// Someone standing in the line of fire, last seen.
     in_the_way: Option<u32>,
+    /// The target's health when this spell of shooting began: hits landing mean the
+    /// player stays where it is (module notes).
+    health: Option<f64>,
 }
 
 enum Phase {
@@ -2167,6 +2171,9 @@ fn engage(p: &mut Pilot, h: &mut Hands, name: &str, f: &mut Fight, w: &mut Walk)
             h.control.trigger = false;
         }
         Walked::There | Walked::Put => {
+            if f.shooting.is_none() {
+                f.health = h.game(|g| g.health_now_and_full(target).0);
+            }
             let since = *f.shooting.get_or_insert(p.now);
             let at = h.phys.world.actor_aim_point(target.0).or_else(|| h.game(|g| where_is(g, target)).flatten().map(|(_, pos)| [pos[0], pos[1], pos[2] + 80.0]));
             // The line of fire, as the NPCs judge it: to the trunk, else the head.
@@ -2203,11 +2210,17 @@ fn engage(p: &mut Pilot, h: &mut Hands, name: &str, f: &mut Fight, w: &mut Walk)
             f.in_the_way = None;
             // The trigger is pulled and let go, as for a weapon that fires once a pull.
             h.control.trigger = ((p.now - since) * 6.0) as i64 % 2 == 0;
-            if !f.near && p.now - since > FIGHT_CLOSER_SECS {
+            // Closer only when the shots miss: a target losing health is fought from where
+            // the player stands (the Chimera tank at Anchorage knocked the player down with
+            // every shell as it walked in; a player keeps its distance from one).
+            let hurt = h.game(|g| g.health_now_and_full(target).0).zip(f.health).is_some_and(|(now, then)| now < then);
+            if !f.near && p.now - since > FIGHT_CLOSER_SECS && hurt {
+                f.shooting = None;
+            } else if !f.near && p.now - since > FIGHT_CLOSER_SECS {
                 f.near = true;
                 f.shooting = None;
                 w.radius = FIGHT_NEAR;
-                info!("pilot: step {}: {name} still lives after {FIGHT_CLOSER_SECS:.0} s of shooting: the player goes closer", p.i);
+                info!("pilot: step {}: {name} still lives after {FIGHT_CLOSER_SECS:.0} s of shooting: the player goes closer (its shots did not hurt it)", p.i);
             }
         }
     }
@@ -3638,7 +3651,7 @@ fn fight(p: &mut Pilot, h: &mut Hands, name: &str, a: &Action) -> Option<Option<
         };
         arm(p, h);
         let Phase::Walk(w) = new_walk(place, Some(r), FIGHT_RANGE, p.now, h.feet()) else { unreachable!() };
-        p.phase = Phase::Fight(Fight { target: r, shooting: None, near: false, blocked: None, began: p.now, in_the_way: None }, w);
+        p.phase = Phase::Fight(Fight { target: r, shooting: None, near: false, blocked: None, began: p.now, in_the_way: None, health: None }, w);
     }
     let Phase::Fight(mut f, mut w) = std::mem::replace(&mut p.phase, Phase::Begin) else { return Some(None) };
     let target = f.target;
@@ -4118,7 +4131,7 @@ fn drive(
                 let space = cell.and_then(|c| crate::nav::space_of_cell(world, c.0)).unwrap_or(space_of(h.location));
                 arm(p, &mut h);
                 info!("pilot: step {}: {who} attacks {}: fought before the step goes on", p.i, if friend.is_some() { "the player or the actor it is with" } else { "the player" });
-                p.defend = Some((Fight { target: who, shooting: None, near: false, blocked: None, began: p.now, in_the_way: None }, walk_to(Place { space, pos }, Some(who), FIGHT_RANGE, p.now, feet)));
+                p.defend = Some((Fight { target: who, shooting: None, near: false, blocked: None, began: p.now, in_the_way: None, health: None }, walk_to(Place { space, pos }, Some(who), FIGHT_RANGE, p.now, feet)));
                 p.defend_from = p.now;
             }
         }
