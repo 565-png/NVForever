@@ -156,7 +156,7 @@ not part of NVForever's code, and keep their own licences; the owner allowed the
 2026-11-15 (the exception in [deny.toml](deny.toml)). Their texts are in
 `THIRD-PARTY-LICENSES.txt`.
 
-`engine/nvforever/src/dlss_download/nvngx_dlss.license.txt` is NVIDIA's licence text for
+`crates/nvf-dlss-files/src/nvngx_dlss.license.txt` is NVIDIA's licence text for
 its DLSS files, copied unchanged from NVIDIA's Streamline 2.14.16 release archive. It is
 NVIDIA's text, not under NVForever's licence, and is included only so that a player can read
 and accept it in the game before choosing to download NVIDIA's files from NVIDIA's own

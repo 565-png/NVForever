@@ -24,7 +24,7 @@ use super::{ASSET_SIZE, Failure};
 /// [observed: the asset's redirect, 2026-11-12, and GitHub's earlier asset host].
 pub(super) const ALLOWED_HOSTS: [&str; 2] = ["release-assets.githubusercontent.com", "objects.githubusercontent.com"];
 /// The test aid's variable.
-pub(super) const TEST_URL_VAR: &str = "NVF_DLSS_DOWNLOAD_URL";
+pub(super) use super::TEST_URL_VAR;
 const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "[::1]"];
 
 /// An absolute URL's scheme and host, both lower case (an IPv6 host with its brackets); `None`
@@ -110,7 +110,7 @@ mod http {
 
     /// The archive over HTTP. Visible to the download module only: nothing else reaches the
     /// network through it, and the download starts only with a `LicenceAccepted`.
-    pub(in crate::dlss::download) struct Http {
+    pub(in crate::download) struct Http {
         agent: ureq::Agent,
         /// [`ASSET_URL`], or the test aid's address.
         start_url: String,
@@ -121,18 +121,18 @@ mod http {
 
     impl Http {
         /// The pinned address, or the test aid's when it is set and allowed.
-        pub(in crate::dlss::download) fn new() -> Self {
-            match crate::dlss_download::test_aid_value(TEST_URL_VAR) {
+        pub(in crate::download) fn new(test_url: Option<String>) -> Self {
+            match test_url.filter(|u| !u.trim().is_empty()) {
                 Some(url) if is_loopback_http(&url) => Self::with_url(url, true),
                 Some(_) => {
-                    bevy::log::warn!("DLSS download: {TEST_URL_VAR} is not an http address on this machine (127.0.0.1, localhost, [::1]); ignored");
+                    tracing::warn!("DLSS download: {TEST_URL_VAR} is not an http address on this machine (127.0.0.1, localhost, [::1]); ignored");
                     Self::with_url(ASSET_URL.to_string(), false)
                 }
                 _ => Self::with_url(ASSET_URL.to_string(), false),
             }
         }
 
-        pub(in crate::dlss::download) fn with_url(start_url: String, test_aid: bool) -> Self {
+        pub(in crate::download) fn with_url(start_url: String, test_aid: bool) -> Self {
             let tls = ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).root_certs(ureq::tls::RootCerts::PlatformVerifier).build();
             let agent = ureq::Agent::config_builder()
                 .tls_config(tls)

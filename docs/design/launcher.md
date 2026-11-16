@@ -74,11 +74,24 @@ line-height setting for Markdown text, so the room comes from the font and its s
   them out of egui's output (eframe is built without its own link opener). Its own
   folders open through `launch::open_folder`.
 - Test aid: `NVF_LAUNCHER_SHOT=<file.png>` saves the window once the news has arrived and
-  closes; `NVF_LAUNCHER_PAGE=home|settings|mods|game` opens that page first (`settings:<tab>`: that tab; `delete-reports`: the reports question, open; `update`: the
+  closes; `NVF_LAUNCHER_PAGE=home|settings|mods|game` opens that page first (`settings:<tab>`: that tab; `delete-reports`: the reports question, open; `dlss-licence`: NVIDIA's licence before Download DLSS, open; `update`: the
   update dialog over Home, once a newer release is known); `NVF_LAUNCHER_RELEASES=<url>` reads
   the release list from that address instead of GitHub (a local server with a fixture release,
   to try the updater); `NVF_LAUNCHER_ZOOM=0.6` draws everything smaller (a whole page in one shot); `NVF_LAUNCHER_VERSION=0.6.9` makes the launcher take itself for that
   version, so a real release counts as newer (the restarted launcher inherits it).
+
+## DLSS (#2765)
+
+Settings > Graphics starts with an NVIDIA DLSS card (`src/dlss.rs`): the requirements with a
+green or red dot (Windows; an NVIDIA RTX card by the name Windows gives the attached
+displays' adapters, the game asks the driver itself at start; the four upscaling and four
+frame generation files in the `dlss` folder), and Download DLSS…, Open dlss folder, NVIDIA's
+release page, Check again. Download DLSS… opens NVIDIA's licence (`nvf_dlss_files::LICENCE`);
+**I accept** takes a mouse click only, as in the game, and starts
+`nvf_dlss_files::download::start`: the game's own download, moved into the shared crate
+`crates/nvf-dlss-files` with its pins, signature checks and folder rule, so the two cannot
+differ. Its progress shows on the card; the folder is `dlss` beside the launcher, which is
+beside `nvforever.exe` in a release. The launcher never passes the developer test address.
 
 ## Updater (#2713)
 
