@@ -1119,8 +1119,6 @@ below cover them all.
 - More: docs/spec-notes/world.md §3 "Smoothing"
 - Registered in `engine/nvforever/src/settings.rs` (state in `engine/nvf-play/src/smooth_terrain.rs`)
 
-## Graphics › Distance
-
 ### `object-distance`: Object distance
 
 - On the page: How far from you objects of the loaded cells (buildings, rocks, furniture,
