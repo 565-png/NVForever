@@ -20,8 +20,8 @@
 //!
 //! [design] Census (round 6): every spawned STAT or SCOL shape carries a [`BlendCensus`]
 //! with the reasons its reference and shape cannot blend, recorded before any filtering
-//! (world.rs::spawn_model); the conversion adds the material and ownership reasons each
-//! frame and reports counts on the ready line and bounded `census-shape` lines. The census
+//! (world.rs::spawn_model); the conversion adds the material and ownership reasons in each
+//! full pass ([`pass_needed`]) and reports counts on the ready line and bounded `census-shape` lines. The census
 //! is separate from [`BlendShape`]: only shapes without reference or shape reasons get a
 //! `BlendShape`, so tracking a shape never makes it convertible.
 
@@ -423,7 +423,7 @@ pub struct BlendCensus {
     pub reasons: u32,
 }
 
-/// What an enabled clone was made from, compared each frame so that a producer editing
+/// What an enabled clone was made from, compared in each full pass so that a producer editing
 /// the source under the same handle (blended cut-outs flipping Blend and Mask, NIF block
 /// edits) rebuilds the clone without inserting a new ordinary material component.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -509,6 +509,91 @@ struct Variants {
     frames_since_report: u32,
     logged: HashSet<(u32, usize, u32)>,
     shape_lines: usize,
+    /// What the last full pass saw of its frame-level inputs; `None` before the first
+    /// ([`pass_needed`]).
+    last: Option<LastPass>,
+    /// Each source material the last full pass read, with what it read of it
+    /// ([`fingerprint`]), compared when the material store changed.
+    watched: HashMap<AssetId<NifMaterial>, Fingerprint>,
+    /// One publication of each key in [`Self::publications`], and the coverage last put on
+    /// that key's clones (`None`: not yet, or a clone was added since) ([`follow_coverage`]).
+    surfaces: HashMap<PublicationKey, (crate::terrain_surface::PublishedSurface, Option<u32>)>,
+    /// Full passes the gate called for since the blend turned on (tests and the verify
+    /// line; the verify aid's passes in skipped frames are `verify.skipped`).
+    passes: u64,
+    verify: Verify,
+}
+
+/// A publication's identity: its revision and colour atlas (the revision alone already
+/// differs between publications of one cache; the atlas makes it hold across caches).
+type PublicationKey = (u64, AssetId<Image>);
+fn publication_key(p: &crate::terrain_surface::PublishedSurface) -> PublicationKey {
+    (p.revision, p.colour.id())
+}
+
+/// What the full pass reads of a source material: whether it is loaded, its reasons
+/// ([`material_reasons`]) and its [`SourceStamp`] (which also holds every field the
+/// admitted counts and `see_through` read; `depth_write` is a reason).
+type Fingerprint = Option<(u32, SourceStamp)>;
+fn fingerprint(source: Option<&NifMaterial>) -> Fingerprint {
+    source.map(|m| (material_reasons(m), SourceStamp::of(m)))
+}
+
+/// [design] The frame-level inputs of the last full pass, and what it ended with.
+#[derive(Clone)]
+struct LastPass {
+    config: BlendConfig,
+    published: Option<PublicationKey>,
+    pending: bool,
+    census: Census,
+}
+
+/// [design] The test aid `NVF_PLAY_TEST_MESH_BLEND_VERIFY=1`: in every frame the gate
+/// would skip, the full pass runs anyway and any change it makes is logged
+/// (`verify diverged`, bounded), with a count line (`verify skipped-frames=`). Read once;
+/// any other value is refused in the log.
+fn verify_aid() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| match std::env::var("NVF_PLAY_TEST_MESH_BLEND_VERIFY") {
+        Ok(v) if v == "1" => true,
+        Ok(v) => { warn!("mesh terrain blend: rejected NVF_PLAY_TEST_MESH_BLEND_VERIFY={v:?}: expected 1"); false }
+        Err(_) => false,
+    })
+}
+
+/// At most this many `verify diverged` lines per run of the blend.
+const VERIFY_LINES: usize = 16;
+/// A `verify skipped-frames=` line at least once per this many skipped frames.
+const VERIFY_PERIOD: u64 = 600;
+
+/// Why a full pass ran ([`pass_needed`]), the names of the verify line's `pass-<name>=` counts.
+const PASS_REASONS: [&str; 6] = ["first", "config", "publication", "pending", "shapes", "materials"];
+
+/// The verify aid's state; `reasons` counts every pass by its first reason, aid or not.
+struct Verify { on: bool, skipped: u64, diverged: u64, lines: usize, since_line: u64, reasons: [u64; PASS_REASONS.len()] }
+impl Default for Verify {
+    fn default() -> Self { Self { on: verify_aid(), skipped: 0, diverged: 0, lines: 0, since_line: 0, reasons: [0; PASS_REASONS.len()] } }
+}
+impl Verify {
+    /// `verify skipped-frames=N diverged=M passes=P pass-first=.. pass-config=..
+    /// pass-publication=.. pass-pending=.. pass-shapes=.. pass-materials=..`.
+    fn line(&mut self, passes: u64) -> String {
+        use std::fmt::Write;
+        self.since_line = 0;
+        let mut out = format!("mesh terrain blend: verify skipped-frames={} diverged={} passes={passes}", self.skipped, self.diverged);
+        for (name, n) in PASS_REASONS.iter().zip(self.reasons) { let _ = write!(out, " pass-{name}={n}"); }
+        out
+    }
+    /// One divergence: counted, and logged while under [`VERIFY_LINES`].
+    fn diverged(&mut self, what: &str) {
+        self.diverged += 1;
+        self.lines += 1;
+        if self.lines < VERIFY_LINES {
+            warn!("mesh terrain blend: verify diverged skipped-frame={} {what}", self.skipped);
+        } else if self.lines == VERIFY_LINES {
+            warn!("mesh terrain blend: verify diverged lines stopped at {VERIFY_LINES}; the count goes on");
+        }
+    }
 }
 
 /// [design] Asset IDs alone cross this acknowledgement boundary; main-world handles
@@ -683,6 +768,10 @@ fn stop(mut commands: Commands, mut state: ResMut<BlendState>, mut cache: ResMut
     }
     let released = cells.iter().count();
     cache.release(&mut commands);
+    if variants.verify.on {
+        let passes = variants.passes;
+        info!("{}", variants.verify.line(passes));
+    }
     *variants = Variants { readiness: variants.readiness.take(), ..default() };
     *state = BlendState { draining: Some(0), ..default() };
     info!("mesh terrain blend: stop restored-shapes={restored} tracked-shapes={} released-cells={released} kept-producer-materials={kept}", shapes.iter().count());
@@ -749,17 +838,44 @@ type ShadowMarks = (Has<NotShadowCaster>, Has<SeeThroughNoShadow>);
 /// Every shape the blend tracks: convertible ones ([`BlendShape`]) and census-only ones.
 type Tracked<'w, 's> = Query<'w, 's, (Entity, Option<&'static mut BlendShape>, Option<&'static BlendCensus>, Option<Ref<'static, MeshMaterial3d<NifMaterial>>>, Temporary, ShadowMarks), Or<(With<BlendShape>, With<BlendCensus>)>>;
 
-fn apply_variants(
-    mut commands: Commands,
-    state: Res<BlendState>,
-    cache: Res<SurfaceCache>,
-    mut variants: ResMut<Variants>,
-    materials: Res<Assets<NifMaterial>>,
-    mut blends: ResMut<Assets<NifBlendMaterial>>,
-    mut shapes: Tracked,
-) {
+/// [design] Tracked shapes whose conversion inputs changed since the conversion last ran:
+/// a `BlendShape` added or replaced (only the conversion edits one in place, and a system
+/// never sees its own edits as changes), a `BlendCensus` added or replaced, an ordinary
+/// material put on or edited, a temporary owner's marker added. Removals: [`Removals`].
+/// The shadow marks are left out on purpose: the pass reads them only where it swaps a
+/// shape's material, which in a frame the gate skips no shape needs (see [`pass_needed`]).
+type ShapeChanges<'w, 's> = Query<'w, 's, (), (Or<(With<BlendShape>, With<BlendCensus>)>, Or<(
+    Changed<BlendShape>, Changed<BlendCensus>, Changed<MeshMaterial3d<NifMaterial>>,
+    Added<nvf_play::fade::Fading>, Added<crate::effect_shaders::Faded>, Added<MaterialOverride>,
+)>)>;
+
+/// [design] Removals the gate reads: the tracking components (spawned shapes streaming out,
+/// a despawn sends these too) count always, the others only on a shape still tracked.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Removals<'w, 's> {
+    shape: RemovedComponents<'w, 's, BlendShape>,
+    census: RemovedComponents<'w, 's, BlendCensus>,
+    ordinary: RemovedComponents<'w, 's, MeshMaterial3d<NifMaterial>>,
+    fading: RemovedComponents<'w, 's, nvf_play::fade::Fading>,
+    faded: RemovedComponents<'w, 's, crate::effect_shaders::Faded>,
+    overridden: RemovedComponents<'w, 's, MaterialOverride>,
+}
+
+/// Everything the conversion reads and writes ([`apply_configured_variants`]).
+#[derive(bevy::ecs::system::SystemParam)]
+struct Conversion<'w, 's> {
+    commands: Commands<'w, 's>,
+    cache: Res<'w, SurfaceCache>,
+    variants: ResMut<'w, Variants>,
+    materials: Res<'w, Assets<NifMaterial>>,
+    blends: ResMut<'w, Assets<NifBlendMaterial>>,
+    shapes: ParamSet<'w, 's, (Tracked<'w, 's>, ShapeChanges<'w, 's>)>,
+    removals: Removals<'w, 's>,
+}
+
+fn apply_variants(state: Res<BlendState>, mut conversion: Conversion) {
     let Some(c) = state.active else { return };
-    apply_configured_variants(&mut commands, &cache, &mut variants, &materials, &mut blends, &mut shapes, c);
+    apply_configured_variants(&mut conversion, c);
 }
 
 /// The full reason mask of a tracked shape this frame: its recorded reference and shape
@@ -770,8 +886,170 @@ fn shape_mask(recorded: u32, temporary: bool, source: Option<&NifMaterial>) -> u
     recorded | owned | source.map_or(reason::MISSING_SOURCE, material_reasons)
 }
 
+/// [design] Whether any tracked shape's inputs changed since the conversion last ran
+/// ([`ShapeChanges`], [`Removals`]). Every removal reader is drained each run.
+fn shapes_changed(shapes: &mut ParamSet<(Tracked, ShapeChanges)>, removals: &mut Removals) -> bool {
+    let mut changed = !removals.shape.is_empty() || !removals.census.is_empty();
+    removals.shape.clear();
+    removals.census.clear();
+    {
+        let tracked = shapes.p0();
+        changed |= removals.ordinary.read().fold(false, |hit, e| hit | tracked.contains(e));
+        changed |= removals.fading.read().fold(false, |hit, e| hit | tracked.contains(e));
+        changed |= removals.faded.read().fold(false, |hit, e| hit | tracked.contains(e));
+        changed |= removals.overridden.read().fold(false, |hit, e| hit | tracked.contains(e));
+    }
+    changed || !shapes.p1().is_empty()
+}
+
+/// [design] Whether the full pass must run this frame. It reads, besides its own state:
+/// the configuration; the publication (`None` or its key); the render world's readiness
+/// of the clones (only while the last pass ended pending: once it settled, every clone on
+/// a shape was usable and a clone becoming unusable later changes nothing the pass does,
+/// `settled` already holding this revision); each tracked shape's components (changes and
+/// removals, [`shapes_changed`]); and each source material ([`Variants::watched`], compared
+/// only when the material store was changed since the last run). In a frame it skips,
+/// every convertible shape that can blend already draws its clone and has no ordinary
+/// material, so the material swap (and the shadow marks it reads) is not reached.
+/// Returns the first reason ([`PASS_REASONS`]), `None` to skip.
+fn pass_needed(variants: &Variants, c: BlendConfig, published: Option<PublicationKey>, shapes: bool, materials: &Res<Assets<NifMaterial>>) -> Option<usize> {
+    let Some(last) = &variants.last else { return Some(0) };
+    [
+        last.config != c,
+        last.published != published,
+        last.pending,
+        shapes,
+    ].iter().position(|&b| b).map(|i| i + 1).or_else(|| {
+        let edited = materials.is_changed() && variants.watched.iter().any(|(id, seen)| fingerprint(materials.get(*id)) != *seen);
+        edited.then_some(5)
+    })
+}
+
+/// [design] Restrict old drawable clones too, while their replacement prepares. Only
+/// uniform POD changes; the atlas handles remain fixed (no colour upload). Round 10a review:
+/// and the palette follows the coverage, keeping only what covered quadrants read
+/// (`PublishedSurface::live_palette`), so the clone's rebuild never waits for a masked
+/// cell's image that is gone; the bound numbers keep their meaning. Each frame, the
+/// coverage of one publication per key is compared with the coverage last put on that
+/// key's clones; only a key whose coverage changed, or that gained a clone, walks its
+/// clones. Returns the clones changed.
+fn follow_coverage(cache: &SurfaceCache, variants: &mut Variants, blends: &mut Assets<NifBlendMaterial>) -> usize {
+    let mut changed = 0;
+    for (key, (publication, applied)) in &mut variants.surfaces {
+        let coverage = cache.coverage_for(publication);
+        if *applied == Some(coverage) { continue; }
+        *applied = Some(coverage);
+        for (id, publication) in variants.publications.iter().filter(|(_, p)| publication_key(p) == *key) {
+            changed += restrict_clone(cache, blends, *id, publication);
+        }
+    }
+    changed
+}
+
+/// One clone brought to its publication's coverage; 1 when it changed.
+fn restrict_clone(cache: &SurfaceCache, blends: &mut Assets<NifBlendMaterial>, id: AssetId<NifBlendMaterial>, publication: &crate::terrain_surface::PublishedSurface) -> usize {
+    let coverage = cache.coverage_for(publication);
+    if !blends.get(id).is_some_and(|m| m.extension.mesh_terrain_origin.z != coverage as f32) { return 0; }
+    let extension = &mut blends.get_mut(id).unwrap().extension;
+    extension.mesh_terrain_origin.z = coverage as f32;
+    extension.palette = publication.live_palette(coverage);
+    1
+}
+
+/// What one full pass did, for the gate's next frame and the verify aid.
+#[derive(Default)]
+struct Outcome { pending: bool, census: Census, commands: usize, created: usize, evicted: usize, dropped: usize, edits: usize }
+
 // [design] Explicit config boundary lets ECS tests publish without process-wide env state.
-fn apply_configured_variants(
+// The conversion is change-driven (graphics-enhanced.md §3.14 "Per frame"): the full pass
+// ([`full_pass`]) runs only in frames [`pass_needed`] says one of its inputs changed; a
+// quiet frame follows the coverage, stores `settled` again and refreshes a deferred ready
+// line from the last pass's census.
+fn apply_configured_variants(p: &mut Conversion, c: BlendConfig) {
+    let Conversion { commands, cache, variants, materials, blends, shapes, removals } = p;
+    let variants: &mut Variants = variants;
+    let published = cache.published.as_ref().map(publication_key);
+    let revision = published.map_or(0, |k| k.0);
+    follow_coverage(cache, variants, blends);
+    if variants.verify.on {
+        // The verify aid: the per-clone check of every recorded publication, as before.
+        let restricted: usize = variants.publications.iter().map(|(id, publication)| restrict_clone(cache, blends, *id, publication)).sum();
+        if restricted > 0 { variants.verify.diverged(&format!("coverage-clones={restricted}")); }
+    }
+    let changed = shapes_changed(shapes, removals);
+    let needed = pass_needed(variants, c, published, changed, materials);
+    if let Some(reason) = needed { variants.verify.reasons[reason] += 1; }
+    if needed.is_none() && !variants.verify.on {
+        quiet(variants, cache, revision, c);
+        return;
+    }
+    let skipped = needed.is_none();
+    let settled_before = variants.readiness.as_ref().map(|r| r.settled.load(Ordering::Acquire));
+    let lines_before = variants.shape_lines;
+    let outcome = full_pass(commands, cache, variants, materials, blends, &mut shapes.p0(), c, revision);
+    variants.passes += u64::from(!skipped);
+    if let Some(readiness) = variants.readiness.as_ref().filter(|_| !outcome.pending) { readiness.settled.store(revision, Ordering::Release); }
+    if skipped {
+        variants.verify.skipped += 1;
+        variants.verify.since_line += 1;
+        let last = variants.last.as_ref().expect("a skipped frame follows a pass");
+        let settled_after = variants.readiness.as_ref().map(|r| r.settled.load(Ordering::Acquire));
+        let mut what = Vec::new();
+        for (name, n) in [("commands", outcome.commands), ("created", outcome.created), ("evicted", outcome.evicted), ("dropped-publications", outcome.dropped), ("shape-edits", outcome.edits), ("census-shape-lines", variants.shape_lines - lines_before)] {
+            if n > 0 { what.push(format!("{name}={n}")); }
+        }
+        if outcome.census != last.census { what.push("census=changed".into()); }
+        if settled_after != settled_before { what.push(format!("settled={settled_before:?}->{settled_after:?}")); }
+        // [design] Pending turning true alone is not a divergence: it stores nothing
+        // (`settled` already holds this revision) and changes no shape; it is named with
+        // the other changes when there are some.
+        if !what.is_empty() {
+            if outcome.pending != last.pending { what.push(format!("pending={}->{}", last.pending, outcome.pending)); }
+            variants.verify.diverged(&what.join(" "));
+        }
+        if variants.verify.since_line >= VERIFY_PERIOD {
+            let passes = variants.passes;
+            info!("{}", variants.verify.line(passes));
+        }
+    }
+    variants.last = Some(LastPass { config: c, published, pending: outcome.pending, census: outcome.census.clone() });
+    report(variants, cache, revision, &c, &outcome.census);
+}
+
+/// [design] A frame where nothing the full pass reads changed: the last pass ended settled
+/// (not pending), so `settled` is stored again as it would have been, and the ready line
+/// is refreshed from the last pass's census once [`REFRESH_FRAMES`] have passed.
+fn quiet(variants: &mut Variants, cache: &SurfaceCache, revision: u64, c: BlendConfig) {
+    let census = variants.last.as_ref().expect("a quiet frame follows a pass").census.clone();
+    if let Some(readiness) = variants.readiness.as_ref() { readiness.settled.store(revision, Ordering::Release); }
+    report(variants, cache, revision, &c, &census);
+}
+
+/// The ready line: at once for a new publication, otherwise for a changed census at most
+/// once per [`REFRESH_FRAMES`] frames.
+fn report(variants: &mut Variants, cache: &SurfaceCache, revision: u64, c: &BlendConfig, census: &Census) {
+    variants.frames_since_report = variants.frames_since_report.saturating_add(1);
+    if let Some(surface) = &cache.published {
+        let published = variants.reported != Some(revision);
+        let refreshed = variants.reported_census.as_ref() != Some(census) && variants.frames_since_report >= REFRESH_FRAMES;
+        if published || refreshed {
+            info!("{}", ready_line(surface, revision, c, census));
+            variants.reported = Some(revision);
+            variants.reported_census = Some(census.clone());
+            variants.frames_since_report = 0;
+            if variants.verify.on {
+                let passes = variants.passes;
+                info!("{}", variants.verify.line(passes));
+            }
+        }
+    }
+}
+
+/// [design] The whole conversion of every tracked shape, from scratch: the decisions of
+/// rounds 1-10 (unchanged by the gate), and the record of what it read
+/// ([`Variants::watched`], [`Variants::surfaces`]).
+#[allow(clippy::too_many_arguments)]
+fn full_pass(
     commands: &mut Commands,
     cache: &SurfaceCache,
     variants: &mut Variants,
@@ -779,26 +1057,15 @@ fn apply_configured_variants(
     blends: &mut Assets<NifBlendMaterial>,
     shapes: &mut Tracked,
     c: BlendConfig,
-) {
-    let revision = cache.published.as_ref().map_or(0, |p| p.revision);
+    revision: u64,
+) -> Outcome {
+    let mut o = Outcome::default();
     if variants.generation != revision {
         variants.generation = revision;
+        o.evicted += variants.materials.len();
         variants.materials.clear();
     }
-    // [design] Restrict old drawable clones too, while their replacement prepares.
-    // Only uniform POD changes; the atlas handles remain fixed (no colour upload).
-    // [design] Round 10a review: and the palette follows the coverage, keeping only what
-    // covered quadrants read (`PublishedSurface::live_palette`), so the clone's rebuild
-    // never waits for a masked cell's image that is gone; the bound numbers keep their
-    // meaning.
-    for (id, publication) in &variants.publications {
-        let coverage = cache.coverage_for(publication);
-        if blends.get(*id).is_some_and(|m| m.extension.mesh_terrain_origin.z != coverage as f32) {
-            let extension = &mut blends.get_mut(*id).unwrap().extension;
-            extension.mesh_terrain_origin.z = coverage as f32;
-            extension.palette = publication.live_palette(coverage);
-        }
-    }
+    variants.watched.clear();
     // A producer can edit an owned source in place and republish the same handle
     // (NIF block material edits). Evict once per source before creating shared clones.
     let mut ordinary_live = HashSet::new();
@@ -807,45 +1074,49 @@ fn apply_configured_variants(
         if let Some(drawn) = drawn {
             ordinary_live.insert(entity);
             if variants.ordinary_seen.insert(entity, drawn.last_changed().get()) != Some(drawn.last_changed().get()) {
-                variants.materials.remove(&drawn.0.id());
+                o.evicted += usize::from(variants.materials.remove(&drawn.0.id()).is_some());
             }
         }
     }
     variants.ordinary_seen.retain(|e, _| ordinary_live.contains(e));
-    let mut pending = false;
-    let mut census = Census::default();
     for (entity, shape, tracked, drawn, (fading, faded, overridden), (no_shadow, see_through_mark)) in shapes.iter_mut() {
         let temporary = fading || faded || overridden;
         let recorded = tracked.map_or(0, |t| t.reasons);
         let Some(mut shape) = shape else {
             // Census only: never converted.
-            let mask = shape_mask(recorded, temporary, drawn.as_ref().and_then(|d| materials.get(&d.0)));
+            let source = drawn.as_ref().and_then(|d| materials.get(&d.0));
+            if let Some(d) = &drawn { variants.watched.entry(d.0.id()).or_insert_with(|| fingerprint(source)); }
+            let mask = shape_mask(recorded, temporary, source);
             if let Some(t) = tracked {
-                census.count(t.base_type, mask);
+                o.census.count(t.base_type, mask);
                 log_shape(variants, t, mask);
             }
             continue;
         };
         // [design] Respect a material override, retaining its actual source handle too.
-        if let Some(drawn) = &drawn {
+        if let Some(drawn) = drawn.as_ref().filter(|d| d.0 != shape.original) {
             shape.original = drawn.0.clone();
+            o.edits += 1;
         }
         let source = materials.get(&shape.original);
+        variants.watched.entry(shape.original.id()).or_insert_with(|| fingerprint(source));
         let mask = shape_mask(recorded, temporary, source);
         if let Some(t) = tracked {
-            census.count(t.base_type, mask);
+            o.census.count(t.base_type, mask);
             log_shape(variants, t, mask);
         }
         let allowed = mask == 0;
-        census.eligible += usize::from(allowed);
+        o.census.eligible += usize::from(allowed);
         let (Some(surface), Some(source), true) = (cache.published.as_ref(), source, allowed) else {
             if shape.enabled.is_some() {
                 commands.entity(entity).remove::<MeshMaterial3d<NifBlendMaterial>>().insert(MeshMaterial3d(shape.original.clone()));
+                o.commands += 1;
+                shape.enabled = None;
+                o.edits += 1;
             }
-            shape.enabled = None;
             continue;
         };
-        census.admit(source);
+        o.census.admit(source);
         let id = shape.original.id();
         let stamp = SourceStamp::of(source);
         let handle = match variants.materials.get(&id) {
@@ -853,22 +1124,29 @@ fn apply_configured_variants(
             _ => {
                 let handle = blends.add(enabled_material(source, c, surface));
                 variants.publications.insert(handle.id(), surface.clone());
+                // A new clone of this publication: its coverage is checked next frame.
+                variants.surfaces.entry(publication_key(surface)).or_insert_with(|| (surface.clone(), None)).1 = None;
                 variants.materials.insert(id, (handle.clone(), stamp));
+                o.created += 1;
                 handle
             }
         };
         // Keep the old enabled handle until the render world acknowledges a prepared,
         // bound replacement. Source/temporary owners still take precedence above.
         if variants.readiness.as_ref().is_some_and(|r| !r.usable(handle.id())) {
-            pending = true;
+            o.pending = true;
             // A non-temporary producer may have republished an ordinary source. Its
             // handle is recorded above; keep only the old drawable blend while the
             // replacement prepares, so two material types never compete for the entity.
-            if shape.enabled.is_some() && drawn.is_some() { commands.entity(entity).remove::<MeshMaterial3d<NifMaterial>>(); }
+            if shape.enabled.is_some() && drawn.is_some() {
+                commands.entity(entity).remove::<MeshMaterial3d<NifMaterial>>();
+                o.commands += 1;
+            }
             continue;
         }
         if shape.enabled.as_ref() != Some(&handle) || drawn.is_some() {
             commands.entity(entity).remove::<MeshMaterial3d<NifMaterial>>().insert(MeshMaterial3d(handle.clone()));
+            o.commands += 1;
             // [design] The shared bookkeeping runs on ordinary material changes only; a
             // source edited under the same handle is checked here, by the same rule.
             match (nvf_assets::nif_material::see_through(source), no_shadow, see_through_mark) {
@@ -877,24 +1155,22 @@ fn apply_configured_variants(
                 _ => {}
             }
         }
-        shape.enabled = Some(handle);
-    }
-    let sources: HashSet<_> = shapes.iter().filter_map(|(_, s, _, _, _, _)| s.map(|s| s.original.id())).collect();
-    variants.materials.retain(|id, _| sources.contains(id));
-    let live: HashSet<_> = shapes.iter().filter_map(|(_, s, _, _, _, _)| s.and_then(|s| s.enabled.as_ref().map(Handle::id))).chain(variants.materials.values().map(|(h, _)| h.id())).collect();
-    variants.publications.retain(|id, _| live.contains(id));
-    if let Some(readiness) = variants.readiness.as_ref().filter(|_| !pending) { readiness.settled.store(revision, Ordering::Release); }
-    variants.frames_since_report = variants.frames_since_report.saturating_add(1);
-    if let Some(surface) = &cache.published {
-        let published = variants.reported != Some(revision);
-        let refreshed = variants.reported_census.as_ref() != Some(&census) && variants.frames_since_report >= REFRESH_FRAMES;
-        if published || refreshed {
-            info!("{}", ready_line(surface, revision, &c, &census));
-            variants.reported = Some(revision);
-            variants.reported_census = Some(census);
-            variants.frames_since_report = 0;
+        if shape.enabled.as_ref() != Some(&handle) {
+            shape.enabled = Some(handle);
+            o.edits += 1;
         }
     }
+    let sources: HashSet<_> = shapes.iter().filter_map(|(_, s, _, _, _, _)| s.map(|s| s.original.id())).collect();
+    let before = variants.materials.len();
+    variants.materials.retain(|id, _| sources.contains(id));
+    o.evicted += before - variants.materials.len();
+    let live: HashSet<_> = shapes.iter().filter_map(|(_, s, _, _, _, _)| s.and_then(|s| s.enabled.as_ref().map(Handle::id))).chain(variants.materials.values().map(|(h, _)| h.id())).collect();
+    let before = variants.publications.len();
+    variants.publications.retain(|id, _| live.contains(id));
+    o.dropped += before - variants.publications.len();
+    let kept: HashSet<PublicationKey> = variants.publications.values().map(publication_key).collect();
+    variants.surfaces.retain(|key, _| kept.contains(key));
+    o
 }
 
 /// One bounded `census-shape` line per distinct base form, shape index and reason mask;
@@ -934,12 +1210,8 @@ mod tests {
     use super::*;
     use nvf_assets::nif_material::NifSurface;
 
-    fn configured(
-        mut commands: Commands, cache: Res<SurfaceCache>, mut variants: ResMut<Variants>,
-        materials: Res<Assets<NifMaterial>>, mut blends: ResMut<Assets<NifBlendMaterial>>,
-        mut shapes: Tracked,
-    ) {
-        apply_configured_variants(&mut commands, &cache, &mut variants, &materials, &mut blends, &mut shapes, parse("24:status").unwrap());
+    fn configured(mut conversion: Conversion) {
+        apply_configured_variants(&mut conversion, parse("24:status").unwrap());
     }
     fn publish(app: &mut App) {
         let mut images = app.world_mut().resource_mut::<Assets<Image>>();
@@ -1949,5 +2221,203 @@ mod tests {
         assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).map(|m| m.0.clone()), Some(cloak), "the override's copy stays");
         assert!(app.world().get::<MaterialOverride>(e).is_some());
         assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none() && app.world().get::<BlendShape>(e).is_none());
+    }
+
+    fn passes(app: &App) -> u64 {
+        app.world().resource::<Variants>().passes
+    }
+    /// Frames until one runs no full pass: the pass's own commands may call for one
+    /// settling pass, never a pass every frame.
+    fn go_quiet(app: &mut App) {
+        for _ in 0..4 {
+            let before = passes(app);
+            app.update();
+            if passes(app) == before { return; }
+        }
+        panic!("the conversion keeps running its full pass");
+    }
+    fn assert_quiet(app: &mut App, frames: usize, what: &str) {
+        let before = passes(app);
+        for _ in 0..frames { app.update(); }
+        assert_eq!(passes(app), before, "{what}: no full pass");
+    }
+    fn runs(app: &mut App, what: &str) {
+        let before = passes(app);
+        app.update();
+        assert!(passes(app) > before, "{what} runs the full pass");
+    }
+    fn blends_on(app: &App, e: Entity) -> bool {
+        app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_some() && app.world().get::<MeshMaterial3d<NifMaterial>>(e).is_none()
+    }
+
+    /// The change-driven conversion (graphics-enhanced.md §3.14 "Per frame"): in a steady
+    /// state no full pass runs; each input change runs it in the frame it happens, and the
+    /// pass's own commands settle within a frame.
+    #[test]
+    fn the_full_pass_runs_only_in_frames_where_an_input_changed() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let (a, b, late) = {
+            let mut m = app.world_mut().resource_mut::<Assets<NifMaterial>>();
+            (m.add(NifMaterial::default()), m.add(NifMaterial { base: StandardMaterial { perceptual_roughness: 0.4, ..default() }, extension: default() }), m.reserve_handle())
+        };
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(a.clone()), MeshMaterial3d(a.clone()))).id();
+        app.world_mut().spawn((tracked(1, reason::RIG), MeshMaterial3d(a.clone())));
+        app.update();
+        assert!(blends_on(&app, e));
+        go_quiet(&mut app);
+        assert_quiet(&mut app, 5, "a steady state");
+        // A new publication revision.
+        app.world_mut().resource_mut::<SurfaceCache>().published.as_mut().unwrap().revision = 8;
+        runs(&mut app, "a new publication revision");
+        assert_eq!(app.world().resource::<Variants>().generation, 8);
+        go_quiet(&mut app);
+        assert_quiet(&mut app, 3, "after the publication");
+        // A shape spawned, then despawned: its source and clone are collected.
+        let f = app.world_mut().spawn((tracked(2, 0), BlendShape::new(b.clone()), MeshMaterial3d(b.clone()))).id();
+        runs(&mut app, "a shape spawned");
+        assert!(blends_on(&app, f));
+        go_quiet(&mut app);
+        let clone_b = app.world().resource::<Variants>().materials[&b.id()].0.id();
+        assert!(app.world().resource::<Variants>().publications.contains_key(&clone_b));
+        app.world_mut().despawn(f);
+        runs(&mut app, "a shape despawned");
+        let variants = app.world().resource::<Variants>();
+        assert!(!variants.materials.contains_key(&b.id()), "the despawned shape's source leaves the clones");
+        assert!(!variants.publications.contains_key(&clone_b), "and its clone the publications");
+        assert!(!variants.watched.contains_key(&b.id()), "and the watched sources");
+        go_quiet(&mut app);
+        // An ordinary material put on a converted shape.
+        app.world_mut().entity_mut(e).insert(MeshMaterial3d(a.clone()));
+        runs(&mut app, "an ordinary material put on a converted shape");
+        assert!(blends_on(&app, e));
+        go_quiet(&mut app);
+        // A source edited in place under the same handle, no component touched.
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&a).unwrap().base.unlit = true;
+        runs(&mut app, "a source edited in place");
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).unwrap().0, a, "an unlit source cannot blend");
+        go_quiet(&mut app);
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&a).unwrap().base.unlit = false;
+        runs(&mut app, "the edit undone");
+        assert!(blends_on(&app, e));
+        go_quiet(&mut app);
+        // A store change no tracked shape reads does not run it.
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial::default());
+        assert_quiet(&mut app, 2, "a material no tracked shape draws");
+        // A source material that loads later.
+        let g = app.world_mut().spawn((tracked(3, 0), BlendShape::new(late.clone()), MeshMaterial3d(late.clone()))).id();
+        app.update();
+        go_quiet(&mut app);
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(g).is_none(), "not loaded yet");
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().insert(late.id(), NifMaterial::default()).unwrap();
+        runs(&mut app, "a source that loads later");
+        assert!(blends_on(&app, g));
+        go_quiet(&mut app);
+        // A temporary owner's marker added, then removed.
+        app.world_mut().entity_mut(e).insert(MaterialOverride { source: a.clone(), copy: a.clone() });
+        runs(&mut app, "a temporary marker added");
+        assert!(app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).is_none(), "a temporary owner keeps it out");
+        go_quiet(&mut app);
+        app.world_mut().entity_mut(e).remove::<MaterialOverride>();
+        runs(&mut app, "a temporary marker removed");
+        assert!(blends_on(&app, e));
+        go_quiet(&mut app);
+        assert_quiet(&mut app, 5, "the steady state again");
+    }
+
+    #[test]
+    fn a_pending_replacement_keeps_the_pass_running_until_it_is_usable() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial::default());
+        let entity = app.world_mut().spawn((BlendShape::new(source.clone()), MeshMaterial3d(source))).id();
+        app.update();
+        let old = app.world().get::<BlendShape>(entity).unwrap().enabled.clone().unwrap();
+        let ready = BlendReadiness::default();
+        ready.ready.lock().unwrap().insert(old.id());
+        app.world_mut().resource_mut::<Variants>().readiness = Some(ready.clone());
+        go_quiet(&mut app);
+        assert!(ready.settled(7), "quiet frames store settled as before");
+        app.world_mut().resource_mut::<SurfaceCache>().published.as_mut().unwrap().revision = 8;
+        for _ in 0..4 {
+            runs(&mut app, "a pending replacement");
+            assert_eq!(app.world().get::<BlendShape>(entity).unwrap().enabled.as_ref(), Some(&old));
+            assert!(!ready.settled(8));
+        }
+        let next = app.world().resource::<Variants>().materials.values().next().unwrap().0.clone();
+        ready.ready.lock().unwrap().insert(next.id());
+        runs(&mut app, "the replacement usable");
+        assert_eq!(app.world().get::<BlendShape>(entity).unwrap().enabled.as_ref(), Some(&next));
+        assert!(ready.settled(8));
+        go_quiet(&mut app);
+        assert_quiet(&mut app, 3, "settled");
+        assert!(ready.settled(8));
+    }
+
+    #[test]
+    fn a_deferred_census_report_comes_from_quiet_frames() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial::default());
+        app.world_mut().spawn((tracked(0, 0), BlendShape::new(source.clone()), MeshMaterial3d(source.clone())));
+        app.update();
+        assert_eq!(reported(&app).stat_shapes, 1);
+        go_quiet(&mut app);
+        app.world_mut().spawn((tracked(1, reason::RIG), MeshMaterial3d(source)));
+        runs(&mut app, "a census-only shape spawned");
+        assert_eq!(reported(&app).stat_shapes, 1, "rate-limited");
+        go_quiet(&mut app);
+        let before = passes(&app);
+        settle(&mut app);
+        assert_eq!(passes(&app), before, "no full pass while waiting");
+        let c = reported(&app);
+        assert_eq!((c.stat_shapes, reason_count(&c, reason::RIG)), (2, 1), "the deferred report came");
+    }
+
+    /// The coverage of a retained publication's clones follows the cache in the frame it
+    /// changes ([`follow_coverage`]); a front coverage change is a new revision, so the
+    /// pass runs too.
+    #[test]
+    fn a_coverage_change_restricts_retained_clones_and_runs_the_pass() {
+        let (mut app, _files, [_, a_normal, _, _]) = crate::terrain_surface::tests::detail_fixture();
+        app.init_resource::<Assets<NifBlendMaterial>>().init_resource::<Variants>().add_systems(PostUpdate, conversion_order(configured));
+        let published = app.world().resource::<SurfaceCache>().published.clone().unwrap();
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial::default());
+        let entity = app.world_mut().spawn((BlendShape::new(source.clone()), MeshMaterial3d(source))).id();
+        app.update();
+        let clone = app.world().get::<BlendShape>(entity).unwrap().enabled.clone().unwrap();
+        go_quiet(&mut app);
+        assert_quiet(&mut app, 3, "a steady state");
+        app.world_mut().resource_mut::<Assets<Image>>().remove(&a_normal);
+        app.world_mut().resource_mut::<Messages<AssetEvent<Image>>>().write(AssetEvent::Removed { id: a_normal.id() });
+        crate::terrain_surface::tests::tick(&mut app);
+        let front = app.world().resource::<SurfaceCache>().published.clone().unwrap();
+        assert_ne!(front.coverage, published.coverage);
+        runs(&mut app, "a coverage change");
+        let material = app.world().resource::<Assets<NifBlendMaterial>>().get(&clone).unwrap();
+        assert_eq!(material.extension.mesh_terrain_origin.z as u32, front.coverage, "the retained clone follows the coverage");
+        assert_eq!(material.extension.palette, front.palette);
+        go_quiet(&mut app);
+    }
+
+    /// The verify aid runs the full pass in frames the gate skips and reports any change;
+    /// an edit the gate cannot see (the store's change mark bypassed) is found.
+    #[test]
+    fn the_verify_aid_runs_skipped_frames_and_reports_a_missed_change() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial::default());
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(source.clone()), MeshMaterial3d(source.clone()))).id();
+        app.update();
+        go_quiet(&mut app);
+        app.world_mut().resource_mut::<Variants>().verify.on = true;
+        for _ in 0..5 { app.update(); }
+        let verify = &app.world().resource::<Variants>().verify;
+        assert_eq!((verify.skipped, verify.diverged), (5, 0), "every steady frame verified, nothing differs");
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().bypass_change_detection().get_mut_untracked(&source).unwrap().base.unlit = true;
+        app.update();
+        let verify = &app.world().resource::<Variants>().verify;
+        assert_eq!((verify.skipped, verify.diverged), (6, 1), "the unseen edit is a divergence");
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).unwrap().0, source, "and the verify pass acts on it");
     }
 }
