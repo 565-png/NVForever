@@ -119,10 +119,12 @@ and calls after: at most three moves can happen meanwhile).
   shutdown the mode off, null tags, the drain, `slFreeResources` for DLSS and DLSS-G, and the
   ordered `slShutdown`. A loaded save's handoff ends the old run with `std::process::exit`
   before `App::run` returns (`handoff.rs` `end_now`); it runs the same steps first
-  (`dlss::end_now`, #2733): the render app taken back from the render thread, the mode off at
-  once, the window's swapchain released, then the shutdown. Before #2733 that exit left
-  Streamline to the DLLs' detach and crashed in `nvngx_dlssg.dll` [observed: a player's logs
-  and dumps, 2026-11-15].
+  (`dlss::end_now`, #2733): the render app taken back from the render thread, FSR frame
+  generation's presenters stopped and joined, the mode off at once, the window's swapchain
+  released, then the shutdown (waits without a limit, as every other exit does). Before #2733
+  that exit left Streamline to the DLLs' detach [design], and in a player's runs every such
+  exit with DLSS-G set up crashed in `nvngx_dlssg.dll` [observed: the player's logs and dumps,
+  2026-11-15]; that the detach is what crashed is a [hypothesis] the change tests.
 
 ### Frame pacing
 

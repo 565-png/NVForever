@@ -26812,10 +26812,10 @@ forbid = [{ text = "Validation Error", label = "a Vulkan validation error" }, { 
 
 [[scenario]]
 name = "dlssg-handoff-exit"
-source = "#2733, docs/design/dlss-frame-generation.md \"Exit\": a save loaded in play with DLSS Frame Generation set up hands over to a new run; the old run, which ends with std::process::exit before App::run returns (engine/nvforever/src/handoff.rs end_now), first takes the render app back, sets DLSS-G's mode off, releases the window's swapchain, frees DLSS-G's resources and shuts Streamline down, and ends without a crash (before #2733 every such exit crashed in nvngx_dlssg.dll)"
-note = "needs NVF_DLSS_DIR with the frame generation files; front = true as dlssg-on (the old run's window; the mode is on in play before the save). Both runs write to the launch's log: the lines that say 'the run hands over to a new one' are the old run's alone, and the shutdown lines between them can only be its own (the new run ends seconds later, by NVF_PLAY_TEST_HANDOFF_EXIT). The launch's exit code is the old run's (a crash at its end most likely leaves it non-zero [hypothesis]); the crash handler's line is forbidden either way. Worth a run with RivaTuner's Vulkan layer on where it can be had (the player's runs had it)."
+source = "#2733, docs/design/dlss-frame-generation.md \"Exit\": a save loaded in play with DLSS Frame Generation set up hands over to a new run; the old run, which ends with std::process::exit before App::run returns (engine/nvforever/src/handoff.rs end_now), first takes the render app back, sets DLSS-G's mode off, releases the window's swapchain, frees DLSS-G's resources and shuts Streamline down, and ends without a crash (before #2733 every such exit in a player's runs with DLSS-G set up crashed in nvngx_dlssg.dll)"
+note = "needs NVF_DLSS_DIR with the frame generation files; front = true as dlssg-on (the old run's window; the mode is on in play before the save). Both runs write to the launch's log and its lines carry no run tag: the lines that say 'the run hands over to a new one' are the old run's alone; the shutdown lines are both runs', so each is expected twice (each run shuts Streamline down once, the new one at its own exit by NVF_PLAY_TEST_HANDOFF_EXIT), which shows the old run wrote its own; their order between the old run's exit lines is what is expected, not a proof of whose they are. 'handoff: the old run has ended' is the new run's, written once the ready file is gone (the old run removes it before its exit steps), so it is not ordered after them. The launch's exit code is the old run's (a crash at its end most likely leaves it non-zero [hypothesis]); the crash handler's line is forbidden either way. Worth a run with RivaTuner's Vulkan layer on where it can be had (the player's runs had it)."
 areas = ["graphics", "save"]
-paths = ["engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**", "engine/nvforever/src/handoff.rs", "engine/nvforever/src/gpu_poll.rs", "engine/vendor/bevy_render/src/pipelined_rendering.rs", "engine/vendor/bevy_render/src/view/window/**"]
+paths = ["engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**", "engine/nvforever/src/handoff.rs", "engine/nvforever/src/gpu_poll.rs", "engine/nvforever/src/frame_gen.rs", "engine/nvforever/src/fg_presenter.rs", "engine/vendor/bevy_render/src/pipelined_rendering.rs", "engine/vendor/bevy_render/src/view/window/**"]
 requires = ["NVF_DLSS_DIR"]
 front = true
 env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-handoff-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "20:save dlssg-handoff;22:load dlssg-handoff", NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
@@ -26827,8 +26827,10 @@ expect = [
   { re = 'save: wrote .*dlssg-handoff\.nvfsave', label = "the save is written" },
   { re = 'load: handing over to a new run with --load .*dlssg-handoff\.nvfsave', count = 1, label = "a new run starts behind the loading screen" },
   { re = "DLSS-G: exit: the run hands over to a new one: DLSS-G's mode off now: eOk", count = 1, label = "the old run sets DLSS-G's mode off before it ends" },
-  { re = 'DLSS-G: exit: the run hands over to a new one: GPU drained \(ok\), 1 window swapchain\(s\) released \(mode off at the last present\)', count = 1, label = "the old run's swapchain released with the mode off at the last present (the loading screen keeps it off)" },
+  { re = 'DLSS-G: exit: the run hands over to a new one: GPU drained \(ok\), 1 window swapchain\(s\) released \(the mode was off in the options already\)', count = 1, label = "the old run's swapchain released, the options having the mode off already (the loading screen keeps them off)" },
   { text = "DLSS: exit: the run hands over to a new one: Streamline shut down before the process ends", count = 1, label = "the old run shuts Streamline down before the process ends" },
+  { text = "DLSS-G: shutdown: slFreeResources(DLSS-G, viewport 0) eOk", count = 2, label = "DLSS-G's resources freed by both runs, the old one's at its handoff exit" },
+  { text = "DLSS: shutdown: slShutdown eOk", count = 2, label = "slShutdown by both runs, the old one's at its handoff exit" },
   { re = 'handoff: the old run has ended after [\d.]+ s', label = "the new run sees the old one end" },
 ]
 order = [[
@@ -26836,19 +26838,18 @@ order = [[
   { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new one is up" },
   { re = "DLSS-G: exit: the run hands over to a new one: DLSS-G's mode off now: eOk" },
   { re = 'DLSS-G: exit: the run hands over to a new one: GPU drained' },
-  { re = 'DLSS-G: shutdown: null tags \(frame \d+\): eOk', label = "the old run's tags set null" },
-  { text = "DLSS: shutdown: slFreeResources(DLSS, viewport 0) eOk", label = "the old run frees DLSS's resources" },
-  { text = "DLSS-G: shutdown: slFreeResources(DLSS-G, viewport 0) eOk", label = "the old run frees DLSS-G's resources" },
-  { text = "DLSS: shutdown: slShutdown eOk", label = "the old run's slShutdown" },
+  { re = 'DLSS-G: shutdown: null tags \(frame \d+\): eOk', label = "tags set null after the exit lines" },
+  { text = "DLSS: shutdown: slFreeResources(DLSS, viewport 0) eOk", label = "DLSS's resources freed after them" },
+  { text = "DLSS-G: shutdown: slFreeResources(DLSS-G, viewport 0) eOk", label = "DLSS-G's resources freed after them" },
+  { text = "DLSS: shutdown: slShutdown eOk", label = "slShutdown after them" },
   { text = "DLSS: exit: the run hands over to a new one: Streamline shut down before the process ends", label = "the old run's last DLSS line" },
-  { re = 'handoff: the old run has ended after [\d.]+ s', label = "then the new run sees it end" },
 ]]
 forbid = [
-  { re = 'native crash, ', label = "a native crash (#2733: the old run crashed in nvngx_dlssg.dll as it ended)" },
+  { re = 'native crash, ', label = "a native crash (#2733: the old run crashed in nvngx_dlssg.dll as it ended in a player's runs)" },
   { re = '\]\[streamline\]\[error\]', label = "an error from Streamline in dlssg-handoff-exit" },
   { text = "Validation Error", label = "a Vulkan validation error" },
   { text = "shutdown finished with failures", label = "a failed step at shutdown" },
-  { text = "no render world to release the swapchain from", label = "the render app not taken back from the render thread" },
+  { text = "the render app could not be taken back from the render thread", label = "the render app not taken back from the render thread" },
   { text = "DLSS-G: status ", label = "a DLSS-G status other than eOk" },
   { re = 'before the world was in|before it was ready', label = "no time limit or failure in the handoff" },
 ]

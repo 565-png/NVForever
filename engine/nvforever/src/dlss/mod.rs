@@ -103,13 +103,28 @@
 //! - **Ending at once** ([`end_now`], #2733): a loaded save's handoff ends the old run with
 //!   `std::process::exit` from the main schedule (`handoff.rs` `end_now`), so `App::run` never
 //!   returns and [`shutdown`] above never ran: Streamline and DLSS-G were left to the DLLs'
-//!   detach at process exit, which crashed in `nvngx_dlssg.dll` [observed: a player's logs and
-//!   dumps, 2026-11-15]. Before that exit, with the device made through Streamline, the render
-//!   app is taken back from the render thread (nothing renders or presents after), device
-//!   polling and pipeline creation are held off (`gpu_poll::quiet`), DLSS-G's mode goes off and
-//!   the window's swapchain is released (`frame_gen.rs`, "Exit"), and [`shutdown`] runs as
-//!   above. The render world is not dropped (the point of ending at once); so the swapchain is
-//!   released by hand and the device outlives `slShutdown`, as it does above.
+//!   detach at process exit. In a player's runs every such exit with DLSS-G set up ended in a
+//!   crash in `nvngx_dlssg.dll` [observed: the player's logs and dumps, 2026-11-15]; that the
+//!   detach without `slShutdown` is what crashes is a [hypothesis] this change tests. Before
+//!   that exit, with the device made through Streamline: the render app is taken back from the
+//!   render thread (Bevy renders nothing after), FSR frame generation's presenter threads are
+//!   stopped and joined (`crate::frame_gen::stop_presenters`: they present on threads of their
+//!   own and hold the window's surface), device polling and pipeline creation are held off
+//!   (`gpu_poll::quiet`), DLSS-G's mode goes off and the window's swapchain is released
+//!   (`frame_gen.rs`, "Exit"), and [`shutdown`] runs as above. The render world is not dropped
+//!   (the point of ending at once); so the swapchain is released by hand and the device
+//!   outlives `slShutdown`, as it does above.
+//!
+//!   The old run now waits, without a time limit, for the render thread's frame, the
+//!   presenters' last presents, the pipeline gate (a pipeline being compiled) and the GPU drain
+//!   (`Device::poll` wait, `vkDeviceWaitIdle`). Not bounded [design]: every other exit waits
+//!   for the same things without a limit (Bevy's `RenderAppChannels::drop` for the render
+//!   app, `Presenter::drop`, `win.rs` `shutdown`'s drain), and a limit that gave up would
+//!   leave exactly the exit that crashed; the new run is already shown and playing by then,
+//!   so a wait costs the player nothing they see. A renderer or driver that never returns
+//!   would leave the old process behind the new window, as it would hang any exit. The
+//!   handoff's own limits (`handoff.rs` `ACK_WAIT_SECS`, `GIVE_UP_MARGIN_SECS`) time the new
+//!   run's start, not this.
 //!
 //! - **Frame generation** (#2317; docs/design/dlss-frame-generation.md): with the four files of
 //!   [`FG_FILES`] in the folder beside the four above, `slInit` asks for DLSS, DLSS Frame
@@ -1074,12 +1089,15 @@ fn first_time(flag: &AtomicBool) -> bool {
 /// The process is about to end without `App::run` returning (`handoff.rs` `end_now`, which
 /// calls `std::process::exit` from the main schedule, so `main` never reaches [`shutdown`]):
 /// the module's "Ending at once". With the renderer's device made through Streamline, the
-/// render app is taken back from the render thread (so nothing renders or presents from here
-/// on), device polling and pipeline creation are held off (`gpu_poll::quiet`), DLSS-G's mode is
-/// set off and the window's swapchain released (`frame_gen.rs` `end_now`), and then the
-/// shutdown runs as at any other exit ([`shutdown`]). `why` names the reason in the log lines
-/// (`exit: <why>: …`). Runs once; nothing to do without Streamline. The caller ends the process
-/// right after: the render app and the poll gate are kept (never given back) until then.
+/// render app is taken back from the render thread (so Bevy renders nothing from here on),
+/// FSR frame generation's presenter threads are stopped and joined
+/// (`crate::frame_gen::stop_presenters`), device polling and pipeline creation are held off
+/// (`gpu_poll::quiet`), DLSS-G's mode is set off and the window's swapchain released
+/// (`frame_gen.rs` `end_now`), and then the shutdown runs as at any other exit ([`shutdown`]).
+/// `why` names the reason in the log lines (`exit: <why>: …`). Runs once; nothing to do
+/// without Streamline. Waits without a time limit (the module's "Ending at once" says why).
+/// The caller ends the process right after: the render app and the poll gate are kept (never
+/// given back) until then.
 pub fn end_now(main_world: &mut World, why: &str) {
     if !first_time(&ENDING) {
         return;
@@ -1087,8 +1105,22 @@ pub fn end_now(main_world: &mut World, why: &str) {
     #[cfg(windows)]
     if streamline_loaded() {
         let mut render_app = render_app_back(main_world);
-        // Taken only once the render thread has handed its app back (it may poll the device
-        // itself while finishing its frame); held until the process ends.
+        match render_app.as_mut() {
+            // With the render thread idle no frame is handed to a presenter any more; each ends
+            // after presenting what it holds, before anything below drains or releases.
+            Some(app) => {
+                let stopped = crate::frame_gen::stop_presenters(app.world_mut());
+                if stopped > 0 {
+                    note(Level::INFO, format!("exit: {why}: {stopped} FSR frame generation presenter(s) stopped and joined"));
+                }
+            }
+            None => note(
+                Level::WARN,
+                format!("exit: {why}: the render app could not be taken back from the render thread (no pipelined rendering, or the thread stopped); presenters and the window's swapchain left in place"),
+            ),
+        }
+        // Taken only once the render thread has handed its app back and the presenters have
+        // ended (both may poll the device while finishing); held until the process ends.
         let quiet = crate::gpu_poll::quiet();
         frame_gen::end_now(render_app.as_mut().map(|a| a.world_mut()), why);
         shutdown();

@@ -97,20 +97,22 @@
 //!      `ProgrammingGuide.md:1017-1025`; `ProgrammingGuideDLSS_G.md` §6.4 step 2]);
 //!   3. `slShutdown`, "before destroying ... Vulkan instances, devices" [documented:
 //!      `ProgrammingGuideDLSS_G.md` §2.0; `ProgrammingGuide.md` §2.15], which unloads every
-//!      plugin (each one's `onShutdown`, then `FreeLibrary`) [documented:
-//!      `src/sl.cpp` `slShutdown`, `src/pluginManager.cpp` `unloadPlugins`].
+//!      plugin (each one's `onShutdown`, then `FreeLibrary`) [documented: Streamline's source,
+//!      `src/sl.cpp:289-327` `slShutdown`, `src/pluginManager.cpp:1200-1229` `unloadPlugins`].
 //!
 //!   A loaded save's handoff ends the old run without `App::run` returning: `handoff.rs`
 //!   `end_now` calls `std::process::exit` from the `EndNow` schedule after `Last`, so neither
 //!   this frame's extraction (where [`exit_watch`] would see its `AppExit`) nor `main`'s
 //!   shutdown ran, and Streamline and DLSS-G were left to the DLLs' detach at process exit
-//!   (#2733: every such exit with DLSS-G set up crashed in `nvngx_dlssg.dll` on the main
-//!   thread [observed: a player's logs and dumps, 2026-11-15]; that the detach without
-//!   `slShutdown` is the cause is a [hypothesis] the fix tests). It now runs the same steps
-//!   first (`super::end_now`): the render app taken back from the render thread, then
-//!   [`end_now`] here (step 1, the mode off at once as for a closing window: the handoff's
-//!   loading screen has kept the mode off at the presents before, `may_generate` [design]),
-//!   then `win.rs` `shutdown` (steps 2 and 3); the process ends after.
+//!   [design]. In a player's runs every such exit with DLSS-G set up crashed in
+//!   `nvngx_dlssg.dll` on the main thread (#2733) [observed: the player's logs and dumps,
+//!   2026-11-15]; that the detach without `slShutdown` is the cause is a [hypothesis] the fix
+//!   tests. It now runs the same steps first (`super::end_now`): the render app taken back
+//!   from the render thread, FSR frame generation's presenters stopped and joined (they
+//!   present on threads of their own and hold the surface), then [`end_now`] here (step 1, the
+//!   mode off at once as for a closing window; the handoff's loading screen keeps the options
+//!   off before, `may_generate` needs play [design]), then `win.rs` `shutdown` (steps 2 and
+//!   3); the process ends after.
 //! - **Errors**: with DLSS-G loaded, `vkQueuePresentKHR` and `vkAcquireNextImageKHR` run
 //!   asynchronously inside Streamline and the host sees only "the last known error"; the
 //!   callback reports each call whose `VkResult` is not `VK_SUCCESS` and must return at once
@@ -1239,22 +1241,22 @@ fn release_surface(world: &mut World, entity: Entity) {
 /// held by the caller, the mode off at once ([`exit_mode_off`]), the GPU drained and every
 /// window's swapchain released, before `win.rs` `shutdown` frees DLSS-G's resources and shuts
 /// Streamline down. Nothing while DLSS-G is not installed. Without the render world (no
-/// pipelined rendering, or the render thread stopped) only the mode goes off; said.
+/// pipelined rendering, or the render thread stopped; `super::end_now` says so) only the mode
+/// goes off. The line says whether the options had the mode on until now: what is known of the
+/// last presents, not that one was presented off ([`state`] counts no present as off).
 pub(super) fn end_now(render_world: Option<&mut World>, why: &str) {
     if !active() {
         return;
     }
-    let presented_off = {
+    let was_on = {
         let mut guard = frame_gen();
         let Some(fg) = guard.as_mut() else { return };
+        let was_on = fg.applied.is_some_and(|a| a.on);
         exit_mode_off(fg, why);
-        fg.presented_off
+        was_on
     };
-    let at_last_present = if presented_off { "off" } else { "on" };
-    let Some(world) = render_world else {
-        note_fg(Level::WARN, format!("exit: {why}: no render world to release the swapchain from (mode {at_last_present} at the last present); Streamline is shut down with it in place"));
-        return;
-    };
+    let options = if was_on { "the mode was on in the options until now" } else { "the mode was off in the options already" };
+    let Some(world) = render_world else { return };
     let polled = world.get_resource::<bevy::render::renderer::RenderDevice>().map(|d| d.wgpu_device().poll(wgpu::PollType::wait_indefinitely()));
     let entities: Vec<Entity> = world.query_filtered::<Entity, (With<ExtractedWindow>, With<SurfaceData>)>().iter(world).collect();
     for &entity in &entities {
@@ -1263,7 +1265,7 @@ pub(super) fn end_now(render_world: Option<&mut World>, why: &str) {
     note_fg(
         Level::INFO,
         format!(
-            "exit: {why}: GPU drained ({}), {} window swapchain(s) released (mode {at_last_present} at the last present)",
+            "exit: {why}: GPU drained ({}), {} window swapchain(s) released ({options})",
             if matches!(&polled, Some(Ok(s)) if s.wait_finished()) { "ok" } else { "incomplete" },
             entities.len()
         ),
