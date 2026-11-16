@@ -340,7 +340,7 @@ mod tests {
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
     /// field of view row, the menu scale row, the Physics rate row, #2688's sound cover row and
     /// the Advanced movement rows with Movement Weight), by the group it registers with.
-    const KNOWN: [(&str, &str); 121] = [
+    const KNOWN: [(&str, &str); 122] = [
         ("detached-camera", "Gameplay"),
         ("sound-cover", "Gameplay"),
         ("advanced-movement", "Gameplay"),
