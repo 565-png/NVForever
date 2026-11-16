@@ -29635,6 +29635,24 @@ expect = [
 ]
 
 [[scenario]]
+name = "orris-warning-once"
+source = "[design, #2724] Game::open_dialogue consumes a pending walk-up when a repeated StartConversation opens the conversation sooner. [documented: issue #2724 supplied record analysis] VFSOrrisConcernedTriggerREF (0x00118AA5) repeats StartConversation until warning INFO 0x00118A72 ends and sets detourstage 1."
+note = "[design / file refs] Hire setup follows orris-escort-thugs; script.rs/script_events.rs provide MoveTo and walk aids. At 1 s move the player 2000 units from the trigger before hiring; at 5 s put Orris 600 units from its centre, then at 6 s walk the player into it. Do not set detourstage. The walk-up distance expectation proves the initial separation exceeds 300; count=1 counts say lines over the entire run. [hypothesis] Placement and timing await runtime smoke."
+areas = ["ai", "dialogue", "scripts"]
+paths = ["crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/functions/misc.rs", "crates/fnv-ai/src/carry.rs", "crates/fnv-ai/tests/talk.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GIVE = "0000000F:200", NVF_PLAY_TEST_SCRIPT = "1:moveto:player:VFSOrrisConcernedTriggerREF:0:2000:0,2:start:VMS19,2.5:stage:VMS19:10,3:moveto:VFSOrrisREF:player:150:0:0,4:info:0x00115C2C:VFSOrrisREF,5:moveto:VFSOrrisREF:VFSOrrisConcernedTriggerREF:600:0:0,6:walk:VFSOrrisConcernedTriggerREF" }
+args = ["--play", "--world", "FreesideWorld", "--pos=1700,-7000,1030", "--heading", "200", "--hour", "14", "--no-voice", "--no-messages", "--npc-packages", "all,VFSOrrisREF"]
+run_seconds = 60
+expect = [
+  { re = 'VFSOrrisREF: walks up to the player for a script.s StartConversation: (?P<n>\d+) units away', range = [301, 3000], label = "Orris starts the warning walk beyond WALK_UP_REACH" },
+  { text = "script: VFSOrrisREF says 0x00118A72", count = 1, label = "the warning is said exactly once, including after dialogue ends" },
+]
+order = [[
+  { text = "VFSOrrisREF: walks up to the player for a script", label = "a pending walk exists before the warning" },
+  "script: VFSOrrisREF says 0x00118A72",
+]]
+
+[[scenario]]
 name = "chauncey-steam-room"
 source = "issue #2445 (crates/fnv-game/src/game.rs Game::run_far_frame; crates/fnv-ai/src/process.rs low_update, carry.rs pass_time): Beyond the Beef's informant. Chauncey (VMS18ChaunceyREF) patrols the Ultra-Luxe casino on a Must Complete package; only his own GameMode block (SCPT 0x0011689F: not in the player's cell, not in the bathhouse, 15 to 18 h, the player has the Matchbook) warps him to the bathhouse and re-evaluates his package, and it runs only while he is in a cell the player is not in. Our scripts ran in the loaded cells alone, so he never came (objective 40 stalled)"
 note = "the player starts in the casino at 14:12 (Chauncey becomes a resident), VMS18 with objective 40 and the Matchbook note at 2-3 s, goes to the bathhouse at 8 s, stands in the steam room at 10 s and waits 3 hours at 16 s; the hour from 15:17 runs Chauncey's script; he walks to the steam room and the player talks to him at 85 s"
