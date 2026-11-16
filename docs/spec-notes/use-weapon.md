@@ -107,12 +107,12 @@ never attack [documented: catalogue notes on SetRestrained].
   has OBND z -1..227.
 - [hypothesis: inferred from those supplied scripts, original not captured in this run]
   The original fires at objects and markers; finite marker shots release the actor,
-  and harmless object hits pass the shooter to OnHit. Observer check 212 requests the
+  and harmless object hits pass the shooter to OnHit. Observer check 206 requests the
   original behavior and aim placement.
 - [design, #2652; `engine/nvforever/src/use_weapon/targets.rs`] NVForever keeps drawn
   actor aim unchanged and resolves other present references from moved/placed positions.
   It adds the base OBND centre when available, otherwise fires toward the position
-  itself [hypothesis: aim placement pending observer check 212]. Collision and hit
+  itself [hypothesis: aim placement pending observer check 206]. Collision and hit
   dispatch stay on the existing object path; the shot count, rather than collision,
   finishes a finite use. The fight handover uses the same target availability rule.
 - [documented: #2652 w4 brief, supplied fnvtool world list / world refs facts]
@@ -126,7 +126,7 @@ never attack [documented: catalogue notes on SetRestrained].
   their fight markers and calls EvaluatePackage, but the smoke records zero shots.
   [design: `fnv-ai/src/carry.rs::weapon_step`] Exact-space filtering prevents the
   barkers turning toward that sibling-worldspace target.
-- [hypothesis, #2652; observer check 212] A Use Weapon / UseWeapon non-actor placed
+- [hypothesis, #2652; observer check 206] A Use Weapon / UseWeapon non-actor placed
   target in another worldspace with the same nonempty immediate parent is aimed at
   by its coordinates plus OBND centre, as if in the shooter's worldspace. Different
   parents, absent parents, and interiors do not qualify. Actor targets keep their

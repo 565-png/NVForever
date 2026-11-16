@@ -2691,7 +2691,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
 
-212. **How does UseWeapon aim at objects and markers?** (P1; #2652, #2715 shooter
+206. **How does UseWeapon aim at objects and markers?** (P1; #2652, #2715 shooter
      half; `docs/spec-notes/use-weapon.md` section 6.) [documented: #2652 supplied record
      facts] The Hopeville silo mainframe's ACTI OnHit ED-E block sets NVDLC04MQ01a
      55 after its package requests one Always Hit / Do No Damage arc-welder shot;

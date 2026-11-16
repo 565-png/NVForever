@@ -425,7 +425,7 @@ pub fn place_of_ref(game: &Game, r: FormId) -> Option<Place> {
     Some(Place { space: space_of_cell(refs, cell?), pos })
 }
 
-/// [hypothesis, #2652; docs/spec-notes/use-weapon.md section 6, observer check 212]
+/// [hypothesis, #2652; docs/spec-notes/use-weapon.md section 6, observer check 206]
 /// A Use Weapon target that is a non-actor placed reference in a sibling worldspace
 /// shares the shooter's coordinates. Actors and interiors still require the same
 /// space; worldspaces without a shared, nonempty immediate parent do not qualify.
