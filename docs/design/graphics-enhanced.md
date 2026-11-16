@@ -957,6 +957,29 @@ producer put on the shape that frame stays (a texture swap's copy, whose generat
 swap has consumed; a fade's or an override's copy), and only a shape with none gets its
 recorded source back.
 
+**Per frame** [design: `mesh_terrain_blend.rs::apply_configured_variants`, `pass_needed`,
+`full_pass`]: the conversion is change-driven. Its full pass (every tracked shape's reason
+mask, census, clone and material swap, then the collection of unused clones and
+publications) runs only in a frame where one of its inputs changed since the last pass:
+the blend's look, the publication (`None`, or its revision and colour atlas), a last pass
+that ended with a replacement still pending (then every frame until it settles), a tracked
+shape's components (a `BlendShape` or `BlendCensus` added, replaced or removed, a despawn
+included; an ordinary material put on, edited or removed; a fade's, effect shader's or
+override's marker added or removed), or a source material the last pass read (loaded,
+removed, or edited under its handle so that its reasons or its `SourceStamp` differ),
+compared only when the material store was changed since the conversion last ran. The
+first frame after the blend turns on always runs it. A pass's own commands can call for
+one more pass in the next frame, which changes nothing. A quiet frame follows the coverage
+of the recorded publications (one check per publication, a walk over its clones only when
+its coverage changed or it gained a clone), stores `settled` again, and refreshes a ready
+line a census change deferred (60 frames, `REFRESH_FRAMES`) from the last pass's census.
+Before this, the full pass ran every frame: [observed] Tracy, RTX 5070 Ti, 2560x1440,
+WastelandNV (-17, 0): `apply_variants` 0.61-0.65 ms a frame before this change. The test
+aid `NVF_PLAY_TEST_MESH_BLEND_VERIFY=1` runs the full pass in every frame the gate would
+skip and logs any change it makes (`verify diverged`, at most 16 lines), and a count line
+`verify skipped-frames=N diverged=M passes=P pass-<reason>=...` (each pass by its first
+reason) with each ready line, every 600 skipped frames and at the stop.
+
 **Off** [design: `mesh_terrain_blend.rs::BlendGate`, `close_gate`;
 `terrain_surface.rs::SurfaceBakePlugin`; vendored bevy_pbr `MaterialGate` and bevy_render
 `ErasedRenderAssetPlugin::gated`, engine/vendor/README.md]: both material types, the
@@ -1221,8 +1244,8 @@ acceptance (gravel frequency and mapped-normal response at the close road should
 crossings) needs the main session's frames, which logs and naga do not prove; shadows, occlusion and the separately lit layer draws still differ from
 the landscape's own lighting; admitted Blend and decal shapes near the ground (glass,
 markings) take the landscape's colour; buried visible surfaces take its look; the census
-keeps scanning every tracked shape each frame while the blend is on (only its line is
-limited); rigged STATs and SCOLs drawn while the blend was off are not counted until their
+scans every tracked shape in each frame the full pass runs (only its line is limited;
+streaming cells, fades and material edits on tracked shapes run it); rigged STATs and SCOLs drawn while the blend was off are not counted until their
 cell is drawn again (they never convert); the colour-coded `excluded` view was not built.
 
 **Tests and smoke**: `nvforever` test filters `mesh_terrain_blend` (switching off during a
@@ -1243,7 +1266,12 @@ texture swap, a fade and an override: `switching_off_during`), `terrain_surface`
 `copy_only_replacements_draw_nothing_and_copy_every_level`; round 10b review:
 `colour_reads_are_continuous_across_valid_cell_edges`,
 `coverage_drops_unloaded_diagonal_taps_and_rejects_invalid_quadrants`), `mesh_terrain_blend` (round 10a review:
-`removed_palette_image_keeps_retained_clones_drawable_and_the_replacement_publishes`),
+`removed_palette_image_keeps_retained_clones_drawable_and_the_replacement_publishes`; the
+change-driven pass: `the_full_pass_runs_only_in_frames_where_an_input_changed`,
+`a_pending_replacement_keeps_the_pass_running_until_it_is_usable`,
+`a_deferred_census_report_comes_from_quiet_frames`,
+`a_coverage_change_restricts_retained_clones_and_runs_the_pass`,
+`the_verify_aid_runs_skipped_frames_and_reports_a_missed_change`),
 `terrain::tests` (round 10a: `detail_capture_reconstructs_the_drawn_triangles`; second
 review round: `an_initially_rejected_overflow_capture_recovers_when_the_edit_is_reverted`;
 height blending and anti-tiling: `the_mesh_blend_detail_composes_as_the_near_draw_with_and_without_the_switches`
@@ -1266,7 +1294,9 @@ The WGSL is composed and validated by naga in the tests, not executed. Smoke:
 `mesh-terrain-blend-crossing` (retained witnesses, pending work, replacement and zero
 publication/material/lookup outages), `mesh-terrain-blend-setting` (the row on from the
 command line), `mesh-terrain-blend-live`
-(on and off from the settings page, then the gate closing), the aid's `mesh-terrain-blend-goodsprings`,
+(on and off from the settings page, then the gate closing), the verify aid's
+`mesh-terrain-blend-verify-crossing`, `-verify-live` and `-verify-terrain-switches` (the
+gate's skipped frames change nothing), the aid's `mesh-terrain-blend-goodsprings`,
 `-options` and `-widths`; `graphics-enhanced` and `settings-enhanced-effects` check that
 the enhanced look neither turns it on nor logs it.
 
