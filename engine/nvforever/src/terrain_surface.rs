@@ -2371,9 +2371,9 @@ pub(crate) mod tests {
         for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
             let mut cell = surface([CapturePath::Folded { layers: 12 }; 4]);
             cell.grid = (x, y);
-            for q in 0..4 {
+            for detail in &mut cell.detail {
                 let overlays = (0..12).map(|_| (sampled(&mut images, 8), Some(sampled(&mut images, 8)))).collect();
-                cell.detail[q] = layers(sampled(&mut images, 8), sampled(&mut images, 8), overlays);
+                *detail = layers(sampled(&mut images, 8), sampled(&mut images, 8), overlays);
             }
             cell.refresh_dependencies();
             cells.push(cell);
@@ -2392,7 +2392,7 @@ pub(crate) mod tests {
         // Shared images and descriptions: two quadrants reading the same textures add one set.
         let (base, normal, overlay) = (sampled(&mut images, 8), sampled(&mut images, 8), sampled(&mut images, 8));
         let mut shared = surface([CapturePath::Folded { layers: 1 }; 4]);
-        for q in 0..4 { shared.detail[q] = layers(base.clone(), normal.clone(), vec![(overlay.clone(), None)]); }
+        for detail in &mut shared.detail { *detail = layers(base.clone(), normal.clone(), vec![(overlay.clone(), None)]); }
         let s = DetailPalette::assemble([&shared], &images, &[]);
         assert_eq!((s.admitted.len(), s.palette.images.len(), s.palette.samplers.len()), (4, 3, 1));
         let words = s.admitted[3].1.words();
