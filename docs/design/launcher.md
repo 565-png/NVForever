@@ -30,7 +30,10 @@ without the launcher is the same as before.
   Frame rate limit; `src/display.rs`, words and values the game's)
   get their choices as a list (a test checks the engine still has them). A
   row the game has not written yet shows "game default". `[Settings]` keys the game's menu does
-  not place (an older build's) go under Other. Save writes only the changed keys over the file as it is on disk then.
+  not place (an older build's) go under Other while the page is the built-in copy; with the
+  game's file there is no Other tab (the file has every row the game has). A slider the player
+  moves is fitted onto its steps as the game fits it (from 0, to the thousandth); one only
+  drawn keeps the INI's value, so opening a tab changes nothing. Save writes only the changed keys over the file as it is on disk then.
 - **Mods**: NVForever's own `plugins.txt` (turn on/off with the box or a click on the name; drag a row anywhere but its box to move it, with a gold line where it lands; FalloutNV.esm stays first). While the load order has
   `TaleOfTwoWastelands.esm`, a box "start new games in Vault 101" writes TTW's two lines to
   the INI's `[General]` (`sCharGenQuest=001FFFF8`, `sIntroMovie=`) at once, or takes them out

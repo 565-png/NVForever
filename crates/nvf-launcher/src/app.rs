@@ -80,6 +80,9 @@ pub struct App {
     rows: Vec<Row>,
     tabs: Vec<String>,
     tab_labels: Vec<String>,
+    /// The menu is the game's own file: no Other tab (a key it does not place is not a row of
+    /// this game's).
+    menu_from_game: bool,
     tab: usize,
     words: HashMap<&'static str, &'static [&'static str]>,
     lists: HashMap<&'static str, &'static [&'static str]>,
@@ -145,6 +148,7 @@ impl App {
             message: None,
             tabs: menu.tab_names(),
             tab_labels: menu.tabs.iter().map(|(_, l)| l.clone()).collect(),
+            menu_from_game: menu.from_game,
             rows: menu.rows,
             tab: 0,
             words: catalog::step_words(),
@@ -282,6 +286,7 @@ impl App {
         let on = self.tabs.get(self.tab).cloned();
         self.tabs = menu.tab_names();
         self.tab_labels = menu.tabs.iter().map(|(_, l)| l.clone()).collect();
+        self.menu_from_game = menu.from_game;
         self.rows = menu.rows;
         if let Some(on) = on {
             self.tab = self.tabs.iter().position(|t| *t == on).unwrap_or(0);
@@ -769,14 +774,17 @@ fn menu_control(ui: &mut egui::Ui, key: &str, kind: &menu::Kind, v: &str, contro
         }
         menu::Kind::Slider { min, step, steps } => {
             let mut f: f32 = v.trim().parse().unwrap_or(*min);
-            let s = egui::Slider::new(&mut f, *min..=1.0).step_by(f64::from(step.max(1e-3)));
+            // No egui steps: egui counts them from the range's start, the game from 0
+            // (`Slider::fit`), so a value of the game's would move by being drawn. A value the
+            // player moves is fitted as the game fits it; one drawn stays as the INI has it.
+            let s = egui::Slider::new(&mut f, *min..=1.0).clamping(egui::SliderClamping::Edits);
             let s = if steps.is_empty() {
                 s.custom_formatter(|x, _| format!("{:.0}%", x * 100.0)).custom_parser(|s| s.trim().trim_end_matches('%').parse::<f64>().ok().map(|x| x / 100.0))
             } else {
                 let steps = steps.clone();
                 s.custom_formatter(move |x, _| menu::Step::nearest(&steps, x as f32).unwrap_or_default().to_string())
             };
-            ui.add_sized([control_w, 20.0], s).changed().then(|| part_text(f))
+            ui.add_sized([control_w, 20.0], s).changed().then(|| part_text(game_fit(f, *min, *step)))
         }
         menu::Kind::List { choices } => {
             let shown = choices.iter().find(|c| c.name == v).map_or(v.to_string(), |c| c.label.clone());
@@ -791,6 +799,14 @@ fn menu_control(ui: &mut egui::Ui, key: &str, kind: &menu::Kind, v: &str, contro
             picked
         }
     }
+}
+
+/// `v` brought into `min..=1` and onto a step of `step` from 0, to the thousandth, as the game
+/// fits a slider's value (engine/nvf-play/src/settings.rs, `Slider::fit`).
+fn game_fit(v: f32, min: f32, step: f32) -> f32 {
+    let step = step.max(1e-3);
+    let v = (v.clamp(min, 1.0) / step).round() * step;
+    ((v * 1000.0).round() / 1000.0).clamp(min, 1.0)
 }
 
 /// A slider part (`0.50`) as the INI keeps it: to the thousandth, at least two places.
@@ -971,8 +987,12 @@ impl App {
         });
     }
 
-    /// `[Settings]` keys the game's menu does not place (an older build's, the editor's).
+    /// `[Settings]` keys the game's menu does not place (an older build's, the editor's); none
+    /// while the menu is the game's own file, which has every row this game has.
     fn other_keys(&self) -> Vec<String> {
+        if self.menu_from_game {
+            return Vec::new();
+        }
         self.stored
             .keys()
             .filter(|k| !self.rows.iter().any(|r| &r.key == *k))
@@ -1901,6 +1921,15 @@ mod tests {
         assert_eq!(part_text(1.0 / 3.0), "0.333");
         assert_eq!(part_text(1.2), "1.00");
         assert_eq!(part_text(0.25), "0.25");
+    }
+
+    #[test]
+    fn a_moved_slider_is_fitted_as_the_game_fits_it() {
+        // Steps from 0 as the game counts them, not from the slider's start.
+        assert_eq!(part_text(game_fit(0.52, 0.1, 0.05)), "0.50");
+        assert_eq!(part_text(game_fit(0.01, 0.1, 0.05)), "0.10", "not below the start");
+        assert_eq!(part_text(game_fit(0.34, 0.0, 1.0 / 30.0)), "0.333");
+        assert_eq!(part_text(game_fit(2.0, 0.0, 0.25)), "1.00");
     }
 
     #[test]
