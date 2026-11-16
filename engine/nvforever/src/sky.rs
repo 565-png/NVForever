@@ -126,20 +126,48 @@ pub(crate) fn sorts_with_sky(sort_key: f32) -> bool {
 /// further from its look.
 pub const DEFAULT_SHADOW_DISTANCE: f32 = 8_000.0;
 /// The sun's shadow cascades by default, Quality's (see [`DEFAULT_SHADOW_DISTANCE`]): 4,
-/// laid out by [`shadow_cascade_bounds`] [engineering choice, proposed in #NNNN; 3 from
-/// 2026-10-12 until then]. The 4 cascades of before 2026-10-12 reached 16,000 units, and
-/// every cascade was drawn every frame (8,000 in 4 then took 15.0-16.8 ms against 13.7-15.2
-/// for 3: graphics-enhanced.md §5.3); now the reach stays 8,000, the casters are culled to
-/// each cascade's slice ([`sun_casters_over_slice`]) and the cascades are staggered
-/// (shadow_rate.rs `STAGGERED_SCHEDULE`: never more than two drawn in a frame, 2 of 4 on
-/// average against 1.75 of 3). [observed 2026-11-16: Goodsprings'
-/// start view at 09:00 standing still, 2560 × 1440, RTX 5070 Ti, ambient occlusion, longer
-/// shadows (reach 12,000), light glow, 16x anisotropic filtering, sun shafts; sun shadows
-/// off 2.84 ms a frame] 3 cascades with far bounds 667, 2,828, 12,000 (texels 0.765,
-/// 3.243, 13.756 units) 3.16 ms; 4 with 700, 2,000, 5,000, 12,000 (texels 0.803, 2.293,
-/// 5.732, 13.756) 3.22 ms, sharper between about 25 and 60 m (docs/design/frame-rate-audit.md
-/// §12).
-pub const DEFAULT_SHADOW_CASCADES: usize = 4;
+/// laid out by [`shadow_cascade_layout`] [engineering choice: the contributor's proposal in
+/// #2843, for the maintainer to decide; 3 from 2026-10-12 until then]. The 4 cascades of
+/// before 2026-10-12 reached 16,000 units, and every cascade was drawn every frame (8,000 in
+/// 4 then took 15.0-16.8 ms against 13.7-15.2 for 3: graphics-enhanced.md §5.3); now the
+/// reach stays 8,000, the casters are culled to each cascade's slice
+/// ([`sun_casters_over_slice`]) and the cascades are staggered (shadow_rate.rs
+/// `STAGGERED_SCHEDULE`: never more than two drawn in a frame, 2 of 4 on average against
+/// 1.75 of 3). [observed 2026-11-16: Goodsprings' start view at 09:00 standing still,
+/// 2560 × 1440, RTX 5070 Ti, ambient occlusion, longer shadows (reach 12,000), light glow,
+/// 16x anisotropic filtering, sun shafts, `--no-actors`; sun shadows off 2.81-2.85 ms a
+/// frame] with 2048² maps, 3 cascades with far bounds 667, 2,828, 12,000 (texels 0.77,
+/// 3.2, 13.8 units) 3.15-3.16 ms; 4 with 700, 2,000, 5,000, 12,000 (texels 0.80, 2.3, 5.7,
+/// 13.8) 3.22 ms. With 4096² maps 4 with 1,500, 3,500, 7,000, 12,000 and a blend band of
+/// 0.4 (texels 0.86, 2.0, 4.0, 6.9) 3.43-3.48 ms (docs/design/frame-rate-audit.md §12).
+pub const DEFAULT_SHADOW_CASCADES: usize = CascadeLayout::Quality.count();
+
+/// How the sun's shadow cascades are laid out ([`shadow_cascade_layout`]): the Sun shadows
+/// mode picks Quality or Performance (shadow_rate.rs `set_performance`); the test aid
+/// `--graphics-cycle cascades=<n>` asks for a count spaced as before #2843.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CascadeLayout {
+    /// Quality's [`DEFAULT_SHADOW_CASCADES`], their bounds following the shadow maps' size.
+    #[default]
+    Quality,
+    /// Performance's 3 cascades (shadow_rate.rs, the Sun shadows row's middle choice).
+    Performance,
+    /// This many cascades in Bevy's geometric spacing from a first bound of a twelfth of
+    /// the distance, as every count had it before #2843 (`--graphics-cycle cascades=<n>`,
+    /// so that measurements of then still compare; 1 is the moon's single cascade).
+    Spaced(usize),
+}
+
+impl CascadeLayout {
+    /// The number of cascades.
+    pub const fn count(self) -> usize {
+        match self {
+            CascadeLayout::Quality => SHADOW_SHARES_QUALITY.len() + 1,
+            CascadeLayout::Performance => SHADOW_SHARES_PERFORMANCE.len() + 1,
+            CascadeLayout::Spaced(n) => if n == 0 { 1 } else { n },
+        }
+    }
+}
 
 /// Shares of the weather's and the interior's light colours (display values) in the
 /// display-value lighting sum (lights.rs `DISPLAY_HELPERS`; world.md §8 "Light on
@@ -257,8 +285,8 @@ pub struct SkyState {
     /// The cascades reach this many times `shadow_distance` (1; more with the finer
     /// shadows of `graphics.rs`), the first cascade as near as without.
     pub shadow_reach: f32,
-    /// Number of the sun's shadow cascades.
-    pub shadow_cascades: usize,
+    /// How the sun's shadow cascades are laid out (their number and far bounds).
+    pub shadow_layout: CascadeLayout,
     /// The picture is graded by the image space (`--no-grade` and the settings page turn
     /// it off).
     pub grade: bool,
@@ -502,7 +530,7 @@ impl SkyState {
             shadows: false,
             shadow_distance: DEFAULT_SHADOW_DISTANCE,
             shadow_reach: 1.0,
-            shadow_cascades: DEFAULT_SHADOW_CASCADES,
+            shadow_layout: CascadeLayout::Quality,
             grade: true,
             time_scale: 0.0,
             clock_running: false,
@@ -1407,8 +1435,9 @@ pub fn setup_sky(
     mut textures: ResMut<TextureCache>,
     data: Res<GameData>,
     sky: Res<SkyState>,
+    map: Option<Res<bevy::light::DirectionalLightShadowMap>>,
 ) {
-    let sun_tex = sky.climate.sun_texture.as_deref().and_then(|t| textures.get(t, true, &data, &mut images, None));
+    let sun_tex =sky.climate.sun_texture.as_deref().and_then(|t| textures.get(t, true, &data, &mut images, None));
     let glare_tex = sky.climate.sun_glare_texture.as_deref().and_then(|t| textures.get(t, true, &data, &mut images, None));
     let atmosphere = sky_shapes(&data, "meshes\\sky\\atmosphere.nif").into_iter().next().unwrap_or_else(fallback_dome);
     let weights = atmosphere.colors.clone();
@@ -1527,7 +1556,7 @@ pub fn setup_sky(
         RenderLayers::from_layers(&[0, SHADOW_LAYER, BODY_LAYER]),
     ));
     if sky.shadows {
-        sun.insert(shadow_cascades(sky.shadow_distance, sky.shadow_reach, sky.shadow_cascades));
+        sun.insert(shadow_cascades(sky.shadow_distance, sky.shadow_reach, sky.shadow_layout, map_side(map.as_deref())));
     }
 }
 
@@ -1643,46 +1672,67 @@ fn overlaps(outline: &[Vec2], centre: Vec2, reach: Vec2) -> bool {
     })
 }
 
-/// The sun's shadow cascades, in game units ([`shadow_cascade_bounds`]).
-pub(crate) fn shadow_cascades(distance: f32, reach: f32, count: usize) -> CascadeShadowConfig {
-    CascadeShadowConfig {
-        bounds: shadow_cascade_bounds(distance, reach, count),
-        overlap_proportion: SHADOW_OVERLAP,
-        minimum_distance: SHADOW_MINIMUM_DISTANCE,
-    }
+/// The sun's shadow cascades, in game units ([`shadow_cascade_layout`]), for shadow maps
+/// `map` texels on a side.
+pub(crate) fn shadow_cascades(distance: f32, reach: f32, layout: CascadeLayout, map: usize) -> CascadeShadowConfig {
+    let (bounds, overlap_proportion) = shadow_cascade_layout(distance, reach, layout, map);
+    CascadeShadowConfig { bounds, overlap_proportion, minimum_distance: SHADOW_MINIMUM_DISTANCE }
+}
+
+/// The side of the sun's shadow maps (texels): the resource's, or Bevy's default without
+/// it (2048, graphics.rs `SHADOW_MAP` too).
+pub(crate) fn map_side(map: Option<&bevy::light::DirectionalLightShadowMap>) -> usize {
+    map.map_or_else(|| bevy::light::DirectionalLightShadowMap::default().size, |m| m.size)
 }
 
 /// Where the sun's cascades start (game units from the camera) and how far each overlaps
 /// the one before it (a share of its far bound), as Bevy's builder was given them here
-/// before.
+/// before; Quality with the larger maps blends over [`WIDE_SHADOW_OVERLAP`].
 const SHADOW_MINIMUM_DISTANCE: f32 = 5.0;
 const SHADOW_OVERLAP: f32 = 0.2;
 /// The first cascade's far bound is never nearer than this (game units), however short
 /// the shadow distance.
 const FIRST_CASCADE_FLOOR: f32 = 200.0;
-/// The far bounds of all cascades but the last, as shares of the shadow distance, for
-/// Performance's 2 cascades (`shadow_rate::PERFORMANCE_CASCADES`) and Quality's 4
-/// ([`DEFAULT_SHADOW_CASCADES`]): at 8,000 units 1,500, and 700, 2,000, 5,000
-/// [engineering choice, #NNNN: players found the shadows sharp only in a small radius
-/// around the player and coarse beyond, worst on Performance, where everything past the
-/// first bound's 667 units lay on the last cascade]. [observed 2026-11-16, the view and
-/// settings of [`DEFAULT_SHADOW_CASCADES`]] On Performance the first bound at 1,500 made a
-/// telegraph pole's shadow 15-25 m away as sharp as on Quality, where at 667 it was a wide
-/// blur, for 3.07 ms a frame against 3.05.
-const SHADOW_SHARES_2: [f32; 1] = [0.1875];
-const SHADOW_SHARES_4: [f32; 3] = [0.0875, 0.25, 0.625];
-
-/// The far bounds of the sun's `count` shadow cascades (game units from the camera),
-/// nearest first. The last is `distance` × `reach` (`reach` 1, or more with the longer
-/// shadows of `graphics.rs`), so the Shadow distance slider and `--shadow-distance` move
-/// them all; the others are not stretched by `reach`.
+/// The far bounds of all cascades but the last, as shares of the shadow distance
+/// [engineering choice: the contributor's proposal in #2843, for the maintainer to decide.
+/// The shadows were sharp only in a small radius around the player and coarse beyond,
+/// worst on Performance, where everything past the first bound's 667 units lay on the last
+/// cascade]. [observed 2026-11-16, the view and settings of [`DEFAULT_SHADOW_CASCADES`]]
 ///
-/// - 2 and 4 cascades: the shares of `distance` in [`SHADOW_SHARES_2`] and
-///   [`SHADOW_SHARES_4`].
-/// - 3 cascades (`--graphics-cycle cascades=3`), and any other count but 1: Bevy's
-///   geometric spacing from a first bound of a twelfth of `distance`, as every count had
-///   it before #NNNN, so that measurements of then still compare.
-/// - 1 cascade (the moon's): `distance` × `reach`.
+/// Performance's 3 cascades: at 8,000 units 1,500 and 4,500. With 2048² maps 3.09-3.11 ms
+/// a frame against 3.05-3.10 for the 2 cascades of before (667, 12,000), and a telegraph
+/// pole's crossarm past 667 units cast a clean shadow instead of a shapeless blob.
+const SHADOW_SHARES_PERFORMANCE: [f32; 2] = [0.1875, 0.5625];
+/// Quality's 4 cascades with maps smaller than [`WIDE_SHADOW_MAP`] (2048²): at 8,000 units
+/// 700, 2,000, 5,000, 3.22 ms against 3.15-3.16 for the 3 of before. A farther first bound
+/// costs sharpness at the player's feet with these maps (a wire's shadow crisp at 0.77
+/// units a texel, soft at 1.15, blurred at 1.72), so their first bound stays near.
+const SHADOW_SHARES_QUALITY: [f32; 3] = [0.0875, 0.25, 0.625];
+/// Quality's 4 cascades with maps of [`WIDE_SHADOW_MAP`] or more (4096²): at 8,000 units
+/// 1,500, 3,500, 7,000, blended over [`WIDE_SHADOW_OVERLAP`]: 3.43-3.48 ms against 3.38 for
+/// the 3 of before with these maps; the near shadow stays crisp (0.86 units a texel) with
+/// the seams farther out.
+const SHADOW_SHARES_QUALITY_WIDE: [f32; 3] = [0.1875, 0.4375, 0.875];
+/// The shadow map side from which Quality takes [`SHADOW_SHARES_QUALITY_WIDE`].
+const WIDE_SHADOW_MAP: usize = 4096;
+/// The overlap (blend band) of Quality's cascades with the larger maps: seams farther out
+/// are wider apart in texel size, and a wider band hides them [engineering choice, #2843].
+const WIDE_SHADOW_OVERLAP: f32 = 0.4;
+
+/// The far bounds of the sun's shadow cascades (game units from the camera, nearest
+/// first) and their overlap, for `layout` and shadow maps `map` texels on a side. The last
+/// bound is `distance` × `reach` (`reach` 1, or more with the longer shadows of
+/// `graphics.rs`), so the Shadow distance slider and `--shadow-distance` move them all; the
+/// others are not stretched by `reach`.
+///
+/// - Performance: the shares of `distance` in [`SHADOW_SHARES_PERFORMANCE`], whatever the
+///   map size; overlap [`SHADOW_OVERLAP`].
+/// - Quality: [`SHADOW_SHARES_QUALITY`] and [`SHADOW_OVERLAP`] with maps under
+///   [`WIDE_SHADOW_MAP`], [`SHADOW_SHARES_QUALITY_WIDE`] and [`WIDE_SHADOW_OVERLAP`] from it.
+/// - Spaced(n) (`--graphics-cycle cascades=<n>`): Bevy's geometric spacing from a first
+///   bound of a twelfth of `distance`, as every count had it before #2843, so that
+///   measurements of then still compare; overlap [`SHADOW_OVERLAP`].
+/// - One cascade (the moon's, Spaced(1)): `distance` × `reach`.
 ///
 /// At short distances (the Shadow distance slider goes down to a tenth of
 /// `--shadow-distance`) the first bound stays at [`FIRST_CASCADE_FLOOR`] but under half the
@@ -1690,53 +1740,58 @@ const SHADOW_SHARES_4: [f32; 3] = [0.0875, 0.25, 0.625];
 /// is then the farther of its share and Bevy's geometric spacing between the first bound
 /// and the last. That spacing rises strictly from the first to the last, and the shares
 /// rise, so the bounds always rise strictly; at the usual distances the shares win (at
-/// 8,000 units the spacing gives about 1,576 and 3,550 against 2,000 and 5,000)
-/// [engineering choice].
-pub(crate) fn shadow_cascade_bounds(distance: f32, reach: f32, count: usize) -> Vec<f32> {
-    let count = count.max(1);
+/// 8,000 units Quality's spacing with 2048² maps gives about 1,576 and 3,550 against 2,000
+/// and 5,000) [engineering choice].
+pub(crate) fn shadow_cascade_layout(distance: f32, reach: f32, layout: CascadeLayout, map: usize) -> (Vec<f32>, f32) {
+    let count = layout.count();
     let last = (distance * reach.max(1.0)).max(4.0 * SHADOW_MINIMUM_DISTANCE);
-    if count == 1 {
-        return vec![last];
-    }
-    let shares: &[f32] = match count {
-        2 => &SHADOW_SHARES_2,
-        4 => &SHADOW_SHARES_4,
-        _ => &[],
+    let (shares, overlap): (&[f32], f32) = match layout {
+        CascadeLayout::Performance => (&SHADOW_SHARES_PERFORMANCE, SHADOW_OVERLAP),
+        CascadeLayout::Quality if map >= WIDE_SHADOW_MAP => (&SHADOW_SHARES_QUALITY_WIDE, WIDE_SHADOW_OVERLAP),
+        CascadeLayout::Quality => (&SHADOW_SHARES_QUALITY, SHADOW_OVERLAP),
+        CascadeLayout::Spaced(_) => (&[], SHADOW_OVERLAP),
     };
+    if count == 1 {
+        return (vec![last], overlap);
+    }
     let first_share = shares.first().copied().unwrap_or(1.0 / 12.0);
     let first = (distance * first_share).max(FIRST_CASCADE_FLOOR).min(last / 2.0);
     if shares.is_empty() {
-        return CascadeShadowConfigBuilder {
+        let bounds = CascadeShadowConfigBuilder {
             num_cascades: count,
             minimum_distance: SHADOW_MINIMUM_DISTANCE,
             first_cascade_far_bound: first,
             maximum_distance: last,
-            overlap_proportion: SHADOW_OVERLAP,
+            overlap_proportion: overlap,
         }
         .build()
         .bounds;
+        return (bounds, overlap);
     }
     let spaced = |i: usize| first * (last / first).powf(i as f32 / (count - 1) as f32);
-    std::iter::once(first)
+    let bounds = std::iter::once(first)
         .chain(shares.iter().enumerate().skip(1).map(|(i, share)| (distance * share).max(spaced(i))))
         .chain(std::iter::once(last))
-        .collect()
+        .collect();
+    (bounds, overlap)
 }
 
-/// Log the sun's cascades whenever their far bounds change (the first frame with
-/// cascades, the day's and the moon's, a change of mode or distance): `sun shadows:
-/// cascades far bounds [..] texels [..] units`, with each cascade's texel size as Bevy
-/// built it for the main camera. Runs after Bevy builds the cascades and before the hold
-/// can give back a cascade of an earlier frame (shadow_anchor.rs `cascade_edits`); a few
-/// floats compared a frame.
+/// Log the sun's cascades whenever their far bounds or the shadow maps' size change (the
+/// first frame with cascades, the day's and the moon's, a change of mode, distance or
+/// Shadow resolution): `sun shadows: cascades far bounds [..] texels [..] units`, with each
+/// cascade's texel size as Bevy built it for the main camera. Runs after Bevy builds the
+/// cascades and before the hold can give back a cascade of an earlier frame
+/// (shadow_anchor.rs `cascade_edits`); a few floats compared a frame.
 pub fn log_sun_cascades(
     suns: Query<(&DirectionalLight, &CascadeShadowConfig, &bevy::light::Cascades), With<Sun>>,
     cams: Query<Entity, With<FlyCam>>,
-    mut said: Local<Vec<f32>>,
+    map: Option<Res<bevy::light::DirectionalLightShadowMap>>,
+    mut said: Local<(Vec<f32>, usize)>,
 ) {
     let Some(cam) = cams.iter().next() else { return };
+    let side = map_side(map.as_deref());
     for (light, config, cascades) in &suns {
-        if !light.shadow_maps_enabled || config.bounds == *said {
+        if !light.shadow_maps_enabled || (config.bounds == said.0 && side == said.1) {
             continue;
         }
         // Wait for the cascades Bevy builds from this config.
@@ -1744,7 +1799,8 @@ pub fn log_sun_cascades(
         let bounds: Vec<String> = config.bounds.iter().map(|b| format!("{b:.0}")).collect();
         let texels: Vec<String> = list.iter().map(|c| format!("{:.3}", c.texel_size)).collect();
         info!("sun shadows: cascades far bounds [{}] texels [{}] units", bounds.join(", "), texels.join(", "));
-        said.clone_from(&config.bounds);
+        said.0.clone_from(&config.bounds);
+        said.1 = side;
     }
 }
 
@@ -1762,8 +1818,9 @@ pub fn set_shadows(world: &mut World, on: bool) {
     let distance = {
         let mut sky = world.resource_mut::<SkyState>();
         sky.shadows = on;
-        (sky.shadow_distance, sky.shadow_reach, sky.shadow_cascades)
+        (sky.shadow_distance, sky.shadow_reach, sky.shadow_layout)
     };
+    let map = map_side(world.get_resource::<bevy::light::DirectionalLightShadowMap>());
     let mut suns = world.query_filtered::<(Entity, &mut DirectionalLight), With<Sun>>();
     let lit: Vec<Entity> = suns
         .iter_mut(world)
@@ -1774,7 +1831,7 @@ pub fn set_shadows(world: &mut World, on: bool) {
         .collect();
     if on {
         for e in lit {
-            world.entity_mut(e).insert(shadow_cascades(distance.0, distance.1, distance.2));
+            world.entity_mut(e).insert(shadow_cascades(distance.0, distance.1, distance.2, map));
         }
     }
 }
@@ -2310,7 +2367,7 @@ mod tests {
             shadows: false,
             shadow_distance: DEFAULT_SHADOW_DISTANCE,
             shadow_reach: 1.0,
-            shadow_cascades: DEFAULT_SHADOW_CASCADES,
+            shadow_layout: CascadeLayout::Quality,
             grade: true,
             time_scale: 0.0,
             clock_running: false,
@@ -2378,7 +2435,7 @@ mod tests {
             shadows: false,
             shadow_distance: DEFAULT_SHADOW_DISTANCE,
             shadow_reach: 1.0,
-            shadow_cascades: DEFAULT_SHADOW_CASCADES,
+            shadow_layout: CascadeLayout::Quality,
             grade: true,
             time_scale: 0.0,
             clock_running: false,
@@ -2926,53 +2983,71 @@ mod tests {
         assert_eq!(before, cascade.clip_from_world);
     }
 
-    /// The far bounds by cascade count at the default 8,000 units, without and with the
-    /// longer shadows' reach: only the last bound takes the reach.
+    /// The far bounds and overlap of each layout at the default 8,000 units, without and
+    /// with the longer shadows' reach: only the last bound takes the reach.
     #[test]
-    fn cascade_bounds_by_count() {
-        let near = |got: Vec<f32>, want: &[f32]| {
+    fn cascade_layouts_at_the_default_distance() {
+        use CascadeLayout::{Performance, Quality, Spaced};
+        let near = |(got, overlap): (Vec<f32>, f32), want: &[f32], want_overlap: f32| {
             assert_eq!(got.len(), want.len(), "{got:?} against {want:?}");
             assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.5), "{got:?} against {want:?}");
+            assert_eq!(overlap, want_overlap, "{got:?}");
         };
-        // Quality: 700, 2,000, 5,000, then the distance times the reach.
-        near(shadow_cascade_bounds(8000.0, 1.0, 4), &[700.0, 2000.0, 5000.0, 8000.0]);
-        near(shadow_cascade_bounds(8000.0, 1.5, 4), &[700.0, 2000.0, 5000.0, 12000.0]);
-        // Performance: 1,500.
-        near(shadow_cascade_bounds(8000.0, 1.0, 2), &[1500.0, 8000.0]);
-        near(shadow_cascade_bounds(8000.0, 1.5, 2), &[1500.0, 12000.0]);
-        // 3 as before: geometric from a twelfth of the distance (667, 2,828, 12,000 with
-        // the reach, as measured on 2026-11-16).
-        near(shadow_cascade_bounds(8000.0, 1.0, 3), &[666.7, 2309.4, 8000.0]);
-        near(shadow_cascade_bounds(8000.0, 1.5, 3), &[666.7, 2828.4, 12000.0]);
-        // The moon's single cascade.
-        near(shadow_cascade_bounds(3000.0, 1.0, 1), &[3000.0]);
-        near(shadow_cascade_bounds(8000.0, 1.5, 1), &[12000.0]);
+        for map in [2048, 4096] {
+            // Performance, whatever the maps: 1,500, 4,500, then the distance times the reach.
+            near(shadow_cascade_layout(8000.0, 1.0, Performance, map), &[1500.0, 4500.0, 8000.0], 0.2);
+            near(shadow_cascade_layout(8000.0, 1.5, Performance, map), &[1500.0, 4500.0, 12000.0], 0.2);
+            // 3 spaced as before (`--graphics-cycle cascades=3`): geometric from a twelfth
+            // of the distance (667, 2,828, 12,000 with the reach, as measured on 2026-11-16).
+            near(shadow_cascade_layout(8000.0, 1.0, Spaced(3), map), &[666.7, 2309.4, 8000.0], 0.2);
+            near(shadow_cascade_layout(8000.0, 1.5, Spaced(3), map), &[666.7, 2828.4, 12000.0], 0.2);
+            // The moon's single cascade.
+            near(shadow_cascade_layout(3000.0, 1.0, Spaced(1), map), &[3000.0], 0.2);
+            near(shadow_cascade_layout(8000.0, 1.5, Spaced(1), map), &[12000.0], 0.2);
+        }
+        // Quality with 2048² maps: 700, 2,000, 5,000, overlap 0.2.
+        near(shadow_cascade_layout(8000.0, 1.0, Quality, 2048), &[700.0, 2000.0, 5000.0, 8000.0], 0.2);
+        near(shadow_cascade_layout(8000.0, 1.5, Quality, 2048), &[700.0, 2000.0, 5000.0, 12000.0], 0.2);
+        // Quality with 4096² maps: 1,500, 3,500, 7,000, overlap 0.4.
+        near(shadow_cascade_layout(8000.0, 1.0, Quality, 4096), &[1500.0, 3500.0, 7000.0, 8000.0], 0.4);
+        near(shadow_cascade_layout(8000.0, 1.5, Quality, 4096), &[1500.0, 3500.0, 7000.0, 12000.0], 0.4);
         // The shares follow the distance (the Shadow distance slider).
-        near(shadow_cascade_bounds(16000.0, 1.0, 4), &[1400.0, 4000.0, 10000.0, 16000.0]);
-        // The config carries them with the overlap and the minimum distance of before.
-        let config = shadow_cascades(8000.0, 1.0, 4);
-        assert_eq!(config.bounds, shadow_cascade_bounds(8000.0, 1.0, 4));
-        assert_eq!((config.overlap_proportion, config.minimum_distance), (0.2, 5.0));
+        near(shadow_cascade_layout(16000.0, 1.0, Quality, 2048), &[1400.0, 4000.0, 10000.0, 16000.0], 0.2);
+        near(shadow_cascade_layout(16000.0, 1.0, Performance, 2048), &[3000.0, 9000.0, 16000.0], 0.2);
+        // The counts.
+        assert_eq!((Quality.count(), Performance.count(), Spaced(3).count(), Spaced(0).count()), (4, 3, 3, 1));
+        assert_eq!(DEFAULT_SHADOW_CASCADES, 4);
+        // The config carries them with the layout's overlap and the minimum distance of before.
+        let config = shadow_cascades(8000.0, 1.0, Quality, 4096);
+        assert_eq!((config.bounds.clone(), config.overlap_proportion), shadow_cascade_layout(8000.0, 1.0, Quality, 4096));
+        assert_eq!(config.minimum_distance, 5.0);
+        // Without the map resource: Bevy's default side, the smaller maps' layout.
+        assert_eq!(map_side(None), 2048);
     }
 
     /// At the slider's low end (a tenth of the default distance) and below, the bounds
-    /// still rise strictly and the first stays past the minimum distance, for every count.
+    /// still rise strictly and the first stays past the minimum distance, for every layout.
     #[test]
     fn cascade_bounds_rise_at_short_distances() {
+        use CascadeLayout::{Performance, Quality, Spaced};
+        let layouts = [Quality, Performance, Spaced(1), Spaced(2), Spaced(3), Spaced(4), Spaced(5)];
         for distance in [8000.0, 2000.0, DEFAULT_SHADOW_DISTANCE * crate::draw_distance::MIN, 300.0, 100.0, 10.0, 0.0] {
             for reach in [1.0, 1.5] {
-                for count in 1..=4 {
-                    let b = shadow_cascade_bounds(distance, reach, count);
-                    assert_eq!(b.len(), count);
-                    assert!(b[0] > SHADOW_MINIMUM_DISTANCE, "{distance} x {reach}, {count}: {b:?}");
-                    assert!(b.windows(2).all(|w| w[1] > w[0]), "{distance} x {reach}, {count}: {b:?}");
+                for layout in layouts {
+                    for map in [2048, 4096] {
+                        let (b, _) = shadow_cascade_layout(distance, reach, layout, map);
+                        assert_eq!(b.len(), layout.count());
+                        assert!(b[0] > SHADOW_MINIMUM_DISTANCE, "{distance} x {reach}, {layout:?} {map}: {b:?}");
+                        assert!(b.windows(2).all(|w| w[1] > w[0]), "{distance} x {reach}, {layout:?} {map}: {b:?}");
+                    }
                 }
             }
         }
-        // At the slider's low end the first bound is held at the floor and the rest spaced
-        // out from it.
-        near_eq(&shadow_cascade_bounds(800.0, 1.0, 4), &[200.0, 317.5, 504.0, 800.0]);
-        near_eq(&shadow_cascade_bounds(800.0, 1.0, 2), &[200.0, 800.0]);
+        // At the slider's low end the first bound is held at the floor and the rest are
+        // the farther of their share and the spacing out from it.
+        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 2048).0, &[200.0, 317.5, 504.0, 800.0]);
+        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 4096).0, &[200.0, 350.0, 700.0, 800.0]);
+        near_eq(&shadow_cascade_layout(800.0, 1.0, Performance, 2048).0, &[200.0, 450.0, 800.0]);
         fn near_eq(got: &[f32], want: &[f32]) {
             assert!(got.len() == want.len() && got.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.5), "{got:?} against {want:?}");
         }

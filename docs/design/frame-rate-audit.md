@@ -1199,56 +1199,83 @@ light held still on the origin's grid; the pulse at half the frame rate is gone 
 The anchoring is a few matrices per cascade a frame; its frame time was not measured
 separately.
 
-## 12. Where the sun's cascades end (#NNNN, 2026-11-16)
+## 12. Where the sun's cascades end (#2843, 2026-11-16)
 
 Players found the sun's shadows sharp only in a small radius around the player and coarse
 beyond, worst on Performance. Every count had the same layout (Bevy's builder): the first
 cascade ends at a twelfth of the shadow distance (667 of the default 8,000 units, about
 9.5 m), the others spaced geometrically up to the distance times the reach (1.5 with longer
-shadows). On Performance's 2 cascades everything past 667 units lay on the last cascade.
+shadows). Each cascade's texels were about 4.2 times the size of the one before (0.77, 3.2,
+13.8 units with longer shadows), and the Smooth filter's blur is a fixed number of texels,
+so an edge got about four times softer at each seam. On Performance's 2 cascades
+everything past 667 units lay on the last cascade.
 
 [observed 2026-11-16: Goodsprings' start view at 09:00 standing still, 2560 × 1440, an RTX
 5070 Ti, ambient occlusion, longer shadows (reach 12,000), light glow, 16x anisotropic
 filtering, sun shafts, `--no-actors`, cascades anchored (§11); the median of five 4-second
-periods, two rounds agreeing within 0.03 ms; sun shadows off 2.84 ms a frame]
+periods, two rounds; sun shadows off 2.81-2.85 ms a frame. Third cascades on Performance
+drawn every fourth frame; four cascades on Quality every frame / every other / every fourth
+/ every fourth, the last two on different frames]
 
-| Layout | Far bounds (units) | Texel sizes (units) | ms a frame |
-|---|---|---|---|
-| Performance as it was | 667, 12,000 | 0.765, 13.756 | 3.05 |
-| Performance, first bound 1,500 | 1,500, 12,000 | 1.720, 13.756 | 3.07 |
-| Performance, 3 cascades (the third every fourth frame) | 1,000, 3,500, 12,000 | 1.146, 4.012, 13.756 | 3.10 |
-| Quality as it was | 667, 2,828, 12,000 | 0.765, 3.243, 13.756 | 3.16 |
-| Quality, 3 cascades | 1,200, 3,600, 12,000 | 1.376, 4.127, 13.756 | 3.19 |
-| Quality, 4 cascades, schedule (1,0), (2,1), (4,2), (4,0) | 700, 2,000, 5,000, 12,000 | 0.803, 2.293, 5.732, 13.756 | 3.22 |
-| Quality, 4 cascades, the same schedule | 1,000, 2,800, 6,500, 12,000 | 1.146, 3.210, 7.452, 13.756 | 3.27 |
-| Quality as it was, 4096² maps | 667, 2,828, 12,000 | 0.382, 1.621, 6.878 | 3.38 |
+| Layout | Far bounds (units) | Maps | Texel sizes (units) | ms a frame |
+|---|---|---|---|---|
+| Performance as it was | 667 / 12,000 | 2048² | 0.77 / 13.8 | 3.05-3.10 |
+| Performance, first bound 1,500 | 1,500 / 12,000 | 2048² | 1.72 / 13.8 | 3.07 |
+| Performance, three cascades | 1,000 / 3,500 / 12,000 | 2048² | 1.15 / 4.0 / 13.8 | 3.07-3.10 |
+| **Performance, three cascades, farther** | 1,500 / 4,500 / 12,000 | 2048² | 1.72 / 5.2 / 13.8 | 3.09-3.11 |
+| Quality as it was | 667 / 2,828 / 12,000 | 2048² | 0.77 / 3.2 / 13.8 | 3.15-3.16 |
+| Quality, four cascades | 700 / 2,000 / 5,000 / 12,000 | 2048² | 0.80 / 2.3 / 5.7 / 13.8 | 3.22 |
+| Quality, four cascades, wider | 1,000 / 2,800 / 6,500 / 12,000 | 2048² | 1.15 / 3.2 / 7.5 / 13.8 | 3.24-3.27 |
+| Quality as it was | 667 / 2,828 / 12,000 | 4096² | 0.38 / 1.6 / 6.9 | 3.38 |
+| Quality, four cascades, wider | 1,000 / 2,800 / 6,500 / 12,000 | 4096² | 0.57 / 1.6 / 3.7 / 6.9 | 3.42-3.43 |
+| **Quality, four cascades, farther, blend band 0.4** | 1,500 / 3,500 / 7,000 / 12,000 | 4096² | 0.86 / 2.0 / 4.0 / 6.9 | 3.43-3.48 |
 
-In the pictures: on Performance as it was a telegraph pole's shadow 15-25 m away is a wide
-blur; with the first bound at 1,500 it is as sharp as on Quality. The Quality layouts
-differ modestly in stills; the 4-cascade one is sharper between about 25 and 60 m.
+In pictures of a long pole shadow (one per row, the same view): with 2048² maps a farther
+first seam costs sharpness at the player's feet (a wire's shadow is crisp at 0.77 units a
+texel, soft at 1.15, blurred at 1.72); with 4096² maps the near shadow stays crisp with the
+seams farther out. The two rows in bold looked best to the contributor in play.
+Performance with three cascades keeps a clean shadow of a telegraph pole's crossarm where
+the two-cascade layout has a shapeless blob, for 0.01-0.05 ms here.
 
-Proposed [engineering choice] (sky.rs `shadow_cascade_bounds`): the bounds as shares of the
-shadow distance, so the Shadow distance slider and `--shadow-distance` move them, with
-only the last stretched by the reach:
+Proposed [engineering choice: the contributor's proposal, for the maintainer to decide]
+(sky.rs `shadow_cascade_layout`, a pure function of the distance, the reach, the layout
+and the shadow maps' side): the bounds as shares of the shadow distance, so the Shadow
+distance slider and `--shadow-distance` move them, with only the last stretched by the
+reach (longer shadows); the moon's single cascade unchanged.
 
-- **Performance**, 2 cascades: the first ends at 0.1875 of the distance (1,500 of 8,000),
-  for 0.02 ms.
-- **Quality**, 4 cascades (`DEFAULT_SHADOW_CASCADES`, 3 before): 0.0875, 0.25 and 0.625 of
-  the distance (700, 2,000 and 5,000 of 8,000), for 0.06 ms. The schedule
-  (shadow_rate.rs `STAGGERED_SCHEDULE`) draws the nearest every frame, the second every
-  other frame, the third and the fourth every fourth frame on different frames: two
-  cascades drawn in each frame, 2 of 4 on average against 1.75 of 3. On 2026-10-12
-  (graphics-enhanced.md §5.3; sky.rs `DEFAULT_SHADOW_DISTANCE`) the old default of 16,000
-  units in 4 cascades took 19.0-20.8 ms a frame and 8,000 in 3 13.7-15.2; 8,000 in 4 took
-  15.0-16.8, every cascade drawn every frame, before the casters were culled to the slice
-  (graphics-enhanced.md §5.7) and before the schedule. The reach stays 8,000 here, and
-  the fourth cascade costs 0.06 ms in the table above. 4096² maps sharpen every cascade
-  but cost 0.22 ms over Quality as it was and are not part of this change.
-- 3 cascades (`--graphics-cycle cascades=3`), any other count but 1, and the moon's
-  single cascade keep the layout of before, so measurements of then compare.
+- **Performance**, 3 cascades (2 before): far bounds 0.1875 and 0.5625 of the distance
+  (1,500 and 4,500 of 8,000), whatever the maps' size, overlap 0.2. The schedule
+  (shadow_rate.rs `PERFORMANCE_SCHEDULE`) draws the first two every other frame,
+  together, and the third every fourth frame on a frame the first two are not drawn.
+- **Quality**, 4 cascades (`DEFAULT_SHADOW_CASCADES`, 3 before), laid out by the maps'
+  side (the Shadow resolution row, `shadow-resolution`): with 2048² maps 0.0875, 0.25
+  and 0.625 of the distance (700, 2,000, 5,000), overlap 0.2; with 4096² maps 0.1875,
+  0.4375 and 0.875 (1,500, 3,500, 7,000) and a blend band (overlap) of 0.4. With 2048²
+  maps the wider layout's near shadow is softer than before, so 2048 keeps the nearer
+  seams. The schedule (shadow_rate.rs `STAGGERED_SCHEDULE`) draws the nearest every
+  frame, the second every other frame, the third and the fourth every fourth frame on
+  different frames: two cascades drawn in each frame, 2 of 4 on average against 1.75
+  of 3.
+- **Shadow resolution** 2048 (as before, the default) or 4096: the sun's maps' side
+  (`DirectionalLightShadowMap`), changed in play. 4096² maps measured 0.2-0.3 ms on this
+  GPU and take about 200 MB more video memory by arithmetic (four layers of 4096² against
+  2048²); not measured on a slower GPU. No quality preset sets the row.
+- `--graphics-cycle cascades=<n>` (the test aid) asks for n cascades in the spacing of
+  before (sky.rs `CascadeLayout::Spaced`), so `cascades=3` still measures the 3 cascades
+  of before against the modes' layouts.
+
+For the maintainer to decide: the 3 cascades to 8,000 units are the choice of 2026-10-12
+after the playtest's "shadow rendering seriously affects performance" (graphics-enhanced.md
+§5.3; sky.rs `DEFAULT_SHADOW_DISTANCE`: the old default of 16,000 units in 4 cascades took
+19.0-20.8 ms a frame and 8,000 in 3 13.7-15.2; 8,000 in 4 took 15.0-16.8, every cascade
+drawn every frame, before the casters were culled to the slice, graphics-enhanced.md
+§5.7, and before the schedule). This keeps the 8,000 units; with the staggered schedule of
+#2182 a fourth cascade measured 0.06-0.1 ms here. Performance is the mode this audit says
+the maintainer plays on; its third cascade measured within the noise of the two of
+before. Whether 4096 is any preset's default is left open.
 
 At short distances (the slider goes down to a tenth of `--shadow-distance`) the first
 bound keeps its floor of 200 units, under half the last; each in-between bound is then
 the farther of its share and the geometric spacing between the first bound and the last,
-so the bounds always rise. The log says the layout whenever it changes:
-`sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels [..] units`.
+so the bounds always rise. The log says the layout whenever the bounds or the maps' side
+change: `sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels [..] units`.

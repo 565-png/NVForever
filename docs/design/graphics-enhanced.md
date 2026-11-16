@@ -746,11 +746,14 @@ casters, as it did. Changed [engineering choices]:
   (`C:\fnv-private\references\shadows_sun\shadow_limits_before_after.png`); at dusk the long
   shadows of distant rocks and buildings end nearer. The original casts no sun shadows from
   the world at all (world.md §6), so this is no further from its look.
-  **Proposed in #NNNN** [engineering choice]: Quality draws 4 cascades again, still to
-  8,000 units and staggered (never more than two drawn in a frame), with far bounds at
-  0.0875, 0.25 and 0.625 of the distance (700, 2,000, 5,000), and Performance's first
-  cascade ends at 0.1875 of it (1,500) instead of a twelfth (667); 3 cascades keep the
-  layout above. The measurements and the reasons: frame-rate-audit.md §12.
+  **Proposed in #2843** [engineering choice: the contributor's proposal, for the
+  maintainer to decide]: Quality draws 4 cascades again, still to 8,000 units and
+  staggered (never more than two drawn in a frame), with far bounds at 0.0875, 0.25 and
+  0.625 of the distance (700, 2,000, 5,000) with 2048² maps, or 0.1875, 0.4375 and 0.875
+  (1,500, 3,500, 7,000) and a blend band of 0.4 with 4096² maps; Performance draws 3,
+  ending at 0.1875 and 0.5625 of it (1,500, 4,500), the third every fourth frame.
+  `--graphics-cycle cascades=<n>` keeps the layout above. The measurements and the
+  reasons: frame-rate-audit.md §12.
 - Finer shadows (§3.2) keep their 4096² maps and reach 1.5 × the distance, now 12,000
   (the 4096² maps went in #1367; the longer reach stays).
 

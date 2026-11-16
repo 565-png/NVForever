@@ -4,17 +4,19 @@
 //! casts no sun shadows from the world at all, docs/spec-notes/world.md §6]
 //!
 //! Performance:
-//! - **The sun's shadow maps are drawn every other frame** ([`hold_cascades`]). On the
-//!   frames between, the lights keep the cascades of the frame that drew them, so the maps
-//!   and the matrices they are read with still belong together, and the renderer is told
-//!   to leave the maps alone (`bevy::pbr::HoldDirectionalShadowMaps`, a patched bevy_pbr:
+//! - **The sun's shadow maps are drawn every other frame**, the farthest cascade's every
+//!   fourth ([`PERFORMANCE_SCHEDULE`], [`hold_cascades`]). On the frames between, the
+//!   lights keep the cascades of the frame that drew them, so the maps and the matrices
+//!   they are read with still belong together, and the renderer is told to leave the maps
+//!   alone (`bevy::pbr::HoldDirectionalShadowMaps`, a patched bevy_pbr:
 //!   engine/vendor/README.md). The shadow of a moving thing then moves at half the frame
-//!   rate, and on a fast turn the edge of the view can lie outside a held cascade for one
-//!   frame (unshadowed).
-//! - **The sun's shadows are split over [`PERFORMANCE_CASCADES`] cascades** instead of
-//!   `sky::DEFAULT_SHADOW_CASCADES` ([`set_performance`]): two shadow views less, and
-//!   shadows near the camera coarser (the first cascade ends at 1,500 of 8,000 units
-//!   instead of 700: `sky::shadow_cascade_bounds`).
+//!   rate (a quarter in the farthest cascade), and on a fast turn the edge of the view can
+//!   lie outside a held cascade for one frame (up to three in the farthest; unshadowed).
+//! - **The sun's shadows are split over 3 cascades** (`sky::CascadeLayout::Performance`;
+//!   2 until #2843) instead of `sky::DEFAULT_SHADOW_CASCADES` ([`set_performance`]): one
+//!   shadow view less, and shadows near the camera coarser (the cascades end at 1,500 and
+//!   4,500 of 8,000 units instead of 700, 2,000 and 5,000 with 2048² maps:
+//!   `sky::shadow_cascade_layout`).
 //! - **The first-person arms have no shade light of their own** (player_body.rs
 //!   `shade_light`): another shadow view less; the arms take the sun's own shadows.
 //! - **A tree casts a shadow only within [`TREE_SHADOW_NEAR`] of the camera**
@@ -22,7 +24,7 @@
 //!   finely divided trunk in every cascade it falls in.
 //!
 //! Quality (the default) draws the sun's 4 cascades on a staggered schedule
-//! ([`STAGGERED_SCHEDULE`], #2063; 3 cascades until #NNNN): the nearest every frame, the
+//! ([`STAGGERED_SCHEDULE`], #2063; 3 cascades until #2843): the nearest every frame, the
 //! second every other frame, the third and the fourth every fourth frame, on different
 //! frames, each held cascade kept with the matrices of the frame that drew it, as above.
 //! A moving thing's shadow in the far cascades moves at a half or a quarter of the frame
@@ -40,7 +42,7 @@
 //! What it costs and saves: docs/design/frame-rate-audit.md §9 and §10.
 
 use crate::fly::FlyCam;
-use crate::sky::SkyState;
+use crate::sky::{CascadeLayout, SkyState};
 use bevy::ecs::entity::EntityHashMap;
 use bevy::light::{Cascades, DirectionalLight, DirectionalLightShadowMap, NotShadowCaster};
 use bevy::pbr::HoldDirectionalShadowMaps;
@@ -87,9 +89,6 @@ pub fn set_sun_shadow_choice(world: &mut World, choice: usize) {
     }
 }
 
-/// The sun's cascades in Performance mode.
-pub const PERFORMANCE_CASCADES: usize = 2;
-
 /// With the switch on a tree casts a shadow within this distance of the camera (game
 /// units: about 43 m), and again once it is back within [`TREE_SHADOW_BACK`] of it.
 pub const TREE_SHADOW_NEAR: f32 = 3000.0;
@@ -98,31 +97,32 @@ pub const TREE_SHADOW_BACK: f32 = 2700.0;
 /// Seconds between two looks at the trees.
 const TREES_EVERY: f32 = 0.5;
 
-/// The sun's cascade count Performance replaced when it was chosen (`--graphics-cycle
-/// cascades=` or the default), given back with Quality.
+/// The sun's cascade layout Performance replaced when it was chosen (Quality's, or the
+/// count `--graphics-cycle cascades=` asked for), given back with Quality.
 #[derive(Resource, Default)]
-struct CascadesBeforePerformance(Option<usize>);
+struct CascadesBeforePerformance(Option<CascadeLayout>);
 
-/// Performance mode on or off now (the Sun shadows row): the cascade count changes with it.
-/// Only the count is set here; graphics.rs `sun_shadow_quality` puts the cascades on the
-/// sun as the hour wants them (the moon's single cascade by night).
+/// Performance mode on or off now (the Sun shadows row): the cascade layout changes with
+/// it. Only the layout is set here; graphics.rs `sun_shadow_quality` puts the cascades on
+/// the sun as the hour wants them (the moon's single cascade by night).
 pub fn set_performance(world: &mut World, on: bool) {
     let was = std::mem::replace(&mut world.resource_mut::<PerformanceShadows>().0, on);
-    let current = world.resource::<SkyState>().shadow_cascades;
+    let current = world.resource::<SkyState>().shadow_layout;
     let mut before = world.get_resource_or_init::<CascadesBeforePerformance>();
-    let cascades = if on {
+    let layout = if on {
         if !was {
             before.0 = Some(current);
         }
-        PERFORMANCE_CASCADES
+        CascadeLayout::Performance
     } else if was {
-        before.0.take().unwrap_or(crate::sky::DEFAULT_SHADOW_CASCADES)
+        before.0.take().unwrap_or_default()
     } else {
         current
     };
-    world.resource_mut::<SkyState>().shadow_cascades = cascades;
+    world.resource_mut::<SkyState>().shadow_layout = layout;
+    let cascades = layout.count();
     let how = if on {
-        "performance (maps drawn every other frame, trees cast near the camera only, no arms shade light)"
+        "performance (maps drawn every other frame, the farthest every fourth, trees cast near the camera only, no arms shade light)"
     } else if staggered() {
         "cascades on a staggered schedule (the nearest every frame, the farther ones less often)"
     } else {
@@ -180,12 +180,16 @@ fn far_trees_cast_no_shadow(
 
 /// How often each cascade's map is drawn, nearest cascade first: `(n, phase)` draws it on
 /// the frames where (frame + phase) is a multiple of n; a cascade past the list is drawn
-/// every frame. With the switch on, both cascades every other frame, together.
-pub const PERFORMANCE_SCHEDULE: [(u32, u32); 2] = [(2, 0), (2, 0)];
+/// every frame. With the switch on, the first two cascades every other frame, together,
+/// and the third every fourth frame, on a frame the other two are not drawn (#2843): never
+/// more than two drawn in a frame, 1.25 of 3 on average against 1 of the 2 of before. The
+/// third holds the farthest and coarsest shadows, where a moving thing's shadow moving at a
+/// quarter of the frame rate shows least.
+pub const PERFORMANCE_SCHEDULE: [(u32, u32); 3] = [(2, 0), (2, 0), (4, 1)];
 /// With the switch off: the nearest cascade every frame, the second every other frame,
 /// the third and the fourth every fourth frame, all on different frames, so exactly two
 /// are drawn in each frame (2 of 4 on average; 1.75 of 3 with the 3 cascades of before
-/// #NNNN, which drew the farthest every fourth frame: `--graphics-cycle cascades=3` still
+/// #2843, which drew the farthest every fourth frame: `--graphics-cycle cascades=3` still
 /// does). The far cascades hold most of the casters (with 3 cascades the farthest held
 /// about 1,150 of 1,400 at Goodsprings, 1,570 of 2,140 at Novac), and their shadows are
 /// the coarsest, so a moving thing's shadow there moving at a quarter of the frame rate
@@ -304,7 +308,7 @@ pub(crate) fn hold_cascades(
 }
 
 /// `performance`: start in Performance mode (`--sun-shadows=performance`; the program sets
-/// `SkyState`'s cascade count to match).
+/// `SkyState`'s cascade layout to match).
 pub struct ShadowRatePlugin {
     pub performance: bool,
 }
@@ -312,7 +316,7 @@ pub struct ShadowRatePlugin {
 impl Plugin for ShadowRatePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PerformanceShadows(self.performance))
-            .insert_resource(CascadesBeforePerformance(self.performance.then_some(crate::sky::DEFAULT_SHADOW_CASCADES)))
+            .insert_resource(CascadesBeforePerformance(self.performance.then_some(CascadeLayout::Quality)))
             .init_resource::<HoldDirectionalShadowMaps>()
             .add_plugins(ExtractResourcePlugin::<HoldDirectionalShadowMaps>::default())
             // `hold_cascades` runs with the other edits of the cascades, in their order
@@ -348,33 +352,47 @@ mod tests {
         assert!(!same_layout(&kept, &[(sun, &cascades(arms, 3))]));
     }
 
-    /// The switch gives back the cascade count it replaced (#2182 review: it reset a
-    /// `--graphics-cycle cascades=` value to the default), and only sets the count.
+    /// The switch gives back the cascade layout it replaced (#2182 review: it reset a
+    /// `--graphics-cycle cascades=` value to the default), and only sets the layout. Since
+    /// #2843 Performance has as many cascades as `cascades=3`, but not their spacing.
     #[test]
     fn the_switch_gives_back_the_cascades_it_replaced() {
         let mut world = World::new();
         world.init_resource::<PerformanceShadows>();
         let mut sky = SkyState::default();
-        // A count other than the default's.
-        let given = 3;
-        assert_ne!(given, crate::sky::DEFAULT_SHADOW_CASCADES);
-        sky.shadow_cascades = given;
+        // `--graphics-cycle cascades=3`: the old spacing, as many cascades as Performance.
+        let given = CascadeLayout::Spaced(3);
+        assert_eq!(given.count(), CascadeLayout::Performance.count());
+        sky.shadow_layout = given;
         world.insert_resource(sky);
         set_performance(&mut world, true);
-        assert_eq!(world.resource::<SkyState>().shadow_cascades, PERFORMANCE_CASCADES);
+        assert_eq!(world.resource::<SkyState>().shadow_layout, CascadeLayout::Performance);
         set_performance(&mut world, true);
         set_performance(&mut world, false);
-        assert_eq!(world.resource::<SkyState>().shadow_cascades, given);
-        // Off when it already is: the count stays.
+        assert_eq!(world.resource::<SkyState>().shadow_layout, given);
+        // Off when it already is: the layout stays.
         set_performance(&mut world, false);
-        assert_eq!(world.resource::<SkyState>().shadow_cascades, given);
+        assert_eq!(world.resource::<SkyState>().shadow_layout, given);
+        // Started in Performance (`--sun-shadows=performance`): Quality's layout back.
+        let mut world = World::new();
+        world.insert_resource(PerformanceShadows(true));
+        world.insert_resource(CascadesBeforePerformance(Some(CascadeLayout::Quality)));
+        world.insert_resource(SkyState { shadow_layout: CascadeLayout::Performance, ..SkyState::default() });
+        set_performance(&mut world, false);
+        assert_eq!(world.resource::<SkyState>().shadow_layout, CascadeLayout::Quality);
     }
 
     #[test]
     fn the_schedules_hold_the_cascades_they_should() {
-        // Performance: both cascades every other frame, together.
-        let performance: Vec<u32> = (0..4).map(|f| held_mask(&PERFORMANCE_SCHEDULE, f, 2)).collect();
-        assert_eq!(performance, [0, 0b11, 0, 0b11]);
+        // Performance: the first two cascades every other frame, together, the third every
+        // fourth frame, on a frame the first two are held.
+        let performance: Vec<u32> = (0..4).map(|f| held_mask(&PERFORMANCE_SCHEDULE, f, 3)).collect();
+        assert_eq!(performance, [0b100, 0b111, 0b100, 0b011]);
+        // Over four frames each cascade is drawn at least once.
+        assert_eq!(performance.iter().fold(0b111, |all, m| all & m), 0);
+        // With 2 cascades (still a valid input): both every other frame, together.
+        let two: Vec<u32> = (0..4).map(|f| held_mask(&PERFORMANCE_SCHEDULE, f, 2)).collect();
+        assert_eq!(two, [0, 0b11, 0, 0b11]);
         // Staggered: the nearest every frame, the second every other, the third and the
         // fourth every fourth on different frames: exactly two drawn in each frame.
         let staggered: Vec<u32> = (0..4).map(|f| held_mask(&STAGGERED_SCHEDULE, f, 4)).collect();
@@ -385,7 +403,7 @@ mod tests {
         let three: Vec<u32> = (0..4).map(|f| held_mask(&STAGGERED_SCHEDULE, f, 3)).collect();
         assert_eq!(three, [0b110, 0b100, 0b010, 0b100]);
         // More cascades than the schedule: those are drawn every frame.
-        assert_eq!(held_mask(&PERFORMANCE_SCHEDULE, 1, 3), 0b011);
+        assert_eq!(held_mask(&PERFORMANCE_SCHEDULE, 1, 4), 0b0111);
         assert_eq!(held_mask(&[], 1, 3), 0);
     }
 

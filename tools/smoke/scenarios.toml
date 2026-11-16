@@ -484,7 +484,7 @@ manual = "motion_turning.png against motion_still.png: the street and hills smea
 
 [[scenario]]
 name = "shadows-sun"
-source = "docs/design/graphics-enhanced.md §2 (playtest list 4 items 6-7, 2026-10-12): the sky dome and its sun come back after leaving an interior; the sun's shadows default to 8,000 units in 4 cascades (3 until #NNNN) and the arms' shade light draws only what is near the arms"
+source = "docs/design/graphics-enhanced.md §2 (playtest list 4 items 6-7, 2026-10-12): the sky dome and its sun come back after leaving an interior; the sun's shadows default to 8,000 units in 4 cascades (3 until #2843) and the arms' shade light draws only what is near the arms"
 areas = ["renderer", "graphics", "sky"]
 paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/sky.wesl", "engine/nvforever/src/player_body.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "10:00103E61", NVF_PLAY_TEST_ACTIVATE = "12" }
@@ -502,7 +502,7 @@ expect = [
 
 [[scenario]]
 name = "sun-casters-over-slice"
-source = "docs/design/graphics-enhanced.md §5.7 (#1378, 2026-11-03): each of the sun's cascades draws only the casters over the outline of the view's slice it covers, not its whole square: at Novac 07:00 about 78, 750 and 1,750 casters (154, 1,420 and 3,200 before); held at the 3 cascades those counts were taken with (the default is 4 since #NNNN)"
+source = "docs/design/graphics-enhanced.md §5.7 (#1378, 2026-11-03): each of the sun's cascades draws only the casters over the outline of the view's slice it covers, not its whole square: at Novac 07:00 about 78, 750 and 1,750 casters (154, 1,420 and 3,200 before); held at the 3 cascades those counts were taken with (the default is 4 since #2843)"
 areas = ["renderer", "graphics", "sky"]
 paths = ["engine/nvforever/src/sky.rs"]
 env = { NVF_PLAY_TEST_GOD = "1" }
@@ -1442,7 +1442,7 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 
 [[scenario]]
 name = "sun-shadows-performance"
-source = "docs/design/frame-rate-audit.md §9, §10 and §11 (nvforever shadow_rate.rs, shadow_anchor.rs, #2062, #2063, #2833): the sun's cascades are snapped to a grid anchored near the camera; on Quality the sun's farther cascades keep their maps on a staggered schedule; the settings page's Sun shadows row goes to Performance and back to Quality while the game runs: two cascades, the sun's shadow maps kept on alternate frames, four staggered cascades again (three until #NNNN), without a rendering error; the cascades' far bounds are logged as each mode lays them out (#NNNN)"
+source = "docs/design/frame-rate-audit.md §9, §10 and §11 (nvforever shadow_rate.rs, shadow_anchor.rs, #2062, #2063, #2833): the sun's cascades are snapped to a grid anchored near the camera; on Quality the sun's farther cascades keep their maps on a staggered schedule; the settings page's Sun shadows row goes to Performance and back to Quality while the game runs: three cascades (two until #2843), the sun's shadow maps kept on alternate frames, four staggered cascades again (three until #2843), without a rendering error; the cascades' far bounds are logged as each mode lays them out (#2843)"
 areas = ["renderer", "graphics", "settings"]
 paths = [
   "engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/shadow_anchor.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/player_body.rs",
@@ -1454,15 +1454,15 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hou
 run_seconds = 23
 order = [[
   { text = "sun shadows: a frame kept its farther cascades' maps (staggered schedule", label = "on Quality from the start, the farther cascades are held" },
-  "sun shadows: performance (maps drawn every other frame, trees cast near the camera only, no arms shade light), 2 cascades",
+  "sun shadows: performance (maps drawn every other frame, the farthest every fourth, trees cast near the camera only, no arms shade light), 3 cascades",
   "settings: sun-shadows Performance",
   "sun shadows: a frame kept the shadow maps of the frame before",
   "sun shadows: cascades on a staggered schedule (the nearest every frame, the farther ones less often), 4 cascades",
   { text = "sun shadows: a frame kept its farther cascades' maps (staggered schedule", label = "Quality again: the staggered schedule holds cascades again" },
 ], [
   { text = "sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels […] units", label = "Quality from the start: four cascades, 700, 2,000 and 5,000 of the 8,000 units" },
-  "sun shadows: performance (maps drawn every other frame, trees cast near the camera only, no arms shade light), 2 cascades",
-  { text = "sun shadows: cascades far bounds [1500, 8000] texels […] units", label = "Performance: two cascades, the first to 1,500 of the 8,000 units" },
+  "sun shadows: performance (maps drawn every other frame, the farthest every fourth, trees cast near the camera only, no arms shade light), 3 cascades",
+  { text = "sun shadows: cascades far bounds [1500, 4500, 8000] texels […] units", label = "Performance: three cascades, to 1,500 and 4,500 of the 8,000 units" },
   "sun shadows: cascades on a staggered schedule (the nearest every frame, the farther ones less often), 4 cascades",
   { text = "sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels […] units", label = "Quality again: the four cascades' bounds again" },
 ]]
@@ -1501,7 +1501,7 @@ env = { NVF_PLAY_TEST_SHADOW_STAGGER = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", 
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
 run_seconds = 23
 order = [[
-  "sun shadows: performance (maps drawn every other frame, trees cast near the camera only, no arms shade light), 2 cascades",
+  "sun shadows: performance (maps drawn every other frame, the farthest every fourth, trees cast near the camera only, no arms shade light), 3 cascades",
   "settings: sun-shadows Performance",
   "sun shadows: a frame kept the shadow maps of the frame before",
   "sun shadows: drawn every frame, 4 cascades",
