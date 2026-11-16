@@ -3073,3 +3073,31 @@ already talking takes over at once, same topic or another; nothing is queued or 
      NAVM triangle/link/drop heights to marker 01 and between markers; no camp
      navmesh facts or original captures were available to this writer.
 
+## Added 2026-11-15 (L'il Devil's crown, issue #2350)
+
+216. **Does L'il Devil's crown follow the hair colour?** (P3; nif.md §6 "Hair",
+     actors.md §3; #2350.) [documented: issue #2350, supplied `fnvtool esm decode`,
+     `fnvtool nif` and texture measurements] HAIR 0x000987DB `HairRaiderFCat`
+     "L'il Devil" uses `Characters\Hair\HairRaiderFCat.NIF`; Playable and Not Male
+     are set, Fixed Color is not. Its `NoHat` and `Hat` shapes have identical
+     BSShaderPPLightingProperty flags 0x82040101 (Specular, Alpha texture, Hair,
+     Remappable, Z-test), NiAlphaProperty blend + test, and textures
+     `HairRaider01.dds`, `HairRaider01_n.dds`, `HairRaider01_hl.dds`, matching the
+     other ten raider hairs' properties. At the crown, 9% of `NoHat`'s area samples
+     black, opaque diffuse texels (RGB ≈ 0.001, alpha ≈ 0.99); other raider hairs
+     have at most 1% there. The `_hl` texture carries strands there: 2,084 of the
+     2,506 black, opaque diffuse texels have `_hl` luma above 0.08; crown-region
+     luma is about 0.17 against diffuse 0.001, with overall luma correlation 0.97.
+     NVForever multiplies the diffuse by doubled HCLR and draws the model's solid
+     core at alpha ≥ 0.8 [design; `engine/nvforever/src/actors.rs::part_uses`,
+     `engine/nvf-assets/src/nif_spawn.rs::hair_model_cut_out`; provisional tint
+     hypothesis in actors.md §3]. The issue has no reproduction in NVForever or
+     observation of the original [documented: #2350]. The original may take crown
+     colour or brightness from `_hl` [hypothesis, #2350]. In the original's face
+     editor at Doc Mitchell's, select L'il Devil and capture the crown at two very
+     different hair colours, keeping the view and lighting fixed; compare with
+     NVForever at the same colours and view. Does the crown tint with the strands,
+     or stay black? Record both colours and frames in nif.md §6. Consider a shader
+     change only if the original tints it; then compare three or four other hairs
+     before choosing a rule [design, #2350].
+
