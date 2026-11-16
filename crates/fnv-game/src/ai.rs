@@ -19,6 +19,23 @@ use crate::trace::EventKind;
 use fnv_sim::FormId;
 use std::collections::BTreeSet;
 
+/// A script's write that moves GameHour by more than this many game hours on the clock
+/// face ([`clock_face_hours`]) is a jump of the clock: the engine has every actor choose
+/// its package now and puts the actors the player cannot see where their packages have
+/// them, as at the end of a wait ([`crate::game::Game::take_hour_jump`]) [design, #2353:
+/// the original's handling of a script's GameHour write is not described by any source
+/// read, docs/spec-notes/packages.md §9; one hour is more than the periodic choice's
+/// ~10 s lag stands for at any TimeScale in use, and less than a schedule's shortest
+/// window].
+pub const SCRIPT_HOUR_JUMP: f32 = 1.0;
+
+/// How far apart two hours of the day are on the clock face, 0 to 12: 23:00 and 01:00
+/// are two hours apart, whichever way the clock went.
+pub fn clock_face_hours(from: f32, to: f32) -> f32 {
+    let d = (to - from).rem_euclid(24.0);
+    d.min(24.0 - d)
+}
+
 /// What the layer that carries packages out (`fnv_ai`) has an actor do within its
 /// current package, as it last told ([`Game::set_ai_phase`]); GetCurrentAIProcedure reads
 /// it (`functions::ai_state`). `None` (the field unset): that layer does not run the
@@ -287,8 +304,8 @@ impl<'a> Game<'a> {
     /// "the actor will lock or unlock all the doors in the cell" when the package starts or
     /// ends, and "for the duration of the package … will keep all doors in the cell locked
     /// or unlocked" [documented: GECK wiki Packages, Door Flags]. The cell is the actor's;
-    /// only doors that have a lock (XLOC, or one a script gave them) are locked, at their
-    /// own level [design: a door without a lock has no level to lock at]. The "at
+    /// only doors with an applicable lock (`World::lock_of`) are changed [design,
+    /// #2538]. Lock creates a local lock; Unlock changes the source [hypothesis]. The "at
     /// location" flags are applied as the package starts and at each periodic choice
     /// ([`Game::tick_packages`]) [design: how often the original checks is not known].
     /// Returns how many doors changed.
@@ -304,7 +321,7 @@ impl<'a> Game<'a> {
         let doors: Vec<FormId> = placed.by_cell.get(&cell).into_iter().flatten().copied().filter(|r| data.sig(placed.get(*r).map_or(FormId(0), |p| p.base)).as_ref() == Some(b"DOOR")).collect();
         let mut changed = 0;
         for d in doors {
-            let Some(l) = self.world.peek(d).and_then(|s| s.lock) else { continue };
+            let Some(l) = self.world.lock_of(d) else { continue };
             if locks && !l.locked {
                 changed += usize::from(self.world.lock(d, None).is_ok());
             } else if unlocks && !locks && l.locked {

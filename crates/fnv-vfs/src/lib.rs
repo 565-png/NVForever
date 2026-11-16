@@ -13,7 +13,50 @@
 use fnv_bsa::Archive;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+
+/// What every [`Vfs`] of the process has read so far (issue #2407): files, stored bytes,
+/// time spent in the reads themselves (the archive's seek and read, a loose file's read;
+/// not inflating) and time spent waiting for another reader's turn on the same archive.
+/// A loading screen takes the difference over its time: many seconds of reading for few
+/// bytes is a slow or cold disk.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReadStats {
+    pub files: u64,
+    pub bytes: u64,
+    pub read_ns: u64,
+    pub queued_ns: u64,
+}
+
+impl ReadStats {
+    /// What was read after `before`.
+    pub fn since(&self, before: &ReadStats) -> ReadStats {
+        ReadStats {
+            files: self.files.saturating_sub(before.files),
+            bytes: self.bytes.saturating_sub(before.bytes),
+            read_ns: self.read_ns.saturating_sub(before.read_ns),
+            queued_ns: self.queued_ns.saturating_sub(before.queued_ns),
+        }
+    }
+}
+
+static FILES: AtomicU64 = AtomicU64::new(0);
+static BYTES: AtomicU64 = AtomicU64::new(0);
+static READ_NS: AtomicU64 = AtomicU64::new(0);
+static QUEUED_NS: AtomicU64 = AtomicU64::new(0);
+
+/// The process's [`ReadStats`] so far.
+pub fn read_stats() -> ReadStats {
+    ReadStats { files: FILES.load(Ordering::Relaxed), bytes: BYTES.load(Ordering::Relaxed), read_ns: READ_NS.load(Ordering::Relaxed), queued_ns: QUEUED_NS.load(Ordering::Relaxed) }
+}
+
+fn count_read(bytes: usize, queued: std::time::Duration, read: std::time::Duration) {
+    FILES.fetch_add(1, Ordering::Relaxed);
+    BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
+    QUEUED_NS.fetch_add(queued.as_nanos() as u64, Ordering::Relaxed);
+    READ_NS.fetch_add(read.as_nanos() as u64, Ordering::Relaxed);
+}
 
 /// `SArchiveList` of the shipped `Fallout_default.ini` and of the owner's `Fallout.ini`
 /// [observed: both identical on FNV 1.4.0.525].
@@ -144,7 +187,7 @@ pub struct Vfs {
     data_dir: PathBuf,
     archives: Vec<(String, Mutex<Archive>)>,
     index: HashMap<String, Location>,
-    /// Lower-cased loose path → real relative path (for case-sensitive file systems).
+    /// Lower-cased loose path → winning physical path (preserving filesystem casing).
     loose: HashMap<String, PathBuf>,
     /// The highest archive copy of each loose path that also sits in an archive, which
     /// the loose file hides from [`Vfs::read`] ([`Vfs::read_archived`], #975).
@@ -203,15 +246,27 @@ impl Vfs {
         }
         push(find("Update.bsa"), &mut order);
         let stems: Vec<String> = plugins.iter().map(|p| p.rsplit_once('.').map_or(*p, |(s, _)| s).to_ascii_lowercase()).collect();
-        let claims = |stem: &str, name: &str| {
+        // A plugin owns `<stem>.bsa`, `<stem> - *.bsa` and the numbered pieces a packer
+        // splits a big archive into, `<stem>N.bsa` / `<stem>N - *.bsa` (#2521). Returns the
+        // piece's number (0 for an unnumbered archive) when `name` is `stem`'s.
+        let claims = |stem: &str, name: &str| -> Option<u64> {
             let l = name.to_ascii_lowercase();
-            l == format!("{stem}.bsa") || l.starts_with(&format!("{stem} - "))
+            let rest = l.strip_prefix(stem)?;
+            let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            let (num, tail) = rest.split_at(digits);
+            (tail == ".bsa" || tail.starts_with(" - ")).then(|| num.parse().unwrap_or(0))
         };
         for stem in &stems {
             // An archive several plugins' stems match belongs to the longest of them:
             // `Foo - Bar.bsa` is `Foo - Bar.esp`'s, not `Foo.esp`'s (#996).
-            let mut own: Vec<&(String, String)> = owned.iter().filter(|(n, _)| claims(stem, n) && !stems.iter().any(|o| o.len() > stem.len() && claims(o, n))).collect();
-            own.sort_by_key(|(n, _)| n.to_ascii_lowercase());
+            let mut own: Vec<(u64, &(String, String))> = owned
+                .iter()
+                .filter(|(n, _)| !stems.iter().any(|o| o.len() > stem.len() && claims(o, n).is_some()))
+                .filter_map(|e| claims(stem, &e.0).map(|k| (k, e)))
+                .collect();
+            // Unnumbered archives by name, then the numbered pieces in number order.
+            own.sort_by_key(|(k, (n, _))| (*k, n.to_ascii_lowercase()));
+            let own = own.into_iter().map(|(_, e)| e);
             for (_, open_as) in own {
                 push(Some(open_as.clone()), &mut order);
             }
@@ -247,20 +302,24 @@ impl Vfs {
             }
             vfs.archives.push((name.clone(), Mutex::new(a)));
         }
+        vfs.index_loose(data_dir);
+        Ok(vfs)
+    }
+
+    fn index_loose(&mut self, root: &Path) {
         let mut files = Vec::new();
-        walk(data_dir, data_dir, &mut files, &mut vfs.skipped);
+        walk(root, root, &mut files, &mut self.skipped);
         for rel in files {
             let key = normalize(&rel.to_string_lossy());
             // Plugins and archives at the top level are not part of the asset namespace.
             if !key.contains('\\') {
                 continue;
             }
-            if let Some(under @ Location::Archive { .. }) = vfs.index.insert(key.clone(), Location::Loose) {
-                vfs.under_loose.insert(key.clone(), under);
+            if let Some(under @ Location::Archive { .. }) = self.index.insert(key.clone(), Location::Loose) {
+                self.under_loose.insert(key.clone(), under);
             }
-            vfs.loose.insert(key, rel);
+            self.loose.insert(key, root.join(rel));
         }
-        Ok(vfs)
     }
 
     /// Default setup: the INI archive list, `Update.bsa`, and the base + DLC plugins.
@@ -282,9 +341,16 @@ impl Vfs {
     }
 
     /// [`Vfs::open_for_plugins`] with the archives beside the plugins in NVForever's mods
-    /// folder `mods` too ([`Vfs::archive_order_in`]).
+    /// folder `mods` too ([`Vfs::archive_order_in`]), and its loose files above Data's.
     pub fn open_for_plugins_in<S: AsRef<str>>(data_dir: &Path, mods: Option<&Path>, plugins: &[S]) -> Result<Vfs, VfsError> {
-        Vfs::open(data_dir, &Vfs::order_for_plugins_in(data_dir, mods, plugins).0)
+        let mut vfs = Vfs::open(data_dir, &Vfs::order_for_plugins_in(data_dir, mods, plugins).0)?;
+        if let Some(root) = mods {
+            // An absent optional layer is ordinary; other errors retain walk's diagnostics.
+            if !matches!(root.try_exists(), Ok(false)) {
+                vfs.index_loose(root);
+            }
+        }
+        Ok(vfs)
     }
 
     /// The archives [`Vfs::open_for_plugins`] mounts, lowest precedence first, and
@@ -345,7 +411,7 @@ impl Vfs {
     pub fn loose_path(&self, path: &str) -> Option<PathBuf> {
         let key = normalize(path);
         match self.index.get(&key)? {
-            Location::Loose => Some(self.data_dir.join(&self.loose[&key])),
+            Location::Loose => Some(self.loose[&key].clone()),
             Location::Archive { .. } => None,
         }
     }
@@ -370,15 +436,24 @@ impl Vfs {
 
     fn read_at(&self, key: &str, at: Location) -> std::io::Result<Vec<u8>> {
         match at {
-            Location::Loose => std::fs::read(self.data_dir.join(&self.loose[key])),
+            Location::Loose => {
+                let t = std::time::Instant::now();
+                let bytes = std::fs::read(&self.loose[key]);
+                count_read(bytes.as_ref().map_or(0, |b| b.len()), std::time::Duration::ZERO, t.elapsed());
+                bytes
+            }
             Location::Archive { archive, folder, file } => {
                 // The lock covers only the seek and read of the stored bytes; inflating
                 // happens after it is let go, so workers reading the same archive do not
                 // queue behind each other's decompression (#997).
                 let stored = {
+                    let asked = std::time::Instant::now();
                     let mut a = self.archives[archive].1.lock().unwrap_or_else(|p| p.into_inner());
+                    let got = std::time::Instant::now();
                     let r = a.folders[folder].files[file].clone();
-                    a.read_stored(&r)
+                    let stored = a.read_stored(&r);
+                    count_read(r.stored_size() as usize, got - asked, got.elapsed());
+                    stored
                 };
                 stored.and_then(|b| b.decode()).map_err(std::io::Error::other)
             }
@@ -644,4 +719,26 @@ mod tests {
         assert_eq!(order, ["Foo - Bar.bsa", "Foo - Main.bsa", "Foo.bsa", "Middle.bsa"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    /// A packer splits a big archive into `<stem>.bsa`, `<stem>1.bsa`, `<stem>2.bsa` …
+    /// (the Begin Again list's `Begin Again Worldspace Merge1.bsa` … `6.bsa` hold its rock
+    /// textures): every piece is the plugin's, in number order (#2521). A name that only
+    /// starts with the stem (`MergeExtra.bsa`) is not, and a numbered piece another plugin
+    /// is named for exactly goes with that plugin.
+    #[test]
+    fn numbered_archive_pieces_follow_their_plugin() {
+        let dir = std::env::temp_dir().join(format!("nvf-vfs-numbered-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in ["Merge.bsa", "Merge10.bsa", "Merge2.bsa", "Merge1.bsa", "Merge1 - Textures.bsa", "MergeExtra.bsa", "Merge3.bsa", "Merge3.esp.bsa"] {
+            std::fs::write(dir.join(n), b"").unwrap();
+        }
+        let order = Vfs::archive_order(&dir, &[], &["Merge.esp"]);
+        assert_eq!(order, ["Merge.bsa", "Merge1 - Textures.bsa", "Merge1.bsa", "Merge2.bsa", "Merge3.bsa", "Merge10.bsa"]);
+        let order = Vfs::archive_order(&dir, &[], &["Merge.esp", "Merge3.esp"]);
+        assert_eq!(order, ["Merge.bsa", "Merge1 - Textures.bsa", "Merge1.bsa", "Merge2.bsa", "Merge10.bsa", "Merge3.bsa"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
+
+#[cfg(test)]
+mod own_loose_tests;

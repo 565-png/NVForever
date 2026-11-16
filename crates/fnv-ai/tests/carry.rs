@@ -922,6 +922,54 @@ fn a_place_that_cannot_be_reached_sets_the_package_aside() {
     assert_eq!(s.ai.agents[&actor].walker.space, B);
 }
 
+/// A package's place that no door leads to (issue #2405: Gomez in the NCR safehouse's
+/// side room, a navmesh island, sent to the door by his Leave package; Malcolm Holmes
+/// sent back to his holding cell). In sight the package is set aside as before; out of
+/// sight the actor is put there and has arrived (docs/spec-notes/packages.md §11). A
+/// disabled door between the two still joins them: the actor stays (Loyal, #2566).
+#[test]
+fn out_of_sight_an_actor_is_put_at_a_place_no_door_leads_to() {
+    let f = fixture();
+    let actor = FormId(R_TRAVEL);
+    // Cells A and B, and no door between them.
+    let no_door = || {
+        let a = grid(1, [0.0, 0.0], 4, 0.0);
+        let b = grid(2, [5000.0, 5000.0], 3, 50.0);
+        NavGraph::assemble(&[(&a, Some(CELL_A), Some(A)), (&b, Some(CELL_B), Some(B))])
+    };
+    let out_of_sight = fnv_ai::FAR_PROCESS_SECONDS as f64 + 5.0;
+    // In the loaded area: set aside, where it stands.
+    let mut s = sim(&f, &[R_TRAVEL]);
+    s.nav = no_door();
+    s.run(1.0);
+    let ev = s.events(R_TRAVEL);
+    assert!(matches!(ev[1], AiEvent::Unreachable { package, .. } if package.0 == P_TRAVEL_B), "{ev:?}");
+    assert_eq!(s.feet(R_TRAVEL), START);
+    // Out of sight: put at the package's place in B, arrived, its goal met.
+    let mut s = sim(&f, &[R_TRAVEL]);
+    s.nav = no_door();
+    assert!(s.ai.set_level(&s.game, actor, fnv_ai::ProcessLevel::Low));
+    s.run(out_of_sight);
+    let ev = s.events(R_TRAVEL);
+    assert!(ev.iter().any(|e| matches!(e, AiEvent::PutThere { package, from, to } if package.0 == P_TRAVEL_B && from.space == A && to.space == B)), "{ev:?}");
+    assert!(matches!(ev.last().unwrap(), AiEvent::Arrived { package, .. } if package.0 == P_TRAVEL_B), "{ev:?}");
+    assert!(!ev.iter().any(|e| matches!(e, AiEvent::Unreachable { .. })), "{ev:?}");
+    assert_eq!(s.ai.agents[&actor].walker.space, B);
+    assert!(dist(s.feet(R_TRAVEL), [5250.0, 5250.0, 50.0]) < 5.0);
+    assert_eq!(s.game.world.peek(actor).unwrap().cell, Some(FormId(CELL_B)));
+    assert!(s.game.extra[&actor].package_goal_met);
+    // The door there but disabled: no way, yet joined, so it stays and the package is set
+    // aside.
+    let mut s = sim(&f, &[R_TRAVEL]);
+    s.nav.sync_door_presence([(DOOR_A, false)]);
+    assert!(s.ai.set_level(&s.game, actor, fnv_ai::ProcessLevel::Low));
+    s.run(out_of_sight);
+    let ev = s.events(R_TRAVEL);
+    assert!(ev.iter().any(|e| matches!(e, AiEvent::Unreachable { package, .. } if package.0 == P_TRAVEL_B)), "{ev:?}");
+    assert!(!ev.iter().any(|e| matches!(e, AiEvent::PutThere { .. })), "{ev:?}");
+    assert_eq!(s.ai.agents[&actor].walker.space, A);
+}
+
 /// The obstacle poll is skipped while nothing that could change an obstacle's presence or
 /// the graph's obstacles happened since the last one (`Ai::obstacles_in_line`), and runs
 /// again after each such change: a script's Disable/Enable, a deletion, any reference
@@ -1004,6 +1052,34 @@ fn a_door_locked_and_unlocked_in_the_game_reaches_the_paths() {
     s.game.world.unlock(FormId(DOOR_A)).unwrap();
     assert_eq!(s.ai.apply_door_locks(&mut s.game, &mut s.nav), Some(vec![actor]));
     assert!(!s.nav.door_locks.contains_key(&DOOR_A));
+    s.run(40.0);
+    assert!(dist(s.feet(R_TRAVEL), [5250.0, 5250.0, 50.0]) < 5.0, "{:?}", s.feet(R_TRAVEL));
+    assert_eq!(s.ai.agents[&actor].walker.space, B);
+}
+
+/// A load door the game disables (a script's Disable, an enable parent's) is no way: the
+/// actor sets its package aside rather than going through it. Enabled again, the graph
+/// learns it, the package is chosen again at once and the actor gets through
+/// (`Ai::apply_door_presence`; issue #2566, Loyal put behind a disabled Nellis hangar door).
+#[test]
+fn a_door_disabled_and_enabled_in_the_game_reaches_the_paths() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_TRAVEL]);
+    let actor = FormId(R_TRAVEL);
+    // The first poll learns the doors as they are, all there: nothing changed.
+    assert_eq!(s.ai.apply_door_presence(&mut s.game, &mut s.nav), None);
+    s.game.world.set_enabled(FormId(DOOR_A), false).unwrap();
+    assert_eq!(s.ai.apply_door_presence(&mut s.game, &mut s.nav), Some(vec![]));
+    assert!(s.nav.disabled_doors.contains(&DOOR_A));
+    assert_eq!(s.ai.apply_door_presence(&mut s.game, &mut s.nav), None, "applied once");
+    s.run(1.0);
+    assert!(s.events(R_TRAVEL).iter().any(|e| matches!(e, AiEvent::Unreachable { package, .. } if package.0 == P_TRAVEL_B)), "{:?}", s.events(R_TRAVEL));
+    s.run(30.0);
+    assert_eq!(s.feet(R_TRAVEL), START);
+    // Enabled: the package is chosen again and the way is open.
+    s.game.world.set_enabled(FormId(DOOR_A), true).unwrap();
+    assert_eq!(s.ai.apply_door_presence(&mut s.game, &mut s.nav), Some(vec![actor]));
+    assert!(!s.nav.disabled_doors.contains(&DOOR_A));
     s.run(40.0);
     assert!(dist(s.feet(R_TRAVEL), [5250.0, 5250.0, 50.0]) < 5.0, "{:?}", s.feet(R_TRAVEL));
     assert_eq!(s.ai.agents[&actor].walker.space, B);
@@ -3174,6 +3250,37 @@ fn a_rooted_actor_in_combat_turns_to_its_target_in_place() {
     assert!(off(heading).abs() < 0.05, "{heading} against {want}");
     assert_eq!(s.feet(R_TRAVEL), start);
     assert_eq!(s.ai.agents[&FormId(R_TRAVEL)].activity, Activity::None);
+}
+
+/// A rooted actor given a script's UseWeapon (HELIOS One's ARCHIMEDES turret, #2544)
+/// uses it from where it stands: the use is in place at once, and it turns to the use's
+/// target, out of combat too, where it stays. Before, a rooted actor's use never got in
+/// place, so the engine's shooter never fired.
+#[test]
+fn a_rooted_actor_uses_a_weapon_from_where_it_stands_and_turns_to_the_target() {
+    use fnv_script::vm::{ArgValue, Value};
+    let f = fixture();
+    let mut s = sim(&f, &[R_LONER]);
+    let actor = FormId(R_LONER);
+    let start = s.feet(R_LONER);
+    s.ai.root(&s.game, actor);
+    let target = s.game.world.placed.get(FormId(R_HERE)).unwrap().pos;
+    let want = fnv_nav::follow::heading_of([target[0] - start[0], target[1] - start[1]]);
+    let off = |h: f32| (h - want + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    s.ai.agents.get_mut(&actor).unwrap().walker.heading = want + 2.5;
+    let opcode = s.game.data.table.by_name("UseWeapon").unwrap();
+    let ctx = fnv_game::functions::Ctx { unit: "test".into(), opcode, on: Some(actor), self_ref: Some(actor), action_ref: None, quest: None, inst: None, in_condition: false };
+    let r = |x: u32| ArgValue::Value(Value::Ref(x));
+    let n = |x: f64| ArgValue::Value(Value::Num(x));
+    // As ARCHIMEDES's: the weapon, standing on itself, the target, one shot, always hit.
+    s.game.call_function(&ctx, &[r(STAT), r(R_LONER), r(R_HERE), n(1.0), n(0.0), n(0.0), n(1.0)]);
+    assert!(!s.game.awareness.state(actor).in_combat());
+    s.run(0.5);
+    assert!(s.game.weapon_use(actor).unwrap().in_place, "in place where it stands");
+    s.run(5.0);
+    let heading = s.ai.agents[&actor].walker.heading;
+    assert!(off(heading).abs() < 0.05, "{heading} against {want}");
+    assert_eq!(s.feet(R_LONER), start);
 }
 
 /// A rooted actor that never turns (an Immobile creature with a Turning Speed of 0, Mr.
@@ -6137,4 +6244,37 @@ fn continue_during_combat_guard_pursues_only_inside_its_radius() {
             assert!(dist(s.feet(R_RADIUS), post) <= 200.0, "it stayed at its post: {:?}", s.feet(R_RADIUS));
         }
     }
+}
+
+
+/// [design, #2538] A cold load door inherits the authored lock across its XTEL.
+#[test]
+fn load_door_lock_reaches_both_nav_directions_and_resyncs() {
+    use fnv_sim::refs::{Lock, Teleport};
+    let mut f = fixture();
+    let mut a = f.refs.get(FormId(DOOR_A)).unwrap().clone();
+    a.base = FormId(SCRIPT_DOOR_BASE);
+    a.teleport = Some(Teleport { door: FormId(DOOR_B), pos: [5050.0, 5030.0, 50.0], rot: [0.0; 3], no_alarm: false });
+    let mut b = a.clone();
+    b.id = FormId(DOOR_B);
+    b.cell = Some(FormId(CELL_B));
+    b.teleport.as_mut().unwrap().door = a.id;
+    b.lock = Some(Lock { level: 255, key: None, leveled: false });
+    f.refs.refs.insert(a.id, a);
+    f.refs.refs.insert(b.id, b);
+    let mut s = sim(&f, &[R_TRAVEL]);
+    assert!(s.game.world.peek(FormId(DOOR_A)).is_none());
+    assert!(s.ai.apply_door_locks(&mut s.game, &mut s.nav).is_some());
+    for d in [DOOR_A, DOOR_B] {
+        assert_eq!(s.nav.door_locks[&d], DoorLock { level: 255, key: None });
+    }
+    s.run(30.0);
+    assert_eq!(s.feet(R_TRAVEL), START);
+    s.game.world.unlock(FormId(DOOR_A)).unwrap();
+    assert!(s.ai.apply_door_locks(&mut s.game, &mut s.nav).is_some());
+    for d in [DOOR_A, DOOR_B] {
+        assert!(!s.nav.door_locks.contains_key(&d));
+    }
+    s.run(40.0);
+    assert_eq!(s.ai.agents[&FormId(R_TRAVEL)].walker.space, B);
 }

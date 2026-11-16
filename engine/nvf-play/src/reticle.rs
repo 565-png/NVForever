@@ -133,6 +133,14 @@ pub struct Prompt {
 /// Under the name of an empty container or body [owner 2026-10-27].
 const EMPTY: &str = "[Empty]";
 
+/// The player's tweak: a stack's weight and value are the whole stack's [design: docs/design/tweaks.md].
+static STACK_FIGURES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set by the Tweaks tab.
+pub fn set_stack_figures(on: bool) {
+    STACK_FIGURES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The XATO Activation Prompt of reference `form_id`, else of its base (an ACTI).
 pub fn activation_prompt(sim: &SimState, form_id: u32) -> Option<String> {
     let own = sim.refs.get(fnv_sim::FormId(form_id)).and_then(|r| r.prompt.clone());
@@ -161,7 +169,7 @@ impl Prompt {
         // An Activation Prompt (XATO) of the reference, else of its activator base, in
         // place of the action word; not over a lock or an inaccessible door
         // (docs/spec-notes/cells-refs.md §3) [hypothesis: which states it replaces].
-        if !matches!(t.action, Action::Locked { .. } | Action::Unlock | Action::Name | Action::Inaccessible) {
+        if !matches!(t.action, Action::Locked { .. } | Action::UsePassword | Action::Unlock | Action::Name | Action::Hostile | Action::Inaccessible) {
             if let Some(p) = activation_prompt(sim, t.form_id) {
                 action = p;
             }
@@ -170,8 +178,12 @@ impl Prompt {
             Action::Take { .. } => sim.base_of(t.form_id).and_then(|b| sim.forms.get(b)),
             _ => None,
         };
+        let n = match t.action {
+            Action::Take { count } if count > 1 && STACK_FIGURES.load(std::sync::atomic::Ordering::Relaxed) => count,
+            _ => 1,
+        };
         let figures = item.and_then(|b| match &b.data {
-            BaseData::Item(i) => Some([weight_text(i.weight), value_text(i.worth())]),
+            BaseData::Item(i) => Some([weight_text(i.weight.map(|w| w * n as f32)), value_text(i.worth().map(|v| v.saturating_mul(n)))]),
             _ => None,
         });
         let note = t.empty.then(|| EMPTY.to_string());
@@ -332,14 +344,15 @@ pub struct ReticlePlugin;
 
 impl Plugin for ReticlePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DynamicCrosshair>().init_resource::<CrosshairStyle>().add_systems(Update, draw.in_set(PlaySet::Ui));
+        app.init_resource::<DynamicCrosshair>().init_resource::<CrosshairStyle>().add_systems(Update, draw.in_set(PlaySet::Ui).in_set(crate::test_aid::activation_sweep::Draw));
         crate::settings::add_setting(
             app,
             crate::settings::Setting {
                 key: "dynamic-crosshair",
                 group: crate::pause::GROUP_MENUS,
                 label: "Dynamic crosshair",
-                note: "On: with a gun or thrown weapon drawn the crosshair opens to show how wide your shots spread now (wider running, after shots, with crippled arms; narrower aimed or crouched); Crosshair style below picks how it looks. Off: the arrows stay together whatever is drawn.",
+                note: "On: with a gun or thrown weapon drawn the crosshair opens with how wide your shots spread now. Off: the arrows stay together.",
+                switches: "",
                 get: |w| w.resource::<DynamicCrosshair>().0,
                 set: |w, on| w.resource_mut::<DynamicCrosshair>().0 = on,
                 slider: None,
@@ -351,7 +364,8 @@ impl Plugin for ReticlePlugin {
                 key: "crosshair-style",
                 group: crate::pause::GROUP_MENUS,
                 label: "Crosshair style",
-                note: "With Dynamic crosshair on and a gun or thrown weapon drawn. Cross: four bars that part with the spread. Arrows: the plain crosshair's two arrows part instead.",
+                note: "With Dynamic crosshair on. Cross: four bars that part with the spread. Arrows: the plain crosshair's two arrows part instead.",
+                switches: "",
                 get: |_| false,
                 set: |_, _| {},
                 slider: None,
@@ -517,10 +531,10 @@ fn draw(
     (state, wheel, style): (Res<State<PlayState>>, Option<Res<crate::weapon_wheel::WeaponWheel>>, Option<Res<CrosshairStyle>>),
     target: Res<Target>,
     sim: Res<SimState>,
-    (combat, hostile, bar, camera, time, dynamic): (Option<Res<crate::combat::Combat>>, Option<Res<crate::hud_target::AimHostile>>, Option<Res<crate::hud_target::HudTarget>>, Query<&Projection, With<crate::PlayerCamera>>, Res<Time>, Option<Res<DynamicCrosshair>>),
+    (combat, hostile, bar, camera, time, dynamic, control): (Option<Res<crate::combat::Combat>>, Option<Res<crate::hud_target::AimHostile>>, Option<Res<crate::hud_target::HudTarget>>, Query<&Projection, With<crate::PlayerCamera>>, Res<Time>, Option<Res<DynamicCrosshair>>, Option<Res<crate::control::PlayerControl>>),
     mut spread: Local<f32>,
     mut logged: Local<(bool, i32, bool, Option<String>, Option<bool>, Option<bool>, Option<CrosshairStyle>)>,
-    (locks, bindings, creator, sights, scope, driven, kill_cam, vats): (
+    (locks, bindings, creator, sights, scope, driven, kill_cam, tweaks, anim, vats): (
         Option<Res<ControlLocks>>,
         Option<Res<crate::bindings::Bindings>>,
         Option<Res<crate::creator::CreatorMenu>>,
@@ -528,13 +542,15 @@ fn draw(
         Option<Res<crate::aim_zoom::Scope>>,
         Option<Res<crate::player::ViewDriven>>,
         Option<Res<crate::kill_cam::KillCam>>,
+        Option<Res<crate::tweaks::TweakSettings>>,
+        Option<Res<crate::combat::WeaponAnim>>,
         Option<Res<crate::vats_mode::VatsMode>>,
     ),
     data: Option<Res<GameData>>,
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
     mut kit: Local<Option<Kit>>,
-    mut shown: Local<Option<Prompt>>,
+    (mut shown, mut sweep): (Local<Option<Prompt>>, Option<ResMut<crate::test_aid::activation_sweep::ActivationSweep>>),
     mut root: Query<&mut Visibility, With<Root>>,
     (mut crosses, mut bars): (
         Query<(&Cross, &mut Visibility, &mut Node, Option<&mut ImageNode>), Without<Root>>,
@@ -542,6 +558,11 @@ fn draw(
     ),
     texts: Query<Entity, With<Texts>>,
 ) {
+    // Record only what this drawing pass shows, including early hidden returns
+    // [design: #2528, test_aid/activation_sweep.rs].
+    if let Some(s) = sweep.as_deref_mut() {
+        s.drawn = None;
+    }
     // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
     let _hud = crate::interface::hud_units();
     // Not over the character creator, whatever state the opening leaves the game in
@@ -578,19 +599,24 @@ fn draw(
     // Down a gun's true iron sights the sights are the aim, through a scope its reticle
     // (docs/spec-notes/weapon-scopes.md §2): no crosshair.
     let scoped = scope.is_some_and(|s| s.on);
-    let sights = sights.is_some_and(|s| s.0) || scoped;
+    // The player's tweak hides it while reloading too [design: docs/design/tweaks.md].
+    let reloading = tweaks.as_ref().is_some_and(|t| t.hide_crosshair_reloading) && anim.as_ref().is_some_and(|a| a.reload.is_some());
+    // The player's tweak keeps it down the iron sights (a scope still hides it) [design: docs/design/tweaks.md].
+    let keep = tweaks.as_ref().is_some_and(|t| t.crosshair_when_aiming);
+    let sights = (sights.is_some_and(|s| s.0) && !keep) || scoped || reloading;
     if sights != logged.2 {
         logged.2 = sights;
         info!("crosshair: {}", if !sights { "shown again" } else if scoped { "hidden by the scope" } else { "hidden down the true iron sights" });
     }
     for mut v in &mut root {
-        v.set_if_neq(show(playing && !sights));
+        // The Tweaks tab's crosshair key hides it [design: docs/design/tweaks.md].
+        v.set_if_neq(show(playing && !sights && !tweaks.as_ref().is_some_and(|t| t.crosshair_hidden)));
     }
     if !playing || sights {
         return;
     }
     let locks = locks.as_deref().copied().unwrap_or_default();
-    let aimed = target.0.is_some();
+    let aimed = target.0.as_ref().is_some_and(Targeted::prompted);
     let foe = hostile.is_some_and(|h| h.0);
     let colour = if foe || target.0.as_ref().is_some_and(|t| t.crime) { crime_colour() } else { amber(255.0) };
     // The arrows' tips on the cone's edge, moving there a share of the way each frame.
@@ -630,9 +656,13 @@ fn draw(
         info!("reticle: {}", if cross { "gun cross (four bars)" } else { "arrows" });
         logged.5 = Some(cross);
     }
+    // The player's tweaks: no crosshair in first or in third person (the prompt stays)
+    // [design: docs/design/tweaks.md].
+    let third = control.as_ref().is_some_and(|c| c.third_person_view());
+    let view_hidden = tweaks.as_ref().is_some_and(|t| if third { t.hide_crosshair_third } else { t.hide_crosshair_first });
     let gap = spread.max(CROSS_REST);
     for (b, mut v, mut node, mut image) in &mut bars {
-        v.set_if_neq(show(!locks.movement && !aimed && cross));
+        v.set_if_neq(show(!view_hidden && !locks.movement && !aimed && cross));
         if image.color != colour {
             image.color = colour;
         }
@@ -642,7 +672,7 @@ fn draw(
     }
     let shift = (*spread - TIP).max(0.0);
     for (c, mut v, mut node, image) in &mut crosses {
-        v.set_if_neq(show(!locks.movement && c.filled == aimed && (c.filled || !cross)));
+        v.set_if_neq(show(!view_hidden && !locks.movement && c.filled == aimed && (c.filled || !cross)));
         if let Some(mut image) = image.filter(|i| i.color != colour) {
             image.color = colour;
         }
@@ -656,7 +686,7 @@ fn draw(
         }
     }
     let barred = |t: &Targeted| bar.as_ref().and_then(|b| b.0.as_ref()).is_some_and(|b| under_bar(t, b.form_id));
-    let want = target.0.as_ref().filter(|t| !locks.rollover && !barred(t)).map(|t| Prompt::bound(t, &sim, bindings.as_deref()));
+    let want = target.0.as_ref().filter(|t| !locks.rollover && t.prompted() && !barred(t)).map(|t| Prompt::bound(t, &sim, bindings.as_deref()));
     if *shown != want {
         let Ok(e) = texts.single() else { return };
         commands.entity(e).despawn_related::<Children>().with_children(|p| {
@@ -669,6 +699,9 @@ fn draw(
             info!("reticle: prompt \"{}\" on \"{}\"", p.action, p.name);
         }
         *shown = want;
+    }
+    if let Some(s) = sweep.as_deref_mut() {
+        s.drawn = shown.clone();
     }
 }
 
@@ -771,6 +804,18 @@ mod tests {
         let t = Targeted { form_id: 0x1234, name: "Cazador".into(), action: Action::Name, distance: 100.0, source: crate::activate::pick::Source::Bounds, crime: false, empty: false };
         assert!(under_bar(&t, 0x1234));
         assert!(!under_bar(&t, 0x5678));
+    }
+
+    /// Issue #2536: a living hostile under the crosshair is a target with no prompt (and
+    /// no word for E); a peaceful creature with nothing to say keeps its name.
+    #[test]
+    fn a_hostile_actor_has_no_prompt() {
+        let of = |action| Targeted { form_id: 0x1234, name: "Radscorpion".into(), action, distance: 100.0, source: crate::activate::pick::Source::Bounds, crime: false, empty: false };
+        assert!(!of(Action::Hostile).prompted());
+        assert_eq!(Action::Hostile.label(), "");
+        for shown in [Action::Name, Action::Talk, Action::Steal, Action::Search] {
+            assert!(of(shown.clone()).prompted(), "{shown:?}");
+        }
     }
 
     #[test]

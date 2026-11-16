@@ -27,12 +27,14 @@ What exists already and is reused, not rewritten:
 
 - Built: the popup and INI keys (§2), the session summary with plugin sizes and CRC32s
   (§3.1), crash reports with the run log, the flight recorder, the world snapshot and, on
-  Windows, a minidump (§3.2), "Delete my reports" (§6), `[Log]` levels and folded repeats
+  Windows, a minidump, on Linux a native crash's signal line and top frames in the run log
+  (§3.2), "Delete my reports" (§6), `[Log]` levels and folded repeats
   (§4.1), the structured events file (§4.1, local only, not sent), the flight recorder
   (§4.2, log events only), the world snapshot (§4.3) and the anomaly detectors in
-  `anomaly.rs` (§4.4).
+  `anomaly.rs` (§4.4), and the hand report form (§3.3, #2151).
 - Not yet:
-  - the hand report form (§3.3);
+  - the settings page's "Open reports folder" button and last-sent line (§1 point 3, §2.2:
+    the Reports rows are only Send reports and Delete my reports);
   - the summary's count of loose files in Data (§3.1; it needs the server's schema first);
   - breadcrumbs the log does not already carry (§4.2);
   - the AI's procedure and the most expensive scripts in the snapshot (§4.3);
@@ -71,7 +73,7 @@ menu, on a player's start only (not with `--data`, `NVFOREVER_DATA`, a test aid 
 > NVForever can send a report after each session: the build, your PC's hardware and
 > settings, your mod list, how it ran, the game's log and any problems it noticed.
 > No personal details, no saves.
-> You can change this at any time in Settings → General → Reports.
+> You can change this at any time in Settings → Gameplay → Reports.
 >
 > [ Send reports ]  [ Not now ]   *What is sent?* (opens §3 in the browser)
 
@@ -94,8 +96,9 @@ Endpoint=           ; empty = the project's server; set for a self-hosted one
 
 - `InstallId` is random, made at opt-in, not derived from hardware or account. Turning
   reports off and on again makes a new one (the old one is unlinked).
-- Settings → General → Reports: a toggle (Send reports), "Open reports folder",
-  "Delete my reports" (§6), last sent time. The hand report (§3.3) is opened from the
+- Settings → Gameplay → Reports (`engine/nvf-play/src/settings_layout.rs`): a toggle
+  (Send reports) and "Delete my reports" (§6); "Open reports folder" and the last sent
+  time are designed but not built. The hand report (§3.3) is opened from the
   pause menu's "Report a bug", not from Settings.
 - `NVF_REPORTS=0` forces off for any run (developers, CI, the smoke tests set it).
 
@@ -148,9 +151,37 @@ Not in it: save names, character name, screenshots, typed console text (console
   files by hand); sending it does. Symbols (PDBs) for each release are uploaded to the
   server's private store at release time (§5.4), never shipped.
 
+  Linux [documented: `engine/nvforever/src/native_crash_unix.rs`, #2167]: there is no
+  minidump; a `sigaction` handler for `SIGSEGV`, `SIGBUS`, `SIGABRT`, `SIGFPE` and
+  `SIGILL`, on a `sigaltstack` of its own (so a stack overflow is covered too), writes the
+  evidence into the session's run log at the moment of the signal — a line, then the top
+  frames:
+
+  ```
+  20261112-183005 ERROR nvforever::crash: native crash, signal SIGSEGV (11), fault address 0x10; at 0x7f2c1a0b2e40 /usr/lib/libc.so.6+0x2a2e0
+  20261112-183005 ERROR nvforever::crash:   frame 1: 0x7f2c1a0b2e40 /usr/lib/libc.so.6+0x2a2e0
+  ```
+
+  The line is written with `write(2)` from a fixed buffer (no allocation, no lock: the
+  log plugin itself may be what crashed); the module and offset come from
+  `/proc/self/maps`, the frames from libgcc's `_Unwind_Backtrace` (addresses only; the
+  release's line tables symbolise them later, §5.4). The handler is armed from
+  `.init_array`, before Rust's std installs its own SIGSEGV handler (std's per-thread
+  alternate stacks are too small for the unwinder); the alternate stack this module
+  installs is the main thread's, so a stack overflow there leaves the line, while one on
+  another thread (none of which has an alternate stack) does not. The handler then restores the
+  default disposition and re-raises, so the process still ends by the same signal (exit
+  status `-11`, which `tools/smoke` reports as a failed scenario rather than a pass). The
+  home folder and the removable-drive mounts under the player's name (`/run/media/<user>`,
+  `/media/<user>`) are written `~` as everywhere else. Because the evidence is in the run log,
+  a Linux `native` end is log-only (`native-nofile`) until a Linux dump pipeline exists;
+  nothing new is uploaded. (`native-nofile` is a server-side report kind: nothing in this
+  repo implements it yet — planned, and its home is the reports service, not the engine.)
+
 The crash is grouped server-side by a **signature**: for panics, the message with numbers
 stripped plus the top 3 frames inside NVForever's own crates; for dumps, the faulting
-module + offset bucket plus the top 3 symbolised frames.
+module + offset bucket plus the top 3 symbolised frames; for a Linux `native` end, the run
+log's signal line (module + offset) and its top frames.
 
 ### 3.3 Report by hand (any player, opted in or not)
 
@@ -246,7 +277,7 @@ session.
 | quest stall | (opt-in, for the main quest) a stage's objective target is unreachable: the target ref is disabled, dead or in no cell |
 | script loop | one script runs > 5 ms in a frame, or the same script errors 100 times |
 | hitch | a frame > 250 ms outside a load |
-| slow load | a load > 20 s |
+| slow load | a load > 20 s; it says where the time went: each wait's end, the longest frame, the files read and the time in the reads (docs/design/loading-screen.md §1 step 7, #2407) |
 | memory | RAM or VRAM within 10 % of the budget |
 | missing asset | the first failure of each path |
 | save trouble | a save that fails to write, or a load that falls back (#1360) |

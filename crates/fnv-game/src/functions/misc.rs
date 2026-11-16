@@ -41,8 +41,11 @@ pub fn show_message(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> 
     // A message box (MESG flag Message Box, or buttons) is a menu until the player closes
     // it [observed: MenuMode 1001 while the pack plugins' boxes were open,
     // layer5-captures.md §10.1]; other messages are corner notifications.
+    // `--no-messages` answers a box that asks nothing as it is shown (`Game::answer_ok_box`).
     if is_box || !buttons.is_empty() {
-        g.show_box(m);
+        if !g.answer_ok_box(m, buttons.len()) {
+            g.show_box(m);
+        }
     } else {
         let icon = match icon.and_then(|i| crate::nvse::record_value(g, i, "ICON", "")) {
             Some(fnv_script::vm::XVal::Str(p)) => p,
@@ -162,12 +165,14 @@ pub fn get_game_setting(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, Str
 /// defaults itself), with the values the original returned [observed: `GetGameSetting`
 /// in the capture `fa_batch1_queries`, 2026-10-16; the 27 trap-plate scripts read the
 /// five `iLockLevelMax…` settings, docs/design/script-function-audit.md].
-pub const EXE_SETTINGS: [(&str, f32); 5] = [
+pub const EXE_SETTINGS: [(&str, f32); 6] = [
     ("iLockLevelMaxVeryEasy", 0.0),
     ("iLockLevelMaxEasy", 25.0),
     ("iLockLevelMaxAverage", 50.0),
     ("iLockLevelMaxHard", 75.0),
     ("iLockLevelMaxVeryHard", 100.0),
+    // [observed: builtin-luck-setting.md, own public script query, 2026-11-12].
+    ("fAVDSkillLuckBonusMult", 0.5),
 ];
 
 pub fn abs(_g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
@@ -431,6 +436,9 @@ pub fn show_repair_menu(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, Str
 /// ban and opens it) [documented: GECK wiki ShowBlackJackMenuParams; docs/spec-notes/
 /// blackjack.md §1]. Left out, the bets run from 1 to 200 (every table's script passes
 /// those [observed]); a max winnings of 0 is the casino's own [hypothesis].
+/// The No Casino Bet Limit tweak's limit: more than any purse holds [design: docs/design/tweaks.md].
+pub const NO_BET_LIMIT: u32 = 1_000_000;
+
 pub fn show_blackjack_menu(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let casino = a.form(0)?;
     if !g.data.casinos.contains_key(&casino) {
@@ -438,6 +446,8 @@ pub fn show_blackjack_menu(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, 
     }
     let min_bet = a.num_or(1, 1.0).max(1.0) as u32;
     let max_bet = (a.num_or(2, 200.0).max(0.0) as u32).max(min_bet);
+    // The player's tweak lifts the table's limit [design: docs/design/tweaks.md].
+    let max_bet = if g.tweaks.no_max_casino_bet { NO_BET_LIMIT } else { max_bet };
     let max_winnings = a.num_or(3, 0.0).max(0.0) as u32;
     g.blackjack_requests.push(crate::blackjack::BlackjackRequest { casino, min_bet, max_bet, max_winnings });
     none()
@@ -455,6 +465,7 @@ pub fn show_roulette_menu(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, S
     }
     let min_bet = a.num_or(1, 1.0).max(1.0) as u32;
     let max_bet = (a.num_or(2, 200.0).max(0.0) as u32).max(min_bet);
+    let max_bet = if g.tweaks.no_max_casino_bet { NO_BET_LIMIT } else { max_bet };
     let max_winnings = a.num_or(3, 0.0).max(0.0) as u32;
     g.roulette_requests.push(crate::roulette::RouletteRequest { casino, min_bet, max_bet, max_winnings });
     none()
@@ -472,6 +483,7 @@ pub fn show_slot_machine_menu(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Valu
     }
     let min_bet = a.num_or(1, 1.0).max(1.0) as u32;
     let max_bet = (a.num_or(2, 75.0).max(0.0) as u32).max(min_bet);
+    let max_bet = if g.tweaks.no_max_casino_bet { NO_BET_LIMIT } else { max_bet };
     let max_winnings = a.num_or(3, 0.0).max(0.0) as u32;
     g.slots_requests.push(crate::slots::SlotsRequest { casino, min_bet, max_bet, max_winnings });
     none()

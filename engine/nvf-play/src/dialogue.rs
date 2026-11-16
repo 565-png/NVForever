@@ -300,7 +300,8 @@ fn response_text(g: &Game) -> Option<String> {
     let l = c.line.as_ref()?;
     let def = g.data.infos.get(&l.info)?;
     let r = *def.response_order().get(l.response)?;
-    let text = shown_text(&g.expand_codes(&def.responses[r].text));
+    // The player's tweak keeps the acting notes [design: docs/design/tweaks.md].
+    let text = if g.tweaks.keep_acting_notes { g.expand_codes(&def.responses[r].text).trim().to_string() } else { shown_text(&g.expand_codes(&def.responses[r].text)) };
     (!text.is_empty()).then_some(text)
 }
 
@@ -372,7 +373,8 @@ pub(crate) fn view_named(g: &Game, speaker: String) -> Option<MenuView> {
         .iter()
         .map(|ch| {
             let fallback = g.data.name(ch.topic);
-            let tag = ch.challenge.as_ref().map(|t| tag_of(g, t));
+            // The player's tweak leaves the skill tags off [design: docs/design/tweaks.md].
+            let tag = ch.challenge.as_ref().filter(|_| !g.tweaks.no_skill_tags).map(|t| tag_of(g, t));
             let short = ch.challenge.as_ref().is_some_and(|t| matches!((t.needed, t.have), (Some(n), Some(h)) if h < n));
             ChoiceRow { label: row_label(&g.shown_choice_text(ch), &fallback, tag), darkened: ch.darkened, short }
         })
@@ -919,7 +921,9 @@ pub(crate) fn input(
                 act = Some((Act::BreakOff, "Shift+Tab"));
             }
         } else if speaking.is_some() {
-            if confirm || controls.mouse.just_pressed(MouseButton::Left) || asked.skip {
+            // The player's tweak: spoken lines are not cut short by the player [design: docs/design/tweaks.md].
+            let no_skip = rt.game.tweaks.no_skip_dialogue;
+            if !no_skip && (confirm || controls.mouse.just_pressed(MouseButton::Left) || asked.skip) {
                 act = Some((Act::Skip, if asked.skip { "tile click" } else { "key or click" }));
             }
         } else if choosing {
@@ -993,11 +997,15 @@ pub(crate) fn input(
 /// game clock, activation, combat. Runs after `script::hold_player`
 /// (which would put the player in `Menu` for a message box): in a conversation the box
 /// is answered from the `Dialogue` state, and when the conversation ends under an open
-/// box the player goes to `Menu`.
+/// box the player goes to `Menu`. The repair services and the recipe menu a line's result
+/// script opens (#2308) are `Menu` over the conversation, which waits under them: their
+/// own close goes back to `Dialogue` (`crate::repair::after_close`), and a conversation
+/// that ends as one opens (a Goodbye line's end script) leaves the player in `Menu`.
 #[allow(clippy::too_many_arguments)]
 fn sync_state(
     script: Option<Res<ScriptState>>,
     active: Res<ActiveMenu>,
+    services: (Option<Res<crate::repair::RepairServices>>, Option<Res<crate::crafting::RecipeMenu>>),
     paused: Res<Paused>,
     mode: Res<MenuPause>,
     state: Res<State<PlayState>>,
@@ -1009,11 +1017,12 @@ fn sync_state(
     let game = script.as_ref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
     let talking = game.is_some_and(|g| g.dialogue.is_some());
     let boxed = game.and_then(|g| g.menu).is_some_and(is_script_menu);
-    let own_menu = active.0.is_some() || paused.0;
+    let service = services.0.is_some_and(|r| r.is_open()) || services.1.is_some_and(|r| r.is_open());
+    let own_menu = active.0.is_some() || paused.0 || service;
     match (*state.get(), talking) {
         (PlayState::Playing, true) => next.set(PlayState::Dialogue),
         (PlayState::Menu, true) if !own_menu => next.set(PlayState::Dialogue),
-        (PlayState::Dialogue, false) => next.set(if boxed { PlayState::Menu } else { PlayState::Playing }),
+        (PlayState::Dialogue, false) => next.set(if boxed || service { PlayState::Menu } else { PlayState::Playing }),
         _ => {}
     }
     world_held.set_if_neq(WorldHeld(talking));

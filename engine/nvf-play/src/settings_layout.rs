@@ -73,8 +73,10 @@ pub const SECTIONS: &[Section] = &[
     section("Gameplay", Some("Saving"), &["autosave-travel", "autosave-fast-travel", "autosave-wait", "autosave-sleep", "autosave-scripts"]),
     section("Gameplay", Some("Dialogue"), &["menu-pause", "dialogue-goodbye-hint", "dialogue-look", "dialogue-recentre", "dialogue-zoom", "lip-sync"]),
     section("Gameplay", Some("Reports"), &["send-reports", "reports-delete"]),
-    section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-sway", "head-bob", "weapon-lower", "field-of-view"]),
-    section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "ui-scale"]),
+    section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-sway", "head-bob", "weapon-lower", "field-of-view", "viewmodel-field-of-view"]),
+    // After the tab's other headings, so the rows above keep their places (#2662).
+    section("Gameplay", Some("World"), &["grass-fire", "sound-cover"]),
+    section("Display", Some("Screen"), &["resolution", "borderless", "monitor", "display-sync", "frame-cap", "physics-rate", "ui-scale", "menu-scale"]),
     section(
         "Display",
         Some("Interface"),
@@ -102,6 +104,7 @@ pub const SECTIONS: &[Section] = &[
             "dlss-model",
             "fsr-library",
             "frame-generation",
+            "frame-generation-frames",
             "anti-aliasing",
             "latency-reduction",
             "shadow-filter",
@@ -113,6 +116,8 @@ pub const SECTIONS: &[Section] = &[
             "neon-glow",
             "sharpen",
             "anisotropic",
+            "terrain-height-blend",
+            "terrain-anti-tiling",
             "light-shafts",
             "water-reflections",
             "water-mirror",
@@ -281,7 +286,7 @@ mod tests {
     use crate::settings::Settings;
 
     fn row(key: &'static str, group: &'static str) -> Setting {
-        Setting { key, group, label: key, note: "", get: |_| false, set: |_, _| {}, slider: None }
+        Setting { key, group, label: key, note: "", switches: "", get: |_| false, set: |_, _| {}, slider: None }
     }
 
     /// The registry as `Settings::add` orders it.
@@ -306,12 +311,16 @@ mod tests {
     /// Every row the registry can hold today (upstream main 9af0a4552 and f4015fae8, with #1966's
     /// quality and enhanced rows, #2014's counter rows, the two VATS rows and #2198's Upscaler
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
-    /// FSR library row, and #2242's upscaling counter row), by the group it registers with.
-    const KNOWN: [(&str, &str); 108] = [
+    /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
+    /// field of view row, the menu scale row, the Physics rate row and #2688's sound cover row), by
+    /// the group it registers with.
+    const KNOWN: [(&str, &str); 116] = [
         ("detached-camera", "Gameplay"),
+        ("sound-cover", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
         ("reload-slows", "Gameplay"),
+        ("grass-fire", "Gameplay"),
         ("music", "Gameplay"),
         ("voice", "Gameplay"),
         ("dialogue-look", "Gameplay"),
@@ -362,7 +371,9 @@ mod tests {
         ("distant-lod", "Display"),
         ("grade", "Display"),
         ("field-of-view", "Display"),
+        ("viewmodel-field-of-view", "Display"),
         ("ui-scale", "Display"),
+        ("menu-scale", "Display"),
         ("fps-counter", "Display"),
         ("fps-counter-fps", "Display"),
         ("fps-counter-low", "Display"),
@@ -376,6 +387,7 @@ mod tests {
         ("fps-counter-upscaling", "Display"),
         ("display-sync", "Display"),
         ("frame-cap", "Display"),
+        ("physics-rate", "Display"),
         ("object-distance", "Display"),
         ("actor-distance", "Display"),
         ("item-distance", "Display"),
@@ -386,6 +398,7 @@ mod tests {
         ("dlss-model", "Graphics"),
         ("fsr-library", "Graphics"),
         ("frame-generation", "Graphics"),
+        ("frame-generation-frames", "Graphics"),
         ("anti-aliasing", "Graphics"),
         ("latency-reduction", "Graphics"),
         ("shadow-filter", "Graphics"),
@@ -397,6 +410,8 @@ mod tests {
         ("neon-glow", "Graphics"),
         ("sharpen", "Graphics"),
         ("anisotropic", "Graphics"),
+        ("terrain-height-blend", "Graphics"),
+        ("terrain-anti-tiling", "Graphics"),
         ("light-shafts", "Graphics"),
         ("water-reflections", "Graphics"),
         ("water-mirror", "Graphics"),
@@ -444,6 +459,8 @@ mod tests {
         all.sort_unstable();
         assert_eq!(all, (0..list.len()).collect::<Vec<_>>(), "each registered row once");
         assert_eq!(keys(&list, &l, "Gameplay")[..9], ["[Game]", "difficulty", "hardcore", "kill-camera", "vats-style", "vats-slowdown", "reload-slows", "UsePipBoy", "[Saving]"]);
+        let gameplay = keys(&list, &l, "Gameplay");
+        assert_eq!(gameplay[gameplay.len() - 3..], ["[World]", "grass-fire", "sound-cover"]);
         assert_eq!(keys(&list, &l, "Audio"), ["volume-master", "volume-music", "volume-footstep", "volume-voice", "volume-effects", "volume-radio", "music", "voice", "reverb", "voice-reverb"]);
         assert_eq!(keys(&list, &l, "Controls"), CONTROLLER_KEYS);
         assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "scope-3d"]);
@@ -455,6 +472,8 @@ mod tests {
         assert_eq!(at("sky-clock"), "Graphics > World");
         assert_eq!(at("quality"), "Graphics > Quality");
         assert_eq!(at("enhanced"), "Graphics > Picture");
+        assert_eq!(at("terrain-height-blend"), "Graphics > Picture", "beside the texture filtering (#2550)");
+        assert_eq!(at("terrain-anti-tiling"), "Graphics > Picture", "beside terrain height blending (#2551)");
         assert_eq!(keys(&list, &l, "Graphics")[..4], ["[Quality]", "quality", "[Picture]", "enhanced"], "the presets first, under their own heading (#1966)");
         assert_eq!(at("button-style"), "Controls");
         // The registry itself is left as it was: its order and each row's group.
