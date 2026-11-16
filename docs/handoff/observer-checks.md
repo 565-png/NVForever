@@ -2251,6 +2251,9 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      `AtticusREF` (0x0015A04E, SafehouseLegionINT). And `SSHQMalcolmHolmesREF`
      (0x0010651A): after he has met the player outdoors and walked out of sight, is he
      back in RandomEncounterNPCs at (1825, 2079, 6976)?
+     Ours since #2405 (packages.md §11): out of the high process, an actor whose
+     package's place no door at all joins to where it stands is put there; in the loaded
+     area (the player in the safehouse) it is still set aside every hour.
 
 160. **Where is Loyal once Volare! has failed, and can the player reach him?** (P2; #2566,
      navmesh.md §4 "Disabled load doors".) Kill Argyll (NellisArgyllREF) at Nellis
@@ -2905,3 +2908,22 @@ already talking takes over at once, same topic or another; nothing is queued or 
      and keeps it, and Karl fights; that is what #2467 saw. Not checked: a murder by the
      player's own shot (only the scripted Kill worked here), travel on foot or by fast
      travel instead of MoveTo, and a murder seen by more witnesses or by Karl himself.
+
+## Added 2026-11-15 (the REPCONN ghouls' walk to the basement, #2405)
+
+204. **Do the REPCONN ghouls set off for the basement while its door is locked?** (P2;
+     #2405, packages.md §11.) `REPCONGhoulRocketWalkPACKAGE` (Travel to
+     `JasonBrightDialogMarker` 0x0008D47A in RocketLabBasement, valid at VMS01
+     variable 25 == 3) sends Jason Bright's ghouls from RocketLabTop through the Mid
+     floor and `REPCONMidToBasementDoor` (0x000840AC, lock level 25, key
+     `REPCONLowerKey` 0x000810E8 that no ghoul carries); `REPCONTopIntercomTrigger`
+     (0x000CD683) by the door out of Top moves every actor entering it to the basement
+     while `nightkinquest` is 3 [observed: the data]. Ours: no walk starts, since the
+     whole way is not open, so they never reach the trigger [observed in NVForever,
+     `fnvtool ai run --force Ghoul5=REPCONGhoulRocketWalkPACKAGE`]. In RocketLabTop
+     during Come Fly With Me, once the Nightkin are dealt with (`nightkinquest` 3,
+     before the player opens the basement door), watch Ghoul5 (0x00087AEF):
+     `GetCurrentAIPackage`, `GetPos x/y` every few seconds, and `0840AC.GetLocked`.
+     If he walks to the door out of Top and is moved on, the original starts a walk
+     whose way ends at a locked door (at least as far as the door); if he stands still
+     until the door is unlocked, ours is right and the trigger only serves after it.
