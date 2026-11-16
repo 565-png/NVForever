@@ -2930,7 +2930,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-16 (how far a spoken line carries, #2750)
 
-205. **How loud is a line between actors at 500 to 4,000 units?** (P1; #2750, voice.md
+206. **How loud is a line between actors at 500 to 4,000 units?** (P1; #2750, voice.md
      "Heard where it is said".) Ours: full level to 600 units (`fDialogMinDistance`),
      600 ÷ distance beyond, faded to nothing at 2,000 (`fDialogMaxDistance`)
      [hypothesis]. The owner hears President Kimball's speech in the original from the
@@ -2950,7 +2950,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-15 (Mick secret door, #2716)
 
-205. **Does an NPC path through an open locked door in the original?** (P2;
+206. **Does an NPC path through an open locked door in the original?** (P2;
     `fnv_nav::NavGraph::door_tri_open`.) [hypothesis, #2716] NVForever treats an
     open in-place door as no barrier to any actor, even while locked. [documented:
     issue #2716, spooknik comment 2026-11-15, supplied record findings] In

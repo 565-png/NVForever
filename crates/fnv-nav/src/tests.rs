@@ -790,7 +790,7 @@ fn endpoint_must_be_outside_every_refusing_door_footprint() {
 
 #[test]
 fn open_locked_in_place_door_does_not_refuse_paths_or_raycasts() {
-    // [hypothesis, #2716] An open locked door is no barrier (observer check 205).
+    // [hypothesis, #2716] An open locked door is no barrier (observer check 206).
     let g = corridor_with_door(Some(crate::graph::DoorLock { level: 255, key: None }));
     let from = Place { space: W, pos: [350.0, 50.0, 0.0] };
     let to = Place { space: W, pos: [650.0, 50.0, 0.0] };

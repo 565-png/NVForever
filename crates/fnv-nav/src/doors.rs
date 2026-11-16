@@ -280,7 +280,7 @@ impl NavGraph {
     }
 
     // [hypothesis, #2716] An open in-place door is no barrier, even while locked or
-    // previously refused by its script; docs/spec-notes/navmesh.md, observer check 205.
+    // previously refused by its script; docs/spec-notes/navmesh.md, observer check 206.
     fn in_place_door_open(&self, d: u32, p: &PathParams) -> bool {
         if p.open_doors.contains(&d) {
             return true;

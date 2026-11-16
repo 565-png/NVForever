@@ -195,7 +195,7 @@ the actor jumps or drops over them (actor-jumps.md §3).
   authorize the lock. If permission is absent, the path is cancelled before movement
   or an opening request, even when the door has no activation script. Load-door
   behavior is unchanged. Original-game check:
-  `docs/handoff/observer-checks.md` **205**.
+  `docs/handoff/observer-checks.md` **206**.
 - A door's bounds can be wider than its opening: `UtlDoor01`'s span 249 units across
   (−69 to 180), more than the doorway the navmesh runs through at 0x0012C97C [observed];
   the walkable stretch of navmesh along the door's line is taken as the opening instead
