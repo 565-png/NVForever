@@ -252,7 +252,9 @@ Contract: [UI trait external-write serials](spec-notes/ui-trait-write-serial.md)
 
 [design] The selected keyboard/mouse/controller binding snapshot feeds both existing
 JIP and colon-name control-event interfaces, with disabled-control edges included.
-Four authored engine controls remain unrun; one connects source handlers to actual
-walk/run character steps in a collision-free fixture. Native ordering/synthetic
-input and original Enhanced Movement 1.43 acceptance remain open.
+Four authored engine controls passed Windows CPU libtests on combinedb8da4c3
+(0failed/ignored); one connects source handlers to actual walk/run character steps
+in a collision-free fixture. The separate controller-query/gameplay successor,
+baseline failure, native ordering/synthetic input and original Enhanced Movement1.43
+acceptance remain open.
 Contract: [Control input events](spec-notes/control-input-events.md).

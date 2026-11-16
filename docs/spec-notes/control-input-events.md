@@ -59,10 +59,25 @@ exercise running/walking through the actual player control/movement consumer.
 Native observation and original Enhanced Movement initialization, AP, animation,
 prone/slide/mantle, companion speed, MCM and save/load remain separate acceptance.
 
-[design: authored, unrun] `player::control_event_tests` exercises both interfaces
+[design: authored consumer controls] `player::control_event_tests` exercises both interfaces
 through original-style independent source handlers. A disabled crouch binding's
 press selects walking, its release restores running and unblocks crouch, and the
 real character stepping path travels at the configured walk/run speeds. The fixture
 uses the existing collision-free movement mode; it does not qualify terrain,
 collision, sprint perks or AP. Other controls cover binding aggregation/rebind,
 selected controller button/stick state and history before handler registration.
+
+## Executed consumer checks
+
+[validation: Windows CPU libtest, integrated source b8da4c3d41e9a950a6e43bdb4d95b0e3c60d0a1e]
+The selected consumer controls below passed with zero failures and zero ignored.
+This combined source contains the focused MCM/control/light changes and fresh
+neighboring inventory work. It is not an isolated standalone-head run. Both
+libtest targets compiled; all selected jobs ended and the build source was restored.
+No pristine baseline failure, playable client, physical OS/device acquisition,
+GPU/rendered, native or original installed-mod acceptance is established by this run.
+
+`player::control_event_tests`:4 passed, covering source callbacks, actual walk/run
+steps in the authored collision-free fixture, selected controller/button/stick
+snapshots, binding aggregation, exact filters and edge history. The later controller
+query/button/gameplay-blocking successor is separate and remains unrun.
