@@ -30229,6 +30229,12 @@ expect = [
   { re = 'mesh terrain blend: rejected', max = 0, label = "nothing refused with the terrain switches" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
 ]
+order = [[
+  { re = 'mesh terrain blend: ready .* detail=layers detail-quadrants=[1-9][0-9]*', label = "layer detail is ready with both terrain switches on" },
+  { re = 'terrain: height blending off ', label = "then the height blending row turns off" },
+  { re = 'terrain: anti-tiling off ', label = "then the anti-tiling row turns off" },
+  { re = 'mesh terrain blend: publication .* detail=layers .*detail-quadrants=[1-9][0-9]*', label = "then the switched materials bake and publish again with layer detail" },
+]]
 
 [[scenario]]
 name = "mesh-terrain-blend-detail-colour"

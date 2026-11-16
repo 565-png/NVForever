@@ -184,11 +184,34 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
     assert!(material.find("let terrain = mesh_terrain_lookup(").unwrap() > material.find("alpha_discard(pbr_input.material.flags").unwrap(), "after the coverage tests");
     assert!(material.find("let terrain = mesh_terrain_lookup(").unwrap() < material.find("out.color = apply_pbr_lighting(pbr_input);").unwrap(), "before lighting");
     // [design] Round 10a: the game-xy derivatives are taken before the lookup, at the
-    // function's top level (uniform control flow), never inside its branches.
-    let inputs = material.find("let terrain_inputs = MeshTerrainInputs(distance(view.world_position, in.world_position.xyz), dpdx(terrain_xy), dpdy(terrain_xy), view.mip_bias,").expect("the derivatives");
-    assert!(inputs < material.find("let terrain = mesh_terrain_lookup(").unwrap());
-    let line_start = material[..inputs].rfind('\n').unwrap();
-    assert_eq!(material[line_start + 1..inputs].trim(), "@if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE)", "a top-level statement, not inside a branch");
+    // function's top level (uniform control flow), never inside its branches. Merge review
+    // (#2661): they are captured at the very start of nif_fragment, before the visibility
+    // dither and before every discard (alpha cut, holes, alpha_discard), as terrain.wesl
+    // captures its own; only the blend variant has the capture.
+    let fragment = material.find("fn nif_fragment(").expect("nif_fragment");
+    // The function's body, after its own opening brace.
+    let body = &material[fragment + material[fragment..].find('{').unwrap() + 1..];
+    let at = |needle: &str| body.find(needle).unwrap_or_else(|| panic!("nif_fragment: {needle}"));
+    let capture = [
+        "let terrain_xy = vec2(in.world_position.x, -in.world_position.z);",
+        "let terrain_dx = dpdx(terrain_xy);",
+        "let terrain_dy = dpdy(terrain_xy);",
+    ];
+    for statement in capture {
+        let pos = at(statement);
+        let line_start = body[..pos].rfind('\n').unwrap();
+        assert_eq!(body[line_start + 1..pos].trim(), "@if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE)", "{statement}: a top-level statement of the blend variant only");
+        assert!(pos < at("discard;"), "{statement}: before the first discard");
+        assert!(pos < at("visibility_range_dither(in.position"), "{statement}: before the visibility dither");
+        assert!(pos < at("alpha_discard(pbr_input.material.flags"), "{statement}: before alpha_discard");
+        assert!(pos < at("{"), "{statement}: before the first block (no branch)");
+    }
+    assert_eq!(material.matches("dpdx(terrain_xy)").count(), 1, "the game-xy derivatives are taken once");
+    assert_eq!(material.matches("dpdy(terrain_xy)").count(), 1, "the game-xy derivatives are taken once");
+    let inputs = at("let terrain_inputs = MeshTerrainInputs(distance(view.world_position, in.world_position.xyz), terrain_dx, terrain_dy, view.mip_bias,");
+    assert!(inputs < at("let terrain = mesh_terrain_lookup("));
+    let line_start = body[..inputs].rfind('\n').unwrap();
+    assert_eq!(body[line_start + 1..inputs].trim(), "@if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE)", "a top-level statement, not inside a branch");
     // [design] Zero weight leaves every shading input as it was: the surface blend sits
     // inside the positive-weight branch, which hybrid v2 keeps.
     let branch = material.find("} else if terrain.status == LOOKUP_SUCCESS && terrain.weight > 0.0 {").expect("the positive-weight branch");

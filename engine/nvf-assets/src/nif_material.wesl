@@ -468,6 +468,15 @@ fn nif_fragment(
     in: VertexOutput,
     is_front: bool,
 ) -> FragmentOutput {
+    // [design] Mesh terrain blend: the derivatives of the fragment's game xy (Bevy (x, -z))
+    // for the landscape layers' explicit-gradient reads, the colour level and the local
+    // height reference (nif_surface_bindings.wesl `mesh_terrain_detail`). Taken first, in
+    // uniform control flow while every fragment of the quad still runs, before the
+    // visibility dither and every discard below (terrain.wesl's order); the blend itself
+    // stays after the coverage tests. Only the blend variant has these lines.
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_xy = vec2(in.world_position.x, -in.world_position.z);
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_dx = dpdx(terrain_xy);
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_dy = dpdy(terrain_xy);
     // Landscape anti-tiling's footprint, while every fragment of the quad still runs.
     @if(TERRAIN_ANTI_TILING) let terrain_fp = terrain_footprint(in.world_position, nif_surface(in.instance_index).terrain.x, standard_material(in.instance_index).uv_transform);
     @if(VISIBILITY_RANGE_DITHER) visibility_range_dither(in.position, in.visibility_range_dither);
@@ -571,11 +580,9 @@ fn nif_fragment(
     // return: the lighting code after it keeps uniform control flow), their emission
     // cleared below.
     @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_unlit = mesh_terrain_unlit_view(mesh_terrain_view(in.instance_index));
-    // [design] Round 10a: the derivatives of the fragment's game xy (Bevy (x, -z)), taken
-    // here in uniform control flow, before the lookup's branches, for the landscape layers'
-    // explicit-gradient reads (nif_surface_bindings.wesl `mesh_terrain_detail`).
-    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_xy = vec2(in.world_position.x, -in.world_position.z);
-    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_inputs = MeshTerrainInputs(distance(view.world_position, in.world_position.xyz), dpdx(terrain_xy), dpdy(terrain_xy), view.mip_bias, mesh_terrain_shading(in.instance_index));
+    // [design] Round 10a: the lookup's inputs, with the game-xy derivatives captured at the
+    // top of nif_fragment (before any discard), passed in for the lookup's branches.
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_inputs = MeshTerrainInputs(distance(view.world_position, in.world_position.xyz), terrain_dx, terrain_dy, view.mip_bias, mesh_terrain_shading(in.instance_index));
     @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) {
         let terrain = mesh_terrain_lookup(in.instance_index, in.world_position.xyz, pbr_input.world_normal, terrain_inputs);
         let terrain_view = mesh_terrain_view(in.instance_index);
