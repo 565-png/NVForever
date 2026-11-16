@@ -26,7 +26,9 @@
 //! - **4 × 4 near** (#2676): the lines show each quadrant as it is drawn now (4 × 4 or 2 × 2,
 //!   a 4 × 4 quadrant's coarse sides on their 2 × 2 neighbours' segments: `crate::terrain_lod`),
 //!   one grid of lines per quadrant ([`outline_drawn`]; the quadrants' shared sides are drawn
-//!   by both). A cell whose quadrants are redrawn at another level gets a new outline job.
+//!   by both). A cell whose quadrants are redrawn at another level gets a new outline job
+//!   and keeps its old lines until the job is done. The count line then ends `; <n>
+//!   quadrants outlined 4 x 4`.
 //!
 //! [design, #2149] One gizmo per cell rather than per quadrant (the plan's sketch): the
 //! cell is what loads and unloads, and its surface is one grid. Jobs are keyed by the
@@ -90,8 +92,9 @@ impl WireSource {
 
 /// A cell's outline: its job, its drawn lines, or nothing to draw; each with how its
 /// quadrants were drawn when the job was made (`None`: in full, no 4 × 4 near).
+/// A job outlining a cell again after a redraw keeps the old lines (`old`) until it is done.
 enum WireCell {
-    Pending(Task<Option<(GizmoAsset, usize)>>, Option<[QuadrantDraw; 4]>),
+    Pending { task: Task<Option<(GizmoAsset, usize)>>, draws: Option<[QuadrantDraw; 4]>, old: Option<(Entity, Handle<GizmoAsset>)> },
     Drawn { entity: Entity, asset: Handle<GizmoAsset>, edges: usize, draws: Option<[QuadrantDraw; 4]> },
     Empty(Option<[QuadrantDraw; 4]>),
 }
@@ -99,7 +102,7 @@ enum WireCell {
 impl WireCell {
     fn draws(&self) -> Option<[QuadrantDraw; 4]> {
         match self {
-            WireCell::Pending(_, d) | WireCell::Drawn { draws: d, .. } | WireCell::Empty(d) => *d,
+            WireCell::Pending { draws: d, .. } | WireCell::Drawn { draws: d, .. } | WireCell::Empty(d) => *d,
         }
     }
 }
@@ -123,6 +126,8 @@ pub struct Counts {
     pub edges: usize,
     pub empty: usize,
     pub pending: usize,
+    /// Quadrants outlined at 4 × 4 under 4 × 4 near (0 otherwise).
+    pub fine: usize,
 }
 
 impl TerrainWireframe {
@@ -135,10 +140,11 @@ impl TerrainWireframe {
         let mut c = Counts::default();
         for w in self.cells.values() {
             match w {
-                WireCell::Pending(..) => c.pending += 1,
-                WireCell::Drawn { edges, .. } => {
+                WireCell::Pending { .. } => c.pending += 1,
+                WireCell::Drawn { edges, draws, .. } => {
                     c.drawn += 1;
                     c.edges += edges;
+                    c.fine += draws.map_or(0, |d| d.iter().filter(|d| d.step == 1).count());
                 }
                 WireCell::Empty(_) => c.empty += 1,
             }
@@ -227,11 +233,16 @@ pub fn outline_drawn(s: &Surface, origin: Vec2, draws: [QuadrantDraw; 4]) -> (Gi
     (asset, edges)
 }
 
+fn drop_lines(entity: Entity, asset: &Handle<GizmoAsset>, commands: &mut Commands, assets: &mut Assets<GizmoAsset>) {
+    commands.entity(entity).try_despawn();
+    assets.remove(asset);
+}
+
 fn drop_cell(c: WireCell, commands: &mut Commands, assets: &mut Assets<GizmoAsset>) {
     // A pending job is cancelled when its task is dropped here.
-    if let WireCell::Drawn { entity, asset, .. } = c {
-        commands.entity(entity).try_despawn();
-        assets.remove(&asset);
+    match c {
+        WireCell::Drawn { entity, asset, .. } | WireCell::Pending { old: Some((entity, asset)), .. } => drop_lines(entity, &asset, commands, assets),
+        _ => {}
     }
 }
 
@@ -272,11 +283,22 @@ fn sync(
     // How each cell's quadrants are drawn now (4 x 4 near), `None` in full.
     let lod = terrain.as_deref().and_then(|t| t.lod.as_ref());
     let draws_of = |e: Entity| lod.map(|l| l.drawn(e).unwrap_or([QuadrantDraw::FULL; 4]));
-    // Cells that unloaded or were hidden, or whose quadrants are drawn otherwise now.
-    let gone: Vec<Entity> = w.cells.iter().filter(|(e, c)| !shown.contains_key(e) || c.draws() != draws_of(**e)).map(|(e, _)| *e).collect();
+    // Cells that unloaded or were hidden lose their lines; cells whose quadrants are drawn
+    // otherwise now are outlined again below, keeping their lines until that is done.
+    let gone: Vec<Entity> = w.cells.keys().filter(|e| !shown.contains_key(e)).copied().collect();
     for e in gone {
         if let Some(c) = w.cells.remove(&e) {
             drop_cell(c, &mut commands, &mut assets);
+        }
+    }
+    let mut kept: HashMap<Entity, (Entity, Handle<GizmoAsset>)> = HashMap::new();
+    let redrawn: Vec<Entity> = w.cells.iter().filter(|(e, c)| c.draws() != draws_of(**e)).map(|(e, _)| *e).collect();
+    for e in redrawn {
+        match w.cells.remove(&e) {
+            Some(WireCell::Drawn { entity, asset, .. }) | Some(WireCell::Pending { old: Some((entity, asset)), .. }) => {
+                kept.insert(e, (entity, asset));
+            }
+            _ => {}
         }
     }
     // Cells loaded or shown since: a job each.
@@ -294,14 +316,21 @@ fn sync(
                     None => outline(&s, origin),
                 })
             });
-            w.cells.insert(e, WireCell::Pending(task, draws));
+            w.cells.insert(e, WireCell::Pending { task, draws, old: kept.remove(&e) });
         }
     }
-    // Jobs done: their lines drawn.
+    // Lines kept for a cell no job could be made for (no source).
+    for (_, (entity, asset)) in kept {
+        drop_lines(entity, &asset, &mut commands, &mut assets);
+    }
+    // Jobs done: their lines drawn, in place of the old ones.
     for c in w.cells.values_mut() {
-        let WireCell::Pending(task, draws) = c else { continue };
+        let WireCell::Pending { task, draws, old } = c else { continue };
         let draws = *draws;
         let Some(done) = check_ready(task) else { continue };
+        if let Some((entity, asset)) = old.take() {
+            drop_lines(entity, &asset, &mut commands, &mut assets);
+        }
         *c = match done {
             Some((asset, edges)) => {
                 let asset = assets.add(asset);
@@ -318,7 +347,10 @@ fn sync(
     }
     let counts = w.counts();
     if counts.pending == 0 && w.logged != Some(counts) {
-        info!("terrain wireframe: {} cells outlined, {} edges, {} without landscape, {} line assets", counts.drawn, counts.edges, counts.empty, counts.drawn);
+        // Under 4 x 4 near, how many quadrants the lines show at 4 x 4 (the smoke scenario
+        // `terrain-wireframe-near` reads it).
+        let fine = if lod.is_some() { format!("; {} quadrants outlined 4 x 4", counts.fine) } else { String::new() };
+        info!("terrain wireframe: {} cells outlined, {} edges, {} without landscape, {} line assets{fine}", counts.drawn, counts.edges, counts.empty, counts.drawn);
         w.logged = Some(counts);
     }
 }
