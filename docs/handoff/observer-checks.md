@@ -2251,6 +2251,9 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      `AtticusREF` (0x0015A04E, SafehouseLegionINT). And `SSHQMalcolmHolmesREF`
      (0x0010651A): after he has met the player outdoors and walked out of sight, is he
      back in RandomEncounterNPCs at (1825, 2079, 6976)?
+     Ours since #2405 (packages.md §11): out of the high process, an actor whose
+     package's place no door at all joins to where it stands is put there; in the loaded
+     area (the player in the safehouse) it is still set aside every hour.
 
 160. **Where is Loyal once Volare! has failed, and can the player reach him?** (P2; #2566,
      navmesh.md §4 "Disabled load doors".) Kill Argyll (NellisArgyllREF) at Nellis
@@ -2703,3 +2706,241 @@ already talking takes over at once, same topic or another; nothing is queued or 
     [design, #2715: `Allowed::only_idle_markers`, `Sandbox::next`]; continuous cower
     in the original is provisional [hypothesis]. This leaves the general sole-object
     60-second rule and observer check 114 intact [design, #1505, #2715].
+
+197. **What does a resurrected actor carry?** (P2; `fnv_game::resurrect`,
+    `fnv_sim::World::restock_inventory`, issue #2683.) NVForever makes the items of a
+    dead actor's own item list up again when it is resurrected (rolled anew; only what
+    it has fewer of is added) and keeps everything else it carries [hypothesis; capture
+    rs1 only showed that a given Stimpak stays and looted given ones do not come back].
+    Kill a Legionary Assassin of the reputation hit squad (or any NPC whose weapon is in
+    a leveled list of its own record, console `kill`), take everything from the body and
+    pick up its dropped weapon, then `resurrect` (and again with `resurrect 1`), kill it
+    and look: does it carry its weapons, armour and loot again? Same once more without
+    looting: is anything doubled, and is the weapon that fell beside the first body
+    still on the ground? Then with an NPC whose items are all fixed entries (Ringo):
+    do his own looted items come back?
+
+## Added 2026-11-15 (REPCONN test-site load-door lock, #2538)
+
+198. **Is a load door without lock data locked as its other side is?** (P1; #2538,
+     cells-refs.md section 6.) **Answered [observed: capture run15b_a, 2026-11-15;
+     xNVSE 6.4.9, JIP LN 57.30]: yes for reads and player activation.** Fresh
+     `coc RocketLabBasement` (0x0007EA61, REPCONN Basement) from a Goodsprings save
+     that never visited it: 0x000CE1AD, without XLOC, and its XTEL partner
+     0x0008F97C, with XLOC 255 / no key / flags 0, both read `GetLocked` 1 and
+     `GetLockLevel` 255. The tunnel-side door is at (9812, -2504, 7180); from
+     (9902, -2414, 7180), 130 units in front, `000CE1AD.Activate player` did not
+     move the player or teleport. Activating 0x0008F97C from inside the room was
+     refused too, with all four reads unchanged after each attempt. The hatch pair
+     0x000CD777 / 0x001694E6 read 0 / 0 on both sides. [observed: FalloutNV.esm,
+     fnvtool esm decode / world refs, 2026-11-15] The two load doors share base
+     UtlDoorBg01 0x0003D205 (no script); 0x0008F97C is at (9760, -2572, 7176),
+     85 units from 0x000CE1AD. The hatches use REPCONHatch2 0x001694DD (no name
+     or script), at (7756, -3644, 7316) / (8222, -3377, 6615); neither has XLOC.
+     No FalloutNV.esm script names any of these four references. [hypothesis,
+     #2538] Key/pick/script unlocking through either side changes the source lock;
+     creating an own lock leaves the partner independent. Those mutations, key
+     inheritance, broken-lock sharing and NPC use were not captured.
+
+## Answered 2026-11-15 (weather region lookup timing, #2531)
+
+199. **When does the weather follow a weather region: by its outline or the cell's
+     region list, and when is it looked up?** (P2; #2531, world.md §6.) **Answered
+     [observed: captures run15b_w and run15b_w2, 2026-11-15; first person, GameHour 12,
+     xNVSE 6.4.9, JIP LN 57.30 GetCurrentWeather/GetCurrentWeatherPercent]:** script
+     MoveTo to (110686, 19125), cell 27,4: NVWastelandClear; (109775, 18882), cell 26,4,
+     260 units outside NVLegateRegion's outline: clear for 40 s despite that cell's
+     XCLR listing the region [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-15].
+     MoveTo (109330, 18852), inside: NVlegateCampWeather;
+     back outside: clear. All complete (percent 1.0) at the first sample 4 s after
+     moving. Walking east at y 18849 kept camp weather past outline x 109513 and
+     fall-off distance x 110537: last camp sample x 110567.9, first clear x 110596.0
+     at percent 0.000, across cell border x 110592. Fade rose 0.033/s, complete in
+     about 30 s. Walking west entered cell 26,4 outside the outline and kept clear
+     to (109067, 18849), 450 units inside, for another 49 s standing. Thus membership
+     uses the outline, sampled on exterior cell entry; walking inside a cell holds
+     the result, while script moves resample and snap. [hypothesis: extend that
+     placement refresh to load doors, other teleports, fast travel, loaded games,
+     worldspace changes and coming outdoors; only script MoveTo was captured.]
+
+## Answered 2026-11-15 (combat distraction, #2573)
+
+200. **Does a fighter detect its own foe better than a bystander? Answered: yes.**
+     (P2; #2573, [actor-behaviour §2.1a](../spec-notes/actor-behaviour.md#21a-combat-distraction-2573-answered-observer-check-200), detection.md §9.)
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] xNVSE 6.4.9 and JIP LN
+     57.30 `GetDetectionValue`, Searchlight Airport's runway, GameHour 12; the player
+     sneaking, standing still, in god mode. Detectors GoodspringsSettler01Ref 0x00104F03
+     and GoodspringsSettler03Ref 0x00104F0A both had Perception 5 and line of sight.
+     "Fighter" used `StartCombat player` (IsInCombat 1, IsCombatTarget player 1);
+     "watcher" used `StartCombat` on a restrained gecko after RemoveFromAllFactions and
+     Assistance 0 (IsInCombat 1, IsCombatTarget player 0). Run 2 swapped the NPCs' roles.
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] Distances and readings:
+
+     | State of the detector | Distance to the player | GetDetectionValue player |
+     |---|---|---|
+     | Not in combat, facing the player (both NPCs, both runs) | 695 | 79 |
+     | Not in combat, walking (both NPCs) | 669-674 / 650 / 633-640 / 621-627 / 601 / 567 | 80 / 82 / 83 / 84 / 85 / 86-87 |
+     | In Combat, the player its combat target (run 1) | 687-693 / 672-685 / 650 / 627 | 83 / 83-84 / 85 / 87 |
+     | In Combat, the player its combat target (run 2, the other NPC) | 695 / 675-681 / 650 / 618-627 | 83 / 84-86 / 86 / 87-88 |
+     | In Combat with the gecko, the player not its target (run 1) | 609-636 | 81 |
+     | In Combat with the gecko, the player not its target (run 2) | 547-591 | 83-84 |
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] At comparable distances,
+     a fighter read its own target 3-4 higher than the same NPC out of combat, in both
+     role assignments. Fighting someone else read the player 2-4 lower; those samples
+     were fewer because line of sight came and went. This settles the direction in
+     favour of the setting's description: fSneakCombatMod applies to a detector in
+     Combat against actors outside its combat target list, giving 0.8 at defaults;
+     its own targets retain 1 + fSneakAlertMod = 1.2. The wiki formula's IsCombatTarget
+     reading and the Fallout Wiki's 0.8 / 1.2 table are reversed (§2.1).
+
+     [observed: captures run15b_t1 and run15b_t2, 2026-11-15] `SetRestrained 1` on a
+     combatant ended combat (IsInCombat 0 from the next sample), as `tcai` did.
+     GetDetectionValue read -100 for a detector in combat without line of sight.
+     These captures did not time detection loss or the search after breaking sight.
+
+     [design, #2573; tools/smoke/scenarios.toml] `detection-combat-target-sneak`
+     uses the cleared Searchlight Airport runway at hour 12 with god mode. The
+     player sneaks from 2 s and stands still. Fighter GoodspringsSettler01Ref
+     (00104F03) and watcher GoodspringsSettler03Ref (00104F0A) have Perception 5 and
+     Assistance 0; the watcher is removed from all factions. A gecko is created at
+     the watcher with Aggression 0 and Perception 0, then positioned 150 units
+     toward the player. Both settlers reset to mirrored 690-unit offsets at 5.8 s
+     and the gecko resets at 5.9 s. At 6 s the fighter starts combat with the player
+     and the watcher with the gecko. Five paired GetDetectionValue/GetDistance reads
+     run every 0.5 s from 6.6 to 8.6 s. Every fighter value must exceed its paired
+     watcher value; distances are logged without absolute ranges.
+
+     [observed: smoke runs on the combined build, 2026-11-15] With the fix, both
+     detectors at 690 units read fighter 64 / watcher 56; the fighter closing to 610
+     read 69 (PASS). With both detection.rs files reverted to upstream main, fighter
+     84-88 / watcher 91 in all five pairs (FAIL).
+
+## Added 2026-11-15 (Gomorrah Suites wall-sconce glow, #2435)
+
+201. **How strong and how wide is the glow on the wall above a lit Gomorrah Suites
+     sconce?** (P3; #2435, nif.md §6 "Fog on added light".) Ours: the card
+     `NeoclassicalSconce:9` (ONE / ONE, no texture, vertex colour 0.34 at the bowl to
+     black on its outline) adds its colour in display values, fog only dimming it; next
+     to the bowl it is about 100 grey levels over the wall, near the outline 10 to 25
+     [observed in NVForever; hypothesis for the game]. In Gomorrah03 by any hour, stand
+     at 5900, 2250, 6384 facing east (heading 90, level) towards the sconce 0x0011A90A,
+     take one frame, then one from heading 50; note the wall's grey level beside the
+     glow, the glow's level next to the bowl and halfway up, and whether an outline of
+     the card can be seen anywhere. Softer and dimmer than ours points at the
+     display-value sum ("Additive blend") on a ONE / ONE card; the same agrees with ours.
+
+## Added 2026-11-15 (gas traps, #2687)
+
+202. **What sets a gas cloud off: a ballistic gun fired inside it, one fired through it,
+     a frag grenade?** (P1; #2687, `engine/nvf-play/src/gas_traps.rs`.) Ours since
+     #2687: a shot that passes through a cloud hits it with its weapon, which sets it off
+     only for the weapons of `ExplodesGasTrapsOnHit` (FLST 0x0007627F: energy, fire,
+     launchers, no plain guns). A gun fired from inside a cloud, and any blast that
+     reaches one, also hit it with `GasTrapDummy` (WEAP 0x000001F6), which sets it off
+     [hypothesis; GECK wiki Traps documents "fired inside" and "explosions"]. In
+     Vault22e, on a save taken after Keely's line INFO 0x000F43F8 (or after
+     `0F0908.enable`), stand outside `V22SporePurgeGasRef` (0x000F0908, at 3592, 2469,
+     8469) and fire a 10mm pistol through the gas at the wall behind it. Then reload,
+     step inside it and fire the 10mm at the floor. Then reload and throw a frag grenade
+     in. Each time, read `0F0908.getdestructionstage` and `GetObjectiveCompleted VMS06 50`.
+     Our rule holds if the shot through it does nothing and the shot from inside and the
+     grenade set it off. If the shot from outside sets it off too, a ballistic hit counts
+     anywhere in the cloud. If the shot from inside does nothing, the "fired inside" rule
+     is wrong for New Vegas, and the dummy hit for a gun fired inside goes; the owner
+     asked in #2687 that any spark set the gas off, so that would be a ruling for them.
+
+## Answered 2026-11-15 (Karl at Red Rock and the Legion, #2728)
+
+203. **Does Karl at Red Rock turn on the player because of the Legion?** (P1; #2728, #2467,
+     PR #2498, owner-review item 65 there; crime-karma.md §3.4, §3.7.) Karl is VRRCKarlREF
+     0x00140E71 (base VRRCKarl 0x00140E60, Aggressive). His records put him in three
+     factions, not one: ArmorVCaesarsLegionFaction 0x00134B6E (Track Crime, no reputation),
+     vCaesarsLegionMilitaryDialogueFaction 0x00137BB7 and VRRCKarlFaction 0x0017B5B6 (Track
+     Crime, reputation RepNVCaesarsLegion, Ally of VCaesarsLegionFaction and of the Red Rock
+     ambush factions) [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-15]. **Answered
+     [observed: nvf_capture observer campaigns `karl_murder`, `karl_murder2`,
+     `karl_legion_rep`, `karl_legion_rep2`, `karl_legion_rep3`, `karl_legion_rep_cove`,
+     `karl_flags` and `karl_flags2` (tools/capture/observe/), save nvfairport, god mode,
+     xNVSE 6.4.9, plugin version 10, 2026-11-15; outputs `obs_karl_*` in the private capture
+     folder]:**
+     - **The setup and baseline.** Every sample reads GetPCEnemyOfFaction on the three
+       factions, Karl's GetFactionRelation player, GetActorFactionPlayerEnemy and
+       GetActorCrimePlayerEnemy, IsPCAMurderer and the Legion's infamy and fame. With no
+       crime, Karl detects the player, sits (GetSitting 3), stays at relation 0 and never
+       fights, on entry and at noon on each of the next four days.
+     - **1. Seen murder.** The staging is #2498's `crime-karl-no-side`: the player at
+       (63363, -89150) at Cottonwood Cove, hour 12, NVCCAureliusREF 0x0012D6E2 about 400
+       units off. Shots by TapControl never fired in the unfocused game, and FireWeapon
+       never hit. The kill that worked is `NVCCLegionary4REF.Kill player`, with the
+       Legionary moved 120 units in front of the player first. The original counted it
+       as a murder: IsPCAMurderer 1 at once. About 40 samples later **both
+       VCaesarsLegionFaction and ArmorVCaesarsLegionFaction read GetPCEnemyOfFaction 1**
+       (VRRCKarlFaction 0). Legion infamy went from 0 to 60, Aurelius's relation to the
+       player became 1 (enemy), and the Cove's Legionaries started combat with the player.
+       So the original does flag the armour faction, which #2498 calls "no side".
+       But the flags did not last. In `karl_murder2` the player went by `cow` to the
+       Searchlight airport. The flags still read 1 there, then went to 0 at 12.45, about
+       0.18 game hours (11 minutes) after the murder, with no cell change and no script of
+       ours. Back at the Cove, Aurelius was still in combat with the player: his own grudge,
+       with the flags at 0. In Karl's longhouse (by MoveTo, 0.3 to 0.5 h after the murder,
+       and at noon one, two, three and four days later), all three flags read 0,
+       GetActorFactionPlayerEnemy 0, relation 0. **Karl detected the player, stayed seated
+       and never fought.** The murder stayed on record (IsPCAMurderer 1, infamy 60).
+     - **2. Legion infamy, no murder.** SetReputation RepNVCaesarsLegion (infamy 100,
+       fame 0) and AddReputation infamy deeds: 6 gave 72, and 15 gave 100 with
+       GetReputationThreshold axis 2 at 6, the top rank. **Karl stayed seated and calm on
+       entry and for 0.4 to 0.5 h each time**, relation 0, all flags 0. He spoke once but
+       never fought. The same reputation turned no Legionary at the Cove either: Aurelius
+       detected the player and stayed calm for a game hour. In the original, Vilified alone
+       puts no Legion member in combat at once; the scripts that read the Legion's rank
+       only start encounters, such as VEFR02LegionAssassinSCRIPT
+       [observed: FalloutNV.esm script text].
+     - **3. What does turn him.** Each case is a flag set by script, then Karl's cell
+       entered:
+       - SetPCEnemyOfFaction VRRCKarlFaction 1: the flag held through the move, Karl read
+         GetActorFactionPlayerEnemy 1 and relation 1, and he attacked on entry.
+       - SetEnemy ArmorVCaesarsLegionFaction PlayerFaction (the faction reaction, no crime
+         flag): relation 1, and he attacked on entry.
+       - SetPCEnemyOfFaction ArmorVCaesarsLegionFaction 1 **set with the player already in
+         front of him**: GetActorFactionPlayerEnemy 1, relation 1, and he went to combat
+         (OnStartCombat Karl → player) and hit the player.
+
+       Set outdoors instead, the armour flag and the VCaesarsLegionFaction flag each held
+       for 0.3 h at the airport, then read 0 as soon as MoveTo put the player in Karl's
+       cell, and Karl stayed calm. So the armour faction's flag does turn him while it is up.
+       Nothing in FalloutNV.esm's scripts clears those flags (no SetPCEnemyOfFaction … 0
+       or ClearFactionPlayerEnemyFlag on them) [observed: script text]. What clears them is
+       not known: after the murder it was a timer or something in the engine; for a flag
+       set by script it was the move [hypothesis].
+
+     **For item 65:** the original does not agree that a murder flags no faction that is
+     "no side": the Cove murder flagged ArmorVCaesarsLegionFaction too. Karl stays calm in
+     the original because that flag was gone within about 11 game minutes, long before
+     anyone could reach Red Rock, and not because it was never set. The armour flag is
+     enough to turn him while it is up. NVForever keeps a crime's flag for
+     iCoolDownTimerSetting (3) days (crime-karma.md §3.7), so it flags the armour faction
+     and keeps it, and Karl fights; that is what #2467 saw. Not checked: a murder by the
+     player's own shot (only the scripted Kill worked here), travel on foot or by fast
+     travel instead of MoveTo, and a murder seen by more witnesses or by Karl himself.
+
+## Added 2026-11-15 (the REPCONN ghouls' walk to the basement, #2405)
+
+204. **Do the REPCONN ghouls set off for the basement while its door is locked?** (P2;
+     #2405, packages.md §11.) `REPCONGhoulRocketWalkPACKAGE` (Travel to
+     `JasonBrightDialogMarker` 0x0008D47A in RocketLabBasement, valid at VMS01
+     variable 25 == 3) sends Jason Bright's ghouls from RocketLabTop through the Mid
+     floor and `REPCONMidToBasementDoor` (0x000840AC, lock level 25, key
+     `REPCONLowerKey` 0x000810E8 that no ghoul carries); `REPCONTopIntercomTrigger`
+     (0x000CD683) by the door out of Top moves every actor entering it to the basement
+     while `nightkinquest` is 3 [observed: the data]. Ours: no walk starts, since the
+     whole way is not open, so they never reach the trigger [observed in NVForever,
+     `fnvtool ai run --force Ghoul5=REPCONGhoulRocketWalkPACKAGE`]. In RocketLabTop
+     during Come Fly With Me, once the Nightkin are dealt with (`nightkinquest` 3,
+     before the player opens the basement door), watch Ghoul5 (0x00087AEF):
+     `GetCurrentAIPackage`, `GetPos x/y` every few seconds, and `0840AC.GetLocked`.
+     If he walks to the door out of Top and is moved on, the original starts a walk
+     whose way ends at a locked door (at least as far as the door); if he stands still
+     until the door is unlocked, ours is right and the trigger only serves after it.
