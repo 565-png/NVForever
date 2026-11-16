@@ -815,7 +815,7 @@ paths = [
   "engine/nvforever/src/graphics.rs", "engine/nvforever/src/ssao*", "engine/nvforever/src/post*",
   "engine/nvforever/src/taa*", "engine/nvforever/src/shafts*",
   "engine/nvforever/src/settings.rs", "engine/nvf-play/src/pause.rs",
-  "engine/nvf-play/src/settings_layout.rs",
+  "engine/nvf-play/src/settings_layout.rs", "engine/vendor/naga/**",
 ]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16,19.5:20.5", NVF_PLAY_TEST_SETTINGS = "11:ambient-occlusion,12:bloom,13:fine-shadows,14:ambient-occlusion,15:anti-aliasing=1,15.5:light-shafts,20:anti-aliasing=0.333", NVF_PLAY_TEST_LOOK = "17:90:0,17.5:120:0,18:150:0", NVF_PLAY_TEST_MOVE = "17:1:0,19:0:0" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--graphics", "enhanced"]
@@ -1377,7 +1377,7 @@ areas = ["renderer", "graphics", "settings"]
 paths = [
   "engine/nvforever/src/graphics.rs", "engine/nvforever/src/frame_pace.rs", "engine/nvforever/src/settings.rs",
   "engine/nvforever/src/taa*", "engine/nvf-play/src/settings.rs", "engine/nvf-play/src/pause.rs",
-  "engine/nvf-play/src/settings_layout.rs",
+  "engine/nvf-play/src/settings_layout.rs", "engine/vendor/naga/**",
 ]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:20", NVF_PLAY_TEST_SETTINGS = "11:anti-aliasing=0.667,12:anti-aliasing=0.833,13:anti-aliasing=1,14:anti-aliasing=0.5,15:shadow-filter=0,16:shadow-filter=1,17:shadow-filter=0.5,17.5:field-of-view=0.667,18:frame-cap=0.4,18.5:display-sync=Off,19:frame-cap=0,19.5:field-of-view=0.417" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
