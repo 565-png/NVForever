@@ -26706,6 +26706,42 @@ forbid = [
 ]
 
 [[scenario]]
+name = "dlssg-cap"
+source = "#2731, #2732, docs/design/dlss-frame-generation.md \"Frame pacing\": DLSS Frame Generation on from the start: Reflex's options set again once the window's swapchain exists; a frame rate limit of 144 (picked in the pause menu) handed to Reflex in full while the menu has DLSS-G's mode off, divided by the frames DLSS-G presents once play goes on, and the real frames held to it"
+note = "needs NVF_DLSS_DIR with the frame generation files; front = true as dlssg-on. The home of its own keeps the limit between runs, so the settings line is not expected. Generated frames stays at its default, 2x; the real-frame line needs the GPU to keep 60 or more real frames a second at 1280x720 over DLSS Quality."
+areas = ["graphics", "settings"]
+paths = ["engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**", "engine/nvforever/src/frame_pace.rs", "engine/nvforever/src/nv_low_latency.rs", "engine/vendor/wgpu-hal/src/vulkan/**"]
+requires = ["NVF_DLSS_DIR"]
+front = true
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-cap-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:13", NVF_PLAY_TEST_SETTINGS = "11:frame-cap=1" }
+args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--upscaler", "dlss", "--upscaler-quality", "quality", "--frame-generation", "dlss", "--log-frame-times", "10", "--no-voice", "--no-lodgen"]
+run_seconds = 48
+expect = [
+  { re = 'DLSS-G: Reflex options set again for a new swapchain \(\d+ made so far\): mode eLowLatency, frame limit .*: eOk', label = "Reflex's options set again once the window's swapchain exists (#2732)" },
+  { re = "DLSS-G: frame cap: real frames at the full limit, was divided by 2 \\(menus: DLSS-G's mode off for 8 frames\\)", label = "the full limit in the pause menu (#2731)" },
+  { text = "DLSS-G: Reflex options: mode eLowLatency, frame limit 6944 us a real frame: eOk", label = "the whole limit of 144 handed to Reflex in the menu" },
+  { text = "DLSS-G: Reflex options: mode eLowLatency, frame limit 13889 us a real frame: eOk", label = "144 divided by the two frames presented per real frame in play" },
+  { re = 'DLSS-G: 1\d\.\d s: (?P<n>\d+) real frames, \d+ presented \((1\.[89]|2\.[0-2])\d* per real frame\), status eOk', range = [600, 740], label = "about 72 real frames a second over ten seconds at 2x under 144" },
+]
+order = [[
+  { re = 'DLSS-G: Reflex options set again for a new swapchain' },
+  { re = "DLSS-G: frame cap: real frames at the full limit, was divided by 2 \\(menus" },
+  { text = "DLSS-G: Reflex options: mode eLowLatency, frame limit 6944 us a real frame: eOk" },
+  { re = "DLSS-G: frame cap: real frames at the limit divided by 2, was the full limit \\(generation starting: DLSS-G's mode on\\)", label = "divided again once play goes on" },
+  { text = "DLSS-G: Reflex options: mode eLowLatency, frame limit 13889 us a real frame: eOk" },
+]]
+forbid = [
+  { re = '\]\[streamline\]\[error\]', label = "an error from Streamline in dlssg-cap (e.g. a tagged image's format it cannot read)" },
+  { text = "Validation Error", label = "a Vulkan validation error" },
+  { re = 'Reflex options( set again for a new swapchain \(\d+ made so far\))?: mode \w+, frame limit [^:]+: e(?!Ok)', label = "slReflexSetOptions refused" },
+  { text = "DLSS-G: status ", label = "a DLSS-G status other than eOk (frame generation ended)" },
+  { re = 'DLSS-G: frame cap: real frames at the full limit, was divided by \d \(presented 1 per real frame', label = "generation paused while the window is in front" },
+  { text = "tried again each frame", label = "slDLSSGSetOptions failing" },
+  { re = 'present and acquire errors since last: [1-9]', label = "a VkResult error from DLSS-G's error callback (out of date counted apart)" },
+  { text = "Couldn't get swap chain texture", label = "an acquire timeout or failure" },
+]
+
+[[scenario]]
 name = "dlssg-resize"
 source = "#2317, docs/design/dlss-frame-generation.md \"Window changes\": the window resized during play with DLSS Frame Generation on (test aid NVF_DLSSG_RESIZE): DLSS-G's mode off and presented once before Bevy reconfigures the surface (the vendored HoldSurfaceReconfigure), on again at the new size, and back"
 note = "needs NVF_DLSS_DIR with the frame generation files; front = true as dlssg-on. NVF_DLSSG_RESIZE's seconds count from the app's start, so 16 s is a few seconds into play."
