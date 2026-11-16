@@ -6,7 +6,7 @@ use fnv_sim::FormId;
 
 /// [design, #2652] Use the current placed position, as the AI's facing does
 /// (`fnv_ai::goal::place_of_ref`). Add the base's OBND centre when available; without
-/// bounds (a marker), aim at the position itself [hypothesis: observer check 206].
+/// bounds (a marker), aim at the position itself [hypothesis: observer check 207].
 /// [hypothesis, #2652] Non-actors in sibling worldspaces share coordinates, as in
 /// `fnv_ai::goal::weapon_target_place`; unrelated-world objects have no aim point.
 pub(crate) fn target_place(game: &Game, shooter: FormId, target: FormId) -> Option<(V3, V3)> {

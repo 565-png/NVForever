@@ -69,7 +69,7 @@ During Combat, read from the use's own package as `Game::package_def` gives it):
 - **Targets** [design, #2652; `use_weapon::target_place`]: drawn actors keep their posed
   chest aim point. Any other present reference uses its current position
   (`fnv_ai::goal::place_of_ref`) plus the base OBND centre, or the position itself
-  without OBND. This aim placement is provisional [hypothesis: observer check 206].
+  without OBND. This aim placement is provisional [hypothesis: observer check 207].
   [hypothesis, #2652; spec note section 6] A non-actor placed target in a sibling
   exterior worldspace with the same nonempty immediate parent uses these coordinates
   in the shooter's worldspace. Different or absent parents and interiors do not
