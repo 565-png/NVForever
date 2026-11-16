@@ -967,12 +967,18 @@ shape's components (a `BlendShape` or `BlendCensus` added, replaced or removed, 
 included; an ordinary material put on, edited or removed; a fade's, effect shader's or
 override's marker added or removed), or a source material the last pass read (loaded,
 removed, or edited under its handle so that its reasons or its `SourceStamp` differ),
-compared only when the material store was changed since the conversion last ran. The
-first frame after the blend turns on always runs it. A pass's own commands can call for
-one more pass in the next frame, which changes nothing. A quiet frame follows the coverage
-of the recorded publications (one check per publication, a walk over its clones only when
-its coverage changed or it gained a clone), stores `settled` again, and refreshes a ready
-line a census change deferred (60 frames, `REFRESH_FRAMES`) from the last pass's census.
+compared only when the material store was changed since the conversion last ran. The stamp
+is watched only for a source a shape that may blend read; a source only shapes kept out
+read (a fade's or an override's copy, whose alpha moves every frame; a census-only shape's
+material) is watched by its reasons and whether it is loaded, since such a shape becomes
+allowed only through its reasons, a temporary marker's removal or a change of its ordinary
+material or census, each a trigger. The first frame after the blend turns on always runs
+it. A pass's own commands can call for one more pass in the next frame, which changes
+nothing. Every frame, pass or not, follows the coverage of the recorded publications
+(`follow_coverage`: one check per publication, a walk over its clones only when its
+coverage changed or it gained a clone). A quiet frame then stores `settled` again and
+refreshes a ready line a census change deferred (60 frames, `REFRESH_FRAMES`) from the last
+pass's census.
 Before this, the full pass ran every frame: [observed] Tracy, RTX 5070 Ti, 2560x1440,
 WastelandNV (-17, 0): `apply_variants` 0.61-0.65 ms a frame before this change. The test
 aid `NVF_PLAY_TEST_MESH_BLEND_VERIFY=1` runs the full pass in every frame the gate would
@@ -1271,6 +1277,8 @@ change-driven pass: `the_full_pass_runs_only_in_frames_where_an_input_changed`,
 `a_pending_replacement_keeps_the_pass_running_until_it_is_usable`,
 `a_deferred_census_report_comes_from_quiet_frames`,
 `a_coverage_change_restricts_retained_clones_and_runs_the_pass`,
+`a_kept_out_shapes_animated_copy_runs_no_pass_until_its_marker_goes`,
+`an_allowed_shapes_source_alpha_edit_runs_the_pass`,
 `the_verify_aid_runs_skipped_frames_and_reports_a_missed_change`),
 `terrain::tests` (round 10a: `detail_capture_reconstructs_the_drawn_triangles`; second
 review round: `an_initially_rejected_overflow_capture_recovers_when_the_edit_is_reverted`;
