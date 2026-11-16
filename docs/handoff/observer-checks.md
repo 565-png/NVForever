@@ -2690,31 +2690,6 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
-
-
-## Added 2026-11-15 (old-head hair outside the race list, #2714)
-
-209. **Which hair does the original use when an NPC's HAIR is outside its race's
-     list?** (P3; #2714; actors.md section 4.4.) [documented: #2714, spooknik's
-     2026-11-15 record/archive audit at main 1790ab94a] Roy, VFSRoyREF
-     0x0011365D / base VFSLocalVictim03 0x00113649, is CaucasianOldAged
-     0x000987DF (`headold.nif`) with HairAfricanAmericanBase 0x000306BE
-     (`hairbase.nif`, `hairafricanamericanbase.dds`, HCLR 192,192,192, no hat).
-     This hair is outside the race's old-hair-only HNAM list; the default male
-     hair is HairBaldingOld. Old-head alternatives exist: HairBaseOld 0x00044528
-     (`hairbaseold.nif`, `hairbaseoldnohat.egm` / `hairbaseoldhat.egm`) and
-     HairAfricanAmericanBaseOld 0x000987D9 (`hairafricanamericanbaseold.nif`).
-     The second case, VNovacDoctorMerc2, uses `hairraiderspike.nif` on an old
-     head and has no old version [documented: the same audit]. In the original,
-     at Old Mormon Fort courtyard during VMS19 objective 60, capture Roy from
-     behind and from the side, close enough to compare the scalp/hair seam;
-     also capture VNovacDoctorMerc2 from those angles. Does Roy retain the
-     record's hair with the same gap, wear the old-head version, or wear the
-     race default? Does the second case retain its hair or use a default when
-     no old version exists? [hypothesis, #2714] NVForever provisionally keeps
-     the record's model and its own EGM; a young-head model on an old head
-     could explain the reported gap. Resolve this before changing hair selection.
-
 197. **What does a resurrected actor carry?** (P2; `fnv_game::resurrect`,
     `fnv_sim::World::restock_inventory`, issue #2683.) NVForever makes the items of a
     dead actor's own item list up again when it is resurrected (rolled anew; only what
@@ -2952,3 +2927,27 @@ already talking takes over at once, same topic or another; nothing is queued or 
      If he walks to the door out of Top and is moved on, the original starts a walk
      whose way ends at a locked door (at least as far as the door); if he stands still
      until the door is unlocked, ours is right and the trigger only serves after it.
+
+
+## Added 2026-11-15 (old-head hair outside the race list, #2714)
+
+209. **Which hair does the original use when an NPC's HAIR is outside its race's
+     list?** (P3; #2714; actors.md section 4.4.) [documented: #2714, spooknik's
+     2026-11-15 record/archive audit at main 1790ab94a] Roy, VFSRoyREF
+     0x0011365D / base VFSLocalVictim03 0x00113649, is CaucasianOldAged
+     0x000987DF (`headold.nif`) with HairAfricanAmericanBase 0x000306BE
+     (`hairbase.nif`, `hairafricanamericanbase.dds`, HCLR 192,192,192, no hat).
+     This hair is outside the race's old-hair-only HNAM list; the default male
+     hair is HairBaldingOld. Old-head alternatives exist: HairBaseOld 0x00044528
+     (`hairbaseold.nif`, `hairbaseoldnohat.egm` / `hairbaseoldhat.egm`) and
+     HairAfricanAmericanBaseOld 0x000987D9 (`hairafricanamericanbaseold.nif`).
+     The second case, VNovacDoctorMerc2, uses `hairraiderspike.nif` on an old
+     head and has no old version [documented: the same audit]. In the original,
+     at Old Mormon Fort courtyard during VMS19 objective 60, capture Roy from
+     behind and from the side, close enough to compare the scalp/hair seam;
+     also capture VNovacDoctorMerc2 from those angles. Does Roy retain the
+     record's hair with the same gap, wear the old-head version, or wear the
+     race default? Does the second case retain its hair or use a default when
+     no old version exists? [hypothesis, #2714] NVForever provisionally keeps
+     the record's model and its own EGM; a young-head model on an old head
+     could explain the reported gap. Resolve this before changing hair selection.
