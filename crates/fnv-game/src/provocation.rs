@@ -45,7 +45,15 @@
 //!   either, `crate::combat_group`) [hypothesis: Assistance answers an ally being
 //!   attacked; the Silver Rush intro's customer is made to run out by his StartCombat and
 //!   only his OnHit player sets the Van Graffs against the player, #2520; observer-checks
-//!   question 180].
+//!   question 180]. The player is helped too (#2794) [hypothesis: whether Assistance
+//!   counts the player as an ally to help is not documented; the maintainer expects it]:
+//!   whoever is in a combat state with the player on its target list is fought by a
+//!   watcher that detects the player and whose Assistance covers its reaction to the
+//!   player, with the checks above; the player's teammates keep their own rule
+//!   (`crate::followers`). The scripted-fight rule does not keep them out: it concerns the
+//!   allies of the actor a script set on the player, and the player is the one attacked
+//!   (the Legate's camp Securitrons, PlayerFaction allies, against General Oliver, set on
+//!   the player by `StartCombat player`; observer-checks question 217).
 //! - **Cowards stay out** [documented: GECK wiki Confidence, "Cowardly … I will always
 //!   flee from combat"; owner's playtest list 4, item 14: confidence and aggression must
 //!   override the helps-allies join]: an actor whose Confidence is Cowardly never takes up
@@ -497,7 +505,7 @@ impl Game<'_> {
     /// Allies of actors in a fight take it up (module notes): called after a round of
     /// measurements, before [`Game::settle_awareness`]. Returns how many joined.
     pub fn call_allies(&mut self) -> usize {
-        let fights: Vec<(FormId, Foes)> = self
+        let mut fights: Vec<(FormId, Foes)> = self
             .awareness
             .actors
             .iter()
@@ -513,6 +521,20 @@ impl Game<'_> {
             })
             .filter(|(_, f)| !f.is_empty())
             .collect();
+        // The player as the one attacked (module notes, "Assistance", #2794): it has no
+        // entry above, so its foes are gathered as `Game::teammates_assist` gathers them,
+        // at their positions.
+        let pos = |g: &Game, r: FormId| g.world.peek(r).map(|s| s.pos).or_else(|| g.world.placed.get(r).map(|p| p.pos));
+        let player_foes: Foes = self
+            .awareness
+            .actors
+            .iter()
+            .filter(|(id, a)| a.state.in_combat() && a.targets.contains_key(&FormId::PLAYER_REF) && !self.is_teammate(**id))
+            .filter_map(|(id, _)| pos(self, *id).map(|p| (*id, p)))
+            .collect();
+        if !player_foes.is_empty() {
+            fights.push((FormId::PLAYER_REF, player_foes));
+        }
         let mut joined = 0;
         // Who perceives whom (detected, seen or heard), in one pass over the pairs, each
         // victim's watchers in the pairs' order [engineering choice: one scan per victim
@@ -539,6 +561,11 @@ impl Game<'_> {
             let watchers = watching.get(&victim).cloned().unwrap_or_default();
             for helper in watchers {
                 if helper == FormId::PLAYER_REF || self.is_dead(helper) || !self.present(helper) {
+                    continue;
+                }
+                // The player's teammates take up its fights by their own rule
+                // (`Game::teammates_assist`).
+                if victim == FormId::PLAYER_REF && self.is_teammate(helper) {
                     continue;
                 }
                 let assistance = match assistance_of.get(&helper) {

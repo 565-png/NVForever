@@ -12834,6 +12834,19 @@ expect = [
 ]
 
 [[scenario]]
+name = "house-camp-securitron-assist"
+source = "#2794: a faction ally of the player with Helps Allies takes up a fight against the player (fnv-game provocation.rs call_allies; docs/design/combat-ai.md section 10.3) [hypothesis: the maintainer's expectation, observer check 217]"
+note = "the Legate's camp Securitron LegateCampSecuritron01REF (0x00155DC2; VHDSecuritronFaction: PlayerFaction Ally, VCaesarsLegionFaction Enemy; Unaggressive, Brave, Helps Allies from VSecuritronMk2TEMPLATE) is enabled and put 256 units from the player in Goodsprings, the Legion Centurion reference 0x0013A358 is enabled, put 700 units off and set on the player with StartCombat; the player is in god mode. Unaggressive, the Securitron would leave the Centurion alone; it takes up the player's fight. Not run by the writer: whether the two references come along from the dam's worldspace by MoveTo is for the first run to show"
+areas = ["ai", "combat"]
+paths = ["crates/fnv-game/src/provocation.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:call:LegateCampSecuritron01REF:Enable,3.5:moveto:LegateCampSecuritron01REF:player:256:0:0,6:call:0x0013A358:Enable,6.5:moveto:0x0013A358:player:700:0:0,8:call:0x0013A358:StartCombat:player" }
+args = ["--cell", "Goodsprings", "--pos=-71400,3600,8352", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 40
+expect = [
+  { re = 'provocation: LegateCampSecuritron01REF 0x00155DC2 helps the player against .*0x0013A358', label = "the Securitron takes up the player's fight against the Centurion" },
+]
+
+[[scenario]]
 name = "package-find"
 source = "Find packages (fnv-ai errand.rs; docs/spec-notes/packages.md §3.1): FFER24FindFood given to a Goodsprings settler"
 note = "mole rat meat is placed at the player and a settler 300 units off is given FFER24FindFood (find one MoleRatMeat within 1000 of where it is): it walks to the meat and takes it"

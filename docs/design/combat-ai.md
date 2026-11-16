@@ -296,6 +296,24 @@ alarm at the attacker's position (`Cause::Ally`), so it becomes Alert and fights
 detects the attacker: `provocation: … helps … against …`. `Game::call_allies` runs after
 each round of measurements.
 
+**The player as the one helped** (#2794) [hypothesis: whether Assistance counts the player
+as an ally to help is not documented; the maintainer expects it, issue thread]: the player
+has no entry among the fighters, so `call_allies` adds one: its foes are every actor in a
+combat state with the player on its target list (not a teammate), at their positions, and
+its watchers whoever detects the player (band Detected). A watcher helps when its
+Assistance covers its reaction to the player (Ally with Helps Allies, Friend with Helps
+Friends and Allies), with every check above (never against its own ally or friend, cowards
+stay out). The player's teammates are left to their own rule (followers.md §3). The
+scripted-fight rule below does not keep the player's allies out: it is about the allies of
+the actor a script set on the player, and the player is the one attacked there. The case:
+on the House route the Legate's camp Securitrons (VHDSecuritronFaction, PlayerFaction
+Ally; Helps Allies) are each set on one of General Oliver's guards when the player picks
+the fight, and Oliver on the player with `StartCombat player` [observed: the data, issue
+#2794] (a fight his own guards stay out of when the player has not hit him); by this rule,
+once its guard is down, a Securitron goes on to Oliver and the fifth guard [design; observer
+check 217 asks the original]. Smoke:
+`house-camp-securitron-assist`.
+
 Goodsprings' settlers share GoodspringsFaction and have Assistance 2 [observed:
 `fnvtool actor values`], so shooting one brings the others that see it; Violet's dogs
 share FiendsFactionNV with her (Assistance 2), so they now join her fights.
@@ -452,7 +470,9 @@ NPCs should not be able to move at full speed whilst aiming" (the player's half 
   the next refused within fCombatYieldRetryTime, a yield past fCombatYieldTime refused),
   `a_neutral_fighting_someone_else_ignores_a_stray_hit_from_a_fighting_player` (the
   owner's exception), `an_ally_that_sees_a_fight_helps` (Assistance, never against its
-  own ally).
+  own ally), `a_faction_ally_of_the_player_takes_up_the_players_fight` (#2794: the player
+  as the one helped; Helps Nobody, a coward, an attacker that is the helper's ally and a
+  teammate stay out of this rule).
 - Smoke scenario `provoked-yield` [observed 2026-10-12]: in the general store the player
   shoots Chet (`provocation: GSChetRef 0x00104C79 (neutral) is attacked by the player
   and fights back`, his Assault line "What was that for?"), he fights back with his .357,

@@ -135,6 +135,19 @@ the spec it links to.
     original (observer check 180 asks about the Silver Rush customer this was found on).
     It changes every Cowardly actor in every fight. Should cowards still fight back when
     cornered, or wait until hurt? ([combat-ai §12](design/combat-ai.md))
+85. **Faction allies of the player take up fights against the player (#2794).** An actor
+    whose faction names one of the player's an Ally (or a Friend, with Helps Friends and
+    Allies) and whose Assistance helps it now joins against whoever fights the player
+    when it detects the player, as it would for any other ally; before, Assistance never
+    counted the player, so the Legate's camp Securitrons (PlayerFaction Ally, Helps
+    Allies) stood by once their scripted guards were dead and never fought General
+    Oliver. The documentation does not say Assistance counts the player
+    [hypothesis: your expectation in the issue thread]; cowards, Helps Nobody and actors
+    allied to the attacker stay out, teammates keep their own rule. It reaches faction
+    disguises too: in NCR armour ArmorNCRFactionNV is the player's friend, so NCR
+    soldiers with Helps Friends and Allies join the player's fights. If allies now pile
+    into fights you start (they join once the other side fights back), say where.
+    Observer check 217 asks the original. ([combat-ai §10.3](design/combat-ai.md))
 
 ## Tier 2: movement and controls feel
 
