@@ -15,7 +15,9 @@ source handlers over the existing engine consumers. Their native encoding remain
 unmeasured; the three catalogue rows remain unnumbered. The focused portable census
 in `tests/player_source_commands.rs` is UNRUN, as is the existing broad
 `NVF_CENSUS_FAMILY=vanilla` census. No shipped-script, stub-use or native parity
-total changes are claimed. See [the contract and capture gaps](../spec-notes/player-source-commands.md).
+total changes are claimed. The separate unused-console consumer now recognizes these
+source commands: AdvancePCLevel was already an engine word, so the two additional
+handlers change the authored expected count from 33/92 to 33/90 (UNRUN). See [the contract and capture gaps](../spec-notes/player-source-commands.md).
 
 ## 1. Method
 

@@ -161,4 +161,11 @@ fn focused_vanilla_census_keeps_source_support_separate_from_native_encoding() {
         assert_eq!(g.data.table.by_name(name), None, "native encoding is unmeasured");
         success(&mut g, source);
     }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/script/functions.json");
+    let catalogue = serde_json::from_str(&std::fs::read_to_string(root).unwrap()).unwrap();
+    let (console, other) = functions::console::unhandled_unused(&catalogue);
+    assert_eq!((console.len(), other.len()), (33, 90));
+    for name in ["AdvancePCLevel", "ModPCAttribute", "RemoveReputationExact"] {
+        assert!(!console.iter().chain(&other).any(|n| n == name));
+    }
 }
