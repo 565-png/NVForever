@@ -30072,7 +30072,7 @@ paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/ter
 env = { NVF_PLAY_TEST_MESH_BLEND = "24:surface", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "14:mesh_terrain_blend_goodsprings.png" }
 args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages"]
 run_seconds = 20
-manual = "[design] Value syntax [band:]view[:shape[:resolution[:shading[:flat,steep]]]], defaults 8, height, 512 (round 10b; 1024 before), full since round 7 (24:surface here: band 24, the rest defaults; docs/design/graphics-enhanced.md §3.12). Shoot 8:status:hybrid:1024:full first: magenta out of range, red invalid height, orange invalid colour quadrant, cyan rejected bilinear footprint, green success (brightness follows weight); weight, normal and status draw unlit. Inspect publication grids, quadrant paths, exclusions and probe-normal. The round-5 comparison sheet: aid absent, 24:surface:height:512:albedo, 8:surface:height:512:albedo, 8:surface:hybrid:512:albedo, 8:surface:hybrid:512:full, 8:surface:hybrid:1024:full at one road view, then the last and aid absent at a rock foot and a cliff base. No golden updates."
+manual = "[design] Value syntax [band:]view[:shape[:resolution[:shading[:flat,steep]]]], defaults 8, height, 512 (round 10b; 1024 before), full since round 7 (24:surface here: band 24, the rest defaults; docs/design/graphics-enhanced.md §3.14). Shoot 8:status:hybrid:1024:full first: magenta out of range, red invalid height, orange invalid colour quadrant, cyan rejected bilinear footprint, green success (brightness follows weight); weight, normal and status draw unlit. Inspect publication grids, quadrant paths, exclusions and probe-normal. The round-5 comparison sheet: aid absent, 24:surface:height:512:albedo, 8:surface:height:512:albedo, 8:surface:hybrid:512:albedo, 8:surface:hybrid:512:full, 8:surface:hybrid:1024:full at one road view, then the last and aid absent at a rock foot and a cliff base. No golden updates."
 expect = [
   { re = 'mesh terrain blend: start band=24 variant=surface resolution=512 noise=0 shape=height shading=full', label = "the effective aid configuration (512 the default resolution since round 10b, full the default shading; round 7: height the default shape)" },
   { re = 'mesh terrain blend: colour atlas resolution=512 atlas=1536x1536 rgba16f colour-mib=24 levels=10 ', label = "the default atlas fits the device (round 10b: 512 texels per cell, its mip chain down to one texel per cell)" },
@@ -30115,7 +30115,7 @@ paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/wor
 env = { NVF_PLAY_TEST_MESH_BLEND = "8:weight:hybrid:1024:full:0.5,32", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages"]
 run_seconds = 20
-manual = "[design] Round 6 comparison set: aid absent, 8:surface:height:1024:full, 8:surface:hybrid:1024:full:0.5,32, 8:surface:hybrid:1024:full:0.5,48, 8:surface:hybrid:1024:full:0.5,64, 8:weight:hybrid:1024:full:0.5,48 at the road view (A) and the rock foot (B); keep the start, ready and census-shape lines beside each frame. The colour-coded excluded view was not built in round 6: classify the road from its census-shape line (grep its model path; docs/design/graphics-enhanced.md §3.12 says when a line can be missing). No golden updates."
+manual = "[design] Round 6 comparison set: aid absent, 8:surface:height:1024:full, 8:surface:hybrid:1024:full:0.5,32, 8:surface:hybrid:1024:full:0.5,48, 8:surface:hybrid:1024:full:0.5,64, 8:weight:hybrid:1024:full:0.5,48 at the road view (A) and the rock foot (B); keep the start, ready and census-shape lines beside each frame. The colour-coded excluded view was not built in round 6: classify the road from its census-shape line (grep its model path; docs/design/graphics-enhanced.md §3.14 says when a line can be missing). No golden updates."
 expect = [
   { re = 'mesh terrain blend: start band=8 variant=weight resolution=1024 noise=0 shape=hybrid shading=full flat=0\.5 steep=32 weight-version=2', label = "the widths at the end of the value are resolved" },
   { re = 'mesh terrain blend: colour atlas resolution=1024 atlas=3072x3072 rgba16f colour-mib=96 levels=11 ', label = "round 10b: the aid's explicit 1024 keeps its meaning, with an eleven-level mip chain" },
@@ -30205,6 +30205,28 @@ expect = [
   { re = 'mesh terrain blend: continuity crossing done steps=7 timeouts=0', count = 1, label = "round 10a: the whole sequence ran, no step waited past its timeout" },
   { re = 'mesh terrain blend: publication .*resident=\[.*\(-17, 0\):q=\[', label = "round 10a: the user's road cell (-17, 0) is in the region" },
   { re = 'mesh terrain blend: publication .*colour-quadrants=\[[^\]]*\(-17, 0\):q[0-3]:', max = 0, label = "round 10a: every quadrant of the road cell (-17, 0) keeps layer detail, its separately drawn overflow layers included ([observed] folded+1 and folded+2 quadrants there)" },
+  { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
+]
+
+[[scenario]]
+name = "mesh-terrain-blend-terrain-switches"
+source = "[design] #2661 with #2550 and #2551: the mesh terrain blend on with Terrain height blending and Terrain anti-tiling on from the command line keeps its layer detail (the detail composes as the near draw does with both switches, graphics-enhanced.md §3.14 \"Height blending and anti-tiling\"), and turning both rows off on the settings page re-reads the detail and bakes and publishes again (engine/nvf-assets/src/nif_surface_bindings.wesl mesh_terrain_detail; engine/nvforever/src/terrain_surface.rs ResolvedDetail::from_materials, refresh_captures, bake_root; terrain_capture.wesl; terrain.rs sync_height_blend, sync_anti_tiling)"
+note = "the three switches start on; height blending is flipped off at 11 s and anti-tiling at 11.5 s on the settings page"
+areas = ["rendering", "terrain", "graphics"]
+paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvforever/src/terrain.*", "engine/nvforever/src/terrain_capture.wesl", "engine/nvforever/src/terrain_weights.wesl", "engine/nvf-assets/src/terrain_sampling.*", "engine/nvf-assets/src/terrain_pbr.wesl", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_material.wesl"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:13", NVF_PLAY_TEST_SETTINGS = "11:terrain-height-blend,11.5:terrain-anti-tiling" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages", "--graphics-only", "mesh-terrain-blend,terrain-height-blend,terrain-anti-tiling"]
+run_seconds = 24
+manual = "[design] At a road shoulder or rock foot, with both terrain switches on: the blended band shows the same stones and the same broken-up repeat as the ground beside it; then the same view with both off. No golden updates."
+expect = [
+  { re = 'graphics: .*meshes blended into the ground.*terrain height blending, terrain anti-tiling', label = "the three switches are on" },
+  { re = 'mesh terrain blend: start .* detail=layers', count = 1, label = "the landscape's own layers are sampled near the camera (a bindless device)" },
+  { re = 'mesh terrain blend: ready .* detail=layers detail-quadrants=[1-9][0-9]*', label = "with both terrain switches on the publication still supplies layer detail" },
+  { re = 'terrain: height blending off ', count = 1, label = "the height blending row turned off once" },
+  { re = 'terrain: anti-tiling off ', count = 1, label = "the anti-tiling row turned off once" },
+  { re = 'mesh terrain blend: publication ', min = 2, label = "the switched materials bake and publish again" },
+  { re = 'mesh terrain blend: publication .*colour-quadrants=\[[^\]]*:(anti-tiling-repeat|unresolved-materials|overflow-material)', max = 0, label = "no quadrant falls back for the switches" },
+  { re = 'mesh terrain blend: rejected', max = 0, label = "nothing refused with the terrain switches" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors" },
 ]
 
