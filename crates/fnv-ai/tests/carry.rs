@@ -1358,7 +1358,7 @@ fn arrival_heading_needs_an_existing_link() {
     assert_eq!(s.ai.agents[&FormId(R_TO_HEADING)].face_to, None);
 }
 
-// [hypothesis, #2526, observer check 212] Travel and standing Guard restore the
+// [hypothesis, #2526, observer check 213] Travel and standing Guard restore the
 // editor heading on returning to a small editor location, using the standing turn.
 #[test]
 fn arrival_heading_at_small_editor_locations_restores_editor_rotation() {

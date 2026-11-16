@@ -286,7 +286,7 @@ location, in cell (radius ignored), near reference; the radius is editable.
     (0012FCD4) and `02REF` (0012FCD5) use Travel `VHDKimballGuardSpeechIdlePackage`
     (00131F13), near linked reference, radius 0; their linked stage markers 00131F0E/F
     are xMarkerHeading base 00000034, z rotation 3.3832 rad.
-  - **At the editor position** [hypothesis, #2526, observer check 212]: Travel and
+  - **At the editor position** [hypothesis, #2526, observer check 213]: Travel and
     standing Guard with a near-editor location radius below `GUARD_WANDER_MIN_RADIUS`
     (16 units, the existing #2027 cutoff) face the actor's placed editor z rotation.
     [design: `carry::settle`, `marker_heading`] This excludes sandbox/wander and Guard

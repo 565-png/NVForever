@@ -3323,7 +3323,7 @@ pub const GUARD_WANDER_MIN_RADIUS: f32 = 16.0;
 /// linked xMarkerHeading destinations; docs/spec-notes/packages.md §3].
 fn marker_heading(game: &Game, actor: FormId, def: &fnv_game::package::PackageDef, goal: Option<&Goal>) -> Option<f32> {
     // At a small editor location, Travel and standing Guard restore the placed
-    // heading [hypothesis, #2526, observer check 212]. Sandbox/wander choose their own;
+    // heading [hypothesis, #2526, observer check 213]. Sandbox/wander choose their own;
     // a Guard remaining near its target uses that target's place (`goal::resolve`).
     if def.location.is_some_and(|loc| loc.kind == fnv_game::package::LocationKind::NearEditor && (loc.radius as f32) < GUARD_WANDER_MIN_RADIUS)
         && (def.ty == PackageType::Travel || def.ty == PackageType::Guard && !def.remain_near_reference())

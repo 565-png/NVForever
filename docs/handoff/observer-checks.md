@@ -2950,7 +2950,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-15 (Kimball's speech crowd heading, #2526)
 
-212. **Does Kimball's speech crowd face its editor heading?** (P2; #2526;
+213. **Does Kimball's speech crowd face its editor heading?** (P2; #2526;
     `fnv_ai::carry::marker_heading`, `docs/spec-notes/packages.md` §3.)
     [documented: #2526 writer brief, main session's fnvtool ai show of FalloutNV.esm]
     `VHDSpeechNPC01REF` (0012FCDC) and `VHDSpeechNPC02REF` (0012FCE2) have Travel
