@@ -116,7 +116,8 @@ on fixture folders and a fixture zip/tar.gz (no real release is downloaded by an
   catches a broken or cut download, not a release replaced on GitHub itself (the list comes
   from the same place); signing the list (minisign or similar) would be the next step. What ties
   the archive and the list to this project is their address: both must be files of that very
-  release of this repository (`https://github.com/LootJunkieAzza/NVForever/releases/download/<tag>/`,
+  release of this repository, named as the asset is
+  (`https://github.com/LootJunkieAzza/NVForever/releases/download/<tag>/<asset name>`,
   `update::fetchable`), or the update is refused.
 - **Staging.** `<cache>/updates/<tag>/` in NVForever's cache folder (`EngineHome::cache`, the
   local data folder on Windows): `<archive>.part` while it downloads, the archive once checked
@@ -152,8 +153,14 @@ on fixture folders and a fixture zip/tar.gz (no real release is downloaded by an
      launcher itself, is first renamed to `<name>.nvf-old`: Windows lets a running program be
      renamed, not replaced), the retired files go, `update/installed.json` is written and the
      journal removed.
-  A launcher that finds the journal at its start (`resume_interrupted`) finishes the commit:
-  every new file is whole by then, so the swap rolls forward. Without a journal it removes
+  If the second rename of a running program fails (a virus scanner holding the new file), the
+  old program is renamed back, so the install never lacks it; the journal stays.
+  A launcher that finds the journal at its start (`resume_interrupted`, in the folder it runs
+  from even when `nvforever` is not there) finishes the commit: every new file is whole by
+  then, so the swap rolls forward. An install or a roll back finishes a pending swap first and
+  refuses when it cannot, so a new swap never stages over the kept previous version. The
+  journal's paths are checked before they are followed (plain paths below the install,
+  outside `update/`, through `guard_write` with the game folder). Without a journal it removes
   stray `.nvf-new` (a swap cut short while staging; the old release runs as before) and
   `.nvf-old` files. While the swap runs the window does not close (the close is cancelled with
   a word) and Play waits. Afterwards only the one previous version is kept under

@@ -227,8 +227,9 @@ impl App {
         }
         // A swap cut short in its renames (the window closed, the power lost) is finished
         // first; a swap cut short before them leaves only files to tidy away.
-        if let Ok(dir) = install_dir(app.game().as_ref()) {
-            match update::resume_interrupted(&dir) {
+        // The folder the launcher runs from, whether or not nvforever is still beside it.
+        if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from)) {
+            match update::resume_interrupted(&dir, app.game().as_ref()) {
                 Some(Ok(v)) => app.message = Some((format!("An update to v{v} was interrupted; it has been finished."), false)),
                 Some(Err(e)) => app.message = Some((format!("An interrupted update could not be finished: {e}. Download the release from its page."), true)),
                 None => {}

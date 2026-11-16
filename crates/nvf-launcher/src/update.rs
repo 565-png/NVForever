@@ -95,8 +95,8 @@ pub fn test_aids() -> bool {
 /// repository (`releases/download/<tag>/`). `SHA256SUMS.txt` comes from the same release, so
 /// it only catches damage; the address is what ties the archive to this project. Plain `http`
 /// to this machine only with the test aids.
-pub fn fetchable(url: &str, tag: &str) -> bool {
-    let ours = url.strip_prefix(REPO_DOWNLOADS).and_then(|r| r.strip_prefix(tag)).is_some_and(|r| r.len() > 1 && r.starts_with('/') && !r[1..].contains('/'));
+pub fn fetchable(url: &str, tag: &str, name: &str) -> bool {
+    let ours = url.strip_prefix(REPO_DOWNLOADS).and_then(|r| r.strip_prefix(tag)).and_then(|r| r.strip_prefix('/')).is_some_and(|file| file == name);
     ours || (test_aids() && (url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:")))
 }
 
@@ -543,9 +543,18 @@ fn commit(install: &Path, journal: &Journal) -> Result<(), String> {
             continue; // Already in place (a swap finished at the next start).
         }
         if fs::rename(&tmp, &to).is_err() && to.exists() {
+            // A running program cannot be replaced, only renamed: move it aside, then the new
+            // copy in. If that second rename fails too (a virus scanner holding the new file),
+            // the old one goes back to its name, so the install is never left without it.
             let old = with_suffix(&to, OLD_SUFFIX);
             let _ = fs::remove_file(&old);
-            fs::rename(&to, &old).and_then(|()| fs::rename(&tmp, &to)).map_err(|e| format!("{}: {e}", to.display()))?;
+            fs::rename(&to, &old).map_err(|e| format!("{}: {e}", to.display()))?;
+            if let Err(e) = fs::rename(&tmp, &to) {
+                return Err(match fs::rename(&old, &to) {
+                    Ok(()) => format!("{}: {e}", to.display()),
+                    Err(back) => format!("{}: {e}; the old one could not be put back from {} either: {back}", to.display(), old.display()),
+                });
+            }
         } else if tmp.exists() {
             fs::rename(&tmp, &to).map_err(|e| format!("{}: {e}", to.display()))?;
         }
@@ -578,13 +587,48 @@ pub fn apply(install: &Path, payload: &Path, plan: &Plan, game: Option<&GameInst
     Ok(())
 }
 
-/// At the launcher's start: a swap whose journal is still there was cut short in its renames;
-/// it is finished (every new file is whole), and the version it installed is returned. With
-/// no journal, the leftovers of a swap cut short before its renames (`*.nvf-new`) and the
-/// old running program moved aside (`*.nvf-old`) are removed.
-pub fn resume_interrupted(install: &Path) -> Option<Result<String, String>> {
-    match fs::read_to_string(journal_path(install)).ok().and_then(|t| serde_json::from_str::<Journal>(&t).ok()) {
-        Some(j) => Some(commit(install, &j).map(|()| j.version.clone())),
+/// The journal of a swap cut short, read and checked: every path a plain one below the
+/// install, outside `update/`, and writable by [`guard_write`] with the game folder `game`.
+/// `None` without a journal; an error for one that cannot be read or trusted.
+fn pending_journal(install: &Path, game: Option<&GameInstall>) -> Option<Result<Journal, String>> {
+    let path = journal_path(install);
+    let text = fs::read_to_string(&path).ok()?;
+    let checked = serde_json::from_str::<Journal>(&text).map_err(|e| format!("{}: {e}", path.display())).and_then(|j| {
+        if !safe_component(&j.version) {
+            return Err(format!("{}: unusable version {:?}", path.display(), j.version));
+        }
+        for f in j.copy.iter().chain(&j.retire) {
+            let rel = safe_rel(Path::new(f)).filter(|r| !r.components().next().is_some_and(|c| c.as_os_str().eq_ignore_ascii_case(UPDATE_DIR)));
+            let rel = rel.ok_or_else(|| format!("{}: unusable path {f:?}", path.display()))?;
+            guard_write(&install.join(rel), game).map_err(|e| e.to_string())?;
+        }
+        Ok(j)
+    });
+    Some(checked)
+}
+
+/// A swap cut short is finished before anything else changes the install: the start does it,
+/// and an install or a roll back does it first, refusing to go on when it cannot (a new swap
+/// would stage over the kept previous version with half-swapped files).
+fn finish_pending(install: &Path, game: Option<&GameInstall>) -> Result<(), String> {
+    match pending_journal(install, game) {
+        None => Ok(()),
+        Some(Ok(j)) => commit(install, &j).map_err(|e| format!("an earlier update to v{} is still unfinished and could not be finished ({e}); try again, or download the release from its page", j.version)),
+        Some(Err(e)) => Err(format!("an earlier update left a journal that cannot be used ({e}); download the release from its page")),
+    }
+}
+
+/// At the launcher's start, in the folder it runs from (`install`, whether or not
+/// [`check_install`] passes: a swap cut short may have left it without `nvforever`): a swap
+/// whose journal is still there was cut short in its renames; it is finished (every new file is
+/// whole), and the version it installed is returned. With no journal, in a release folder,
+/// the leftovers of a swap cut short before its renames (`*.nvf-new`) and the old running
+/// program moved aside (`*.nvf-old`) are removed.
+pub fn resume_interrupted(install: &Path, game: Option<&GameInstall>) -> Option<Result<String, String>> {
+    match pending_journal(install, game) {
+        Some(Ok(j)) => Some(commit(install, &j).map(|()| j.version.clone())),
+        Some(Err(e)) => Some(Err(e)),
+        None if check_install(install, game).is_err() => None,
         None => {
             for f in list_files(install).unwrap_or_default() {
                 let name = f.to_string_lossy();
@@ -646,8 +690,8 @@ pub fn prepare(latest: &Latest, cache: &Path, game: Option<&GameInstall>, send: 
     let target = target().ok_or("the releases have no archive for this system")?;
     let (asset, kind) = choose_asset(&latest.assets, &latest.tag, target).ok_or_else(|| format!("v{} has no archive for {target}", latest.version))?;
     let sums_asset = checksums_asset(&latest.assets).ok_or_else(|| format!("v{} publishes no {CHECKSUMS}, so its download cannot be checked", latest.version))?;
-    for url in [&asset.browser_download_url, &sums_asset.browser_download_url] {
-        if !fetchable(url, &latest.tag) {
+    for (url, name) in [(&asset.browser_download_url, &asset.name), (&sums_asset.browser_download_url, &sums_asset.name)] {
+        if !fetchable(url, &latest.tag, name) {
             return Err(format!("the release names a download address outside {REPO_DOWNLOADS}{}/: {url}", latest.tag));
         }
     }
@@ -685,6 +729,7 @@ pub fn prepare(latest: &Latest, cache: &Path, game: Option<&GameInstall>, send: 
 
 /// Swap `ready` into `install` (running version `current`); the staged copy is removed after.
 pub fn install(install: &Path, ready: &Ready, current: &str, game: Option<&GameInstall>) -> Result<String, String> {
+    finish_pending(install, game)?;
     check_install(install, game)?;
     if let Some(p) = busy_program(install) {
         return Err(format!("{p} is running: close it, then install."));
@@ -699,6 +744,7 @@ pub fn install(install: &Path, ready: &Ready, current: &str, game: Option<&GameI
 /// Put the kept previous version back (the current one is kept in its place, so a second
 /// roll back goes forward again).
 pub fn roll_back(install: &Path, current: &str, game: Option<&GameInstall>) -> Result<String, String> {
+    finish_pending(install, game)?;
     check_install(install, game)?;
     if let Some(p) = busy_program(install) {
         return Err(format!("{p} is running: close it, then roll back."));
@@ -754,8 +800,9 @@ mod tests {
         assert!(choose_asset(&assets, "v0.8.0", "aarch64-apple-darwin").is_none());
         assert_eq!(checksums_asset(&assets).unwrap().name, CHECKSUMS);
         let ours = format!("{REPO_DOWNLOADS}v0.8.0/NVForever-v0.8.0-x86_64-pc-windows-msvc.zip");
-        assert!(fetchable(&ours, "v0.8.0"));
-        assert!(fetchable("http://127.0.0.1:8765/y.zip", "v0.8.0"), "the tests' local server");
+        assert!(fetchable(&ours, "v0.8.0", "NVForever-v0.8.0-x86_64-pc-windows-msvc.zip"));
+        assert!(!fetchable(&ours, "v0.8.0", "SHA256SUMS.txt"), "the address must name the asset itself");
+        assert!(fetchable("http://127.0.0.1:8765/y.zip", "v0.8.0", "y.zip"), "the tests' local server");
         for bad in [
             format!("{REPO_DOWNLOADS}v0.7.0/x.zip"),
             format!("{REPO_DOWNLOADS}v0.8.0/../v0.7.0/x.zip"),
@@ -766,7 +813,7 @@ mod tests {
             "\\\\host\\share\\y.zip".into(),
             String::new(),
         ] {
-            assert!(!fetchable(&bad, "v0.8.0"), "{bad}");
+            assert!(!fetchable(&bad, "v0.8.0", "x.zip"), "{bad}");
         }
         assert!(target().is_some(), "the machines that build releases have a target");
     }
@@ -1130,13 +1177,13 @@ mod tests {
         // The renames cut short after the first file.
         let first = install.join(&j.copy[0]);
         fs::rename(with_suffix(&first, NEW_SUFFIX), &first).unwrap();
-        assert_eq!(resume_interrupted(&install), Some(Ok("0.8.0".to_string())));
+        assert_eq!(resume_interrupted(&install, None), Some(Ok("0.8.0".to_string())));
         assert_eq!(read(&install.join(launcher_exe())), format!("{} 0.8.0", launcher_exe()));
         assert_eq!(read(&install.join("schemas").join("a.toml")), "schemas/a.toml 0.8.0");
         assert_eq!(read_manifest(&install).unwrap().version, "0.8.0");
         assert!(!journal_path(&install).exists());
         assert_eq!(read(&p.backup.join(launcher_exe())), format!("{} 0.7.0", launcher_exe()), "the old release is kept to roll back to");
-        assert_eq!(resume_interrupted(&install), None, "nothing more to do");
+        assert_eq!(resume_interrupted(&install, None), None, "nothing more to do");
 
         // Cut short before the journal: only staged files, which go; the release is untouched.
         let d2 = tmp("cut-early");
@@ -1144,11 +1191,78 @@ mod tests {
         fixture_install(&install2, "0.7.0");
         put(&with_suffix(&install2.join(launcher_exe()), NEW_SUFFIX), "half a file");
         put(&with_suffix(&install2.join("schemas").join("a.toml"), NEW_SUFFIX), "x");
-        assert_eq!(resume_interrupted(&install2), None);
+        assert_eq!(resume_interrupted(&install2, None), None);
         assert!(!list_files(&install2).unwrap().iter().any(|f| f.to_string_lossy().ends_with(NEW_SUFFIX)));
         assert_eq!(read(&install2.join(launcher_exe())), format!("{} 0.7.0", launcher_exe()));
         let _ = fs::remove_dir_all(&d);
         let _ = fs::remove_dir_all(&d2);
+    }
+
+    /// The second rename of a running program fails (the new file held, as a virus scanner may):
+    /// the old program goes back to its name, the journal stays, and the start that follows,
+    /// with no `nvforever` (the first rename moved it), still finishes the swap once the file is
+    /// free. An install before that finishes it first instead of staging over the backup.
+    #[cfg(windows)]
+    #[test]
+    fn a_failed_second_rename_puts_the_program_back() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let d = tmp("second-rename");
+        let install = d.join("NVForever");
+        fixture_install(&install, "0.7.0");
+        let payload = d.join("payload");
+        for f in [launcher_exe(), programs()[0].clone()] {
+            put(&payload.join(&f), &format!("{f} 0.8.0"));
+        }
+        let files = list_files(&payload).unwrap();
+        let p = plan(&install, &files, |p| p.exists(), None, "0.7.0", "0.8.0").unwrap();
+        let j = stage(&install, &payload, &p).unwrap();
+        let game = install.join(&programs()[0]);
+        let new = with_suffix(&game, NEW_SUFFIX);
+        // The staged file held with no sharing: it cannot be renamed, so the first rename fails,
+        // the program is moved aside, and the second rename fails too.
+        let held_new = fs::OpenOptions::new().read(true).share_mode(0).open(&new).unwrap();
+        let err = commit(&install, &j).unwrap_err();
+        assert!(err.contains(&programs()[0]), "{err}");
+        assert_eq!(read(&game), format!("{} 0.7.0", programs()[0]), "the old program is back under its name");
+        assert!(!with_suffix(&game, OLD_SUFFIX).exists());
+        assert!(journal_path(&install).exists(), "the journal stays to finish the swap later");
+        // A swap in between finishes the pending one first; while the file is held it refuses
+        // and leaves the kept previous version alone.
+        let ready = Ready { version: "0.9.0".into(), payload: payload.clone(), files: files.clone(), staging: d.join("staging") };
+        assert!(install_unchecked_pending(&install, &ready).unwrap_err().contains("still unfinished"));
+        assert_eq!(read(&p.backup.join(&programs()[0])), format!("{} 0.7.0", programs()[0]));
+        drop(held_new);
+        // Without nvforever beside it (cut short after the first rename) the start still resumes.
+        fs::rename(&game, with_suffix(&game, OLD_SUFFIX)).unwrap();
+        assert_eq!(resume_interrupted(&install, None), Some(Ok("0.8.0".to_string())));
+        assert_eq!(read(&game), format!("{} 0.8.0", programs()[0]));
+        assert_eq!(read(&install.join(launcher_exe())), format!("{} 0.8.0", launcher_exe()));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// A journal naming a path outside the install, or inside the game folder, is not followed.
+    #[test]
+    fn an_untrusted_journal_is_refused() {
+        let d = tmp("bad-journal");
+        put(&d.join("Data").join("FalloutNV.esm"), "TES4");
+        let game = GameInstall::open(&d).unwrap();
+        let install = d.join("NVForever");
+        fixture_install(&install, "0.7.0");
+        let outside = Journal { version: "0.8.0".into(), copy: vec!["../escape.dll".into()], retire: vec![] };
+        write_json(&journal_path(&install), &outside).unwrap();
+        assert!(resume_interrupted(&install, None).unwrap().unwrap_err().contains("unusable path"));
+        let ours = Journal { version: "0.8.0".into(), copy: vec![launcher_exe()], retire: vec![] };
+        write_json(&journal_path(&install), &ours).unwrap();
+        assert!(resume_interrupted(&install, Some(&game)).unwrap().is_err(), "inside the game folder");
+        assert_eq!(read(&install.join(launcher_exe())), format!("{} 0.7.0", launcher_exe()));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// [`install`]'s pending-swap step without [`check_install`] (a temp folder).
+    #[cfg(windows)]
+    fn install_unchecked_pending(install: &Path, ready: &Ready) -> Result<(), String> {
+        finish_pending(install, None)?;
+        install_unchecked(install, ready, "0.7.0")
     }
 
     /// [`install`] and [`roll_back`] without [`check_install`] (a test folder under the
