@@ -337,6 +337,14 @@ the spec it links to.
   bunker and being sent out for your gear by McNamara left your controls off for good.
   Check in game that Ramos speaks on the intercom there on a sneak-in save.
   ([talking-activators §2](spec-notes/talking-activators.md))
+- **An intercom whose talking actor has no line says its own (#2768).** [design, #2768]
+  A script's Say or SayTo on a talking activator now says its talking actor's line
+  (observer check 219 asks whether the original does). When that actor has no line of
+  the topic, ours falls back to the activator's own lines, as before #2768, so no line
+  an intercom said before is lost. The alternative: no fallback, so a talking activator
+  with an actor set says only that actor's lines, nothing otherwise (closer to the
+  catalogue's "use the dialogue of a given actor"). Ruling otherwise changes
+  `Game::say_with` alone. ([talking-activators §2](spec-notes/talking-activators.md))
 - **Grass fires: size, speed and regrowth (#2567).** [design] Burning weapons and blasts
   light generated grass; a fire spreads in 64-unit patches (0.5-1.5 s a step, faster
   downwind), each patch burns 6 s, and a fire stops at 1,024 units from its start or 500
