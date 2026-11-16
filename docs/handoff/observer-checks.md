@@ -3014,3 +3014,17 @@ already talking takes over at once, same topic or another; nothing is queued or 
     is provisional [hypothesis]. NVForever carries it without destination filtering
     [design: `sky.rs::SkyState::carry_weather_from`].
 
+## Added 2026-11-16 (controller hotkey assignment, #2312)
+
+211. **How does a controller choose a hotkey slot on ITEMS?** (P3; controller.md §3,
+    weapon-wheel.md §3.) [documented: issue #2312's supplied inventory_menu.xml facts]
+    `IM_HotkeyButton` uses RB and `sInventoryHotKey`, opening `IM_HotKeyWheel`.
+    [hypothesis] The original's slot-selection method is unknown; its prefab facts
+    supplied in #2312 bind no pad directions. Select a weapon on ITEMS, press RB, and
+    test D-pad taps/holds and both sticks in cardinal and diagonal directions. Record
+    which box is chosen on opening, whether selection points spatially or steps,
+    whether it wraps/repeats, and whether A assigns and B cancels. Include Ammo Swap
+    and an occupied slot. [design, #2312] NVForever provisionally opens at slot 1,
+    steps right/down forward and left/up backward through eight slots with wrapping,
+    assigns with A (closing on success), and cancels with B; Ammo Swap refuses items.
+
