@@ -92,7 +92,7 @@ leg is checked against refusing doors on its corridor (`door_segments_open`): an
 segment entering their oriented footprints rejects the path. This covers adjacent
 exempt endpoints on opposite sides and crossings within one triangle.
 [hypothesis, #2716] An already open in-place door refuses no triangle,
-regardless of locks or a previous script refusal (observer check 210). [design / file refs]
+regardless of locks or a previous script refusal (observer check 205). [design / file refs]
 `door_tri_open` reads `PathParams::open_doors`, supplied by `Ai::path_params` from live
 world state, falling back to default-open placement for untouched locked doors.
 [hypothesis, #2716] Runtime passage through an open in-place door likewise wins over

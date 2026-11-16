@@ -30289,7 +30289,7 @@ expect = [
 [[scenario]]
 name = "mick-secret-door-paths"
 kind = "tool"
-source = "[documented: issue #2716, spooknik comment 2026-11-15, supplied record findings] Mick's linked marker is beside his locked hidden door; the Travel end script opens it before the secret-sales trip. [design, #2716] Endpoint triangles beside oriented bounds remain reachable. [hypothesis, #2716] Open locked doors are no barrier (observer check 210)."
+source = "[documented: issue #2716, spooknik comment 2026-11-15, supplied record findings] Mick's linked marker is beside his locked hidden door; the Travel end script opens it before the secret-sales trip. [design, #2716] Endpoint triangles beside oriented bounds remain reachable. [hypothesis, #2716] Open locked doors are no barrier (observer check 205)."
 areas = ["nav", "ai"]
 paths = ["crates/fnv-nav/", "crates/fnvtool/src/nav_path.rs"]
 commands = [
@@ -30300,7 +30300,7 @@ expect = [{ json = "path.length", schema = "fnv.nav.path/1", range = [1, 2000], 
 
 [[scenario]]
 name = "mick-secret-door-packages"
-source = "[documented: issue #2716, spooknik comment 2026-11-15, supplied record findings] MickHoldoutWeapons 1 selects VFSMickTravelToLinkedPackage; its end script opens MickSecretDoorREF, sets the variable to 4 and evaluates Mick's package. [design, #2716] Reach the marker beside the locked door. [hypothesis, #2716] His next package can pass the open locked door (observer check 210)."
+source = "[documented: issue #2716, spooknik comment 2026-11-15, supplied record findings] MickHoldoutWeapons 1 selects VFSMickTravelToLinkedPackage; its end script opens MickSecretDoorREF, sets the variable to 4 and evaluates Mick's package. [design, #2716] Reach the marker beside the locked door. [hypothesis, #2716] His next package can pass the open locked door (observer check 205)."
 note = "[design, #2716] The console aid plays the dialogue line's effect at 6 s, then evaluates Mick. Travel arrival and the next package prove the end script ran. The player's coordinates are the shop-side spot supplied in issue #2716."
 areas = ["nav", "ai", "scripts"]
 paths = ["crates/fnv-nav/", "crates/fnv-ai/"]

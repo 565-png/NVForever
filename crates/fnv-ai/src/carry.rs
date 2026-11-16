@@ -2459,7 +2459,7 @@ impl Ai {
         // [design, #2716 / fnv_sim::World::initial] An untouched locked door uses its
         // default-open placement; a materialized reference's live state wins below.
         // Open locked doors do not refuse nav triangles [hypothesis,
-        // docs/spec-notes/navmesh.md; observer check 210].
+        // docs/spec-notes/navmesh.md; observer check 205].
         params.open_doors.extend(self.locked_doors.iter().copied().filter(|&d| {
             game.world.peek(FormId(d)).is_none() && game.world.placed.get(FormId(d)).is_some_and(|r| r.open_by_default)
         }));
@@ -2499,7 +2499,7 @@ impl Ai {
         a.asked_door = Some((door, a.package));
         let answer = game.npc_door(actor, FormId(door));
         // [hypothesis, #2716] An already-open in-place door is no barrier, even with
-        // a cached or fresh script refusal (navmesh.md; observer check 210). [design]
+        // a cached or fresh script refusal (navmesh.md; observer check 205). [design]
         // Ask first to preserve crossing events and use live state after the script.
         let in_place = game.world.placed.get(FormId(door)).is_some_and(|r| r.teleport.is_none());
         let open_in_place = in_place && game.world.get(FormId(door)).is_ok_and(|s| s.open);
