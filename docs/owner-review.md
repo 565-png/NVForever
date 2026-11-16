@@ -142,8 +142,8 @@ the spec it links to.
     counted the player, so the Legate's camp Securitrons (PlayerFaction Ally, Helps
     Allies) stood by once their scripted guards were dead and never fought General
     Oliver. The documentation does not say Assistance counts the player
-    [hypothesis: your expectation in the issue thread]; cowards, Helps Nobody and actors
-    allied to the attacker stay out, teammates keep their own rule. It reaches faction
+    [hypothesis: your expectation in the issue thread]; cowards, Helps Nobody, actors
+    allied to the attacker and anyone after the player itself (a crime, a grudge) stay out, teammates keep their own rule. It reaches faction
     disguises too: in NCR armour ArmorNCRFactionNV is the player's friend, so NCR
     soldiers with Helps Friends and Allies join the player's fights. If allies now pile
     into fights you start (they join once the other side fights back), say where.

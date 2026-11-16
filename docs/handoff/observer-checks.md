@@ -2961,7 +2961,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
      (0x00155DC2, C3, C4, C1; VHDSecuritronFaction, PlayerFaction Ally; Unaggressive,
      Brave, Helps Allies). Pick the attack topic (INFO 0x0015993C): its end script runs
      `StartCombat player` on Oliver and gives each Securitron one of Guard01-04, none
-     Guard05 or Oliver [observed: the data, issue #2794]. Watch each Securitron's
+     Guard05 or Oliver [documented: issue #2794, cited records]. Watch each Securitron's
      `GetCombatTarget` every second once its guard is dead, and who damages Oliver and
      Guard05 (their health). Also: does a Securitron help when the player alone fights
      Oliver before the guards are down (it has its guard then)?

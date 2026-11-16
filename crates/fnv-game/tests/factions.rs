@@ -586,7 +586,8 @@ fn a_faction_ally_of_the_player_takes_up_the_players_fight() {
     // raider) attacks the player. The helper (Helps Allies) detects the player and joins;
     // the coward (Helps Allies, Cowardly) stays out; neither while the rats are neutral to
     // the player. With Helps Nobody the helper stays out; it never fights its own ally (a
-    // rat attacking the player); as a teammate it is left to `teammates_assist`.
+    // rat attacking the player); after the player itself (a crime) it stays out; as a
+    // teammate it is left to `teammates_assist`.
     const SET_ALLY: u16 = 0x1079;
     const SET_AV: u16 = 0x100F;
     let (bandit, helper, coward, own, player) = (FormId(BANDIT_REF), FormId(HELPER_REF), FormId(COWARD_REF), FormId(OWN_REF), FormId::PLAYER_REF);
@@ -632,6 +633,20 @@ fn a_faction_ally_of_the_player_takes_up_the_players_fight() {
     g.detection.pairs.insert((helper, own), (Detection { value: 5.0, band: Band::Detected, ..Default::default() }, g.time));
     assert_eq!(g.call_allies(), 0);
     assert!(!g.would_attack(helper, own) && !g.would_attack(helper, player));
+
+    // A helper after the player itself (a crime of the player's against it), its faction
+    // reaction still Ally: it does not join, so two of the player's attackers never turn
+    // on each other.
+    let mut g = game(&f);
+    ally(&mut g);
+    g.player.crime_enemies.insert(helper);
+    assert_eq!(g.reaction_to(helper, player), fnv_game::provocation::ALLY);
+    assert!(g.would_attack(helper, player));
+    fighting(&mut g, BANDIT_REF, PLAYER);
+    sees_player(&mut g, helper);
+    assert_eq!(g.call_allies(), 0);
+    assert!(!g.provocations.holds(helper, bandit));
+    assert!(!g.provocations.take_notes().iter().any(|n| matches!(n, Note::Assists { helper: h, .. } if *h == helper)));
 
     // A teammate: its own rule, one note only.
     let mut g = game(&f);

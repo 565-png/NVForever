@@ -49,7 +49,8 @@
 //!   counts the player as an ally to help is not documented; the maintainer expects it]:
 //!   whoever is in a combat state with the player on its target list is fought by a
 //!   watcher that detects the player and whose Assistance covers its reaction to the
-//!   player, with the checks above; the player's teammates keep their own rule
+//!   player, with the checks above, unless it is after the player itself (a crime, a
+//!   grudge, a StartCombat, the player on its target list); the player's teammates keep their own rule
 //!   (`crate::followers`). The scripted-fight rule does not keep them out: it concerns the
 //!   allies of the actor a script set on the player, and the player is the one attacked
 //!   (the Legate's camp Securitrons, PlayerFaction allies, against General Oliver, set on
@@ -566,6 +567,13 @@ impl Game<'_> {
                 // The player's teammates take up its fights by their own rule
                 // (`Game::teammates_assist`).
                 if victim == FormId::PLAYER_REF && self.is_teammate(helper) {
+                    continue;
+                }
+                // Nobody helps the player while it is after the player itself: a crime of
+                // the player's against it, a grudge, a StartCombat on the player
+                // (`Game::would_attack`), or the player on its own target list; its faction
+                // reaction may still say Ally or Friend [design, #2794].
+                if victim == FormId::PLAYER_REF && (self.would_attack(helper, FormId::PLAYER_REF) || self.awareness.get(helper).is_some_and(|a| a.targets.contains_key(&FormId::PLAYER_REF))) {
                     continue;
                 }
                 let assistance = match assistance_of.get(&helper) {
