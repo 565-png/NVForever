@@ -15,8 +15,8 @@ template policy and accepts placed leveled actors through the runtime selector.
 [design] An omitted receiver uses the script's actor. An explicit empty receiver
 retains the VM's existing `NoReference` failure and stops the script before host
 dispatch, both for statement and expression source calls. The synthetic VM controls
-assert that failure and that a following implicit-actor mutation does not run;
-their execution remains pending. No adapter guard or failure-policy change is needed.
+assert that failure and that a following implicit-actor mutation does not run.
+No adapter guard or failure-policy change is needed.
 
 [documented] `RemoveMerchantContainer actor` clears the actor's merchant
 container assignment (accepted `schemas/script/functions.json` documentation

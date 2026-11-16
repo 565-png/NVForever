@@ -212,9 +212,10 @@ contract and limits: [Built-in luck setting getter fallback](spec-notes/builtin-
 Source calls for `GetPlayerGrabbedRef`, `GetPackageTarget` and
 `RemoveMerchantContainer` use existing grab/package/conversation state and an
 explicit saved merchant-container clear. The barter stock selector respects that
-clear. `RemoveFac` aliases the accepted faction-removal command. Synthetic source,
-leveled-actor, lifecycle and barter-boundary tests are authored; execution, native
-encoding for the new source names and installed-mod acceptance remain open.
+clear. `RemoveFac` aliases the accepted faction-removal command. Eight synthetic
+source, leveled-actor, lifecycle and VM cases passed in a combined core cohort.
+The barter engine boundary, focused-cut validation, native encoding for the new
+source names and installed-mod acceptance remain open.
 See [actor query context](spec-notes/actor-query-context.md).
 
 ## 9. Open items needing the owner
