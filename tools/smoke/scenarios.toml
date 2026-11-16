@@ -26535,6 +26535,44 @@ expect = [
 ]
 forbid = [{ text = "DLSS: evaluate active", label = "a DLSS evaluate with FSR chosen" }, { re = 'graphics: DLSS \w+ active', label = "DLSS put on the camera" }, { text = "frame generation: on but not running", label = "frame generation held off" }, { text = "FSR dispatch failed", label = "FSR failing" }, { text = "FSR 3.1 unavailable", label = "FSR unavailable through the interposer" }, { text = "Validation Error", label = "a Vulkan validation error" }, { text = "Caught rendering error", label = "a rendering error" }]
 
+[[scenario]]
+name = "fsr-fg-preload-handoff-exit"
+source = "#2733, engine/nvforever/src/dlss/mod.rs \"Ending at once\": a save loaded in play with FSR's frame generation running on a device made through Streamline (NVF_DLSS_PRELOAD=1) hands over to a new run; before the old run ends with std::process::exit it stops and joins its frame generation presenter threads (crate::frame_gen::stop_presenters), then shuts Streamline down, and ends without a crash"
+note = "needs NVF_DLSS_DIR (NVIDIA's files), as dlss-preload-fsr. The presenter, started for the first generated frame in play, stays through the loading screen (FrameGenRequest.on does not depend on play), so the old run has one to stop. Both runs write to the launch's log with no run tag: the 'the run hands over to a new one' lines are the old run's alone; slShutdown is expected twice (once per run, the new one at its own exit by NVF_PLAY_TEST_HANDOFF_EXIT); 'handoff: the old run has ended' is the new run's and is not ordered after the old run's exit steps (it is written once the ready file is gone). Lines of DLSS-G's own (when the folder holds its files it is set up and unloaded) are not checked here."
+areas = ["graphics", "save"]
+paths = ["engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**", "engine/nvforever/src/handoff.rs", "engine/nvforever/src/gpu_poll.rs", "engine/nvforever/src/frame_gen.rs", "engine/nvforever/src/fg_presenter.rs", "engine/vendor/bevy_render/src/pipelined_rendering.rs"]
+requires = ["NVF_DLSS_DIR"]
+env = { WGPU_BACKEND = "vulkan", NVF_DLSS_PRELOAD = "1", NVFOREVER_HOME = "fsr-fg-preload-handoff-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "4:0:1,9:0.5:-1", NVF_PLAY_TEST_CONSOLE = "20:save fsr-fg-handoff;22:load fsr-fg-handoff", NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--fsr", "quality", "--frame-generation", "--no-voice", "--no-lodgen"]
+run_seconds = 90
+# The old run ends by handing over, not at run_seconds; the new one by its test aid.
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its world is in"
+expect = [
+  "DLSS: route: interposer (the Vulkan instance was made through sl.interposer.dll)",
+  { re = 'frame generation: [1-9]\d* real frames and [1-9]\d* generated in ', label = "FSR's frame generation presents through the interposer's device before the save" },
+  { re = 'save: wrote .*fsr-fg-handoff\.nvfsave', label = "the save is written" },
+  { re = 'load: handing over to a new run with --load .*fsr-fg-handoff\.nvfsave', count = 1, label = "a new run starts behind the loading screen" },
+  { re = 'DLSS: exit: the run hands over to a new one: [1-9]\d* FSR frame generation presenter\(s\) stopped and joined', count = 1, label = "the old run stops and joins its presenter(s) before it ends" },
+  { text = "DLSS: exit: the run hands over to a new one: Streamline shut down before the process ends", count = 1, label = "the old run shuts Streamline down before the process ends" },
+  { text = "DLSS: shutdown: slShutdown eOk", count = 2, label = "slShutdown by both runs (FSR frame generation), the old one's at its handoff exit" },
+  { re = 'handoff: the old run has ended after [\d.]+ s', label = "the new run sees the old one end (FSR frame generation)" },
+]
+order = [[
+  { re = 'frame generation: [1-9]\d* real frames and [1-9]\d* generated in ', label = "generated frames in play" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new one is up" },
+  { re = 'DLSS: exit: the run hands over to a new one: [1-9]\d* FSR frame generation presenter\(s\) stopped and joined', label = "the presenters stopped first" },
+  { text = "DLSS: shutdown: slShutdown eOk", label = "slShutdown after the presenters stopped" },
+  { text = "DLSS: exit: the run hands over to a new one: Streamline shut down before the process ends", label = "the old run's last DLSS line" },
+]]
+forbid = [
+  { re = 'native crash, ', label = "a native crash at the handoff's exit (#2733)" },
+  { re = '\]\[streamline\]\[error\]', label = "an error from Streamline in fsr-fg-preload-handoff-exit" },
+  { text = "the render app could not be taken back from the render thread", label = "the render app not taken back from the render thread" },
+  { text = "shutdown finished with failures", label = "a failed step at shutdown" },
+  { text = "Validation Error", label = "a Vulkan validation error" },
+  { re = 'before the world was in|before it was ready', label = "no time limit or failure in the handoff" },
+]
+
 # Download DLSS... from the settings (#2250, docs/dlss.md): the Upscaler row's choice, NVIDIA's licence in a dialog, the
 # download of the eight files from NVIDIA's release. dlss-download-decline, -offline and -404 need no network and no NVIDIA
 # file: their NVF_DLSS_DIR names a folder under target/ that holds none (so the choice is offered), and their download address
