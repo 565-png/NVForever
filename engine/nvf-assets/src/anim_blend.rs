@@ -112,6 +112,18 @@ pub fn settle(x: f32) -> f32 {
     spring - end_speed * x * x * (x - 1.0)
 }
 
+/// [`settle`] at `x` with its first and second derivatives (its speed and its pull).
+pub fn settle_slopes(x: f32) -> (f32, f32, f32) {
+    let k = SETTLE_SHARPNESS;
+    let x = x.clamp(0.0, 1.0);
+    let norm = 1.0 - (1.0 + k) * (-k).exp();
+    let end_speed = k * k * (-k).exp() / norm;
+    let e = (-k * x).exp();
+    let speed = k * k * x * e / norm - end_speed * (3.0 * x * x - 2.0 * x);
+    let pull = k * k * e * (1.0 - k * x) / norm - end_speed * (6.0 * x - 2.0);
+    (settle(x), speed, pull)
+}
+
 /// The `x` at which [`settle`] is `y` (by halving; `settle` only rises).
 pub fn settle_inv(y: f32) -> f32 {
     let y = y.clamp(0.0, 1.0);

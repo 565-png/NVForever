@@ -1288,10 +1288,66 @@ const EQUIP_HANDOVER_FROM: f32 = 0.35;
 
 /// How far a draw's or a holster's clip has handed the arms over (0–1) at `x`, the share of
 /// its time: from [`EQUIP_HANDOVER_FROM`] on, by a curve that starts with no speed and no
-/// pull and ends at rest (`6u⁵ − 15u⁴ + 10u³`).
+/// pull, is quickest a little before the middle and tapers off over its last part, coming
+/// to rest with no speed, pull or jerk left (its speed goes as `u³(1 − u)⁴`: the integral
+/// `70u⁴ − 224u⁵ + 280u⁶ − 160u⁷ + 35u⁸`) [design: the owner, 2026-11-16: "make the last
+/// 25% of the equip and holster animations smoother without changing their timing"]. With
+/// `6u⁵ − 15u⁴ + 10u³` the hand-over came into the last quarter at nine tenths of its top
+/// speed with 29 % still to go and braked all of it there (the 10mm pistol's put-away, 105
+/// units/s to none in 0.16 s); now 15 % is left, braked over the whole quarter.
 fn handover_share(x: f32) -> f32 {
     let u = ((x - EQUIP_HANDOVER_FROM) / (1.0 - EQUIP_HANDOVER_FROM)).clamp(0.0, 1.0);
-    u * u * u * (u * (6.0 * u - 15.0) + 10.0)
+    if u < 0.5 {
+        u * u * u * u * (70.0 + u * (-224.0 + u * (280.0 + u * (-160.0 + u * 35.0))))
+    } else {
+        // The same from its end, where the expanded form loses its last digits in f32 (it
+        // stepped back by a thousandth): what is left is `v⁵(v³ + 8uv² + 28u²v + 56u³)`.
+        let v = 1.0 - u;
+        1.0 - v * v * v * v * v * (v * v * v + 8.0 * u * v * v + 28.0 * u * u * v + 56.0 * u * u * u)
+    }
+}
+
+/// The share of a draw's or a holster's time from which [`equip_curve`] leaves the settling
+/// curve for its own end.
+const EQUIP_TAIL_FROM: f32 = 0.75;
+
+/// How far a draw or a holster has got (0–1) at `x`, the share of its time, with movement
+/// inertia: the settling curve, its last quarter a quintic that carries on from it (place,
+/// speed and pull alike) and comes to rest with no speed and no pull left [design: the owner,
+/// 2026-11-16: "make the last 25% of the equip and holster animations smoother without
+/// changing their timing"]. The settling curve stops with the arms still braking (its pull
+/// at the end is 0.8 of a draw a time², the speed dropping to nothing at an angle); this end
+/// eases out of the braking too. Same time, still only rising.
+fn equip_curve(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    if x <= EQUIP_TAIL_FROM {
+        return nvf_play::ease::settle(x);
+    }
+    let h = 1.0 - EQUIP_TAIL_FROM;
+    let (p0, v, a) = nvf_assets::anim_blend::settle_slopes(EQUIP_TAIL_FROM);
+    // The quintic in s (0–1 over the tail) with p(0), p'(0), p''(0) the curve's and p(1) = 1,
+    // p'(1) = p''(1) = 0.
+    let (v0, a0, d) = (v * h, a * h * h, 1.0 - p0);
+    let c3 = 10.0 * d - 6.0 * v0 - 1.5 * a0;
+    let c4 = -15.0 * d + 8.0 * v0 + 1.5 * a0;
+    let c5 = 6.0 * d - 3.0 * v0 - 0.5 * a0;
+    let s = (x - EQUIP_TAIL_FROM) / h;
+    p0 + s * (v0 + s * (0.5 * a0 + s * (c3 + s * (c4 + s * c5))))
+}
+
+/// The `x` at which [`equip_curve`] is `y` (by halving; it only rises).
+fn equip_curve_inv(y: f32) -> f32 {
+    let y = y.clamp(0.0, 1.0);
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..24 {
+        let mid = 0.5 * (lo + hi);
+        if equip_curve(mid) < y {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
 }
 
 /// Test aid `NVF_PLAY_TEST_MOTION_TRACE=<file>`: one CSV line a frame of the first-person
@@ -2548,7 +2604,7 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     // After the draw, its clip leaving keeps covering what the hold has not yet taken too
     // (dropping its last 2 % in one frame was a second kick).
     if first_inertia {
-        let over = f.equip_at.map(|at| handover_share(nvf_play::ease::settle_inv(at.clamp(0.0, 1.0))));
+        let over = f.equip_at.map(|at| handover_share(equip_curve_inv(at)));
         // The aim clips together (the hold, or the hold crossing over to the sights or a block:
         // their shares then add up to about the whole, so an aim taken up right after a draw
         // does not bring the draw clip back).
@@ -3239,7 +3295,7 @@ fn drive_body(
     // weight and the attributes by its class (`nvf_play::inertia::MovementInertia::equip_rate`).
     let equip_pace = inertia.as_deref().map_or(1.0, |i| i.equip_rate());
     let eq = if anim.equip_rate > 0.0 { anim.equip_rate } else { 1.0 } * equip_pace;
-    // With movement inertia the clip is played along the settling curve (`Frame::equip_at`):
+    // With movement inertia the clip is played along its curve (`equip_curve`, `Frame::equip_at`):
     // the weapon changes hands when the curve reaches the clip's own moment for it.
     let warped = inertia.as_deref().is_some_and(|i| i.smooth_hands());
     // Played by its motion (`ClipMotion`): the moment is where the curve reaches the motion
@@ -3249,7 +3305,7 @@ fn drive_body(
     let quick = |t: fnv_actor::player_clips::Transition, c: Option<&Arc<ClipInfo>>| {
         let length = t.length / eq;
         let moved = |x: f32| c.map_or(x, |c| c.motion(&skel).done_at(x));
-        let switch_at = if warped && t.length > 0.0 { length * nvf_play::ease::settle_inv(moved(t.switch_at / t.length)) } else { t.switch_at / eq };
+        let switch_at = if warped && t.length > 0.0 { length * equip_curve_inv(moved(t.switch_at / t.length)) } else { t.switch_at / eq };
         fnv_actor::player_clips::Transition { length, switch_at }
     };
     let (draw_t, away_t) = (quick(draw_t, draw_c.as_ref()), quick(away_t, away_c.as_ref()));
@@ -3257,8 +3313,8 @@ fn drive_body(
     let mut events = std::mem::take(&mut m.events);
     m.hands.update(want_out, dt, draw_t, away_t, &mut events);
     let equip_at = match m.hands.phase {
-        WeaponPhase::Drawing if warped && draw_t.length > 0.0 => Some(nvf_play::ease::settle(m.hands.time / draw_t.length)),
-        WeaponPhase::Holstering if warped && away_t.length > 0.0 => Some(nvf_play::ease::settle(m.hands.time / away_t.length)),
+        WeaponPhase::Drawing if warped && draw_t.length > 0.0 => Some(equip_curve(m.hands.time / draw_t.length)),
+        WeaponPhase::Holstering if warped && away_t.length > 0.0 => Some(equip_curve(m.hands.time / away_t.length)),
         _ => None,
     };
     // The first-person view's way into a crouch and out of one (`Frame::stance_fade`): a
@@ -3832,6 +3888,44 @@ mod tests {
         // top speed (the settling curve's start was at about three fifths).
         let top = speed(0.5 * (1.0 + EQUIP_HANDOVER_FROM));
         assert!(speed(EQUIP_HANDOVER_FROM + 0.1 * (1.0 - EQUIP_HANDOVER_FROM)) < 0.2 * top);
+        // Its last quarter only tapers off: under a fifth of the way left, entered at under
+        // two thirds of its top speed (the owner, 2026-11-16: "make the last 25% smoother").
+        let top = (0..100).map(|i| speed(EQUIP_HANDOVER_FROM + i as f32 * 0.0064)).fold(0.0f32, f32::max);
+        assert!(1.0 - handover_share(EQUIP_TAIL_FROM) < 0.2, "{} left", 1.0 - handover_share(EQUIP_TAIL_FROM));
+        assert!(speed(EQUIP_TAIL_FROM) < 0.67 * top, "{} against {top}", speed(EQUIP_TAIL_FROM));
+        // (Steps of a hundredth: finer ones are lost to f32 rounding of the polynomial.)
+        let coarse = |x: f32| (handover_share(x + 0.01) - handover_share(x)) / 0.01;
+        assert!((1..=24).all(|i| coarse(EQUIP_TAIL_FROM + i as f32 * 0.01) <= coarse(EQUIP_TAIL_FROM + (i - 1) as f32 * 0.01)), "it only slows over the last quarter");
+    }
+
+    #[test]
+    fn a_draws_last_quarter_eases_to_rest_from_the_settling_curve() {
+        // The settling curve up to the last quarter, the same ends.
+        for x in [0.0, 0.2, 0.5, EQUIP_TAIL_FROM] {
+            assert_eq!(equip_curve(x), nvf_play::ease::settle(x), "at {x}");
+        }
+        assert!((equip_curve(1.0) - 1.0).abs() < 1e-6);
+        // Place, speed and pull carry on across the join.
+        let (_, v, a) = nvf_assets::anim_blend::settle_slopes(EQUIP_TAIL_FROM);
+        let d = 1e-3;
+        let (x0, x1, x2) = (EQUIP_TAIL_FROM, EQUIP_TAIL_FROM + d, EQUIP_TAIL_FROM + 2.0 * d);
+        let speed = (equip_curve(x1) - equip_curve(x0)) / d;
+        let pull = (equip_curve(x2) - 2.0 * equip_curve(x1) + equip_curve(x0)) / (d * d);
+        assert!((speed - v).abs() < 0.01 && (pull - a).abs() < 0.2, "speed {speed} against {v}, pull {pull} against {a}");
+        // It only rises, and arrives with no speed and no pull, where the settling curve
+        // still brakes.
+        let n = 1000;
+        assert!((1..=n).all(|i| equip_curve(i as f32 / n as f32) >= equip_curve((i - 1) as f32 / n as f32)));
+        let (_, end_speed, end_pull) = nvf_assets::anim_blend::settle_slopes(1.0);
+        assert!(end_speed.abs() < 1e-4 && end_pull < -0.5, "the settling curve brakes to its end: {end_pull}");
+        let h = 0.01;
+        let tail_speed = (1.0 - equip_curve(1.0 - h)) / h;
+        let settle_speed = (1.0 - nvf_play::ease::settle(1.0 - h)) / h;
+        assert!(tail_speed < 0.5 * settle_speed, "its last hundredth goes slower: {tail_speed} against {settle_speed}");
+        // The inverse finds the time again.
+        for x in [0.1, 0.5, 0.8, 0.95] {
+            assert!((equip_curve_inv(equip_curve(x)) - x).abs() < 1e-3, "at {x}");
+        }
     }
 
     #[test]

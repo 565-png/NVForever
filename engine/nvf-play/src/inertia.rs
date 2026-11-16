@@ -557,6 +557,24 @@ impl MovementInertia {
 }
 
 
+/// Log Advanced Movement's switches kept here at the start and whenever one changes (a smoke
+/// check of the defaults: the owner, 2026-11-16, every part off but Advanced Recoil).
+pub fn log_switches(inertia: Res<MovementInertia>, mut last: Local<Option<[bool; 5]>>) {
+    let now = [inertia.advanced, inertia.on, inertia.weapon_handling, inertia.recoil, inertia.smooth];
+    if *last != Some(now) {
+        *last = Some(now);
+        let s = |b: bool| if b { "on" } else { "off" };
+        info!(
+            "advanced movement: Global Toggle {}, Movement Inertia {}, Weapon Handling {}, Advanced Recoil {}, Animation Smoothing {}",
+            s(now[0]),
+            s(now[1]),
+            s(now[2]),
+            s(now[3]),
+            s(now[4])
+        );
+    }
+}
+
 /// Keep [`MovementInertia::handling`] and the weapon's weight on the weapon the player holds
 /// (or is drawing). Logs the draw's and the aim's pace when they change (a smoke check).
 pub fn follow_weapon(mut inertia: ResMut<MovementInertia>, combat: Option<Res<crate::combat::Combat>>, mut logged: Local<Option<(f32, f32)>>) {

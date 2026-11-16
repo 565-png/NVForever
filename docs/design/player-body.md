@@ -364,15 +364,15 @@ itself turns exactly as the mouse says.
 - It turns and moves `Bip01 Translate` about the eye in the view's frame, after the
   clips are blended, so the camera does not move; it fades out (0.15 s) under the
   Pip-Boy, while an idle drives the view and in third person.
-- A switch, on by default: `--no-weapon-sway`, Weapon Inertia on the settings page (key
+- A switch, off by default since 2026-11-16 (`--weapon-sway` / `--no-weapon-sway`), Weapon Inertia on the settings page (key
   `weapon-inertia`, "Weapon sway" and `weapon-sway` until 2026-11-15). The exit summary gives the most turn lag, the deepest bob and the
   deepest jump or landing dip.
 
 ### 1.4a.2 Movement inertia and the eased crouch (owner, 2026-11-13)
 
 The original's player is at full speed from the first loop and stops dead (physics.md
-§6.3). With the "Movement inertia" switch (key `movement-inertia`, `--no-movement-inertia`,
-on by default) [design]:
+§6.3). With the "Movement inertia" switch (key `movement-inertia`, `--movement-inertia` / `--no-movement-inertia`,
+off by default since 2026-11-16) [design]:
 
 - On the ground the player's velocity, walking or running, rides a critically damped
   spring towards the keys' velocity: 95 % of a new, faster speed in 0.5 s, down to 5 % of
@@ -489,6 +489,19 @@ the rebar club, a frag grenade, the flamer, the fists, a swap while drawn):
   speed and no pull (`handover_share`, `6u⁵ − 15u⁴ + 10u³` from 35 % of the time): along the
   settling curve's sharp start, the nearly stopped arms set off again at 350 units/s within
   two frames (the fists', the 10mm pistol's holster; now about 150 and 50 at most).
+- The last quarter of a draw or a put-away (owner, 2026-11-16: "make the last 25% of the
+  equip and holster animations smoother without changing their timing"), same times:
+  - The hand-over's speed goes as `u³(1 − u)⁴` (`70u⁴ − 224u⁵ + 280u⁶ − 160u⁷ + 35u⁸`), not
+    `6u⁵ − 15u⁴ + 10u³`: it is quickest a little before its middle and has 15 % left at the
+    last quarter, not 29 % taken at nine tenths of its top speed and braked there. The 10mm
+    pistol's put-away came into its last quarter at 105 units/s and stopped within 0.16 s;
+    now 74, tapering off (the Assault Carbine's 124 to 76).
+  - The draw's place along its time (`equip_curve`) is the settling curve up to 75 % and
+    then a quintic carrying on from it that comes to rest with no speed and no pull: the
+    settling curve stops while still braking.
+  - The traces `movement-inertia-trace-weapons` and `-rest` give the club, flamer and
+    launcher put-aways (2 s and 4 s with Weapon Handling) their whole time: equipping the
+    next weapon part-way cut them, a 26 to 114 units/s kick at the cut.
 - The blend keeps each clip's rotation of a bone on the side of the sphere it was on last
   frame (`anim_blend::Layer::aligned`): taken from the first clip's side each frame, the
   straight razor's put-away over the idle blended the upper arm the long way round for a
@@ -512,7 +525,14 @@ Switching a part off or on while it acts leaves nothing stuck (smoke
 from where it is, and a placement by the game starts the ground velocity from rest
 however near (`MovementInertia::check_game_placed`).
 
-All are on by default.
+The Global Toggle and Advanced Recoil are on by default; Movement Inertia, Weapon Handling,
+Animation Smoothing, Weapon Inertia and Camera Motion are off (each turned on by its own
+switch, `--movement-inertia`, `--weapon-handling`, `--animation-smoothing`, `--weapon-sway`,
+`--head-bob`, or on the page) [design: the owner, 2026-11-16, "make sure all advanced movement
+features are off by default except the improved/advanced recoil"]. A saved choice in the INI
+stays. At the start and at each change the log says which of the switches kept in
+`MovementInertia` are on (`advanced movement: Global Toggle on, ...`; smoke
+`advanced-movement-defaults`). Until 2026-11-16 all were on by default.
 
 ### 1.4a.1 The camera's bob: first person yes, third person no (owner, 2026-11-07)
 
@@ -533,7 +553,7 @@ tuned by eye]:
   (§1.4a) comes on top. A switch registered in the settings page's Display group and
   shown under NVF Features › Advanced movement (Gameplay › Camera until 2026-11-13, then
   Gameplay › Advanced Inertia until 2026-11-15; `head-bob`,
-  `--no-head-bob`; settings-page.md), on by default.
+  `--head-bob` / `--no-head-bob`; settings-page.md), off by default since 2026-11-16.
 - Head inertia (owner's playtest of 2026-11-13: "we should add inertia to it"): the
   stride's bob passes through a critically damped spring settling in 0.12 s, so it
   rounds off; the body's acceleration leaves the head behind as it speeds up and lets it

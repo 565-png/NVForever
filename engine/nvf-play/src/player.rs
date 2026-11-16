@@ -375,7 +375,7 @@ impl Plugin for PlayerPlugin {
                     .after(crate::phys::PhysSystems),
             )
             .add_systems(Update, crate::control::place_camera.in_set(PlaySet::Physics).after(log_status));
-        app.init_resource::<crate::inertia::MovementInertia>().add_systems(Update, crate::inertia::follow_weapon);
+        app.init_resource::<crate::inertia::MovementInertia>().add_systems(Update, (crate::inertia::follow_weapon, crate::inertia::log_switches));
         // The Advanced Movement section's switches kept here (NVF Features; Weapon Inertia and
         // Camera Motion are nvforever's `settings.rs`): the Global Toggle, then Gameplay's and
         // Animation Smoothing [design: the owner, 2026-11-15, the menu's names and order].
@@ -394,7 +394,7 @@ impl Plugin for PlayerPlugin {
                 "movement-inertia",
                 "Movement Inertia",
                 "On: you speed up, glide to a stop and brake before turning; crouching eases and landings dip and slow you by the fall. Off: as in the original.",
-                "--no-movement-inertia",
+                "--movement-inertia --no-movement-inertia",
                 |w| w.resource::<Inertia>().on,
                 |w, on| w.resource_mut::<Inertia>().on = on,
             ),
@@ -402,7 +402,7 @@ impl Plugin for PlayerPlugin {
                 "weapon-handling",
                 "Weapon Handling",
                 "On: drawing, putting away and aiming a weapon take a moment longer, and longer still for heavier weapons. Off: the original's timing.",
-                "--no-weapon-handling",
+                "--weapon-handling --no-weapon-handling",
                 |w| w.resource::<Inertia>().weapon_handling,
                 |w, on| w.resource_mut::<Inertia>().weapon_handling = on,
             ),
@@ -410,7 +410,7 @@ impl Plugin for PlayerPlugin {
                 "advanced-recoil",
                 "Advanced Recoil",
                 "On: a shot's kick eases the view up and part of it settles back down, and the view nudges back. Off: the whole kick stays, as in the original.",
-                "",
+                "--no-advanced-recoil",
                 |w| w.resource::<Inertia>().recoil,
                 |w, on| w.resource_mut::<Inertia>().recoil = on,
             ),
@@ -418,7 +418,7 @@ impl Plugin for PlayerPlugin {
                 "animation-smoothing",
                 "Animation Smoothing",
                 "On: in first person drawing, aiming, attacks, reloads and the Pip-Boy ease in and settle softly, taking no longer. Off: the original's clips.",
-                "",
+                "--animation-smoothing --no-animation-smoothing",
                 |w| w.resource::<Inertia>().smooth,
                 |w, on| w.resource_mut::<Inertia>().smooth = on,
             ),
