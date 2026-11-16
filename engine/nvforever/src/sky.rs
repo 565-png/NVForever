@@ -2151,6 +2151,11 @@ mod weather_percent_tests;
 mod session_lighting_tests;
 
 #[cfg(test)]
+pub(crate) fn authored_session_sky() -> SkyState {
+    session_lighting_tests::sky()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
