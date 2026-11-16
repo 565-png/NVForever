@@ -2061,19 +2061,21 @@ fn title_line(root: &mut ChildSpawnerCommands, look: &PauseLook, words: &str, co
         let (dir, size) = if open { (Dir::Down, HEADING_ARROW) } else { (Dir::Right, Vec2::new(HEADING_ARROW.y, HEADING_ARROW.x)) };
         crate::menu_shapes::shape(r, look.shapes.as_ref(), Kind::Triangle, dir, Vec2::new(12.0 + HEADING_ARROW.x / 2.0, OPTION_ROW / 2.0), size, bright);
         let x = 12.0 + HEADING_ARROW.x + 12.0;
-        // The count of its rows at the right, centred where the rows' values are, no brackets,
-        // only while the line is chosen (the pointer on it, or the keys); never a box round
-        // it, a click still opens and closes it [design: owner 2026-11-15, the fifth build].
+        // The count of its rows, no brackets, only while the line is chosen (the pointer on
+        // it, or the keys), inside the highlight box round it [design: owner 2026-11-15, the
+        // fifth build; 2026-11-16: the hover box back], its right edge where the heading
+        // links' words end (right-aligned in the list, `ENTRY_BOX_PAD` in) [design: owner
+        // 2026-11-16, "aligned with the hints"].
         let row = lb.row();
         let words = fit_text(|t| f.title.font.width(t), words, row.value_left() - LABEL_GAP - x);
         sm_text(r, &f.title, &words, x, BASE + 2.0, bright);
         if button.is_some_and(|(_, on)| on) {
             let n = count.to_string();
-            sm_text(r, &f.title, &n, row.value_at() - f.title.font.width(&n) / 2.0, BASE + 2.0, bright);
+            sm_text(r, &f.title, &n, lb.width - ENTRY_BOX_PAD - f.title.font.width(&n), BASE + 2.0, bright);
         }
     };
     match button {
-        Some((b, _)) => root.spawn((Button, b, node)).with_children(content),
+        Some((b, on)) => root.spawn((Button, b, boxed(node, on))).with_children(content),
         None => root.spawn(node).with_children(content),
     };
 }

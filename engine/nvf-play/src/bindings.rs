@@ -138,13 +138,19 @@ pub enum Control {
     HideHud,
     /// End the Pip-Boy radio's song or talk now (iSkipRadioSongKey).
     SkipRadioSong,
+    /// Open and close the console (the original's ` key; Stewie's Tweaks iConsoleKey), a
+    /// binding like any other [design: owner 2026-11-16: "make the console hotkey and
+    /// screenshot hotkey a normal rebindable key"].
+    Console,
+    /// Save a picture of the screen (NVForever's F12; Stewie's Tweaks iScreenshotKey).
+    Screenshot,
 }
 
 /// `[Controls]` of the owner's `FalloutPrefs.ini`: (control, INI name, value)
 /// [observed 2026-10-09], then NVForever's own controls (after [`GAME_INI_CONTROLS`],
 /// coded the same way): Lower Weapon on H [design: the owner 2026-10-27, moved off Ready
 /// Item tapped twice so a reload is not held back waiting for a second tap].
-pub const GAME_CONTROLS: [(Control, &str, u32); 55] = [
+pub const GAME_CONTROLS: [(Control, &str, u32); 57] = [
     (Control::Forward, "Forward", 0x0011FF13),
     (Control::Back, "Back", 0x001FFF14),
     (Control::SlideLeft, "Slide Left", 0x001EFF17),
@@ -200,11 +206,19 @@ pub const GAME_CONTROLS: [(Control, &str, u32); 55] = [
     (Control::PlaceMarkerHere, "Place Marker Here", 0xFFFFFFFF),
     (Control::HideHud, "Hide HUD", 0xFFFFFFFF),
     (Control::SkipRadioSong, "Skip Radio Song", 0xFFFFFFFF),
+    // Bound by default, as before they were bindings (the keys as the INI codes them).
+    (Control::Console, "Console", 0x0029FFFF),
+    (Control::Screenshot, "Screenshot", 0x0058FFFF),
 ];
 
 /// Where the Tweaks tab's keys start in [`GAME_CONTROLS`]: none is bound unless the
-/// player binds it (`crate::tweaks`).
+/// player binds it (`crate::tweaks`), but the console's and the screenshot's at the end
+/// ([`BOUND_EXTRA_CONTROLS`]), bound by default.
 pub const TWEAK_CONTROLS: usize = 29;
+
+/// The controls after the Tweaks tab's that are bound by default: the console and the
+/// screenshot ([`Control::Console`], [`Control::Screenshot`]).
+pub const BOUND_EXTRA_CONTROLS: usize = 2;
 
 /// How many of [`GAME_CONTROLS`] are the game's own (the extender's control codes 0–27).
 pub const GAME_INI_CONTROLS: usize = 28;
@@ -630,6 +644,8 @@ pub fn label(c: Control) -> &'static str {
         PlaceMarkerHere => "Place Marker Here",
         HideHud => "Hide HUD",
         SkipRadioSong => "Skip Radio Song",
+        Console => "Console",
+        Screenshot => "Screenshot",
     }
 }
 
@@ -654,6 +670,8 @@ pub const KEY_NAMES: &[(KeyCode, &str)] = {
         (Digit6, "6"), (Digit7, "7"), (Digit8, "8"), (Digit9, "9"), (Digit0, "0"),
         (F1, "F1"), (F2, "F2"), (F3, "F3"), (F4, "F4"), (F5, "F5"), (F6, "F6"),
         (F7, "F7"), (F8, "F8"), (F9, "F9"), (F10, "F10"), (F11, "F11"), (F12, "F12"),
+        // The console's key, a binding now (`Control::Console`).
+        (Backquote, "`"),
         (Space, "Space"), (Tab, "Tab"), (Enter, "Enter"), (Backspace, "Backspace"), (CapsLock, "Caps Lock"),
         (ShiftLeft, "Left Shift"), (ShiftRight, "Right Shift"), (ControlLeft, "Left Ctrl"), (ControlRight, "Right Ctrl"),
         (AltLeft, "Left Alt"), (AltRight, "Right Alt"),
@@ -677,8 +695,19 @@ pub const MOUSE_NAMES: [(MouseButton, &str); 5] = [
     (MouseButton::Forward, "Mouse 5"),
 ];
 
-/// Keys no control may take: Esc (the pause menu) and the console's key.
-pub const RESERVED_KEYS: [KeyCode; 2] = [KeyCode::Escape, KeyCode::Backquote];
+/// Keys no control may take: Esc (the pause menu). The console's key is a binding of its own
+/// now ([`Control::Console`]).
+pub const RESERVED_KEYS: [KeyCode; 1] = [KeyCode::Escape];
+
+/// Whether `c`'s key or mouse button was pressed this frame, by `bindings` (none: never);
+/// for the controls read outside the game's own control handling (the console, the
+/// screenshot).
+pub fn binding_just_pressed(bindings: Option<&Bindings>, c: Control, keys: impl Fn(KeyCode) -> bool, mouse: impl Fn(MouseButton) -> bool) -> bool {
+    bindings.is_some_and(|b| {
+        let x = b.get(c);
+        x.key.is_some_and(&keys) || x.mouse.is_some_and(&mouse)
+    })
+}
 
 pub fn key_name(k: KeyCode) -> Option<&'static str> {
     KEY_NAMES.iter().find(|(c, _)| *c == k).map(|(_, n)| *n)
@@ -1618,14 +1647,18 @@ mod tests {
         assert_eq!(b.get(Control::QuickLoad).key, Some(KeyCode::F9));
         assert_eq!(b.get(Control::LowerWeapon).key, Some(KeyCode::KeyH));
         assert_eq!(Bindings::name(Control::Rest), "Rest");
-        // Every control has a key or a button, but the Tweaks tab's, which start unbound.
+        // Every control has a key or a button, but the Tweaks tab's, which start unbound;
+        // the console and the screenshot at the end on their old keys.
         for (c, _, _) in &GAME_CONTROLS[..TWEAK_CONTROLS] {
             let x = b.get(*c);
             assert!(x.key.is_some() || x.mouse.is_some(), "{c:?}");
         }
-        for (c, _, _) in &GAME_CONTROLS[TWEAK_CONTROLS..] {
+        let extra = GAME_CONTROLS.len() - BOUND_EXTRA_CONTROLS;
+        for (c, _, _) in &GAME_CONTROLS[TWEAK_CONTROLS..extra] {
             assert_eq!(b.get(*c), Binding { key: None, mouse: None }, "{c:?}");
         }
+        assert_eq!(b.get(Control::Console), Binding { key: Some(KeyCode::Backquote), mouse: None });
+        assert_eq!(b.get(Control::Screenshot), Binding { key: Some(KeyCode::F12), mouse: None });
     }
 
     #[test]

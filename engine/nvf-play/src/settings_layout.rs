@@ -178,11 +178,12 @@ pub const SECTIONS: &[Section] = &[
         &["controls:bind:Hotkey1", "controls:bind:Hotkey3", "controls:bind:Hotkey4", "controls:bind:Hotkey5", "controls:bind:Hotkey6", "controls:bind:Hotkey7", "controls:bind:Hotkey8"],
     ),
     // The tweaks' own keys (#1892, `crate::bindings::TWEAK_CONTROLS` on), none bound until the
-    // player binds one: their own category after the game's [design: the menu overhaul,
-    // merged with #1892; the name is the overhaul's, open to the owner].
+    // player binds one, and the console's and the screenshot's (bound): their own category
+    // after the game's [design: the menu overhaul, merged with #1892; owner 2026-11-16:
+    // "Additional Features", the console and screenshot keys moved here as bindings].
     section(
         "Controls",
-        Some("Tweak Keys"),
+        Some("Additional Features"),
         &[
             "controls:bind:Holster Weapon",
             "controls:bind:Toggle Light",
@@ -210,6 +211,8 @@ pub const SECTIONS: &[Section] = &[
             "controls:bind:Place Marker Here",
             "controls:bind:Hide HUD",
             "controls:bind:Skip Radio Song",
+            "controls:bind:Console",
+            "controls:bind:Screenshot",
         ],
     ),
     section("Graphics", Some("Quality"), &["quality"]),
@@ -817,7 +820,7 @@ pub const SECTIONS: &[Section] = &[
     ),
     // Tweaks > Hotkeys.
     group_section("Hotkeys", "Hide HUD Key", &["tweak-hide-hud-ammo", "tweak-hide-hud-needs", "tweak-hide-hud-compass", "tweak-hide-hud-on-load", "tweak-hide-hud-sneak"]),
-    group_section("Hotkeys", "Other Keys", &["tweak-place-marker-here-says", "tweak-repeat-activate-takes-only", "tweak-console-key", "tweak-screenshot-key"]),
+    group_section("Hotkeys", "Other Keys", &["tweak-place-marker-here-says", "tweak-repeat-activate-takes-only"]),
     // Tweaks > Cheats.
     group_section("Cheats", "Weight", &["tweak-weightless-aid", "tweak-weightless-ammo", "tweak-weightless-armor", "tweak-weightless-misc", "tweak-weightless-weapons"]),
     group_section(
@@ -1452,7 +1455,7 @@ mod tests {
         no-weapon-move-penalty unequip-broken-armor hide-crosshair-first hide-crosshair-third no-skill-books-at-max \
         red-hp-below red-ap-below weapon-cnd-red-below weapon-cnd-flash-below blackjack-total player-pain-gap \
         pause-on-load swap-ammo-holstered slots-hold-to-spin no-auto-continue-dialogue shift-talks-sneaking \
-        no-quest-set-on-objective no-quest-set-on-complete hide-read-notes console-key tab-closes-terminals \
+        no-quest-set-on-objective no-quest-set-on-complete hide-read-notes tab-closes-terminals \
         tab-back-in-pause unsafe-fast-travel vats-auto-head vats-drops-disarmed-shots vats-target-projectiles \
         vats-target-mines vats-target-own-projectiles vats-ignore-non-explosive vats-burst-stops-on-kill \
         repair-needs-weapon-skill date-style hide-unknown-names vats-keeps-holstered no-hotkey-wheel ammo-label-under \
@@ -1472,7 +1475,7 @@ mod tests {
         vigor-review-first scope-delay no-pointer-message-box no-pointer-dialogue levelup-wheel compare-armor \
         detailed-stats minigames-timescale no-name-limit seat-keeps-on-activate plain-going-out \
         mark-recurring-challenges hide-hotkeyed-containers hide-hotkeyed-barter hide-hotkeyed-repair \
-        map-zoom-at-pointer console-homes screenshot-key shift-screenshot-hides print-plugin-names \
+        map-zoom-at-pointer console-homes shift-screenshot-hides print-plugin-names \
         weapon-requirements-matter console-model-details back-pace strafe-pace hack-no-single-chars \
         hack-no-repeat-words hack-dud-when-full hack-spare-guessed run-overencumbered over-run-ap over-jump-ap \
         npc-melee-part-damage disarm-needs-skill disarm-mult disarm-explode-mult cap-skills-by-special skill-cap-base \
@@ -1628,7 +1631,8 @@ mod tests {
     #[test]
     fn every_tweak_of_1892_has_its_group_and_category() {
         let tweaks = tweak_rows();
-        assert_eq!(tweaks.len(), 560);
+        // 560 less the console and screenshot keys, bindings since 2026-11-16 (Controls).
+        assert_eq!(tweaks.len(), 558);
         let mut rows: Vec<(&'static str, &'static str)> = KNOWN.to_vec();
         rows.extend(&tweaks);
         let list = registry(&rows);
