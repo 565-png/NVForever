@@ -560,9 +560,10 @@ pub const QUADRANT_WEST: usize = 3;
 ///   this step, so every other vertex along it (the ones the neighbour does not have) is
 ///   put halfway between its two neighbours on the side, with the normalised sum of their
 ///   normals: the side is then the neighbour's straight segments exactly, without the
-///   T-junction gaps a finer side's extra vertices would open, and lit as the neighbour
-///   interpolates it. Only the side's own vertices move; ignored where the drawn grid
-///   cannot be halved.
+///   gaps a finer side's extra vertices would open (the T-junctions stay, on one line).
+///   The normals agree with the neighbour's at the shared vertices; in between, the two
+///   sides interpolate them slightly differently (the moved vertex's normal is normalised).
+///   Only the side's own vertices move; ignored where the drawn grid cannot be halved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QuadrantDraw {
     pub step: usize,
