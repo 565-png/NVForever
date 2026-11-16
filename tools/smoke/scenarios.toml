@@ -1452,7 +1452,7 @@ forbid = [
 name = "sun-shadow-hold-flashlight"
 source = "#2182 review (vendored bevy_pbr light.rs prepare_lights, nvforever shadow_rate.rs): the player's flashlight casts shadows, so switching it on or off gives the sun a new shadow texture; that frame draws every cascade instead of holding one, outdoors at noon with the staggered schedule"
 areas = ["renderer", "flashlight"]
-paths = ["engine/nvforever/src/shadow_rate.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/nvforever/src/flashlight.rs"]
+paths = ["engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/shadow_anchor.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/nvforever/src/flashlight.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONTROL = "8:flashlight,14:flashlight" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
 run_seconds = 20
@@ -1469,7 +1469,7 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 name = "sun-shadow-stagger-off"
 source = "#2063 (nvforever shadow_rate.rs): the test aid NVF_PLAY_TEST_SHADOW_STAGGER=0 draws every cascade every frame on Quality; Performance still holds its maps"
 areas = ["renderer", "graphics", "settings"]
-paths = ["engine/nvforever/src/shadow_rate.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/vendor/bevy_pbr/src/render/gpu_preprocess.rs"]
+paths = ["engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/shadow_anchor.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/vendor/bevy_pbr/src/render/gpu_preprocess.rs"]
 env = { NVF_PLAY_TEST_SHADOW_STAGGER = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:12,17:19", NVF_PLAY_TEST_SETTINGS = "11:sun-shadows=0.5,18:sun-shadows=1" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
 run_seconds = 23
