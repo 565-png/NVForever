@@ -2690,19 +2690,6 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
-
-208. **Does held weather survive a door into another worldspace?** (P3; #1997;
-    `worldspace.rs::carry_sky`, `sky.rs::SkyState::carry_weather_from`.) In Freeside,
-    use the console to `ForceWeather` a clearly different weather with override flag 1,
-    then go through the gate into the Strip. Does that weather remain shown? Repeat
-    with `SetWeather` and its override flag, allowing its fade to finish first; then
-    call `ReleaseWeatherOverride` and check that normal weather returns. Save after
-    the door and load: is it still held? Both setters say the weather will not change
-    until release [documented: offline GECK wiki ForceWeather / SetWeather /
-    ReleaseWeatherOverride, snapshot 2026-10-28]; keeping it across a worldspace door
-    is provisional [hypothesis]. NVForever carries it without destination filtering
-    [design: `sky.rs::SkyState::carry_weather_from`].
-
 197. **What does a resurrected actor carry?** (P2; `fnv_game::resurrect`,
     `fnv_sim::World::restock_inventory`, issue #2683.) NVForever makes the items of a
     dead actor's own item list up again when it is resurrected (rolled anew; only what
@@ -2940,3 +2927,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      If he walks to the door out of Top and is moved on, the original starts a walk
      whose way ends at a locked door (at least as far as the door); if he stands still
      until the door is unlocked, ours is right and the trigger only serves after it.
+
+
+## Added 2026-11-15 (held weather across worldspace doors, #1997)
+
+208. **Does held weather survive a door into another worldspace?** (P3; #1997;
+    `worldspace.rs::carry_sky`, `sky.rs::SkyState::carry_weather_from`.) In Freeside,
+    use the console to `ForceWeather` a clearly different weather with override flag 1,
+    then go through the gate into the Strip. Does that weather remain shown? Repeat
+    with `SetWeather` and its override flag, allowing its fade to finish first; then
+    call `ReleaseWeatherOverride` and check that normal weather returns. Save after
+    the door and load: is it still held? Both setters say the weather will not change
+    until release [documented: offline GECK wiki ForceWeather / SetWeather /
+    ReleaseWeatherOverride, snapshot 2026-10-28]; keeping it across a worldspace door
+    is provisional [hypothesis]. NVForever carries it without destination filtering
+    [design: `sky.rs::SkyState::carry_weather_from`].
