@@ -132,6 +132,27 @@ expect = [
   { json = "warnings.#", schema = "fnv.ui.tree/1", equals = 0, count = 1 },
 ]
 
+[[scenario]]
+name = "ui-bit-test-operator"
+kind = "tool"
+source = "[documented] GECK UIO Extra XML Operators; docs/spec-notes/ui-bit-test-operator.md. Authored portable XML expressions without game data."
+note = "Qualified portable CLI pair at fedce260: the unchanged shared launcher runs normal-Cargo fnvtool images against identical authored XML and ten strict schema/count oracles. Baseline retains arithmetic 21 and sentinel 23 but fails six bit/dependent values plus zero-warning expectation; candidate passes all ten. The initial d4ac68b registry rejection is retained separately; dedicated control names preserve its numeric oracles and guard. No native/rendered-menu/installed-mod acceptance."
+areas = ["ui"]
+paths = ["crates/fnv-ui/", "crates/fnvtool/src/ui_cmd.rs", "docs/spec-notes/ui-bit-test-operator.md", "tools/smoke/fixtures/uio-bt/"]
+commands = [["ui", "tree", "--data", "tools/smoke/fixtures/uio-bt", "--menu", "menus/uio-bt.xml"]]
+expect = [
+  { json = "tree.name", schema = "fnv.ui.tree/1", equals = "UIOBitTest", count = 1 },
+  { json = "tree.traits.set", schema = "fnv.ui.tree/1", equals = 1, count = 1 },
+  { json = "tree.traits.clear", schema = "fnv.ui.tree/1", equals = 0, count = 1 },
+  { json = "tree.traits.index", schema = "fnv.ui.tree/1", equals = 1, count = 1 },
+  { json = "tree.traits.notmask", schema = "fnv.ui.tree/1", equals = 0, count = 1 },
+  { json = "tree.traits.nested", schema = "fnv.ui.tree/1", equals = 9, count = 1 },
+  { json = "tree.traits.dependent", schema = "fnv.ui.tree/1", equals = 27, count = 1 },
+  { json = "tree.traits.bt_arithmetic_control", schema = "fnv.ui.tree/1", equals = 21, count = 1 },
+  { json = "tree.traits.bt_sentinel_control", schema = "fnv.ui.tree/1", equals = 23, count = 1 },
+  { json = "warnings.#", schema = "fnv.ui.tree/1", equals = 0, count = 1 },
+]
+
 [[check]]
 name = "root cargo test"
 paths = ["crates/", "Cargo.toml", "Cargo.lock", "schemas/", "deny.toml"]
