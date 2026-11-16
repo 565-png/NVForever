@@ -21,17 +21,21 @@
 //! on Quality, and for both cascades on Performance.
 //!
 //! **What.** [`anchor_cascades`] moves each cascade of the sun and of the first-person
-//! arms' shade light (player_body.rs `ArmsShade`, which turns with the sun) by less than
-//! half a texel so that its grid is fixed to the light's axes through an anchor point near
-//! the cascade's middle ([`snap_to_anchor`]). A turn of the light then slides the grid at
-//! a point `P` by `|P − anchor| × dθ`, a few hundred units times `dθ` instead of 70,000
-//! times. The anchor stays put while the cascade's middle stays within
-//! [`ANCHOR_REACH_TEXELS`] texels of it on every world axis; past that it moves by whole
-//! texels in the light's axes, which keeps the grid where it was in that frame
-//! ([`pick_anchor`]). A cascade of another texel size (the moon's single cascade by night,
-//! Performance's two cascades, another view's frustum) takes a fresh anchor, and the
-//! anchors of cascades no longer built (a light or view gone, fewer cascades, a light
-//! casting no shadows) are forgotten. Test aid `NVF_PLAY_TEST_SHADOW_ANCHOR=0` leaves the
+//! arms' shade light (player_body.rs `ArmsShade`, which turns with the sun) across the
+//! light by at most about a texel, toward the middle of the slice it covers, so that its
+//! grid is fixed to the light's axes through an anchor point near the cascade's middle
+//! ([`snap_to_anchor`]). A turn of the light then slides the grid at a point `P` by
+//! `|P − anchor| × dθ`, a few hundred units times `dθ` instead of 70,000 times: in texels,
+//! at most about 0.03 of one a frame at the cascade's middle and 0.07 at its edge (at
+//! 3.6e-5 rad a frame, `P` up to 887 texels from the anchor and 1,024 more to the edge of
+//! a 2048-texel map). The anchor stays put while the cascade's middle stays within
+//! [`ANCHOR_REACH_TEXELS`] texels of it on every world axis (so up to about 887 texels
+//! away in a straight line); past that it moves by whole texels in the light's axes, which
+//! keeps the grid where it was in that frame ([`pick_anchor`]). A cascade of another texel
+//! size takes a fresh anchor: the moon's single cascade by night, Performance's second
+//! cascade (the first covers the same slice in both modes, has the same texel and keeps
+//! its anchor), a view whose frustum changed. The anchors of cascades no longer built (a
+//! light or view gone, fewer cascades, a light casting no shadows) are forgotten. Test aid `NVF_PLAY_TEST_SHADOW_ANCHOR=0` leaves the
 //! cascades on Bevy's grid through the origin, for measuring against.
 //!
 //! **Measured** [observed 2026-11-16: Goodsprings' start view standing still, 1280 × 720,
@@ -136,9 +140,23 @@ pub fn pick_anchor(centre: DVec3, texel: f32, light_from_world: DMat3, prev: Opt
     }
 }
 
-/// `c` moved by under half a texel across the light so that its near-plane centre lies a
-/// whole number of texels from `anchor` in the light's x and y (depth unchanged), its
-/// matrices formed as `bevy_light` `calculate_cascade` forms them: `cascade_from_world`
+/// Snapping a cascade already on an anchor's grid again leaves it there, against float
+/// error up to this share of a texel (see [`snap_to_anchor`]): 1/8, against the 32-bit
+/// near-plane centre's few thousandths of a unit 70,000 units out, a few hundredths of the
+/// finest cascade's texel [engineering choice].
+const SNAP_TIE: f64 = 0.125;
+
+/// `c` moved across the light so that its near-plane centre lies a whole number of texels
+/// from `anchor` in the light's x and y (depth unchanged): to the grid point nearest the
+/// middle of the slice as far as the cascade tells it. Bevy floors the near-plane centre
+/// to whole texels, so the slice's middle lies within a texel above it on each axis; the
+/// best guess is Bevy's centre plus half a texel, and the grid point nearest that is the
+/// first at or above Bevy's centre, taken from [`SNAP_TIE`] of a texel below it so that a
+/// centre on the grid already (or a float's error off it) stays. The centre then moves at
+/// most `1 − SNAP_TIE` texels up or `SNAP_TIE` down from Bevy's, and lies within
+/// `1 + SNAP_TIE` texels of the slice's middle (Bevy's own within one), where rounding
+/// Bevy's floored centre to the nearest grid point would leave it up to 1.5 texels off.
+/// Its matrices are formed as `bevy_light` `calculate_cascade` forms them: `cascade_from_world`
 /// straight from the transposed rotation and the negated centre (not by inverting), and
 /// `clip_from_world = clip_from_cascade × cascade_from_world`. The projection and texel
 /// size stay.
@@ -153,7 +171,7 @@ pub fn snap_to_anchor(c: &Cascade, anchor: DVec3) -> Cascade {
     // from the world's origin, its z the near plane), and the anchor's.
     let n = light_from_world * origin;
     let a = (light_from_world * anchor).truncate();
-    let xy: DVec2 = a + ((n.truncate() - a) / t).round() * t;
+    let xy: DVec2 = a + ((n.truncate() - a) / t - DVec2::splat(SNAP_TIE)).ceil() * t;
     let centre = xy.extend(n.z);
     let light_axes = Mat3::from_mat4(c.world_from_cascade).transpose();
     let cascade_from_world = Mat4::from_cols(light_axes.x_axis.extend(0.0), light_axes.y_axis.extend(0.0), light_axes.z_axis.extend(0.0), (-centre).as_vec3().extend(1.0));
@@ -303,17 +321,21 @@ mod tests {
     #[test]
     fn snapping_moves_the_centre_under_half_a_texel_across_the_light_and_keeps_its_depth() {
         let c = bevy_cascade(sun(0.0), FAR + Vec3::new(37.0, 0.0, 81.0));
+        let t = f64::from(TEXEL);
         for anchor in [FAR.as_dvec3(), FAR.as_dvec3() + DVec3::new(123.4, -5.6, 78.9), DVec3::ZERO] {
             let s = snap_to_anchor(&c, anchor);
             let (n, m) = (near_centre(&c), near_centre(&s));
             let d = m - n;
-            assert!(d.x.abs() <= 0.5 * f64::from(TEXEL) + 0.02 && d.y.abs() <= 0.5 * f64::from(TEXEL) + 0.02, "{d}");
+            // Up toward the middle by under a texel, or down by at most SNAP_TIE of one.
+            for d in [d.x, d.y] {
+                assert!((-SNAP_TIE * t - 0.02..=(1.0 - SNAP_TIE) * t + 0.02).contains(&d), "{d}");
+            }
             assert!(d.z.abs() < 0.05, "depth kept: {d}");
             // Its x and y are whole texels from the anchor's.
             let a = light_from_world(&c) * anchor;
             let k = (m.truncate() - a.truncate()) / f64::from(TEXEL);
             assert!((k - k.round()).abs().max_element() < 0.05, "{k}");
-            // Snapping again changes nothing.
+            // Snapping again changes nothing (no walk by a texel a snap).
             let again = near_centre(&snap_to_anchor(&s, anchor));
             assert!((again - m).abs().max_element() < 0.02, "{again} {m}");
             assert_eq!((s.clip_from_cascade, s.texel_size), (c.clip_from_cascade, c.texel_size));
@@ -455,6 +477,37 @@ mod tests {
             let k = (near_centre(c).truncate() - (light_from_world(c) * a.at).truncate()) / f64::from(c.texel_size);
             assert!((k - k.round()).abs().max_element() < 0.05, "cascade {i}: {k}");
         }
+    }
+
+    /// The chain's order: the anchoring runs on the cascades Bevy built this frame, before
+    /// the hold gives a kept one back. Between a drawn and a held frame Bevy's cascade moves
+    /// past the anchor's reach: the anchor follows the cascade built (it re-anchors), and
+    /// the held cascade is the drawn one, bit for bit. Were the anchoring after the hold, it
+    /// would see the given-back cascade instead, at the old place, and keep the old anchor.
+    #[test]
+    fn the_anchors_follow_the_built_cascades_not_the_held_ones() {
+        let (mut world, mut schedule, view) = edits_world();
+        let light = sun_light(&mut world, true);
+        let key = (light, view, 0);
+        let one = |at: Vec3| built(view, vec![bevy_cascade(sun(0.0), at)]);
+        // Performance, one cascade: frames 1 and 2 draw (the first has nothing kept), 3 holds.
+        for _ in 0..2 {
+            world.entity_mut(light).insert(one(FAR));
+            schedule.run(&mut world);
+        }
+        assert_eq!(world.resource::<HoldDirectionalShadowMaps>().0, 0);
+        let drawn = world.get::<Cascades>(light).unwrap().cascades[&view][0].clone();
+        let before = world.resource::<CascadeAnchors>().0[&key];
+        let moved = FAR + Vec3::new(3.0 * (ANCHOR_REACH_TEXELS * f64::from(TEXEL)) as f32, 0.0, 0.0);
+        let fresh = bevy_cascade(sun(0.0), moved);
+        let want = pick_anchor(cascade_centre(&fresh), TEXEL, light_from_world(&fresh), Some(before));
+        assert_ne!(want, before, "the move re-anchors");
+        world.entity_mut(light).insert(one(moved));
+        schedule.run(&mut world);
+        assert_eq!(world.resource::<HoldDirectionalShadowMaps>().0, 0b1, "frame 3 holds");
+        let now = &world.get::<Cascades>(light).unwrap().cascades[&view][0];
+        assert_eq!((now.clip_from_world, now.clip_from_cascade, now.world_from_cascade, now.texel_size), (drawn.clip_from_world, drawn.clip_from_cascade, drawn.world_from_cascade, drawn.texel_size));
+        assert_eq!(world.resource::<CascadeAnchors>().0[&key], want, "anchored from the cascade built this frame");
     }
 
     /// The anchors follow the cascades: the moon's single cascade of another texel size

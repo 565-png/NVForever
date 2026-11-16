@@ -899,6 +899,9 @@ about 0.1 ms.
    - A first try without the sample mask (depth equality with the old prepass) lost the
      soft edges: grass thinned out and fence wires broke up. That is why the prepass writes
      them.
+   - On Vulkan it needs the vendored naga's fix (engine/vendor/README.md, "naga"; #2413):
+     upstream naga declares the sample mask output as a scalar, which Vulkan forbids, and
+     Intel's shader compiler crashed on it.
 3. **One multisample resolve instead of three** (engine/vendor/README.md, "one resolve").
    The opaque, transmissive and transparent passes each resolved the 4x HDR target, and the
    transmissive pass copied the resolved frame. Now the samples are resolved once into the
@@ -1169,10 +1172,13 @@ into a pulse: a held cascade keeps the matrices it was drawn with and stands sti
 changes all at once on the frame it is drawn again.
 
 The fix (nvforever shadow_anchor.rs) [engineering choice]: after Bevy builds the cascades,
-each cascade of the sun and of the arms' shade light is moved by under half a texel onto a
-grid through an anchor near the cascade's middle, which stays put until the cascade's
-middle is 512 texels from it and then moves by whole texels in the light's axes. The grid
-then slides by the distance from the anchor times `dθ`, a few hundredths of a texel.
+each cascade of the sun and of the arms' shade light is moved across the light by at most
+about a texel, toward the middle of its slice, onto a grid through an anchor near the
+cascade's middle. The anchor stays put until the cascade's middle is more than 512 texels
+from it on some world axis (up to about 887 texels in a straight line) and then moves by
+whole texels in the light's axes. The grid then slides by the distance from the anchor
+times `dθ`: at most about 0.03 texel a frame at the cascade's middle and 0.07 at its edge,
+against several texels a frame on the origin's grid.
 Then the cascades are stretched toward the sun and the held ones given back, in that order
 (shadow_anchor.rs `cascade_edits`). Test aid `NVF_PLAY_TEST_SHADOW_ANCHOR=0` leaves the grid
 through the origin.
