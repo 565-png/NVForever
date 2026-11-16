@@ -29,3 +29,9 @@ Reuse the accepted command and its existing argument encoding.
 [hypothesis] The first three names are admitted through source names only;
 native encoding, original-game edge cases and installed-mod execution remain
 separate work. Synthetic tests establish NVForever behavior, not native parity.
+
+[hypothesis] `IsActorDetected` retains its accepted measured-cache behavior and
+also admits references carried by LVLN/LVLC after selecting their actual actor
+with the runtime template resolver. This changes receiver admission only: player
+perception and self-perception remain excluded, and querying does not remeasure
+or change the cache.

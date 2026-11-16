@@ -160,4 +160,24 @@ mod tests {
         g.run_query("Begin Function { }\nRef301.SetFactionRank TestFaction 2\nRef301.RemoveFac TestFaction\nEnd\n", Default::default()).unwrap();
         assert_eq!(crate::functions::actor::faction_rank(&g, FormId(0x301), FormId(0x830)), -1);
     }
+
+    #[test]
+    fn detection_query_admits_selected_leveled_actors_without_changing_cache_rules() {
+        use crate::detection::{Band, Detection};
+        let f = fixture(); let mut g = game(&f);
+        for target in [0x301, 0x302, 0x303, 0x304] {
+            let detector = if target == 0x301 { 0x303 } else { 0x301 };
+            g.detection.record(FormId(detector), FormId(target), Detection { value: 10.0, band: Band::Detected, ..Default::default() }, g.time);
+            let before = g.detection.pairs.len();
+            assert_eq!(query(&mut g, "IsActorDetected", Some(target)), XVal::Num(1.0));
+            assert_eq!(g.detection.pairs.len(), before);
+        }
+        g.detection.pairs.clear();
+        for detector in [FormId::PLAYER_REF, FormId(0x302)] {
+            g.detection.record(detector, FormId(0x302), Detection { value: 10.0, band: Band::Detected, ..Default::default() }, g.time);
+        }
+        assert_eq!(query(&mut g, "IsActorDetected", Some(0x302)), XVal::Num(0.0));
+        g.detection.record(FormId(0x301), FormId(0x305), Detection { value: 10.0, band: Band::Detected, ..Default::default() }, g.time);
+        assert_eq!(query(&mut g, "IsActorDetected", Some(0x305)), XVal::Num(0.0));
+    }
 }
