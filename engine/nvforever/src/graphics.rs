@@ -320,11 +320,50 @@ impl Graphics {
     }
 }
 
-/// Shadow map side of every directional light, with longer shadows or without (Bevy's
-/// default). 4096² with longer shadows cost about 2.1 ms a frame at Novac and 0.65 ms at
-/// Goodsprings for edges hardly sharper near the player [observed 2026-11-03, RTX 4070,
-/// 1920x1080; owner's choice 2026-11-03, #1367: the smaller maps, for the frame rate].
+/// Shadow map side of every directional light by default, with longer shadows or without
+/// (Bevy's default). 4096² with longer shadows cost about 2.1 ms a frame at Novac and 0.65
+/// ms at Goodsprings for edges hardly sharper near the player [observed 2026-11-03, RTX
+/// 4070, 1920x1080; owner's choice 2026-11-03, #1367: the smaller maps, for the frame
+/// rate]. The Shadow resolution row ([`SHADOW_RESOLUTIONS`]) can choose 4096 in play
+/// [engineering choice: the contributor's proposal in #2843, for the maintainer to decide;
+/// observed 2026-11-16 with the cascades of that time: 0.2-0.3 ms a frame at Goodsprings,
+/// RTX 5070 Ti, 2560 × 1440 (docs/design/frame-rate-audit.md §12)], and the sun's Quality
+/// cascades are laid out for the side chosen (sky.rs `shadow_cascade_layout`).
 const SHADOW_MAP: usize = 2048;
+
+/// The settings page's Shadow resolution choices, in its order: the side of the shadow
+/// maps of every directional light (`DirectionalLightShadowMap`), [`SHADOW_MAP`] first.
+/// 4096² maps take about 200 MB more video memory than 2048² for the sun's four cascades
+/// (four layers of 4096² against 2048², by arithmetic) [engineering choice, #2843].
+pub const SHADOW_RESOLUTIONS: [(&str, usize); 2] = [("2048", 2048), ("4096", 4096)];
+
+/// The Shadow resolution row's choice now (an index into [`SHADOW_RESOLUTIONS`]; a side
+/// not among them reads as the first).
+pub fn shadow_resolution_choice(world: &World) -> usize {
+    let side = crate::sky::map_side(world.get_resource::<DirectionalLightShadowMap>());
+    SHADOW_RESOLUTIONS.iter().position(|&(_, s)| s == side).unwrap_or(0)
+}
+
+/// Choose Shadow resolution `i` of [`SHADOW_RESOLUTIONS`]: the maps change size now (Bevy
+/// makes new ones; `shadow_rate::hold_cascades` draws every cascade that frame, the anchors
+/// of shadow_anchor.rs start afresh for the new texel size, and `sun_shadow_quality` lays
+/// out Quality's cascades for the new side). The resource is written only when the side
+/// changes.
+pub fn set_shadow_resolution_choice(world: &mut World, i: usize) {
+    let side = SHADOW_RESOLUTIONS[i.min(SHADOW_RESOLUTIONS.len() - 1)].1;
+    let mut map = world.get_resource_or_insert_with(|| DirectionalLightShadowMap { size: SHADOW_MAP });
+    if map.size != side {
+        map.size = side;
+    }
+}
+
+/// Say the shadow maps' side at the start and whenever it changes (the Shadow resolution
+/// row): `sun shadows: maps 2048 x 2048 texels`.
+fn log_shadow_map(map: Option<Res<DirectionalLightShadowMap>>) {
+    if let Some(map) = map.filter(|m| m.is_changed()) {
+        info!("sun shadows: maps {0} x {0} texels", map.size);
+    }
+}
 /// With longer shadows they reach this many times `--shadow-distance`.
 pub const FINE_SHADOW_REACH: f32 = 1.5;
 
@@ -476,7 +515,8 @@ impl Plugin for GraphicsPlugin {
             .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
             .add_plugins((crate::ssao::SsaoPlugin, crate::post::PostPlugin, crate::taa::TaaPlugin, crate::shafts::ShaftsPlugin, crate::upscaler::prep::PrepPlugin, crate::fsr::FsrPlugin, crate::dlss::DlssPassPlugin))
             .add_systems(Startup, |g: Res<Graphics>| info!("graphics: {}", g.describe()))
-            .add_systems(Update, (crate::upscaler::follow_request, apply, sun_shadow_key.pipe(sun_shadow_quality).after(crate::sky::update_sky)).chain());
+            .add_systems(Update, (crate::upscaler::follow_request, apply, sun_shadow_key.pipe(sun_shadow_quality).after(crate::sky::update_sky)).chain())
+            .add_systems(Update, log_shadow_map);
         if let Some(ft) = self.2.clone().filter(|f| f.every > 0.0) {
             // GPU time per render pass (timestamp queries), logged with the frame time.
             ensure_render_diagnostics(app);
@@ -1183,6 +1223,24 @@ mod tests {
         app.update();
         assert!(!app.world().get::<DirectionalLight>(third).unwrap().shadow_maps_enabled);
         assert!(!app.world().get::<DirectionalLight>(second).unwrap().shadow_maps_enabled);
+    }
+
+    /// The Shadow resolution row's choices set the maps' side, and read back; a world
+    /// without the resource reads the first choice and gets one when a choice is made.
+    #[test]
+    fn shadow_resolution_choices_set_the_map_side() {
+        let mut world = World::new();
+        assert_eq!(shadow_resolution_choice(&world), 0);
+        set_shadow_resolution_choice(&mut world, 1);
+        assert_eq!(world.resource::<DirectionalLightShadowMap>().size, 4096);
+        assert_eq!(shadow_resolution_choice(&world), 1);
+        set_shadow_resolution_choice(&mut world, 0);
+        assert_eq!(world.resource::<DirectionalLightShadowMap>().size, SHADOW_MAP);
+        assert_eq!(shadow_resolution_choice(&world), 0);
+        // Past the end: the last choice.
+        set_shadow_resolution_choice(&mut world, 9);
+        assert_eq!(world.resource::<DirectionalLightShadowMap>().size, 4096);
+        assert_eq!(SHADOW_RESOLUTIONS[0].1, SHADOW_MAP, "the default first");
     }
 
     /// The Shadow resolution row changes the key's map size: Quality's layout follows it

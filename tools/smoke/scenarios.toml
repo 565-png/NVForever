@@ -1512,6 +1512,37 @@ forbid = [
 ]
 
 [[scenario]]
+name = "sun-shadow-resolution"
+source = "docs/design/frame-rate-audit.md §12 (#2843; nvforever graphics.rs SHADOW_RESOLUTIONS, sky.rs shadow_cascade_layout): the settings page's Shadow resolution row goes to 4096 and back to 2048 while the game runs on Sun shadows Quality: the sun's maps change size, a new shadow texture draws every cascade, and the cascades' far bounds follow the size (700, 2,000, 5,000 with 2048; 1,500, 3,500, 7,000 with 4096), without a rendering error"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/shadow_anchor.rs",
+  "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings_layout.rs", "engine/vendor/bevy_pbr/src/render/light.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:12,17:19", NVF_PLAY_TEST_SETTINGS = "11:shadow-resolution=1,18:shadow-resolution=0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
+run_seconds = 23
+order = [[
+  { text = "sun shadows: maps 2048 x 2048 texels", label = "the maps start at 2048 (the default)" },
+  { text = "sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels […] units", label = "Quality with 2048 maps: 700, 2,000 and 5,000 of the 8,000 units" },
+  "settings: shadow-resolution 4096",
+  { text = "sun shadows: maps 4096 x 4096 texels", label = "the row makes the maps 4096 in play" },
+  { text = "held shadow maps: a new directional shadow texture", label = "4096: a new shadow texture, every cascade drawn" },
+  { text = "sun shadows: cascades far bounds [1500, 3500, 7000, 8000] texels […] units", label = "Quality with 4096 maps: 1,500, 3,500 and 7,000 of the 8,000 units" },
+  "settings: shadow-resolution 2048",
+  { text = "sun shadows: maps 2048 x 2048 texels", label = "back to 2048 in play" },
+  { text = "held shadow maps: a new directional shadow texture", label = "2048 again: a new shadow texture, every cascade drawn" },
+  { text = "sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels […] units", label = "Quality with 2048 maps again: the nearer bounds" },
+]]
+expect = [
+  { text = "sun shadows: a frame kept its farther cascades' maps (staggered schedule", min = 1, label = "the staggered schedule holds cascades" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error while the shadow maps change size under held cascades" },
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
+]
+
+[[scenario]]
 name = "settings-resume-pipelines"
 source = "[design] #1820 pipeline portion: graphics-enhanced.md section 3; resume 0.5 seconds after AA/AO edits, keeping the pause menu until fresh pipeline samples settle (loading-pipelines-start covers the start's gate)"
 areas = ["renderer", "graphics", "settings"]

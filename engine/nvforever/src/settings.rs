@@ -10,7 +10,7 @@
 //! are the Sound tab, `nvf_play::audio_out::register_settings`)
 //! and the test aids. The draw distances are sliders here, each a part of the
 //! command line's distance (`draw_distance.rs`); the field of view, the frame-rate cap and the
-//! anti-aliasing and shadow-filter choices are sliders whose steps are the choices.
+//! anti-aliasing, shadow-filter and shadow-resolution choices are sliders whose steps are the choices.
 
 use crate::draw_distance::{self, DrawClass, DrawDistances};
 use crate::fly::FlyCam;
@@ -972,6 +972,19 @@ fn register_graphics(app: &mut App) {
                 },
                 |w, v| w.resource_mut::<Graphics>().shadow_filter = graphics::SHADOW_FILTERS[choice_index(v, graphics::SHADOW_FILTERS.len())].1,
                 |v| graphics::SHADOW_FILTERS[choice_index(v, graphics::SHADOW_FILTERS.len())].0.to_string(),
+            ),
+        ),
+        // The sun's shadow maps' side, 2048 (the default) or 4096, changed in play (#2843).
+        Setting::slider(
+            "shadow-resolution",
+            GROUP_GRAPHICS,
+            "Shadow resolution",
+            "Size of the sun's shadow maps: 4096 draws sharper shadows than 2048. It takes more video memory and a little frame rate.",
+            Slider::choice(
+                graphics::SHADOW_RESOLUTIONS.len(),
+                |w| choice_part(graphics::shadow_resolution_choice(w), graphics::SHADOW_RESOLUTIONS.len()),
+                |w, v| graphics::set_shadow_resolution_choice(w, choice_index(v, graphics::SHADOW_RESOLUTIONS.len())),
+                |v| graphics::SHADOW_RESOLUTIONS[choice_index(v, graphics::SHADOW_RESOLUTIONS.len())].0.to_string(),
             ),
         ),
     ];
@@ -2382,6 +2395,7 @@ dlss-model=Preset K
             ("fsr-library", &[]),
             ("anti-aliasing", &["--msaa", "--graphics-only"]),
             ("shadow-filter", &[]),
+            ("shadow-resolution", &[]),
             (FRAME_GENERATION_KEY, &["--frame-generation"]),
             (FRAMES_KEY, &[]),
             ("latency-reduction", &["--latency-reduction"]),
