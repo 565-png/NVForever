@@ -990,7 +990,10 @@ fn fast_travel_to(here: Space, to: Space) -> bool {
     match to {
         // The Mojave is matched by its FormID; Tale of Two Wastelands' Capital Wasteland
         // has no fixed one, and a long way into it is only cut when it is the player's own.
-        Space::World(w) => here == to || w == MOJAVE,
+        // Or a worldspace of the base game itself (the Strip, Freeside: map markers a
+        // player fast travels to); never an add-on's. From Goodsprings the way to Tops
+        // ran 165,000 units, all of it walked, into the Strip's worldspace.
+        Space::World(w) => here == to || w == MOJAVE || w >> 24 == 0,
         Space::Interior(_) => false,
     }
 }
@@ -1575,6 +1578,9 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
             } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, door, feet) {
                 w.door_since = Some(p.now);
                 return Walked::Going;
+            } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && fetch_key(p, &mut w.poked, &mut w.errand, h, nav, door, feet) {
+                (w.follower, w.door_since) = (None, None);
+                return Walked::Going;
             } else if let Some(lock) = lock_words(nav, door).filter(|_| w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS)) {
                 info!("pilot: step {}: door {door:08X} on the way is {lock} and nothing opened it in {LOCKED_SECS:.0} s after the player tried it: another way round", p.i);
                 w.tried.push((door, lock));
@@ -1639,6 +1645,10 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 };
                 if try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, d.door, feet) {
                     w.door_since = Some(p.now);
+                    return Walked::Going;
+                }
+                if fetch_key(p, &mut w.poked, &mut w.errand, h, nav, d.door, feet) {
+                    (w.follower, w.door_since) = (None, None);
                     return Walked::Going;
                 }
                 info!("pilot: step {}: door {:08X} is {lock} and nothing opened it in {LOCKED_SECS:.0} s after the player tried it: another way round", p.i, d.door);
@@ -1869,6 +1879,43 @@ fn try_beside(p: &Pilot, poked: &mut Vec<(u32, u32)>, side: &mut Option<(FormId,
     let done = h.script.rt.as_mut().map(|rt| with_world(rt, h.sim, |rt| rt.activate_as_player(r)));
     info!("pilot: step {}: door {door:08X} stays locked: the player uses {name} ({what}, {away:.0} units from the door): {}", p.i, outcome(done.as_ref()));
     true
+}
+
+/// A locked door's key the player does not carry: fetched as a player fetches it, from a
+/// body, a container or where it lies (`find_item`, as an `add_item` step finds an item),
+/// once a walk and door; the walk plans again after the errand. A key only a living actor
+/// carries is not taken (a quest that hands it over would be the way): a finding names
+/// the holder. Whether there was a key to fetch.
+fn fetch_key(p: &mut Pilot, poked: &mut Vec<(u32, u32)>, errand: &mut Option<(Errand, Place)>, h: &mut Hands, nav: &crate::nav::NavState, door: u32, feet: [f32; 3]) -> bool {
+    let Some(key) = nav.graph.door_locks.get(&door).and_then(|l| l.key) else { return false };
+    if poked.contains(&(key, door)) {
+        return false;
+    }
+    poked.push((key, door));
+    let world = h.world;
+    let look = h.game(|g| {
+        if g.world.item_count(FormId::PLAYER_REF, FormId(key)).unwrap_or(0) > 0 {
+            return None;
+        }
+        let holder = g.world.changed().find(|(r, st)| *r != FormId::PLAYER_REF && g.data.actors.contains_key(&st.base) && !g.is_dead(*r) && st.inventory.as_ref().is_some_and(|inv| inv.iter().any(|(i, n)| i == FormId(key) && n > 0))).map(|(r, _)| r);
+        Some((find_item(g, FormId(key), feet), holder, g.data.name(FormId(key))))
+    }).flatten();
+    let Some((found, holder, name)) = look else { return false };
+    match found {
+        Some((from, cell, pos, lying)) => {
+            let space = cell.and_then(|c| crate::nav::space_of_cell(world, c.0)).unwrap_or(space_of(h.location));
+            info!("pilot: step {}: door {door:08X} wants {name} ({key:08X}): the player goes for it", p.i);
+            *errand = Some((Errand::Take { from, item: FormId(key), count: 1, lying }, Place { space, pos }));
+            true
+        }
+        None => {
+            if let Some(who) = holder {
+                let them = h.game(|g| g.data.name(who)).unwrap_or_default();
+                p.finding("key_held", format!("door {door:08X} wants {name} ({key:08X}), which only {them} ({:08X}), alive, carries: no player way to it here", who.0));
+            }
+            false
+        }
+    }
 }
 
 /// A door's lock as the nav graph has it now, in words; `None`: not locked.

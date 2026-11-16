@@ -44,7 +44,7 @@ NVFOREVER_HOME=<a folder of its own> nvforever --data <Data> --play --new-game \
 
 | step | in the pilot |
 |---|---|
-| `move_player`, `go_to_cell`, `trigger_enter` | a walk on the navmesh (`fnv_nav`) on the player's own movement controls, through doors; a long way out of doors is cut to its last 3,000 units (a fast-travel stand-in), only within the player's own worldspace or into the Mojave's (never a DLC's), and never past a door whose script runs on activation (it is cut to 3,000 units before that door, or not at all when the way to it is indoors: Lonesome Road's Divide east door takes the player's controls, and Ulysses' trigger beyond it gives them back); a load door into its own worldspace (the Strip's gates) counts as gone through by the jump; never put where it could not walk |
+| `move_player`, `go_to_cell`, `trigger_enter` | a walk on the navmesh (`fnv_nav`) on the player's own movement controls, through doors; a long way out of doors is cut to its last 3,000 units (a fast-travel stand-in), only within the player's own worldspace, into the Mojave's or another of the base game's (the Strip, Freeside; never a DLC's), and never past a door whose script runs on activation (it is cut to 3,000 units before that door, or not at all when the way to it is indoors: Lonesome Road's Divide east door takes the player's controls, and Ulysses' trigger beyond it gives them back); a load door into its own worldspace (the Strip's gates) counts as gone through by the jump; never put where it could not walk |
 | `talk`, `player_activate` | walk there, turn the view on it, ask the crosshair (`could_not_target` when it does not take it), activate as E does |
 | `choose`, `wait_talk`, `end_talk` | the dialogue screen's own calls; leaving is by the Goodbye choice with its line heard out (#2157), Tab on a topic list, `no_way_out` otherwise |
 | `say_info` (campaign) | the player brings the line about: keeps the speaker company, talks to it when it stands silent, picks the choices that lead to the line (`choice_toward`, up to 5 picks deep), or, with no known way, tries the choices on offer one topic at a time (up to 12) |
@@ -72,7 +72,7 @@ into the ride; the direct door stays disabled until the player is down there; wh
 way there is such a door, out of the world and on a navmesh the ride enables, the player goes
 to its switch first, then waits and plans again), takes the navmesh's ledges (drops and climbs)
 when no way is walkable without them (Lonesome Road's Divide is ten areas joined by ledges),
-and at a door that stays locked (or, unlocked, does
+fetches a locked door's key from a body, a container or where it lies (a key only a living actor carries is not taken: a `key_held` finding names the holder), and at a door that stays locked (or, unlocked, does
 not take the player: a vault door "activated elsewhere") tries the door's switch (a script that
 names the door), a talking activator beside it, any other scripted activator beside it, a terminal entry
 that names the door, then another way round.
