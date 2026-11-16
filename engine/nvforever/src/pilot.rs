@@ -3114,8 +3114,19 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                 return Some(r.and_then(|r| r.err()));
             }
             if wait_an_hour(p, h) == Some(false) {
-                // Refused (enemies near, or not now): a moment, then again; the step's
-                // own limit ends it.
+                // Refused (enemies near, or not here: Gomorrah01 is flagged Can't Wait): a
+                // moment, then again, a few times; then as the headless run does it (the
+                // step's time is reset below for the hours waited, so it never ran out:
+                // Bye Bye Love asked the Wait menu 152 times in Gomorrah's lobby).
+                p.part += 1;
+                if p.part > WAIT_REFUSALS {
+                    p.finding("wait_refused", format!("the Wait menu refused the player {WAIT_REFUSALS} times at {marker}, waiting for {who}: moved as the headless run moves it"));
+                    p.headless("call (no waiting allowed there)");
+                    let mut applier = std::mem::take(&mut p.applier);
+                    let r = h.game(|g| runner::apply_now(g, &mut applier, &a));
+                    p.applier = applier;
+                    return Some(r.and_then(|r| r.err()));
+                }
                 p.phase = Phase::Wait { until: p.now + 5.0 };
             }
             p.step_from = p.now - 1.0;
@@ -3654,6 +3665,9 @@ const SHOOT_OBJECT_FROM: f32 = 600.0;
 /// The longest a `call_until` waits, seconds: past [`STEP_SECS`], as end slides run for
 /// minutes (the headless chains give them up to 30).
 const CALL_UNTIL_CAP: f64 = 1800.0;
+/// How many refusals of the Wait menu a step that waits for an actor takes before it
+/// gives up waiting.
+const WAIT_REFUSALS: u8 = 6;
 /// How far inside a trigger's faces the walk into it from its near side aims, game units.
 const TRIGGER_INSET: f32 = 24.0;
 /// How long a walk waits for a travel a script asked for, seconds.
