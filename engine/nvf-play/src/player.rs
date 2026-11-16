@@ -930,7 +930,7 @@ pub(crate) fn mouse_look(
     driven: Option<Res<ViewDriven>>,
     free_cam: Option<Res<crate::free_cam::FreeCam>>,
     kill_cam: Option<Res<crate::kill_cam::KillCam>>,
-    assist: Option<Res<crate::aim_assist::AimAssistState>>,
+    (assist, aim): (Option<Res<crate::aim_assist::AimAssistState>>, Option<Res<crate::aim_zoom::AimZoom>>),
     (talk, switches, mut mouse_guard): (
         Option<Res<crate::dialogue_zoom::DialogueZoom>>,
         Option<Res<crate::script_switches::ScriptSwitches>>,
@@ -1003,6 +1003,10 @@ pub(crate) fn mouse_look(
     }
     // A conversation's zoom as it eases out: the picture moves as far as it does unzoomed.
     let s = s * talk.as_deref().map_or(1.0, crate::dialogue_zoom::DialogueZoom::look_scale);
+    // The Controls tab's Aim Sensitivity of the device in use, as far as the view is zoomed
+    // for the aim (down the sights or through a scope; `crate::aim_zoom`): the hip look is
+    // left as it is.
+    let s = s * aim_scale(bindings.aim_sensitivity(), aim.as_deref().map_or(0.0, crate::aim_zoom::AimZoom::share));
     let inv = bindings.invert_y;
     // The player's tweak: left and right at their own speed [design: docs/design/tweaks.md].
     let delta = Vec2::new(delta.x * tweaks.as_ref().map_or(1.0, |t| t.horizontal_look as f32), delta.y);
@@ -1071,6 +1075,15 @@ impl DialogueMouseGuard {
 /// #2201]; 1 leaves it exactly as it is.
 pub fn vertical_scaled(delta: Vec2, vertical: f32) -> Vec2 {
     Vec2::new(delta.x, delta.y * vertical)
+}
+
+/// What the look's radians per count are multiplied by for `aim`, the Controls tab's Aim
+/// Sensitivity of the device in use, with the view `zoomed` of the way to the aim's zoom
+/// (`crate::aim_zoom::AimZoom::share`: 0 unzoomed, 1 down the sights or through a scope)
+/// [design: owner 2026-11-15]. Exactly 1 unzoomed, and at an Aim Sensitivity of 1 (the
+/// look as before); `aim` at the full zoom, in step with the zoom between.
+pub fn aim_scale(aim: f32, zoomed: f32) -> f32 {
+    1.0 + (aim - 1.0) * zoomed.clamp(0.0, 1.0)
 }
 
 /// Radians per unit of the right stick's turn (a look speed of 1000 turns a radian a
@@ -1907,6 +1920,57 @@ mod tests {
             assert_eq!(h, h1);
             assert!(((p - 0.1) - (p1 - 0.1) / 2.0).abs() < 1e-6, "{p} {p1}");
         }
+    }
+
+    /// Owner 2026-11-15: the Aim Sensitivity scales the look by how far the view is zoomed
+    /// for the aim (`crate::aim_zoom::AimZoom::share`); unzoomed (the hip look), and at 100%,
+    /// the look is exactly as before.
+    #[test]
+    fn the_aim_sensitivity_scales_the_look_only_while_zoomed_for_the_aim() {
+        use bevy::input::mouse::AccumulatedMouseMotion;
+        use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+        for zoomed in [0.0, 0.25, 0.5, 1.0] {
+            assert_eq!(aim_scale(1.0, zoomed), 1.0, "100%: as before");
+        }
+        for aim in [crate::bindings::SENSITIVITY_LEAST, 0.5, 1.5, crate::bindings::SENSITIVITY_MOST] {
+            assert_eq!(aim_scale(aim, 0.0), 1.0, "unzoomed: as before");
+            assert!((aim_scale(aim, 1.0) - aim).abs() < 1e-6, "{aim}");
+        }
+        assert!((aim_scale(0.5, 0.5) - 0.75).abs() < 1e-6, "in step with the zoom");
+        // The zoom's share as the field of view moves: none at rest, all at the full zoom.
+        let mut z = crate::aim_zoom::AimZoom::default();
+        assert_eq!(z.share(), 0.0);
+        z.blend = 1.0;
+        assert_eq!(z.share(), 1.0);
+        // Through the look system: the mouse's turn this frame at an Aim Sensitivity `aim`
+        // with the aim's zoom at `blend`.
+        let turned = |aim: f32, blend: f32| {
+            let mut app = App::new();
+            let mut zoom = crate::aim_zoom::AimZoom::default();
+            zoom.blend = blend;
+            let mut b = Bindings::game_defaults();
+            b.aim = [aim, 1.0];
+            app.insert_resource(State::new(PlayState::Playing))
+                .insert_resource(Time::<()>::default())
+                .insert_resource(b)
+                .insert_resource(zoom)
+                .init_resource::<crate::control::ControlLocks>()
+                .init_resource::<PlayerControl>()
+                .init_resource::<crate::furniture::PlayerSeat>()
+                .insert_resource(AccumulatedMouseMotion { delta: Vec2::new(80.0, 20.0) })
+                .insert_resource(Player { heading: 1.0, pitch: 0.0, eye_height: 112.0, feet: [0.0; 3], body_eye: None, body_view: None, placed: None })
+                .add_systems(Update, mouse_look);
+            app.world_mut().spawn((PrimaryWindow, CursorOptions { grab_mode: CursorGrabMode::Confined, ..default() }));
+            app.update();
+            let p = app.world().resource::<Player>();
+            (p.heading - 1.0, p.pitch)
+        };
+        let hip = turned(1.0, 0.0);
+        assert!(hip.0 > 0.0 && hip.1 < 0.0, "{hip:?}");
+        assert_eq!(turned(0.5, 0.0), hip, "unzoomed the Aim Sensitivity does nothing");
+        assert_eq!(turned(1.0, 1.0), hip, "at 100% the zoomed look is as before");
+        let half = turned(0.5, 1.0);
+        assert!((half.0 - hip.0 / 2.0).abs() < 1e-6 && (half.1 - hip.1 / 2.0).abs() < 1e-6, "both axes half as far: {half:?} {hip:?}");
     }
 
     fn close(a: [f32; 2], b: [f32; 2]) -> bool {

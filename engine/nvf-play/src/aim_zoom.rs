@@ -24,6 +24,10 @@
 //!   Scope from Mod with an Increase Zoom mod on) at full zoom in first person puts its
 //!   scope up ([`Scope`]); nvforever `scope_view.rs` draws the MOD3 picture, the night
 //!   vision and the sway, the arms rig and the crosshair go meanwhile.
+//! - **The look while aiming** [design: owner 2026-11-15]: the Controls tab's Aim
+//!   Sensitivity scales the mouse's and the right stick's turn by the zoom's own eased share
+//!   ([`AimZoom::share`], `crate::player::aim_scale`): the chosen speed at the full zoom
+//!   (down the sights, or a scope up), the unzoomed look with no zoom, in step between.
 
 use bevy::prelude::*;
 
@@ -80,28 +84,36 @@ impl AimZoom {
     pub fn base(&self) -> Option<f32> {
         self.base
     }
+
+    /// How far the view is zoomed for the aim, eased as the field of view moves
+    /// ([`zoom_share`] of [`AimZoom::blend`]): 0 unzoomed, 1 at the full zoom. The look's
+    /// Aim Sensitivity follows it (`crate::player::aim_scale`).
+    pub fn share(&self) -> f32 {
+        zoom_share(self.blend)
+    }
+}
+
+/// `blend` (0–1) eased in and out: the share of the way from the unzoomed field of view to
+/// the zoomed one ([`zoomed_fov`]).
+pub fn zoom_share(blend: f32) -> f32 {
+    let b = blend.clamp(0.0, 1.0);
+    b * b * (3.0 - 2.0 * b)
 }
 
 /// The field of view (vertical, radians) for `base`, the weapon's `sight` and `blend`
 /// (0–1), eased in and out.
 pub fn zoomed_fov(base: f32, sight: f32, blend: f32) -> f32 {
-    base + (sight - base) * zoom_ease(blend)
-}
-
-/// How far the straight zoom has taken the view at `blend` (0–1): eased in and out.
-fn zoom_ease(blend: f32) -> f32 {
-    let b = blend.clamp(0.0, 1.0);
-    b * b * (3.0 - 2.0 * b)
+    base + (sight - base) * zoom_share(blend)
 }
 
 /// The `blend` at which the straight zoom has taken the view `share` of the way (by
-/// halving; [`zoom_ease`] only rises).
-fn zoom_ease_inv(share: f32) -> f32 {
+/// halving; [`zoom_share`] only rises).
+fn zoom_share_inv(share: f32) -> f32 {
     let share = share.clamp(0.0, 1.0);
     let (mut lo, mut hi) = (0.0f32, 1.0f32);
     for _ in 0..24 {
         let mid = 0.5 * (lo + hi);
-        if zoom_ease(mid) < share {
+        if zoom_share(mid) < share {
             lo = mid;
         } else {
             hi = mid;
@@ -253,7 +265,7 @@ pub(crate) fn zoom(
     // goes on from where the view is, instead of from the start (review, 2026-11-15).
     let settled = inertia.as_deref().filter(|i| i.smooth_hands()).map(|i| {
         if !z.settled_on {
-            let at = zoom_ease(z.blend);
+            let at = zoom_share(z.blend);
             z.settled.place(at, sight.is_some());
         }
         // Weapon Handling's pace (heavier weapons come up slower), else the game's.
@@ -264,7 +276,7 @@ pub(crate) fn zoom(
     });
     if settled.is_none() {
         if z.settled_on {
-            z.blend = zoom_ease_inv(z.settled.value());
+            z.blend = zoom_share_inv(z.settled.value());
         }
         // Weapon Handling's pace for the straight zoom too, else the game's.
         let seconds = inertia.as_deref().filter(|i| i.handles()).map_or(ZOOM_SECONDS, |i| i.aim_seconds(sight.is_some())) * scope_time;
@@ -360,12 +372,12 @@ mod tests {
         // Straight to the settling curve: the same share of the way, either direction.
         for (blend, up) in [(0.3, true), (0.8, false), (1.0, true), (0.0, false)] {
             let mut s = crate::ease::Settled::default();
-            s.place(zoom_ease(blend), up);
-            assert!((s.value() - zoom_ease(blend)).abs() < 1e-4, "{blend} {up}: {}", s.value());
+            s.place(zoom_share(blend), up);
+            assert!((s.value() - zoom_share(blend)).abs() < 1e-4, "{blend} {up}: {}", s.value());
         }
         // And back: the straight zoom's blend for the share the settling curve had.
         for share in [0.0, 0.2, 0.5, 0.93, 1.0] {
-            assert!((zoom_ease(zoom_ease_inv(share)) - share).abs() < 1e-4, "{share}");
+            assert!((zoom_share(zoom_share_inv(share)) - share).abs() < 1e-4, "{share}");
         }
     }
 

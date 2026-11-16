@@ -1602,9 +1602,15 @@ fn overlaps(outline: &[Vec2], centre: Vec2, reach: Vec2) -> bool {
     })
 }
 
+/// The least shadow distance the cascades are made for: the first cascade's least bound
+/// (200) with room [design].
+const MIN_CASCADE_DISTANCE: f32 = 400.0;
+
 /// The sun's shadow cascades, in game units: the first covers the area right around the
 /// camera (a twelfth of `distance`), the last ends at `distance` × `reach`.
 pub(crate) fn shadow_cascades(distance: f32, reach: f32, count: usize) -> CascadeShadowConfig {
+    // Never a last cascade inside the first one's bound (a very short shadow distance).
+    let distance = distance.max(MIN_CASCADE_DISTANCE);
     CascadeShadowConfigBuilder {
         num_cascades: count.max(1),
         minimum_distance: 5.0,
@@ -1631,6 +1637,8 @@ pub fn set_shadows(world: &mut World, on: bool) {
         sky.shadows = on;
         (sky.shadow_distance, sky.shadow_reach, sky.shadow_cascades)
     };
+    // A shadow distance of 0% (the menu overhaul) casts none.
+    let on = on && distance.0 > 0.0;
     let mut suns = world.query_filtered::<(Entity, &mut DirectionalLight), With<Sun>>();
     let lit: Vec<Entity> = suns
         .iter_mut(world)
