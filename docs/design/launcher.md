@@ -145,9 +145,14 @@ on fixture folders and a fixture zip/tar.gz (no real release is downloaded by an
   A launcher that finds the journal at its start (`resume_interrupted`, in the folder it runs
   from even when `nvforever` is not there) finishes the commit: every new file is whole by
   then, so the swap rolls forward. An install or a roll back finishes a pending swap first and
-  refuses when it cannot, so a new swap never stages over the kept previous version. The
-  journal's paths are checked before they are followed (plain paths below the install,
-  outside `update/`, through `guard_write` with the game folder). Without a journal it removes
+  refuses when it cannot, so a new swap never stages over the kept previous version; when it
+  did finish one, it stops there (the install now holds that release, not the running one):
+  an install returns that version and the launcher restarts into it, a roll back asks for a
+  restart first. The journal names the folder it was written for, and is followed only
+  there; its paths are checked before they are followed (plain paths below the install,
+  outside `update/`, through `guard_write` with the game folder), and each file to put in
+  place must be staged or already in place. The manifest write and the journal's removal go
+  through `guard_write` too. Without a journal it removes
   stray `.nvf-new` (a swap cut short while staging; the old release runs as before) and
   `.nvf-old` files. While the swap runs the window does not close (the close is cancelled with
   a word) and Play waits. Afterwards only the one previous version is kept under

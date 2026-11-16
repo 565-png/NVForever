@@ -451,6 +451,10 @@ const OLD_SUFFIX: &str = ".nvf-old";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Journal {
+    /// The install folder the journal was written for: a journal found in another folder (a
+    /// copied install) is not followed.
+    #[serde(default)]
+    install: String,
     version: String,
     /// The files staged beside their place as `<file>.nvf-new`, `/`-separated.
     copy: Vec<String>,
@@ -524,7 +528,7 @@ fn stage(install: &Path, payload: &Path, plan: &Plan) -> Result<Journal, String>
         }
     }
     let copy: BTreeSet<&PathBuf> = plan.copy.iter().collect();
-    let journal = Journal { version: plan.version.clone(), copy: plan.copy.iter().map(|p| slash(p)).collect(), retire: plan.aside.iter().filter(|r| !copy.contains(r)).map(|p| slash(p)).collect() };
+    let journal = Journal { install: install.display().to_string(), version: plan.version.clone(), copy: plan.copy.iter().map(|p| slash(p)).collect(), retire: plan.aside.iter().filter(|r| !copy.contains(r)).map(|p| slash(p)).collect() };
     if let Err(e) = write_json(&journal_path(install), &journal) {
         return Err(undo(&staged, format!("{}: {e}", journal_path(install).display())));
     }
@@ -535,7 +539,10 @@ fn stage(install: &Path, payload: &Path, plan: &Plan) -> Result<Journal, String>
 /// `<file>.nvf-old`), the retired files go, the manifest is written and the journal removed.
 /// Every new file is already whole, so a phase 2 cut short (the window closed, the power lost)
 /// is finished by the next start ([`resume_interrupted`]) rather than undone.
-fn commit(install: &Path, journal: &Journal) -> Result<(), String> {
+fn commit(install: &Path, journal: &Journal, game: Option<&GameInstall>) -> Result<(), String> {
+    for p in [manifest_path(install), journal_path(install)] {
+        guard_write(&p, game).map_err(|e| e.to_string())?;
+    }
     for rel in &journal.copy {
         let to = install.join(rel);
         let tmp = with_suffix(&to, NEW_SUFFIX);
@@ -577,7 +584,7 @@ fn commit(install: &Path, journal: &Journal) -> Result<(), String> {
 pub fn apply(install: &Path, payload: &Path, plan: &Plan, game: Option<&GameInstall>) -> Result<(), String> {
     guard_plan(install, plan, game)?;
     let journal = stage(install, payload, plan)?;
-    commit(install, &journal).map_err(|e| format!("the update stopped part-way ({e}); start the launcher again and it finishes it"))?;
+    commit(install, &journal, game).map_err(|e| format!("the update stopped part-way ({e}); start the launcher again and it finishes it"))?;
     // One previous version is kept: the one just set aside (a roll back's source goes too).
     if let Ok(rd) = fs::read_dir(previous_dir(install)) {
         for e in rd.flatten().filter(|e| e.path() != plan.backup) {
@@ -597,23 +604,51 @@ fn pending_journal(install: &Path, game: Option<&GameInstall>) -> Option<Result<
         if !safe_component(&j.version) {
             return Err(format!("{}: unusable version {:?}", path.display(), j.version));
         }
-        for f in j.copy.iter().chain(&j.retire) {
+        if !same_folder(Path::new(&j.install), install) {
+            return Err(format!("{}: written for another folder ({})", path.display(), j.install));
+        }
+        for (i, f) in j.copy.iter().chain(&j.retire).enumerate() {
             let rel = safe_rel(Path::new(f)).filter(|r| !r.components().next().is_some_and(|c| c.as_os_str().eq_ignore_ascii_case(UPDATE_DIR)));
             let rel = rel.ok_or_else(|| format!("{}: unusable path {f:?}", path.display()))?;
-            guard_write(&install.join(rel), game).map_err(|e| e.to_string())?;
+            let place = install.join(&rel);
+            guard_write(&place, game).map_err(|e| e.to_string())?;
+            // A file to put in place must be staged or already in place.
+            if i < j.copy.len() && !place.exists() && !with_suffix(&place, NEW_SUFFIX).exists() {
+                return Err(format!("{}: {f} is neither staged nor in place", path.display()));
+            }
         }
         Ok(j)
     });
     Some(checked)
 }
 
+/// Whether two paths name one folder (the same once made absolute and resolved; else the same
+/// text, without case on Windows).
+fn same_folder(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => {
+            let (x, y) = (a.to_string_lossy(), b.to_string_lossy());
+            if cfg!(windows) {
+                x.eq_ignore_ascii_case(&y)
+            } else {
+                x == y
+            }
+        }
+    }
+}
+
 /// A swap cut short is finished before anything else changes the install: the start does it,
 /// and an install or a roll back does it first, refusing to go on when it cannot (a new swap
-/// would stage over the kept previous version with half-swapped files).
-fn finish_pending(install: &Path, game: Option<&GameInstall>) -> Result<(), String> {
+/// would stage over the kept previous version with half-swapped files). The version it
+/// finished, if it finished one: the install then holds that release, not the running one, so
+/// the caller stops and the launcher restarts into it.
+fn finish_pending(install: &Path, game: Option<&GameInstall>) -> Result<Option<String>, String> {
     match pending_journal(install, game) {
-        None => Ok(()),
-        Some(Ok(j)) => commit(install, &j).map_err(|e| format!("an earlier update to v{} is still unfinished and could not be finished ({e}); try again, or download the release from its page", j.version)),
+        None => Ok(None),
+        Some(Ok(j)) => commit(install, &j, game)
+            .map(|()| Some(j.version.clone()))
+            .map_err(|e| format!("an earlier update to v{} is still unfinished and could not be finished ({e}); try again, or download the release from its page", j.version)),
         Some(Err(e)) => Err(format!("an earlier update left a journal that cannot be used ({e}); download the release from its page")),
     }
 }
@@ -626,7 +661,7 @@ fn finish_pending(install: &Path, game: Option<&GameInstall>) -> Result<(), Stri
 /// program moved aside (`*.nvf-old`) are removed.
 pub fn resume_interrupted(install: &Path, game: Option<&GameInstall>) -> Option<Result<String, String>> {
     match pending_journal(install, game) {
-        Some(Ok(j)) => Some(commit(install, &j).map(|()| j.version.clone())),
+        Some(Ok(j)) => Some(commit(install, &j, game).map(|()| j.version.clone())),
         Some(Err(e)) => Some(Err(e)),
         None if check_install(install, game).is_err() => None,
         None => {
@@ -728,8 +763,14 @@ pub fn prepare(latest: &Latest, cache: &Path, game: Option<&GameInstall>, send: 
 }
 
 /// Swap `ready` into `install` (running version `current`); the staged copy is removed after.
+/// When an earlier swap was still pending, finishing it is all this does: the install then
+/// holds that release (not `current`), so a new swap would keep the wrong one as the previous
+/// version; its version is returned, the launcher restarts into it and offers the newer one
+/// again.
 pub fn install(install: &Path, ready: &Ready, current: &str, game: Option<&GameInstall>) -> Result<String, String> {
-    finish_pending(install, game)?;
+    if let Some(finished) = finish_pending(install, game)? {
+        return Ok(finished);
+    }
     check_install(install, game)?;
     if let Some(p) = busy_program(install) {
         return Err(format!("{p} is running: close it, then install."));
@@ -744,7 +785,9 @@ pub fn install(install: &Path, ready: &Ready, current: &str, game: Option<&GameI
 /// Put the kept previous version back (the current one is kept in its place, so a second
 /// roll back goes forward again).
 pub fn roll_back(install: &Path, current: &str, game: Option<&GameInstall>) -> Result<String, String> {
-    finish_pending(install, game)?;
+    if let Some(finished) = finish_pending(install, game)? {
+        return Err(format!("an interrupted update to v{finished} was just finished: start the launcher again, then roll back"));
+    }
     check_install(install, game)?;
     if let Some(p) = busy_program(install) {
         return Err(format!("{p} is running: close it, then roll back."));
@@ -1221,19 +1264,50 @@ mod tests {
         // The staged file held with no sharing: it cannot be renamed, so the first rename fails,
         // the program is moved aside, and the second rename fails too.
         let held_new = fs::OpenOptions::new().read(true).share_mode(0).open(&new).unwrap();
-        let err = commit(&install, &j).unwrap_err();
+        let err = commit(&install, &j, None).unwrap_err();
         assert!(err.contains(&programs()[0]), "{err}");
         assert_eq!(read(&game), format!("{} 0.7.0", programs()[0]), "the old program is back under its name");
         assert!(!with_suffix(&game, OLD_SUFFIX).exists());
         assert!(journal_path(&install).exists(), "the journal stays to finish the swap later");
-        // A swap in between finishes the pending one first; while the file is held it refuses
+        // Try again (an install of a newer release) while the file is still held: it refuses
         // and leaves the kept previous version alone.
-        let ready = Ready { version: "0.9.0".into(), payload: payload.clone(), files: files.clone(), staging: d.join("staging") };
-        assert!(install_unchecked_pending(&install, &ready).unwrap_err().contains("still unfinished"));
+        let newer = d.join("payload-0.9");
+        for f in [launcher_exe(), programs()[0].clone()] {
+            put(&newer.join(&f), &format!("{f} 0.9.0"));
+        }
+        let ready = Ready { version: "0.9.0".into(), payload: newer.clone(), files: list_files(&newer).unwrap(), staging: d.join("staging") };
+        assert!(super::install(&install, &ready, "0.7.0", None).unwrap_err().contains("still unfinished"));
         assert_eq!(read(&p.backup.join(&programs()[0])), format!("{} 0.7.0", programs()[0]));
         drop(held_new);
-        // Without nvforever beside it (cut short after the first rename) the start still resumes.
+        // Try again once the file is free: it finishes the 0.8.0 swap and stops there (the
+        // launcher restarts into 0.8.0), rather than staging 0.9.0 with 0.8.0's files kept as
+        // "v0.7.0".
+        assert_eq!(super::install(&install, &ready, "0.7.0", None), Ok("0.8.0".to_string()));
+        assert_eq!(read(&game), format!("{} 0.8.0", programs()[0]));
+        assert_eq!(read(&install.join(launcher_exe())), format!("{} 0.8.0", launcher_exe()));
+        assert!(!journal_path(&install).exists());
+        let (kept, dir) = previous_version(&install).unwrap();
+        assert_eq!(kept, "0.7.0");
+        assert_eq!(read(&dir.join(&programs()[0])), format!("{} 0.7.0", programs()[0]), "roll back still restores 0.7.0");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// Cut short between moving a program aside and moving its new copy in: the install has no
+    /// `nvforever`, and the start still finishes the swap from the journal.
+    #[test]
+    fn a_start_without_nvforever_finishes_the_swap() {
+        let d = tmp("no-nvforever");
+        let install = d.join("NVForever");
+        fixture_install(&install, "0.7.0");
+        let payload = d.join("payload");
+        for f in [launcher_exe(), programs()[0].clone()] {
+            put(&payload.join(&f), &format!("{f} 0.8.0"));
+        }
+        let p = plan(&install, &list_files(&payload).unwrap(), |p| p.exists(), None, "0.7.0", "0.8.0").unwrap();
+        stage(&install, &payload, &p).unwrap();
+        let game = install.join(&programs()[0]);
         fs::rename(&game, with_suffix(&game, OLD_SUFFIX)).unwrap();
+        assert!(check_install(&install, None).is_err(), "no nvforever beside the launcher");
         assert_eq!(resume_interrupted(&install, None), Some(Ok("0.8.0".to_string())));
         assert_eq!(read(&game), format!("{} 0.8.0", programs()[0]));
         assert_eq!(read(&install.join(launcher_exe())), format!("{} 0.8.0", launcher_exe()));
@@ -1248,21 +1322,23 @@ mod tests {
         let game = GameInstall::open(&d).unwrap();
         let install = d.join("NVForever");
         fixture_install(&install, "0.7.0");
-        let outside = Journal { version: "0.8.0".into(), copy: vec!["../escape.dll".into()], retire: vec![] };
+        let at = install.display().to_string();
+        let outside = Journal { install: at.clone(), version: "0.8.0".into(), copy: vec!["../escape.dll".into()], retire: vec![] };
         write_json(&journal_path(&install), &outside).unwrap();
         assert!(resume_interrupted(&install, None).unwrap().unwrap_err().contains("unusable path"));
-        let ours = Journal { version: "0.8.0".into(), copy: vec![launcher_exe()], retire: vec![] };
+        let ours = Journal { install: at.clone(), version: "0.8.0".into(), copy: vec![launcher_exe()], retire: vec![] };
         write_json(&journal_path(&install), &ours).unwrap();
         assert!(resume_interrupted(&install, Some(&game)).unwrap().is_err(), "inside the game folder");
+        // Written for another folder (a copied install), or naming a file neither staged nor in
+        // place: not followed.
+        let elsewhere = Journal { install: d.join("Other").display().to_string(), ..ours.clone() };
+        write_json(&journal_path(&install), &elsewhere).unwrap();
+        assert!(resume_interrupted(&install, None).unwrap().unwrap_err().contains("another folder"));
+        let missing = Journal { copy: vec!["gone.dll".into()], ..ours };
+        write_json(&journal_path(&install), &missing).unwrap();
+        assert!(resume_interrupted(&install, None).unwrap().unwrap_err().contains("neither staged nor in place"));
         assert_eq!(read(&install.join(launcher_exe())), format!("{} 0.7.0", launcher_exe()));
         let _ = fs::remove_dir_all(&d);
-    }
-
-    /// [`install`]'s pending-swap step without [`check_install`] (a temp folder).
-    #[cfg(windows)]
-    fn install_unchecked_pending(install: &Path, ready: &Ready) -> Result<(), String> {
-        finish_pending(install, None)?;
-        install_unchecked(install, ready, "0.7.0")
     }
 
     /// [`install`] and [`roll_back`] without [`check_install`] (a test folder under the
