@@ -184,4 +184,4 @@ External NiPSysModifierActiveCtlr keys now reach named gravity, drag and bomb mo
 on those attachments. Existing actor material posing continues to target creature NIFZ
 shapes. CLAMP effect idles hold their final values in memory; actor idle serialization
 remains a gap, whereas placed fog groups already restore at their end. [hypothesis]
-Original appearance and timing require observer check 221.
+Original appearance and timing require observer check 211.

@@ -646,5 +646,5 @@ preserves normalized emissive brightness, texture transforms and refraction.
 [observed: data, main session 2026-11-15, issue #2685, upstream 1790ab94a]
 The chamber model `animobjects\hchamberFX.NIF` has five particle systems and the
 smoke-strip shapes named by the creature's `WakeUp.kf`; they are absent from its NIFZ
-parts. [hypothesis] Visual parity and the exact effect envelope await observer check 221;
+parts. [hypothesis] Visual parity and the exact effect envelope await observer check 211;
 no original-game capture or game data was accessed by this implementation session.

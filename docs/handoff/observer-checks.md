@@ -2692,7 +2692,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
     edge?
 
 
-## 221. House chamber steam, glow and ground fog (#2685)
+## 211. House chamber steam, glow and ground fog (#2685)
 
 [hypothesis; spec-notes/idles.md section 10.1, particles.md section 7.8] From a sealed
 chamber in Lucky38ControlRoom, use the unseal terminal item and record the opening,
