@@ -100,7 +100,7 @@ it. The console's exact line is not documented: the name alone [hypothesis].
 - `eval` is the if-statement form (ext-syntax.md), built in the compiler; the census
   counts it only because it calls every catalogue name as a function.
 
-## 4. Critical weapon damage in hit calculation
+## 7. Critical weapon damage in hit calculation
 
 [documented: https://fose.silverlock.org/fose_command_doc.html#SetWeaponCritDamage;
 `schemas/script/functions.json`, SetWeaponCritDamage] `SetWeaponCritDamage amount
@@ -133,7 +133,7 @@ encoding. This note does not import FOSE opcode numbers into New Vegas.
 captures. Core source execution, engine hit calculation, native captures and real
 installed-mod acceptance are separate validation states.
 
-## Player swimming and Hardcore achievement eligibility
+## 8. Player swimming and Hardcore achievement eligibility
 
 [documented: https://geckwiki.com/index.php?title=IsPlayerSwimming]
 `IsPlayerSwimming` takes no arguments and returns whether the player is swimming.
