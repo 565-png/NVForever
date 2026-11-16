@@ -30463,12 +30463,14 @@ expect = [
   { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[1-9]', max = 0, label = "no skipped frame would have changed a shape, a clone, the census or the settlement, through the crossing" },
   { re = 'mesh terrain blend: verify diverged', max = 0, label = "no divergence line, through the crossing" },
   # [design] The readiness delay aid (120 frames) and the crossing's held steps keep each new
-  # set of clones pending for long stretches, so pass-pending legitimately reaches the
-  # thousands and is not bounded. Shape passes come from the cells streamed by seven
-  # crossings and the walk (spawn frames, each conversion's settling pass) where no
-  # replacement is pending; on 070c331fa animated STATs' republished looks made it 1768.
-  # Bounded below 1000.
-  { re = 'mesh terrain blend: verify skipped-frames=.* pass-shapes=[0-9]{4,} ', max = 0, label = "fewer than 1000 passes for a shape change in the run (an animated STAT's look published again is not one), through the crossing" },
+  # set of clones pending for long stretches, so passes and pass-pending legitimately reach
+  # the thousands and are not bounded. [observed] smoke --slots 3, release build, final
+  # verify line: at 070c331fa skipped-frames=424 passes=3137 pass-shapes=1772; at 398b61cda
+  # skipped-frames=2875 passes=1547 pass-pending=1530 pass-shapes=5
+  # shapes-ordinary-census-only=3. The bounds are 5 times what 398b61cda showed, on every
+  # (cumulative) count line.
+  { re = 'mesh terrain blend: verify skipped-frames=.* pass-shapes=(?P<n>[0-9]+) ', range = [0, 25], all = true, label = "at most 25 passes for a shape change in the run (5 seen at 398b61cda, 1772 at 070c331fa), through the crossing" },
+  { re = 'mesh terrain blend: verify skipped-frames=.* shapes-ordinary-census-only=(?P<n>[0-9]+) ', range = [0, 15], all = true, label = "at most 15 passes for another handle on a census-only shape (3 seen at 398b61cda), through the crossing" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the crossing" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors, through the crossing" },
 ]
@@ -30521,16 +30523,18 @@ expect = [
   { re = 'mesh terrain blend: verify skipped-frames=[1-9][0-9]* diverged=0 passes=[0-9]+ pass-first=1 pass-config=0 pass-publication=([2-9]|[1-9][0-9]+) pass-pending=[1-9][0-9]* pass-shapes=[1-9][0-9]* pass-materials=[0-9]+', label = "the triggers this case must fire did: the first publication and the switched materials' (at least two, above) each run a pass for the new publication; each new clone is pending a frame or more; the first conversion's removal of the ordinary materials runs a pass for the shapes; the look never changes while it is on, through the terrain switches" },
   { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[1-9]', max = 0, label = "no skipped frame would have changed a shape, a clone, the census or the settlement, through the terrain switches" },
   { re = 'mesh terrain blend: verify diverged', max = 0, label = "no divergence line, through the terrain switches" },
-  # [design] Standing still with the blend on from the start, the gate is quiet. On
-  # 070c331fa, before census-only shapes' same-handle republications stopped counting, the
-  # run showed passes=1068 pass-shapes=1064 seven seconds after loading (animated STATs'
-  # looks, nvf-assets material_anim.rs), and only 4 passes for every other reason. What
-  # legitimately runs a pass here: the first pass, the cells spawned while loading, each
-  # publication (the first and the two switches' at least) with its new clones pending a
-  # few frames and one settling pass for the shapes it converts; standing still, no cell
-  # streams. Tens at most, so every count line stays below 100 passes and 100 shape passes.
-  { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[0-9]+ passes=[0-9]{3,} ', max = 0, label = "the gate stays quiet in standing play: fewer than 100 full passes in the run, through the terrain switches" },
-  { re = 'mesh terrain blend: verify skipped-frames=.* pass-shapes=[0-9]{3,} ', max = 0, label = "fewer than 100 passes for a shape change in the run (an animated STAT's look published again is not one), through the terrain switches" },
+  # [design] Standing still with the blend on from the start, the gate is quiet.
+  # [observed] smoke --slots 3, release build, final verify line: at 070c331fa
+  # skipped-frames=1277 passes=1289 pass-shapes=1275; at 398b61cda skipped-frames=3354
+  # passes=20 (first 1, publication 5, pending 10, shapes 4, materials 0)
+  # shapes-ordinary-census-only=3. Only census-only shapes' same-handle republications
+  # stopped running the pass between the two heads; that the old shape passes were those
+  # (an animated STAT's look, nvf-assets material_anim.rs) is read from that and from the
+  # per-signal counts 398b61cda prints, not seen directly at 070c331fa. The bounds are about
+  # 5 times what 398b61cda showed, on every (cumulative) count line; passes bounds
+  # pass-shapes too.
+  { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[0-9]+ passes=(?P<n>[0-9]+) ', range = [0, 99], all = true, label = "the gate stays quiet in standing play: fewer than 100 full passes in the run (20 seen at 398b61cda, 1289 at 070c331fa), through the terrain switches" },
+  { re = 'mesh terrain blend: verify skipped-frames=.* shapes-ordinary-census-only=(?P<n>[0-9]+) ', range = [0, 15], all = true, label = "at most 15 passes for another handle on a census-only shape (3 seen at 398b61cda), through the terrain switches" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the terrain switches" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors, through the terrain switches" },
 ]
