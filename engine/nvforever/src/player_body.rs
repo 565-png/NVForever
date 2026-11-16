@@ -237,9 +237,11 @@ const ARMS_SHADE_REACH: f32 = 256.0;
 /// between it and the sun, so what shades the arms still does, while the pass draws only
 /// those (before 2026-10-12 it was the sun's first cascade, about 190 casters at
 /// Goodsprings against about 30 then; the arms' shadows are finer for it). Of those it
-/// draws only the ones by the eye toward the sun ([`near_shade_casters`]).
+/// draws only the ones by the eye toward the sun ([`near_shade_casters`]). It turns with the
+/// sun, so its cascade is snapped to a grid anchored near the camera as the sun's are
+/// (shadow_anchor.rs).
 #[derive(Component)]
-struct ArmsShade;
+pub(crate) struct ArmsShade;
 
 /// How far toward the sun from the eye the [`ArmsShade`] light's casters are looked for,
 /// and how far from that line they may lie (game units): the arms rig and its weapon reach
