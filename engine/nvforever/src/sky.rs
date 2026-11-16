@@ -2588,7 +2588,7 @@ mod tests {
     #[test]
     fn held_weather_survives_sky_replacement_and_releases_to_the_new_climate() {
         let mut from = sky_started_on_held();
-        from.place(Some(None));
+        from.place(Some(None), false);
         from.rolls = 41;
         from.script_weather(Weather { form_id: HELD, ..Default::default() }, [None; 6], true, true);
         let mut to = sky_started_on_held();
@@ -2601,7 +2601,7 @@ mod tests {
         assert_eq!(to.script.unwrap().roll, to.rolls);
         assert!(to.script.unwrap().hold);
         assert!(!to.pinned);
-        to.place(Some(None));
+        to.place(Some(None), false);
         assert_eq!((to.weather.form_id, to.pick), (HELD, LISTED));
         to.release_script_weather();
         assert_eq!(to.weather.form_id, HELD);
@@ -2613,7 +2613,7 @@ mod tests {
     #[test]
     fn held_weather_carries_its_fade_and_both_weathers_adapters() {
         let mut from = sky_started_on_held();
-        from.place(Some(None));
+        from.place(Some(None), false);
         let old_adapters = [Some(Adapter { tint: Some(([0.1, 0.2, 0.3], 0.4)), ..Default::default() }); 6];
         let held_adapters = [Some(Adapter { tint: Some(([0.5, 0.6, 0.7], 0.8)), ..Default::default() }); 6];
         from.adapters.insert(LISTED, old_adapters);
@@ -2623,7 +2623,7 @@ mod tests {
         to.adapters.clear();
 
         to.carry_weather_from(&from);
-        to.place(Some(None));
+        to.place(Some(None), false);
         assert_eq!((to.weather.form_id, to.prev.as_ref().unwrap().form_id, to.fade), (HELD, LISTED, 0.375));
         assert_eq!(to.adapters.get(&HELD), Some(&held_adapters));
         assert_eq!(to.adapters.get(&LISTED), Some(&old_adapters));
@@ -2636,7 +2636,7 @@ mod tests {
     #[test]
     fn natural_weather_does_not_gain_an_override_on_sky_replacement() {
         let mut from = sky_started_on_held();
-        from.place(Some(None));
+        from.place(Some(None), false);
         let mut to = sky_started_on_held();
         to.weather = to.choices[1].weather.clone();
         to.resume = None;
@@ -2645,7 +2645,7 @@ mod tests {
         assert!(to.script.is_none());
         assert!(!to.pinned);
         assert!(to.resume.is_none());
-        to.place(Some(None));
+        to.place(Some(None), false);
         assert_eq!(to.weather.form_id, LISTED);
 
         // [design: worldspace.rs::script_sky] A climate rebuild's own start weather
@@ -2655,7 +2655,7 @@ mod tests {
         climate.resume = Some(LISTED);
         climate.carry_weather_from(&from);
         assert_eq!(climate.resume, Some(LISTED));
-        climate.place(Some(None));
+        climate.place(Some(None), false);
         assert_eq!((climate.weather.form_id, climate.rolls), (LISTED, 0));
     }
 
@@ -2670,7 +2670,7 @@ mod tests {
         assert!(to.pinned);
         assert_eq!(to.resume, Some(HELD));
         assert!(to.script.is_none());
-        to.place(Some(None));
+        to.place(Some(None), false);
         assert_eq!(to.weather.form_id, HELD);
     }
 
@@ -2682,7 +2682,7 @@ mod tests {
         to.resume = None;
         to.weather = to.choices[0].weather.clone();
         to.carry_weather_from(&from);
-        to.place(Some(None));
+        to.place(Some(None), false);
 
         let mut world = World::new();
         world.insert_resource(to);
@@ -2692,7 +2692,7 @@ mod tests {
         let saved: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
         let mut loaded = sky_started_on_held();
         loaded.restore_saved(&saved);
-        loaded.place(Some(None));
+        loaded.place(Some(None), false);
         loaded.set_live_global(GATE, 1.0);
         assert_eq!(loaded.weather.form_id, HELD);
         assert!(loaded.script.unwrap().hold);
