@@ -30459,6 +30459,7 @@ expect = [
   { re = 'mesh terrain blend: continuity crossing done steps=7 timeouts=0', count = 1, label = "the whole crossing sequence ran, through the crossing" },
   { re = 'mesh terrain blend: continuity summary .* failures=0 .*settled=true', count = 1, label = "zero continuity failures and eventual settlement with the verify aid on, through the crossing" },
   { re = 'mesh terrain blend: verify skipped-frames=([1-9][0-9]*) diverged=0 passes=', label = "the gate skipped frames, and the full pass run in them anyway changed nothing, through the crossing" },
+  { re = 'mesh terrain blend: verify skipped-frames=[1-9][0-9]* diverged=0 passes=[0-9]+ pass-first=1 pass-config=0 pass-publication=([2-9]|[1-9][0-9]+) pass-pending=[1-9][0-9]* pass-shapes=[1-9][0-9]* pass-materials=[0-9]+', label = "the triggers this case must fire did: the first publication and the crossing's replacements (at least one, its summary) each run a pass for the new publication; each new clone is pending a frame or more; the first conversion's removal of the ordinary materials (and the cells streaming in) runs a pass for the shapes; the look never changes while it is on, through the crossing" },
   { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[1-9]', max = 0, label = "no skipped frame would have changed a shape, a clone, the census or the settlement, through the crossing" },
   { re = 'mesh terrain blend: verify diverged', max = 0, label = "no divergence line, through the crossing" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the crossing" },
@@ -30478,6 +30479,7 @@ expect = [
   { re = 'mesh terrain blend: start ', count = 1, label = "started once, by the row, through the live switch" },
   { re = 'mesh terrain blend: stop ', count = 1, label = "stopped once, by the row, through the live switch" },
   { re = 'mesh terrain blend: verify skipped-frames=([1-9][0-9]*) diverged=0 passes=', label = "the gate skipped frames, and the full pass run in them anyway changed nothing, through the live switch" },
+  { re = 'mesh terrain blend: verify skipped-frames=[1-9][0-9]* diverged=0 passes=[0-9]+ pass-first=1 pass-config=0 pass-publication=[1-9][0-9]* pass-pending=[1-9][0-9]* pass-shapes=[1-9][0-9]* pass-materials=[0-9]+', label = "the triggers this case must fire did: switched on: the first pass, the first publication, its clones pending, then the converted shapes' ordinary materials removed; the look never changes while it is on, through the live switch" },
   { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[1-9]', max = 0, label = "no skipped frame would have changed a shape, a clone, the census or the settlement, through the live switch" },
   { re = 'mesh terrain blend: verify diverged', max = 0, label = "no divergence line, through the live switch" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the live switch" },
@@ -30487,7 +30489,7 @@ order = [[
   { text = "settings: mesh-terrain-blend on", label = "the row on, through the live switch" },
   { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+ variant=surface shape=height', label = "the cells drawn while it was off are captured and published, through the live switch" },
   { text = "settings: mesh-terrain-blend off", label = "the row off, through the live switch" },
-  { re = 'mesh terrain blend: verify skipped-frames=([1-9][0-9]*) diverged=0 passes=', label = "the count at the stop: frames skipped while it was on, none would have changed anything, through the live switch" },
+  { re = 'mesh terrain blend: verify skipped-frames=([1-9][0-9]*) diverged=0 passes=[0-9]+ pass-first=1 pass-config=0 pass-publication=[1-9][0-9]* pass-pending=[1-9][0-9]* pass-shapes=[1-9][0-9]* ', label = "the count at the stop: frames skipped while it was on, none would have changed anything, and the first pass, a publication, pending clones and shape changes each ran one, through the live switch" },
   { re = 'mesh terrain blend: stop restored-shapes=([1-9][0-9]*) ', label = "then the converted shapes get their ordinary materials back, through the live switch" },
 ]]
 forbid = [
@@ -30509,6 +30511,7 @@ expect = [
   { re = 'terrain: anti-tiling off ', count = 1, label = "the anti-tiling row turned off once, through the terrain switches" },
   { re = 'mesh terrain blend: publication ', min = 2, label = "the switched materials bake and publish again, through the terrain switches" },
   { re = 'mesh terrain blend: verify skipped-frames=([1-9][0-9]*) diverged=0 passes=', label = "the gate skipped frames, and the full pass run in them anyway changed nothing, through the terrain switches" },
+  { re = 'mesh terrain blend: verify skipped-frames=[1-9][0-9]* diverged=0 passes=[0-9]+ pass-first=1 pass-config=0 pass-publication=([2-9]|[1-9][0-9]+) pass-pending=[1-9][0-9]* pass-shapes=[1-9][0-9]* pass-materials=[0-9]+', label = "the triggers this case must fire did: the first publication and the switched materials' (at least two, above) each run a pass for the new publication; each new clone is pending a frame or more; the first conversion's removal of the ordinary materials runs a pass for the shapes; the look never changes while it is on, through the terrain switches" },
   { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[1-9]', max = 0, label = "no skipped frame would have changed a shape, a clone, the census or the settlement, through the terrain switches" },
   { re = 'mesh terrain blend: verify diverged', max = 0, label = "no divergence line, through the terrain switches" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the terrain switches" },
