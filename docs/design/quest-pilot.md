@@ -52,7 +52,7 @@ NVFOREVER_HOME=<a folder of its own> nvforever --data <Data> --play --new-game \
 | `kill` | a fight with the player's own weapon (a 9mm pistol is given once, god mode on by default); the body is searched for quest items and keys |
 | `terminal` | walk there, activate, the screen's own input: password on the hacking page, into the sub menu, the entry |
 | `add_item` to the player (campaign) | taken from whoever holds it in the loaded cells, or where it lies; `item_not_found` and the headless gift otherwise |
-| `X.MoveTo marker` (campaign) | the player goes to the marker and waits there on the Wait menu, an hour at a time, up to 24 hours; `never_came` otherwise |
+| `X.MoveTo marker` (campaign) | the player goes to the marker and waits there on the Wait menu, an hour at a time, up to 24 hours (the actor counts as there only in the marker's own space: two interiors share coordinates, Dad was taken as at MQ05ControlRoomMarker in PPurity01 from PPurity02); `never_came` otherwise |
 | `package`, `patrol_point`, `dialogue_package` | not carried out: the AI has to do it |
 | `call_until` | the console line read each frame until it is not 0, for up to its own `max_frames` (30 minutes at most; the 240 s step limit does not apply): Lonesome Road's end slides take about three minutes |
 | `wait_menu`, `get_menus`, `press_button`, `dismiss_message_boxes` | the game's own menu; a box nobody waits for gets its last shown button after 1.5 s |

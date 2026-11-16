@@ -3103,7 +3103,11 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                 let m = named(g, &marker).ok()?;
                 let (cell, pos) = where_is(g, m)?;
                 let space = crate::nav::space_of_cell(world, cell?.0)?;
-                Some((actor, Place { space, pos }, where_is(g, actor).map(|(_, at)| at)))
+                // Where the actor is counts only in the marker's own space: two interiors
+                // share coordinates (Dad "at" MQ05ControlRoomMarker in PPurity01 while he
+                // stood in PPurity02 [observed]).
+                let at = where_is(g, actor).filter(|(c, _)| same_space(world, *c, cell)).map(|(_, at)| at);
+                Some((actor, Place { space, pos }, at))
             });
             // `X.MoveTo player`: X comes to the player (a follower): a minute is waited,
             // with no Wait menu.
