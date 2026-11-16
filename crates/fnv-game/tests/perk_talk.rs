@@ -569,6 +569,53 @@ fn a_talking_activator_says_its_talking_actors_lines_by_script() {
     no_errors(&g);
 }
 
+/// One line at a time at a talking activator (#2768): its own line and a line said
+/// through it by its talking actor cut each other, whichever starts second, so only the
+/// second ends and the activator's SayToDone runs once.
+#[test]
+fn a_talking_activators_own_line_and_its_actors_line_cut_each_other() {
+    let f = fixture();
+    let speaker = FormId(SPEAKER_REF);
+    let benny = FormId(BENNY_REF);
+    let set_benny = |g: &mut Game| {
+        call(g, speaker, OP_SET_TALKING_ACTOR, &[ArgValue::Value(Value::Ref(BENNY_REF))]);
+    };
+    let done = |g: &Game| g.events.iter().filter(|e| matches!(&e.kind, EventKind::BlockRun { block, on: Some(r), .. } if block == "SayToDone" && *r == speaker)).count();
+    let cut = |g: &Game, who: FormId, line: u32| g.events.iter().any(|e| matches!(e.kind, EventKind::LineEnded { speaker: sp, info, cut: true } if sp == who && info == FormId(line)));
+    let finish = |g: &mut Game| {
+        for _ in 0..20_000 {
+            if g.speech.is_empty() {
+                break;
+            }
+            g.tick();
+        }
+        assert!(g.speech.is_empty());
+    };
+    // Its own line first, then Benny's through it: the own line is cut.
+    let mut g = game(&f);
+    set_benny(&mut g);
+    assert_eq!(g.say_by_script(speaker, None, FormId(T_OWN), false), Some(FormId(L_SAY_OWN)));
+    assert_eq!(g.say_by_script(speaker, Some(P), FormId(T_SAY), true), Some(FormId(L_SAY_BENNY)));
+    assert!(cut(&g, speaker, L_SAY_OWN), "the activator's own line is cut");
+    assert_eq!(g.speech.iter().map(|s| (s.speaker, s.through, s.info)).collect::<Vec<_>>(), vec![(benny, Some(speaker), FormId(L_SAY_BENNY))]);
+    finish(&mut g);
+    assert_eq!(done(&g), 1, "one SayToDone, for the line said to its end");
+    no_errors(&g);
+    // Benny's line through it first, then its own: Benny's is cut.
+    let mut g = game(&f);
+    set_benny(&mut g);
+    assert_eq!(g.say_by_script(speaker, Some(P), FormId(T_SAY), true), Some(FormId(L_SAY_BENNY)));
+    assert_eq!(g.say_by_script(speaker, None, FormId(T_OWN), false), Some(FormId(L_SAY_OWN)));
+    assert!(cut(&g, benny, L_SAY_BENNY), "the line through the activator is cut");
+    assert_eq!(g.speech.iter().map(|s| (s.speaker, s.through, s.info)).collect::<Vec<_>>(), vec![(speaker, None, FormId(L_SAY_OWN))]);
+    // Say's flags reach the line that plays.
+    g.set_line_flags(speaker, true, false);
+    assert!(g.speech[0].force_subtitles);
+    finish(&mut g);
+    assert_eq!(done(&g), 1, "one SayToDone, for the line said to its end");
+    no_errors(&g);
+}
+
 /// A Goodbye greeting through a talking activator opens a conversation, which the line
 /// ends (owner 2026-10-22): the REPCONN intercom's "I'm letting you in", said at the
 /// player without one, was said out of hearing where its speaker stood.

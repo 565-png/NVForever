@@ -4919,6 +4919,14 @@ impl<'a> Game<'a> {
         let dv = self.dialogue_view();
         let Some(def) = dv.info(&info) else { return };
         self.cut_line(speaker);
+        // One line at a time where it is said: a talking activator's own line and a line
+        // said through it by its talking actor cut each other, whichever starts second
+        // [design, #2768: else both would end, each with its SayToDone].
+        let place = through.unwrap_or(speaker);
+        let others: Vec<FormId> = self.speech.iter().filter(|s| s.speaker != speaker && s.place() == place).map(|s| s.speaker).collect();
+        for o in others {
+            self.cut_line_where(|s| s.speaker == o && s.place() == place);
+        }
         self.mark_said(speaker, info, false);
         let conversation = match kind {
             LineKind::Conversation(n) => Some(n),
@@ -4999,12 +5007,18 @@ impl<'a> Game<'a> {
     /// quest stages and must not be lost; the owner's catch-all statement was about the
     /// greeting].
     pub(crate) fn cut_line(&mut self, speaker: FormId) {
-        if let Some(k) = self.speech.iter().position(|s| s.speaker == speaker) {
+        self.cut_line_where(|s| s.speaker == speaker);
+    }
+
+    /// [`Game::cut_line`] for the first line that `which` picks.
+    fn cut_line_where(&mut self, which: impl Fn(&Speech) -> bool) {
+        if let Some(k) = self.speech.iter().position(which) {
             if self.speech[k].goodbye_at_player() {
                 self.end_line(k);
                 return;
             }
             let s = self.speech.remove(k);
+            let speaker = s.speaker;
             self.emit(EventKind::LineEnded { speaker, info: s.info, cut: true });
             if let (Some(lines), Some(target)) = (s.conversation, s.target) {
                 self.emit(EventKind::ActorConversationEnded { speaker, target, reason: crate::dialogue::ended::CUT, lines });
