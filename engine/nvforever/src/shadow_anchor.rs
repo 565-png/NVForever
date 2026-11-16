@@ -482,7 +482,8 @@ mod tests {
         let reach = ANCHOR_REACH_TEXELS * f64::from(moon_texel);
         let centre = cascade_centre(&cascade_of(sun(0.0), FAR, moon_texel, DEPTH));
         assert_eq!(a, Anchor { at: (centre / reach).round() * reach, texel: moon_texel }, "a fresh anchor");
-        // Faded at the horizon: no shadows, the cascades left as they were, no anchors.
+        // Faded at the horizon: no shadows, the cascades neither anchored nor given back by
+        // the hold (shadow_rate.rs), no anchors.
         world.get_mut::<DirectionalLight>(day).unwrap().shadow_maps_enabled = false;
         let stale = cascade_of(sun(0.3), FAR, moon_texel, DEPTH);
         world.entity_mut(day).insert(built(view, vec![stale.clone()]));
