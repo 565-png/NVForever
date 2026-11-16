@@ -2946,3 +2946,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
      falls as min ÷ distance, where it stops falling or is cut, whether 2,000 units
      means anything, and whether the speech differs from the ordinary line. Also
      whether the subtitle shows at each distance.
+
+## Added 2026-11-16 (a talking activator's Say and SayTo, #2768)
+
+219. **When a talking activator given a talking actor says a line whose conditions test the
+     speaker (GetIsID), are the conditions tested on the talking actor?** (P2; #2768,
+     talking-activators.md §2, `Game::say`.) Ours: yes; the line is chosen with the actor
+     as the speaker and IsActorTalkingThroughActivator 1, said in the actor's voice from
+     the activator, its SayToDone blocks run on the activator and its result scripts on
+     the actor; with no line for the actor the activator's own lines are tried
+     [hypothesis]. Tale of Two Wastelands relies on it (Vault 101's intercom given Jonas,
+     CG02IntercomConv; the Pitt's Ashur intercom), FalloutNV.esm's talking activators may
+     not. With a talking activator placed near the player and a test topic whose one line
+     has GetIsID <an actor> (and nothing else), run `<activator>.SetTalkingActivatorActor
+     <that actor's ref>` then `<activator>.Say <topic>`: is the line said (subtitle,
+     voice)? Then without SetTalkingActivatorActor (cleared): nothing? While it plays,
+     read `<activator>.IsTalking` and `<actor>.IsTalking`, and note whether a SayToDone
+     block in the activator's script runs when it ends (a script print).

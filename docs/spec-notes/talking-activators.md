@@ -8,9 +8,10 @@ decompile` and `fnvtool dialogue lines`; nothing quoted beyond names, short labe
 FormIDs). Radios as stations: [radio.md](radio.md).
 
 Code: `fnv_game::talking_activators` (who speaks, IsActorTalkingThroughActivator),
-`fnv_game::dialogue` (`Conversation::through`), `fnv_sim::World::activate` (a TACT's
+`fnv_game::dialogue` (`Conversation::through`), `Game::say` (`Speech::through`), `fnv_sim::World::activate` (a TACT's
 default action is Talk); the engine's `dialogue_look.rs` (the view turns to the
-activator; the actor does not turn). Tests: `crates/fnv-game/tests/perk_talk.rs`. Smoke:
+activator; the actor does not turn). Tests: `crates/fnv-game/tests/perk_talk.rs` (Say and SayTo through one:
+`a_talking_activator_says_its_talking_actors_lines_by_script`). Smoke:
 `talking-activator-intercom`. Capture job: `tools/capture/probes/actor_changes.toml` ac6
 (run 2026-10-18 on nvftest: every answer the same as ours).
 
@@ -92,9 +93,28 @@ activator; the actor does not turn). Tests: `crates/fnv-game/tests/perk_talk.rs`
   hearing; the player tried again, got "Stop messing around with the intercom", and that
   conversation cut the silent line before its end script ran (owner playtest 2026-10-22;
   smoke `intercom-goodbye-line`).
-- Not built: other lines of a talking activator outside a conversation (Say, SayTo from
-  an intercom are said by the activator as by any speaker); distance attenuation is not
-  an issue in a conversation (heard whole).
+- **Say and SayTo on a talking activator** with a talking actor (the one set by
+  SetTalkingActivatorActor, else the one its scripts name, as above) say that actor's
+  lines: the line is chosen with the actor as the speaker (GetIsID, faction, voice type
+  and every other condition on the speaker, the fixed-speaker check, Say Once), with
+  IsActorTalkingThroughActivator 1 on it while choosing, and said by the actor through
+  the activator, in the actor's voice, as a conversation through one is [hypothesis,
+  issue #2768; observer check 219; documented: SetTalkingActivatorActor "makes a talking
+  activator use the dialogue of a given actor"]. Tale of Two Wastelands needs it:
+  Vault 101's intercom is given Jonas and says CG02IntercomConv, whose lines test GetIsID
+  Jonas; the Pitt's Ashur intercom (DLC01AshurIntercomREF) says DLC01AshurCalledOutside1
+  and the square's loudspeaker Ashur's speech [observed headless by the maintainer, TTW
+  3.4: "no line" before]. When the actor has no line of the topic the activator's own
+  lines are tried, as before [design, #2768]; without a talking actor nothing changes.
+  While the line is said the activator stands for the actor in the world, as for a
+  conversation's line through it (#2451; `Speech::through`): the line goes on while the
+  activator is there (the actor's death cuts it), the activator reads IsTalking 1, a
+  repeated Say of the topic on it finds the line playing, the listener looks at the
+  activator and the far actor does not turn, the line is heard from the activator (the
+  engine's voice and subtitles), and its SayToDone blocks run on the activator
+  [hypothesis: the script that said it waits there]. The line's result scripts run on the
+  actor, as in a conversation through the activator [hypothesis].
+- Distance attenuation is not an issue in a conversation (heard whole).
 
 ## 3. The bunker intercom in the original (2026-10-19) [observed]
 
