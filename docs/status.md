@@ -247,3 +247,14 @@ plus eight authored controls); focused library/unit-test strict lint passed.
 Broader release/live checks remain unrun. This supplies no sink transaction,
 restoration, local-map provider/recipient/projection or native parity.
 Contract: [UI trait external-write serials](spec-notes/ui-trait-write-serial.md).
+
+### Live projectile position and source consumers
+
+[design] Canonical SetPos requests on active shots reach actual flight position
+before engine publication. Canonical Shot.source reaches blast causes, settled
+World ownership and visual attribution. Existing velocity, age, travelled distance,
+fuse, collision shooter and resolved-hit policy remain intact. Six authored
+source-to-physical-consumer controls and one internal queue/restore control remain
+UNRUN. Native behavior and original B42 Quickthrow3.1b initialization, input, bones,
+animation, throw/inventory/detonation and full lifecycle acceptance remain open.
+Contract: [Projectile launch/session traits](spec-notes/projectile-launch-session-traits.md).
