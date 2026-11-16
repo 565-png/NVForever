@@ -1220,7 +1220,7 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   0.97 [documented: issue #2350, supplied `fnvtool esm decode`, `fnvtool nif` and
   texture measurements]. The original may use `_hl` for crown colour or brightness
   [hypothesis, #2350]; whether its crown tints is unknown. Settle
-  [observer check 215](../handoff/observer-checks.md#added-2026-11-15-lil-devils-crown-issue-2350)
+  [observer check 216](../handoff/observer-checks.md#added-2026-11-15-lil-devils-crown-issue-2350)
   before considering a change to the provisional tint rule [design, #2350].
 - **Hair and depth** [observed, `characters\hair\hairbase.nif`]: the hair shape's
   NiAlphaProperty is flags 4333 (0x10ED), threshold 0: blend on, SRC_ALPHA /
