@@ -9160,6 +9160,51 @@ expect = [
 ]
 
 [[scenario]]
+name = "npc-seated-save-write"
+source = "issue #2797: an NPC saved while seated stands after a load, GetSitting reads 0 until the engine seats it again; the first half: Easy Pete (EasyPeteRef, 00104C80) sits on his porch chair 0010634A at 09:00 under EasyPeteChairPackage8x4 (as resetai-seated), GetSitting reads 3, save (npc-seated-save-load and npc-seated-save-resits read this save, so run them together)"
+areas = ["save", "furniture"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-game/src/functions/furniture.rs"]
+env = { NVFOREVER_HOME = "npc-seated-save-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "15:call:EasyPeteRef:GetSitting", NVF_PLAY_TEST_CONSOLE = "18:save npcseated;19:close" }
+args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--hour", "9", "--npc-packages", "EasyPeteRef", "--no-voice", "--no-messages"]
+run_seconds = 22
+order = [[
+  { text = "furniture: 00104C80 is on 0010634A", label = "Easy Pete sits on his chair" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 3", label = "seated before the save" },
+  { re = 'save: wrote .*npcseated\.nvfsave', label = "the save is written while he sits" },
+]]
+
+[[scenario]]
+name = "npc-seated-save-load"
+source = "issue #2797: the second half: --load the save npc-seated-save-write made with no NPC packages (nothing seats him again): Easy Pete's GetSitting reads 0 and no seated idle (FurnitureFidget, ChairDialogueIdles) plays on him while he stands; before the fix the saved furniture use came back and both read the seat"
+areas = ["save", "furniture"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-game/src/functions/furniture.rs"]
+env = { NVFOREVER_HOME = "npc-seated-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "3:call:EasyPeteRef:GetSitting,14:call:EasyPeteRef:GetSitting" }
+args = ["--play", "--load", "npcseated", "--no-npc-packages", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = [
+  { re = 'load: restored .*npcseated\.nvfsave', label = "the save is restored" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 0", count = 2, label = "standing after the load, at both probes" },
+]
+forbid = [
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 3", label = "the saved seat read back after the load" },
+  { re = 'idle: EasyPeteRef plays Sit', label = "a seated idle on the standing body" },
+]
+
+[[scenario]]
+name = "npc-seated-save-resits"
+source = "issue #2797: the third part: --load the same save with Easy Pete's package running: his AI walks him back to his chair and the engine reports the new seat (a new furniture line), after which GetSitting reads 3 again"
+areas = ["save", "furniture"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-game/src/functions/furniture.rs"]
+env = { NVFOREVER_HOME = "npc-seated-save-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "40:call:EasyPeteRef:GetSitting" }
+args = ["--play", "--load", "npcseated", "--npc-packages", "EasyPeteRef", "--no-voice", "--no-messages"]
+run_seconds = 45
+order = [[
+  { re = 'load: restored .*npcseated\.nvfsave', label = "the save is restored" },
+  { text = "furniture: 00104C80 is on 0010634A", label = "the engine seats him again and says so" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 3", label = "seated again" },
+]]
+
+[[scenario]]
 name = "ammo-type-save-write"
 source = "issue #1574: the ammo type swapped into the weapon comes back on load; the first half: 10mm Pistol (0000434F) with 10mm (00004241) and 10mm JHP (0013E43B): it loads 10mm, Ammo Swap to JHP, save (ammo-type-save-load reads this save, so run them together)"
 areas = ["save", "combat"]
