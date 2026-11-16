@@ -82,11 +82,11 @@ fn source_advance_and_alias_reach_the_existing_menu_without_awarding_xp() {
     let level = g.player_level();
     let menus = g.events.iter().filter(|e| matches!(e.kind, EventKind::MenuOpened { menu: fnv_game::game::menus::LEVEL_UP })).count();
     success(&mut g, "AdvancePCLevel");
-    assert_eq!(g.player_level(), level + 1);
+    assert_eq!(g.player_level(), level + 1.0);
     assert_eq!(g.menu, Some(fnv_game::game::menus::LEVEL_UP));
     assert_eq!(g.player.xp, 123.5);
     success(&mut g, "AdvLevel");
-    assert_eq!(g.player_level(), level + 2);
+    assert_eq!(g.player_level(), level + 2.0);
     assert_eq!(g.player.xp, 123.5);
     assert_eq!(g.events.iter().filter(|e| matches!(e.kind, EventKind::MenuOpened { menu: fnv_game::game::menus::LEVEL_UP })).count(), menus + 1, "advancing while already open retains the existing menu event policy");
     // Main's source compiler drops surplus call-line arguments with a warning.
@@ -95,7 +95,7 @@ fn source_advance_and_alias_reach_the_existing_menu_without_awarding_xp() {
     assert!(compiled.errors().next().is_none(), "{:?}", compiled.diags);
     assert!(compiled.diags.iter().any(|d| !d.error && d.kind == "surplus_arguments" && d.detail == "1 dropped: 1"));
     success(&mut g, "AdvancePCLevel 1");
-    assert_eq!(g.player_level(), level + 3);
+    assert_eq!(g.player_level(), level + 3.0);
     assert_eq!(g.player.xp, 123.5);
 }
 
@@ -143,7 +143,7 @@ fn bad_arguments_and_explicit_empty_receivers_do_not_mutate_player_state() {
     success(&mut admitted, "ModPCAttribute Strength 1\nRemoveReputationExact ProgressionRep 0 0.5\nAdvancePCLevel");
     assert_eq!(functions::actor_value_parts(&mut admitted, FormId::PLAYER_REF, av::STRENGTH).unwrap(), [6.0, 0.0, 0.0]);
     assert_eq!(admitted.player.reputation[&REP], [0.0, 0.0]);
-    assert_eq!(admitted.player_level(), g.player_level() + 1);
+    assert_eq!(admitted.player_level(), g.player_level() + 1.0);
     let level = g.player_level();
     let strength = functions::actor_value_parts(&mut g, FormId::PLAYER_REF, av::STRENGTH).unwrap();
     for (body, reason) in [
