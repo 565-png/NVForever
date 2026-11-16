@@ -515,6 +515,9 @@ pub struct RefExtra {
     /// reference's (`Game::merchant_container`).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub merchant_container: Option<FormId>,
+    /// RemoveMerchantContainer explicitly clears even an authored XMRC assignment.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub merchant_container_cleared: bool,
     /// Wait: the Follow or Accompany package the actor waits in, standing where it is,
     /// until StopWaiting (`functions::fo3`; the AI's follow step reads [`Game::waits`]).
     #[serde(skip_serializing_if = "Option::is_none", default)]

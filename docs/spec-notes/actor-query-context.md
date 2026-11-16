@@ -1,0 +1,31 @@
+# Actor query and merchant context
+
+[documented] `GetPlayerGrabbedRef` returns the reference held by the player's
+grab, or no reference. [Source](https://geckwiki.com/index.php/GetPlayerGrabbedRef).
+NVForever reads the existing grab state reported by the engine; no grab is created
+or changed by the query.
+
+[documented] `actor.GetPackageTarget` returns the actor's current package target;
+while the actor is in a conversation it returns its conversation partner.
+[Source](https://geckwiki.com/index.php?title=GetPackageTarget).
+[hypothesis] Use the existing current-package resolver, linked-reference target
+resolver, player conversation and actor-conversation records. Missing targets
+and invalid receivers return no reference. Selection keeps the command's actor
+template policy and accepts placed leveled actors through the runtime selector.
+
+[documented] `RemoveMerchantContainer actor` clears the actor's merchant
+container assignment (accepted `schemas/script/functions.json` documentation
+entry). `SetMerchantContainer` assigns a persistent container and
+[GetMerchantContainer](https://geckwiki.com/index.php?title=GetMerchantContainer)
+queries that assignment.
+[hypothesis] Keep an explicit saved clear distinct from a missing override:
+clearing an authored assignment must not fall back to that same assignment in
+barter, buying or repair. A later successful setter replaces the clear.
+
+[documented] `RemoveFac` is an alias of `RemoveFromFaction`, not another
+independent function. [Source](https://geckwiki.com/index.php?title=Complete_List_of_Functions_in_Fallout_New_Vegas_%28OLD_LIST%29).
+Reuse the accepted command and its existing argument encoding.
+
+[hypothesis] The first three names are admitted through source names only;
+native encoding, original-game edge cases and installed-mod execution remain
+separate work. Synthetic tests establish NVForever behavior, not native parity.

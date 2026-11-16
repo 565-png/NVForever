@@ -167,6 +167,7 @@ pub mod nvse_lu2;
 pub mod nvse_lu3;
 pub mod nvse_showoff4;
 pub mod nvse_leveled;
+mod nvse_actor_queries;
 pub mod nvse_jip2;
 pub mod nvse_gaps;
 pub mod nvse_jip3;
