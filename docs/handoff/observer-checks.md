@@ -2694,7 +2694,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-15 (old-head hair outside the race list, #2714)
 
-216. **Which hair does the original use when an NPC's HAIR is outside its race's
+209. **Which hair does the original use when an NPC's HAIR is outside its race's
      list?** (P3; #2714; actors.md section 4.4.) [documented: #2714, spooknik's
      2026-11-15 record/archive audit at main 1790ab94a] Roy, VFSRoyREF
      0x0011365D / base VFSLocalVictim03 0x00113649, is CaucasianOldAged
