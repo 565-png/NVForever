@@ -14,8 +14,9 @@ tab or category). The launcher shows these labels and notes until the game has w
 own menu (docs/design/launcher.md). The words are NVForever's own; the
 facts are the rows' (each row's module, named under its key).
 
-The labels here are as the rows register them. The page shows them in Title Case in English:
-it title-cases them itself (`engine/nvf-play/src/pause.rs`, `shown_case`).
+The labels here are as the rows register them. The page shows them in Title Case in English
+(also where another language's file has no line for one): it title-cases them itself
+(`engine/nvf-play/src/pause.rs`, `shown`).
 
 A row whose module is not part of a run (lip sync without lip data, the draw distances, the
 quality presets without the install's preset files) is not on the page then. Some rows are
@@ -465,6 +466,9 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
   4x three. More looks smoother and costs a little more latency and graphics memory; 3x and
   4x only where the graphics card offers them (RTX 50 series). Takes effect at once. Only
   with DLSS frame generation. Not in the original.
+- In its place on the page while the frame rate limit divided by the frames shown per real
+  frame is under 60 (#2731), e.g.: 4x at a limit of 144: 36 real frames a second, which can
+  feel choppy. Fewer generated frames, or a limit up to the display's refresh rate, give more.
 - More: docs/design/dlss-frame-generation.md
 - Registered in `engine/nvforever/src/settings.rs`
 
@@ -491,8 +495,8 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
 
 ### `menu-font`: Menu font
 
-- On the page: The menus' letters. Original: the game's own font. Sharp: Roboto Condensed,
-  sharp at any resolution, titles bold.
+- On the page: The menus' letters. Original: the game's own font (Sharp for a language it
+  has no letters for). Sharp: Roboto Condensed, sharp at any resolution, titles bold.
 - In full: Sharp draws the main menu's entries and the pause menu's text (the column, the
   settings page, the load page) with Roboto Condensed (SIL Open Font License 1.1, Fallout 4's
   own interface font), laid out by Bevy's text at the screen's resolution, without kerning or
@@ -502,7 +506,11 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
   and a drop shadow as the game's own fonts have in their pictures. Original keeps the game's
   raster font, whose letters are stretched at high resolutions. Default Original [design: owner
   2026-11-15, the menu overhaul and its second test; 2026-11-16: the vanilla font by default].
-  The other menus keep the game's font.
+  The game's font has only its code page's 256 letters: where the chosen language's are not
+  among them (Russian on an English install, whose page is Windows-1252) Original draws
+  sharp too, else the words would read as `?`; Sharp draws every letter the font has
+  (Latin and Cyrillic), whatever the install's code page (owner 2026-11-16). The other
+  menus keep the game's font.
 - Registered in `engine/nvf-play/src/pause.rs` (`MenuFont`), the font in
   `engine/nvf-play/src/vector_font.rs`
 ### `sneak-gauges`: Light and noise gauges while sneaking
@@ -1074,8 +1082,8 @@ below cover them all.
 
 ### `terrain-anti-tiling`: Terrain anti-tiling
 
-- On the page: On: ground textures no longer repeat as a visible grid. Off: each repeats
-  every 256 units, as in the original. Costs some GPU time.
+- On the page: On: ground textures stop repeating as a visible grid, for some GPU time.
+  Off: each repeats every 256 units, as in the original.
 - In full: On: every landscape texture (diffuse and normal map) is read at two or three
   places offset by a hash of where the ground lies in the world and blended, so its
   256-unit repeat no longer lines up into a grid; nearby the ground looks like the same
@@ -1084,6 +1092,37 @@ below cover them all.
 - Command-line switches: `--graphics`, `--graphics-only`
 - More: docs/design/graphics-enhanced.md §3.13
 - Registered in `engine/nvforever/src/settings.rs`
+
+### `smooth-terrain`: Smooth terrain
+
+- On the page: Smooths height steps while keeping bumps and ridges: 2 x 2 or 4 x 4 squares
+  per landscape square, or 4 x 4 near you and 2 x 2 further. Drawing and collision share it.
+  Applies at the next start.
+- In full: [design, #2149, #2676] A list: Off, 2 x 2, 4 x 4 and 4 x 4 near; 4 x 4 by
+  default (smoothing on by the maintainer's decision of 2026-11-13; 4 × 4 and the recipe,
+  detail, bound 8 units and thresholds 2:6, are the contributor's pick from in-game
+  comparisons of 2026-11-15, for the maintainer to confirm). Detail evens out height steps while keeping
+  bumps and ridges; 4 × 4 gives rounder silhouettes, 2 × 2 a quarter of the geometry for
+  weaker machines. 4 x 4 near collides on the 4 × 4 surface and draws each loaded quadrant
+  4 × 4 within 2,048 units of the camera, 2 × 2 (the same surface, every other vertex)
+  beyond 2,560, with no gaps where the two meet. The surface stays within one height step
+  (8 units) of the stored triangles to keep placed objects in contact (the test aids below
+  allow up to 16); actors and objects stand on what is drawn. Off: the landscape's
+  triangles as stored. It takes effect at the next start (loading a save starts the game
+  again), so drawn ground and collision always change together. The INI's older `1`/`0`
+  (#2149's on/off) reads as 4 x 4 and Off. Not in the original. Kept in the INI as `off`,
+  `2x2`, `4x4` or `4x4-near`. For comparing recipes, the test aids
+  `NVF_PLAY_TEST_SMOOTH_MODE` (`interpolate`, `fit`, `detail`: a fit that evens out the
+  height steps but keeps bumps and ridges), `NVF_PLAY_TEST_SMOOTH_SUBDIV` (`2`, `4`, over
+  the row's level), `NVF_PLAY_TEST_SMOOTH_BOUND` (0 to 16 units),
+  `NVF_PLAY_TEST_SMOOTH_DETAIL` (detail's thresholds, `2:6` by default) and
+  `NVF_PLAY_TEST_SMOOTH_NEAR` (4 x 4 near's distance, 2048 by default) override how it
+  smooths for one run without changing this row or its saved default.
+- Command-line switches: `--smooth-terrain <off|2x2|4x4|4x4-near>`, `--no-smooth-terrain`
+- More: docs/spec-notes/world.md §3 "Smoothing"
+- Registered in `engine/nvforever/src/settings.rs` (state in `engine/nvf-play/src/smooth_terrain.rs`)
+
+## Graphics › Distance
 
 ### `object-distance`: Object distance
 
@@ -1175,6 +1214,18 @@ below cover them all.
 - On the page: On: the navmesh near the camera and the walking NPCs' paths are drawn.
 - Command-line switches: `--show-navmesh`
 - Registered in `engine/nvforever/src/settings.rs`
+
+### `terrain-wireframe`: Terrain wireframe
+
+- On the page: On: draw triangle edges over the loaded landscape to inspect its shape.
+  Changes immediately. Distant terrain is not outlined.
+- In full: Off by default. On: every triangle edge of the loaded landscape, as it is drawn
+  and collided (smoothed or stored), is drawn as a thin magenta line over the ground, for
+  looking at the shape smoothing gives it. Cells that load while it is on are outlined as
+  they come; nothing is built or kept while it is off. Not in the original.
+- Command-line switches: `--terrain-wireframe`
+- More: docs/spec-notes/world.md §3 "Smoothing"
+- Registered in `engine/nvforever/src/settings.rs` (drawn by `engine/nvforever/src/terrain_wireframe.rs`)
 
 ### `scope-3d`: 3D scopes (test)
 

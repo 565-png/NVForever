@@ -52,6 +52,11 @@
 //! but the INI's text still loads it ([`apply_stored`]): a stored request survives a run in
 //! which it cannot be met.
 //!
+//! A row's note can give other words for a while ([`set_note_now`]): while its function says
+//! something (already in the language shown), the page shows that under the rows in place of
+//! the row's own note, e.g. the Generated frames row saying how few real frames a second the
+//! frame rate limit leaves (nvforever, #2731). It should keep to the note's budget too.
+//!
 //! A list that took over from an older row can read that row's INI key when its own is not in
 //! the file ([`set_older_key`]; its `load` takes the older row's text), and the test aids can
 //! still name the older row ([`set_list_alias`], [`pick_alias`]): nvforever's `fsr-upscaling`,
@@ -384,6 +389,10 @@ pub type ChoiceLabel = fn(&World, &str) -> String;
 /// ([`set_choice_unavailable`]).
 pub type ChoiceUnavailable = fn(&World, &str) -> Option<String>;
 
+/// Words a row's note gives now in place of its own, already in the language shown; `None`:
+/// its own note ([`set_note_now`]).
+pub type NoteNow = fn(&World) -> Option<String>;
+
 /// Whether a list's choice of this name is an action rather than a state to keep
 /// ([`set_choice_action`]).
 pub type ChoiceAction = fn(&str) -> bool;
@@ -418,6 +427,8 @@ pub struct Settings(
     /// Rows shown only while their module says so ([`set_shown_when`]): (the row's key, the
     /// key of the row that stands for it while hidden, the test).
     Vec<(&'static str, &'static str, ShownWhen)>,
+    /// Rows whose note gives other words for a while ([`set_note_now`]).
+    Vec<(&'static str, NoteNow)>,
 );
 
 /// Whether a row is shown now ([`set_shown_when`]).
@@ -481,6 +492,13 @@ impl Settings {
             let holds = if r.choices.is_empty() { self.value(world, p) >= 0.5 } else { self.choices(p).is_some_and(|c| r.choices.contains(&(c.chosen)(world).as_str())) };
             (!holds).then_some(r.why)
         })
+    }
+
+    /// The words row `i`'s note gives now in place of its own ([`set_note_now`]); `None`: its
+    /// own.
+    pub fn note_now(&self, world: &World, i: usize) -> Option<String> {
+        let key = self.0.get(i)?.key;
+        (self.9.iter().find(|(k, _)| *k == key)?.1)(world)
     }
 
     /// List row `i`'s words and reasons for its choices, when it has any ([`ChoiceLooks`]).
@@ -608,6 +626,16 @@ pub fn set_shown_when(app: &mut App, key: &'static str, parent: &'static str, sh
     let mut settings = app.world_mut().resource_mut::<Settings>();
     settings.8.retain(|(k, _, _)| *k != key);
     settings.8.push((key, parent, shown));
+}
+
+/// Give row `key`'s note `note`'s words, in place of its own, while it says something (module
+/// notes). The words are drawn as they come: `note` translates them itself
+/// (`fnv_util::words::trf`).
+pub fn set_note_now(app: &mut App, key: &'static str, note: NoteNow) {
+    app.init_resource::<Settings>();
+    let mut settings = app.world_mut().resource_mut::<Settings>();
+    settings.9.retain(|(k, _)| *k != key);
+    settings.9.push((key, note));
 }
 
 /// Show list `key`'s choices by `label`'s words instead of their names (module notes). The
@@ -976,10 +1004,18 @@ pub(crate) fn setup(app: &mut App) {
     app.insert_resource(SettingsFile::for_run(crate::test_aid::Unattended::from_env().0));
     app.add_systems(PostStartup, (apply_stored, crate::bindings::apply_stored));
     app.add_systems(PostStartup, fix_ui_scale.after(apply_stored));
+    app.add_systems(PostStartup, fix_smooth_terrain.after(apply_stored));
     app.add_systems(PostStartup, check_notes.after(apply_stored));
     // The page for the launcher, once every row is registered (crate::settings_menu).
     app.add_systems(PostStartup, crate::settings_menu::write_menu.after(check_notes));
     app.add_systems(Update, revert_unkept);
+}
+
+/// Whether the landscape is smoothed is fixed for the run once the INI is read
+/// (`crate::smooth_terrain`): before the first cell loads, for drawing and collision alike.
+pub fn fix_smooth_terrain() {
+    crate::smooth_terrain::fix();
+    info!("{}", crate::smooth_terrain::describe());
 }
 
 /// The UI scale is fixed for the run once the INI is read (`crate::interface::fix_ui_scale`).

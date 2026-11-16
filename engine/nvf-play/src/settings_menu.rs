@@ -12,10 +12,10 @@
 //! settings file (`SettingsFile(None)`) writes none.
 
 use bevy::prelude::*;
-use fnv_util::words::{tr, tr_str};
+use fnv_util::words::tr;
 use nvf_settings_layout::menu::{self, Menu};
 
-use crate::pause::shown_case;
+use crate::pause::on_page;
 use crate::settings::{Settings, SettingsFile, Slider};
 use crate::settings_layout::resolve_layout;
 
@@ -33,13 +33,13 @@ pub fn menu_of(world: &World, settings: &Settings) -> Menu {
             .iter()
             .filter(|s| !s.rows.is_empty())
             .map(|s| menu::Category {
-                group: s.placement.subgroup.map(|g| shown_case(tr(g))),
-                heading: s.placement.heading.map(|h| shown_case(tr(h))),
+                group: s.placement.subgroup.map(on_page),
+                heading: s.placement.heading.map(on_page),
                 rows: s.rows.iter().map(|&i| row(world, settings, i)).collect(),
             })
             .collect();
         if !categories.is_empty() {
-            tabs.push(menu::Tab { name: t.name.to_string(), label: shown_case(tr(t.name)), categories });
+            tabs.push(menu::Tab { name: t.name.to_string(), label: on_page(t.name), categories });
         }
     }
     Menu { version: env!("CARGO_PKG_VERSION").to_string(), tabs }
@@ -55,7 +55,7 @@ fn row(world: &World, settings: &Settings, i: usize) -> menu::Row {
             .into_iter()
             .filter(|name| !action.is_some_and(|is_action| is_action(name)))
             .map(|name| {
-                let label = shown_case(tr_str(&settings.choice_label(world, i, &name)));
+                let label = on_page(&settings.choice_label(world, i, &name));
                 menu::Choice { name, label }
             })
             .collect();
@@ -69,7 +69,7 @@ fn row(world: &World, settings: &Settings, i: usize) -> menu::Row {
     let words = |w: &'static str| tr(w).to_string();
     let shown_with = nvf_settings_layout::shown_with(s.key).map(|r| menu::Rule::of(r, words));
     let needs = nvf_settings_layout::needs(s.key).into_iter().map(|r| menu::Rule::of(r, words)).collect();
-    menu::Row { key: s.key.to_string(), label: shown_case(tr(s.label)), note: tr(s.note).to_string(), kind, shown_with, needs }
+    menu::Row { key: s.key.to_string(), label: on_page(s.label), note: tr(s.note).to_string(), kind, shown_with, needs }
 }
 
 /// The values `slider` reaches (`Slider::fit`) and the words the page shows for each, when
@@ -87,7 +87,7 @@ fn steps(slider: &Slider) -> Vec<menu::Step> {
     for k in first..=last {
         let value = slider.fit(k as f32 * step);
         if out.last().is_none_or(|s| s.value != value) {
-            out.push(menu::Step { value, label: shown_case(tr_str(&slider.text(value))) });
+            out.push(menu::Step { value, label: on_page(&slider.text(value)) });
         }
     }
     out

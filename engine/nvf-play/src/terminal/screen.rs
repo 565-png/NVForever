@@ -886,7 +886,7 @@ mod tests {
         let mut glyphs = vec![Glyph::default(); 256];
         glyphs[65] = Glyph { uv: [0.0, 0.0, 0.5, 0.5], width: 2.0, height: 2.0, before: 1.0, after: 1.0, ascent: 2.0 };
         glyphs[66] = Glyph { uv: [0.5, 0.5, 1.0, 1.0], width: 2.0, height: 2.0, before: 0.0, after: 3.0, ascent: 1.0 };
-        let font = Font { size: 4.0, texture: String::new(), glyphs };
+        let font = Font { size: 4.0, texture: String::new(), glyphs, extra: Default::default() };
         let mut alpha = vec![0.0; 16];
         for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1), (2, 2), (3, 2), (2, 3), (3, 3)] {
             alpha[y * 4 + x] = 1.0;
@@ -919,7 +919,7 @@ mod tests {
     #[test]
     fn softened_glyphs_refuse_invalid_uvs_before_rounding() {
         use fnv_font::Glyph;
-        let mut font = Font { size: 4.0, texture: String::new(), glyphs: vec![Glyph::default(); 256] };
+        let mut font = Font { size: 4.0, texture: String::new(), glyphs: vec![Glyph::default(); 256], extra: Default::default() };
         // [design] Include slight excursions that rounding would otherwise hide,
         // non-finite edges, reversed ranges, and ranges collapsed by rounding.
         for uv in [
@@ -942,7 +942,7 @@ mod tests {
         // a 2 x 3 cut-out. Non-unit metric/texel ratios must also pad proportionally.
         let original = Glyph { uv: [1.25 / 8.0, 2.25 / 8.0, 3.25 / 8.0, 5.25 / 8.0], width: 3.0, height: 6.0, before: 1.0, after: 2.0, ascent: 5.0 };
         glyphs[65] = original;
-        let font = Font { size: 8.0, texture: String::new(), glyphs };
+        let font = Font { size: 8.0, texture: String::new(), glyphs, extra: Default::default() };
         let mut alpha = vec![0.0; 64];
         for y in 2..5 {
             alpha[y * 8 + 1] = 0.25;
@@ -973,7 +973,7 @@ mod tests {
                 alpha[y * 750 + i * 250..y * 750 + (i + 1) * 250].fill(coverage);
             }
         }
-        let font = Font { size: 4.0, texture: String::new(), glyphs };
+        let font = Font { size: 4.0, texture: String::new(), glyphs, extra: Default::default() };
         let soft = soften(&font, &alpha, 750, 4, SOFT_SIGMA, |a| a).expect("wrapped shelf");
         let origins: Vec<_> = (65..68).map(|code| {
             let g = soft.font.glyphs[code];

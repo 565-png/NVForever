@@ -195,7 +195,7 @@ pub const SECTIONS: &[Section] = &[
     section("Graphics", Some("Shadows"), &["sun-shadows", "shadow-filter", "shadow-distance", "fine-shadows"]),
     section("Graphics", Some("Lighting and Effects"), &["ambient-occlusion", "light-shafts", "bloom", "grade", "glow", "eye-adaptation", "neon-glow"]),
     section("Graphics", Some("Water"), &["water-reflections", "water-mirror"]),
-    section("Graphics", Some("Detail and Distance"), &["distant-lod", "grass", "anisotropic", "terrain-height-blend", "terrain-anti-tiling", "object-distance", "actor-distance", "item-distance", "grass-distance"]),
+    section("Graphics", Some("Detail and Distance"), &["distant-lod", "grass", "anisotropic", "terrain-height-blend", "terrain-anti-tiling", "smooth-terrain", "object-distance", "actor-distance", "item-distance", "grass-distance"]),
     section("Graphics", Some("World and Animation"), &["head-tracking", "foot-ik", "sky-clock"]),
     // The owner's own layout of the movement work (tech/movement-inertia, 2026-11-15).
     section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement"]),
@@ -909,7 +909,7 @@ pub const SECTIONS: &[Section] = &[
             "tweak-region-borders-message-only",
         ],
     ),
-    section("Debug", None, &["overlay", "hit-markers", "god-mode", "navmesh", "scope-3d"]),
+    section("Debug", None, &["overlay", "hit-markers", "god-mode", "navmesh", "terrain-wireframe", "scope-3d"]),
 ];
 
 /// Rows that cannot apply while another row is off: (the row, the row it needs, why), the
