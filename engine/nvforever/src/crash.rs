@@ -18,7 +18,8 @@
 //! where the camera was (worldspace or interior, cell, position; [`note_place`], kept
 //! every frame) and the name of the run log; the panic is logged too, and the console gets
 //! the words Rust's default hook prints, redacted (the default hook is not called: it would
-//! print the home folder).
+//! print the home folder). If several panics share a second and process id, the first
+//! report and its optional sidecars keep that name; later panics are still logged.
 //!
 //! **Structured events** (events_log.rs): the same events at `info` and up, as JSON lines
 //! with where and when they happened, in `events-<UTC time>-<pid>.jsonl` beside the run log.
@@ -441,8 +442,16 @@ fn report_text(thread: &str, message: &str, location: &str, place: &str, command
 /// Write one panic report and its optional sidecars. `false` means an earlier report
 /// already owns this name; its evidence must stay together.
 fn write_panic_report(path: &Path, text: &str, sidecars: impl FnOnce()) -> std::io::Result<bool> {
+    let result = match File::options().write(true).create_new(true).open(path) {
+        Ok(mut file) => file.write_all(redact(text).as_bytes()),
+        // Reserve the report name before collecting sidecars: concurrent or reentrant
+        // panics must not replace the report or the context belonging to it.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && path.is_file() => return Ok(false),
+        Err(e) => Err(e),
+    };
+    // As before, try the sidecars even if the text could not be written.
     sidecars();
-    std::fs::write(path, redact(text).as_bytes())?;
+    result?;
     Ok(true)
 }
 
@@ -472,17 +481,17 @@ fn set_hook() {
             let when = stamp(now_secs());
             let path = dir.join(format!("crash-{when}-{}.txt", std::process::id()));
             let result = write_panic_report(&path, &text, || {
-            // The flight recorder's last 60 s beside it, when reports are on (reports/anomaly.rs).
-            if crate::reports::active().is_some() {
-                let rec = crate::reports::anomaly::dump_recorder(&dir.join(format!("recorder-{when}-{}.jsonl", std::process::id())));
-                let snap = crate::reports::snapshot::dump(&dir.join(format!("snapshot-{when}-{}.json", std::process::id())));
-                match (rec.is_ok(), snap.is_ok()) {
-                    (true, true) => info!("reports: the flight recorder and world snapshot written beside the crash report"),
-                    (true, false) => info!("reports: the flight recorder written beside the crash report (no world snapshot yet)"),
-                    (false, true) => info!("reports: the world snapshot written beside the crash report (no flight recorder)"),
-                    (false, false) => {}
+                // The flight recorder's last 60 s beside it, when reports are on (reports/anomaly.rs).
+                if crate::reports::active().is_some() {
+                    let rec = crate::reports::anomaly::dump_recorder(&dir.join(format!("recorder-{when}-{}.jsonl", std::process::id())));
+                    let snap = crate::reports::snapshot::dump(&dir.join(format!("snapshot-{when}-{}.json", std::process::id())));
+                    match (rec.is_ok(), snap.is_ok()) {
+                        (true, true) => info!("reports: the flight recorder and world snapshot written beside the crash report"),
+                        (true, false) => info!("reports: the flight recorder written beside the crash report (no world snapshot yet)"),
+                        (false, true) => info!("reports: the world snapshot written beside the crash report (no flight recorder)"),
+                        (false, false) => {}
+                    }
                 }
-            }
             });
             (result, path)
         });
