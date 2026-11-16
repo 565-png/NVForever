@@ -16,6 +16,8 @@
     {"op": "note", "text": "The player's gear, stripped at the gate, waits in the return container by the Hole (stage 170 of Unsafe Working Conditions moved it there); opening it (DLC01PlayerItemContainer02SCRIPT, TTW's [observed]) sets stage 5 (travel through Uptown to Haven)."},
     {"op": "note", "text": "The given leaves the Hole's gate (DLC01HoleGateREF) as the last fight's start locked it (INFO 0x0C0032C8's begin script: Lock 255); the talk after the win, which the given does not play, unlocks it (INFO 0x0C0032D5's and 0x0C007148's end scripts [observed]: DLC01HoleGateREF.Unlock). Stand-in for that line's end script."},
     {"op": "call", "line": "DLC01HoleGateREF.Unlock"},
+    {"op": "note", "text": "The given does not run the stage scripts that open the way from Downtown to the scaffolds and Haven: DLC01DowntownGateToScaffoldsREF is unlocked by Unsafe Working Conditions' stage 200 and by Free Labor's stage 0 (their result scripts [observed]: DLC01DowntownGateToScaffoldsREF.Unlock). Stand-in for them."},
+    {"op": "call", "line": "DLC01DowntownGateToScaffoldsREF.Unlock"},
     {"op": "move_player", "to": "DLC01PlayerItemContainerReturnREF"},
     {"op": "player_activate", "target": "DLC01PlayerItemContainerReturnREF", "label": "the gear container"},
     {"op": "close_menus"},
