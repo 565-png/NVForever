@@ -296,3 +296,11 @@ source-to-physical-consumer controls and one internal queue/restore control rema
 UNRUN. Native behavior and original B42 Quickthrow3.1b initialization, input, bones,
 animation, throw/inventory/detonation and full lifecycle acceptance remain open.
 Contract: [Projectile launch/session traits](spec-notes/projectile-launch-session-traits.md).
+
+### MCM integer RGB consumer contract
+
+[design] Three authored, unrun libtests cover packed colour extraction into image
+channels, picker packing and live/reopened preview consistency for bounded integer
+RGB values. Parser/evaluator implementation remains unchanged pending ownership;
+native integer-edge policies and full original MCM acceptance remain open.
+Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
