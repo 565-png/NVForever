@@ -4,7 +4,7 @@ The xNVSE and FOSE functions left after the 2026-10-26 batches, and two JIP/LU g
 lab asked for. Built in `crates/fnv-game/src/nvse_rest.rs`, `ui_functions.rs`,
 `nvse_misc.rs`, `nvse_gaps.rs` and the script VM (`fnv-script/src/vm.rs`). Sources: the
 GECK wiki export [documented: the page named], the lab's probe goldens [observed], and
-the HUD captures in hud.md §14 [observed]. Every change lasts for the session.
+the HUD captures in hud.md §14 [observed]. Changes last for the session unless an entry states a saved lifetime.
 
 ## 1. Setters whose getters were built
 
