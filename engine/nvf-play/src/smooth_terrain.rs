@@ -11,7 +11,7 @@
 //!
 //! How it is smoothed is fixed for the run too ([`params`]): by default detail,
 //! 4 × 4, within 8 units, thresholds 2:6 (`fnv_world::land_surface::SmoothParams::DEFAULT`).
-//! [design, #2149: the user's 2026-11-15 choice from in-game comparisons.] Test aids
+//! [design, #2149: the contributor's pick from in-game comparisons (2026-11-15), for the maintainer to confirm.] Test aids
 //! choose another recipe for comparing them in the game; they are not settings rows
 //! or INI entries:
 //! - `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit|detail` (the LAND vertices kept, fitted,

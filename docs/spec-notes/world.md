@@ -191,9 +191,10 @@ apart and the last row/column coincides with the neighbour's first.
   the same south-west → north-east diagonal (a [hypothesis] about the original), so ridges
   zig-zag and gentle slopes show steps; the VNML lighting is already smooth, the facets
   are in the geometry. The maintainer decided on 2026-11-13: "terrain smoothing should be
-  the default have the collision follow the smoothed surface". On 2026-11-15 the user
-  chose **detail, 4 × 4, bound 8, thresholds 2:6** from nine variants compared in game
-  and screenshots [design, #2149]. Interpolate keeps the 8-unit VHGT steps; fit flattens
+  the default have the collision follow the smoothed surface". The default recipe,
+  **detail, 4 × 4, bound 8, thresholds 2:6**, is the contributor's pick from nine variants
+  compared in game and screenshots on 2026-11-15, for the maintainer to confirm
+  [design, #2149]. Interpolate keeps the 8-unit VHGT steps; fit flattens
   real features; detail removes the steps while keeping bumps, crests and ridges.
   The 4 × 4 subdivision gives rounder silhouettes, and bound 8 keeps placed objects
   in contact by limiting the distance from the stored ground to one height step.
@@ -213,8 +214,8 @@ apart and the last row/column coincides with the neighbour's first.
     2 units); at a LAND vertex the surface is F. With detail (the default, a feature-preserving fit)
     only the part of the move that looks like a quantisation step is taken: with
     d = A − H, F = H + clamp(d · (1 − smoothstep(t0, t1, |d|)), −K, K), t0 = 2 and t1 = 6
-    units by default [design, #2149: the user found fit 4 × 4 within 8 the best
-    compromise but "overly smooths things"; an 8-unit step on a slope moves a vertex by
+    units by default [design, #2149: in the contributor's comparisons fit 4 × 4 within 8 was
+    the best compromise but "overly smooths things"; an 8-unit step on a slope moves a vertex by
     at most 2 (the staircase above gives ±2), while a lone vertex 16 above flat
     neighbours moves by 12 and a ridge 16 high by 8, so steps even out as with fit and
     bumps, crests, ridges and dips keep their height];
@@ -254,7 +255,7 @@ apart and the last row/column coincides with the neighbour's first.
   mode=detail(2:6) subdiv=4 bound=8 land-shift=4; drawing, collision and queries use this
   surface` (off: `mode=stored subdiv=1 bound=0 land-shift=0`), and the exit's `terrain
   summary` counts cell draws over the run (a cell drawn again counts again) and names the
-  recipe. Cost of the default [observed: 2026-11-15, 1920x1080 unpaced, RTX 4070, three
+  recipe. Cost of the default [observed: 2026-11-15, 1920x1080 unpaced, RTX 5070 Ti, three
   launches each on a Goodsprings hillside and two fast flights (1500 units/s) over
   Goodsprings]: standing frame time 3.78 ms (2 x 2 interpolate 3.74, off 3.78), the
   flight's worst frame 32.9 ms (2 x 2 32.4), peak working set about 255 MB above 2 x 2
@@ -282,7 +283,7 @@ apart and the last row/column coincides with the neighbour's first.
   (between the LAND vertices; fitting, the LAND vertices themselves by at most K). With
   the previous interpolate/2/bound-8 recipe, on Goodsprings' cells (−17, 0) and (−18, 0), 1,084 and
   1,541 of the 3,136 new vertices move by more than half a unit, the 95th percentile by
-  3.3 and 4.6 units, and 19 and 43 reach the bound [documented: `fnvtool world land`
+  3.3 and 4.6 units, and 19 and 43 reach the bound [observed: `fnvtool world land`
   heights of the nine cells around each (FalloutNV.esm, WastelandNV), run through a
   Python port of the rule above on 2026-11-14; a calculation, not a game run]: that is
   why a larger bound alone changes little there, and why the fit moves the controls.

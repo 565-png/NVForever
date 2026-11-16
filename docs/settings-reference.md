@@ -942,7 +942,8 @@ After the Controls tab's own rows (see the end of this page):
   the next start.
 - In full: [design, #2149] On by default (the maintainer's decision of 2026-11-13).
   The default recipe is detail, 4 × 4 squares per landscape square, bound 8 units and
-  thresholds 2:6, chosen by the user on 2026-11-15 from in-game comparisons. Detail evens
+  thresholds 2:6, the contributor's pick from in-game comparisons (2026-11-15), for the
+  maintainer to confirm. Detail evens
   out height steps while keeping bumps and ridges; 4 × 4 gives rounder silhouettes.
   The surface stays within one height step (8 units) of the stored triangles to keep
   placed objects in contact (the test aids below allow up to 16); actors and objects
