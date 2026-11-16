@@ -132,6 +132,27 @@ expect = [
   { json = "warnings.#", schema = "fnv.ui.tree/1", equals = 0, count = 1 },
 ]
 
+[[scenario]]
+name = "ui-bit-test-operator"
+kind = "tool"
+source = "[documented] GECK UIO Extra XML Operators; docs/spec-notes/ui-bit-test-operator.md. Authored portable XML expressions without game data."
+note = "Qualified portable CLI pair at fedce260: the unchanged shared launcher runs normal-Cargo fnvtool images against identical authored XML and ten strict schema/count oracles. Baseline retains arithmetic 21 and sentinel 23 but fails six bit/dependent values plus zero-warning expectation; candidate passes all ten. The initial d4ac68b registry rejection is retained separately; dedicated control names preserve its numeric oracles and guard. No native/rendered-menu/installed-mod acceptance."
+areas = ["ui"]
+paths = ["crates/fnv-ui/", "crates/fnvtool/src/ui_cmd.rs", "docs/spec-notes/ui-bit-test-operator.md", "tools/smoke/fixtures/uio-bt/"]
+commands = [["ui", "tree", "--data", "tools/smoke/fixtures/uio-bt", "--menu", "menus/uio-bt.xml"]]
+expect = [
+  { json = "tree.name", schema = "fnv.ui.tree/1", equals = "UIOBitTest", count = 1 },
+  { json = "tree.traits.set", schema = "fnv.ui.tree/1", equals = 1, count = 1 },
+  { json = "tree.traits.clear", schema = "fnv.ui.tree/1", equals = 0, count = 1 },
+  { json = "tree.traits.index", schema = "fnv.ui.tree/1", equals = 1, count = 1 },
+  { json = "tree.traits.notmask", schema = "fnv.ui.tree/1", equals = 0, count = 1 },
+  { json = "tree.traits.nested", schema = "fnv.ui.tree/1", equals = 9, count = 1 },
+  { json = "tree.traits.dependent", schema = "fnv.ui.tree/1", equals = 27, count = 1 },
+  { json = "tree.traits.bt_arithmetic_control", schema = "fnv.ui.tree/1", equals = 21, count = 1 },
+  { json = "tree.traits.bt_sentinel_control", schema = "fnv.ui.tree/1", equals = 23, count = 1 },
+  { json = "warnings.#", schema = "fnv.ui.tree/1", equals = 0, count = 1 },
+]
+
 [[check]]
 name = "root cargo test"
 paths = ["crates/", "Cargo.toml", "Cargo.lock", "schemas/", "deny.toml"]
@@ -815,7 +836,7 @@ paths = [
   "engine/nvforever/src/graphics.rs", "engine/nvforever/src/ssao*", "engine/nvforever/src/post*",
   "engine/nvforever/src/taa*", "engine/nvforever/src/shafts*",
   "engine/nvforever/src/settings.rs", "engine/nvf-play/src/pause.rs",
-  "engine/nvf-play/src/settings_layout.rs",
+  "engine/nvf-play/src/settings_layout.rs", "engine/vendor/naga/**",
 ]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16,19.5:20.5", NVF_PLAY_TEST_SETTINGS = "11:ambient-occlusion,12:bloom,13:fine-shadows,14:ambient-occlusion,15:anti-aliasing=1,15.5:light-shafts,20:anti-aliasing=0.333", NVF_PLAY_TEST_LOOK = "17:90:0,17.5:120:0,18:150:0", NVF_PLAY_TEST_MOVE = "17:1:0,19:0:0" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--graphics", "enhanced"]
@@ -1377,7 +1398,7 @@ areas = ["renderer", "graphics", "settings"]
 paths = [
   "engine/nvforever/src/graphics.rs", "engine/nvforever/src/frame_pace.rs", "engine/nvforever/src/settings.rs",
   "engine/nvforever/src/taa*", "engine/nvf-play/src/settings.rs", "engine/nvf-play/src/pause.rs",
-  "engine/nvf-play/src/settings_layout.rs",
+  "engine/nvf-play/src/settings_layout.rs", "engine/vendor/naga/**",
 ]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:20", NVF_PLAY_TEST_SETTINGS = "11:anti-aliasing=0.667,12:anti-aliasing=0.833,13:anti-aliasing=1,14:anti-aliasing=0.5,15:shadow-filter=0,16:shadow-filter=1,17:shadow-filter=0.5,17.5:field-of-view=0.667,18:frame-cap=0.4,18.5:display-sync=Off,19:frame-cap=0,19.5:field-of-view=0.417" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
@@ -5994,6 +6015,25 @@ expect = [
 order = [[{ re = 'GetItemCount on .*>> 1\.00' }, { re = 'death item: 0x00168D1A' }, { re = 'GetItemCount on .*>> 2\.00' }, { re = 'GetItemCount on player >> [2-9]\.' }]]
 
 # ------------------------------------------------------------------ script stubs
+
+[[scenario]]
+name = "player-source-commands"
+source = "#2271: authored runtime source calls reach the existing player attribute, fractional reputation and level/menu consumers (docs/spec-notes/player-source-commands.md). Native GECK encoding and original-game parity are unmeasured."
+note = "Passed at tested source 23388a32d on QA image b1f63e37: fnv-game/nvf-play/nvforever opt-level 0/debug 0, default features, 16 MiB stack reserve. Six strict state/sentinel/completion oracles and returned row 73 passed; normal exit 0. Native, optimized-release/performance, profile and whole-mod acceptance remain unmeasured."
+areas = ["scripts"]
+paths = ["crates/fnv-game/src/functions/player_source.rs", "crates/fnv-game/src/functions/reputation.rs", "crates/fnv-game/src/game.rs", "tools/smoke/fixtures/player-source-commands.steps.json"]
+env = { NVF_PLAY_TEST_QUERIES = "{repo}/tools/smoke/fixtures/player-source-commands.steps.json", NVF_PLAY_TEST_QUERIES_AT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
+run_seconds = 30
+ends = "run log: the game exited normally"
+expect = [
+  { text = 'script: print "nvf player source attribute delta 1"', count = 1 },
+  { text = 'script: print "nvf player source infamy 3.25"', count = 1 },
+  { text = 'script: print "nvf player source fame 11.5"', count = 1 },
+  { text = 'script: print "nvf player source level delta 1"', count = 1 },
+  { text = 'script: print "nvf player source sentinel 73"', count = 1 },
+  { text = "query job: player-source-commands: 1 steps, 1 rows, 0 errors, written to ", count = 1 },
+]
 
 [[scenario]]
 name = "vanilla-inline-call-operands"
@@ -11410,10 +11450,10 @@ forbid = [
 
 [[scenario]]
 name = "settings-layout"
-source = "#1953: the settings page's seven tabs, the original's four first, and each row's tab and heading from one table (engine/nvf-play/src/settings_layout.rs; docs/design/settings-page.md); an empty Tweaks tab opens on no row"
-note = "the placements checked are of rows registered in every --play run; `0 not in the table` says every row this run registers has its place"
+source = "#1953: the settings page's seven tabs, the original's four first, and each row's tab and heading from one table (engine/nvf-play/src/settings_layout.rs; docs/design/settings-page.md); the Tweaks tab, filled by #1892 (88fbce1c4), opens on its first row, listed with no heading"
+note = "the placements checked are of rows registered in every --play run; `0 not in the table` says every row this run registers has its place (the Tweaks tab's rows, listed in registry order by design, are not counted). Until 88fbce1c4 the Tweaks tab was empty and the scenario checked it opened on no row"
 areas = ["settings"]
-paths = ["engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs"]
+paths = ["engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/tweaks.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:page,12:layout,13:tab:Tweaks", NVF_PLAY_TEST_PAUSE_MENU = "14:inspect" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 18
@@ -11438,12 +11478,13 @@ expect = [
   "settings layout: sky-clock -> Graphics > World",
   "settings layout: god-mode -> Debug",
   "settings layout: scope-3d -> Debug",
-  { text = "pause menu: tab Tweaks; selected none", label = "the empty Tweaks tab opens on no row" },
-  { text = "pause menu: inspect: Tweaks, keys on the rows, selected none, lines 0-0 of 0", label = "it lists nothing" },
-  { re = 'pause menu: inspect: words Search \| Changed \| Gameplay \| Display \| Audio \| Controls \| Graphics \| Tweaks \| Debug \| No settings here\.', label = "the rail and the empty tab's words" },
+  { text = "settings layout: tweak-discovered-sound -> Tweaks", label = "#1892's first tweak under Tweaks, no heading (88fbce1c4)" },
+  { text = "pause menu: tab Tweaks; selected tweak-discovered-sound", label = "the Tweaks tab opens on its first row (filled since 88fbce1c4)" },
+  { re = 'pause menu: inspect: Tweaks, keys on the rows, selected tweak-discovered-sound, lines 1-12 of \d+', label = "a full window of its rows" },
+  { re = 'pause menu: inspect: words Search \| Changed \| Gameplay \| Display \| Audio \| Controls \| Graphics \| Tweaks \| Debug$', label = "the rail's words and no heading in the Tweaks tab" },
   { text = "pause menu: settings window of 12 lines", count = 1, label = "the window's lines worked out from the layout, once (#2377)" },
   { re = 'pause menu: settings list (\d+) wide from \d+ in a view \d+ wide, band \d+-\d+', label = "the list's width from the view, logged (#2377)" },
-  "pause menu: inspect: window 12 lines, 0 drawn",
+  "pause menu: inspect: window 12 lines, 12 drawn",
 ]
 order = [[
   "settings layout: tabs Gameplay",
@@ -11455,7 +11496,7 @@ order = [[
   "settings layout: button-style -> Controls",
   "settings layout: grade -> Graphics > Picture",
   "settings layout: god-mode -> Debug",
-  "pause menu: tab Tweaks; selected none",
+  "pause menu: tab Tweaks; selected tweak-discovered-sound",
 ]]
 forbid = [{ re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" }]
 
@@ -12744,6 +12785,24 @@ env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_T
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
 run_seconds = 18
 expect = [{ re = 'console: GetDead on player >> 0\.00', label = "the player stands" }]
+forbid = [{ re = 'the player died', label = "the player dies" }]
+
+[[scenario]]
+name = "god-mode-script-damage"
+source = "issue #2792 (the maintainer's request on #2743: no trap may damage the player in god mode): a bear trap's script runs DamageActorValue Health 45 and a leg's condition 50 on its victim (docs/spec-notes/traps.md §3); in god mode they and a lowering ModActorValue change nothing, without it they apply"
+note = "the bear trap's two DamageActorValue calls typed in the console on the player in Goodsprings. ForceAV puts Health at 300 first (raising is allowed in god mode), so the readings are fixed numbers; the left leg starts whole at 100. At 18 s tgm turns god mode off and the same calls take 45 Health and 50 condition"
+areas = ["scripts", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.forceav health 300;14.5:player.damageav health 45;15:player.modav health -100;15.5:player.getav health;16:player.damageav LeftMobilityCondition 50;16.5:player.getav LeftMobilityCondition;18:tgm;19:player.damageav health 45;19.5:player.getav health;20:player.damageav LeftMobilityCondition 50;20.5:player.getav LeftMobilityCondition;21:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 24
+order = [[
+  { re = 'console: GetActorValue on player >> 300\.00', label = "god mode: Health untouched by DamageAV 45 and ModAV -100" },
+  { re = 'console: GetActorValue on player >> 100\.00', label = "god mode: the left leg untouched by DamageAV 50" },
+  { text = "console: God mode off", label = "tgm turns god mode off" },
+  { re = 'console: GetActorValue on player >> 255\.00', label = "without it DamageAV takes 45 Health" },
+  { re = 'console: GetActorValue on player >> 50\.00', label = "and 50 of the leg's condition" },
+]]
 forbid = [{ re = 'the player died', label = "the player dies" }]
 
 [[scenario]]
@@ -16823,6 +16882,42 @@ expect = [
   { re = 'dismember: .* 0x00157B3F: Head exploded \(KillActor\)', label = "KillActor explodes gecko 4's head" },
 ]
 manual = "geckos_head.png, geckos_severed.png and geckos_after.png: gecko 2 headless with a neck cap and bits about; gecko 3's head and a foreleg lying apart, capped; gecko 4 headless"
+
+[[scenario]]
+name = "sever-coyote-legs"
+source = "#2677 (docs/spec-notes/dismemberment.md §2.5): a creature's severed leg leaves its torso section (the stump) on the body, closed by the torso cap; the coyote's legs are parts 7/10 (forelegs) and 8/11 (hind legs), each pair under one condition (DogBodyPartData: Right Legs, Left Legs), and coyote.nif cuts each leg between the part and its section like the human body [observed: FalloutNV.esm BPTD, fnvtool nif decode]"
+note = "VERGSCoyote6REF 0x00157B38 moved 150 units in front of the player at 3 s; the hit aid kills it with a machete on the torso at 6 s, then chops its corpse's right legs and left legs (Dismember Only, seeded rolls); frames after each. coyote.nif's right legs and their section caps are 904 triangles (parts 10, 11: 702; caps 110, 111: 202); with their torso sections (10000, 11000: 191) they were 1095, the open hips of #2677"
+areas = ["combat"]
+paths = ["engine/nvforever/src/dismember.rs", "engine/nvf-assets/src/actor.rs", "engine/nvf-play/src/dismember.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "3:moveto:VERGSCoyote6REF:player:0:150:0", NVF_PLAY_TEST_HIT = "6:VERGSCoyote6REF:300:WeapNVMachete:limb=EnduranceCondition,8:VERGSCoyote6REF:40:WeapNVMachete:limb=RightMobilityCondition,8.5:VERGSCoyote6REF:40:WeapNVMachete:limb=RightMobilityCondition,9:VERGSCoyote6REF:40:WeapNVMachete:limb=RightMobilityCondition,9.5:VERGSCoyote6REF:40:WeapNVMachete:limb=RightMobilityCondition,10:VERGSCoyote6REF:40:WeapNVMachete:limb=RightMobilityCondition,10.5:VERGSCoyote6REF:40:WeapNVMachete:limb=RightMobilityCondition,12:VERGSCoyote6REF:40:WeapNVMachete:limb=LeftMobilityCondition,12.5:VERGSCoyote6REF:40:WeapNVMachete:limb=LeftMobilityCondition,13:VERGSCoyote6REF:40:WeapNVMachete:limb=LeftMobilityCondition,13.5:VERGSCoyote6REF:40:WeapNVMachete:limb=LeftMobilityCondition,14:VERGSCoyote6REF:40:WeapNVMachete:limb=LeftMobilityCondition,14.5:VERGSCoyote6REF:40:WeapNVMachete:limb=LeftMobilityCondition", NVF_PLAY_TEST_LOOK = "4:0:-35", NVF_PLAY_TEST_CONTROL = "7:aimcorpse,11:aimcorpse,15.5:aimcorpse", NVF_PLAY_TEST_SHOTS = "7.5:coyote_dead.png,11.5:coyote_right_legs.png,16:coyote_all_legs.png" }
+args = ["--play", "--plugins", "FalloutNV.esm", "--cell", "Goodsprings", "--pos=-61000,4500,8500", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = [
+  { re = 'dismember: .* 0x00157B38: Right Legs severed', label = "a machete severs the coyote corpse's right legs" },
+  { re = 'dismember: 00157B38 cut apart for severed \[10, 11\]: [1-9][0-9]* shapes, 904 triangles leave', label = "the right legs leave with their section caps only: their torso sections (the stumps) stay on the body" },
+  { re = 'dismember: .* 0x00157B38: Left Legs severed', label = "and its left legs" },
+  { re = 'dismember: 00157B38 cut apart for severed \[7, 8, 10, 11\]: [1-9][0-9]* shapes', label = "all four legs cut apart" },
+  { re = 'dismember: .* 0x00157B38: .* exploded', count = 0, label = "the machete never explodes" },
+]
+manual = "coyote_right_legs.png and coyote_all_legs.png: the coyote's legs lying apart, capped; on the body a short stump at each hip and shoulder closed by a red cap, no view through the body to the ground"
+
+[[scenario]]
+name = "sever-ghoul-legs"
+source = "#2677 (docs/spec-notes/dismemberment.md §5): feralghoul.nif's Pants are one BP_TORSO partition over both thighs; a severed leg's trouser leg is not drawn (it hung empty on the body, then off the leg's cut) [design]; the stumps and torso caps stay on the body by anchors on the bone above the cut [design] [observed: fnvtool nif decode]"
+note = "A feral ghoul (CrFeralGhoul1A) is placed and held 80 units in front of the player on flat ground, killed with a machete at 6 s, its left leg chopped from 8 s, its right from 11.5 s (Dismember Only, seeded rolls); frames after each. The left leg leaves with its section cap (466 triangles of feralghoul.nif: part 7 and cap 107) and the 172 Pants triangles carried mostly by the left thigh are not drawn"
+areas = ["combat"]
+paths = ["engine/nvforever/src/dismember.rs", "engine/nvf-assets/src/actor.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:player:PlaceAtMe:CrFeralGhoul1A:1,2.2:call:0xFF000000:SetRestrained:1,2.4:moveto:0xFF000000:player:0:80:0", NVF_PLAY_TEST_HIT = "6:0xFF000000:300:WeapNVMachete:limb=EnduranceCondition,8:0xFF000000:40:WeapNVMachete:limb=LeftMobilityCondition,8.5:0xFF000000:40:WeapNVMachete:limb=LeftMobilityCondition,9:0xFF000000:40:WeapNVMachete:limb=LeftMobilityCondition,9.5:0xFF000000:40:WeapNVMachete:limb=LeftMobilityCondition,10:0xFF000000:40:WeapNVMachete:limb=LeftMobilityCondition,10.5:0xFF000000:40:WeapNVMachete:limb=LeftMobilityCondition,11.5:0xFF000000:40:WeapNVMachete:limb=RightMobilityCondition,12:0xFF000000:40:WeapNVMachete:limb=RightMobilityCondition,12.5:0xFF000000:40:WeapNVMachete:limb=RightMobilityCondition,13:0xFF000000:40:WeapNVMachete:limb=RightMobilityCondition,13.5:0xFF000000:40:WeapNVMachete:limb=RightMobilityCondition,14:0xFF000000:40:WeapNVMachete:limb=RightMobilityCondition", NVF_PLAY_TEST_LOOK = "4:0:-60", NVF_PLAY_TEST_CONTROL = "7:aimcorpse,11:aimcorpse,15:aimcorpse", NVF_PLAY_TEST_SHOTS = "7.5:ghoul_dead.png,11.3:ghoul_left_leg.png,15.5:ghoul_both_legs.png" }
+args = ["--play", "--plugins", "FalloutNV.esm", "--cell", "Goodsprings", "--pos=-61000,4500,8500", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 17
+expect = [
+  { re = 'dismember: Feral Ghoul 0xFF000000: Left Leg severed', label = "a machete severs the ghoul corpse's left leg" },
+  { re = 'dismember: FF000000 cut apart for severed \[7\]: [1-9][0-9]* shapes, 466 triangles leave with the pieces, 172 triangles of shapes without partitions of a severed part not drawn', label = "the leg leaves with its section cap; the trouser leg over it is not drawn" },
+  { re = 'dismember: Feral Ghoul 0xFF000000: Right Leg severed', label = "and its right leg" },
+  { re = 'dismember: FF000000 cut apart for severed \[7, 10\]: [1-9][0-9]* shapes, [1-9][0-9]* triangles leave with the pieces, [1-9][0-9]* triangles of shapes without partitions', label = "both legs cut apart, both trouser legs gone" },
+  { re = 'dismember: .* 0xFF000000: .* exploded', count = 0, label = "the machete never explodes" },
+]
+manual = "ghoul_left_leg.png and ghoul_both_legs.png: the legs lying apart, bare and capped at the thigh; on the body a capped stump at each hip, no empty trouser leg, no cloth lying loose, no view through the body to the ground"
 
 [[scenario]]
 name = "combat-npc-range-swap"
@@ -24773,10 +24868,10 @@ expect = [
 [[scenario]]
 name = "dropped-clothes-fall"
 source = "issue #1604: clothing dropped from the inventory hung in the air: its folded ground model (armour MOD2, GO.NIF) is 2-4 dynamic bodies on hinges, and the drawn item follows one body only. Created references whose model's bodies are all dynamic now get one body (engine/nvf-play/src/phys.rs one_dynamic_body; simulation.md §5)"
-note = "Goodsprings, by the player: the Pre-War Spring Outfit, Leather Armor, Merc Charmer Outfit and Vault 21 Jumpsuit dropped from 8 s to 11 s from chest height, then the 10mm pistol at 12 s as a control; the ground is about 85 units below the drop point"
+note = "Goodsprings, by the player: the Pre-War Spring Outfit, Leather Armor, Merc Charmer Outfit and Vault 21 Jumpsuit dropped from 8 s to 11 s from chest height, then the 10mm pistol at 12 s as a control; the ground is about 85 units below the drop point; at 14 s the player steps 500 units away, since a piece resting against the standing player is pushed by its character controller every step and never sleeps (on the smoothed landscape, #2149, one lands against the feet) [design, #2149]"
 areas = ["physics", "items"]
 paths = ["engine/nvf-play/src/phys.rs", "engine/nvf-play/src/dropped.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "000340D0:1,00020423:1,00034122:1,00104184:1,0000434F:1", NVF_PLAY_TEST_DROP = "8:000340D0,9:00020423,10:00034122,11:00104184,12:0000434F" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "000340D0:1,00020423:1,00034122:1,00104184:1,0000434F:1", NVF_PLAY_TEST_DROP = "8:000340D0,9:00020423,10:00034122,11:00104184,12:0000434F", NVF_PLAY_TEST_GOTO = "14:-68375:4300:8400" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
 run_seconds = 30
 expect = [
@@ -24818,6 +24913,38 @@ expect = [
   { re = 'console: GetPos on vMEGoodSpringsRef >> 8537\.00', label = "GetPos reads the raised height (the frames must show it: see the note)" },
 ]
 manual = "compare i2_before.png with i2_after.png in target/smoke: the box must stand about 150 units higher in the second; no log line proves it"
+
+[[scenario]]
+name = "helios-plaza-floor"
+source = "issue #2795 (player report): the player sank through HELIOS One's front plaza. The plaza is HeliosPowerPlant (REFR 0x000B0A0E, placed in square 5,-1), whose collision reaches down to y -8801, inside square 5,-3; physics loaded only the references placed in the 3x3 around the player, so a player in 5,-3 stood on the terrain (z 5435-5464) under the plaza (z 5476) [observed: fnvtool phys cell rays, #2795]. Each square now also loads the references whose bounds reach into it (crates/fnv-world/src/reach.rs, engine/nvf-play/src/phys.rs job)"
+note = "the start at (22200, -8500) lies on the plaza's south part in square 5,-3, two squares from the plant's own; the start waits for the 3x3 around it (#1103)"
+areas = ["physics", "loading"]
+paths = ["crates/fnv-world/src/reach.rs", "engine/nvf-play/src/phys.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "10:player.getpos z;11:close" }
+args = ["--play", "--world", "WastelandNV", "--pos=22200,-8500,5600", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'physics: worldspace 000DA726: \d+ references reach beyond their own square', label = "the reach index of WastelandNV is built (its time is on the line)" },
+  { re = 'player placed: feet \(22200, -8500, 54[78]\d\.\d\), ground z 547\d\.\d \(Ref \{ form_id: 723470,', label = "the start stands on the plaza (HeliosPowerPlant 0x000B0A0E), not on the terrain under it" },
+  { re = 'console: GetPos on player >> 54[78]\d\.', label = "and is still on the plaza at 10 s" },
+]
+
+[[scenario]]
+name = "helios-plaza-walk-on"
+source = "issue #2795: the second half of its Done-when, walking onto HELIOS One's front plaza from the south. The plaza's collision (HeliosPowerPlant 0x000B0A0E, placed in square 5,-1) ends at y -8801, where the sidewalk statics of square 5,-3 (top 5464) take over; rays at x 21600-22400, y -8300..-8800 hit the plaza at z 5476 [observed: fnvtool phys cell, #2795]"
+note = "[design, #2795] Written without running the game. Start at (22200, -8900), south of the plaza's edge (on the sidewalk or the terrain, below the plaza), facing north; run forward for 1 s (about 270-340 units [hypothesis: the run distance of weather-region-cell-stairs]) onto the plaza's ray-checked part, then stand; the console reads y, then z. The start's height and the distance are provisional until the main session runs this scenario."
+areas = ["physics", "loading"]
+paths = ["crates/fnv-world/src/reach.rs", "engine/nvf-play/src/phys.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_LOOK = "2:0:0", NVF_PLAY_TEST_MOVE = "6:1:0,7:0:0", NVF_PLAY_TEST_CONSOLE = "9:player.getpos y;9.3:player.getpos z;9.6:close" }
+args = ["--play", "--world", "WastelandNV", "--pos=22200,-8900,5600", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'player placed: feet \(22200, -8900, (?P<n>[\d.]+)\)', range = [5400, 5469], label = "the start stands south of the plaza, below its height" },
+]
+order = [[
+  { re = 'console: GetPos on player >> (?P<n>-[\d.]+)', range = [-8800, -8300], label = "the run ends over the plaza's ray-checked part (y -8800..-8300)" },
+  { re = 'console: GetPos on player >> (?P<n>[\d.]+)', range = [5470, 5489], label = "standing on the plaza (z about 5476), not on the terrain under it" },
+]]
 
 [[scenario]]
 name = "mccarran-monorail-arrival"
@@ -26535,6 +26662,44 @@ expect = [
 ]
 forbid = [{ text = "DLSS: evaluate active", label = "a DLSS evaluate with FSR chosen" }, { re = 'graphics: DLSS \w+ active', label = "DLSS put on the camera" }, { text = "frame generation: on but not running", label = "frame generation held off" }, { text = "FSR dispatch failed", label = "FSR failing" }, { text = "FSR 3.1 unavailable", label = "FSR unavailable through the interposer" }, { text = "Validation Error", label = "a Vulkan validation error" }, { text = "Caught rendering error", label = "a rendering error" }]
 
+[[scenario]]
+name = "fsr-fg-preload-handoff-exit"
+source = "#2733, engine/nvforever/src/dlss/mod.rs \"Ending at once\": a save loaded in play with FSR's frame generation running on a device made through Streamline (NVF_DLSS_PRELOAD=1) hands over to a new run; before the old run ends with std::process::exit it stops and joins its frame generation presenter threads (crate::frame_gen::stop_presenters), then shuts Streamline down, and ends without a crash"
+note = "needs NVF_DLSS_DIR (NVIDIA's files), as dlss-preload-fsr. The presenter, started for the first generated frame in play, stays through the loading screen (FrameGenRequest.on does not depend on play), so the old run has one to stop. Both runs write to the launch's log with no run tag: the 'the run hands over to a new one' lines are the old run's alone; slShutdown is expected twice (once per run, the new one at its own exit by NVF_PLAY_TEST_HANDOFF_EXIT); 'handoff: the old run has ended' is the new run's and is not ordered after the old run's exit steps (it is written once the ready file is gone). Lines of DLSS-G's own (when the folder holds its files it is set up and unloaded) are not checked here."
+areas = ["graphics", "save"]
+paths = ["engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**", "engine/nvforever/src/handoff.rs", "engine/nvforever/src/gpu_poll.rs", "engine/nvforever/src/frame_gen.rs", "engine/nvforever/src/fg_presenter.rs", "engine/vendor/bevy_render/src/pipelined_rendering.rs"]
+requires = ["NVF_DLSS_DIR"]
+env = { WGPU_BACKEND = "vulkan", NVF_DLSS_PRELOAD = "1", NVFOREVER_HOME = "fsr-fg-preload-handoff-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "4:0:1,9:0.5:-1", NVF_PLAY_TEST_CONSOLE = "20:save fsr-fg-handoff;22:load fsr-fg-handoff", NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--fsr", "quality", "--frame-generation", "--no-voice", "--no-lodgen"]
+run_seconds = 90
+# The old run ends by handing over, not at run_seconds; the new one by its test aid.
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its world is in"
+expect = [
+  "DLSS: route: interposer (the Vulkan instance was made through sl.interposer.dll)",
+  { re = 'frame generation: [1-9]\d* real frames and [1-9]\d* generated in ', label = "FSR's frame generation presents through the interposer's device before the save" },
+  { re = 'save: wrote .*fsr-fg-handoff\.nvfsave', label = "the save is written" },
+  { re = 'load: handing over to a new run with --load .*fsr-fg-handoff\.nvfsave', count = 1, label = "a new run starts behind the loading screen" },
+  { re = 'DLSS: exit: the run hands over to a new one: [1-9]\d* FSR frame generation presenter\(s\) stopped and joined', count = 1, label = "the old run stops and joins its presenter(s) before it ends" },
+  { text = "DLSS: exit: the run hands over to a new one: Streamline shut down before the process ends", count = 1, label = "the old run shuts Streamline down before the process ends" },
+  { text = "DLSS: shutdown: slShutdown eOk", count = 2, label = "slShutdown by both runs (FSR frame generation), the old one's at its handoff exit" },
+  { re = 'handoff: the old run has ended after [\d.]+ s', label = "the new run sees the old one end (FSR frame generation)" },
+]
+order = [[
+  { re = 'frame generation: [1-9]\d* real frames and [1-9]\d* generated in ', label = "generated frames in play" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new one is up" },
+  { re = 'DLSS: exit: the run hands over to a new one: [1-9]\d* FSR frame generation presenter\(s\) stopped and joined', label = "the presenters stopped first" },
+  { text = "DLSS: shutdown: slShutdown eOk", label = "slShutdown after the presenters stopped" },
+  { text = "DLSS: exit: the run hands over to a new one: Streamline shut down before the process ends", label = "the old run's last DLSS line" },
+]]
+forbid = [
+  { re = 'native crash, ', label = "a native crash at the handoff's exit (#2733)" },
+  { re = '\]\[streamline\]\[error\]', label = "an error from Streamline in fsr-fg-preload-handoff-exit" },
+  { text = "the render app could not be taken back from the render thread", label = "the render app not taken back from the render thread" },
+  { text = "shutdown finished with failures", label = "a failed step at shutdown" },
+  { text = "Validation Error", label = "a Vulkan validation error" },
+  { re = 'before the world was in|before it was ready', label = "no time limit or failure in the handoff" },
+]
+
 # Download DLSS... from the settings (#2250, docs/dlss.md): the Upscaler row's choice, NVIDIA's licence in a dialog, the
 # download of the eight files from NVIDIA's release. dlss-download-decline, -offline and -404 need no network and no NVIDIA
 # file: their NVF_DLSS_DIR names a folder under target/ that holds none (so the choice is offered), and their download address
@@ -26809,6 +26974,50 @@ order = [[
   { text = "DLSS: shutdown done" },
 ]]
 forbid = [{ text = "Validation Error", label = "a Vulkan validation error" }, { text = "shutdown finished with failures", label = "a failed step at shutdown" }, { text = "DLSS-G: status ", label = "a DLSS-G status other than eOk" }, { re = '\]\[streamline\]\[error\]', label = "an error from Streamline in dlssg-exit (e.g. a tagged image's format it cannot read)" }]
+
+[[scenario]]
+name = "dlssg-handoff-exit"
+source = "#2733, docs/design/dlss-frame-generation.md \"Exit\": a save loaded in play with DLSS Frame Generation set up hands over to a new run; the old run, which ends with std::process::exit before App::run returns (engine/nvforever/src/handoff.rs end_now), first takes the render app back, sets DLSS-G's mode off, releases the window's swapchain, frees DLSS-G's resources and shuts Streamline down, and ends without a crash (before #2733 every such exit in a player's runs with DLSS-G set up crashed in nvngx_dlssg.dll)"
+note = "needs NVF_DLSS_DIR with the frame generation files; front = true as dlssg-on (the old run's window; the mode is on in play before the save). Both runs write to the launch's log and its lines carry no run tag: the lines that say 'the run hands over to a new one' are the old run's alone; the shutdown lines are both runs', so each is expected twice (each run shuts Streamline down once, the new one at its own exit by NVF_PLAY_TEST_HANDOFF_EXIT), which shows the old run wrote its own; their order between the old run's exit lines is what is expected, not a proof of whose they are. 'handoff: the old run has ended' is the new run's, written once the ready file is gone (the old run removes it before its exit steps), so it is not ordered after them. The launch's exit code is the old run's (a crash at its end most likely leaves it non-zero [hypothesis]); the crash handler's line is forbidden either way. Worth a run with RivaTuner's Vulkan layer on where it can be had (the player's runs had it)."
+areas = ["graphics", "save"]
+paths = ["engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**", "engine/nvforever/src/handoff.rs", "engine/nvforever/src/gpu_poll.rs", "engine/nvforever/src/frame_gen.rs", "engine/nvforever/src/fg_presenter.rs", "engine/vendor/bevy_render/src/pipelined_rendering.rs", "engine/vendor/bevy_render/src/view/window/**"]
+requires = ["NVF_DLSS_DIR"]
+front = true
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-handoff-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "20:save dlssg-handoff;22:load dlssg-handoff", NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--upscaler", "dlss", "--upscaler-quality", "quality", "--frame-generation", "dlss", "--log-frame-times", "10", "--no-voice", "--no-lodgen"]
+run_seconds = 90
+# The old run ends by handing over, not at run_seconds; the new one by its test aid.
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its world is in"
+expect = [
+  { re = 'save: wrote .*dlssg-handoff\.nvfsave', label = "the save is written" },
+  { re = 'load: handing over to a new run with --load .*dlssg-handoff\.nvfsave', count = 1, label = "a new run starts behind the loading screen" },
+  { re = "DLSS-G: exit: the run hands over to a new one: DLSS-G's mode off now: eOk", count = 1, label = "the old run sets DLSS-G's mode off before it ends" },
+  { re = 'DLSS-G: exit: the run hands over to a new one: GPU drained \(ok\), 1 window swapchain\(s\) released \(the mode was off in the options already\)', count = 1, label = "the old run's swapchain released, the options having the mode off already (the loading screen keeps them off)" },
+  { text = "DLSS: exit: the run hands over to a new one: Streamline shut down before the process ends", count = 1, label = "the old run shuts Streamline down before the process ends" },
+  { text = "DLSS-G: shutdown: slFreeResources(DLSS-G, viewport 0) eOk", count = 2, label = "DLSS-G's resources freed by both runs, the old one's at its handoff exit" },
+  { text = "DLSS: shutdown: slShutdown eOk", count = 2, label = "slShutdown by both runs, the old one's at its handoff exit" },
+  { re = 'handoff: the old run has ended after [\d.]+ s', label = "the new run sees the old one end" },
+]
+order = [[
+  { re = 'DLSS-G: options: mode On, ', label = "on in play before the save" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new one is up" },
+  { re = "DLSS-G: exit: the run hands over to a new one: DLSS-G's mode off now: eOk" },
+  { re = 'DLSS-G: exit: the run hands over to a new one: GPU drained' },
+  { re = 'DLSS-G: shutdown: null tags \(frame \d+\): eOk', label = "tags set null after the exit lines" },
+  { text = "DLSS: shutdown: slFreeResources(DLSS, viewport 0) eOk", label = "DLSS's resources freed after them" },
+  { text = "DLSS-G: shutdown: slFreeResources(DLSS-G, viewport 0) eOk", label = "DLSS-G's resources freed after them" },
+  { text = "DLSS: shutdown: slShutdown eOk", label = "slShutdown after them" },
+  { text = "DLSS: exit: the run hands over to a new one: Streamline shut down before the process ends", label = "the old run's last DLSS line" },
+]]
+forbid = [
+  { re = 'native crash, ', label = "a native crash (#2733: the old run crashed in nvngx_dlssg.dll as it ended in a player's runs)" },
+  { re = '\]\[streamline\]\[error\]', label = "an error from Streamline in dlssg-handoff-exit" },
+  { text = "Validation Error", label = "a Vulkan validation error" },
+  { text = "shutdown finished with failures", label = "a failed step at shutdown" },
+  { text = "the render app could not be taken back from the render thread", label = "the render app not taken back from the render thread" },
+  { text = "DLSS-G: status ", label = "a DLSS-G status other than eOk" },
+  { re = 'before the world was in|before it was ready', label = "no time limit or failure in the handoff" },
+]
 
 [[scenario]]
 name = "dlssg-ui"
@@ -27905,11 +28114,11 @@ run_seconds = 26
 expect = [
   { text = "controls: input device Controller", label = "the pause menu's settings aid sets the Input Device to Controller" },
   { text = "hints: Xbox labels", label = "the hints take the Xbox names before the Pip-Boy opens" },
-  { re = 'pipboy hints: items Weapons: (Equip|Unequip) A\), Drop X\), (Repair|Maintain) Y\)( \(dim\))?, Hotkey 1-8\), Mod LB\)$', label = "Weapons: Equip, Drop, Repair, Hotkey and Mod with their buttons, in the original's order" },
-  { re = 'pipboy hints: items Apparel: (Equip|Unequip) A\)( \(dim\))?, Drop X\)( \(dim\))?, (Repair|Maintain) Y\)( \(dim\))?, Hotkey 1-8\)$', label = "Apparel: the set without Mod" },
-  { re = 'pipboy hints: items Aid: Use A\), Drop X\), Repair Y\) \(dim\), Hotkey 1-8\)$', label = "Aid: Use; Repair dim" },
-  { re = 'pipboy hints: items Misc: Equip A\) \(dim\), Drop X\)( \(dim\))?, Repair Y\) \(dim\), Hotkey 1-8\) \(dim\)$', label = "Misc: Equip, Repair and Hotkey dim" },
-  { re = 'pipboy hints: items Ammo: Equip A\) \(dim\), Drop X\), Repair Y\) \(dim\), Hotkey 1-8\) \(dim\)$', label = "Ammo: Equip, Repair and Hotkey dim" },
+  { re = 'pipboy hints: items Weapons: (Equip|Unequip) A\), Drop X\), (Repair|Maintain) Y\)( \(dim\))?, Hotkey RB\), Mod LB\)$', label = "Weapons: Equip, Drop, Repair, Hotkey and Mod with their buttons, in the original's order" },
+  { re = 'pipboy hints: items Apparel: (Equip|Unequip) A\)( \(dim\))?, Drop X\)( \(dim\))?, (Repair|Maintain) Y\)( \(dim\))?, Hotkey RB\)$', label = "Apparel: the set without Mod" },
+  { re = 'pipboy hints: items Aid: Use A\), Drop X\), Repair Y\) \(dim\), Hotkey RB\)$', label = "Aid: Use; Repair dim" },
+  { re = 'pipboy hints: items Misc: Equip A\) \(dim\), Drop X\)( \(dim\))?, Repair Y\) \(dim\), Hotkey RB\) \(dim\)$', label = "Misc: Equip, Repair and Hotkey dim" },
+  { re = 'pipboy hints: items Ammo: Equip A\) \(dim\), Drop X\), Repair Y\) \(dim\), Hotkey RB\) \(dim\)$', label = "Ammo: Equip, Repair and Hotkey dim" },
   { text = "pipboy hints: mod menu: Mod A) (dim), Exit B)", label = "the mod menu on the weapon's row: Mod dim, and Exit under it" },
   { re = 'pipboy hints: mod menu: Mod A\)(?! \(dim), Exit B\)', label = "the mod menu on a mod: Mod bright" },
   { re = 'pipboy items: 10mm Pistol Mod LB\)(?! \(dim)', label = "the pistol's own Mod LB) line, bright" },
@@ -28543,6 +28752,215 @@ manual = "terrain_edge_save36.png: the ground in front of the player has no stra
 expect = [
   { re = 'test aid: screenshot .*terrain_edge_save36\.png', label = "the ground frame is saved" },
 ]
+
+[[scenario]]
+name = "terrain-smoothing"
+source = "[design, #2149] the contributor's pick from in-game comparisons (2026-11-15), for the maintainer to confirm: detail, 4 x 4, bound 8, thresholds 2:6 by default; the landscape is drawn and collided on one smoothed surface (crates/fnv-world/src/land_surface.rs)"
+note = "Goodsprings' hills with the default settings: the start says the run is smoothed, every drawn cell is, the player is placed and does not fall through the collision"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "crates/fnv-phys/src/terrain.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  "terrain: mode=detail(2:6) subdiv=4 bound=8 land-shift=4; drawing, collision and queries use this surface",
+  { re = 'terrain summary: (\d+) cells drawn smoothed', range = [9, 100000], label = "the loaded cells are drawn smoothed" },
+  { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [0, 0], label = "none on the stored triangles" },
+  { re = 'player placed: feet \(', label = "the player is placed on the ground" },
+]
+forbid = [{ text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-smoothing-off"
+source = "#2149: --no-smooth-terrain (the Smooth terrain setting off) draws and collides the stored LAND triangles, as before smoothing came"
+note = "the twin of terrain-smoothing with the switch off"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvforever/src/terrain.rs"]
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--no-smooth-terrain"]
+run_seconds = 20
+expect = [
+  "terrain: mode=stored subdiv=1 bound=0 land-shift=0; drawing, collision and queries use this surface (smoothing off",
+  { re = 'terrain summary: (\d+) cells drawn smoothed', range = [0, 0], label = "no cell is smoothed" },
+  { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [9, 100000], label = "the loaded cells are drawn on the stored triangles" },
+  { re = 'player placed: feet \(', label = "the player is placed on the ground" },
+]
+forbid = [{ text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-smoothing-fit-s2-b8"
+source = "[design, #2149] pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default is now detail, 4 x 4, bound 8, thresholds 2:6 (the contributor's pick of 2026-11-15, for the maintainer to confirm)"
+note = "Fitted LAND vertices at subdivision 2 and bound 8: the start names the recipe, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
+env = { NVF_PLAY_TEST_SMOOTH_MODE = "fit", NVF_PLAY_TEST_SMOOTH_SUBDIV = "2", NVF_PLAY_TEST_SMOOTH_BOUND = "8" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { text = "terrain: mode=fit subdiv=2 bound=8 land-shift=4; drawing, collision and queries use this surface", count = 1, label = "the start names the recipe, once" },
+  { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=fit subdiv=2 bound=8 land-shift=4\)', range = [9, 100000], label = "the loaded cells are drawn with it" },
+  { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [0, 0], label = "none on the stored triangles (fit 2/8)" },
+  { re = 'player placed: feet \(', label = "the player is placed on the fit 2/8 ground" },
+]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test aid value is taken (fit 2/8)" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-smoothing-interpolate-s4-b8"
+source = "[design, #2149] pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default is now detail, 4 x 4, bound 8, thresholds 2:6 (the contributor's pick of 2026-11-15, for the maintainer to confirm)"
+note = "The LAND vertices kept, 4 x 4 squares (four times the triangles): the start names the recipe, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
+env = { NVF_PLAY_TEST_SMOOTH_MODE = "interpolate", NVF_PLAY_TEST_SMOOTH_SUBDIV = "4", NVF_PLAY_TEST_SMOOTH_BOUND = "8" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { text = "terrain: mode=interpolate subdiv=4 bound=8 land-shift=0; drawing, collision and queries use this surface", count = 1, label = "the start names the recipe, once" },
+  { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=interpolate subdiv=4 bound=8 land-shift=0\)', range = [9, 100000], label = "the loaded cells are drawn with it" },
+  { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [0, 0], label = "none on the stored triangles (interpolate 4/8)" },
+  { re = 'player placed: feet \(', label = "the player is placed on the interpolate 4/8 ground" },
+]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test aid value is taken (interpolate 4/8)" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-smoothing-fit-s4-b12"
+source = "[design, #2149] pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default is now detail, 4 x 4, bound 8, thresholds 2:6 (the contributor's pick of 2026-11-15, for the maintainer to confirm)"
+note = "Fitted, 4 x 4, within 12 units: the start names the recipe, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
+env = { NVF_PLAY_TEST_SMOOTH_MODE = "fit", NVF_PLAY_TEST_SMOOTH_SUBDIV = "4", NVF_PLAY_TEST_SMOOTH_BOUND = "12" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { text = "terrain: mode=fit subdiv=4 bound=12 land-shift=4; drawing, collision and queries use this surface", count = 1, label = "the start names the recipe, once" },
+  { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=fit subdiv=4 bound=12 land-shift=4\)', range = [9, 100000], label = "the loaded cells are drawn with it" },
+  { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [0, 0], label = "none on the stored triangles (fit 4/12)" },
+  { re = 'player placed: feet \(', label = "the player is placed on the fit 4/12 ground" },
+]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test aid value is taken (fit 4/12)" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-smoothing-detail-s4-b8"
+source = "[design, #2149] pass 2: the smoothing recipe the test aids choose (engine/nvf-play/src/smooth_terrain.rs; crates/fnv-world/src/land_surface.rs SmoothParams), for the maintainer's comparison of variants; the default is now detail, 4 x 4, bound 8, thresholds 2:6 (the contributor's pick of 2026-11-15, for the maintainer to confirm)"
+note = "Detail (fitted where the LAND vertices look like height steps, thresholds 2:6), 4 x 4, within 8 units: the start names the recipe, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/terrain.rs"]
+env = { NVF_PLAY_TEST_SMOOTH_MODE = "detail", NVF_PLAY_TEST_SMOOTH_SUBDIV = "4", NVF_PLAY_TEST_SMOOTH_BOUND = "8" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { text = "terrain: mode=detail(2:6) subdiv=4 bound=8 land-shift=4; drawing, collision and queries use this surface", count = 1, label = "the start names the recipe, once" },
+  { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=detail\(2:6\) subdiv=4 bound=8 land-shift=4\)', range = [9, 100000], label = "the loaded cells are drawn with it" },
+  { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [0, 0], label = "none on the stored triangles (detail 4/8)" },
+  { re = 'player placed: feet \(', label = "the player is placed on the detail 4/8 ground" },
+]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "every test aid value is taken (detail 4/8)" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-wireframe-live"
+source = "[design, #2149] pass 2: the Debug row Terrain wireframe (engine/nvforever/src/terrain_wireframe.rs) draws the loaded landscape's triangle edges while on and keeps nothing once off"
+note = "off at the start; switched on and off again on the settings page in the pause menu"
+areas = ["rendering", "terrain", "settings"]
+paths = ["engine/nvforever/src/terrain_wireframe.rs"]
+env = { NVF_PLAY_TEST_PAUSE = "8:15", NVF_PLAY_TEST_SETTINGS = "9:terrain-wireframe,12:terrain-wireframe" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = [
+  { text = "terrain wireframe: on (", count = 1, label = "switched on once" },
+  { text = "terrain wireframe: off;", count = 1, label = "switched off once" },
+]
+order = [[
+  { text = "settings: terrain-wireframe on", label = "the row is switched on" },
+  { text = "terrain wireframe: on (mode=detail(2:6) subdiv=4 bound=8 land-shift=4)", label = "the wireframe follows, on the run's surface" },
+  { re = 'terrain wireframe: (9|[1-9]\d+) cells outlined, \d{6,} edges, \d+ without landscape, (9|[1-9]\d+) line assets', label = "the loaded cells are outlined" },
+  { text = "settings: terrain-wireframe off", label = "the row is switched off" },
+  { re = 'terrain wireframe: off; (9|[1-9]\d+) cell outlines let go, 0 line assets kept', label = "and nothing is kept" },
+]]
+forbid = [{ text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-wireframe-stored"
+source = "[design, #2149] pass 2: --terrain-wireframe with smoothing off outlines the stored LAND triangles (engine/nvforever/src/terrain_wireframe.rs)"
+note = "on from the start, smoothing off: 33 x 33 vertices a cell, 3,136 edges each"
+areas = ["rendering", "terrain"]
+paths = ["engine/nvforever/src/terrain_wireframe.rs", "engine/nvf-play/src/smooth_terrain.rs"]
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--no-smooth-terrain", "--terrain-wireframe"]
+run_seconds = 20
+expect = [
+  { text = "terrain wireframe: on (mode=stored subdiv=1 bound=0 land-shift=0)", count = 1, label = "on from the start, on the stored triangles" },
+  { re = 'terrain wireframe: (\d+) cells outlined', range = [9, 100000], label = "the loaded cells are outlined" },
+  { re = 'terrain wireframe: \d+ cells outlined, (\d+) edges', range = [28224, 100000000], label = "3,136 edges a cell" },
+  { re = 'player placed: feet \(', label = "the player is placed on the ground" },
+]
+forbid = [{ text = "terrain wireframe: off", label = "it stays on" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-smoothing-2x2"
+source = "[design, #2676] the Smooth terrain row's 2 x 2 (engine/nvf-play/src/smooth_terrain.rs Smoothing): each landscape square cut 2 x 2, drawn and collided at that level everywhere"
+note = "--smooth-terrain 2x2 with the default recipe: the start names subdiv 2, every drawn cell is smoothed with it, the player is placed and does not fall through the collision"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvforever/src/terrain.rs", "engine/nvforever/src/settings.rs"]
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--smooth-terrain", "2x2"]
+run_seconds = 20
+expect = [
+  { text = "terrain: mode=detail(2:6) subdiv=2 bound=8 land-shift=4; drawing, collision and queries use this surface", count = 1, label = "the start names 2 x 2, once" },
+  { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=detail\(2:6\) subdiv=2 bound=8 land-shift=4\)', range = [9, 100000], label = "the loaded cells are drawn 2 x 2" },
+  { re = 'terrain summary: \d+ cells drawn smoothed, (\d+) on the stored triangles', range = [0, 0], label = "none on the stored triangles (2 x 2)" },
+  { re = 'player placed: feet \(', label = "the player is placed on the 2 x 2 ground" },
+]
+forbid = [{ text = "terrain levels:", label = "no redraws by distance at 2 x 2" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-smoothing-4x4-near"
+source = "[design, #2676] the Smooth terrain row's 4 x 4 near (engine/nvforever/src/terrain_lod.rs): the 4 x 4 surface collided everywhere, each loaded quadrant drawn 4 x 4 within 2048 units of the camera and 2 x 2 beyond 2560, redrawn on the read pool and swapped in once the GPU has the meshes"
+note = "--smooth-terrain 4x4-near; the player is put at a spot in Goodsprings at 10 s and one cell (4,096 units) east of it at 16 s, so the quadrants at the second spot, beyond 2048 from the first, must be redrawn after the move; NVF_PLAY_TEST_TERRAIN_LEVELS logs each settled state"
+areas = ["rendering", "terrain"]
+paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain_lod.rs", "engine/nvforever/src/world.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_TERRAIN_LEVELS = "1", NVF_PLAY_TEST_GOTO = "10:-68375:4800:8600,16:-64279:4800:8600" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--smooth-terrain", "4x4-near"]
+run_seconds = 24
+expect = [
+  { text = "terrain: mode=detail(2:6) subdiv=4 bound=8 land-shift=4; drawing, collision and queries use this surface; drawn 4 x 4 within 2048 units of the camera, 2 x 2 beyond 2560 (4 x 4 near)", count = 1, label = "the start names the 4 x 4 surface and the rule, once" },
+  { re = 'terrain levels: first redraw: (\d+) quadrants rebuilt', range = [1, 16], label = "the quadrants near the camera are redrawn" },
+  { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=detail\(2:6\) subdiv=4 bound=8 land-shift=4\); 4 x 4 near: ', range = [9, 100000], label = "the loaded cells are drawn smoothed under 4 x 4 near" },
+  { re = 'terrain summary: .*; 4 x 4 near: .*, (\d+) given up waiting for the GPU', range = [0, 0], label = "no redraw was given up waiting for its meshes" },
+  { re = 'player placed: feet \(', label = "the player is placed on the ground" },
+]
+order = [[
+  { text = "test aid: go to (-64279, 4800, 8600)", label = "the player is moved one cell east" },
+  { re = 'terrain levels: settled: (\d+) quadrants drawn 4 x 4, \d+ 2 x 2 after \d+ redraws \(camera at -6[345]\d{3}, ', range = [1, 16], label = "redrawn after the move: settled around the new spot with 1 to 16 quadrants 4 x 4" },
+]]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "no test aid value refused" }, { text = "not on the GPU after", label = "no redraw given up waiting for its meshes" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-smoothing-near-aid"
+source = "[design, #2676] 4 x 4 near's distance from the test aid NVF_PLAY_TEST_SMOOTH_NEAR (engine/nvf-play/src/smooth_terrain.rs), for tuning it from pictures"
+note = "near 4096 (far 4608): named in the start line; once the levels settle with the camera still, at least 16 quadrants are drawn 4 x 4 (wherever the camera stands), where the default distance gives at most 9"
+areas = ["rendering", "terrain"]
+paths = ["engine/nvf-play/src/smooth_terrain.rs", "engine/nvforever/src/terrain_lod.rs"]
+env = { NVF_PLAY_TEST_SMOOTH_NEAR = "4096", NVF_PLAY_TEST_TERRAIN_LEVELS = "1" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--smooth-terrain", "4x4-near"]
+run_seconds = 20
+expect = [
+  { text = "drawn 4 x 4 within 4096 units of the camera, 2 x 2 beyond 4608 (4 x 4 near)", count = 1, label = "the start names the aid's distance" },
+  { re = 'terrain levels: settled: (\d+) quadrants drawn 4 x 4', range = [16, 64], label = "settled with a wider ring of 4 x 4 quadrants (at rest 4096 gives at least 16, 2048 at most 9)" },
+]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "the aid's value is taken" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+
+[[scenario]]
+name = "terrain-wireframe-near"
+source = "[design, #2676] under 4 x 4 near the terrain wireframe (engine/nvforever/src/terrain_wireframe.rs) shows each quadrant as drawn, outlined again when it is redrawn"
+note = "on from the start with 4 x 4 near: the loaded cells are outlined, and once the levels have settled and every outline shows its quadrants as drawn at that revision, the wireframe says so with the 4 x 4 quadrants it outlined"
+areas = ["rendering", "terrain"]
+paths = ["engine/nvforever/src/terrain_wireframe.rs", "engine/nvforever/src/terrain_lod.rs"]
+env = { NVF_PLAY_TEST_TERRAIN_LEVELS = "1" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--smooth-terrain", "4x4-near", "--terrain-wireframe"]
+run_seconds = 20
+expect = [
+  { text = "terrain wireframe: on (mode=detail(2:6) subdiv=4 bound=8 land-shift=4)", count = 1, label = "on from the start, on the run's 4 x 4 surface" },
+  { re = 'terrain wireframe: (\d+) cells outlined', range = [9, 100000], label = "the loaded cells are outlined" },
+]
+order = [[
+  { re = 'terrain wireframe: settled terrain revision [1-9]\d* outlined: (\d+) quadrants 4 x 4, [1-9]\d* cells', range = [1, 16], label = "a settled revision after a redraw outlined, with its 4 x 4 quadrants (the cell count is checked by the line above: cells may stream in after the revision is outlined)" },
+]]
+forbid = [{ text = "terrain wireframe: off", label = "it stays on" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
 
 [[scenario]]
 name = "reports-anomaly-fell-through"
@@ -29446,6 +29864,26 @@ forbid = [
 ]
 
 [[scenario]]
+name = "npc-door-one-body"
+source = "issue #2461 (owner; tester's log 2026-11-16): a resident handed over at a load door is drawn anew at the far side, and the body it is drawn by afterwards is that new one, the only body of its reference: Lt. Boyd at Camp McCarran was left drawn twice when the root scan took the body fading at the near door in the frame the new one spawned. nav::show_actor now takes its root from the spawn (engine/nvforever/src/nav.rs) and lets go of a root whose body is gone; the same-frame race itself (both sides of the door drawn: a door inside one interior, as Boyd's room) is covered by the engine tests a_resident_handed_through_a_load_door_keeps_one_body and a_resident_whose_body_is_gone_is_drawn_anew_or_takes_up_another (residents.rs)"
+note = "the npc-door-fade run (its aids unchanged): the player goes out of the gas station by its door at 7.5 s, Ringo (RingoRef 0x00104C7D) is sent out after him at 15 s and is drawn anew at the outside door (the door loop's hand-over, faded in). The census of bodies per reference is taken at exit; the number in brackets counts only the bodies of references drawn more than once, so 0 is what one body each gives. The Boyd scene (mccarran-boyd-one-body) does not reach a door in smoke: after the trick's MoveTo her VFreeformMcCarran2BoydPatrolReturn goal cannot be reached (0 triangles searched, run of 2026-11-16), so no setup here walks a resident through a door with both sides drawn. Expectations written without a run of this scenario (2026-11-16)"
+areas = ["ai", "doors", "actors"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/nav.rs", "engine/nvforever/src/actors.rs", "engine/nvforever/src/door_fade.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "1:call:0x00109040:Unlock,15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
+run_seconds = 60
+expect = [
+  { re = 'door fade summary: \d+ actors faded out at a door, (?P<n>\d+) faded in', range = [1, 1000], label = "Ringo is drawn anew at the far side of the door (the hand-over)" },
+  { re = 'actor bodies summary: (?P<n>\d+) references drawn by more than one body', range = [0, 0], label = "one body per reference at the end, after the door hand-over" },
+]
+forbid = [
+  { re = 'actor bodies: RingoRef', label = "Ringo drawn by two bodies after the door" },
+  { re = 'actor 00104C7D: \d+ bodies under the world root when its body was looked for', label = "two bodies of Ringo under the world root" },
+  { text = "actor 00104C7D: the body it was drawn by is gone", label = "Ringo's root pointed at a body no longer his" },
+  { re = 'RingoRef went through a door before its body spawned earlier was found', label = "a body of Ringo spawned and not found was left at the door" },
+]
+
+[[scenario]]
 name = "mccarran-vms08-markers"
 source = "issue #2464 (owner): I Put a Spell on You's marker for Lt. Boyd pointed outside. VMS08 objective 20 (\"Ask around about suspicious activity at Camp McCarran\") has three targets [documented: the QUST 0x000E790F QSTA/CTDA records, read with fnvtool esm decode]: LieutenantBoydREF 0x000F0678 in CampMCTermInt02 (GetDead 0), SupplyOfficerContrerasREF 0x000E5517 in CampMCTermInt04, the Supply Shack (bAskedContreras 0, GetDead 0), and CorporalSterlingRef 0x000F570E outdoors (bAskedSterling 0, GetDead 0). With the player beside Capt. Curtis in the Terminal Building all three are marked: Boyd at herself, the other two at the first door of the way to them, both leading out of the building (engine/nvf-play/src/compass.rs quest_mark_at)"
 note = "the player stands beside CaptainCurtisREF (976, -288, 18240); the objective is shown and the quest made active by the console at 6 s"
@@ -29633,6 +30071,24 @@ expect = [
   { re = 'use weapon: .* 0x00115C60 goes on with its WeapNVHuntingRevolver from its last use', min = 2, label = "#2763: his second and third packages go on with the same revolver's cycle" },
   { re = 'use weapon summary: (?P<n>\d+) uses went on with the gun.s cycle from the actor.s last use; the shortest time between two shots of a semi-automatic gun: [0-9.]+ s \(WeapNVHuntingRevolver', range = [2, 9], label = "#2763: the summary names it" },
 ]
+
+[[scenario]]
+name = "orris-warning-once"
+source = "[design, #2724] Game::open_dialogue consumes a pending walk-up when a repeated StartConversation opens the conversation sooner. [documented: issue #2724 supplied record analysis] VFSOrrisConcernedTriggerREF (0x00118AA5) repeats StartConversation until warning INFO 0x00118A72 ends and sets detourstage 1."
+note = "[design / file refs] Hire setup follows orris-escort-thugs; script.rs/script_events.rs provide MoveTo and walk aids. At 1 s move the player 2000 units from the trigger before hiring; at 5 s put Orris 600 units from its centre, then at 6 s walk the player into it. Do not set detourstage. The walk-up distance expectation proves the initial separation exceeds 300; count=1 counts say lines over the entire run. [hypothesis] Placement and timing await runtime smoke."
+areas = ["ai", "dialogue", "scripts"]
+paths = ["crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/functions/misc.rs", "crates/fnv-ai/src/carry.rs", "crates/fnv-ai/tests/talk.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GIVE = "0000000F:200", NVF_PLAY_TEST_SCRIPT = "1:moveto:player:VFSOrrisConcernedTriggerREF:0:2000:0,2:start:VMS19,2.5:stage:VMS19:10,3:moveto:VFSOrrisREF:player:150:0:0,4:info:0x00115C2C:VFSOrrisREF,5:moveto:VFSOrrisREF:VFSOrrisConcernedTriggerREF:600:0:0,6:walk:VFSOrrisConcernedTriggerREF" }
+args = ["--play", "--world", "FreesideWorld", "--pos=1700,-7000,1030", "--heading", "200", "--hour", "14", "--no-voice", "--no-messages", "--npc-packages", "all,VFSOrrisREF"]
+run_seconds = 60
+expect = [
+  { re = 'VFSOrrisREF: walks up to the player for a script.s StartConversation: (?P<n>\d+) units away', range = [301, 3000], label = "Orris starts the warning walk beyond WALK_UP_REACH" },
+  { text = "script: VFSOrrisREF says 0x00118A72", count = 1, label = "the warning is said exactly once, including after dialogue ends" },
+]
+order = [[
+  { text = "VFSOrrisREF: walks up to the player for a script", label = "a pending walk exists before the warning" },
+  "script: VFSOrrisREF says 0x00118A72",
+]]
 
 [[scenario]]
 name = "chauncey-steam-room"
@@ -30379,6 +30835,177 @@ expect = [
   { re = 'vats mode summary: entered 1 times, 0 marks, 0 shots, 0 AP spent, 1 refused', label = "one stay, one refusal" },
 ]
 
+
+[[scenario]]
+name = "roy-say-pause-resume"
+source = "[documented: #2714, spooknik's 2026-11-15 record audit] Roy's SCPT 0x00113643 calls plain Say 0x001135FA; INFO 0x0011361F has no Wayne reply. [design: docs/design/dialogue.md section 8] Its remaining time, voice and subtitle survive the pause menu and the line ends once."
+note = "[design, #2714] Start near Roy in FreesideFortWorld; call the same plain Say with no target at 10 s, press Escape at 11 and 16 s (a hold longer than the reported 2.24 s line), then hear it out. Say and both key presses share the world-aid clock, including a late script start; the required voice hold/resume order guards the mid-line pause. This is an unrun engine/audio acceptance check."
+areas = ["dialogue", "voice", "menus"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/tests/synthetic.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/voice.rs", "engine/nvf-play/src/script_hud.rs", "engine/nvf-play/src/pause.rs", "docs/design/dialogue.md"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_NEAR = "0011365D", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "10:call:VFSRoyREF:Say:0x001135FA", NVF_PLAY_TEST_KEYS = "11:esc,16:esc" }
+args = ["--play", "--world", "FreesideFortWorld", "--pos=7915,2120,1000", "--heading", "0", "--hour", "12", "--no-messages"]
+run_seconds = 24
+order = [[
+  { re = 'voice: playing \S+0011361f_1\.ogg .*VFSRoyREF line 0x0011361F response 1 at ', label = "Roy's response starts audibly in the world" },
+  "pause menu: open",
+  "voice: VFSRoyREF line 0x0011361F held (its timer stands still)",
+  "pause menu: resume",
+  "voice: VFSRoyREF line 0x0011361F goes on",
+  "script: VFSRoyREF ended line 0x0011361F",
+], [
+  { re = 'subtitle: .*Wayne, it.s okay.*King sent', label = "Roy's subtitle starts with the line" },
+  "voice: VFSRoyREF line 0x0011361F held (its timer stands still)",
+  "voice: VFSRoyREF line 0x0011361F goes on",
+  "script: VFSRoyREF ended line 0x0011361F",
+  { text = "subtitle: cleared", label = "the HUD clears the finished subtitle" },
+]]
+expect = [
+  { text = "script: VFSRoyREF says 0x0011361F", count = 1, label = "Say starts the line once" },
+  { text = "script: VFSRoyREF ended line 0x0011361F", count = 1, label = "the resumed line finishes exactly once" },
+  { re = 'subtitle: .*Wayne, it.s okay.*King sent', label = "Roy's line has its subtitle" },
+  { gap = ["voice: VFSRoyREF line 0x0011361F held (its timer stands still)", "voice: VFSRoyREF line 0x0011361F goes on"], range = [4.5, 8], label = "the voice survives a hold longer than the whole line" },
+  { gap = ["script: VFSRoyREF says 0x0011361F", "script: VFSRoyREF ended line 0x0011361F"], range = [6.5, 10], label = "completion counts the held time" },
+]
+forbid = [
+  "script: VFSRoyREF cut line 0x0011361F",
+  "voice: stopped VFSRoyREF line 0x0011361F",
+  { re = 'voice: playing .*0011361f_1\.ogg .*\[.*silent', label = "the line must be audible" },
+  "script: VFSWayneREF says 0x0011363B",
+]
+
+[[scenario]]
+name = "mick-secret-door-paths"
+kind = "tool"
+source = "[documented: issue #2716, spooknik comment 2026-11-15, supplied record findings] Mick's linked marker is beside his locked hidden door; the Travel end script opens it before the secret-sales trip. [design, #2716] Endpoint triangles beside oriented bounds remain reachable. [hypothesis, #2716] Open locked doors are no barrier (observer check 206)."
+areas = ["nav", "ai"]
+paths = ["crates/fnv-nav/", "crates/fnvtool/src/nav_path.rs"]
+commands = [
+  ["nav", "path", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--space", "FreesideMickandRalphs", "--from", "FreesideMickREF", "--to", "SecretDoorMarkerREF"],
+  ["nav", "path", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--space", "FreesideMickandRalphs", "--from", "SecretDoorMarkerREF", "--to", "SecretSalesMarkerREF", "--open-door", "0x00121FF2"],
+]
+expect = [{ json = "path.length", schema = "fnv.nav.path/1", range = [1, 2000], count = 2, label = "both legs find a path without open-locked" }]
+
+[[scenario]]
+name = "mick-secret-door-packages"
+source = "[documented: issue #2716, spooknik comment 2026-11-15, supplied record findings] MickHoldoutWeapons 1 selects VFSMickTravelToLinkedPackage; its end script opens MickSecretDoorREF, sets the variable to 4 and evaluates Mick's package. [design, #2716] Reach the marker beside the locked door. [hypothesis, #2716] His next package can pass the open locked door (observer check 206)."
+note = "[design, #2716] The console aid plays the dialogue line's effect at 6 s, then evaluates Mick. Travel arrival and the next package prove the end script ran. The player's coordinates are the shop-side spot supplied in issue #2716."
+areas = ["nav", "ai", "scripts"]
+paths = ["crates/fnv-nav/", "crates/fnv-ai/"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "6:set VFreeformFreeside.MickHoldoutWeapons to 1;FreesideMickREF.EvaluatePackage;6.3:close" }
+args = ["--cell", "FreesideMickandRalphs", "--pos=3807,-58,8872", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "FreesideMickREF"]
+run_seconds = 60
+order = [[
+  { text = "FreesideMickREF: package VFSMickTravelToLinkedPackage", label = "Mick takes the travel package" },
+  { text = "FreesideMickREF: arrived after", label = "he reaches the marker beside the locked door" },
+  { text = "FreesideMickREF: package VFSMickSecretSalesConversationPackage", label = "the end script starts his secret-sales package" },
+]]
+forbid = [
+  { text = "cannot reach the place of VFSMickTravelToLinkedPackage", label = "the closed door does not refuse the adjacent goal" },
+  { text = "cannot reach the place of VFSMickSecretSalesConversationPackage", label = "the open locked door does not refuse the next trip" },
+]
+
+[[scenario]]
+name = "pacer-cower-sole-marker"
+source = "[documented: #2715 issue comment, supplied record findings] VFSPacerCowerNCRFightPackage permits only idle markers; VFSNCRFightPacerMarkerREF (0x001293EC) uses DefaultCowerIdleMarker (timer 0) and looping LooseCowerIdles. [documented: GECK wiki Sandbox Package, Action Selection] The action-type rule allows repetition unless it has no other options. [design, #2715] Sandbox::next reuses the last marker immediately only for an idle-marker-only package with that sole eligible marker; observer check 208 measures original parity."
+note = "[design: engine/nvf-play/src/script.rs script aids, engine/nvforever/src/residents.rs sandbox logs, idles.rs marker debug logs] Start VMS19, set ncrfight 1, place Pacer at his named marker as the King's scene does, then move the player nearby. Require the cower animation, at least four marker choices, no Standing pick, and procedure 46 at 118 s, at least 90 s after cowering began. The placement offsets are synthetic staging choices."
+areas = ["ai", "animation", "scripts"]
+paths = ["crates/fnv-ai/src/sandbox.rs", "crates/fnv-ai/src/carry.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/idles.rs"]
+env = { RUST_LOG = "info,nvforever::idles=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:start:VMS19,3:var:VMS19:ncrfight:1,4:moveto:VFSPacerREF:VFSNCRFightPacerMarkerREF,6:moveto:player:VFSNCRFightPacerMarkerREF:0:-250:0", NVF_PLAY_TEST_CONSOLE = "118:VFSPacerREF.GetCurrentAIProcedure;118.5:close" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "14", "--no-voice", "--no-messages", "--npc-packages", "all,VFSPacerREF"]
+run_seconds = 130
+expect = [
+  { text = "VFSPacerREF: package VFSPacerCowerNCRFightPackage", label = "Pacer selects his staged-fight sandbox" },
+  { re = 'VFSPacerREF: sandbox: goes to idle marker 0x001293EC', min = 4, label = "Pacer reselects his sole marker through repeated timer expiries" },
+  { re = 'idle: VFSPacerREF plays LooseCowerIdles .*\(MarkerIdles\)', label = "the marker plays Pacer's cower idle" },
+  { re = 'VFSPacerREF: sandbox: stands', count = 0, label = "no Standing stretch between marker uses" },
+  { re = 'console: GetCurrentAIProcedure on VFSPacerREF >> 46\.00', count = 1, label = "Pacer is still using the idle marker at 118 seconds" },
+  { gap = ["idle: VFSPacerREF plays LooseCowerIdles", "console: GetCurrentAIProcedure on VFSPacerREF >> 46.00"], range = [90, 125], label = "the no-Standing observation spans at least 90 simulation seconds" },
+]
+
+[[scenario]]
+name = "held-weather-worldspace-write"
+source = "[documented: offline GECK wiki ForceWeather / SetWeather / ReleaseWeatherOverride] Override lasts until release. [hypothesis, #1997; observer check 209] It lasts across a worldspace door. [design: sky.rs carry_weather_from; existing strip-crowd-evening and save-weather-write scenarios] Force a hold in Freeside, use the Strip gate, check the shown hold, save for held-weather-worldspace-load."
+note = "[design: strip-crowd-evening] Reuse its gate, start pose and passport test aid. [design: save-weather-write] Reuse its named weather; no command-line weather pin. Run the write and load scenarios together."
+areas = ["sky", "weather", "save"]
+paths = ["engine/nvforever/src/worldspace.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "held-weather-worldspace-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GIVE = "00119875:1", NVF_PLAY_TEST_TALK = "0:*=leave", NVF_PLAY_TEST_CONSOLE = "6:ForceWeather NVHooverDamWeather 1;6.5:close;24:GetIsCurrentWeather NVHooverDamWeather;25:save smoke-weather-worldspace;26:close", NVF_PLAY_TEST_SCRIPT = "12:activate:FreesideGateToStripREF" }
+args = ["--play", "--world", "FreesideWorld", "--pos=-6850,-10120,1040", "--heading", "220", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 32
+order = [[
+  { re = 'weather: NVHooverDamWeather by a script \(at once, held until released\)', label = "ForceWeather holds the weather before the door" },
+  { re = 'render: worldspace [0-9A-F]{8} -> [0-9A-F]{8} \(TheStripWorldNew\)', label = "the gate switches into the Strip worldspace" },
+  { re = 'weather: NVHooverDamWeather \([0-9A-F]{8}\) held after sky replacement', label = "the replacement sky retains the named hold" },
+  { re = 'console: GetIsCurrentWeather >> 1\.00', label = "the held weather is still shown after the door" },
+  { re = 'save: wrote .*smoke-weather-worldspace\.nvfsave', label = "save the hold after the door" },
+]]
+expect = [{ re = 'weather: the climate takes over', count = 0, label = "the climate never takes over the hold" }]
+
+[[scenario]]
+name = "held-weather-worldspace-load"
+source = "[design, #1997: sky.rs SAVE_HOOK / restore_saved] Load the save from held-weather-worldspace-write after its Freeside-to-Strip door; the weather remains held from first placement."
+areas = ["sky", "weather", "save"]
+paths = ["engine/nvforever/src/worldspace.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "held-weather-worldspace-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:GetIsCurrentWeather NVHooverDamWeather;15:close" }
+args = ["--play", "--load", "smoke-weather-worldspace", "--no-voice", "--no-messages"]
+run_seconds = 19
+order = [[
+  { re = 'load: the weather stays held as a script left it', label = "the hold is restored before the first placement" },
+  { re = 'load: restored .*smoke-weather-worldspace\.nvfsave', label = "the post-door save is loaded" },
+  { re = 'console: GetIsCurrentWeather >> 1\.00', label = "the held weather remains shown after load" },
+]]
+expect = [
+  { re = 'weather: \S+ at \d\d:\d\d', count = 0, label = "the loaded sky never changes weather" },
+  { re = 'weather: the climate takes over', count = 0, label = "the loaded hold is never replaced by a roll" },
+]
+
+[[scenario]]
+name = "pipboy-hotkey-assign-pad"
+source = "[design, #2312] controller.md section 3: RB opens the existing ITEMS hotkey panel, D-pad steps all eight slots, A assigns, B cancels; provisional selection method pending observer check 211"
+note = "Reuses pipboy-hotkey-assign's inventory fixture. RB opens slot 1, right visits Ammo Swap (A refuses), down reaches slot 3 and A assigns. Reopen, move left and cancel with B; the Pip-Boy stays open. After closing, D-pad down uses slot 3. No mouse/digit assignment."
+areas = ["hotkeys", "pipboy", "controller"]
+paths = ["engine/nvf-play/src/pipboy/hotkey_panel.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/pad.rs", "engine/nvf-play/src/hotkeys.rs"]
+env = { NVFOREVER_HOME = "pipboy-hotkey-assign-pad-home", NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:device:Controller", NVF_PLAY_TEST_GIVE = "0008F216:1,0008ED02:24", NVF_PLAY_TEST_PIPBOY = "25:open,26:page=items,26.5:tab=0,40:close", NVF_PLAY_TEST_KEYS = "28:pad-RB,29:pad-D-Pad Right,30:pad-A,31:pad-D-Pad Down,32:pad-A,34:pad-RB,35:pad-D-Pad Left,36:pad-B,43:pad-D-Pad Down" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  "controls: input device Controller",
+  { text = "pipboy hotkeys: controller opened, key 1 chosen", count = 2 },
+  { re = 'pipboy hints: items Weapons: .*Hotkey RB\)', min = 1 },
+  "pipboy hotkeys: controller key 2 chosen",
+  { re = 'hotkeys: slot 2 is Ammo Swap: \.357 Magnum Revolver not assigned', count = 1 },
+  "pipboy hotkeys: controller key 3 chosen",
+  { re = 'hotkeys: slot 3 holds \.357 Magnum Revolver \(0x0008F216\)', count = 1 },
+  "pipboy hotkeys: controller key 8 chosen",
+  { text = "pipboy hotkeys: controller closed", count = 2 },
+  { re = 'hotkeys: slot 3: equipped \.357 Magnum Revolver', count = 1 },
+  { re = 'hotkeys: slot (1|8) holds', count = 0, label = "B cancels without assigning" },
+]
+order = [["controller opened", "controller key 2 chosen", "slot 2 is Ammo Swap", "controller key 3 chosen", "hotkeys: slot 3 holds", "controller closed", "controller opened", "controller key 8 chosen", "controller closed", "hotkeys: slot 3: equipped"]]
+
+
+[[scenario]]
+name = "tiles-items-hotkey-pad"
+source = "[design, #2312] controller.md section 3: RB opens the existing ITEMS hotkey panel, D-pad steps all eight slots, A assigns, B cancels; provisional selection method pending observer check 211"
+note = "Reuses pipboy-hotkey-assign's inventory fixture. RB opens slot 1, right visits Ammo Swap (A refuses), down reaches slot 3 and A assigns. Reopen, move left and cancel with B; the Pip-Boy stays open. After closing, D-pad down uses slot 3. No mouse/digit assignment."
+areas = ["hotkeys", "pipboy", "controller"]
+paths = ["engine/nvf-play/src/pipboy/hotkey_panel.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/pad.rs", "engine/nvf-play/src/hotkeys.rs"]
+env = { NVFOREVER_HOME = "tiles-items-hotkey-pad-home", NVF_PLAY_TEST_TILE_MENUS = "InventoryMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:device:Controller", NVF_PLAY_TEST_GIVE = "0008F216:1,0008ED02:24", NVF_PLAY_TEST_PIPBOY = "25:open,26:page=items,26.5:tab=0,40:close", NVF_PLAY_TEST_KEYS = "28:pad-RB,29:pad-D-Pad Right,30:pad-A,31:pad-D-Pad Down,32:pad-A,34:pad-RB,35:pad-D-Pad Left,36:pad-B,43:pad-D-Pad Down" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  { text = "controls: input device Controller", label = "tile assignment uses Controller" },
+  { text = "pipboy hotkeys: controller opened, key 1 chosen", count = 2, label = "tile page opens the shared modal twice" },
+  { text = "tiles: InventoryMenu hotkey panel shown, key 1", min = 2 },
+  { text = "pipboy hotkeys: controller key 2 chosen", label = "tile panel visits Ammo Swap" },
+  { re = 'hotkeys: slot 2 is Ammo Swap: \.357 Magnum Revolver not assigned', count = 1, label = "tile panel refuses reserved slot" },
+  { text = "pipboy hotkeys: controller key 3 chosen", label = "tile panel advances to slot 3" },
+  { re = 'hotkeys: slot 3 holds \.357 Magnum Revolver \(0x0008F216\)', count = 1, label = "tile panel assigns the fixture item" },
+  { text = "pipboy hotkeys: controller key 8 chosen", label = "tile panel wraps backwards" },
+  { text = "pipboy hotkeys: controller closed", count = 2, label = "tile modal closes after confirm and cancel" },
+  { re = 'hotkeys: slot 3: equipped \.357 Magnum Revolver', count = 1, label = "D-pad uses the slot assigned over tiles" },
+  { re = 'hotkeys: slot (1|8) holds', count = 0, label = "tile modal cancellation changes no assignment" },
+]
+order = [["controller opened", "controller key 2 chosen", "slot 2 is Ammo Swap", "controller key 3 chosen", "hotkeys: slot 3 holds", "controller closed", "controller opened", "controller key 8 chosen", "controller closed", "hotkeys: slot 3: equipped"]]
 
 [[scenario]]
 name = "house-chamber-fx"
