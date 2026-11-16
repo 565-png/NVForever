@@ -2948,6 +2948,111 @@ already talking takes over at once, same topic or another; nothing is queued or 
      whether the subtitle shows at each distance.
 
 
+## Added 2026-11-15 (old-head hair outside the race list, #2714)
+
+210. **Which hair does the original use when an NPC's HAIR is outside its race's
+     list?** (P3; #2714; actors.md section 4.4.) [documented: #2714, spooknik's
+     2026-11-15 record/archive audit at main 1790ab94a] Roy, VFSRoyREF
+     0x0011365D / base VFSLocalVictim03 0x00113649, is CaucasianOldAged
+     0x000987DF (`headold.nif`) with HairAfricanAmericanBase 0x000306BE
+     (`hairbase.nif`, `hairafricanamericanbase.dds`, HCLR 192,192,192, no hat).
+     This hair is outside the race's old-hair-only HNAM list; the default male
+     hair is HairBaldingOld. Old-head alternatives exist: HairBaseOld 0x00044528
+     (`hairbaseold.nif`, `hairbaseoldnohat.egm` / `hairbaseoldhat.egm`) and
+     HairAfricanAmericanBaseOld 0x000987D9 (`hairafricanamericanbaseold.nif`).
+     The second case, VNovacDoctorMerc2, uses `hairraiderspike.nif` on an old
+     head and has no old version [documented: the same audit]. In the original,
+     at Old Mormon Fort courtyard during VMS19 objective 60, capture Roy from
+     behind and from the side, close enough to compare the scalp/hair seam;
+     also capture VNovacDoctorMerc2 from those angles. Does Roy retain the
+     record's hair with the same gap, wear the old-head version, or wear the
+     race default? Does the second case retain its hair or use a default when
+     no old version exists? [hypothesis, #2714] NVForever provisionally keeps
+     the record's model and its own EGM; a young-head model on an old head
+     could explain the reported gap. Resolve this before changing hair selection.
+
+## Added 2026-11-15 (Mick secret door, #2716)
+
+206. **Does an NPC path through an open locked door in the original?** (P2;
+    `fnv_nav::NavGraph::door_tri_open`.) [hypothesis, #2716] NVForever treats an
+    open in-place door as no barrier to any actor, even while locked. [documented:
+    issue #2716, spooknik comment 2026-11-15, supplied record findings] In
+    `FreesideMickandRalphs`, Mick reaches `SecretDoorMarkerREF`; his Travel end script
+    opens `MickSecretDoorREF` (0x00121FF2, Requires Key, no key) with SetOpenState 1
+    and chooses the secret-sales package. Watch whether he then walks through the
+    still-locked door to `SecretSalesMarkerREF` and starts the sales conversation.
+    Check another NPC without a key through an open locked door too, then close it
+    and compare. Record whether the live lock changes when the door opens.
+
+## Added 2026-11-16 (Pacer's cover, #2715)
+
+208. **Does Pacer keep cowering throughout the staged NCR fight, including after a load?**
+    (P2; `fnv_ai::sandbox`, #2715 part 3.) His VFSPacerCowerNCRFightPackage
+    (PACK 0x00129434) permits only idle markers; VFSNCRFightPacerMarkerREF
+    (REFR 0x001293EC) uses DefaultCowerIdleMarker (IDLM 0x000C47CC, timer 0),
+    with LooseCowerIdles (0x000C0A9A, looping 3rdP_Cowering.kf)
+    [documented: #2715 issue comment, supplied record findings]. With VMS19 ncrfight
+    at 1, watch Pacer from the start for at least 120 seconds without talking or
+    starting combat. Does he ever stand upright between cower loops? Save while
+    he cowers, reload, and measure the time until he cowers again. NVForever reuses
+    the sole marker at each timer expiry when every other behaviour is disabled
+    [design, #2715: `Allowed::only_idle_markers`, `Sandbox::next`]; continuous cower
+    in the original is provisional [hypothesis]. This leaves the general sole-object
+    60-second rule and observer check 114 intact [design, #1505, #2715].
+
+## Added 2026-11-15 (held weather across worldspace doors, #1997)
+
+209. **Does held weather survive a door into another worldspace?** (P3; #1997;
+    `worldspace.rs::carry_sky`, `sky.rs::SkyState::carry_weather_from`.) In Freeside,
+    use the console to `ForceWeather` a clearly different weather with override flag 1,
+    then go through the gate into the Strip. Does that weather remain shown? Repeat
+    with `SetWeather` and its override flag, allowing its fade to finish first; then
+    call `ReleaseWeatherOverride` and check that normal weather returns. Save after
+    the door and load: is it still held? Both setters say the weather will not change
+    until release [documented: offline GECK wiki ForceWeather / SetWeather /
+    ReleaseWeatherOverride, snapshot 2026-10-28]; keeping it across a worldspace door
+    is provisional [hypothesis]. NVForever carries it without destination filtering
+    [design: `sky.rs::SkyState::carry_weather_from`].
+
+## Added 2026-11-16 (controller hotkey assignment, #2312)
+
+211. **How does a controller choose a hotkey slot on ITEMS?** (P3; controller.md §3,
+    weapon-wheel.md §3.) [documented: issue #2312's supplied inventory_menu.xml facts]
+    `IM_HotkeyButton` uses RB and `sInventoryHotKey`, opening `IM_HotKeyWheel`.
+    [hypothesis] The original's slot-selection method is unknown; its prefab facts
+    supplied in #2312 bind no pad directions. Select a weapon on ITEMS, press RB, and
+    test D-pad taps/holds and both sticks in cardinal and diagonal directions. Record
+    which box is chosen on opening, whether selection points spatially or steps,
+    whether it wraps/repeats, and whether A assigns and B cancels. Include Ammo Swap
+    and an occupied slot. [design, #2312] NVForever provisionally opens at slot 1,
+    steps right/down forward and left/up backward through eight slots with wrapping,
+    assigns with A (closing on success), and cancels with B; Ammo Swap refuses items.
+
+## Added 2026-11-15 (House's chamber steam, glow and ground fog, #2685)
+
+212. **Do the steam, panel glow and ground fog of House's chamber linger, and do they survive a
+     load?** (P2; #2685, spec-notes/idles.md §10.1, particles.md §7.8.) [hypothesis] From a sealed
+     chamber in Lucky38ControlRoom, use the unseal terminal item and record the opening, steam
+     bursts, panel glow and ground fog at start, after 20 s and after 55 s. Check that glow and
+     haze linger, then save/load at the held end and compare. Also check whether replacing or
+     stopping the idle removes its effect model. The provisional engine rule holds CLAMP effect
+     tracks until replacement, using authored values throughout; actor idle playback is
+     currently not serialized. No original capture was performed in this run.
+
+## Added 2026-11-15 (Kimball's speech crowd heading, #2526)
+
+213. **Does Kimball's speech crowd face its editor heading?** (P2; #2526;
+    `fnv_ai::carry::marker_heading`, `docs/spec-notes/packages.md` §3.)
+    [documented: #2526 writer brief, main session's fnvtool ai show of FalloutNV.esm]
+    `VHDSpeechNPC01REF` (0012FCDC) and `VHDSpeechNPC02REF` (0012FCE2) have Travel
+    `VHDCivilianIdlePackage` (00133EC3), near editor location, radius 0.
+    [hypothesis, #2526] NVForever makes Travel and standing Guard at an editor location
+    below the existing 16-unit guard-wander cutoff face their placed z rotation.
+    In the original, during Kimball's speech at Hoover Dam cell 16,5, record one crowd
+    member's current package, position and z angle against its placed position/rotation.
+    Move it off its editor spot and reevaluate: does it return and turn to the placed
+    heading? Also check a small-radius standing Guard if a test plugin is available.
+
 ## Added 2026-11-15 (the Ranger assassins' drop at the Legate's camp, #2532)
 
 214. **Legate showdown rangers and harmless drops without Allow Falls (#2532).**
@@ -2967,3 +3072,4 @@ already talking takes over at once, same topic or another; nothing is queued or 
      Separately ask the main session for both rangers' NPC_ PKID/conditions and
      NAVM triangle/link/drop heights to marker 01 and between markers; no camp
      navmesh facts or original captures were available to this writer.
+

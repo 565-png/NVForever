@@ -88,7 +88,9 @@ pub struct PathParams {
     /// Locked doors the actor owns (its base or a faction it is in): these may be used
     /// as if it carried their key.
     pub owned_doors: Vec<u32>,
-    /// Doors that open in place known to stand open: a path that starts (or turns) within
+    /// [hypothesis, #2716] Doors that open in place known to stand open: these do not
+    /// refuse triangles, even while locked. [design / NavGraph::square_approach]
+    /// A path that starts (or turns) within
     /// the approach to one goes straight on through it instead of backing off to the stop
     /// in front of it ([`NavGraph::square_approach`]).
     pub open_doors: Vec<u32>,
@@ -305,6 +307,12 @@ struct Piece {
 impl NavGraph {
     /// Whether a path may step from triangle `t` over edge `e`.
     fn passable(&self, t: u32, e: usize, p: &PathParams) -> Option<u32> {
+        self.passable_for_path(t, e, p, &[])
+    }
+
+    // [design, #2716] Only the original path endpoints can bypass coarse door tagging;
+    // all other passability checks, including raycasts, retain the ordinary refusal.
+    fn passable_for_path(&self, t: u32, e: usize, p: &PathParams, door_endpoints: &[u32]) -> Option<u32> {
         let tri = &self.tris[t as usize];
         let n = tri.next[e];
         if n == NONE || !self.usable(n) {
@@ -328,9 +336,9 @@ impl NavGraph {
         if p.max_slope_deg.is_some_and(|m| self.up[n as usize] < m.to_radians().cos() - 1e-4) {
             return None;
         }
-        // A locked door that opens in place closes its triangles to actors without its
-        // key, as a locked teleport door closes its link.
-        if !self.door_tri_open(n, p) {
+        // [design, #2716] Passing triangles stay closed; an endpoint beside the door
+        // can use its own overlapping triangle (checked by door_endpoint_open).
+        if !door_endpoints.contains(&n) && !self.door_tri_open(n, p) {
             return None;
         }
         Some(n)
@@ -539,6 +547,12 @@ impl NavGraph {
         }
         let (start, s_at) = self.nearest(from.space, from.pos, SNAP_RADIUS).ok_or(PathError::NoTriangle { which: "start", at: from.pos })?;
         let (goal, g_at) = self.nearest(to.space, to.pos, SNAP_RADIUS).ok_or(PathError::NoTriangle { which: "goal", at: to.pos })?;
+        // [design, #2716] Test the points against every refusing oriented footprint,
+        // then exempt only these two triangles throughout this path's leg searches.
+        if !self.door_endpoint_open(start, s_at, p) || !self.door_endpoint_open(goal, g_at, p) {
+            return Err(PathError::Unreachable { expanded: 0 });
+        }
+        let door_endpoints = [start, goal];
         // Water closed to it ([`PathParams::water`]): a goal in water is out of reach at
         // once, not after a search of everything round it; one that stands in water may
         // walk out through it [design].
@@ -555,7 +569,7 @@ impl NavGraph {
             p
         };
         let (chain, expanded) = if p.ledges || p.safe_drop_max.is_some() {
-            self.search(start, s_at, goal, g_at, to.space, p, p.doors)?
+            self.search(start, s_at, goal, g_at, to.space, p, p.doors, &door_endpoints)?
         } else {
             let mut excluded: Vec<(u32, usize)> = Vec::new();
             let mut expanded = 0usize;
@@ -573,7 +587,7 @@ impl NavGraph {
                     } else {
                         (f, self.centre(f), self.space_of_tri(f).unwrap_or(to.space))
                     };
-                    match self.search(t, at, target, target_at, space, p, false) {
+                    match self.search(t, at, target, target_at, space, p, false, &door_endpoints) {
                         Ok((mut c, n)) => {
                             expanded += n;
                             // This leg starts by the door that ended the last one.
@@ -604,6 +618,11 @@ impl NavGraph {
             }
         };
         let legs = self.legs_of(&chain, s_at, g_at, from.space, to.space, p);
+        // [design, #2716] Check the final geometry after funneling, shortcuts and door
+        // approaches: exempt endpoint triangles can straddle the same closed door.
+        if legs.iter().any(|l| !self.door_segments_open(&l.corridor, &l.points, p)) {
+            return Err(PathError::Unreachable { expanded });
+        }
         let length = legs.iter().map(|l| l.points.windows(2).map(|w| dist(w[0], w[1])).sum::<f32>()).sum();
         Ok(Path { legs, length, expanded, start_snap: dist(from.pos, s_at), goal_snap: dist(to.pos, g_at) })
     }
@@ -611,7 +630,7 @@ impl NavGraph {
     /// A* from triangle `start` (entered at `s_at`) to `goal` (`g_at`, in `goal_space`):
     /// the triangles and how each was entered, and how many were expanded.
     #[allow(clippy::too_many_arguments)]
-    fn search(&self, start: u32, s_at: [f32; 3], goal: u32, g_at: [f32; 3], goal_space: Space, p: &PathParams, doors: bool) -> Result<(Vec<(u32, Via)>, usize), PathError> {
+    fn search(&self, start: u32, s_at: [f32; 3], goal: u32, g_at: [f32; 3], goal_space: Space, p: &PathParams, doors: bool, door_endpoints: &[u32]) -> Result<(Vec<(u32, Via)>, usize), PathError> {
         let min_factor = p.preferred_cost.min(1.0).min(p.water_cost).max(0.01);
         let h = |t: u32, at: [f32; 3]| {
             if self.space_of_tri(t) == Some(goal_space) {
@@ -650,7 +669,7 @@ impl NavGraph {
                 }
             };
             for e in 0..3 {
-                let Some(n) = self.passable(t, e, p) else { continue };
+                let Some(n) = self.passable_for_path(t, e, p, door_endpoints) else { continue };
                 let (l, r) = self.portal(t, e);
                 // Too narrow for the actor: an edge between two outline vertices that is
                 // narrower than the actor's clearance radius.
