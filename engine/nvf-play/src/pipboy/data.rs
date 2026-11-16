@@ -561,6 +561,25 @@ pub struct DataState {
     lines_logged: Option<(Vec<LineTo>, Option<CustomMarker>)>,
 }
 
+/// [design, #2403] Synthetic list/note scrolling for reports integration tests only.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_progress_fixture(step: usize) -> DataState {
+    let mut st = DataState { text_max: 1000.0, pane_of: Some((NOTES, false, 42)), ..Default::default() };
+    if step >= 1 {
+        scroll_pane(&mut st, NOTES, Some((NOTES, false, 42)), PaneMoves { pages: 1.0, ..Default::default() });
+    }
+    if step >= 2 {
+        st.sel[NOTES] = 1;
+    }
+    if step >= 3 {
+        st.first[NOTES] = 1;
+    }
+    st.navigated = step as u32;
+    st.poll = step as f32;
+    st
+}
+
 // ---- what is shown ------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1225,6 +1244,14 @@ impl DataState {
     /// (`super::sounds`).
     pub fn selection(&self, tab: usize) -> (usize, bool) {
         (self.sel.get(tab).copied().unwrap_or(0), self.challenges)
+    }
+
+    /// [design, #2403 / file refs] Read-only logical list/pane/map progress. Excludes
+    /// radio playback/wave clocks, pointer hover and attempted-input counters.
+    pub fn progress(&self, tab: usize) -> impl std::fmt::Debug + '_ {
+        (self.selection(tab), self.first.get(tab), self.text_first, self.pane_of, self.notes_of_active,
+            self.active_quest, self.centre.get(tab).filter(|_| tab < 2), self.magnify.get(tab).filter(|_| tab < 2),
+            self.cursor.get(tab).filter(|_| tab < 2), &self.popup, &self.custom)
     }
 
     /// The active quest, for a save (`crate::save`): a ForceActiveQuest the Pip-Boy has
@@ -3927,6 +3954,48 @@ fn highlight(p: &mut ChildSpawnerCommands, c: &mut Ctx, centre: Vec2, label: Opt
             c.text(p, 1, d, centre.x, below, Align::Centre, c.bright());
         }
     }
+}
+
+/// [design, #2403] Synthetic logical/ineffective states for detector regressions.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_map_progress_fixture(step: usize) -> DataState {
+    let mut s = DataState::default();
+    if step >= 1 {
+        s.centre[1] = Some([0.5, 0.5]);
+    }
+    if step >= 2 {
+        s.magnify[1] = 2.0;
+    }
+    if step >= 3 {
+        s.cursor[1] = Some(Vec2::ONE);
+    }
+    if step >= 4 {
+        s.popup = Some(Popup::travel(42, "Synthetic question".into()));
+    }
+    if step >= 5 {
+        s.popup.as_mut().unwrap().step(1);
+    }
+    if step >= 6 {
+        s.active_quest = Some(43);
+    }
+    if step >= 7 {
+        s.custom = Some(CustomMarker { space: 42, pos: [1.0, 2.0, 3.0] });
+    }
+    s.navigated = step as u32;
+    s.poll = step as f32;
+    s
+}
+
+/// [design, #2403] The same logical map transitions on the Local Map tab.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_local_map_progress_fixture(step: usize) -> DataState {
+    let mut s = report_map_progress_fixture(step);
+    s.centre.swap(0, 1);
+    s.magnify.swap(0, 1);
+    s.cursor.swap(0, 1);
+    s
 }
 
 #[cfg(test)]
