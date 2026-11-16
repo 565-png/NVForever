@@ -65,7 +65,11 @@ fn row(world: &World, settings: &Settings, i: usize) -> menu::Row {
     } else {
         menu::Kind::Switch
     };
-    menu::Row { key: s.key.to_string(), label: shown_case(tr(s.label)), note: tr(s.note).to_string(), kind }
+    // What it needs of other rows (the shared tables the page goes by), its reason translated.
+    let words = |w: &'static str| tr(w).to_string();
+    let shown_with = nvf_settings_layout::shown_with(s.key).map(|r| menu::Rule::of(r, words));
+    let needs = nvf_settings_layout::needs(s.key).into_iter().map(|r| menu::Rule::of(r, words)).collect();
+    menu::Row { key: s.key.to_string(), label: shown_case(tr(s.label)), note: tr(s.note).to_string(), kind, shown_with, needs }
 }
 
 /// The values `slider` reaches (`Slider::fit`) and the words the page shows for each, when
@@ -132,6 +136,7 @@ mod tests {
         add_choice_list(&mut app, setting("upscaler", "Display", "Upscaler"), upscaler);
         set_choice_action(&mut app, "upscaler", |name| name.starts_with("Download"));
         add_setting(&mut app, setting("a-later-row", "Gameplay", "A later row"));
+        add_setting(&mut app, setting("vats-slowdown", "Gameplay", "Time slowdown"));
         app
     }
 
@@ -154,6 +159,13 @@ mod tests {
         assert_eq!((*min, *step), (0.0, 0.25));
         assert_eq!(steps.iter().map(|s| (s.value, s.label.as_str())).collect::<Vec<_>>(), [(0.0, "Very Easy"), (0.25, "Easy"), (0.5, "Normal"), (0.75, "Hard"), (1.0, "Very Hard")]);
         let menu::Kind::List { choices } = &g.categories[1].rows[0].kind else { panic!() };
+        // The rules the page goes by, for the launcher (the shared tables).
+        let slowdown = &g.categories[1].rows[1];
+        assert_eq!(slowdown.key, "vats-slowdown");
+        assert_eq!(slowdown.needs, vec![menu::Rule { parent: "vats-style".into(), choices: vec!["Classic".into()], why: "Classic V.A.T.S. only.".into() }]);
+        assert!(g.categories[1].rows[0].needs.is_empty() && g.categories[1].rows[0].shown_with.is_none());
+        let upscaler = &m.tabs[1].categories[0].rows[0];
+        assert_eq!(upscaler.key, "upscaler");
         assert_eq!(choices.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Classic", "Mark and Fire"]);
         let menu::Kind::List { choices } = &m.tabs[1].categories[0].rows[0].kind else { panic!() };
         assert_eq!(choices.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Off", "DLSS"], "an action is not a value the INI keeps");
@@ -171,7 +183,7 @@ mod tests {
         let file = dir.join(menu::MENU_FILE);
         write_menu(app.world());
         let text = std::fs::read_to_string(&file).unwrap();
-        assert_eq!(Menu::parse(&text).map(|m| m.rows().count()), Some(6));
+        assert_eq!(Menu::parse(&text).map(|m| m.rows().count()), Some(7));
         std::fs::write(&file, "old").unwrap();
         write_menu(app.world());
         assert_eq!(std::fs::read_to_string(&file).unwrap(), text, "an old file is replaced");

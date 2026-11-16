@@ -44,13 +44,39 @@ pub struct Category {
     pub rows: Vec<Row>,
 }
 
-/// A row: its `[Settings]` key, its label and note as the page shows them, how it changes.
+/// A row: its `[Settings]` key, its label and note as the page shows them, how it changes,
+/// and what of other rows it needs (`crate::shown_with`, `crate::needs`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Row {
     pub key: String,
     pub label: String,
     pub note: String,
     pub kind: Kind,
+    /// Shown only while this holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shown_with: Option<Rule>,
+    /// Greyed while one of these does not hold (the first one's `why` said).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs: Vec<Rule>,
+}
+
+/// What a row needs of another row ([`crate::Rule`]): `parent` (a `[Settings]` key, or
+/// [`crate::DEVICE_ROW`]) on when `choices` is empty, else on one of `choices` (by name);
+/// `why` in the page's words.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Rule {
+    pub parent: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub why: String,
+}
+
+impl Rule {
+    /// The shared table's rule, its `why` through `words` (the game's translation).
+    pub fn of(r: crate::Rule, words: impl Fn(&'static str) -> String) -> Rule {
+        Rule { parent: r.parent.to_string(), choices: r.choices.iter().map(|c| c.to_string()).collect(), why: if r.why.is_empty() { String::new() } else { words(r.why) } }
+    }
 }
 
 /// How a row changes, as the INI keeps it.
@@ -124,9 +150,16 @@ mod tests {
                     group: None,
                     heading: Some("Game".into()),
                     rows: vec![
-                        Row { key: "hardcore".into(), label: "Hardcore Mode".into(), note: "On: …".into(), kind: Kind::Switch },
-                        Row { key: "difficulty".into(), label: "Difficulty".into(), note: "".into(), kind: Kind::Slider { min: 0.0, step: 0.25, steps: vec![Step { value: 0.0, label: "Very Easy".into() }, Step { value: 0.25, label: "Easy".into() }] } },
-                        Row { key: "vats-style".into(), label: "V.A.T.S. Style".into(), note: "".into(), kind: Kind::List { choices: vec![Choice { name: "Classic".into(), label: "Classic".into() }] } },
+                        Row { key: "hardcore".into(), label: "Hardcore Mode".into(), note: "On: …".into(), kind: Kind::Switch, shown_with: None, needs: vec![] },
+                        Row { key: "difficulty".into(), label: "Difficulty".into(), note: "".into(), kind: Kind::Slider { min: 0.0, step: 0.25, steps: vec![Step { value: 0.0, label: "Very Easy".into() }, Step { value: 0.25, label: "Easy".into() }] }, shown_with: None, needs: vec![] },
+                        Row {
+                            key: "vats-slowdown".into(),
+                            label: "V.A.T.S. Time Slowdown".into(),
+                            note: "".into(),
+                            kind: Kind::List { choices: vec![Choice { name: "100% (full stop)".into(), label: "100% (Full Stop)".into() }] },
+                            shown_with: None,
+                            needs: crate::needs("vats-slowdown").into_iter().map(|r| Rule::of(r, str::to_string)).collect(),
+                        },
                     ],
                 }],
             }],
@@ -134,8 +167,30 @@ mod tests {
         let text = m.to_text();
         assert!(!text.contains("\"group\""), "no group outside the Tweaks tab: {text}");
         assert_eq!(Menu::parse(&text), Some(m.clone()));
-        assert_eq!(m.rows().map(|r| r.key.as_str()).collect::<Vec<_>>(), ["hardcore", "difficulty", "vats-style"]);
+        assert_eq!(m.rows().map(|r| r.key.as_str()).collect::<Vec<_>>(), ["hardcore", "difficulty", "vats-slowdown"]);
+        assert!(text.contains("\"parent\": \"vats-style\"") && !text.contains("shown_with"), "only the rules a row has: {text}");
         assert_eq!(Menu::parse("{\"version\": 1}"), None);
+    }
+
+    #[test]
+    fn the_rules_of_a_row() {
+        assert_eq!(crate::shown_with("dlss-model").map(|r| (r.parent, r.choices)), Some(("upscaler", &["DLSS"][..])));
+        assert_eq!(crate::shown_with("aim-lock").map(|r| (r.parent, r.choices)), Some((crate::DEVICE_ROW, &[crate::CONTROLLER_DEVICE][..])));
+        assert_eq!(crate::shown_with("difficulty"), None);
+        let lows: Vec<&str> = crate::needs("fps-counter-low").iter().map(|r| r.parent).collect();
+        assert_eq!(lows, ["fps-counter", "fps-counter-fps"], "every need, in the table's order");
+        assert_eq!(crate::needs("vats-slowdown")[0].choices, ["Classic"]);
+        let r = Rule::of(crate::needs("shadow-distance")[0], |w| format!("<{w}>"));
+        assert_eq!((r.parent.as_str(), r.choices.len(), r.why.as_str()), ("sun-shadows", 0, "<Needs Sun Shadows.>"));
+        // Every rule names placed rows (a Controls row by its table name).
+        let placed = |k: &str| crate::SECTIONS.iter().any(|s| s.keys.contains(&k));
+        for (row, parent, _) in crate::SHOWN_WITH {
+            assert!(placed(row) && placed(parent), "{row} / {parent}");
+        }
+        for (row, parent, _, _) in crate::NEEDS_CHOICE {
+            assert!(placed(row) && placed(parent), "{row} / {parent}");
+        }
+        assert!(placed(crate::DEVICE_ROW));
     }
 
     #[test]

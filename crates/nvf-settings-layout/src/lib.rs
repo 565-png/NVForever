@@ -952,6 +952,60 @@ pub fn controller_only(key: &str) -> bool {
     CONTROLLER_KEYS.contains(&key)
 }
 
+/// The Controls tab's Input Device row, as a rule names it ([`Rule::parent`]): kept as
+/// `[Controls] Input Device`, not in `[Settings]`.
+pub const DEVICE_ROW: &str = "controls:device";
+
+/// The input device [`CONTROLLER_KEYS`] need, by the name `[Controls] Input Device` keeps.
+pub const CONTROLLER_DEVICE: &str = "Controller";
+
+/// Rows shown only while a list row has one of the named choices: (the row, the list row,
+/// the choices by name) [design: the menu overhaul, owner 2026-11-15: the upscaler's own rows
+/// and Generated Frames are hidden, not greyed, while they cannot apply]. While hidden, the
+/// list row stands for the row (the search, the Changed list). The game's page
+/// (`nvf_play::settings::Settings::hidden`) and the launcher both go by this table: a row
+/// hidden by another row's choice is written here, not in code, so the two stay one.
+pub const SHOWN_WITH: &[(&str, &str, &[&str])] = &[
+    ("upscaler-quality", "upscaler", &["FSR 3.1", "DLSS"]),
+    ("dlss-model", "upscaler", &["DLSS"]),
+    ("fsr-library", "upscaler", &["FSR 3.1"]),
+    ("anti-aliasing", "upscaler", &["Off"]),
+    ("frame-generation-frames", "frame-generation", &["DLSS"]),
+];
+
+/// Rows greyed unless a list row has one of the named choices: (the row, the list row, the
+/// choices by name, why) [design: the menu overhaul], as [`NEEDS`] for a row that needs a
+/// choice rather than a row switched on. The game's page
+/// (`nvf_play::settings::Settings::disabled_status`) and the launcher both go by it.
+pub const NEEDS_CHOICE: &[(&str, &str, &[&str], &str)] = &[("vats-slowdown", "vats-style", &["Classic"], "Classic V.A.T.S. only.")];
+
+/// What a row needs of another row to apply: `parent` on (a switch on, a list past its first
+/// choice) when `choices` is empty, else `parent` on one of `choices` (by name). `why` is
+/// what the page says while it does not hold (English; the game shows it translated).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rule {
+    pub parent: &'static str,
+    pub choices: &'static [&'static str],
+    pub why: &'static str,
+}
+
+/// The rule that hides row `key` while it does not hold: [`SHOWN_WITH`], or a controller
+/// row's need of the controller ([`CONTROLLER_KEYS`], parent [`DEVICE_ROW`]).
+pub fn shown_with(key: &str) -> Option<Rule> {
+    if controller_only(key) {
+        return Some(Rule { parent: DEVICE_ROW, choices: &[CONTROLLER_DEVICE], why: "" });
+    }
+    SHOWN_WITH.iter().find(|(k, _, _)| *k == key).map(|(_, parent, choices)| Rule { parent, choices, why: "" })
+}
+
+/// The rules that grey row `key` while one does not hold, in the page's order ([`NEEDS`],
+/// then [`NEEDS_CHOICE`]); the page names the first that does not.
+pub fn needs(key: &str) -> Vec<Rule> {
+    let off = NEEDS.iter().filter(|(k, _, _)| *k == key).map(|(_, parent, why)| Rule { parent, choices: &[], why });
+    let choice = NEEDS_CHOICE.iter().filter(|(k, _, _, _)| *k == key).map(|(_, parent, choices, why)| Rule { parent, choices, why });
+    off.chain(choice).collect()
+}
+
 /// The table's faults: a key named twice, a tab not in [`TAB_ORDER`], a group outside the
 /// Tweaks tab, a category without a heading on a tab with categories, a key in NVF Features
 /// the owner did not name.

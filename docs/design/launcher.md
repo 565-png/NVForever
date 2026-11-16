@@ -18,7 +18,12 @@ without the launcher is the same as before.
   (`settings-menu.json`, `nvf_settings_layout::menu`, `engine/nvf-play/src/settings_menu.rs`):
   each row's label and note as the page shows them, and its kind (switch, slider and its
   steps' words, list and its choices). The launcher shows that file while its version is the
-  launcher's (`src/catalog.rs`); a choice that is an action, not a value (Download DLSS… on
+  launcher's (`src/catalog.rs`). Rows are hidden and greyed as the game's page does it, by
+  the same tables (`nvf_settings_layout::SHOWN_WITH`, `NEEDS`, `NEEDS_CHOICE`, the
+  controller's rows by `[Controls] Input Device`), live as rows are changed on the page; a
+  greyed row keeps its value and says why ("Greyed out: Needs Sun Shadows."), a tab whose
+  rows are all hidden says what shows them. Greying the game decides from the machine (the
+  GPU, DLSS's files, a run's command line) is the game's alone; a choice that is an action, not a value (Download DLSS… on
   the Upscaler row), is not in it. A row whose INI value the game's row takes is drawn from the
   game's row before the launcher's own lists (`src/display.rs`), which stay for the rows the INI
   keeps by another word than the choice's name (Display sync `variable`, Language `en`, …). Before the game has written one (a first start, a game

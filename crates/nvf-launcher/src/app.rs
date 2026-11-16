@@ -758,6 +758,20 @@ fn toggle(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     resp
 }
 
+/// Whether `rule` holds for its row's INI value `value` (its choice's name `name`), the row
+/// of kind `kind` (`None`: built in, by the value).
+fn rule_holds(rule: &menu::Rule, kind: Option<&menu::Kind>, value: &str, name: &str) -> bool {
+    if !rule.choices.is_empty() {
+        return rule.choices.iter().any(|c| c.eq_ignore_ascii_case(name));
+    }
+    match kind {
+        Some(menu::Kind::List { choices }) => choices.first().is_none_or(|c| c.name != name),
+        Some(menu::Kind::Slider { .. }) => value.parse::<f32>().is_ok_and(|v| v >= 0.5),
+        // A switch, or a row with no kind (built in): off as `0`, a list's Off, or no value.
+        _ => !(value.is_empty() || value == "0" || value.eq_ignore_ascii_case("off")),
+    }
+}
+
 /// Whether the INI's value `v` is one the game's row kind `kind` takes (else the page goes by
 /// the value, as for a row with no kind).
 fn menu_fits(kind: &menu::Kind, v: &str) -> bool {
@@ -968,7 +982,17 @@ impl App {
                     // while the INI holds it.
                     let rows: Vec<Row> = self.rows.iter().filter(|r| r.tab == tab && (!r.unlisted || self.stored.contains_key(&r.key))).cloned().collect();
                     let mut heading: Option<Option<String>> = None;
+                    let mut hidden_by: Vec<menu::Rule> = Vec::new();
                     for r in rows {
+                        // The game's rules: hidden while the row it goes with is not on its
+                        // choice, greyed (with the game's reason) while a row it needs is off.
+                        if let Some(rule) = r.shown_with.as_ref().filter(|rule| !self.holds(rule)) {
+                            if !hidden_by.contains(rule) {
+                                hidden_by.push(rule.clone());
+                            }
+                            continue;
+                        }
+                        let greyed = r.needs.iter().find(|rule| !self.holds(rule)).map(|rule| rule.why.clone());
                         if let Some(colour) = crate::display::colour_of_part(&r.key) {
                             if !self.current(colour).is_some_and(|c| c.eq_ignore_ascii_case(crate::display::CUSTOM)) {
                                 continue;
@@ -981,12 +1005,19 @@ impl App {
                             }
                             heading = Some(r.heading.clone());
                         }
-                        self.setting_row(ui, &r.key, &r.label, &r.note, r.kind.as_ref());
+                        self.setting_row(ui, &r.key, &r.label, &r.note, r.kind.as_ref(), greyed.as_deref());
+                    }
+                    // Every row of the tab hidden (the Controls tab with keyboard and mouse):
+                    // what shows them, not an empty page.
+                    if heading.is_none() && !hidden_by.is_empty() {
+                        let with: Vec<String> = hidden_by.iter().map(|rule| format!("{}: {}", self.row_label(&rule.parent), rule.choices.join(" or "))).collect();
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(format!("The game shows this tab's rows here with {}.", with.join("; "))).small().color(WEAK));
                     }
                 }
                 None => {
                     for k in self.other_keys() {
-                        self.setting_row(ui, &k, &k, "", None);
+                        self.setting_row(ui, &k, &k, "", None, None);
                     }
                 }
             }
@@ -1007,12 +1038,16 @@ impl App {
             .collect()
     }
 
-    fn setting_row(&mut self, ui: &mut egui::Ui, key: &str, label: &str, note: &str, kind: Option<&menu::Kind>) {
+    fn setting_row(&mut self, ui: &mut egui::Ui, key: &str, label: &str, note: &str, kind: Option<&menu::Kind>, greyed: Option<&str>) {
         let stored = self.stored.get(key).cloned();
         let value = self.edits.get(key).cloned().or_else(|| stored.clone());
         Frame::new().fill(CARD).corner_radius(4).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
+                // Greyed as the game greys it: shown, its value kept, not changed here.
+                if greyed.is_some() {
+                    ui.disable();
+                }
                 let control_w = 260.0;
                 // Resolution's two lists carry their names to the left: room for them.
                 let column_w = if key == "resolution" { control_w + 90.0 } else { control_w };
@@ -1022,6 +1057,9 @@ impl App {
                     ui.label(RichText::new(if changed { format!("{label}  •") } else { label.to_string() }).strong().color(if changed { GOLD } else { theme::TEXT }));
                     if !note.is_empty() {
                         ui.label(RichText::new(note).small().color(WEAK));
+                    }
+                    if let Some(why) = greyed {
+                        ui.label(RichText::new(format!("Greyed out: {why}")).small().color(WEAK));
                     }
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1313,6 +1351,33 @@ impl App {
     /// The value of `key` as the page shows it now: an unsaved change, else the INI's.
     fn current(&self, key: &str) -> Option<String> {
         self.edits.get(key).or_else(|| self.stored.get(key)).cloned()
+    }
+
+    /// The words the page shows for row `key` (the Input Device row by its own name).
+    fn row_label(&self, key: &str) -> String {
+        if key == nvf_settings_layout::DEVICE_ROW {
+            return "Input Device".into();
+        }
+        self.rows.iter().find(|r| r.key == key).map_or(key.to_string(), |r| r.label.clone())
+    }
+
+    /// Whether the game's rule `rule` holds for the values on the page now (the INI's, or the
+    /// changes not saved yet): its row on, or on one of its choices. As the game: a switch on,
+    /// a list past its first choice; the input device from `[Controls]`.
+    fn holds(&self, rule: &menu::Rule) -> bool {
+        let value = if rule.parent == nvf_settings_layout::DEVICE_ROW {
+            ini_get(&self.ini_text, "Controls", "Input Device").unwrap_or_default()
+        } else {
+            self.current(&rule.parent).unwrap_or_default()
+        };
+        let kind = self.rows.iter().find(|r| r.key == rule.parent).and_then(|r| r.kind.as_ref());
+        // The choice's name: the INI keeps some lists by another word (frame generation
+        // `dlss`), which the launcher's own list names.
+        let name = match kind {
+            Some(menu::Kind::List { choices }) if choices.iter().any(|c| c.name == value) => value.clone(),
+            _ => self.display_choices(&rule.parent).and_then(|l| l.into_iter().find(|c| c.stored == value)).map_or(value.clone(), |c| c.label),
+        };
+        rule_holds(rule, kind, value.trim(), name.trim())
     }
 
     /// The list for a Display row the game keeps as a choice (src/display.rs); `None` for
@@ -2117,6 +2182,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_games_rules_hold_as_the_game_has_them() {
+        let rule = |parent: &str, choices: &[&str]| menu::Rule { parent: parent.into(), choices: choices.iter().map(|c| c.to_string()).collect(), why: String::new() };
+        let c = |n: &str| menu::Choice { name: n.into(), label: n.into() };
+        let shadows = menu::Kind::List { choices: vec![c("Off"), c("Performance"), c("Quality")] };
+        // A row it needs on: a switch on, a list past its first choice.
+        assert!(rule_holds(&rule("glow", &[]), Some(&menu::Kind::Switch), "1", "1"));
+        assert!(!rule_holds(&rule("glow", &[]), Some(&menu::Kind::Switch), "0", "0"));
+        assert!(!rule_holds(&rule("sun-shadows", &[]), Some(&shadows), "Off", "Off"));
+        assert!(rule_holds(&rule("sun-shadows", &[]), Some(&shadows), "Quality", "Quality"));
+        // Built in (no kind): by the value.
+        assert!(!rule_holds(&rule("sun-shadows", &[]), None, "Off", "Off"));
+        assert!(!rule_holds(&rule("glow", &[]), None, "", ""));
+        assert!(rule_holds(&rule("glow", &[]), None, "1", "1"));
+        // On one of its choices, by name (the frame generation's `dlss` named DLSS).
+        assert!(rule_holds(&rule("frame-generation", &["DLSS"]), None, "dlss", "DLSS"));
+        assert!(!rule_holds(&rule("upscaler", &["FSR 3.1", "DLSS"]), None, "Off", "Off"));
+        assert!(rule_holds(&rule(nvf_settings_layout::DEVICE_ROW, &["Controller"]), None, "controller", "controller"));
     }
 
     #[test]

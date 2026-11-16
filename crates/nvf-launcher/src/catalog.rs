@@ -41,6 +41,10 @@ pub struct Row {
     /// Built in, with no words in the reference (a Tweaks row): shown only while the INI
     /// holds it, labelled by its key.
     pub unlisted: bool,
+    /// Shown only while this holds, greyed while one of `needs` does not: the game's rules
+    /// (`nvf_settings_layout::shown_with`, `needs`), the same in both sources.
+    pub shown_with: Option<menu::Rule>,
+    pub needs: Vec<menu::Rule>,
 }
 
 /// The page: its tabs (the table's name, the words shown) and rows, in the page's order.
@@ -75,7 +79,22 @@ impl Catalog {
                     (g, h) => g.clone().or_else(|| h.clone()),
                 };
                 for r in &c.rows {
-                    rows.push(Row { key: r.key.clone(), label: r.label.clone(), tab: t.name.clone(), heading: heading.clone(), note: r.note.clone(), kind: Some(r.kind.clone()), unlisted: false });
+                    // The file's rules (their reasons in the game's language); a file written
+                    // before it had them: the shared table's, the same game version's.
+                    let english = |w: &'static str| w.to_string();
+                    let shown_with = r.shown_with.clone().or_else(|| nvf_settings_layout::shown_with(&r.key).map(|x| menu::Rule::of(x, english)));
+                    let needs = if r.needs.is_empty() { nvf_settings_layout::needs(&r.key).into_iter().map(|x| menu::Rule::of(x, english)).collect() } else { r.needs.clone() };
+                    rows.push(Row {
+                        key: r.key.clone(),
+                        label: r.label.clone(),
+                        tab: t.name.clone(),
+                        heading: heading.clone(),
+                        note: r.note.clone(),
+                        kind: Some(r.kind.clone()),
+                        unlisted: false,
+                        shown_with,
+                        needs,
+                    });
                 }
             }
         }
@@ -98,7 +117,10 @@ impl Catalog {
                     Some(w) => (w.label.clone(), w.note.clone(), false),
                     None => (k.to_string(), String::new(), true),
                 };
-                rows.push(Row { key: k.to_string(), label, tab: p.tab.to_string(), heading: heading.clone(), note, kind: None, unlisted });
+                let english = |w: &'static str| w.to_string();
+                let shown_with = nvf_settings_layout::shown_with(k).map(|r| menu::Rule::of(r, english));
+                let needs = nvf_settings_layout::needs(k).into_iter().map(|r| menu::Rule::of(r, english)).collect();
+                rows.push(Row { key: k.to_string(), label, tab: p.tab.to_string(), heading: heading.clone(), note, kind: None, unlisted, shown_with, needs });
             }
         }
         let tabs = TAB_ORDER.iter().filter(|t| rows.iter().any(|r| r.tab == **t)).map(|t| (t.to_string(), t.to_string())).collect();
@@ -129,7 +151,7 @@ pub fn parse(text: &str) -> Vec<Row> {
             in_note = false;
             if let Some((key, rest)) = h.split_once('`') {
                 let label = rest.trim_start_matches(':').trim().to_string();
-                out.push(Row { key: key.to_string(), label, tab: tab.clone(), heading: heading.clone(), note: String::new(), kind: None, unlisted: false });
+                out.push(Row { key: key.to_string(), label, tab: tab.clone(), heading: heading.clone(), note: String::new(), kind: None, unlisted: false, shown_with: None, needs: Vec::new() });
             }
         } else if let Some(n) = line.strip_prefix("- On the page:") {
             if let Some(r) = out.last_mut() {
@@ -193,7 +215,7 @@ mod tests {
         let t = "# S\n\n## Gameplay › Game\n\n### `difficulty`: Difficulty\n\n- On the page: How hard the\n  fights are.\n- In full: more\n  words.\n- Registered in x\n\n## Audio\n\n### `music`: Music\n\n- On the page: Plays it.\n\n## Controls › the tab's own rows\n\n### `x`: X\n";
         let r = parse(t);
         assert_eq!(r.len(), 2);
-        assert_eq!(r[0], Row { key: "difficulty".into(), label: "Difficulty".into(), tab: "Gameplay".into(), heading: Some("Game".into()), note: "How hard the fights are.".into(), kind: None, unlisted: false });
+        assert_eq!(r[0], Row { key: "difficulty".into(), label: "Difficulty".into(), tab: "Gameplay".into(), heading: Some("Game".into()), note: "How hard the fights are.".into(), kind: None, unlisted: false, shown_with: None, needs: vec![] });
         assert_eq!((r[1].tab.as_str(), r[1].heading.as_deref(), r[1].note.as_str()), ("Audio", None, "Plays it."));
     }
 
@@ -215,6 +237,8 @@ mod tests {
         }
         // The Tweaks tab's rows: the game's groups and categories, labelled by key until the
         // game writes its menu.
+        assert_eq!(at("dlss-model").shown_with.as_ref().map(|r| r.parent.as_str()), Some("upscaler"), "the game's rules built in too");
+        assert_eq!(at("aim-lock").shown_with.as_ref().map(|r| r.choices.clone()), Some(vec!["Controller".to_string()]));
         if let Some(t) = c.rows.iter().find(|r| r.tab == TWEAKS_TAB) {
             assert!(t.unlisted && t.heading.as_deref().is_some_and(|h| h.contains(" › ")), "{t:?}");
         }
@@ -232,7 +256,7 @@ mod tests {
 
     fn game_menu(version: &str) -> Menu {
         use menu::{Category, Kind as K, Row as R, Tab};
-        let row = |key: &str, kind: K| R { key: key.into(), label: key.to_uppercase(), note: "n".into(), kind };
+        let row = |key: &str, kind: K| R { key: key.into(), label: key.to_uppercase(), note: "n".into(), kind, shown_with: None, needs: vec![] };
         Menu {
             version: version.into(),
             tabs: vec![
@@ -254,6 +278,22 @@ mod tests {
         assert_eq!(c.tab_names(), ["Gameplay", TWEAKS_TAB]);
         assert_eq!(c.rows[1].heading.as_deref(), Some("Combat › In Combat"));
         assert_eq!((c.rows[1].label.as_str(), c.rows[1].kind.clone()), ("TWEAK-NO-COMBAT-MUSIC", Some(menu::Kind::Switch)));
+        // The game's rules: from the file, else (a file without them) the shared table.
+        let mut with_rules = game_menu(env!("CARGO_PKG_VERSION"));
+        with_rules.tabs[0].categories[0].rows.push(menu::Row { key: "shadow-distance".into(), label: "S".into(), note: "n".into(), kind: menu::Kind::Switch, shown_with: None, needs: vec![] });
+        with_rules.tabs[0].categories[0].rows.push(menu::Row {
+            key: "vats-slowdown".into(),
+            label: "V".into(),
+            note: "n".into(),
+            kind: menu::Kind::Switch,
+            shown_with: None,
+            needs: vec![menu::Rule { parent: "vats-style".into(), choices: vec!["Classic".into()], why: "Nur klassisch.".into() }],
+        });
+        let w = Catalog::from_menu(&with_rules, env!("CARGO_PKG_VERSION")).unwrap();
+        let at = |k: &str| w.rows.iter().find(|r| r.key == k).unwrap().clone();
+        assert_eq!(at("shadow-distance").needs.iter().map(|r| (r.parent.as_str(), r.why.as_str())).collect::<Vec<_>>(), [("sun-shadows", "Needs Sun Shadows.")]);
+        assert_eq!(at("vats-slowdown").needs[0].why, "Nur klassisch.", "the file's words win");
+        assert_eq!(at("hardcore").needs, vec![]);
         assert_eq!(Catalog::from_menu(&m, "0.0.1"), None, "another version's menu: built in");
         let empty = Menu { version: env!("CARGO_PKG_VERSION").into(), tabs: vec![] };
         assert_eq!(Catalog::from_menu(&empty, env!("CARGO_PKG_VERSION")), None, "no row: built in, not an empty page");
