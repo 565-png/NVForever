@@ -3261,9 +3261,12 @@ capture setup, so every part of a check that needs an interior is still open.
      multiplies as ours does (about 2.4 times). Compare with `NVF_PLAY_DEBUG_ENV_STRENGTH`
      at 0.5 and 2.
      *Status: partly answered.* The bright patches are fixed in the world (a pot turned
-     in place, the held pistol at four headings) and a streak's place is set by the view
-     [observed]. By day the original needs 1-8 times our strength-1 term depending on the
-     object [observed fit]. Still open: the absolute strength, and whether the scale
+     in place, the held pistol at four headings) and a streak's place does not follow the
+     light's direction [observed]; that the view sets it is an inference (the camera did
+     not move) and that the patches are the cube is a hypothesis. A fit asks for 1-8.5
+     times our strength-1 term by day depending on the object [hypothesis, medium]; ours
+     stays at 1 by day (the scene light can only dim it). Still open: the absolute
+     strength, and whether the scale
      multiplies: the two bottles' glass differs in colour (4.0-4.6× under moonlight), so
      they cannot show it; a pair with the same texture and different scales is needed.
 224. **Does a shape with Environment_Mapping and a cube but no slot-5 mask reflect?** (P3;
@@ -3287,10 +3290,15 @@ capture setup, so every part of a check that needs an interior is still open.
      window of check 222. Compare where the bright parts of the cube land with
      `NVF_PLAY_DEBUG_ENV_AXES` (`base`, `flip-x`, `flip-y`, `flip-z`, `swap-yz`) and
      `NVF_PLAY_DEBUG_ENV_AXES_WINDOW`.
-     *Status: partly answered.* The lookup is fixed in the world, not in the object or
-     the view [observed, firm: envmap4's pot and held pistol]. Which axis is up and what
-     the window flag flips are open: no cube content could be recognised. Lucky 38 is an
-     interior: not captured.
+     *Status: partly answered.* The bright patches are fixed in the world, not in the
+     object or the view [observed, firm: envmap4's pot and held pistol]; whether they are
+     the cube or the sun's own highlight cannot be told, so that the cube lookup is
+     world-fixed is a hypothesis. Which axis is up and what the window flag flips are
+     open: no cube content could be recognised. Lucky 38 is an interior: not captured.
+     The wiki also says Lighting30ShaderProperty flips the cube orientation and is "Used
+     by the engine for … advanced effect combinations (e.g. parallax + cube mapping)": if
+     the engine switches a PPLighting shape with parallax and a cube to it at run time,
+     such shapes would show a flipped cube too [hypothesis]; frame one if any is found.
 226. **On blended glass without the window flag, is the reflection weighted by the glass's
      alpha?** (P3; #2841, nif.md §6.) Ours: the shape keeps its blend, so its reflection
      fades with its alpha like the rest of its colour; window shapes are drawn with the
@@ -3322,8 +3330,10 @@ capture setup, so every part of a check that needs an interior is still open.
      day to night while the ground fell to 0.07-0.10× [observed for that bottle;
      hypothesis as a rule]; the fit needs about none of the term at night. The flag
      showed no difference: fire-made highlights vanished with the fire on flagged and
-     unflagged bottles alike [observed]. No env-mapped bottle kept more of its day
-     brightness at night than the no-cube wine bottle [observed]. Open: interiors, the
+     unflagged bottles alike [observed]. No clear glow in the dark: at night the
+     env-mapped bottles kept about the share of their day brightness that the no-cube wine
+     bottle (Environment_Mapping flag, no cube) kept, or somewhat more (1.1-2.0×,
+     confounded by the night light's direction) [observed]. Open: interiors, the
      role of point lights, and what L is exactly (sun intensity, ambient, or a light sum
      at the surface).
 228. **Do reflections fade out between 1,500 and 1,800 units from the camera?** (P3;
@@ -3335,7 +3345,8 @@ capture setup, so every part of a check that needs an interior is still open.
      direction. A reflection that is whole at 1,500, about half at 1,650 and gone at
      1,800 agrees with ours; a sudden cut or no change says otherwise
      (`NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=0` draws no fade). Ours fades by the distance to
-     the object's origin, so a long object fades as a whole.
+     the shape node's origin (usually the reference's), so a long shape fades as a
+     whole and a model whose parts sit under nodes of their own fades part by part.
      *Status: open.* The running original reported 1500 and 1800 (envmap); setting both
      to 1 in memory changed no picture at 51-1,200 units (envmap5), so either the setting
      does not apply live or the fade does not act there; a crate at 600-1,900 units

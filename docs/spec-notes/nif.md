@@ -1374,35 +1374,41 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   Primm, first person, 1280 × 720; measured in linear light; the pictures stay private).
   Exteriors only: interior shots fail in the capture setup, so nothing here is observed
   indoors.
-  - The lookup is fixed in the world [observed, firm]: a cooking pot turned in place keeps
-    its bright patches where they were while its painted dirt turns with it (envmap4), and
-    the held 10mm Pistol's sheen changes with the player's heading (mean 0.05 facing north
-    or east, 0.22 facing south or west, envmap4). Whether the cube or the sun's own
-    highlight makes those patches cannot be told; no cube content (horizon, sky) can be
-    recognised.
-  - A streak's place is set by the view, its colour by the light [observed]: a narrow
-    streak on a static Sunset Sarsaparilla bottle (`ssbottle01.nif`) keeps its screen place
-    under the sun, a fire and the moon, is warm by day and nearly neutral at night, and is
-    not painted (its ratio to the glass beside it goes from 6.1 to 3.2-3.4) (envmap2,
-    envmap3).
+  - The bright patches are fixed in the world [observed, firm]: a cooking pot turned in
+    place keeps its bright patches where they were while its painted dirt turns with it
+    (envmap4), and the held 10mm Pistol's sheen changes with the player's heading (mean
+    0.05 facing north or east, 0.22 facing south or west, envmap4). That this is the cube
+    lookup is a hypothesis: whether the cube or the sun's own highlight makes those patches
+    cannot be told, and no cube content (horizon, sky) can be recognised.
+  - A streak's place does not follow the light's direction, its colour does [observed]: a
+    narrow streak on a static Sunset Sarsaparilla bottle (`ssbottle01.nif`) keeps its
+    screen place under the sun, a fire and the moon, is warm by day and nearly neutral at
+    night, and is not painted (its ratio to the glass beside it goes from 6.1 to 3.2-3.4)
+    (envmap2, envmap3). That the view sets its place is an inference [hypothesis]: the
+    camera did not move in those shots.
   - It dims with the scene light [observed for that one static bottle; hypothesis as a
     rule]: from day to night its excess over the glass falls to 0.33×, the glass beside it
-    to 0.70×, the ground to 0.07-0.10× (envmap3). Fitted against NVForever's unscaled term
-    at the same cameras, the original needs 3.75-7.75 times that term by day and about none
-    at night on that bottle [hypothesis, medium: the fit trades the term against a free
-    gain on the rest].
+    to 0.70×, the ground to 0.07-0.10× (envmap2's day shot, with the sun and a fire lit,
+    against envmap3's night shots). Fitted against NVForever's unscaled term at the same
+    cameras, the original needs 3.75-7.75 times that term by day and about none at night
+    on that bottle [hypothesis, medium: the fit trades the term against a free gain on the
+    rest].
   - Env Map Fade (flags 2 bit 15): no visible difference in these scenes [observed]: a
     fire-made highlight vanished with the fire on the flagged Nuka-Cola bottle and the 10mm
     Pistol as on unflagged bottles and on the no-cube wine bottle (envmap3), and the
     flagged bottle did not lose more than an unflagged one as the fire got farther
     (envmap2).
-  - No "glow in the dark" [observed]: at night no env-mapped bottle kept more of its day
-    brightness than the wine bottle, which has the flag but no cube (envmap, envmap3).
-  - Strength: by day NVForever's strength-1 term needs 1 to 8 times its strength,
-    depending on the object (Nuka-Cola bottle about 1, the Sarsaparilla bottles 4-8)
-    [observed fit]; the absolute strength and whether `environment_map_scale` applies are
-    **open** (the two Sarsaparilla bottles' glass differs in colour, 4.0-4.6× under
-    moonlight, so their scales 1.2 and 0.5 cannot be read off them).
+  - No clear "glow in the dark" [observed]: at night the env-mapped bottles kept about the
+    no-cube control's share of their day brightness or somewhat more (1.1-2.0× of the
+    control's night/day ratio, confounded by the night light lighting their upright sides
+    about three times more); the control is the wine bottle, which has the
+    Environment_Mapping flag but no cube (envmap, envmap3).
+  - Strength: by day the fit asks for 1 to 8.5 times NVForever's strength-1 term,
+    depending on the object (Nuka-Cola bottle about 1, the Sarsaparilla bottles 3.5-8.5)
+    [hypothesis, medium: the same fit]; the absolute strength and whether
+    `environment_map_scale` applies are **open** (the two Sarsaparilla bottles' glass
+    differs in colour, 4.0-4.6× under moonlight, so their scales 1.2 and 0.5 cannot be read
+    off them).
   - Alpha weighting on blended shapes: **open** (the test glass, the cafeteria
     `drinkingglass01.nif` placed in the air, drew opaque, transmission below about 0.1,
     envmap4).
@@ -1427,13 +1433,18 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   as an info line, not a warning. The window flag stays a property of its own on the
   material, so the two sets can take different cube orientations. The same wiki page says
   Lighting30ShaderProperty, "a pixel shader 3.0 upgrade to BSShaderPPLightingProperty",
-  also has its "cubemap orientation … flipped" [documented: GECK wiki "NIF Shader
-  Properties"]; the schema has no such block, so none is drawn, and it is one more
-  reading for observer check 225. Choices, each tagged, with the observer check that
-  would settle it:
+  also has its "cubemap orientation … flipped", and that it is "Used by the engine for
+  decals, hair and advanced effect combinations (e.g. parallax + cube mapping)"
+  [documented: GECK wiki "NIF Shader Properties"]. No model stores that block (the schema
+  has none), but the engine may switch PPLighting shapes with parallax and a cube to it
+  at run time, flipping their cube [hypothesis]; one more reading for observer check
+  225. Choices, each tagged, with the observer check that would settle it:
   - Strength and view: the cube read along the view reflected about the normal-mapped
-    normal (world-fixed, as observed), × the scale × the mask, added to the lit colour,
-    as for windows [hypothesis for the strength and the scale; observer check 223].
+    normal (world-fixed, which fits the bright patches observed), × the scale × the mask,
+    added to the lit colour, as for windows [hypothesis for the lookup, the strength and
+    the scale; observer check 223]. By day L (next bullet) is at most 1, so the default
+    can only dim the strength-1 term, while the fit asks for up to 8.5 times more on some
+    objects: the day strength is **open** and deliberately left at 1.
   - Light: × the scene light L, per channel the ambient colour plus the sun's or moon's
     (indoors the cell's ambient plus directional colour), as display values without any
     N·L, held to 1 (`env_map::scene_light`, `env_scene_light` in nif_material.wesl)
@@ -1443,9 +1454,12 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     `AMBIENT_SHARE` 0.9, `SUN_SHARE` 0.75, `MOON_SHARE` 0.5 (sky.rs) with the sunlight's
     fade and the lightning flash, not the records' bytes as stored; indoors XCLL's ambient
     and directional colours × the directional fade. Point lights are not in L (no evidence
-    either way). Window shapes keep #2462's unscaled term by default
+    either way). L follows the sun light's fade near the horizon, so for a few degrees of
+    sun height around sunrise and sunset the reflection dips towards the ambient part
+    alone, as the lit surfaces do. Window shapes keep #2462's unscaled term by default
     (`NVF_PLAY_DEBUG_ENV_LIGHT_WINDOW=scene` scales them too). Views without the world
-    view's display-value lights (the minigame views) keep the term unscaled.
+    view's display-value lights (the minigame views) keep the term unscaled. A
+    premultiplied shape is premultiplied whether or not its reflection has faded out.
   - No slot-5 mask: full strength [hypothesis; observer check 224].
   - Cube orientation: the same lookup as window shapes, (x, z, y) of the game-space
     reflection [hypothesis: the wiki says the two differ by a flip; observer check 225].
@@ -1453,11 +1467,14 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     weighted by its alpha like the rest of its colour; window shapes stay premultiplied
     (#2462) [hypothesis, the conservative choice: hair, cell fades, blended cut-outs and
     material animation key on the blend mode; observer check 226].
-  - Env Map Fade (flags 2 bit 15) changes nothing [observed: no difference in the
-    captures; observer check 227].
+  - Env Map Fade (flags 2 bit 15) changes nothing [hypothesis, from no difference
+    observed in the exterior captures, against the wiki's documented fade; observer check
+    227].
   - Camera distance: whole up to 1500 units, none from 1800, linear between, by the
-    distance to the object's origin (the mesh instance's translation), so a long shape
-    fades as a whole, on window shapes too [hypothesis for the curve and the origin,
+    distance to the shape node's origin (the mesh instance's translation, usually the
+    reference's), so a long shape fades as a whole, while a model whose parts sit under
+    nodes of their own (the HELIOS One reflector row, its reflectors about 240 units
+    apart) fades part by part; on window shapes too [hypothesis for the curve and the origin,
     documented distances, the fade unobserved; observer check 228]. The
     `glass-mccarran-*` frames stand well inside 1500 units, so #2462's pictures do not
     change.
