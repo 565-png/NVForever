@@ -49,6 +49,15 @@ pub fn atlas_width(resolution: u32) -> u32 { 3 * resolution }
 pub fn resolution_supported(resolution: u32, max_texture_dimension_2d: u32) -> bool {
     RESOLUTIONS.contains(&resolution) && atlas_width(resolution) <= max_texture_dimension_2d
 }
+/// [design] #2149/#2661: the height atlas's rows, the heights' and, with landscape detail,
+/// the detail words' after them.
+pub fn height_atlas_rows(layout: HeightLayout, detail: bool) -> usize {
+    if detail { layout.rows() + layout.detail_rows() } else { layout.rows() }
+}
+/// [design] #2149/#2661: a height atlas of `layout` the device can hold as one texture.
+pub fn height_atlas_supported(layout: HeightLayout, detail: bool, max_texture_dimension_2d: u32) -> bool {
+    layout.width().max(height_atlas_rows(layout, detail)) <= max_texture_dimension_2d as usize
+}
 /// [design] Round 10b: the colour atlas's mip levels, from `resolution` texels per cell side
 /// down to one texel per cell. Every level is a 3 by 3 grid of whole cells (the resolutions
 /// are powers of two), and no level below one texel per cell exists, so no texel of any
@@ -604,7 +613,9 @@ impl SurfaceCache {
     /// logged). An unsupported request is rejected in the log and bakes nothing, so no
     /// material samples it. Nothing is allocated here; the first bake allocates.
     /// #2149/#2661: `layout` is the height atlas's, from the run's landscape surface (fixed
-    /// for the run before the first cell; nvf_play `smooth_terrain::spec`).
+    /// for the run before the first cell; nvf_play `smooth_terrain::spec`). The height atlas
+    /// is checked against the same limit ([`height_atlas_supported`]: 2304 texels wide at
+    /// 4 x 4) and refused the same way.
     pub fn start(&mut self, resolution: u32, max_texture_dimension_2d: Option<u32>, detail: bool, layout: HeightLayout) {
         self.resolution = resolution;
         self.rejected = false;
@@ -616,6 +627,10 @@ impl SurfaceCache {
             info!("mesh terrain blend: colour atlas resolution={resolution} atlas={width}x{width} rgba16f colour-mib={} levels={} max-texture-dimension-2d={max}", mib(colour_bytes(resolution)), colour_levels(resolution));
         } else {
             warn!("mesh terrain blend: rejected resolution={resolution}: atlas {width} texels wide exceeds max-texture-dimension-2d={max}; no colour cache is baked");
+            self.rejected = true;
+        }
+        if !height_atlas_supported(layout, detail, max) {
+            warn!("mesh terrain blend: rejected height atlas subdiv={} atlas={}x{}: exceeds max-texture-dimension-2d={max}; no colour cache is baked", layout.sub(), layout.width(), height_atlas_rows(layout, detail));
             self.rejected = true;
         }
     }
@@ -1656,7 +1671,7 @@ pub fn update_cache(
     colour.sampler = ImageSampler::linear();
     let colour = images.add(colour);
     // [design] Round 10a: with landscape detail the height atlas carries the detail rows.
-    let rows = if cache.detail { layout.rows() + layout.detail_rows() } else { layout.rows() };
+    let rows = height_atlas_rows(layout, cache.detail);
     let mut heights = empty_height_atlas_rows(layout, rows);
     let mut expected = HashSet::new();
     // [design] #2551: the bake's copies and camera sit at the cells' true world places (the
@@ -3755,5 +3770,73 @@ pub(crate) mod tests {
             assert!((probe_height(layout, data, (-1, -1), p).unwrap() - surface.height_at(p.x, p.y).unwrap()).abs() <= 1e-3, "{p:?}");
         }
         assert_eq!(lookup_status(layout, data, (-1, -1), Vec2::splat(1024.0), 512), LookupStatus::Success);
+    }
+
+    /// [design] #2149/#2661: the height atlas is checked against the device's 2D texture
+    /// limit as the colour atlas is, and refused the same way (nothing bakes).
+    #[test]
+    fn start_refuses_a_height_atlas_the_device_cannot_hold() {
+        let fine = HeightLayout::new(4);
+        assert_eq!((height_atlas_rows(fine, false), height_atlas_rows(fine, true)), (387, 438));
+        for (layout, max, rejected) in [(STORED, 2048, false), (fine, 2048, true), (fine, 2304, false), (HeightLayout::new(2), 2048, false), (fine, 4096, false)] {
+            let mut cache = SurfaceCache::with_resolution(512);
+            cache.start(512, Some(max), true, layout);
+            assert_eq!((cache.rejected, cache.layout), (rejected, layout), "{layout:?} {max}");
+        }
+        // Without a render device nothing is checked.
+        let mut cache = SurfaceCache::with_resolution(512);
+        cache.start(512, None, true, fine);
+        assert!(!cache.rejected);
+        assert!(height_atlas_supported(STORED, true, 576) && !height_atlas_supported(STORED, true, 575));
+    }
+
+    /// [design] #2149/#2661: the production capture of a smoothed cell (`capture_surface`
+    /// over a prep on a 4 × 4 surface) gives the surface's own heights, and its bake copies
+    /// at the LAND grid's resolution (terrain.rs `land_resolution`); the detail still reads
+    /// 17 × 17 vertices.
+    #[test]
+    fn a_smoothed_capture_carries_the_surface_heights_and_land_resolution_copies() {
+        use bevy::ecs::system::RunSystemOnce;
+        use fnv_world::land::{Land, Layer, QUAD_SIDE};
+        use fnv_world::land_surface::{QuadrantDraw, SmoothParams, Surface};
+        let grid = (-17, 0);
+        let block = hilly_block();
+        let b: fnv_world::land_surface::Block = std::array::from_fn(|r| std::array::from_fn(|c| Some(block[r][c].as_slice())));
+        let surface = Surface::smoothed(&b, SmoothParams::DEFAULT).unwrap();
+        assert_eq!(surface.sub(), 4);
+        let centre = ((QUAD_SIDE / 2) * QUAD_SIDE + QUAD_SIDE / 2) as u16;
+        let mut layers = Vec::new();
+        for q in 0..4u8 {
+            layers.push(Layer { quadrant: q, texture: None, layer: -1, base: true, alpha: vec![] });
+            layers.push(Layer { quadrant: q, texture: None, layer: 0, base: false, alpha: vec![(centre, 0.75)] });
+        }
+        let land = Land { heights: Some(block[1][1].clone()), layers, ..default() };
+        for folds in [true, false] {
+            let (mut app, _files) = crate::outfits::tests::asset_fixture();
+            app.insert_resource(crate::outfits::tests::empty_world_data())
+                .insert_resource(crate::terrain::TerrainSettings { tile: 256.0 })
+                .init_resource::<crate::terrain::TerrainCache>()
+                .init_resource::<Assets<TerrainMaterial>>()
+                .init_resource::<Assets<SurfaceCaptureMaterial>>()
+                .init_resource::<SurfaceCache>();
+            app.world_mut().resource_mut::<nvf_assets::TextureCache>()
+                .offer(fnv_vfs::texture_path(fnv_world::land::DEFAULT_DIFFUSE), synthetic_dds(), 0.0);
+            let (prep_land, prep_surface) = (land.clone(), surface.clone());
+            let captured = app.world_mut().run_system_once(move |world: Res<WorldData>, mut terrain: crate::terrain::TerrainMaterials, mut models: nvf_assets::model::ModelCtx| {
+                let prep = crate::terrain::prepare_land_on(prep_land.clone(), prep_surface.clone(), &[None, None, None, None], grid, 256.0, QuadrantDraw::FULL);
+                crate::terrain::capture_surface(&world, prep, &mut crate::terrain::TerrainCtx { tm: &mut terrain, assets: &mut models }, folds)
+            }).unwrap().expect("heights give a capture");
+            assert_eq!(captured.heights, surface.heights(), "folds={folds}: the surface's own heights");
+            assert_eq!(captured.heights.len(), HeightLayout::new(4).side().pow(2));
+            assert_eq!(captured.colour_mask(), 0xf, "folds={folds}");
+            assert!(!captured.quadrants.is_empty());
+            for (mesh, _) in &captured.quadrants {
+                assert_eq!(mesh.count_vertices(), QUAD_SIDE * QUAD_SIDE, "folds={folds}: a bake copy at the LAND grid's resolution");
+            }
+            for d in &captured.detail {
+                let DetailCapture::Layers(d) = d else { panic!("folds={folds}: {d:?}") };
+                assert_eq!((d.tint.len(), d.normal.len()), (QUAD_SIDE * QUAD_SIDE, QUAD_SIDE * QUAD_SIDE));
+            }
+        }
     }
 }

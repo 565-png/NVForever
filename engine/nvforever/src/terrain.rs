@@ -1162,9 +1162,17 @@ fn surface_cell(world: &WorldData, grid: (i32, i32), surface: &Surface) -> crate
 /// blend's landscape detail interpolates (linear vertex colour, normal, tangent direction;
 /// game space) and the tangents' handedness, read from the very mesh drawn
 /// ([`quadrant_mesh_drawn`] or [`folded_mesh_drawn`], whose tangent's fourth number keeps
-/// the sign of [`TANGENT_SIGN`]), so the detail never reinterprets LAND on its own. The
-/// detail holds a quadrant's 17 × 17 LAND vertices: of a mesh drawn finer (#2149, #2676)
-/// it takes the vertices that lie on them. `None` for a mesh that is no such grid.
+/// the sign of [`TANGENT_SIGN`]) at its LAND vertices. The detail holds a quadrant's
+/// 17 × 17 LAND vertices: of a mesh drawn finer (#2149, #2676; a full, half or coarse-sided
+/// draw) it takes the vertices that lie on them, every `stride`-th of each row and column.
+/// [design] #2149/#2661, a known approximation: as stored, and for the tint and the
+/// opacities always (they are linear on the LAND triangles, [`stored_weights`],
+/// [`refine_quad`]), the detail interpolated over a LAND triangle is what the drawn mesh
+/// has; with smoothing the normal and tangent are the surface's at the LAND vertices,
+/// interpolated linearly over the LAND triangle, while the drawn mesh has the surface's
+/// normal (and its tangent) at every finer vertex, so the detail's shading follows the
+/// smoothed ground's curvature only from one LAND vertex to the next. `None` for a mesh
+/// that is no such grid.
 pub(crate) struct DetailVertices { pub tint: Vec<[f32; 3]>, pub normal: Vec<[f32; 3]>, pub tangent: Vec<[f32; 3]>, pub sign: f32 }
 pub(crate) fn detail_vertices(mesh: &Mesh) -> Option<DetailVertices> {
     use bevy::mesh::VertexAttributeValues as V;
@@ -1185,6 +1193,70 @@ pub(crate) fn detail_vertices(mesh: &Mesh) -> Option<DetailVertices> {
         tangent: land.map(|v| { let t = tangent[at(v)]; [t[0], t[1], t[2]] }).collect(),
         sign,
     })
+}
+
+/// [design] #2149/#2661: the mesh terrain blend's bake copy of a drawn quadrant mesh at the
+/// LAND grid's resolution. Of a mesh drawn finer than the LAND grid (a row-major `qs × qs`
+/// grid, `qs - 1` a multiple of 16: [`quadrant_mesh_drawn`], [`folded_mesh_drawn`], drawn
+/// full, half or with coarse sides), the 17 × 17 mesh of its LAND vertices: every attribute
+/// taken at those vertices (the stride [`detail_vertices`] takes), and each LAND triangle
+/// (split south-west → north-east, as a mesh drawn as stored has it) wherever the drawn mesh
+/// has a triangle inside it. The bake draws its copies flat and unlit, and everything it
+/// reads is linear on the LAND triangles (the vertex colour and every opacity, packed
+/// channels included: [`stored_weights`], [`refine_quad`]; the texture coordinate: the
+/// world place over the repeat) or not read for the colour at all (the normals, the
+/// tangents' direction, the heights, which the copy flattens), so the copy bakes the same
+/// picture (up to float rounding in the interpolation) from a sixteenth of the vertices at
+/// the default 4 × 4. A layer's mesh keeps a LAND triangle exactly where one of its corners
+/// paints, as a mesh drawn as stored does ([`quadrant_mesh_drawn`]): its opacity is linear there, so a finer
+/// triangle inside it with three unpainted corners would be degenerate. A mesh at the LAND
+/// grid's resolution (smoothing off), or one that is no such grid, comes back unchanged.
+pub(crate) fn land_resolution(mesh: &Mesh) -> Mesh {
+    use bevy::mesh::VertexAttributeValues as V;
+    let n = mesh.count_vertices();
+    let qs = n.isqrt();
+    if qs <= QUAD_SIDE || qs * qs != n || !(qs - 1).is_multiple_of(QUAD_SIDE - 1) {
+        return mesh.clone();
+    }
+    let Some(Indices::U32(drawn)) = mesh.indices() else { return mesh.clone() };
+    let stride = (qs - 1) / (QUAD_SIDE - 1);
+    let at = |v: usize| (v / QUAD_SIDE) * stride * qs + (v % QUAD_SIDE) * stride;
+    let land = 0..QUAD_SIDE * QUAD_SIDE;
+    let mut out = Mesh::new(mesh.primitive_topology(), mesh.asset_usage);
+    for (attribute, values) in mesh.attributes() {
+        let picked = match values {
+            V::Float32x2(a) => V::Float32x2(land.clone().map(|v| a[at(v)]).collect()),
+            V::Float32x3(a) => V::Float32x3(land.clone().map(|v| a[at(v)]).collect()),
+            V::Float32x4(a) => V::Float32x4(land.clone().map(|v| a[at(v)]).collect()),
+            _ => return mesh.clone(),
+        };
+        out.insert_attribute(*attribute, picked);
+    }
+    // The LAND triangle each drawn triangle lies in, from three times its centroid (whole
+    // numbers): its LAND square, and whether it lies above the square's diagonal.
+    let squares = QUAD_SIDE - 1;
+    let s3 = 3 * stride;
+    let mut kept = vec![false; squares * squares * 2];
+    for t in drawn.chunks_exact(3) {
+        let (r, c) = t.iter().fold((0, 0), |(r, c), &v| (r + v as usize / qs, c + v as usize % qs));
+        let (sr, sc) = ((r / s3).min(squares - 1), (c / s3).min(squares - 1));
+        kept[(sr * squares + sc) * 2 + usize::from(r - sr * s3 > c - sc * s3)] = true;
+    }
+    let mut idx = Vec::with_capacity(squares * squares * 6);
+    for sr in 0..squares {
+        for sc in 0..squares {
+            let i = (sr * QUAD_SIDE + sc) as u32;
+            let (e, nn, ne) = (i + 1, i + QUAD_SIDE as u32, i + QUAD_SIDE as u32 + 1);
+            // Counter-clockwise from above, as [`quadrant_mesh_drawn`]'s.
+            for (k, t) in [[i, e, ne], [i, ne, nn]].into_iter().enumerate() {
+                if kept[(sr * squares + sc) * 2 + k] {
+                    idx.extend_from_slice(&t);
+                }
+            }
+        }
+    }
+    out.insert_indices(Indices::U32(idx));
+    out
 }
 
 /// [design] Round 10a: one quadrant's detail parts while its draws are made: the base
@@ -1295,7 +1367,9 @@ fn quadrant_draws(mut near: Option<NearDraw>, world: &WorldData, drawn: &[Layer]
     if let Some((mesh, mat, n)) = folded_mat {
         if let Some(surface) = capture.as_deref_mut() {
             surface.sources.push(CaptureSource::Folded(mat.clone()));
-            stack = Some((true, vec![(mesh.clone(), CaptureDraw::Folded(Box::new(tm.tm.folded.get(&mat).unwrap().clone())))]));
+            // [design] #2149/#2661: the bake's copy at the LAND grid's resolution
+            // ([`land_resolution`]); the detail reads the drawn mesh itself.
+            stack = Some((true, vec![(land_resolution(&mesh), CaptureDraw::Folded(Box::new(tm.tm.folded.get(&mat).unwrap().clone())))]));
             detail = Some(DetailParts {
                 base: DetailBase::Folded(mat.clone()), vertices: detail_vertices(&mesh), cell_local: shader_tile > 0.0,
                 opacity: layers.iter().take(n).map(|(_, l)| alpha_grid(l)).collect(), overflow: Vec::new(),
@@ -1317,7 +1391,7 @@ fn quadrant_draws(mut near: Option<NearDraw>, world: &WorldData, drawn: &[Layer]
                 // [design] Not folded: the single-texture capture, never TerrainMaterial
                 // (whose layout a GPU without bindless textures cannot bind).
                 let copy = SurfaceCaptureMaterial::from_source(tm.assets.materials.get(&mat).unwrap(), false);
-                stack = Some((false, vec![(mesh.clone(), CaptureDraw::Single(copy))]));
+                stack = Some((false, vec![(land_resolution(&mesh), CaptureDraw::Single(copy))]));
                 detail = Some(DetailParts { base: DetailBase::Single(mat.clone()), vertices: detail_vertices(&mesh), cell_local: false, opacity: Vec::new(), overflow: Vec::new() });
             }
             if let Some(near) = near.as_mut() {
@@ -1334,7 +1408,7 @@ fn quadrant_draws(mut near: Option<NearDraw>, world: &WorldData, drawn: &[Layer]
             if let Some((_, draws)) = &mut stack {
                 if let Some(surface) = capture.as_deref_mut() { surface.sources.push(CaptureSource::Single(mat.clone(), true)); }
                 let copy = SurfaceCaptureMaterial::from_source(tm.assets.materials.get(&mat).unwrap(), true);
-                draws.push((mesh.clone(), CaptureDraw::Single(copy)));
+                draws.push((land_resolution(&mesh), CaptureDraw::Single(copy)));
                 // [design] Round 10a: an overflow layer joins the detail after the folded
                 // ones, in drawing order, with the opacity grid its mesh was built from.
                 if let Some(d) = &mut detail {
@@ -2180,6 +2254,119 @@ mod tests {
     fn triangles(mesh: &Mesh) -> Vec<[u32; 3]> {
         let Some(Indices::U32(idx)) = mesh.indices() else { panic!() };
         idx.chunks(3).map(|t| [t[0], t[1], t[2]]).collect()
+    }
+
+    /// The LAND vertex (row, column) of quadrant `q`'s detail vertex `v`.
+    fn land_vertex_of(q: u8, v: usize) -> (usize, usize) {
+        let half = QUAD_SIDE - 1;
+        ((q as usize / 2) * half + v / QUAD_SIDE, (q as usize % 2) * half + v % QUAD_SIDE)
+    }
+
+    /// The draws a 4 × 4 surface can be drawn with (#2676): full, half, and full with two
+    /// coarse sides, with the LAND stride of each.
+    fn fine_draws() -> [(usize, QuadrantDraw, usize); 4] {
+        let coarse = QuadrantDraw { step: 1, coarse: [true, false, true, false] };
+        [(4, QuadrantDraw::FULL, 4), (4, QuadrantDraw::HALF, 2), (4, coarse, 4), (2, QuadrantDraw::FULL, 2)]
+    }
+
+    /// [design] #2149/#2661: the detail reads a drawn mesh's LAND vertices, in order, from a
+    /// full 65 × 65 draw, a half 33 × 33 one and a full one with coarse sides: the LAND
+    /// vertices' linear colour and the surface's normal there, with the tangents' sign.
+    #[test]
+    fn detail_vertices_are_the_land_vertices_of_every_drawn_level() {
+        let land = hilly_land();
+        for (subdiv, draw, stride) in fine_draws() {
+            let s = smoothed_with(&land, fnv_world::land_surface::SmoothParams { subdiv, ..Default::default() });
+            let normals = s.normals().unwrap();
+            for q in 0..4u8 {
+                let mesh = quadrant_mesh_drawn(&land, &s, q, draw, None, Vec2::ZERO, 256.0).unwrap();
+                let qs = (QUAD_SIDE - 1) * stride + 1;
+                assert_eq!(mesh.count_vertices(), qs * qs, "{subdiv} {draw:?}");
+                let d = detail_vertices(&mesh).expect("a drawn grid");
+                let pos = attr3(&mesh, Mesh::ATTRIBUTE_POSITION);
+                assert_eq!((d.tint.len(), d.normal.len(), d.tangent.len(), d.sign), (QUAD_SIDE * QUAD_SIDE, QUAD_SIDE * QUAD_SIDE, QUAD_SIDE * QUAD_SIDE, TANGENT_SIGN));
+                for v in 0..QUAD_SIDE * QUAD_SIDE {
+                    let (r, c) = land_vertex_of(q, v);
+                    let colour = land.colors.as_ref().unwrap()[r * SIDE + c].map(srgb_to_linear);
+                    assert_eq!(d.tint[v], colour, "{subdiv} {draw:?} q{q} v{v}: tint");
+                    let n = Vec3::from_array(normals[s.land_vertex(r, c)]).normalize_or(Vec3::Z);
+                    assert!((Vec3::from_array(d.normal[v]) - n).abs().max_element() < 1e-6, "{subdiv} {draw:?} q{q} v{v}: normal");
+                    let east = (Vec3::X - n * n.x).normalize_or(Vec3::X);
+                    assert!((Vec3::from_array(d.tangent[v]) - east).abs().max_element() < 1e-6, "{subdiv} {draw:?} q{q} v{v}: tangent");
+                    // The vertex read is the LAND vertex's (a coarse side moves only the
+                    // vertices between them).
+                    let i = (v / QUAD_SIDE) * stride * qs + (v % QUAD_SIDE) * stride;
+                    assert_eq!((pos[i][0], pos[i][1], pos[i][2]), (c as f32 * SPACING, r as f32 * SPACING, s.heights()[s.land_vertex(r, c)]), "{subdiv} {draw:?} q{q} v{v}");
+                }
+            }
+        }
+    }
+
+    /// [design] #2149/#2661: the bake's copies at the LAND grid's resolution. Drawn as
+    /// stored they are the mesh itself; drawn finer (full, half, coarse-sided), the 17 × 17
+    /// LAND vertices with every attribute's value there, and the triangles a mesh drawn as
+    /// stored has (a layer's: those it paints).
+    #[test]
+    fn land_resolution_copies_keep_the_land_vertices() {
+        use bevy::mesh::VertexAttributeValues as V;
+        let land = hilly_land();
+        let mut alpha = vec![0.0; QUAD_SIDE * QUAD_SIDE];
+        alpha[5 * QUAD_SIDE + 7] = 0.4;
+        alpha[12 * QUAD_SIDE + 16] = 1.0;
+        alpha[13 * QUAD_SIDE + 16] = 0.25;
+        let mut second = vec![0.0; QUAD_SIDE * QUAD_SIDE];
+        second[QUAD_SIDE * QUAD_SIDE - 1] = 0.6;
+        second[3 * QUAD_SIDE + 3] = 0.8;
+        let tile = 256.0;
+        let stored_surface = stored(&land);
+        for q in 0..4u8 {
+            // Stride 1: unchanged, byte for byte (smoothing off).
+            let base = quadrant_mesh(&land, &stored_surface, q, None, Vec2::ZERO, tile).unwrap();
+            let layer = quadrant_mesh(&land, &stored_surface, q, Some(&alpha), Vec2::ZERO, tile).unwrap();
+            let folded = folded_mesh(&land, &stored_surface, q, &[&alpha, &second, &alpha, &second, &alpha, &second], Vec2::ZERO, tile).unwrap();
+            for mesh in [&base, &layer, &folded] { assert_eq!(&land_resolution(mesh), mesh, "q{q}"); }
+        }
+        for (subdiv, draw, stride) in fine_draws() {
+            let s = smoothed_with(&land, fnv_world::land_surface::SmoothParams { subdiv, ..Default::default() });
+            let sub = drawn_sub(&s, draw);
+            let (fine, fine_second) = (refine_quad(&alpha, sub), refine_quad(&second, sub));
+            let qs = (QUAD_SIDE - 1) * stride + 1;
+            let at = |v: usize| (v / QUAD_SIDE) * stride * qs + (v % QUAD_SIDE) * stride;
+            for q in 0..4u8 {
+                let base = quadrant_mesh_drawn(&land, &s, q, draw, None, Vec2::ZERO, tile).unwrap();
+                let layer = quadrant_mesh_drawn(&land, &s, q, draw, Some(&fine), Vec2::ZERO, tile).unwrap();
+                let folded = folded_mesh_drawn(&land, &s, q, draw, &[&fine, &fine_second, &fine, &fine_second, &fine, &fine_second], Vec2::ZERO, tile).unwrap();
+                let as_stored = [
+                    quadrant_mesh(&land, &stored_surface, q, None, Vec2::ZERO, tile).unwrap(),
+                    quadrant_mesh(&land, &stored_surface, q, Some(&alpha), Vec2::ZERO, tile).unwrap(),
+                    folded_mesh(&land, &stored_surface, q, &[&alpha, &second, &alpha, &second, &alpha, &second], Vec2::ZERO, tile).unwrap(),
+                ];
+                for (mesh, stored_mesh) in [&base, &layer, &folded].into_iter().zip(&as_stored) {
+                    assert_eq!(mesh.count_vertices(), qs * qs);
+                    let copy = land_resolution(mesh);
+                    assert_eq!(copy.count_vertices(), QUAD_SIDE * QUAD_SIDE);
+                    assert_eq!(copy.attributes().count(), mesh.attributes().count(), "every attribute kept");
+                    for (attribute, values) in mesh.attributes() {
+                        let picked = copy.attribute(*attribute).expect("the attribute");
+                        let ok = match (values, picked) {
+                            (V::Float32x2(a), V::Float32x2(b)) => (0..b.len()).all(|v| b[v] == a[at(v)]),
+                            (V::Float32x3(a), V::Float32x3(b)) => (0..b.len()).all(|v| b[v] == a[at(v)]),
+                            (V::Float32x4(a), V::Float32x4(b)) => (0..b.len()).all(|v| b[v] == a[at(v)]),
+                            _ => false,
+                        };
+                        assert!(ok, "{subdiv} {draw:?} q{q}: {attribute:?} at the LAND vertices");
+                    }
+                    // The triangles of the LAND grid a mesh drawn as stored has: valid
+                    // indices, the same split, a layer's painted ones only.
+                    let tris = triangles(&copy);
+                    assert!(tris.iter().flatten().all(|&i| (i as usize) < QUAD_SIDE * QUAD_SIDE));
+                    assert_eq!(tris, triangles(stored_mesh), "{subdiv} {draw:?} q{q}");
+                    // Its colours and opacities are the stored mesh's: the bake reads the same values.
+                    let (Some(V::Float32x4(a)), Some(V::Float32x4(b))) = (copy.attribute(Mesh::ATTRIBUTE_COLOR), stored_mesh.attribute(Mesh::ATTRIBUTE_COLOR)) else { panic!() };
+                    assert!(a.iter().zip(b).all(|(x, y)| (Vec4::from_array(*x) - Vec4::from_array(*y)).abs().max_element() < 1e-6), "{subdiv} {draw:?} q{q}: colours");
+                }
+            }
+        }
     }
 
     #[test]

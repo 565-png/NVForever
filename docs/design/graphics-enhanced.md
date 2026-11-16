@@ -683,7 +683,8 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   band follows the drawn landscape exactly. #2149/#2661: the landscape is drawn and collided
   as a `Surface` with 1 (smoothing off), 2 or 4 squares per LAND square and side, fixed for
   the run before the first cell (nvf_play `smooth_terrain::spec`; the Smooth terrain row
-  applies at the next start), and up to 8 units off the stored LAND triangles, so the atlas
+  applies at the next start), and up to its bound off the stored LAND triangles (8 units
+  by default; the test aid allows up to 16), so the atlas
   holds that surface's squares, `32 x sub` a cell side (nif_surface_blend.rs
   `HeightLayout`): each cell's `SurfaceCell.heights` are the surface's own (`side()`
   squared, terrain.rs `surface_cell`), and a cell whose heights are not the run's surface's
@@ -701,19 +702,32 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   landscape detail stay on the LAND grid. Each cell's tile ends, after its squares' rows, in
   a metadata row: a nine-bit mask of the resident neighbours and a four-bit mask of the
   quadrants whose colour was captured. Every prepared cell gives its heights even where a
-  quadrant's colour cannot be captured.
-- *4 x 4 near (known approximation).* Under the Smooth terrain row's 4 x 4 near (#2676) a
-  quadrant far from the camera is drawn with every other surface vertex
-  (`QuadrantDraw::HALF`, some sides coarse; terrain_lod.rs), while the atlas holds the full
-  4 x 4 surface regardless and is not rebuilt when a quadrant's drawing changes. There the
-  band measures from the 4 x 4 surface, not from the triangles drawn. [design] What bounds
-  the difference: the drawn coarse squares' corners are 4 x 4 surface vertices and their
-  diagonals lie on the LAND squares' diagonals, so each drawn triangle lies within one stored
-  LAND triangle, and its heights (and a coarse side's midpoints, averages of two LAND
-  vertices' heights) are averages of surface heights; the surface lies within its bound
-  (8 units by default) of the stored triangles, so the drawn far ground and the atlas's are
-  at most twice that apart, and only beyond the near distance (2048 units by default),
-  where the camera is far from the contact.
+  quadrant's colour cannot be captured. The bake's copies of a quadrant's draws are taken
+  at the LAND grid's resolution (terrain.rs `land_resolution`, 17 by 17 vertices whatever
+  the surface's subdivision): the bake is flat and unlit, and what it reads (vertex
+  colour, every opacity, the packed channels of a folded draw, the texture coordinate as
+  the world place over the repeat, anti-tiled or not) is linear on the LAND triangles, so
+  the picture is the same as from the drawn mesh, up to float rounding, with a sixteenth of
+  the vertices kept in the main world at 4 x 4. Switching the blend on while the game runs
+  prepares the region's up to 9 loaded cells again on the main thread
+  (`terrain_surface.rs::backfill_cells`, `terrain.rs::capture_surface`), at the surface's
+  resolution: a one-time cost, larger at 4 x 4 than with smoothing off.
+- *4 x 4 near (known approximation).* Under the Smooth terrain row's 4 x 4 near (#2676)
+  every quadrant starts drawn with every other surface vertex (`QuadrantDraw::HALF`,
+  terrain_lod.rs `first_draw`), the one under the camera too, until terrain_lod redraws it
+  in full near the camera; a full quadrant beside a half one draws that side coarse (its
+  vertices between the neighbour's put on the neighbour's straight segments, one surface
+  square into the full quadrant). The atlas holds the full 4 x 4 surface regardless and is
+  not rebuilt when a quadrant's drawing changes, so wherever a quadrant is drawn half or
+  with a coarse side the band measures from the 4 x 4 surface, not from the triangles
+  drawn. [design] What bounds the difference: the drawn coarse squares' corners are 4 x 4
+  surface vertices and their diagonals lie on the LAND squares' diagonals, so each drawn
+  triangle lies within one stored LAND triangle, and its heights (and a coarse side's
+  moved vertices, averages of two surface heights along a LAND square's side) are averages
+  of surface heights; the surface lies within its bound (8 units by default) of the stored
+  triangles, so the drawn ground and the atlas's are at most twice that apart there. Most
+  of it lies beyond the near distance (2048 units by default); near the camera only until
+  the first redraw and along a full quadrant's coarse sides.
 - *Residency.* Before sampling, the shader needs the fragment's own cell's height and live
   coverage and its quadrant's colour bit, and (round 10b) every own-cell texel the colour
   read takes at each contributing mip level in a captured quadrant of that cell (below); a
@@ -800,8 +814,13 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   neighbour layers are included): the base draw's source (the folded `TerrainMaterial` or
   the single base material), the separately drawn overflow layers' materials in drawing
   order, the base mesh's per-vertex linear colour, normal and tangent with the tangents'
-  handedness, and one opacity grid per drawn overlay (the folded ones, then the overflow
-  ones). Source material edits re-read it (`refresh_captures`); a source that is gone or
+  handedness at its LAND vertices (`detail_vertices`), and one opacity grid per drawn
+  overlay (the folded ones, then the overflow ones). [design] #2149/#2661, a known
+  approximation: the tint and the opacities are linear on the LAND triangles, so their
+  interpolation matches the drawn mesh exactly; with smoothing, the normal and tangent are
+  the surface's at the LAND vertices interpolated linearly over the LAND triangle, while
+  the drawn mesh has the surface's normal at every finer vertex, so the detail's shading
+  follows the smoothed ground's curvature only from one LAND vertex to the next. Source material edits re-read it (`refresh_captures`); a source that is gone or
   no longer matches the prepared layers leaves that quadrant on the colour cache. Its
   images (normal maps included) join the cell's dependencies. *Publication*: with the
   capability, each publication's height atlas gains rows after its heights (201 with
