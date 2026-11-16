@@ -28390,11 +28390,11 @@ run_seconds = 26
 expect = [
   { text = "controls: input device Controller", label = "the pause menu's settings aid sets the Input Device to Controller" },
   { text = "hints: Xbox labels", label = "the hints take the Xbox names before the Pip-Boy opens" },
-  { re = 'pipboy hints: items Weapons: (Equip|Unequip) A\), Drop X\), (Repair|Maintain) Y\)( \(dim\))?, Hotkey 1-8\), Mod LB\)$', label = "Weapons: Equip, Drop, Repair, Hotkey and Mod with their buttons, in the original's order" },
-  { re = 'pipboy hints: items Apparel: (Equip|Unequip) A\)( \(dim\))?, Drop X\)( \(dim\))?, (Repair|Maintain) Y\)( \(dim\))?, Hotkey 1-8\)$', label = "Apparel: the set without Mod" },
-  { re = 'pipboy hints: items Aid: Use A\), Drop X\), Repair Y\) \(dim\), Hotkey 1-8\)$', label = "Aid: Use; Repair dim" },
-  { re = 'pipboy hints: items Misc: Equip A\) \(dim\), Drop X\)( \(dim\))?, Repair Y\) \(dim\), Hotkey 1-8\) \(dim\)$', label = "Misc: Equip, Repair and Hotkey dim" },
-  { re = 'pipboy hints: items Ammo: Equip A\) \(dim\), Drop X\), Repair Y\) \(dim\), Hotkey 1-8\) \(dim\)$', label = "Ammo: Equip, Repair and Hotkey dim" },
+  { re = 'pipboy hints: items Weapons: (Equip|Unequip) A\), Drop X\), (Repair|Maintain) Y\)( \(dim\))?, Hotkey RB\), Mod LB\)$', label = "Weapons: Equip, Drop, Repair, Hotkey and Mod with their buttons, in the original's order" },
+  { re = 'pipboy hints: items Apparel: (Equip|Unequip) A\)( \(dim\))?, Drop X\)( \(dim\))?, (Repair|Maintain) Y\)( \(dim\))?, Hotkey RB\)$', label = "Apparel: the set without Mod" },
+  { re = 'pipboy hints: items Aid: Use A\), Drop X\), Repair Y\) \(dim\), Hotkey RB\)$', label = "Aid: Use; Repair dim" },
+  { re = 'pipboy hints: items Misc: Equip A\) \(dim\), Drop X\)( \(dim\))?, Repair Y\) \(dim\), Hotkey RB\) \(dim\)$', label = "Misc: Equip, Repair and Hotkey dim" },
+  { re = 'pipboy hints: items Ammo: Equip A\) \(dim\), Drop X\), Repair Y\) \(dim\), Hotkey RB\) \(dim\)$', label = "Ammo: Equip, Repair and Hotkey dim" },
   { text = "pipboy hints: mod menu: Mod A) (dim), Exit B)", label = "the mod menu on the weapon's row: Mod dim, and Exit under it" },
   { re = 'pipboy hints: mod menu: Mod A\)(?! \(dim), Exit B\)', label = "the mod menu on a mod: Mod bright" },
   { re = 'pipboy items: 10mm Pistol Mod LB\)(?! \(dim)', label = "the pistol's own Mod LB) line, bright" },
@@ -31147,6 +31147,235 @@ forbid = [
   "voice: stopped VFSRoyREF line 0x0011361F",
   { re = 'voice: playing .*0011361f_1\.ogg .*\[.*silent', label = "the line must be audible" },
   "script: VFSWayneREF says 0x0011363B",
+]
+
+[[scenario]]
+name = "mick-secret-door-paths"
+kind = "tool"
+source = "[documented: issue #2716, spooknik comment 2026-11-15, supplied record findings] Mick's linked marker is beside his locked hidden door; the Travel end script opens it before the secret-sales trip. [design, #2716] Endpoint triangles beside oriented bounds remain reachable. [hypothesis, #2716] Open locked doors are no barrier (observer check 206)."
+areas = ["nav", "ai"]
+paths = ["crates/fnv-nav/", "crates/fnvtool/src/nav_path.rs"]
+commands = [
+  ["nav", "path", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--space", "FreesideMickandRalphs", "--from", "FreesideMickREF", "--to", "SecretDoorMarkerREF"],
+  ["nav", "path", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--space", "FreesideMickandRalphs", "--from", "SecretDoorMarkerREF", "--to", "SecretSalesMarkerREF", "--open-door", "0x00121FF2"],
+]
+expect = [{ json = "path.length", schema = "fnv.nav.path/1", range = [1, 2000], count = 2, label = "both legs find a path without open-locked" }]
+
+[[scenario]]
+name = "mick-secret-door-packages"
+source = "[documented: issue #2716, spooknik comment 2026-11-15, supplied record findings] MickHoldoutWeapons 1 selects VFSMickTravelToLinkedPackage; its end script opens MickSecretDoorREF, sets the variable to 4 and evaluates Mick's package. [design, #2716] Reach the marker beside the locked door. [hypothesis, #2716] His next package can pass the open locked door (observer check 206)."
+note = "[design, #2716] The console aid plays the dialogue line's effect at 6 s, then evaluates Mick. Travel arrival and the next package prove the end script ran. The player's coordinates are the shop-side spot supplied in issue #2716."
+areas = ["nav", "ai", "scripts"]
+paths = ["crates/fnv-nav/", "crates/fnv-ai/"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "6:set VFreeformFreeside.MickHoldoutWeapons to 1;FreesideMickREF.EvaluatePackage;6.3:close" }
+args = ["--cell", "FreesideMickandRalphs", "--pos=3807,-58,8872", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "FreesideMickREF"]
+run_seconds = 60
+order = [[
+  { text = "FreesideMickREF: package VFSMickTravelToLinkedPackage", label = "Mick takes the travel package" },
+  { text = "FreesideMickREF: arrived after", label = "he reaches the marker beside the locked door" },
+  { text = "FreesideMickREF: package VFSMickSecretSalesConversationPackage", label = "the end script starts his secret-sales package" },
+]]
+forbid = [
+  { text = "cannot reach the place of VFSMickTravelToLinkedPackage", label = "the closed door does not refuse the adjacent goal" },
+  { text = "cannot reach the place of VFSMickSecretSalesConversationPackage", label = "the open locked door does not refuse the next trip" },
+]
+
+[[scenario]]
+name = "pacer-cower-sole-marker"
+source = "[documented: #2715 issue comment, supplied record findings] VFSPacerCowerNCRFightPackage permits only idle markers; VFSNCRFightPacerMarkerREF (0x001293EC) uses DefaultCowerIdleMarker (timer 0) and looping LooseCowerIdles. [documented: GECK wiki Sandbox Package, Action Selection] The action-type rule allows repetition unless it has no other options. [design, #2715] Sandbox::next reuses the last marker immediately only for an idle-marker-only package with that sole eligible marker; observer check 208 measures original parity."
+note = "[design: engine/nvf-play/src/script.rs script aids, engine/nvforever/src/residents.rs sandbox logs, idles.rs marker debug logs] Start VMS19, set ncrfight 1, place Pacer at his named marker as the King's scene does, then move the player nearby. Require the cower animation, at least four marker choices, no Standing pick, and procedure 46 at 118 s, at least 90 s after cowering began. The placement offsets are synthetic staging choices."
+areas = ["ai", "animation", "scripts"]
+paths = ["crates/fnv-ai/src/sandbox.rs", "crates/fnv-ai/src/carry.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/idles.rs"]
+env = { RUST_LOG = "info,nvforever::idles=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:start:VMS19,3:var:VMS19:ncrfight:1,4:moveto:VFSPacerREF:VFSNCRFightPacerMarkerREF,6:moveto:player:VFSNCRFightPacerMarkerREF:0:-250:0", NVF_PLAY_TEST_CONSOLE = "118:VFSPacerREF.GetCurrentAIProcedure;118.5:close" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "14", "--no-voice", "--no-messages", "--npc-packages", "all,VFSPacerREF"]
+run_seconds = 130
+expect = [
+  { text = "VFSPacerREF: package VFSPacerCowerNCRFightPackage", label = "Pacer selects his staged-fight sandbox" },
+  { re = 'VFSPacerREF: sandbox: goes to idle marker 0x001293EC', min = 4, label = "Pacer reselects his sole marker through repeated timer expiries" },
+  { re = 'idle: VFSPacerREF plays LooseCowerIdles .*\(MarkerIdles\)', label = "the marker plays Pacer's cower idle" },
+  { re = 'VFSPacerREF: sandbox: stands', count = 0, label = "no Standing stretch between marker uses" },
+  { re = 'console: GetCurrentAIProcedure on VFSPacerREF >> 46\.00', count = 1, label = "Pacer is still using the idle marker at 118 seconds" },
+  { gap = ["idle: VFSPacerREF plays LooseCowerIdles", "console: GetCurrentAIProcedure on VFSPacerREF >> 46.00"], range = [90, 125], label = "the no-Standing observation spans at least 90 simulation seconds" },
+]
+
+[[scenario]]
+name = "held-weather-worldspace-write"
+source = "[documented: offline GECK wiki ForceWeather / SetWeather / ReleaseWeatherOverride] Override lasts until release. [hypothesis, #1997; observer check 209] It lasts across a worldspace door. [design: sky.rs carry_weather_from; existing strip-crowd-evening and save-weather-write scenarios] Force a hold in Freeside, use the Strip gate, check the shown hold, save for held-weather-worldspace-load."
+note = "[design: strip-crowd-evening] Reuse its gate, start pose and passport test aid. [design: save-weather-write] Reuse its named weather; no command-line weather pin. Run the write and load scenarios together."
+areas = ["sky", "weather", "save"]
+paths = ["engine/nvforever/src/worldspace.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "held-weather-worldspace-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GIVE = "00119875:1", NVF_PLAY_TEST_TALK = "0:*=leave", NVF_PLAY_TEST_CONSOLE = "6:ForceWeather NVHooverDamWeather 1;6.5:close;24:GetIsCurrentWeather NVHooverDamWeather;25:save smoke-weather-worldspace;26:close", NVF_PLAY_TEST_SCRIPT = "12:activate:FreesideGateToStripREF" }
+args = ["--play", "--world", "FreesideWorld", "--pos=-6850,-10120,1040", "--heading", "220", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 32
+order = [[
+  { re = 'weather: NVHooverDamWeather by a script \(at once, held until released\)', label = "ForceWeather holds the weather before the door" },
+  { re = 'render: worldspace [0-9A-F]{8} -> [0-9A-F]{8} \(TheStripWorldNew\)', label = "the gate switches into the Strip worldspace" },
+  { re = 'weather: NVHooverDamWeather \([0-9A-F]{8}\) held after sky replacement', label = "the replacement sky retains the named hold" },
+  { re = 'console: GetIsCurrentWeather >> 1\.00', label = "the held weather is still shown after the door" },
+  { re = 'save: wrote .*smoke-weather-worldspace\.nvfsave', label = "save the hold after the door" },
+]]
+expect = [{ re = 'weather: the climate takes over', count = 0, label = "the climate never takes over the hold" }]
+
+[[scenario]]
+name = "held-weather-worldspace-load"
+source = "[design, #1997: sky.rs SAVE_HOOK / restore_saved] Load the save from held-weather-worldspace-write after its Freeside-to-Strip door; the weather remains held from first placement."
+areas = ["sky", "weather", "save"]
+paths = ["engine/nvforever/src/worldspace.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "held-weather-worldspace-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:GetIsCurrentWeather NVHooverDamWeather;15:close" }
+args = ["--play", "--load", "smoke-weather-worldspace", "--no-voice", "--no-messages"]
+run_seconds = 19
+order = [[
+  { re = 'load: the weather stays held as a script left it', label = "the hold is restored before the first placement" },
+  { re = 'load: restored .*smoke-weather-worldspace\.nvfsave', label = "the post-door save is loaded" },
+  { re = 'console: GetIsCurrentWeather >> 1\.00', label = "the held weather remains shown after load" },
+]]
+expect = [
+  { re = 'weather: \S+ at \d\d:\d\d', count = 0, label = "the loaded sky never changes weather" },
+  { re = 'weather: the climate takes over', count = 0, label = "the loaded hold is never replaced by a roll" },
+]
+
+[[scenario]]
+name = "pipboy-hotkey-assign-pad"
+source = "[design, #2312] controller.md section 3: RB opens the existing ITEMS hotkey panel, D-pad steps all eight slots, A assigns, B cancels; provisional selection method pending observer check 211"
+note = "Reuses pipboy-hotkey-assign's inventory fixture. RB opens slot 1, right visits Ammo Swap (A refuses), down reaches slot 3 and A assigns. Reopen, move left and cancel with B; the Pip-Boy stays open. After closing, D-pad down uses slot 3. No mouse/digit assignment."
+areas = ["hotkeys", "pipboy", "controller"]
+paths = ["engine/nvf-play/src/pipboy/hotkey_panel.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/pad.rs", "engine/nvf-play/src/hotkeys.rs"]
+env = { NVFOREVER_HOME = "pipboy-hotkey-assign-pad-home", NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:device:Controller", NVF_PLAY_TEST_GIVE = "0008F216:1,0008ED02:24", NVF_PLAY_TEST_PIPBOY = "25:open,26:page=items,26.5:tab=0,40:close", NVF_PLAY_TEST_KEYS = "28:pad-RB,29:pad-D-Pad Right,30:pad-A,31:pad-D-Pad Down,32:pad-A,34:pad-RB,35:pad-D-Pad Left,36:pad-B,43:pad-D-Pad Down" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  "controls: input device Controller",
+  { text = "pipboy hotkeys: controller opened, key 1 chosen", count = 2 },
+  { re = 'pipboy hints: items Weapons: .*Hotkey RB\)', min = 1 },
+  "pipboy hotkeys: controller key 2 chosen",
+  { re = 'hotkeys: slot 2 is Ammo Swap: \.357 Magnum Revolver not assigned', count = 1 },
+  "pipboy hotkeys: controller key 3 chosen",
+  { re = 'hotkeys: slot 3 holds \.357 Magnum Revolver \(0x0008F216\)', count = 1 },
+  "pipboy hotkeys: controller key 8 chosen",
+  { text = "pipboy hotkeys: controller closed", count = 2 },
+  { re = 'hotkeys: slot 3: equipped \.357 Magnum Revolver', count = 1 },
+  { re = 'hotkeys: slot (1|8) holds', count = 0, label = "B cancels without assigning" },
+]
+order = [["controller opened", "controller key 2 chosen", "slot 2 is Ammo Swap", "controller key 3 chosen", "hotkeys: slot 3 holds", "controller closed", "controller opened", "controller key 8 chosen", "controller closed", "hotkeys: slot 3: equipped"]]
+
+
+[[scenario]]
+name = "tiles-items-hotkey-pad"
+source = "[design, #2312] controller.md section 3: RB opens the existing ITEMS hotkey panel, D-pad steps all eight slots, A assigns, B cancels; provisional selection method pending observer check 211"
+note = "Reuses pipboy-hotkey-assign's inventory fixture. RB opens slot 1, right visits Ammo Swap (A refuses), down reaches slot 3 and A assigns. Reopen, move left and cancel with B; the Pip-Boy stays open. After closing, D-pad down uses slot 3. No mouse/digit assignment."
+areas = ["hotkeys", "pipboy", "controller"]
+paths = ["engine/nvf-play/src/pipboy/hotkey_panel.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/pad.rs", "engine/nvf-play/src/hotkeys.rs"]
+env = { NVFOREVER_HOME = "tiles-items-hotkey-pad-home", NVF_PLAY_TEST_TILE_MENUS = "InventoryMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:device:Controller", NVF_PLAY_TEST_GIVE = "0008F216:1,0008ED02:24", NVF_PLAY_TEST_PIPBOY = "25:open,26:page=items,26.5:tab=0,40:close", NVF_PLAY_TEST_KEYS = "28:pad-RB,29:pad-D-Pad Right,30:pad-A,31:pad-D-Pad Down,32:pad-A,34:pad-RB,35:pad-D-Pad Left,36:pad-B,43:pad-D-Pad Down" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  { text = "controls: input device Controller", label = "tile assignment uses Controller" },
+  { text = "pipboy hotkeys: controller opened, key 1 chosen", count = 2, label = "tile page opens the shared modal twice" },
+  { text = "tiles: InventoryMenu hotkey panel shown, key 1", min = 2 },
+  { text = "pipboy hotkeys: controller key 2 chosen", label = "tile panel visits Ammo Swap" },
+  { re = 'hotkeys: slot 2 is Ammo Swap: \.357 Magnum Revolver not assigned', count = 1, label = "tile panel refuses reserved slot" },
+  { text = "pipboy hotkeys: controller key 3 chosen", label = "tile panel advances to slot 3" },
+  { re = 'hotkeys: slot 3 holds \.357 Magnum Revolver \(0x0008F216\)', count = 1, label = "tile panel assigns the fixture item" },
+  { text = "pipboy hotkeys: controller key 8 chosen", label = "tile panel wraps backwards" },
+  { text = "pipboy hotkeys: controller closed", count = 2, label = "tile modal closes after confirm and cancel" },
+  { re = 'hotkeys: slot 3: equipped \.357 Magnum Revolver', count = 1, label = "D-pad uses the slot assigned over tiles" },
+  { re = 'hotkeys: slot (1|8) holds', count = 0, label = "tile modal cancellation changes no assignment" },
+]
+order = [["controller opened", "controller key 2 chosen", "slot 2 is Ammo Swap", "controller key 3 chosen", "hotkeys: slot 3 holds", "controller closed", "controller opened", "controller key 8 chosen", "controller closed", "hotkeys: slot 3: equipped"]]
+
+[[scenario]]
+name = "house-chamber-fx"
+source = "[documented: issue #2685, main-session record/script/NIF/KF decode 2026-11-15, upstream 1790ab94a] MrHouseOpen names an ANIO effect, and the unseal enables ground fog then plays its Forward group"
+note = "[design, #2685] Lucky38ControlRoom is the chamber cell from house-pod-sealed. Aids stand in for terminal housestate/PlayIdle and Enable/PlayGroup; final screenshots need observer comparison 212"
+areas = ["idles", "actors", "animation", "particles"]
+paths = ["crates/fnv-actor/src/idle_play.rs", "crates/fnv-actor/src/idle.rs", "engine/nvforever/src/anim_objects.rs", "engine/nvforever/src/idles.rs", "engine/nvforever/src/particles.rs", "engine/nvf-assets/src/anim_play.rs", "engine/nvf-assets/src/model.rs", "engine/nvf-assets/src/morph.rs", "engine/nvf-assets/src/material_anim.rs", "engine/nvf-assets/src/particles.rs", "engine/nvforever/src/object_anims.rs", "engine/nvf-play/src/script_draw.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "13:var:NVCRMrHouse01REF:housestate:0,13:play_idle:NVCRMrHouse01REF:MrHouseOpen", NVF_PLAY_TEST_CONSOLE = "13.1:0x001629DD.enable;14:0x001629DD.playgroup forward 1;14.3:close", NVF_PLAY_TEST_SHOTS = "15:house_chamber_fx_start.png,35:house_chamber_fx_held.png,69:house_chamber_fog_held.png" }
+args = ["--cell", "Lucky38ControlRoom", "--play", "--pos=1024,-2400,8010", "--heading", "180", "--pitch", "1.5", "--fov", "15", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 72
+expect = [
+  { re = 'idle: NVCRMrHouse01REF plays MrHouseOpen', label = "unseal idle starts" },
+  { re = 'anim object: 0014B095 holds .*hchamberfx\.nif on Bip01 \(hChamberFXAmin, idle 0013A23A\)', count = 1, label = "chamber ANIO attaches once" },
+  { re = 'playgroup: hChamberGroundFogREF (plays Forward \(once, 52\.\d+ s\), flag 1|drawn \(enabled at run time\), plays Forward from)', label = "enabled fog starts its Forward sequence" },
+  { re = 'vertex morphs: .* GroundFog:0 plays Forward on rig clock', label = "fog geometry receives its Forward sample" },
+  { re = 'particles: 0014B095 .*hchamberfx\.nif emits as its SpecialIdle_Wakeup says: 5 of 5 systems', label = "idle KF reaches all five ANIO particle systems" },
+  { re = 'particles: born in .*hchamberfx\.nif:', label = "ANIO particles were born" },
+  { re = 'actor materials: reference 0014B095 shape ##heart:0 driven by its clips', label = "pod glow reaches a NIFZ material" },
+]
+manual = "[hypothesis, #2685] Steam bursts at start, pod glow at 35 s, and lingering ground haze at 69 s; compare observer check 212. Actor idle reload parity remains unimplemented."
+
+[[scenario]]
+name = "scene-kimball-guard-heading"
+source = "[documented: #2526 writer brief, main session fnvtool esm decode / ai show] Guard refs 0012FCD4/5 run Travel 00131F13 near linked stage markers 00131F0E/F (xMarkerHeading base 34, z 3.3832 rad). [design: fnv_ai carry.rs::settle] Reference-valued locations share goal.rs::location_reference and supply the marker heading on arrival."
+note = "[design, #2526] Hoover Dam cell 16,5: scene-kimball-speech's three dialogue setup aids, with both guards enabled and SpeechIdle explicitly assigned after placing them 150 units from their own stage markers. This isolates arrival facing; natural package selection (the condition audit in packages.md section 3) is covered by scene-kimball-guard-natural-heading."
+areas = ["ai", "quests", "nav"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/goal.rs", "crates/fnv-game/src/ai.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "3:info:0x00136DCE:VHDColonelMooreREF,6:info:0x001446A7:VHDCaptainGrahamREF,20:info:0x0014469F:VHDCaptainGrahamREF,23:call:VHDRangerKimballGuard01REF:Enable,23.1:call:VHDRangerKimballGuard02REF:Enable,24:moveto:VHDRangerKimballGuard01REF:VHDKimballGuard1StageMarkerREF:150:0:0,24.1:moveto:VHDRangerKimballGuard02REF:VHDKimballGuard2StageMarkerREF:150:0:0,25:call:VHDRangerKimballGuard01REF:AddScriptPackage:VHDKimballGuardSpeechIdlePackage,25.1:call:VHDRangerKimballGuard02REF:AddScriptPackage:VHDKimballGuardSpeechIdlePackage" }
+args = ["--play", "--cell", "16,5", "--world", "WastelandNV", "--npc-packages", "VHDKimballREF,VHDColonelMooreREF,VHDRangerKimballGuard01REF,VHDRangerKimballGuard02REF", "--hour", "9", "--no-voice", "--no-messages"]
+run_seconds = 65
+expect = [
+  { text = "script: VMQ03a stage 20 set", label = "speech visit setup calls the vertibird" },
+  { re = 'VHDRangerKimballGuard01REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "first guard takes its linked stage marker heading" },
+  { re = 'VHDRangerKimballGuard02REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "second guard takes its linked stage marker heading" },
+]
+forbid = [
+  { re = 'VHDRangerKimballGuard0[12]REF: cannot reach', label = "both guards reach their nearby stage markers" },
+]
+
+
+[[scenario]]
+name = "scene-kimball-guard-natural-heading"
+source = "[documented: #2526 w2 brief, main-session fnvtool ai show + quest-script SLSD/SCVR decode, FalloutNV.esm, 2026-11-15] Subject-run AND conditions: at speech iKimballStage 2 and VMQ03a variables 0, StageFront fails AssassinAttack == 2, KimballDead fails bKimballDead == 1, and SpeechIdle passes for both guards before Saferoom/Follow. Linked stage markers have z rotation 3.3832 rad."
+note = "[design, #2526] Direct quest-variable setup in Hoover Dam cell 16,5: first set speech stage 0, enable both guards and place them 150 units from their own linked stage markers; clear all VMQ03a variables used by the package lists, then set speech stage 2 and EvaluatePackage. No AddScriptPackage override or dialogue result script: the actual lists and conditions must select SpeechIdle and each guard must arrive facing its linked marker's heading."
+areas = ["ai", "quests", "nav"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/goal.rs", "crates/fnv-game/src/ai.rs", "crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/quest.rs", "crates/fnv-game/src/functions/refs.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "3:var:VHDKimballSpeech:iKimballStage:0,4:call:VHDRangerKimballGuard01REF:Enable,4.1:call:VHDRangerKimballGuard02REF:Enable,5:moveto:VHDRangerKimballGuard01REF:VHDKimballGuard1StageMarkerREF:150:0:0,5.1:moveto:VHDRangerKimballGuard02REF:VHDKimballGuard2StageMarkerREF:150:0:0,6:var:VMQ03a:iKimballFlee:0,6.1:var:VMQ03a:iDetonatorFound:0,6.2:var:VMQ03a:iVertibirdBombActive:0,6.3:var:VMQ03a:AssassinAttack:0,6.4:var:VMQ03a:bKimballDead:0,6.5:var:VMQ03a:bKimballSaferoom:0,7:var:VHDKimballSpeech:iKimballStage:2,8:call:VHDRangerKimballGuard01REF:EvaluatePackage,8.1:call:VHDRangerKimballGuard02REF:EvaluatePackage" }
+args = ["--play", "--cell", "16,5", "--world", "WastelandNV", "--npc-packages", "VHDRangerKimballGuard01REF,VHDRangerKimballGuard02REF", "--hour", "9", "--no-voice", "--no-messages"]
+run_seconds = 45
+order = [
+  [
+    { text = 'test aid: script Var("VHDKimballSpeech", "iKimballStage", 2.0)', label = "natural speech state staged" },
+    { text = "VHDRangerKimballGuard01REF: package VHDKimballGuardSpeechIdlePackage", label = "guard one selects SpeechIdle from its own list" },
+    { re = 'VHDRangerKimballGuard01REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "guard one takes its linked stage marker heading" },
+  ],
+  [
+    { text = 'test aid: script Var("VHDKimballSpeech", "iKimballStage", 2.0)', label = "natural speech state staged" },
+    { text = "VHDRangerKimballGuard02REF: package VHDKimballGuardSpeechIdlePackage", label = "guard two selects SpeechIdle from its own list" },
+    { re = 'VHDRangerKimballGuard02REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "guard two takes its linked stage marker heading" },
+  ],
+]
+forbid = [
+  { re = 'VHDRangerKimballGuard0[12]REF: cannot reach', label = "both guards reach their nearby stage markers" },
+]
+
+[[scenario]]
+name = "legate-rangers-showdown"
+source = "[documented: #2532 supplied main-session fnvtool record brief, 2026-11-15] SCPT 001438CA enables 001438DA/DB for battle state 1, showdownstart 1 and controller 001438E3.spawnheroes 1; PACK 001438E8 is their intended patrol without Allow Falls. [design, #2532] Test natural package selection, marker 01 arrival, and descent to marker 02; cannot-reach lines diagnose missing links or damaging drops."
+note = "[design: existing cdc-lanius-leaves-marker scenario] Start at its camp position in WastelandNV, then move only the player to the supplied VLegateWaitPlayerMarker. [documented: supplied SCPT 00142A7D] Set legatestarts to 9 before starting the scene. [observed: supplied main-session fnvtool nav path at upstream 1790ab94a] The approach to marker 01 works without ledges; marker 01 (001438D3) to 02 (001438D4) needs ledges, about 221 units down, with a 987-unit route. [hypothesis, #2532] Both rangers naturally choose E8 and physically traverse this harmless authored drop. No ranger package or position is injected."
+areas = ["ai", "nav", "quests"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-nav/src/path.rs", "crates/fnv-nav/src/follow.rs", "engine/nvforever/src/residents.rs", "docs/spec-notes/packages.md", "docs/spec-notes/actor-jumps.md"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "1:moveto:player:VLegateWaitPlayerMarker:0:0:0,2:var:0x00133075:iBattleState:1,2.1:var:0x001438E6:legatestarts:9,2.2:var:0x001438E6:showdownstart:1,2.3:var:0x001438E3:spawnheroes:1" }
+args = ["--play", "--plugins", "FalloutNV.esm", "--world", "WastelandNV", "--pos=109397,20263,6200", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "001438DA,001438DB,00137A9D"]
+run_seconds = 60
+order = [
+  [
+    { re = '001438DA: package VLegateRangerRunToCamp01', label = "first ranger naturally chooses the patrol" },
+    { re = '001438DA: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "first ranger sets off to marker 01" },
+    { re = '001438DA: arrived after .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "first ranger reaches marker 01" },
+    { re = '001438DA: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "first ranger sets off to marker 02" },
+    { re = 'actor jumps: 001438DA is in the air on Jump', label = "first ranger descends after marker 01" },
+    { re = '001438DA: arrived after .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "first ranger reaches marker 02 after the drop" },
+  ],
+  [
+    { re = '001438DB: package VLegateRangerRunToCamp01', label = "second ranger naturally chooses the patrol" },
+    { re = '001438DB: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "second ranger sets off to marker 01" },
+    { re = '001438DB: arrived after .*\(patrol point (VLegateCampRangerRunMarker01REF|0x001438D3)\)', label = "second ranger reaches marker 01" },
+    { re = '001438DB: (runs|walks) to .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "second ranger sets off to marker 02" },
+    { re = 'actor jumps: 001438DB is in the air on Jump', label = "second ranger descends after marker 01" },
+    { re = '001438DB: arrived after .*\(patrol point (VLegateCampRangerRunMarker02REF|0x001438D4)\)', label = "second ranger reaches marker 02 after the drop" },
+  ],
+]
+forbid = [
+  { re = '001438D[AB]: cannot reach', label = "ranger cannot-reach diagnostic" },
 ]
 
 [[scenario]]
