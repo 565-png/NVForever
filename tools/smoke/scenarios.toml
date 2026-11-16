@@ -30288,7 +30288,7 @@ expect = [
 
 [[scenario]]
 name = "pipboy-hotkey-assign-pad"
-source = "[design, #2312] controller.md section 3: RB opens the existing ITEMS hotkey panel, D-pad steps all eight slots, A assigns, B cancels; provisional selection method pending observer check 219"
+source = "[design, #2312] controller.md section 3: RB opens the existing ITEMS hotkey panel, D-pad steps all eight slots, A assigns, B cancels; provisional selection method pending observer check 210"
 note = "Reuses pipboy-hotkey-assign's inventory fixture. RB opens slot 1, right visits Ammo Swap (A refuses), down reaches slot 3 and A assigns. Reopen, move left and cancel with B; the Pip-Boy stays open. After closing, D-pad down uses slot 3. No mouse/digit assignment."
 areas = ["hotkeys", "pipboy", "controller"]
 paths = ["engine/nvf-play/src/pipboy/hotkey_panel.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/pad.rs", "engine/nvf-play/src/hotkeys.rs"]
@@ -30313,7 +30313,7 @@ order = [["controller opened", "controller key 2 chosen", "slot 2 is Ammo Swap",
 
 [[scenario]]
 name = "tiles-items-hotkey-pad"
-source = "[design, #2312] controller.md section 3: RB opens the existing ITEMS hotkey panel, D-pad steps all eight slots, A assigns, B cancels; provisional selection method pending observer check 219"
+source = "[design, #2312] controller.md section 3: RB opens the existing ITEMS hotkey panel, D-pad steps all eight slots, A assigns, B cancels; provisional selection method pending observer check 210"
 note = "Reuses pipboy-hotkey-assign's inventory fixture. RB opens slot 1, right visits Ammo Swap (A refuses), down reaches slot 3 and A assigns. Reopen, move left and cancel with B; the Pip-Boy stays open. After closing, D-pad down uses slot 3. No mouse/digit assignment."
 areas = ["hotkeys", "pipboy", "controller"]
 paths = ["engine/nvf-play/src/pipboy/hotkey_panel.rs", "engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/pad.rs", "engine/nvf-play/src/hotkeys.rs"]

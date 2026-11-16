@@ -2694,7 +2694,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-16 (controller hotkey assignment, #2312)
 
-219. **How does a controller choose a hotkey slot on ITEMS?** (P3; controller.md §3,
+210. **How does a controller choose a hotkey slot on ITEMS?** (P3; controller.md §3,
     weapon-wheel.md §3.) [documented: issue #2312's supplied inventory_menu.xml facts]
     `IM_HotkeyButton` uses RB and `sInventoryHotKey`, opening `IM_HotKeyWheel`.
     [hypothesis] The original's slot-selection method is unknown; its prefab facts

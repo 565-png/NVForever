@@ -476,7 +476,7 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
       Hotkey now names RB (R1 with PlayStation labels): it opens the panel for the
       selected item, D-pad right/down advances and left/up goes back with wrapping,
       A assigns and B cancels. This selection method is provisional [hypothesis;
-      observer check 219]; Ammo Swap refuses assignment. The word still comes from
+      observer check 210]; Ammo Swap refuses assignment. The word still comes from
       the load order's `sInventoryHotKey`, else our built-in label.
     - **With the keyboard and mouse** only the repair action ("Repair R)" / "Maintain R)")
       on every tab, dim where it does nothing, and "Mod X)" under it on Weapons [observed

@@ -285,7 +285,7 @@ Start cannot be bound.
   A assigns the item and closes on success; a refusal stays visible. B cancels without
   changing slots. Closing/changing the page, changing input device or opening another
   modal cancels. The stepping order is provisional [hypothesis: original selection
-  method unknown; observer check 219]. The hand-built hint uses the load order's
+  method unknown; observer check 210]. The hand-built hint uses the load order's
   `sInventoryHotKey` word (our built-in fallback otherwise), followed by RB/R1 and the
   existing glyph renderer. The tile page shows its optional `IM_HotkeyButton` with the
   same pad hint and keeps the file's label. Held-digit/click/Enter assignment with the
@@ -450,7 +450,7 @@ those settings so a mod that changes them changes this too.
 - The original's own button pictures from `Interface\Shared\Button\` in place of letters
   (NVForever draws its own glyphs instead, §3a).
 - [hypothesis, #2312] The original's controller slot-selection method remains unknown
-  (observer check 219); the provisional D-pad stepping rule is built (§3).
+  (observer check 210); the provisional D-pad stepping rule is built (§3).
 - The tiled menus' remaining file hints following the device (§3); ITEMS Hotkey's
   optional RB button is built [design, #2312; `tiles/inventory_menu.rs`].
 - A pointer moved by a stick for the mouse-only parts of menus still left: the dialogue
