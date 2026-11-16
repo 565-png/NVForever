@@ -2692,7 +2692,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
     edge?
 
 
-224. **Legate showdown rangers and harmless drops without Allow Falls (#2532).**
+213. **Legate showdown rangers and harmless drops without Allow Falls (#2532).**
      [documented: supplied main-session fnvtool record brief, 2026-11-15] In the NCR
      showdown, SCPT 0x001438CA enables 0x001438DA then 0x001438DB when battle state 1,
      showdownstart 1 and controller 0x001438E3.spawnheroes 1. Their intended Patrol
