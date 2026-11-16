@@ -29446,6 +29446,26 @@ forbid = [
 ]
 
 [[scenario]]
+name = "npc-door-one-body"
+source = "issue #2461 (owner; tester's log 2026-11-16): a resident handed over at a load door is drawn anew at the far side, and the body it is drawn by afterwards is that new one, the only body of its reference: Lt. Boyd at Camp McCarran was left drawn twice when the root scan took the body fading at the near door in the frame the new one spawned. nav::show_actor now takes its root from the spawn (engine/nvforever/src/nav.rs) and lets go of a root whose body is gone; the same-frame race itself (both sides of the door drawn: a door inside one interior, as Boyd's room) is covered by the engine tests a_resident_handed_through_a_load_door_keeps_one_body and a_resident_whose_body_is_gone_is_drawn_anew_or_takes_up_another (residents.rs)"
+note = "the npc-door-fade run (its aids unchanged): the player goes out of the gas station by its door at 7.5 s, Ringo (RingoRef 0x00104C7D) is sent out after him at 15 s and is drawn anew at the outside door (the door loop's hand-over, faded in). The census of bodies per reference is taken at exit; the number in brackets counts only the bodies of references drawn more than once, so 0 is what one body each gives. The Boyd scene (mccarran-boyd-one-body) does not reach a door in smoke: after the trick's MoveTo her VFreeformMcCarran2BoydPatrolReturn goal cannot be reached (0 triangles searched, run of 2026-11-16), so no setup here walks a resident through a door with both sides drawn. Expectations written without a run of this scenario (2026-11-16)"
+areas = ["ai", "doors", "actors"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/nav.rs", "engine/nvforever/src/actors.rs", "engine/nvforever/src/door_fade.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "6.5:0010903F", NVF_PLAY_TEST_ACTIVATE = "7.5", NVF_PLAY_TEST_SCRIPT = "1:call:0x00109040:Unlock,15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
+run_seconds = 60
+expect = [
+  { re = 'door fade summary: \d+ actors faded out at a door, (?P<n>\d+) faded in', range = [1, 1000], label = "Ringo is drawn anew at the far side of the door (the hand-over)" },
+  { re = 'actor bodies summary: (?P<n>\d+) references drawn by more than one body', range = [0, 0], label = "one body per reference at the end, after the door hand-over" },
+]
+forbid = [
+  { re = 'actor bodies: RingoRef', label = "Ringo drawn by two bodies after the door" },
+  { re = 'actor 00104C7D: \d+ bodies under the world root when its body was looked for', label = "two bodies of Ringo under the world root" },
+  { text = "actor 00104C7D: the body it was drawn by is gone", label = "Ringo's root pointed at a body no longer his" },
+  { re = 'RingoRef went through a door before its body spawned earlier was found', label = "a body of Ringo spawned and not found was left at the door" },
+]
+
+[[scenario]]
 name = "mccarran-vms08-markers"
 source = "issue #2464 (owner): I Put a Spell on You's marker for Lt. Boyd pointed outside. VMS08 objective 20 (\"Ask around about suspicious activity at Camp McCarran\") has three targets [documented: the QUST 0x000E790F QSTA/CTDA records, read with fnvtool esm decode]: LieutenantBoydREF 0x000F0678 in CampMCTermInt02 (GetDead 0), SupplyOfficerContrerasREF 0x000E5517 in CampMCTermInt04, the Supply Shack (bAskedContreras 0, GetDead 0), and CorporalSterlingRef 0x000F570E outdoors (bAskedSterling 0, GetDead 0). With the player beside Capt. Curtis in the Terminal Building all three are marked: Boyd at herself, the other two at the first door of the way to them, both leading out of the building (engine/nvf-play/src/compass.rs quest_mark_at)"
 note = "the player stands beside CaptainCurtisREF (976, -288, 18240); the objective is shown and the quest made active by the console at 6 s"
