@@ -581,6 +581,10 @@ struct Walk {
     side: Option<(FormId, u32, Box<Walk>)>,
     /// Since when a door not in the world, its switch used, is waited for (a lift's ride).
     enable_wait: Option<f64>,
+    /// Since when the walk has waited at a locked door for its owner to open it.
+    owner_wait: Option<f64>,
+    /// The locked door whose owner the player keeps by, while it does.
+    owner_door: Option<u32>,
     /// When the walk last said where the player is on its path (every [`WALK_REPORT_SECS`]).
     reported: f64,
     /// Since when a travel a script asked for has been waited for.
@@ -1443,6 +1447,23 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
             }
         }
     }
+    // Kept by a locked door's owner until it opens the door (below, Steer::OpenDoor): the
+    // path is taken up again then, from wherever following it led the player.
+    if let Some(door) = w.owner_door {
+        if h.doors.is_open(door) == Some(true) {
+            info!("pilot: step {}: door {door:08X} is open now: the player goes through", p.i);
+            (w.owner_door, w.owner_wait, w.follower, w.door_since) = (None, None, None, None);
+            return Walked::Going;
+        }
+        match owner_opens(p, &mut w.owner_wait, h, door) {
+            Some(owner) => {
+                keep_by(h, feet, owner);
+                return Walked::Going;
+            }
+            None => (w.owner_door, w.follower, w.door_since) = (None, None, None),
+        }
+        return Walked::Going;
+    }
     let f = w.follower.as_mut().expect("planned above");
     // In another space than the leg's: through its door, or sent elsewhere.
     if f.space().is_some_and(|s| s != here.space) {
@@ -1575,12 +1596,25 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 w.door_since = Some(p.now);
                 let r = h.script.rt.as_mut().map(|rt| with_world(rt, h.sim, |rt| rt.activate_as_player(FormId(door))));
                 info!("pilot: step {}: opens door {door:08X}: {}", p.i, outcome(r.as_ref()));
+            } else if h.locks.movement || h.locks.fighting {
+                // A script holds the player's controls (The Pitt's Hole: the arena's script
+                // takes fighting and the Pip-Boy, `DisablePlayerControls 0 1 1 0 0 0 0`, while
+                // the announcer speaks, then opens the player's gate): what it is doing is
+                // waited for, so the door's time counts from when they are back.
+                w.door_since = Some(p.now);
             } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, door, feet) {
                 w.door_since = Some(p.now);
                 return Walked::Going;
             } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && fetch_key(p, &mut w.poked, &mut w.errand, h, nav, door, feet) {
                 (w.follower, w.door_since) = (None, None);
                 return Walked::Going;
+            } else if let Some(owner) = (lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS)).then(|| owner_opens(p, &mut w.owner_wait, h, door)).flatten() {
+                // Its owner, near, may open it (Wernher's escort through his fence gate at
+                // The Pitt): the player keeps by the owner, as a player follows the one who
+                // leads it (an escort waits while the one it leads is more than its radius
+                // away, 750 units for Wernher's, PKE2), and goes through when it is open.
+                w.owner_door = Some(door);
+                keep_by(h, feet, owner);
             } else if let Some(lock) = lock_words(nav, door).filter(|_| w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS)) {
                 info!("pilot: step {}: door {door:08X} on the way is {lock} and nothing opened it in {LOCKED_SECS:.0} s after the player tried it: another way round", p.i);
                 w.tried.push((door, lock));
@@ -1625,6 +1659,9 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 info!("pilot: step {}: door {:08X} took the player {:.0} units within its own space: a new path from there", p.i, d.door, hdist(feet, w.door_from));
                 (w.follower, w.door_since, w.seen) = (None, None, (p.now, feet));
                 return Walked::Going;
+            } else if h.locks.movement || h.locks.fighting {
+                // Controls held by a script: as for a door that opens in place.
+                w.door_since = Some(p.now);
             } else if w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) {
                 // Open now (a script unlocked it meanwhile): tried again on a new path.
                 let lock = lock_words(nav, d.door);
@@ -1673,7 +1710,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
 }
 
 fn walk_to(goal: Place, target: Option<FormId>, radius: f32, now: f64, feet: [f32; 3]) -> Walk {
-    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, reported: now, travel_since: None }
+    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, owner_wait: None, owner_door: None, reported: now, travel_since: None }
 }
 
 /// What a player would use to open a door that stays locked (module notes), not used
@@ -1916,6 +1953,56 @@ fn fetch_key(p: &mut Pilot, poked: &mut Vec<(u32, u32)>, errand: &mut Option<(Er
             false
         }
     }
+}
+
+/// A step towards `owner` while the player is more than [`OWNER_KEEP`] from it.
+fn keep_by(h: &mut Hands, feet: [f32; 3], owner: [f32; 3]) {
+    if hdist(feet, owner) > OWNER_KEEP {
+        let want = heading_of([owner[0] - feet[0], owner[1] - feet[1]]);
+        h.player.heading = turn_towards(h.player.heading, want, TURN_RATE * h.dt);
+        if heading_delta(h.player.heading, want).abs() < 0.7 {
+            (h.intent.forward, h.intent.right, h.intent.walk) = (1.0, 0.0, false);
+        }
+    }
+}
+
+/// How far from a locked door its owner may be for the walk to wait for it, game units.
+const OWNER_NEAR: f32 = 6000.0;
+/// How long a walk waits at a locked door for its owner to open it, seconds.
+const OWNER_WAIT: f64 = 120.0;
+/// How near the owner the player keeps while it waits, game units.
+const OWNER_KEEP: f32 = 250.0;
+
+/// Whether the walk waits on at a locked door for its owner: an actor that counts as the
+/// door's owner (its base, or a faction at the rank asked for; not the cell's), alive and
+/// within [`OWNER_NEAR`] of it, passes through it as if it carried the key (the actors'
+/// own rule, `fnv_ai::carry`), and a player walking behind such an owner goes through
+/// while it is open (The Pitt: Wernher's escort leads the player through his locked
+/// fence gate PittFenceGateRef, whose far side holds the arrival trigger). Up to
+/// [`OWNER_WAIT`] s; a finding when it did not open. Where the owner is, while waited for.
+fn owner_opens(p: &mut Pilot, since: &mut Option<f64>, h: &mut Hands, door: u32) -> Option<[f32; 3]> {
+    if since.is_some_and(|t| p.now - t > OWNER_WAIT) {
+        return None;
+    }
+    let owner = h.game(|g| {
+        let o = g.ownership(FormId(door)).filter(|o| !o.from_cell)?;
+        let (_, at) = where_is(g, FormId(door))?;
+        g.world.changed().find(|(r, st)| *r != FormId::PLAYER_REF && g.data.actors.contains_key(&st.base) && !g.is_dead(*r) && hdist(st.pos, at) < OWNER_NEAR && g.counts_as_owner(*r, &o)).map(|(r, st)| (r, g.data.name(r), st.pos))
+    }).flatten();
+    let Some((who, name, pos)) = owner else {
+        if since.take().is_some() {
+            p.finding("owner_gone", format!("door {door:08X}'s owner is no longer near it: the walk goes on without it"));
+        }
+        return None;
+    };
+    if since.is_none() {
+        info!("pilot: step {}: door {door:08X} is locked, and its owner {name} ({:08X}) is near: the player waits for it to open the door (up to {OWNER_WAIT:.0} s)", p.i, who.0);
+        *since = Some(p.now);
+    } else if p.now - since.unwrap_or(p.now) > OWNER_WAIT {
+        p.finding("owner_did_not_open", format!("door {door:08X}'s owner {name} ({:08X}) did not open it in {OWNER_WAIT:.0} s", who.0));
+        return None;
+    }
+    Some(pos)
 }
 
 /// A door's lock as the nav graph has it now, in words; `None`: not locked.
@@ -2335,8 +2422,19 @@ fn leave_talk(p: &mut Pilot, h: &mut Hands, go_along: bool) -> bool {
     let way = h
         .game(|g| match g.dialogue.as_ref() {
             Some(c) if c.choices.is_empty() => Way::NotYet,
-            // A Goodbye that starts no fight and gives no companion an order first.
-            Some(c) => match c.choices.iter().position(|x| x.goodbye && !choice_to_avoid(g, x)).or_else(|| c.choices.iter().position(|x| x.goodbye)) {
+            // A Goodbye whose answer runs no script first (leaving changes nothing: the
+            // Gomorrah guard's "Here you go. <Hand over all weapons>" is a Goodbye too, and
+            // taken to leave it handed the weapons over outside and set iInGomorrah, so on
+            // the way in the guard never greeted and the door's DisablePlayerControls was
+            // never undone; "Nevermind, I'll be back." is the one that leaves), then one
+            // that starts no fight and gives no companion an order, then any.
+            Some(c) => match c
+                .choices
+                .iter()
+                .position(|x| x.goodbye && !x.darkened && g.data.infos.get(&x.info).is_some_and(|d| d.begin.is_none() && d.end.is_none()))
+                .or_else(|| c.choices.iter().position(|x| x.goodbye && !choice_to_avoid(g, x)))
+                .or_else(|| c.choices.iter().position(|x| x.goodbye))
+            {
                 Some(i) => Way::Goodbye(i),
                 None if c.topic_list => Way::TopicList,
                 None => match c.choices.iter().position(|x| g.data.infos.get(&x.info).is_some_and(|d| d.choices.is_empty() && d.follow_ups.is_empty() && d.add_topics.is_empty())) {
@@ -3226,8 +3324,11 @@ fn worth_taking(g: &Game, body: FormId) -> Vec<(FormId, i32)> {
 /// lies in the world.
 fn find_item(g: &Game, item: FormId, feet: [f32; 3]) -> Option<(FormId, Option<FormId>, [f32; 3], bool)> {
     let mut found: Vec<Found> = Vec::new();
+    // A disabled reference is not in the world for the player (TTW keeps a slave outfit
+    // in a container 0x0C0088AB, enable parent 0x10008DEE, in a cell without navmesh).
+    let there = |r: FormId| g.world.is_enabled(r).unwrap_or(true);
     for (r, state) in g.world.changed() {
-        if r == FormId::PLAYER_REF {
+        if r == FormId::PLAYER_REF || !there(r) {
             continue;
         }
         let holds = state.inventory.as_ref().is_some_and(|inv| inv.iter().any(|(i, n)| i == item && n > 0));
@@ -3238,7 +3339,7 @@ fn find_item(g: &Game, item: FormId, feet: [f32; 3]) -> Option<(FormId, Option<F
             found.push((hdist(state.pos, feet), r, state.cell, state.pos, lies));
         }
     }
-    for placed in g.world.placed.refs.values().filter(|pl| pl.base == item && g.world.peek(pl.id).is_none()) {
+    for placed in g.world.placed.refs.values().filter(|pl| pl.base == item && g.world.peek(pl.id).is_none() && there(pl.id)) {
         found.push((hdist(placed.pos, feet), placed.id, placed.cell, placed.pos, true));
     }
     found.sort_by(|a, b| a.0.total_cmp(&b.0));

@@ -14,6 +14,8 @@
     {"op": "note", "text": "Starts with the player out of Vault 101 (the given): Escape! (CG04) done at stage 200, whose script starts Following in His Footsteps (MQ01 stage 10) and Trouble on the Homefront (MS16). [observed: CG04 stage 200 script] Then Unsafe Working Conditions done (the given, as ttw-dlc01quest02-unsafe-working-conditions leaves it): the player won the three fights in the Hole and Krenshaw's line set DLC01Quest02 200, whose stage script set this quest's stage 0 (Retrieve your gear; Ashur waits in Haven). This chain takes Ashur's side: the player leaves the baby with Sandra and stops Wernher (stage 200, path A)."},
     {"op": "get_quest", "quest": "DLC01Quest03", "fields": ["running", "stage", "objective.1.displayed"], "label": "start: retrieve your gear"},
     {"op": "note", "text": "The player's gear, stripped at the gate, waits in the return container by the Hole (stage 170 of Unsafe Working Conditions moved it there); opening it (DLC01PlayerItemContainer02SCRIPT, TTW's [observed]) sets stage 5 (travel through Uptown to Haven)."},
+    {"op": "note", "text": "The given leaves the Hole's gate (DLC01HoleGateREF) as the last fight's start locked it (INFO 0x0C0032C8's begin script: Lock 255); the talk after the win, which the given does not play, unlocks it (INFO 0x0C0032D5's and 0x0C007148's end scripts [observed]: DLC01HoleGateREF.Unlock). Stand-in for that line's end script."},
+    {"op": "call", "line": "DLC01HoleGateREF.Unlock"},
     {"op": "move_player", "to": "DLC01PlayerItemContainerReturnREF"},
     {"op": "player_activate", "target": "DLC01PlayerItemContainerReturnREF", "label": "the gear container"},
     {"op": "close_menus"},
