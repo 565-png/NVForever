@@ -27,7 +27,7 @@ fn app() -> (App, Entity) {
         <rect name="MCM_Options"/><rect name="MCM_Scale"/>
         <rect name="MCM_List"/><rect name="MCM_Trigger"/>
         <rect name="MCM_ModList"><_offset>1</_offset><_visible>3</_visible>
-          <_count>6</_count><_searchKeys>0</_searchKeys><_released>0</_released><_allDown>0</_allDown>
+          <_count>6</_count><_searchKeys>0</_searchKeys><_released>0</_released><_allDown>0</_allDown><_warpSelections>0</_warpSelections>
           <x>50</x><y>20</y><width>150</width><height>200</height>
         </rect></rect></menu>"#);
     game.ui_tree.load_menu(&files, "owned.xml").unwrap();
@@ -200,4 +200,81 @@ fn mcm_page_wheel_routes_by_menu_coordinates_and_admits_callback_cursor_writes()
     let game = &state.rt.as_ref().unwrap().game;
     assert_eq!(game.menu, Some(menus::MESSAGE));
     assert_eq!(game.other.jip9.cursor_warp, None);
+}
+
+#[test]
+fn mcm_page_warp_reaches_window_then_menu_input_and_source_list_routing() {
+    use bevy::ecs::system::RunSystemOnce;
+    for (scale, expected) in [(0.5, Vec2::new(357.5, 210.0)), (0.75, Vec2::new(216.25, 135.0)), (1.0, Vec2::new(75.0, 60.0))] {
+        let _units = crate::interface::units_at(scale);
+        let (mut app, window) = app();
+        app.init_resource::<crate::script_switches::ScriptSwitches>();
+        let mut actual = Window::default();
+        actual.resolution.set(1280.0, 720.0);
+        app.world_mut().entity_mut(window).insert(actual);
+        {
+            let mut state = app.world_mut().resource_mut::<ScriptState>();
+            let game = &mut state.rt.as_mut().unwrap().game;
+            let source = r#"Begin Function {}
+              SetFunctionValue (SetOnKeyDownEventHandler (Begin Function {int key}
+                if GetActiveMenuMode == 1013
+                  SetCursorPos 100 80 1
+                endif
+              End) 1 265)
+            End"#;
+            assert_eq!(game.run_query(source, RunCtx::default()).unwrap(), XVal::Num(1.0));
+            let source = r#"Begin Function {}
+              SetFunctionValue (SetOnKeyDownEventHandler (Begin Function {int key}
+                if GetActiveMenuMode == 1013
+                  if GetCursorPos X 1 > GetMCMFloat 5 0 "x" && GetCursorPos X 1 < (GetMCMFloat 5 0 "x") + (GetMCMFloat 5 0 "width")
+                    if GetCursorPos Y 1 > GetMCMFloat 5 0 "y" && GetCursorPos Y 1 < (GetMCMFloat 5 0 "y") + (GetMCMFloat 5 0 "height")
+                      SetMCMFloat 5 0 "_warpSelections" ((GetMCMFloat 5 0 "_warpSelections") + 1)
+                    endif
+                  endif
+                endif
+              End) 1 33)
+            End"#;
+            assert_eq!(game.run_query(source, RunCtx::default()).unwrap(), XVal::Num(1.0));
+        }
+        wheel(&mut app, window, -1.0);
+        app.update();
+        assert_eq!(app.world().resource::<ScriptState>().rt.as_ref().unwrap().game.menu, None);
+        // Execute this same production consumer on the scope's thread, so the
+        // menu scale is isolated from other tests without mutating global settings.
+        app.world_mut().run_system_once(crate::script_switches::sync).unwrap();
+        let w = app.world().get::<Window>(window).unwrap();
+        let at = w.cursor_position().expect("actual window cursor warp consumed");
+        assert!((at - expected).length() < 0.01, "scale {scale}: {at:?}");
+        let menu_at = crate::tiles::input::to_menu_units(at, Vec2::new(w.width(), w.height()), crate::interface::MIDDLE);
+        {
+            let mut state = app.world_mut().resource_mut::<ScriptState>();
+            let game = &mut state.rt.as_mut().unwrap().game;
+            let menu = game.ui_tree.menu("StartMenu").unwrap();
+            fnv_game::ui_input::step(game, &[menu], &fnv_ui::input::Input { at: Some(menu_at), ..Default::default() }, &fnv_ui::input::no_measure);
+            assert!(game.other.jip9.cursor_warp.is_none());
+            assert!(!game.other.jip9.cursor_warp_start_menu);
+        }
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyF);
+        app.update();
+        assert_eq!(value(&app, "_warpSelections"), 1.0, "the subsequent physical handler reaches the list at scale {scale}");
+        // Raw coordinates in StartMenu still use window pixels.
+        {
+            let mut state = app.world_mut().resource_mut::<ScriptState>();
+            let game = &mut state.rt.as_mut().unwrap().game;
+            game.menu = Some(menus::START);
+            game.run_query("Begin Function {}\nSetCursorPos 300 200 0\nEnd", RunCtx::default()).unwrap();
+        }
+        app.world_mut().run_system_once(crate::script_switches::sync).unwrap();
+        assert_eq!(app.world().get::<Window>(window).unwrap().cursor_position(), Some(Vec2::new(300.0, 200.0)));
+        // The HUD cursor has no menu frame, including under a smaller menu scale.
+        {
+            let mut state = app.world_mut().resource_mut::<ScriptState>();
+            let game = &mut state.rt.as_mut().unwrap().game;
+            game.menu = None;
+            game.other.jip9.hud_cursor = true;
+            game.run_query("Begin Function {}\nSetCursorPos 100 80 1\nEnd", RunCtx::default()).unwrap();
+        }
+        app.world_mut().run_system_once(crate::script_switches::sync).unwrap();
+        assert_eq!(app.world().get::<Window>(window).unwrap().cursor_position(), Some(Vec2::new(75.0, 60.0)));
+    }
 }

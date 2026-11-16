@@ -44,6 +44,23 @@ the page is a context for its blocks, not a replacement for the overlay.
 [hypothesis] Exact ordering against the original game's menu scripts still needs a
 capture. Dispatch before menu blocks preserves NVForever's ordinary-frame ordering.
 
+## StartMenu cursor-warp consumer
+
+[design: `ui-tile-tree.md` §7; `interface::menu_frame` / `from_menu_frame`]
+The tile input's menu coordinates invert the drawing's frame at its menu scale.
+A StartMenu XML cursor warp therefore applies the drawing's existing inverse
+(`to_menu_frame`) after converting 960-high interface units to window pixels.
+The setter retains the StartMenu identity with the pending request because the
+page restores its temporary script context before the engine consumes that request.
+Raw pixel requests and HUD-cursor requests retain their existing coordinate policy.
+
+[design] A focused authored control runs the real window warp consumer, feeds the
+result through the same coordinate conversion and tile-input step used by StartMenu,
+and routes a subsequent physical key callback to the MCM list. Cover 50%, 75% and
+100% thread-local scale scopes; no global setting mutation or separate test binary.
+This controls a Bevy window resource and production conversion/consumer functions;
+OS cursor interaction, GPU drawing and original installed-mod execution remain open.
+
 ## Validation and limits
 
 [design] Authored regressions must register handlers through the source compiler,

@@ -36,6 +36,9 @@ pub struct Jip9State {
     pub camera_collision: bool,
     /// SetCursorPos for the engine: (x, y, in XML coordinates).
     pub cursor_warp: Option<(f64, f64, bool)>,
+    /// A pending XML warp belongs to StartMenu's scaled frame. The held page's
+    /// temporary context ends before the engine consumes it (mcm-page-key-events.md).
+    pub cursor_warp_start_menu: bool,
     /// The cursor in the window's pixels from its top left, as the engine last told it.
     pub cursor_px: Option<(f64, f64)>,
     /// The window's size in pixels, as the engine last told it; `None` until it does
@@ -69,6 +72,7 @@ impl Default for Jip9State {
             vanity_wheel: true,
             camera_collision: true,
             cursor_warp: None,
+            cursor_warp_start_menu: false,
             cursor_px: None,
             window: None,
             volumes: DEFAULT_VOLUMES,
@@ -232,6 +236,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
                 if menu_cursor || g.other.jip9.hud_cursor {
                     let xml = num(args, 2).is_some_and(|v| v != 0.0);
                     g.other.jip9.cursor_warp = Some((x, y, xml));
+                    g.other.jip9.cursor_warp_start_menu = g.menu_open(crate::game::menus::START);
                     let per = px_per_unit(g);
                     g.other.jip9.cursor_px = Some(if xml { (x * per, y * per) } else { (x, y) });
                 }
