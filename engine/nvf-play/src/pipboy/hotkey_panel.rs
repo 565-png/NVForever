@@ -1,7 +1,7 @@
 //! The ITEMS page's hotkey panel (docs/design/weapon-wheel.md §3): hold a hotkey's key
 //! (1 to 8) and left-click an item in the list to put it in that slot [design: ?3].
 //! [design, #2312] With Controller chosen, RB opens it for the selected row;
-//! D-pad steps slots, A assigns, B cancels (observer check 210).
+//! D-pad steps slots, A assigns, B cancels (observer check 211).
 //!
 //! - **The panel** [documented: menus\main\inventory_menu.xml `IM_HotKeyWheel`, 380, 52
 //!   in the menus' rectangle, 290 × 250, drawn further right ([`PANEL`]);
@@ -71,7 +71,7 @@ pub struct HotkeyHold {
     pub controller: Option<Row>,
 }
 
-/// [design, #2312] Provisional order until observer check 210: right/down advance,
+/// [design, #2312] Provisional order until observer check 211: right/down advance,
 /// left/up go back, wrapping through all eight boxes including Ammo Swap.
 const PAD_SLOT_COUNT: usize = 8;
 

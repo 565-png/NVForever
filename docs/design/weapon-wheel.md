@@ -74,7 +74,7 @@ replaced by a fixed `IM_AmmoSwap` image (`interface\icons\typeicons\hot_keys_ico
   panel for the selected row; D-pad right/down advances and left/up goes back through
   eight slots with wrapping, A assigns (closing on success), B cancels without change.
   Ammo Swap still refuses assignment. The selection method is provisional [hypothesis;
-  observer check 210]. Both ITEMS renderers share this modal; smokes
+  observer check 211]. Both ITEMS renderers share this modal; smokes
   `pipboy-hotkey-assign-pad` and `tiles-items-hotkey-pad`.
 - **Empty slot**: a tap says nothing happens [design: the HUD message "Hotkey N is empty"
   replaces today's "not available yet"]; on the wheel the slice reads EMPTY.
