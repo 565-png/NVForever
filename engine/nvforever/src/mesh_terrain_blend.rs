@@ -531,12 +531,31 @@ fn publication_key(p: &crate::terrain_surface::PublishedSurface) -> PublicationK
     (p.revision, p.colour.id())
 }
 
-/// What the full pass reads of a source material: whether it is loaded, its reasons
-/// ([`material_reasons`]) and its [`SourceStamp`] (which also holds every field the
-/// admitted counts and `see_through` read; `depth_write` is a reason).
-type Fingerprint = Option<(u32, SourceStamp)>;
-fn fingerprint(source: Option<&NifMaterial>) -> Fingerprint {
-    source.map(|m| (material_reasons(m), SourceStamp::of(m)))
+/// What the full pass reads of a source material: whether it is loaded and its reasons
+/// ([`material_reasons`]) for every shape; its [`SourceStamp`] (which also holds every
+/// field the admitted counts and `see_through` read; `depth_write` is a reason) only for
+/// a shape that may blend (mask 0). [design] So a source only shapes kept out read (a
+/// fade's or an override's copy whose alpha moves every frame, a census-only shape's
+/// material) is watched without its stamp: such a shape becomes allowed only through a
+/// change of its reasons (this fingerprint), a temporary marker's removal, its ordinary
+/// material component or its `BlendCensus` changing, each a trigger of its own.
+type Fingerprint = Option<(u32, Option<SourceStamp>)>;
+fn fingerprint(source: Option<&NifMaterial>, stamped: bool) -> Fingerprint {
+    source.map(|m| (material_reasons(m), stamped.then(|| SourceStamp::of(m))))
+}
+/// Whether a recorded fingerprint holds the stamp.
+fn stamped(seen: &Fingerprint) -> bool {
+    seen.is_some_and(|(_, stamp)| stamp.is_some())
+}
+/// Records what a shape read of its source: with the stamp when the shape may blend; a
+/// source read both ways keeps the stamp.
+fn watch(watched: &mut HashMap<AssetId<NifMaterial>, Fingerprint>, id: AssetId<NifMaterial>, source: Option<&NifMaterial>, allowed: bool) {
+    match watched.entry(id) {
+        std::collections::hash_map::Entry::Occupied(mut e) => {
+            if allowed && !stamped(e.get()) { e.insert(fingerprint(source, true)); }
+        }
+        std::collections::hash_map::Entry::Vacant(e) => { e.insert(fingerprint(source, allowed)); }
+    }
 }
 
 /// [design] The frame-level inputs of the last full pass, and what it ended with.
@@ -920,7 +939,7 @@ fn pass_needed(variants: &Variants, c: BlendConfig, published: Option<Publicatio
         last.pending,
         shapes,
     ].iter().position(|&b| b).map(|i| i + 1).or_else(|| {
-        let edited = materials.is_changed() && variants.watched.iter().any(|(id, seen)| fingerprint(materials.get(*id)) != *seen);
+        let edited = materials.is_changed() && variants.watched.iter().any(|(id, seen)| fingerprint(materials.get(*id), stamped(seen)) != *seen);
         edited.then_some(5)
     })
 }
@@ -1085,7 +1104,7 @@ fn full_pass(
         let Some(mut shape) = shape else {
             // Census only: never converted.
             let source = drawn.as_ref().and_then(|d| materials.get(&d.0));
-            if let Some(d) = &drawn { variants.watched.entry(d.0.id()).or_insert_with(|| fingerprint(source)); }
+            if let Some(d) = &drawn { watch(&mut variants.watched, d.0.id(), source, false); }
             let mask = shape_mask(recorded, temporary, source);
             if let Some(t) = tracked {
                 o.census.count(t.base_type, mask);
@@ -1099,8 +1118,8 @@ fn full_pass(
             o.edits += 1;
         }
         let source = materials.get(&shape.original);
-        variants.watched.entry(shape.original.id()).or_insert_with(|| fingerprint(source));
         let mask = shape_mask(recorded, temporary, source);
+        watch(&mut variants.watched, shape.original.id(), source, mask == 0);
         if let Some(t) = tracked {
             o.census.count(t.base_type, mask);
             log_shape(variants, t, mask);
@@ -2398,6 +2417,54 @@ mod tests {
         assert_eq!(material.extension.mesh_terrain_origin.z as u32, front.coverage, "the retained clone follows the coverage");
         assert_eq!(material.extension.palette, front.palette);
         go_quiet(&mut app);
+    }
+
+    /// A temporary owner's copy whose alpha moves every frame (a fade's, an override's) is
+    /// read only by a shape kept out, so its edits run no full pass; the marker's removal
+    /// does. [design] Only a shape that may blend records its source's stamp.
+    #[test]
+    fn a_kept_out_shapes_animated_copy_runs_no_pass_until_its_marker_goes() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let (a, copy) = {
+            let mut m = app.world_mut().resource_mut::<Assets<NifMaterial>>();
+            (m.add(NifMaterial::default()), m.add(NifMaterial { base: StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() }, extension: default() }))
+        };
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(a.clone()), MeshMaterial3d(a.clone()))).id();
+        app.update();
+        go_quiet(&mut app);
+        app.world_mut().entity_mut(e).insert((MeshMaterial3d(copy.clone()), MaterialOverride { source: a.clone(), copy: copy.clone() }));
+        runs(&mut app, "a temporary owner's copy put on");
+        go_quiet(&mut app);
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(e).unwrap().0, copy);
+        let before = passes(&app);
+        for frame in 0..8 {
+            let alpha = 0.9 - frame as f32 * 0.1;
+            app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&copy).unwrap().base.base_color.set_alpha(alpha);
+            app.update();
+        }
+        assert_eq!(passes(&app), before, "the copy's alpha edits run no full pass while the marker stays");
+        app.world_mut().entity_mut(e).remove::<MaterialOverride>().insert(MeshMaterial3d(a.clone()));
+        runs(&mut app, "the marker removed");
+        assert!(blends_on(&app, e));
+    }
+
+    /// An allowed shape's source edited under its handle in a stamped field (alpha) still
+    /// runs the pass, and the clone is rebuilt.
+    #[test]
+    fn an_allowed_shapes_source_alpha_edit_runs_the_pass() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let a = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial::default());
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(a.clone()), MeshMaterial3d(a.clone()))).id();
+        app.update();
+        go_quiet(&mut app);
+        let before = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&a).unwrap().base.base_color.set_alpha(0.5);
+        runs(&mut app, "an allowed shape's source alpha edit");
+        let after = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+        assert_ne!(after, before, "the clone is rebuilt");
+        assert_eq!(app.world().resource::<Assets<NifBlendMaterial>>().get(&after).unwrap().base.base_color.alpha(), 0.5);
     }
 
     /// The verify aid runs the full pass in frames the gate skips and reports any change;
