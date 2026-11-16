@@ -212,9 +212,11 @@ contract and limits: [Built-in luck setting getter fallback](spec-notes/builtin-
 `AddNPCToLeveledList` and `AddCreatureToLeveledList` have source-name handlers
 and saved additions consumed by seeded actor templates, packages, factions and
 new inventories. The actor renderer receives the same effective list definitions.
-Synthetic source, invalid-input, cold-inventory and save/load tests are authored;
-execution and rendered acceptance are pending. Native encoding and original-game
-edge cases remain open; this is not installed-mod compatibility evidence.
+Nine synthetic source, invalid-input, cold-inventory, resurrection and save/load
+cases passed in a combined core cohort, along with the simulation source-lifetime
+control. Focused-cut/comparator validation and rendered acceptance remain pending.
+Native encoding and original-game edge cases remain open; this is not installed-mod
+compatibility evidence.
 See [actor-list-additions](spec-notes/actor-list-additions.md).
 
 ## 9. Open items needing the owner
