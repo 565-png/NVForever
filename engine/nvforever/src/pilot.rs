@@ -1449,7 +1449,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         // door was met: a gap a player crosses by something the navmesh does
                         // not hold (Rivet City's swing bridge, RCExBridge1Ref, swung by the
                         // Security Intercom; `fnvtool nav path` finds no way from the shore to
-                        // the deck [observed]): a fast travel there, with a finding.
+                        // the deck [observed], #2847): a fast travel there, with a finding.
                         let gap = here_side && !too_far && w.tried.is_empty() && h.game(|g| match w.goal.space {
                             Space::World(b) => capital_side(g, b),
                             Space::Interior(c) => outside_door(g, c).is_some(),
