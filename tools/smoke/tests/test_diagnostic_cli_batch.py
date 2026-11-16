@@ -25,8 +25,9 @@ def record(sig, fid, data):
 def authored_plugin():
     header = record(b"TES4", 0, sub(b"HEDR", struct.pack("<fII", 1.34, 1, 0x801)))
     # Original authored SCPT with an unreachable unknown call. Coverage must inspect
-    # it without executing the block. The empty bytecode is replaced by source_compile.
-    source = b"scn DiagnosticOwned\nBegin GameMode\nif 0\nNvfDiagnosticOwnedMissing\nendif\nEnd\n"
+    # it without executing the block. A real extender declaration selects Auto source
+    # compilation; the original bytecode contains only a valid script-name marker.
+    source = b"scn DiagnosticOwned\nstring_var ownedSourceSelection\nBegin GameMode\nif 0\nNvfDiagnosticOwnedMissing\nendif\nEnd\n"
     schr = struct.pack("<IIIIHH", 0, 0, 4, 0, 0, 1)
     unit = record(b"SCPT", 0x800, sub(b"SCHR", schr) + sub(b"SCDA", b"\x1d\x00\x00\x00") + sub(b"SCTX", source))
     return header + b"GRUP" + struct.pack("<I4si8s", len(unit) + 24, b"SCPT", 0, bytes(8)) + unit
