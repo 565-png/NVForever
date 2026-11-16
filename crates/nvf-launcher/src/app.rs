@@ -89,6 +89,11 @@ pub struct App {
     mods_drag: Option<usize>,
     /// The displays, for the Resolution and Monitor lists (asked once at start).
     monitors: Vec<crate::display::Monitor>,
+    /// The Language list (the language files found at start).
+    languages: Vec<crate::display::Choice>,
+    /// "Delete them now": asking first, then the request's answer.
+    reports_confirm: bool,
+    reports_rx: Option<Receiver<Result<usize, String>>>,
     // News.
     news: Vec<(Post, Option<Arc<[u8]>>)>,
     news_state: NewsState,
@@ -119,6 +124,10 @@ impl App {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         crate::fonts::install(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
+        // Test aid: NVF_LAUNCHER_ZOOM=0.6 draws everything smaller (a whole page in one shot).
+        if let Some(z) = std::env::var("NVF_LAUNCHER_ZOOM").ok().and_then(|z| z.parse::<f32>().ok()).filter(|z| (0.3..=3.0).contains(z)) {
+            cc.egui_ctx.set_zoom_factor(z);
+        }
         let home = EngineHome::user();
         let rows = catalog::rows();
         let mut app = App {
@@ -138,6 +147,12 @@ impl App {
             mods_dirty: false,
             mods_drag: None,
             monitors: crate::display::monitors(),
+            languages: crate::display::language_choices(&fnv_util::words::dirs(
+                std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())).as_deref(),
+                EngineHome::user().map(|h| h.root).as_deref(),
+            )),
+            reports_confirm: false,
+            reports_rx: None,
             news: Vec::new(),
             news_state: NewsState::Off,
             news_rx: None,
@@ -163,6 +178,11 @@ impl App {
             Ok("update") => {
                 app.upd_open = true;
                 Page::Home
+            }
+            // The "Delete them now" question, open (nothing is sent without its button).
+            Ok("delete-reports") => {
+                app.reports_confirm = true;
+                Page::Settings
             }
             // `settings:<tab>`: that tab of the Settings page.
             Ok(p) if p.starts_with("settings:") => {
@@ -416,6 +436,7 @@ impl eframe::App for App {
         self.nav(ui);
         self.test_shot(ctx);
         self.update_window(ctx, running);
+        self.reports_window(ctx, running);
         egui::CentralPanel::default().frame(Frame::new().fill(theme::BG).inner_margin(Margin::symmetric(24, 16))).show(ui, |ui| match self.page {
             Page::Home => self.home_page(ui),
             Page::Settings => self.settings_page(ui),
@@ -825,6 +846,11 @@ impl App {
                     let rows: Vec<Row> = self.rows.iter().filter(|r| r.tab == tab).cloned().collect();
                     let mut heading: Option<Option<String>> = None;
                     for r in rows {
+                        if let Some(colour) = crate::display::colour_of_part(&r.key) {
+                            if !self.current(colour).is_some_and(|c| c.eq_ignore_ascii_case(crate::display::CUSTOM)) {
+                                continue;
+                            }
+                        }
                         if heading.as_ref() != Some(&r.heading) {
                             if let Some(h) = &r.heading {
                                 ui.add_space(8.0);
@@ -867,10 +893,20 @@ impl App {
                     }
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if key == "reports-delete" {
+                        self.reports_control(ui);
+                        return;
+                    }
                     let Some(v) = value else {
                         ui.label(RichText::new("game default").small().color(WEAK)).on_hover_text("Not in NVForever.ini yet: change it once on the game's settings page");
                         return;
                     };
+                    // Not a value: the game shows what was sent and offers "Delete them now"; the
+                    // INI only ever holds "kept". The launcher shows the state (the same file).
+                    if key == "reports-delete" {
+                        self.reports_control(ui);
+                        return;
+                    }
                     let new = if key == "resolution" {
                         self.resolution_control(ui, &v, control_w)
                     } else if let Some(choices) = self.display_choices(key) {
@@ -893,12 +929,12 @@ impl App {
                         }
                         Kind::Slider => {
                             let mut f: f32 = v.trim().parse().unwrap_or(0.0);
-                            let s = match self.words.get(key) {
+                            let words: Option<Vec<String>> = self.words.get(key).map(|w| w.iter().map(|s| s.to_string()).collect()).or_else(|| crate::display::steps(key));
+                            let s = match words {
                                 Some(words) => {
                                     let n = words.len();
-                                    let words: &'static [&'static str] = words;
                                     egui::Slider::new(&mut f, 0.0..=1.0).step_by(1.0 / (n - 1) as f64).custom_formatter(move |x, _| {
-                                        words[((x * (n - 1) as f64).round() as usize).min(n - 1)].to_string()
+                                        words[((x * (n - 1) as f64).round() as usize).min(n - 1)].clone()
                                     })
                                 }
                                 None => egui::Slider::new(&mut f, 0.0..=1.0).custom_formatter(|x, _| format!("{:.0}%", x * 100.0)).custom_parser(|s| {
@@ -923,16 +959,96 @@ impl App {
                         }
                     };
                     if let Some(n) = new {
-                        if Some(&n) == stored.as_ref() {
-                            self.edits.remove(key);
-                        } else {
-                            self.edits.insert(key.to_string(), n);
+                        // A named colour writes its three parts too: the game reads the parts
+                        // after the name, and a part read makes the colour Custom. A part moved
+                        // makes it Custom here as in the game.
+                        if let (Some(parts), Some(rgb)) = (crate::display::colour_parts(key), crate::display::preset_rgb(&n)) {
+                            for (k, c) in parts.into_iter().zip(rgb) {
+                                self.set_edit(k, part_text(f32::from(c) / 255.0));
+                            }
                         }
+                        if let Some(colour) = crate::display::colour_of_part(key) {
+                            self.set_edit(colour, crate::display::CUSTOM.to_string());
+                        }
+                        self.set_edit(key, n);
                     }
                 });
             });
         });
         ui.add_space(2.0);
+    }
+
+    /// Change `key` to `value` on the page (no change when it is the INI's value).
+    fn set_edit(&mut self, key: &str, value: String) {
+        if self.stored.get(key) == Some(&value) {
+            self.edits.remove(key);
+        } else {
+            self.edits.insert(key.to_string(), value);
+        }
+    }
+
+    /// "Reports already sent": what this PC sent, and "Delete them now" (asks first).
+    fn reports_control(&mut self, ui: &mut egui::Ui) {
+        let sent = self.home.as_ref().is_some_and(crate::reports::any_sent);
+        if self.reports_rx.is_some() {
+            ui.add(egui::Spinner::new());
+            ui.label(RichText::new("Deleting…").small().color(WEAK));
+        } else if sent {
+            if ui.button("Delete them now").clicked() {
+                self.reports_confirm = true;
+            }
+            ui.label(RichText::new("Kept on the server").small().color(WEAK));
+        } else {
+            ui.label(RichText::new("None sent from this PC").small().color(WEAK));
+        }
+    }
+
+    /// The question before deleting, and the request in the background.
+    fn reports_window(&mut self, ctx: &egui::Context, running: bool) {
+        if let Some(r) = self.reports_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.reports_rx = None;
+            self.message = Some(match r {
+                Ok(n) => (format!("The server was asked to delete the reports of {n} install ID(s) from this PC (it removes them within 7 days). Later reports get a new ID."), false),
+                Err(e) => (format!("Could not delete the reports: {e}"), true),
+            });
+            self.reload_ini();
+        }
+        if !self.reports_confirm {
+            return;
+        }
+        let modal = egui::Modal::new(egui::Id::unique("reports-delete")).frame(Frame::window(&ctx.global_style()).inner_margin(Margin::symmetric(24, 20))).show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.label(RichText::new("Delete your reports?").size(20.0).strong().color(GOLD));
+            ui.add_space(8.0);
+            ui.label("NVForever's report server is asked to delete every report this PC sent; it removes them within 7 days. Reports not sent yet are deleted here. Later reports get a new ID, not linked to these.");
+            ui.add_space(4.0);
+            ui.label(RichText::new("This cannot be undone.").color(BAD));
+            if running {
+                ui.label(RichText::new("Close the game first: it holds this PC's report ID while it runs.").small().color(WEAK));
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                let delete = egui::Button::new(RichText::new("Delete them").strong().color(theme::ON_GOLD)).fill(BAD);
+                if ui.add_enabled(!running, delete).clicked() {
+                    if let Some(home) = self.home.clone() {
+                        let (tx, rx) = channel();
+                        let c = ctx.clone();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(crate::reports::delete_all(&home));
+                            c.request_repaint();
+                        });
+                        self.reports_rx = Some(rx);
+                    }
+                    self.reports_confirm = false;
+                }
+                if ui.button("Cancel").clicked() {
+                    self.reports_confirm = false;
+                }
+            });
+        });
+        if modal.should_close() {
+            self.reports_confirm = false;
+        }
     }
 
     /// The value of `key` as the page shows it now: an unsaved change, else the INI's.
@@ -948,6 +1064,11 @@ impl App {
             "display-sync" => Some(display::sync_choices()),
             "frame-cap" => Some(display::cap_choices()),
             "monitor" if !self.monitors.is_empty() => Some(display::monitor_choices(&self.monitors)),
+            "physics-rate" => Some(display::physics_choices()),
+            "fps-counter-low" => Some(display::counter_low_choices()),
+            "crosshair-style" => Some(display::crosshair_choices()),
+            "hud-colour" | "pipboy-colour" => Some(display::colour_choices()),
+            "language" => Some(self.languages.clone()),
             _ => None,
         }
     }

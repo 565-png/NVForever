@@ -70,10 +70,10 @@ line-height setting for Markdown text, so the room comes from the font and its s
   them out of egui's output (eframe is built without its own link opener). Its own
   folders open through `launch::open_folder`.
 - Test aid: `NVF_LAUNCHER_SHOT=<file.png>` saves the window once the news has arrived and
-  closes; `NVF_LAUNCHER_PAGE=home|settings|mods|game` opens that page first (`settings:<tab>`: that tab; `update`: the
+  closes; `NVF_LAUNCHER_PAGE=home|settings|mods|game` opens that page first (`settings:<tab>`: that tab; `delete-reports`: the reports question, open; `update`: the
   update dialog over Home, once a newer release is known); `NVF_LAUNCHER_RELEASES=<url>` reads
   the release list from that address instead of GitHub (a local server with a fixture release,
-  to try the updater); `NVF_LAUNCHER_VERSION=0.6.9` makes the launcher take itself for that
+  to try the updater); `NVF_LAUNCHER_ZOOM=0.6` draws everything smaller (a whole page in one shot); `NVF_LAUNCHER_VERSION=0.6.9` makes the launcher take itself for that
   version, so a real release counts as newer (the restarted launcher inherits it).
 
 ## Updater (#2713)

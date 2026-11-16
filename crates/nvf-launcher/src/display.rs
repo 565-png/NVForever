@@ -46,6 +46,71 @@ pub fn cap_index(stored: &str) -> Option<usize> {
     Some(((v.clamp(0.0, 1.0) * n as f32).round() as usize).min(n))
 }
 
+/// Physics rate (nvf-play phys_rate.rs `RateChoice::LISTED`: `60 Hz` … `Match FPS`, kept
+/// as `60` … `fps`).
+pub fn physics_choices() -> Vec<Choice> {
+    [60, 120, 144, 160].iter().map(|hz| choice(format!("{hz} Hz"), hz.to_string())).chain([choice("Match FPS", "fps")]).collect()
+}
+
+/// Counter: last figure (perf_overlay/readings.rs `Low`).
+pub fn counter_low_choices() -> Vec<Choice> {
+    vec![choice("1% low", "low"), choice("Slowest frame", "slowest")]
+}
+
+/// Crosshair style (nvf-play reticle.rs `CrosshairStyle`, kept by its name).
+pub fn crosshair_choices() -> Vec<Choice> {
+    vec![choice("Cross", "Cross"), choice("Arrows", "Arrows")]
+}
+
+/// The HUD's and the Pip-Boy's named colours (nvf-play ui_colour.rs `PRESETS`, Amber being
+/// interface.rs `AMBER_RGB`), then Custom; kept by name.
+pub const PRESETS: [(&str, [u8; 3]); 4] = [("Amber", [255, 182, 66]), ("Green", [26, 255, 128]), ("Blue", [46, 207, 255]), ("White", [230, 240, 255])];
+pub const CUSTOM: &str = "Custom";
+
+pub fn colour_choices() -> Vec<Choice> {
+    PRESETS.iter().map(|(n, _)| choice(*n, *n)).chain([choice(CUSTOM, CUSTOM)]).collect()
+}
+
+/// A colour row's three part rows (red, green, blue).
+pub fn colour_parts(key: &str) -> Option<[&'static str; 3]> {
+    match key {
+        "hud-colour" => Some(["hud-red", "hud-green", "hud-blue"]),
+        "pipboy-colour" => Some(["pipboy-red", "pipboy-green", "pipboy-blue"]),
+        _ => None,
+    }
+}
+
+/// The colour row a part row belongs to.
+pub fn colour_of_part(key: &str) -> Option<&'static str> {
+    ["hud-colour", "pipboy-colour"].into_iter().find(|c| colour_parts(c).is_some_and(|p| p.contains(&key)))
+}
+
+pub fn preset_rgb(name: &str) -> Option<[u8; 3]> {
+    PRESETS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name.trim())).map(|(_, c)| *c)
+}
+
+/// Language: English (`en`), then each language file found (`lang/<id>.toml` beside the
+/// program or in the home), by its own name; kept by id (nvf-play language.rs).
+pub fn language_choices(dirs: &[std::path::PathBuf]) -> Vec<Choice> {
+    let (tables, _) = fnv_util::words::read_dirs(dirs);
+    std::iter::once(choice("English", "en")).chain(tables.into_iter().map(|t| choice(t.name, t.id))).collect()
+}
+
+/// The words of a stepped slider's steps, as the game's page shows them: HUD scale 50% to
+/// 150% (interface.rs, 21 steps), Menu scale 50% to 100% (menu_scale.rs, 11 steps), the
+/// fields of view in degrees, a colour part 0 to 255.
+pub fn steps(key: &str) -> Option<Vec<String>> {
+    match key {
+        "ui-scale" => Some((0..21).map(|i| format!("{}%", 50 + 5 * i)).collect()),
+        "menu-scale" => Some((0..11).map(|i| format!("{}%", 50 + 5 * i)).collect()),
+        // Degrees in steps of 5 (engine settings.rs FOV_MIN..FOV_MAX, VIEWMODEL_FOV_*).
+        "field-of-view" => Some((0..13).map(|i| format!("{}°", 50 + 5 * i)).collect()),
+        "viewmodel-field-of-view" => Some((0..13).map(|i| format!("{}°", 30 + 5 * i)).collect()),
+        k if colour_of_part(k).is_some() => Some((0..=255).map(|i: u32| i.to_string()).collect()),
+        _ => None,
+    }
+}
+
 /// The game's name for display `i` of the left-to-right order (`monitor_label`).
 pub fn monitor_label(i: usize, m: &Monitor) -> String {
     format!("Display {} ({}x{})", i + 1, m.size.0, m.size.1)
@@ -137,7 +202,10 @@ pub fn chosen(key: &str, choices: &[Choice], value: &str) -> Option<usize> {
         return cap_index(value);
     }
     let v = value.trim();
-    choices.iter().position(|c| c.stored.eq_ignore_ascii_case(v) || (parse_size(v).is_some() && parse_size(&c.stored) == parse_size(v)))
+    choices
+        .iter()
+        .position(|c| c.stored.eq_ignore_ascii_case(v) || (parse_size(v).is_some() && parse_size(&c.stored) == parse_size(v)))
+        .or_else(|| choices.iter().position(|c| c.label.eq_ignore_ascii_case(v)))
 }
 
 /// The displays attached to the desktop, in the game's order. Asked of Windows
@@ -215,6 +283,49 @@ mod tests {
         let wm = engine("window_mode.rs");
         assert!(wm.contains("format!(\"Display {} ({}x{})\", i + 1, m.size.x, m.size.y)"), "monitor_label changed");
         assert!(wm.contains("format!(\"{};{full}\""), "resolution_save changed");
+    }
+
+    fn play(file: &str) -> String {
+        std::fs::read_to_string(format!("{}/../../engine/nvf-play/src/{file}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    }
+
+    #[test]
+    fn the_other_lists_match_the_game() {
+        let p = play("phys_rate.rs");
+        assert!(p.contains("pub const LISTED: [RateChoice; 5] = [RateChoice::Fixed(60), RateChoice::Fixed(120), RateChoice::Fixed(144), RateChoice::Fixed(160), RateChoice::Fps];"));
+        assert!(p.contains("RateChoice::Fixed(hz) => format!(\"{hz} Hz\")") && p.contains("RateChoice::Fps => \"Match FPS\"") && p.contains("RateChoice::Fps => \"fps\""));
+        let r = engine("perf_overlay/readings.rs");
+        for c in counter_low_choices() {
+            assert!(r.contains(&format!("=> \"{}\"", c.label)) && r.contains(&format!("=> \"{}\"", c.stored)), "{c:?}");
+        }
+        let x = play("reticle.rs");
+        for c in crosshair_choices() {
+            assert!(x.contains(&format!("=> \"{}\"", c.label)), "{c:?}");
+        }
+        assert!(x.contains("save: |w| w.resource::<CrosshairStyle>().name().to_string()"), "the crosshair style is kept by name");
+        let u = play("ui_colour.rs");
+        assert!(u.contains("pub const PRESETS: [(&str, [u8; 3]); 4] = [(\"Amber\", AMBER_RGB), (\"Green\", [26, 255, 128]), (\"Blue\", [46, 207, 255]), (\"White\", [230, 240, 255])];"));
+        assert!(u.contains("pub const CUSTOM: &str = \"Custom\";"));
+        let i = play("interface.rs");
+        assert!(i.contains("pub const AMBER_RGB: [u8; 3] = [255, 182, 66];"));
+        assert!(i.contains("pub const UI_SCALE_CHOICES: usize = 21;") && i.contains("pub const UI_SCALE_RANGE: (f32, f32) = (0.5, 1.5);"));
+        let m = play("menu_scale.rs");
+        assert!(m.contains("const CHOICES: usize = 11;") && m.contains("scale.clamp(0.5, 1.0)"));
+        let st = engine("settings.rs");
+        for c in ["const FOV_MIN: f32 = 50.0;", "const FOV_MAX: f32 = 110.0;", "const FOV_CHOICES: usize = 13;", "const VIEWMODEL_FOV_MIN: f32 = 30.0;", "const VIEWMODEL_FOV_MAX: f32 = 90.0;", "const VIEWMODEL_FOV_CHOICES: usize = 13;"] {
+            assert!(st.contains(c), "settings.rs no longer has {c}");
+        }
+        assert_eq!(steps("field-of-view").unwrap()[5], "75°");
+        assert_eq!(steps("viewmodel-field-of-view").unwrap()[5], "55°");
+        assert_eq!(steps("ui-scale").unwrap()[10], "100%");
+        assert_eq!(steps("menu-scale").unwrap().last().unwrap(), "100%");
+        assert_eq!(steps("pipboy-blue").unwrap().len(), 256);
+        assert_eq!(colour_of_part("hud-green"), Some("hud-colour"));
+        assert_eq!(preset_rgb("blue"), Some([46, 207, 255]));
+        assert_eq!(chosen("physics-rate", &physics_choices(), "Match FPS"), Some(4));
+        let langs = language_choices(&[std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../lang"))]);
+        assert_eq!(langs[0], choice("English", "en"));
+        assert!(langs.iter().any(|c| c.stored == "de" && c.label == "Deutsch"), "{langs:?}");
     }
 
     #[test]
