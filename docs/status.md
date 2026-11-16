@@ -264,3 +264,14 @@ in a collision-free fixture. The separate controller-query/gameplay successor,
 baseline failure, native ordering/synthetic input and original Enhanced Movement1.43
 acceptance remain open.
 Contract: [Control input events](spec-notes/control-input-events.md).
+
+### Title-start MenuMode group 4
+
+**Partly.** The existing startup/preload frames admit source-compiled title-group
+blocks and queries without treating ordinary pause pages as title frames. The
+current 1013/no-argument block behavior, restart/session policy, input/timers and
+startup-before-load-event consumer remain in place. Four authored integration
+controls drive attached start-enabled quest sources through that startup method
+and a registered load-event recipient; execution is pending. Live title-screen
+execution, native timing and original Helmet Overlay/Titans acceptance remain
+unqualified. Contract: [Title-start MenuMode](spec-notes/script-language.md#title-start-menumode-group-4).
