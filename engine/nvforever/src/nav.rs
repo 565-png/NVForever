@@ -636,7 +636,9 @@ pub fn draw(
     let space = drawn_space(&world, &streamer);
     let at = crate::world::bevy_to_game(cam.translation());
     let g = &nav.graph;
-    let lift = Vec3::Z * 3.0;
+    // Above the ground it lies on, and above a smoothed landscape, which can rise up to its
+    // bound over the stored triangles the navmesh was made on [design, #2149].
+    let lift = Vec3::Z * (3.0 + nvf_play::smooth_terrain::spec().bound());
     let p = |q: [f32; 3]| to_bevy(Vec3::from_array(q) + lift);
     for t in g.triangles_near(space, at.x, at.y, 3000.0) {
         let tri = &g.tris[t as usize];

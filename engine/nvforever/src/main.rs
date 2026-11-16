@@ -181,6 +181,7 @@ mod perf_overlay;
 mod occlusion;
 mod rooms;
 mod terrain;
+mod terrain_wireframe;
 mod texture_swap;
 mod effect_particles;
 mod effect_shaders;
@@ -398,6 +399,10 @@ struct Args {
     /// docs/spec-notes/world.md §3 "Texture repeat"]).
     #[arg(long, default_value_t = 256.0)]
     terrain_tile: f32,
+    /// Draw and collide the landscape on its stored triangles, not smoothed (#2149,
+    /// `nvf_play::smooth_terrain`; the settings page's Smooth terrain row).
+    #[arg(long)]
+    no_smooth_terrain: bool,
     /// Do not draw models whose path contains any of these texts (diagnostics).
     #[arg(long, value_delimiter = ',')]
     hide: Vec<String>,
@@ -651,6 +656,10 @@ struct Args {
     /// Draw the navmesh near the camera and the travellers' paths.
     #[arg(long)]
     show_navmesh: bool,
+    /// Draw the loaded landscape's triangle edges over it (terrain_wireframe.rs; the
+    /// settings page's Debug row Terrain wireframe).
+    #[arg(long)]
+    terrain_wireframe: bool,
     /// With --play: draw the developer markers of shots: a cross at each impact and a
     /// line from the muzzle along each hitscan shot (settings page: Developer).
     #[arg(long)]
@@ -1167,6 +1176,9 @@ fn main() -> AppExit {
                     None => return fail(format!("no exterior cell {}", args.cell)),
                 },
             };
+            // A provisional camera seed 400 units over the stored centre vertex: the
+            // player is grounded later on the run's surface (`nvf_play::smooth_terrain`,
+            // fixed after the settings are read), at most its bound from this [design, #2149].
             let ground = world
                 .grid_cell(grid)
                 .and_then(|c| c.land)
@@ -1423,6 +1435,11 @@ fn main() -> AppExit {
     // PostStartup (settings.rs `upscaler_after_ini`). The DLSS loader runs for a DLSS choice or
     // when NVIDIA's four files are in the DLSS folder, so every later switch is live; the test
     // aid NVF_DLSS_PRELOAD=1 runs it always, =0 only for DLSS (upscaler.rs, "Start").
+    // Whether the landscape is smoothed (#2149): the command line's state, before any cell
+    // loads; with --play the INI may change it at PostStartup (nvf_play::settings
+    // `fix_smooth_terrain`), still before the first cell.
+    nvf_play::smooth_terrain::set_setting(!args.no_smooth_terrain);
+    nvf_play::smooth_terrain::fix();
     let start_upscaler = {
         let given = play.is_some().then(|| settings::given_switches(&args, &command_line()));
         let ini = given.as_ref().and_then(|_| settings::settings_text_at_start()).map(|text| settings::UpscalerIni::read(&text));
@@ -1544,6 +1561,9 @@ fn main() -> AppExit {
     .insert_resource(fly::AutoFly(args.auto_fly))
     .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen).with_origin(lod_origin))
     .insert_resource(TerrainSettings { tile: args.terrain_tile })
+    // The terrain wireframe (#2149), off unless asked for: it builds nothing while off.
+    .add_plugins(terrain_wireframe::TerrainWireframePlugin { on: args.terrain_wireframe })
+    .insert_resource(terrain_wireframe::WireSource::of_records(world.lo, world.schema, world.index))
     .init_resource::<TerrainCache>()
     .init_resource::<imposters::Imposters>()
     .insert_resource(Streamer {
@@ -1979,6 +1999,9 @@ fn main() -> AppExit {
             }
         };
         app.add_systems(Update, summary);
+    }
+    if play.is_none() {
+        app.add_systems(Startup, || info!("{}", nvf_play::smooth_terrain::describe()));
     }
     if play.is_some() {
         settings::register(&mut app);

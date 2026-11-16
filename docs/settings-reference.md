@@ -935,6 +935,30 @@ After the Controls tab's own rows (see the end of this page):
 - More: docs/design/graphics-enhanced.md
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `smooth-terrain`: Smooth terrain
+
+- On the page: Smooths height steps while keeping bumps and ridges, with 4 x 4 squares per
+  landscape square and an 8-unit bound. Drawing and collision share the surface. Applies at
+  the next start.
+- In full: [design, #2149] On by default (the maintainer's decision of 2026-11-13).
+  The default recipe is detail, 4 × 4 squares per landscape square, bound 8 units and
+  thresholds 2:6, the contributor's pick from in-game comparisons (2026-11-15), for the
+  maintainer to confirm. Detail evens
+  out height steps while keeping bumps and ridges; 4 × 4 gives rounder silhouettes.
+  The surface stays within one height step (8 units) of the stored triangles to keep
+  placed objects in contact (the test aids below allow up to 16); actors and objects
+  stand on what is drawn. Off: the
+  landscape's triangles as stored. It takes effect at the next start (loading a save starts
+  the game again), so drawn ground and collision always change together. Not in the original.
+  For comparing recipes, the test aids `NVF_PLAY_TEST_SMOOTH_MODE` (`interpolate`, `fit`,
+  `detail`: a fit that evens out the height steps but keeps bumps and ridges),
+  `NVF_PLAY_TEST_SMOOTH_SUBDIV` (`2`, `4`), `NVF_PLAY_TEST_SMOOTH_BOUND` (0 to 16 units) and
+  `NVF_PLAY_TEST_SMOOTH_DETAIL` (detail's thresholds, `2:6` by default) override how it
+  smooths for one run without changing this row or its saved default.
+- Command-line switches: `--no-smooth-terrain`
+- More: docs/spec-notes/world.md §3 "Smoothing"
+- Registered in `engine/nvforever/src/settings.rs` (state in `engine/nvf-play/src/smooth_terrain.rs`)
+
 ## Graphics › Distance
 
 ### `distant-lod`: Distant terrain and objects
@@ -1036,6 +1060,18 @@ After the Controls tab's own rows (see the end of this page):
 - On the page: On: the navmesh near the camera and the walking NPCs' paths are drawn.
 - Command-line switches: `--show-navmesh`
 - Registered in `engine/nvforever/src/settings.rs`
+
+### `terrain-wireframe`: Terrain wireframe
+
+- On the page: On: draw triangle edges over the loaded landscape to inspect its shape.
+  Changes immediately. Distant terrain is not outlined.
+- In full: Off by default. On: every triangle edge of the loaded landscape, as it is drawn
+  and collided (smoothed or stored), is drawn as a thin magenta line over the ground, for
+  looking at the shape smoothing gives it. Cells that load while it is on are outlined as
+  they come; nothing is built or kept while it is off. Not in the original.
+- Command-line switches: `--terrain-wireframe`
+- More: docs/spec-notes/world.md §3 "Smoothing"
+- Registered in `engine/nvforever/src/settings.rs` (drawn by `engine/nvforever/src/terrain_wireframe.rs`)
 
 ### `scope-3d`: 3D scopes (test)
 
