@@ -60,8 +60,29 @@ pub fn spawn(exe: &Path, start: &Start) -> std::io::Result<Child> {
     c.spawn()
 }
 
-/// Open a folder or web page with the system's own program.
-pub fn open(target: &str) {
+/// Open one of the launcher's own folders with the system's file browser.
+pub fn open_folder(dir: &Path) {
+    open(&dir.display().to_string());
+}
+
+/// Whether `url` may be handed to the system: an `https://` web page and nothing else. URLs
+/// come from the network (`news.json`, GitHub), and the system opener runs whatever it is
+/// given: a local program, a `\\host\share` path, a `file:` or other protocol handler.
+pub fn is_web_url(url: &str) -> bool {
+    let u = url.trim();
+    u.len() > 8 && u[..8].eq_ignore_ascii_case("https://") && !u.contains(['"', '\n', '\r', '\0'])
+}
+
+/// Open a web page in the browser; anything but an `https://` URL is refused.
+pub fn open_url(url: &str) {
+    if is_web_url(url) {
+        open(url.trim());
+    } else {
+        eprintln!("launcher: not opening {url:?}: only https:// pages are opened");
+    }
+}
+
+fn open(target: &str) {
     #[cfg(windows)]
     let r = Command::new("explorer").arg(target).spawn();
     #[cfg(target_os = "macos")]
@@ -85,5 +106,24 @@ mod tests {
         let a = Start::Load(PathBuf::from("s").join("q.nvfsave")).args();
         assert_eq!(&a[..2], ["--play", "--load"]);
         assert!(a[2].ends_with("q.nvfsave"));
+    }
+
+    #[test]
+    fn only_https_pages_are_opened() {
+        assert!(is_web_url("https://nv-forever.com/news/070"));
+        assert!(is_web_url("HTTPS://github.com/LootJunkieAzza/NVForever/releases/tag/v0.7.0"));
+        for bad in [
+            "",
+            "https://",
+            "http://nv-forever.com",
+            r"C:\Windows\System32\calc.exe",
+            r"\\host\share\x.exe",
+            "file:///C:/x.exe",
+            "ms-settings:",
+            "javascript:alert(1)",
+            "https://x.com\" a.exe",
+        ] {
+            assert!(!is_web_url(bad), "{bad}");
+        }
     }
 }

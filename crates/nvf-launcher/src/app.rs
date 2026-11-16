@@ -343,6 +343,20 @@ impl eframe::App for App {
         }
         self.top_bar(ui);
         self.bottom_bar(ui, ctx, running);
+        let links: Vec<String> = ctx.output_mut(|o| {
+            let mut urls = Vec::new();
+            o.commands.retain(|c| match c {
+                egui::OutputCommand::OpenUrl(u) => {
+                    urls.push(u.url.clone());
+                    false
+                }
+                _ => true,
+            });
+            urls
+        });
+        for url in links {
+            launch::open_url(&url);
+        }
         self.nav(ui);
         self.test_shot(ctx);
         egui::CentralPanel::default().frame(Frame::new().fill(theme::BG).inner_margin(Margin::symmetric(24, 16))).show(ui, |ui| match self.page {
@@ -393,13 +407,13 @@ impl App {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some(h) = &self.home {
                         if ui.small_button("Open folder").on_hover_text("Open NVForever's folder (settings, saves, logs)").clicked() {
-                            launch::open(&h.root.display().to_string());
+                            launch::open_folder(&h.root);
                         }
                     }
                     if let Some(l) = &self.latest {
                         let b = egui::Button::new(RichText::new(format!("Update to v{}", l.version)).strong().color(theme::ON_GOLD)).fill(GOLD);
                         if ui.add(b).on_hover_text(format!("v{} is out (this is v{}): opens its download page", l.version, env!("CARGO_PKG_VERSION"))).clicked() {
-                            launch::open(&l.url);
+                            launch::open_url(&l.url);
                         }
                     }
                 });
@@ -449,10 +463,10 @@ impl App {
             ui.separator();
             ui.add_space(6.0);
             if nav_button(ui, "WEBSITE", false).on_hover_text(news::SITE).clicked() {
-                launch::open(news::SITE);
+                launch::open_url(news::SITE);
             }
             if nav_button(ui, "GITHUB", false).on_hover_text(REPO).clicked() {
-                launch::open(REPO);
+                launch::open_url(REPO);
             }
         });
     }
@@ -678,7 +692,7 @@ impl App {
                         }
                         if let Some(url) = &post.url {
                             if ui.link("Open in the browser").clicked() {
-                                launch::open(url);
+                                launch::open_url(url);
                             }
                         }
                     });
@@ -857,7 +871,7 @@ impl App {
                 if let Some(h) = &self.home {
                     if ui.button("Open mods folder").clicked() {
                         let _ = std::fs::create_dir_all(h.mods());
-                        launch::open(&h.mods().display().to_string());
+                        launch::open_folder(&h.mods());
                     }
                 }
             });
@@ -881,12 +895,13 @@ impl App {
             .unwrap_or_default();
         let mut swap: Option<(usize, usize)> = None;
         let n = list.entries.len();
+        let is_base: Vec<bool> = list.entries.iter().map(|e| e.name.eq_ignore_ascii_case("FalloutNV.esm")).collect();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             for (i, e) in list.entries.iter_mut().enumerate() {
                 Frame::new().fill(CARD).corner_radius(4).inner_margin(Margin::symmetric(10, 4)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        let base = e.name.eq_ignore_ascii_case("FalloutNV.esm");
+                        let base = is_base[i];
                         ui.label(RichText::new(format!("{:02X}", i)).monospace().color(WEAK));
                         if ui.add_enabled(!base, egui::Checkbox::without_text(&mut e.active)).changed() {
                             self.mods_dirty = true;
@@ -899,7 +914,7 @@ impl App {
                             if ui.add_enabled(!base && i + 1 < n, egui::Button::new("Down").small()).clicked() {
                                 swap = Some((i, i + 1));
                             }
-                            if ui.add_enabled(!base && i > 1, egui::Button::new("Up").small()).clicked() {
+                            if ui.add_enabled(!base && i > 0 && !is_base[i - 1], egui::Button::new("Up").small()).clicked() {
                                 swap = Some((i, i - 1));
                             }
                         });
@@ -975,7 +990,7 @@ impl App {
                 for (name, dir) in [("Saves", h.saves()), ("Logs", h.logs()), ("Screenshots", h.screenshots()), ("Settings", h.root.clone())] {
                     if ui.button(name).clicked() {
                         let _ = std::fs::create_dir_all(&dir);
-                        launch::open(&dir.display().to_string());
+                        launch::open_folder(&dir);
                     }
                 }
             });
@@ -1031,7 +1046,9 @@ fn preview(body: &str, open: bool) -> (&str, bool) {
     if body.len() <= PREVIEW_CHARS {
         return (body, false);
     }
-    let at = body[PREVIEW_CHARS..].find("\n\n").map(|i| i + PREVIEW_CHARS);
+    // A byte count can fall inside a character (`·`, `—`); start at the next whole one.
+    let from = (PREVIEW_CHARS..=body.len()).find(|&i| body.is_char_boundary(i)).unwrap_or(body.len());
+    let at = body[from..].find("\n\n").map(|i| i + from);
     match at {
         Some(at) if !open => (&body[..at], true),
         Some(_) => (body, true),
@@ -1066,6 +1083,12 @@ mod tests {
         assert_eq!(preview("short", false), ("short", false));
         let long = format!("{}\n\nrest", "a".repeat(PREVIEW_CHARS + 5));
         assert_eq!(preview(&long, false).0.len(), PREVIEW_CHARS + 5);
+        // Byte PREVIEW_CHARS inside a two-byte `·`: no panic, cut at the paragraph after it.
+        let wide = format!("{}·b\n\nrest", "a".repeat(PREVIEW_CHARS - 1));
+        assert!(!wide.is_char_boundary(PREVIEW_CHARS));
+        assert_eq!(preview(&wide, false), (&wide[..wide.len() - 6], true));
+        let wide_end = format!("{}—", "a".repeat(PREVIEW_CHARS - 1));
+        assert_eq!(preview(&wide_end, false), (wide_end.as_str(), false));
         assert_eq!(preview(&long, true), (long.as_str(), true));
     }
 }

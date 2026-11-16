@@ -2,7 +2,7 @@
 
 A small window beside `nvforever.exe` (`crates/nvf-launcher`, egui/eframe on OpenGL) that
 shows the project's news, starts the game and changes the settings in `NVForever.ini` without
-starting the game first [design: owner request 2026-11-15]. The game does not need it: a start
+starting the game first (owner request, 2026-11-15). The game does not need it: a start
 without the launcher is the same as before.
 
 ## Pages
@@ -53,8 +53,16 @@ line-height setting for Markdown text, so the room comes from the font and its s
 
 - Writes only NVForever's own files (the INI, `plugins.txt`), through
   `fnv_install::guard_write`; never the game folder or `Documents\My Games\FalloutNV`.
-- Sends nothing: three GET requests (the site's news and config, GitHub's release list), only
-  while "Fetch news" is on.
+- Sends nothing but GET requests, and only while "Fetch news" is on (it is on at first, so the
+  first start asks before the player has seen the switch): the site's `news.json` and
+  `assets/js/config.js`, GitHub's release list (once a start, shared by the news and the update
+  check; GitHub allows 60 an hour without a sign-in), and each `https://` image a post names, on
+  whatever host it names, side by side, at most 8 MiB each and 15 s each. Nothing fetched is
+  saved but the news cache, and nothing is run.
+- Opens only `https://` pages in the browser (`launch::open_url`): the news, release and
+  update links come from the network, and the system's opener would also run a program, a
+  `\\host\share` path or a `file:` link. Links inside a post's text go the same way. Its own
+  folders open through `launch::open_folder`.
 - Test aid: `NVF_LAUNCHER_SHOT=<file.png>` saves the window once the news has arrived and
   closes; `NVF_LAUNCHER_PAGE=home|settings|mods|game` opens that page first.
 
