@@ -988,6 +988,8 @@ const MOJAVE: u32 = 0x000D_A726;
 /// (a DLC's: a long way round a locked door once put the player in Dead Money's Villa).
 fn fast_travel_to(here: Space, to: Space) -> bool {
     match to {
+        // The Mojave is matched by its FormID; Tale of Two Wastelands' Capital Wasteland
+        // has no fixed one, and a long way into it is only cut when it is the player's own.
         Space::World(w) => here == to || w == MOJAVE,
         Space::Interior(_) => false,
     }
@@ -1296,7 +1298,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
             Err(_) => None,
         };
         match found {
-            Ok(path) if path.length > WALK_MAX && !w.cut && cut_at.is_some_and(|i| fast_travel_to(here.space, path.legs[i].space)) => {
+            Ok(path) if path.length > WALK_MAX && !w.cut && cut_at.is_some_and(|i| fast_travel_to(here.space, path.legs[i].space) || capital_world(h, path.legs[i].space)) => {
                 w.cut = true;
                 let leg = &path.legs[cut_at.expect("checked")];
                 let at = Place { space: leg.space, pos: tail_point(&leg.points, WALK_TAIL) };
@@ -1346,7 +1348,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                                 break;
                             }
                         }
-                        match upto.filter(|(space, pts)| fast_travel_to(here.space, *space) && pts.len() > 1) {
+                        match upto.filter(|(space, pts)| (fast_travel_to(here.space, *space) || capital_world(h, *space)) && pts.len() > 1) {
                             Some((space, pts)) => {
                                 let at = Place { space, pos: tail_point(&pts, WALK_TAIL) };
                                 info!("pilot: step {}: the way to the locked door is {:.0} units: starts {WALK_TAIL:.0} units before the door (a stand-in for fast travel)", p.i, path.length);
@@ -1393,6 +1395,34 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         if w.enable_wait.is_some_and(|since| p.now - since < ENABLE_WAIT) {
                             (h.intent.forward, h.intent.right) = (0.0, 0.0);
                             w.seen = (p.now, feet);
+                            return Walked::Going;
+                        }
+                        // Tale of Two Wastelands: no door joins the Mojave and the Capital
+                        // Wasteland; its travel moves the player between them by script. Into the
+                        // other side the player is put where it goes (a worldspace), or outside
+                        // the interior's door that leads to that side, as the mod list's travel
+                        // and a fast travel from there would put it (counted in `headless`).
+                        let here_side = match here.space {
+                            Space::World(a) => h.game(|g| capital_side(g, a)).unwrap_or(false),
+                            // An interior whose doors lead out onto the Capital Wasteland's side.
+                            Space::Interior(c) => h.game(|g| outside_door(g, c).is_some()).unwrap_or(false),
+                        };
+                        let arrive = if here_side { None } else {
+                            match w.goal.space {
+                                Space::World(b) if h.game(|g| capital_side(g, b)).unwrap_or(false) => nav.graph.nearest(w.goal.space, w.goal.pos, 4096.0).map(|(_, on)| Place { space: w.goal.space, pos: on }),
+                                Space::Interior(cell) => h.game(|g| outside_door(g, cell)).flatten().and_then(|(cell, pos)| {
+                                    let space = crate::nav::space_of_cell(h.world, cell)?;
+                                    nav.graph.nearest(space, pos, 1024.0).map(|(_, on)| Place { space, pos: on })
+                                }),
+                                _ => None,
+                            }
+                        };
+                        if let Some(at) = arrive {
+                            info!("pilot: step {}: no way to the Capital Wasteland side ({:?}): the player is put at ({:.0}, {:.0}, {:.0}) in {:?}, as the mod list's travel and a fast travel would put it", p.i, w.goal.space, at.pos[0], at.pos[1], at.pos[2], at.space);
+                            p.headless("move_player (between the two wastelands)");
+                            h.put(at);
+                            p.followers_due = Some(p.now);
+                            w.seen = (p.now, at.pos);
                             return Walked::Going;
                         }
                         let tried = if w.tried.is_empty() { "locked doors or not".to_string() } else { format!("the doors tried: {}", w.tried.iter().map(|(d, l)| format!("{d:08X} ({l})")).collect::<Vec<_>>().join(", ")) };
@@ -1640,6 +1670,59 @@ type Switch = (FormId, Option<FormId>, [f32; 3], f32, &'static str);
 type DoorTerminal = (FormId, FormId, usize, Option<FormId>, [f32; 3]);
 /// Where an item was found: how far, the holder or the item, its cell, where, lying.
 type Found = (f32, FormId, Option<FormId>, [f32; 3], bool);
+
+/// The plugins of Fallout 3's side of Tale of Two Wastelands: a worldspace whose FormID
+/// belongs to one of them is the Capital Wasteland's (its DC ruins are worldspaces of
+/// their own).
+const CAPITAL_PLUGINS: [&str; 6] = ["Fallout3.esm", "Anchorage.esm", "ThePitt.esm", "BrokenSteel.esm", "PointLookout.esm", "Zeta.esm"];
+
+/// A worldspace of the Capital Wasteland's side (Tale of Two Wastelands): its DC ruins
+/// are worldspaces of their own with map markers a player fast travels to, so a long way
+/// into one is cut as one into the Mojave is.
+fn capital_world(h: &mut Hands, space: Space) -> bool {
+    match space {
+        Space::World(w) => h.game(|g| capital_side(g, w)).unwrap_or(false),
+        Space::Interior(_) => false,
+    }
+}
+
+/// Whether a worldspace is on the Capital Wasteland's side (Tale of Two Wastelands).
+fn capital_side(g: &Game, w: u32) -> bool {
+    g.data.load_order.get((w >> 24) as usize).is_some_and(|p| CAPITAL_PLUGINS.iter().any(|c| c.eq_ignore_ascii_case(p)))
+}
+
+/// Where the doors of an interior cell let the player out into a worldspace of the
+/// Capital Wasteland's side, through up to [`OUTSIDE_DEPTH`] interiors (Underworld opens
+/// into the Museum of History, which opens onto the Mall): the destination's cell and
+/// position.
+fn outside_door(g: &Game, cell: u32) -> Option<(u32, [f32; 3])> {
+    let mut seen = vec![cell];
+    let mut cells = vec![cell];
+    for _ in 0..OUTSIDE_DEPTH {
+        let mut next = Vec::new();
+        for c in cells {
+            let Some(refs) = g.world.placed.by_cell.get(&FormId(c)) else { continue };
+            for &r in refs {
+                let Some(to) = g.world.placed.get(r).and_then(|p| p.teleport.as_ref()).map(|t| t.door) else { continue };
+                let Some((Some(dest), pos)) = where_is(g, to) else { continue };
+                match g.world.placed.world_of(dest) {
+                    Some(w) if capital_side(g, w.0) => return Some((dest.0, pos)),
+                    Some(_) => {}
+                    None if !seen.contains(&dest.0) => {
+                        seen.push(dest.0);
+                        next.push(dest.0);
+                    }
+                    None => {}
+                }
+            }
+        }
+        cells = next;
+    }
+    None
+}
+
+/// How many interiors deep [`outside_door`] looks for a way out.
+const OUTSIDE_DEPTH: usize = 4;
 
 /// Whether a door has a script with an OnActivate block (it does something when used).
 fn door_scripted(g: &Game, door: u32) -> bool {
