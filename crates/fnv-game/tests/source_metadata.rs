@@ -103,12 +103,13 @@ fn a_visible_override_uses_its_own_remote_index() {
 
 #[test]
 fn stale_or_nonvisible_remote_names_keep_the_original_bytes() {
-    for (sees_override, source) in [
-        (true, "set TargetQuest.masterFlag to 1"),
-        (false, "set TargetRef.overrideFlag to 1"),
-        (false, "set TargetQuest.neverDeclared to 1"),
+    for (sees_override, source, override_has_unit) in [
+        (true, "set TargetQuest.masterFlag to 1", true),
+        (false, "set TargetRef.overrideFlag to 1", true),
+        (false, "set TargetQuest.neverDeclared to 1", true),
+        (true, "set TargetQuest.shared to 1", false),
     ] {
-        let (plugins, original) = plugins(source, sees_override, true);
+        let (plugins, original) = plugins(source, sees_override, override_has_unit);
         let data = build(&plugins);
         assert_eq!(source_result(&data).error.as_ref().map(|e| e.kind), Some("unresolved_remote_variable"), "{source}");
         assert_eq!(data.unit(data.scripts[&FormId(VIEWER_SCRIPT)]).unit.bytes, original, "a genuine source error retains SCDA: {source}");
