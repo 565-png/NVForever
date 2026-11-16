@@ -2693,7 +2693,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-15 (L'il Devil's crown, issue #2350)
 
-226. **Does L'il Devil's crown follow the hair colour?** (P3; nif.md §6 "Hair",
+215. **Does L'il Devil's crown follow the hair colour?** (P3; nif.md §6 "Hair",
      actors.md §3; #2350.) [documented: issue #2350, supplied `fnvtool esm decode`,
      `fnvtool nif` and texture measurements] HAIR 0x000987DB `HairRaiderFCat`
      "L'il Devil" uses `Characters\Hair\HairRaiderFCat.NIF`; Playable and Not Male
