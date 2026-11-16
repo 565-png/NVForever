@@ -383,7 +383,7 @@ mod tests {
 
     /// A variable lookup over fixed pairs.
     fn set(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
-        move |n| pairs.iter().find(|(k, _)| *k == n).map(|(_, v)| v.to_string())
+        move |n: &str| pairs.iter().find(|(k, _)| *k == n).map(|(_, v)| v.to_string())
     }
 
     fn env(window: bool, light_fade: bool) -> ShapeEnv {
