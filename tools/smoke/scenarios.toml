@@ -12769,6 +12769,24 @@ expect = [{ re = 'console: GetDead on player >> 0\.00', label = "the player stan
 forbid = [{ re = 'the player died', label = "the player dies" }]
 
 [[scenario]]
+name = "god-mode-script-damage"
+source = "issue #2792 (the maintainer's request on #2743: no trap may damage the player in god mode): a bear trap's script runs DamageActorValue Health 45 and a leg's condition 50 on its victim (docs/spec-notes/traps.md §3); in god mode they and a lowering ModActorValue change nothing, without it they apply"
+note = "the bear trap's two DamageActorValue calls typed in the console on the player in Goodsprings. ForceAV puts Health at 300 first (raising is allowed in god mode), so the readings are fixed numbers; the left leg starts whole at 100. At 18 s tgm turns god mode off and the same calls take 45 Health and 50 condition"
+areas = ["scripts", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.forceav health 300;14.5:player.damageav health 45;15:player.modav health -100;15.5:player.getav health;16:player.damageav LeftMobilityCondition 50;16.5:player.getav LeftMobilityCondition;18:tgm;19:player.damageav health 45;19.5:player.getav health;20:player.damageav LeftMobilityCondition 50;20.5:player.getav LeftMobilityCondition;21:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 24
+order = [[
+  { re = 'console: GetActorValue on player >> 300\.00', label = "god mode: Health untouched by DamageAV 45 and ModAV -100" },
+  { re = 'console: GetActorValue on player >> 100\.00', label = "god mode: the left leg untouched by DamageAV 50" },
+  { text = "console: God mode off", label = "tgm turns god mode off" },
+  { re = 'console: GetActorValue on player >> 255\.00', label = "without it DamageAV takes 45 Health" },
+  { re = 'console: GetActorValue on player >> 50\.00', label = "and 50 of the leg's condition" },
+]]
+forbid = [{ re = 'the player died', label = "the player dies" }]
+
+[[scenario]]
 name = "knockout-boxing-gloves"
 source = "owner request 2026-10-17: boxing gloves knock out by fatigue, with no corner message (docs/spec-notes/unconscious.md)"
 note = "in Goodsprings, Easy Pete (not essential) is brought 300 units north of the player at 3 s; at 6 s and 7 s the player hits him with WeapNVBoxingGloves (1 damage each): the gloves' OnHit script takes 35 Fatigue a hit, so the second (fatigue 50 - 70) knocks him out; his fatigue returns at 10 a second and his fatigue knockout lasts 30 s (a test value, unconscious.md §2.5) whatever goes on, so he gets up at about 37 s of game time (later on the clock: scripted message boxes pause game time)"
