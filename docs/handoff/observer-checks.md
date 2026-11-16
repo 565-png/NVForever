@@ -3000,3 +3000,17 @@ already talking takes over at once, same topic or another; nothing is queued or 
     in the original is provisional [hypothesis]. This leaves the general sole-object
     60-second rule and observer check 114 intact [design, #1505, #2715].
 
+## Added 2026-11-15 (held weather across worldspace doors, #1997)
+
+209. **Does held weather survive a door into another worldspace?** (P3; #1997;
+    `worldspace.rs::carry_sky`, `sky.rs::SkyState::carry_weather_from`.) In Freeside,
+    use the console to `ForceWeather` a clearly different weather with override flag 1,
+    then go through the gate into the Strip. Does that weather remain shown? Repeat
+    with `SetWeather` and its override flag, allowing its fade to finish first; then
+    call `ReleaseWeatherOverride` and check that normal weather returns. Save after
+    the door and load: is it still held? Both setters say the weather will not change
+    until release [documented: offline GECK wiki ForceWeather / SetWeather /
+    ReleaseWeatherOverride, snapshot 2026-10-28]; keeping it across a worldspace door
+    is provisional [hypothesis]. NVForever carries it without destination filtering
+    [design: `sky.rs::SkyState::carry_weather_from`].
+
