@@ -81,6 +81,10 @@ fn player_swimming_source_tracks_player_motion_across_call_contexts() {
         assert_eq!(source(&mut g, "OwnedOtherWeapon.IsPlayerSwimming"), XVal::Num(f64::from(u8::from(player))));
         assert_eq!(source(&mut g, "PlayerREF.IsSwimming"), XVal::Num(0.0));
     }
+    g.set_motion(FormId::PLAYER_REF, Motion { swimming: false, ..Default::default() });
+    assert_eq!(query(&mut g, "if IsPlayerSwimming\nSetFunctionValue 9\nelse\nSetFunctionValue 4\nendif"), XVal::Num(4.0));
+    g.set_motion(FormId::PLAYER_REF, Motion { swimming: true, ..Default::default() });
+    assert_eq!(query(&mut g, "if IsPlayerSwimming\nSetFunctionValue 9\nelse\nSetFunctionValue 4\nendif"), XVal::Num(9.0));
     assert_eq!(source(&mut game(&f), "IsPlayerSwimming"), XVal::Num(0.0));
 }
 
@@ -97,6 +101,12 @@ fn disabling_hardcore_eligibility_persists_without_changing_mode_or_needs_toggle
         assert_eq!(source(&mut g, "IsHardcore"), XVal::Num(1.0));
         assert_eq!(source(&mut g, "GetHardcoreTracking"), XVal::Num(1.0));
     }
+    let mut control = game(&f);
+    control.set_hardcore(true);
+    let before = control.pass_hours(1.0, false);
+    let after = g.pass_hours(1.0, false);
+    assert_eq!(after.needs, before.needs, "the actual wait consumer keeps accumulating needs");
+    assert!(after.needs.iter().any(|(_, from, to)| to > from));
     let mut loaded = restored(&f, &g);
     loaded.set_hardcore(true);
     assert_eq!(source(&mut loaded, "IsAlwaysHardcore"), XVal::Num(0.0));
