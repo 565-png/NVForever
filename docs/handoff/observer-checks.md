@@ -2690,35 +2690,6 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
-
-## Added 2026-11-15 (L'il Devil's crown, issue #2350)
-
-215. **Does L'il Devil's crown follow the hair colour?** (P3; nif.md §6 "Hair",
-     actors.md §3; #2350.) [documented: issue #2350, supplied `fnvtool esm decode`,
-     `fnvtool nif` and texture measurements] HAIR 0x000987DB `HairRaiderFCat`
-     "L'il Devil" uses `Characters\Hair\HairRaiderFCat.NIF`; Playable and Not Male
-     are set, Fixed Color is not. Its `NoHat` and `Hat` shapes have identical
-     BSShaderPPLightingProperty flags 0x82040101 (Specular, Alpha texture, Hair,
-     Remappable, Z-test), NiAlphaProperty blend + test, and textures
-     `HairRaider01.dds`, `HairRaider01_n.dds`, `HairRaider01_hl.dds`, matching the
-     other ten raider hairs' properties. At the crown, 9% of `NoHat`'s area samples
-     black, opaque diffuse texels (RGB ≈ 0.001, alpha ≈ 0.99); other raider hairs
-     have at most 1% there. The `_hl` texture carries strands there: 2,084 of the
-     2,506 black, opaque diffuse texels have `_hl` luma above 0.08; crown-region
-     luma is about 0.17 against diffuse 0.001, with overall luma correlation 0.97.
-     NVForever multiplies the diffuse by doubled HCLR and draws the model's solid
-     core at alpha ≥ 0.8 [design; `engine/nvforever/src/actors.rs::part_uses`,
-     `engine/nvf-assets/src/nif_spawn.rs::hair_model_cut_out`; provisional tint
-     hypothesis in actors.md §3]. The issue has no reproduction in NVForever or
-     observation of the original [documented: #2350]. The original may take crown
-     colour or brightness from `_hl` [hypothesis, #2350]. In the original's face
-     editor at Doc Mitchell's, select L'il Devil and capture the crown at two very
-     different hair colours, keeping the view and lighting fixed; compare with
-     NVForever at the same colours and view. Does the crown tint with the strands,
-     or stay black? Record both colours and frames in nif.md §6. Consider a shader
-     change only if the original tints it; then compare three or four other hairs
-     before choosing a rule [design, #2350].
-
 197. **What does a resurrected actor carry?** (P2; `fnv_game::resurrect`,
     `fnv_sim::World::restock_inventory`, issue #2683.) NVForever makes the items of a
     dead actor's own item list up again when it is resurrected (rolled anew; only what
@@ -2956,3 +2927,32 @@ already talking takes over at once, same topic or another; nothing is queued or 
      If he walks to the door out of Top and is moved on, the original starts a walk
      whose way ends at a locked door (at least as far as the door); if he stands still
      until the door is unlocked, ours is right and the trigger only serves after it.
+
+
+## Added 2026-11-15 (L'il Devil's crown, issue #2350)
+
+215. **Does L'il Devil's crown follow the hair colour?** (P3; nif.md §6 "Hair",
+     actors.md §3; #2350.) [documented: issue #2350, supplied `fnvtool esm decode`,
+     `fnvtool nif` and texture measurements] HAIR 0x000987DB `HairRaiderFCat`
+     "L'il Devil" uses `Characters\Hair\HairRaiderFCat.NIF`; Playable and Not Male
+     are set, Fixed Color is not. Its `NoHat` and `Hat` shapes have identical
+     BSShaderPPLightingProperty flags 0x82040101 (Specular, Alpha texture, Hair,
+     Remappable, Z-test), NiAlphaProperty blend + test, and textures
+     `HairRaider01.dds`, `HairRaider01_n.dds`, `HairRaider01_hl.dds`, matching the
+     other ten raider hairs' properties. At the crown, 9% of `NoHat`'s area samples
+     black, opaque diffuse texels (RGB ≈ 0.001, alpha ≈ 0.99); other raider hairs
+     have at most 1% there. The `_hl` texture carries strands there: 2,084 of the
+     2,506 black, opaque diffuse texels have `_hl` luma above 0.08; crown-region
+     luma is about 0.17 against diffuse 0.001, with overall luma correlation 0.97.
+     NVForever multiplies the diffuse by doubled HCLR and draws the model's solid
+     core at alpha ≥ 0.8 [design; `engine/nvforever/src/actors.rs::part_uses`,
+     `engine/nvf-assets/src/nif_spawn.rs::hair_model_cut_out`; provisional tint
+     hypothesis in actors.md §3]. The issue has no reproduction in NVForever or
+     observation of the original [documented: #2350]. The original may take crown
+     colour or brightness from `_hl` [hypothesis, #2350]. In the original's face
+     editor at Doc Mitchell's, select L'il Devil and capture the crown at two very
+     different hair colours, keeping the view and lighting fixed; compare with
+     NVForever at the same colours and view. Does the crown tint with the strands,
+     or stay black? Record both colours and frames in nif.md §6. Consider a shader
+     change only if the original tints it; then compare three or four other hairs
+     before choosing a rule [design, #2350].
