@@ -556,3 +556,156 @@ fn neighbours_are_laid_out_by_offset() {
     assert_eq!(ids[2][1], Some(997));
     assert_eq!(ids[1][2], Some(1096));
 }
+
+// ---- Drawing levels (#2676) ----
+
+/// Every recipe at subdivision 4 (the surface the distance rule draws at two levels).
+fn combos4() -> Vec<SmoothParams> {
+    combos().into_iter().filter(|p| p.subdiv == 4).collect()
+}
+
+/// The 2 × 2 surface of a recipe is every other vertex of its 4 × 4 surface, bit for bit,
+/// with and without neighbours, at a negative grid square too; and a 4 × 4 quadrant drawn
+/// with step 2 is the 2 × 2 surface's quadrant, positions exactly.
+#[test]
+fn a_2x2_surface_is_every_other_vertex_of_the_4x4_one() {
+    for p4 in combos4() {
+        let p2 = SmoothParams { subdiv: 2, ..p4 };
+        for (g, missing) in [((0, 0), &[][..]), ((-6, -3), &[(-6, -2), (-5, -3)][..]), ((3, 1), &[(2, 0), (4, 2), (3, 2)][..])] {
+            let (s4, s2) = (smoothed_of(world, g, missing, p4), smoothed_of(world, g, missing, p2));
+            let (n4, n2) = (s4.side(), s2.side());
+            assert_eq!(n4 - 1, 2 * (n2 - 1));
+            for i in 0..n2 {
+                for j in 0..n2 {
+                    assert_eq!(s2.heights()[i * n2 + j].to_bits(), s4.heights()[2 * i * n4 + 2 * j].to_bits(), "{p4:?} {g:?} ({i}, {j})");
+                }
+            }
+            for q in 0..4u8 {
+                let half = s4.drawn_quadrant(q, QuadrantDraw::HALF);
+                let full2 = s2.drawn_quadrant(q, QuadrantDraw::FULL);
+                assert_eq!((half.side, half.step, full2.side), (QUADRANT_SQUARES * 2 + 1, 2, QUADRANT_SQUARES * 2 + 1));
+                assert_eq!(half.positions, full2.positions, "{p4:?} {g:?} quadrant {q}");
+            }
+        }
+    }
+}
+
+/// Drawn in full and with no side coarse, a quadrant is the surface's own vertices and
+/// normals (what was always drawn); as stored, the LAND grid's 17 × 17 whatever the step.
+#[test]
+fn a_full_quadrant_is_the_surface_itself() {
+    let h = cell((0, 0));
+    let stored = Surface::stored(&h);
+    let d = stored.drawn_quadrant(3, QuadrantDraw::HALF);
+    assert_eq!((d.side, d.step, d.origin, d.normals.is_none()), (QUADRANT_SQUARES + 1, 1, (QUADRANT_SQUARES, QUADRANT_SQUARES), true), "a stored surface ignores the step");
+    for p in combos() {
+        let s = smoothed((0, 0), p);
+        for q in 0..4u8 {
+            let d = s.drawn_quadrant(q, QuadrantDraw::FULL);
+            assert_eq!(d.side, QUADRANT_SQUARES * p.subdiv + 1);
+            for r in 0..d.side {
+                for c in 0..d.side {
+                    let (sr, sc) = d.surface_vertex(r, c);
+                    let i = sr * s.side() + sc;
+                    assert_eq!((d.positions[r * d.side + c], d.normals.as_ref().unwrap()[r * d.side + c]), (s.vertex(i), s.normals().unwrap()[i]), "{p:?} q{q} ({r}, {c})");
+                }
+            }
+        }
+    }
+}
+
+/// The drawn vertices along one side of a quadrant (west → east or south → north), with
+/// their normals.
+fn side_of(d: &DrawnQuadrant, side: usize) -> Vec<([f32; 3], [f32; 3])> {
+    let last = d.side - 1;
+    (0..d.side)
+        .map(|k| {
+            let v = match side {
+                QUADRANT_NORTH => last * d.side + k,
+                QUADRANT_EAST => k * d.side + last,
+                QUADRANT_SOUTH => k,
+                _ => k * d.side,
+            };
+            (d.positions[v], d.normals.as_ref().unwrap()[v])
+        })
+        .collect()
+}
+
+/// Where a 4 × 4 quadrant meets a 2 × 2 one, its side drawn coarse lies on the 2 × 2
+/// side's straight segments: its even vertices are the 2 × 2 side's (positions and
+/// normals), its odd ones halfway between them with the normalised sum of their normals, so
+/// there is no T-junction gap. Checked inside a cell (quadrants 0 | 1 and 0 / 2) and
+/// across cell edges (east, north, west and south neighbours, at a negative grid square
+/// too); the vertices off the side are left as they were.
+#[test]
+fn a_coarse_side_meets_its_2x2_neighbour_without_gaps() {
+    let size = CELL_SIZE;
+    // (A's cell, A's quadrant, A's side, B's cell, B's quadrant, B's origin less A's).
+    let pairs: [((i32, i32), u8, usize, (i32, i32), u8, [f32; 2]); 6] = [
+        ((0, 0), 0, QUADRANT_EAST, (0, 0), 1, [0.0, 0.0]),
+        ((0, 0), 0, QUADRANT_NORTH, (0, 0), 2, [0.0, 0.0]),
+        ((0, 0), 1, QUADRANT_EAST, (1, 0), 0, [size, 0.0]),
+        ((0, 0), 3, QUADRANT_NORTH, (0, 1), 1, [0.0, size]),
+        ((1, 0), 0, QUADRANT_WEST, (0, 0), 1, [-size, 0.0]),
+        ((-6, -3), 0, QUADRANT_SOUTH, (-6, -4), 2, [0.0, -size]),
+    ];
+    for p in combos4() {
+        for &(ga, qa, side, gb, qb, shift) in &pairs {
+            let (sa, sb) = (smoothed(ga, p), smoothed(gb, p));
+            let mut d = QuadrantDraw::FULL;
+            d.coarse[side] = true;
+            let fine = sa.drawn_quadrant(qa, d);
+            let plain = sa.drawn_quadrant(qa, QuadrantDraw::FULL);
+            let coarse = sb.drawn_quadrant(qb, QuadrantDraw::HALF);
+            let (a, b) = (side_of(&fine, side), side_of(&coarse, (side + 2) % 4));
+            assert_eq!(a.len(), 2 * (b.len() - 1) + 1);
+            let at = |m: usize| ([b[m].0[0] + shift[0], b[m].0[1] + shift[1], b[m].0[2]], b[m].1);
+            for (k, (pos, nor)) in a.iter().enumerate() {
+                if k % 2 == 0 {
+                    assert_eq!((*pos, *nor), at(k / 2), "{p:?} {ga:?} q{qa} side {side}: vertex {k}");
+                } else {
+                    let ((p0, n0), (p1, n1)) = (at(k / 2), at(k / 2 + 1));
+                    let mid = [(p0[0] + p1[0]) * 0.5, (p0[1] + p1[1]) * 0.5, (p0[2] + p1[2]) * 0.5];
+                    assert_eq!(*pos, mid, "{p:?} {ga:?} q{qa} side {side}: vertex {k} on the segment");
+                    let s = [n0[0] + n1[0], n0[1] + n1[1], n0[2] + n1[2]];
+                    let len = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt();
+                    for (x, y) in nor.iter().zip(s) {
+                        assert!((x - y / len).abs() < 1e-6, "{p:?} {ga:?} q{qa} side {side}: normal {k}");
+                    }
+                }
+            }
+            let last = fine.side - 1;
+            let on_side = |v: usize| {
+                let (r, c) = (v / fine.side, v % fine.side);
+                match side {
+                    QUADRANT_NORTH => r == last,
+                    QUADRANT_EAST => c == last,
+                    QUADRANT_SOUTH => r == 0,
+                    _ => c == 0,
+                }
+            };
+            for v in (0..fine.positions.len()).filter(|&v| !on_side(v)) {
+                assert_eq!(fine.positions[v], plain.positions[v], "{p:?} {ga:?} q{qa}: vertex {v} off the side");
+            }
+        }
+    }
+}
+
+/// Two quadrants at the same level meet exactly, inside a cell and across cell edges: 4 × 4
+/// with 4 × 4 (neither side coarse) and 2 × 2 with 2 × 2.
+#[test]
+fn quadrants_at_one_level_meet_exactly() {
+    let size = CELL_SIZE;
+    for p in combos4() {
+        let (a, east, north) = (smoothed((0, 0), p), smoothed((1, 0), p), smoothed((0, 1), p));
+        for d in [QuadrantDraw::FULL, QuadrantDraw::HALF] {
+            for (sa, qa, side, sb, qb, shift) in [(&a, 0u8, QUADRANT_EAST, &a, 1u8, [0.0, 0.0]), (&a, 1, QUADRANT_EAST, &east, 0, [size, 0.0]), (&a, 2, QUADRANT_NORTH, &north, 0, [0.0, size])] {
+                let (x, y) = (side_of(&sa.drawn_quadrant(qa, d), side), side_of(&sb.drawn_quadrant(qb, d), (side + 2) % 4));
+                assert_eq!(x.len(), y.len());
+                for ((pa, na), (pb, nb)) in x.iter().zip(&y) {
+                    assert_eq!((*pa, *na), ([pb[0] + shift[0], pb[1] + shift[1], pb[2]], *nb), "{p:?} {d:?} q{qa} side {side}");
+                }
+            }
+        }
+    }
+}

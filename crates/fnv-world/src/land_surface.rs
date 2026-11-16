@@ -466,6 +466,58 @@ impl Surface {
         self.height_at(x.clamp(0.0, size), y.clamp(0.0, size)).unwrap_or(f32::NAN)
     }
 
+    /// How many surface vertices apart quadrant draw `d` really takes its vertices: its
+    /// [`QuadrantDraw::step`] when that divides [`Surface::sub`], else 1 (every vertex: a
+    /// surface too coarse for the step is drawn as it is).
+    pub fn draw_step(&self, d: QuadrantDraw) -> usize {
+        if d.step > 1 && self.sub.is_multiple_of(d.step) {
+            d.step
+        } else {
+            1
+        }
+    }
+
+    /// The vertices quadrant `q` (0 south-west, 1 south-east, 2 north-west, 3 north-east)
+    /// is drawn with as `d` says (module notes of [`QuadrantDraw`]) [design, #2676].
+    pub fn drawn_quadrant(&self, q: u8, d: QuadrantDraw) -> DrawnQuadrant {
+        let step = self.draw_step(d);
+        let span = QUADRANT_SQUARES * self.sub;
+        let origin = ((q / 2) as usize * span, (q % 2) as usize * span);
+        let qs = span / step + 1;
+        let side = self.side();
+        let index = |r: usize, c: usize| (origin.0 + r * step) * side + origin.1 + c * step;
+        let mut positions: Vec<[f32; 3]> = (0..qs * qs).map(|v| self.vertex(index(v / qs, v % qs))).collect();
+        let mut normals: Option<Vec<[f32; 3]>> = self.normals.as_ref().map(|nm| (0..qs * qs).map(|v| nm[index(v / qs, v % qs)]).collect());
+        // Coarse sides: only where the drawn grid can be halved along them.
+        let snaps = (qs - 1).is_multiple_of(2) && self.sub.is_multiple_of(2 * step);
+        if snaps {
+            let last = qs - 1;
+            for (side_i, coarse) in d.coarse.iter().enumerate() {
+                if !coarse {
+                    continue;
+                }
+                // Drawn-grid index of the side's k-th vertex (west → east, south → north).
+                let at = |k: usize| match side_i {
+                    QUADRANT_NORTH => last * qs + k,
+                    QUADRANT_EAST => k * qs + last,
+                    QUADRANT_SOUTH => k,
+                    _ => k * qs,
+                };
+                for k in (1..last).step_by(2) {
+                    let (a, b, v) = (at(k - 1), at(k + 1), at(k));
+                    positions[v][2] = (positions[a][2] + positions[b][2]) * 0.5;
+                    if let Some(nm) = normals.as_mut() {
+                        let (na, nb) = (nm[a], nm[b]);
+                        let s = [na[0] + nb[0], na[1] + nb[1], na[2] + nb[2]];
+                        let len = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt();
+                        nm[v] = if len > 1e-6 { s.map(|x| x / len) } else { [0.0, 0.0, 1.0] };
+                    }
+                }
+            }
+        }
+        DrawnQuadrant { side: qs, step, origin, positions, normals }
+    }
+
     /// Unit normal at cell-local (`x`, `y`) when smoothed: the vertex normals blended
     /// between the four vertices around the point. `None` as stored.
     pub fn normal_at(&self, x: f32, y: f32) -> Option<[f32; 3]> {
@@ -484,6 +536,71 @@ impl Surface {
         }
         let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
         Some(if len > 1e-6 { n.map(|k| k / len) } else { [0.0, 0.0, 1.0] })
+    }
+}
+
+/// LAND grid squares along a quadrant's side (a cell is 2 × 2 quadrants).
+pub const QUADRANT_SQUARES: usize = (SIDE - 1) / 2;
+
+/// A quadrant's sides in [`QuadrantDraw::coarse`]: north, east, south, west.
+pub const QUADRANT_NORTH: usize = 0;
+pub const QUADRANT_EAST: usize = 1;
+pub const QUADRANT_SOUTH: usize = 2;
+pub const QUADRANT_WEST: usize = 3;
+
+/// How one quadrant of a surface is drawn [design, #2676; NVForever's own choice]:
+///
+/// - `step`: every `step`-th surface vertex along each axis. A 4 × 4 surface drawn with
+///   step 2 is drawn 2 × 2, and those vertices are exactly the vertices a 2 × 2 surface
+///   of the same recipe has (each new vertex is worked out from its place in the stored
+///   square alone, and 2/4 is 1/2: [`Surface::smoothed`]), so the two levels are the same
+///   surface wherever they share vertices. The normals are the surface's own at those
+///   vertices.
+/// - `coarse` (by side, [`QUADRANT_NORTH`] …): the side meets a neighbour drawn with twice
+///   this step, so every other vertex along it (the ones the neighbour does not have) is
+///   put halfway between its two neighbours on the side, with the normalised sum of their
+///   normals: the side is then the neighbour's straight segments exactly, without the
+///   T-junction gaps a finer side's extra vertices would open, and lit as the neighbour
+///   interpolates it. Only the side's own vertices move; ignored where the drawn grid
+///   cannot be halved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct QuadrantDraw {
+    pub step: usize,
+    pub coarse: [bool; 4],
+}
+
+impl QuadrantDraw {
+    /// Every vertex of the surface, no side moved (what was always drawn).
+    pub const FULL: QuadrantDraw = QuadrantDraw { step: 1, coarse: [false; 4] };
+    /// Every other vertex (a 4 × 4 surface drawn 2 × 2).
+    pub const HALF: QuadrantDraw = QuadrantDraw { step: 2, coarse: [false; 4] };
+}
+
+impl Default for QuadrantDraw {
+    fn default() -> Self {
+        QuadrantDraw::FULL
+    }
+}
+
+/// A quadrant's vertices as drawn ([`Surface::drawn_quadrant`]): `side × side`, row-major,
+/// rows south → north, cell-local positions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrawnQuadrant {
+    /// Vertices per side.
+    pub side: usize,
+    /// Surface vertices between neighbouring drawn ones.
+    pub step: usize,
+    /// The surface vertex (row, column) of the south-west corner.
+    pub origin: (usize, usize),
+    pub positions: Vec<[f32; 3]>,
+    /// Unit normals when smoothed (`None` as stored: VNML shades it).
+    pub normals: Option<Vec<[f32; 3]>>,
+}
+
+impl DrawnQuadrant {
+    /// The surface vertex (row, column) of drawn vertex (`r`, `c`).
+    pub fn surface_vertex(&self, r: usize, c: usize) -> (usize, usize) {
+        (self.origin.0 + r * self.step, self.origin.1 + c * self.step)
     }
 }
 
