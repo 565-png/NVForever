@@ -122,11 +122,12 @@ pub const SECTIONS: &[Section] = &[
             "water-reflections",
             "water-mirror",
             "mesh-terrain-blend",
+            "smooth-terrain",
         ],
     ),
     section("Graphics", Some("Distance"), &["distant-lod", "grass", "object-distance", "actor-distance", "item-distance", "shadow-distance", "grass-distance"]),
     section("Graphics", Some("World"), &["head-tracking", "foot-ik", "sky-clock"]),
-    section("Debug", None, &["overlay", "hit-markers", "god-mode", "navmesh", "scope-3d"]),
+    section("Debug", None, &["overlay", "hit-markers", "god-mode", "navmesh", "terrain-wireframe", "scope-3d"]),
 ];
 
 /// The Controls tab's rows that are shown only while the input device is a controller
@@ -185,7 +186,8 @@ pub struct ResolvedLayout {
     pub tabs: Vec<ResolvedTab>,
     /// Each registered row's place, by its index.
     placements: Vec<Placement>,
-    /// The rows the table does not name.
+    /// The rows the table does not name, the Tweaks tab's left out
+    /// ([`ResolvedLayout::unnamed`]).
     unnamed: usize,
 }
 
@@ -228,7 +230,10 @@ pub fn resolve_layout(list: &[Setting]) -> ResolvedLayout {
             None => unnamed.push((t, vec![i])),
         }
     }
-    let count = unnamed.iter().map(|(_, r)| r.len()).sum();
+    // The Tweaks tab's rows are not counted: #1892 registers them under Tweaks without
+    // naming them here, by design (module notes), so the count stays the rows another
+    // tab's table left out [design: #1953, #1892].
+    let count = unnamed.iter().filter(|(t, _)| tabs[*t].name != TWEAKS_TAB).map(|(_, r)| r.len()).sum();
     for (t, rows) in unnamed {
         let placement = Placement::tab(tabs[t].name);
         tabs[t].sections.push(ResolvedSection { placement, rows });
@@ -251,7 +256,9 @@ impl ResolvedLayout {
         self.placements.get(i).copied()
     }
 
-    /// How many registered rows the table does not name.
+    /// How many registered rows the table does not name, leaving out the Tweaks tab's
+    /// ([`TWEAKS_TAB`]), which #1892 lists in registry order without naming them here
+    /// [design: #1953, #1892].
     pub fn unnamed(&self) -> usize {
         self.unnamed
     }
@@ -313,10 +320,11 @@ mod tests {
     /// quality and enhanced rows, #2014's counter rows, the two VATS rows and #2198's Upscaler
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
-    /// field of view row, the menu scale row, the Physics rate row, #2662's grass fire row, #2550's
-    /// and #2551's terrain rows, #2661's mesh terrain blend row and #2688's sound cover row), by the
-    /// group it registers with.
-    const KNOWN: [(&str, &str); 117] = [
+    /// field of view row, the menu scale row, the Physics rate row, #2550's Terrain height blending
+    /// row, #2551's terrain anti-tiling row, #2662's Grass fires row, #2688's sound cover row,
+    /// #2149's Smooth terrain row and its Debug row Terrain wireframe, #2661's mesh terrain blend
+    /// row), by the group it registers with.
+    const KNOWN: [(&str, &str); 119] = [
         ("detached-camera", "Gameplay"),
         ("sound-cover", "Gameplay"),
         ("menu-pause", "Gameplay"),
@@ -418,6 +426,7 @@ mod tests {
         ("water-reflections", "Graphics"),
         ("water-mirror", "Graphics"),
         ("mesh-terrain-blend", "Graphics"),
+        ("smooth-terrain", "Graphics"),
         ("enhanced", "Graphics"),
         ("quality", "Graphics"),
         ("volume-master", "Sound"),
@@ -432,6 +441,7 @@ mod tests {
         ("hit-markers", "Debug"),
         ("god-mode", "Debug"),
         ("navmesh", "Debug"),
+        ("terrain-wireframe", "Debug"),
         ("send-reports", "Reports"),
         ("reports-delete", "Reports"),
     ];
@@ -466,7 +476,7 @@ mod tests {
         assert_eq!(gameplay[gameplay.len() - 3..], ["[World]", "grass-fire", "sound-cover"]);
         assert_eq!(keys(&list, &l, "Audio"), ["volume-master", "volume-music", "volume-footstep", "volume-voice", "volume-effects", "volume-radio", "music", "voice", "reverb", "voice-reverb"]);
         assert_eq!(keys(&list, &l, "Controls"), CONTROLLER_KEYS);
-        assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "scope-3d"]);
+        assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "terrain-wireframe", "scope-3d"]);
         assert!(keys(&list, &l, "Tweaks").is_empty(), "an empty tab is still a tab");
         let at = |k: &str| l.placement_of(list.iter().position(|s| s.key == k).unwrap()).unwrap().path();
         assert_eq!(at("menu-pause"), "Gameplay > Dialogue");
@@ -533,5 +543,6 @@ mod tests {
         assert_eq!(shown.len(), 650, "no heading: all in one run");
         assert!(shown.iter().zip(&names).all(|(a, b)| a == b), "in the order registered");
         assert_eq!(l.ordered_settings().count(), list.len());
+        assert_eq!(l.unnamed(), 0, "the Tweaks tab's rows are listed by design, not counted as left out of the table");
     }
 }

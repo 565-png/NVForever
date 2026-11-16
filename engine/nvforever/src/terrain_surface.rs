@@ -1358,7 +1358,7 @@ pub fn backfill_cells(
         if existing.is_none() && !state.tried.insert(cell) { continue; }
         let Some(land) = world.grid_cell((x, y)).and_then(|c| c.land) else { continue };
         let tile = terrain.settings.tile;
-        let Some(prep) = crate::terrain::prepare_terrain(world.lo, world.schema, land, (x, y), tile, world.neighbour_lands((x, y))) else { continue };
+        let Some(prep) = crate::terrain::prepare_terrain(world.lo, world.schema, land, (x, y), tile, world.land_ids((x, y)), nvf_play::smooth_terrain::spec(), crate::terrain_lod::first_draw()) else { continue };
         let folds = terrain.folds();
         if let Some(surface) = crate::terrain::capture_surface(&world, prep, &mut crate::terrain::TerrainCtx { tm: &mut terrain, assets: &mut models }, folds) {
             commands.entity(cell).try_insert(cache.refreshed_capture(cell, existing, surface));
