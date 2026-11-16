@@ -9,7 +9,7 @@
 //! [`apply`]) are small and tested on fixture folders.
 
 use crate::news::{self, Latest};
-use fnv_install::guard_write;
+use fnv_install::{guard_write, GameInstall};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -81,10 +81,23 @@ pub fn choose_asset<'a>(assets: &'a [Asset], tag: &str, target: &str) -> Option<
     assets.iter().find(|a| a.name == name).map(|a| (a, kind))
 }
 
-/// Whether the updater may fetch `url`: `https://` only, as the launcher opens only
-/// `https://` pages (`launch::open_url`); plain `http://` only to this machine (tests).
-pub fn fetchable(url: &str) -> bool {
-    url.starts_with("https://") || url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:")
+/// Where this repository's releases keep their files on GitHub.
+pub const REPO_DOWNLOADS: &str = "https://github.com/LootJunkieAzza/NVForever/releases/download/";
+
+/// Whether the launcher's test aids work: in tests and debug builds only, never in a release's
+/// launcher (a local release list, a version taken for an older one, plain `http` to this
+/// machine).
+pub fn test_aids() -> bool {
+    cfg!(any(test, debug_assertions))
+}
+
+/// Whether the updater may fetch `url` for release `tag`: a file of that very release of this
+/// repository (`releases/download/<tag>/`). `SHA256SUMS.txt` comes from the same release, so
+/// it only catches damage; the address is what ties the archive to this project. Plain `http`
+/// to this machine only with the test aids.
+pub fn fetchable(url: &str, tag: &str) -> bool {
+    let ours = url.strip_prefix(REPO_DOWNLOADS).and_then(|r| r.strip_prefix(tag)).is_some_and(|r| r.len() > 1 && r.starts_with('/') && !r[1..].contains('/'));
+    ours || (test_aids() && (url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:")))
 }
 
 pub fn checksums_asset(assets: &[Asset]) -> Option<&Asset> {
@@ -173,15 +186,19 @@ pub fn stale_staging(cache: &Path, current: &str) -> Vec<PathBuf> {
 
 /// Whether the launcher in `dir` runs from a release folder the updater may change: not a
 /// build of a source checkout (that one updates with git), the game program beside it,
-/// and not inside the game's folder or its user folder ([`guard_write`]).
-pub fn check_install(dir: &Path) -> Result<(), String> {
+/// and not inside the game's folder (`game`, the one the INI names) or the original game's
+/// user folder ([`guard_write`]).
+pub fn check_install(dir: &Path, game: Option<&GameInstall>) -> Result<(), String> {
+    if game.is_some_and(|g| g.contains(dir)) {
+        return Err("NVForever is unpacked inside the game folder, which it never writes to: move it to a folder of its own to update it.".into());
+    }
     if dir.ancestors().any(|a| a.join("engine").join("Cargo.toml").is_file()) {
         return Err("This launcher is a build of the source code: update it with git and cargo.".into());
     }
     if !dir.join(&programs()[0]).is_file() {
         return Err(format!("{} is not beside the launcher, so this is not a release folder the updater can change.", programs()[0]));
     }
-    guard_write(&dir.join(launcher_exe()), None).map_err(|e| e.to_string())
+    guard_write(&dir.join(launcher_exe()), game).map_err(|e| e.to_string())
 }
 
 // ---- Downloading ----
@@ -424,58 +441,134 @@ pub fn busy_program(install: &Path) -> Option<String> {
     })
 }
 
-/// Carry out `plan` on `install` from `payload`: set aside (renames inside the install's
-/// drive, so even the running launcher can go), copy in (each file whole before it takes its
-/// place), write the manifest. Any failure puts every file back as it was. Afterwards only
-/// `plan.backup` is kept under `update/previous/`.
-pub fn apply(install: &Path, payload: &Path, plan: &Plan) -> Result<(), String> {
-    for rel in plan.aside.iter().chain(&plan.copy) {
-        guard_write(&install.join(rel), None).map_err(|e| e.to_string())?;
+/// The journal of a swap under way (`update/swap.json`): written once every new file is
+/// staged, removed once the swap is done; a launcher that finds one at start finishes the
+/// swap ([`resume_interrupted`]).
+const JOURNAL: &str = "swap.json";
+/// The suffix of a running program moved out of the way so its new copy can take its name
+/// (Windows lets a running program be renamed, not replaced); removed at the next start.
+const OLD_SUFFIX: &str = ".nvf-old";
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Journal {
+    version: String,
+    /// The files staged beside their place as `<file>.nvf-new`, `/`-separated.
+    copy: Vec<String>,
+    /// The files of the old release the new one lacks, removed (their copies are in the backup).
+    retire: Vec<String>,
+}
+
+pub fn journal_path(install: &Path) -> PathBuf {
+    install.join(UPDATE_DIR).join(JOURNAL)
+}
+
+fn with_suffix(p: &Path, suffix: &str) -> PathBuf {
+    let mut s = p.as_os_str().to_os_string();
+    s.push(suffix);
+    PathBuf::from(s)
+}
+
+fn write_json(path: &Path, value: &impl Serialize) -> std::io::Result<()> {
+    let tmp = with_suffix(path, ".tmp");
+    let text = serde_json::to_string_pretty(value).map_err(std::io::Error::other)?;
+    if let Some(d) = path.parent() {
+        fs::create_dir_all(d)?;
     }
+    fs::write(&tmp, text)?;
+    fs::rename(&tmp, path)
+}
+
+/// Every path `plan` writes, through [`guard_write`] with the game folder the INI names: never
+/// inside the game folder or the original game's user folder.
+fn guard_plan(install: &Path, plan: &Plan, game: Option<&GameInstall>) -> Result<(), String> {
+    for p in plan.aside.iter().chain(&plan.copy).map(|r| install.join(r)).chain([plan.backup.clone(), journal_path(install)]) {
+        guard_write(&p, game).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Phase 1, which changes nothing the install runs from: the files to be replaced or retired
+/// copied into `plan.backup`, each new file copied beside its place as `<file>.nvf-new`, then
+/// the journal written. On any failure what was made is removed again; the error says if
+/// some of it could not be.
+fn stage(install: &Path, payload: &Path, plan: &Plan) -> Result<Journal, String> {
     if plan.backup.exists() {
         fs::remove_dir_all(&plan.backup).map_err(|e| format!("{}: {e}", plan.backup.display()))?;
     }
-    let mut moved: Vec<&PathBuf> = Vec::new();
-    let mut copied: Vec<&PathBuf> = Vec::new();
-    let undo = |moved: &[&PathBuf], copied: &[&PathBuf]| {
-        for c in copied {
-            let _ = fs::remove_file(install.join(c));
+    let mut staged: Vec<PathBuf> = Vec::new();
+    let undo = |staged: &[PathBuf], why: String| -> String {
+        let mut left: Vec<String> = staged.iter().filter(|t| fs::remove_file(t).is_err() && t.exists()).map(|t| t.display().to_string()).collect();
+        if plan.backup.exists() && fs::remove_dir_all(&plan.backup).is_err() {
+            left.push(plan.backup.display().to_string());
         }
-        for m in moved.iter().rev() {
-            let _ = fs::rename(plan.backup.join(m), install.join(m));
+        if left.is_empty() {
+            format!("{why}. Nothing was changed.")
+        } else {
+            format!("{why}. The program files were not changed, but these could not be removed: {}.", left.join(", "))
         }
     };
     for rel in &plan.aside {
         let (from, to) = (install.join(rel), plan.backup.join(rel));
-        let r = to.parent().map_or(Ok(()), fs::create_dir_all).and_then(|()| fs::rename(&from, &to));
-        if let Err(e) = r {
-            undo(&moved, &copied);
-            return Err(format!("{}: {e}", from.display()));
+        if let Err(e) = to.parent().map_or(Ok(()), fs::create_dir_all).and_then(|()| fs::copy(&from, &to)) {
+            return Err(undo(&staged, format!("{}: {e}", from.display())));
         }
-        moved.push(rel);
     }
     for rel in &plan.copy {
-        let to = install.join(rel);
-        let tmp = PathBuf::from(format!("{}{NEW_SUFFIX}", to.display()));
-        let r = to.parent().map_or(Ok(()), fs::create_dir_all).and_then(|()| fs::copy(payload.join(rel), &tmp)).and_then(|_| fs::rename(&tmp, &to));
-        if let Err(e) = r {
-            let _ = fs::remove_file(&tmp);
-            undo(&moved, &copied);
-            return Err(format!("{}: {e}", to.display()));
+        let tmp = with_suffix(&install.join(rel), NEW_SUFFIX);
+        let r = tmp.parent().map_or(Ok(()), fs::create_dir_all).and_then(|()| fs::copy(payload.join(rel), &tmp));
+        if tmp.exists() {
+            staged.push(tmp.clone());
         }
-        copied.push(rel);
+        if let Err(e) = r {
+            return Err(undo(&staged, format!("{}: {e}", tmp.display())));
+        }
     }
-    let manifest = Manifest { version: plan.version.clone(), files: plan.copy.iter().map(|p| slash(p)).collect() };
-    let mpath = manifest_path(install);
-    let mtmp = mpath.with_extension("json.tmp");
-    let r = serde_json::to_string_pretty(&manifest)
-        .map_err(std::io::Error::other)
-        .and_then(|t| fs::create_dir_all(install.join(UPDATE_DIR)).and_then(|()| fs::write(&mtmp, t)))
-        .and_then(|()| fs::rename(&mtmp, &mpath));
-    if let Err(e) = r {
-        undo(&moved, &copied);
-        return Err(format!("{}: {e}", mpath.display()));
+    let copy: BTreeSet<&PathBuf> = plan.copy.iter().collect();
+    let journal = Journal { version: plan.version.clone(), copy: plan.copy.iter().map(|p| slash(p)).collect(), retire: plan.aside.iter().filter(|r| !copy.contains(r)).map(|p| slash(p)).collect() };
+    if let Err(e) = write_json(&journal_path(install), &journal) {
+        return Err(undo(&staged, format!("{}: {e}", journal_path(install).display())));
     }
+    Ok(journal)
+}
+
+/// Phase 2, renames only: each staged file takes its place (a running program is first moved to
+/// `<file>.nvf-old`), the retired files go, the manifest is written and the journal removed.
+/// Every new file is already whole, so a phase 2 cut short (the window closed, the power lost)
+/// is finished by the next start ([`resume_interrupted`]) rather than undone.
+fn commit(install: &Path, journal: &Journal) -> Result<(), String> {
+    for rel in &journal.copy {
+        let to = install.join(rel);
+        let tmp = with_suffix(&to, NEW_SUFFIX);
+        if !tmp.exists() {
+            continue; // Already in place (a swap finished at the next start).
+        }
+        if fs::rename(&tmp, &to).is_err() && to.exists() {
+            let old = with_suffix(&to, OLD_SUFFIX);
+            let _ = fs::remove_file(&old);
+            fs::rename(&to, &old).and_then(|()| fs::rename(&tmp, &to)).map_err(|e| format!("{}: {e}", to.display()))?;
+        } else if tmp.exists() {
+            fs::rename(&tmp, &to).map_err(|e| format!("{}: {e}", to.display()))?;
+        }
+    }
+    for rel in &journal.retire {
+        let p = install.join(rel);
+        if p.exists() {
+            fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        }
+    }
+    let manifest = Manifest { version: journal.version.clone(), files: journal.copy.clone() };
+    write_json(&manifest_path(install), &manifest).map_err(|e| format!("{}: {e}", manifest_path(install).display()))?;
+    fs::remove_file(journal_path(install)).map_err(|e| format!("{}: {e}", journal_path(install).display()))
+}
+
+/// Carry out `plan` on `install` from `payload`: [`stage`] (nothing the install runs from
+/// changes; a failure leaves it as it was), then [`commit`] (renames only). Afterwards only
+/// `plan.backup` is kept under `update/previous/`. Nothing is written inside the game folder
+/// (`game`, the one the INI names) or the original game's user folder.
+pub fn apply(install: &Path, payload: &Path, plan: &Plan, game: Option<&GameInstall>) -> Result<(), String> {
+    guard_plan(install, plan, game)?;
+    let journal = stage(install, payload, plan)?;
+    commit(install, &journal).map_err(|e| format!("the update stopped part-way ({e}); start the launcher again and it finishes it"))?;
     // One previous version is kept: the one just set aside (a roll back's source goes too).
     if let Ok(rd) = fs::read_dir(previous_dir(install)) {
         for e in rd.flatten().filter(|e| e.path() != plan.backup) {
@@ -483,6 +576,28 @@ pub fn apply(install: &Path, payload: &Path, plan: &Plan) -> Result<(), String> 
         }
     }
     Ok(())
+}
+
+/// At the launcher's start: a swap whose journal is still there was cut short in its renames;
+/// it is finished (every new file is whole), and the version it installed is returned. With
+/// no journal, the leftovers of a swap cut short before its renames (`*.nvf-new`) and the
+/// old running program moved aside (`*.nvf-old`) are removed.
+pub fn resume_interrupted(install: &Path) -> Option<Result<String, String>> {
+    match fs::read_to_string(journal_path(install)).ok().and_then(|t| serde_json::from_str::<Journal>(&t).ok()) {
+        Some(j) => Some(commit(install, &j).map(|()| j.version.clone())),
+        None => {
+            for f in list_files(install).unwrap_or_default() {
+                let name = f.to_string_lossy();
+                if f.components().next().is_some_and(|c| c.as_os_str() == UPDATE_DIR) {
+                    continue;
+                }
+                if name.ends_with(NEW_SUFFIX) || name.ends_with(OLD_SUFFIX) {
+                    let _ = fs::remove_file(install.join(&f));
+                }
+            }
+            None
+        }
+    }
 }
 
 // ---- The whole update, for the launcher's worker thread ----
@@ -526,20 +641,20 @@ pub struct Ready {
 
 /// Download (unless a checked copy is already staged), check and unpack `latest` into the
 /// cache. Nothing in the install changes.
-pub fn prepare(latest: &Latest, cache: &Path, send: &dyn Fn(Msg), cancel: &AtomicBool) -> Result<Ready, String> {
+pub fn prepare(latest: &Latest, cache: &Path, game: Option<&GameInstall>, send: &dyn Fn(Msg), cancel: &AtomicBool) -> Result<Ready, String> {
     send(Msg::Phase(Phase::Checking));
     let target = target().ok_or("the releases have no archive for this system")?;
     let (asset, kind) = choose_asset(&latest.assets, &latest.tag, target).ok_or_else(|| format!("v{} has no archive for {target}", latest.version))?;
     let sums_asset = checksums_asset(&latest.assets).ok_or_else(|| format!("v{} publishes no {CHECKSUMS}, so its download cannot be checked", latest.version))?;
     for url in [&asset.browser_download_url, &sums_asset.browser_download_url] {
-        if !fetchable(url) {
-            return Err(format!("the release names a download address that is not https: {url}"));
+        if !fetchable(url, &latest.tag) {
+            return Err(format!("the release names a download address outside {REPO_DOWNLOADS}{}/: {url}", latest.tag));
         }
     }
     let sums = news::get_text(&news::agent(), &sums_asset.browser_download_url)?;
     let want = checksum_for(&sums, &asset.name).ok_or_else(|| format!("{CHECKSUMS} does not list {}", asset.name))?;
     let staging = Staging::new(cache, &latest.tag).ok_or_else(|| format!("unusable release tag {:?}", latest.tag))?;
-    guard_write(&staging.dir, None).map_err(|e| e.to_string())?;
+    guard_write(&staging.dir, game).map_err(|e| e.to_string())?;
     fs::create_dir_all(&staging.dir).map_err(|e| format!("{}: {e}", staging.dir.display()))?;
     let archive = staging.archive(&asset.name);
     let have = archive.is_file().then(|| sha256_file(&archive).ok()).flatten();
@@ -569,22 +684,22 @@ pub fn prepare(latest: &Latest, cache: &Path, send: &dyn Fn(Msg), cancel: &Atomi
 }
 
 /// Swap `ready` into `install` (running version `current`); the staged copy is removed after.
-pub fn install(install: &Path, ready: &Ready, current: &str) -> Result<String, String> {
-    check_install(install)?;
+pub fn install(install: &Path, ready: &Ready, current: &str, game: Option<&GameInstall>) -> Result<String, String> {
+    check_install(install, game)?;
     if let Some(p) = busy_program(install) {
         return Err(format!("{p} is running: close it, then install."));
     }
     let exists = |p: &Path| p.exists();
     let plan = plan(install, &ready.files, exists, read_manifest(install).as_ref(), current, &ready.version)?;
-    apply(install, &ready.payload, &plan)?;
+    apply(install, &ready.payload, &plan, game)?;
     let _ = fs::remove_dir_all(&ready.staging);
     Ok(ready.version.clone())
 }
 
 /// Put the kept previous version back (the current one is kept in its place, so a second
 /// roll back goes forward again).
-pub fn roll_back(install: &Path, current: &str) -> Result<String, String> {
-    check_install(install)?;
+pub fn roll_back(install: &Path, current: &str, game: Option<&GameInstall>) -> Result<String, String> {
+    check_install(install, game)?;
     if let Some(p) = busy_program(install) {
         return Err(format!("{p} is running: close it, then roll back."));
     }
@@ -595,7 +710,7 @@ pub fn roll_back(install: &Path, current: &str) -> Result<String, String> {
     let files = list_files(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let exists = |p: &Path| p.exists();
     let plan = plan(install, &files, exists, read_manifest(install).as_ref(), current, &version)?;
-    apply(install, &dir, &plan)?;
+    apply(install, &dir, &plan, game)?;
     Ok(version)
 }
 
@@ -638,9 +753,20 @@ mod tests {
         assert!(choose_asset(&assets, "v0.7.0", "x86_64-pc-windows-msvc").is_none());
         assert!(choose_asset(&assets, "v0.8.0", "aarch64-apple-darwin").is_none());
         assert_eq!(checksums_asset(&assets).unwrap().name, CHECKSUMS);
-        assert!(fetchable("https://github.com/x/y.zip") && fetchable("http://127.0.0.1:8765/y.zip"));
-        for bad in ["http://github.com/y.zip", "file:///C:/y.zip", "ftp://x/y", "\\\\host\\share\\y.zip", ""] {
-            assert!(!fetchable(bad), "{bad}");
+        let ours = format!("{REPO_DOWNLOADS}v0.8.0/NVForever-v0.8.0-x86_64-pc-windows-msvc.zip");
+        assert!(fetchable(&ours, "v0.8.0"));
+        assert!(fetchable("http://127.0.0.1:8765/y.zip", "v0.8.0"), "the tests' local server");
+        for bad in [
+            format!("{REPO_DOWNLOADS}v0.7.0/x.zip"),
+            format!("{REPO_DOWNLOADS}v0.8.0/../v0.7.0/x.zip"),
+            format!("{REPO_DOWNLOADS}v0.8.0/"),
+            "https://github.com/someone/else/releases/download/v0.8.0/x.zip".to_string(),
+            "http://github.com/y.zip".into(),
+            "file:///C:/y.zip".into(),
+            "\\\\host\\share\\y.zip".into(),
+            String::new(),
+        ] {
+            assert!(!fetchable(&bad, "v0.8.0"), "{bad}");
         }
         assert!(target().is_some(), "the machines that build releases have a target");
     }
@@ -839,23 +965,25 @@ mod tests {
         // The plan names a file the payload lacks: its copy fails after others went in.
         let files = vec![PathBuf::from(launcher_exe()), PathBuf::from(&programs()[0]), PathBuf::from("zz-missing.txt")];
         let p = plan(&install, &files, |p| p.exists(), None, "0.7.0", "0.8.0").unwrap();
-        assert!(apply(&install, &payload, &p).is_err());
+        assert!(apply(&install, &payload, &p, None).unwrap_err().contains("Nothing was changed"));
         assert_eq!(read(&install.join(launcher_exe())), format!("{} 0.7.0", launcher_exe()));
         assert_eq!(read(&install.join(&programs()[0])), format!("{} 0.7.0", programs()[0]));
         assert!(!install.join("zz-missing.txt").exists());
         assert!(read_manifest(&install).is_none());
-        assert!(list_files(&p.backup).map_or(true, |f| f.is_empty()));
+        assert!(!p.backup.exists(), "the backup's copies are removed again");
+        assert!(!list_files(&install).unwrap().iter().any(|f| f.to_string_lossy().ends_with(NEW_SUFFIX)), "no staged file is left");
+        assert!(!journal_path(&install).exists());
         let _ = fs::remove_dir_all(&d);
     }
 
     #[test]
     fn installs_the_updater_will_not_change() {
         let d = tmp("check");
-        assert!(check_install(&d).unwrap_err().contains("not a release folder"));
+        assert!(check_install(&d, None).unwrap_err().contains("not a release folder"));
         put(&d.join(&programs()[0]), "x");
-        assert_eq!(check_install(&d), Ok(()));
+        assert_eq!(check_install(&d, None), Ok(()));
         let here = std::env::current_exe().unwrap();
-        assert!(check_install(here.parent().unwrap()).is_err(), "a cargo build of this checkout");
+        assert!(check_install(here.parent().unwrap(), None).is_err(), "a cargo build of this checkout");
         assert_eq!(busy_program(&d), None);
         let _ = fs::remove_dir_all(&d);
     }
@@ -937,18 +1065,18 @@ mod tests {
             }
         };
 
-        let e = prepare(&release("bad"), &cache, &send, &AtomicBool::new(false)).unwrap_err();
+        let e = prepare(&release("bad"), &cache, None, &send, &AtomicBool::new(false)).unwrap_err();
         assert!(e.contains("does not match its checksum"), "{e}");
         assert!(!Staging::new(&cache, "v0.8.0").unwrap().part(&name).exists(), "the bad download is deleted");
         assert_eq!(read(&install.join(launcher_exe())), format!("{} 0.7.0", launcher_exe()));
 
         msgs.lock().unwrap().clear();
-        let ready = prepare(&release("good"), &cache, &send, &AtomicBool::new(false)).unwrap();
+        let ready = prepare(&release("good"), &cache, None, &send, &AtomicBool::new(false)).unwrap();
         assert_eq!(*msgs.lock().unwrap(), [Phase::Checking, Phase::Downloading, Phase::Verifying, Phase::Unpacking]);
         assert!(ready.payload.starts_with(updates_dir(&cache)));
         // A second run finds the checked archive staged and downloads nothing.
         msgs.lock().unwrap().clear();
-        let ready = prepare(&release("good"), &cache, &send, &AtomicBool::new(false)).unwrap();
+        let ready = prepare(&release("good"), &cache, None, &send, &AtomicBool::new(false)).unwrap();
         assert_eq!(*msgs.lock().unwrap(), [Phase::Checking, Phase::Unpacking]);
 
         assert_eq!(install_with_check(&install, &ready), Ok("0.8.0".to_string()));
@@ -962,20 +1090,78 @@ mod tests {
 
     /// [`install`] itself (with [`check_install`]: the fixture install has the game program).
     fn install_with_check(install_dir: &Path, ready: &Ready) -> Result<String, String> {
-        install(install_dir, ready, "0.7.0")
+        install(install_dir, ready, "0.7.0", None)
+    }
+
+    /// NVForever unpacked inside the game folder: the updater refuses before writing anything,
+    /// and the swap's own guard refuses too.
+    #[test]
+    fn never_inside_the_game_folder() {
+        let d = tmp("in-game");
+        put(&d.join("Data").join("FalloutNV.esm"), "TES4");
+        let game = GameInstall::open(&d).unwrap();
+        let install = d.join("NVForever");
+        fixture_install(&install, "0.7.0");
+        assert!(check_install(&install, Some(&game)).unwrap_err().contains("inside the game folder"));
+        let payload = d.join("payload");
+        put(&payload.join(launcher_exe()), "new");
+        let p = plan(&install, &[PathBuf::from(launcher_exe())], |p| p.exists(), None, "0.7.0", "0.8.0").unwrap();
+        assert!(apply(&install, &payload, &p, Some(&game)).is_err());
+        assert_eq!(read(&install.join(launcher_exe())), format!("{} 0.7.0", launcher_exe()));
+        assert!(!p.backup.exists() && !journal_path(&install).exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// The launcher killed after staging, before or during the renames: its next start
+    /// finishes the swap from the journal; killed before the journal, it tidies the staged
+    /// files away and the old release runs as before.
+    #[test]
+    fn a_swap_cut_short_is_finished_at_the_next_start() {
+        let d = tmp("cut-short");
+        let install = d.join("NVForever");
+        fixture_install(&install, "0.7.0");
+        let payload = d.join("payload");
+        for f in [launcher_exe(), programs()[0].clone(), "schemas/a.toml".to_string()] {
+            put(&payload.join(&f), &format!("{f} 0.8.0"));
+        }
+        let files = list_files(&payload).unwrap();
+        let p = plan(&install, &files, |p| p.exists(), None, "0.7.0", "0.8.0").unwrap();
+        let j = stage(&install, &payload, &p).unwrap();
+        // The renames cut short after the first file.
+        let first = install.join(&j.copy[0]);
+        fs::rename(with_suffix(&first, NEW_SUFFIX), &first).unwrap();
+        assert_eq!(resume_interrupted(&install), Some(Ok("0.8.0".to_string())));
+        assert_eq!(read(&install.join(launcher_exe())), format!("{} 0.8.0", launcher_exe()));
+        assert_eq!(read(&install.join("schemas").join("a.toml")), "schemas/a.toml 0.8.0");
+        assert_eq!(read_manifest(&install).unwrap().version, "0.8.0");
+        assert!(!journal_path(&install).exists());
+        assert_eq!(read(&p.backup.join(launcher_exe())), format!("{} 0.7.0", launcher_exe()), "the old release is kept to roll back to");
+        assert_eq!(resume_interrupted(&install), None, "nothing more to do");
+
+        // Cut short before the journal: only staged files, which go; the release is untouched.
+        let d2 = tmp("cut-early");
+        let install2 = d2.join("NVForever");
+        fixture_install(&install2, "0.7.0");
+        put(&with_suffix(&install2.join(launcher_exe()), NEW_SUFFIX), "half a file");
+        put(&with_suffix(&install2.join("schemas").join("a.toml"), NEW_SUFFIX), "x");
+        assert_eq!(resume_interrupted(&install2), None);
+        assert!(!list_files(&install2).unwrap().iter().any(|f| f.to_string_lossy().ends_with(NEW_SUFFIX)));
+        assert_eq!(read(&install2.join(launcher_exe())), format!("{} 0.7.0", launcher_exe()));
+        let _ = fs::remove_dir_all(&d);
+        let _ = fs::remove_dir_all(&d2);
     }
 
     /// [`install`] and [`roll_back`] without [`check_install`] (a test folder under the
     /// system's temp folder has no game program to check against).
     fn install_unchecked(install: &Path, ready: &Ready, current: &str) -> Result<(), String> {
         let p = plan(install, &ready.files, |p| p.exists(), read_manifest(install).as_ref(), current, &ready.version)?;
-        apply(install, &ready.payload, &p)
+        apply(install, &ready.payload, &p, None)
     }
 
     fn roll_back_unchecked(install: &Path, current: &str) -> Result<String, String> {
         let (version, dir) = previous_version(install).ok_or("none kept")?;
         let p = plan(install, &list_files(&dir).unwrap(), |p| p.exists(), read_manifest(install).as_ref(), current, &version)?;
-        apply(install, &dir, &p)?;
+        apply(install, &dir, &p, None)?;
         Ok(version)
     }
 }
