@@ -7,6 +7,9 @@
   ],
   "actions": [
     {"op": "note", "text": "Joins where Picking Up the Trail (MQ06) ends: the player walking into Vault 87 sets MQ06 200 [observed], whose script sets MQ08 15 (find the G.E.C.K.). Set here directly so this chain runs alone."},
+    {"op": "note", "text": "Little Lamplight's back door (to Murder Pass): its terminal MQ06BackDoorTerminalRef says \"The terminal is not powered.\" until MQ06.dbcomputeron is 2 (SCPT 0x0A003A17 [observed]). Joseph's line 0x0A003A0B (\"Sure, if you want.\") sets it to 1 and his package MQ06JosephActivateTerminal's end sets 2 [observed, Fallout3.esm]; the walk there is his AI (its end stands in)."},
+    {"op": "say_info", "info": "0x0A003A0B", "speaker": "JosephRef"},
+    {"op": "package", "actor": "JosephRef", "package": "MQ06JosephActivateTerminal", "event": "end"},
     {"op": "go_to_cell", "cell": "Vault87c"},
     {"op": "set_stage", "quest": "MQ06", "stage": 200},
     {"op": "get_quest", "quest": "MQ08", "fields": ["running", "stage", "objective.15.displayed"], "label": "milestone: MQ08 15"},
