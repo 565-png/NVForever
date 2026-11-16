@@ -974,45 +974,47 @@ impl App {
                 let dragged = self.mods_drag == Some(i);
                 let fill = if dragged { theme::SELECTED } else { CARD };
                 let stroke = if dragged { Stroke::new(1.0, theme::GOLD_DIM) } else { Stroke::NONE };
-                let row = Frame::new().fill(fill).stroke(stroke).corner_radius(4).inner_margin(Margin::symmetric(10, 4)).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        // The grip: three short lines, drawn (the system font has no grip glyph).
-                        let (grip, resp) = ui.allocate_exact_size(Vec2::new(14.0, 18.0), if base { Sense::hover() } else { Sense::drag() });
-                        if !base {
-                            let c = if resp.hovered() || dragged { GOLD } else { WEAK };
-                            for k in [-4.0, 0.0, 4.0] {
-                                let y = grip.center().y + k;
-                                ui.painter().line_segment([egui::pos2(grip.left() + 1.0, y), egui::pos2(grip.right() - 1.0, y)], Stroke::new(1.5, c));
+                // The whole row drags (its sense sits below the checkbox's, so the box keeps its
+                // clicks); a click on the name turns the plugin on or off.
+                let sense = if base { Sense::hover() } else { Sense::click_and_drag() };
+                let mut name_rect = egui::Rect::NOTHING;
+                let row = ui.scope_builder(egui::UiBuilder::new().id_salt(("mod-row", i)).sense(sense), |ui| {
+                    let hot = !base && (dragged || ui.response().hovered());
+                    Frame::new().fill(fill).stroke(stroke).corner_radius(4).inner_margin(Margin::symmetric(10, 4)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            // The grip: three short lines, drawn (the system font has no grip glyph).
+                            let (grip, _) = ui.allocate_exact_size(Vec2::new(14.0, 18.0), Sense::hover());
+                            if !base {
+                                let c = if hot { GOLD } else { WEAK };
+                                for k in [-4.0, 0.0, 4.0] {
+                                    let y = grip.center().y + k;
+                                    ui.painter().line_segment([egui::pos2(grip.left() + 1.0, y), egui::pos2(grip.right() - 1.0, y)], Stroke::new(1.5, c));
+                                }
                             }
-                            if resp.drag_started() {
-                                self.mods_drag = Some(i);
-                            }
-                            resp.on_hover_cursor(egui::CursorIcon::Grab);
-                        }
-                        ui.label(RichText::new(format!("{:02X}", i)).monospace().color(WEAK));
-                        if ui.add_enabled(!base, egui::Checkbox::without_text(&mut e.active)).changed() {
-                            self.mods_dirty = true;
-                        }
-                        // The name: a click turns the plugin on or off, a drag moves it.
-                        let sense = if base { Sense::hover() } else { Sense::click_and_drag() };
-                        let name = ui.add(egui::Label::new(&e.name).sense(sense));
-                        if !base {
-                            if name.drag_started() {
-                                self.mods_drag = Some(i);
-                            }
-                            if name.clicked() {
-                                e.active = !e.active;
+                            ui.label(RichText::new(format!("{:02X}", i)).monospace().color(WEAK));
+                            if ui.add_enabled(!base, egui::Checkbox::without_text(&mut e.active)).changed() {
                                 self.mods_dirty = true;
                             }
-                            name.on_hover_cursor(egui::CursorIcon::PointingHand);
-                        }
-                        if !present.is_empty() && !present.contains(&e.name.to_ascii_lowercase()) {
-                            ui.label(RichText::new("missing").small().color(BAD));
-                        }
+                            name_rect = ui.label(&e.name).rect;
+                            if !present.is_empty() && !present.contains(&e.name.to_ascii_lowercase()) {
+                                ui.label(RichText::new("missing").small().color(BAD));
+                            }
+                        });
                     });
                 });
-                rects.push(row.response.rect);
+                let resp = row.response;
+                if !base {
+                    if resp.drag_started() {
+                        self.mods_drag = Some(i);
+                    }
+                    if resp.clicked() && resp.interact_pointer_pos().is_some_and(|p| name_rect.contains(p)) {
+                        e.active = !e.active;
+                        self.mods_dirty = true;
+                    }
+                    let _ = resp.clone().on_hover_cursor(egui::CursorIcon::Grab);
+                }
+                rects.push(resp.rect);
             }
             let Some(from) = self.mods_drag else { return };
             let ctx = ui.ctx().clone();
