@@ -11,8 +11,8 @@ use fnv_game::use_weapon::WeaponUse;
 use fnv_script::vm::Value;
 use std::sync::Arc;
 
-// The test plugin builder (crates/fnv-game/tests/common), loaded once by sky.rs's lighting tests.
-use crate::sky::session_lighting_tests::lighting_build::*;
+// The test plugin builder (crates/fnv-game/tests/common), loaded once as crate::authored_test_records.
+use crate::authored_test_records::*;
 
 const SHOOTER: FormId = FormId(0x801);
 const TARGET: FormId = FormId(0x802);
