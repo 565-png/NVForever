@@ -1430,7 +1430,20 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                             // An interior whose doors lead out onto the Capital Wasteland's side.
                             Space::Interior(c) => h.game(|g| outside_door(g, c).is_some()).unwrap_or(false),
                         };
-                        let arrive = if here_side { None } else {
+                        // Or a way across the Capital Wasteland longer than the search goes
+                        // (Vault 112 to the Jefferson Memorial: 400,955 triangles searched and
+                        // no end [observed]): a fast travel from the side the player is on.
+                        let too_far = matches!(e, fnv_nav::PathError::TooFar { .. });
+                        // No navmesh joins the two at all, locked doors or not, and no locked
+                        // door was met: a gap a player crosses by something the navmesh does
+                        // not hold (Rivet City's swing bridge, RCExBridge1Ref, swung by the
+                        // Security Intercom; `fnvtool nav path` finds no way from the shore to
+                        // the deck [observed]): a fast travel there, with a finding.
+                        let gap = here_side && !too_far && w.tried.is_empty() && h.game(|g| match w.goal.space {
+                            Space::World(b) => capital_side(g, b),
+                            Space::Interior(c) => outside_door(g, c).is_some(),
+                        }).unwrap_or(false);
+                        let arrive = if here_side && !too_far && !gap { None } else {
                             match w.goal.space {
                                 Space::World(b) if h.game(|g| capital_side(g, b)).unwrap_or(false) => nav.graph.nearest(w.goal.space, w.goal.pos, 4096.0).map(|(_, on)| Place { space: w.goal.space, pos: on }),
                                 Space::Interior(cell) => h.game(|g| outside_door(g, cell)).flatten().and_then(|(cell, pos)| {
@@ -1441,8 +1454,11 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                             }
                         };
                         if let Some(at) = arrive {
-                            info!("pilot: step {}: no way to the Capital Wasteland side ({:?}): the player is put at ({:.0}, {:.0}, {:.0}) in {:?}, as the mod list's travel and a fast travel would put it", p.i, w.goal.space, at.pos[0], at.pos[1], at.pos[2], at.space);
-                            p.headless("move_player (between the two wastelands)");
+                            info!("pilot: step {}: {} ({:?}): the player is put at ({:.0}, {:.0}, {:.0}) in {:?}, as the mod list's travel and a fast travel would put it", p.i, if too_far { "a way longer than the search goes" } else if gap { "no navmesh way there" } else { "no way to the Capital Wasteland side" }, w.goal.space, at.pos[0], at.pos[1], at.pos[2], at.space);
+                            if gap {
+                                p.finding("no_navmesh_way", format!("no navmesh way from ({:.0}, {:.0}, {:.0}) in {:?} to {:?}, locked doors or not: put there as a fast travel would", feet[0], feet[1], feet[2], here.space, w.goal.space));
+                            }
+                            p.headless(if too_far || gap { "move_player (a fast travel)" } else { "move_player (between the two wastelands)" });
                             h.put(at);
                             p.followers_due = Some(p.now);
                             w.seen = (p.now, at.pos);
