@@ -1837,6 +1837,17 @@ fn door_switch(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<Switch> {
         unit.program.blocks.iter().any(|b| b.event == fnv_game::game::event::ON_ACTIVATE).then_some(unit)
     };
     let mut found: Vec<(u8, f32, FormId, [f32; 3], &'static str)> = Vec::new();
+    // The door's activate parents (XAPR) set it off: a door that only they open (XAPD,
+    // Vault 112's floor hatch Vault112SecretHatchREF under the Tenpenny wall switch
+    // [observed]) refuses the player. A parent that is a trigger volume is not a switch.
+    let parents: Vec<FormId> = g.world.placed.get(FormId(door)).map(|p| p.activate_parents.iter().map(|a| a.reference).collect()).unwrap_or_default();
+    for r in parents {
+        if used.iter().any(|(u, d)| *u == r.0 && *d == door) || g.world.placed.get(r).is_none_or(|p| p.primitive.is_some() || p.cell != cell) {
+            continue;
+        }
+        let Some((_, pos)) = where_is(g, r) else { continue };
+        found.push((0, hdist(pos, at).hypot(pos[2] - at[2]), r, pos, "the door's activate parent"));
+    }
     for &r in refs {
         if r.0 == door || used.iter().any(|(u, d)| *u == r.0 && *d == door) || g.is_dead(r) {
             continue;
