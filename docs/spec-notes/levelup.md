@@ -253,3 +253,11 @@ Rules: `crate::perks` (`ADJUST_GAINED_SKILL_POINTS`, `rank_abilities`,
 - **Skill books**: Comprehension's code 11 changes a book's points when one is read
   ([skill-books](skill-books.md) §3).
 - **Not built**: Hacking Science Bonus; the teammates' perks (`AddPerk perk 1`).
+
+## Source advancement commands (#2271)
+
+[documented: repository `functions/player_source.rs`] Source `AdvancePCLevel` and
+`AdvLevel` call the same `advance` operation as experience and the console. See
+[player source commands](player-source-commands.md) for the documented contract,
+portable controls, receiver policy and unmeasured native encoding. Execution and
+original-game parity are UNRUN for this contribution.

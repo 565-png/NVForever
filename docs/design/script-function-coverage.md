@@ -8,6 +8,15 @@ quests depend on them. It builds on the audit of 2026-10-16
 (docs/design/script-function-audit.md, which reads every registered function's code) and
 on a second round of captures in the original game, made with a new probe generator.
 
+## Source-only player command followup (#2271)
+
+AdvancePCLevel/AdvLevel, ModPCAttribute and RemoveReputationExact now have named
+source handlers over the existing engine consumers. Their native encoding remains
+unmeasured; the three catalogue rows remain unnumbered. The focused portable census
+in `tests/player_source_commands.rs` is UNRUN, as is the existing broad
+`NVF_CENSUS_FAMILY=vanilla` census. No shipped-script, stub-use or native parity
+total changes are claimed. See [the contract and capture gaps](../spec-notes/player-source-commands.md).
+
 ## 1. Method
 
 - **Which functions**: `fnvtool script coverage` over the ten masters: every opcode the

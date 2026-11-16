@@ -5996,6 +5996,25 @@ order = [[{ re = 'GetItemCount on .*>> 1\.00' }, { re = 'death item: 0x00168D1A'
 # ------------------------------------------------------------------ script stubs
 
 [[scenario]]
+name = "player-source-commands"
+source = "#2271: authored runtime source calls reach the existing player attribute, fractional reputation and level/menu consumers (docs/spec-notes/player-source-commands.md). Native GECK encoding and original-game parity are unmeasured."
+note = "UNRUN. Uses the real query-job launcher path; a post-command sentinel and nonzero state changes prevent missing named handlers from passing. No profile or whole-mod acceptance claim."
+areas = ["scripts"]
+paths = ["crates/fnv-game/src/functions/player_source.rs", "crates/fnv-game/src/functions/reputation.rs", "crates/fnv-game/src/game.rs", "tools/smoke/fixtures/player-source-commands.steps.json"]
+env = { NVF_PLAY_TEST_QUERIES = "{repo}/tools/smoke/fixtures/player-source-commands.steps.json", NVF_PLAY_TEST_QUERIES_AT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
+run_seconds = 30
+ends = "run log: the game exited normally"
+expect = [
+  { text = 'script: print "nvf player source attribute delta 1"', count = 1 },
+  { text = 'script: print "nvf player source infamy 3.25"', count = 1 },
+  { text = 'script: print "nvf player source fame 11.5"', count = 1 },
+  { text = 'script: print "nvf player source level delta 1"', count = 1 },
+  { text = 'script: print "nvf player source sentinel 73"', count = 1 },
+  { text = "query job: player-source-commands: 1 steps, 1 rows, 0 errors, written to ", count = 1 },
+]
+
+[[scenario]]
 name = "vanilla-inline-call-operands"
 source = "[hypothesis: docs/spec-notes/vanilla-inline-call-operands.md] Authored scalar QueryJob exercises ordinary and grouped call operands with actual game dispatch; no Auto-loader/native/pixel or named-mod acceptance. NOT RUN."
 areas = ["scripts"]

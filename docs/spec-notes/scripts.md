@@ -1128,6 +1128,12 @@ the GameYear / GameMonth (from 0) / GameDay globals [hypothesis; 18 October 2281
 masters' start date, is a Tuesday]. IsAlwaysHardcore: on now and never switched off
 [hypothesis].
 
+[documented: repository `functions::reputation::remove_reputation_exact`] Source
+`RemoveReputationExact` reuses the fractional reputation writer and its events.
+See [player source commands](player-source-commands.md) for limits, invalid-axis
+policy and UNRUN authored controls. Native parameter encoding and original-game
+parity are unmeasured for this contribution.
+
 ### 7.7 Menus, message boxes and dialogue lines (round 4, 2026-10-09)
 
 Evidence: the round 4 captures from the new-game save `nvfnew` (layer5-captures.md §10),
