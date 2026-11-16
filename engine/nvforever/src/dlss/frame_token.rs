@@ -246,8 +246,11 @@ pub(super) fn set_reflex_options(mode: i32, frame_limit_us: u32) -> Option<(SetW
     Some((send, swapchains, result))
 }
 
-/// Refused `slReflexSetOptions` calls, which are made again each frame: said once for the same
-/// options and result, counted until one works (`dlss::reflex_options`).
+/// Refused `slReflexSetOptions` calls, which are made again each frame: a refusal is said when
+/// it differs from the one before (options or result), so the same refusal repeated frame after
+/// frame is said once; all are counted until a call works (`dlss::reflex_options`). Refusals
+/// that alternate are each said [design: kept simple; options change only with the switch or
+/// the cap].
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct Retries {
     /// The options (mode, frame limit) and result last refused, said.
@@ -390,6 +393,8 @@ mod tests {
         assert_eq!(r.worked(), 102, "the call that works says how many failed");
         assert_eq!(r.worked(), 0);
         assert!(r.failed((1, 13_889, -1)), "said again after a call worked");
+        // Only a repeat of the refusal before is kept quiet: alternating ones are each said.
+        assert!(r.failed((1, 6_944, -1)) && r.failed((1, 13_889, -1)));
     }
 
     #[test]

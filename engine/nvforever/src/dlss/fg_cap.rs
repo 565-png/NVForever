@@ -16,49 +16,53 @@
 //! **The rules** [design]. Only presents that showed something count (0: the window minimised,
 //! an image that came back outdated, changes nothing).
 //!
-//! - **Waiting** (divisor 1, the full limit): at the start, after DLSS-G is loaded or unloaded,
-//!   and after the mode was off for [`MENU_FRAMES`] real frames in a row ("menus": menus,
-//!   loading, the pause). A window change or the live switch holds the mode off for one to three
-//!   frames (`frame_gen.rs` `window_changes`), under [`MENU_FRAMES`], so it changes nothing.
-//! - **Starting**: the first present with the mode on after Waiting divides by the frames asked
-//!   for at once, before any frame has shown generation (the bootstrap: the cap does not decide
-//!   whether DLSS-G generates, so dividing at once only spares the first frames a burst at the
-//!   full limit). A new number of frames asked for (the Generated frames row, up or down) does
-//!   the same. Both start the history again.
-//! - **Following the rate**: the history is the last [`WINDOW`] presents with the mode on, every
-//!   count in it (those presented once too). Its mean, rounded (half up), between 1 and the
-//!   frames asked for, is what the divisor moves to, when the mean is [`HYSTERESIS`] or more from
-//!   the divisor, the history is full, the present itself generated (so a run of presents shown
-//!   once never steps it down frame by frame), and [`MIN_DWELL`] presents have passed since the
-//!   last change. A divisor of 1 is the full limit (generation paused); the same rule divides
-//!   again once the history's mean has climbed to 1.75 ("generation resumed"), so a resume needs
-//!   generation sustained over a good part of the history, and the history is not started again
-//!   by a pause or a resume: an intermittent pattern that does not change settles on one divisor.
-//!   Steady 4, 1, 4, 1 at 4x averages 2.5 and divides by 3.
-//! - **A quick pause**: while divided, [`PAUSE_RUN`] presents in a row shown once (the window
-//!   left the front, or generation never started) go to the full limit at once ("presented 1 per
-//!   real frame for N frames"), without waiting for the mean. Each quick pause doubles the run
-//!   the next one needs (up to [`PAUSE_RUN_MAX`]), so bursts of generation and runs shown once
-//!   repeating leave it to the mean; [`QUIET_FRAMES`] presents with no run of [`PAUSE_RUN`] / 2
-//!   shown once bring it back to [`PAUSE_RUN`].
+//! 1. **Menus**: the mode off for [`MENU_FRAMES`] presents in a row is the full limit until the
+//!    mode is on again (menus, loading, the pause). A window change or the live switch holds the
+//!    mode off for one to three frames (`frame_gen.rs` `window_changes`), under that.
+//! 2. **Start**: the first present with the mode on after that, at the start, or after DLSS-G
+//!    was loaded or unloaded, divides by the frames asked for at once, before any frame has shown
+//!    generation (the cap does not decide whether DLSS-G generates); so does a new number of
+//!    frames asked for (the Generated frames row, up or down). Both start the history again.
+//! 3. **The rate**: the history is the last [`WINDOW`] presents with the mode on, every count in
+//!    it (those shown once too). From [`MIN_SAMPLES`] of them on, after every present, the divisor
+//!    moves to the history's mean, rounded half up, between 1 and the frames asked for, when the
+//!    mean is [`HYSTERESIS`] or more from it. 1 is the full limit; from 1 the same rule divides
+//!    again once the mean is back to 1.75 ("generation resumed").
+//! 4. **Quick pause**: while divided, a run of presents shown once longer than [`QUICK_PAUSE`] - 1
+//!    and longer than every run shown once that ended in the last [`RUN_MEMORY`] presents goes to
+//!    the full limit at once ("presented 1 per real frame for N frames"), and the history keeps
+//!    only that run, so resuming takes generation that brings the mean back to 1.75.
+//!
+//! **What this guarantees** (the tests check each):
+//! - A steady rate settles at once: all 4 at 4x divides by 4; DLSS-G presenting 3 where 4 were
+//!   asked divides by 3.
+//! - A pattern repeating with a period of at most 64 presents settles after a warm-up of one
+//!   history and never moves again: over [`WINDOW`] presents its mean spreads by under 0.5 (at
+//!   most 0.42, for 27 presents of 4 then 28 shown once at 4x), less than the 2 × 0.75 - 1 a move
+//!   and its way back need, and its runs shown once are no longer than the ones remembered, so no
+//!   quick pause comes after the first period. Where it settles can depend on where it came from
+//!   (the hysteresis): 4, 1, 4, 1 at 4x (2.5 a real frame) settles at 3 from the start, at 2
+//!   after a pause.
+//! - The window losing the front reaches the full limit after [`QUICK_PAUSE`] presents shown
+//!   once when nothing like it came in the last [`RUN_MEMORY`] presents, and in any case after
+//!   one more than the longest run shown once among them.
+//! - Generation back after a long pause divides again within 48 presents at 4x (0.75 × 192 / 3),
+//!   then climbs to the frames asked for in steps, one line each.
 //!
 //! Each change of the divisor is one `frame cap:` line with its reason ([`Change::line`]).
 
 use std::collections::VecDeque;
 
-/// Real frames in a row with DLSS-G's mode off before the cap is the full limit ("menus").
+/// Presents in a row with DLSS-G's mode off before the cap is the full limit ("menus").
 pub(super) const MENU_FRAMES: u32 = 8;
-/// Presents in a row shown once, while divided, for a quick pause (doubled by each one).
-pub(super) const PAUSE_RUN: u32 = 16;
-/// The most the quick pause's run grows to.
-pub(super) const PAUSE_RUN_MAX: u32 = 256;
-/// Presents with no run of `PAUSE_RUN / 2` shown once before the quick pause's run is
-/// [`PAUSE_RUN`] again.
-pub(super) const QUIET_FRAMES: u32 = 600;
+/// The shortest run of presents shown once for a quick pause.
+pub(super) const QUICK_PAUSE: u32 = 16;
+/// Presents over which runs shown once are remembered: a quick pause needs a longer run.
+pub(super) const RUN_MEMORY: u64 = 1024;
 /// Presents the mean is taken over.
-pub(super) const WINDOW: usize = 32;
-/// Presents after a change before the mean may move the divisor again.
-pub(super) const MIN_DWELL: u32 = 16;
+pub(super) const WINDOW: usize = 192;
+/// Presents in the history before its mean moves the divisor.
+pub(super) const MIN_SAMPLES: usize = 16;
 /// How far the mean must be from the divisor before the divisor follows it.
 const HYSTERESIS: f64 = 0.75;
 
@@ -110,18 +114,17 @@ pub(super) struct CapDivisor {
     asked: u32,
     off_run: u32,
     once_run: u32,
-    /// Presents since the divisor last changed.
-    dwell: u32,
-    /// The run of presents shown once a quick pause needs now.
-    pause_run: u32,
-    /// Presents since a run of `PAUSE_RUN / 2` shown once.
-    quiet: u32,
+    /// Presents with the mode on so far (the clock of [`RUN_MEMORY`]).
+    presents: u64,
     window: VecDeque<u32>,
+    sum: u32,
+    /// Runs shown once that ended: (the present that ended it, its length).
+    runs: VecDeque<(u64, u32)>,
 }
 
 impl Default for CapDivisor {
     fn default() -> Self {
-        Self { waiting: true, divisor: 1, asked: 1, off_run: 0, once_run: 0, dwell: 0, pause_run: PAUSE_RUN, quiet: 0, window: VecDeque::with_capacity(WINDOW) }
+        Self { waiting: true, divisor: 1, asked: 1, off_run: 0, once_run: 0, presents: 0, window: VecDeque::with_capacity(WINDOW), sum: 0, runs: VecDeque::new() }
     }
 }
 
@@ -165,31 +168,38 @@ impl CapDivisor {
         if asked != self.asked {
             return self.start(asked, format!("{asked} frames asked for per real frame"));
         }
-        self.dwell = self.dwell.saturating_add(1);
-        self.once_run = if p.presented <= 1 { self.once_run + 1 } else { 0 };
-        self.quiet = if self.once_run >= PAUSE_RUN / 2 { 0 } else { self.quiet.saturating_add(1) };
-        if self.quiet >= QUIET_FRAMES {
-            self.pause_run = PAUSE_RUN;
+        self.presents += 1;
+        if p.presented > 1 && self.once_run > 0 {
+            self.runs.push_back((self.presents, self.once_run));
         }
+        self.once_run = if p.presented <= 1 { self.once_run.saturating_add(1) } else { 0 };
         if self.window.len() == WINDOW {
-            self.window.pop_front();
+            self.sum -= self.window.pop_front().unwrap_or(0);
         }
         self.window.push_back(p.presented);
-        if self.divisor >= 2 && self.once_run >= self.pause_run {
+        self.sum += p.presented;
+        while self.runs.front().is_some_and(|&(end, _)| end + RUN_MEMORY <= self.presents) {
+            self.runs.pop_front();
+        }
+        let longest = self.runs.iter().map(|&(_, run)| run).max().unwrap_or(0);
+        if self.divisor >= 2 && self.once_run > longest.max(QUICK_PAUSE - 1) {
             let run = self.once_run;
-            self.pause_run = (self.pause_run * 2).min(PAUSE_RUN_MAX);
+            // The history keeps the run alone: resuming needs generation to make up for it.
+            while self.window.len() > run as usize {
+                self.sum -= self.window.pop_front().unwrap_or(0);
+            }
             return self.set(1, format!("presented 1 per real frame for {run} frames"));
         }
-        if self.window.len() < WINDOW || self.once_run > 0 || self.dwell < MIN_DWELL {
+        if self.window.len() < MIN_SAMPLES {
             return None;
         }
-        let mean = f64::from(self.window.iter().sum::<u32>()) / WINDOW as f64;
+        let mean = f64::from(self.sum) / self.window.len() as f64;
         let to = (mean.round() as u32).clamp(1, asked);
         if to == self.divisor || (mean - f64::from(self.divisor)).abs() < HYSTERESIS {
             return None;
         }
         let head = if self.divisor == 1 { "generation resumed: " } else { "" };
-        self.set(to, format!("{head}presented {mean:.2} per real frame over the last {WINDOW} frames"))
+        self.set(to, format!("{head}presented {mean:.2} per real frame over the last {} frames", self.window.len()))
     }
 
     /// Divided by `asked` at once, the history started again.
@@ -198,11 +208,11 @@ impl CapDivisor {
         self.asked = asked;
         self.once_run = 0;
         self.window.clear();
+        self.sum = 0;
         self.set(asked, reason)
     }
 
     fn set(&mut self, to: u32, reason: String) -> Option<Change> {
-        self.dwell = 0;
         let from = std::mem::replace(&mut self.divisor, to);
         (from != to).then_some(Change { from, to, reason })
     }
@@ -225,16 +235,21 @@ mod tests {
         presents.into_iter().filter_map(|p| c.after(p)).collect()
     }
 
-    /// `pattern` repeated over `n` presents at `asked`.
+    /// `pattern` repeated over `n` presents at `asked`, each count at most `asked`.
     fn repeat(pattern: &[u32], n: usize, asked: u32) -> impl Iterator<Item = Present> + '_ {
-        pattern.iter().cycle().take(n).map(move |&p| on(p, asked))
+        pattern.iter().cycle().take(n).map(move |&p| on(p.min(asked), asked))
+    }
+
+    /// `n` presents of `count` followed by `m` shown once.
+    fn burst(n: usize, count: u32, m: usize) -> Vec<u32> {
+        std::iter::repeat_n(count, n).chain(std::iter::repeat_n(1, m)).collect()
     }
 
     #[test]
     fn all_four_divides_by_four_from_the_first_frame() {
         let mut c = CapDivisor::default();
         assert_eq!(c.divisor(), 1, "the full limit before any present");
-        let changes = run(&mut c, repeat(&[4], 200, 4));
+        let changes = run(&mut c, repeat(&[4], 500, 4));
         assert_eq!(c.divisor(), 4);
         assert_eq!(changes.len(), 1, "said once: {changes:?}");
         assert_eq!(changes[0].line(), "frame cap: real frames at the limit divided by 4, was the full limit (generation starting: DLSS-G's mode on)");
@@ -248,9 +263,9 @@ mod tests {
         assert_eq!((c.divisor(), c.phase()), (3, Phase::Generating), "divided while generation starts");
         assert_eq!(changes.len(), 1);
         // A start where it never generates (the window not in front): the full limit after
-        // PAUSE_RUN presented once after the bootstrap's own present, said with the count.
+        // QUICK_PAUSE presented once after the bootstrap's own present, said with the count.
         let mut c = CapDivisor::default();
-        let changes = run(&mut c, repeat(&[1], PAUSE_RUN as usize, 4));
+        let changes = run(&mut c, repeat(&[1], QUICK_PAUSE as usize, 4));
         assert_eq!(c.divisor(), 4, "not yet: {changes:?}");
         let changes = run(&mut c, [on(1, 4)]);
         assert_eq!((c.divisor(), c.phase()), (1, Phase::Paused));
@@ -258,103 +273,115 @@ mod tests {
     }
 
     #[test]
-    fn all_ones_while_on_is_the_full_limit_until_generation_resumes() {
-        let mut c = CapDivisor::default();
-        run(&mut c, repeat(&[4], 100, 4));
-        // Streamline stops interpolating (the window not in front), the status still eOk: one
-        // quick pause, no steps down on the way.
-        let changes = run(&mut c, repeat(&[1], 480, 4));
-        assert_eq!(c.divisor(), 1);
-        assert_eq!(changes.len(), 1, "one line for the pause: {changes:?}");
-        // A generated frame now and then does not divide again.
-        let changes = run(&mut c, repeat(&[4, 1, 1, 1, 1, 1, 1, 1], 200, 4));
-        assert_eq!((c.divisor(), changes.len()), (1, 0), "{changes:?}");
-        // Generation back for good: divided again, up to four, each step a line.
-        let changes = run(&mut c, repeat(&[4], 200, 4));
-        assert_eq!(c.divisor(), 4);
-        assert!(changes[0].reason.starts_with("generation resumed: presented "), "{changes:?}");
-        assert!(changes.windows(2).all(|w| w[1].to > w[0].to) && changes.len() <= 3, "{changes:?}");
-    }
-
-    #[test]
-    fn a_mixed_run_follows_the_mean_without_flapping() {
-        let mut c = CapDivisor::default();
-        // Now and then a frame presented once: still divided by four.
-        let changes = run(&mut c, (0..400).map(|i| on(if i % 16 == 7 { 1 } else { 4 }, 4)));
-        assert_eq!((c.divisor(), changes.len()), (4, 1), "{changes:?}");
-        // One in four presented once: 3.25 a real frame, divided by three, moved once.
-        let changes = run(&mut c, repeat(&[4, 4, 4, 1], 400, 4));
-        assert_eq!((c.divisor(), changes.len()), (3, 1), "{changes:?}");
-        assert!(changes[0].reason.starts_with("presented 3.25 per real frame over the last 32 frames"), "{}", changes[0].reason);
-        // DLSS-G presenting three where four were asked: divided by three.
+    fn a_steady_rate_settles_at_once() {
+        // DLSS-G presenting three where four were asked: divided by three, moved once.
         let mut c = CapDivisor::default();
         let changes = run(&mut c, repeat(&[3], 400, 4));
         assert_eq!((c.divisor(), changes.len()), (3, 2), "{changes:?}");
-        // Means around 3.5 (between 3 and 4) do not move it either way.
-        let changes = run(&mut c, repeat(&[3, 4], 400, 4));
-        assert_eq!((c.divisor(), changes.len()), (3, 0), "{changes:?}");
-        // Generation in one frame of five at 2x: 1.2 a real frame, the full limit.
+        assert!(changes[1].reason.starts_with("presented 3.00 per real frame over the last 16 frames"), "{changes:?}");
+        // Now and then a frame presented once: still divided by four.
         let mut c = CapDivisor::default();
-        let changes = run(&mut c, (0..400).map(|i| on(if i % 5 == 0 { 2 } else { 1 }, 2)));
-        assert_eq!((c.divisor(), c.phase()), (1, Phase::Paused), "{changes:?}");
-        assert_eq!(changes.len(), 2, "divided at the start, the full limit once: {changes:?}");
+        let changes = run(&mut c, (0..2000).map(|i| on(if i % 16 == 7 { 1 } else { 4 }, 4)));
+        assert_eq!((c.divisor(), changes.len()), (4, 1), "{changes:?}");
     }
 
-    /// Review #2731 r1: 4, 1, 4, 1 at 4x presents 2.5 a real frame, not 4.
+    /// Review #2731 r1/r2: patterns repeating with a period of at most 64 presents settle after
+    /// a warm-up and never move again, from the start, from a pause and from steady generation.
     #[test]
-    fn steady_four_one_divides_by_the_rate_presented() {
+    fn repeating_patterns_settle_after_a_warm_up() {
+        let patterns: Vec<(&str, Vec<u32>)> = vec![
+            ("4,1", vec![4, 1]),
+            ("4x4+5x1", burst(4, 4, 5)),
+            ("16x4+32x1", burst(16, 4, 32)),
+            ("16x4+16x1", burst(16, 4, 16)),
+            ("1x4+3x1", burst(1, 4, 3)),
+            ("4x4+1x1", burst(3, 4, 1)),
+            ("27x4+28x1", burst(27, 4, 28)),
+            ("8x4+24x1", burst(8, 4, 24)),
+            ("32x4+32x1", burst(32, 4, 32)),
+            ("15x1+1x4", burst(1, 4, 15)),
+            ("3,4", vec![3, 4]),
+            ("2,1,1", vec![2, 1, 1]),
+        ];
+        for (name, pattern) in &patterns {
+            for asked in 2..=4 {
+                for before in ["fresh", "paused", "divided"] {
+                    let mut c = CapDivisor::default();
+                    match before {
+                        "paused" => {
+                            run(&mut c, repeat(&[4], 50, asked));
+                            run(&mut c, repeat(&[1], 300, asked));
+                        }
+                        "divided" => {
+                            run(&mut c, repeat(&[4], 300, asked));
+                        }
+                        _ => {}
+                    }
+                    // One series, so the pattern keeps its phase from the warm-up on.
+                    let mut series = repeat(pattern, 6000, asked);
+                    run(&mut c, series.by_ref().take(1000));
+                    let settled = c.divisor();
+                    let changes = run(&mut c, series);
+                    assert!(changes.is_empty(), "{name} at {asked}x from {before} (settled at {settled}): {changes:?}");
+                }
+            }
+        }
+        // Where 4, 1, 4, 1 at 4x settles depends on where it came from (the hysteresis).
         let mut c = CapDivisor::default();
-        let changes = run(&mut c, repeat(&[4, 1], 400, 4));
-        assert_eq!(c.divisor(), 3, "2.5 rounds half up: {changes:?}");
-        assert_eq!(changes.len(), 2, "the start, then once: {changes:?}");
-        assert!(changes[1].reason.starts_with("presented 2.50 per real frame"), "{changes:?}");
-        let changes = run(&mut c, repeat(&[4, 1], 2000, 4));
-        assert!(changes.is_empty(), "settled: {changes:?}");
+        run(&mut c, repeat(&[4, 1], 1000, 4));
+        assert_eq!(c.divisor(), 3, "2.5 a real frame, from the start: rounded half up");
+        let mut c = CapDivisor::default();
+        run(&mut c, repeat(&[4], 50, 4));
+        run(&mut c, repeat(&[1], 300, 4));
+        run(&mut c, repeat(&[4, 1], 1000, 4));
+        assert_eq!(c.divisor(), 2, "from a pause: resumed at 2, and 2.5 is within the hysteresis");
     }
 
-    /// Review #2731 r1: an intermittent pattern that does not change settles in one state
-    /// instead of pausing and resuming over and over.
     #[test]
-    fn bursts_and_runs_shown_once_settle() {
-        // Four generated, five shown once.
+    fn losing_the_front_reaches_the_full_limit_quickly() {
+        // After steady generation: QUICK_PAUSE presents shown once, one line, no steps on the way.
         let mut c = CapDivisor::default();
-        let changes = run(&mut c, repeat(&[4, 4, 4, 4, 1, 1, 1, 1, 1], 900, 4));
-        assert!(changes.len() <= 3, "{changes:?}");
-        assert!((2..=3).contains(&c.divisor()), "{changes:?}");
-        let changes = run(&mut c, repeat(&[4, 4, 4, 4, 1, 1, 1, 1, 1], 3000, 4));
-        assert!(changes.is_empty(), "settled: {changes:?}");
-        // Sixteen generated, sixteen shown once: one quick pause, then the mean, which a run of
-        // sixteen no longer pauses (the run doubled) and which keeps it divided.
-        let mut c = CapDivisor::default();
-        let pattern: Vec<u32> = [4; 16].into_iter().chain([1; 16]).collect();
-        let changes = run(&mut c, repeat(&pattern, 640, 4));
-        assert!(changes.len() <= 3, "{changes:?}");
-        let changes = run(&mut c, repeat(&pattern, 3200, 4));
-        assert!(changes.is_empty(), "settled, longer than QUIET_FRAMES too: {changes:?}");
-        assert!(c.divisor() >= 2);
-    }
-
-    /// Review #2731 r1: after a pause, an alternating pattern resumes once and stays.
-    #[test]
-    fn a_pause_then_alternating_resumes_once() {
-        let mut c = CapDivisor::default();
-        run(&mut c, repeat(&[4], 100, 4));
-        run(&mut c, repeat(&[1], 200, 4));
-        assert_eq!(c.divisor(), 1);
-        let changes = run(&mut c, repeat(&[4, 1], 400, 4));
-        assert_eq!(changes.len(), 1, "{changes:?}");
-        assert!(changes[0].reason.starts_with("generation resumed: "), "{changes:?}");
-        assert!((2..=3).contains(&c.divisor()));
-        let changes = run(&mut c, repeat(&[4, 1], 2000, 4));
-        assert!(changes.is_empty(), "settled: {changes:?}");
-        // A later loss of focus, after a quiet spell, pauses quickly again.
-        let mut c = CapDivisor::default();
-        run(&mut c, repeat(&[4], 100, 4));
-        run(&mut c, repeat(&[1], 100, 4));
-        run(&mut c, repeat(&[4], QUIET_FRAMES as usize + 100, 4));
-        assert_eq!(c.divisor(), 4);
-        let changes = run(&mut c, repeat(&[1], PAUSE_RUN as usize, 4));
+        run(&mut c, repeat(&[4], 500, 4));
+        let changes = run(&mut c, repeat(&[1], QUICK_PAUSE as usize - 1, 4));
+        assert!(changes.is_empty() && c.divisor() == 4, "{changes:?}");
+        let changes = run(&mut c, repeat(&[1], 1, 4));
         assert_eq!((c.divisor(), changes.len()), (1, 1), "{changes:?}");
+        // After a pattern with runs of 32 shown once: one more than that.
+        let mut c = CapDivisor::default();
+        let pattern = burst(16, 4, 32);
+        run(&mut c, repeat(&pattern, 2000, 4));
+        run(&mut c, repeat(&[4; 16], 16, 4));
+        assert!(c.divisor() >= 2);
+        let changes = run(&mut c, repeat(&[1], 32, 4));
+        assert!(changes.is_empty() && c.divisor() >= 2, "a run as long as the pattern's: {changes:?}");
+        let changes = run(&mut c, repeat(&[1], 1, 4));
+        assert_eq!((c.divisor(), changes.len()), (1, 1), "{changes:?}");
+        // Long after the pattern, a short run pauses quickly again.
+        run(&mut c, repeat(&[4], RUN_MEMORY as usize + 200, 4));
+        assert_eq!(c.divisor(), 4);
+        let changes = run(&mut c, repeat(&[1], QUICK_PAUSE as usize, 4));
+        assert_eq!((c.divisor(), changes.len()), (1, 1), "{changes:?}");
+    }
+
+    #[test]
+    fn generation_back_divides_again_in_steps() {
+        let mut c = CapDivisor::default();
+        run(&mut c, repeat(&[4], 500, 4));
+        run(&mut c, repeat(&[1], 1000, 4));
+        assert_eq!(c.divisor(), 1);
+        // A generated frame now and then does not divide again.
+        let changes = run(&mut c, repeat(&[4, 1, 1, 1, 1, 1, 1, 1], 400, 4));
+        assert_eq!((c.divisor(), changes.len()), (1, 0), "{changes:?}");
+        let mut c = CapDivisor::default();
+        run(&mut c, repeat(&[4], 500, 4));
+        run(&mut c, repeat(&[1], 1000, 4));
+        // Generation back for good: divided again within 48 presents, then up to four.
+        let changes = run(&mut c, repeat(&[4], 48, 4));
+        assert_eq!(c.divisor(), 2, "{changes:?}");
+        assert!(changes[0].reason.starts_with("generation resumed: presented 1.75"), "{changes:?}");
+        let changes = run(&mut c, repeat(&[4], 400, 4));
+        assert_eq!(c.divisor(), 4);
+        assert_eq!(changes.iter().map(|c| c.to).collect::<Vec<_>>(), [3, 4], "{changes:?}");
     }
 
     #[test]
@@ -374,7 +401,7 @@ mod tests {
         assert_eq!(c.divisor(), 3);
         assert_eq!(changes[0].reason, "generation starting: DLSS-G's mode on");
         // Paused (not in front), then a menu: no line for the menu, the next play divides.
-        run(&mut c, repeat(&[1], PAUSE_RUN as usize, 3));
+        run(&mut c, repeat(&[1], QUICK_PAUSE as usize, 3));
         assert_eq!(c.divisor(), 1);
         let changes = run(&mut c, std::iter::repeat_n(off(), 20));
         assert!(changes.is_empty(), "{changes:?}");
@@ -395,7 +422,7 @@ mod tests {
         let changes = run(&mut c, [on(4, 2)]);
         assert_eq!(c.divisor(), 2);
         assert_eq!(changes[0].reason, "2 frames asked for per real frame");
-        let changes = run(&mut c, repeat(&[2], 200, 2));
+        let changes = run(&mut c, repeat(&[2], 400, 2));
         assert!(changes.is_empty(), "{changes:?}");
         assert_eq!(c.divisor(), 2);
     }

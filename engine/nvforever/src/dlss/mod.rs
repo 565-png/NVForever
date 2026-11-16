@@ -320,9 +320,9 @@ pub(crate) fn reflex_running() -> bool {
 /// and the swapchain"; #2732) (`slReflexSetOptions` is not thread safe: the main thread,
 /// `nv_low_latency.rs` at each frame's input). Each is said, with the swapchains made so far:
 /// `Reflex options: … (swapchains made: N)` for a change, `Reflex options set again for a new
-/// swapchain: … (swapchains made: N)` for the other. A refused call is made again each frame but
-/// said once for the same options and result, and the call that works after it says how many
-/// tries failed (`frame_token::Retries`). `Err`: Streamline refused, or Reflex does not run.
+/// swapchain: … (swapchains made: N)` for the other. A refused call is made again each frame; a
+/// refusal repeated frame after frame is said once, and the call that works after it says how
+/// many tries failed (`frame_token::Retries`). `Err`: Streamline refused, or Reflex does not run.
 pub(crate) fn reflex_options(on: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -346,7 +346,7 @@ pub(crate) fn reflex_options(on: bool) -> Result<(), String> {
                     Ok(())
                 } else {
                     if retries.failed((mode, limit, result.0)) {
-                        note_fg(Level::WARN, format!("{head}: {options} (swapchains made: {swapchains}); tried again each frame, said once"));
+                        note_fg(Level::WARN, format!("{head}: {options} (swapchains made: {swapchains}); tried again each frame, the same refusal said once"));
                     }
                     Err(format!("slReflexSetOptions {}", result.name()))
                 }

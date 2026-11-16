@@ -2,7 +2,8 @@
 //! refresh) and an optional cap on the frame rate (docs/design/graphics-enhanced.md §3.10).
 //! Both are settings-page rows (`settings.rs`); vsync starts on, as Bevy's default, except
 //! while `--log-frame-times` measures (then off and not on the page), and there is no cap
-//! unless one is chosen. Neither changes the picture.
+//! unless one is chosen (while measuring, the cap is off the page too, and the test aid
+//! `--frame-cap <fps>` sets one for the run). Neither changes the picture.
 //!
 //! **Variable refresh** (G-Sync, FreeSync; #1082) keeps vsync on and caps the frame rate a
 //! few frames below the monitor's refresh rate ([`vrr_cap`]), so a frame never comes in
