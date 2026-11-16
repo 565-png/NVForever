@@ -142,7 +142,7 @@ the spec it links to.
   Use `fJumpFallHeightMin` (`SAFE_DROP_HEIGHT` fallback 600) as the per-link safety
   limit when the ordinary route is unavailable; no invented ledge links. A lower
   limit would leave more patrol routes unreachable. [hypothesis] This predicts
-  harmless falls; parity is pending observer check 213
+  harmless falls; parity is pending observer check 214
   ([navmesh](design/navmesh.md#3-paths), [packages](spec-notes/packages.md)).
 
 - **Darting movement clips (#2352).** [design, #2352] `ROOT_EXCURSION_RATIO = 1.5`

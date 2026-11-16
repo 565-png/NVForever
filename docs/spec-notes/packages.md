@@ -618,7 +618,7 @@ different thing: `fnv_ai::alert`); ForceFlee]:
   following `engine/nvf-play/src/falls.rs`; physics.md section 6.10).
   [hypothesis, #2532] This individual-link height predicts a harmless fall; original
   scene parity, collision along the arc and cumulative falls remain unverified
-  (observer check 213). No new links or ranger-specific package overrides are created.
+  (observer check 214). No new links or ranger-specific package overrides are created.
 - **No Warn/Attack Behavior** (4 Ambush, 18 Dialogue, 6 Eat and others): no aggro-radius
   warnings or attack (`fnv_game::aggro`) [hypothesis: the flag's name, xEdit; no page
   describes it].

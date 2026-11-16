@@ -33,7 +33,7 @@ over FalloutNV.esm (2026-10-20). The player's own jump is physics.md ยง6.3 and ย
   smoothing disable these drops; search-limit failures do not enable them
   (`fnv_nav::NavGraph::search_path`). Existing climb rules stay unchanged.
   [hypothesis, #2532] The planned takeoff-to-landing height predicts safety
-  for a single drop (physics.md section 6.10); observer check 213 checks this policy.
+  for a single drop (physics.md section 6.10); observer check 214 checks this policy.
 - **Settings**: FalloutNV.esm holds four jump settings, all about falls: `fJumpFallHeightMin`,
   `fJumpFallHeightExponent`, `fJumpFallVelocityMin`, `fJumpSwimmingMult` [observed:
   `fnvtool esm inventory`, the GMST Editor IDs containing "jump"; their values are in
@@ -140,6 +140,6 @@ walks round them, `fnv_ai::apart`). Actors on the navmesh surface meet no obstac
 - Whether the original's actors take a ledge-up link at all, and how high they jump.
 - Whether they jump obstacles, and by what rule; whether a drop without Allow Falls is
   taken when it would not hurt [hypothesis, #2532: now provisionally allowed as above;
-  observer check 213].
+  observer check 214].
 - An AI observer capture of a follower taking a drop down (Boone after the player off a
   marked ledge) would answer the first and the take-off.

@@ -91,7 +91,7 @@ retry with bounded full A* and harmless drops, including when an area/door route
 but its triangle search cannot reach the goal. Search-limit errors are retained.
 The navigation default remains opt-in, and unrestricted ledges and
 climbs retain their existing policy. [hypothesis, #2532] Per-link height is a provisional
-safety estimate, not a measurement of the original (observer check 213).
+safety estimate, not a measurement of the original (observer check 214).
 
 [documented: supplied #2532 record brief, main-session fnvtool 2026-11-15]
 The showdown controller enables rangers 0x001438DA/DB; their Patrol package 0x001438E8
@@ -107,7 +107,7 @@ differ by about 221 units. The next two legs, 02 to 03 (517 units) and 03 to 04
 departure to marker 02, a per-ranger drop diagnostic and marker 02 arrival, in order.
 [hypothesis, #2532] The safe-drop fallback should permit this descent; natural package
 selection and physical traversal still need the main-session smoke, and original
-behavior remains observer check 213.
+behavior remains observer check 214.
 
 ## 4. Following
 
