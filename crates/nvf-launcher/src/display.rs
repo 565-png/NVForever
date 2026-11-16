@@ -103,10 +103,55 @@ pub fn steps(key: &str) -> Option<Vec<String>> {
     match key {
         "ui-scale" => Some((0..21).map(|i| format!("{}%", 50 + 5 * i)).collect()),
         "menu-scale" => Some((0..11).map(|i| format!("{}%", 50 + 5 * i)).collect()),
+        // graphics.rs AA_CHOICES and SHADOW_FILTERS, shadow_rate.rs SUN_SHADOW_CHOICES.
+        "anti-aliasing" => Some(["Off", "2x", "4x", "8x", "FXAA", "SMAA", "TAA"].map(String::from).to_vec()),
+        "shadow-filter" => Some(["Fast", "Smooth", "Temporal"].map(String::from).to_vec()),
+        "sun-shadows" => Some(["Off", "Performance", "Quality"].map(String::from).to_vec()),
         // Degrees in steps of 5 (engine settings.rs FOV_MIN..FOV_MAX, VIEWMODEL_FOV_*).
         "field-of-view" => Some((0..13).map(|i| format!("{}°", 50 + 5 * i)).collect()),
         "viewmodel-field-of-view" => Some((0..13).map(|i| format!("{}°", 30 + 5 * i)).collect()),
         k if colour_of_part(k).is_some() => Some((0..=255).map(|i: u32| i.to_string()).collect()),
+        _ => None,
+    }
+}
+
+/// The lists kept by their names: Button style (nvf-play pad.rs `ButtonStyle`), Upscaler
+/// (engine settings.rs `UPSCALERS`; its "Download DLSS…" is the game's own), Upscaling mode
+/// (upscaler.rs `UpscaleQuality`), DLSS model (`DlssModel`), FSR library (settings.rs) and
+/// Generated frames (`FRAMES_CHOICES`).
+pub fn named_choices(key: &str) -> Option<Vec<Choice>> {
+    let names: &[&str] = match key {
+        "button-style" => &["Auto", "Xbox", "PlayStation"],
+        "upscaler" => &["Off", "FSR 3.1", "DLSS"],
+        "upscaler-quality" => &["Native AA", "Quality", "Balanced", "Performance", "Ultra Performance"],
+        "dlss-model" => &["Default", "K", "L", "M", "J"],
+        "fsr-library" => &["Built-in", "Game folder"],
+        "frame-generation-frames" => &["2x", "3x", "4x"],
+        _ => return None,
+    };
+    Some(names.iter().map(|n| choice(*n, *n)).collect())
+}
+
+/// Frame generation (frame_gen.rs `FrameGenKind`: shown `FSR 3.1`, kept `fsr`).
+pub fn frame_gen_choices() -> Vec<Choice> {
+    vec![choice("Off", "off"), choice("FSR 3.1", "fsr"), choice("DLSS", "dlss")]
+}
+
+/// Rows whose value the game works out from the rows under them (quality.rs): Quality preset
+/// and Enhanced effects. Choosing one in the game rewrites those rows (a preset from the game
+/// folder's preset files); the INI's word alone does nothing, so the launcher shows it only.
+pub fn read_only(key: &str) -> bool {
+    matches!(key, "quality" | "enhanced")
+}
+
+/// A key the game reads only while the INI lacks the key that took over from it
+/// (`set_older_key`): `fsr-upscaling` before Upscaler and Upscaling mode (settings.rs
+/// `LEGACY_KEY`), `vsync` before Display sync (`read_old_vsync`). The Other tab leaves it out
+/// once the newer key is there.
+pub fn superseded_by(key: &str) -> Option<&'static str> {
+    match key {
+        "fsr-upscaling" => Some("upscaler"),
+        "vsync" => Some("display-sync"),
         _ => None,
     }
 }
@@ -326,6 +371,40 @@ mod tests {
         let langs = language_choices(&[std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../lang"))]);
         assert_eq!(langs[0], choice("English", "en"));
         assert!(langs.iter().any(|c| c.stored == "de" && c.label == "Deutsch"), "{langs:?}");
+    }
+
+    #[test]
+    fn graphics_and_controls_lists_match_the_game() {
+        let pad = play("pad.rs");
+        for c in named_choices("button-style").unwrap() {
+            assert!(pad.contains(&format!("ButtonStyle::{} => \"{}\"", c.label.replace(' ', ""), c.label)), "{c:?}");
+        }
+        assert!(pad.contains("save: |w| w.resource::<ButtonStyle>().name().to_string()"));
+        let st = engine("settings.rs");
+        assert!(st.contains("const UPSCALERS: [(&str, Upscaler); 3] = [(\"Off\", Upscaler::Off), (\"FSR 3.1\", Upscaler::Fsr), (\"DLSS\", Upscaler::Dlss)];"));
+        assert!(st.contains("save: upscaler_chosen,") && st.contains("save: quality_chosen,") && st.contains("save: model_chosen,"));
+        assert!(st.contains("const FSR_LIBRARY_BUILT_IN: &str = \"Built-in\";") && st.contains("const FSR_LIBRARY_FOLDER: &str = \"Game folder\";"));
+        assert!(st.contains("const FRAMES_CHOICES: [&str; 3] = [\"2x\", \"3x\", \"4x\"];"));
+        let up = engine("upscaler.rs");
+        for key in ["upscaler-quality", "dlss-model"] {
+            for c in named_choices(key).unwrap() {
+                assert!(up.contains(&format!("=> \"{}\"", c.label)), "{key}: {c:?}");
+            }
+        }
+        let fg = engine("frame_gen.rs");
+        for c in frame_gen_choices() {
+            assert!(fg.contains(&format!("=> \"{}\"", c.label)) && fg.contains(&format!("=> \"{}\"", c.stored)), "{c:?}");
+        }
+        let gr = engine("graphics.rs");
+        for w in steps("anti-aliasing").unwrap().iter().chain(steps("shadow-filter").unwrap().iter()) {
+            assert!(gr.contains(&format!("(\"{w}\", ")), "graphics.rs: {w}");
+        }
+        assert!(engine("shadow_rate.rs").contains("pub const SUN_SHADOW_CHOICES: [&str; 3] = [\"Off\", \"Performance\", \"Quality\"];"));
+        assert!(gr.contains("pub const AA_CHOICES: [(&str, ScreenAa, Msaa); 7]") && gr.contains("pub const SHADOW_FILTERS: [(&str, ShadowFilteringMethod); 3]"));
+        assert!(st.contains("pub(crate) const LEGACY_KEY: &str = \"fsr-upscaling\";") && st.contains("set_older_key(app, UPSCALER_KEY, LEGACY_KEY)"));
+        assert!(st.contains("if fnv_install::ini_get(&text, section, \"display-sync\").is_some() {") && st.contains("let Some(old) = fnv_install::ini_get(&text, section, \"vsync\")"), "the old vsync key is read only without display-sync");
+        let q = engine("quality.rs");
+        assert!(q.contains("fn load_quality(_world: &mut World, text: &str) -> bool") && q.contains("fn load_enhanced(_world: &mut World, text: &str) -> bool"), "the presets' INI word is read only to check it");
     }
 
     #[test]

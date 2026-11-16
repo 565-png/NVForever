@@ -187,7 +187,8 @@ impl App {
             // `settings:<tab>`: that tab of the Settings page.
             Ok(p) if p.starts_with("settings:") => {
                 let tab = &p["settings:".len()..];
-                app.tab = app.tabs.iter().position(|t| t.eq_ignore_ascii_case(tab)).unwrap_or(0);
+                // "other": the tab after the listed ones (the keys the reference does not list).
+                app.tab = app.tabs.iter().position(|t| t.eq_ignore_ascii_case(tab)).unwrap_or(if tab.eq_ignore_ascii_case("other") { app.tabs.len() } else { 0 });
                 Page::Settings
             }
             _ => Page::Home,
@@ -872,7 +873,12 @@ impl App {
 
     /// `[Settings]` keys the reference does not list (rows of a later build, the editor's).
     fn other_keys(&self) -> Vec<String> {
-        self.stored.keys().filter(|k| !self.rows.iter().any(|r| &r.key == *k)).cloned().collect()
+        self.stored
+            .keys()
+            .filter(|k| !self.rows.iter().any(|r| &r.key == *k))
+            .filter(|k| crate::display::superseded_by(k).is_none_or(|newer| !self.stored.contains_key(newer)))
+            .cloned()
+            .collect()
     }
 
     fn setting_row(&mut self, ui: &mut egui::Ui, key: &str, label: &str, note: &str) {
@@ -905,6 +911,12 @@ impl App {
                     // INI only ever holds "kept". The launcher shows the state (the same file).
                     if key == "reports-delete" {
                         self.reports_control(ui);
+                        return;
+                    }
+                    if crate::display::read_only(key) {
+                        ui.label(RichText::new("set in the game").small().color(WEAK))
+                            .on_hover_text("The game works this out from the rows below; choosing one there sets them all (a preset from the game folder's files).");
+                        ui.label(RichText::new(&v).strong());
                         return;
                     }
                     let new = if key == "resolution" {
@@ -1069,7 +1081,8 @@ impl App {
             "crosshair-style" => Some(display::crosshair_choices()),
             "hud-colour" | "pipboy-colour" => Some(display::colour_choices()),
             "language" => Some(self.languages.clone()),
-            _ => None,
+            "frame-generation" => Some(display::frame_gen_choices()),
+            k => display::named_choices(k),
         }
     }
 
