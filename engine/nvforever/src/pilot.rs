@@ -675,6 +675,11 @@ struct Pilot {
     /// The stall watchdog's last sign of progress: when, where the player stood, the step,
     /// the hours waited and the lines said then ([`STALL_SECS`]).
     stall: (f64, [f32; 3], usize, u32, u64),
+    /// Where the player stood, every few seconds over the last [`STALL_SECS`]: walking
+    /// counts as progress by the ground it gained over that time, not by single moves
+    /// (the stuck walk's 200-unit puts along its path each looked like 150 units walked
+    /// while it went round a refused door for many minutes, Vault 112's hatch).
+    trail: std::collections::VecDeque<(f64, [f32; 3])>,
     waiting: Option<f64>,
     /// Steps done the headless way, by kind.
     headless: std::collections::BTreeMap<String, u32>,
@@ -777,6 +782,7 @@ impl Pilot {
             searched: Vec::new(),
             waited: 0,
             stall: (0.0, [0.0; 3], usize::MAX, 0, 0),
+            trail: Default::default(),
             waiting: None,
             headless: Default::default(),
             failed_in_a_row: 0,
@@ -3674,8 +3680,11 @@ const CALL_UNTIL_CAP: f64 = 1800.0;
 /// said, an hour waited or the trigger pulled. Steps that wait on purpose (`call_until`,
 /// `advance_seconds`) are left to their own limits.
 const STALL_SECS: f64 = 90.0;
-/// How far the player has to walk from where it stood for that to count as progress.
+/// How far the player has to be from where it stood a while ago for its walking to count
+/// as progress.
 const STALL_MOVE: f32 = 150.0;
+/// How often the stall watchdog notes where the player stands, seconds.
+const STALL_SAMPLE: f64 = 5.0;
 
 /// The stall watchdog (owner 2026-11-16: "a better way for the bot to detect when its
 /// stalled"). The step's own limit ([`STEP_SECS`]) is reset by a step that keeps trying
@@ -3686,13 +3695,31 @@ const STALL_MOVE: f32 = 150.0;
 fn watch_stall(p: &mut Pilot, h: &mut Hands) -> bool {
     let feet = h.feet();
     let said = h.game(|g| g.softlock_seen.lines_begun).unwrap_or(0);
-    let (since, at, step, waited, lines) = p.stall;
-    let moved = hdist(feet, at) > STALL_MOVE || (feet[2] - at[2]).abs() > STALL_MOVE;
+    let (since, _, step, waited, lines) = p.stall;
+    if p.trail.back().is_none_or(|(t, _)| p.now - t >= STALL_SAMPLE) {
+        p.trail.push_back((p.now, feet));
+    }
+    while p.trail.len() > 1 && p.trail.get(1).is_some_and(|(t, _)| p.now - t >= STALL_SECS) {
+        p.trail.pop_front();
+    }
+    // Ground gained: away from every place it stood between half and the whole of
+    // STALL_SECS ago (going back and forth round a door comes back near one of them).
+    let old: Vec<[f32; 3]> = p.trail.iter().filter(|(t, _)| p.now - t >= STALL_SECS * 0.5).map(|(_, at)| *at).collect();
+    let moved = !old.is_empty() && old.iter().all(|at| hdist(feet, *at) > STALL_MOVE || (feet[2] - at[2]).abs() > STALL_MOVE);
+    if moved {
+        p.trail.clear();
+    }
     if step != p.i || moved || waited != p.waited || lines != said || h.control.trigger {
         p.stall = (p.now, feet, p.i, p.waited, said);
         return false;
     }
-    let purposeful = matches!(p.actions.get(p.i), Some(Action::CallUntil { .. } | Action::AdvanceSeconds { .. }));
+    // Waits with limits of their own: a step's (`call_until`, `advance_seconds`), a walk's
+    // for a door's owner (up to OWNER_WAIT) or for a door to come (up to ENABLE_WAIT).
+    let walk_waits = match &p.phase {
+        Phase::Walk(w) | Phase::Fight(_, w) | Phase::Shoot(_, w) => w.owner_wait.is_some() || w.enable_wait.is_some(),
+        _ => false,
+    };
+    let purposeful = walk_waits || matches!(p.actions.get(p.i), Some(Action::CallUntil { .. } | Action::AdvanceSeconds { .. }));
     if purposeful || p.i >= p.actions.len() || p.now - since < STALL_SECS {
         return false;
     }

@@ -10,6 +10,7 @@ use crate::functions::{actor_value, av_code, set_actor_value_current, Ctx};
 use crate::game::{event, menus, ActMode, Game, GameConfig, InstKey};
 use crate::trace::EventKind;
 use crate::GameData;
+use fnv_script::ir::Stmt;
 use fnv_script::vm::{literal, to_int_storage, ArgValue, Value};
 use fnv_sim::world::SimConfig;
 use fnv_sim::{FormId, FormStore, RefTable, World};
@@ -874,6 +875,42 @@ pub fn apply_given_entries(g: &mut Game, given: &[Json]) -> Vec<Json> {
     errors
 }
 
+/// The functions of a done stage's result script that a given replays: the world's doors
+/// and references as the stage left them.
+const GIVEN_WORLD_CALLS: [&str; 5] = ["Enable", "Disable", "Lock", "Unlock", "SetOpenState"];
+
+/// A given that marks stages done leaves the world as those stages left it: each stage's
+/// result script's top-level calls of [`GIVEN_WORLD_CALLS`] on a reference are run, in
+/// stage order, where the entry's conditions pass. Nothing else of the script runs (no
+/// MoveTo, items, messages or stages), and nothing inside an `if` [design]. Tale of Two
+/// Wastelands' chains start after earlier quests: the Pitt's Hole and Downtown gates
+/// (Unsafe Working Conditions' stages 120 and 200) and Point Lookout's cathedral gate
+/// (Walking With Spirits' stage 180) stayed locked, and the quest pilot stood at them.
+fn given_stage_world(g: &mut Game, q: FormId, done: &[i32]) {
+    let data = g.data;
+    let Some(def) = data.quests.get(&q) else { return };
+    let ops: Vec<u16> = GIVEN_WORLD_CALLS.iter().filter_map(|n| data.table.by_name(n)).collect();
+    let mut stages: Vec<i32> = done.to_vec();
+    stages.sort_unstable();
+    stages.dedup();
+    let player = Some(FormId::PLAYER_REF);
+    for st in stages {
+        let Some(entries) = def.stages.get(&st) else { continue };
+        for e in entries {
+            let Some(u) = e.unit else { continue };
+            if !g.conditions_pass(&e.conditions, player, player, &format!("QUST {q} stage {st} (given)")) {
+                continue;
+            }
+            let top = &data.unit(u).program.top;
+            for i in 0..top.len() {
+                if matches!(&top[i], Stmt::Call { call } if call.on.is_some() && ops.contains(&call.opcode)) {
+                    g.run_stmts(u, &top[i..=i], crate::game::RunCtx { quest: Some(q), ..Default::default() });
+                }
+            }
+        }
+    }
+}
+
 fn apply_given(g: &mut Game, gv: &Given) -> Result<(), String> {
     match gv {
         Given::Quest { quest: name, running, completed, stage, done, not_done, objectives, vars, refs } => {
@@ -916,6 +953,7 @@ fn apply_given(g: &mut Game, gv: &Given) -> Result<(), String> {
                     e.completed = c;
                 }
             }
+            given_stage_world(g, q, done);
         }
         Given::Global { name, value } => {
             let id = resolve(g, name)?;
