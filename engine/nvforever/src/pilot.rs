@@ -1749,6 +1749,10 @@ fn capital_side(g: &Game, w: u32) -> bool {
 /// into the Museum of History, which opens onto the Mall): the destination's cell and
 /// position.
 fn outside_door(g: &Game, cell: u32) -> Option<(u32, [f32; 3])> {
+    // A door whose script runs on activation is a way only when no other is (GNR's back
+    // door from Dupont Circle, DuponttoGNRRef, only says it is barred:
+    // MQ02GNRBackDoorScript [observed]), so a plain door out is taken first.
+    let mut scripted = None;
     let mut seen = vec![cell];
     let mut cells = vec![cell];
     for _ in 0..OUTSIDE_DEPTH {
@@ -1759,6 +1763,9 @@ fn outside_door(g: &Game, cell: u32) -> Option<(u32, [f32; 3])> {
                 let Some(to) = g.world.placed.get(r).and_then(|p| p.teleport.as_ref()).map(|t| t.door) else { continue };
                 let Some((Some(dest), pos)) = where_is(g, to) else { continue };
                 match g.world.placed.world_of(dest) {
+                    Some(w) if capital_side(g, w.0) && (door_scripted(g, to.0) || door_scripted(g, r.0)) => {
+                        scripted.get_or_insert((dest.0, pos));
+                    }
                     Some(w) if capital_side(g, w.0) => return Some((dest.0, pos)),
                     Some(_) => {}
                     None if !seen.contains(&dest.0) => {
@@ -1771,7 +1778,7 @@ fn outside_door(g: &Game, cell: u32) -> Option<(u32, [f32; 3])> {
         }
         cells = next;
     }
-    None
+    scripted
 }
 
 /// How many interiors deep [`outside_door`] looks for a way out.
