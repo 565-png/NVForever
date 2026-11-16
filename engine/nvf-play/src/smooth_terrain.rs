@@ -5,7 +5,7 @@
 //! [design, #2149, #2676] The settings page's Smooth terrain row ([`Smoothing`]): Off, 2 × 2,
 //! 4 × 4 or 4 × 4 near. 4 × 4 is the default (maintainer decision 2026-11-13: "terrain
 //! smoothing should be the default have the collision follow the smoothed surface"; 4 × 4
-//! the user's 2026-11-15 choice). `--smooth-terrain <off|2x2|4x4|4x4-near>` chooses for a
+//! the contributor's pick of 2026-11-15, for the maintainer to confirm). `--smooth-terrain <off|2x2|4x4|4x4-near>` chooses for a
 //! run, `--no-smooth-terrain` is Off. A change on the page takes effect at the next start
 //! (loading a save starts the game again): cells are drawn and collided as they load, so a
 //! change while the game runs would leave the loaded cells' ground and collision on the old
@@ -22,7 +22,7 @@
 //!
 //! How it is smoothed is fixed for the run too ([`params`]): by default detail, within 8
 //! units, thresholds 2:6 (`fnv_world::land_surface::SmoothParams::DEFAULT`). [design, #2149:
-//! the user's 2026-11-15 choice from in-game comparisons.] Test aids choose another recipe
+//! the contributor's pick from in-game comparisons (2026-11-15), for the maintainer to confirm.] Test aids choose another recipe
 //! for comparing them in the game; they are not settings rows or INI entries:
 //! - `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit|detail` (the LAND vertices kept, fitted,
 //!   or fitted where they look like quantisation steps only);
@@ -57,7 +57,8 @@ pub enum Smoothing {
 impl Smoothing {
     /// The page's order.
     pub const ALL: [Smoothing; 4] = [Smoothing::Off, Smoothing::Sub2, Smoothing::Sub4, Smoothing::Near];
-    /// [design, #2149: maintainer decision 2026-11-13, 4 × 4 the user's 2026-11-15 choice].
+    /// [design, #2149: maintainer decision 2026-11-13; 4 × 4 the contributor's pick of
+    /// 2026-11-15, for the maintainer to confirm].
     /// Making 4 × 4 near the default is the maintainer's call (#2676).
     pub const DEFAULT: Smoothing = Smoothing::Sub4;
 

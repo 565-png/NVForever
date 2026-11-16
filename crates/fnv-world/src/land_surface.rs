@@ -55,7 +55,7 @@ use crate::land::{load_land, LandParts, HEIGHT_SCALE, SIDE, SPACING};
 use fnv_esm::{LoadOrder, Schema};
 
 /// New squares per grid square and side when smoothed, by default [design, #2149:
-/// the user's 2026-11-15 choice from in-game comparisons, for rounder silhouettes;
+/// the contributor's pick from in-game comparisons (2026-11-15), for the maintainer to confirm, for rounder silhouettes;
 /// measured the same day: no frame-time change, about 255 MB more RAM than 2 (world.md §3)].
 pub const DEFAULT_SUBDIV: usize = 4;
 
@@ -65,7 +65,7 @@ pub const SUBDIVS: [usize; 2] = [2, 4];
 /// How far (world units, up or down) the smoothed surface may leave the stored triangles,
 /// by default [design, #2149: one stored height step (`HEIGHT_SCALE`), so the surface
 /// stays within the data's own resolution and placed rocks, roads and foundations neither
-/// float nor sink by more than that; kept by the user's 2026-11-15 choice].
+/// float nor sink by more than that; kept in the contributor's pick of 2026-11-15].
 pub const DEFAULT_MAX_DEVIATION: f32 = HEIGHT_SCALE;
 
 /// The largest bound a smoothed surface can be built with: two stored height steps
@@ -135,7 +135,7 @@ pub struct SmoothParams {
 
 impl SmoothParams {
     /// Detail with [`DEFAULT_DETAIL`], [`DEFAULT_SUBDIV`], [`DEFAULT_MAX_DEVIATION`]
-    /// [design, #2149: the user's 2026-11-15 choice from in-game comparisons].
+    /// [design, #2149: the contributor's pick from in-game comparisons (2026-11-15), for the maintainer to confirm].
     pub const DEFAULT: SmoothParams = SmoothParams { mode: SmoothMode::DETAIL, subdiv: DEFAULT_SUBDIV, max_deviation: DEFAULT_MAX_DEVIATION };
 
     /// How far a LAND vertex's control height may move: 0 interpolating, the smaller of

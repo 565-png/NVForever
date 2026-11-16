@@ -941,9 +941,9 @@ After the Controls tab's own rows (see the end of this page):
   per landscape square, or 4 x 4 near you and 2 x 2 further. Drawing and collision share it.
   Applies at the next start.
 - In full: [design, #2149, #2676] A list: Off, 2 x 2, 4 x 4 and 4 x 4 near; 4 x 4 by
-  default (smoothing on by the maintainer's decision of 2026-11-13, 4 × 4 the user's choice
-  of 2026-11-15). The recipe is detail, bound 8 units and thresholds 2:6, chosen by the
-  user on 2026-11-15 from in-game comparisons. Detail evens out height steps while keeping
+  default (smoothing on by the maintainer's decision of 2026-11-13; 4 × 4 and the recipe,
+  detail, bound 8 units and thresholds 2:6, are the contributor's pick from in-game
+  comparisons of 2026-11-15, for the maintainer to confirm). Detail evens out height steps while keeping
   bumps and ridges; 4 × 4 gives rounder silhouettes, 2 × 2 a quarter of the geometry for
   weaker machines. 4 x 4 near collides on the 4 × 4 surface and draws each loaded quadrant
   4 × 4 within 2,048 units of the camera, 2 × 2 (the same surface, every other vertex)

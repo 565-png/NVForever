@@ -314,7 +314,7 @@ mod tests {
     /// and Upscaling mode rows in place of the one upscaling row, its DLSS model row and #2169's
     /// FSR library row, #2242's upscaling counter row, #2317's Generated frames row, the viewmodel
     /// field of view row, the menu scale row, the Physics rate row, #2550's Terrain height blending
-    /// row, #2551's terrain anti-tiling row, #2682's Grass fires row, #2688's sound cover row,
+    /// row, #2551's terrain anti-tiling row, #2662's Grass fires row, #2688's sound cover row,
     /// #2149's Smooth terrain row and its Debug row Terrain wireframe), by the group it registers
     /// with.
     const KNOWN: [(&str, &str); 118] = [
