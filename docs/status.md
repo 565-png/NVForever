@@ -136,7 +136,7 @@ contract and limits: [CompileScript sibling paths](spec-notes/compilescript-rela
 
 Temporary cloned-projectile getter/setter identity is being qualified separately from scene placement and physics ([clone record access](spec-notes/cloned-projectile-records.md)).
 
-`TempCloneForm` uses the calling reference's base when its argument is omitted ([clone caller](spec-notes/clone-calling-reference.md)). Direct nonscripted STAT/MSTT/PROJ aliases support inert scene placement with frozen model paths; whole saves containing temporary scene bases, including deleted-created tombstones, are deliberately refused. Playable persistence, temporary-reference lifetime and rendered/collision parity remain unqualified ([temporary scene bases](spec-notes/temporary-scene-bases.md)).
+`TempCloneForm` uses the calling reference's base when its argument is omitted ([clone caller](spec-notes/clone-calling-reference.md)). Direct nonscripted STAT/MSTT/PROJ aliases support inert scene placement with frozen model paths. Deleted-created references to admitted direct inert aliases can retain provenance tombstones and reserved identity in `fnv.game.state/2-retired-scenes`; restore does not revive their temporary bases. Live or unsupported temporary-reference closures still refuse whole saves. Native parity, existing user-save repair, complete mod behavior and rendered/collision parity remain unqualified ([temporary scene bases](spec-notes/temporary-scene-bases.md)).
 
 INI sibling paths within Data are being qualified for existing Config-relative readers and caches; physical containment and complete configuration consumers remain separate ([INI paths](spec-notes/local-ini-sibling-paths.md)).
 

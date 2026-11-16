@@ -142,3 +142,35 @@ No passing count is implied by these source controls. Actual CPU, full-profile
 save/load, rendered and native qualification belong to an exact executed revision.
 An installed temporary-reference creator has not been attributed by this proposal;
 it is not a complete B42 or #2391 implementation.
+
+
+## Source-bound CPU qualification
+
+[implementation evidence] The historical source-port and guard qualifications
+above describe their original checkpoints. The bounded retired-scene candidate
+has since completed two separate controlled Windows CPU comparisons on public
+main `1790ab94a5ae8a8a4ef56b84e3454c3363d78866` plus the authored fixtures.
+These are NVForever implementation results, not original-game observations.
+
+The Rust 1.97.1 core comparison ran the same 19 integration controls on both
+sides: baseline 12 passed and seven failed at their first temporary-base
+snapshot/save refusal; candidate 19 passed, with zero ignored on either side.
+Later assertions in each failing baseline case were not reached. Ordinary, live,
+scripted, inventory, chain and unused-clone compatibility controls remain part
+of that comparison. An earlier compile timeout ran zero cases and supplies no
+regression outcome.
+
+A separate normal Rust 1.99.0 engine-workspace comparison ran the same three
+SaveNow/container controls on both sides: baseline one ordinary-remap control
+passed and two failed at their first checked-snapshot refusal; candidate three
+passed, zero ignored. It exercised SaveGame callbacks, enqueue admission, the
+actual save-container writer/reader and World/Game restore. Later baseline
+container/restore assertions were not reached after those refusals. These
+engine results are not a combined 22-case executable or a reuse of the core
+binary.
+
+The public-source adoption retains the authored production and fixture bytes.
+Documentation changes and a later current-main composition have not been
+compiled or executed by this adoption. Broader suites, strict lint, installed
+GAME scenarios, native parity, existing user-save recovery, rendered/collision
+behavior and complete B42/profile acceptance remain unqualified.
