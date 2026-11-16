@@ -974,8 +974,8 @@ fn space_of(loc: &Location) -> Space {
 
 fn travel_to(p: Place, heading_deg: f32) -> Travel {
     match p.space {
-        Space::World(w) => Travel { world: Some(w), interior: None, feet: p.pos, heading_deg },
-        Space::Interior(c) => Travel { world: None, interior: Some(c), feet: p.pos, heading_deg },
+        Space::World(w) => Travel { world: Some(w), interior: None, feet: p.pos, heading_deg, pitch_deg: None },
+        Space::Interior(c) => Travel { world: None, interior: Some(c), feet: p.pos, heading_deg, pitch_deg: None },
     }
 }
 
