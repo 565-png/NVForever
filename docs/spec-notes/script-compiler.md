@@ -112,6 +112,11 @@ Editor ID names its form. In an enum position (actor values, animation groups) a
 spelling from encodings.json `enums`. `Head.var` is variable `var` of the script that
 `Head` runs: a quest's script, or a reference's base form's script.
 
+[design] The running engine indexes every standalone script record's variable
+metadata for this lookup, including overridden master versions. Execution still
+uses the winning script. An empty script override supplies an empty variable list,
+so it cannot expose declarations from an older version when that override is visible.
+
 - **Seeded** (the default for `fnvtool script compile`, and what a running engine should
   use for a unit that has lists): the unit's own variable and reference lists start the
   compiler, so every index stays the same. This matters because other scripts' bytes
