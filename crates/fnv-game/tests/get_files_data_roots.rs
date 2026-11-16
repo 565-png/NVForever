@@ -167,6 +167,7 @@ fn model_queries_keep_file_fallback_until_a_reference_tree_is_published() {
     // bytes characterize that fallback without claiming complete NIF parsing.
     let name = b"FileBlock";
     let bytes = [(name.len() as u32).to_le_bytes().as_slice(), name].concat();
+    assert!(!mod_files::nif_has_name(&bytes, ""), "the established file helper rejects an empty name");
     mod_files::update_roots(|roots| roots.reader = Some(std::sync::Arc::new(move |path| {
         seen.lock().unwrap().push(path.to_string());
         (path == "meshes\\Owned/base.nif").then(|| bytes.clone())
@@ -176,7 +177,10 @@ fn model_queries_keep_file_fallback_until_a_reference_tree_is_published() {
         assert_eq!(has(game, "OwnedRefA", "FileBlock"), XVal::Num(1.0));
         assert_eq!(has(game, "OwnedRefA", "fileblock"), XVal::Num(0.0));
         assert_eq!(has(game, "OwnedRefA", "Absent"), XVal::Num(0.0));
+        let before_empty = reads.lock().unwrap().len();
+        assert_eq!(has(game, "OwnedModel", ""), XVal::Num(0.0));
         assert_eq!(has(game, "OwnedRefA", ""), XVal::Num(0.0));
+        assert_eq!(reads.lock().unwrap().len(), before_empty + 2, "base and cold empty queries retain their existing file consumer");
         let before = reads.lock().unwrap().len();
         game.scene.set_tree(FIRST, tree("SceneBlock"));
         assert_eq!(has(game, "OwnedRefA", "SceneBlock"), XVal::Num(1.0));

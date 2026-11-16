@@ -20,6 +20,8 @@ fn published_reference_names_are_exact_and_instance_local() {
         assert_eq!(has(g, "OwnedRefA", ""), XVal::Num(0.0));
         assert_eq!(has(g, "PlayerREF", "ThirdOnly"), XVal::Num(1.0));
         assert_eq!(has(g, "PlayerREF", "FirstOnly"), XVal::Num(0.0), "retain the mirror's existing default model");
+        g.scene.set_tree(FIRST, tree(""));
+        assert_eq!(has(g, "OwnedRefA", ""), XVal::Num(0.0), "retain the file helper's empty-name result even with an unnamed scene node");
         assert!(g.scene.take_edits().is_empty(), "queries do not queue scene edits");
     });
 }

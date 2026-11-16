@@ -89,6 +89,12 @@ asset, smoke and native acceptance remain unqualified.
   whose tree has not been published. Empty or invalid required object arguments
   must not become the running script's self. A base-form ID is not a reference
   simply because a host published a tree under that ID.
+- [design] Preserve the empty-name result of the accepted file helper,
+  `mod_files::nif_has_name`: it explicitly returns false before scanning. The
+  published-tree query also returns false for an empty name, including when the
+  tree contains an unnamed node. Base and cold queries retain their existing file
+  reader path for this input; this is preservation of existing local behavior,
+  not a newly inferred native refusal policy.
 - [design] Use the mirror's existing default player model selection described
   above. Host `forget` removes a reference's model publication; `Game::restore`
   starts with an unpublished mirror. Saving leaves the running mirror intact.
