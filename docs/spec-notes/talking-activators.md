@@ -67,11 +67,18 @@ activator; the actor does not turn). Tests: `crates/fnv-game/tests/perk_talk.rs`
   0015B6D5) are the only calls that set Ramos, so a player who came in without using
   the intercom (sneaking in) met an intercom with no line and kept the controls off
   [observed: `fnvtool script run`, smoke `hv-intercom-push`].
-- **IsActorTalkingThroughActivator** is 1 on that actor while its lines are chosen and
-  while that conversation runs, else 0 [documented: "returns true if the actor is
-  speaking via an activator; the actor must first be registered through the
-  talking-activator setter"]. Outside a conversation it is 0 even with the actor set
-  [observed: capture ac6, 2026-10-18]. The catalogue's note "false if the talking actor
+- **IsActorTalkingThroughActivator** is 1 on that actor while its lines are chosen,
+  while that conversation runs, and while it says a line through the activator outside
+  one (Say or SayTo on the activator, a conversation between actors through it), the
+  line's begin and end result scripts included; else 0 [documented: "returns true if the
+  actor is speaking via an activator; the actor must first be registered through the
+  talking-activator setter"; GECK wiki IsActorTalkingThroughActivator: it tests whether
+  the actor "is currently talking through an Activator" and "only returns true when the
+  actor is actually in dialogue through the activator"; hypothesis for the line outside a
+  conversation, #2768]. The wiki's further note that it "will return false if the talking
+  activator actor was set via script" is not followed: the masters' intercom lines test
+  it == 1 for actors only scripts set (§1). Outside a conversation and a line it is 0
+  even with the actor set [observed: capture ac6, 2026-10-18]. The catalogue's note "false if the talking actor
   was assigned by script" does not hold: IsTalkingActivatorActor read 0 before, 1 after
   SetTalkingActivatorActor by script and 0 again once the actor was cleared [observed:
   ac6, the same as NVForever's]. That IsActorTalkingThroughActivator is 1 during a
