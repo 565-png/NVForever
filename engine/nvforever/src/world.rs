@@ -499,7 +499,8 @@ const DESPAWN_PER_FRAME: usize = 400;
 /// half drawn (the LOD stands in for it meanwhile).
 #[derive(Debug)]
 pub struct CellSpawn {
-    entity: Entity,
+    /// The cell's entity (also read by terrain_lod.rs: a cell being spawned is alive).
+    pub entity: Entity,
     refs: Vec<u32>,
     /// Index of the next reference to spawn.
     next: usize,

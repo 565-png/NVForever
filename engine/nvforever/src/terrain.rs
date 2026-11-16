@@ -1086,6 +1086,8 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
 /// folded base.
 pub struct SpawnedQuadrant {
     pub entities: Vec<Entity>,
+    /// Their meshes (for the swap's readiness check, `crate::terrain_lod`).
+    pub meshes: Vec<AssetId<Mesh>>,
     pub overflow: usize,
 }
 
@@ -1099,14 +1101,19 @@ pub fn spawn_quadrant(commands: &mut Commands, cell: Entity, world: &WorldData, 
     // The repeat for the shader to work the texture coordinate out with, 0 when the mesh
     // carries the coordinate.
     let shader_tile = if most == FOLDED_LAYERS { tile } else { 0.0 };
-    let mut out = SpawnedQuadrant { entities: Vec::new(), overflow: 0 };
-    let add = |commands: &mut Commands, mesh: Handle<Mesh>, mat: MeshMaterialAny| -> Entity {
+    let mut out = SpawnedQuadrant { entities: Vec::new(), meshes: Vec::new(), overflow: 0 };
+    let add = |commands: &mut Commands, mesh: Handle<Mesh>, mat: MeshMaterialAny| -> (Entity, AssetId<Mesh>) {
+        let id = mesh.id();
         let e = match mat {
             MeshMaterialAny::Folded(m) => commands.spawn((Mesh3d(mesh), MeshMaterial3d(m), Transform::IDENTITY, visibility, LandMesh, LandQuadrant(q))).id(),
             MeshMaterialAny::Nif(m) => commands.spawn((Mesh3d(mesh), MeshMaterial3d(m), Transform::IDENTITY, visibility, LandMesh, LandQuadrant(q))).id(),
         };
         commands.entity(cell).add_child(e);
-        e
+        (e, id)
+    };
+    let push = |out: &mut SpawnedQuadrant, (e, id): (Entity, AssetId<Mesh>)| {
+        out.entities.push(e);
+        out.meshes.push(id);
     };
     let base = drawn.iter().rev().find(|l| l.base && l.quadrant == q);
     if base.is_none() && count {
@@ -1126,7 +1133,7 @@ pub fn spawn_quadrant(commands: &mut Commands, cell: Entity, world: &WorldData, 
     };
     if let Some((mesh, mat, n)) = folded_mat {
         let mesh = tm.assets.meshes.add(mesh);
-        out.entities.push(add(commands, mesh, MeshMaterialAny::Folded(mat)));
+        push(&mut out, add(commands, mesh, MeshMaterialAny::Folded(mat)));
         if count {
             tm.tm.cache.folded_quadrants += 1;
             tm.tm.cache.folded_layers += n;
@@ -1136,7 +1143,7 @@ pub fn spawn_quadrant(commands: &mut Commands, cell: Entity, world: &WorldData, 
         let mat = tm.base_material(tex);
         if let Some(mesh) = base_mesh {
             let mesh = tm.assets.meshes.add(mesh);
-            out.entities.push(add(commands, mesh, MeshMaterialAny::Nif(mat)));
+            push(&mut out, add(commands, mesh, MeshMaterialAny::Nif(mat)));
         }
     }
     for (rank, (i, l)) in layers.into_iter().enumerate().skip(blended_from) {
@@ -1144,7 +1151,7 @@ pub fn spawn_quadrant(commands: &mut Commands, cell: Entity, world: &WorldData, 
         let Some(mat) = tm.layer_material(tex, rank) else { continue };
         if let Some(mesh) = layer_meshes.remove(&i) {
             let mesh = tm.assets.meshes.add(mesh);
-            out.entities.push(add(commands, mesh, MeshMaterialAny::Nif(mat)));
+            push(&mut out, add(commands, mesh, MeshMaterialAny::Nif(mat)));
             if count {
                 tm.tm.cache.layers += 1;
             }
