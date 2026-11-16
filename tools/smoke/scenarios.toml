@@ -247,6 +247,34 @@ order = [[
 ]]
 
 [[scenario]]
+name = "gpu-blocks-small-card"
+source = "#2754 (a 2 GB card ran out of GPU memory at the default settings): with a small GPU budget the GPU allocator is asked for small blocks, the player is told once when the process holds over 95 % of the budget, and the exit says the most it held (engine/nvforever/src/memory_budget.rs)"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/memory_budget.rs", "engine/nvforever/src/dlss/mod.rs"]
+# The test aid's 700 MB is under what Goodsprings holds on foot (about 1,100 MB with small blocks), so the notice comes.
+env = { NVFOREVER_HOME = "gpu-blocks-home", NVF_PLAY_TEST_VRAM_MB = "700", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  "memory budget: GPU memory is taken in small (8 to 64 MB) blocks: the test aid's GPU budget is 700 MB",
+  { re = 'memory budget: the GPU memory is almost full \(this process holds \d+ of 700 MB\); the player is told once', label = "told once past 95 % of the budget", count = 1 },
+  { re = 'memory budget: this process held at most \d+ of the 700 MB GPU budget in this run', label = "the most held, at the exit" },
+]
+
+[[scenario]]
+name = "gpu-blocks-remembered"
+source = "#2754: the GPU budget a run reads is kept in the home (cache\\gpu-budget.txt) and the next start chooses the allocator's blocks from it, before the device is made (engine/nvforever/src/memory_budget.rs)"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/memory_budget.rs", "engine/nvforever/src/dlss/mod.rs"]
+# The run after gpu-blocks-small-card in the same home: that run kept the device's own budget, not the test aid's.
+env = { NVFOREVER_HOME = "gpu-blocks-home" }
+args = ["--cell", "GSDocMitchellHouse"]
+run_seconds = 8
+expect = [
+  { re = 'memory budget: GPU memory is taken in (small \(8 to 64 MB\)|large \(128 to 256 MB\)) blocks: the run before read a GPU budget of \d+ MB', label = "the blocks follow the budget the run before read" },
+]
+
+[[scenario]]
 name = "memory-budget-capped"
 source = "#1170: the asset caches' keep limits follow the machine's RAM and the GPU's memory budget (VK_EXT_memory_budget); with the test aids capping the GPU budget at 512 MB, the limits go to their least (30 s, 128 per cache) and the flight over Goodsprings uses over 85 % of it (this process's use of the device-local heaps, VK_EXT_memory_budget), which presses the caches (they keep the least, 30 s and 128)"
 areas = ["renderer"]
@@ -1747,10 +1775,10 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 
 [[scenario]]
 name = "sun-shadows-performance"
-source = "docs/design/frame-rate-audit.md §9 and §10 (nvforever shadow_rate.rs, #2062, #2063): on Quality the sun's farther cascades keep their maps on a staggered schedule; the settings page's Sun shadows row goes to Performance and back to Quality while the game runs: two cascades, the sun's shadow maps kept on alternate frames, three staggered cascades again, without a rendering error"
+source = "docs/design/frame-rate-audit.md §9, §10 and §11 (nvforever shadow_rate.rs, shadow_anchor.rs, #2062, #2063, #2833): the sun's cascades are snapped to a grid anchored near the camera; on Quality the sun's farther cascades keep their maps on a staggered schedule; the settings page's Sun shadows row goes to Performance and back to Quality while the game runs: two cascades, the sun's shadow maps kept on alternate frames, three staggered cascades again, without a rendering error"
 areas = ["renderer", "graphics", "settings"]
 paths = [
-  "engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/player_body.rs",
+  "engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/shadow_anchor.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/player_body.rs",
   "engine/nvforever/src/tree.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/vendor/bevy_pbr/src/render/gpu_preprocess.rs",
   "engine/nvf-play/src/settings_layout.rs",
 ]
@@ -1765,8 +1793,12 @@ order = [[
   "sun shadows: cascades on a staggered schedule (the nearest every frame, the farther ones less often), 3 cascades",
   { text = "sun shadows: a frame kept its farther cascades' maps (staggered schedule", label = "Quality again: the staggered schedule holds cascades again" },
 ]]
+expect = [
+  { text = "sun shadows: cascades snapped to a grid anchored near the camera", count = 1, label = "the cascades are anchored near the camera (logged once)" },
+]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error while the shadow maps are kept or the cascades change" },
+  { text = "cascades left on the grid through the world's origin", label = "the anchoring is on without the test aid" },
   { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
 ]
 
@@ -1774,7 +1806,7 @@ forbid = [
 name = "sun-shadow-hold-flashlight"
 source = "#2182 review (vendored bevy_pbr light.rs prepare_lights, nvforever shadow_rate.rs): the player's flashlight casts shadows, so switching it on or off gives the sun a new shadow texture; that frame draws every cascade instead of holding one, outdoors at noon with the staggered schedule"
 areas = ["renderer", "flashlight"]
-paths = ["engine/nvforever/src/shadow_rate.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/nvforever/src/flashlight.rs"]
+paths = ["engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/shadow_anchor.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/nvforever/src/flashlight.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONTROL = "8:flashlight,14:flashlight" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
 run_seconds = 20
@@ -1791,7 +1823,7 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 name = "sun-shadow-stagger-off"
 source = "#2063 (nvforever shadow_rate.rs): the test aid NVF_PLAY_TEST_SHADOW_STAGGER=0 draws every cascade every frame on Quality; Performance still holds its maps"
 areas = ["renderer", "graphics", "settings"]
-paths = ["engine/nvforever/src/shadow_rate.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/vendor/bevy_pbr/src/render/gpu_preprocess.rs"]
+paths = ["engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/shadow_anchor.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/vendor/bevy_pbr/src/render/gpu_preprocess.rs"]
 env = { NVF_PLAY_TEST_SHADOW_STAGGER = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:12,17:19", NVF_PLAY_TEST_SETTINGS = "11:sun-shadows=0.5,18:sun-shadows=1" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
 run_seconds = 23
@@ -29494,6 +29526,22 @@ exit = 3221225477
 ends = "test aid NVF_PLAY_TEST_NATIVE_CRASH: an access violation now"
 expect = [
   { re = 'native crash, exception 0xC0000005; dump written to .*crash-\d{8}-\d{6}-\d+\.dmp', label = "the dump beside the run log" },
+]
+
+[[scenario]]
+name = "native-crash-exit-code"
+source = "#2755: a watcher process adds the process's exit code to the end of the run log of a run that did not exit normally, and the next start names it (engine/nvforever/src/exit_watch.rs, crash.rs)"
+areas = ["crash"]
+paths = ["engine/nvforever/src/exit_watch.rs", "engine/nvforever/src/native_crash.rs", "engine/nvforever/src/crash.rs"]
+# Windows only, as the watcher is. The run after native-crash-dump in the same home: that run's process ended with 0xC0000005.
+requires = ["WINDIR"]
+env = { NVFOREVER_HOME = "native-crash-home" }
+args = ["--cell", "Goodsprings"]
+run_seconds = 5
+expect = [
+  "run log: the previous run did not end normally and left no crash report",
+  "run log: the previous run's process ended with exit code 0xC0000005 (access violation)",
+  "run log: the game exited normally",
 ]
 
 [[scenario]]
