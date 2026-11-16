@@ -39,8 +39,16 @@ whole-workspace, optimized release, native or rendered acceptance.
 invokes the actual `fnvtool ui tree` consumer against a portable repository-owned
 fixture. Referenced operands, set/clear bits, nested arguments and a dependent
 trait are checked alongside nonzero arithmetic and sentinel controls. An ignored
-`bt` cannot satisfy the expected set-bit, nested or downstream values. This CLI
-scenario is UNRUN; passing library controls do not qualify its launch boundary.
+`bt` cannot satisfy the expected set-bit, nested or downstream values.
+
+[documented: launcher process evidence] The first shared-runner attempt at
+`d4ac68b` rejected duplicated adjacent expectation blocks in the scenario registry
+before invoking `fnvtool`. No CLI behavior was qualified by that attempt. The
+bit-test fixture and expectations now use dedicated arithmetic and sentinel
+trait names, retaining their expected nonzero values of 21 and 23 and every
+bit-test/schema/count oracle. The duplicate-block guard is unchanged. Static
+`python tools/smoke verify` now admits all 1,571 scenarios. Corrected CLI
+execution remains UNRUN; passing library controls do not qualify it.
 
 Native edge behavior remains unobserved: negative or fractional operands,
 nonfinite values, indexes outside the native width and numeric precision/conversion

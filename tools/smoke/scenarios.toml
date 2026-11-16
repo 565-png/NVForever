@@ -136,7 +136,7 @@ expect = [
 name = "ui-bit-test-operator"
 kind = "tool"
 source = "[documented] GECK UIO Extra XML Operators; docs/spec-notes/ui-bit-test-operator.md. Authored portable XML expressions without game data."
-note = "UNRUN CLI qualification. The actual fnvtool ui tree consumer evaluates referenced bit operands, set and clear bits, nested arguments and a downstream trait. Nonzero oracles, ordinary arithmetic and a sentinel reject default-zero or ignored-operator results. No native/rendered-menu/installed-mod acceptance."
+note = "Corrected CLI qualification UNRUN. The first launcher attempt rejected duplicated registry expectation blocks before fnvtool invocation; dedicated bit-test control trait names retain the same numeric oracles without weakening the guard. The actual fnvtool ui tree consumer checks referenced operands, set/clear bits, nested arguments, a downstream trait, nonzero arithmetic and a sentinel. No native/rendered-menu/installed-mod acceptance."
 areas = ["ui"]
 paths = ["crates/fnv-ui/", "crates/fnvtool/src/ui_cmd.rs", "docs/spec-notes/ui-bit-test-operator.md", "tools/smoke/fixtures/uio-bt/"]
 commands = [["ui", "tree", "--data", "tools/smoke/fixtures/uio-bt", "--menu", "menus/uio-bt.xml"]]
@@ -148,8 +148,8 @@ expect = [
   { json = "tree.traits.notmask", schema = "fnv.ui.tree/1", equals = 0, count = 1 },
   { json = "tree.traits.nested", schema = "fnv.ui.tree/1", equals = 9, count = 1 },
   { json = "tree.traits.dependent", schema = "fnv.ui.tree/1", equals = 27, count = 1 },
-  { json = "tree.traits.ordinary", schema = "fnv.ui.tree/1", equals = 21, count = 1 },
-  { json = "tree.traits.sentinel", schema = "fnv.ui.tree/1", equals = 23, count = 1 },
+  { json = "tree.traits.bt_arithmetic_control", schema = "fnv.ui.tree/1", equals = 21, count = 1 },
+  { json = "tree.traits.bt_sentinel_control", schema = "fnv.ui.tree/1", equals = 23, count = 1 },
   { json = "warnings.#", schema = "fnv.ui.tree/1", equals = 0, count = 1 },
 ]
 
