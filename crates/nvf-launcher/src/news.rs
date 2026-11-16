@@ -22,6 +22,8 @@ pub const SITE: &str = "https://nv-forever.com";
 const CACHE_FILE: &str = "launcher-news.json";
 /// The longest a news image may be; a bigger one is left out.
 const MAX_IMAGE: u64 = 8 << 20;
+/// The most posts kept from a fetch (and so the most images fetched at once).
+const MAX_POSTS: usize = 20;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Post {
@@ -139,6 +141,27 @@ pub(crate) fn get_text(agent: &ureq::Agent, url: &str) -> Result<String, String>
     r.body_mut().read_to_string().map_err(|e| format!("{url}: {e}"))
 }
 
+/// The release list, fetched at most once a minute: the news (when the site has none) and
+/// the update check both read it, and GitHub allows 60 requests an hour without a sign-in.
+fn release_list(agent: &ureq::Agent) -> Result<String, String> {
+    use std::sync::Mutex;
+    use std::time::Instant;
+    static LAST: Mutex<Option<(Instant, String)>> = Mutex::new(None);
+    // Held across the request, so a second caller waits for the first one's answer.
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, text)) = last.as_ref() {
+        if at.elapsed() < Duration::from_secs(60) {
+            return Ok(text.clone());
+        }
+    }
+    // Test aid: a release list of a local server (docs/design/launcher.md), for trying the
+    // updater against a fixture release.
+    let url = std::env::var("NVF_LAUNCHER_RELEASES").ok().filter(|u| !u.is_empty());
+    let text = get_text(agent, url.as_deref().unwrap_or(RELEASES))?;
+    *last = Some((Instant::now(), text.clone()));
+    Ok(text)
+}
+
 fn get_bytes(agent: &ureq::Agent, url: &str) -> Option<Vec<u8>> {
     let mut r = agent.get(url).call().ok()?;
     r.body_mut().with_config().limit(MAX_IMAGE).read_to_vec().ok()
@@ -159,17 +182,21 @@ pub fn fetch() -> Result<(Vec<Post>, Source), String> {
         Ok(p) if !p.is_empty() => (p, Source::Site),
         site => {
             let site_err = site.err().unwrap_or_else(|| "news.json: no posts".into());
-            match get_text(&agent, RELEASES).and_then(|t| parse_releases(&t)) {
+            match release_list(&agent).and_then(|t| parse_releases(&t)) {
                 Ok(p) => (p, Source::Releases),
                 Err(e) => return Err(format!("{site_err}; {e}")),
             }
         }
     };
-    for p in &mut posts {
-        if let Some(url) = p.image.clone().filter(|u| u.starts_with("https://")) {
-            p.image_bytes = get_bytes(&agent, &url);
+    posts.truncate(MAX_POSTS);
+    std::thread::scope(|s| {
+        for p in &mut posts {
+            if let Some(url) = p.image.clone().filter(|u| u.starts_with("https://")) {
+                let agent = &agent;
+                s.spawn(move || p.image_bytes = get_bytes(agent, &url));
+            }
         }
-    }
+    });
     Ok((posts, source))
 }
 
@@ -335,10 +362,7 @@ pub fn is_newer(a: &str, b: &str) -> bool {
 /// From the release list, not `releases/latest`: that one leaves pre-releases out, and every
 /// NVForever release so far is one (it answers 404).
 pub fn fetch_latest() -> Result<Option<Latest>, String> {
-    // Test aid: a release list of a local server (docs/design/launcher.md), for trying the
-    // updater against a fixture release.
-    let url = std::env::var("NVF_LAUNCHER_RELEASES").ok().filter(|u| !u.is_empty());
-    let text = get_text(&agent(), url.as_deref().unwrap_or(RELEASES))?;
+    let text = release_list(&agent())?;
     Ok(newest(parse_release_list(&text)?))
 }
 

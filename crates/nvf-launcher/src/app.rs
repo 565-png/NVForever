@@ -397,7 +397,28 @@ impl eframe::App for App {
             Page::Mods => self.mods_page(ui),
             Page::Game => self.game_page(ui),
         });
+        // Last, after everything that can draw a link (a post's Markdown is in the central
+        // panel): egui's own link opening would skip the https rule.
+        for url in take_links(ctx) {
+            launch::open_url(&url);
+        }
     }
+}
+
+/// The pages egui was asked to open this frame (links in a post's text), taken out of its
+/// output so that only [`launch::open_url`] opens them.
+fn take_links(ctx: &egui::Context) -> Vec<String> {
+    ctx.output_mut(|o| {
+        let mut urls = Vec::new();
+        o.commands.retain(|c| match c {
+            egui::OutputCommand::OpenUrl(u) => {
+                urls.push(u.url.clone());
+                false
+            }
+            _ => true,
+        });
+        urls
+    })
 }
 
 impl App {
@@ -439,7 +460,7 @@ impl App {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some(h) = &self.home {
                         if ui.small_button("Open folder").on_hover_text("Open NVForever's folder (settings, saves, logs)").clicked() {
-                            launch::open(&h.root.display().to_string());
+                            launch::open_folder(&h.root);
                         }
                     }
                     if let Some(l) = &self.latest {
@@ -470,7 +491,7 @@ impl App {
         let time_g = time.map(|t| p.layout_no_wrap(t, egui::FontId::proportional(18.0), GOLD));
         let w = lead_g.size().x + time_g.as_ref().map_or(0.0, |g| g.size().x + 12.0) + 40.0;
         let pill = egui::Rect::from_center_size(rect.center(), Vec2::new(w, 34.0));
-        p.rect(pill, CornerRadius::same(17), Color32::from_rgb(0x24, 0x20, 0x18), Stroke::new(1.0, theme::GOLD_DIM), egui::StrokeKind::Inside);
+        p.rect(pill, CornerRadius::same(17), theme::SELECTED, Stroke::new(1.0, theme::GOLD_DIM), egui::StrokeKind::Inside);
         let lead_w = lead_g.size().x;
         p.galley(egui::pos2(pill.left() + 16.0, pill.center().y - lead_g.size().y / 2.0), lead_g, WEAK);
         if let Some(g) = time_g {
@@ -495,10 +516,10 @@ impl App {
             ui.separator();
             ui.add_space(6.0);
             if nav_button(ui, "WEBSITE", false).on_hover_text(news::SITE).clicked() {
-                launch::open(news::SITE);
+                launch::open_url(news::SITE);
             }
             if nav_button(ui, "GITHUB", false).on_hover_text(REPO).clicked() {
-                launch::open(REPO);
+                launch::open_url(REPO);
             }
         });
     }
@@ -562,7 +583,7 @@ fn nav_button(ui: &mut egui::Ui, name: &str, on: bool) -> egui::Response {
     let text = RichText::new(name).font(crate::fonts::title(15.0)).color(if on { GOLD } else { theme::TEXT });
     let b = egui::Button::new(text)
         .min_size(Vec2::new(ui.available_width(), 42.0))
-        .fill(if on { Color32::from_rgb(0x2E, 0x29, 0x20) } else { theme::BUTTON })
+        .fill(if on { theme::SELECTED } else { theme::BUTTON })
         .stroke(Stroke::new(1.0, if on { theme::GOLD_DIM } else { LINE }));
     let r = ui.add(b);
     if on {
@@ -570,6 +591,16 @@ fn nav_button(ui: &mut egui::Ui, name: &str, on: bool) -> egui::Response {
         ui.painter().rect_filled(bar, CornerRadius::same(1), GOLD);
     }
     r
+}
+
+/// A button in the site's primary style when `on` (gold, dark words, 9:1), else a plain one.
+fn gold_button(text: &str, on: bool) -> egui::Button<'static> {
+    let words = RichText::new(text.to_string()).strong();
+    if on {
+        egui::Button::new(words.color(theme::ON_GOLD)).fill(GOLD)
+    } else {
+        egui::Button::new(words)
+    }
 }
 
 /// A large two-line button (title and a small line under it), gold when `primary`.
@@ -580,7 +611,7 @@ fn big_button(ui: &mut egui::Ui, title: &str, sub: &str, primary: bool) -> egui:
     let fill = match (primary, resp.hovered() && enabled) {
         (true, true) => theme::GOLD_HOVER,
         (true, false) => GOLD,
-        (false, true) => Color32::from_rgb(0x3A, 0x35, 0x2E),
+        (false, true) => theme::BUTTON_HOVER,
         (false, false) => theme::BUTTON,
     };
     let fill = if enabled { fill } else { fill.gamma_multiply(0.5) };
@@ -612,7 +643,7 @@ fn toggle(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
         resp.mark_changed();
     }
     let t = ui.ctx().animate_bool_responsive(resp.id, *on);
-    let bg = Color32::from_rgb(0x3A, 0x36, 0x30).lerp_to_gamma(GOLD, t);
+    let bg = theme::BUTTON_ACTIVE.lerp_to_gamma(GOLD, t);
     let p = ui.painter();
     p.rect_filled(rect, CornerRadius::same(11), bg);
     let x = egui::lerp(rect.left() + 11.0..=rect.right() - 11.0, t);
@@ -714,7 +745,7 @@ impl App {
                         }
                         if let Some(url) = &post.url {
                             if ui.link("Open in the browser").clicked() {
-                                launch::open(url);
+                                launch::open_url(url);
                             }
                         }
                     });
@@ -729,7 +760,7 @@ impl App {
             ui.heading("Settings");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let dirty = !self.edits.is_empty();
-                if ui.add_enabled(dirty, egui::Button::new(RichText::new("Save").strong()).fill(if dirty { theme::GOLD_DIM } else { theme::BUTTON })).clicked() {
+                if ui.add_enabled(dirty, gold_button("Save", dirty)).clicked() {
                     let r = self.save_settings();
                     self.after_write(r, Some("Settings saved: the game uses them at its next start."));
                 }
@@ -753,7 +784,9 @@ impl App {
                 tabs.push("Other".into());
             }
             for (i, t) in tabs.iter().enumerate() {
-                if ui.selectable_label(self.tab == i, RichText::new(t).strong()).clicked() {
+                let on = self.tab == i;
+                let b = egui::Button::new(RichText::new(t).strong().color(if on { theme::ON_GOLD } else { theme::TEXT })).fill(if on { GOLD } else { Color32::TRANSPARENT }).stroke(Stroke::NONE);
+                if ui.add(b).clicked() {
                     self.tab = i;
                 }
             }
@@ -770,7 +803,7 @@ impl App {
                         if heading.as_ref() != Some(&r.heading) {
                             if let Some(h) = &r.heading {
                                 ui.add_space(8.0);
-                                ui.label(RichText::new(h.to_uppercase()).small().strong().color(theme::GOLD_DIM));
+                                ui.label(RichText::new(h.to_uppercase()).small().strong().color(theme::GOLD_TEXT));
                             }
                             heading = Some(r.heading.clone());
                         }
@@ -875,7 +908,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.heading("Mods");
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add_enabled(self.mods_dirty, egui::Button::new(RichText::new("Save").strong())).clicked() {
+                if ui.add_enabled(self.mods_dirty, gold_button("Save", self.mods_dirty)).clicked() {
                     let r = self.save_mods();
                     match r {
                         Ok(()) => {
@@ -891,7 +924,7 @@ impl App {
                 if let Some(h) = &self.home {
                     if ui.button("Open mods folder").clicked() {
                         let _ = std::fs::create_dir_all(h.mods());
-                        launch::open(&h.mods().display().to_string());
+                        launch::open_folder(&h.mods());
                     }
                 }
             });
@@ -915,12 +948,13 @@ impl App {
             .unwrap_or_default();
         let mut swap: Option<(usize, usize)> = None;
         let n = list.entries.len();
+        let is_base: Vec<bool> = list.entries.iter().map(|e| e.name.eq_ignore_ascii_case("FalloutNV.esm")).collect();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             for (i, e) in list.entries.iter_mut().enumerate() {
                 Frame::new().fill(CARD).corner_radius(4).inner_margin(Margin::symmetric(10, 4)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        let base = e.name.eq_ignore_ascii_case("FalloutNV.esm");
+                        let base = is_base[i];
                         ui.label(RichText::new(format!("{:02X}", i)).monospace().color(WEAK));
                         if ui.add_enabled(!base, egui::Checkbox::without_text(&mut e.active)).changed() {
                             self.mods_dirty = true;
@@ -930,10 +964,10 @@ impl App {
                             ui.label(RichText::new("missing").small().color(BAD));
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.add_enabled(!base && i + 1 < n, egui::Button::new("Down").small()).clicked() {
+                            if ui.add_enabled(!base && i + 1 < n && !is_base[i + 1], egui::Button::new("Down").small()).clicked() {
                                 swap = Some((i, i + 1));
                             }
-                            if ui.add_enabled(!base && i > 1, egui::Button::new("Up").small()).clicked() {
+                            if ui.add_enabled(!base && i > 0 && !is_base[i - 1], egui::Button::new("Up").small()).clicked() {
                                 swap = Some((i, i - 1));
                             }
                         });
@@ -989,7 +1023,7 @@ impl App {
             }
         });
         ui.add_space(12.0);
-        ui.label(RichText::new("PROGRAM").small().strong().color(theme::GOLD_DIM));
+        ui.label(RichText::new("PROGRAM").small().strong().color(theme::GOLD_TEXT));
         card(ui, |ui| {
             ui.set_width(ui.available_width());
             match &self.exe {
@@ -1003,7 +1037,7 @@ impl App {
             }
         });
         ui.add_space(12.0);
-        ui.label(RichText::new("VERSION").small().strong().color(theme::GOLD_DIM));
+        ui.label(RichText::new("VERSION").small().strong().color(theme::GOLD_TEXT));
         card(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(format!("NVForever v{VERSION}"));
@@ -1026,13 +1060,13 @@ impl App {
             }
         });
         ui.add_space(12.0);
-        ui.label(RichText::new("FOLDERS").small().strong().color(theme::GOLD_DIM));
+        ui.label(RichText::new("FOLDERS").small().strong().color(theme::GOLD_TEXT));
         if let Some(h) = self.home.clone() {
             ui.horizontal_wrapped(|ui| {
                 for (name, dir) in [("Saves", h.saves()), ("Logs", h.logs()), ("Screenshots", h.screenshots()), ("Settings", h.root.clone())] {
                     if ui.button(name).clicked() {
                         let _ = std::fs::create_dir_all(&dir);
-                        launch::open(&dir.display().to_string());
+                        launch::open_folder(&dir);
                     }
                 }
             });
@@ -1191,7 +1225,7 @@ impl App {
                                 self.upd_open = false;
                             }
                             if ui.button("Release page").clicked() {
-                                launch::open(&l.url);
+                                launch::open_url(&l.url);
                             }
                         });
                     }
@@ -1221,7 +1255,7 @@ impl App {
                                 self.start_update(ui.ctx());
                             }
                             if ui.button("Release page").clicked() {
-                                launch::open(&l.url);
+                                launch::open_url(&l.url);
                             }
                         });
                     }
@@ -1277,7 +1311,9 @@ fn preview(body: &str, open: bool) -> (&str, bool) {
     if body.len() <= PREVIEW_CHARS {
         return (body, false);
     }
-    let at = body[PREVIEW_CHARS..].find("\n\n").map(|i| i + PREVIEW_CHARS);
+    // A byte count can fall inside a character (`·`, `—`); start at the next whole one.
+    let from = (PREVIEW_CHARS..=body.len()).find(|&i| body.is_char_boundary(i)).unwrap_or(body.len());
+    let at = body[from..].find("\n\n").map(|i| i + from);
     match at {
         Some(at) if !open => (&body[..at], true),
         Some(_) => (body, true),
@@ -1308,10 +1344,30 @@ mod tests {
     }
 
     #[test]
+    fn links_are_taken_from_egui() {
+        let ctx = egui::Context::default();
+        let mut taken = Vec::new();
+        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.ctx().open_url(egui::OpenUrl::new_tab("https://nv-forever.com"));
+            ui.ctx().copy_text("kept".into());
+            taken = take_links(ui.ctx());
+        });
+        assert_eq!(taken, ["https://nv-forever.com"]);
+        assert!(!out.platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::OpenUrl(_))));
+        assert!(out.platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::CopyText(_))));
+    }
+
+    #[test]
     fn previews_cut_at_a_paragraph() {
         assert_eq!(preview("short", false), ("short", false));
         let long = format!("{}\n\nrest", "a".repeat(PREVIEW_CHARS + 5));
         assert_eq!(preview(&long, false).0.len(), PREVIEW_CHARS + 5);
+        // Byte PREVIEW_CHARS inside a two-byte `·`: no panic, cut at the paragraph after it.
+        let wide = format!("{}·b\n\nrest", "a".repeat(PREVIEW_CHARS - 1));
+        assert!(!wide.is_char_boundary(PREVIEW_CHARS));
+        assert_eq!(preview(&wide, false), (&wide[..wide.len() - 6], true));
+        let wide_end = format!("{}—", "a".repeat(PREVIEW_CHARS - 1));
+        assert_eq!(preview(&wide_end, false), (wide_end.as_str(), false));
         assert_eq!(preview(&long, true), (long.as_str(), true));
     }
 }

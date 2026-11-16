@@ -81,6 +81,12 @@ pub fn choose_asset<'a>(assets: &'a [Asset], tag: &str, target: &str) -> Option<
     assets.iter().find(|a| a.name == name).map(|a| (a, kind))
 }
 
+/// Whether the updater may fetch `url`: `https://` only, as the launcher opens only
+/// `https://` pages (`launch::open_url`); plain `http://` only to this machine (tests).
+pub fn fetchable(url: &str) -> bool {
+    url.starts_with("https://") || url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:")
+}
+
 pub fn checksums_asset(assets: &[Asset]) -> Option<&Asset> {
     assets.iter().find(|a| a.name == CHECKSUMS)
 }
@@ -525,6 +531,11 @@ pub fn prepare(latest: &Latest, cache: &Path, send: &dyn Fn(Msg), cancel: &Atomi
     let target = target().ok_or("the releases have no archive for this system")?;
     let (asset, kind) = choose_asset(&latest.assets, &latest.tag, target).ok_or_else(|| format!("v{} has no archive for {target}", latest.version))?;
     let sums_asset = checksums_asset(&latest.assets).ok_or_else(|| format!("v{} publishes no {CHECKSUMS}, so its download cannot be checked", latest.version))?;
+    for url in [&asset.browser_download_url, &sums_asset.browser_download_url] {
+        if !fetchable(url) {
+            return Err(format!("the release names a download address that is not https: {url}"));
+        }
+    }
     let sums = news::get_text(&news::agent(), &sums_asset.browser_download_url)?;
     let want = checksum_for(&sums, &asset.name).ok_or_else(|| format!("{CHECKSUMS} does not list {}", asset.name))?;
     let staging = Staging::new(cache, &latest.tag).ok_or_else(|| format!("unusable release tag {:?}", latest.tag))?;
@@ -627,6 +638,10 @@ mod tests {
         assert!(choose_asset(&assets, "v0.7.0", "x86_64-pc-windows-msvc").is_none());
         assert!(choose_asset(&assets, "v0.8.0", "aarch64-apple-darwin").is_none());
         assert_eq!(checksums_asset(&assets).unwrap().name, CHECKSUMS);
+        assert!(fetchable("https://github.com/x/y.zip") && fetchable("http://127.0.0.1:8765/y.zip"));
+        for bad in ["http://github.com/y.zip", "file:///C:/y.zip", "ftp://x/y", "\\\\host\\share\\y.zip", ""] {
+            assert!(!fetchable(bad), "{bad}");
+        }
         assert!(target().is_some(), "the machines that build releases have a target");
     }
 

@@ -60,8 +60,33 @@ pub fn spawn(exe: &Path, start: &Start) -> std::io::Result<Child> {
     c.spawn()
 }
 
-/// Open a folder or web page with the system's own program.
-pub fn open(target: &str) {
+/// Open one of the launcher's own folders with the system's file browser.
+pub fn open_folder(dir: &Path) {
+    open(&dir.display().to_string());
+}
+
+/// Whether `url` may be handed to the system: an `https://` web page and nothing else. URLs
+/// come from the network (`news.json`, GitHub), and the system opener runs whatever it is
+/// given: a local program, a `\\host\share` path, a `file:` or other protocol handler.
+/// Only URL characters are let through (RFC 3986's, no spaces, controls, quotes, backslashes
+/// or commas, which explorer reads as its own switches); a page whose address needs others
+/// is refused rather than guessed at.
+pub fn is_web_url(url: &str) -> bool {
+    let u = url.trim();
+    let url_char = |c: char| c.is_ascii_alphanumeric() || "-._~:/?#[]@!$&'()*+;=%".contains(c);
+    u.len() > 8 && u.get(..8).is_some_and(|s| s.eq_ignore_ascii_case("https://")) && u.chars().all(url_char)
+}
+
+/// Open a web page in the browser; anything but an `https://` URL is refused.
+pub fn open_url(url: &str) {
+    if is_web_url(url) {
+        open(url.trim());
+    } else {
+        eprintln!("launcher: not opening {url:?}: only https:// pages are opened");
+    }
+}
+
+fn open(target: &str) {
     #[cfg(windows)]
     let r = Command::new("explorer").arg(target).spawn();
     #[cfg(target_os = "macos")]
@@ -85,5 +110,31 @@ mod tests {
         let a = Start::Load(PathBuf::from("s").join("q.nvfsave")).args();
         assert_eq!(&a[..2], ["--play", "--load"]);
         assert!(a[2].ends_with("q.nvfsave"));
+    }
+
+    #[test]
+    fn only_https_pages_are_opened() {
+        assert!(is_web_url("https://nv-forever.com/news/070"));
+        assert!(is_web_url("HTTPS://github.com/LootJunkieAzza/NVForever/releases/tag/v0.7.0"));
+        for bad in [
+            "",
+            "https://",
+            "http://nv-forever.com",
+            r"C:\Windows\System32\calc.exe",
+            r"\\host\share\x.exe",
+            "file:///C:/x.exe",
+            "ms-settings:",
+            "javascript:alert(1)",
+            "https://x.com\" a.exe",
+            "https://x.com/a b",
+            "https://x.com/a\tb",
+            "https://x.com/a,/select,C:\\x.exe",
+            "https://x.com/\\x",
+            "https://x.com/é",
+            "aéééé…",
+            "httpsé://x.com",
+        ] {
+            assert!(!is_web_url(bad), "{bad}");
+        }
     }
 }
