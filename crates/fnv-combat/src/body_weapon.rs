@@ -63,11 +63,12 @@ pub const SWITCH_SECONDS: f32 = 1.5;
 /// `attack_anims`' `AttackTimes::reloads`). It then reloads by the people's rule, for as
 /// long as that clip runs (docs/spec-notes/combat-rules.md §4.1). Without the clip, or
 /// until it is known, an embedded gun fires on without a magazine, as all of them did
-/// before [design, #2739: the WEAP's Clip Size and Reload Animation are the data's pause
-/// (`SentryBotMissileLauncher2HL`: Clip Size 1, ReloadB [documented: fnvtool esm decode,
-/// FalloutNV.esm]); its Reload Time is "Unused" [documented: GECK wiki Weapons], so the
-/// clip is the only length; whether a creature without the clip pauses in the original
-/// is observer check 221].
+/// before [design, #2739: the WEAP's Clip Size and Reload Animation are the data's
+/// reload; its Reload Time is "Unused" [documented: GECK wiki Weapons], so the clip is the
+/// only length. Only the `nvsecuritron`, `protectron` and `smspinebreaker` folders have
+/// a reload clip [documented: fnvtool bsa list, Fallout - Meshes.bsa, main session
+/// 2026-11-16]; the sentry bot's has none. Whether a creature without the clip pauses in
+/// the original is observer check 221].
 pub fn has_magazine(embedded: bool, reload_clip: Option<f32>) -> bool {
     !embedded || reload_clip.is_some_and(|len| len > 0.0)
 }

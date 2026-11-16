@@ -59,6 +59,11 @@
 //!   (docs/spec-notes/combat-rules.md §4). The clips' lengths and `Hit` key in the
 //!   actor's own rig go to `npc_combat` ([`AttackTimes::reloads`]), whose gun cycle
 //!   reloads for as long. Their `Sound:` keys play as any clip's (`anim_sounds`).
+//! - **Shot timing of NPCs** (#2739): a semi-automatic gun's standing attack clip in the
+//!   actor's own rig (`player_clips::attack_clips` of the WEAP attack animation: the
+//!   sentry bot's `2hlattackleft.kf`) gives its length and `a:` key with the reload
+//!   clips ([`AttackTimes::reloads`]); `npc_combat` times the next shot by them as the
+//!   player's (docs/spec-notes/combat-rules.md §4).
 //! - While an attack clip plays, the actor's body block keeps the place it had when the
 //!   attack began (`nvf_play::blocking::ActorBlocks::attacking`): a dog's lunge shoved
 //!   the player back 40 units each bite before [design; owner 2026-10-11].
@@ -261,7 +266,9 @@ pub struct AttackTimes {
     pub swings: HashMap<u32, SwingClip>,
     /// Each armed actor's reload clips in its own rig, for the weapon drawn on it: their
     /// length and `Hit` key and the opening clip's length (`fnv_combat::attack::
-    /// ClipTiming`), so its gun's cycle reloads for as long as the clip plays.
+    /// ClipTiming`), so its gun's cycle reloads for as long as the clip plays; for a
+    /// semi-automatic gun also its standing attack clip's length and `a:` key, which time
+    /// its shots (#2739).
     pub reloads: HashMap<u32, (FormId, fnv_combat::attack::ClipTiming)>,
 }
 
@@ -747,6 +754,18 @@ fn start(
                     timing.reload_hit = hit_time(&c);
                 }
                 timing.reload_open_len = clips.first(&mut ctx, &rig.skeleton, &skel, &folder, &reload_open_clips(Stance::Stand, prefix, &r)).map(|(_, c)| c.clip.length());
+            }
+            // A semi-automatic gun's standing attack clip: its length and `a:` key time
+            // the next shot as the player's (`fnv_combat::attack::Timing::of`, #2739).
+            let semi = combat.as_deref().and_then(|c| c.forms.weapons.get(&w)).filter(|ws| !ws.automatic);
+            if let Some(ws) = semi {
+                let stem = attack_stem(ws.attack_anim.as_deref());
+                if let Some((_, c)) = clips.first(&mut ctx, &rig.skeleton, &skel, &folder, &attack_clips(Stance::Stand, prefix, &stem, false)) {
+                    let len = c.clip.length();
+                    timing.attack_len = Some(len).filter(|l| *l > 0.0);
+                    let keys = ClipKeys::parse(&c.clip.text_keys);
+                    timing.next_attack = keys.next_attack.and_then(|(t, v)| NextAttack::parse(&v).map(|n| ((t - c.clip.start).clamp(0.0, len), n)));
+                }
             }
             times.reloads.insert(id, (w, timing));
         }

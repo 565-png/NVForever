@@ -1884,11 +1884,16 @@ bloatfly and protectron folders also keep stance clips there.
   Weapons]: crippling Mister Handy's left arm leaves it its saw.
 - Body weapons do not wear or break and do not slow their creature as two-handed weapons
   in hand do [design].
-- **Reloading** (#2739; docs/spec-notes/combat-rules.md §4.1): a body gun has a magazine
-  and reloads by the people's rule once its creature's rig is known to have the weapon's
-  reload clip; without one it fires on without a magazine, as every body gun did before
+- **Shot timing and reloading** (#2739; docs/spec-notes/combat-rules.md §4.1): a
+  semi-automatic body gun, like any NPC's, is timed by its attack clip in its rig as the
+  player's (the `a:` key, else the clip's end, ÷ the attack multipliers;
+  `fnv_combat::attack::npc_clip_timing`), 1 ÷ Attack Shots/Sec until the clip is known.
+  A body gun has a magazine and reloads by the people's rule once its creature's rig is
+  known to have the weapon's reload clip (only the Securitron, protectron and spinebreaker
+  folders have reload clips); without one it fires on without a magazine
   (`fnv_combat::body_weapon::has_magazine`) [design, #2739; observer check 221]. Before, a
-  sentry bot's one-round missile launcher (Clip Size 1, ReloadB) fired every 0.63 s.
+  sentry bot's missile launcher fired every 0.63 s; now every 0.967 s (`2hlattackleft.kf`
+  `a:R`), still without reloads (its folder has no reload clip).
 
 **Not built**: VATS targeting of a body weapon; the original's own switching rule (a
 capture of a Mister Gutsy at several distances would settle it); the protectron's and
