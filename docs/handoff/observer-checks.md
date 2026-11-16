@@ -2950,7 +2950,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-15 (held weather across worldspace doors, #1997)
 
-208. **Does held weather survive a door into another worldspace?** (P3; #1997;
+209. **Does held weather survive a door into another worldspace?** (P3; #1997;
     `worldspace.rs::carry_sky`, `sky.rs::SkyState::carry_weather_from`.) In Freeside,
     use the console to `ForceWeather` a clearly different weather with override flag 1,
     then go through the gate into the Strip. Does that weather remain shown? Repeat

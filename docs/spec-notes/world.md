@@ -365,7 +365,7 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
     GECK wiki SetWeather/ForceWeather "the weather will change back in the normal fashion
     according to the weather system"; hypothesis: that is the next roll].
   - A held script weather survives a door into another worldspace, even when that
-    world's lists do not include it [hypothesis, #1997; observer check 208 in
+    world's lists do not include it [hypothesis, #1997; observer check 209 in
     `docs/handoff/observer-checks.md`]. The lifetime follows the wording of both
     [ForceWeather](https://geckwiki.com/index.php?title=ForceWeather) and
     [SetWeather](https://geckwiki.com/index.php?title=SetWeather): "If OverrideWeatherFlag
@@ -373,7 +373,7 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
     [documented: offline GECK wiki snapshot 2026-10-28].
     [ReleaseWeatherOverride](https://geckwiki.com/index.php?title=ReleaseWeatherOverride)
     says to "allow the weather to resume normal dynamic operation" [documented: same
-    snapshot]. The cross-door interpretation remains provisional pending check 208.
+    snapshot]. The cross-door interpretation remains provisional pending check 209.
     The replacement sky keeps the script/pin/resume state, shown and fading-out weather,
     fade progress and those weathers' image-space adapters; the destination supplies
     its own climate and region lists for later rolls. Natural unpinned weather starts
