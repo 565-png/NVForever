@@ -330,3 +330,7 @@ fn mod_file_roots(data: Option<Res<nvf_assets::GameData>>, mut done: Local<bool>
 #[cfg(test)]
 #[path = "script_input_wheel_tests.rs"]
 mod wheel_tests;
+
+#[cfg(test)]
+#[path = "script_input_mcm_page_tests.rs"]
+mod mcm_page_tests;
