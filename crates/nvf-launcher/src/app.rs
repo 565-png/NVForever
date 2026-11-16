@@ -52,7 +52,13 @@ enum Upd {
     Failed(String),
 }
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The launcher's version: its build's, or `NVF_LAUNCHER_VERSION` (a test aid: a launcher
+/// that takes itself for an older version offers the newest release as an update, so the
+/// updater can be tried against a real release; docs/design/launcher.md).
+fn version() -> &'static str {
+    static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    V.get_or_init(|| std::env::var("NVF_LAUNCHER_VERSION").ok().filter(|v| update::safe_component(v)).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()))
+}
 
 struct NewestSave {
     path: PathBuf,
@@ -171,8 +177,15 @@ impl App {
         // Started by the updater (update::restart): say what changed.
         for a in std::env::args().skip(1) {
             match a.as_str() {
-                "--updated" => app.message = Some((format!("Updated to v{VERSION}. Your saves, settings and mods are as they were."), false)),
-                "--rolled-back" => app.message = Some((format!("Rolled back to v{VERSION}."), false)),
+                "--updated" | "--rolled-back" => {
+                    // The version the swap wrote (an archive without a launcher leaves this one).
+                    let installed = install_dir().ok().and_then(|d| update::read_manifest(&d)).map_or_else(|| version().to_string(), |m| m.version);
+                    app.message = Some(if a == "--updated" {
+                        (format!("Updated to v{installed}. Your saves, settings and mods are as they were."), false)
+                    } else {
+                        (format!("Rolled back to v{installed}."), false)
+                    });
+                }
                 _ => {}
             }
         }
@@ -180,7 +193,7 @@ impl App {
         if let Some(h) = &app.home {
             let cache = h.cache();
             std::thread::spawn(move || {
-                for d in update::stale_staging(&cache, VERSION) {
+                for d in update::stale_staging(&cache, version()) {
                     let _ = std::fs::remove_dir_all(d);
                 }
             });
@@ -298,7 +311,7 @@ impl App {
         if let Some(r) = self.latest_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.latest_rx = None;
             match r {
-                Ok(l) => self.latest = l.filter(|l| news::is_newer(&l.version, VERSION)),
+                Ok(l) => self.latest = l.filter(|l| news::is_newer(&l.version, version())),
                 Err(e) => eprintln!("launcher: latest release: {e}"),
             }
         }
@@ -465,7 +478,7 @@ impl App {
                     }
                     if let Some(l) = &self.latest {
                         let b = egui::Button::new(RichText::new(format!("Update to v{}", l.version)).strong().color(theme::ON_GOLD)).fill(GOLD);
-                        if ui.add(b).on_hover_text(format!("v{} is out (this is v{VERSION})", l.version)).clicked() {
+                        if ui.add(b).on_hover_text(format!("v{} is out (this is v{})", l.version, version())).clicked() {
                             self.upd_open = true;
                         }
                     }
@@ -527,7 +540,7 @@ impl App {
     fn bottom_bar(&mut self, root: &mut egui::Ui, ctx: &egui::Context, running: bool) {
         egui::Panel::bottom("bottom").frame(Frame::new().fill(theme::PANEL).inner_margin(Margin::symmetric(16, 10)).stroke(Stroke::new(1.0, LINE))).show(root, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("v{}", env!("CARGO_PKG_VERSION"))).size(20.0).strong().color(WEAK));
+                ui.label(RichText::new(format!("v{}", version())).size(20.0).strong().color(WEAK));
                 if let Some((m, bad)) = &self.message {
                     ui.add_space(16.0);
                     ui.label(RichText::new(m).color(if *bad { BAD } else { GOOD }));
@@ -1040,7 +1053,7 @@ impl App {
         ui.label(RichText::new("VERSION").small().strong().color(theme::GOLD_TEXT));
         card(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(format!("NVForever v{VERSION}"));
+            ui.label(format!("NVForever v{}", version()));
             let install = install_dir();
             let kept = install.as_ref().ok().and_then(|d| update::previous_version(d));
             match (&install, kept) {
@@ -1127,7 +1140,7 @@ impl App {
         let (tx, rx) = channel();
         let c = ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(Msg::Installed(update::install(&dir, &ready, VERSION)));
+            let _ = tx.send(Msg::Installed(update::install(&dir, &ready, version())));
             c.request_repaint();
         });
         self.upd_rx = Some(rx);
@@ -1139,7 +1152,7 @@ impl App {
             self.message = Some(("Close the game first, then roll back.".into(), true));
             return;
         }
-        match update::roll_back(&dir, VERSION) {
+        match update::roll_back(&dir, version()) {
             Ok(v) => match update::restart(&dir, "--rolled-back") {
                 Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 Err(e) => self.message = Some((format!("Rolled back to v{v}; start the launcher again ({e})."), false)),
@@ -1201,7 +1214,7 @@ impl App {
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.label(format!("v{} is out; this is v{VERSION}.{}", l.version, size.map_or(String::new(), |s| format!(" Download: {}.", megabytes(s)))));
+                ui.label(format!("v{} is out; this is v{}.{}", l.version, version(), size.map_or(String::new(), |s| format!(" Download: {}.", megabytes(s)))));
                 if !l.notes.trim().is_empty() {
                     ui.add_space(6.0);
                     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {

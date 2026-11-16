@@ -71,7 +71,8 @@ line-height setting for Markdown text, so the room comes from the font and its s
   closes; `NVF_LAUNCHER_PAGE=home|settings|mods|game` opens that page first (`update`: the
   update dialog over Home, once a newer release is known); `NVF_LAUNCHER_RELEASES=<url>` reads
   the release list from that address instead of GitHub (a local server with a fixture release,
-  to try the updater).
+  to try the updater); `NVF_LAUNCHER_VERSION=0.6.9` makes the launcher take itself for that
+  version, so a real release counts as newer (the restarted launcher inherits it).
 
 ## Updater (#2713)
 
@@ -98,7 +99,8 @@ on fixture folders and a fixture zip/tar.gz (no real release is downloaded by an
   folder goes through `guard_write` (never the game folder or `My Games\FalloutNV`); the tag
   comes from the network, so it must be letters, digits, `.`, `_`, `-`. Unpacking refuses an
   entry that would land outside (`..`, absolute, a drive), links and devices, and an archive
-  without the launcher and `nvforever` in it. Staging folders of versions no newer than the
+  without `nvforever` in it (releases before v0.8.0 have no launcher: the running one stays
+  and restarts as itself). Staging folders of versions no newer than the
   running one are removed at the launcher's start.
 - **Where it installs.** The folder the launcher runs from, wherever the player unpacked the
   archive. Refused (the dialog says why and offers the release page) when the launcher is a
@@ -130,7 +132,7 @@ on fixture folders and a fixture zip/tar.gz (no real release is downloaded by an
 - **Restart.** After the swap the launcher starts the new `nvforever-launcher` in the install
   with `--updated` and closes; the new one says "Updated to vX".
 - **Roll back.** The Game folder page's Version card shows "Roll back to vX" when
-  `update/previous/v<X>/` holds the launcher and the game. It is the same swap with the kept
+  `update/previous/v<X>/` holds the game program. It is the same swap with the kept
   folder as the payload, so the current version is kept in its place (a second roll back goes
   forward again); the launcher restarts with `--rolled-back`.
 - **The dialog.** Version, download size, the release notes (Markdown), "Your saves, settings

@@ -230,8 +230,9 @@ pub fn copy_hashed(mut from: impl Read, dest: &Path, limit: u64, mut on_bytes: i
 
 /// Unpack `archive` into `dest` (emptied first) and give the folder holding the programs:
 /// the archive's one top folder (`NVForever-<tag>-<target>/`), else `dest`. Entries that
-/// would land outside `dest`, links and devices are refused; the result must hold the
-/// launcher and the game program.
+/// would land outside `dest`, links and devices are refused; the result must hold the game
+/// program (the launcher too from v0.8.0 on; an archive without one leaves the running
+/// launcher in place, and it restarts as itself).
 pub fn unpack(archive: &Path, kind: ArchiveKind, dest: &Path) -> Result<PathBuf, String> {
     if dest.exists() {
         fs::remove_dir_all(dest).map_err(|e| format!("{}: {e}", dest.display()))?;
@@ -242,10 +243,9 @@ pub fn unpack(archive: &Path, kind: ArchiveKind, dest: &Path) -> Result<PathBuf,
         ArchiveKind::TarGz => untar(archive, dest),
     }?;
     let root = payload_root(dest).map_err(|e| format!("{}: {e}", dest.display()))?;
-    for need in [launcher_exe(), programs()[0].clone()] {
-        if !root.join(&need).is_file() {
-            return Err(format!("the archive has no {need}: not an NVForever release for this system"));
-        }
+    let need = &programs()[0];
+    if !root.join(need).is_file() {
+        return Err(format!("the archive has no {need}: not an NVForever release for this system"));
     }
     Ok(root)
 }
@@ -359,7 +359,7 @@ fn slash(p: &Path) -> String {
 }
 
 /// The kept previous version a roll back would put back: its version and folder, when it
-/// holds the launcher and the game (an empty or partial folder is no version to go back to).
+/// holds the game program (an empty folder is no version to go back to).
 pub fn previous_version(install: &Path) -> Option<(String, PathBuf)> {
     let mut found: Vec<(String, PathBuf)> = fs::read_dir(previous_dir(install))
         .ok()?
@@ -368,7 +368,7 @@ pub fn previous_version(install: &Path) -> Option<(String, PathBuf)> {
             let name = e.file_name().to_string_lossy().into_owned();
             let v = name.strip_prefix('v')?.to_string();
             let p = e.path();
-            (safe_component(&v) && p.join(launcher_exe()).is_file() && p.join(&programs()[0]).is_file()).then_some((v, p))
+            (safe_component(&v) && p.join(&programs()[0]).is_file()).then_some((v, p))
         })
         .collect();
     found.sort_by(|a, b| news::cmp_versions(&b.0, &a.0));
