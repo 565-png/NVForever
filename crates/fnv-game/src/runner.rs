@@ -822,6 +822,12 @@ fn label(l: &Option<String>, i: usize) -> String {
 
 /// Run a console line (`reference.Function words…`) through the console's reading of
 /// its words.
+/// A console line's value, as `call_until` reads it each frame (for a caller with frames
+/// of its own: the quest pilot).
+pub fn call_value(g: &mut Game, line: &str) -> Result<f64, String> {
+    call_line(g, line).map(|c| c.value.num())
+}
+
 fn call_line(g: &mut Game, line: &str) -> Result<crate::functions::console::Called, String> {
     let (on, func, args) = crate::functions::console::split_call(line).ok_or("an empty line")?;
     let on = match on {

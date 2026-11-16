@@ -583,6 +583,8 @@ struct Walk {
     enable_wait: Option<f64>,
     /// When the walk last said where the player is on its path (every [`WALK_REPORT_SECS`]).
     reported: f64,
+    /// Since when a travel a script asked for has been waited for.
+    travel_since: Option<f64>,
     /// Seconds stood watching scenes on this walk, and when a scene's line was last seen.
     scene_held: f64,
     scene_last: Option<f64>,
@@ -1087,6 +1089,24 @@ enum Walked {
 fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
     let feet = h.feet();
     let here = h.here();
+    // A script has moved the player to another space and the travel has not happened yet
+    // (Lonesome Road's narrator moves the player from the end slides to the Canyon
+    // Wreckage): planned from where the player was, the way was "unreachable". Waited for,
+    // up to [`TRAVEL_WAIT`].
+    let moving_to = h.game(|g| g.cell_of(FormId::PLAYER_REF)).flatten().and_then(|c| crate::nav::space_of_cell(h.world, c.0)).filter(|s| *s != here.space);
+    match moving_to {
+        Some(to) if w.travel_since.is_none_or(|t| p.now - t < TRAVEL_WAIT) => {
+            if w.travel_since.is_none() {
+                info!("pilot: step {}: a script has moved the player to {to:?}: waits for the travel", p.i);
+                w.travel_since = Some(p.now);
+            }
+            w.follower = None;
+            w.seen = (p.now, feet);
+            return Walked::Going;
+        }
+        None => w.travel_since = None,
+        Some(_) => {}
+    }
     // The player's teammates come along a fast-travel stand-in, a moment after it (once
     // the player stands there): Boone was left 107,000 units behind and "never came".
     if p.followers_due.is_some_and(|t| p.now - t > FOLLOWERS_AFTER) {
@@ -1607,7 +1627,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
 }
 
 fn walk_to(goal: Place, target: Option<FormId>, radius: f32, now: f64, feet: [f32; 3]) -> Walk {
-    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, reported: now }
+    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, reported: now, travel_since: None }
 }
 
 /// What a player would use to open a door that stays locked (module notes), not used
@@ -2548,6 +2568,24 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
         }
         Action::AdvanceSeconds { seconds } => wait_for(p, seconds.min(ADVANCE_CAP)),
         Action::WaitFrames { frames } => wait_for(p, (*frames as f64 / 60.0).min(ADVANCE_CAP)),
+        // A console line read each frame until it is not 0, as the headless run reads it
+        // (Lonesome Road's end slides: until the narrator's last line moves the player back
+        // to the Mojave). Not skipped: the step after it walked from the slides' room.
+        Action::CallUntil { line, max_frames, label } => {
+            let limit = (*max_frames as f64 / 60.0).clamp(10.0, CALL_UNTIL_CAP);
+            match h.game(|g| runner::call_value(g, line)) {
+                Some(Ok(v)) if v != 0.0 => {
+                    info!("pilot: step {}: {line:?} is {v} after {:.1} s ({label})", p.i, p.now - p.step_from);
+                    Some(None)
+                }
+                Some(Err(e)) => Some(Some(e)),
+                _ if p.now - p.step_from > limit => {
+                    p.finding("wait_timed_out", format!("step {} call_until: {line:?} still 0 after {limit:.0} s", p.i));
+                    Some(Some(format!("{line:?} still 0 after {limit:.0} s")))
+                }
+                _ => None,
+            }
+        }
         Action::WaitQuest { quest, field, value, max_frames, label, .. } => {
             let limit = (*max_frames as f64 / 60.0).clamp(10.0, WAIT_CAP);
             match h.game(|g| runner::quest_field(g, quest, field)) {
@@ -3350,6 +3388,11 @@ fn fight(p: &mut Pilot, h: &mut Hands, name: &str, a: &Action) -> Option<Option<
 
 /// How near the player goes to an object it shoots, game units [design].
 const SHOOT_OBJECT_FROM: f32 = 600.0;
+/// The longest a `call_until` waits, seconds: past [`STEP_SECS`], as end slides run for
+/// minutes (the headless chains give them up to 30).
+const CALL_UNTIL_CAP: f64 = 1800.0;
+/// How long a walk waits for a travel a script asked for, seconds.
+const TRAVEL_WAIT: f64 = 10.0;
 /// How often a walk says where the player is on its path, seconds.
 const WALK_REPORT_SECS: f64 = 20.0;
 /// Nearer than this the player steps back before it fires: from on top of the warhead
@@ -3779,7 +3822,7 @@ fn drive(
         match step(p, &mut h) {
             Some(error) => p.next(error),
             // No step holds the run up for good, whatever went wrong in it.
-            None if p.now - p.step_from > STEP_SECS => {
+            None if p.now - p.step_from > STEP_SECS && !matches!(p.actions[p.i], Action::CallUntil { .. }) => {
                 p.finding("step_timed_out", format!("the step was not over after {STEP_SECS:.0} s: given up"));
                 h.control.trigger = false;
                 p.next(Some("the step timed out".into()));

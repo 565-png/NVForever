@@ -54,6 +54,7 @@ NVFOREVER_HOME=<a folder of its own> nvforever --data <Data> --play --new-game \
 | `add_item` to the player (campaign) | taken from whoever holds it in the loaded cells, or where it lies; `item_not_found` and the headless gift otherwise |
 | `X.MoveTo marker` (campaign) | the player goes to the marker and waits there on the Wait menu, an hour at a time, up to 24 hours; `never_came` otherwise |
 | `package`, `patrol_point`, `dialogue_package` | not carried out: the AI has to do it |
+| `call_until` | the console line read each frame until it is not 0, for up to its own `max_frames` (30 minutes at most; the 240 s step limit does not apply): Lonesome Road's end slides take about three minutes |
 | `wait_menu`, `get_menus`, `press_button`, `dismiss_message_boxes` | the game's own menu; a box nobody waits for gets its last shown button after 1.5 s |
 | anything else | the headless step on the running game, counted in the report's `headless` by kind |
 
@@ -116,6 +117,13 @@ that stop a quest (`no_way_out`, `unreachable`, `never_came`, `chain_abandoned`)
 own trouble; each row says what was still done the headless way. With 217 chains and two games at
 once a full pass takes about a day; `--skip-fail` leaves out the 51 `fail-*` chains (a
 quest's failure paths).
+
+A mod list (Tale of Two Wastelands, #2761): `tools/smoke/pilot/mo2_merge.py --instance <MO2 folder>
+--profile <name> --out <folder>` writes the profile merged into a game folder of its own as hard
+links (the game and the mods are never written) and its `plugins.txt`; then `batch.py --data
+<folder>/Data --plugins-file <folder>/plugins.txt` moves each chain's FormIDs to that load order
+for the headless trace and the game, and `--chains-dir crates/fnv-game/walkthrough/ttw` adds the
+Fallout 3 chains. Give the batch a `--home` of its own with the mod list's start save.
 
 Read a finding against the chain's notes before calling it a bug: a chain run from its `given`
 state carries the false alarms a thin `given` brings (§2).

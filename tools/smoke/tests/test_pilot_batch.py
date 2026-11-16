@@ -27,6 +27,20 @@ class Picking(unittest.TestCase):
             batch.chains(["no-such-chain"])
 
 
+class LoadOrder(unittest.TestCase):
+    def test_formids_move_to_the_run_s_load_order(self):
+        # A Dead Money chain's 0x01 is DeadMoney.esm; on a load order with it at 0x03 it moves.
+        index = [0, 3]
+        self.assertEqual(batch.remap_ids("0x0100D0A1", index), "0x0300D0A1")
+        self.assertEqual(batch.remap_ids("scripted:0x0100C7F3 and 0100ABCD", index), "scripted:0x0300C7F3 and 0300ABCD")
+        # The base game's (top byte 0), a name or a longer word are left alone.
+        self.assertEqual(batch.remap_ids("0x0010A18E VMS18 0x0100D0A1FF", index), "0x0010A18E VMS18 0x0100D0A1FF")
+        self.assertEqual(batch.remap_ids({"a": ["0x01000001"], "b": 3}, index), {"a": ["0x03000001"], "b": 3})
+
+    def test_a_plugin_missing_from_the_order_keeps_its_ids(self):
+        self.assertEqual(batch.remap_ids("0x01000001", [0, None]), "0x01000001")
+
+
 class Summary(unittest.TestCase):
     def test_a_soft_lock_ranks_above_the_pilots_own_trouble(self):
         quiet = {"chain": "a", "report": {"steps": [{"step": 0}], "findings": [{"kind": "fight_not_won", "step": 0}], "divergences": [], "softlocks": 0, "headless": {}}}

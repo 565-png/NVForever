@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -62,9 +63,12 @@ WEIGHTS = {
 }
 
 
-def chains(only: list[str]) -> list[Path]:
-    """The chain files, all or the named ones (name = file name without `.actions.json`)."""
+def chains(only: list[str], extra: list[str] | None = None) -> list[Path]:
+    """The chain files, all or the named ones (name = file name without `.actions.json`):
+    the New Vegas ones, and those of each `--chains-dir` (the TTW ones in `walkthrough/ttw`)."""
     every = sorted(CHAINS.glob("*.actions.json"))
+    for d in extra or []:
+        every += sorted(Path(d).glob("*.actions.json"))
     if not only:
         return every
     names = {n.removesuffix(".actions.json") for n in only}
@@ -93,6 +97,42 @@ def in_order(todo: list[Path]) -> list[Path]:
     return sorted(todo, key=lambda c: (variant(c), name_of(c)))
 
 
+_WORD = re.compile(r"(?<![0-9A-Za-z])(0x)?([0-9A-Fa-f]{8})(?![0-9A-Za-z])")
+
+
+def remap_ids(value, index: list[int | None]):
+    """Each 8-hex-digit word whose top byte is a chain plugin's index gets that plugin's
+    index in the run's load order (the pilot's `remap_ids`, for the headless trace)."""
+    if isinstance(value, str):
+        def sub(m: re.Match) -> str:
+            word = int(m.group(2), 16)
+            top = word >> 24
+            to = index[top] if 0 < top < len(index) else None
+            return m.group(0) if to is None else (m.group(1) or "") + f"{(to << 24) | (word & 0xFFFFFF):08X}"
+        return _WORD.sub(sub, value)
+    if isinstance(value, list):
+        return [remap_ids(v, index) for v in value]
+    if isinstance(value, dict):
+        return {k: remap_ids(v, index) for k, v in value.items()}
+    return value
+
+
+def for_load_order(chain: Path, out: Path, order: list[str]) -> Path:
+    """The chain with its FormIDs moved to `order` (a mod list's: Tale of Two Wastelands
+    puts the DLC masters at other indexes), written under `out/chains`; `plugins` is the
+    whole order, so the headless run and the game read it the same way."""
+    raw = json.loads(chain.read_text(encoding="utf-8"))
+    own = raw.get("plugins") or ["FalloutNV.esm"]
+    low = [o.lower() for o in order]
+    index = [low.index(n.lower()) if n.lower() in low else None for n in own]
+    moved = remap_ids(raw, index)
+    moved["plugins"] = order
+    dst = out / "chains" / chain.name
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(json.dumps(moved, indent=1), encoding="utf-8")
+    return dst
+
+
 def headless_trace(chain: Path, out: Path, fnvtool: Path, data: Path) -> Path | None:
     """The chain's headless trace, made again when the chain or fnvtool is newer."""
     trace = out / "traces" / f"{name_of(chain)}.trace.json"
@@ -109,6 +149,13 @@ def headless_trace(chain: Path, out: Path, fnvtool: Path, data: Path) -> Path | 
     return trace if code == 0 else None
 
 
+def load_order(args: argparse.Namespace) -> list[str]:
+    """`--plugins-file`'s plugins in order, or none (each chain's own)."""
+    if not getattr(args, "plugins_file", None):
+        return []
+    return [line.strip() for line in Path(args.plugins_file).read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")]
+
+
 def run_one(chain: Path, args: argparse.Namespace, slot: int) -> dict:
     """One chain in the game: its report (or what went wrong), with the run's facts."""
     name = name_of(chain)
@@ -117,6 +164,9 @@ def run_one(chain: Path, args: argparse.Namespace, slot: int) -> dict:
     log = out / "logs" / f"{name}.log"
     report.parent.mkdir(parents=True, exist_ok=True)
     log.parent.mkdir(parents=True, exist_ok=True)
+    order = load_order(args)
+    if order:
+        chain = for_load_order(chain, out, order)
     trace = headless_trace(chain, out, Path(args.fnvtool), Path(args.data))
     # A home of its own for each slot, with the start save in it.
     home = Path(args.home) / f"batch-{slot}"
@@ -127,6 +177,8 @@ def run_one(chain: Path, args: argparse.Namespace, slot: int) -> dict:
         shutil.copy2(start, saves / start.name)
     cmd = [str(args.exe), "--data", str(args.data), "--play", "--no-voice", "--no-music", "--run-seconds", str(args.minutes * 60)]
     cmd += ["--load", args.start] if start.exists() else ["--new-game"]
+    if order:
+        cmd += ["--plugins", *order]
     cmd += ["--pilot", str(chain), "--pilot-campaign", "--pilot-given", "--pilot-out", str(report), "--pilot-minutes", str(args.minutes)]
     if trace:
         cmd += ["--pilot-expect", str(trace)]
@@ -220,9 +272,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--only", nargs="*", default=[])
     ap.add_argument("--skip-fail", action="store_true", help="leave out the fail-* chains (a quest's failure paths)")
     ap.add_argument("--save-load", action="store_true", help="the game's state through a save and a load before each milestone")
+    ap.add_argument("--chains-dir", action="append", default=[], help="another folder of chains, beside crates/fnv-game/walkthrough (e.g. its ttw/ folder for Tale of Two Wastelands)")
+    ap.add_argument("--plugins-file", help="a load order of its own, one plugin a line (a mod list merged by mo2_merge.py: Tale of Two Wastelands); the chains' FormIDs are moved to it")
     ap.add_argument("--resume", action="store_true", help="keep the chains that already have a report in --out; run the others")
     args = ap.parse_args(argv)
-    todo = [c for c in chains(args.only) if not (args.skip_fail and c.name.startswith("fail-"))]
+    todo = [c for c in chains(args.only, args.chains_dir) if not (args.skip_fail and c.name.startswith("fail-"))]
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     results: list[dict] = []
