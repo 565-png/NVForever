@@ -149,6 +149,8 @@ impl VigorMenu {
                 aid_from: Some(step as f32),
             }),
             clips: None,
+            ready: None,
+            warmed: false,
         }
     }
     pub fn is_open(&self) -> bool {
