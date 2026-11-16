@@ -38,6 +38,9 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 # is typed there, as the game's own setup asks for it on Linux (`--data` or `[Game] Path`).
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "0.15", default-features = false, features = ["common-controls-v6"] }
+# The displays and their modes for the Resolution and Monitor lists (src/display.rs):
+# EnumDisplayDevicesW / EnumDisplaySettingsW. The version winit already brings. MIT/Apache-2.0.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

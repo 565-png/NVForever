@@ -2377,6 +2377,7 @@ dependencies = [
  "sha2",
  "tar",
  "ureq",
+ "windows-sys 0.61.2",
  "winresource",
  "zip",
 ]

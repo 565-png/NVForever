@@ -1,0 +1,276 @@
+//! The Display rows the launcher shows as lists rather than text: Resolution, Monitor,
+//! Display sync and Frame rate limit. Each list's words and the text it writes are the game's
+//! (engine/nvforever/src/window_mode.rs, frame_pace.rs, settings.rs); the tests read those
+//! files so a change there shows here.
+
+/// One entry of a list: what the page shows and what the INI keeps.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Choice {
+    pub label: String,
+    pub stored: String,
+}
+
+fn choice(label: impl Into<String>, stored: impl Into<String>) -> Choice {
+    Choice { label: label.into(), stored: stored.into() }
+}
+
+/// A display attached to the desktop: its device name (what `monitor=` keeps, `\\.\DISPLAY1`
+/// on Windows), its desktop size and position, and the sizes of its video modes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Monitor {
+    pub name: String,
+    pub size: (u32, u32),
+    pub position: (i32, i32),
+    pub modes: Vec<(u32, u32)>,
+}
+
+/// Display sync, as `DisplaySync::name` / `stored` have it (frame_pace.rs).
+pub fn sync_choices() -> Vec<Choice> {
+    vec![choice("Off", "off"), choice("Vertical sync", "vsync"), choice("Variable refresh", "variable")]
+}
+
+/// The frame rate limits (frame_pace.rs `CAPS`; 0 is Off).
+pub const CAPS: [u32; 6] = [0, 30, 60, 90, 120, 144];
+
+/// Frame rate limit: a slider of [`CAPS`] steps in the game, kept as the step's part of 0..1
+/// (`choice_part`: 0.00, 0.20, … 1.00).
+pub fn cap_choices() -> Vec<Choice> {
+    let n = CAPS.len() - 1;
+    CAPS.iter().enumerate().map(|(i, c)| choice(if *c == 0 { "Off".to_string() } else { format!("{c} a second") }, format!("{:.2}", i as f32 / n as f32))).collect()
+}
+
+/// The cap a stored part stands for (`choice_index`).
+pub fn cap_index(stored: &str) -> Option<usize> {
+    let v: f32 = stored.trim().parse().ok()?;
+    let n = CAPS.len() - 1;
+    Some(((v.clamp(0.0, 1.0) * n as f32).round() as usize).min(n))
+}
+
+/// The game's name for display `i` of the left-to-right order (`monitor_label`).
+pub fn monitor_label(i: usize, m: &Monitor) -> String {
+    format!("Display {} ({}x{})", i + 1, m.size.0, m.size.1)
+}
+
+/// Monitor: the displays in the game's order (left to right, then top to bottom).
+pub fn monitor_choices(monitors: &[Monitor]) -> Vec<Choice> {
+    monitors.iter().enumerate().map(|(i, m)| choice(monitor_label(i, m), m.name.clone())).collect()
+}
+
+/// The display `monitor=` names, else the first (the game's rule).
+pub fn chosen_monitor<'a>(monitors: &'a [Monitor], stored: Option<&str>) -> Option<&'a Monitor> {
+    stored.and_then(|s| monitors.iter().find(|m| m.name.eq_ignore_ascii_case(s.trim()))).or_else(|| monitors.first())
+}
+
+/// Sizes offered when the displays cannot be asked (not Windows): the common ones.
+const COMMON: [(u32, u32); 8] = [(1280, 720), (1366, 768), (1600, 900), (1920, 1080), (1920, 1200), (2560, 1440), (3440, 1440), (3840, 2160)];
+
+/// The sizes of `m`'s modes and its desktop, at least 640x480, smallest first, once each
+/// (`MonitorModes::sizes`); the common sizes without a display.
+pub fn sizes(m: Option<&Monitor>) -> Vec<(u32, u32)> {
+    let mut s: Vec<(u32, u32)> = match m {
+        Some(m) => m.modes.iter().copied().filter(|s| s.0 >= 640 && s.1 >= 480).chain([m.size]).collect(),
+        None => COMMON.to_vec(),
+    };
+    s.sort_by_key(|s| (u64::from(s.0) * u64::from(s.1), s.0));
+    s.dedup();
+    s
+}
+
+pub fn size_text(s: (u32, u32)) -> String {
+    format!("{}x{}", s.0, s.1)
+}
+
+/// A size from "WxH", as the game reads it (`parse_size`: 320x240 to 16384 a side).
+pub fn parse_size(t: &str) -> Option<(u32, u32)> {
+    let (w, h) = t.trim().split_once(['x', 'X'])?;
+    let s = (w.trim().parse().ok()?, h.trim().parse().ok()?);
+    ((320..=16384).contains(&s.0) && (240..=16384).contains(&s.1)).then_some(s)
+}
+
+/// `resolution=` is `<window size>;<full screen size or desktop>` (`resolution_save`); a
+/// window size alone keeps full screen at the desktop's.
+pub fn split_resolution(v: &str) -> (String, String) {
+    match v.split_once(';') {
+        Some((w, f)) if !f.trim().is_empty() => (w.trim().to_string(), f.trim().to_string()),
+        Some((w, _)) => (w.trim().to_string(), "desktop".to_string()),
+        None => (v.trim().to_string(), "desktop".to_string()),
+    }
+}
+
+pub fn join_resolution(window: &str, full: &str) -> String {
+    format!("{window};{full}")
+}
+
+/// The window sizes: none larger than the display's desktop (the game's rule in a window),
+/// with the one in use kept.
+pub fn window_choices(m: Option<&Monitor>, current: &str) -> Vec<Choice> {
+    let mut s: Vec<(u32, u32)> = sizes(m).into_iter().filter(|s| m.is_none_or(|m| s.0 <= m.size.0 && s.1 <= m.size.1)).collect();
+    keep_current(&mut s, current);
+    s.into_iter().map(|s| choice(size_text(s), size_text(s))).collect()
+}
+
+/// The full screen sizes: the display's own (`desktop`, borderless at its size) first, then
+/// every size of its modes, with the one in use kept.
+pub fn full_choices(m: Option<&Monitor>, current: &str) -> Vec<Choice> {
+    let own = match m {
+        Some(m) => format!("The display's own ({})", size_text(m.size)),
+        None => "The display's own".to_string(),
+    };
+    let mut s = sizes(m);
+    keep_current(&mut s, current);
+    std::iter::once(choice(own, "desktop")).chain(s.into_iter().map(|s| choice(size_text(s), size_text(s)))).collect()
+}
+
+fn keep_current(s: &mut Vec<(u32, u32)>, current: &str) {
+    if let Some(c) = parse_size(current) {
+        if !s.contains(&c) {
+            s.push(c);
+            s.sort_by_key(|s| (u64::from(s.0) * u64::from(s.1), s.0));
+        }
+    }
+}
+
+/// The entry of `choices` that `value` stands for: the same text (any case, and a size in
+/// any `x`/`X` spelling), or for the frame rate limit the same step.
+pub fn chosen(key: &str, choices: &[Choice], value: &str) -> Option<usize> {
+    if key == "frame-cap" {
+        return cap_index(value);
+    }
+    let v = value.trim();
+    choices.iter().position(|c| c.stored.eq_ignore_ascii_case(v) || (parse_size(v).is_some() && parse_size(&c.stored) == parse_size(v)))
+}
+
+/// The displays attached to the desktop, in the game's order. Asked of Windows
+/// (EnumDisplayDevicesW / EnumDisplaySettingsW, user32): the device names are the ones winit
+/// gives the game, so `monitor=` matches.
+#[cfg(windows)]
+pub fn monitors() -> Vec<Monitor> {
+    use windows_sys::Win32::Graphics::Gdi::{EnumDisplayDevicesW, EnumDisplaySettingsW, DEVMODEW, DISPLAY_DEVICEW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, ENUM_CURRENT_SETTINGS};
+    let wide = |w: &[u16]| String::from_utf16_lossy(&w[..w.iter().position(|c| *c == 0).unwrap_or(w.len())]);
+    let blank_mode = || {
+        // SAFETY: DEVMODEW is plain data (integers, arrays, unions of integers); all zeros is
+        // a valid value, and the call reads dmSize.
+        let mut dm: DEVMODEW = unsafe { std::mem::zeroed() };
+        dm.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
+        dm
+    };
+    let mut out = Vec::new();
+    for i in 0.. {
+        // SAFETY: as DEVMODEW; cb says the struct's size.
+        let mut dd: DISPLAY_DEVICEW = unsafe { std::mem::zeroed() };
+        dd.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+        // SAFETY: a null device asks for adapter outputs; dd is a valid, sized struct.
+        if unsafe { EnumDisplayDevicesW(std::ptr::null(), i, &mut dd, 0) } == 0 {
+            break;
+        }
+        if dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP == 0 {
+            continue;
+        }
+        let mut dm = blank_mode();
+        // SAFETY: DeviceName is the NUL-terminated name Windows just wrote; dm is sized.
+        if unsafe { EnumDisplaySettingsW(dd.DeviceName.as_ptr(), ENUM_CURRENT_SETTINGS, &mut dm) } == 0 {
+            continue;
+        }
+        // SAFETY: for a display device the union holds the display fields (dmPosition).
+        let p = unsafe { dm.Anonymous1.Anonymous2.dmPosition };
+        let mut modes = Vec::new();
+        for m in 0.. {
+            let mut mode = blank_mode();
+            // SAFETY: as above; m counts the device's modes until the call says there are no more.
+            if unsafe { EnumDisplaySettingsW(dd.DeviceName.as_ptr(), m, &mut mode) } == 0 {
+                break;
+            }
+            modes.push((mode.dmPelsWidth, mode.dmPelsHeight));
+        }
+        out.push(Monitor { name: wide(&dd.DeviceName), size: (dm.dmPelsWidth, dm.dmPelsHeight), position: (p.x, p.y), modes });
+    }
+    out.sort_by_key(|m| m.position);
+    out
+}
+
+/// Off Windows the displays are not asked (no display crate in the launcher): Resolution
+/// offers the common sizes and Monitor stays a text box.
+#[cfg(not(windows))]
+pub fn monitors() -> Vec<Monitor> {
+    Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn engine(file: &str) -> String {
+        std::fs::read_to_string(format!("{}/../../engine/nvforever/src/{file}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    }
+
+    #[test]
+    fn lists_match_the_games_words_and_values() {
+        let src = engine("frame_pace.rs");
+        for c in sync_choices() {
+            assert!(src.contains(&format!("=> \"{}\"", c.label)), "Display sync: {} is not a name in frame_pace.rs", c.label);
+            assert!(src.contains(&format!("=> \"{}\"", c.stored)), "Display sync: {} is not stored by frame_pace.rs", c.stored);
+        }
+        let caps = format!("pub const CAPS: [u32; {}] = {:?};", CAPS.len(), CAPS);
+        assert!(src.contains(&caps), "frame_pace.rs no longer has {caps}");
+        let wm = engine("window_mode.rs");
+        assert!(wm.contains("format!(\"Display {} ({}x{})\", i + 1, m.size.x, m.size.y)"), "monitor_label changed");
+        assert!(wm.contains("format!(\"{};{full}\""), "resolution_save changed");
+    }
+
+    #[test]
+    fn frame_rate_limit_steps() {
+        let c = cap_choices();
+        assert_eq!(c.iter().map(|c| c.stored.as_str()).collect::<Vec<_>>(), ["0.00", "0.20", "0.40", "0.60", "0.80", "1.00"]);
+        assert_eq!((c[0].label.as_str(), c[2].label.as_str()), ("Off", "60 a second"));
+        assert_eq!(chosen("frame-cap", &c, "0.00"), Some(0));
+        assert_eq!(chosen("frame-cap", &c, "0.4"), Some(2));
+        assert_eq!(chosen("frame-cap", &c, "1"), Some(5));
+        assert_eq!(chosen("frame-cap", &c, "x"), None);
+    }
+
+    fn monitor(name: &str, size: (u32, u32), modes: &[(u32, u32)]) -> Monitor {
+        Monitor { name: name.into(), size, position: (0, 0), modes: modes.to_vec() }
+    }
+
+    #[test]
+    fn resolutions() {
+        assert_eq!(split_resolution("1920x1080;desktop"), ("1920x1080".into(), "desktop".into()));
+        assert_eq!(split_resolution("1280x720"), ("1280x720".into(), "desktop".into()));
+        assert_eq!(split_resolution("1280x720;2560x1440"), ("1280x720".into(), "2560x1440".into()));
+        assert_eq!(join_resolution("1600x900", "desktop"), "1600x900;desktop");
+        let m = monitor(r"\\.\DISPLAY1", (1920, 1080), &[(640, 400), (1280, 720), (1920, 1080), (1920, 1080), (2560, 1440), (1600, 900)]);
+        assert_eq!(sizes(Some(&m)), [(1280, 720), (1600, 900), (1920, 1080), (2560, 1440)]);
+        // In a window nothing larger than the desktop; a size in use is kept.
+        let w: Vec<String> = window_choices(Some(&m), "1024x768").into_iter().map(|c| c.stored).collect();
+        assert_eq!(w, ["1024x768", "1280x720", "1600x900", "1920x1080"]);
+        let f = full_choices(Some(&m), "desktop");
+        assert_eq!((f[0].label.as_str(), f[0].stored.as_str()), ("The display's own (1920x1080)", "desktop"));
+        assert_eq!(f.last().unwrap().stored, "2560x1440");
+        assert_eq!(chosen("resolution", &f, "1920X1080"), f.iter().position(|c| c.stored == "1920x1080"));
+        assert_eq!(chosen("resolution", &f, "Desktop"), Some(0));
+        // No display known: the common sizes.
+        assert!(window_choices(None, "").iter().any(|c| c.stored == "1920x1080"));
+    }
+
+    #[test]
+    fn monitors_by_name() {
+        let ms = [monitor(r"\\.\DISPLAY1", (2560, 1440), &[]), monitor(r"\\.\DISPLAY2", (1920, 1080), &[])];
+        let c = monitor_choices(&ms);
+        assert_eq!((c[1].label.as_str(), c[1].stored.as_str()), ("Display 2 (1920x1080)", r"\\.\DISPLAY2"));
+        assert_eq!(chosen_monitor(&ms, Some(r"\\.\display2")).unwrap().size, (1920, 1080));
+        assert_eq!(chosen_monitor(&ms, Some("gone")).unwrap().name, r"\\.\DISPLAY1", "the first display");
+        assert_eq!(chosen_monitor(&ms, None).unwrap().name, r"\\.\DISPLAY1");
+        assert_eq!(chosen("monitor", &c, r"\\.\DISPLAY2"), Some(1));
+    }
+
+    /// Windows lists this machine's displays with their modes (none on a machine without
+    /// one, such as a service session: then nothing to check).
+    #[cfg(windows)]
+    #[test]
+    fn this_machines_displays() {
+        for m in monitors() {
+            assert!(m.name.starts_with(r"\\.\"), "{m:?}");
+            assert!(m.size.0 > 0 && m.size.1 > 0 && !m.modes.is_empty(), "{m:?}");
+        }
+    }
+}

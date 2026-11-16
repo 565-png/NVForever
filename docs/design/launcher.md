@@ -15,8 +15,10 @@ without the launcher is the same as before.
 - **Settings**: the `[Settings]` rows by the in-game page's tabs and headings, with its labels
   and notes, read from `docs/settings-reference.md` (built in). The reference does not say what
   kind a row is, so the launcher goes by the value in the INI: `1`/`0` a switch, `0.50` a
-  slider (as a percentage, or the step's words for Difficulty), anything else text; Kill camera
-  and V.A.T.S. style get their choices as a list (a test checks the engine still has them). A
+  slider (as a percentage, or the step's words for Difficulty), anything else text; Kill camera, V.A.T.S. style and the Display rows (Resolution as a Window and a Full screen
+  list of the chosen display's sizes, Monitor from the displays Windows lists, Display sync,
+  Frame rate limit; `src/display.rs`, words and values the game's)
+  get their choices as a list (a test checks the engine still has them). A
   row the game has not written yet shows "game default". Rows the reference does not list go
   under Other. Save writes only the changed keys over the file as it is on disk then.
 - **Mods**: NVForever's own `plugins.txt` (turn on/off with the box or a click on the name; drag a row anywhere but its box to move it, with a gold line where it lands; FalloutNV.esm stays first). Opening the page runs
@@ -68,7 +70,7 @@ line-height setting for Markdown text, so the room comes from the font and its s
   them out of egui's output (eframe is built without its own link opener). Its own
   folders open through `launch::open_folder`.
 - Test aid: `NVF_LAUNCHER_SHOT=<file.png>` saves the window once the news has arrived and
-  closes; `NVF_LAUNCHER_PAGE=home|settings|mods|game` opens that page first (`update`: the
+  closes; `NVF_LAUNCHER_PAGE=home|settings|mods|game` opens that page first (`settings:<tab>`: that tab; `update`: the
   update dialog over Home, once a newer release is known); `NVF_LAUNCHER_RELEASES=<url>` reads
   the release list from that address instead of GitHub (a local server with a fixture release,
   to try the updater); `NVF_LAUNCHER_VERSION=0.6.9` makes the launcher take itself for that

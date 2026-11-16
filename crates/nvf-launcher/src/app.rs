@@ -87,6 +87,8 @@ pub struct App {
     mods_dirty: bool,
     /// The row being dragged on the Mods page.
     mods_drag: Option<usize>,
+    /// The displays, for the Resolution and Monitor lists (asked once at start).
+    monitors: Vec<crate::display::Monitor>,
     // News.
     news: Vec<(Post, Option<Arc<[u8]>>)>,
     news_state: NewsState,
@@ -135,6 +137,7 @@ impl App {
             mods: None,
             mods_dirty: false,
             mods_drag: None,
+            monitors: crate::display::monitors(),
             news: Vec::new(),
             news_state: NewsState::Off,
             news_rx: None,
@@ -160,6 +163,12 @@ impl App {
             Ok("update") => {
                 app.upd_open = true;
                 Page::Home
+            }
+            // `settings:<tab>`: that tab of the Settings page.
+            Ok(p) if p.starts_with("settings:") => {
+                let tab = &p["settings:".len()..];
+                app.tab = app.tabs.iter().position(|t| t.eq_ignore_ascii_case(tab)).unwrap_or(0);
+                Page::Settings
             }
             _ => Page::Home,
         };
@@ -847,8 +856,10 @@ impl App {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 let control_w = 260.0;
+                // Resolution's two lists carry their names to the left: room for them.
+                let column_w = if key == "resolution" { control_w + 90.0 } else { control_w };
                 ui.vertical(|ui| {
-                    ui.set_width((ui.available_width() - control_w - 16.0).max(200.0));
+                    ui.set_width((ui.available_width() - column_w - 16.0).max(200.0));
                     let changed = self.edits.contains_key(key);
                     ui.label(RichText::new(if changed { format!("{label}  •") } else { label.to_string() }).strong().color(if changed { GOLD } else { theme::TEXT }));
                     if !note.is_empty() {
@@ -860,7 +871,22 @@ impl App {
                         ui.label(RichText::new("game default").small().color(WEAK)).on_hover_text("Not in NVForever.ini yet: change it once on the game's settings page");
                         return;
                     };
-                    let new = match Kind::of_value(&v) {
+                    let new = if key == "resolution" {
+                        self.resolution_control(ui, &v, control_w)
+                    } else if let Some(choices) = self.display_choices(key) {
+                        let at = crate::display::chosen(key, &choices, &v);
+                        let shown = at.map_or(v.clone(), |i| choices[i].label.clone());
+                        let mut picked = None;
+                        egui::ComboBox::from_id_salt(key).width(control_w - 8.0).selected_text(shown).show_ui(ui, |ui| {
+                            for (i, c) in choices.iter().enumerate() {
+                                if ui.selectable_label(at == Some(i), &c.label).clicked() {
+                                    picked = Some(c.stored.clone());
+                                }
+                            }
+                        });
+                        picked.filter(|p| at.is_none_or(|i| &choices[i].stored != p))
+                    } else {
+                        match Kind::of_value(&v) {
                         Kind::Switch => {
                             let mut on = v.trim() == "1";
                             toggle(ui, &mut on).changed().then(|| if on { "1" } else { "0" }.to_string())
@@ -894,6 +920,7 @@ impl App {
                             let mut t = v.clone();
                             ui.add_sized([control_w, 22.0], egui::TextEdit::singleline(&mut t)).changed().then_some(t)
                         }
+                        }
                     };
                     if let Some(n) = new {
                         if Some(&n) == stored.as_ref() {
@@ -906,6 +933,52 @@ impl App {
             });
         });
         ui.add_space(2.0);
+    }
+
+    /// The value of `key` as the page shows it now: an unsaved change, else the INI's.
+    fn current(&self, key: &str) -> Option<String> {
+        self.edits.get(key).or_else(|| self.stored.get(key)).cloned()
+    }
+
+    /// The list for a Display row the game keeps as a choice (src/display.rs); `None` for
+    /// the other rows, and for Monitor when the displays could not be asked.
+    fn display_choices(&self, key: &str) -> Option<Vec<crate::display::Choice>> {
+        use crate::display;
+        match key {
+            "display-sync" => Some(display::sync_choices()),
+            "frame-cap" => Some(display::cap_choices()),
+            "monitor" if !self.monitors.is_empty() => Some(display::monitor_choices(&self.monitors)),
+            _ => None,
+        }
+    }
+
+    /// Resolution: the window's size and full screen's, as two lists (the INI keeps both in
+    /// one value). The sizes are those of the display chosen on the Monitor row.
+    fn resolution_control(&mut self, ui: &mut egui::Ui, v: &str, width: f32) -> Option<String> {
+        use crate::display;
+        let (window, full) = display::split_resolution(v);
+        let monitor_value = self.current("monitor");
+        let m = display::chosen_monitor(&self.monitors, monitor_value.as_deref());
+        let mut out = None;
+        ui.allocate_ui_with_layout(Vec2::new(width, 0.0), Layout::top_down(Align::Max), |ui| {
+            for (name, now, choices, is_window) in [("Window", &window, display::window_choices(m, &window), true), ("Full screen", &full, display::full_choices(m, &full), false)] {
+                ui.horizontal(|ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let at = display::chosen("resolution", &choices, now);
+                        let shown = at.map_or(now.clone(), |i| choices[i].label.clone());
+                        egui::ComboBox::from_id_salt(("resolution", name)).width(width - 8.0).selected_text(shown).show_ui(ui, |ui| {
+                            for (i, c) in choices.iter().enumerate() {
+                                if ui.selectable_label(at == Some(i), &c.label).clicked() && at != Some(i) {
+                                    out = Some(if is_window { display::join_resolution(&c.stored, &full) } else { display::join_resolution(&window, &c.stored) });
+                                }
+                            }
+                        });
+                        ui.label(RichText::new(name).small().color(WEAK));
+                    });
+                });
+            }
+        });
+        out
     }
 
     fn load_mods(&mut self) {
