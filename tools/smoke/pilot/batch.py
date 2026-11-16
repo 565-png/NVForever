@@ -176,6 +176,11 @@ def run_one(chain: Path, args: argparse.Namespace, slot: int) -> dict:
     if start.exists():
         shutil.copy2(start, saves / start.name)
     cmd = [str(args.exe), "--data", str(args.data), "--play", "--no-voice", "--no-music", "--run-seconds", str(args.minutes * 60)]
+    # A small window, placed, so several batches can be watched side by side.
+    if getattr(args, "size", ""):
+        cmd += ["--size", args.size]
+    if getattr(args, "window_at", ""):
+        cmd += [f"--window-at={args.window_at}"]
     cmd += ["--load", args.start] if start.exists() else ["--new-game"]
     if order:
         cmd += ["--plugins", *order]
@@ -265,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--data", required=True)
     ap.add_argument("--fnvtool", required=True)
     ap.add_argument("--home", required=True, help="the pilot's NVForever home (never the player's): holds the start save")
+    ap.add_argument("--size", default="640x360", help="the game window's size, WxH (small, to watch several batches at once); empty for the game's own")
+    ap.add_argument("--window-at", default="", help="where the game window's top-left corner goes, X,Y on the desktop (a batch each its own place)")
     ap.add_argument("--start", default="pilot-after-intro", help="save to start each chain from (in <home>/saves); --new-game when absent")
     ap.add_argument("--out", default=str(REPO / "target" / "pilot-batch"))
     ap.add_argument("--jobs", type=int, default=2)
