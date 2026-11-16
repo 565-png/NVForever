@@ -149,7 +149,10 @@ impl Game<'_> {
         let key = "CRDT/critical_damage";
         let value = self.field_overrides.get(&(weapon, key.into()))
             .or_else(|| self.field_overrides.get(&(self.unclone(weapon), key.into())))?;
-        value.num().ok().map(|value| value as u32)
+        match value {
+            XVal::Num(value) => Some(*value as u32),
+            _ => None,
+        }
     }
 
     /// The members of a form list, with the session's ListAddForm/ListRemove… edits.
