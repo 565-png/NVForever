@@ -73,19 +73,50 @@ pub struct ReachIndex {
     pub refs: usize,
 }
 
-/// Squares further than this from a reference's own square are left out: a box this
-/// long (65 squares, 266,240 units) is a broken record, not a building [design, #2795].
-const MAX_REACH: i32 = 32;
+/// A reference reaching further than this many squares from its own is logged (a WARN
+/// naming it and its reach): the largest buildings of FalloutNV.esm reach two or three
+/// [observed: #2795's table], so such a box more likely comes from a broken record. It
+/// is indexed all the same [design, #2795].
+const LONG_REACH: i32 = 32;
+
+/// One placed reference as [`ReachIndex::build`] reads it: FormID, the square whose cell
+/// lists it, its base, position, rotation and scale.
+struct Placed {
+    form_id: u32,
+    own: (i32, i32),
+    base: u32,
+    position: [f32; 3],
+    rotation: [f32; 3],
+    scale: f32,
+}
 
 impl ReachIndex {
     /// From (reference, the square whose cell lists it, the squares its bounds cover):
-    /// the reference is listed under every covered square but its own. A reference whose
-    /// bounds stay in its own square gives no entry.
-    pub fn from_entries(entries: impl IntoIterator<Item = (u32, (i32, i32), Squares)>) -> ReachIndex {
+    /// the reference is listed under every covered square but its own that lies within
+    /// `extent` (the worldspace's grid of cells: no square outside it has a cell). A
+    /// reference whose bounds stay in its own square gives no entry. A reach cut by
+    /// `extent`, or longer than [`LONG_REACH`] squares, is logged as a warning.
+    pub fn from_entries(entries: impl IntoIterator<Item = (u32, (i32, i32), Squares)>, extent: Squares) -> ReachIndex {
         let mut ix = ReachIndex::default();
-        for (r, own, ((x0, y0), (x1, y1))) in entries {
-            let (x0, y0) = (x0.max(own.0 - MAX_REACH), y0.max(own.1 - MAX_REACH));
-            let (x1, y1) = (x1.min(own.0 + MAX_REACH), y1.min(own.1 + MAX_REACH));
+        let ((ex0, ey0), (ex1, ey1)) = extent;
+        for (r, own, reach) in entries {
+            let ((x0, y0), (x1, y1)) = reach;
+            let long = (own.0 - x0).max(x1 - own.0).max(own.1 - y0).max(y1 - own.1) > LONG_REACH;
+            let cut = x0 < ex0 || y0 < ey0 || x1 > ex1 || y1 > ey1;
+            let (x0, y0, x1, y1) = (x0.max(ex0), y0.max(ey0), x1.min(ex1), y1.min(ey1));
+            if long || cut {
+                tracing::warn!(
+                    "reach: 0x{r:08X} (placed in square {},{}) has bounds over squares {},{} to {},{}{}{}",
+                    own.0,
+                    own.1,
+                    reach.0 .0,
+                    reach.0 .1,
+                    reach.1 .0,
+                    reach.1 .1,
+                    if long { format!(", more than {LONG_REACH} squares from its own (a broken record?)") } else { String::new() },
+                    if cut { format!("; indexed within the worldspace's grid {ex0},{ey0} to {ex1},{ey1} only") } else { String::new() },
+                );
+            }
             let mut any = false;
             for y in y0..=y1 {
                 for x in x0..=x1 {
@@ -111,7 +142,13 @@ impl ReachIndex {
         let Some(ws) = ix.worldspaces.get(&world) else { return ReachIndex::default() };
         let cells: Vec<((i32, i32), &[u32])> =
             ws.grid.iter().filter_map(|(&g, id)| ix.cells.get(id).map(|c| (g, c.refs.as_slice()))).collect();
-        let placed_refs = |part: &[((i32, i32), &[u32])]| -> Vec<(u32, (i32, i32), u32, [f32; 3], [f32; 3], f32)> {
+        // The worldspace's grid of cells: no square outside it has a cell.
+        let Some(extent) = cells.iter().map(|c| c.0).fold(None, |e: Option<Squares>, (x, y)| {
+            Some(e.map_or(((x, y), (x, y)), |((x0, y0), (x1, y1))| ((x0.min(x), y0.min(y)), (x1.max(x), y1.max(y)))))
+        }) else {
+            return ReachIndex::default();
+        };
+        let placed_refs = |part: &[((i32, i32), &[u32])]| -> Vec<Placed> {
             let mut out = Vec::new();
             for &(own, refs) in part {
                 for &r in refs {
@@ -120,7 +157,7 @@ impl ReachIndex {
                     }
                     let Some(pl) = placement(lo, schema, r).filter(|p| !p.deleted()) else { continue };
                     let Some(base) = pl.base else { continue };
-                    out.push((r, own, base, pl.position, pl.rotation, pl.scale));
+                    out.push(Placed { form_id: r, own, base, position: pl.position, rotation: pl.rotation, scale: pl.scale });
                 }
             }
             out
@@ -131,7 +168,7 @@ impl ReachIndex {
             let handles: Vec<_> = cells.chunks(chunk).map(|part| s.spawn(move || placed_refs(part))).collect();
             handles.into_iter().flat_map(|h| h.join().expect("reach index thread")).collect()
         });
-        let mut bases: Vec<u32> = placed.iter().map(|p| p.2).collect();
+        let mut bases: Vec<u32> = placed.iter().map(|p| p.base).collect();
         bases.sort_unstable();
         bases.dedup();
         let bchunk = bases.len().div_ceil(threads).max(1);
@@ -142,10 +179,11 @@ impl ReachIndex {
                 .collect();
             handles.into_iter().flat_map(|h| h.join().expect("reach index thread")).collect()
         });
-        ReachIndex::from_entries(placed.into_iter().filter_map(|(r, own, base, pos, rot, scale)| {
-            let b = bounds.get(&base)?;
-            Some((r, own, squares_reached(pos, rot, scale, *b)))
-        }))
+        let entries = placed.into_iter().filter_map(|p| {
+            let b = bounds.get(&p.base)?;
+            Some((p.form_id, p.own, squares_reached(p.position, p.rotation, p.scale, *b)))
+        });
+        ReachIndex::from_entries(entries, extent)
     }
 
     /// The references placed elsewhere whose bounds reach into `square`, by FormID.
@@ -163,6 +201,9 @@ impl ReachIndex {
 mod tests {
     use super::*;
     use crate::CELL_SIZE;
+
+    /// An extent wider than any test's squares.
+    const WIDE: Squares = ((-100, -100), (100, 100));
 
     /// The centre of grid square `g`.
     fn square_centre(g: (i32, i32)) -> [f32; 2] {
@@ -189,7 +230,7 @@ mod tests {
         let c = square_centre((0, 0));
         let s = squares_reached([c[0], c[1], 0.0], [0.0, 0.0, 0.7], 1.0, ([-100.0; 3], [100.0; 3]));
         assert_eq!(s, ((0, 0), (0, 0)));
-        let ix = ReachIndex::from_entries([(7, (0, 0), s)]);
+        let ix = ReachIndex::from_entries([(7, (0, 0), s)], WIDE);
         assert_eq!(ix.refs, 0);
         assert_eq!(ix.entries(), 0);
     }
@@ -198,11 +239,10 @@ mod tests {
     fn the_players_square_lists_a_reference_placed_two_squares_away_that_reaches_it() {
         // The player stands in (5, -3). The plant is placed in (5, -1) and reaches down to
         // (5, -3); a rock placed in (5, -1) reaches only (5, -2); a box in (7, -3) stays home.
-        let ix = ReachIndex::from_entries([
-            (0x0B0A0E, (5, -1), ((4, -3), (5, -1))),
-            (0x000100, (5, -1), ((5, -2), (5, -1))),
-            (0x000200, (7, -3), ((7, -3), (7, -3))),
-        ]);
+        let ix = ReachIndex::from_entries(
+            [(0x0B0A0E, (5, -1), ((4, -3), (5, -1))), (0x000100, (5, -1), ((5, -2), (5, -1))), (0x000200, (7, -3), ((7, -3), (7, -3)))],
+            WIDE,
+        );
         assert_eq!(ix.reaching((5, -3)), &[0x0B0A0E]);
         assert_eq!(ix.reaching((4, -3)), &[0x0B0A0E]);
         assert_eq!(ix.reaching((5, -2)), &[0x000100, 0x0B0A0E]);
@@ -212,10 +252,20 @@ mod tests {
     }
 
     #[test]
-    fn a_broken_box_is_cut_at_the_reach_limit() {
-        let ix = ReachIndex::from_entries([(1, (0, 0), ((-1000, 0), (1000, 0)))]);
-        assert_eq!(ix.entries(), 2 * MAX_REACH as usize);
-        assert!(ix.reaching((MAX_REACH + 1, 0)).is_empty());
+    fn a_very_long_box_is_indexed_over_the_worldspaces_grid() {
+        // A reference reaching 1,000 squares either way in a worldspace whose cells span
+        // -40..40 by -30..30: listed under every square of the grid but its own, none
+        // outside it.
+        let grid = ((-40, -30), (40, 30));
+        let ix = ReachIndex::from_entries([(1, (0, 0), ((-1000, -1000), (1000, 1000)))], grid);
+        assert_eq!(ix.entries(), 81 * 61 - 1);
+        assert_eq!(ix.reaching((40, -30)), &[1]);
+        assert_eq!(ix.reaching((-40, 30)), &[1]);
+        assert!(ix.reaching((41, 0)).is_empty() && ix.reaching((0, 0)).is_empty());
+        // A reach past the grid's edge keeps its squares inside it.
+        let ix = ReachIndex::from_entries([(2, (40, 0), ((39, 0), (42, 0)))], grid);
+        assert_eq!(ix.reaching((39, 0)), &[2]);
+        assert_eq!(ix.entries(), 1);
     }
 
     #[test]
