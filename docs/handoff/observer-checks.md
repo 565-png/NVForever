@@ -2690,21 +2690,6 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
-
-
-## Added 2026-11-15 (Mick secret door, #2716)
-
-205. **Does an NPC path through an open locked door in the original?** (P2;
-    `fnv_nav::NavGraph::door_tri_open`.) [hypothesis, #2716] NVForever treats an
-    open in-place door as no barrier to any actor, even while locked. [documented:
-    issue #2716, spooknik comment 2026-11-15, supplied record findings] In
-    `FreesideMickandRalphs`, Mick reaches `SecretDoorMarkerREF`; his Travel end script
-    opens `MickSecretDoorREF` (0x00121FF2, Requires Key, no key) with SetOpenState 1
-    and chooses the secret-sales package. Watch whether he then walks through the
-    still-locked door to `SecretSalesMarkerREF` and starts the sales conversation.
-    Check another NPC without a key through an open locked door too, then close it
-    and compare. Record whether the live lock changes when the door opens.
-
 197. **What does a resurrected actor carry?** (P2; `fnv_game::resurrect`,
     `fnv_sim::World::restock_inventory`, issue #2683.) NVForever makes the items of a
     dead actor's own item list up again when it is resurrected (rolled anew; only what
@@ -2942,3 +2927,17 @@ already talking takes over at once, same topic or another; nothing is queued or 
      If he walks to the door out of Top and is moved on, the original starts a walk
      whose way ends at a locked door (at least as far as the door); if he stands still
      until the door is unlocked, ours is right and the trigger only serves after it.
+
+
+## Added 2026-11-15 (Mick secret door, #2716)
+
+205. **Does an NPC path through an open locked door in the original?** (P2;
+    `fnv_nav::NavGraph::door_tri_open`.) [hypothesis, #2716] NVForever treats an
+    open in-place door as no barrier to any actor, even while locked. [documented:
+    issue #2716, spooknik comment 2026-11-15, supplied record findings] In
+    `FreesideMickandRalphs`, Mick reaches `SecretDoorMarkerREF`; his Travel end script
+    opens `MickSecretDoorREF` (0x00121FF2, Requires Key, no key) with SetOpenState 1
+    and chooses the secret-sales package. Watch whether he then walks through the
+    still-locked door to `SecretSalesMarkerREF` and starts the sales conversation.
+    Check another NPC without a key through an open locked door too, then close it
+    and compare. Record whether the live lock changes when the door opens.
