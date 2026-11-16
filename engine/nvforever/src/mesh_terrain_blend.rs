@@ -515,6 +515,9 @@ struct Variants {
     /// Each source material the last full pass read, with what it read of it
     /// ([`fingerprint`]), compared when the material store changed.
     watched: HashMap<AssetId<NifMaterial>, Fingerprint>,
+    /// The ordinary material each census-only shape drew in the last full pass
+    /// ([`CensusDrawn`]).
+    census_drawn: HashMap<Entity, AssetId<NifMaterial>>,
     /// One publication of each key in [`Self::publications`], and the coverage last put on
     /// that key's clones (`None`: not yet, or a clone was added since) ([`follow_coverage`]).
     surfaces: HashMap<PublicationKey, (crate::terrain_surface::PublishedSurface, Option<u32>)>,
@@ -589,19 +592,34 @@ const VERIFY_PERIOD: u64 = 600;
 /// Why a full pass ran ([`pass_needed`]), the names of the verify line's `pass-<name>=` counts.
 const PASS_REASONS: [&str; 6] = ["first", "config", "publication", "pending", "shapes", "materials"];
 
+/// Which shape signal ran a pass whose first reason was `shapes` ([`count_shape_signals`],
+/// the verify aid only), the names of the verify line's `shapes-<name>=` counts: a
+/// `BlendShape` or `BlendCensus` added or replaced, an ordinary material put on or written
+/// on a convertible shape or (another handle) on a census-only one, a temporary marker
+/// added, then each removal kind (the ordinary and marker removals on a shape still
+/// tracked). Several can fire in one frame.
+const SHAPE_SIGNALS: [&str; 11] = [
+    "blend-shape", "census", "ordinary-convertible", "ordinary-census-only", "marker-added",
+    "removed-blend-shape", "removed-census", "removed-ordinary", "removed-fading", "removed-faded", "removed-override",
+];
+/// At most this many `verify shape-trigger` lines per run of the blend.
+const TRIGGER_LINES: usize = 8;
+
 /// The verify aid's state; `reasons` counts every pass by its first reason, aid or not.
-struct Verify { on: bool, skipped: u64, diverged: u64, lines: usize, since_line: u64, reasons: [u64; PASS_REASONS.len()] }
+struct Verify { on: bool, skipped: u64, diverged: u64, lines: usize, since_line: u64, reasons: [u64; PASS_REASONS.len()], signals: [u64; SHAPE_SIGNALS.len()], trigger_lines: usize }
 impl Default for Verify {
-    fn default() -> Self { Self { on: verify_aid(), skipped: 0, diverged: 0, lines: 0, since_line: 0, reasons: [0; PASS_REASONS.len()] } }
+    fn default() -> Self { Self { on: verify_aid(), skipped: 0, diverged: 0, lines: 0, since_line: 0, reasons: [0; PASS_REASONS.len()], signals: [0; SHAPE_SIGNALS.len()], trigger_lines: 0 } }
 }
 impl Verify {
     /// `verify skipped-frames=N diverged=M passes=P pass-first=.. pass-config=..
-    /// pass-publication=.. pass-pending=.. pass-shapes=.. pass-materials=..`.
+    /// pass-publication=.. pass-pending=.. pass-shapes=.. pass-materials=..`, then the
+    /// shape signals' `shapes-<name>=..` counts.
     fn line(&mut self, passes: u64) -> String {
         use std::fmt::Write;
         self.since_line = 0;
         let mut out = format!("mesh terrain blend: verify skipped-frames={} diverged={} passes={passes}", self.skipped, self.diverged);
         for (name, n) in PASS_REASONS.iter().zip(self.reasons) { let _ = write!(out, " pass-{name}={n}"); }
+        for (name, n) in SHAPE_SIGNALS.iter().zip(self.signals) { let _ = write!(out, " shapes-{name}={n}"); }
         out
     }
     /// One divergence: counted, and logged while under [`VERIFY_LINES`].
@@ -861,13 +879,33 @@ type Tracked<'w, 's> = Query<'w, 's, (Entity, Option<&'static mut BlendShape>, O
 /// [design] Tracked shapes whose conversion inputs changed since the conversion last ran:
 /// a `BlendShape` added or replaced (only the conversion edits one in place, and a system
 /// never sees its own edits as changes), a `BlendCensus` added or replaced, an ordinary
-/// material put on or edited, a temporary owner's marker added. Removals: [`Removals`].
-/// The shadow marks are left out on purpose: the pass reads them only where it swaps a
-/// shape's material, which in a frame the gate skips no shape needs (see [`pass_needed`]).
+/// material put on or written on a convertible shape (any write: the pass's eviction of an
+/// owned source republished under the same handle reads its change tick), a temporary
+/// owner's marker added. Census-only shapes' ordinary materials: [`CensusDrawn`].
+/// Removals: [`Removals`]. The shadow marks are left out on purpose: the pass reads them
+/// only where it swaps a shape's material, which in a frame the gate skips no shape needs
+/// (see [`pass_needed`]).
 type ShapeChanges<'w, 's> = Query<'w, 's, (), (Or<(With<BlendShape>, With<BlendCensus>)>, Or<(
-    Changed<BlendShape>, Changed<BlendCensus>, Changed<MeshMaterial3d<NifMaterial>>,
+    Changed<BlendShape>, Changed<BlendCensus>, (Changed<MeshMaterial3d<NifMaterial>>, With<BlendShape>),
     Added<nvf_play::fade::Fading>, Added<crate::effect_shaders::Faded>, Added<MaterialOverride>,
 )>)>;
+
+/// [design] Census-only shapes (no `BlendShape`) whose ordinary material component was put
+/// on or written since the conversion last ran. Of it the full pass reads only the handle
+/// (which source's reasons join the mask; the source's own changes are the fingerprint's),
+/// so such a write runs the pass only when the handle differs from the one the last pass
+/// recorded ([`Variants::census_drawn`]): a rig's animated look published again under its
+/// own handle (nvf-assets material_anim.rs, most frames for an animated STAT) runs none.
+type CensusDrawn<'w, 's> = Query<'w, 's, (Entity, &'static MeshMaterial3d<NifMaterial>), (With<BlendCensus>, Without<BlendShape>, Changed<MeshMaterial3d<NifMaterial>>)>;
+
+/// The verify aid only: each tracked shape's signals ([`count_shape_signals`]).
+type Signals<'w, 's> = Query<'w, 's, (
+    Entity, Option<Ref<'static, BlendShape>>, Option<Ref<'static, BlendCensus>>, Option<Ref<'static, MeshMaterial3d<NifMaterial>>>,
+    Option<Ref<'static, nvf_play::fade::Fading>>, Option<Ref<'static, crate::effect_shaders::Faded>>, Option<Ref<'static, MaterialOverride>>,
+), Or<(With<BlendShape>, With<BlendCensus>)>>;
+
+/// The conversion's shape queries; one at a time.
+type ShapeQueries<'w, 's> = ParamSet<'w, 's, (Tracked<'w, 's>, ShapeChanges<'w, 's>, CensusDrawn<'w, 's>, Signals<'w, 's>)>;
 
 /// [design] Removals the gate reads: the tracking components (spawned shapes streaming out,
 /// a despawn sends these too) count always, the others only on a shape still tracked.
@@ -889,7 +927,7 @@ struct Conversion<'w, 's> {
     variants: ResMut<'w, Variants>,
     materials: Res<'w, Assets<NifMaterial>>,
     blends: ResMut<'w, Assets<NifBlendMaterial>>,
-    shapes: ParamSet<'w, 's, (Tracked<'w, 's>, ShapeChanges<'w, 's>)>,
+    shapes: ShapeQueries<'w, 's>,
     removals: Removals<'w, 's>,
 }
 
@@ -907,19 +945,50 @@ fn shape_mask(recorded: u32, temporary: bool, source: Option<&NifMaterial>) -> u
 }
 
 /// [design] Whether any tracked shape's inputs changed since the conversion last ran
-/// ([`ShapeChanges`], [`Removals`]). Every removal reader is drained each run.
-fn shapes_changed(shapes: &mut ParamSet<(Tracked, ShapeChanges)>, removals: &mut Removals) -> bool {
-    let mut changed = !removals.shape.is_empty() || !removals.census.is_empty();
+/// ([`ShapeChanges`], [`CensusDrawn`], [`Removals`]), and which removal kinds fired (for
+/// the verify aid's counts). Every removal reader is drained each run.
+fn shapes_changed(shapes: &mut ShapeQueries, removals: &mut Removals, variants: &Variants) -> (bool, [bool; 6]) {
+    let mut removed = [!removals.shape.is_empty(), !removals.census.is_empty(), false, false, false, false];
     removals.shape.clear();
     removals.census.clear();
     {
         let tracked = shapes.p0();
-        changed |= removals.ordinary.read().fold(false, |hit, e| hit | tracked.contains(e));
-        changed |= removals.fading.read().fold(false, |hit, e| hit | tracked.contains(e));
-        changed |= removals.faded.read().fold(false, |hit, e| hit | tracked.contains(e));
-        changed |= removals.overridden.read().fold(false, |hit, e| hit | tracked.contains(e));
+        removed[2] = removals.ordinary.read().fold(false, |hit, e| hit | tracked.contains(e));
+        removed[3] = removals.fading.read().fold(false, |hit, e| hit | tracked.contains(e));
+        removed[4] = removals.faded.read().fold(false, |hit, e| hit | tracked.contains(e));
+        removed[5] = removals.overridden.read().fold(false, |hit, e| hit | tracked.contains(e));
     }
-    changed || !shapes.p1().is_empty()
+    let changed = removed.contains(&true) || !shapes.p1().is_empty()
+        || shapes.p2().iter().any(|(e, drawn)| variants.census_drawn.get(&e) != Some(&drawn.0.id()));
+    (changed, removed)
+}
+
+/// The verify aid only, in a frame whose pass ran for `shapes`: which shape signals fired
+/// ([`SHAPE_SIGNALS`]), counted once each, and up to [`TRIGGER_LINES`] lines naming a
+/// shape that fired one (its model, shape index and recorded reasons).
+fn count_shape_signals(shapes: &mut ShapeQueries, variants: &mut Variants, removed: [bool; 6]) {
+    let mut fired = [false; SHAPE_SIGNALS.len()];
+    fired[5..].copy_from_slice(&removed);
+    for (e, shape, census, ordinary, fading, faded, overridden) in shapes.p3().iter() {
+        let ordinary_changed = ordinary.as_ref().is_some_and(|o| o.is_changed());
+        let hits = [
+            shape.as_ref().is_some_and(|s| s.is_changed()),
+            census.as_ref().is_some_and(|c| c.is_changed()),
+            ordinary_changed && shape.is_some(),
+            ordinary_changed && shape.is_none() && ordinary.as_ref().is_some_and(|o| variants.census_drawn.get(&e) != Some(&o.0.id())),
+            fading.is_some_and(|m| m.is_added()) || faded.is_some_and(|m| m.is_added()) || overridden.is_some_and(|m| m.is_added()),
+        ];
+        for (i, hit) in hits.iter().enumerate() {
+            if !hit { continue; }
+            fired[i] = true;
+            if variants.verify.trigger_lines < TRIGGER_LINES {
+                variants.verify.trigger_lines += 1;
+                let (model, index, reasons) = census.as_ref().map_or(("-".to_string(), 0, 0), |c| (c.model.to_string(), c.shape, c.reasons));
+                info!("mesh terrain blend: verify shape-trigger signal={} model={model} shape={index} reasons={}", SHAPE_SIGNALS[i], reason::list(reasons));
+            }
+        }
+    }
+    for (n, f) in variants.verify.signals.iter_mut().zip(fired) { *n += u64::from(f); }
 }
 
 /// [design] Whether the full pass must run this frame. It reads, besides its own state:
@@ -996,9 +1065,10 @@ fn apply_configured_variants(p: &mut Conversion, c: BlendConfig) {
         let restricted: usize = variants.publications.iter().map(|(id, publication)| restrict_clone(cache, blends, *id, publication)).sum();
         if restricted > 0 { variants.verify.diverged(&format!("coverage-clones={restricted}")); }
     }
-    let changed = shapes_changed(shapes, removals);
+    let (changed, removed) = shapes_changed(shapes, removals, variants);
     let needed = pass_needed(variants, c, published, changed, materials);
     if let Some(reason) = needed { variants.verify.reasons[reason] += 1; }
+    if needed == Some(4) && variants.verify.on { count_shape_signals(shapes, variants, removed); }
     if needed.is_none() && !variants.verify.on {
         quiet(variants, cache, revision, c);
         return;
@@ -1086,6 +1156,7 @@ fn full_pass(
         variants.materials.clear();
     }
     variants.watched.clear();
+    variants.census_drawn.clear();
     // A producer can edit an owned source in place and republish the same handle
     // (NIF block material edits). Evict once per source before creating shared clones.
     let mut ordinary_live = HashSet::new();
@@ -1105,7 +1176,10 @@ fn full_pass(
         let Some(mut shape) = shape else {
             // Census only: never converted.
             let source = drawn.as_ref().and_then(|d| materials.get(&d.0));
-            if let Some(d) = &drawn { watch(&mut variants.watched, d.0.id(), source, false); }
+            if let Some(d) = &drawn {
+                watch(&mut variants.watched, d.0.id(), source, false);
+                variants.census_drawn.insert(entity, d.0.id());
+            }
             let mask = shape_mask(recorded, temporary, source);
             if let Some(t) = tracked {
                 o.census.count(t.base_type, mask);
@@ -2447,6 +2521,58 @@ mod tests {
         assert_eq!(passes(&app), before, "the copy's alpha edits run no full pass while the marker stays");
         app.world_mut().entity_mut(e).remove::<MaterialOverride>().insert(MeshMaterial3d(a.clone()));
         runs(&mut app, "the marker removed");
+        assert!(blends_on(&app, e));
+    }
+
+    /// A census-only shape (an animated rig's, kept out by its recorded reason) whose own
+    /// material is posed and published again under the same handle every frame (nvf-assets
+    /// material_anim.rs) runs no full pass; another handle on it does.
+    #[test]
+    fn a_census_only_shapes_same_handle_republish_runs_no_pass() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let (own, other) = {
+            let mut m = app.world_mut().resource_mut::<Assets<NifMaterial>>();
+            (m.add(NifMaterial::default()), m.add(NifMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: default() }))
+        };
+        let rig = app.world_mut().spawn((tracked(0, reason::RIG), MeshMaterial3d(own.clone()))).id();
+        app.update();
+        go_quiet(&mut app);
+        let before = passes(&app);
+        for frame in 0..8 {
+            app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&own).unwrap().base.base_color.set_alpha(1.0 - frame as f32 * 0.1);
+            app.world_mut().entity_mut(rig).insert(MeshMaterial3d(own.clone()));
+            app.update();
+        }
+        assert_eq!(passes(&app), before, "the same handle published again every frame runs no full pass");
+        app.world_mut().entity_mut(rig).insert(MeshMaterial3d(other.clone()));
+        runs(&mut app, "another handle on a census-only shape");
+        assert_eq!(app.world().resource::<Variants>().census_drawn.get(&rig), Some(&other.id()));
+        go_quiet(&mut app);
+        settle(&mut app);
+        assert_eq!(reason_count(&reported(&app), reason::UNLIT), 1, "the census follows the new handle's reasons");
+    }
+
+    /// A convertible shape's owned source edited in place in a field the stamp does not
+    /// hold (emissive) and republished under the same handle still runs the pass, which
+    /// evicts the clone and rebuilds it (the `ordinary_seen` eviction); the edit alone does not.
+    #[test]
+    fn a_convertible_shapes_same_handle_republish_still_runs_the_pass_and_evicts() {
+        let mut app = conversion_app();
+        publish(&mut app);
+        let source = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial::default());
+        let e = app.world_mut().spawn((tracked(0, 0), BlendShape::new(source.clone()), MeshMaterial3d(source.clone()))).id();
+        app.update();
+        go_quiet(&mut app);
+        let before = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+        let emission = LinearRgba::rgb(0.6, 0.3, 0.1);
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&source).unwrap().base.emissive = emission;
+        assert_quiet(&mut app, 1, "an edit the stamp does not hold, not yet republished");
+        app.world_mut().entity_mut(e).insert(MeshMaterial3d(source.clone()));
+        runs(&mut app, "the same handle republished on a convertible shape");
+        let after = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+        assert_ne!(after, before, "evicted and rebuilt");
+        assert_eq!(app.world().resource::<Assets<NifBlendMaterial>>().get(&after).unwrap().base.emissive, emission);
         assert!(blends_on(&app, e));
     }
 
