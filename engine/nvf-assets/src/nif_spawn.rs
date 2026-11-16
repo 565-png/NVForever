@@ -348,14 +348,15 @@ pub(crate) fn env_flags(shader_flags: i64) -> bool {
 /// and the window and Env Map Fade flags [documented: nif.xml BSShaderTextureSet slot
 /// order, BSShaderProperty field; GECK wiki "NIF Shader Properties": "Texture 5:
 /// Environment Map (Cubemap)", "Texture 6: Environment Mask"]. `None` without the flag,
-/// without a cube, on an unlit shape, at a scale of 0 or less, on object LOD block
-/// geometry (LOD_Building: drawn only beyond the loaded cells, farther than the game's
-/// end of reflections, `env_map::ENV_MAP_LOD2` [design]) and, for a shape without the
-/// window flag, while `NVF_PLAY_DEBUG_ENV_NON_WINDOW=0` (env_map.rs). A cube that does
-/// not load as a cube map leaves the shape as it was (`shape_material_inner`).
+/// without a cube, on an unlit shape, at a scale of 0 or less, and, for a shape without
+/// the window flag, on object LOD block geometry (LOD_Building: drawn only beyond the
+/// loaded cells, farther than the game's end of reflections, `env_map::ENV_MAP_LOD2`
+/// [design]) and while `NVF_PLAY_DEBUG_ENV_NON_WINDOW=0` (env_map.rs). Window shapes are
+/// gated as #2462 gated them, LOD block geometry included. A cube that does not load as a
+/// cube map leaves the shape as it was (`shape_material_inner`).
 pub(crate) fn shape_env(props: &Props, aids: &crate::env_map::EnvAids) -> Option<crate::env_map::ShapeEnv> {
-    let f = props.env.filter(|f| f.scale > 0.0 && !props.unlit && !props.lod_building)?;
-    if !f.window && !aids.non_window {
+    let f = props.env.filter(|f| f.scale > 0.0 && !props.unlit)?;
+    if !f.window && (!aids.non_window || props.lod_building) {
         return None;
     }
     let slot = |i: usize| props.textures.get(i).filter(|t| !t.is_empty()).cloned();
@@ -922,15 +923,18 @@ pub(crate) fn shape_material_reusing_tangents(
     images: &mut Assets<Image>,
     formats: Option<&CompressedImageFormatSupport>,
 ) -> (NifMaterial, Option<String>) {
-    shape_material_inner(props, mesh, &mut StoreTextures { textures, data, images, formats }, true)
+    shape_material_inner(props, mesh, &mut StoreTextures { textures, data, images, formats }, true, crate::env_map::aids())
 }
 
 /// [`shape_material`] with its textures from `textures`.
 pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut impl TextureSource) -> (NifMaterial, Option<String>) {
-    shape_material_inner(props, mesh, textures, false)
+    shape_material_inner(props, mesh, textures, false, crate::env_map::aids())
 }
 
-fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl TextureSource, keep_tangents: bool) -> (NifMaterial, Option<String>) {
+/// The material build itself; `aids`: the environment maps' debug switches (this run's,
+/// `env_map::aids`, except in tests, which pass their own so that a developer's
+/// environment cannot change them).
+fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl TextureSource, keep_tangents: bool, aids: &crate::env_map::EnvAids) -> (NifMaterial, Option<String>) {
     fix_vertex_colors(mesh, props.vertex_alpha);
     let base = props.textures.first().filter(|t| !t.is_empty()).and_then(|t| textures.texture(t, true));
     let normal = props.textures.get(1).filter(|t| !t.is_empty()).and_then(|t| textures.normal(t));
@@ -946,7 +950,6 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
     // reflects is drawn premultiplied, so its reflection is added over the blend whatever
     // its alpha; a blended shape without the window flag keeps its blend, so the
     // reflection is weighted by its alpha (`env_map::env_alpha_mode`).
-    let aids = crate::env_map::aids();
     let env = shape_env(props, aids).and_then(|e| {
         let cube = textures.texture(&crate::texture::cube_path(&e.cube), true)?;
         let mask = e.mask.as_deref().filter(|_| has_uv).and_then(|m| textures.texture(m, false));
@@ -1554,6 +1557,8 @@ mod tests {
         assert_eq!(shape_env(&Props { textures: texture_set(&["a.dds"]), ..bottle.clone() }, &aids), None);
         assert_eq!(shape_env(&Props { unlit: true, ..bottle.clone() }, &aids), None);
         assert_eq!(shape_env(&Props { lod_building: true, ..bottle.clone() }, &aids), None);
+        let lod_window = Props { lod_building: true, env: Some(crate::env_map::EnvFlags { window: true, ..flags }), ..bottle.clone() };
+        assert!(shape_env(&lod_window, &aids).is_some(), "window shapes keep #2462's gate on LOD block geometry");
         assert_eq!(shape_env(&Props { env: Some(crate::env_map::EnvFlags { scale: 0.0, ..flags }), ..bottle.clone() }, &aids), None);
         let before = crate::env_map::EnvAids { non_window: false, ..aids };
         assert_eq!(shape_env(&bottle, &before), None);
@@ -1579,7 +1584,8 @@ mod tests {
     /// (#2669), one without the window flag keeps its blend (the reflection weighted by its
     /// alpha); a shape with the flag but no cube is drawn as before. Blend SRC_ALPHA /
     /// INV_SRC_ALPHA without a test (0x10ED, as `vwindow01.nif`); fixtures written for the
-    /// test.
+    /// test. The default switches are passed in, so `NVF_PLAY_DEBUG_ENV_*` set on the
+    /// machine does not change the result.
     #[test]
     fn blended_env_shapes_premultiply_only_windows() {
         let mut tri = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
@@ -1594,23 +1600,24 @@ mod tests {
             textures: texture_set(&["glass.dds", "", "", "", "textures\\effects\\shinybright_e.dds", "glass_m.dds"]),
             ..default()
         };
-        let (plain, _) = shape_material_with(&Props { env: None, ..glass.clone() }, &mut tri.clone(), &mut AllTextures);
+        let d = crate::env_map::EnvAids::default();
+        let (plain, _) = shape_material_inner(&Props { env: None, ..glass.clone() }, &mut tri.clone(), &mut AllTextures, false, &d);
         assert!(matches!(plain.base.alpha_mode, AlphaMode::Blend), "the fixture is blended");
-        let (m, _) = shape_material_with(&glass, &mut tri.clone(), &mut AllTextures);
+        let (m, _) = shape_material_inner(&glass, &mut tri.clone(), &mut AllTextures, false, &d);
         assert!(matches!(m.base.alpha_mode, AlphaMode::Blend));
         assert_eq!(m.extension.env.truncate(), Vec3::new(1.0, 1.0, crate::env_map::ENV_MAP_LOD1));
         assert_eq!(m.extension.env_how.z, 0.0, "not a window");
         assert!(m.extension.env_cube.is_some() && m.extension.env_mask.is_some());
         let window = Props { env: Some(crate::env_map::EnvFlags { window: true, ..flags }), ..glass.clone() };
-        let (w, _) = shape_material_with(&window, &mut tri.clone(), &mut AllTextures);
+        let (w, _) = shape_material_inner(&window, &mut tri.clone(), &mut AllTextures, false, &d);
         assert!(matches!(w.base.alpha_mode, AlphaMode::Premultiplied));
         assert_eq!(w.extension.env_how.z, 1.0, "a window");
         let no_cube = Props { textures: texture_set(&["glass.dds", "", "", "", "", "glass_m.dds"]), ..glass.clone() };
-        let (n, _) = shape_material_with(&no_cube, &mut tri.clone(), &mut AllTextures);
+        let (n, _) = shape_material_inner(&no_cube, &mut tri.clone(), &mut AllTextures, false, &d);
         assert!(matches!(n.base.alpha_mode, AlphaMode::Blend));
         assert_eq!((n.extension.env, n.extension.env_how), (Vec4::ZERO, Vec4::ZERO));
         assert!(n.extension.env_cube.is_none() && n.extension.env_mask.is_none());
-        let (none, _) = shape_material_with(&glass, &mut tri, &mut NoTextures);
+        let (none, _) = shape_material_inner(&glass, &mut tri, &mut NoTextures, false, &d);
         assert_eq!(none.extension.env, Vec4::ZERO, "a cube that does not load: no reflection");
     }
 
