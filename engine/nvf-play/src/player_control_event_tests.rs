@@ -38,15 +38,16 @@ fn app() -> App {
         .add_systems(Update, crate::control::tell_scripts.after(PlaySet::Input).before(PlaySet::Scripts))
         .add_systems(Update, scripts.in_set(PlaySet::Scripts));
     app.world_mut().resource_mut::<PhysState>().place_player([0.0; 3], 1.0, 1.0);
-    let mut script = app.world_mut().resource_mut::<ScriptState>();
-    let game = &mut script.rt.as_mut().unwrap().game;
-    let files = fnv_ui::MemSource::default().with(
-        "controls.xml",
-        r#"<menu name="HUDMainMenu"><rect name="Controls"><_jd>0</_jd><_ju>0</_ju><_nd>0</_nd><_nu>0</_nu><_other>0</_other><_last>0</_last><string>none</string></rect></menu>"#,
-    );
-    game.ui_tree.load_menu(&files, "controls.xml").unwrap();
-    game.ui_tree.update();
-    drop(script);
+    {
+        let mut script = app.world_mut().resource_mut::<ScriptState>();
+        let game = &mut script.rt.as_mut().unwrap().game;
+        let files = fnv_ui::MemSource::default().with(
+            "controls.xml",
+            r#"<menu name="HUDMainMenu"><rect name="Controls"><_jd>0</_jd><_ju>0</_ju><_nd>0</_nd><_nu>0</_nu><_other>0</_other><_last>0</_last><string>none</string></rect></menu>"#,
+        );
+        game.ui_tree.load_menu(&files, "controls.xml").unwrap();
+        game.ui_tree.update();
+    }
     app
 }
 
