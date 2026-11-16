@@ -94,6 +94,7 @@ pub mod challenges;
 pub mod poker;
 pub mod menu;
 pub mod mod_log;
+pub mod gas_traps;
 pub mod grass_fire;
 pub mod mines;
 pub mod thrown;
@@ -151,6 +152,7 @@ pub use test_aid::{drives_run, MEASURING_AIDS};
 pub mod sfx;
 pub mod start_read;
 pub mod sneak_gauges;
+pub mod sound_cover;
 pub mod sound_grid;
 pub mod ui_colour;
 pub mod language;
@@ -308,6 +310,11 @@ pub struct Travel {
     pub feet: [f32; 3],
     /// Compass heading in degrees on arrival.
     pub heading_deg: f32,
+    /// The view's pitch in degrees on arrival (negative looks down, as `Player::pitch`);
+    /// `None` keeps the pitch the player had. A script's MoveTo of the player sets it to
+    /// the marker's (`fnv_game` `move_ref`): the add-ons' intro slides and the ending's
+    /// slides are framed for a level view, and the player cannot look there (#2710).
+    pub pitch_deg: Option<f32>,
 }
 
 impl Travel {
@@ -396,7 +403,7 @@ impl Plugin for PlayPlugin {
             .add_plugins((ui_sounds::UiSoundsPlugin, pad::PadPlugin, key_repeat::KeyRepeatPlugin, rumble::RumblePlugin, shake::ShakePlugin, script_input::ScriptInputPlugin, aim_assist::AimAssistPlugin))
             .add_plugins(script_switches::ScriptSwitchesPlugin)
             .add_plugins((chargen::ChargenPlugin, creator::CreatorPlugin, fade::FadePlugin))
-            .add_plugins((levelup::LevelUpPlugin, sneak_gauges::SneakGaugesPlugin))
+            .add_plugins((levelup::LevelUpPlugin, sneak_gauges::SneakGaugesPlugin, sound_cover::SoundCoverPlugin))
             .add_plugins(perk_marks::PerkMarksPlugin)
             .add_plugins(softlock::SoftlockPlugin)
             .add_plugins(sup_screen::SupScreenPlugin)
@@ -463,7 +470,7 @@ mod tests {
     const HOUSE: u32 = 0x100;
 
     fn travel(world: Option<u32>, interior: Option<u32>) -> Travel {
-        Travel { world, interior, feet: [0.0; 3], heading_deg: 0.0 }
+        Travel { world, interior, feet: [0.0; 3], heading_deg: 0.0, pitch_deg: None }
     }
 
     /// Every plugin of this crate is added somewhere (here or by nvforever): the crosshair's

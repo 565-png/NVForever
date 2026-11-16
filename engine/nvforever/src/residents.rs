@@ -2627,6 +2627,8 @@ impl Core {
                 _ if r.named || game.is_teammate(e.actor) => info!("{line}"),
                 AiEvent::Trip { .. }
                 | AiEvent::Unreachable { .. }
+                | AiEvent::PutThere { .. }
+                | AiEvent::DoorsClosedToIt { .. }
                 | AiEvent::HeightWaived { .. }
                 | AiEvent::DoorRefused { .. }
                 | AiEvent::DoorWaitCancelled { .. }
@@ -2636,6 +2638,8 @@ impl Core {
                 | AiEvent::Talk { .. }
                 | AiEvent::NoTalk { .. }
                 | AiEvent::TalkUnseen { .. }
+                | AiEvent::LeadsPlayer { .. }
+                | AiEvent::LeadStuck { .. }
                 | AiEvent::WalkUp { .. }
                 | AiEvent::WalkedUp { .. }
                 | AiEvent::PushedBack { .. }
@@ -2688,6 +2692,7 @@ impl Core {
                 | AiEvent::FetchGot { .. }
                 | AiEvent::FetchDropped { .. }
                 | AiEvent::RangeSwap { .. }
+                | AiEvent::RangeFists { .. }
                 | AiEvent::FleeSafe { .. } => info!("{line}"),
                 _ => debug!("{line}"),
             }
@@ -2824,6 +2829,19 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
         AiEvent::Resumed { package, .. } => format!("goes on with {}, its sandbox day as saved", n(package)),
         AiEvent::Arrived { seconds, travelled, .. } => format!("arrived after {seconds:.1}s, {travelled:.0} units"),
         AiEvent::Unreachable { package, why } => format!("cannot reach the place of {}: {why}", n(package)),
+        AiEvent::PutThere { package, from, to } => format!(
+            "put at the place of {} out of sight, no door joining the two: ({:.0}, {:.0}, {:.0}) in {}, from ({:.0}, {:.0}, {:.0}) in {}",
+            n(package),
+            to.pos[0],
+            to.pos[1],
+            to.pos[2],
+            nav::space_name(world, to.space),
+            from.pos[0],
+            from.pos[1],
+            from.pos[2],
+            nav::space_name(world, from.space)
+        ),
+        AiEvent::DoorsClosedToIt { package } => format!("stays: the way to the place of {} needs a load door, and it cannot open doors", n(package)),
         AiEvent::HeightWaived { at } => format!("ends its walk off its goal's height, at ({:.0}, {:.0}, {:.0}): no new path helped", at[0], at[1], at[2]),
         AiEvent::NotCarriedOut { package, why } => format!("stays: {} is {why}, not carried out yet", n(package)),
         AiEvent::Furniture { furniture: Some(f) } => format!("is to use furniture {f}"),
@@ -2870,6 +2888,8 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
         ),
         AiEvent::CaughtUp { target, away, stop_at, .. } => format!("has caught up with {}: {away:.0} units away, stops within {stop_at:.0}", n(target)),
         AiEvent::NoTalk { package, why } => format!("does not talk ({}): {why}", n(package)),
+        AiEvent::LeadsPlayer { package, to, away } => format!("walks the player into its trigger location ({}): {away:.0} units away, to ({:.0}, {:.0}, {:.0})", n(package), to[0], to[1], to[2]),
+        AiEvent::LeadStuck { package, left } => format!("stops walking the player into its trigger location ({}): no nearer for {} s, {left:.0} units short; talks where the player stands", n(package), fnv_ai::carry::LEAD_STUCK_SECONDS),
         AiEvent::TalkUnseen { package, target, away } => format!("waits to talk to {} ({}): {away:.0} units away, with something solid between", n(target), n(package)),
         AiEvent::Hello { line, away } => format!("says hello to the player from {away:.0} units, line {line}"),
         AiEvent::IdleChatter { line, away } => format!("chatters ({away:.0} units from the player), line {line}"),
@@ -3021,6 +3041,7 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
         ),
         AiEvent::FetchDropped { from, why } => format!("rearm: gives up on {}: {why}", n(from)),
         AiEvent::RangeSwap { weapon, distance } => format!("rearm: takes up {} for its target {distance:.0} units away", n(weapon)),
+        AiEvent::RangeFists { weapon, distance } => format!("rearm: puts away {} for its fists: its target {distance:.0} units away is inside its blast", n(weapon)),
         AiEvent::EscortWaits { package, target, away } => format!(
             "escorts {}: waits, it is {} behind ({})",
             n(target),

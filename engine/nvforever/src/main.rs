@@ -30,6 +30,11 @@ mod native_crash;
 #[cfg(target_os = "linux")]
 mod native_crash_unix;
 mod nif_mirror;
+mod nif_attachments;
+// Authored record builders are loaded once for the engine test binary.
+#[cfg(test)]
+#[path = "../../../crates/fnv-game/tests/common/mod.rs"]
+mod authored_test_records;
 mod anim_paths;
 mod actor_feet;
 mod tumble;
@@ -519,7 +524,7 @@ struct Args {
     dlss_model: Option<upscaler::DlssModel>,
     /// Instead of --graphics: exactly these improvements on, by the settings page's keys
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
-    /// water-reflections, terrain-height-blend) and choices (fxaa, smaa or taa instead of --msaa;
+    /// water-reflections, terrain-height-blend, terrain-anti-tiling) and choices (fxaa, smaa or taa instead of --msaa;
     /// shadow-filter-hardware or shadow-filter-temporal), for comparing them one at a time.
     #[arg(long, value_delimiter = ',', conflicts_with = "graphics")]
     graphics_only: Option<Vec<String>>,
@@ -1609,7 +1614,7 @@ fn main() -> AppExit {
     .insert_resource(args.clone())
     .add_systems(Startup, (world::setup_root, setup, sky::setup_sky))
     .add_systems(Update, sky::tell_sky_colors.after(sky::update_sky))
-    .add_systems(Update, (fly::fly.run_if(move || play.is_none()), sky::sky_keys.run_if(move || play.is_none()), sky::weather_region, sky::update_sky, sky::interior_clip, sky::update_clouds, sky::update_night_sky, world::stream.run_if(world::world_not_held), imposters::update, fade::fade_cells, world::face_billboards, lod::update_lod, treelod::update_distant_trees, overlay, keys).chain())
+    .add_systems(Update, (fly::fly.run_if(move || play.is_none()), sky::sky_keys.run_if(move || play.is_none()), sky::weather_region.after(nvf_play::PlaySet::Physics), sky::update_sky, sky::interior_clip, sky::update_clouds, sky::update_night_sky, world::stream.run_if(world::world_not_held), imposters::update, fade::fade_cells, world::face_billboards, lod::update_lod, treelod::update_distant_trees, overlay, keys).chain())
     .add_systems(Update, world::note_other_cameras.after(world::stream))
     .add_systems(Update, (cell_buffer::remember, cell_buffer::tell_game).chain().after(world::stream))
     .add_systems(Update, world::script_markers.before(world::stream))
@@ -1703,7 +1708,7 @@ fn main() -> AppExit {
         // The loading screen sends the travel in the Input set and reads in `Last` whether
         // the renderer is done: both this frame.
         app.add_plugins(nvf_play::PlayPlugin(data))
-            .add_systems(Update, (worldspace::switch, world::travel, world::cell_image_space, world::cell_lighting).chain().after(nvf_play::PlaySet::Input).before(world::stream))
+            .add_systems(Update, (worldspace::switch, world::travel, world::cell_image_space, world::cell_lighting).chain().after(nvf_play::PlaySet::Input).before(world::stream).before(sky::weather_region))
             .add_plugins(pipeline_gate::PipelineGatePlugin)
             .add_systems(Update, world::loading_gate.after(world::stream))
             .configure_sets(Update, nvf_play::PlaySet::Physics.before(world::stream));
@@ -2312,10 +2317,7 @@ fn script_weather(mut script: Option<ResMut<nvf_play::script::ScriptState>>, wor
     if g.take_weather_release() {
         sky.release_script_weather();
     }
-    let (shown, raining) = (fnv_sim::FormId(sky.weather.form_id), sky.raining());
-    if g.weather.shown != Some(shown) || g.weather.raining != raining {
-        g.set_shown_weather(shown, raining);
-    }
+    report_script_weather(g, &sky);
     // The scripts' wind and lightning (SetWindDirection, TriggerLightningFX;
     // `fnv_game::nvse_jip12`); their climate and moons: `worldspace::script_sky`.
     let wind = g.script_wind();
@@ -2325,6 +2327,16 @@ fn script_weather(mut script: Option<ResMut<nvf_play::script::ScriptState>>, wor
     if g.take_lightning() {
         sky.lightning_request = true;
     }
+}
+
+/// Publish this bridge pass's sky observation; clock/fade scheduling stays unchanged.
+fn report_script_weather(g: &mut fnv_game::Game<'_>, sky: &sky::SkyState) {
+    let (shown, raining) = (fnv_sim::FormId(sky.weather.form_id), sky.raining());
+    if g.weather.shown != Some(shown) || g.weather.raining != raining {
+        g.set_shown_weather(shown, raining);
+    }
+    // Progress changes even while the shown form and stable-rain flag do not.
+    g.set_shown_weather_sample(sky.fade, sky.weather.classification, sky.prev.is_none());
 }
 
 fn sky_follows_game(mut sim: ResMut<nvf_play::sim::SimState>, mut sky: ResMut<sky::SkyState>, args: Res<Args>, mut shown: Local<Option<f32>>, hold: Option<ResMut<nvf_play::pipboy::data::travel::WeatherHold>>) {

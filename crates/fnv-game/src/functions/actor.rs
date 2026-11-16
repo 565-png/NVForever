@@ -146,7 +146,20 @@ fn set_damage(g: &mut Game, actor: FormId, code: u16, d: f64) {
     told(g, actor, code, |g| set_damage_untold(g, actor, code, d));
 }
 
+/// God mode (`tgm`) keeps a change off the player: its Action Points are never spent and
+/// its rads never rise, whatever asks (a VATS attack, a tweak's cost, the world's
+/// radiation, a script's DamageActorValue or ModActorValue) [design: owner decision
+/// 2026-11-15, issue #2743; an aid effect's damage is kept off in `Game::change_value`,
+/// and the needs' own rise goes on, as observed there].
+pub(crate) fn god_spares(g: &Game, actor: FormId, code: u16) -> bool {
+    actor == FormId::PLAYER_REF && g.toggles.god_mode && matches!(code, crate::actor_values::ACTION_POINTS | crate::aid::RAD_LEVEL)
+}
+
 fn set_damage_untold(g: &mut Game, actor: FormId, code: u16, d: f64) {
+    // God mode: the player's Action Points are not spent (their damage never grows).
+    if code == crate::actor_values::ACTION_POINTS && god_spares(g, actor, code) && d > damage(g, actor, code) {
+        return;
+    }
     let e = g.extra.entry(actor).or_default();
     if d > 0.0 {
         e.av_damage.insert(code, d);
@@ -250,6 +263,10 @@ pub(crate) fn add_modifier(g: &mut Game, actor: FormId, code: u16, d: f64) -> Re
 }
 
 fn add_modifier_untold(g: &mut Game, actor: FormId, code: u16, d: f64) -> Result<(), String> {
+    // God mode: the player's rads do not rise ([`god_spares`]).
+    if code == crate::aid::RAD_LEVEL && d > 0.0 && god_spares(g, actor, code) {
+        return Ok(());
+    }
     let before = permanent(g, actor, code)?;
     let e = g.extra.entry(actor).or_default();
     let m = e.av_permanent.get(&code).copied().unwrap_or(0.0) + d;
@@ -269,6 +286,11 @@ fn add_modifier_untold(g: &mut Game, actor: FormId, code: u16, d: f64) -> Result
 
 /// Move the base by `d`, leaving the modifier and the damage alone.
 pub(crate) fn shift_base(g: &mut Game, actor: FormId, code: u16, d: f64) -> Result<(), String> {
+    // God mode: the player's rads do not rise ([`god_spares`]): the world's radiation,
+    // irradiated water, food and drink and a script's DamageActorValue all come here.
+    if code == crate::aid::RAD_LEVEL && d > 0.0 && god_spares(g, actor, code) {
+        return Ok(());
+    }
     let v = base(g, actor, code)? + d;
     set_base(g, actor, code, v)
 }
@@ -972,9 +994,13 @@ pub fn get_faction_combat_reaction(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result
 /// 3 friend) [documented: GECK wiki GetFactionRelation]. One direction: the reactions
 /// of `r`'s factions towards `o`'s, which need not be those of `o`'s towards `r`'s
 /// [documented: GECK wiki SetEnemy, each faction has its own reaction list;
-/// docs/spec-notes/factions.md §4]. How several factions combine is a [hypothesis]:
-/// enemy first, then friend, then ally; the player counts as an enemy of an actor in a
-/// faction the player is a crime enemy of.
+/// docs/spec-notes/factions.md §4]. How several factions combine: a friend or an ally
+/// first, then an enemy, as allies and friends "cannot attack each other under any
+/// circumstances" [documented: GECK wiki GetFactionCombatReaction], so one shared
+/// friendly pair keeps the peace (Vulpes Inculta, in VCaesarsLegionFaction and
+/// ArmorNCRFactionNVEnemy, among the Legion, #2560); friend before ally is a
+/// [hypothesis]. The player counts as an enemy of an actor in a faction the player is
+/// a crime enemy of, before anything else.
 pub fn faction_relation(g: &Game, r: FormId, o: FormId) -> i64 {
     // Kept while asked again and again ([`FactionKeep`]).
     let kept = keep(g).map(|k| &k.relations);
@@ -1030,12 +1056,12 @@ pub fn factions_between(g: &Game, mine: &[FormId], o: FormId, theirs: &[FormId])
         return 1;
     }
     let all: Vec<i64> = mine.iter().flat_map(|&x| theirs.iter().map(move |&y| (x, y))).map(|(x, y)| reaction(g, x, y)).collect();
-    if all.contains(&1) {
-        1
-    } else if all.contains(&3) {
+    if all.contains(&3) {
         3
     } else if all.contains(&2) {
         2
+    } else if all.contains(&1) {
+        1
     } else {
         0
     }
