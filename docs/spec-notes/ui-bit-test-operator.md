@@ -35,7 +35,7 @@ or filtered controls. All eight bounded compile/list/run jobs ended and host
 source was restored. This is focused library qualification, not pristine
 whole-workspace, optimized release, native or rendered acceptance.
 
-[hypothesis: CLI qualification] The authored `ui-bit-test-operator` TOOL scenario
+[documented: CLI contract] The authored `ui-bit-test-operator` TOOL scenario
 invokes the actual `fnvtool ui tree` consumer against a portable repository-owned
 fixture. Referenced operands, set/clear bits, nested arguments and a dependent
 trait are checked alongside nonzero arithmetic and sentinel controls. An ignored
@@ -47,8 +47,20 @@ before invoking `fnvtool`. No CLI behavior was qualified by that attempt. The
 bit-test fixture and expectations now use dedicated arithmetic and sentinel
 trait names, retaining their expected nonzero values of 21 and 23 and every
 bit-test/schema/count oracle. The duplicate-block guard is unchanged. Static
-`python tools/smoke verify` now admits all 1,571 scenarios. Corrected CLI
-execution remains UNRUN; passing library controls do not qualify it.
+`python tools/smoke verify` admits all 1,571 scenarios.
+
+[documented: CLI process evidence] The corrected `fedce260` fixture and registry
+ran through the unchanged shared TOOL launcher using retained normal-Cargo
+baseline/candidate `fnvtool` images. The images were built at `d4ac68b`; compiled
+Rust/Cargo/schema inputs are identical at `fedce260`, so no rebuild was needed.
+The identical fixture emitted the expected menu name and retained arithmetic
+21/sentinel 23 on both images. Baseline bit/dependent values were 13, 13, 8, 8,
+58 and 315, failing their six numeric expectations, with five unknown-operator
+warnings failing the zero-warning expectation. The candidate passed all ten
+strict schema/count/value expectations with no warnings. Both owned jobs ended
+and host source was restored. The earlier registry-admission failure remains
+separate from this actual consumer qualification. No query changes, setup
+substitution or suppressed warnings were used to make the candidate pass.
 
 Native edge behavior remains unobserved: negative or fractional operands,
 nonfinite values, indexes outside the native width and numeric precision/conversion
