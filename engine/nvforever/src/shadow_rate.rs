@@ -44,7 +44,7 @@
 use crate::fly::FlyCam;
 use crate::sky::{CascadeLayout, SkyState};
 use bevy::ecs::entity::EntityHashMap;
-use bevy::light::{Cascades, DirectionalLight, DirectionalLightShadowMap, NotShadowCaster};
+use bevy::light::{CascadeShadowConfig, Cascades, DirectionalLight, DirectionalLightShadowMap, NotShadowCaster};
 use bevy::pbr::HoldDirectionalShadowMaps;
 use bevy::prelude::*;
 use bevy::render::extract_resource::ExtractResourcePlugin;
@@ -205,14 +205,47 @@ pub fn held_mask(schedule: &[(u32, u32)], frame: u64, cascades: usize) -> u32 {
     })
 }
 
+/// A light's cascades kept from the frame that drew them, with what its
+/// `CascadeShadowConfig` was then (far bounds, overlap, minimum distance; `None` without
+/// one).
+#[derive(Clone)]
+pub(crate) struct Kept {
+    cascades: Cascades,
+    config: Option<(Vec<f32>, f32, f32)>,
+}
+
+impl Kept {
+    fn new(cascades: &Cascades, config: Option<&CascadeShadowConfig>) -> Self {
+        Kept { cascades: cascades.clone(), config: config.map(|c| (c.bounds.clone(), c.overlap_proportion, c.minimum_distance)) }
+    }
+
+    /// Whether `config` is the one these cascades were kept under.
+    fn same_config(&self, config: Option<&CascadeShadowConfig>) -> bool {
+        match (&self.config, config) {
+            (None, None) => true,
+            (Some((bounds, overlap, minimum)), Some(c)) => *bounds == c.bounds && *overlap == c.overlap_proportion && *minimum == c.minimum_distance,
+            _ => false,
+        }
+    }
+}
+
+/// A light casting shadows this frame: its cascades as Bevy built them and the config they
+/// were built from.
+type Lit<'a> = (Entity, &'a Cascades, Option<&'a CascadeShadowConfig>);
+
 /// Whether the cascades kept from earlier frames can stand in for this frame's: every
-/// light has kept cascades for the same views, as many of them.
-fn same_layout(kept: &EntityHashMap<Cascades>, now: &[(Entity, &Cascades)]) -> bool {
+/// light has kept cascades for the same views, as many of them, under the same config.
+/// The vendored renderer reads each cascade's far bound from the light's config, not from
+/// the kept cascade, so a held cascade under changed bounds (the Shadow resolution row,
+/// the Shadow distance slider, Longer shadows, the mode) would be read against the wrong
+/// slice: a change of the config draws every cascade that frame (#2843 review).
+fn same_layout(kept: &EntityHashMap<Kept>, now: &[Lit]) -> bool {
     !now.is_empty()
-        && now.iter().all(|(light, cascades)| {
+        && now.iter().all(|(light, cascades, config)| {
             kept.get(light).is_some_and(|k| {
-                k.cascades.len() == cascades.cascades.len()
-                    && cascades.cascades.iter().all(|(view, c)| k.cascades.get(view).is_some_and(|kc| kc.len() == c.len()))
+                k.same_config(*config)
+                    && k.cascades.cascades.len() == cascades.cascades.len()
+                    && cascades.cascades.iter().all(|(view, c)| k.cascades.cascades.get(view).is_some_and(|kc| kc.len() == c.len()))
             })
         })
 }
@@ -241,8 +274,8 @@ pub(crate) fn hold_cascades(
     on: Res<PerformanceShadows>,
     map: Option<Res<DirectionalLightShadowMap>>,
     mut hold: ResMut<HoldDirectionalShadowMaps>,
-    mut all_lights: Query<(Entity, &DirectionalLight, &mut Cascades)>,
-    mut kept: Local<EntityHashMap<Cascades>>,
+    mut all_lights: Query<(Entity, &DirectionalLight, &mut Cascades, Option<&CascadeShadowConfig>)>,
+    mut kept: Local<EntityHashMap<Kept>>,
     mut frame: Local<u64>,
     mut said: Local<Option<bool>>,
 ) {
@@ -254,8 +287,8 @@ pub(crate) fn hold_cascades(
     } else {
         &[]
     };
-    let lights: Vec<(Entity, &Cascades)> = all_lights.iter().filter(|(_, l, _)| l.shadow_maps_enabled).map(|(e, _, c)| (e, c)).collect();
-    let count = lights.iter().flat_map(|(_, c)| c.cascades.values().map(Vec::len)).max().unwrap_or(0);
+    let lights: Vec<Lit> = all_lights.iter().filter(|(_, l, _, _)| l.shadow_maps_enabled).map(|(e, _, c, config)| (e, c, config)).collect();
+    let count = lights.iter().flat_map(|(_, c, _)| c.cascades.values().map(Vec::len)).max().unwrap_or(0);
     // A new map size makes new maps: nothing to keep.
     let same_maps = !map.is_some_and(|m| m.is_changed());
     let mut mask = held_mask(schedule, *frame, count);
@@ -265,20 +298,20 @@ pub(crate) fn hold_cascades(
     if mask == 0 {
         kept.clear();
         if !schedule.is_empty() {
-            kept.extend(lights.iter().map(|(e, c)| (*e, (*c).clone())));
+            kept.extend(lights.iter().map(|(e, c, config)| (*e, Kept::new(c, *config))));
         }
     } else {
         // A light that stopped casting while another casts on: forget what it kept.
         if kept.len() != lights.len() {
-            kept.retain(|e, _| lights.iter().any(|(l, _)| l == e));
+            kept.retain(|e, _| lights.iter().any(|(l, _, _)| l == e));
         }
-        for (light, directional, mut cascades) in &mut all_lights {
+        for (light, directional, mut cascades, _) in &mut all_lights {
             if !directional.shadow_maps_enabled {
                 continue;
             }
             let Some(k) = kept.get_mut(&light) else { continue };
             for (view, list) in cascades.cascades.iter_mut() {
-                let Some(kl) = k.cascades.get_mut(view) else { continue };
+                let Some(kl) = k.cascades.cascades.get_mut(view) else { continue };
                 for (i, (c, kc)) in list.iter_mut().zip(kl.iter_mut()).enumerate() {
                     if mask & (1 << i) != 0 {
                         *c = kc.clone();
@@ -341,15 +374,50 @@ mod tests {
         let (sun, arms, view) = (Entity::from_raw_u32(1).unwrap(), Entity::from_raw_u32(2).unwrap(), Entity::from_raw_u32(3).unwrap());
         let (three, two) = (cascades(view, 3), cascades(view, 2));
         let mut kept = EntityHashMap::default();
-        kept.insert(sun, three.clone());
-        assert!(same_layout(&kept, &[(sun, &three)]));
+        kept.insert(sun, Kept::new(&three, None));
+        assert!(same_layout(&kept, &[(sun, &three, None)]));
         // Never without lights.
         assert!(!same_layout(&kept, &[]));
         // A light that was not there (the arms' shade light switching on), a different
         // number of cascades, or another view: this frame draws.
-        assert!(!same_layout(&kept, &[(sun, &three), (arms, &three)]));
-        assert!(!same_layout(&kept, &[(sun, &two)]));
-        assert!(!same_layout(&kept, &[(sun, &cascades(arms, 3))]));
+        assert!(!same_layout(&kept, &[(sun, &three, None), (arms, &three, None)]));
+        assert!(!same_layout(&kept, &[(sun, &two, None)]));
+        assert!(!same_layout(&kept, &[(sun, &cascades(arms, 3), None)]));
+    }
+
+    /// The same number of cascades under other bounds or another overlap (the Shadow
+    /// resolution row, the Shadow distance slider, Longer shadows): this frame draws.
+    #[test]
+    fn maps_are_held_only_under_the_same_config() {
+        let (sun, view) = (Entity::from_raw_u32(1).unwrap(), Entity::from_raw_u32(3).unwrap());
+        let four = cascades(view, 4);
+        let config = |bounds: [f32; 4], overlap: f32| CascadeShadowConfig { bounds: bounds.to_vec(), overlap_proportion: overlap, minimum_distance: 5.0 };
+        let near = config([700.0, 2000.0, 5000.0, 8000.0], 0.2);
+        let mut kept = EntityHashMap::default();
+        kept.insert(sun, Kept::new(&four, Some(&near)));
+        assert!(same_layout(&kept, &[(sun, &four, Some(&near))]));
+        assert!(!same_layout(&kept, &[(sun, &four, Some(&config([1500.0, 2400.0, 4800.0, 8000.0], 0.4)))]), "other bounds");
+        assert!(!same_layout(&kept, &[(sun, &four, Some(&config([700.0, 2000.0, 5000.0, 8000.0], 0.4)))]), "another overlap");
+        assert!(!same_layout(&kept, &[(sun, &four, None)]), "the config gone");
+        // In the system: a frame that would hold draws every cascade when the bounds changed.
+        let mut world = World::new();
+        world.insert_resource(PerformanceShadows(true));
+        world.init_resource::<HoldDirectionalShadowMaps>();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(hold_cascades);
+        let light = world.spawn((DirectionalLight { shadow_maps_enabled: true, ..default() }, near.clone(), cascades(view, 2))).id();
+        let mut run = |world: &mut World| {
+            schedule.run(world);
+            world.resource::<HoldDirectionalShadowMaps>().0
+        };
+        // Performance with 2 cascades: frames 1 and 2 draw, 3 holds both.
+        assert_eq!((run(&mut world), run(&mut world), run(&mut world)), (0, 0, 0b11));
+        // Frame 4 draws, frame 5 would hold: under new bounds it draws.
+        assert_eq!(run(&mut world), 0);
+        world.entity_mut(light).insert(config([1500.0, 2400.0, 4800.0, 8000.0], 0.4));
+        assert_eq!(run(&mut world), 0, "new bounds, same count: every cascade drawn");
+        // Then held as usual under the new config.
+        assert_eq!((run(&mut world), run(&mut world)), (0, 0b11));
     }
 
     /// The switch gives back the cascade layout it replaced (#2182 review: it reset a

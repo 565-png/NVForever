@@ -140,6 +140,8 @@ pub const DEFAULT_SHADOW_DISTANCE: f32 = 8_000.0;
 /// 3.2, 13.8 units) 3.15-3.16 ms; 4 with 700, 2,000, 5,000, 12,000 (texels 0.80, 2.3, 5.7,
 /// 13.8) 3.22 ms. With 4096² maps 4 with 1,500, 3,500, 7,000, 12,000 and a blend band of
 /// 0.4 (texels 0.86, 2.0, 4.0, 6.9) 3.43-3.48 ms (docs/design/frame-rate-audit.md §12).
+/// Without Longer shadows the 4096² layout is 1,500, 2,400, 4,800, 8,000, derived by
+/// [`SHADOW_CAPS_QUALITY_WIDE`]'s rule and neither measured nor pictured.
 pub const DEFAULT_SHADOW_CASCADES: usize = CascadeLayout::Quality.count();
 
 /// How the sun's shadow cascades are laid out ([`shadow_cascade_layout`]): the Sun shadows
@@ -1437,7 +1439,7 @@ pub fn setup_sky(
     sky: Res<SkyState>,
     map: Option<Res<bevy::light::DirectionalLightShadowMap>>,
 ) {
-    let sun_tex =sky.climate.sun_texture.as_deref().and_then(|t| textures.get(t, true, &data, &mut images, None));
+    let sun_tex = sky.climate.sun_texture.as_deref().and_then(|t| textures.get(t, true, &data, &mut images, None));
     let glare_tex = sky.climate.sun_glare_texture.as_deref().and_then(|t| textures.get(t, true, &data, &mut images, None));
     let atmosphere = sky_shapes(&data, "meshes\\sky\\atmosphere.nif").into_iter().next().unwrap_or_else(fallback_dome);
     let weights = atmosphere.colors.clone();
@@ -1708,11 +1710,21 @@ const SHADOW_SHARES_PERFORMANCE: [f32; 2] = [0.1875, 0.5625];
 /// costs sharpness at the player's feet with these maps (a wire's shadow crisp at 0.77
 /// units a texel, soft at 1.15, blurred at 1.72), so their first bound stays near.
 const SHADOW_SHARES_QUALITY: [f32; 3] = [0.0875, 0.25, 0.625];
-/// Quality's 4 cascades with maps of [`WIDE_SHADOW_MAP`] or more (4096²): at 8,000 units
-/// 1,500, 3,500, 7,000, blended over [`WIDE_SHADOW_OVERLAP`]: 3.43-3.48 ms against 3.38 for
-/// the 3 of before with these maps; the near shadow stays crisp (0.86 units a texel) with
-/// the seams farther out.
+/// Quality's 4 cascades with maps of [`WIDE_SHADOW_MAP`] or more (4096²): 0.1875, 0.4375
+/// and 0.875 of the distance, the second and third capped at [`SHADOW_CAPS_QUALITY_WIDE`]
+/// of the last bound, blended over [`WIDE_SHADOW_OVERLAP`]. With Longer shadows (reach
+/// 1.5) at 8,000 units: 1,500, 3,500, 7,000, 12,000, the layout measured and pictured on
+/// 2026-11-16: 3.43-3.48 ms against 3.38 for the 3 of before with these maps; the near
+/// shadow stays crisp (0.86 units a texel) with the seams farther out.
 const SHADOW_SHARES_QUALITY_WIDE: [f32; 3] = [0.1875, 0.4375, 0.875];
+/// The caps of Quality's in-between bounds with the larger maps, as shares of the last
+/// bound (none on the first) [engineering choice, #2843 review, for the maintainer to
+/// decide: without Longer shadows (reach 1) the uncapped bounds end at 1,500, 3,500, 7,000
+/// of 8,000, and with the 0.4 blend band the fourth cascade (4,200-8,000) would add almost
+/// nothing beside the third (2,100-7,000) for a fourth draw]. At reach 1.5 they leave the
+/// measured layout as it is (3,500 under 3,600, 7,000 under 7,200); at reach 1 they give
+/// 1,500, 2,400, 4,800, 8,000, derived by this rule and neither measured nor pictured.
+const SHADOW_CAPS_QUALITY_WIDE: [f32; 3] = [f32::INFINITY, 0.3, 0.6];
 /// The shadow map side from which Quality takes [`SHADOW_SHARES_QUALITY_WIDE`].
 const WIDE_SHADOW_MAP: usize = 4096;
 /// The overlap (blend band) of Quality's cascades with the larger maps: seams farther out
@@ -1728,7 +1740,9 @@ const WIDE_SHADOW_OVERLAP: f32 = 0.4;
 /// - Performance: the shares of `distance` in [`SHADOW_SHARES_PERFORMANCE`], whatever the
 ///   map size; overlap [`SHADOW_OVERLAP`].
 /// - Quality: [`SHADOW_SHARES_QUALITY`] and [`SHADOW_OVERLAP`] with maps under
-///   [`WIDE_SHADOW_MAP`], [`SHADOW_SHARES_QUALITY_WIDE`] and [`WIDE_SHADOW_OVERLAP`] from it.
+///   [`WIDE_SHADOW_MAP`]; from it [`SHADOW_SHARES_QUALITY_WIDE`], each in-between bound
+///   capped at its [`SHADOW_CAPS_QUALITY_WIDE`] share of the last, and
+///   [`WIDE_SHADOW_OVERLAP`].
 /// - Spaced(n) (`--graphics-cycle cascades=<n>`): Bevy's geometric spacing from a first
 ///   bound of a twelfth of `distance`, as every count had it before #2843, so that
 ///   measurements of then still compare; overlap [`SHADOW_OVERLAP`].
@@ -1737,19 +1751,22 @@ const WIDE_SHADOW_OVERLAP: f32 = 0.4;
 /// At short distances (the Shadow distance slider goes down to a tenth of
 /// `--shadow-distance`) the first bound stays at [`FIRST_CASCADE_FLOOR`] but under half the
 /// last, and the last at four times the minimum distance at least; each in-between bound
-/// is then the farther of its share and Bevy's geometric spacing between the first bound
-/// and the last. That spacing rises strictly from the first to the last, and the shares
-/// rise, so the bounds always rise strictly; at the usual distances the shares win (at
-/// 8,000 units Quality's spacing with 2048² maps gives about 1,576 and 3,550 against 2,000
-/// and 5,000) [engineering choice].
+/// is then the farther of its (capped) share and a floor between the first bound and the
+/// last, `first + (last − first) × (i / (n − 1))²` for bound `i` of `n`. The floor rises
+/// strictly from the first to below the last, and the capped shares rise strictly and stay
+/// under the last, so the bounds always rise strictly. At the usual distances the shares
+/// win: at 8,000 units without Longer shadows the floor is about 1,511 and 3,944 against
+/// Quality's 2,000 and 5,000 with 2048² maps, 2,222 and 4,389 against 2,400 and 4,800 with
+/// 4096², and 3,125 against Performance's 4,500. (Bevy's geometric spacing, the floor
+/// before, would lift the 4096² second bound to about 2,621.) [engineering choice]
 pub(crate) fn shadow_cascade_layout(distance: f32, reach: f32, layout: CascadeLayout, map: usize) -> (Vec<f32>, f32) {
     let count = layout.count();
     let last = (distance * reach.max(1.0)).max(4.0 * SHADOW_MINIMUM_DISTANCE);
-    let (shares, overlap): (&[f32], f32) = match layout {
-        CascadeLayout::Performance => (&SHADOW_SHARES_PERFORMANCE[..], SHADOW_OVERLAP),
-        CascadeLayout::Quality if map >= WIDE_SHADOW_MAP => (&SHADOW_SHARES_QUALITY_WIDE[..], WIDE_SHADOW_OVERLAP),
-        CascadeLayout::Quality => (&SHADOW_SHARES_QUALITY[..], SHADOW_OVERLAP),
-        CascadeLayout::Spaced(_) => (&[][..], SHADOW_OVERLAP),
+    let (shares, caps, overlap): (&[f32], &[f32], f32) = match layout {
+        CascadeLayout::Performance => (&SHADOW_SHARES_PERFORMANCE[..], &[][..], SHADOW_OVERLAP),
+        CascadeLayout::Quality if map >= WIDE_SHADOW_MAP => (&SHADOW_SHARES_QUALITY_WIDE[..], &SHADOW_CAPS_QUALITY_WIDE[..], WIDE_SHADOW_OVERLAP),
+        CascadeLayout::Quality => (&SHADOW_SHARES_QUALITY[..], &[][..], SHADOW_OVERLAP),
+        CascadeLayout::Spaced(_) => (&[][..], &[][..], SHADOW_OVERLAP),
     };
     if count == 1 {
         return (vec![last], overlap);
@@ -1768,9 +1785,15 @@ pub(crate) fn shadow_cascade_layout(distance: f32, reach: f32, layout: CascadeLa
         .bounds;
         return (bounds, overlap);
     }
-    let spaced = |i: usize| first * (last / first).powf(i as f32 / (count - 1) as f32);
+    let floor = |i: usize| {
+        let t = i as f32 / (count - 1) as f32;
+        first + (last - first) * t * t
+    };
     let bounds = std::iter::once(first)
-        .chain(shares.iter().enumerate().skip(1).map(|(i, share)| (distance * share).max(spaced(i))))
+        .chain(shares.iter().enumerate().skip(1).map(|(i, share)| {
+            let cap = caps.get(i).map_or(f32::INFINITY, |c| c * last);
+            (distance * share).min(cap).max(floor(i))
+        }))
         .chain(std::iter::once(last))
         .collect();
     (bounds, overlap)
@@ -3008,9 +3031,11 @@ mod tests {
         // Quality with 2048² maps: 700, 2,000, 5,000, overlap 0.2.
         near(shadow_cascade_layout(8000.0, 1.0, Quality, 2048), &[700.0, 2000.0, 5000.0, 8000.0], 0.2);
         near(shadow_cascade_layout(8000.0, 1.5, Quality, 2048), &[700.0, 2000.0, 5000.0, 12000.0], 0.2);
-        // Quality with 4096² maps: 1,500, 3,500, 7,000, overlap 0.4.
-        near(shadow_cascade_layout(8000.0, 1.0, Quality, 4096), &[1500.0, 3500.0, 7000.0, 8000.0], 0.4);
+        // Quality with 4096² maps, overlap 0.4: with Longer shadows 1,500, 3,500, 7,000 (the
+        // layout measured); without, the middle two capped at 0.3 and 0.6 of the last.
         near(shadow_cascade_layout(8000.0, 1.5, Quality, 4096), &[1500.0, 3500.0, 7000.0, 12000.0], 0.4);
+        near(shadow_cascade_layout(8000.0, 1.0, Quality, 4096), &[1500.0, 2400.0, 4800.0, 8000.0], 0.4);
+        near(shadow_cascade_layout(16000.0, 1.0, Quality, 4096), &[3000.0, 4800.0, 9600.0, 16000.0], 0.4);
         // The shares follow the distance (the Shadow distance slider).
         near(shadow_cascade_layout(16000.0, 1.0, Quality, 2048), &[1400.0, 4000.0, 10000.0, 16000.0], 0.2);
         near(shadow_cascade_layout(16000.0, 1.0, Performance, 2048), &[3000.0, 9000.0, 16000.0], 0.2);
@@ -3044,9 +3069,9 @@ mod tests {
             }
         }
         // At the slider's low end the first bound is held at the floor and the rest are
-        // the farther of their share and the spacing out from it.
-        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 2048).0, &[200.0, 317.5, 504.0, 800.0]);
-        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 4096).0, &[200.0, 350.0, 700.0, 800.0]);
+        // the farther of their (capped) share and the floor between the first and the last.
+        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 2048).0, &[200.0, 266.7, 500.0, 800.0]);
+        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 4096).0, &[200.0, 266.7, 480.0, 800.0]);
         near_eq(&shadow_cascade_layout(800.0, 1.0, Performance, 2048).0, &[200.0, 450.0, 800.0]);
         fn near_eq(got: &[f32], want: &[f32]) {
             assert!(got.len() == want.len() && got.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.5), "{got:?} against {want:?}");
