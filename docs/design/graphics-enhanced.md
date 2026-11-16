@@ -890,7 +890,9 @@ offline snapshot 2026-10-28]. `world.rs` draws a SCOL reference as that one mode
 draws a STAT, so the same reference, shape and material rules apply to both. A reference is
 left out for any of: not in an exterior cell of the drawn world, a rig or skinning,
 particles, jointed or loose bodies or a stored pose, damage-stage nodes, a DEST record, an
-imposter; a shape for external emittance or a registered morph mesh. A material is left out
+imposter; a shape for external emittance, a registered morph mesh, or one drawn under a
+billboard holder that turns it to the camera (#2549; `excluded-billboard`, last in the
+reasons' order, merge of upstream main f4dbc82f8). A material is left out
 for Add, Multiply, Premultiplied or AlphaToCoverage alpha, unlit, refraction, first person,
 depth write, transmission, falloff, holes, FaceGen, the Pip-Boy screen, linear add, soft
 edges or a non-finite depth bias; ordinary Blend, a finite depth bias, the lit decal flag,
