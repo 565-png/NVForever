@@ -2970,3 +2970,17 @@ already talking takes over at once, same topic or another; nothing is queued or 
      no old version exists? [hypothesis, #2714] NVForever provisionally keeps
      the record's model and its own EGM; a young-head model on an old head
      could explain the reported gap. Resolve this before changing hair selection.
+
+## Added 2026-11-15 (Mick secret door, #2716)
+
+206. **Does an NPC path through an open locked door in the original?** (P2;
+    `fnv_nav::NavGraph::door_tri_open`.) [hypothesis, #2716] NVForever treats an
+    open in-place door as no barrier to any actor, even while locked. [documented:
+    issue #2716, spooknik comment 2026-11-15, supplied record findings] In
+    `FreesideMickandRalphs`, Mick reaches `SecretDoorMarkerREF`; his Travel end script
+    opens `MickSecretDoorREF` (0x00121FF2, Requires Key, no key) with SetOpenState 1
+    and chooses the secret-sales package. Watch whether he then walks through the
+    still-locked door to `SecretSalesMarkerREF` and starts the sales conversation.
+    Check another NPC without a key through an open locked door too, then close it
+    and compare. Record whether the live lock changes when the door opens.
+

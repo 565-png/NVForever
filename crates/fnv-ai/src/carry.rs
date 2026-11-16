@@ -2460,7 +2460,13 @@ impl Ai {
         // key and owned by Dad's base (TTW's Fallout3.esm REFR 0602EA4A); without this his
         // package was out of reach and the scene stopped, owner's TTW run 2026-11-02].
         params.owned_doors.extend(self.locked_doors.iter().copied().filter(|&d| game.ownership(FormId(d)).is_some_and(|o| !o.from_cell && game.counts_as_owner(actor, &o))));
-        // Doors the game has open (opened, or open by default and since touched).
+        // [design, #2716 / fnv_sim::World::initial] An untouched locked door uses its
+        // default-open placement; a materialized reference's live state wins below.
+        // Open locked doors do not refuse nav triangles [hypothesis,
+        // docs/spec-notes/navmesh.md; observer check 206].
+        params.open_doors.extend(self.locked_doors.iter().copied().filter(|&d| {
+            game.world.peek(FormId(d)).is_none() && game.world.placed.get(FormId(d)).is_some_and(|r| r.open_by_default)
+        }));
         params.open_doors.extend(game.world.changed().filter(|(_, s)| s.open).map(|(id, _)| id.0));
         // A creature flagged "Can't Open Doors" [documented: GECK wiki
         // GetActorBaseFlagsHigh, Creature column] uses no teleport door [hypothesis: what
@@ -2495,7 +2501,26 @@ impl Ai {
         }
         let Some(door) = ahead else { return true };
         a.asked_door = Some((door, a.package));
-        if game.npc_door(actor, FormId(door)) != fnv_game::npc_doors::DoorAnswer::Refused {
+        let answer = game.npc_door(actor, FormId(door));
+        // [hypothesis, #2716] An already-open in-place door is no barrier, even with
+        // a cached or fresh script refusal (navmesh.md; observer check 206). [design]
+        // Ask first to preserve crossing events and use live state after the script.
+        let in_place = game.world.placed.get(FormId(door)).is_some_and(|r| r.teleport.is_none());
+        let open_in_place = in_place && game.world.get(FormId(door)).is_ok_and(|s| s.open);
+        // [design, #2716] SetOpenState can close a door without changing its lock
+        // (`Game::set_ref_open`). A path planned while open grants no permission to
+        // reopen it: recheck the live lock, key and own ownership after activation,
+        // with the same configured overrides as `path_params`. Cell ownership does
+        // not authorize opening a locked door (`path_params`).
+        let p = &self.cfg.params;
+        let locked_out = in_place && !open_in_place && game.world.lock_of(FormId(door)).is_some_and(|lock| {
+            lock.locked
+                && !p.open_locked
+                && !p.owned_doors.contains(&door)
+                && !game.ownership(FormId(door)).is_some_and(|o| !o.from_cell && game.counts_as_owner(actor, &o))
+                && !lock.key.is_some_and(|key| p.keys.contains(&key.0) || game.world.item_count(actor, key).is_ok_and(|n| n > 0))
+        });
+        if open_in_place || (answer != fnv_game::npc_doors::DoorAnswer::Refused && !locked_out) {
             return true;
         }
         a.walker.follower = None;
