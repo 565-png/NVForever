@@ -5061,6 +5061,16 @@ expect = [
   # Sunny turns for two lines only.
   { re = 'listens to', count = 1, label = "no listens line for the last one (one listens line in all)" },
   { re = 'speech look: SunnyRef says a line to', count = 2, label = "Sunny turns for lines 1 and 2, not for the flagged line 3 (#2796)" },
+  # All three lines start: the aid logs its call without an error only when the line is
+  # being said (nvf-play script.rs ScriptAid::SayTo), and each start logs "script: … says".
+  { re = 'test aid: script SayTo\("0x00104E85", "0x0010588E", "GREETING", false\)(?!:)', count = 1, label = "line 1 (to Cheyenne) starts" },
+  { re = 'test aid: script SayTo\("SunnyRef", "player", "GREETING", false\)(?!:)', count = 1, label = "line 2 (to the player) starts" },
+  { re = 'test aid: script SayTo\("SunnyRef", "0x0010588E", "GREETING", true\)(?!:)', count = 1, label = "line 3 (to Cheyenne, noTargetLookFlag 1) starts" },
+  { re = 'script: SunnyRef says ', count = 3, label = "Sunny starts three lines" },
+]
+forbid = [
+  { re = 'test aid: script SayTo\(.*\): ', label = "a say_to aid failed (its error follows the call)" },
+  { text = "has no line of", label = "the say_to aid found no line to say" },
 ]
 manual = "add --no-npc-packages to see 'the body turns' by speech_look.rs itself"
 
