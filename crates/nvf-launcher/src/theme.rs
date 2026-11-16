@@ -50,6 +50,11 @@ pub fn apply(ctx: &egui::Context) {
     style.spacing.button_padding = egui::vec2(12.0, 6.0);
     let v = &mut style.visuals;
     *v = egui::Visuals::dark();
+    // egui's dark theme thickens every glyph's edges (2c - c^2, about gamma 0.5), which suits
+    // light text on dark but leaves the dark text on the gold buttons jagged and heavy. One
+    // glyph atlas serves both, so a middle gamma: dark-on-gold edges smooth, light text still
+    // full (compared side by side at 4x).
+    v.text_options.color_transfer_function = egui::epaint::FontColorTransferFunction::Gamma(0.75);
     v.panel_fill = PANEL;
     v.window_fill = PANEL;
     v.extreme_bg_color = BG;
