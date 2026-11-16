@@ -198,22 +198,30 @@ pub fn filling() -> Node {
 }
 
 /// The glow round a filled bar at `x`, `y`, `w` × `h` in its parent (the scroll bar's marker
-/// and track, a slider's meter), drawn before it: two dark rings outside it and its drop
-/// shadow along its right and bottom edges, as dark as `ink` [design: owner 2026-11-15, the
-/// fourth build: "the sliders do not have shadows behind them"]. Only outside the bar, so a
-/// see-through bar (a slider's ground) keeps its own shade.
+/// and track, a slider's meter), drawn before it: the arrows' glow (`GLOW_DARK` at the bar's
+/// edge, fading out over the arrows' reach, in thin bands) and its drop shadow along its right
+/// and bottom edges, as dark as `ink` [design: owner 2026-11-15, the fourth build: "the
+/// sliders do not have shadows behind them"; 2026-11-16: "make it the same as text and
+/// arrows"]. Only outside the bar, so a see-through bar (a slider's ground) keeps its own
+/// shade.
 pub fn bar_glow(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, h: f32, ink: f32) {
     let at_out = |out: f32| Node { position_type: PositionType::Absolute, left: u(x - out), top: u(y - out), width: u(w + 2.0 * out), height: u(h + 2.0 * out), ..default() };
-    for (out, band, dark) in BAR_RINGS {
-        p.spawn((GlowRing, Node { border: UiRect::all(u(band)), ..at_out(out) }, BorderColor::all(Color::BLACK.with_alpha(dark * ink)), Pickable::IGNORE));
+    let band = BAR_GLOW_REACH / BAR_GLOW_BANDS as f32;
+    for k in 0..BAR_GLOW_BANDS {
+        // Each band at its middle's darkness on the arrows' falloff (a smoothstep).
+        let t = (k as f32 + 0.5) / BAR_GLOW_BANDS as f32;
+        let dark = GLOW_DARK * (1.0 - t * t * (3.0 - 2.0 * t));
+        p.spawn((GlowRing, Node { border: UiRect::all(u(band)), ..at_out(band * (k + 1) as f32) }, BorderColor::all(Color::BLACK.with_alpha(dark * ink)), Pickable::IGNORE));
     }
     let d = DROP * ENTRY_EM;
     let drop = Node { position_type: PositionType::Absolute, left: u(x + d.x), top: u(y + d.y), width: u(w), height: u(h), border: UiRect { right: u(d.x), bottom: u(d.y), ..default() }, ..default() };
     p.spawn((GlowRing, drop, BorderColor::all(Color::BLACK.with_alpha(DROP_ALPHA * ink)), Pickable::IGNORE));
 }
 
-/// A bar's rings: so far out, so wide a band, so dark (outside the bar only).
-const BAR_RINGS: [(f32, f32, f32); 2] = [(2.0, 2.0, 0.3), (4.5, 2.5, 0.14)];
+/// How far a bar's glow reaches out, in interface units (the letters' and the arrows', about
+/// a seventh of the rows' em), and in how many bands.
+const BAR_GLOW_REACH: f32 = 4.5;
+const BAR_GLOW_BANDS: usize = 9;
 
 #[cfg(test)]
 mod tests {

@@ -1548,7 +1548,7 @@ mod tests {
         assert_eq!(all.len(), list.len());
         all.sort_unstable();
         assert_eq!(all, (0..list.len()).collect::<Vec<_>>(), "each registered row once");
-        assert_eq!(keys(&list, &l, "Gameplay")[..10], ["[Game]", "difficulty", "hardcore", "reload-slows", "UsePipBoy", "", "[V.A.T.S.]", "vats-style", "vats-slowdown", "kill-camera"]);
+        assert_eq!(keys(&list, &l, "Gameplay")[..11], ["[Game]", "difficulty", "hardcore", "reload-slows", "UsePipBoy", "sound-cover", "", "[V.A.T.S.]", "vats-style", "vats-slowdown", "kill-camera"]);
         assert_eq!(keys(&list, &l, "Audio"), ["[Volume]", "volume-master", "volume-music", "volume-footstep", "volume-voice", "volume-effects", "volume-radio", "", "[Sound]", "music", "voice", "reverb", "voice-reverb"]);
         assert_eq!(keys(&list, &l, "Controls")[..6], ["[Input]", "@device", "button-style", "@automatic-input", "@rumble", ""]);
         assert_eq!(keys(&list, &l, NVF_FEATURES_TAB), ["[World Interaction]", "grass-fire"], "the movement rows are not registered on main");
@@ -1575,7 +1575,7 @@ mod tests {
         let l = resolve_layout(&list);
         let closed = |p: &Placement| p.heading != Some("V.A.T.S.") && p.heading != Some("Camera");
         let g = lines(&list, &l, "Gameplay", closed);
-        assert_eq!(g[..9], ["[Game]", "difficulty", "hardcore", "reload-slows", "UsePipBoy", "", "[V.A.T.S.]", "[Camera]", "[Dialogue]"]);
+        assert_eq!(g[..10], ["[Game]", "difficulty", "hardcore", "reload-slows", "UsePipBoy", "sound-cover", "", "[V.A.T.S.]", "[Camera]", "[Dialogue]"]);
         let p = l.placement_of(list.iter().position(|s| s.key == "vats-style").unwrap()).unwrap();
         assert_eq!(l.shown_count(&p, |_| true), 3);
         assert_eq!(l.shown_count(&p, |i| i != LayoutItem::Setting(list.iter().position(|s| s.key == "vats-slowdown").unwrap())), 2);

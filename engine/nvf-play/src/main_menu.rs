@@ -51,7 +51,7 @@
 //! Log: `main menu: open (…)`, `main menu: <entry>`, `main menu: slide <texture>`.
 
 use crate::interface::{bc_supported, face, plain_font, set_line, u, Face};
-use crate::start_menu::{color, entry_base, highlight_colors, Shade, COLUMN, FONT, ITEM, LINE, RIGHT};
+use crate::start_menu::{color, entry_base, highlight_colors, Shade, FONT, ITEM, LINE, RIGHT};
 use crate::pause::{AidTime, Page, PageRequest, Paused};
 use crate::{PlaySet, PlayState, PlayWorld};
 use bevy::asset::RenderAssetUsages;
@@ -383,19 +383,10 @@ fn spawn(commands: &mut Commands, menu: &MainMenu, logo: Option<(Handle<Image>, 
                 }
                 root.spawn((ContinuePicture, ImageNode::default(), Node { position_type: PositionType::Absolute, left: u(LOGO_LEFT), top: u(PICTURE_TOP), width: u(PICTURE_WIDTH), ..default() }, Visibility::Hidden));
                 let Some(f) = menu.face.as_ref() else { return };
-                let n = Entry::ALL.len() as f32;
-                let top = (960.0 - n * ITEM) / 2.0;
-                let width = COLUMN - 5.0;
                 for (i, e) in Entry::ALL.iter().enumerate() {
-                    // The whole row takes the pointer; its border is the highlight box (`show_entries`).
-                    root.spawn((
-                        EntryNode(i),
-                        Button,
-                        Node { position_type: PositionType::Absolute, right: u(RIGHT), top: u(top + i as f32 * ITEM), width: u(width), height: u(ITEM), border: UiRect::all(u(LINE)), ..default() },
-                        BorderColor::all(Color::NONE),
-                        BackgroundColor(Color::NONE),
-                    ))
-                    .with_children(|p| entry_label(p, f, *e));
+                    // The box round the words takes the pointer, not the rest of the row
+                    // (`entry_node`); its highlight box is lit by `show_entries`.
+                    root.spawn((EntryNode(i), Button, entry_node(f, i), BorderColor::all(Color::NONE), BackgroundColor(Color::NONE))).with_children(|p| entry_label(p, f, *e));
                 }
             });
         });
@@ -407,19 +398,27 @@ fn spawn(commands: &mut Commands, menu: &MainMenu, logo: Option<(Handle<Image>, 
 fn entry_label(p: &mut ChildSpawnerCommands, f: &Face, e: Entry) {
     let label = fnv_util::words::tr(e.label());
     if let Some(line) = f.font.lines(label, None).into_iter().next() {
-        let w = f.font.width(label);
-        let x = COLUMN - 5.0 - w - 10.0 - 2.0 * LINE;
-        // The box with its glow (`crate::menu_shapes::framed`), shown while the entry is chosen.
+        // The box with its glow (`crate::menu_shapes::framed`), filling the entry's node,
+        // shown while the entry is chosen.
         let (line_colour, fill) = highlight_colors();
-        p.spawn((
-            EntryBox,
-            Node { position_type: PositionType::Absolute, left: u(x - 12.0), top: u(-LINE), width: u(w + 24.0), height: u(ITEM), ..default() },
-            Visibility::Hidden,
-            Pickable::IGNORE,
-        ))
-        .with_children(|c| crate::menu_shapes::framed(c, line_colour, fill, LINE));
-        set_line(p, f, &line, x, entry_base(f) - LINE, color(Shade::Bright));
+        p.spawn((EntryBox, crate::menu_shapes::filling(), Visibility::Hidden, Pickable::IGNORE)).with_children(|c| crate::menu_shapes::framed(c, line_colour, fill, LINE));
+        set_line(p, f, &line, ENTRY_PAD, entry_base(f), color(Shade::Bright));
     }
+}
+
+/// The room each side of an entry's words in its box (the pause menu's column's,
+/// `crate::pause`).
+const ENTRY_PAD: f32 = 12.0;
+
+/// Entry `i`'s node: the box round its words, right-aligned as the pause menu's column's
+/// entries (their words end `ENTRY_PAD` before the column's edge), and only it takes the
+/// pointer [design: owner 2026-11-16, "the main menu titles show the hover box even when you
+/// hover some distance from the box ... make the activation boxes the same size as the menu
+/// hover boxes"].
+fn entry_node(f: &Face, i: usize) -> Node {
+    let top = (960.0 - Entry::ALL.len() as f32 * ITEM) / 2.0 + i as f32 * ITEM;
+    let w = f.font.width(fnv_util::words::tr(Entry::ALL[i].label())) + 2.0 * ENTRY_PAD;
+    Node { position_type: PositionType::Absolute, right: u(RIGHT), top: u(top), width: u(w), height: u(ITEM), ..default() }
 }
 
 /// The entries' labels drawn again in the new language, or in the new face when the Menu Font
@@ -448,7 +447,7 @@ fn relabel(
     }
     if seen.is_some() {
         for (id, e) in &entries {
-            commands.entity(id).despawn_related::<Children>().with_children(|p| entry_label(p, f, Entry::ALL[e.0]));
+            commands.entity(id).despawn_related::<Children>().insert(entry_node(f, e.0)).with_children(|p| entry_label(p, f, Entry::ALL[e.0]));
         }
     }
     *seen = Some(now);

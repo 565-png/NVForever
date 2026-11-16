@@ -11307,7 +11307,7 @@ order = [[
 [[scenario]]
 name = "settings-scroll-headings"
 source = "#1953: the mouse wheel moves the window of a tab with headings (Gameplay) as of one without, the chosen row brought into the window (the top row once the chosen one leaves it) and the window not pulled back to the chosen row's heading; a notch up moves it back one line"
-note = "Gameplay's first lines: [Game], difficulty, hardcore, reload-slows, UsePipBoy, an empty line, [V.A.T.S.] and its three rows, an empty line, [Camera] (the menu overhaul, owner 2026-11-15); the window is eleven lines (#2377, the heading links under the note)"
+note = "Gameplay's first lines: [Game], difficulty, hardcore, reload-slows, UsePipBoy, sound-cover (#2688), an empty line, [V.A.T.S.] and its three rows, an empty line, [Camera] (the menu overhaul, owner 2026-11-15); the window is eleven lines (#2377, the heading links under the note)"
 areas = ["settings"]
 paths = ["engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/settings_layout.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:18", NVF_PLAY_TEST_SETTINGS = "11:tab:Gameplay", NVF_PLAY_TEST_PAUSE_MENU = "12:wheel-down,12.3:wheel-down,12.6:wheel-down,13.5:inspect,14:wheel-up,15:inspect" }
@@ -11321,8 +11321,8 @@ order = [[
   { re = 'pause menu: inspect: Gameplay, keys on the rows, selected reload-slows, lines 4-14 of \d+', label = "the window stays moved, the chosen row its top row" },
   "pause menu: inspect: window 11 lines, 11 drawn",
   { re = 'pause menu: rows 3-13 of \d+ shown', label = "a notch up moves it back one line" },
-  { re = 'pause menu: inspect: Gameplay, keys on the rows, selected reload-slows, lines 3-13 of \d+', label = "the chosen row still in the window" },
-  "pause menu: inspect: window 11 lines, 11 drawn",
+  { re = 'pause menu: inspect: Gameplay, keys on the rows, selected reload-slows, lines 3-11 of \d+', label = "the chosen row still in the window ([Camera] on its last line left for the next window, with the empty line before it)" },
+  "pause menu: inspect: window 11 lines, 9 drawn",
 ]]
 forbid = [
   { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },

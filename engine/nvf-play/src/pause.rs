@@ -1726,18 +1726,21 @@ enum BoxLook {
 #[allow(clippy::too_many_arguments)]
 fn right_entry_look(p: &mut ChildSpawnerCommands, face: &Face, label: &str, node: Node, width: f32, shade: Shade, look: BoxLook, b: PauseButton, glyphs: &crate::pad::PadGlyphs) {
     let w = crate::pad::hint_width(face, label, glyphs);
-    // The whole line takes the pointer; the box hugs the words with the same room each side,
-    // right-aligned as the words are [design: owner 2026-11-15, "the selection/hover box
-    // alignment does not look correct": the box was the rail's whole width].
+    // The box hugs the words with the same room each side, right-aligned as the words are
+    // [design: owner 2026-11-15, "the selection/hover box alignment does not look correct"],
+    // and only the box takes the pointer, not the rest of the line [design: owner 2026-11-16,
+    // "make the activation boxes the same size as the menu hover boxes"].
     let pad = ENTRY_BOX_PAD;
-    p.spawn((Button, b, node)).with_children(|t| {
-        if look != BoxLook::None {
-            let (line, fill) = highlight_colors();
-            let fill = if look == BoxLook::Outline { Color::NONE } else { fill };
-            let bw = (w + 2.0 * pad).min(width);
-            t.spawn((at(width - bw, 0.0, bw, ITEM), Pickable::IGNORE)).with_children(|c| crate::menu_shapes::framed(c, line, fill, LINE));
-        }
-        crate::pad::set_hint(t, face, label, width - w - pad, crate::start_menu::entry_base(face), color(shade), glyphs);
+    let bw = (w + 2.0 * pad).min(width);
+    p.spawn((node, Pickable::IGNORE)).with_children(|t| {
+        t.spawn((Button, b, at(width - bw, 0.0, bw, ITEM))).with_children(|bt| {
+            if look != BoxLook::None {
+                let (line, fill) = highlight_colors();
+                let fill = if look == BoxLook::Outline { Color::NONE } else { fill };
+                bt.spawn((crate::menu_shapes::filling(), Pickable::IGNORE)).with_children(|c| crate::menu_shapes::framed(c, line, fill, LINE));
+            }
+            crate::pad::set_hint(bt, face, label, bw - w - pad, crate::start_menu::entry_base(face), color(shade), glyphs);
+        });
     });
 }
 
@@ -2143,8 +2146,11 @@ struct SearchText;
 /// "Previous Category" and "Next Category" at the rows' right end from `top`, each with its
 /// key.
 fn heading_links(root: &mut ChildSpawnerCommands, f: &Faces, lb: ListBox, glyphs: &crate::pad::PadGlyphs, top: f32) {
-    let mut right = lb.left + lb.width;
-    for (k, key) in [(1, KeyCode::PageDown), (0, KeyCode::PageUp)] {
+    // From the left, their words where the note's start [design: owner 2026-11-16, "category
+    // controls aligned to the left side"]: an entry's words stand `ENTRY_BOX_PAD` in from its
+    // box, the box 20 wider than the words.
+    let mut left = lb.left + 10.0 - (20.0 - ENTRY_BOX_PAD);
+    for (k, key) in [(0, KeyCode::PageUp), (1, KeyCode::PageDown)] {
         // The keyboard's keys by their short names ("PgUp)"): the original's "R)" shape
         // reads broken after two words [design: the menu overhaul].
         let hint = match crate::pad::labels() {
@@ -2153,9 +2159,8 @@ fn heading_links(root: &mut ChildSpawnerCommands, f: &Faces, lb: ListBox, glyphs
         };
         let label = format!("{}  {hint}", tr(HEADING_LINKS[k]));
         let w = crate::pad::hint_width(&f.small, &label, glyphs) + 20.0;
-        right -= w;
-        right_entry(root, &f.small, &label, from_middle(right, top, w, ITEM), w, Shade::Bright, false, PauseButton::HeadingStep(if k == 0 { -1 } else { 1 }), glyphs);
-        right -= 10.0;
+        right_entry(root, &f.small, &label, from_middle(left, top, w, ITEM), w, Shade::Bright, false, PauseButton::HeadingStep(if k == 0 { -1 } else { 1 }), glyphs);
+        left += w + 10.0;
     }
 }
 
