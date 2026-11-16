@@ -28,6 +28,12 @@
 //! held cascade for up to three frames. Test aid `NVF_PLAY_TEST_SHADOW_STAGGER=0` draws
 //! every cascade every frame.
 //!
+//! Test aids for the shadows' shimmer: `NVF_PLAY_TEST_SHADOW_ANCHOR=1` snaps the sun's
+//! cascades to a texel grid anchored near the camera instead of at the world's origin
+//! (shadow_anchor.rs); `NVF_PLAY_TEST_SUN_STILL=1` holds the sun light's direction still
+//! (sky.rs `update_sky`); `NVF_PLAY_TEST_SHOT_BURST` saves consecutive frames (nvf-play
+//! test_aid.rs).
+//!
 //! What it costs and saves: docs/design/frame-rate-audit.md §9 and §10.
 
 use crate::fly::FlyCam;
@@ -212,7 +218,7 @@ fn staggered() -> bool {
 /// the directional lights back those cascades as the frame that drew them had them, and
 /// have the renderer keep their maps (module notes). Runs after Bevy has built this
 /// frame's cascades and before it fits the lights' frusta to them.
-fn hold_cascades(
+pub(crate) fn hold_cascades(
     on: Res<PerformanceShadows>,
     map: Option<Res<DirectionalLightShadowMap>>,
     mut hold: ResMut<HoldDirectionalShadowMaps>,

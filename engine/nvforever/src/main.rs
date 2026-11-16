@@ -155,6 +155,7 @@ mod head_bob;
 mod view_sway;
 mod weapon_lower;
 mod setup;
+mod shadow_anchor;
 mod shadow_probe;
 mod shadow_rate;
 mod shadow_thin;
@@ -1535,6 +1536,8 @@ fn main() -> AppExit {
     // Small objects far away cast no sun shadows (shadow_thin.rs).
     .add_plugins(shadow_thin::ShadowThinPlugin(args.shadow_thin))
     .add_plugins(shadow_rate::ShadowRatePlugin { performance: performance_shadows })
+    // Test aid NVF_PLAY_TEST_SHADOW_ANCHOR: the sun's cascades snapped near the camera (shadow_anchor.rs).
+    .add_plugins(shadow_anchor::ShadowAnchorPlugin)
     // Interiors draw the rooms seen through portals only (rooms.rs).
     .add_plugins(rooms::RoomsPlugin { off: args.no_room_culling, planes_off: args.no_occlusion_planes, planes_outdoors: args.occlusion_planes_outdoors })
     .insert_resource(ClearColor(Color::srgb(0.62, 0.72, 0.85)))
