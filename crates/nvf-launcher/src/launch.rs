@@ -68,9 +68,13 @@ pub fn open_folder(dir: &Path) {
 /// Whether `url` may be handed to the system: an `https://` web page and nothing else. URLs
 /// come from the network (`news.json`, GitHub), and the system opener runs whatever it is
 /// given: a local program, a `\\host\share` path, a `file:` or other protocol handler.
+/// Only URL characters are let through (RFC 3986's, no spaces, controls, quotes, backslashes
+/// or commas, which explorer reads as its own switches); a page whose address needs others
+/// is refused rather than guessed at.
 pub fn is_web_url(url: &str) -> bool {
     let u = url.trim();
-    u.len() > 8 && u[..8].eq_ignore_ascii_case("https://") && !u.contains(['"', '\n', '\r', '\0'])
+    let url_char = |c: char| c.is_ascii_alphanumeric() || "-._~:/?#[]@!$&'()*+;=%".contains(c);
+    u.len() > 8 && u.get(..8).is_some_and(|s| s.eq_ignore_ascii_case("https://")) && u.chars().all(url_char)
 }
 
 /// Open a web page in the browser; anything but an `https://` URL is refused.
@@ -122,6 +126,13 @@ mod tests {
             "ms-settings:",
             "javascript:alert(1)",
             "https://x.com\" a.exe",
+            "https://x.com/a b",
+            "https://x.com/a\tb",
+            "https://x.com/a,/select,C:\\x.exe",
+            "https://x.com/\\x",
+            "https://x.com/é",
+            "aéééé…",
+            "httpsé://x.com",
         ] {
             assert!(!is_web_url(bad), "{bad}");
         }

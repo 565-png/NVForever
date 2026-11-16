@@ -55,13 +55,15 @@ line-height setting for Markdown text, so the room comes from the font and its s
   `fnv_install::guard_write`; never the game folder or `Documents\My Games\FalloutNV`.
 - Sends nothing but GET requests, and only while "Fetch news" is on (it is on at first, so the
   first start asks before the player has seen the switch): the site's `news.json` and
-  `assets/js/config.js`, GitHub's release list (once a start, shared by the news and the update
-  check; GitHub allows 60 an hour without a sign-in), and each `https://` image a post names, on
-  whatever host it names, side by side, at most 8 MiB each and 15 s each. Nothing fetched is
+  `assets/js/config.js`, GitHub's release list (at most once a minute, shared by the news and
+  the update check; GitHub allows 60 an hour without a sign-in), and each `https://` image a post names, on
+  whatever host it names, side by side, at most 8 MiB and 15 s each (20 posts at most). Nothing fetched is
   saved but the news cache, and nothing is run.
 - Opens only `https://` pages in the browser (`launch::open_url`): the news, release and
   update links come from the network, and the system's opener would also run a program, a
-  `\\host\share` path or a `file:` link. Links inside a post's text go the same way. Its own
+  `\\host\share` path or a `file:` link; only URL characters pass (no spaces, quotes,
+  backslashes or commas). Links inside a post's text go the same way: each frame ends by taking
+  them out of egui's output (eframe is built without its own link opener). Its own
   folders open through `launch::open_folder`.
 - Test aid: `NVF_LAUNCHER_SHOT=<file.png>` saves the window once the news has arrived and
   closes; `NVF_LAUNCHER_PAGE=home|settings|mods|game` opens that page first.

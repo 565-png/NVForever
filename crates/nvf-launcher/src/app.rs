@@ -343,20 +343,6 @@ impl eframe::App for App {
         }
         self.top_bar(ui);
         self.bottom_bar(ui, ctx, running);
-        let links: Vec<String> = ctx.output_mut(|o| {
-            let mut urls = Vec::new();
-            o.commands.retain(|c| match c {
-                egui::OutputCommand::OpenUrl(u) => {
-                    urls.push(u.url.clone());
-                    false
-                }
-                _ => true,
-            });
-            urls
-        });
-        for url in links {
-            launch::open_url(&url);
-        }
         self.nav(ui);
         self.test_shot(ctx);
         egui::CentralPanel::default().frame(Frame::new().fill(theme::BG).inner_margin(Margin::symmetric(24, 16))).show(ui, |ui| match self.page {
@@ -365,7 +351,28 @@ impl eframe::App for App {
             Page::Mods => self.mods_page(ui),
             Page::Game => self.game_page(ui),
         });
+        // Last, after everything that can draw a link (a post's Markdown is in the central
+        // panel): egui's own link opening would skip the https rule.
+        for url in take_links(ctx) {
+            launch::open_url(&url);
+        }
     }
+}
+
+/// The pages egui was asked to open this frame (links in a post's text), taken out of its
+/// output so that only [`launch::open_url`] opens them.
+fn take_links(ctx: &egui::Context) -> Vec<String> {
+    ctx.output_mut(|o| {
+        let mut urls = Vec::new();
+        o.commands.retain(|c| match c {
+            egui::OutputCommand::OpenUrl(u) => {
+                urls.push(u.url.clone());
+                false
+            }
+            _ => true,
+        });
+        urls
+    })
 }
 
 impl App {
@@ -911,7 +918,7 @@ impl App {
                             ui.label(RichText::new("missing").small().color(BAD));
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.add_enabled(!base && i + 1 < n, egui::Button::new("Down").small()).clicked() {
+                            if ui.add_enabled(!base && i + 1 < n && !is_base[i + 1], egui::Button::new("Down").small()).clicked() {
                                 swap = Some((i, i + 1));
                             }
                             if ui.add_enabled(!base && i > 0 && !is_base[i - 1], egui::Button::new("Up").small()).clicked() {
@@ -1076,6 +1083,20 @@ mod tests {
         assert_eq!(shown_place("WastelandNV (-15, -13)"), None);
         assert_eq!(shown_place(""), None);
         assert_eq!(shown_place("Prospector Saloon"), Some("Prospector Saloon"));
+    }
+
+    #[test]
+    fn links_are_taken_from_egui() {
+        let ctx = egui::Context::default();
+        let mut taken = Vec::new();
+        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.ctx().open_url(egui::OpenUrl::new_tab("https://nv-forever.com"));
+            ui.ctx().copy_text("kept".into());
+            taken = take_links(ui.ctx());
+        });
+        assert_eq!(taken, ["https://nv-forever.com"]);
+        assert!(!out.platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::OpenUrl(_))));
+        assert!(out.platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::CopyText(_))));
     }
 
     #[test]

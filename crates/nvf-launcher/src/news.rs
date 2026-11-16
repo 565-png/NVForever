@@ -22,6 +22,8 @@ pub const SITE: &str = "https://nv-forever.com";
 const CACHE_FILE: &str = "launcher-news.json";
 /// The longest a news image may be; a bigger one is left out.
 const MAX_IMAGE: u64 = 8 << 20;
+/// The most posts kept from a fetch (and so the most images fetched at once).
+const MAX_POSTS: usize = 20;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Post {
@@ -167,6 +169,7 @@ pub fn fetch() -> Result<(Vec<Post>, Source), String> {
             }
         }
     };
+    posts.truncate(MAX_POSTS);
     std::thread::scope(|s| {
         for p in &mut posts {
             if let Some(url) = p.image.clone().filter(|u| u.starts_with("https://")) {
