@@ -20,9 +20,10 @@ fn app() -> (App, Entity) {
         .insert_resource(ScriptState::over_no_plugins())
         .add_systems(Update, (script_input, page).chain());
     let window = app.world_mut().spawn(PrimaryWindow).id();
-    let mut state = app.world_mut().resource_mut::<ScriptState>();
-    let game = &mut state.rt.as_mut().unwrap().game;
-    let files = fnv_ui::MemSource::default().with("owned.xml", r#"
+    {
+        let mut state = app.world_mut().resource_mut::<ScriptState>();
+        let game = &mut state.rt.as_mut().unwrap().game;
+        let files = fnv_ui::MemSource::default().with("owned.xml", r#"
       <menu name="StartMenu"><rect name="MCM"><_Menu>1</_Menu>
         <rect name="MCM_Options"/><rect name="MCM_Scale"/>
         <rect name="MCM_List"/><rect name="MCM_Trigger"/>
@@ -30,12 +31,12 @@ fn app() -> (App, Entity) {
           <_count>6</_count><_searchKeys>0</_searchKeys><_released>0</_released><_allDown>0</_allDown><_warpSelections>0</_warpSelections>
           <x>50</x><y>20</y><width>150</width><height>200</height>
         </rect></rect></menu>"#);
-    game.ui_tree.load_menu(&files, "owned.xml").unwrap();
-    let source = "Begin Function {}\nSetFunctionValue (GetMCMFloat 5 0 \"_offset\")\nEnd";
-    assert_eq!(game.run_query(source, RunCtx::default()).unwrap(), XVal::Num(1.0), "the source API reaches the fifth child before any input");
-    // Independent consumers of the same documented key-event and MCM tile APIs;
-    // none of the installed mod's scripts or XML are test fixtures.
-    let handler = r#"Begin Function {int key}
+        game.ui_tree.load_menu(&files, "owned.xml").unwrap();
+        let source = "Begin Function {}\nSetFunctionValue (GetMCMFloat 5 0 \"_offset\")\nEnd";
+        assert_eq!(game.run_query(source, RunCtx::default()).unwrap(), XVal::Num(1.0), "the source API reaches the fifth child before any input");
+        // Independent consumers of the same documented key-event and MCM tile APIs;
+        // none of the installed mod's scripts or XML are test fixtures.
+        let handler = r#"Begin Function {int key}
       if MenuMode 1013 == 0
         return
       endif
@@ -51,25 +52,25 @@ fn app() -> (App, Entity) {
         SetMCMFloat 5 0 "_searchKeys" ((GetMCMFloat 5 0 "_searchKeys") + 1)
       endif
     End"#;
-    for code in [264, 265, 33] {
-        let source = format!("Begin Function {{}}\nSetFunctionValue (SetOnKeyDownEventHandler ({handler}) 1 {code})\nEnd");
-        assert_eq!(game.run_query(&source, RunCtx::default()).unwrap(), XVal::Num(1.0));
-    }
-    let source = r#"Begin Function {}
+        for code in [264, 265, 33] {
+            let source = format!("Begin Function {{}}\nSetFunctionValue (SetOnKeyDownEventHandler ({handler}) 1 {code})\nEnd");
+            assert_eq!(game.run_query(&source, RunCtx::default()).unwrap(), XVal::Num(1.0));
+        }
+        let source = r#"Begin Function {}
       SetFunctionValue (SetOnKeyUpEventHandler (Begin Function {int key}
         if MenuMode 1013
           SetMCMFloat 5 0 "_released" key
         endif
       End) 1 33)
     End"#;
-    assert_eq!(game.run_query(source, RunCtx::default()).unwrap(), XVal::Num(1.0));
-    let source = r#"Begin Function {}
+        assert_eq!(game.run_query(source, RunCtx::default()).unwrap(), XVal::Num(1.0));
+        let source = r#"Begin Function {}
       SetFunctionValue (SetOnKeyDownEventHandler (Begin Function {int key}
         SetMCMFloat 5 0 "_allDown" ((GetMCMFloat 5 0 "_allDown") + 1)
       End) 1 33)
     End"#;
-    assert_eq!(game.run_query(source, RunCtx::default()).unwrap(), XVal::Num(1.0));
-    drop(state);
+        assert_eq!(game.run_query(source, RunCtx::default()).unwrap(), XVal::Num(1.0));
+    }
     (app, window)
 }
 
@@ -178,14 +179,15 @@ fn mcm_page_wheel_routes_by_menu_coordinates_and_admits_callback_cursor_writes()
     }
     // Leaving the callback's page context restores plain-play cursor policy. A
     // stale menu pointer cannot replace raw pixels or authorize a new warp.
-    let mut state = app.world_mut().resource_mut::<ScriptState>();
-    let game = &mut state.rt.as_mut().unwrap().game;
-    let query = "Begin Function {}\nSetCursorPos 1 2 1\nSetFunctionValue (GetCursorPos X 1)\nEnd";
-    assert_eq!(game.run_query(query, RunCtx::default()).unwrap(), XVal::Num(110.0));
-    assert_eq!(game.other.jip9.cursor_warp, Some((110.0, 90.0, true)));
-    let query = "Begin Function {}\nSetFunctionValue (GetActiveMenuMode)\nEnd";
-    assert_eq!(game.run_query(query, RunCtx::default()).unwrap(), XVal::Num(0.0));
-    drop(state);
+    {
+        let mut state = app.world_mut().resource_mut::<ScriptState>();
+        let game = &mut state.rt.as_mut().unwrap().game;
+        let query = "Begin Function {}\nSetCursorPos 1 2 1\nSetFunctionValue (GetCursorPos X 1)\nEnd";
+        assert_eq!(game.run_query(query, RunCtx::default()).unwrap(), XVal::Num(110.0));
+        assert_eq!(game.other.jip9.cursor_warp, Some((110.0, 90.0, true)));
+        let query = "Begin Function {}\nSetFunctionValue (GetActiveMenuMode)\nEnd";
+        assert_eq!(game.run_query(query, RunCtx::default()).unwrap(), XVal::Num(0.0));
+    }
     app.update(); // release the wheel before another edge under an overlay
     {
         let mut state = app.world_mut().resource_mut::<ScriptState>();
