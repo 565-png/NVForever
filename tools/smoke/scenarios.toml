@@ -28700,45 +28700,48 @@ forbid = [{ text = "terrain levels:", label = "no redraws by distance at 2 x 2" 
 
 [[scenario]]
 name = "terrain-smoothing-4x4-near"
-source = "[design, #2676] the Smooth terrain row's 4 x 4 near (engine/nvforever/src/terrain_lod.rs): the 4 x 4 surface collided everywhere, each loaded quadrant drawn 4 x 4 within 2048 units of the camera and 2 x 2 beyond 2560, redrawn on the read pool"
-note = "--smooth-terrain 4x4-near; the player is put at a spot in Goodsprings at 10 s and one cell (4,096 units) east of it at 16 s: the start names the rule, the quadrants around the camera are redrawn 4 x 4, the move redraws again, the player stands on the ground"
+source = "[design, #2676] the Smooth terrain row's 4 x 4 near (engine/nvforever/src/terrain_lod.rs): the 4 x 4 surface collided everywhere, each loaded quadrant drawn 4 x 4 within 2048 units of the camera and 2 x 2 beyond 2560, redrawn on the read pool and swapped in once the GPU has the meshes"
+note = "--smooth-terrain 4x4-near; the player is put at a spot in Goodsprings at 10 s and one cell (4,096 units) east of it at 16 s, so the quadrants at the second spot, beyond 2048 from the first, must be redrawn after the move; NVF_PLAY_TEST_TERRAIN_LEVELS logs each settled state"
 areas = ["rendering", "terrain"]
 paths = ["crates/fnv-world/src/land_surface.rs", "engine/nvf-play/src/smooth_terrain.rs", "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain_lod.rs", "engine/nvforever/src/world.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "10:-68375:4800:8600,16:-64279:4800:8600" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_TERRAIN_LEVELS = "1", NVF_PLAY_TEST_GOTO = "10:-68375:4800:8600,16:-64279:4800:8600" }
 args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--smooth-terrain", "4x4-near"]
 run_seconds = 24
 expect = [
   { text = "terrain: mode=detail(2:6) subdiv=4 bound=8 land-shift=4; drawing, collision and queries use this surface; drawn 4 x 4 within 2048 units of the camera, 2 x 2 beyond 2560 (4 x 4 near)", count = 1, label = "the start names the 4 x 4 surface and the rule, once" },
   { re = 'terrain levels: first redraw: (\d+) quadrants rebuilt', range = [1, 16], label = "the quadrants near the camera are redrawn" },
-  { re = 'terrain levels: first redraw: .*; (\d+) quadrants drawn 4 x 4', range = [1, 16], label = "1 to 16 quadrants drawn 4 x 4 around the camera" },
   { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=detail\(2:6\) subdiv=4 bound=8 land-shift=4\); 4 x 4 near: ', range = [9, 100000], label = "the loaded cells are drawn smoothed under 4 x 4 near" },
-  { re = 'terrain summary: .*; 4 x 4 near: (\d+) redraws', range = [2, 100000], label = "the move east redraws again" },
-  { re = 'terrain summary: .*; 4 x 4 near: .*; now (\d+) 4 x 4', range = [1, 16], label = "at the exit 4 x 4 only around the camera" },
+  { re = 'terrain summary: .*; 4 x 4 near: .*, (\d+) swapped before the GPU had them', range = [0, 0], label = "every redraw waited for its meshes to be on the GPU" },
   { re = 'player placed: feet \(', label = "the player is placed on the ground" },
 ]
-forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "no test aid value refused" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+order = [[
+  { text = "test aid: go to (-64279, 4800, 8600)", label = "the player is moved one cell east" },
+  { re = 'terrain levels: settled: (\d+) quadrants drawn 4 x 4, \d+ 2 x 2 after \d+ redraws \(camera at -6[345]\d{3}, ', range = [1, 16], label = "redrawn after the move: settled around the new spot with 1 to 16 quadrants 4 x 4" },
+]]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "no test aid value refused" }, { text = "not on the GPU after", label = "no redraw swapped before its meshes were in" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
 
 [[scenario]]
 name = "terrain-smoothing-near-aid"
 source = "[design, #2676] 4 x 4 near's distance from the test aid NVF_PLAY_TEST_SMOOTH_NEAR (engine/nvf-play/src/smooth_terrain.rs), for tuning it from pictures"
-note = "near 4096 (far 4608): named in the start line, more quadrants drawn 4 x 4 at the first redraw than the default's at most 16"
+note = "near 4096 (far 4608): named in the start line; once the levels settle with the camera still, at least 16 quadrants are drawn 4 x 4 (wherever the camera stands), where the default distance gives at most 9"
 areas = ["rendering", "terrain"]
 paths = ["engine/nvf-play/src/smooth_terrain.rs", "engine/nvforever/src/terrain_lod.rs"]
-env = { NVF_PLAY_TEST_SMOOTH_NEAR = "4096" }
+env = { NVF_PLAY_TEST_SMOOTH_NEAR = "4096", NVF_PLAY_TEST_TERRAIN_LEVELS = "1" }
 args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--smooth-terrain", "4x4-near"]
 run_seconds = 20
 expect = [
   { text = "drawn 4 x 4 within 4096 units of the camera, 2 x 2 beyond 4608 (4 x 4 near)", count = 1, label = "the start names the aid's distance" },
-  { re = 'terrain levels: first redraw: .*; (\d+) quadrants drawn 4 x 4', range = [9, 64], label = "a wider ring of 4 x 4 quadrants" },
+  { re = 'terrain levels: settled: (\d+) quadrants drawn 4 x 4', range = [16, 64], label = "settled with a wider ring of 4 x 4 quadrants (at rest 4096 gives at least 16, 2048 at most 9)" },
 ]
 forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "the aid's value is taken" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
 
 [[scenario]]
 name = "terrain-wireframe-near"
 source = "[design, #2676] under 4 x 4 near the terrain wireframe (engine/nvforever/src/terrain_wireframe.rs) shows each quadrant as drawn, outlined again when it is redrawn"
-note = "on from the start with 4 x 4 near: the loaded cells are outlined, and outlined again once the first redraw draws the quadrants around the camera 4 x 4"
+note = "on from the start with 4 x 4 near: the loaded cells are outlined, and once the levels have settled the outlines show the 4 x 4 quadrants (the count line names them)"
 areas = ["rendering", "terrain"]
 paths = ["engine/nvforever/src/terrain_wireframe.rs", "engine/nvforever/src/terrain_lod.rs"]
+env = { NVF_PLAY_TEST_TERRAIN_LEVELS = "1" }
 args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--smooth-terrain", "4x4-near", "--terrain-wireframe"]
 run_seconds = 20
 expect = [
@@ -28746,8 +28749,8 @@ expect = [
   { re = 'terrain wireframe: (\d+) cells outlined', range = [9, 100000], label = "the loaded cells are outlined" },
 ]
 order = [[
-  { text = "terrain levels: first redraw:", label = "the quadrants around the camera are redrawn 4 x 4" },
-  { re = 'terrain wireframe: (9|[1-9]\d+) cells outlined, \d+ edges', label = "and the outlines follow" },
+  { re = 'terrain levels: settled: [1-9]\d* quadrants drawn 4 x 4', label = "the levels settle with quadrants drawn 4 x 4" },
+  { re = 'terrain wireframe: (?:9|[1-9]\d+) cells outlined, \d+ edges, \d+ without landscape, \d+ line assets; (\d+) quadrants outlined 4 x 4', range = [1, 16], label = "and the outlines then show 4 x 4 quadrants" },
 ]]
 forbid = [{ text = "terrain wireframe: off", label = "it stays on" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
 

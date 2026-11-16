@@ -269,24 +269,35 @@ apart and the last row/column coincides with the neighbour's first.
   - *no cracks*: a 4 × 4 quadrant's side next to a quadrant drawn 2 × 2 (or one not
     loaded, which loads as 2 × 2) is drawn coarse: each vertex between two of the 2 × 2
     side's vertices is put halfway between them, with the normalised sum of their normals,
-    so the side is the 2 × 2 side's straight segments without T-junction gaps and lit as
-    the 2 × 2 side interpolates it; colours and layer opacities need no change (the stored
+    so the side lies on the 2 × 2 side's straight segments with no gap (the T-junctions stay,
+    collinear); the normals agree at the shared vertices and differ slightly between them
+    (the moved vertex's normal is normalised, the 2 × 2 side interpolates linearly);
+    colours and layer opacities need no change (the stored
     triangles are linear along a quadrant's side). A level change also redraws the 4 × 4
     neighbours whose sides depend on it; cell edges stay identical from both sides;
   - *redraws* run one batch at a time on the read pool's worker threads, from the
     landscape, surface and layers the cell was spawned with (no record read again); a
-    built batch is spawned hidden and swapped in a few frames later, all its quadrants in
-    one frame, so neighbours change together and no quadrant is ever without ground;
+    built batch is spawned hidden, with the visibility range (cell fade step) of the
+    quadrant's old meshes, and the old meshes stay until the render world reports every
+    new mesh uploaded and given its buffer slabs (the shared GPU upload limit can hold
+    meshes back for frames); after 120 frames without that word it is swapped anyway
+    with a warning. At the swap the batch is checked against the cells loaded then: a
+    quadrant whose sides would no longer fit its neighbours' drawing (a cell unloaded or
+    loaded again while it was built) keeps its old meshes, until every swapped one fits;
+    the rest swap in one frame, so neighbours change together. Retired cells are
+    forgotten at once;
   - *collision* keeps one surface per loaded cell at the finest chosen level: 2 × 2 under
     2 x 2, 4 × 4 under 4 x 4 and 4 x 4 near. Actors near the player stand on what is drawn
-    there (4 × 4); at a distance the drawn 2 × 2 ground is within about a unit of the
+    there once their quadrant is redrawn 4 × 4 (at the start, after a teleport and while a
+    batch waits, the drawn ground there is briefly 2 × 2, within about a unit); at a distance the drawn 2 × 2 ground is within about a unit of the
     collision, below what an actor's feet show from that far, and the collision never
     changes while cells are loaded (no rebuilt colliders, nothing re-grounded when the
     camera moves) [design, #2676];
   - the terrain wireframe shows each quadrant as drawn, and the start line names the rule
     (`…; drawn 4 x 4 within 2048 units of the camera, 2 x 2 beyond 2560 (4 x 4 near)`); the
     redraws log `terrain levels: …` (the first, then at most every 10 s) and the exit's
-    `terrain summary` adds their totals.
+    `terrain summary` adds their totals; test aid `NVF_PLAY_TEST_TERRAIN_LEVELS=1` logs
+    `terrain levels: settled: …` each time the levels settle after redraws.
   Test aids choose another recipe for comparing them, without changing the
   setting or the INI [design, #2149]:
   `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit|detail`, `NVF_PLAY_TEST_SMOOTH_SUBDIV=2|4`
