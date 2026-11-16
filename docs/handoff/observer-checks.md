@@ -3028,3 +3028,14 @@ already talking takes over at once, same topic or another; nothing is queued or 
     steps right/down forward and left/up backward through eight slots with wrapping,
     assigns with A (closing on success), and cancels with B; Ammo Swap refuses items.
 
+## Added 2026-11-15 (House's chamber steam, glow and ground fog, #2685)
+
+212. **Do the steam, panel glow and ground fog of House's chamber linger, and do they survive a
+     load?** (P2; #2685, spec-notes/idles.md §10.1, particles.md §7.8.) [hypothesis] From a sealed
+     chamber in Lucky38ControlRoom, use the unseal terminal item and record the opening, steam
+     bursts, panel glow and ground fog at start, after 20 s and after 55 s. Check that glow and
+     haze linger, then save/load at the held end and compare. Also check whether replacing or
+     stopping the idle removes its effect model. The provisional engine rule holds CLAMP effect
+     tracks until replacement, using authored values throughout; actor idle playback is
+     currently not serialized. No original capture was performed in this run.
+

@@ -275,6 +275,11 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- **Hold CLAMP effect idles (#2685).** [design, #2685] `HOLD_CLAMP_EFFECT_IDLES` keeps
+  a CLAMP actor idle with material/emitter tracks at its exact end until replacement or
+  stop, overriding repeat counts. This keeps attached chamber effects and pod glow;
+  disabling it restores finite-idle fade-out. Review the generalization to other
+  effect idles ([idles section 10.1](spec-notes/idles.md#101-chamber-effects-and-external-kf-controllers-2685)).
 - **Terrain smoothing: which recipe by default (#2149, #2676).** [design, #2149]
   The default is the contributor's pick from nine variants compared in game and
   screenshots on 2026-11-15, for you to confirm or change: **detail, 4 × 4, bound 8,
