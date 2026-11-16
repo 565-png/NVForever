@@ -1321,8 +1321,90 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     (x, z, y) [hypothesis: unverified against the original; on a blurry 32-texel cube it
     only places the streaks].
   - Shapes with Environment_Mapping alone (metal, most bottles: 1,663 PP files carry bit
-    7 in all) are left as they were [design: the scope of #2462; reflections on all of
-    them would change the look of much of the clutter and want their own check].
+    7 in all) were left as they were by #2462 [design: its scope]; since #2841 they reflect
+    too (next bullet), and the distance fade described there applies to window shapes as
+    well.
+- **Environment maps on other shapes** (#2841). What is documented about the effect:
+  - "Environment Mapping: Enables environment mapping on the object"; the texture set's
+    "Texture 5: Environment Map (Cubemap) (Needs "Environment Mapping" shader flag set)"
+    and "Texture 6: Environment Mask (Needs "Environment Mapping" shader flag set)"
+    (slots 4 and 5 counted from 0, as nif.xml's BSShaderTextureSet; "Texture-set slots"
+    above); "Environment Map Scale: Only used by BSShaderPPLightingProperty and
+    Lighting30ShaderProperty if environment mapping is enabled. Controls the brightness
+    multiplier of the cubemap" [documented: GECK wiki "NIF Shader Properties"].
+  - "Window Environment Mapping: Broken from how it worked in Oblivion, simply flips the
+    cubemap orientation in Fallout 3 and New Vegas" [documented: same page]. Which axis
+    flips is not stated.
+  - Shader Flags 2 "Env Map Fade: Fades the cubemap's brightness based on the distance to
+    the nearest light. Makes environment mapped objects not "glow" at all times"
+    [documented: same page; the bit is 15, nif.xml `envmap_light_fade`, schemas/nif
+    scene.json]. "Eye Environment Mapping: Different form of environment mapping, light
+    doesn't fade" [documented: same page]. Whether a shape without bit 15 depends on light
+    at all, and the fade's curve, are not stated.
+  - `fEnvMapLOD1` 1500, "Distance at which Environment mapping effects (fake environment
+    reflections) start to fade on objects", and `fEnvMapLOD2` 1800, "Max distance to render
+    Environment mapping effects (fake environment reflections) on objects" [documented:
+    GECK wiki "INI Settings", Display]. "Stinger Prop" (Shader Flags 2) "Disables distance
+    related limitations (specular, env mapping fades)" [documented: GECK wiki "NIF Shader
+    Properties"]; its bit is not in nif.xml's names (bits 23-31 are unknown there), so it
+    is not read.
+  - Nothing documents what a shape with the flag and a cube but no slot-5 mask does,
+    which channel of the mask is read, or whether the diffuse colour, the Specular flag or
+    the glossiness changes the reflection.
+
+  Measured in the data files [observed: a survey of the visible, textured
+  BSShaderPPLightingProperty shapes of the base and DLC archives' models, 2026-11-16;
+  the survey's tables are not committed]: 5,437 shapes in 2,251 models set
+  Environment_Mapping without the window flag (940 shapes in 558 models set both). Of the
+  5,437, 5,207 (95.8 %) name a slot-4 file that is a cube map; 214 name none (the wine
+  bottle `clutter\food\winebottle01.nif`, dog eyes, the Pimp-Boy), 6 name a flat
+  texture and 10 a file not in the archives. Four cubes cover 94.8 % of them:
+  `textures\effects\shinybright_e.dds` (2,410 shapes), `chrome_e.dds` (1,368),
+  `bronze_e.dds` (788) and `shinydull_e.dds` (587), each 32 × 32 DXT1 faces. 4,427 (81.4
+  %) name a slot-5 mask, 287 of the 316 masks found are grey and 29 have an alpha
+  channel (`weapons\1handpistol\10mmpistol_m.dds`); 1,010 name none (the whiskey bottles,
+  the cafeteria drinking glass, the milk bottle). `environment_map_scale` is 1 on 91.9 %
+  (29 values from 0.1 to 10; the Sunset Sarsaparilla bottles `ssbottle02.nif` 1.2 and
+  `ssbottle01.nif` 0.5, the Sierra Madre chip 2). 299 are skinned (robots, armour); 41 %
+  of the weapons' shapes are such shapes, 88.9 % of those masked. 337 lit files set Env
+  Map Fade, among them `clutter\junk\sodabottle01.nif` (gap audit §2.1).
+
+  What the renderers draw (nvf_assets `env_map.rs`, `nif_spawn::shape_env`): a lit shape
+  with Environment_Mapping, a slot-4 file that loads as a cube map and a scale above 0
+  reflects that cube the way window shapes do (previous bullet), whether or not the
+  window flag is set [design, #2841]. Shapes with the flag but no usable cube are drawn as
+  before, as are unlit shapes [design: the wiki gives the scale to the lit shaders only]
+  and object LOD block geometry (LOD_Building), which stands beyond the loaded cells,
+  farther than `fEnvMapLOD2` [design]. The window flag stays a property of its own on
+  the material, so the two sets can take different cube orientations. Choices with no
+  source, each a hypothesis with the observer check that would settle it:
+  - Strength and view: the cube read along the view reflected about the normal-mapped
+    normal, × the scale × the mask, added to the lit colour, as for windows [hypothesis;
+    observer check 223].
+  - No slot-5 mask: full strength [hypothesis; observer check 224].
+  - Cube orientation: the same lookup as window shapes, (x, z, y) of the game-space
+    reflection [hypothesis: the wiki says the two differ by a flip; observer check 225].
+  - A blended shape without the window flag keeps its blend, so its reflection is
+    weighted by its alpha like the rest of its colour; window shapes stay premultiplied
+    (#2462) [hypothesis, the conservative choice: hair, cell fades, blended cut-outs and
+    material animation key on the blend mode; observer check 226].
+  - The reflection does not depend on light, with or without Env Map Fade [hypothesis:
+    the documented fade's curve is unknown; observer check 227].
+  - Camera distance: whole up to 1500 units, none from 1800, linear between, on window
+    shapes too [hypothesis for the curve, documented distances; observer check 228]. The
+    `glass-mccarran-*` frames stand well inside 1500 units, so #2462's pictures do not
+    change.
+  - A shape with the flag and no slot-4 file reflects nothing (no default cube)
+    [hypothesis; observer check 229].
+  - The mask's red channel is read, as for windows [hypothesis; only the 29 masks with
+    an alpha channel could differ].
+
+  Debug switches `NVF_PLAY_DEBUG_ENV_*` vary each of these from the same build, for
+  comparing frames with the original's (`env_map.rs` module docs: strength, no-mask rule,
+  orientation per set, blend per set, a received-light stand-in, the distance fade, and
+  `NVF_PLAY_DEBUG_ENV_NON_WINDOW=0` for #2462's set alone). The model log names each
+  model's reflecting shapes without the window flag ("N shape(s) with an environment
+  map, no window flag: …", model.rs); smoke `env-maps-saloon`, `env-maps-saloon-before`.
 
 ## 7. Coverage status
 

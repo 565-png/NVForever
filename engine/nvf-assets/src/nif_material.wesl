@@ -8,7 +8,7 @@
 //   colour), as NIF emissive is;
 // - ambient light is diffuse only: the specular part Bevy adds for its ambient light is
 //   taken out again, since the game's ambient term is a flat colour and highlights come
-//   from lights (and environment maps, not drawn yet);
+//   from lights (and environment maps, added after the lighting: NifSurface::env);
 // - a multiply-blended shape's colour is a factor on what lies behind it: summed in
 //   display values, held to 0..1, and neither fogged nor tonemapped;
 // - an additive shape adds what it would add to the display values of the opaque frame
