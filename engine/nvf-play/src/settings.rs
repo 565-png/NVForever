@@ -968,6 +968,8 @@ pub(crate) fn setup(app: &mut App) {
     app.add_systems(PostStartup, (apply_stored, crate::bindings::apply_stored));
     app.add_systems(PostStartup, fix_ui_scale.after(apply_stored));
     app.add_systems(PostStartup, check_notes.after(apply_stored));
+    // The page for the launcher, once every row is registered (crate::settings_menu).
+    app.add_systems(PostStartup, crate::settings_menu::write_menu.after(check_notes));
     app.add_systems(Update, revert_unkept);
 }
 

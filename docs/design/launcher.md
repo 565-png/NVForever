@@ -12,15 +12,25 @@ without the launcher is the same as before.
   `src/news.rs`), and while the site has none, this repository's GitHub releases (title, date,
   notes). The last list is kept in the home's cache folder (`launcher-news.json`) for offline
   starts. "Fetch news" (`[Launcher] News=0/1`) turns every request off.
-- **Settings**: the `[Settings]` rows by the in-game page's tabs and headings, with its labels
-  and notes, read from `docs/settings-reference.md` (built in). The reference does not say what
-  kind a row is, so the launcher goes by the value in the INI: `1`/`0` a switch, `0.50` a
+- **Settings**: the game's own menu, never a copy that can drift [design: owner 2026-11-16]:
+  the same tabs, categories and rows in the same order, the Tweaks tab's groups too (as
+  "Group › Category" headings). The game writes its page beside the INI at every start
+  (`settings-menu.json`, `nvf_settings_layout::menu`, `engine/nvf-play/src/settings_menu.rs`):
+  each row's label and note as the page shows them, and its kind (switch, slider and its
+  steps' words, list and its choices). The launcher shows that file while its version is the
+  launcher's (`src/catalog.rs`). Before the game has written one (a first start, a game
+  older than the file, an update not started yet) it shows its built-in copy: the tabs,
+  categories and order from the game's own table (`crates/nvf-settings-layout`, `SECTIONS`,
+  which the game's pause menu draws from), the labels and notes from
+  `docs/settings-reference.md` (a test in the game holds the reference to the table; a
+  Tweaks row is shown there by its key, only while the INI holds it). A row with no kind
+  from the game goes by the value in the INI: `1`/`0` a switch, `0.50` a
   slider (as a percentage, or the step's words for Difficulty), anything else text; Kill camera, V.A.T.S. style and the Display rows (Resolution as a Window and a Full screen
   list of the chosen display's sizes, Monitor from the displays Windows lists, Display sync,
   Frame rate limit; `src/display.rs`, words and values the game's)
   get their choices as a list (a test checks the engine still has them). A
-  row the game has not written yet shows "game default". Rows the reference does not list go
-  under Other. Save writes only the changed keys over the file as it is on disk then.
+  row the game has not written yet shows "game default". `[Settings]` keys the game's menu does
+  not place (an older build's) go under Other. Save writes only the changed keys over the file as it is on disk then.
 - **Mods**: NVForever's own `plugins.txt` (turn on/off with the box or a click on the name; drag a row anywhere but its box to move it, with a gold line where it lands; FalloutNV.esm stays first). While the load order has
   `TaleOfTwoWastelands.esm`, a box "start new games in Vault 101" writes TTW's two lines to
   the INI's `[General]` (`sCharGenQuest=001FFFF8`, `sIntroMovie=`) at once, or takes them out

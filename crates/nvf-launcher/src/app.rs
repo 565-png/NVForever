@@ -1,11 +1,12 @@
 //! The launcher's window: Home (news), Settings, Mods and Game folder pages beside a bar
 //! that starts the game.
 
-use crate::catalog::{self, Kind, Row};
+use crate::catalog::{self, Catalog, Kind, Row};
 use crate::launch::{self, Start};
 use crate::news::{self, Post, Source};
 use crate::theme::{self, BAD, CARD, GOLD, GOOD, LINE, WEAK};
 use crate::update::{self, Msg, Phase};
+use nvf_settings_layout::menu;
 use eframe::egui::{self, load::Bytes, Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, Sense, Stroke, Vec2};
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use fnv_install::{guard_write, ini_get, ini_pairs, ini_set, plugins, write_whole, Config, EngineHome, GameInstall};
@@ -75,8 +76,10 @@ pub struct App {
     ini_text: String,
     message: Option<(String, bool)>,
     // Settings.
+    /// The game's settings menu (src/catalog.rs): its rows, its tabs' names and the words shown.
     rows: Vec<Row>,
     tabs: Vec<String>,
+    tab_labels: Vec<String>,
     tab: usize,
     words: HashMap<&'static str, &'static [&'static str]>,
     lists: HashMap<&'static str, &'static [&'static str]>,
@@ -134,14 +137,15 @@ impl App {
             cc.egui_ctx.set_zoom_factor(z);
         }
         let home = EngineHome::user();
-        let rows = catalog::rows();
+        let menu = Catalog::load(home.as_ref().map(EngineHome::config_file).as_deref());
         let mut app = App {
             page: Page::Home,
             home,
             ini_text: String::new(),
             message: None,
-            tabs: catalog::tabs(&rows),
-            rows,
+            tabs: menu.tab_names(),
+            tab_labels: menu.tabs.iter().map(|(_, l)| l.clone()).collect(),
+            rows: menu.rows,
             tab: 0,
             words: catalog::step_words(),
             lists: catalog::list_choices(),
@@ -272,6 +276,16 @@ impl App {
         self.ini_text = self.ini_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
         self.stored = ini_pairs(&self.ini_text, "Settings").into_iter().collect();
         self.edits.clear();
+        // The game writes its menu at each start (src/catalog.rs): the page follows it, on the
+        // same tab.
+        let menu = Catalog::load(self.ini_path().as_deref());
+        let on = self.tabs.get(self.tab).cloned();
+        self.tabs = menu.tab_names();
+        self.tab_labels = menu.tabs.iter().map(|(_, l)| l.clone()).collect();
+        self.rows = menu.rows;
+        if let Some(on) = on {
+            self.tab = self.tabs.iter().position(|t| *t == on).unwrap_or(0);
+        }
         self.game_edit = Config::from_ini(&self.ini_text).game_dir.map(|p| p.display().to_string()).unwrap_or_default();
         let configured = ini_get(&self.ini_text, LAUNCHER, "Exe").filter(|s| !s.is_empty()).map(PathBuf::from);
         self.exe = launch::find_game(configured.as_deref());
@@ -735,6 +749,50 @@ fn toggle(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     resp
 }
 
+/// Whether the INI's value `v` is one the game's row kind `kind` takes (else the page goes by
+/// the value, as for a row with no kind).
+fn menu_fits(kind: &menu::Kind, v: &str) -> bool {
+    match kind {
+        menu::Kind::Switch => matches!(v.trim(), "0" | "1"),
+        menu::Kind::Slider { .. } => v.trim().parse::<f32>().is_ok(),
+        menu::Kind::List { choices } => choices.iter().any(|c| c.name == v),
+    }
+}
+
+/// The control for a row of kind `kind` (the game's menu file, src/catalog.rs), drawn as the
+/// page draws the other rows; the new value when it changed.
+fn menu_control(ui: &mut egui::Ui, key: &str, kind: &menu::Kind, v: &str, control_w: f32) -> Option<String> {
+    match kind {
+        menu::Kind::Switch => {
+            let mut on = v.trim() == "1";
+            toggle(ui, &mut on).changed().then(|| if on { "1" } else { "0" }.to_string())
+        }
+        menu::Kind::Slider { min, step, steps } => {
+            let mut f: f32 = v.trim().parse().unwrap_or(*min);
+            let s = egui::Slider::new(&mut f, *min..=1.0).step_by(f64::from(step.max(1e-3)));
+            let s = if steps.is_empty() {
+                s.custom_formatter(|x, _| format!("{:.0}%", x * 100.0)).custom_parser(|s| s.trim().trim_end_matches('%').parse::<f64>().ok().map(|x| x / 100.0))
+            } else {
+                let steps = steps.clone();
+                s.custom_formatter(move |x, _| menu::Step::nearest(&steps, x as f32).unwrap_or_default().to_string())
+            };
+            ui.add_sized([control_w, 20.0], s).changed().then(|| part_text(f))
+        }
+        menu::Kind::List { choices } => {
+            let shown = choices.iter().find(|c| c.name == v).map_or(v.to_string(), |c| c.label.clone());
+            let mut picked = None;
+            egui::ComboBox::from_id_salt(key).width(control_w - 8.0).selected_text(shown).show_ui(ui, |ui| {
+                for c in choices {
+                    if ui.selectable_label(c.name == v, &c.label).clicked() && c.name != v {
+                        picked = Some(c.name.clone());
+                    }
+                }
+            });
+            picked
+        }
+    }
+}
+
 /// A slider part (`0.50`) as the INI keeps it: to the thousandth, at least two places.
 fn part_text(v: f32) -> String {
     let s = format!("{:.3}", v.clamp(0.0, 1.0));
@@ -862,7 +920,7 @@ impl App {
                 .color(WEAK),
         );
         ui.horizontal_wrapped(|ui| {
-            let mut tabs = self.tabs.clone();
+            let mut tabs = self.tab_labels.clone();
             let others = self.other_keys();
             if !others.is_empty() {
                 tabs.push("Other".into());
@@ -884,7 +942,9 @@ impl App {
                     if tab == "Graphics" {
                         self.dlss_card(ui);
                     }
-                    let rows: Vec<Row> = self.rows.iter().filter(|r| r.tab == tab).cloned().collect();
+                    // A row with no words built in (a Tweaks row before the game wrote its menu) only
+                    // while the INI holds it.
+                    let rows: Vec<Row> = self.rows.iter().filter(|r| r.tab == tab && (!r.unlisted || self.stored.contains_key(&r.key))).cloned().collect();
                     let mut heading: Option<Option<String>> = None;
                     for r in rows {
                         if let Some(colour) = crate::display::colour_of_part(&r.key) {
@@ -899,19 +959,19 @@ impl App {
                             }
                             heading = Some(r.heading.clone());
                         }
-                        self.setting_row(ui, &r.key, &r.label, &r.note);
+                        self.setting_row(ui, &r.key, &r.label, &r.note, r.kind.as_ref());
                     }
                 }
                 None => {
                     for k in self.other_keys() {
-                        self.setting_row(ui, &k, &k, "");
+                        self.setting_row(ui, &k, &k, "", None);
                     }
                 }
             }
         });
     }
 
-    /// `[Settings]` keys the reference does not list (rows of a later build, the editor's).
+    /// `[Settings]` keys the game's menu does not place (an older build's, the editor's).
     fn other_keys(&self) -> Vec<String> {
         self.stored
             .keys()
@@ -921,7 +981,7 @@ impl App {
             .collect()
     }
 
-    fn setting_row(&mut self, ui: &mut egui::Ui, key: &str, label: &str, note: &str) {
+    fn setting_row(&mut self, ui: &mut egui::Ui, key: &str, label: &str, note: &str, kind: Option<&menu::Kind>) {
         let stored = self.stored.get(key).cloned();
         let value = self.edits.get(key).cloned().or_else(|| stored.clone());
         Frame::new().fill(CARD).corner_radius(4).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
@@ -973,6 +1033,8 @@ impl App {
                             }
                         });
                         picked.filter(|p| at.is_none_or(|i| &choices[i].stored != p))
+                    } else if let Some(kind) = kind.filter(|k| menu_fits(k, &v)) {
+                        menu_control(ui, key, kind, &v, control_w)
                     } else {
                         match Kind::of_value(&v) {
                         Kind::Switch => {

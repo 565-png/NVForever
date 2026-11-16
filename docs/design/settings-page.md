@@ -12,7 +12,11 @@ The owner reorganised the page on 2026-11-15, tab by tab (the menu overhaul). Ev
 added or changed later keeps to these rules; the checks named fail CI or log a warning when
 one is broken. Read §1–§4 for how the page works.
 
-1. **Place the row** in `engine/nvf-play/src/settings_layout.rs` `SECTIONS`: its tab, its
+1. **Place the row** in `crates/nvf-settings-layout/src/lib.rs` `SECTIONS` (the table the
+   pause menu and the launcher share, re-exported as `nvf_play::settings_layout`; the
+   launcher's Settings page follows it and the game's `settings-menu.json`,
+   docs/design/launcher.md), and list it in `docs/settings-reference.md` under the same tab
+   and category (a test fails while it is missing or elsewhere): its tab, its
    category (heading) and its position. A row the table does not name falls to its group's
    tab with no heading (and a Tweaks row to the group Other); the layout tests list every
    row there is (`KNOWN`), so a new row fails them until it is placed.
@@ -73,7 +77,8 @@ INI's (`GivenSwitches`, `apply_stored`, `after_ini`), as #1382 has it.
 
 ## 2. The layout table
 
-**Since the menu overhaul (2026-11-15)** the table is `settings_layout.rs` `SECTIONS` and the
+**Since the menu overhaul (2026-11-15)** the table is `SECTIONS` (`crates/nvf-settings-layout`
+since 2026-11-16, shared with the launcher) and the
 tables below are its earlier state, kept for #1953's history. Eight tabs: **Gameplay,
 Display, Audio, Controls, Graphics, NVF Features, Tweaks, Debug**, each a run of categories
 in the owner's order (`dev` plan of 2026-11-15; `docs/settings-reference.md` lists every row

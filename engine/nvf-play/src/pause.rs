@@ -878,7 +878,7 @@ const MINOR_WORDS: [&str; 20] = ["a", "an", "the", "and", "but", "or", "nor", "f
 /// Capitalized Case for the menus"]. The rows keep their words as registered (the INI, the
 /// log, the search and the translations go by them); only the page shows them so, so a new
 /// row is in Title Case without anyone writing it so.
-fn shown_case(text: &str) -> String {
+pub(crate) fn shown_case(text: &str) -> String {
     if fnv_util::words::language() != fnv_util::words::ENGLISH {
         return text.to_string();
     }
