@@ -488,9 +488,8 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
 
 ### `menu-font`: Menu font
 
-- On the page: The main and pause menus' letters. Sharp: Roboto Condensed, sharp at any
-  resolution, titles bold, a dark glow behind. Original: the game's own font, blurred at high
-  resolutions.
+- On the page: The menus' letters. Original: the game's own font. Sharp: Roboto Condensed,
+  sharp at any resolution, titles bold.
 - In full: Sharp draws the main menu's entries and the pause menu's text (the column, the
   settings page, the load page) with Roboto Condensed (SIL Open Font License 1.1, Fallout 4's
   own interface font), laid out by Bevy's text at the screen's resolution, without kerning or
@@ -498,8 +497,9 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
   the small print at 24, the titles (the column, the categories, the tab rail, Defaults and
   Back) bold (weight 700, measured from the font's `HVAR` table), each line over a dark glow
   and a drop shadow as the game's own fonts have in their pictures. Original keeps the game's
-  raster font, whose letters are stretched at high resolutions. Default Sharp [design: owner
-  2026-11-15, the menu overhaul and its second test]. The other menus keep the game's font.
+  raster font, whose letters are stretched at high resolutions. Default Original [design: owner
+  2026-11-15, the menu overhaul and its second test; 2026-11-16: the vanilla font by default].
+  The other menus keep the game's font.
 - Registered in `engine/nvf-play/src/pause.rs` (`MenuFont`), the font in
   `engine/nvf-play/src/vector_font.rs`
 ### `sneak-gauges`: Light and noise gauges while sneaking
@@ -1071,9 +1071,8 @@ below cover them all.
 
 ### `terrain-anti-tiling`: Terrain anti-tiling
 
-- On the page: On: ground textures no longer repeat as a visible grid across slopes and
-  open ground. Off: each texture repeats every 256 units, as in the original. Costs some
-  GPU time.
+- On the page: On: ground textures no longer repeat as a visible grid. Off: each repeats
+  every 256 units, as in the original. Costs some GPU time.
 - In full: On: every landscape texture (diffuse and normal map) is read at two or three
   places offset by a hash of where the ground lies in the world and blended, so its
   256-unit repeat no longer lines up into a grid; nearby the ground looks like the same

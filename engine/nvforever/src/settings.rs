@@ -1101,7 +1101,7 @@ fn register_graphics(app: &mut App) {
         (
             "terrain-anti-tiling",
             "Terrain anti-tiling",
-            "On: ground textures no longer repeat as a visible grid across slopes and open ground. Off: each texture repeats every 256 units, as in the original. Costs some GPU time.",
+            "On: ground textures no longer repeat as a visible grid. Off: each repeats every 256 units, as in the original. Costs some GPU time.",
             "--graphics, --graphics-only",
             |w| w.resource::<Graphics>().terrain_anti_tiling,
             |w, on| w.resource_mut::<Graphics>().terrain_anti_tiling = on,

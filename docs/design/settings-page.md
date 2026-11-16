@@ -98,9 +98,11 @@ slider's meter lies between its two arrows, its number right-aligned after them 
 cell's right end. The note sits an empty line under the window (no rule); one soft dark
 column runs behind the list, its titles and the note from the view's top to its bottom;
 "Report a Bug" and the version sit, in the small print, under the pause column's last entry
-after an empty line; the window holds 12 lines. A closed category shows its row count at the
-right, where the values are, without brackets. Back says "Back" alone with the keyboard. In
-the sharp letters (`menu-font`) the column, the categories and the tab rail are bold, every
+after an empty line; the window holds 11 lines, Previous/Next Category under the note at its
+left. A category's title shows its row count at the right, without brackets, while it is hovered
+or chosen. Back says "Back" alone with the keyboard. The game's own font draws the menus by
+default; in the sharp letters (`menu-font` Sharp) the column, the categories and the tab rail
+are bold, every
 line has a soft dark glow; the arrows and the scroll bar are drawn shapes
 (`engine/nvf-play/src/menu_shapes.rs`), and they, the list boxes and the hover and selection
 boxes have the glow too; the selection box is drawn under a row and takes no room, so nothing

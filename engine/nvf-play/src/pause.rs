@@ -1159,21 +1159,17 @@ impl PauseLook {
     }
 }
 
-/// The pause menu's letters: the vector font, sharp at any resolution (the default), or the
-/// game's own raster font [design: owner 2026-11-15, the menu overhaul: "current typeface is
-/// raster therefore it does look blurry"; Roboto Condensed, `crate::vector_font`]. The INI's
-/// `menu-font`; a change draws the page again with it.
-#[derive(Resource, Clone, Debug)]
+/// The menus' letters: the game's own raster font (the default) or the vector font, sharp
+/// at any resolution [design: owner 2026-11-15, the menu overhaul: "current typeface is raster
+/// therefore it does look blurry"; Roboto Condensed, `crate::vector_font`; owner 2026-11-16:
+/// "the vanilla font is enabled by default"]. The INI's `menu-font`; a change draws the page
+/// again with it.
+#[derive(Resource, Clone, Debug, Default)]
 pub struct MenuFont {
+    /// The vector font; false (the default): the game's own.
     pub sharp: bool,
     /// The font asset, made once.
     handle: Option<Handle<bevy::text::Font>>,
-}
-
-impl Default for MenuFont {
-    fn default() -> MenuFont {
-        MenuFont { sharp: true, handle: None }
-    }
 }
 
 impl MenuFont {
@@ -1198,17 +1194,17 @@ impl MenuFont {
     }
 }
 
-/// The Menu Font row's choices, Sharp first (the default).
-const MENU_FONTS: [&str; 2] = ["Sharp", "Original"];
+/// The Menu Font row's choices, Original first (the default).
+const MENU_FONTS: [&str; 2] = ["Original", "Sharp"];
 
 fn menu_font_chosen(w: &World) -> String {
-    MENU_FONTS[usize::from(!w.get_resource::<MenuFont>().is_none_or(|f| f.sharp))].to_string()
+    MENU_FONTS[usize::from(w.get_resource::<MenuFont>().is_some_and(|f| f.sharp))].to_string()
 }
 
 /// The Menu Font row's choice `text`: the page drawn again with its letters.
 fn take_menu_font(w: &mut World, text: &str) -> bool {
     let Some(k) = MENU_FONTS.iter().position(|n| n.eq_ignore_ascii_case(text.trim())) else { return false };
-    w.get_resource_or_insert_with(MenuFont::default).sharp = k == 0;
+    w.get_resource_or_insert_with(MenuFont::default).sharp = k == 1;
     w.remove_resource::<PauseLook>();
     if let Some(mut v) = w.get_resource_mut::<PauseView>() {
         v.drawn = None;
@@ -1600,7 +1596,7 @@ impl Plugin for PausePlugin {
                 key: "menu-font",
                 group: "Interface",
                 label: "Menu font",
-                note: "The main and pause menus' letters. Sharp: Roboto Condensed, sharp at any resolution, titles bold, a dark glow behind. Original: the game's own font, blurred at high resolutions.",
+                note: "The menus' letters. Original: the game's own font. Sharp: Roboto Condensed, sharp at any resolution, titles bold.",
                 switches: "",
                 get: |_| false,
                 set: |_, _| {},
