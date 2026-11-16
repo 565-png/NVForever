@@ -1007,7 +1007,7 @@ impl PhysState {
         refs.extend(persistent.into_iter().flatten());
         // References placed in other squares whose bounds reach into this one (#2795).
         if let PhysCell::Exterior(x, y) = cell {
-            refs.extend_from_slice(self.reach.reaching((x, y)));
+            refs.extend(self.reach.reaching((x, y)));
         }
         refs.sort_unstable();
         refs.dedup();

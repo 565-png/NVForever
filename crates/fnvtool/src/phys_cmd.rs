@@ -411,7 +411,7 @@ pub(crate) fn build_with<'a>(
     if let Some(ws) = ws.filter(|_| !squares.is_empty()) {
         let reach = fnv_world::reach::ReachIndex::build(lo, schema, ix, ws.form_id);
         for &(y, x) in &squares {
-            ref_ids.extend_from_slice(reach.reaching((x, y)));
+            ref_ids.extend(reach.reaching((x, y)));
         }
     }
     let persistent = ws.and_then(|w| w.persistent_cell).and_then(|p| ix.cells.get(&p));

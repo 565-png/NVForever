@@ -1364,12 +1364,12 @@ worldspace, used by `fnvtool phys cell` too) [design, #2795]. HeliosPowerPlant (
 under the plaza (z 5435-5464 against the plaza's 5476) [observed: `fnvtool phys cell`
 rays at radius 1 and 2, #2795]. A reference held by several loaded squares is in the world
 once, added with the first and removed with the last. That a base's OBND covers its
-model's collision is [hypothesis] (true of HeliosPowerPlant [observed: #2795]). The one
-limit left on the reach: squares outside the worldspace's grid of cells (none has a cell
-or terrain) do not list a reference; a box cut there, or reaching more than 32 squares
-from its own (more likely a broken record: the largest buildings reach two or three), is
-logged as a warning naming the reference and its squares, and indexed over the grid all
-the same [design, #2795]. The index's
+model's collision is [hypothesis] (true of HeliosPowerPlant [observed: #2795]). Every
+square a box covers lists the reference, with a cell record there or not (physics loads
+squares without one too); nothing is cut. A box reaching more than 32 squares from its
+own (more likely a broken record: the largest buildings reach two or three) is kept as
+a rectangle the squares check by containment, and logged as a warning naming the
+reference and its squares [design, #2795]. The index's
 build time and size are logged (`physics: worldspace …: N references reach beyond their own
 square`) and not measured yet [hypothesis: well under a second for WastelandNV].
 

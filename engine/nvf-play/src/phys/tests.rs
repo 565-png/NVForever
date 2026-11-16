@@ -486,7 +486,7 @@ fn a_reference_reaching_into_loaded_squares_is_added_once_and_removed_with_the_l
     let ctx = LoadCtx { d: &d, sim: &sim, data: None };
     let mut p = PhysState { fake: Some(reach_cell), loader: loader::Loader::manual(), ..Default::default() };
     // The index as `fnv_world::reach` builds it: placed in (2, 0), reaching (0, 0)..(4, 0).
-    p.reach = Arc::new(fnv_world::reach::ReachIndex::from_entries([(SLAB, (2, 0), ((0, 0), (4, 0)))], ((-10, -10), (10, 10))));
+    p.reach = Arc::new(fnv_world::reach::ReachIndex::from_entries([(SLAB, (2, 0), ((0, 0), (4, 0)))]));
     // A square its bounds do not reach does not load it.
     p.load(&ctx, PhysCell::Exterior(0, 1));
     assert!(!p.has_collision(SLAB));
