@@ -94,6 +94,7 @@ pub mod poker;
 pub mod menu;
 pub mod menu_shapes;
 pub mod mod_log;
+pub mod gas_traps;
 pub mod grass_fire;
 pub mod mines;
 pub mod thrown;
