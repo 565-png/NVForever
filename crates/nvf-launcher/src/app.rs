@@ -1157,6 +1157,7 @@ impl App {
                 .small()
                 .color(WEAK),
         );
+        self.ttw_box(ui);
         ui.separator();
         let Some(list) = &mut self.mods else {
             ui.label("No plugin list yet: set the game folder first, or start the game once.");
@@ -1255,6 +1256,41 @@ impl App {
             let e = list.entries.remove(from);
             list.entries.insert(to, e);
             self.mods_dirty = true;
+        }
+    }
+
+    /// Tale of Two Wastelands' start (src/ttw.rs): shown while its master is in the load
+    /// order; ticking it writes TTW's two `[General]` lines to NVForever.ini at once.
+    fn ttw_box(&mut self, ui: &mut egui::Ui) {
+        let Some(active) = self.mods.as_ref().and_then(|l| l.entries.iter().find(|e| e.name.eq_ignore_ascii_case(crate::ttw::PLUGIN))).map(|e| e.active) else { return };
+        let mut on = crate::ttw::is_on(&self.ini_text);
+        let other = crate::ttw::other_start(&self.ini_text);
+        let mut changed = false;
+        ui.add_space(4.0);
+        card(ui, |ui| {
+            ui.set_width(ui.available_width());
+            changed = ui.checkbox(&mut on, RichText::new("Tale of Two Wastelands: start new games in Vault 101").strong()).changed();
+            ui.label(
+                RichText::new("Sets TTW's start in NVForever.ini for you ([General] sCharGenQuest=001FFFF8 and no New Vegas intro film). Off: New Game is the New Vegas opening.")
+                    .small()
+                    .color(WEAK),
+            );
+            if on && !active {
+                ui.label(RichText::new(format!("{} is off in the list below: turn it on, or New Game stays at the New Vegas opening.", crate::ttw::PLUGIN)).small().color(BAD));
+            }
+            if let Some(q) = &other {
+                ui.label(RichText::new(format!("NVForever.ini names another start quest ({q}); ticking the box replaces it.")).small().color(WEAK));
+            }
+        });
+        if changed {
+            // Only the INI's text is read again: unsaved changes on the Settings page stay.
+            match self.write_ini(|t| if on { crate::ttw::turn_on(&t) } else { crate::ttw::turn_off(&t) }) {
+                Ok(()) => {
+                    self.ini_text = self.ini_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+                    self.message = Some(((if on { "New games start in Vault 101 (Tale of Two Wastelands)." } else { "New games start at the New Vegas opening." }).to_string(), false));
+                }
+                Err(e) => self.message = Some((e, true)),
+            }
         }
     }
 

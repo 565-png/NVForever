@@ -21,7 +21,11 @@ without the launcher is the same as before.
   get their choices as a list (a test checks the engine still has them). A
   row the game has not written yet shows "game default". Rows the reference does not list go
   under Other. Save writes only the changed keys over the file as it is on disk then.
-- **Mods**: NVForever's own `plugins.txt` (turn on/off with the box or a click on the name; drag a row anywhere but its box to move it, with a gold line where it lands; FalloutNV.esm stays first). Opening the page runs
+- **Mods**: NVForever's own `plugins.txt` (turn on/off with the box or a click on the name; drag a row anywhere but its box to move it, with a gold line where it lands; FalloutNV.esm stays first). While the load order has
+  `TaleOfTwoWastelands.esm`, a box "start new games in Vault 101" writes TTW's two lines to
+  the INI's `[General]` (`sCharGenQuest=001FFFF8`, `sIntroMovie=`) at once, or takes them out
+  again (`src/ttw.rs`; a start quest of another mod is named and left until the box is
+  ticked), and warns while TTW is off in the list. Opening the page runs
   `fnv_install::plugins::sync`, as the game's start does, so new plugins get their lines.
 - **Game folder**: `[Game] Path` with the required-files check, the program to start
   (`[Launcher] Exe`, else `nvforever(.exe)` beside the launcher, else this checkout's
