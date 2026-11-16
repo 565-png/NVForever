@@ -1091,13 +1091,18 @@ End
         let schema = Schema::load_dir(root().join("schemas/fnv")).unwrap();
         let table = FunctionTable::load(&fp).unwrap();
         let fjson: Value = serde_json::from_str(&std::fs::read_to_string(&fp).unwrap()).unwrap();
-        let source = "scn OwnedConnections\nBegin GameMode\nif 0\nNvfDiagnosticOwnedMissing\nSv_Length \"owned\"\nendif\nEnd\n";
+        let source = "scn OwnedConnections\nstring_var ownedSourceSelection\nBegin GameMode\nif 0\nNvfDiagnosticOwnedMissing\nSv_Length \"owned\"\nendif\nEnd\n";
         let header = record(b"TES4", 1, 0, &[sub(b"HEDR", [1.34f32.to_le_bytes(), 0i32.to_le_bytes(), 0x800u32.to_le_bytes()].concat())]);
         let bytes = [header, group(*b"SCPT", &script(0x800, &[0x1D, 0, 0, 0], &[], Some(source)))].concat();
         let plugins = vec![Plugin::parse(&bytes, "OwnedDiagnostic.esm".into()).unwrap()];
         let lo = LoadOrder::new(&plugins).unwrap();
         let refs = fnv_sim::RefTable::build(&lo, &schema);
         let data = fnv_game::GameData::build(&lo, &schema, table, &fjson, &refs);
+        // Exercise the normal Auto source path through a real extender declaration.
+        assert!(fnv_game::source_compile::declares_extender_vars(source));
+        assert_eq!(data.source_units.len(), 1, "{:?}", data.source_units);
+        assert_eq!(data.source_units[0].plugin, "OwnedDiagnostic.esm");
+        assert!(data.source_units[0].unknown_functions.iter().any(|name| name.eq_ignore_ascii_case("NvfDiagnosticOwnedMissing")), "{:?}", data.source_units);
         assert!(data.source_units.iter().all(|u| u.error.is_none()), "{:?}", data.source_units);
         let report = fnv_game::connections::check(&data, &Default::default()).unwrap();
         let functions = &report[0].functions;
