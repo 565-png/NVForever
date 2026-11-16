@@ -13,6 +13,8 @@
     {"op": "note", "text": "Given: the player out of Vault 101 (MQ01 10), The Local Flavor and Walking With Spirits done (DLC04MQ01 200, DLC04MQ02 200: their chains), the head scar from the ritual carried. DLC04MQ02's last stage starts DLC04MQ03 and sets 10 (Jackson moved to his meditation seat) [observed]; done here directly so this chain runs alone. The player stands on Point Lookout's landing (where the voyage puts the player [observed])."},
     {"op": "note", "text": "Path: Nadine in the Ark and Dove Cathedral tells where Jackson meditates (DLC04AboutLeader, DLC04JacksonLocation, 1A: stage 50, the sea cave's key), the sea cave's inner trigger (DLC04SeaCaveTrigger02SCRIPT: 100) and the overheard talk between Jackson and the Brain (DLC04Scene1 to 7: 110 to 130), Jackson's greeting and talk (DLC04JacksonMeet1B, 2A: 150), and the Brain's hologram (DLC04BrainMeet1B, 2A: 200, Thought Control at 10)."},
     {"op": "set_stage", "quest": "DLC04MQ03", "stage": 10},
+    {"op": "note", "text": "The given marks Walking With Spirits' stage 180 done without its result script, which unlocks the cathedral gate for the new tribe member (DLC04MQ02 stage 180 [observed]: DLC04CathGateREF.Unlock); the intercom's line that opens it for outsiders (INFO 0x0E009270) no longer applies. Stand-in for that script."},
+    {"op": "call", "line": "DLC04CathGateREF.Unlock"},
     {"op": "get_quest", "quest": "DLC04MQ03", "fields": ["running", "stage", "objective.10.displayed"], "label": "milestone: DLC04MQ03 10, find Jackson"},
     {"op": "note", "text": "Travel stand-in: back to the Ark and Dove Cathedral, where Nadine is among the tribe."},
     {"op": "move_player", "to": "DLC04NadineREF"},
