@@ -507,7 +507,7 @@ impl Sandbox {
         // open, keep using it instead of inserting Standing. The action-type rule
         // allows repetition "unless it has no other options" [documented: GECK wiki,
         // Sandbox Package, Action Selection]. The object exemption is provisional
-        // [hypothesis: the original scene is unmeasured; observer check 207].
+        // [hypothesis: the original scene is unmeasured; observer check 208].
         let sole_idle_marker = self.allowed.only_idle_markers() && markers.len() == 1 && Some(markers[0].0) == self.last_object;
         let again = !another && (sole_idle_marker || self.other_since.is_some_and(|t| game.time - t >= SOLE_OBJECT_AGAIN_AFTER));
         let seats: Vec<_> = seats.into_iter().filter(|o| again || fresh(o)).collect();

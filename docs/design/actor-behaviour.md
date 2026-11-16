@@ -599,7 +599,7 @@ markers pass through the existing eligibility filters. Every other package retai
 “unless it has no other options” [documented: GECK wiki,
 [Sandbox Package, Action Selection](https://geckwiki.com/index.php?title=Sandbox_Package),
 offline revision 32636]; extending that qualification to the sole marker keeps Pacer's
-cover pose continuous [hypothesis: original scene unmeasured; observer check 207].
+cover pose continuous [hypothesis: original scene unmeasured; observer check 208].
 After loading, the first choice has no initial timer wait: `Sandbox::start` is immediately
 due, and `set_schedule` restores only the day's rolls. An actor already at its marker
 begins it on the first AI update [design: `Ai::settle`, `Ai::sandbox_step`; regression

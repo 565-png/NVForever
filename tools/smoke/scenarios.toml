@@ -30381,7 +30381,7 @@ expect = [
 
 [[scenario]]
 name = "pacer-cower-sole-marker"
-source = "[documented: #2715 issue comment, supplied record findings] VFSPacerCowerNCRFightPackage permits only idle markers; VFSNCRFightPacerMarkerREF (0x001293EC) uses DefaultCowerIdleMarker (timer 0) and looping LooseCowerIdles. [documented: GECK wiki Sandbox Package, Action Selection] The action-type rule allows repetition unless it has no other options. [design, #2715] Sandbox::next reuses the last marker immediately only for an idle-marker-only package with that sole eligible marker; observer check 207 measures original parity."
+source = "[documented: #2715 issue comment, supplied record findings] VFSPacerCowerNCRFightPackage permits only idle markers; VFSNCRFightPacerMarkerREF (0x001293EC) uses DefaultCowerIdleMarker (timer 0) and looping LooseCowerIdles. [documented: GECK wiki Sandbox Package, Action Selection] The action-type rule allows repetition unless it has no other options. [design, #2715] Sandbox::next reuses the last marker immediately only for an idle-marker-only package with that sole eligible marker; observer check 208 measures original parity."
 note = "[design: engine/nvf-play/src/script.rs script aids, engine/nvforever/src/residents.rs sandbox logs, idles.rs marker debug logs] Start VMS19, set ncrfight 1, place Pacer at his named marker as the King's scene does, then move the player nearby. Require the cower animation, at least four marker choices, no Standing pick, and procedure 46 at 118 s, at least 90 s after cowering began. The placement offsets are synthetic staging choices."
 areas = ["ai", "animation", "scripts"]
 paths = ["crates/fnv-ai/src/sandbox.rs", "crates/fnv-ai/src/carry.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/idles.rs"]

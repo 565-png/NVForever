@@ -297,7 +297,7 @@ location, in cell (radius ignored), near reference; the radius is editable.
   VFSNCRFightPacerMarkerREF (REFR 0x001293EC), DefaultCowerIdleMarker (IDLM 0x000C47CC,
   timer 0), with LooseCowerIdles (0x000C0A9A, looping 3rdP_Cowering.kf)
   [documented: #2715 issue comment, supplied record findings]. That he stays cowering
-  throughout the original's staged fight is unmeasured [hypothesis; observer check 207].
+  throughout the original's staged fight is unmeasured [hypothesis; observer check 208].
 - **Patrol**: walk the chain of linked references; repeatable patrols loop (or go back
   and forth) and start at the nearest point; non-repeatable ones start at the first point
   and are done at the last; data on the points (Idle Markers, XMarkerHeading: idle time,

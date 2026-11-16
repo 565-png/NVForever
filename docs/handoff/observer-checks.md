@@ -2950,7 +2950,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-16 (Pacer's cover, #2715)
 
-207. **Does Pacer keep cowering throughout the staged NCR fight, including after a load?**
+208. **Does Pacer keep cowering throughout the staged NCR fight, including after a load?**
     (P2; `fnv_ai::sandbox`, #2715 part 3.) His VFSPacerCowerNCRFightPackage
     (PACK 0x00129434) permits only idle markers; VFSNCRFightPacerMarkerREF
     (REFR 0x001293EC) uses DefaultCowerIdleMarker (IDLM 0x000C47CC, timer 0),
