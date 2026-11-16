@@ -116,7 +116,9 @@ pub const NVF_FEATURES_KEYS: [&str; 8] = [
 /// groups come in the plugin's order: Gameplay, Combat, Quality of Life, HUD, Menus,
 /// Hotkeys, Cheats, Misc.
 pub const SECTIONS: &[Section] = &[
-    section("Gameplay", Some("Game"), &["difficulty", "hardcore", "reload-slows", "UsePipBoy"]),
+    // #2688's sound cover with the game's own rules (a bigger gameplay change: NVF Features is the
+    // owner's call, recommended to them, not moved there).
+    section("Gameplay", Some("Game"), &["difficulty", "hardcore", "reload-slows", "UsePipBoy", "sound-cover"]),
     // "V.A.T.S." as the data spells it (MESG `HelpVATS`).
     section("Gameplay", Some("V.A.T.S."), &["vats-style", "vats-slowdown", "kill-camera"]),
     section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-sway", "head-bob", "weapon-lower", "field-of-view", "viewmodel-field-of-view"]),
@@ -1256,14 +1258,15 @@ mod tests {
             .collect()
     }
 
-    /// Every row the registry can hold today (upstream main a2dd0e947: #1966's quality row
+    /// Every row the registry can hold today (upstream main be6db0948: #1966's quality row
     /// (its enhanced row removed by the menu overhaul), #2014's counter rows, the VATS rows,
     /// #2198's upscaler rows, #2169's FSR library row, #2242's upscaling counter row, #2317's
     /// Generated frames row, the field of view rows, the menu scale and Physics rate rows,
-    /// #2662's grass fires, #2550's terrain height blending, #2551's terrain anti-tiling and the
-    /// overhaul's menu font), by the group it registers with.
-    const KNOWN: [(&str, &str); 115] = [
+    /// #2662's grass fires, #2550's terrain height blending, #2551's terrain anti-tiling,
+    /// #2688's sound cover and the overhaul's menu font), by the group it registers with.
+    const KNOWN: [(&str, &str); 116] = [
         ("detached-camera", "Gameplay"),
+        ("sound-cover", "Gameplay"),
         ("menu-pause", "Gameplay"),
         ("dialogue-goodbye-hint", "Gameplay"),
         ("reload-slows", "Gameplay"),
@@ -1559,6 +1562,7 @@ mod tests {
         assert_eq!(at("grass-fire"), "NVF Features > World Interaction");
         assert_eq!(at("button-style"), "Controls > Input");
         assert_eq!(at("terrain-anti-tiling"), "Graphics > Detail and Distance", "beside terrain height blending (#2551)");
+        assert_eq!(at("sound-cover"), "Gameplay > Game", "#2688");
         assert_eq!(l.control_placement("bind:Jump").unwrap().path(), "Controls > Movement");
         // The registry itself is left as it was: its order and each row's group.
         let again = registry(&KNOWN);

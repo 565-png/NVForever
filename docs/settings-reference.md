@@ -65,6 +65,17 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
   always full screen.
 - Registered in `engine/nvf-play/src/pipboy.rs`
 
+### `sound-cover`: Sounds of the world cover your noise
+
+- On the page: On: while a louder sound plays near you (machines, voices, shots, creatures),
+  the noise you make is not heard. Not in the original.
+- In full: On: when the noise you make (footsteps, your shots) is less than the loudest
+  sound of the world heard where you are (sound markers, machines' and creatures' loops,
+  other people's footsteps, shots and voices, radios), no one hears you; your Sneak still
+  counts against anyone who sees you. The sneak gauges' noise bar marks the cover with a
+  bright square. Off: detection is the original's. Not in the original (#2688).
+- Registered in `engine/nvf-play/src/sound_cover.rs`
+
 ## Gameplay › V.A.T.S.
 
 ### `vats-style`: V.A.T.S. style
