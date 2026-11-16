@@ -246,6 +246,34 @@ pub(super) fn set_reflex_options(mode: i32, frame_limit_us: u32) -> Option<(SetW
     Some((send, swapchains, result))
 }
 
+/// Refused `slReflexSetOptions` calls, which are made again each frame: said once for the same
+/// options and result, counted until one works (`dlss::reflex_options`).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct Retries {
+    /// The options (mode, frame limit) and result last refused, said.
+    said: Option<(i32, u32, i32)>,
+    /// Refused calls since the last that worked.
+    failed: u32,
+}
+
+impl Retries {
+    pub(super) const fn new() -> Self {
+        Self { said: None, failed: 0 }
+    }
+
+    /// A call refused with `key` (mode, frame limit, result): whether to say it.
+    pub(super) fn failed(&mut self, key: (i32, u32, i32)) -> bool {
+        self.failed = self.failed.saturating_add(1);
+        self.said.replace(key) != Some(key)
+    }
+
+    /// A call worked: the refused ones before it, and the count starts again.
+    pub(super) fn worked(&mut self) -> u32 {
+        self.said = None;
+        std::mem::take(&mut self.failed)
+    }
+}
+
 /// A Reflex mode's header name, for the log.
 pub(super) fn reflex_mode_name(mode: i32) -> &'static str {
     if mode == REFLEX_MODE_LOW_LATENCY { "eLowLatency" } else { "eOff" }
@@ -350,6 +378,18 @@ mod tests {
         assert_eq!(send_for(applied(1, 27_778, 1), 1, 27_778, 3), Some(SetWhy::NewSwapchain));
         assert_eq!(send_for(applied(1, 27_778, 1), 1, 6_944, 3), Some(SetWhy::Changed), "a change is said as a change");
         assert_eq!(send_for(applied(1, 27_778, 1), 0, 27_778, 1), Some(SetWhy::Changed));
+    }
+
+    #[test]
+    fn a_refused_reflex_call_is_said_once_then_counted() {
+        let mut r = Retries::new();
+        assert_eq!(r.worked(), 0, "nothing refused yet");
+        assert!(r.failed((1, 6_944, -1)), "the first refusal is said");
+        assert!(!(0..100).any(|_| r.failed((1, 6_944, -1))), "the same refusal each frame is not");
+        assert!(r.failed((1, 13_889, -1)), "other options refused are said");
+        assert_eq!(r.worked(), 102, "the call that works says how many failed");
+        assert_eq!(r.worked(), 0);
+        assert!(r.failed((1, 13_889, -1)), "said again after a call worked");
     }
 
     #[test]
