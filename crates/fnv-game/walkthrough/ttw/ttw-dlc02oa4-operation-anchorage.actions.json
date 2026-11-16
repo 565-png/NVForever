@@ -9,10 +9,11 @@
     {"kind": "quest", "quest": "DLC02OA1", "running": false, "completed": true, "stage": 200, "done": [10, 15, 20, 40, 45, 50, 200], "vars": {"MorrillClear": 1, "McGrawTalked": 1, "PlayerInChair": -1}},
     {"kind": "quest", "quest": "DLC02OA2", "running": false, "completed": true, "stage": 200, "done": [200]},
     {"kind": "quest", "quest": "DLC02OA3", "running": false, "completed": true, "stage": 200, "done": [200], "vars": {"OA3BriefingDone": 1, "OA3Phase2Done": 1, "OA3FuelTanksDone": 1, "OA3ListenPostDone": 1}},
+    {"kind": "quest", "quest": "DLC02StrikeTeam", "running": true, "completed": false, "vars": {"StDeployGo": -1, "StHaveReq": 1}},
     {"kind": "quest", "quest": "DLC02OA4", "running": true, "completed": false, "stage": 10, "done": [10], "objectives": [{"index": 10, "displayed": true}]}
   ],
   "actions": [
-    {"op": "note", "text": "Starts with the player out of Vault 101 (the given): Escape! (CG04) done at stage 200, whose script starts Following in His Footsteps (MQ01 stage 10) and Trouble on the Homefront (MS16). [observed: CG04 stage 200 script] Then Paving the Way done (the given, as ttw-dlc02oa3-paving-the-way leaves it): the player is back in the simulation's Command Tent with the Chimera Depot and the Listening Post taken; DLC02OA3 200's stage script set DLC02OA4 10 (Disable the Pulse Field)."},
+    {"op": "note", "text": "Starts with the player out of Vault 101 (the given): Escape! (CG04) done at stage 200, whose script starts Following in His Footsteps (MQ01 stage 10) and Trouble on the Homefront (MS16). [observed: CG04 stage 200 script] Then Paving the Way done (the given, as ttw-dlc02oa3-paving-the-way leaves it): its strike team deployed and a loadout taken (DLC02StrikeTeam: StHaveReq 1 from the Requisition Terminal, StDeployGo 1 from Patterson's Sure entry, made -1 by DLC02StrikeTeam's script once the team is placed [observed: SCPT 0x0B002D0B]), without which the Command Tent's door (DLC02OA3CommandTentDoor's script [observed]) shows its refusal and does not open; the player is back in the simulation's Command Tent with the Chimera Depot and the Listening Post taken; DLC02OA3 200's stage script set DLC02OA4 10 (Disable the Pulse Field)."},
     {"op": "move_player", "to": "DLC02CommandTentStartMarker"},
     {"op": "get_quest", "quest": "DLC02OA4", "fields": ["running", "stage", "objective.10.displayed"], "label": "start: disable the pulse field"},
     {"op": "note", "text": "Sergeant Montgomery goes with the player to the Pulse Field (his greeting's end script: BenjiFollow 1)."},
