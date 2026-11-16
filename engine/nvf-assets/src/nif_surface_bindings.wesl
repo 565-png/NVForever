@@ -98,6 +98,11 @@ struct NifSurface {
 @if(MESH_TERRAIN_BLEND) const PENETRATION: f32 = f32(constants::MESH_TERRAIN_PENETRATION_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const V2_COS_PARALLEL: f32 = f32(constants::MESH_TERRAIN_V2_COS_PARALLEL_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const V2_COS_STEEP: f32 = f32(constants::MESH_TERRAIN_V2_COS_STEEP_E6) / 1e6;
+// [design] The steepness fade's limits (nif_surface_blend.rs STEEP_COS_FULL_E6,
+// STEEP_COS_NONE_E6): the cosine of the face's angle from horizontal at which the contact
+// weight is still whole (60 degrees) and from which it is 0 (80 degrees).
+@if(MESH_TERRAIN_BLEND) const STEEP_COS_FULL: f32 = f32(constants::MESH_TERRAIN_STEEP_COS_FULL_E6) / 1e6;
+@if(MESH_TERRAIN_BLEND) const STEEP_COS_NONE: f32 = f32(constants::MESH_TERRAIN_STEEP_COS_NONE_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const LAND_ROUGHNESS: f32 = f32(constants::MESH_TERRAIN_ROUGHNESS_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const LAND_REFLECTANCE: f32 = f32(constants::MESH_TERRAIN_REFLECTANCE_E6) / 1e6;
 // [design] Round 10a's landscape detail layout and distances (nif_surface_blend.rs).
@@ -143,13 +148,16 @@ struct NifSurface {
 // [design] Round 10a: what the lookup needs of the fragment besides its position: the
 // camera's distance (game units), the derivatives of its game xy across the view's x and
 // y (taken by the caller in uniform control flow, before any lookup branch), the view's
-// mip bias, and whether full shading reads the mapped normal (0 albedo, 1 full).
+// mip bias, and whether full shading reads the mapped normal (0 albedo, 1 full). #2661
+// review: `up`, the cosine between the mesh face's geometric normal and game up
+// (`mesh_terrain_face_up`, from the same derivatives), for the steepness fade.
 @if(MESH_TERRAIN_BLEND) struct MeshTerrainInputs {
     distance: f32,
     ddx: vec2<f32>,
     ddy: vec2<f32>,
     bias: f32,
     full: u32,
+    up: f32,
 }
 
 // [design] Encoded coefficients preserve their f32 bits without requiring filterable R32F.
@@ -724,6 +732,31 @@ struct NifSurface {
     return max(1.0 - smoothstep(0.0, band, max(d, 0.0)), penetration);
 }
 
+// [design] nif_surface_blend.rs::face_up (#2661 review): everything the blend paints is
+// placed by world xy, a top-down projection that stretches one row of texels down a
+// near-vertical face. The face's steepness comes from its geometric normal, the cross
+// product of the world position's screen derivatives `dx`, `dy` (taken by the caller in
+// uniform control flow, before any discard), not from the interpolated vertex normal,
+// which smoothing tilts towards up on a road's lip. Bevy world space: up is +y; abs treats
+// back faces as front faces. Where the derivatives are (nearly) parallel or zero (a face
+// seen edge-on) the cross product says nothing and the interpolated vertex normal stands
+// in; without one either, 1 (no fade).
+@if(MESH_TERRAIN_BLEND) fn mesh_terrain_face_up(dx: vec3<f32>, dy: vec3<f32>, mesh_normal: vec3<f32>) -> f32 {
+    let face = cross(dx, dy);
+    let face_length = length(face);
+    if face_length > 1e-6 * length(dx) * length(dy) { return min(abs(face.y) / face_length, 1.0); }
+    let n_length = length(mesh_normal);
+    if n_length > 1e-6 { return min(abs(mesh_normal.y) / n_length, 1.0); }
+    return 1.0;
+}
+
+// [design] nif_surface_blend.rs::steepness_fade: 1 up to STEEP_COS_FULL (60 degrees from
+// horizontal), 0 from STEEP_COS_NONE (80 degrees), smooth between; it multiplies every
+// contact shape's weight.
+@if(MESH_TERRAIN_BLEND) fn mesh_terrain_steepness(up: f32) -> f32 {
+    return smoothstep(STEEP_COS_NONE, STEEP_COS_FULL, clamp(up, 0.0, 1.0));
+}
+
 // [design] nif_surface_blend.rs::blend_normal: exact at w <= 0, the ground normal where
 // the mix cancels out.
 @if(MESH_TERRAIN_BLEND) fn mesh_terrain_blend_normal(mesh: vec3<f32>, terrain: vec3<f32>, w: f32) -> vec3<f32> {
@@ -739,7 +772,9 @@ struct NifSurface {
 // a fragment with valid heights, each checked on its own: the colour cache (its quadrant
 // and, round 10b, its whole footprint at both contributing mip levels) and the landscape's layers (the quadrant's detail, the
 // fragment nearer than DETAIL_FAR); a failed colour footprint no longer fails a fragment
-// the layers serve. `status` is LOOKUP_SUCCESS when either serves it.
+// the layers serve. `status` is LOOKUP_SUCCESS when either serves it. #2661 review: the
+// contact weight is faded by the face's steepness (`mesh_terrain_steepness` of
+// `inputs.up`), for every contact shape and so in the weight view too.
 @if(MESH_TERRAIN_BLEND) fn mesh_terrain_lookup(instance_index: u32, world: vec3<f32>, mesh_normal: vec3<f32>, inputs: MeshTerrainInputs) -> MeshTerrainLookup {
     let s = nif_surface(instance_index);
     var r = MeshTerrainLookup(LOOKUP_OUT_OF_RANGE, 0.0, vec3(0.0), vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 0.0), 0.0, vec3(0.0), vec3(0.0, 1.0, 0.0));
@@ -788,7 +823,7 @@ struct NifSurface {
     let cos_angle = select(dot(mesh_normal / max(n_length, 1e-6), r.normal), 1.0, n_length < 1e-6);
     r.status = LOOKUP_SUCCESS;
     let widths = vec3(s.mesh_terrain_widths.x, s.mesh_terrain.x, s.mesh_terrain_widths.y);
-    var weight = mesh_terrain_weight(u32(s.mesh_terrain.z), widths, game.z - height, cos_angle) * smoothstep(0.0, SPACING, border);
+    var weight = mesh_terrain_weight(u32(s.mesh_terrain.z), widths, game.z - height, cos_angle) * mesh_terrain_steepness(inputs.up) * smoothstep(0.0, SPACING, border);
     // [design] Round 10a's distance mix d (1 to DETAIL_NEAR, 0 from DETAIL_FAR): with both
     // sources the layers' share of the target; with the layers alone a fade of the weight,
     // so the blend never mixes towards an invalid colour texel.

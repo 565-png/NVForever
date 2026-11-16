@@ -729,8 +729,21 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   the sorted cameras before another clear, and publication retains the extra main-frame
   delay. Receipts name epoch, request, destination and source revision; the current cell
   identities and source revision are revalidated before commit. No pixel readback or GPU wait.
-- *The blend.* With `d` the fragment's height above the ground triangle, `B` the band and `F`
-  the residency fade, the `height` shape's weight is `w = F (1 - smoothstep(0, B, max(d, 0)))`.
+- *The blend.* With `d` the fragment's height above the ground triangle, `B` the band, `S`
+  the steepness fade and `F` the residency fade, the `height` shape's weight is
+  `w = S F (1 - smoothstep(0, B, max(d, 0)))`. *Steepness* (#2661 review: the user's
+  play-test pictures showed vertical streaks on some road lips): every texel the blend
+  paints is placed by world xy, a top-down projection, so on a near-vertical face one row
+  of texels stretches down the face. `S = smoothstep(cos 80°, cos 60°, u)`, with `u` the
+  absolute cosine between the mesh face's geometric normal and up: whole up to 60 degrees
+  from horizontal, 0 from 80 degrees. The geometric normal is the cross product of the
+  world position's screen derivatives, taken at the top of the fragment before any
+  discard, not the interpolated vertex normal, which smoothing tilts towards up on a lip;
+  where the derivatives are parallel (a face seen edge-on) the vertex normal stands in.
+  `S` multiplies every contact shape's weight, and the weight view shows it
+  (`nif_surface_blend.rs::face_up`, `steepness_fade`; `nif_surface_bindings.wesl`
+  `mesh_terrain_face_up`, `mesh_terrain_steepness`). Faces steeper than 80 degrees get no
+  blend, rock and cliff faces included.
   Where `w > 0` the forward fragment, after the existing coverage tests and normal mapping
   and before lighting, mixes the base colour towards the cached colour by `w`; full shading
   also bends the normal towards the ground triangle's geometric normal and moves roughness

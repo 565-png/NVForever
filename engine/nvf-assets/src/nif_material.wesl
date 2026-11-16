@@ -92,7 +92,7 @@ import bevy_pbr::{
 };
 
 import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel};
-@if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_unlit_view, mesh_terrain_diagnostic, mesh_terrain_blend_normal, mesh_terrain_target_colour, mesh_terrain_target_normal, MeshTerrainInputs, LOOKUP_SUCCESS, LAND_ROUGHNESS, LAND_REFLECTANCE};
+@if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_unlit_view, mesh_terrain_diagnostic, mesh_terrain_blend_normal, mesh_terrain_target_colour, mesh_terrain_target_normal, mesh_terrain_face_up, MeshTerrainInputs, LOOKUP_SUCCESS, LAND_ROUGHNESS, LAND_REFLECTANCE};
 @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
 
 // Main-pass geometry uses the render viewport, which can be smaller than the
@@ -468,15 +468,18 @@ fn nif_fragment(
     in: VertexOutput,
     is_front: bool,
 ) -> FragmentOutput {
-    // [design] Mesh terrain blend: the derivatives of the fragment's game xy (Bevy (x, -z))
-    // for the landscape layers' explicit-gradient reads, the colour level and the local
-    // height reference (nif_surface_bindings.wesl `mesh_terrain_detail`). Taken first, in
-    // uniform control flow while every fragment of the quad still runs, before the
-    // visibility dither and every discard below (terrain.wesl's order); the blend itself
-    // stays after the coverage tests. Only the blend variant has these lines.
-    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_xy = vec2(in.world_position.x, -in.world_position.z);
-    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_dx = dpdx(terrain_xy);
-    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_dy = dpdy(terrain_xy);
+    // [design] Mesh terrain blend: the derivatives of the fragment's world position, for
+    // the face's geometric normal (the steepness fade, nif_surface_bindings.wesl
+    // `mesh_terrain_face_up`), and of its game xy (Bevy (x, -z), the same differences
+    // picked out) for the landscape layers' explicit-gradient reads, the colour level and
+    // the local height reference (`mesh_terrain_detail`). Taken first, in uniform control
+    // flow while every fragment of the quad still runs, before the visibility dither and
+    // every discard below (terrain.wesl's order); the blend itself stays after the coverage
+    // tests. Only the blend variant has these lines.
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_wdx = dpdx(in.world_position.xyz);
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_wdy = dpdy(in.world_position.xyz);
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_dx = vec2(terrain_wdx.x, -terrain_wdx.z);
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_dy = vec2(terrain_wdy.x, -terrain_wdy.z);
     // Landscape anti-tiling's footprint, while every fragment of the quad still runs.
     @if(TERRAIN_ANTI_TILING) let terrain_fp = terrain_footprint(in.world_position, nif_surface(in.instance_index).terrain.x, standard_material(in.instance_index).uv_transform);
     @if(VISIBILITY_RANGE_DITHER) visibility_range_dither(in.position, in.visibility_range_dither);
@@ -581,8 +584,9 @@ fn nif_fragment(
     // cleared below.
     @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_unlit = mesh_terrain_unlit_view(mesh_terrain_view(in.instance_index));
     // [design] Round 10a: the lookup's inputs, with the game-xy derivatives captured at the
-    // top of nif_fragment (before any discard), passed in for the lookup's branches.
-    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_inputs = MeshTerrainInputs(distance(view.world_position, in.world_position.xyz), terrain_dx, terrain_dy, view.mip_bias, mesh_terrain_shading(in.instance_index));
+    // top of nif_fragment (before any discard), passed in for the lookup's branches; #2661
+    // review: the face's steepness from the world-position derivatives captured there.
+    @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_inputs = MeshTerrainInputs(distance(view.world_position, in.world_position.xyz), terrain_dx, terrain_dy, view.mip_bias, mesh_terrain_shading(in.instance_index), mesh_terrain_face_up(terrain_wdx, terrain_wdy, pbr_input.world_normal));
     @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) {
         let terrain = mesh_terrain_lookup(in.instance_index, in.world_position.xyz, pbr_input.world_normal, terrain_inputs);
         let terrain_view = mesh_terrain_view(in.instance_index);

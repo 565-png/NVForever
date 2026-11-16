@@ -123,12 +123,13 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
             ];
             modules.push(("embedded://nvforever/blend_validation.wesl".into(), r#"
                 import nvf_assets::nif_surface_bindings::{nif_surface, holes_alpha, facegen_size, facegen_texel};
-                @if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_diagnostic, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_blend_normal, mesh_terrain_target_colour, mesh_terrain_target_normal, MeshTerrainInputs, LAND_ROUGHNESS, LAND_REFLECTANCE};
+                @if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_diagnostic, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_blend_normal, mesh_terrain_target_colour, mesh_terrain_target_normal, mesh_terrain_face_up, MeshTerrainInputs, LAND_ROUGHNESS, LAND_REFLECTANCE};
                 @fragment fn fragment(@location(0) world: vec3<f32>, @location(1) normal: vec3<f32>) -> @location(0) vec4<f32> {
                     var colour = nif_surface(0u).falloff.xyz * holes_alpha(0u, world.xy) + facegen_texel(0u, vec2<i32>(facegen_size(0u)));
                     @if(MESH_TERRAIN_BLEND) {
-                        let xy = vec2(world.x, -world.z);
-                        let inputs = MeshTerrainInputs(length(world), dpdx(xy), dpdy(xy), 0.0, mesh_terrain_shading(0u));
+                        let wdx = dpdx(world);
+                        let wdy = dpdy(world);
+                        let inputs = MeshTerrainInputs(length(world), vec2(wdx.x, -wdx.z), vec2(wdy.x, -wdy.z), 0.0, mesh_terrain_shading(0u), mesh_terrain_face_up(wdx, wdy, normal));
                         let t = mesh_terrain_lookup(0u, world, normal, inputs);
                         colour = mix(colour, mesh_terrain_target_colour(t), t.weight) + mesh_terrain_blend_normal(normal, mesh_terrain_target_normal(t), t.weight) * LAND_ROUGHNESS * LAND_REFLECTANCE;
                         if mesh_terrain_shading(0u) == 0u { colour = mesh_terrain_diagnostic(mesh_terrain_view(0u), t, colour); }
@@ -187,15 +188,18 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
     // function's top level (uniform control flow), never inside its branches. Merge review
     // (#2661): they are captured at the very start of nif_fragment, before the visibility
     // dither and before every discard (alpha cut, holes, alpha_discard), as terrain.wesl
-    // captures its own; only the blend variant has the capture.
+    // captures its own; only the blend variant has the capture. #2661 review: the world
+    // position's derivatives are captured there (the steepness fade's geometric normal),
+    // and the game-xy derivatives are picked out of them.
     let fragment = material.find("fn nif_fragment(").expect("nif_fragment");
     // The function's body, after its own opening brace.
     let body = &material[fragment + material[fragment..].find('{').unwrap() + 1..];
     let at = |needle: &str| body.find(needle).unwrap_or_else(|| panic!("nif_fragment: {needle}"));
     let capture = [
-        "let terrain_xy = vec2(in.world_position.x, -in.world_position.z);",
-        "let terrain_dx = dpdx(terrain_xy);",
-        "let terrain_dy = dpdy(terrain_xy);",
+        "let terrain_wdx = dpdx(in.world_position.xyz);",
+        "let terrain_wdy = dpdy(in.world_position.xyz);",
+        "let terrain_dx = vec2(terrain_wdx.x, -terrain_wdx.z);",
+        "let terrain_dy = vec2(terrain_wdy.x, -terrain_wdy.z);",
     ];
     for statement in capture {
         let pos = at(statement);
@@ -206,8 +210,9 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
         assert!(pos < at("alpha_discard(pbr_input.material.flags"), "{statement}: before alpha_discard");
         assert!(pos < at("{"), "{statement}: before the first block (no branch)");
     }
-    assert_eq!(material.matches("dpdx(terrain_xy)").count(), 1, "the game-xy derivatives are taken once");
-    assert_eq!(material.matches("dpdy(terrain_xy)").count(), 1, "the game-xy derivatives are taken once");
+    assert_eq!(material.matches("dpdx(in.world_position.xyz)").count(), 1, "the world-position derivatives are taken once");
+    assert_eq!(material.matches("dpdy(in.world_position.xyz)").count(), 1, "the world-position derivatives are taken once");
+    assert!(at("mesh_terrain_face_up(terrain_wdx, terrain_wdy, pbr_input.world_normal)") > at("let terrain_inputs = MeshTerrainInputs("), "the face's steepness is one of the lookup's inputs");
     let inputs = at("let terrain_inputs = MeshTerrainInputs(distance(view.world_position, in.world_position.xyz), terrain_dx, terrain_dy, view.mip_bias,");
     assert!(inputs < at("let terrain = mesh_terrain_lookup("));
     let line_start = body[..inputs].rfind('\n').unwrap();
@@ -351,13 +356,19 @@ fn shader_weight_matches_the_cpu_statement_of_hybrid_v2() {
         "return max(1.0 - smoothstep(0.0, band, max(d, 0.0)), penetration);",
         "let widths = vec3(s.mesh_terrain_widths.x, s.mesh_terrain.x, s.mesh_terrain_widths.y);",
         "@if(NIF_SURFACE_BLEND) mesh_terrain_widths: vec4<f32>,",
+        // #2661 review: the steepness fade (nif_surface_blend.rs `face_up`, `steepness_fade`)
+        // multiplies every shape's weight.
+        "let face = cross(dx, dy);",
+        "if face_length > 1e-6 * length(dx) * length(dy) { return min(abs(face.y) / face_length, 1.0); }",
+        "if n_length > 1e-6 { return min(abs(mesh_normal.y) / n_length, 1.0); }",
+        "return smoothstep(STEEP_COS_NONE, STEEP_COS_FULL, clamp(up, 0.0, 1.0));",
     ] {
         assert!(bindings.contains(line), "{line}");
     }
     use nvf_assets::nif_surface_blend::ContactShape;
     assert_eq!([ContactShape::Height, ContactShape::Penetration, ContactShape::Hybrid, ContactShape::HybridV1].map(|s| s.number()), [0.0, 1.0, 2.0, 3.0]);
     let defs = nvf_assets::nif_surface_blend::blend_shader_defs();
-    for name in ["MESH_TERRAIN_V2_COS_PARALLEL_E6", "MESH_TERRAIN_V2_COS_STEEP_E6", "MESH_TERRAIN_COS_FULL_E6"] {
+    for name in ["MESH_TERRAIN_V2_COS_PARALLEL_E6", "MESH_TERRAIN_V2_COS_STEEP_E6", "MESH_TERRAIN_COS_FULL_E6", "MESH_TERRAIN_STEEP_COS_FULL_E6", "MESH_TERRAIN_STEEP_COS_NONE_E6"] {
         assert!(defs.iter().any(|d| matches!(d, ShaderDefVal::UInt(n, _) if n == name)), "{name}");
         assert!(bindings.contains(&format!("constants::{name}")), "{name} reaches the shader");
     }

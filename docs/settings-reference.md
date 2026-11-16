@@ -929,8 +929,9 @@ After the Controls tab's own rows (see the end of this page):
 - On the page: On: softens where outdoor roads, rocks and cliffs meet the landscape, giving
   them the ground's colour and light there. Not in the original.
 - In full: On: rigid outdoor statics and static collections (roads, rocks, cliffs) take the
-  landscape's colour and shading over the lowest 8 units above the ground, from a cache of
-  the landscape around the camera. Off by default and in both looks, not part of Enhanced
+  landscape's colour and shading over the lowest 8 units above the ground (fading out on
+  faces steeper than 60 degrees, none on near-vertical ones), from a cache of the landscape
+  around the camera. Off by default and in both looks, not part of Enhanced
   effects; switches at once, no restart. The test aid `NVF_PLAY_TEST_MESH_BLEND` overrides
   it.
 - Command-line switches: `--graphics-only` (`--graphics-only mesh-terrain-blend`)

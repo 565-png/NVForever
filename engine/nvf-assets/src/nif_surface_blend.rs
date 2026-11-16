@@ -91,6 +91,13 @@ pub const PENETRATION_E6: u32 = 2_000_000;
 /// ramps in between 35 and 75 degrees ([`CONTACT_COS_FULL_E6`] is cos 35).
 pub const V2_COS_PARALLEL_E6: u32 = 996_195; // cos 5 degrees
 pub const V2_COS_STEEP_E6: u32 = 258_819; // cos 75 degrees
+/// [design] The steepness fade (#2661 review; NVForever's choice): everything the blend
+/// paints is placed by world xy, so on a near-vertical face one row of texels stretches down
+/// the face (the streaked road lips of the user's play test). The contact weight is kept
+/// whole on faces up to 60 degrees from horizontal and is 0 from 80 degrees, smooth between
+/// ([`steepness_fade`]); the cosines of those angles against game up.
+pub const STEEP_COS_FULL_E6: u32 = 500_000; // cos 60 degrees
+pub const STEEP_COS_NONE_E6: u32 = 173_648; // cos 80 degrees
 /// The landscape's own material values (nvforever `terrain.rs::surface` uses these), the
 /// targets of the full shading blend.
 pub const LAND_PERCEPTUAL_ROUGHNESS: f32 = 0.95;
@@ -110,6 +117,8 @@ pub fn blend_shader_defs() -> Vec<ShaderDefVal> {
         ShaderDefVal::UInt("MESH_TERRAIN_PENETRATION_E6".into(), PENETRATION_E6),
         ShaderDefVal::UInt("MESH_TERRAIN_V2_COS_PARALLEL_E6".into(), V2_COS_PARALLEL_E6),
         ShaderDefVal::UInt("MESH_TERRAIN_V2_COS_STEEP_E6".into(), V2_COS_STEEP_E6),
+        ShaderDefVal::UInt("MESH_TERRAIN_STEEP_COS_FULL_E6".into(), STEEP_COS_FULL_E6),
+        ShaderDefVal::UInt("MESH_TERRAIN_STEEP_COS_NONE_E6".into(), STEEP_COS_NONE_E6),
         ShaderDefVal::UInt("MESH_TERRAIN_ROUGHNESS_E6".into(), to_micro(LAND_PERCEPTUAL_ROUGHNESS)),
         ShaderDefVal::UInt("MESH_TERRAIN_REFLECTANCE_E6".into(), to_micro(LAND_REFLECTANCE)),
         // Round 10a's landscape detail (the module notes; nvforever terrain_surface.rs packs it).
@@ -316,7 +325,8 @@ pub fn v2_band(widths: ContactWidths, cos_angle: f32) -> f32 {
     widths.flat + (widths.band - widths.flat) * shallow + (widths.steep - widths.band) * steep
 }
 
-/// [design] The CPU statement of the shader's contact weight, before the residency fade:
+/// [design] The CPU statement of the shader's contact weight, before the steepness fade
+/// ([`steepness_fade`]) and the residency fade, which multiply it:
 /// `d` is the height above the ground (negative below it), `cos_angle` the cosine between
 /// the unperturbed mesh normal and the ground triangle's normal. Height, penetration and
 /// hybrid v1 use only `widths.band`; hybrid v2 also the flat and steep widths.
@@ -335,6 +345,26 @@ pub fn contact_weight(shape: ContactShape, widths: ContactWidths, d: f32, cos_an
             (1.0 - smoothstep(0.0, band, d.max(0.0))).max(penetration)
         }
     }
+}
+/// [design] The cosine between a mesh face's geometric normal and up (Bevy world space, up
+/// +Y), as the shader's `mesh_terrain_face_up` takes it: the normal is the cross product
+/// of the world position's screen derivatives `dx`, `dy`, so a lip whose smoothed vertex
+/// normals lean towards up still reads as steep; abs treats back faces as front faces.
+/// Where `dx` and `dy` are (nearly) parallel or zero the interpolated vertex normal
+/// `mesh_normal` stands in, and without one either the result is 1 (no fade).
+pub fn face_up(dx: Vec3, dy: Vec3, mesh_normal: Vec3) -> f32 {
+    let face = dx.cross(dy);
+    let face_length = face.length();
+    if face_length > 1e-6 * dx.length() * dy.length() { return (face.y.abs() / face_length).min(1.0); }
+    let n_length = mesh_normal.length();
+    if n_length > 1e-6 { return (mesh_normal.y.abs() / n_length).min(1.0); }
+    1.0
+}
+/// [design] The steepness fade every contact shape's weight is multiplied by
+/// ([`STEEP_COS_FULL_E6`]): 1 for `up` at or above cos 60 degrees, 0 at or below cos 80,
+/// smooth between.
+pub fn steepness_fade(up: f32) -> f32 {
+    smoothstep(micro(STEEP_COS_NONE_E6), micro(STEEP_COS_FULL_E6), up.clamp(0.0, 1.0))
 }
 /// [design] The geometric normal of a ground triangle in game space (x east, y north, z
 /// up) from its plane's per-square slopes (`terrain_surface.rs::height_planes`).
@@ -861,6 +891,57 @@ mod tests {
     }
 
     #[test]
+    fn steepness_fade_keeps_flat_faces_and_drops_vertical_ones() {
+        let cos = |deg: f32| deg.to_radians().cos();
+        // Faces up to 60 degrees from horizontal keep the weight whole, from 80 none.
+        for deg in [0.0, 10.0, 30.0, 45.0, 59.9] { assert_eq!(steepness_fade(cos(deg)), 1.0, "{deg}"); }
+        for deg in [80.1, 85.0, 89.0, 90.0] { assert_eq!(steepness_fade(cos(deg)), 0.0, "{deg}"); }
+        assert_eq!(steepness_fade(micro(STEEP_COS_FULL_E6)), 1.0);
+        assert_eq!(steepness_fade(micro(STEEP_COS_NONE_E6)), 0.0);
+        let mid = steepness_fade(cos(70.0));
+        assert!(mid > 0.0 && mid < 1.0, "{mid}");
+        // Monotonic: never rising as the face turns from flat to vertical; out-of-range
+        // cosines clamp.
+        let mut last = 1.0;
+        for tenth in 0..=900 {
+            let f = steepness_fade(cos(tenth as f32 / 10.0));
+            assert!(f <= last + 1e-6 && (0.0..=1.0).contains(&f), "{tenth}: {f} > {last}");
+            last = f;
+        }
+        assert_eq!((steepness_fade(1.5), steepness_fade(-0.5)), (1.0, 0.0));
+        // Every contact shape's weight times the fade: a flat face keeps its weight, a
+        // vertical face gets none, at every height in the band.
+        let w = ContactWidths::from_band(8.0);
+        for shape in [ContactShape::Height, ContactShape::Penetration, ContactShape::Hybrid, ContactShape::HybridV1] {
+            for d in [-2.0, 0.0, 4.0] {
+                let flat = contact_weight(shape, w, d, 1.0);
+                assert_eq!(flat * steepness_fade(1.0), flat, "{shape:?} {d}");
+                assert_eq!(contact_weight(shape, w, d, 0.0) * steepness_fade(0.0), 0.0, "{shape:?} {d}");
+            }
+        }
+    }
+
+    #[test]
+    fn face_up_reads_the_geometric_face_not_the_smoothed_normal() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        // A level face (Bevy x and z across the screen): straight up, either winding.
+        assert!(close(face_up(Vec3::X, Vec3::Z, Vec3::Y), 1.0) && close(face_up(Vec3::Z, Vec3::X, Vec3::NEG_Y), 1.0));
+        // A vertical face whose smoothed vertex normal leans up (a road's lip): steep anyway.
+        let lip_normal = Vec3::new(0.0, 0.8, 0.6);
+        assert!(close(face_up(Vec3::X, Vec3::Y, lip_normal), 0.0));
+        assert_eq!(steepness_fade(face_up(Vec3::X, Vec3::Y, lip_normal)), 0.0);
+        // 45 degrees, footprints of any size: the derivatives' lengths cancel.
+        for scale in [1e-3, 1.0, 100.0] {
+            assert!(close(face_up(Vec3::X * scale, Vec3::new(0.0, 1.0, 1.0) * scale, Vec3::Y), 45f32.to_radians().cos()), "{scale}");
+        }
+        // Parallel or zero derivatives (a face seen edge-on): the vertex normal stands in,
+        // and without one, no fade.
+        assert!(close(face_up(Vec3::X, Vec3::X * 2.0, lip_normal), 0.8));
+        assert!(close(face_up(Vec3::ZERO, Vec3::ZERO, Vec3::new(0.0, -3.0, 4.0)), 0.6));
+        assert_eq!(face_up(Vec3::ZERO, Vec3::Z, Vec3::ZERO), 1.0);
+    }
+
+    #[test]
     fn contact_widths_validate_order_and_finiteness() {
         assert!(ContactWidths::from_band(8.0).valid());
         assert!(ContactWidths { flat: 8.0, band: 8.0, steep: 8.0 }.valid(), "equal widths are ordered");
@@ -922,6 +1003,10 @@ mod tests {
         assert_eq!(uint("MESH_TERRAIN_V2_COS_STEEP_E6"), V2_COS_STEEP_E6);
         assert!((micro(V2_COS_PARALLEL_E6) - 5f32.to_radians().cos()).abs() < 1e-6);
         assert!((micro(V2_COS_STEEP_E6) - 75f32.to_radians().cos()).abs() < 1e-6);
+        assert_eq!(uint("MESH_TERRAIN_STEEP_COS_FULL_E6"), STEEP_COS_FULL_E6);
+        assert_eq!(uint("MESH_TERRAIN_STEEP_COS_NONE_E6"), STEEP_COS_NONE_E6);
+        assert!((micro(STEEP_COS_FULL_E6) - 60f32.to_radians().cos()).abs() < 1e-6);
+        assert!((micro(STEEP_COS_NONE_E6) - 80f32.to_radians().cos()).abs() < 1e-6);
         assert!(!defs.iter().any(|d| matches!(d, ShaderDefVal::UInt(n, _) if n.contains("RESOLUTION"))), "the shader reads the atlas size from the texture");
     }
 }
