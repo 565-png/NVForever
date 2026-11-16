@@ -28749,7 +28749,7 @@ expect = [
   { re = 'terrain wireframe: (\d+) cells outlined', range = [9, 100000], label = "the loaded cells are outlined" },
 ]
 order = [[
-  { re = 'terrain wireframe: settled terrain revision [1-9]\d* outlined: (\d+) quadrants 4 x 4, (?:9|[1-9]\d+) cells', range = [1, 16], label = "a settled revision after a redraw outlined, with its 4 x 4 quadrants" },
+  { re = 'terrain wireframe: settled terrain revision [1-9]\d* outlined: (\d+) quadrants 4 x 4, [1-9]\d* cells', range = [1, 16], label = "a settled revision after a redraw outlined, with its 4 x 4 quadrants (the cell count is checked by the line above: cells may stream in after the revision is outlined)" },
 ]]
 forbid = [{ text = "terrain wireframe: off", label = "it stays on" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
 

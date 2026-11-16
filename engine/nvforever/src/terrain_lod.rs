@@ -69,10 +69,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// Frames a built batch waits for the GPU's word that its meshes are in before it is swapped
-/// in anyway (with a warning) [engineering choice: about two seconds at 60 frames a second;
-/// a fallback should the readiness never be reported, not the expected path]. The batch is
-/// then given up, keeping the old meshes.
+/// Frames a built batch waits for the GPU's word that its meshes are in [engineering choice:
+/// about two seconds at 60 frames a second; a fallback should the readiness never be reported,
+/// not the expected path]. Past it the batch is given up (the first time with a warning): the
+/// old meshes stay, the new ones go, and redraws pause ([`MAX_BACKOFF_FRAMES`]).
 pub const WAIT_CAP_FRAMES: u32 = 120;
 
 /// The longest pause (frames) before redraws are planned again after batches given up in a
