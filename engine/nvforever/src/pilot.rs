@@ -556,6 +556,9 @@ struct Walk {
     seen: (f64, [f32; 3]),
     replans: u8,
     cut: bool,
+    /// Whether this walk was already put past a gap no navmesh joins (once a walk: a
+    /// second time is the same gap, Paradise Falls' 1,853 puts in a row).
+    gapped: bool,
     /// Whether a conversation was open when the walk began (`None` until its first frame).
     talking_at_start: Option<bool>,
     /// A conversation that begins on the way ends the walk: the steps after it deal with
@@ -1444,13 +1447,13 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         // Or a way across the Capital Wasteland longer than the search goes
                         // (Vault 112 to the Jefferson Memorial: 400,955 triangles searched and
                         // no end [observed]): a fast travel from the side the player is on.
-                        let too_far = matches!(e, fnv_nav::PathError::TooFar { .. });
+                        let too_far = !w.gapped && matches!(e, fnv_nav::PathError::TooFar { .. });
                         // No navmesh joins the two at all, locked doors or not, and no locked
                         // door was met: a gap a player crosses by something the navmesh does
                         // not hold (Rivet City's swing bridge, RCExBridge1Ref, swung by the
                         // Security Intercom; `fnvtool nav path` finds no way from the shore to
                         // the deck [observed], #2847): a fast travel there, with a finding.
-                        let gap = here_side && !too_far && w.tried.is_empty() && h.game(|g| match w.goal.space {
+                        let gap = here_side && !too_far && !w.gapped && w.tried.is_empty() && h.game(|g| match w.goal.space {
                             Space::World(b) => capital_side(g, b),
                             Space::Interior(c) => outside_door(g, c).is_some(),
                         }).unwrap_or(false);
@@ -1466,6 +1469,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         };
                         if let Some(at) = arrive {
                             info!("pilot: step {}: {} ({:?}): the player is put at ({:.0}, {:.0}, {:.0}) in {:?}, as the mod list's travel and a fast travel would put it", p.i, if too_far { "a way longer than the search goes" } else if gap { "no navmesh way there" } else { "no way to the Capital Wasteland side" }, w.goal.space, at.pos[0], at.pos[1], at.pos[2], at.space);
+                            w.gapped |= too_far || gap;
                             if gap {
                                 p.finding("no_navmesh_way", format!("no navmesh way from ({:.0}, {:.0}, {:.0}) in {:?} to {:?}, locked doors or not: put there as a fast travel would", feet[0], feet[1], feet[2], here.space, w.goal.space));
                             }
@@ -1748,7 +1752,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
 }
 
 fn walk_to(goal: Place, target: Option<FormId>, radius: f32, now: f64, feet: [f32; 3]) -> Walk {
-    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, owner_wait: None, owner_door: None, reported: now, travel_since: None }
+    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, gapped: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, owner_wait: None, owner_door: None, reported: now, travel_since: None }
 }
 
 /// What a player would use to open a door that stays locked (module notes), not used
