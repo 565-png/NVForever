@@ -1256,6 +1256,12 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
         params.keys = keys;
         params.open_doors.extend(open_doors);
         params.refused_doors.extend(w.tried.iter().map(|(d, _)| *d));
+        // A locked door that opens in place and is out of the world (disabled) stands in
+        // no one's way: Broken Steel's 0x0D009B07 on the way to the Citadel's lab, locked
+        // at level 255 and disabled, held the whole of Death From Above up.
+        let gone: Vec<u32> = h.game(|g| nav.graph.door_locks.keys().copied().filter(|&d| is_disabled(g, d)).collect()).unwrap_or_default();
+        params.owned_doors.extend(gone.iter().copied());
+        params.open_doors.extend(gone);
         // Standing off the navmesh (a given state's place, a ledge): onto the nearest
         // point of it within 500 units first, as the pilot's own clumsiness.
         if nav.graph.locate(here.space, feet, 96.0).is_none() {
@@ -1559,7 +1565,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
             }
         }
         Steer::OpenDoor { door, .. } => {
-            if h.doors.is_open(door) == Some(true) {
+            if h.doors.is_open(door) == Some(true) || h.game(|g| is_disabled(g, door)).unwrap_or(false) {
                 f.door_opened();
                 w.door_since = None;
             } else if w.door_since.is_none() {
