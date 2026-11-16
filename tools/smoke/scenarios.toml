@@ -30233,6 +30233,24 @@ expect = [
 ]
 
 [[scenario]]
+name = "load-phases-goodsprings"
+source = "#2407: players' Goodsprings door and save loads took 20-37 s; a loading screen now logs, and a slow load reports, when each thing it waited for came in, its longest frame and what the game files gave under it (nvf_play::loading::LoadPhases, fnv_vfs::read_stats). Out of Doc Mitchell's house into Goodsprings, the heaviest door of a new game"
+note = "2026-11-15 on the bench (i9-14900K, RTX 4070, SATA SSD, files in the OS cache): the start 2.4 s, the door 2.5 s with 2,106 files (248 MB) read. The cap is the reports' slow-load limit (reports/anomaly.rs SLOW_LOAD_MS), far above it"
+areas = ["loading", "streaming"]
+paths = ["engine/nvf-play/src/loading.rs", "crates/fnv-vfs/src/lib.rs", "engine/nvforever/src/reports/mod.rs"]
+env = { NVFOREVER_HOME = "load-phases-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "10:00103E61", NVF_PLAY_TEST_ACTIVATE = "12" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 20
+order = [[
+  { re = 'loading screen phases: up [\d.]+ s; .*cells to draw .*; longest frame [\d.]+ s of \d+; read \d+ files, [\d.]+ MB, [\d.]+ s reading, [\d.]+ s queued for an archive', label = "the start's screen is timed" },
+  "GSDocMitchellHouseIntDoorREF activated",
+  { re = 'loading screen phases: up [\d.]+ s; the travel to go out .*actors to draw .*; read (?P<n>\d+) files', range = [100, 100000], label = "the door's screen is timed, the files of Goodsprings read under it" },
+]]
+expect = [
+  { re = 'loading screen down after (?P<n>[\d.]+) s$', range = [0, 20], all = true, label = "the door's load stays under the 20 s slow-load limit" },
+]
+
+[[scenario]]
 name = "repconn-load-door-lock"
 source = "[observed: capture run15b_a, 2026-11-15] #2538: RocketLabBasement tunnel load door 0x000CE1AD has no XLOC but reads its partner 0x0008F97C as locked, level 255, no key; activation is refused (docs/spec-notes/cells-refs.md section 6)"
 note = "[design, #2538] Written without running the game. Start in the tunnel 130 units in front of the door, heading 225; aim and activate it. Require the Locked level-255 result and no teleport. Pitch 0 is provisional [hypothesis]."
