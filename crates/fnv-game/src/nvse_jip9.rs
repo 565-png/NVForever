@@ -186,6 +186,9 @@ pub fn type_code(sig: &[u8; 4]) -> Option<i32> {
 /// The functions of this file; `None` for any other name.
 pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<FormId>, args: &[XVal]) -> Option<Result<XVal, String>> {
     let zero = XVal::Num(0.0);
+    // The held Mods page exposes StartMenu through its temporary page context rather
+    // than replacing Game::menu (mcm-page-key-events.md).
+    let menu_cursor = g.menu.is_some() || g.menu_open(crate::game::menus::START);
     let v = match name {
         // ---- the cursor, the mouse, the camera
         // `[toggle]`: the state before it, so without an argument the state [observed:
@@ -209,7 +212,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         "getcursorpos" => {
             let (Some(a), xml) = (axis(args.first()), num(args, 1).is_some_and(|x| x != 0.0)) else { return Some(Ok(zero)) };
             let per = px_per_unit(g);
-            if g.menu.is_none() && !g.other.jip9.hud_cursor {
+            if !menu_cursor && !g.other.jip9.hud_cursor {
                 let (w, h) = window(g);
                 let (x, y) = g.other.jip9.cursor_px.unwrap_or((w / 2.0, h / 2.0));
                 let c = if a == 0 { x } else { y };
@@ -226,7 +229,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // HUD cursor [documented].
         "setcursorpos" => {
             if let (Some(x), Some(y)) = (num(args, 0), num(args, 1)) {
-                if g.menu.is_some() || g.other.jip9.hud_cursor {
+                if menu_cursor || g.other.jip9.hud_cursor {
                     let xml = num(args, 2).is_some_and(|v| v != 0.0);
                     g.other.jip9.cursor_warp = Some((x, y, xml));
                     let per = px_per_unit(g);

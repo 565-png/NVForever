@@ -24,6 +24,23 @@ event, and returning to play must not replay a page's already-delivered edge. Th
 does not run world updates, advance game time, or dispatch unrelated queued events.
 The surrounding page menu context is restored after the frame.
 
+[documented: `jip-ui-9.md` §1, `GetCursorPos` / `SetCursorPos`] XML cursor queries
+use the tile tree's pointer in a menu, and cursor writes are admitted in menu mode
+or while the HUD cursor is enabled. [design] The held StartMenu page has the same
+cursor admission. Its XML coordinates use the already transformed, hit-tested
+pointer; raw window pixels still serve non-XML queries. Plain-play behavior and
+ordinary menu behavior keep their existing paths. [observed: installed MCM
+Extender `OnKeyDown.gek`, local demand inventory, 2026-11-16] Its wheel callback
+selects the list by querying XML cursor coordinates and the list's bounds.
+
+[observed: `menu-xml.md` §10.1, original-game pause-menu capture] The active menu
+getter returns 1013 while `MenuMode 1013` holds there.
+[observed: installed MCM Extender `InputHandler.gek`, `MenuSearchInput.gek`
+and `OnButtonDown.gek`, local demand inventory, 2026-11-16] These input handlers
+require active menu 1013. [design] When no ordinary menu overlays the held StartMenu
+page, that getter returns StartMenu. An existing message menu keeps precedence;
+the page is a context for its blocks, not a replacement for the overlay.
+
 [hypothesis] Exact ordering against the original game's menu scripts still needs a
 capture. Dispatch before menu blocks preserves NVForever's ordinary-frame ordering.
 
@@ -33,7 +50,9 @@ capture. Dispatch before menu blocks preserves NVForever's ordinary-frame orderi
 feed physical wheel/keyboard input through the engine input publisher, and call the
 same Mods-page tick as the pause page. Check a list trait written by the handler,
 menu context, held/released keys, disabled keys, repeated entry, and frozen game
-time. A getter-only test cannot establish this boundary.
+time. A separate source-registered wheel callback must route a list update using
+distinct raw and hit-tested cursor positions and request a cursor warp in that
+same page context. A getter-only test cannot establish this boundary.
 
 [hypothesis] Full installed MCM 1.5.1 + MCM Extender + Vanilla UI Plus acceptance
 remains open until their original initialization, menu registration, list scrolling,

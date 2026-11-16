@@ -24,10 +24,15 @@ fn app() -> (App, Entity) {
     let game = &mut state.rt.as_mut().unwrap().game;
     let files = fnv_ui::MemSource::default().with("owned.xml", r#"
       <menu name="StartMenu"><rect name="MCM"><_Menu>1</_Menu>
+        <rect name="MCM_Options"/><rect name="MCM_Scale"/>
+        <rect name="MCM_List"/><rect name="MCM_Trigger"/>
         <rect name="MCM_ModList"><_offset>1</_offset><_visible>3</_visible>
           <_count>6</_count><_searchKeys>0</_searchKeys><_released>0</_released><_allDown>0</_allDown>
+          <x>50</x><y>20</y><width>150</width><height>200</height>
         </rect></rect></menu>"#);
     game.ui_tree.load_menu(&files, "owned.xml").unwrap();
+    let source = "Begin Function {}\nSetFunctionValue (GetMCMFloat 5 0 \"_offset\")\nEnd";
+    assert_eq!(game.run_query(source, RunCtx::default()).unwrap(), XVal::Num(1.0), "the source API reaches the fifth child before any input");
     // Independent consumers of the same documented key-event and MCM tile APIs;
     // none of the installed mod's scripts or XML are test fixtures.
     let handler = r#"Begin Function {int key}
@@ -134,4 +139,65 @@ fn mcm_page_search_gets_disabled_key_down_up_and_no_replay_after_reentry() {
     assert_eq!(game.ui_tree.get_float("StartMenu/MCM/MCM_ModList/_searchKeys"), Some(2.0));
     assert_eq!(game.ui_tree.get_float("StartMenu/MCM/MCM_ModList/_allDown"), Some(2.0));
     assert_eq!(game.menu, Some(menus::MESSAGE));
+}
+
+#[test]
+fn mcm_page_wheel_routes_by_menu_coordinates_and_admits_callback_cursor_writes() {
+    let (mut app, window) = app();
+    {
+        let mut state = app.world_mut().resource_mut::<ScriptState>();
+        let game = &mut state.rt.as_mut().unwrap().game;
+        // Raw cursor outside the list; actual menu pointer inside, after the menu
+        // frame/UI-scale transform performed by tile input.
+        game.other.jip9.window = Some((1280.0, 960.0));
+        game.other.jip9.cursor_px = Some((700.0, 500.0));
+        game.ui_pointer.at = Some((100.0, 80.0));
+        let source = r#"Begin Function {}
+          SetFunctionValue (SetOnKeyDownEventHandler (Begin Function {int key}
+            if MenuMode 1013 && GetActiveMenuMode == 1013
+              if GetCursorPos X 1 > GetMCMFloat 5 0 "x" && GetCursorPos X 1 < (GetMCMFloat 5 0 "x") + (GetMCMFloat 5 0 "width")
+                if GetCursorPos Y 1 > GetMCMFloat 5 0 "y" && GetCursorPos Y 1 < (GetMCMFloat 5 0 "y") + (GetMCMFloat 5 0 "height")
+                  SetMCMFloat 5 0 "_offset" ((GetMCMFloat 5 0 "_offset") + 1)
+                  SetCursorPos 110 90 1
+                endif
+              endif
+            endif
+          End) 1 265)
+        End"#;
+        assert_eq!(game.run_query(source, RunCtx::default()).unwrap(), XVal::Num(1.0));
+    }
+    wheel(&mut app, window, -1.0);
+    app.update();
+    assert_eq!(value(&app, "_offset"), 3.0, "both source callbacks routed to the list");
+    {
+        let state = app.world().resource::<ScriptState>();
+        let game = &state.rt.as_ref().unwrap().game;
+        assert_eq!(game.other.jip9.cursor_warp, Some((110.0, 90.0, true)));
+        assert_eq!(game.ui_pointer.at, Some((100.0, 80.0)), "the engine consumes the pending warp later");
+        assert_eq!(game.menu, None);
+    }
+    // Leaving the callback's page context restores plain-play cursor policy. A
+    // stale menu pointer cannot replace raw pixels or authorize a new warp.
+    let mut state = app.world_mut().resource_mut::<ScriptState>();
+    let game = &mut state.rt.as_mut().unwrap().game;
+    let query = "Begin Function {}\nSetCursorPos 1 2 1\nSetFunctionValue (GetCursorPos X 1)\nEnd";
+    assert_eq!(game.run_query(query, RunCtx::default()).unwrap(), XVal::Num(110.0));
+    assert_eq!(game.other.jip9.cursor_warp, Some((110.0, 90.0, true)));
+    let query = "Begin Function {}\nSetFunctionValue (GetActiveMenuMode)\nEnd";
+    assert_eq!(game.run_query(query, RunCtx::default()).unwrap(), XVal::Num(0.0));
+    drop(state);
+    app.update(); // release the wheel before another edge under an overlay
+    {
+        let mut state = app.world_mut().resource_mut::<ScriptState>();
+        let game = &mut state.rt.as_mut().unwrap().game;
+        game.menu = Some(menus::MESSAGE);
+        game.other.jip9.cursor_warp = None;
+    }
+    wheel(&mut app, window, -1.0);
+    app.update();
+    assert_eq!(value(&app, "_offset"), 3.0, "active-menu-gated list handler stays held under a message");
+    let state = app.world().resource::<ScriptState>();
+    let game = &state.rt.as_ref().unwrap().game;
+    assert_eq!(game.menu, Some(menus::MESSAGE));
+    assert_eq!(game.other.jip9.cursor_warp, None);
 }
