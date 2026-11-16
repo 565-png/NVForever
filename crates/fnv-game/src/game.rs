@@ -1231,13 +1231,13 @@ pub enum LineLook {
     /// The speaker turns to the listener and the listener looks at the speaker.
     #[default]
     Both,
-    /// The listener is not made to look at the speaker: SayTo's `noTargetLookFlag`
-    /// [documented: GECK wiki SayTo, owner export: with the flag set "Joe is not forced
-    /// to look at the speaker during the SayTo"].
-    Speaker,
     /// Nobody turns: a conversation between actors started with `headTrack` 0
     /// [documented: GECK wiki StartConversation: "Enter 0 to disable" head tracking
-    /// during the conversation].
+    /// during the conversation], and a SayTo line with `noTargetLookFlag` 1
+    /// [hypothesis, observer check 218, #2796] (`functions::misc::say_to`). Until #2796
+    /// that flag only kept the listener still (a variant `Speaker`); a game saved while
+    /// such a line was said reads it as this one.
+    #[serde(alias = "Speaker")]
     Nobody,
 }
 
@@ -4836,7 +4836,8 @@ impl<'a> Game<'a> {
     ///   "forced to look at the speaker" unless `noTargetLookFlag`]: its head only for a
     ///   SayTo line [design], head and body in a conversation between actors, where it
     ///   speaks next [design, as `fnv_ai` has turned both since it started them];
-    /// - nobody, when the line's [`LineLook`] says so.
+    /// - nobody, when the line's [`LineLook`] says so (StartConversation's `headTrack` 0,
+    ///   SayTo's `noTargetLookFlag` 1).
     ///
     /// A line said to nobody (Say) turns nobody. Whether the engine can turn a body (one
     /// on furniture or on its way cannot) is the engine's.
@@ -4848,9 +4849,7 @@ impl<'a> Game<'a> {
                 continue;
             }
             out.push(Facing { who: s.speaker, to, body: true, speaking: true, info: s.info });
-            if s.look == LineLook::Both {
-                out.push(Facing { who: to, to: s.speaker, body: s.conversation.is_some(), speaking: false, info: s.info });
-            }
+            out.push(Facing { who: to, to: s.speaker, body: s.conversation.is_some(), speaking: false, info: s.info });
         }
         out
     }

@@ -275,6 +275,13 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- **SayTo's "no target look" flag turns nobody (#2796).** [hypothesis, #2796] A SayTo with
+  `noTargetLookFlag` 1 now turns neither the speaker nor the target, so Curtis talks into
+  his radio in the McCarran tower without turning to the player below. Without the flag
+  the speaker still turns to whom it talks (your 2026-10-11 rule). This changes the 22
+  shipped SayTo calls to the player that carry the flag (the monorail guards would warn
+  you without turning). The narrower reading, the speaker stays only when the target is
+  the player, is a one-line change. ([dialogue-play §9.2](design/dialogue-play.md))
 - **An intercom nobody has set up speaks for the actor its script names (#2454).**
   [hypothesis, #2454] When a talking activator starts a conversation before any script
   told it who speaks, ours lets the one actor its scripts name speak (Ramos for the
