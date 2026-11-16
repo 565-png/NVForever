@@ -2262,7 +2262,7 @@ fn keys(
     input: nvf_play::pad::ActionButtons<KeyCode>,
     play_state: Option<Res<State<nvf_play::PlayState>>>,
     mut commands: Commands,
-    tweaks: Option<Res<nvf_play::tweaks::TweakSettings>>,
+    (tweaks, bindings): (Option<Res<nvf_play::tweaks::TweakSettings>>, Option<Res<nvf_play::bindings::Bindings>>),
     mut hidden: Option<ResMut<nvf_play::free_cam::MenusHidden>>,
     mut held: Local<Option<(u8, bool, std::path::PathBuf)>>,
 ) {
@@ -2287,11 +2287,16 @@ fn keys(
     if input.just_pressed(KeyCode::Escape) && play_state.is_none() {
         commands.write_message(AppExit::Success);
     }
-    // The screenshot key (F12, or the player's Screenshot Key tweak, docs/design/tweaks.md):
+    // The Screenshot binding (F12 unless the player rebinds it, Controls > Additional Features):
     // a shot in the home's screenshots folder at the first free number, through the write
     // guard. It went to the working folder unguarded, and the count restarted at 1 each
     // run, over the last run's shots [#1987].
-    if input.just_pressed(nvf_play::tweaks::screenshot_key(tweaks.as_deref())) {
+    // Without the game's bindings (the viewer), F12.
+    let shot = match bindings.as_deref() {
+        Some(b) => nvf_play::bindings::binding_just_pressed(Some(b), nvf_play::bindings::Control::Screenshot, |k| input.just_pressed(k), |_| false),
+        None => input.just_pressed(KeyCode::F12),
+    };
+    if shot {
         let dir = fnv_install::EngineHome::user().map_or_else(|| std::path::PathBuf::from("."), |h| h.screenshots());
         let path = fnv_install::first_unused(&dir, "nvforever-", "png");
         let ready = fnv_install::guard_write(&path, None)
