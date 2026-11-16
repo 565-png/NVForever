@@ -29446,6 +29446,28 @@ forbid = [
 ]
 
 [[scenario]]
+name = "mccarran-boyd-doors-one-body"
+source = "issue #2461 (owner; tester's log 2026-11-16): Lt. Carrie Boyd (LieutenantBoydREF 0x000F0678, CampMCTermInt02) was drawn twice after walking through the interrogation room's load doors (VFreeformMcCarran2InterrogationDoorREF 0x000FB2F3 and its partner 0x00172534) more than once: in the frame a load door handed her over, a body spawned at the far side at once (her parts already read) and the root scan took the body fading at the near side, which still carried her RefVisual, so the new body stood undriven. Her root is now the body spawned (engine/nvforever/src/nav.rs show_actor), and a root whose body is gone is let go and looked for again. The scene's records as in mccarran-boyd-one-body: Silus's GREETING (INFO 0x000F1873) MoveTo's her to BoydExitREF 0x000FA73E (325, 719); the trick's line (INFO 0x000F2DDE) MoveTo's her to XMarker 0x000FB4E1 (467, 1386) by the room's door and sets bBoydEnter (VFreeformMcCarran2BoydPatrolReturn walks her into the room); bBoydExit walks her back out (VFreeformMcCarran2BoydPatrolExit)"
+note = "as mccarran-boyd-one-body, with the greeting and the trick's line said twice (3 s and 8 s, then 45 s and 50 s), as the tester's log had them, so that she walks through the doors again with her parts read (the new body spawned in the hand-over frame). The census is taken at exit. Expectations written without a run (2026-11-16): the door count is a floor"
+areas = ["ai", "actors"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/nav.rs", "engine/nvforever/src/actors.rs", "engine/nvforever/src/door_fade.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "3:info:0x000F1873:SilusREF,8:info:0x000F2DDE:SilusREF,45:info:0x000F1873:SilusREF,50:info:0x000F2DDE:SilusREF" }
+args = ["--cell", "CampMCTermInt02", "--pos=340,1690,18690", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 120
+expect = [
+  { re = 'LieutenantBoydREF: put at \(325, 719, \d+\) in .* by a script \(MoveTo\)', min = 2, label = "Silus's greeting puts Boyd at BoydExitREF, twice" },
+  { re = 'LieutenantBoydREF: put at \(467, 1386, \d+\) in .* by a script \(MoveTo\)', min = 2, label = "the trick's line puts Boyd by the room's door, twice" },
+  { text = "LieutenantBoydREF: used door", min = 1, label = "Boyd walks through the room's load doors" },
+  { re = 'actor bodies summary: (?P<n>\d+) references drawn by more than one body', range = [0, 0], label = "one body per reference at the end (Boyd not drawn twice)" },
+]
+forbid = [
+  { re = 'actor bodies: LieutenantBoydREF', label = "Boyd drawn by two bodies after her walks through the doors" },
+  { re = 'that body is not taken away', label = "a body spawned and not yet found was left behind at a door" },
+  { re = 'bodies under the world root when its body was looked for', label = "two bodies of one reference under the world root (the door scan)" },
+  { text = "actor 000F0678: the body it was drawn by is gone", label = "Boyd's root pointed at a body no longer hers" },
+]
+
+[[scenario]]
 name = "mccarran-vms08-markers"
 source = "issue #2464 (owner): I Put a Spell on You's marker for Lt. Boyd pointed outside. VMS08 objective 20 (\"Ask around about suspicious activity at Camp McCarran\") has three targets [documented: the QUST 0x000E790F QSTA/CTDA records, read with fnvtool esm decode]: LieutenantBoydREF 0x000F0678 in CampMCTermInt02 (GetDead 0), SupplyOfficerContrerasREF 0x000E5517 in CampMCTermInt04, the Supply Shack (bAskedContreras 0, GetDead 0), and CorporalSterlingRef 0x000F570E outdoors (bAskedSterling 0, GetDead 0). With the player beside Capt. Curtis in the Terminal Building all three are marked: Boyd at herself, the other two at the first door of the way to them, both leading out of the building (engine/nvf-play/src/compass.rs quest_mark_at)"
 note = "the player stands beside CaptainCurtisREF (976, -288, 18240); the objective is shown and the quest made active by the console at 6 s"
