@@ -2947,6 +2947,179 @@ already talking takes over at once, same topic or another; nothing is queued or 
      means anything, and whether the speech differs from the ordinary line. Also
      whether the subtitle shows at each distance.
 
+
+## Added 2026-11-15 (old-head hair outside the race list, #2714)
+
+210. **Which hair does the original use when an NPC's HAIR is outside its race's
+     list?** (P3; #2714; actors.md section 4.4.) [documented: #2714, spooknik's
+     2026-11-15 record/archive audit at main 1790ab94a] Roy, VFSRoyREF
+     0x0011365D / base VFSLocalVictim03 0x00113649, is CaucasianOldAged
+     0x000987DF (`headold.nif`) with HairAfricanAmericanBase 0x000306BE
+     (`hairbase.nif`, `hairafricanamericanbase.dds`, HCLR 192,192,192, no hat).
+     This hair is outside the race's old-hair-only HNAM list; the default male
+     hair is HairBaldingOld. Old-head alternatives exist: HairBaseOld 0x00044528
+     (`hairbaseold.nif`, `hairbaseoldnohat.egm` / `hairbaseoldhat.egm`) and
+     HairAfricanAmericanBaseOld 0x000987D9 (`hairafricanamericanbaseold.nif`).
+     The second case, VNovacDoctorMerc2, uses `hairraiderspike.nif` on an old
+     head and has no old version [documented: the same audit]. In the original,
+     at Old Mormon Fort courtyard during VMS19 objective 60, capture Roy from
+     behind and from the side, close enough to compare the scalp/hair seam;
+     also capture VNovacDoctorMerc2 from those angles. Does Roy retain the
+     record's hair with the same gap, wear the old-head version, or wear the
+     race default? Does the second case retain its hair or use a default when
+     no old version exists? [hypothesis, #2714] NVForever provisionally keeps
+     the record's model and its own EGM; a young-head model on an old head
+     could explain the reported gap. Resolve this before changing hair selection.
+
+## Added 2026-11-15 (Mick secret door, #2716)
+
+206. **Does an NPC path through an open locked door in the original?** (P2;
+    `fnv_nav::NavGraph::door_tri_open`.) [hypothesis, #2716] NVForever treats an
+    open in-place door as no barrier to any actor, even while locked. [documented:
+    issue #2716, spooknik comment 2026-11-15, supplied record findings] In
+    `FreesideMickandRalphs`, Mick reaches `SecretDoorMarkerREF`; his Travel end script
+    opens `MickSecretDoorREF` (0x00121FF2, Requires Key, no key) with SetOpenState 1
+    and chooses the secret-sales package. Watch whether he then walks through the
+    still-locked door to `SecretSalesMarkerREF` and starts the sales conversation.
+    Check another NPC without a key through an open locked door too, then close it
+    and compare. Record whether the live lock changes when the door opens.
+
+## Added 2026-11-16 (Pacer's cover, #2715)
+
+208. **Does Pacer keep cowering throughout the staged NCR fight, including after a load?**
+    (P2; `fnv_ai::sandbox`, #2715 part 3.) His VFSPacerCowerNCRFightPackage
+    (PACK 0x00129434) permits only idle markers; VFSNCRFightPacerMarkerREF
+    (REFR 0x001293EC) uses DefaultCowerIdleMarker (IDLM 0x000C47CC, timer 0),
+    with LooseCowerIdles (0x000C0A9A, looping 3rdP_Cowering.kf)
+    [documented: #2715 issue comment, supplied record findings]. With VMS19 ncrfight
+    at 1, watch Pacer from the start for at least 120 seconds without talking or
+    starting combat. Does he ever stand upright between cower loops? Save while
+    he cowers, reload, and measure the time until he cowers again. NVForever reuses
+    the sole marker at each timer expiry when every other behaviour is disabled
+    [design, #2715: `Allowed::only_idle_markers`, `Sandbox::next`]; continuous cower
+    in the original is provisional [hypothesis]. This leaves the general sole-object
+    60-second rule and observer check 114 intact [design, #1505, #2715].
+
+## Added 2026-11-15 (held weather across worldspace doors, #1997)
+
+209. **Does held weather survive a door into another worldspace?** (P3; #1997;
+    `worldspace.rs::carry_sky`, `sky.rs::SkyState::carry_weather_from`.) In Freeside,
+    use the console to `ForceWeather` a clearly different weather with override flag 1,
+    then go through the gate into the Strip. Does that weather remain shown? Repeat
+    with `SetWeather` and its override flag, allowing its fade to finish first; then
+    call `ReleaseWeatherOverride` and check that normal weather returns. Save after
+    the door and load: is it still held? Both setters say the weather will not change
+    until release [documented: offline GECK wiki ForceWeather / SetWeather /
+    ReleaseWeatherOverride, snapshot 2026-10-28]; keeping it across a worldspace door
+    is provisional [hypothesis]. NVForever carries it without destination filtering
+    [design: `sky.rs::SkyState::carry_weather_from`].
+
+## Added 2026-11-16 (controller hotkey assignment, #2312)
+
+211. **How does a controller choose a hotkey slot on ITEMS?** (P3; controller.md §3,
+    weapon-wheel.md §3.) [documented: issue #2312's supplied inventory_menu.xml facts]
+    `IM_HotkeyButton` uses RB and `sInventoryHotKey`, opening `IM_HotKeyWheel`.
+    [hypothesis] The original's slot-selection method is unknown; its prefab facts
+    supplied in #2312 bind no pad directions. Select a weapon on ITEMS, press RB, and
+    test D-pad taps/holds and both sticks in cardinal and diagonal directions. Record
+    which box is chosen on opening, whether selection points spatially or steps,
+    whether it wraps/repeats, and whether A assigns and B cancels. Include Ammo Swap
+    and an occupied slot. [design, #2312] NVForever provisionally opens at slot 1,
+    steps right/down forward and left/up backward through eight slots with wrapping,
+    assigns with A (closing on success), and cancels with B; Ammo Swap refuses items.
+
+## Added 2026-11-15 (House's chamber steam, glow and ground fog, #2685)
+
+212. **Do the steam, panel glow and ground fog of House's chamber linger, and do they survive a
+     load?** (P2; #2685, spec-notes/idles.md §10.1, particles.md §7.8.) [hypothesis] From a sealed
+     chamber in Lucky38ControlRoom, use the unseal terminal item and record the opening, steam
+     bursts, panel glow and ground fog at start, after 20 s and after 55 s. Check that glow and
+     haze linger, then save/load at the held end and compare. Also check whether replacing or
+     stopping the idle removes its effect model. The provisional engine rule holds CLAMP effect
+     tracks until replacement, using authored values throughout; actor idle playback is
+     currently not serialized. No original capture was performed in this run.
+
+## Added 2026-11-15 (Kimball's speech crowd heading, #2526)
+
+213. **Does Kimball's speech crowd face its editor heading?** (P2; #2526;
+    `fnv_ai::carry::marker_heading`, `docs/spec-notes/packages.md` §3.)
+    [documented: #2526 writer brief, main session's fnvtool ai show of FalloutNV.esm]
+    `VHDSpeechNPC01REF` (0012FCDC) and `VHDSpeechNPC02REF` (0012FCE2) have Travel
+    `VHDCivilianIdlePackage` (00133EC3), near editor location, radius 0.
+    [hypothesis, #2526] NVForever makes Travel and standing Guard at an editor location
+    below the existing 16-unit guard-wander cutoff face their placed z rotation.
+    In the original, during Kimball's speech at Hoover Dam cell 16,5, record one crowd
+    member's current package, position and z angle against its placed position/rotation.
+    Move it off its editor spot and reevaluate: does it return and turn to the placed
+    heading? Also check a small-radius standing Guard if a test plugin is available.
+
+## Added 2026-11-15 (the Ranger assassins' drop at the Legate's camp, #2532)
+
+214. **Legate showdown rangers and harmless drops without Allow Falls (#2532).**
+     [documented: supplied main-session fnvtool record brief, 2026-11-15] In the NCR
+     showdown, SCPT 0x001438CA enables 0x001438DA then 0x001438DB when battle state 1,
+     showdownstart 1 and controller 0x001438E3.spawnheroes 1. Their intended Patrol
+     0x001438E8 lacks Allow Falls and starts at VLegateCampRangerRunMarker01REF
+     (0x001438D3), then 02 (0x001438D4), 03 (0x001438D1), 04 (0x001438D2), 05
+     (form ID not supplied). [hypothesis, #2532] An authored downward link within
+     fJumpFallHeightMin is safe without Allow Falls; NVForever now uses that rule
+     if the ordinary route is unavailable (packages.md; actor-jumps.md). In the
+     original, sample both rangers' packages, positions and procedures from enable
+     through marker 01; record where they leave the ledge, land and enter combat.
+     With a synthetic test plugin, compare authored drops at, below and above the
+     damage threshold, with and without Allow Falls. Do harmless drops work without
+     the flag, do damaging ones require it, and is the height measured per link?
+     Separately ask the main session for both rangers' NPC_ PKID/conditions and
+     NAVM triangle/link/drop heights to marker 01 and between markers; no camp
+     navmesh facts or original captures were available to this writer.
+
+## Added 2026-11-15 (L'il Devil's crown, issue #2350)
+
+216. **Does L'il Devil's crown follow the hair colour?** (P3; nif.md §6 "Hair",
+     actors.md §3; #2350.) [documented: issue #2350, supplied `fnvtool esm decode`,
+     `fnvtool nif` and texture measurements] HAIR 0x000987DB `HairRaiderFCat`
+     "L'il Devil" uses `Characters\Hair\HairRaiderFCat.NIF`; Playable and Not Male
+     are set, Fixed Color is not. Its `NoHat` and `Hat` shapes have identical
+     BSShaderPPLightingProperty flags 0x82040101 (Specular, Alpha texture, Hair,
+     Remappable, Z-test), NiAlphaProperty blend + test, and textures
+     `HairRaider01.dds`, `HairRaider01_n.dds`, `HairRaider01_hl.dds`, matching the
+     other ten raider hairs' properties. At the crown, 9% of `NoHat`'s area samples
+     black, opaque diffuse texels (RGB ≈ 0.001, alpha ≈ 0.99); other raider hairs
+     have at most 1% there. The `_hl` texture carries strands there: 2,084 of the
+     2,506 black, opaque diffuse texels have `_hl` luma above 0.08; crown-region
+     luma is about 0.17 against diffuse 0.001, with overall luma correlation 0.97.
+     NVForever multiplies the diffuse by doubled HCLR and draws the model's solid
+     core at alpha ≥ 0.8 [design; `engine/nvforever/src/actors.rs::part_uses`,
+     `engine/nvf-assets/src/nif_spawn.rs::hair_model_cut_out`; provisional tint
+     hypothesis in actors.md §3]. The issue has no reproduction in NVForever or
+     observation of the original [documented: #2350]. The original may take crown
+     colour or brightness from `_hl` [hypothesis, #2350]. In the original's face
+     editor at Doc Mitchell's, select L'il Devil and capture the crown at two very
+     different hair colours, keeping the view and lighting fixed; compare with
+     NVForever at the same colours and view. Does the crown tint with the strands,
+     or stay black? Record both colours and frames in nif.md §6. Consider a shader
+     change only if the original tints it; then compare three or four other hairs
+     before choosing a rule [design, #2350].
+
+## Added 2026-11-16 (the Legate's camp Securitrons and General Oliver, #2794)
+
+217. **At the Legate's camp (House route), once their scripted guards are down, do the
+     four Securitrons fire on General Oliver and the fifth guard?** (P1; #2794,
+     combat-ai.md §10.3, owner-review item 85.) Ours: a faction ally of the player whose
+     Assistance helps allies takes up any fight against the player it sees, so the
+     Securitrons go on to Oliver and Guard05 [hypothesis: whether Assistance counts the
+     player as an ally to help is not documented; the maintainer expects them to help].
+     The scene: after the Legate, the camp trigger enables Oliver
+     (`vHDGeneralOliverRef2` 0x001483F1) and `LegateCampRangerOliverGuard01REF`..`05REF`;
+     `VHDLegateCampSecuritronMarker` 0x00155DC9 enables `LegateCampSecuritron01REF`..`04REF`
+     (0x00155DC2, C3, C4, C1; VHDSecuritronFaction, PlayerFaction Ally; Unaggressive,
+     Brave, Helps Allies). Pick the attack topic (INFO 0x0015993C): its end script runs
+     `StartCombat player` on Oliver and gives each Securitron one of Guard01-04, none
+     Guard05 or Oliver [documented: issue #2794, cited records]. Watch each Securitron's
+     `GetCombatTarget` every second once its guard is dead, and who damages Oliver and
+     Guard05 (their health). Also: does a Securitron help when the player alone fights
+     Oliver before the guards are down (it has its guard then)?
+
 ## Added 2026-11-16 (SayTo's noTargetLookFlag, #2796)
 
 218. **Does `SayTo` with `noTargetLookFlag` 1 turn the speaker to its target?** (P2; #2796,
@@ -2961,3 +3134,4 @@ already talking takes over at once, same topic or another; nothing is queued or 
      into the radio; and one of the McCarran monorail guards' warnings to the player.
      Read his heading (`GetAngle Z`) and `GetHeadingAngle player` before and at the end of
      the line. If he turns, the flag is the wiki's alone (only the target stays still).
+
