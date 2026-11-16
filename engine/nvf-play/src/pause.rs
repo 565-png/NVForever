@@ -611,6 +611,8 @@ pub fn mods_open(paused: &Paused, page: &Page) -> bool {
 
 /// The Mods entry's label [design: NVForever's word].
 const MODS_LABEL: &str = "Mods";
+/// The Console entry's word [design: our own].
+const CONSOLE_LABEL: &str = "Console";
 
 /// The saves the load page lists, newest first, and the chosen one's thumbnail.
 #[derive(Resource, Default)]
@@ -796,14 +798,21 @@ enum Entry {
     Save,
     Load,
     Settings,
+    /// Where the original has Help, under the player's Replace Help With Console tweak: the
+    /// game goes on and the console opens [design: docs/design/tweaks.md].
+    Console,
     /// Only with [`ModsEntry`], before Quit [design].
     Mods,
     Quit,
 }
 
-/// The column's entries, with the Mods entry when `mods` ([`ModsEntry`]).
-fn entries(mods: bool) -> Vec<Entry> {
+/// The column's entries, with the Console entry when `console` (the tweak) and the Mods
+/// entry when `mods` ([`ModsEntry`]).
+fn entries(mods: bool, console: bool) -> Vec<Entry> {
     let mut v = vec![Entry::Continue, Entry::Save, Entry::Load, Entry::Settings];
+    if console {
+        v.push(Entry::Console);
+    }
     if mods {
         v.push(Entry::Mods);
     }
@@ -818,6 +827,7 @@ impl Entry {
             Entry::Save => "Save",
             Entry::Load => "Load",
             Entry::Settings => "Settings",
+            Entry::Console => CONSOLE_LABEL,
             Entry::Mods => MODS_LABEL,
             Entry::Quit => "Quit",
         }
@@ -1043,7 +1053,7 @@ impl PauseLook {
 /// What the keys have on the first page and in the quit question, and what Defaults goes
 /// back to (taken when the settings page is first shown).
 #[derive(Resource, Default)]
-struct PauseView {
+pub struct PauseView {
     main_selected: usize,
     confirm: Option<usize>,
     defaults: Option<Vec<f32>>,
@@ -1094,6 +1104,12 @@ struct PauseView {
 }
 
 impl PauseView {
+    /// [design, #2403] Read-only logical progress for the reports watchdog. Excludes
+    /// hover, dragging and render caches; the caller hashes this without sending text.
+    pub fn progress(&self) -> impl std::fmt::Debug + '_ {
+        (self.main_selected, self.confirm, self.scroll, self.scope, self.focus, self.keep_selected, self.delete_ask, self.dropdown, &self.search.query)
+    }
+
     /// The settings page's window's lines: as set this frame ([`PauseView::set_lines`]), else
     /// the layout's.
     fn lines(&self) -> usize {
@@ -1205,6 +1221,8 @@ struct Drawn {
     states: Vec<f32>,
     /// Explanations replacing disabled rows' saved values.
     disabled: Vec<Option<&'static str>>,
+    /// The words a row's note gives now in place of its own (`crate::settings::set_note_now`).
+    notes: Vec<Option<String>>,
     status: String,
     /// The column's labels and whether each can be taken.
     column: Vec<(&'static str, bool)>,
@@ -1884,7 +1902,13 @@ fn row_note(list: &[Setting], id: RowId, d: &Drawn) -> String {
     use crate::bindings::label;
     let controller = d.device.1;
     let c = match id {
-        RowId::Setting(i) => return list.get(i).map_or_else(String::new, |s| tr(s.note).to_string()),
+        RowId::Setting(i) => {
+            // Other words for a while (`crate::settings::set_note_now`), else the row's own.
+            return match d.notes.get(i).cloned().flatten() {
+                Some(now) => now,
+                None => list.get(i).map_or_else(String::new, |s| tr(s.note).to_string()),
+            };
+        }
         RowId::Control(c) => c,
     };
     match c {
@@ -3053,10 +3077,14 @@ fn choose(
         ResMut<SettingsLayout>,
         Option<Res<crate::ui_colour::CustomColours>>,
     ),
-    (meters, pointed, mut tab_store, mut report): (Query<(&PauseButton, &RelativeCursorPosition)>, Query<(&PointerState, &PauseButton)>, Option<ResMut<SettingsTabStore>>, Option<ResMut<ReportEntry>>),
+    (meters, pointed, mut tab_store, tweaks, mut report): (Query<(&PauseButton, &RelativeCursorPosition)>, Query<(&PointerState, &PauseButton)>, Option<ResMut<SettingsTabStore>>, Option<Res<crate::tweaks::TweakSettings>>, Option<ResMut<ReportEntry>>),
 ) {
     let keys = keys.snapshot();
     use crate::bindings::{Bindings, Input, InputDevice};
+    let console_entry = tweaks.as_ref().is_some_and(|t| t.help_is_console);
+    // The player's tweak: Tab goes back where it steps no tabs (the main page's question
+    // and the load list) [design: docs/design/tweaks.md].
+    let tab_back = tweaks.is_some_and(|t| t.tab_back_in_pause) && keys.just_pressed(KeyCode::Tab);
     use crate::pad::PadInput;
     use crate::settings_view as sv;
     use crate::ui_sounds::{UiEvent, UiMenu, UiSound};
@@ -3070,7 +3098,7 @@ fn choose(
     // pages come from here, and going back shows it again.
     let under_main = main_menu.as_ref().is_some_and(|m| m.open);
     let mods = mods.is_some_and(|m| m.0);
-    let entries = entries(mods);
+    let entries = entries(mods, console_entry);
     // The Mods page goes when its entry does (the mod's tiles were unloaded).
     if *page == Page::Mods && !mods {
         info!("pause menu: no mod page any more, back to the column");
@@ -3680,7 +3708,7 @@ fn choose(
         Page::Main if view.confirm.is_some() => {
             let sel = view.confirm.unwrap_or(2);
             let mut take = None;
-            if keys.any_just_pressed([KeyCode::Escape, KeyCode::Backspace]) || act("back") {
+            if keys.any_just_pressed([KeyCode::Escape, KeyCode::Backspace]) || tab_back || act("back") {
                 take = Some(2);
             } else if let Some(PauseButton::Confirm(i)) = clicked {
                 take = Some(i);
@@ -3786,6 +3814,17 @@ fn choose(
                         *m = Default::default();
                     }
                     *page = Page::Mods;
+                }
+                Some(Entry::Console) => {
+                    info!("pause menu: console (tweak)");
+                    commands.queue(|w: &mut World| {
+                        if let Some(mut c) = w.get_resource_mut::<crate::console::Console>() {
+                            c.open_asked = true;
+                        }
+                    });
+                    if !resume.pending() {
+                        commands.queue(request_resume);
+                    }
                 }
                 Some(Entry::Continue) if !resume.pending() => {
                     commands.queue(request_resume);
@@ -4093,7 +4132,7 @@ fn choose(
             if (keys.just_pressed(KeyCode::Delete) || clicked == Some(PauseButton::Delete) || act("delete")) && *selected < rows {
                 view.delete_ask = Some(*selected);
                 info!("pause menu: delete {}?", menu.list.saves.get(*selected).map(|(p, _)| stem(p)).unwrap_or_default());
-            } else if keys.any_just_pressed([KeyCode::Escape, KeyCode::Backspace]) || clicked == Some(PauseButton::Back) || act("back") {
+            } else if keys.any_just_pressed([KeyCode::Escape, KeyCode::Backspace]) || tab_back || clicked == Some(PauseButton::Back) || act("back") {
                 *page = Page::Main;
             } else if let Some(PauseButton::LoadRow(i)) = clicked {
                 *selected = i;
@@ -4415,6 +4454,7 @@ fn drawn_now(world: &mut World) -> Drawn {
         page => (page, Vec::new(), Vec::new()),
     };
     let disabled: Vec<_> = (0..list.len()).map(|i| world.resource::<Settings>().disabled_status(world, i)).collect();
+    let notes: Vec<_> = (0..list.len()).map(|i| world.resource::<Settings>().note_now(world, i)).collect();
     let lists: Vec<(usize, Vec<String>, String)> = {
         let settings = world.resource::<Settings>();
         (0..list.len()).filter_map(|i| settings.choices(i).map(|c| (i, (c.names)(world), (c.chosen)(world)))).collect()
@@ -4467,10 +4507,11 @@ fn drawn_now(world: &mut World) -> Drawn {
         confirm: view.confirm,
         states,
         disabled,
+        notes,
         status: world.resource::<PauseStatus>().line.clone(),
         under_main: main.is_some(),
         mod_window: page == Page::Mods && world.get_resource::<crate::tiles::mods::ModsPage>().is_some_and(|m| m.mcm_open),
-        column: main.unwrap_or_else(|| entries(world.get_resource::<ModsEntry>().is_some_and(|m| m.0)).iter().map(|e| (e.label(), true)).collect()),
+        column: main.unwrap_or_else(|| entries(world.get_resource::<ModsEntry>().is_some_and(|m| m.0), world.get_resource::<crate::tweaks::TweakSettings>().is_some_and(|t| t.help_is_console)).iter().map(|e| (e.label(), true)).collect()),
         thumb,
         controls: world.get_resource::<crate::bindings::Bindings>().map(|b| b.all().map(|(c, _)| b.text_on(c)).collect()).unwrap_or_default(),
         device: world.get_resource::<crate::bindings::Bindings>().map_or(("Keyboard and Mouse", false), |b| (b.device.name(), b.device == crate::bindings::InputDevice::Controller)),
@@ -4759,6 +4800,26 @@ fn finish_resume(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn report_progress_tracks_selection_and_confirmation_without_hover() {
+        let mut view = super::PauseView::default();
+        let first = format!("{:?}", view.progress());
+        view.report_hover = true;
+        assert_eq!(first, format!("{:?}", view.progress()));
+        view.main_selected = 1;
+        let selected = format!("{:?}", view.progress());
+        assert_ne!(first, selected);
+        view.confirm = Some(0);
+        assert_ne!(selected, format!("{:?}", view.progress()));
+    }
+
+    #[test]
+    fn the_console_entry_stands_where_help_was() {
+        let labels: Vec<&str> = super::entries(true, true).iter().map(|e| e.label()).collect();
+        assert_eq!(labels, ["Continue", "Save", "Load", "Settings", CONSOLE_LABEL, MODS_LABEL, "Quit"]);
+        assert!(!super::entries(false, false).contains(&Entry::Console));
+    }
+
     #[test]
     fn a_form_shades_the_menu_under_it_and_its_panel_hides_it() {
         use super::{form_panel, form_shade, shown_under, FORM_SHADE};
@@ -5490,7 +5551,7 @@ mod tests {
         let mut app = search_app(&SEARCHED, "pa", SettingsFocus::SearchText);
         app.world_mut().resource_mut::<SearchKeys>().0 = vec![SearchKey::Text("n".into())];
         app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyN);
-        let settings = entries(false).iter().position(|e| *e == Entry::Settings).unwrap();
+        let settings = entries(false, false).iter().position(|e| *e == Entry::Settings).unwrap();
         app.world_mut().spawn((Button, PauseButton::Column(settings), PointerState::Pressed));
         app.update();
         assert_eq!(*app.world().resource::<Page>(), Page::Main);
@@ -5646,7 +5707,7 @@ mod tests {
 
     #[test]
     fn the_mods_entry_stands_before_quit_only_when_a_mod_added_one() {
-        let labels = |mods| entries(mods).iter().map(|e| e.label()).collect::<Vec<_>>();
+        let labels = |mods| entries(mods, false).iter().map(|e| e.label()).collect::<Vec<_>>();
         assert_eq!(labels(false), ["Continue", "Save", "Load", "Settings", "Quit"]);
         assert_eq!(labels(true), ["Continue", "Save", "Load", "Settings", "Mods", "Quit"]);
         assert!(Page::Mods.opened_by("Mods"));
@@ -5702,6 +5763,25 @@ mod tests {
         let names: Vec<String> = ["A", "B", "C", "D", "E"].map(String::from).to_vec();
         let d = Drawn { stand_ins: vec![(id, names)], ..default() };
         assert!(note_of(&[], id, &d).starts_with("Stands for: A, B, C and 2 more. "), "{}", note_of(&[], id, &d));
+    }
+
+    /// #2731: a row's note gives other words while its `set_note_now` function says something.
+    #[test]
+    fn a_note_now_stands_in_for_the_rows_own() {
+        let row = Setting { key: "frames", group: "Graphics", label: "Frames", note: "The row's own note.", switches: "", get: |_| false, set: |_, _| {}, slider: None };
+        let d = Drawn::default();
+        assert_eq!(row_note(&[row], RowId::Setting(0), &d), "The row's own note.");
+        let d = Drawn { notes: vec![Some("Words for now.".to_string())], ..default() };
+        assert_eq!(row_note(&[row], RowId::Setting(0), &d), "Words for now.");
+        let d = Drawn { notes: vec![None], ..default() };
+        assert_eq!(row_note(&[row], RowId::Setting(0), &d), "The row's own note.");
+        // Through the registry.
+        let mut app = App::new();
+        crate::settings::add_setting(&mut app, row);
+        crate::settings::set_note_now(&mut app, "frames", |_| Some("Words for now.".to_string()));
+        let settings = app.world().resource::<Settings>();
+        assert_eq!(settings.note_now(app.world(), 0).as_deref(), Some("Words for now."));
+        assert_eq!(settings.note_now(app.world(), 1), None, "no such row");
     }
 
     /// #2377: a note line wider than the page (a word longer than the line, which wrapping
@@ -5876,7 +5956,7 @@ mod tests {
             list.saves.push((PathBuf::from(format!("{name}.nvfsave")), h));
         }
         app.insert_resource(list);
-        let drawn = Drawn { page: Page::Load { selected: 1 }, column: entries(false).iter().map(|e| (e.label(), true)).collect(), device: ("Keyboard and Mouse", false), rumble: true, sensitivity: 1.0, view_w: VIEW_W as u32, ..default() };
+        let drawn = Drawn { page: Page::Load { selected: 1 }, column: entries(false, false).iter().map(|e| (e.label(), true)).collect(), device: ("Keyboard and Mouse", false), rumble: true, sensitivity: 1.0, view_w: VIEW_W as u32, ..default() };
         app.world_mut().run_system_cached_with(|In(d): In<Drawn>, mut commands: Commands, list: Res<LoadList>, glyphs: Res<crate::pad::PadGlyphs>| spawn_page(&mut commands, &d, &PauseLook::plain(), &[], &list, &glyphs), drawn).unwrap();
         let world = app.world_mut();
         let mut rows = world.query::<(&PauseButton, &BorderColor)>();

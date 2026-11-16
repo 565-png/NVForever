@@ -258,6 +258,28 @@ are at the end.
 - Command-line switches: `--viewmodel-fov`
 - Registered in `engine/nvforever/src/settings.rs`
 
+## Gameplay › World
+
+### `grass-fire`: Grass fires
+
+- On the page: On: flamers, incendiary rounds and fire blasts set grass alight; the fire
+  spreads and burns whoever stands in it. Off: fire stays where it hits.
+- In full: On: flamers, incendiary rounds and fire blasts set grass alight; the fire spreads
+  a short way, burns anyone standing in it and goes out, and the grass grows back once you
+  leave the area. Off: fire stays where it hits, as in the original.
+- Registered in `engine/nvf-play/src/grass_fire.rs`
+
+### `sound-cover`: Sounds of the world cover your noise
+
+- On the page: On: while a louder sound plays near you (machines, voices, shots, creatures),
+  the noise you make is not heard. Not in the original.
+- In full: On: when the noise you make (footsteps, your shots) is less than the loudest
+  sound of the world heard where you are (sound markers, machines' and creatures' loops,
+  other people's footsteps, shots and voices, radios), no one hears you; your Sneak still
+  counts against anyone who sees you. The sneak gauges' noise bar marks the cover with a
+  bright square. Off: detection is the original's. Not in the original (#2688).
+- Registered in `engine/nvf-play/src/sound_cover.rs`
+
 ## Display › Screen
 
 ### `resolution`: Resolution
@@ -751,6 +773,9 @@ After the Controls tab's own rows (see the end of this page):
   4x three. More looks smoother and costs a little more latency and graphics memory; 3x and
   4x only where the graphics card offers them (RTX 50 series). Takes effect at once. Only
   with DLSS frame generation. Not in the original.
+- In its place on the page while the frame rate limit divided by the frames shown per real
+  frame is under 60 (#2731), e.g.: 4x at a limit of 144: 36 real frames a second, which can
+  feel choppy. Fewer generated frames, or a limit up to the display's refresh rate, give more.
 - More: docs/design/dlss-frame-generation.md
 - Registered in `engine/nvforever/src/settings.rs`
 
@@ -860,6 +885,31 @@ After the Controls tab's own rows (see the end of this page):
 - More: docs/design/graphics-enhanced.md
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `terrain-height-blend`: Terrain height blending
+
+- On the page: On: where ground textures meet, the new one shows through its brighter stones
+  and clumps first instead of an even fade. Fully painted ground is unchanged.
+- In full: On: where landscape texture layers meet, the change follows each texture's own
+  relief, judged by its brightness against the texture's mean, instead of an even fade
+  along the triangle grid. Ground painted fully, or not at all, looks the same. Off in
+  both presets; not in the original.
+- Command-line switches: `--graphics`, `--graphics-only`
+- More: docs/design/graphics-enhanced.md §3.12
+- Registered in `engine/nvforever/src/settings.rs`
+
+### `terrain-anti-tiling`: Terrain anti-tiling
+
+- On the page: On: ground textures stop repeating as a visible grid, for some GPU time.
+  Off: each repeats every 256 units, as in the original.
+- In full: On: every landscape texture (diffuse and normal map) is read at two or three
+  places offset by a hash of where the ground lies in the world and blended, so its
+  256-unit repeat no longer lines up into a grid; nearby the ground looks like the same
+  texture. Off in both presets; not in the original. Costs extra texture reads where the
+  ground is drawn (layers that do not show here are not read).
+- Command-line switches: `--graphics`, `--graphics-only`
+- More: docs/design/graphics-enhanced.md §3.13
+- Registered in `engine/nvforever/src/settings.rs`
+
 ### `light-shafts`: Sun shafts
 
 - On the page: On: sunlight streams past what stands in front of the sun, stronger the
@@ -886,6 +936,35 @@ After the Controls tab's own rows (see the end of this page):
 - Command-line switches: `--graphics-only`
 - More: docs/design/graphics-enhanced.md
 - Registered in `engine/nvforever/src/settings.rs`
+
+### `smooth-terrain`: Smooth terrain
+
+- On the page: Smooths height steps while keeping bumps and ridges: 2 x 2 or 4 x 4 squares
+  per landscape square, or 4 x 4 near you and 2 x 2 further. Drawing and collision share it.
+  Applies at the next start.
+- In full: [design, #2149, #2676] A list: Off, 2 x 2, 4 x 4 and 4 x 4 near; 4 x 4 by
+  default (smoothing on by the maintainer's decision of 2026-11-13; 4 × 4 and the recipe,
+  detail, bound 8 units and thresholds 2:6, are the contributor's pick from in-game
+  comparisons of 2026-11-15, for the maintainer to confirm). Detail evens out height steps while keeping
+  bumps and ridges; 4 × 4 gives rounder silhouettes, 2 × 2 a quarter of the geometry for
+  weaker machines. 4 x 4 near collides on the 4 × 4 surface and draws each loaded quadrant
+  4 × 4 within 2,048 units of the camera, 2 × 2 (the same surface, every other vertex)
+  beyond 2,560, with no gaps where the two meet. The surface stays within one height step
+  (8 units) of the stored triangles to keep placed objects in contact (the test aids below
+  allow up to 16); actors and objects stand on what is drawn. Off: the landscape's
+  triangles as stored. It takes effect at the next start (loading a save starts the game
+  again), so drawn ground and collision always change together. The INI's older `1`/`0`
+  (#2149's on/off) reads as 4 x 4 and Off. Not in the original. Kept in the INI as `off`,
+  `2x2`, `4x4` or `4x4-near`. For comparing recipes, the test aids
+  `NVF_PLAY_TEST_SMOOTH_MODE` (`interpolate`, `fit`, `detail`: a fit that evens out the
+  height steps but keeps bumps and ridges), `NVF_PLAY_TEST_SMOOTH_SUBDIV` (`2`, `4`, over
+  the row's level), `NVF_PLAY_TEST_SMOOTH_BOUND` (0 to 16 units),
+  `NVF_PLAY_TEST_SMOOTH_DETAIL` (detail's thresholds, `2:6` by default) and
+  `NVF_PLAY_TEST_SMOOTH_NEAR` (4 x 4 near's distance, 2048 by default) override how it
+  smooths for one run without changing this row or its saved default.
+- Command-line switches: `--smooth-terrain <off|2x2|4x4|4x4-near>`, `--no-smooth-terrain`
+- More: docs/spec-notes/world.md §3 "Smoothing"
+- Registered in `engine/nvforever/src/settings.rs` (state in `engine/nvf-play/src/smooth_terrain.rs`)
 
 ## Graphics › Distance
 
@@ -988,6 +1067,18 @@ After the Controls tab's own rows (see the end of this page):
 - On the page: On: the navmesh near the camera and the walking NPCs' paths are drawn.
 - Command-line switches: `--show-navmesh`
 - Registered in `engine/nvforever/src/settings.rs`
+
+### `terrain-wireframe`: Terrain wireframe
+
+- On the page: On: draw triangle edges over the loaded landscape to inspect its shape.
+  Changes immediately. Distant terrain is not outlined.
+- In full: Off by default. On: every triangle edge of the loaded landscape, as it is drawn
+  and collided (smoothed or stored), is drawn as a thin magenta line over the ground, for
+  looking at the shape smoothing gives it. Cells that load while it is on are outlined as
+  they come; nothing is built or kept while it is off. Not in the original.
+- Command-line switches: `--terrain-wireframe`
+- More: docs/spec-notes/world.md §3 "Smoothing"
+- Registered in `engine/nvforever/src/settings.rs` (drawn by `engine/nvforever/src/terrain_wireframe.rs`)
 
 ### `scope-3d`: 3D scopes (test)
 

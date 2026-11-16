@@ -2562,11 +2562,11 @@ fn lines_said_to_someone_turn_the_two_to_each_other() {
     call(&mut g, 0x1034, NPC1_REF, &[r(player.0), r(GREETING)]);
     assert_eq!(turns(&g), vec![(a, player, true, true), (player, a, false, false)]);
     assert!(g.facings().iter().all(|f| f.info == FormId(A_HIGH)));
-    // noTargetLookFlag 1: the target is not made to look; the speaker still turns.
+    // noTargetLookFlag 0 given: the same turns.
     let mut g = game(&f);
     set_global(&mut g, G_GATE, 5.0);
-    call(&mut g, 0x1034, NPC1_REF, &[r(player.0), r(GREETING), n(0.0), n(1.0)]);
-    assert_eq!(turns(&g), vec![(a, player, true, true)]);
+    call(&mut g, 0x1034, NPC1_REF, &[r(player.0), r(GREETING), n(0.0), n(0.0)]);
+    assert_eq!(turns(&g), vec![(a, player, true, true), (player, a, false, false)]);
     // Say has no listener: nobody turns.
     let mut g = game(&f);
     set_global(&mut g, G_GATE, 5.0);
@@ -2589,6 +2589,27 @@ fn lines_said_to_someone_turn_the_two_to_each_other() {
     }
     assert_eq!(g.speech.first().map(|s| s.speaker), Some(b), "the reply is said");
     assert!(turns(&g).is_empty());
+}
+
+/// SayTo with `noTargetLookFlag` 1 turns nobody, body or head, whoever the target is
+/// (#2796, docs/design/dialogue-play.md §9.2): Curtis's radio call to the player.
+#[test]
+fn say_to_with_no_target_look_turns_nobody() {
+    let f = fixture();
+    let r = |id: u32| ArgValue::Value(Value::Ref(id));
+    let n = |x: f64| ArgValue::Value(Value::Num(x));
+    for target in [FormId::PLAYER_REF.0, NPC2_REF] {
+        let mut g = game(&f);
+        set_global(&mut g, G_GATE, 5.0);
+        call(&mut g, 0x1034, NPC1_REF, &[r(target), r(GREETING), n(0.0), n(1.0)]);
+        assert!(g.is_talking(FormId(NPC1_REF)), "the line is said to {target:08X}");
+        assert_eq!(g.speech[0].target, Some(FormId(target)));
+        assert!(g.facings().is_empty(), "nobody turns for the line to {target:08X}");
+    }
+    // A game saved while such a line was said before #2796 (look "Speaker") reads it as
+    // the new rule.
+    let old: fnv_game::game::LineLook = serde_json::from_str("\"Speaker\"").unwrap();
+    assert_eq!(old, fnv_game::game::LineLook::Nobody);
 }
 
 #[test]
@@ -3258,6 +3279,24 @@ mod edits {
         assert_eq!(n(&mut h, "TopicSetPriority TopicSkill"), 100.0);
         assert_eq!(entries(&mut h, "TopicInfoGetResponseStrings LineA04"), vec!["Back again"]);
     }
+}
+
+#[test]
+fn the_no_auto_continue_tweak_holds_each_response_for_a_click() {
+    // bNoAutoContinueDialog (docs/design/tweaks.md): time alone never moves the line on.
+    let f = fixture();
+    let mut g = game(&f);
+    g.tweaks.no_auto_continue_dialogue = true;
+    g.start_dialogue(actor(), None).unwrap();
+    g.frames(600);
+    let line = g.dialogue.as_ref().and_then(|c| c.line.clone()).unwrap();
+    assert_eq!(line.response, 0, "still the first response after ten seconds");
+    // A click goes on to the second response, which waits in its turn.
+    assert!(g.skip_response());
+    g.frames(600);
+    assert_eq!(g.dialogue.as_ref().and_then(|c| c.line.as_ref()).map(|l| l.response), Some(1));
+    assert!(g.skip_response());
+    assert_eq!(offered(&g), vec![T_ASK, T_BYE]);
 }
 
 /// The editor's dialogue debugger (docs/design/editor.md §14): its winner is the line

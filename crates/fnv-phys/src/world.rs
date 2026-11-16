@@ -331,6 +331,12 @@ impl PreparedTerrain {
         PreparedTerrain::build(1.0 / params.units_per_metre, grid, heights)
     }
 
+    /// The terrain of the cell at `grid` on its landscape surface (`surface`: the LAND grid
+    /// as stored or smoothed, `fnv_world::land_surface`), for a world with `params`.
+    pub fn from_surface(params: &PhysParams, grid: (i32, i32), surface: &fnv_world::land_surface::Surface) -> PreparedTerrain {
+        PreparedTerrain { grid, collider: crate::terrain::collider_surface(grid, surface, 1.0 / params.units_per_metre) }
+    }
+
     fn build(k: f32, grid: (i32, i32), heights: &[f32]) -> PreparedTerrain {
         PreparedTerrain { grid, collider: crate::terrain::collider(grid, heights, k) }
     }
@@ -822,6 +828,12 @@ impl PhysWorld {
     /// at the centre, falling linearly to 0 at the radius]. A settling ragdoll it strikes
     /// stops settling (`PhysWorld::settle_ragdoll`). Returns how many moved.
     pub fn push_dynamic(&mut self, center: [f32; 3], radius: f32, speed: f32) -> usize {
+        self.push_dynamic_but(center, radius, speed, &|_| false)
+    }
+
+    /// [`World::push_dynamic`] leaving out the bodies of the references `spared` names
+    /// (by FormID).
+    pub fn push_dynamic_but(&mut self, center: [f32; 3], radius: f32, speed: f32, spared: &dyn Fn(u32) -> bool) -> usize {
         let k = self.k;
         let c = vec3(center) * k;
         let r = (radius * k).max(1e-4);
@@ -833,6 +845,9 @@ impl PhysWorld {
         let mut struck_ragdolls = Vec::new();
         for (h, b) in self.w.bodies.iter_mut() {
             if !b.is_dynamic() {
+                continue;
+            }
+            if matches!(Owner::decode(b.user_data), Some(Owner::Ref { form_id, .. }) if spared(form_id)) {
                 continue;
             }
             let d = b.position().translation - c;

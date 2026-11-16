@@ -723,10 +723,9 @@ impl Runtime {
         let stand_in = World::new(sim.forms, sim.refs, world.config());
         self.game = Game::restore(data, world, cfg, &s)?;
         self.game.put_session(session);
-        // The engine's seat is not saved, so a load stands the player up
-        // (docs/design/save-load.md §3.4); the saved furniture use goes with it, or
-        // GetSitting and its kin go on reading the seat (#1573).
-        self.game.set_furniture_use(FormId::PLAYER_REF, None);
+        // The engine's seats are not saved, so a load stands the player and every NPC up
+        // (docs/design/save-load.md §3.4): `Game::restore` clears each saved furniture use,
+        // or GetSitting and its kin go on reading the seat (#1573, #2797).
         let mut world = std::mem::replace(&mut self.game.world, stand_in);
         // The world's session edits (game settings, leveled lists, base containers changed
         // by script) last for the run, not in the save (`fnv_sim::world::WorldSession`).
@@ -1403,6 +1402,10 @@ impl EffectCtx for PlayCtx<'_> {
         self.display(form)
     }
 
+    fn tweaks(&self) -> Option<&fnv_game::tweaks::Tweaks> {
+        Some(&self.game.tweaks)
+    }
+
     fn is_actor_base(&self, base: FormId) -> bool {
         fnv_game::ai::is_actor_base(self.sim.world.forms, base)
     }
@@ -1464,6 +1467,11 @@ impl EffectCtx for PlayCtx<'_> {
 
     fn player_heading_deg(&self) -> f32 {
         self.sim.world.peek(FormId::PLAYER_REF).map_or(0.0, |s| s.rot[2].to_degrees().rem_euclid(360.0))
+    }
+
+    fn player_pitch_deg(&self) -> Option<f32> {
+        // The simulation's X angle is positive looking down (`player::sim_pitch`).
+        self.sim.world.peek(FormId::PLAYER_REF).map(|s| -s.rot[0].to_degrees())
     }
 
     fn destination(&self, cell: Option<FormId>) -> Destination {
@@ -2219,6 +2227,12 @@ pub(crate) fn run_scripts(
             if crate::aid::read_book(rt, item) {
                 continue;
             }
+            // A poison goes on the weapon in hand (`fnv_game::weapon_poison`).
+            if rt.game.is_poison(item) {
+                crate::aid::use_poison(rt, item);
+                continue;
+            }
+            rt.game.forget_poison_question();
             let r = crate::aid::use_item(rt, item, limb);
             info!("script: the player used {item}: {} effect(s) started", r.effects.len());
         }
@@ -2274,11 +2288,14 @@ pub(crate) fn run_scripts(
         // since the last frame before it, again every frame, so a countdown kept in an
         // OnTrigger block ran down while the game stood still (Hidden Valley's virus
         // purge, issue #2455) [hypothesis: OnTrigger is a game-mode block, as GameMode's
-        // are held under menus, scripts.md §7.7].
+        // are held under menus, scripts.md §7.7]. This frame's loading state is set first:
+        // on the first frame after a loading screen the triggers are looked at before the
+        // GameMode blocks run (a trigger waiting for its model holds its script,
+        // `script_trigger::update`, #2571).
+        rt.game.loading = loading;
         if !rt.game.paused() {
             crate::script_trigger::update(rt, &play, &phys, player_capsule);
         }
-        rt.game.loading = loading;
         rt.game.cfg.frame_seconds = dt;
         // Scripts' GetFallTimeElapsed (`fnv_game::nvse_gaps`).
         rt.game.gaps.air_times = phys
@@ -2408,7 +2425,9 @@ pub(crate) fn run_scripts(
                 if here {
                     info!("script: the player is moved to where they stand ({:?}); no travel", t.feet);
                 } else {
-                    info!("script: travel to {:?} / {:?} at {:?} heading {:.1}", t.interior, t.world, t.feet, t.heading_deg);
+                    // `+ 0.0` prints a level -0.0 as 0.0.
+                    let pitch = t.pitch_deg.map_or_else(|| "kept".to_string(), |p| format!("{:.1}", p + 0.0));
+                    info!("script: travel to {:?} / {:?} at {:?} heading {:.1} pitch {pitch}", t.interior, t.world, t.feet, t.heading_deg);
                     if loading_menu {
                         // EnableLoadingMenu before the move: its screen is one for
                         // anywhere, not the destination's [documented: GECK wiki
@@ -2656,7 +2675,7 @@ pub fn asks_nothing(buttons: usize) -> bool {
     buttons <= 1
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "report-test-support"))]
 impl ScriptState {
     /// A runtime over an empty load order, for tests of what works the open menu: nothing
     /// has run, no menu is open.
@@ -2706,9 +2725,19 @@ impl ScriptState {
     }
 
     /// The player answered the open menu: it closes after this frame's scripts.
+    #[cfg(test)]
     pub(crate) fn answered(&self) -> bool {
         self.rt.as_ref().is_some_and(|rt| rt.closing.is_some())
     }
+}
+
+/// [design, #2403] Empty-load-order runtime for detector regressions only.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_progress_fixture(menu: u16) -> ScriptState {
+    let mut s = ScriptState::over_no_plugins();
+    s.rt.as_mut().unwrap().game.menu = Some(menu);
+    s
 }
 
 #[cfg(test)]
@@ -2785,6 +2814,23 @@ mod restore_tests {
         rt.restore_save(&mut sim, save).unwrap();
         assert_eq!(sim.world.roll_level(), 20);
         assert_eq!(sim.world.config().player_level, 1);
+    }
+
+    /// #2797 (and #1573 for the player): a save made while an NPC and the player sat
+    /// loads with both standing in the game's state; the engine reports a new seat.
+    #[test]
+    fn a_load_stands_every_seated_actor_up() {
+        use fnv_game::game::FurnitureUse;
+        let (mut rt, mut sim, _) = in_fade();
+        let seat = FurnitureUse { reference: MARKER, marker_id: 11, state: 3 };
+        rt.game.set_furniture_use(ACTOR, Some(seat));
+        rt.game.set_furniture_use(FormId::PLAYER_REF, Some(seat));
+        let save = with_world(&mut rt, &mut sim, |rt| rt.game.snapshot());
+        assert_eq!(save.extra[&ACTOR].furniture, Some(seat));
+        rt.restore_save(&mut sim, save).unwrap();
+        assert_eq!(rt.game.furniture_use(ACTOR), None, "the NPC stands");
+        assert_eq!(rt.game.furniture_use(FormId::PLAYER_REF), None, "the player stands");
+        assert!(!rt.game.furniture_used_by_other(FormId::PLAYER_REF, MARKER), "the seat is free");
     }
 }
 

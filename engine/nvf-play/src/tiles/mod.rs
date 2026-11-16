@@ -272,7 +272,9 @@ struct HudTiles<'w> {
     target: Option<Res<'w, crate::activate::Target>>,
     bindings: Option<Res<'w, crate::bindings::Bindings>>,
     enemy: Option<Res<'w, crate::hud_target::HudTarget>>,
+    vats: Option<Res<'w, crate::vats_mode::VatsMode>>,
     aim_hostile: Option<Res<'w, crate::hud_target::AimHostile>>,
+    tweaks: Option<Res<'w, crate::tweaks::TweakSettings>>,
     limbs: Option<Res<'w, crate::hud_limbs::Indicator>>,
     player_limbs: Option<Res<'w, crate::combat::PlayerLimbs>>,
     breath: Option<Res<'w, crate::drowning::PlayerBreath>>,
@@ -305,7 +307,9 @@ impl HudTiles<'_> {
         // held camera and weapon wheel hide the corner HUD and its meters [design].
         let corners = playing && !locks.movement && !self.control.as_ref().is_some_and(|c| c.portrait.is_some()) && !driven && !wheel;
         let weapon = self.combat.as_ref().map(|c| c.hud_weapon(&self.sim)).unwrap_or_default();
-        let enemy = self.enemy.as_ref().and_then(|e| e.0.as_ref()).filter(|e| e.health < 1.0);
+        // [design, #2659] Classic targets show even at full health, through playback.
+        let classic = self.vats.as_ref().is_some_and(|v| v.style() == crate::vats_classic::VatsStyle::Classic && v.active());
+        let enemy = self.enemy.as_ref().and_then(|e| e.0.as_ref()).filter(|e| classic || e.health < 1.0);
         // reticle::draw: the prompt also goes under true sights/the scope, and when
         // the enemy bar names this target; only the crosshair obeys movement [design].
         let reticle = playing && !creating && !driven && !wheel && !self.sights.as_ref().is_some_and(|s| s.0) && !self.scope.as_ref().is_some_and(|s| s.on);
@@ -333,9 +337,9 @@ impl HudTiles<'_> {
             root,
             aiming: playing && self.zoom.as_ref().is_some_and(|z| z.aimed),
             corners,
-            sneak: corners && self.control.as_ref().is_some_and(|c| c.sneak),
-            reticle: reticle && !locks.movement,
-            enemy: corners && enemy.is_some(),
+            sneak: corners && self.control.as_ref().is_some_and(|c| c.sneak) && !self.tweaks.as_ref().is_some_and(|t| t.no_sneak_label),
+            reticle: reticle && !locks.movement && !self.tweaks.as_ref().is_some_and(|t| t.crosshair_hidden),
+            enemy: (corners || (classic && self.bars.as_ref().is_some_and(|b| b.enemy_shown))) && enemy.is_some(),
             quests: notices && quest.is_some() && !location,
             messages: notices && self.corner.as_ref().is_some_and(|c| c.showing().is_some()),
             subtitles: {
@@ -440,7 +444,7 @@ impl HudTiles<'_> {
             health: self.bars.as_ref().map_or(1.0, |v| f64::from(v.health)),
             action_points: self.bars.as_ref().map_or(1.0, |v| f64::from(v.action_points)),
             condition: weapon.condition.map(f64::from),
-            ammo: crate::hud::ammo_text(weapon.ammo),
+            ammo: crate::hud::ammo_text(self.vats.as_ref().map_or(weapon.ammo, |v| v.displayed_ammo(weapon.ammo))),
             radiation: fnv_game::functions::actor_value(game, fnv_sim::FormId::PLAYER_REF, fnv_game::aid::RAD_LEVEL).unwrap_or(0.0),
             prompt: prompt.as_ref().map(|p| fnv_game::ui_hud::Prompt {
                 name: p.name.clone(),
@@ -451,6 +455,7 @@ impl HudTiles<'_> {
                 lock_text: self.target.as_ref().and_then(|t| t.0.as_ref()).map_or_else(|| "Locked".into(), |t| {
                     match t.action {
                         crate::activate::outcome::Action::Locked { level } => format!("[Locked - {}]", crate::activate::outcome::lock_text(level)),
+                        crate::activate::outcome::Action::UsePassword => "[Locked - Use Password]".into(),
                         _ => "Locked".into(),
                     }
                 }),
@@ -458,7 +463,7 @@ impl HudTiles<'_> {
                     .target
                     .as_ref()
                     .and_then(|t| t.0.as_ref())
-                    .is_some_and(|t| matches!(t.action, crate::activate::outcome::Action::Locked { .. })),
+                    .is_some_and(|t| matches!(t.action, crate::activate::outcome::Action::Locked { .. } | crate::activate::outcome::Action::UsePassword)),
                 // Only the two captured heights; further lines/wrapping await text
                 // layout [hypothesis: hud.md §14.3; design: widths deferred].
                 height: if p.name.lines().count() > 1 { 80.0 } else { 42.0 },
@@ -466,16 +471,21 @@ impl HudTiles<'_> {
             marks: self.compass.as_ref().map_or_else(Vec::new, |view| {
                 view.0
                     .iter()
+                    // The tile HUD has no door icon: the Show Doors on Compass tweak's marks
+                    // are the hand-built HUD's.
+                    .filter(|(kind, _)| *kind != crate::compass::Mark::Door)
                     .map(|(kind, offset)| {
                         use crate::compass::Mark;
                         use fnv_game::ui_hud::MarkKind;
                         fnv_game::ui_hud::CompassMark {
                             kind: match kind {
-                                Mark::Actor => MarkKind::Actor,
+                                Mark::Actor | Mark::Companion => MarkKind::Actor,
                                 Mark::Hostile => MarkKind::Hostile,
                                 Mark::Place => MarkKind::Place,
                                 Mark::Found => MarkKind::Found,
                                 Mark::Quest => MarkKind::Quest,
+                                Mark::Player => MarkKind::Player,
+                                Mark::Door => MarkKind::Place,
                             },
                             heading: 139.0 + f64::from(*offset), // [observed: hud.md §14.5].
                             distance: 1.0,                       // [hypothesis: hud.md §14.6; drawing stores no distances].
