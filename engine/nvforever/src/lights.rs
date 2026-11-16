@@ -504,19 +504,31 @@ pub struct LightRig {
 fn bind_model_lights(
     mut commands: Commands,
     rigs: Query<(Entity, &LightRig)>,
-    new_rigs: Query<(), Added<LightRig>>,
-    new_lights: Query<(), Added<PointLight>>,
+    new_rigs: Query<(Entity, &LightRig), Added<LightRig>>,
+    new_lights: Query<Entity, (Added<PointLight>, With<ModelDrivenLight>)>,
     mut lights: Query<(Entity, &mut ModelDrivenLight), With<PointLight>>,
 ) {
     if new_rigs.is_empty() && new_lights.is_empty() {
         return;
     }
-    for (root, rig) in &rigs {
+    for (root, rig) in &new_rigs {
         let Some((e, mut l)) = lights.iter_mut().find(|(_, l)| l.reference == rig.reference && l.root.is_none()) else { continue };
-        l.root = Some(root);
-        commands.entity(e).insert((ChildOf(rig.anchor), l.light.local));
-        debug!("model lights: 0x{:08X} light {} hangs from {}", rig.reference, l.light.name, l.light.parent.as_deref().unwrap_or("the root"));
+        bind_model_light(&mut commands, e, &mut l, root, rig);
     }
+    // A dormant modeled light can resume after its rig was loaded. Unrelated
+    // muzzle/fire lights must not cause a scan of all rigs and modeled lights.
+    for e in &new_lights {
+        let Ok((_, mut l)) = lights.get_mut(e) else { continue };
+        if l.root.is_some() { continue; }
+        let Some((root, rig)) = rigs.iter().find(|(_, rig)| rig.reference == l.reference) else { continue };
+        bind_model_light(&mut commands, e, &mut l, root, rig);
+    }
+}
+
+fn bind_model_light(commands: &mut Commands, entity: Entity, light: &mut ModelDrivenLight, root: Entity, rig: &LightRig) {
+    light.root = Some(root);
+    commands.entity(entity).insert((ChildOf(rig.anchor), light.light.local));
+    debug!("model lights: 0x{:08X} light {} hangs from {}", rig.reference, light.light.name, light.light.parent.as_deref().unwrap_or("the root"));
 }
 
 /// Colour the model-driven lights by their rig's playing clip: the diffuse key times
@@ -749,6 +761,44 @@ pub struct SpawnedLight {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foreign_point_light_does_not_rebind_models_and_cold_modeled_light_still_binds() {
+        let mut app = App::new();
+        app.add_systems(Update, bind_model_lights);
+        let anchor = app.world_mut().spawn(Transform::IDENTITY).id();
+        let root = app.world_mut().spawn(LightRig { reference: 42, anchor }).id();
+        let model = || ModelDrivenLight {
+            reference: 42, root: None,
+            light: nvf_assets::model::ModelLight {
+                name: "AuthoredLight".into(), parent: None,
+                local: Transform::from_xyz(1.0, 2.0, 3.0), diffuse: [1.0; 3], dimmer: 1.0,
+            },
+        };
+        let established = app.world_mut().spawn((PointLight::default(), model())).id();
+        app.update();
+        assert_eq!(app.world().get::<ModelDrivenLight>(established).unwrap().root, Some(root));
+        let parent = app.world().get::<ChildOf>(established).unwrap().parent();
+        // Leave a deferred unbound model in an existing archetype. A foreign point
+        // light is not a model/rig publication event and must not trigger its bind.
+        app.world_mut().get_mut::<ModelDrivenLight>(established).unwrap().root = None;
+        let foreign = app.world_mut().spawn(PointLight::default()).id();
+        app.update();
+        assert_eq!(app.world().get::<ModelDrivenLight>(established).unwrap().root, None);
+        assert_eq!(app.world().get::<ChildOf>(established).unwrap().parent(), parent);
+        assert!(app.world().get::<ModelDrivenLight>(foreign).is_none());
+        // The actual off->on publication is eligible even with an older rig.
+        app.world_mut().entity_mut(established).remove::<PointLight>();
+        app.update();
+        app.world_mut().entity_mut(established).insert(PointLight::default());
+        app.update();
+        assert_eq!(app.world().get::<ModelDrivenLight>(established).unwrap().root, Some(root));
+        assert_eq!(app.world().get::<ChildOf>(established).unwrap().parent(), anchor);
+        let later = app.world_mut().spawn((PointLight::default(), model())).id();
+        app.update();
+        assert_eq!(app.world().get::<ModelDrivenLight>(later).unwrap().root, Some(root));
+        assert_eq!(app.world().get::<ChildOf>(later).unwrap().parent(), anchor);
+    }
 
     #[test]
     fn flicker_and_pulse_stay_within_the_light() {

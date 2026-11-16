@@ -28,6 +28,10 @@ edit; it remains owned by its cell/reference and is removed with that owner.
 Carriers are excluded from model-root consumers, and streaming's emitting-light
 statistics remain separate from registration of a non-emitting owner.
 
+[design] Model binding is triggered by newly published rigs or newly emitting
+modeled point lights. Foreign transient point lights do not trigger a full rig/light
+binding scan. A resumed modeled light can bind to an already-loaded rig.
+
 [design] Light-backed external emittance refreshes from the same canonical fields,
 including when the hour/weather does not change. A placed light with an emittance
 source keeps its base color separate from the source multiplier, so repeated updates
