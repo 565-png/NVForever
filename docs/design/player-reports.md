@@ -278,7 +278,7 @@ per unchanged lock. The detectors are registered only while reports are enabled.
 | path failure | pathfinding fails 3 times in a row for one actor |
 | script loop | one script runs > 5 ms in a frame, or the same script errors 100 times |
 | hitch | a frame > 250 ms outside a load |
-| slow load | a load > 20 s |
+| slow load | a load > 20 s; it says where the time went: each wait's end, the longest frame, the files read and the time in the reads (docs/design/loading-screen.md §1 step 7, #2407) |
 | memory | RAM or VRAM within 10 % of the budget |
 | missing asset | the first failure of each path |
 | save trouble | a save that fails to write, or a load that falls back (#1360) |
