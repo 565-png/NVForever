@@ -99,6 +99,20 @@ pub fn winnings_level(earnings: i64, max: u32) -> i32 {
     ((earnings * 4) / max as i64).clamp(0, 3) as i32
 }
 
+/// Source-name SetCasinoWinningsLevel; the same saved standing as the getter and
+/// the table opening consumer (blackjack.md §4), independent of net earnings.
+pub(crate) fn set_winnings_level(g: &mut Game, args: &[fnv_script::vm::XVal]) -> Result<fnv_script::vm::XVal, String> {
+    use fnv_script::vm::XVal;
+    let casino = args.first().and_then(|v| v.value().ok()?.as_form()).map(FormId).ok_or("casino is not a form")?;
+    let level = args.get(1).ok_or("winnings level is missing")?.num().map_err(|e| e.to_string())?;
+    if !g.data.casinos.contains_key(&casino) { return Err("not a casino".into()); }
+    if !level.is_finite() || level.fract() != 0.0 || !(0.0..=4.0).contains(&level) {
+        return Err("winnings level must be an integer from 0 to 4".into());
+    }
+    g.player.casino_levels.insert(casino, level as i32);
+    Ok(XVal::Num(0.0))
+}
+
 /// Add a round's net to the player's earnings at a casino and set the winnings level the
 /// scripts read (GetCasinoWinningsLevel). The new earnings.
 pub fn add_earnings(g: &mut Game, casino: FormId, net: i64, max: u32) -> i64 {

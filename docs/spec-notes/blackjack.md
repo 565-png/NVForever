@@ -102,6 +102,21 @@ Laid out in `schemas/fnv/objects.json` [documented: xEdit wbDefinitionsFNV.pas]:
 
 ## 4. Winnings and bans
 
+[documented] `SetCasinoWinningsLevel casino level` sets a casino's winnings
+level, with an integer parameter in 0..4. Source:
+[GECK](https://geckwiki.com/index.php?title=SetCasinoWinningsLevel).
+
+[design] Source-name calls replace the existing saved per-casino level read by
+GetCasinoWinningsLevel and the casino opening/ban consumer. Net earnings remain
+unchanged, so lowering a level does not bypass an earnings-based ban. Subsequent
+rounds retain the existing monotonic advancement rule. Other casinos and the
+no-casino-bans option retain their existing behavior.
+
+[hypothesis] Invalid casino forms, missing arguments, nonfinite numbers and
+nonintegral/out-of-range levels fail without changing casino state. Native
+invalid-input behavior and interaction with the original game's quest scripts
+remain unobserved. Source-name admission does not admit native numeric encoding.
+
 - The player's earnings at each casino are kept with the game: the net chips won there
   over every round [documented: GECK wiki SetCasinoBan, GetCasinoWinnings].
 - A casino bans the player when the earnings reach its max winnings: the winnings level is

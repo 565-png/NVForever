@@ -248,6 +248,46 @@ fn casino_chip_and_winnings() {
 }
 
 #[test]
+fn casino_level_source_reaches_the_table_ban_and_saved_standing_without_changing_earnings() {
+    use fnv_game::casino::{opening, Closed};
+    let f = fixture(); let mut g = game(&f);
+    g.player.casino_levels.insert(FormId(0xABC), 2);
+    for level in 0..=4 {
+        q(&mut g, &format!("SetCasinoWinningsLevel TestCasino {level}"));
+        assert_eq!(n(&mut g, "GetCasinoWinningsLevel TestCasino"), f64::from(level));
+        assert_eq!(opening(&g, FormId(CSNO), 10, 1000), if level == 4 { Err(Closed::Banned) } else { Ok(()) });
+        assert_eq!(g.player.casino_earnings.get(&FormId(CSNO)), None);
+        assert_eq!(g.player.casino_levels[&FormId(0xABC)], 2);
+    }
+    let saved = g.checked_snapshot().unwrap();
+    let world = World::restore(&f.forms, &f.refs, &saved.sim).unwrap();
+    let mut back = Game::restore(&f.data, world, g.cfg, &saved).unwrap();
+    assert_eq!(n(&mut back, "GetCasinoWinningsLevel TestCasino"), 4.0);
+    assert_eq!(opening(&back, FormId(CSNO), 10, 1000), Err(Closed::Banned));
+    q(&mut back, "SetCasinoWinningsLevel TestCasino 1");
+    assert_eq!(opening(&back, FormId(CSNO), 10, 1000), Ok(()));
+    fnv_game::casino::add_earnings(&mut back, FormId(CSNO), 1000, 1000);
+    q(&mut back, "SetCasinoWinningsLevel TestCasino 0");
+    assert_eq!(back.player.casino_earnings[&FormId(CSNO)], 1000);
+    assert_eq!(opening(&back, FormId(CSNO), 10, 1000), Err(Closed::Banned), "earnings ban remains");
+    back.tweaks.no_casino_bans = true;
+    assert_eq!(opening(&back, FormId(CSNO), 10, 1000), Ok(()));
+}
+
+#[test]
+fn casino_level_source_rejects_invalid_forms_and_levels_without_mutating_standing() {
+    let f = fixture(); let mut g = game(&f);
+    q(&mut g, "SetCasinoWinningsLevel TestCasino 2");
+    for args in ["TestNote 4", "0 4", "TestCasino -1", "TestCasino 5", "TestCasino 1.5", "TestCasino (Pow10 400)", "TestCasino"] {
+        let before = g.checked_snapshot().unwrap();
+        let result = g.run_query(&format!("Begin Function {{ }}\nSetCasinoWinningsLevel {args}\nEnd\n"), RunCtx::default());
+        assert!(result.is_err(), "{args}");
+        assert_eq!(g.player.casino_levels, before.player.casino_levels);
+        assert_eq!(g.player.casino_earnings, before.player.casino_earnings);
+    }
+}
+
+#[test]
 fn terminal_menu_items() {
     let f = fixture();
     let mut g = game(&f);
