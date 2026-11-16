@@ -48,6 +48,9 @@ pub fn apply(ctx: &egui::Context) {
     .into();
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
     style.spacing.button_padding = egui::vec2(12.0, 6.0);
+    // Text is not selectable: a drag over a list (the Mods page) painted rows of gold
+    // selection. Text boxes keep their own selection.
+    style.interaction.selectable_labels = false;
     let v = &mut style.visuals;
     *v = egui::Visuals::dark();
     // egui's dark theme thickens every glyph's edges (2c - c^2, about gamma 0.5), which suits

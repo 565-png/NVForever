@@ -972,7 +972,12 @@ impl App {
                         if ui.add_enabled(!base, egui::Checkbox::without_text(&mut e.active)).changed() {
                             self.mods_dirty = true;
                         }
-                        ui.label(&e.name);
+                        // Clicking the name turns the plugin on or off, as its box does.
+                        let name = ui.add(egui::Label::new(&e.name).sense(Sense::click()));
+                        if !base && name.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            e.active = !e.active;
+                            self.mods_dirty = true;
+                        }
                         if !present.is_empty() && !present.contains(&e.name.to_ascii_lowercase()) {
                             ui.label(RichText::new("missing").small().color(BAD));
                         }
