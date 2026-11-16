@@ -1421,7 +1421,7 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 
 [[scenario]]
 name = "sun-shadows-performance"
-source = "docs/design/frame-rate-audit.md §9, §10 and §11 (nvforever shadow_rate.rs, shadow_anchor.rs, #2062, #2063, #NNNN): the sun's cascades are snapped to a grid anchored near the camera; on Quality the sun's farther cascades keep their maps on a staggered schedule; the settings page's Sun shadows row goes to Performance and back to Quality while the game runs: two cascades, the sun's shadow maps kept on alternate frames, three staggered cascades again, without a rendering error"
+source = "docs/design/frame-rate-audit.md §9, §10 and §11 (nvforever shadow_rate.rs, shadow_anchor.rs, #2062, #2063, #2833): the sun's cascades are snapped to a grid anchored near the camera; on Quality the sun's farther cascades keep their maps on a staggered schedule; the settings page's Sun shadows row goes to Performance and back to Quality while the game runs: two cascades, the sun's shadow maps kept on alternate frames, three staggered cascades again, without a rendering error"
 areas = ["renderer", "graphics", "settings"]
 paths = [
   "engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/shadow_anchor.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/player_body.rs",

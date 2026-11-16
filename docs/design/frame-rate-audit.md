@@ -1155,7 +1155,7 @@ The owner's settings (SMAA, Sun shadows on Performance), the branch before these
 Every outdoor scene measured but the Strip (unchanged within noise) is now over 175 a
 second, Primm over 180.
 
-## 11. Shadow shimmer under a turning sun (#NNNN, 2026-11-16)
+## 11. Shadow shimmer under a turning sun (#2833, 2026-11-16)
 
 Players reported the sun's shadows shimmering while they stood still. Bevy places each
 cascade (`bevy_light` `calculate_cascade`) on a grid of whole texels in the light's axes,

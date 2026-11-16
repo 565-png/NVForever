@@ -1,6 +1,6 @@
 //! The sun's shadow cascades snapped to a texel grid anchored near the camera instead of
 //! the grid through the world's origin, and the order of every change made to the
-//! directional lights' cascades after Bevy builds them ([`cascade_edits`]). #NNNN
+//! directional lights' cascades after Bevy builds them ([`cascade_edits`]). #2833
 //! [engineering choice throughout]
 //!
 //! **Why.** Bevy builds each cascade (`bevy_light` `calculate_cascade`) with the centre of
