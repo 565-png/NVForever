@@ -896,9 +896,8 @@ After the Controls tab's own rows (see the end of this page):
 
 ### `terrain-anti-tiling`: Terrain anti-tiling
 
-- On the page: On: ground textures no longer repeat as a visible grid across slopes and
-  open ground. Off: each texture repeats every 256 units, as in the original. Costs some
-  GPU time.
+- On the page: On: ground textures stop repeating as a visible grid, for some GPU time.
+  Off: each repeats every 256 units, as in the original.
 - In full: On: every landscape texture (diffuse and normal map) is read at two or three
   places offset by a hash of where the ground lies in the world and blended, so its
   256-unit repeat no longer lines up into a grid; nearby the ground looks like the same
