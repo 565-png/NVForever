@@ -2930,7 +2930,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-16 (how far a spoken line carries, #2750)
 
-206. **How loud is a line between actors at 500 to 4,000 units?** (P1; #2750, voice.md
+205. **How loud is a line between actors at 500 to 4,000 units?** (P1; #2750, voice.md
      "Heard where it is said".) Ours: full level to 600 units (`fDialogMinDistance`),
      600 ÷ distance beyond, faded to nothing at 2,000 (`fDialogMaxDistance`)
      [hypothesis]. The owner hears President Kimball's speech in the original from the
