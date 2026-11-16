@@ -3101,3 +3101,22 @@ already talking takes over at once, same topic or another; nothing is queued or 
      change only if the original tints it; then compare three or four other hairs
      before choosing a rule [design, #2350].
 
+## Added 2026-11-16 (the Legate's camp Securitrons and General Oliver, #2794)
+
+217. **At the Legate's camp (House route), once their scripted guards are down, do the
+     four Securitrons fire on General Oliver and the fifth guard?** (P1; #2794,
+     combat-ai.md §10.3, owner-review item 85.) Ours: a faction ally of the player whose
+     Assistance helps allies takes up any fight against the player it sees, so the
+     Securitrons go on to Oliver and Guard05 [hypothesis: whether Assistance counts the
+     player as an ally to help is not documented; the maintainer expects them to help].
+     The scene: after the Legate, the camp trigger enables Oliver
+     (`vHDGeneralOliverRef2` 0x001483F1) and `LegateCampRangerOliverGuard01REF`..`05REF`;
+     `VHDLegateCampSecuritronMarker` 0x00155DC9 enables `LegateCampSecuritron01REF`..`04REF`
+     (0x00155DC2, C3, C4, C1; VHDSecuritronFaction, PlayerFaction Ally; Unaggressive,
+     Brave, Helps Allies). Pick the attack topic (INFO 0x0015993C): its end script runs
+     `StartCombat player` on Oliver and gives each Securitron one of Guard01-04, none
+     Guard05 or Oliver [documented: issue #2794, cited records]. Watch each Securitron's
+     `GetCombatTarget` every second once its guard is dead, and who damages Oliver and
+     Guard05 (their health). Also: does a Securitron help when the player alone fights
+     Oliver before the guards are down (it has its guard then)?
+
