@@ -3152,3 +3152,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      read `<activator>.IsTalking` and `<actor>.IsTalking`, and note whether a SayToDone
      block in the activator's script runs when it ends (a script print).
 
+## Added 2026-11-16 (an NPC saved while seated, #2797)
+
+220. **Does an NPC saved while seated come back seated after a load?** (P2; #2797,
+     save-load.md §3.4, furniture.md.) Ours: a load stands every actor up (the saved
+     furniture use is cleared, GetSitting reads 0) and the NPC's AI seats it again from
+     where it stands if its package still sends it to a seat; the provisional reading of
+     the original is the same, it stands up and re-seats through its AI [hypothesis].
+     In Goodsprings at 09:00, with Easy Pete (`EasyPeteRef`) on his porch chair
+     (0x0010634A, `GetSitting` 3), save, load that save at once and log
+     `EasyPeteRef.GetSitting` every half second from the first frame for 20 s, with
+     `GetPos x/y`. If it reads 3 from the first frame with no getting-on, the original
+     keeps the seat in the save and puts the body straight back on it; if it reads 0
+     then 2, 3 (or he walks first), ours matches. The same with Colonel Hsu on his office
+     chair (0x000FB33A, CampMCTermInt02) gives a second case.
+
