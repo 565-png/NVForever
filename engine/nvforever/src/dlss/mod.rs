@@ -100,6 +100,16 @@
 //!   device it stored [documented: `src/vulkan.cpp:1349-1407`]. Then the DLSS folder's checked
 //!   files, held open since the folder pass (`win.rs` `Pins`), are released. The interposer stays
 //!   loaded.
+//! - **Ending at once** ([`end_now`], #2733): a loaded save's handoff ends the old run with
+//!   `std::process::exit` from the main schedule (`handoff.rs` `end_now`), so `App::run` never
+//!   returns and [`shutdown`] above never ran: Streamline and DLSS-G were left to the DLLs'
+//!   detach at process exit, which crashed in `nvngx_dlssg.dll` [observed: a player's logs and
+//!   dumps, 2026-11-15]. Before that exit, with the device made through Streamline, the render
+//!   app is taken back from the render thread (nothing renders or presents after), device
+//!   polling and pipeline creation are held off (`gpu_poll::quiet`), DLSS-G's mode goes off and
+//!   the window's swapchain is released (`frame_gen.rs`, "Exit"), and [`shutdown`] runs as
+//!   above. The render world is not dropped (the point of ending at once); so the swapchain is
+//!   released by hand and the device outlives `slShutdown`, as it does above.
 //!
 //! - **Frame generation** (#2317; docs/design/dlss-frame-generation.md): with the four files of
 //!   [`FG_FILES`] in the folder beside the four above, `slInit` asks for DLSS, DLSS Frame
@@ -1053,6 +1063,69 @@ pub fn shutdown() {
     drain_log();
 }
 
+/// [`end_now`] has run (once a process).
+static ENDING: AtomicBool = AtomicBool::new(false);
+
+/// Whether this is the first time `flag` is taken (the run-once guard of [`end_now`]).
+fn first_time(flag: &AtomicBool) -> bool {
+    !flag.swap(true, Ordering::SeqCst)
+}
+
+/// The process is about to end without `App::run` returning (`handoff.rs` `end_now`, which
+/// calls `std::process::exit` from the main schedule, so `main` never reaches [`shutdown`]):
+/// the module's "Ending at once". With the renderer's device made through Streamline, the
+/// render app is taken back from the render thread (so nothing renders or presents from here
+/// on), device polling and pipeline creation are held off (`gpu_poll::quiet`), DLSS-G's mode is
+/// set off and the window's swapchain released (`frame_gen.rs` `end_now`), and then the
+/// shutdown runs as at any other exit ([`shutdown`]). `why` names the reason in the log lines
+/// (`exit: <why>: …`). Runs once; nothing to do without Streamline. The caller ends the process
+/// right after: the render app and the poll gate are kept (never given back) until then.
+pub fn end_now(main_world: &mut World, why: &str) {
+    if !first_time(&ENDING) {
+        return;
+    }
+    #[cfg(windows)]
+    if streamline_loaded() {
+        let mut render_app = render_app_back(main_world);
+        // Taken only once the render thread has handed its app back (it may poll the device
+        // itself while finishing its frame); held until the process ends.
+        let quiet = crate::gpu_poll::quiet();
+        frame_gen::end_now(render_app.as_mut().map(|a| a.world_mut()), why);
+        shutdown();
+        note(Level::INFO, format!("exit: {why}: Streamline shut down before the process ends"));
+        drain_log();
+        // Neither is dropped: the render world's non-send data belongs to this thread's
+        // teardown, which the process end skips; the poll gate stays shut until then.
+        std::mem::forget(render_app);
+        std::mem::forget(quiet);
+        return;
+    }
+    let _ = (main_world, why);
+    shutdown();
+}
+
+/// The render app back from the render thread (pipelined rendering), waiting for the frame it
+/// is rendering and running the main-thread tasks it may queue meanwhile, as Bevy's own
+/// extraction does [design: vendor/bevy_render/src/pipelined_rendering.rs `renderer_extract`];
+/// the render thread then waits for an app that never comes. `None` without pipelined
+/// rendering (no `RenderAppChannels`: the render app is the main app's and ran to the end of
+/// its frame before the main schedule) or when the render thread has stopped.
+#[cfg(windows)]
+fn render_app_back(main_world: &mut World) -> Option<bevy::app::SubApp> {
+    use bevy::ecs::schedule::MainThreadExecutor;
+    use bevy::render::pipelined_rendering::RenderAppChannels;
+    use bevy::tasks::ComputeTaskPool;
+
+    let executor = main_world.get_resource::<MainThreadExecutor>()?.clone();
+    let mut channels = main_world.get_resource_mut::<RenderAppChannels>()?;
+    ComputeTaskPool::get()
+        .scope_with_executor(true, Some(&*executor.0), |s| {
+            s.spawn(async { channels.recv().await });
+        })
+        .pop()
+        .flatten()
+}
+
 
 
 /// The files of [`FILES`] that `folder` lacks, in that order.
@@ -1065,6 +1138,16 @@ fn missing_files(folder: &Path) -> Vec<&'static str> {
 mod tests {
     use super::*;
     use std::ffi::OsStr;
+
+    /// The end without Bevy's teardown runs once (#2733): the guard is taken the first time
+    /// only.
+    #[test]
+    fn the_end_at_once_runs_once() {
+        let flag = AtomicBool::new(false);
+        assert!(first_time(&flag), "the first end runs");
+        assert!(!first_time(&flag), "a second call does nothing");
+        assert!(!first_time(&flag));
+    }
 
     /// DLSS's resources are freed once DLSS is not the effective upscaler and no view is DLSS's;
     /// a frame without a DLSS view while DLSS still draws, or before the status exists, keeps
