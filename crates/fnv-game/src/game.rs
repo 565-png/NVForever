@@ -6402,7 +6402,7 @@ impl<'a> Game<'a> {
         g.time = s.time;
         g.pending_onload = s.pending_onload.clone();
         g.forms = s.forms.clone();
-        g.refresh_actor_inventory_sources();
+        g.refresh_actor_inventory_sources(true);
         g.effects = s.effects.clone();
         g.next_effect = s.next_effect.max(1);
         g.image_modifiers = s.image_modifiers.clone();

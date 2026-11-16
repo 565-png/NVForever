@@ -44,3 +44,9 @@ ResetInventory must read that same selection immediately and after saving/loadin
 clearing a created source returns it to its own base. This changes the selected
 source, not the inventory-preservation rule above. Synthetic controls cover both
 reference lifetimes and clearing an override; execution remains pending.
+
+[design] Restoring a game reconstructs effective source metadata for every placed
+actor after saved list additions, actor rolls and player level are restored, even
+when the actor already has generated contents. This metadata refresh leaves those
+contents intact. A later ResetInventory follows the reconstructed source. Created
+actors retain their saved source until an actual reroll replaces it.

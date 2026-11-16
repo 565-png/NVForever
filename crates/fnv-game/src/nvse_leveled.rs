@@ -85,12 +85,13 @@ impl Game<'_> {
         })
     }
 
-    /// Update only inventories that have not generated their contents. Already
-    /// generated inventories keep their contents when a list changes.
-    pub(crate) fn refresh_actor_inventory_sources(&mut self) {
+    /// Refresh source metadata without generating or replacing inventory contents.
+    /// List edits update cold inventories; restoration reconstructs every placed
+    /// source after saved additions/rolls are available, including generated ones.
+    pub(crate) fn refresh_actor_inventory_sources(&mut self, include_generated: bool) {
         let sources: Vec<_> = self.world.placed.refs.iter()
             .filter(|(_, p)| matches!(&p.sig, b"ACHR" | b"ACRE"))
-            .filter(|(r, _)| self.world.peek(**r).and_then(|s| s.inventory.as_ref()).is_none())
+            .filter(|(r, _)| include_generated || self.world.peek(**r).and_then(|s| s.inventory.as_ref()).is_none())
             .map(|(&r, p)| {
                 let source = self.template_source(p.base, r, |d| d.template_inventory).map(|(id, _)| id).filter(|&id| id != p.base);
                 (r, source)
@@ -115,7 +116,7 @@ impl Game<'_> {
             self.other.lev_flags.insert(f, flags);
         } else {
             self.other.lev_actors.insert(f, l);
-            self.refresh_actor_inventory_sources();
+            self.refresh_actor_inventory_sources(false);
         }
     }
 
@@ -147,7 +148,7 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
         if let Some(l) = g.other.lev_actors.get_mut(&list) {
             l.entries.push((entry.0, actor, 1, None));
         }
-        g.refresh_actor_inventory_sources();
+        g.refresh_actor_inventory_sources(false);
         return Some(Ok(zero));
     }
     let is_lev = matches!(name,
@@ -482,6 +483,33 @@ mod actor_addition_tests {
                 assert!(back.world.reset_inventory(actor).unwrap());
                 assert_eq!(back.world.item_count(actor, FormId(0x901)).unwrap(), 0, "created={created}");
                 assert_eq!(back.world.item_count(actor, FormId(0x902)).unwrap(), 1, "created={created}");
+            }
+        }
+    }
+
+    #[test]
+    fn restored_placed_source_metadata_tracks_saved_edits_without_regenerating_existing_contents() {
+        let f = fixture();
+        for (list, placed, edit) in [
+            (0x821, 0xA21, "AddNPCToLeveledList NPCTiers AddedNPC 5\n"),
+            (0x831, 0xA11, "AddCreatureToLeveledList CreatureTiers AddedCreature 5\n"),
+        ] {
+            for created in [false, true] {
+                let mut g = game(&f);
+                g.player.level = Some(5);
+                let actor = if created { g.create_at(FormId(list), None, [0.0; 3], [0.0; 3]).unwrap() }
+                    else { FormId(placed) };
+                assert_eq!(g.world.item_count(actor, FormId(0x901)).unwrap(), 1);
+                g.world.inventory_mut(actor).unwrap().add(FormId(0x902), 3);
+                source(&mut g, edit);
+                let saved = g.checked_snapshot().unwrap();
+                let world = World::restore(&f.forms, &f.refs, &saved.sim).unwrap();
+                let mut back = Game::restore(&f.data, world, g.cfg, &saved).unwrap();
+                assert_eq!(back.world.item_count(actor, FormId(0x901)).unwrap(), 1, "contents survive restore: created={created}");
+                assert_eq!(back.world.item_count(actor, FormId(0x902)).unwrap(), 3, "extras survive restore: created={created}");
+                assert!(back.world.reset_inventory(actor).unwrap());
+                assert_eq!(back.world.item_count(actor, FormId(0x901)).unwrap(), i32::from(created), "created={created}");
+                assert_eq!(back.world.item_count(actor, FormId(0x902)).unwrap(), i32::from(!created), "created={created}");
             }
         }
     }
