@@ -52,3 +52,17 @@ edits before spawn, repeated same-value updates, non-emitting/re-enabled instanc
 cell cleanup/reentry, and stable entity counts across held/resumed frames. Preserve
 ordinary lights and unrelated forms. GPU/rendered appearance, original-game parity
 and the installed profile's complete feature playthrough are separate acceptance.
+
+## Executed consumer checks
+
+[validation: Windows CPU libtest, integrated source b8da4c3d41e9a950a6e43bdb4d95b0e3c60d0a1e]
+The selected consumer controls below passed with zero failures and zero ignored.
+This combined source contains the focused MCM/control/light changes and fresh
+neighboring inventory work. It is not an isolated standalone-head run. Both
+libtest targets compiled; all selected jobs ended and the build source was restored.
+No pristine baseline failure, playable client, physical OS/device acquisition,
+GPU/rendered, native or original installed-mod acceptance is established by this run.
+
+`lights::tests`:13 passed, including the four authored session/lifecycle/emittance
+and foreign-point binding controls plus existing light controls. This is CPU scene
+and material state validation, not a rendered brightness/performance measurement.
