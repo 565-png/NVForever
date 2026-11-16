@@ -1,0 +1,492 @@
+//! Environment maps (docs/spec-notes/nif.md §6 "Window glass and environment maps",
+//! "Environment maps on other shapes"): what the material build needs beyond the shape's
+//! own properties (`nif_spawn::shape_env`), the distance fade and the debug switches for
+//! the unknowns.
+//!
+//! A lit shape (BSShaderPPLightingProperty) with BSShaderFlags bit 7 Environment_Mapping
+//! [documented: nif.xml flag names], a texture-set slot-4 cube that loads as a cube map
+//! and an `environment_map_scale` above 0 reflects that cube, whether or not bit 21
+//! Window_Environment_Mapping is set. Whether it is set is kept as its own property
+//! ([`ShapeEnv::window`]): the GECK wiki says the window flag "simply flips the cubemap
+//! orientation in Fallout 3 and New Vegas" [documented: GECK wiki "NIF Shader
+//! Properties"], without saying which way, so the two sets can be given different cube
+//! orientations ([`EnvAids::axes`], [`EnvAids::axes_window`]).
+//!
+//! Debug switches (off unless set; development aids for comparing frames with the
+//! original's, not part of a release; read once at start; the run stays attended, as with
+//! every `NVF_PLAY_DEBUG_*` switch, nvf-play `test_aid.rs`). Each defaults to the
+//! renderer's own choice:
+//!
+//! - `NVF_PLAY_DEBUG_ENV_NON_WINDOW=0`: shapes without the window flag do not reflect
+//!   (the pictures of #2669, from the same build). Default on.
+//! - `NVF_PLAY_DEBUG_ENV_STRENGTH=<factor>`: every reflection × the factor (0 or more;
+//!   window shapes too). Default 1.
+//! - `NVF_PLAY_DEBUG_ENV_NO_MASK=full|none|normal-alpha`: a reflecting shape whose set
+//!   names no slot-5 mask reflects at full strength, not at all, or masked by its normal
+//!   map's alpha (full when the normal map has no alpha channel). Window shapes too.
+//!   Default `full`.
+//! - `NVF_PLAY_DEBUG_ENV_AXES=<orientation>` (shapes without the window flag) and
+//!   `NVF_PLAY_DEBUG_ENV_AXES_WINDOW=<orientation>` (window shapes): `base` (the lookup of
+//!   #2669: the Bevy-space reflection (x, y, z) read as (x, y, −z)), `flip-x`, `flip-y`,
+//!   `flip-z` (that direction with one axis negated) or `swap-yz` (its y and z swapped).
+//!   Default `base` for both.
+//! - `NVF_PLAY_DEBUG_ENV_BLEND=weighted|premultiplied` (shapes without the window flag)
+//!   and `NVF_PLAY_DEBUG_ENV_BLEND_WINDOW=weighted|premultiplied` (window shapes): a
+//!   blended reflecting shape keeps its blend, so the reflection is weighted by its alpha
+//!   like the rest of its colour, or is drawn premultiplied, the reflection added over the
+//!   blend. Defaults `weighted` and `premultiplied` (#2669's rule for windows).
+//! - `NVF_PLAY_DEBUG_ENV_LIGHT=off|all|fade-flag`: the reflection is scaled by the light
+//!   the fragment receives (its lit colour's luminance over its base colour's, at most 1),
+//!   on every reflecting shape (`all`) or only those whose BSShaderFlags2 bit 15 is set
+//!   (`fade-flag`; "Env Map Fade" [documented: GECK wiki "NIF Shader Properties"]). A
+//!   rough stand-in to compare with the original's frames, **not** a model of the
+//!   original's fade, whose curve is not documented. Default `off`.
+//! - `NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=0`: no fade with distance ([`ENV_MAP_LOD1`],
+//!   [`ENV_MAP_LOD2`]). Default on.
+
+use bevy::prelude::*;
+use std::sync::OnceLock;
+
+/// Camera distance (game units, which are Bevy's world units here) at which reflections
+/// start to fade: `fEnvMapLOD1` = 1500, "Distance at which Environment mapping effects
+/// (fake environment reflections) start to fade on objects" [documented: GECK wiki "INI
+/// Settings", Display section]. The default of the game's INI; NVForever reads no INI
+/// value for it [design].
+pub const ENV_MAP_LOD1: f32 = 1500.0;
+
+/// Camera distance past which there is no reflection: `fEnvMapLOD2` = 1800, "Max distance
+/// to render Environment mapping effects (fake environment reflections) on objects"
+/// [documented: GECK wiki "INI Settings", Display section]. Between the two the
+/// reflection fades linearly [hypothesis: the wiki gives the two distances, not the
+/// curve].
+pub const ENV_MAP_LOD2: f32 = 1800.0;
+
+/// The environment-map inputs of a lit shader property with Environment_Mapping
+/// (`nif_spawn::env_flags`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct EnvFlags {
+    /// `environment_map_scale` (1 when the field is absent).
+    pub scale: f32,
+    /// BSShaderFlags bit 21 Window_Environment_Mapping is set too
+    /// (`nif_spawn::window_env_flags`).
+    pub window: bool,
+    /// BSShaderFlags2 bit 15 [documented: nif.xml `envmap_light_fade`; GECK wiki "NIF
+    /// Shader Properties": "Env Map Fade: Fades the cubemap's brightness based on the
+    /// distance to the nearest light"].
+    pub light_fade: bool,
+}
+
+/// A shape's environment map (`nif_spawn::shape_env`): the cube (slot 4), the mask
+/// (slot 5) if the set names one, and the shader's flags.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ShapeEnv {
+    pub cube: String,
+    pub mask: Option<String>,
+    pub scale: f32,
+    pub window: bool,
+    pub light_fade: bool,
+}
+
+/// What a shape without a slot-5 mask reflects with (`NVF_PLAY_DEBUG_ENV_NO_MASK`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoMask {
+    /// Full strength [hypothesis: the default; nothing documents the case].
+    Full,
+    /// No reflection.
+    None,
+    /// The normal map's alpha (documented as gloss/specular, not as the environment
+    /// mask; a variant to compare).
+    NormalAlpha,
+}
+
+/// How the mask is read in the shader (`NifSurface::env` y).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MaskMode {
+    /// No mask: 1.
+    Full = 0,
+    /// The slot-5 mask's red channel (#2669).
+    Slot5 = 1,
+    /// The normal map's alpha (the debug switch's variant).
+    NormalAlpha = 2,
+}
+
+/// The cube lookup's orientation (`NVF_PLAY_DEBUG_ENV_AXES`, `_AXES_WINDOW`); the value
+/// is the shader's code (`NifSurface::env_how` x).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Axes {
+    /// #2669's lookup: the Bevy-space reflection (x, y, z) read as (x, y, −z), i.e. the
+    /// game-space direction (x, y, z) as (x, z, y) [hypothesis in #2669].
+    Base = 0,
+    FlipX = 1,
+    FlipY = 2,
+    FlipZ = 3,
+    SwapYZ = 4,
+}
+
+/// How a blended reflecting shape is drawn (`NVF_PLAY_DEBUG_ENV_BLEND`, `_BLEND_WINDOW`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvBlend {
+    /// It keeps its blend: the reflection is weighted by the alpha.
+    Weighted,
+    /// Premultiplied: lit colour × alpha + reflection (#2669's rule for windows).
+    Premultiplied,
+}
+
+/// Whether the reflection is scaled by the fragment's received light
+/// (`NVF_PLAY_DEBUG_ENV_LIGHT`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvLight {
+    Off,
+    All,
+    /// Only shapes with BSShaderFlags2 bit 15 ([`EnvFlags::light_fade`]).
+    FadeFlag,
+}
+
+/// The debug switches of the module docs, with their defaults.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EnvAids {
+    pub non_window: bool,
+    pub strength: f32,
+    pub no_mask: NoMask,
+    pub axes: Axes,
+    pub axes_window: Axes,
+    pub blend: EnvBlend,
+    pub blend_window: EnvBlend,
+    pub light: EnvLight,
+    pub distance_fade: bool,
+}
+
+impl Default for EnvAids {
+    fn default() -> Self {
+        EnvAids {
+            non_window: true,
+            strength: 1.0,
+            no_mask: NoMask::Full,
+            axes: Axes::Base,
+            axes_window: Axes::Base,
+            blend: EnvBlend::Weighted,
+            blend_window: EnvBlend::Premultiplied,
+            light: EnvLight::Off,
+            distance_fade: true,
+        }
+    }
+}
+
+/// The names of the debug switches, in the order the module docs give them.
+pub const ENV_SWITCHES: [&str; 9] = [
+    "NVF_PLAY_DEBUG_ENV_NON_WINDOW",
+    "NVF_PLAY_DEBUG_ENV_STRENGTH",
+    "NVF_PLAY_DEBUG_ENV_NO_MASK",
+    "NVF_PLAY_DEBUG_ENV_AXES",
+    "NVF_PLAY_DEBUG_ENV_AXES_WINDOW",
+    "NVF_PLAY_DEBUG_ENV_BLEND",
+    "NVF_PLAY_DEBUG_ENV_BLEND_WINDOW",
+    "NVF_PLAY_DEBUG_ENV_LIGHT",
+    "NVF_PLAY_DEBUG_ENV_DISTANCE_FADE",
+];
+
+fn on_off(v: &str) -> Option<bool> {
+    match v {
+        "1" | "on" | "true" | "yes" => Some(true),
+        "0" | "off" | "false" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+fn axes(v: &str) -> Option<Axes> {
+    match v {
+        "base" => Some(Axes::Base),
+        "flip-x" => Some(Axes::FlipX),
+        "flip-y" => Some(Axes::FlipY),
+        "flip-z" => Some(Axes::FlipZ),
+        "swap-yz" => Some(Axes::SwapYZ),
+        _ => None,
+    }
+}
+
+fn blend(v: &str) -> Option<EnvBlend> {
+    match v {
+        "weighted" => Some(EnvBlend::Weighted),
+        "premultiplied" => Some(EnvBlend::Premultiplied),
+        _ => None,
+    }
+}
+
+fn no_mask(v: &str) -> Option<NoMask> {
+    match v {
+        "full" => Some(NoMask::Full),
+        "none" => Some(NoMask::None),
+        "normal-alpha" => Some(NoMask::NormalAlpha),
+        _ => None,
+    }
+}
+
+fn light(v: &str) -> Option<EnvLight> {
+    match v {
+        "off" => Some(EnvLight::Off),
+        "all" => Some(EnvLight::All),
+        "fade-flag" => Some(EnvLight::FadeFlag),
+        _ => None,
+    }
+}
+
+fn strength(v: &str) -> Option<f32> {
+    v.parse::<f32>().ok().filter(|f| f.is_finite() && *f >= 0.0)
+}
+
+/// Put `value` in `slot` if there is one; whether there was.
+fn put<T>(slot: &mut T, value: Option<T>) -> bool {
+    match value {
+        Some(v) => {
+            *slot = v;
+            true
+        }
+        None => false,
+    }
+}
+
+impl EnvAids {
+    /// The switches from `get` (a variable's value by name), and a complaint for each
+    /// value not understood (that switch keeps its default).
+    pub fn parse(get: impl Fn(&str) -> Option<String>) -> (EnvAids, Vec<String>) {
+        let mut aids = EnvAids::default();
+        let mut bad = Vec::new();
+        for name in ENV_SWITCHES {
+            let Some(raw) = get(name) else { continue };
+            let v = raw.trim().to_ascii_lowercase();
+            let v = v.as_str();
+            let ok = match name {
+                "NVF_PLAY_DEBUG_ENV_NON_WINDOW" => put(&mut aids.non_window, on_off(v)),
+                "NVF_PLAY_DEBUG_ENV_STRENGTH" => put(&mut aids.strength, strength(v)),
+                "NVF_PLAY_DEBUG_ENV_NO_MASK" => put(&mut aids.no_mask, no_mask(v)),
+                "NVF_PLAY_DEBUG_ENV_AXES" => put(&mut aids.axes, axes(v)),
+                "NVF_PLAY_DEBUG_ENV_AXES_WINDOW" => put(&mut aids.axes_window, axes(v)),
+                "NVF_PLAY_DEBUG_ENV_BLEND" => put(&mut aids.blend, blend(v)),
+                "NVF_PLAY_DEBUG_ENV_BLEND_WINDOW" => put(&mut aids.blend_window, blend(v)),
+                "NVF_PLAY_DEBUG_ENV_LIGHT" => put(&mut aids.light, light(v)),
+                "NVF_PLAY_DEBUG_ENV_DISTANCE_FADE" => put(&mut aids.distance_fade, on_off(v)),
+                _ => true,
+            };
+            if !ok {
+                bad.push(format!("{name}={raw}"));
+            }
+        }
+        (aids, bad)
+    }
+
+    /// The cube orientation for a window shape or another.
+    pub fn axes_for(&self, window: bool) -> Axes {
+        if window { self.axes_window } else { self.axes }
+    }
+
+    /// The blend rule for a window shape or another.
+    pub fn blend_for(&self, window: bool) -> EnvBlend {
+        if window { self.blend_window } else { self.blend }
+    }
+}
+
+/// The debug switches of this run, read from the environment once; a line in the log
+/// when any is set.
+pub fn aids() -> &'static EnvAids {
+    static AIDS: OnceLock<EnvAids> = OnceLock::new();
+    AIDS.get_or_init(|| {
+        let (aids, bad) = EnvAids::parse(|name| std::env::var(name).ok());
+        for b in &bad {
+            warn!("debug switch {b}: value not understood, the default is kept (env_map.rs)");
+        }
+        if aids != EnvAids::default() {
+            info!("debug switch NVF_PLAY_DEBUG_ENV_*: environment maps drawn with {aids:?}");
+        }
+        aids
+    })
+}
+
+/// Which mask a reflecting shape is drawn with: its slot-5 mask when it loaded, else as
+/// `no_mask` says; `None`: no reflection (`NoMask::None`). `normal_alpha` tells whether
+/// the shape has a normal map with an alpha channel to read.
+pub(crate) fn mask_mode(has_mask: bool, no_mask: NoMask, normal_alpha: bool) -> Option<MaskMode> {
+    if has_mask {
+        return Some(MaskMode::Slot5);
+    }
+    match no_mask {
+        NoMask::Full => Some(MaskMode::Full),
+        NoMask::None => None,
+        NoMask::NormalAlpha => Some(if normal_alpha { MaskMode::NormalAlpha } else { MaskMode::Full }),
+    }
+}
+
+/// The alpha mode of a shape that reflects (`window`: whether it has the window flag;
+/// `None`: it does not reflect): a blended one is drawn premultiplied where the blend
+/// rule for its set says so ([`EnvAids::blend_for`]), otherwise it keeps its mode.
+/// Window shapes are premultiplied by default (#2669; observer check 222); other shapes
+/// keep their blend [hypothesis, the conservative choice: hair, cell fades, blended
+/// cut-outs and material animation key on `AlphaMode::Blend`; observer check 226].
+pub(crate) fn env_alpha_mode(alpha_mode: AlphaMode, window: Option<bool>, aids: &EnvAids) -> AlphaMode {
+    match window {
+        Some(w) if aids.blend_for(w) == EnvBlend::Premultiplied && matches!(alpha_mode, AlphaMode::Blend) => AlphaMode::Premultiplied,
+        _ => alpha_mode,
+    }
+}
+
+/// The two values a reflecting shape's material hands the shaders (`NifSurface::env`,
+/// `NifSurface::env_how`):
+/// - env: x the scale × the strength switch, y the [`MaskMode`], z and w the distances
+///   of the fade ([`ENV_MAP_LOD1`], [`ENV_MAP_LOD2`]; both 0: no fade);
+/// - env_how: x the [`Axes`] code, y 1 when the reflection is scaled by received light,
+///   z 1 for a window shape, w unused.
+pub(crate) fn env_uniforms(env: &ShapeEnv, mask: MaskMode, aids: &EnvAids) -> (Vec4, Vec4) {
+    let (start, end) = if aids.distance_fade { (ENV_MAP_LOD1, ENV_MAP_LOD2) } else { (0.0, 0.0) };
+    let light = match aids.light {
+        EnvLight::Off => false,
+        EnvLight::All => true,
+        EnvLight::FadeFlag => env.light_fade,
+    };
+    (
+        Vec4::new(env.scale * aids.strength, mask as u8 as f32, start, end),
+        Vec4::new(aids.axes_for(env.window) as u8 as f32, if light { 1.0 } else { 0.0 }, if env.window { 1.0 } else { 0.0 }, 0.0),
+    )
+}
+
+/// The share of the reflection left at camera distance `d` with the fade distances
+/// `start` and `end` (env z and w): 1 up to `start`, 0 from `end`, linear between; 1 when
+/// `end` is not past `start` (no fade). The CPU mirror of nif_material.wesl's fade.
+pub fn distance_fade(d: f32, start: f32, end: f32) -> f32 {
+    if end <= start {
+        return 1.0;
+    }
+    1.0 - ((d - start) / (end - start)).clamp(0.0, 1.0)
+}
+
+/// How a shape without the window flag is drawn with its environment map, for the
+/// model's log line (model.rs): the cube, the scale, the mask and the blend.
+pub(crate) fn describe(cube: &str, material: &crate::nif_material::NifMaterial) -> String {
+    let (env, how) = (material.extension.env, material.extension.env_how);
+    let mask = match env.y {
+        y if y > 1.5 => "normal-map alpha as mask",
+        y if y > 0.5 => "masked",
+        _ => "no mask",
+    };
+    let blend = match material.base.alpha_mode {
+        AlphaMode::Premultiplied => "over the blend",
+        AlphaMode::Blend => "weighted by alpha",
+        AlphaMode::Mask(_) => "alpha-tested",
+        AlphaMode::Opaque => "opaque",
+        _ => "other blend",
+    };
+    let light = if how.y > 0.5 { ", by received light" } else { "" };
+    format!("{cube}, scale {:.2}, {mask}, {blend}{light}", env.x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A variable lookup over fixed pairs.
+    fn set(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |n| pairs.iter().find(|(k, _)| *k == n).map(|(_, v)| v.to_string())
+    }
+
+    fn env(window: bool, light_fade: bool) -> ShapeEnv {
+        ShapeEnv { cube: "textures\\effects\\shinybright_e.dds".into(), mask: None, scale: 1.2, window, light_fade }
+    }
+
+    /// The switches' defaults are the renderer's own choices; values not understood keep
+    /// the default and are reported.
+    #[test]
+    fn switches_parse_with_defaults() {
+        let (none, bad) = EnvAids::parse(|_| None);
+        assert_eq!(none, EnvAids::default());
+        assert!(bad.is_empty());
+        let (a, bad) = EnvAids::parse(set(&[
+            ("NVF_PLAY_DEBUG_ENV_NON_WINDOW", "0"),
+            ("NVF_PLAY_DEBUG_ENV_STRENGTH", "0.5"),
+            ("NVF_PLAY_DEBUG_ENV_NO_MASK", "normal-alpha"),
+            ("NVF_PLAY_DEBUG_ENV_AXES", "swap-yz"),
+            ("NVF_PLAY_DEBUG_ENV_AXES_WINDOW", "flip-z"),
+            ("NVF_PLAY_DEBUG_ENV_BLEND", "premultiplied"),
+            ("NVF_PLAY_DEBUG_ENV_BLEND_WINDOW", "weighted"),
+            ("NVF_PLAY_DEBUG_ENV_LIGHT", "fade-flag"),
+            ("NVF_PLAY_DEBUG_ENV_DISTANCE_FADE", "off"),
+        ]));
+        assert!(bad.is_empty());
+        assert_eq!(
+            a,
+            EnvAids { non_window: false, strength: 0.5, no_mask: NoMask::NormalAlpha, axes: Axes::SwapYZ, axes_window: Axes::FlipZ, blend: EnvBlend::Premultiplied, blend_window: EnvBlend::Weighted, light: EnvLight::FadeFlag, distance_fade: false }
+        );
+        let (b, bad) = EnvAids::parse(set(&[("NVF_PLAY_DEBUG_ENV_STRENGTH", "-1"), ("NVF_PLAY_DEBUG_ENV_AXES", "sideways")]));
+        assert_eq!(b, EnvAids::default());
+        assert_eq!(bad.len(), 2);
+    }
+
+    /// A slot-5 mask always wins; without one the switch decides, and the normal-alpha
+    /// variant falls back to full strength when the normal map has no alpha.
+    #[test]
+    fn mask_mode_follows_the_mask_then_the_switch() {
+        assert_eq!(mask_mode(true, NoMask::None, false), Some(MaskMode::Slot5));
+        assert_eq!(mask_mode(false, NoMask::Full, true), Some(MaskMode::Full));
+        assert_eq!(mask_mode(false, NoMask::None, true), None);
+        assert_eq!(mask_mode(false, NoMask::NormalAlpha, true), Some(MaskMode::NormalAlpha));
+        assert_eq!(mask_mode(false, NoMask::NormalAlpha, false), Some(MaskMode::Full));
+    }
+
+    /// By default a blended window shape is drawn premultiplied (#2669) and a blended
+    /// shape without the window flag keeps its blend; opaque and alpha-tested shapes and
+    /// shapes that do not reflect are never changed.
+    #[test]
+    fn blend_rule_by_set() {
+        let d = EnvAids::default();
+        assert_eq!(env_alpha_mode(AlphaMode::Blend, Some(true), &d), AlphaMode::Premultiplied);
+        assert_eq!(env_alpha_mode(AlphaMode::Blend, Some(false), &d), AlphaMode::Blend);
+        assert_eq!(env_alpha_mode(AlphaMode::Blend, None, &d), AlphaMode::Blend);
+        assert_eq!(env_alpha_mode(AlphaMode::Opaque, Some(true), &d), AlphaMode::Opaque);
+        assert_eq!(env_alpha_mode(AlphaMode::Mask(0.5), Some(true), &d), AlphaMode::Mask(0.5));
+        let swapped = EnvAids { blend: EnvBlend::Premultiplied, blend_window: EnvBlend::Weighted, ..d };
+        assert_eq!(env_alpha_mode(AlphaMode::Blend, Some(true), &swapped), AlphaMode::Blend);
+        assert_eq!(env_alpha_mode(AlphaMode::Blend, Some(false), &swapped), AlphaMode::Premultiplied);
+    }
+
+    /// The fade: whole to fEnvMapLOD1, none from fEnvMapLOD2, linear between; no fade
+    /// without the distances.
+    #[test]
+    fn distance_fade_is_linear_between_the_two_distances() {
+        assert_eq!(distance_fade(0.0, ENV_MAP_LOD1, ENV_MAP_LOD2), 1.0);
+        assert_eq!(distance_fade(1500.0, ENV_MAP_LOD1, ENV_MAP_LOD2), 1.0);
+        assert!((distance_fade(1650.0, ENV_MAP_LOD1, ENV_MAP_LOD2) - 0.5).abs() < 1e-6);
+        assert_eq!(distance_fade(1800.0, ENV_MAP_LOD1, ENV_MAP_LOD2), 0.0);
+        assert_eq!(distance_fade(40_000.0, ENV_MAP_LOD1, ENV_MAP_LOD2), 0.0);
+        assert_eq!(distance_fade(40_000.0, 0.0, 0.0), 1.0);
+        let shader = include_str!("nif_material.wesl");
+        assert!(shader.contains("1.0 - saturate((d - surface.env.z) / (surface.env.w - surface.env.z))"), "the shader's fade is the same formula");
+    }
+
+    /// The default uniforms of a window shape are #2669's (scale, mask flag, lookup) plus
+    /// the fade; the switches change only what they name.
+    #[test]
+    fn uniforms_carry_the_set_and_the_switches() {
+        let d = EnvAids::default();
+        let (e, how) = env_uniforms(&env(true, false), MaskMode::Slot5, &d);
+        assert_eq!(e, Vec4::new(1.2, 1.0, ENV_MAP_LOD1, ENV_MAP_LOD2));
+        assert_eq!(how, Vec4::new(0.0, 0.0, 1.0, 0.0));
+        let (e, how) = env_uniforms(&env(false, true), MaskMode::Full, &d);
+        assert_eq!(e, Vec4::new(1.2, 0.0, ENV_MAP_LOD1, ENV_MAP_LOD2));
+        assert_eq!(how, Vec4::new(0.0, 0.0, 0.0, 0.0));
+        let a = EnvAids { strength: 2.0, axes: Axes::SwapYZ, light: EnvLight::FadeFlag, distance_fade: false, ..d };
+        let (e, how) = env_uniforms(&env(false, true), MaskMode::NormalAlpha, &a);
+        assert_eq!(e, Vec4::new(2.4, 2.0, 0.0, 0.0));
+        assert_eq!(how, Vec4::new(4.0, 1.0, 0.0, 0.0));
+        let (_, how) = env_uniforms(&env(true, false), MaskMode::Full, &a);
+        assert_eq!(how, Vec4::new(0.0, 0.0, 1.0, 0.0), "the window orientation and no light: the shape lacks bit 15");
+    }
+
+    /// The log line's words for a shape without the window flag.
+    #[test]
+    fn describe_names_mask_and_blend() {
+        let mut m = crate::nif_material::nif_material(StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() });
+        (m.extension.env, m.extension.env_how) = env_uniforms(&env(false, false), MaskMode::Slot5, &EnvAids::default());
+        assert_eq!(describe("textures\\effects\\shinybright_e.dds", &m), "textures\\effects\\shinybright_e.dds, scale 1.20, masked, weighted by alpha");
+        m.base.alpha_mode = AlphaMode::Opaque;
+        m.extension.env.y = 0.0;
+        m.extension.env_how.y = 1.0;
+        assert_eq!(describe("c_e.dds", &m), "c_e.dds, scale 1.20, no mask, opaque, by received light");
+    }
+}

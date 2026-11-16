@@ -505,15 +505,24 @@ pub struct NifSurface {
     pub terrain_repeat: f32,
     /// Landscape anti-tiling on (a landscape material only, with a repeat above 0).
     pub anti_tiling: bool,
-    /// Window environment map (`nif_spawn::window_env`; docs/spec-notes/nif.md §6 "Window
-    /// glass and environment maps"): x the scale of the reflection (0: none), y 1 when
-    /// [`env_mask`](Self::env_mask) is set; z, w unused. The reflection, the cube read in
-    /// the reflected view direction × the scale × the mask's red channel, is added to the
-    /// lit colour; on a premultiplied shape (a blended one that reflects) after the colour
-    /// is multiplied by its alpha [hypothesis, the note above].
+    /// Environment map (`nif_spawn::shape_env`, `env_map::env_uniforms`;
+    /// docs/spec-notes/nif.md §6 "Window glass and environment maps", "Environment maps on
+    /// other shapes"): x the scale of the reflection (0: none), y how the mask is read
+    /// (`env_map::MaskMode`: 0 none, 1 [`env_mask`](Self::env_mask)'s red channel, 2 the
+    /// normal map's alpha), z and w the camera distances over which it fades out (both 0:
+    /// no fade). The reflection, the cube read in the reflected view direction × the scale
+    /// × the mask × the fade, is added to the lit colour; on a premultiplied shape (a
+    /// blended window shape that reflects) after the colour is multiplied by its alpha, on
+    /// a blended one it is weighted by the alpha like the rest of the colour
+    /// [hypothesis, the notes above].
     pub env: Vec4,
+    /// How the environment map is read (`env_map::env_uniforms`): x the cube orientation
+    /// (`env_map::Axes`, 0 #2669's lookup), y 1 when the reflection is scaled by the light
+    /// the fragment receives (a debug switch's stand-in), z 1 for a window shape (the
+    /// Window_Environment_Mapping flag); w unused. All zero without an environment map.
+    pub env_how: Vec4,
     /// The environment cube (texture-set slot 4), loaded as a cube map
-    /// (`texture::dds_cube_image`); `None` without a window environment map.
+    /// (`texture::dds_cube_image`); `None` without an environment map.
     #[texture(54, dimension = "cube")]
     #[sampler(55)]
     pub env_cube: Option<Handle<Image>>,
@@ -542,8 +551,9 @@ pub struct NifSurfaceUniform {
     /// x [`NifSurface::terrain_repeat`] (0 when it cannot place anti-tiled reads); y, z, w
     /// unused.
     pub terrain: Vec4,
-    /// [`NifSurface::env`].
+    /// [`NifSurface::env`], [`NifSurface::env_how`].
     pub env: Vec4,
+    pub env_how: Vec4,
 }
 
 /// Screen UV of shift per unit of refraction strength and of view-space tilt
@@ -555,7 +565,7 @@ pub const REFRACTION_SCREEN: f32 = 0.1;
 
 impl From<&NifSurface> for NifSurfaceUniform {
     fn from(s: &NifSurface) -> Self {
-        NifSurfaceUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b, terrain: Vec4::new(if crate::terrain_sampling::repeat_valid(s.terrain_repeat) { s.terrain_repeat } else { 0.0 }, 0.0, 0.0, 0.0), env: s.env }
+        NifSurfaceUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b, terrain: Vec4::new(if crate::terrain_sampling::repeat_valid(s.terrain_repeat) { s.terrain_repeat } else { 0.0 }, 0.0, 0.0, 0.0), env: s.env, env_how: s.env_how }
     }
 }
 
@@ -627,6 +637,7 @@ impl Default for NifSurface {
             terrain_repeat: 0.0,
             anti_tiling: false,
             env: Vec4::ZERO,
+            env_how: Vec4::ZERO,
             env_cube: None,
             env_mask: None,
         }

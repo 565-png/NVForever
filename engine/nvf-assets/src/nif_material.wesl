@@ -91,7 +91,7 @@ import bevy_pbr::{
     render::shadow_sampling::sample_shadow_map,
 };
 
-import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel, env_cube_texel, env_mask_texel};
+import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel, env_cube_texel, env_mask_texel, env_normal_alpha};
 
 // Main-pass geometry uses the render viewport, which can be smaller than the
 // display attachment when FSR is enabled. Transmission remains a full-size texture.
@@ -602,22 +602,55 @@ fn nif_fragment(
             ambient_spec *= pow(max(lights.ambient_color.rgb * view.exposure, vec3(1e-6)), vec3(1.2));
         }
         out.color = vec4(max(out.color.rgb - view.exposure * ambient_spec, vec3(0.0)), out.color.a);
+        // The lit colour without the hot light, for the environment map's received-light
+        // debug switch below.
+        let lit_rgb = out.color.rgb;
         @if(!PREPASS_PIPELINE && !TONEMAP_IN_SHADER && !BLEND_MULTIPLY) out.color = vec4(hot_light(out.color.rgb, hot_e), out.color.a);
-        // Window environment map (nif_material.rs NifSurface::env; docs/spec-notes/nif.md
-        // §6 "Window glass and environment maps"): the cube read in the view direction
-        // reflected about the normal, × the scale × the mask, added to the lit colour. The
-        // game is Z-up and the cube's faces are laid out Y-up: the game-space direction
-        // (x, y, z) is looked up as (x, z, y), which from Bevy's Y-up world space
-        // (x, z, -y of the game) is (x, y, -z) [hypothesis]. A premultiplied shape (a
-        // blended one that reflects) has its colour multiplied by its alpha first, so the
-        // reflection lies over the blend whatever the alpha [hypothesis].
+        // Environment map (nif_material.rs NifSurface::env, env_how; docs/spec-notes/nif.md
+        // §6 "Window glass and environment maps", "Environment maps on other shapes"): the
+        // cube read in the view direction reflected about the normal, × the scale × the
+        // mask × the distance fade, added to the lit colour. The game is Z-up and the
+        // cube's faces are laid out Y-up: the game-space direction (x, y, z) is looked up
+        // as (x, z, y), which from Bevy's Y-up world space (x, z, -y of the game) is
+        // (x, y, -z) [hypothesis]; env_how.x picks another orientation for a debug switch
+        // (env_map.rs Axes: 1 flip x, 2 flip y, 3 flip z, 4 swap y and z). A premultiplied
+        // shape (a blended window shape that reflects) has its colour multiplied by its
+        // alpha first, so the reflection lies over the blend whatever the alpha; a blended
+        // shape is weighted by its alpha, reflection included [hypothesis].
         if surface.env.x > 0.0 {
             let r = reflect(-pbr_input.V, pbr_input.N);
+            var dir = vec3(r.x, r.y, -r.z);
+            let axes = surface.env_how.x;
+            if axes > 3.5 {
+                dir = vec3(dir.x, dir.z, dir.y);
+            } else if axes > 2.5 {
+                dir = vec3(dir.x, dir.y, -dir.z);
+            } else if axes > 1.5 {
+                dir = vec3(dir.x, -dir.y, dir.z);
+            } else if axes > 0.5 {
+                dir = vec3(-dir.x, dir.y, dir.z);
+            }
             var mask = 1.0;
-            @if(VERTEX_UVS_A) if surface.env.y > 0.5 {
+            @if(VERTEX_UVS_A) if surface.env.y > 0.5 && surface.env.y < 1.5 {
                 mask = env_mask_texel(in.instance_index, (standard_material(in.instance_index).uv_transform * vec3(in.uv, 1.0)).xy);
             }
-            let reflection = env_cube_texel(in.instance_index, vec3(r.x, r.y, -r.z)) * surface.env.x * mask;
+            @if(VERTEX_UVS_A) if surface.env.y > 1.5 {
+                mask = env_normal_alpha(in.instance_index, (standard_material(in.instance_index).uv_transform * vec3(in.uv, 1.0)).xy);
+            }
+            var reflection = env_cube_texel(in.instance_index, dir) * surface.env.x * mask;
+            // Distance fade (env_map.rs ENV_MAP_LOD1, ENV_MAP_LOD2: fEnvMapLOD1/2), linear
+            // between the two [hypothesis], in game units (the world's units).
+            if surface.env.w > surface.env.z {
+                let d = distance(view.world_position, pbr_input.world_position.xyz);
+                reflection *= 1.0 - saturate((d - surface.env.z) / (surface.env.w - surface.env.z));
+            }
+            // Debug switch NVF_PLAY_DEBUG_ENV_LIGHT (env_map.rs): × the light the fragment
+            // receives, its lit colour's luminance over its base colour's, at most 1. A
+            // rough stand-in for comparing frames, not a model of the original.
+            if surface.env_how.y > 0.5 {
+                let luma_weights = vec3(0.2126, 0.7152, 0.0722);
+                reflection *= saturate(dot(lit_rgb, luma_weights) / max(dot(pbr_input.material.base_color.rgb, luma_weights), 0.02));
+            }
             let premultiplied = (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_PREMULTIPLIED;
             out.color = vec4(select(out.color.rgb, out.color.rgb * out.color.a, premultiplied) + reflection, out.color.a);
         }

@@ -46,9 +46,13 @@ struct NifSurface {
     // Landscape anti-tiling (nif_material.rs NifSurface::terrain_repeat): x world units per
     // texture repeat of a landscape material, 0 on every other shape; y, z, w unused.
     terrain: vec4<f32>,
-    // Window environment map (nif_material.rs NifSurface::env): x the scale (0: none), y 1
-    // with a mask; z, w unused.
+    // Environment map (nif_material.rs NifSurface::env): x the scale (0: none), y the mask
+    // (0 none, 1 the mask's red, 2 the normal map's alpha), z and w the fade distances
+    // (both 0: no fade).
     env: vec4<f32>,
+    // Environment map (NifSurface::env_how): x the cube orientation (0 #2669's lookup),
+    // y 1 scales by received light, z 1 for a window shape; w unused.
+    env_how: vec4<f32>,
 }
 
 // The extension's index table (indices 50-53 of NifSurface's bindless attribute).
@@ -106,6 +110,14 @@ fn env_mask_texel(instance_index: u32, uv: vec2<f32>) -> f32 {
     @if(BINDLESS) let i = nif_indices[material_slot(instance_index)];
     @if(BINDLESS) return textureSampleLevel(bindless_textures_2d[i.env_mask], bindless_samplers_filtering[i.env_sampler], uv, 0.0).r;
     @if(!BINDLESS) return textureSampleLevel(env_mask, env_sampler, uv, 0.0).r;
+}
+
+// The normal map's alpha at `uv`, at its top level (the environment mask of a debug
+// switch's variant, env_map.rs NVF_PLAY_DEBUG_ENV_NO_MASK=normal-alpha).
+fn env_normal_alpha(instance_index: u32, uv: vec2<f32>) -> f32 {
+    @if(BINDLESS) let i = material_indices[material_slot(instance_index)];
+    @if(BINDLESS) return textureSampleLevel(bindless_textures_2d[i.normal_map_texture], bindless_samplers_filtering[i.normal_map_sampler], uv, 0.0).a;
+    @if(!BINDLESS) return textureSampleLevel(pbr_bindings::normal_map_texture, pbr_bindings::normal_map_sampler, uv, 0.0).a;
 }
 
 // The size of the FaceGen offset image.
