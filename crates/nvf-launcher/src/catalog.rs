@@ -18,7 +18,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use nvf_settings_layout::menu::{self, Menu};
-use nvf_settings_layout::{CONTROL_PREFIX, SECTIONS, TAB_ORDER};
+use nvf_settings_layout::{CONTROL_PREFIX, SECTIONS, TAB_ORDER, TWEAKS_TAB};
+
+/// The game's tabs the launcher shows, by their names in the game's table (`TAB_ORDER`), in
+/// the game's order [design: owner 2026-11-16: Audio, Controls, NVF Features and Debug are
+/// set in the game only]. A test fails when the game no longer has one of them.
+pub const LAUNCHER_TABS: [&str; 4] = ["Gameplay", "Display", "Graphics", TWEAKS_TAB];
 
 const REFERENCE: &str = include_str!("../../../docs/settings-reference.md");
 
@@ -72,7 +77,8 @@ impl Catalog {
             return None;
         }
         let mut rows = Vec::new();
-        for t in &m.tabs {
+        let tabs: Vec<&menu::Tab> = m.tabs.iter().filter(|t| LAUNCHER_TABS.contains(&t.name.as_str())).collect();
+        for t in &tabs {
             for c in &t.categories {
                 let heading = match (&c.group, &c.heading) {
                     (Some(g), Some(h)) => Some(format!("{g} › {h}")),
@@ -98,7 +104,10 @@ impl Catalog {
                 }
             }
         }
-        let tabs = m.tabs.iter().map(|t| (t.name.clone(), t.label.clone())).collect();
+        if rows.is_empty() {
+            return None;
+        }
+        let tabs = tabs.iter().map(|t| (t.name.clone(), t.label.clone())).collect();
         Some(Catalog { tabs, rows, from_game: true })
     }
 
@@ -106,7 +115,7 @@ impl Catalog {
     pub fn built_in() -> Catalog {
         let words: HashMap<String, Row> = parse(REFERENCE).into_iter().map(|r| (r.key.clone(), r)).collect();
         let mut rows = Vec::new();
-        for s in SECTIONS {
+        for s in SECTIONS.iter().filter(|s| LAUNCHER_TABS.contains(&s.placement.tab)) {
             let p = s.placement;
             let heading = match (p.subgroup, p.heading) {
                 (Some(g), Some(h)) => Some(format!("{g} › {h}")),
@@ -123,7 +132,7 @@ impl Catalog {
                 rows.push(Row { key: k.to_string(), label, tab: p.tab.to_string(), heading: heading.clone(), note, kind: None, unlisted, shown_with, needs });
             }
         }
-        let tabs = TAB_ORDER.iter().filter(|t| rows.iter().any(|r| r.tab == **t)).map(|t| (t.to_string(), t.to_string())).collect();
+        let tabs = TAB_ORDER.iter().filter(|t| LAUNCHER_TABS.contains(t) && rows.iter().any(|r| r.tab == **t)).map(|t| (t.to_string(), t.to_string())).collect();
         Catalog { tabs, rows, from_game: false }
     }
 
@@ -208,7 +217,6 @@ pub fn list_choices() -> HashMap<&'static str, &'static [&'static str]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nvf_settings_layout::TWEAKS_TAB;
 
     #[test]
     fn parses_rows_tabs_headings_and_notes() {
@@ -223,11 +231,13 @@ mod tests {
     fn built_in_the_games_tabs_categories_and_order_with_the_references_words() {
         let c = Catalog::built_in();
         assert!(!c.from_game);
-        let names = c.tab_names();
-        assert_eq!(names, TAB_ORDER.iter().filter(|t| names.contains(&t.to_string())).map(|t| t.to_string()).collect::<Vec<_>>(), "the game's tabs in its order");
-        assert!(names.starts_with(&["Gameplay".to_string(), "Display".to_string()]));
-        // Every row where the game's table places it, in its order; no Controls row of its own.
-        let placed: Vec<(&str, &str)> = SECTIONS.iter().flat_map(|s| s.keys.iter().filter(|k| !k.starts_with(CONTROL_PREFIX)).map(move |k| (*k, s.placement.tab))).collect();
+        assert_eq!(c.tab_names(), LAUNCHER_TABS, "the launcher's tabs, in the game's order");
+        // Every row of those tabs where the game's table places it, in its order.
+        let placed: Vec<(&str, &str)> = SECTIONS
+            .iter()
+            .filter(|s| LAUNCHER_TABS.contains(&s.placement.tab))
+            .flat_map(|s| s.keys.iter().filter(|k| !k.starts_with(CONTROL_PREFIX)).map(move |k| (*k, s.placement.tab)))
+            .collect();
         assert_eq!(c.rows.iter().map(|r| (r.key.as_str(), r.tab.as_str())).collect::<Vec<_>>(), placed);
         let at = |k: &str| c.rows.iter().find(|r| r.key == k).unwrap_or_else(|| panic!("{k} missing"));
         assert_eq!((at("menu-pause").tab.as_str(), at("menu-pause").heading.as_deref()), ("Gameplay", Some("Dialogue")));
@@ -238,7 +248,9 @@ mod tests {
         // The Tweaks tab's rows: the game's groups and categories, labelled by key until the
         // game writes its menu.
         assert_eq!(at("dlss-model").shown_with.as_ref().map(|r| r.parent.as_str()), Some("upscaler"), "the game's rules built in too");
-        assert_eq!(at("aim-lock").shown_with.as_ref().map(|r| r.choices.clone()), Some(vec!["Controller".to_string()]));
+        for gone in ["volume-master", "aim-lock", "grass-fire", "god-mode"] {
+            assert!(c.rows.iter().all(|r| r.key != gone), "{gone}: its tab is the game's only");
+        }
         if let Some(t) = c.rows.iter().find(|r| r.tab == TWEAKS_TAB) {
             assert!(t.unlisted && t.heading.as_deref().is_some_and(|h| h.contains(" › ")), "{t:?}");
         }
@@ -246,6 +258,13 @@ mod tests {
 
     /// The launcher never shows a row the game's table does not place, nor in another tab or
     /// category than the game's [design: owner 2026-11-16].
+    /// The launcher's tabs are the game's: each one still in its table, in its order.
+    #[test]
+    fn the_launchers_tabs_are_tabs_of_the_game() {
+        let at: Vec<usize> = LAUNCHER_TABS.iter().map(|t| TAB_ORDER.iter().position(|o| o == t).unwrap_or_else(|| panic!("{t}: no longer a tab of the game"))).collect();
+        assert!(at.windows(2).all(|w| w[0] < w[1]), "in the game's order");
+    }
+
     #[test]
     fn every_reference_row_is_where_the_game_places_it() {
         for r in parse(REFERENCE) {
@@ -276,6 +295,16 @@ mod tests {
         let c = Catalog::from_menu(&m, env!("CARGO_PKG_VERSION")).unwrap();
         assert!(c.from_game);
         assert_eq!(c.tab_names(), ["Gameplay", TWEAKS_TAB]);
+        // A tab the game keeps to itself is left out, with its rows.
+        let mut more = game_menu(env!("CARGO_PKG_VERSION"));
+        let mut audio = more.tabs[0].clone();
+        audio.name = "Audio".into();
+        audio.categories[0].rows[0].key = "volume-master".into();
+        more.tabs.insert(1, audio);
+        let c2 = Catalog::from_menu(&more, env!("CARGO_PKG_VERSION")).unwrap();
+        assert_eq!((c2.tab_names(), c2.rows.len()), (vec!["Gameplay".to_string(), TWEAKS_TAB.to_string()], 2));
+        let only_audio = Menu { version: more.version.clone(), tabs: vec![more.tabs[1].clone()] };
+        assert_eq!(Catalog::from_menu(&only_audio, env!("CARGO_PKG_VERSION")), None, "nothing the launcher shows: built in");
         assert_eq!(c.rows[1].heading.as_deref(), Some("Combat › In Combat"));
         assert_eq!((c.rows[1].label.as_str(), c.rows[1].kind.clone()), ("TWEAK-NO-COMBAT-MUSIC", Some(menu::Kind::Switch)));
         // The game's rules: from the file, else (a file without them) the shared table.

@@ -80,9 +80,6 @@ pub struct App {
     rows: Vec<Row>,
     tabs: Vec<String>,
     tab_labels: Vec<String>,
-    /// The menu is the game's own file: no Other tab (a key it does not place is not a row of
-    /// this game's).
-    menu_from_game: bool,
     tab: usize,
     words: HashMap<&'static str, &'static [&'static str]>,
     lists: HashMap<&'static str, &'static [&'static str]>,
@@ -148,7 +145,6 @@ impl App {
             message: None,
             tabs: menu.tab_names(),
             tab_labels: menu.tabs.iter().map(|(_, l)| l.clone()).collect(),
-            menu_from_game: menu.from_game,
             rows: menu.rows,
             tab: 0,
             words: catalog::step_words(),
@@ -208,8 +204,7 @@ impl App {
             // `settings:<tab>`: that tab of the Settings page.
             Ok(p) if p.starts_with("settings:") => {
                 let tab = &p["settings:".len()..];
-                // "other": the tab after the listed ones (the keys the reference does not list).
-                app.tab = app.tabs.iter().position(|t| t.eq_ignore_ascii_case(tab)).unwrap_or(if tab.eq_ignore_ascii_case("other") { app.tabs.len() } else { 0 });
+                app.tab = app.tabs.iter().position(|t| t.eq_ignore_ascii_case(tab)).unwrap_or(0);
                 Page::Settings
             }
             _ => Page::Home,
@@ -286,15 +281,8 @@ impl App {
         let on = self.tabs.get(self.tab).cloned();
         self.tabs = menu.tab_names();
         self.tab_labels = menu.tabs.iter().map(|(_, l)| l.clone()).collect();
-        self.menu_from_game = menu.from_game;
         self.rows = menu.rows;
-        if let Some(on) = on {
-            self.tab = self.tabs.iter().position(|t| *t == on).unwrap_or(0);
-        } else {
-            // On Other (the tab after the listed ones): still there, or gone (the game's menu
-            // came) and then the first tab, not an empty page.
-            self.tab = if self.other_keys().is_empty() { 0 } else { self.tabs.len() };
-        }
+        self.tab = on.and_then(|on| self.tabs.iter().position(|t| *t == on)).unwrap_or(0);
         self.game_edit = Config::from_ini(&self.ini_text).game_dir.map(|p| p.display().to_string()).unwrap_or_default();
         let configured = ini_get(&self.ini_text, LAUNCHER, "Exe").filter(|s| !s.is_empty()).map(PathBuf::from);
         self.exe = launch::find_game(configured.as_deref());
@@ -956,12 +944,7 @@ impl App {
                 .color(WEAK),
         );
         ui.horizontal_wrapped(|ui| {
-            let mut tabs = self.tab_labels.clone();
-            let others = self.other_keys();
-            if !others.is_empty() {
-                tabs.push("Other".into());
-            }
-            for (i, t) in tabs.iter().enumerate() {
+            for (i, t) in self.tab_labels.clone().iter().enumerate() {
                 let on = self.tab == i;
                 let b = egui::Button::new(RichText::new(t).strong().color(if on { theme::ON_GOLD } else { theme::TEXT })).fill(if on { GOLD } else { Color32::TRANSPARENT }).stroke(Stroke::NONE);
                 if ui.add(b).clicked() {
@@ -973,69 +956,48 @@ impl App {
         let tab = self.tabs.get(self.tab).cloned();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            match tab {
-                Some(tab) => {
-                    if tab == "Graphics" {
-                        self.dlss_card(ui);
+            if let Some(tab) = tab {
+                if tab == "Graphics" {
+                    self.dlss_card(ui);
+                }
+                // A row with no words built in (a Tweaks row before the game wrote its menu) only
+                // while the INI holds it.
+                let rows: Vec<Row> = self.rows.iter().filter(|r| r.tab == tab && (!r.unlisted || self.stored.contains_key(&r.key))).cloned().collect();
+                let mut heading: Option<Option<String>> = None;
+                let mut hidden_by: Vec<menu::Rule> = Vec::new();
+                for r in rows {
+                    // The game's rules: hidden while the row it goes with is not on its
+                    // choice, greyed (with the game's reason) while a row it needs is off.
+                    if let Some(rule) = r.shown_with.as_ref().filter(|rule| !self.holds(rule)) {
+                        if !hidden_by.contains(rule) {
+                            hidden_by.push(rule.clone());
+                        }
+                        continue;
                     }
-                    // A row with no words built in (a Tweaks row before the game wrote its menu) only
-                    // while the INI holds it.
-                    let rows: Vec<Row> = self.rows.iter().filter(|r| r.tab == tab && (!r.unlisted || self.stored.contains_key(&r.key))).cloned().collect();
-                    let mut heading: Option<Option<String>> = None;
-                    let mut hidden_by: Vec<menu::Rule> = Vec::new();
-                    for r in rows {
-                        // The game's rules: hidden while the row it goes with is not on its
-                        // choice, greyed (with the game's reason) while a row it needs is off.
-                        if let Some(rule) = r.shown_with.as_ref().filter(|rule| !self.holds(rule)) {
-                            if !hidden_by.contains(rule) {
-                                hidden_by.push(rule.clone());
-                            }
+                    let greyed = r.needs.iter().find(|rule| !self.holds(rule)).map(|rule| rule.why.clone());
+                    if let Some(colour) = crate::display::colour_of_part(&r.key) {
+                        if !self.current(colour).is_some_and(|c| c.eq_ignore_ascii_case(crate::display::CUSTOM)) {
                             continue;
                         }
-                        let greyed = r.needs.iter().find(|rule| !self.holds(rule)).map(|rule| rule.why.clone());
-                        if let Some(colour) = crate::display::colour_of_part(&r.key) {
-                            if !self.current(colour).is_some_and(|c| c.eq_ignore_ascii_case(crate::display::CUSTOM)) {
-                                continue;
-                            }
-                        }
-                        if heading.as_ref() != Some(&r.heading) {
-                            if let Some(h) = &r.heading {
-                                ui.add_space(8.0);
-                                ui.label(RichText::new(h.to_uppercase()).small().strong().color(theme::GOLD_TEXT));
-                            }
-                            heading = Some(r.heading.clone());
-                        }
-                        self.setting_row(ui, &r.key, &r.label, &r.note, r.kind.as_ref(), greyed.as_deref());
                     }
-                    // Every row of the tab hidden (the Controls tab with keyboard and mouse):
-                    // what shows them, not an empty page.
-                    if heading.is_none() && !hidden_by.is_empty() {
-                        let with: Vec<String> = hidden_by.iter().map(|rule| format!("{}: {}", self.row_label(&rule.parent), rule.choices.join(" or "))).collect();
-                        ui.add_space(8.0);
-                        ui.label(RichText::new(format!("The game shows this tab's rows here with {}.", with.join("; "))).small().color(WEAK));
+                    if heading.as_ref() != Some(&r.heading) {
+                        if let Some(h) = &r.heading {
+                            ui.add_space(8.0);
+                            ui.label(RichText::new(h.to_uppercase()).small().strong().color(theme::GOLD_TEXT));
+                        }
+                        heading = Some(r.heading.clone());
                     }
+                    self.setting_row(ui, &r.key, &r.label, &r.note, r.kind.as_ref(), greyed.as_deref());
                 }
-                None => {
-                    for k in self.other_keys() {
-                        self.setting_row(ui, &k, &k, "", None, None);
-                    }
+                // Every row of the tab hidden (the Controls tab with keyboard and mouse):
+                // what shows them, not an empty page.
+                if heading.is_none() && !hidden_by.is_empty() {
+                    let with: Vec<String> = hidden_by.iter().map(|rule| format!("{}: {}", self.row_label(&rule.parent), rule.choices.join(" or "))).collect();
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(format!("The game shows this tab's rows here with {}.", with.join("; "))).small().color(WEAK));
                 }
             }
         });
-    }
-
-    /// `[Settings]` keys the game's menu does not place (an older build's, the editor's); none
-    /// while the menu is the game's own file, which has every row this game has.
-    fn other_keys(&self) -> Vec<String> {
-        if self.menu_from_game {
-            return Vec::new();
-        }
-        self.stored
-            .keys()
-            .filter(|k| !self.rows.iter().any(|r| &r.key == *k))
-            .filter(|k| crate::display::superseded_by(k).is_none_or(|newer| !self.stored.contains_key(newer)))
-            .cloned()
-            .collect()
     }
 
     fn setting_row(&mut self, ui: &mut egui::Ui, key: &str, label: &str, note: &str, kind: Option<&menu::Kind>, greyed: Option<&str>) {
