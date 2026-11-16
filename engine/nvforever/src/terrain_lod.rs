@@ -29,10 +29,16 @@
 //!   after the swap, because a cell unloaded or loaded again meanwhile, is left as it was
 //!   and its new meshes dropped, until no such quadrant is left) and the rest are shown
 //!   while their old meshes are despawned: neighbours that depend on each other change
-//!   together. After [`WAIT_CAP_FRAMES`] frames without the GPU's word the batch is swapped
-//!   anyway, with a warning. Levels are looked at again once a batch is in. Only cells in
-//!   the streamer's loaded or spawning lists count; a retired cell (its children being
-//!   despawned over frames) is forgotten at once.
+//!   together. After [`WAIT_CAP_FRAMES`] frames without the GPU's word the batch is given up:
+//!   the old meshes stay, the new are dropped, and no redraw is planned for a while (twice
+//!   as long after each such batch, at most [`MAX_BACKOFF_FRAMES`]; the first is warned, the
+//!   rest counted in the exit summary). Levels are looked at again once a batch is in. Only
+//!   cells in the streamer's loaded or spawning lists count; a retired cell (its children
+//!   being despawned over frames) is forgotten at once, and its quadrants leave a waiting
+//!   batch and its watch. The new meshes' visibility range comes from the cell's fade as
+//!   the streamer has it this frame (the system runs after `fade::fade_cells`, its commands
+//!   applied), else the old meshes' fully drawn one, so a fade finishing meanwhile does
+//!   not leave them on a fade step.
 //! - **Collision** stays on the 4 × 4 surface for every loaded cell: actors near the player
 //!   stand on what is drawn once their quadrant is redrawn; at a distance the drawn 2 × 2
 //!   ground is within about a unit of it (world.md §3 "Smoothing").
@@ -43,9 +49,12 @@
 //!   totals ([`TerrainLod::summary`]). Test aid `NVF_PLAY_TEST_TERRAIN_LEVELS=1`: each time
 //!   the levels settle after redraws (a batch in and nothing left to redraw), `terrain
 //!   levels: settled: <f> quadrants drawn 4 x 4, <c> 2 x 2 after <b> redraws (camera at x,
-//!   y)`, for the smoke scenarios to anchor on finished movement.
+//!   y; revision <r>)`, for the smoke scenarios to anchor on finished movement. The
+//!   revision counts the swaps; [`TerrainLod::settled_revision`] tells the wireframe which
+//!   one it can say it outlined.
 
 use crate::terrain::{build_quadrant, spawn_quadrant, QuadMeshes, TerrainCtx, TerrainMaterials, TerrainSource};
+use crate::fade;
 use crate::world::{bevy_to_game, Streamer, WorldData};
 use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
@@ -62,8 +71,13 @@ use std::time::Instant;
 
 /// Frames a built batch waits for the GPU's word that its meshes are in before it is swapped
 /// in anyway (with a warning) [engineering choice: about two seconds at 60 frames a second;
-/// a fallback should the readiness never be reported, not the expected path].
+/// a fallback should the readiness never be reported, not the expected path]. The batch is
+/// then given up, keeping the old meshes.
 pub const WAIT_CAP_FRAMES: u32 = 120;
+
+/// The longest pause (frames) before redraws are planned again after batches given up in a
+/// row [engineering choice: about a minute at 60 frames a second].
+pub const MAX_BACKOFF_FRAMES: u32 = 3600;
 
 /// Seconds between two `terrain levels:` lines while redraws happen [design].
 pub const LOG_EVERY: f64 = 10.0;
@@ -81,7 +95,9 @@ pub struct TerrainLodPlugin;
 impl Plugin for TerrainLodPlugin {
     fn build(&self, app: &mut App) {
         let ready = MeshReadiness::default();
-        app.insert_resource(ready.clone()).add_systems(Update, update_terrain_lod.after(crate::world::stream));
+        // After the fades' step for this frame, its commands applied (Bevy puts the sync point
+        // in for the ordering), so the new meshes take the step the cell has now.
+        app.insert_resource(ready.clone()).add_systems(Update, update_terrain_lod.after(crate::world::stream).after(fade::fade_cells));
         match app.get_sub_app_mut(RenderApp) {
             Some(render) => {
                 render.insert_resource(ready).add_systems(Render, report_ready.in_set(RenderSystems::Cleanup));
@@ -209,6 +225,7 @@ type Job = (Entity, u8, QuadrantDraw);
 struct NewQuad {
     job: Job,
     entities: Vec<Entity>,
+    meshes: Vec<AssetId<Mesh>>,
 }
 
 /// A redraw under way: being built, or built and waiting for the GPU before the swap.
@@ -237,10 +254,20 @@ pub struct TerrainLod {
     last_log: Option<Instant>,
     /// Batches swapped in since the last settled state (the test aid's line).
     since_settled: u64,
-    /// Quadrants left as they were at a swap (their sides no longer fit), and swaps made
-    /// before the GPU's word, over the run.
+    /// Quadrants left as they were at a swap (their sides no longer fit), and batches given
+    /// up waiting for the GPU, over the run.
     dropped: u64,
-    forced: u64,
+    gave_up: u64,
+    /// Frames left before redraws are planned again, and the length of the last such pause
+    /// (0 after a batch swapped in).
+    pause: u32,
+    pause_len: u32,
+    /// Batches swapped in so far, and the one the levels last settled at (no batch, nothing
+    /// to redraw); `None` while redraws are under way.
+    revision: u64,
+    settled: Option<u64>,
+    /// The cells alive this frame (a buffer kept between frames).
+    alive: HashSet<Entity>,
 }
 
 impl TerrainLod {
@@ -255,7 +282,12 @@ impl TerrainLod {
             last_log: None,
             since_settled: 0,
             dropped: 0,
-            forced: 0,
+            gave_up: 0,
+            pause: 0,
+            pause_len: 0,
+            revision: 0,
+            settled: None,
+            alive: HashSet::new(),
         }
     }
 
@@ -275,6 +307,12 @@ impl TerrainLod {
         self.cells.get(&cell).map(|c| c.drawn)
     }
 
+    /// The revision (batches swapped in) the levels have settled at: no batch under way and
+    /// nothing to redraw; `None` while redraws are under way.
+    pub fn settled_revision(&self) -> Option<u64> {
+        self.settled
+    }
+
     /// Quadrants drawn 4 × 4 and 2 × 2 now.
     pub fn levels(&self) -> (usize, usize) {
         let fine = self.cells.values().flat_map(|c| c.drawn).filter(|d| d.step == 1).count();
@@ -282,14 +320,14 @@ impl TerrainLod {
     }
 
     /// The exit summary's part: `4 x 4 near: <b> redraws, <n> quadrants rebuilt (build <ms>
-    /// ms on the read pool), longest batch <ms> ms, <d> left as they were, <f> swapped before
-    /// the GPU had them; now <f> 4 x 4, <c> 2 x 2`.
+    /// ms on the read pool), longest batch <ms> ms, <d> left as they were, <g> given up
+    /// waiting for the GPU; now <f> 4 x 4, <c> 2 x 2`.
     pub fn summary(&self) -> String {
         let (fine, coarse) = self.levels();
         let t = self.total;
         format!(
-            "4 x 4 near: {} redraws, {} quadrants rebuilt (build {:.0} ms on the read pool), longest batch {:.0} ms, {} left as they were, {} swapped before the GPU had them; now {fine} 4 x 4, {coarse} 2 x 2",
-            t.batches, t.quadrants, t.build_ms, t.longest_ms, self.dropped, self.forced
+            "4 x 4 near: {} redraws, {} quadrants rebuilt (build {:.0} ms on the read pool), longest batch {:.0} ms, {} left as they were, {} given up waiting for the GPU; now {fine} 4 x 4, {coarse} 2 x 2",
+            t.batches, t.quadrants, t.build_ms, t.longest_ms, self.dropped, self.gave_up
         )
     }
 
@@ -381,9 +419,13 @@ pub fn update_terrain_lod(
     let (Some(world), Some(streamer)) = (world, streamer) else { return };
     let Some(mut lod) = terrain.cache.lod.take() else { return };
     // Loaded or being spawned; a retired cell (in `dying`) is in neither.
-    let alive: HashSet<Entity> = streamer.loaded.values().copied().chain(streamer.spawning.values().map(|s| s.entity)).collect();
+    let mut alive = std::mem::take(&mut lod.alive);
+    alive.clear();
+    alive.extend(streamer.loaded.values().copied().chain(streamer.spawning.values().map(|s| s.entity)));
     lod.prune(|e| alive.contains(&e));
+    lod.alive = alive;
     match lod.batch.take() {
+        None if lod.pause > 0 => lod.pause -= 1,
         None => {
             if let Ok(cam) = camera.single() {
                 let g = bevy_to_game(cam.translation());
@@ -398,12 +440,16 @@ pub fn update_terrain_lod(
                         })
                         .collect();
                     lod.batch = Some(Batch::Building { started: Instant::now(), jobs, built: Vec::new() });
-                } else if lod.since_settled > 0 {
-                    if levels_aid() {
-                        let (fine, coarse) = lod.levels();
-                        info!("terrain levels: settled: {fine} quadrants drawn 4 x 4, {coarse} 2 x 2 after {} redraws (camera at {:.0}, {:.0})", lod.since_settled, g.x, g.y);
+                    lod.settled = None;
+                } else {
+                    lod.settled = Some(lod.revision);
+                    if lod.since_settled > 0 {
+                        if levels_aid() {
+                            let (fine, coarse) = lod.levels();
+                            info!("terrain levels: settled: {fine} quadrants drawn 4 x 4, {coarse} 2 x 2 after {} redraws (camera at {:.0}, {:.0}; revision {})", lod.since_settled, g.x, g.y, lod.revision);
+                        }
+                        lod.since_settled = 0;
                     }
-                    lod.since_settled = 0;
                 }
             }
         }
@@ -419,14 +465,17 @@ pub fn update_terrain_lod(
                 lod.batch = Some(Batch::Building { started, jobs, built });
             } else {
                 // Built: spawned hidden under their cells (a cell gone meanwhile is skipped),
-                // with their quadrant's visibility range before they are first drawn.
+                // with their visibility range before they are first drawn: the cell's fade step
+                // as the streamer has it now (after this frame's fade_cells), else, with fades
+                // on (the old meshes have a range), the old meshes' fully drawn range.
                 let built_ms = started.elapsed().as_secs_f64() * 1000.0;
                 let mut new = Vec::new();
                 let mut watched = Vec::new();
                 let mut ctx = TerrainCtx { tm: &mut terrain, assets: &mut models };
                 for ((e, q, draw), meshes) in built {
                     let Some(c) = lod.cells.get(&e) else { continue };
-                    let range = c.entities[q as usize].iter().chain(c.entities.iter().flatten()).find_map(|m| ranges.get(*m).ok()).cloned();
+                    let old = c.entities[q as usize].iter().chain(c.entities.iter().flatten()).find_map(|m| ranges.get(*m).ok()).cloned();
+                    let range = replacement_range(streamer.fades.get(&c.grid).map(|f| f.step()), old);
                     let src = c.source.clone();
                     let spawned = spawn_quadrant(&mut commands, e, &world, &src.layers, q, meshes, src.tile, &mut ctx, Visibility::Hidden, false);
                     if let Some(range) = range {
@@ -434,24 +483,54 @@ pub fn update_terrain_lod(
                             commands.entity(m).insert(range.clone());
                         }
                     }
-                    watched.extend(spawned.meshes);
-                    new.push(NewQuad { job: (e, q, draw), entities: spawned.entities });
+                    watched.extend(spawned.meshes.iter().copied());
+                    new.push(NewQuad { job: (e, q, draw), entities: spawned.entities, meshes: spawned.meshes });
                 }
                 ready.watch(watched);
                 lod.batch = Some(Batch::Waiting { started, built_ms, frames: 0, new });
             }
         }
-        Some(Batch::Waiting { started, built_ms, frames, new }) => {
-            let on_gpu = ready.all_ready();
-            if !on_gpu && frames < WAIT_CAP_FRAMES {
+        Some(Batch::Waiting { started, built_ms, frames, mut new }) => {
+            // Quadrants of cells gone meanwhile leave the batch and the watch (their meshes
+            // could never be waited for).
+            let before = new.len();
+            new.retain(|n| {
+                let keep = lod.cells.contains_key(&n.job.0);
+                if !keep {
+                    for &m in &n.entities {
+                        commands.entity(m).try_despawn();
+                    }
+                }
+                keep
+            });
+            if new.len() != before {
+                ready.watch(new.iter().flat_map(|n| n.meshes.iter().copied()).collect());
+            }
+            if new.is_empty() {
+                ready.clear();
+            } else if ready.all_ready() {
+                ready.clear();
+                lod.pause_len = 0;
+                swap(&mut commands, &mut lod, new, started, built_ms);
+            } else if frames < WAIT_CAP_FRAMES {
                 lod.batch = Some(Batch::Waiting { started, built_ms, frames: frames + 1, new });
             } else {
-                if !on_gpu {
-                    lod.forced += 1;
-                    warn!("terrain levels: a redraw's meshes were not on the GPU after {WAIT_CAP_FRAMES} frames; swapped in anyway");
-                }
+                // Given up: the old meshes stay, the new go; a pause before planning again.
                 ready.clear();
-                swap(&mut commands, &mut lod, new, started, built_ms);
+                for n in new {
+                    for m in n.entities {
+                        commands.entity(m).try_despawn();
+                    }
+                }
+                lod.gave_up += 1;
+                lod.pause_len = next_pause(lod.pause_len);
+                lod.pause = lod.pause_len;
+                if lod.gave_up == 1 {
+                    warn!(
+                        "terrain levels: a redraw's meshes were not on the GPU after {WAIT_CAP_FRAMES} frames; the old meshes stay and redraws pause for {} frames (later ones are counted in the exit summary)",
+                        lod.pause_len
+                    );
+                }
             }
         }
     }
@@ -493,7 +572,32 @@ fn swap(commands: &mut Commands, lod: &mut TerrainLod, new: Vec<NewQuad>, starte
         c.longest_ms = c.longest_ms.max(ms);
     }
     lod.since_settled += 1;
+    lod.revision += 1;
     log_levels(lod, swapped, ms);
+}
+
+/// The pause (frames) after a batch given up, the last one having been `last` (0: none
+/// since a swap): [`WAIT_CAP_FRAMES`] at first, then twice as long each time, at most
+/// [`MAX_BACKOFF_FRAMES`].
+pub fn next_pause(last: u32) -> u32 {
+    if last == 0 {
+        WAIT_CAP_FRAMES
+    } else {
+        last.saturating_mul(2).min(MAX_BACKOFF_FRAMES)
+    }
+}
+
+/// A replacement mesh's visibility range (module notes): the cell's fade step when it is
+/// fading (`fade_step`, the streamer's this frame), else, where the old meshes have a range
+/// (fades on), theirs if it is a fully drawn one, or the fully drawn range if it is still a
+/// fade's step (the fade finished this frame); none where fades are off.
+pub fn replacement_range(fade_step: Option<u8>, old: Option<VisibilityRange>) -> Option<VisibilityRange> {
+    match (fade_step, old) {
+        (Some(k), _) => Some(fade::drawn(k)),
+        (None, Some(r)) if fade::at_rest(&r) => Some(r),
+        (None, Some(_)) => Some(fade::drawn(fade::STEPS)),
+        (None, None) => None,
+    }
 }
 
 /// Whether the settled lines are logged (the test aid, module notes).
@@ -688,5 +792,42 @@ mod tests {
         let mut a0c = QuadrantDraw::FULL;
         a0c.coarse = [true, true, true, true];
         assert_eq!(lod.fitting(&[(a, 0, a0c)]), vec![true]);
+    }
+
+    /// The replacement's range follows the cell's fade now; with the fade finished, the
+    /// fully drawn range even if the old meshes still carry the last step; none without
+    /// fades.
+    #[test]
+    fn replacements_take_the_fade_as_it_is_now() {
+        // VisibilityRange has no Debug: compared with ==.
+        assert!(replacement_range(Some(9), Some(fade::drawn(8))) == Some(fade::drawn(9)));
+        assert!(replacement_range(Some(4), None) == Some(fade::drawn(4)));
+        assert!(replacement_range(None, Some(fade::drawn(15))) == Some(fade::drawn(fade::STEPS)), "a fade that finished this frame");
+        let within = fade::drawn_within(Some(9000.0), 0.1);
+        assert!(replacement_range(None, Some(within.clone())) == Some(within), "a fully drawn range is kept");
+        assert!(replacement_range(None, None).is_none());
+    }
+
+    /// Batches given up wait longer each time, up to the cap.
+    #[test]
+    fn pauses_back_off() {
+        let mut p = 0;
+        let mut seen = Vec::new();
+        for _ in 0..8 {
+            p = next_pause(p);
+            seen.push(p);
+        }
+        assert_eq!(&seen[..4], &[120, 240, 480, 960]);
+        assert_eq!(*seen.last().unwrap(), MAX_BACKOFF_FRAMES);
+        assert!(seen.windows(2).all(|w| w[1] >= w[0]));
+    }
+
+    /// No settled revision before the levels have been looked at; the summary counts the
+    /// batches given up.
+    #[test]
+    fn the_settled_revision_starts_unknown() {
+        let lod = lod_with(&[(1, (0, 0))]);
+        assert_eq!(lod.settled_revision(), None);
+        assert!(lod.summary().contains("0 given up waiting for the GPU"));
     }
 }
