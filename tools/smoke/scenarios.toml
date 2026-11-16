@@ -26753,7 +26753,7 @@ expect = [
   { re = 'DLSS-G: Reflex options( set again for a new swapchain)?: mode eLowLatency, frame limit 6944 us a real frame: eOk \(swapchains made: [1-9]\d*', label = "the whole limit of 144 sent while a swapchain exists, before play (#2732)" },
   { re = 'DLSS-G: Reflex options( set again for a new swapchain)?: mode eLowLatency, frame limit 13889 us a real frame: eOk \(swapchains made: [1-9]\d*', label = "144 divided by two in play" },
   { re = 'DLSS-G: 10\.[0-5] s: (?P<n>\d+) real frames, \d+ presented \((1\.9|2\.0|2\.1)\d* per real frame\), status eOk', min = 2, label = "at least two whole ten-second lines of generation at 2x" },
-  { re = 'DLSS-G: 10\.[0-5] s: (?P<n>\d+) real frames, \d+ presented \((1\.9|2\.0|2\.1)\d* per real frame\), status eOk', range = [300, 800], all = true, label = "each of them about 72 real frames a second or fewer" },
+  { re = 'DLSS-G: 10\.[0-5] s: (?P<n>\d+) real frames, \d+ presented \((1\.9|2\.0|2\.1)\d* per real frame\), status eOk', range = [0, 800], all = true, label = "each of them about 72 real frames a second or fewer (no floor: a slow GPU or a load stall is not a cap failure)" },
 ]
 order = [[
   { re = 'DLSS-G: Reflex options( set again for a new swapchain)?: mode eLowLatency, frame limit 6944 us a real frame: eOk \(swapchains made: [1-9]' },

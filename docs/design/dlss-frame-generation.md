@@ -144,16 +144,18 @@ the driver and DLSS-G's pacer see one limiter (`frame_pace::wait_for_cap`).
   - *A quick pause*: while divided, a run of presents shown once longer than 15 and longer than
     every run shown once that ended in the last 1024 presents goes to the full limit at once (the
     window not in front, or generation never started), and the history keeps only that run.
-  - *What this guarantees* (the tests check each): a steady rate settles at once. A pattern
-    repeating with a period of at most 64 presents settles after one history and never moves
-    again: over 192 presents its mean spreads by at most 0.42 (27 presents of 4 then 28 shown
-    once, at 4x), under the 0.5 a move and its way back need with a hysteresis of 0.75, and its
-    runs shown once are no longer than those remembered, so no quick pause follows the first
-    period. Where it settles can depend on where it came from: 4, 1, 4, 1 at 4x (2.5) settles at
-    3 from the start and at 2 after a pause. Losing the front reaches the full limit after 16
+  - *What this guarantees* (the tests check each): a steady rate settles (within 16 presents).
+    A pattern repeating with a period of at most 64 presents settles and then never moves again:
+    over 192 presents its mean spreads by at most 0.42 (period 55), under the 0.5 a move and its
+    way back need with a hysteresis of 0.75, and its runs shown once are no longer than those
+    remembered, so no quick pause follows the first period. The time to settle is not bounded by
+    one history; the tests check their patterns have settled after 1000 presents and stay for
+    5000. Where it settles can depend on where it came from: 4, 1, 4, 1 at 4x (2.5) settles at 3
+    from the start and at 2 after a pause. Losing the front reaches the full limit after 16
     presents shown once when no such run came in the last 1024 presents, and otherwise after one
-    more than the longest. Generation back after a long pause divides again within 48 presents at
-    4x.
+    more than the longest (the mean alone within 176 after steady fours). Generation back after a
+    long pause divides again within 48 presents when DLSS-G presents 4 a real frame (72 for 3,
+    144 for 2).
   - A present that showed nothing (minimised, outdated) counts for none of these; a window change
     holds the mode off for 1-3 frames, under the 8. Each change is one line, `DLSS-G: frame cap:
     real frames at the full limit, was divided by 4 (menus: DLSS-G's mode off for 8 frames)`, and

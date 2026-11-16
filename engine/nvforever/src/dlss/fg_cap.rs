@@ -34,20 +34,24 @@
 //!    only that run, so resuming takes generation that brings the mean back to 1.75.
 //!
 //! **What this guarantees** (the tests check each):
-//! - A steady rate settles at once: all 4 at 4x divides by 4; DLSS-G presenting 3 where 4 were
-//!   asked divides by 3.
-//! - A pattern repeating with a period of at most 64 presents settles after a warm-up of one
-//!   history and never moves again: over [`WINDOW`] presents its mean spreads by under 0.5 (at
-//!   most 0.42, for 27 presents of 4 then 28 shown once at 4x), less than the 2 × 0.75 - 1 a move
-//!   and its way back need, and its runs shown once are no longer than the ones remembered, so no
-//!   quick pause comes after the first period. Where it settles can depend on where it came from
-//!   (the hysteresis): 4, 1, 4, 1 at 4x (2.5 a real frame) settles at 3 from the start, at 2
-//!   after a pause.
+//! - A steady rate settles: all 4 at 4x stays divided by 4 from the first present; DLSS-G
+//!   presenting 3 where 4 were asked divides by 3 once [`MIN_SAMPLES`] presents are in.
+//! - A pattern repeating with a period of at most 64 presents settles and then never moves
+//!   again: over [`WINDOW`] presents its mean spreads by at most 3 × min(r, p - r) / 192 for a
+//!   period p with r = 192 mod p, at most 0.42 (p = 55), under the 2 × 0.75 - 1 = 0.5 a move and
+//!   its way back need; and its runs shown once are no longer than the ones remembered, so no
+//!   quick pause comes after the first period. How long it takes to settle is not bounded by one
+//!   history (a period-60 pattern after steady fours moves once more at present 199); the tests
+//!   check that each of their patterns has settled after 1000 presents and stays for 5000. Where
+//!   it settles can depend on where it came from (the hysteresis): 4, 1, 4, 1 at 4x (2.5 a real
+//!   frame) settles at 3 from the start, at 2 after a pause.
 //! - The window losing the front reaches the full limit after [`QUICK_PAUSE`] presents shown
-//!   once when nothing like it came in the last [`RUN_MEMORY`] presents, and in any case after
-//!   one more than the longest run shown once among them.
-//! - Generation back after a long pause divides again within 48 presents at 4x (0.75 × 192 / 3),
-//!   then climbs to the frames asked for in steps, one line each.
+//!   once when nothing like it came in the last [`RUN_MEMORY`] presents, and otherwise after
+//!   one more than the longest run shown once among them; the mean alone gets there within 176
+//!   presents shown once in a row after steady fours (about 3.6 s at a limit of 144 and 4x).
+//! - Generation back after a long pause divides again within 48 presents when DLSS-G presents 4
+//!   a real frame (0.75 × 192 / 3; 72 when it presents 3, 144 when 2), then climbs to the
+//!   frames asked for in steps, one line each.
 //!
 //! Each change of the divisor is one `frame cap:` line with its reason ([`Change::line`]).
 
