@@ -57,6 +57,12 @@ fn changed_source_reaches_real_blast_attacker_and_effect_without_changing_collis
         phys.player = Some(body);
     });
     let changed_owner = owner(&mut a);
+    let victim = owner(&mut a);
+    on(&mut a, victim, "subject.SetPos X 100");
+    // ActorHit is the NPC consumer; the player has its own hit feedback path.
+    // Keep the victim away from the shot line so only the real blast reaches it.
+    a.world_mut().resource_mut::<PhysState>().world.set_actor_volume(victim.0,
+        fnv_phys::HitVolume { feet: [100.0, 20.0, 30.0], radius: 16.0, height: 128.0, dead: false });
     let (r, id) = launch(&mut a, "OwnedGun");
     let (neighbor, _) = launch(&mut a, "NeighborGun");
     let shooter = a.world().resource::<Combat>().flying.iter().find(|f| f.rref == Some(r)).unwrap().p.shooter;
@@ -67,12 +73,14 @@ fn changed_source_reaches_real_blast_attacker_and_effect_without_changing_collis
     let published_owner = a.world().resource::<ShotVisuals>().flying.iter().find(|v| v.id == id).unwrap().owner;
     a.world_mut().resource_mut::<Messages<ActorHit>>().drain().for_each(drop);
     a.world_mut().resource_mut::<Messages<ExplosionFx>>().drain().for_each(drop);
+    let player_hits_before = a.world().resource::<CombatStats>().player_hits;
     on(&mut a, r, "subject.SetDetonationTimer 0");
     step(&mut a, 1.0 / 60.0);
     let effects: Vec<_> = a.world_mut().resource_mut::<Messages<ExplosionFx>>().drain().collect();
     assert!(effects.iter().any(|e| e.explosion == BLAST && e.cause == Some(changed_owner)), "real emitted blast retains the changed source: {effects:?}");
     let hits: Vec<_> = a.world_mut().resource_mut::<Messages<ActorHit>>().drain().collect();
-    assert!(hits.iter().any(|h| h.form_id == FormId::PLAYER_REF.0 && h.by == Some(changed_owner)), "actual blast hit uses the new attacker: {hits:?}");
+    assert!(hits.iter().any(|h| h.form_id == victim.0 && h.by == Some(changed_owner)), "actual blast hit uses the new attacker: {hits:?}");
+    assert!(a.world().resource::<CombatStats>().player_hits > player_hits_before, "the real blast also reaches the existing player damage consumer");
     assert_eq!(published_owner, changed_owner, "published flight ownership agrees with the actual blast");
     assert_eq!(a.world().resource::<CombatStats>().explosions, 1);
     assert!(a.world().resource::<Combat>().flying.iter().any(|f| f.rref == Some(neighbor)));
@@ -123,7 +131,7 @@ fn nonfinite_position_does_not_poison_actual_flight() {
     let mut a = lifecycle_app(0, 1, 5000.0);
     let (r, _) = launch(&mut a, "OwnedGun");
     let before = a.world().resource::<Combat>().flying.iter().find(|f| f.rref == Some(r)).unwrap().p.pos;
-    on(&mut a, r, "subject.SetPos Z 1e40");
+    on(&mut a, r, "subject.SetPos Z (100000000000000000000.0 * 100000000000000000000.0)");
     assert!(!a.world().resource::<SimState>().world.peek(r).unwrap().pos[2].is_finite(), "canonical conversion/result admission remains unchanged");
     step(&mut a, 0.0);
     assert_eq!(a.world().resource::<Combat>().flying.iter().find(|f| f.rref == Some(r)).unwrap().p.pos, before);
