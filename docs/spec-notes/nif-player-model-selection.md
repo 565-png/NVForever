@@ -125,3 +125,27 @@ assertions; a cold first read may register interest before a tree exists. It use
 existing ToggleFirstPerson requests and IsPC1stPerson observations to require an
 actual first-to-third camera transition, rather than assuming a key was consumed.
 No private captures, installed scripts or assets belong in the contribution.
+
+### ModelHasBlock core validation, 2026-11-16
+
+The five ModelHasBlock controls described above have now executed in a paired
+CPU run: four selected `integration` tests and the selected guarded-reader test
+in `get_files_data_roots`. The accepted-runtime baseline
+`2b1d5704d1f2a356c3c3f9a3f3256ecbe1ec2999` failed all five at the first
+positive published-name lookup, returning 0 where 1 was required. Candidate
+`f3dc3a14624b8dca69c0ce6d1bc1d8a74238bbf5` passed the same five tests with
+zero ignored. The other 917 integration tests and four file tests were filtered,
+so this is not a full-suite result. Later assertions in the failing baseline
+tests were not reached.
+
+The pair used identical fixture bodies. Its `nif_blocks.rs` runtime blobs are
+`fd365f13acc3fbd1f05e69ce6364d5976e7a9dde` for the baseline and
+`d4db1ebd1764d1ac6a6745f43d06cab8de98b467` for the candidate. This
+documentation update retains the candidate's tested runtime and fixture blobs.
+
+This establishes the source-VM to published `SceneMirror` consumer, including
+the fixture's mutation, argument, lifetime and file-fallback controls. It does
+not exercise engine publication/acquisition, physical armor updates, native
+timing or view selection, installed Titans execution, rendered output or full
+mod compatibility. Those remain unqualified; the native hypotheses above are
+unchanged.

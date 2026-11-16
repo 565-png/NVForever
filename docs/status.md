@@ -247,3 +247,17 @@ plus eight authored controls); focused library/unit-test strict lint passed.
 Broader release/live checks remain unrun. This supplies no sink transaction,
 restoration, local-map provider/recipient/projection or native parity.
 Contract: [UI trait external-write serials](spec-notes/ui-trait-write-serial.md).
+
+### ModelHasBlock published-reference queries
+
+**Partly.** Source-compiled queries use exact names from an available reference
+scene publication, retaining base/cold file fallback and the existing empty-name
+result. A paired CPU run on identical fixtures gave five first-positive-lookup
+assertion failures with accepted runtime at `2b1d5704`, then five passes and zero
+ignored at `f3dc3a14`; 917 integration and four file tests remained filtered.
+The tested candidate runtime blob is
+`d4db1ebd1764d1ac6a6745f43d06cab8de98b467`; this documentation successor
+retains it and the tested fixture blobs. Engine publication/acquisition,
+physical armor changes, native timing/view policy, installed Titans, rendered
+output and full mod compatibility remain unqualified.
+Contract and scope: [ModelHasBlock reference models](spec-notes/nif-player-model-selection.md#modelhasblock-and-published-reference-models).
