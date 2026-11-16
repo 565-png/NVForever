@@ -942,7 +942,7 @@ is outside HNAM. [hypothesis, #2714] A model fitted to `headhuman.nif` could
 leave a gap at the back of `headold.nif`; the original might keep that gap,
 substitute an old-head hair, or use the race default. Keep the current model
 provisionally; no hair resolution or morphing change is justified yet.
-Observer check [209](../handoff/observer-checks.md) compares Roy from behind
+Observer check [210](../handoff/observer-checks.md) compares Roy from behind
 and VNovacDoctorMerc2 to distinguish those alternatives [design, #2714].
 
 ## 5. CLI contract
