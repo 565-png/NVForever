@@ -30446,6 +30446,76 @@ expect = [
 ]
 
 [[scenario]]
+name = "mesh-terrain-blend-verify-crossing"
+source = "[design] #2661: the change-driven conversion (graphics-enhanced.md §3.14 \"Per frame\"; engine/nvforever/src/mesh_terrain_blend.rs pass_needed) checked by the verify aid NVF_PLAY_TEST_MESH_BLEND_VERIFY=1 through mesh-terrain-blend-crossing's camera-cell reversals with pending replacements"
+note = "mesh-terrain-blend-crossing's run without its frames, with the verify aid: every frame the gate skips runs the full pass anyway and logs whatever it would have changed"
+areas = ["rendering", "terrain", "graphics"]
+paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvf-assets/src/nif_material.*", "engine/nvforever/src/world.rs", "engine/nvforever/src/fade.rs", "engine/nvf-play/src/fade.rs", "engine/nvforever/src/effect_shaders.rs", "engine/nvforever/src/texture_swap.rs", "engine/nvforever/src/nif_mirror.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "2:-65632:4800:8600", NVF_PLAY_TEST_MESH_BLEND_CROSSING = "4800:8600:4/-65152,0.3/-65920,3/-65152,0.3/-65920,3/-65152,0.3/-65920,3/-65152", NVF_PLAY_TEST_LOOK = "4:90:-20", NVF_PLAY_TEST_MOVE = "12:0.25:0:walk,17:0:0", NVF_PLAY_TEST_MESH_BLEND_CONTINUITY = "8:32", NVF_PLAY_TEST_MESH_BLEND_READY_DELAY = "120", NVF_PLAY_TEST_MESH_BLEND_VERIFY = "1" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages", "--graphics-only", "mesh-terrain-blend"]
+run_seconds = 44
+expect = [
+  { re = 'mesh terrain blend: start band=8 variant=surface resolution=512 noise=0 shape=height shading=full weight-version=1', count = 1, label = "the settings row draws the default look, through the crossing" },
+  { re = 'mesh terrain blend: continuity crossing done steps=7 timeouts=0', count = 1, label = "the whole crossing sequence ran, through the crossing" },
+  { re = 'mesh terrain blend: continuity summary .* failures=0 .*settled=true', count = 1, label = "zero continuity failures and eventual settlement with the verify aid on, through the crossing" },
+  { re = 'mesh terrain blend: verify skipped-frames=([1-9][0-9]*) diverged=0 passes=', label = "the gate skipped frames, and the full pass run in them anyway changed nothing, through the crossing" },
+  { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[1-9]', max = 0, label = "no skipped frame would have changed a shape, a clone, the census or the settlement, through the crossing" },
+  { re = 'mesh terrain blend: verify diverged', max = 0, label = "no divergence line, through the crossing" },
+  { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the crossing" },
+  { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors, through the crossing" },
+]
+
+[[scenario]]
+name = "mesh-terrain-blend-verify-live"
+source = "[design] #2661: the change-driven conversion (graphics-enhanced.md §3.14 \"Per frame\"; engine/nvforever/src/mesh_terrain_blend.rs pass_needed) checked by the verify aid NVF_PLAY_TEST_MESH_BLEND_VERIFY=1 through mesh-terrain-blend-live's switch on and off on the settings page"
+note = "mesh-terrain-blend-live's run with the verify aid: the row starts off, is flipped on at 11 s and off again at 22 s; the stop line is followed by the verify count"
+areas = ["rendering", "terrain", "settings"]
+paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvf-assets/src/nif_material.*", "engine/nvforever/src/world.rs", "engine/nvforever/src/fade.rs", "engine/nvf-play/src/fade.rs", "engine/nvforever/src/effect_shaders.rs", "engine/nvforever/src/texture_swap.rs", "engine/nvforever/src/nif_mirror.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:12,21:23", NVF_PLAY_TEST_SETTINGS = "11:mesh-terrain-blend,22:mesh-terrain-blend", NVF_PLAY_TEST_MESH_BLEND_VERIFY = "1" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages"]
+run_seconds = 26
+expect = [
+  { re = 'mesh terrain blend: start ', count = 1, label = "started once, by the row, through the live switch" },
+  { re = 'mesh terrain blend: stop ', count = 1, label = "stopped once, by the row, through the live switch" },
+  { re = 'mesh terrain blend: verify skipped-frames=([1-9][0-9]*) diverged=0 passes=', label = "the gate skipped frames, and the full pass run in them anyway changed nothing, through the live switch" },
+  { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[1-9]', max = 0, label = "no skipped frame would have changed a shape, a clone, the census or the settlement, through the live switch" },
+  { re = 'mesh terrain blend: verify diverged', max = 0, label = "no divergence line, through the live switch" },
+  { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the live switch" },
+  { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors on or off, through the live switch" },
+]
+order = [[
+  { text = "settings: mesh-terrain-blend on", label = "the row on, through the live switch" },
+  { re = 'mesh terrain blend: ready eligible-shapes=([1-9][0-9]*) resident-cells=[1-9] generation=[0-9]+ variant=surface shape=height', label = "the cells drawn while it was off are captured and published, through the live switch" },
+  { text = "settings: mesh-terrain-blend off", label = "the row off, through the live switch" },
+  { re = 'mesh terrain blend: verify skipped-frames=([1-9][0-9]*) diverged=0 passes=', label = "the count at the stop: frames skipped while it was on, none would have changed anything, through the live switch" },
+  { re = 'mesh terrain blend: stop restored-shapes=([1-9][0-9]*) ', label = "then the converted shapes get their ordinary materials back, through the live switch" },
+]]
+forbid = [
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood, through the live switch" },
+]
+
+[[scenario]]
+name = "mesh-terrain-blend-verify-terrain-switches"
+source = "[design] #2661: the change-driven conversion (graphics-enhanced.md §3.14 \"Per frame\"; engine/nvforever/src/mesh_terrain_blend.rs pass_needed) checked by the verify aid NVF_PLAY_TEST_MESH_BLEND_VERIFY=1 through mesh-terrain-blend-terrain-switches' two terrain switches and the bakes and publications they cause"
+note = "mesh-terrain-blend-terrain-switches' run with the verify aid: the three switches start on; height blending is flipped off at 11 s and anti-tiling at 11.5 s on the settings page"
+areas = ["rendering", "terrain", "graphics"]
+paths = ["engine/nvforever/src/mesh_terrain_blend.rs", "engine/nvforever/src/terrain_surface.*", "engine/nvf-assets/src/nif_surface_blend.rs", "engine/nvf-assets/src/nif_material.*", "engine/nvforever/src/world.rs", "engine/nvforever/src/fade.rs", "engine/nvf-play/src/fade.rs", "engine/nvforever/src/effect_shaders.rs", "engine/nvforever/src/texture_swap.rs", "engine/nvforever/src/nif_mirror.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:13", NVF_PLAY_TEST_SETTINGS = "11:terrain-height-blend,11.5:terrain-anti-tiling", NVF_PLAY_TEST_MESH_BLEND_VERIFY = "1" }
+args = ["--play", "--cell", "Goodsprings", "--hour", "12.5", "--no-voice", "--no-messages", "--graphics-only", "mesh-terrain-blend,terrain-height-blend,terrain-anti-tiling"]
+run_seconds = 24
+expect = [
+  { re = 'mesh terrain blend: start .* detail=layers', count = 1, label = "started once with layer detail, through the terrain switches" },
+  { re = 'terrain: height blending off ', count = 1, label = "the height blending row turned off once, through the terrain switches" },
+  { re = 'terrain: anti-tiling off ', count = 1, label = "the anti-tiling row turned off once, through the terrain switches" },
+  { re = 'mesh terrain blend: publication ', min = 2, label = "the switched materials bake and publish again, through the terrain switches" },
+  { re = 'mesh terrain blend: verify skipped-frames=([1-9][0-9]*) diverged=0 passes=', label = "the gate skipped frames, and the full pass run in them anyway changed nothing, through the terrain switches" },
+  { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[1-9]', max = 0, label = "no skipped frame would have changed a shape, a clone, the census or the settlement, through the terrain switches" },
+  { re = 'mesh terrain blend: verify diverged', max = 0, label = "no divergence line, through the terrain switches" },
+  { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the terrain switches" },
+  { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors, through the terrain switches" },
+]
+
+[[scenario]]
 name = "pipboy-sleeve-trooper-pimpboy"
 source = "#2457 (docs/spec-notes/actors.md §1.2): with the NCR Trooper Fatigues and the Pimp-Boy 3 Billion worn the raised Pip-Boy showed no sleeve on the arm: the fatigues' model has no `Arms…` shape, its sleeves are arm partitions (3/3000, 5/5000) of `hest:0`, `objdefault01:0` and `objdefault02:0`, and the arms rig drew only `Arms…` and `PipBoyOn…` shapes"
 note = "the player wears OutfitTrooperFatigues (0x0010D2CD) and the Pimp-Boy (PimpBoy 0x0011BACB) in Goodsprings; the Pip-Boy comes up at 4 s, a frame at 7 s: an olive sleeve from the elbow to the device and a cuff at the wrist, the street not seen through the arm"
