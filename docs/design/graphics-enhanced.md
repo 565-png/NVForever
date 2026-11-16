@@ -981,9 +981,15 @@ source's reasons join its mask; the source's own changes are the fingerprint's, 
 eviction of a clone whose owned source was republished under its handle reads only
 convertible shapes. So an animated look published again under the same handle (nvf-assets
 `material_anim.rs`, most frames while it moves) runs no pass. [observed] Smoke
-`mesh-terrain-blend-verify-terrain-switches` at 070c331fa, before this rule: 1064 of 1068
-passes in the seven seconds after loading were for such shapes. A convertible shape keeps
-the wider rule, because there a same-handle republish is the signal of an in-place edit.
+`mesh-terrain-blend-verify-terrain-switches` (`--slots 3`, release build), final verify
+line: at 070c331fa, before this rule, `skipped-frames=1277 passes=1289 pass-shapes=1275`;
+at 398b61cda `skipped-frames=3354 passes=20 pass-shapes=4 shapes-ordinary-census-only=3`;
+`mesh-terrain-blend-verify-crossing` went from `passes=3137 pass-shapes=1772` to
+`passes=1547 pass-pending=1530 pass-shapes=5` (its readiness delay aid keeps it pending).
+That the old shape passes were animated statics' same-handle republications is read from
+this rule being the only change between the two heads and from the per-signal counts
+398b61cda prints, not seen directly at 070c331fa. A convertible shape keeps the wider rule,
+because there a same-handle republish is the signal of an in-place edit.
 The first frame after the blend turns on always runs it. A pass's own commands can call for one more pass in the next frame, which changes
 nothing. Every frame, pass or not, follows the coverage of the recorded publications
 (`follow_coverage`: one check per publication, a walk over its clones only when its
@@ -991,14 +997,16 @@ coverage changed or it gained a clone). A quiet frame then stores `settled` agai
 refreshes a ready line a census change deferred (60 frames, `REFRESH_FRAMES`) from the last
 pass's census.
 Before this, the full pass ran every frame: [observed] Tracy, RTX 5070 Ti, 2560x1440,
-WastelandNV (-17, 0): `apply_variants` 0.61-0.65 ms a frame before this change. The test
+WastelandNV (-17, 0): `apply_variants` 0.61-0.65 ms a frame before this change; with the
+blend on from the start (animated statics tracked), 0.61-0.63 ms at 443434169 and 0.023 ms
+at a7b32dac7, at Goodsprings and at WastelandNV (-17, 0). The test
 aid `NVF_PLAY_TEST_MESH_BLEND_VERIFY=1` runs the full pass in every frame the gate would
 skip and logs any change it makes (`verify diverged`, at most 16 lines), and a count line
 `verify skipped-frames=N diverged=M passes=P pass-<reason>=...` (each pass by its first
 reason), then `shapes-<signal>=...` (which shape signal fired in a pass run for a shape
-change), with each ready line, every 600 skipped frames and at the stop; up to 8
-`verify shape-trigger` lines name the model, shape index and reasons of a shape that fired
-one.
+change), with each ready line, every 600 skipped frames and at the stop; at most 2
+`verify shape-trigger` lines per signal name the model, shape index and reasons of a shape
+that fired it.
 
 **Off** [design: `mesh_terrain_blend.rs::BlendGate`, `close_gate`;
 `terrain_surface.rs::SurfaceBakePlugin`; vendored bevy_pbr `MaterialGate` and bevy_render
