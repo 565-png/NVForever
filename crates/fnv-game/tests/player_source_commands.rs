@@ -20,7 +20,13 @@ fn fixture() -> Fixture {
     let placed = record(b"ACHR", 0, NPC.0, &[sub(b"EDID", z("ProgressionNeighborRef")), sub(b"NAME", 0x800u32.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])]);
     let cell = record(b"CELL", 0, ROOM.0, &[sub(b"EDID", z("ProgressionRoom"))]);
     let children = group(ROOM.0.to_le_bytes(), 6, &group(ROOM.0.to_le_bytes(), 9, &placed));
+    // World::formula_capacity requires both carry settings, as in the aid fixture.
+    let settings = [
+        record(b"GMST", 0, 0x860, &[sub(b"EDID", z("fAVDCarryWeightsBase")), sub(b"DATA", 150f32.to_le_bytes().to_vec())]),
+        record(b"GMST", 0, 0x861, &[sub(b"EDID", z("fAVDCarryWeightMult")), sub(b"DATA", 10f32.to_le_bytes().to_vec())]),
+    ].concat();
     let bytes = [tes4(),
+        top(b"GMST", &settings),
         top(b"NPC_", &[npc(7, "Player", 5), npc(0x800, "ProgressionNeighbor", 8)].concat()),
         top(b"REPU", &[rep(REP.0, "ProgressionRep"), rep(OTHER_REP.0, "ProgressionOtherRep")].concat()),
         top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat()))),
@@ -150,7 +156,8 @@ fn bad_arguments_and_explicit_empty_receivers_do_not_mutate_player_state() {
         ("ModPCAttribute Repair 1", "ModPCAttribute requires a SPECIAL attribute"),
         ("ModPCAttribute NoSuchAttribute 1", "no actor value named \"NoSuchAttribute\""),
         ("ModPCAttribute Strength \"bad\"", "parameter 2 is missing"),
-        ("RemoveReputationExact Player 0 1", "Player is not a reputation"),
+        // Player resolves to reference 0x14; this fixture names its base, not the reference.
+        ("RemoveReputationExact Player 0 1", "0x00000014 is not a reputation"),
         ("ref receiver\nreceiver.AdvancePCLevel", "advancepclevel called on no reference"),
         ("ref receiver\nreceiver.ModPCAttribute Strength 1", "modpcattribute called on no reference"),
         ("ref receiver\nreceiver.RemoveReputationExact ProgressionRep 0 1", "removereputationexact called on no reference"),

@@ -166,7 +166,8 @@ unused in New Vegas (`ModPCSkill`, `GetFactionReaction`, …) or as conditions w
 `IsPleasant` and `IsCloudy` now read the reported weather sample and are no longer
 in this unhandled list. `ModPCAttribute` and `RemoveReputationExact` now run through
 the existing source compiler fallback; `AdvancePCLevel` was already excluded as an
-engine word. The expected source census is 33/90 (authored checks UNRUN). Native
+engine word. The expected source census is 33/90; current-revision execution is
+pending and prior partial results are recorded in PR #2772. Native
 encoding remains unmeasured: [player source commands](../spec-notes/player-source-commands.md). Thirteen that Fallout 3's scripts call came
 off the list on 2026-11-03 (`functions::fo3`, Tale of Two Wastelands), and fourteen more
 the same day (MatchFaceGeometry, Wait, StopWaiting, IsWaiting and the rest of the TTW

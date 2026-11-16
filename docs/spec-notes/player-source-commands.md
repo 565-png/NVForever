@@ -49,8 +49,10 @@ original-game parity remain unverified.
 - Portable controls in `tests/player_source_commands.rs` cover
   successful compiled source calls, alias, invalid input/receiver, neighboring state,
   existing event consumers and save/restore. They are implementation controls, not
-  original-game observations. Baseline missing support and changed-source execution
-  are UNRUN until recorded against an exact head.
+  original-game observations. Qualification is revision-specific: execution of the
+  current revision is pending; earlier partial results are recorded in
+  [PR #2772](https://github.com/LootJunkieAzza/NVForever/pull/2772). The baseline
+  comparison remains UNRUN.
 - [hypothesis] Original-game captures should compare XP before/after repeated
   advancement, attribute base/permanent/current pools with effects and damage,
   fractional reputation loss across each limit, invalid axes and receivers, and
