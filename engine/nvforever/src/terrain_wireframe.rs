@@ -28,7 +28,11 @@
 //!   one grid of lines per quadrant ([`outline_drawn`]; the quadrants' shared sides are drawn
 //!   by both). A cell whose quadrants are redrawn at another level gets a new outline job
 //!   and keeps its old lines until the job is done. The count line then ends `; <n>
-//!   quadrants outlined 4 x 4`.
+//!   quadrants outlined 4 x 4`. Once the levels have settled (`TerrainLod::settled_revision`)
+//!   and every outline matches the quadrants as drawn at that revision, `terrain wireframe:
+//!   settled terrain revision <r> outlined: <n> quadrants 4 x 4, <c> cells, <e> edges`, once
+//!   per revision (the smoke scenario `terrain-wireframe-near` reads it: it ties the lines
+//!   to the drawing they show, whatever the order of the two systems' frames).
 //!
 //! [design, #2149] One gizmo per cell rather than per quadrant (the plan's sketch): the
 //! cell is what loads and unloads, and its surface is one grid. Jobs are keyed by the
@@ -117,6 +121,8 @@ pub struct TerrainWireframe {
     was_on: bool,
     /// The counts last logged.
     logged: Option<Counts>,
+    /// The settled terrain revision last said to be outlined (4 x 4 near).
+    outlined: Option<u64>,
 }
 
 /// What the wireframe holds now.
@@ -266,6 +272,7 @@ fn sync(
         }
         w.was_on = false;
         w.logged = None;
+        w.outlined = None;
         return;
     }
     let spec = nvf_play::smooth_terrain::spec();
@@ -352,6 +359,13 @@ fn sync(
         let fine = if lod.is_some() { format!("; {} quadrants outlined 4 x 4", counts.fine) } else { String::new() };
         info!("terrain wireframe: {} cells outlined, {} edges, {} without landscape, {} line assets{fine}", counts.drawn, counts.edges, counts.empty, counts.drawn);
         w.logged = Some(counts);
+    }
+    // Every outline is of the quadrants as drawn now (a redrawn cell is pending until its
+    // new lines are in), and the levels are settled at this revision: said once.
+    let settled = lod.and_then(|l| l.settled_revision());
+    if let Some(r) = settled.filter(|r| counts.pending == 0 && w.outlined != Some(*r)) {
+        info!("terrain wireframe: settled terrain revision {r} outlined: {} quadrants 4 x 4, {} cells, {} edges", counts.fine, counts.drawn, counts.edges);
+        w.outlined = Some(r);
     }
 }
 

@@ -28711,14 +28711,14 @@ expect = [
   { text = "terrain: mode=detail(2:6) subdiv=4 bound=8 land-shift=4; drawing, collision and queries use this surface; drawn 4 x 4 within 2048 units of the camera, 2 x 2 beyond 2560 (4 x 4 near)", count = 1, label = "the start names the 4 x 4 surface and the rule, once" },
   { re = 'terrain levels: first redraw: (\d+) quadrants rebuilt', range = [1, 16], label = "the quadrants near the camera are redrawn" },
   { re = 'terrain summary: (\d+) cells drawn smoothed, \d+ on the stored triangles \(mode=detail\(2:6\) subdiv=4 bound=8 land-shift=4\); 4 x 4 near: ', range = [9, 100000], label = "the loaded cells are drawn smoothed under 4 x 4 near" },
-  { re = 'terrain summary: .*; 4 x 4 near: .*, (\d+) swapped before the GPU had them', range = [0, 0], label = "every redraw waited for its meshes to be on the GPU" },
+  { re = 'terrain summary: .*; 4 x 4 near: .*, (\d+) given up waiting for the GPU', range = [0, 0], label = "no redraw was given up waiting for its meshes" },
   { re = 'player placed: feet \(', label = "the player is placed on the ground" },
 ]
 order = [[
   { text = "test aid: go to (-64279, 4800, 8600)", label = "the player is moved one cell east" },
   { re = 'terrain levels: settled: (\d+) quadrants drawn 4 x 4, \d+ 2 x 2 after \d+ redraws \(camera at -6[345]\d{3}, ', range = [1, 16], label = "redrawn after the move: settled around the new spot with 1 to 16 quadrants 4 x 4" },
 ]]
-forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "no test aid value refused" }, { text = "not on the GPU after", label = "no redraw swapped before its meshes were in" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
+forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "no test aid value refused" }, { text = "not on the GPU after", label = "no redraw given up waiting for its meshes" }, { text = "player fell through", label = "the collision is where the ground is" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
 
 [[scenario]]
 name = "terrain-smoothing-near-aid"
@@ -28738,7 +28738,7 @@ forbid = [{ re = 'NVF_PLAY_TEST_SMOOTH_\w+=".*": expected', label = "the aid's v
 [[scenario]]
 name = "terrain-wireframe-near"
 source = "[design, #2676] under 4 x 4 near the terrain wireframe (engine/nvforever/src/terrain_wireframe.rs) shows each quadrant as drawn, outlined again when it is redrawn"
-note = "on from the start with 4 x 4 near: the loaded cells are outlined, and once the levels have settled the outlines show the 4 x 4 quadrants (the count line names them)"
+note = "on from the start with 4 x 4 near: the loaded cells are outlined, and once the levels have settled and every outline shows its quadrants as drawn at that revision, the wireframe says so with the 4 x 4 quadrants it outlined"
 areas = ["rendering", "terrain"]
 paths = ["engine/nvforever/src/terrain_wireframe.rs", "engine/nvforever/src/terrain_lod.rs"]
 env = { NVF_PLAY_TEST_TERRAIN_LEVELS = "1" }
@@ -28749,8 +28749,7 @@ expect = [
   { re = 'terrain wireframe: (\d+) cells outlined', range = [9, 100000], label = "the loaded cells are outlined" },
 ]
 order = [[
-  { re = 'terrain levels: settled: [1-9]\d* quadrants drawn 4 x 4', label = "the levels settle with quadrants drawn 4 x 4" },
-  { re = 'terrain wireframe: (?:9|[1-9]\d+) cells outlined, \d+ edges, \d+ without landscape, \d+ line assets; (\d+) quadrants outlined 4 x 4', range = [1, 16], label = "and the outlines then show 4 x 4 quadrants" },
+  { re = 'terrain wireframe: settled terrain revision [1-9]\d* outlined: (\d+) quadrants 4 x 4, (?:9|[1-9]\d+) cells', range = [1, 16], label = "a settled revision after a redraw outlined, with its 4 x 4 quadrants" },
 ]]
 forbid = [{ text = "terrain wireframe: off", label = "it stays on" }, { text = "panicked", label = "no panic" }, { text = "Caught rendering error", label = "no rendering (validation) error" }]
 

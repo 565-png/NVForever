@@ -277,15 +277,19 @@ apart and the last row/column coincides with the neighbour's first.
     neighbours whose sides depend on it; cell edges stay identical from both sides;
   - *redraws* run one batch at a time on the read pool's worker threads, from the
     landscape, surface and layers the cell was spawned with (no record read again); a
-    built batch is spawned hidden, with the visibility range (cell fade step) of the
-    quadrant's old meshes, and the old meshes stay until the render world reports every
-    new mesh uploaded and given its buffer slabs (the shared GPU upload limit can hold
-    meshes back for frames); after 120 frames without that word it is swapped anyway
-    with a warning. At the swap the batch is checked against the cells loaded then: a
-    quadrant whose sides would no longer fit its neighbours' drawing (a cell unloaded or
-    loaded again while it was built) keeps its old meshes, until every swapped one fits;
-    the rest swap in one frame, so neighbours change together. Retired cells are
-    forgotten at once;
+    built batch is spawned hidden, with the visibility range of the cell's fade as it is
+    that frame (after the fade's own update), else the fully drawn range, and the old
+    meshes stay until the render world reports every new mesh uploaded and given its
+    buffer slabs (the shared GPU upload limit can hold meshes back for frames). After 120
+    frames without that word the batch is given up: the old meshes stay, the new are
+    dropped, and redraws pause (120 frames, twice as long after each batch given up in a
+    row, at most 3,600; the first is warned, all counted in the exit summary). At the swap
+    the batch is checked against the cells loaded then: a quadrant whose sides would no
+    longer fit its neighbours' drawing (a cell unloaded or loaded again while it was
+    built) keeps its old meshes, until every swapped one fits; the rest swap in one
+    frame, so neighbours change together. Retired cells are forgotten at once and their
+    quadrants leave a waiting batch. The readiness covers the meshes' upload, not their
+    materials or pipelines (reused from the old meshes in the usual case);
   - *collision* keeps one surface per loaded cell at the finest chosen level: 2 × 2 under
     2 x 2, 4 × 4 under 4 x 4 and 4 x 4 near. Actors near the player stand on what is drawn
     there once their quadrant is redrawn 4 × 4 (at the start, after a teleport and while a
