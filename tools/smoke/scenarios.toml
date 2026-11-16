@@ -31028,6 +31028,50 @@ expect = [
 manual = "[hypothesis, #2685] Steam bursts at start, pod glow at 35 s, and lingering ground haze at 69 s; compare observer check 212. Actor idle reload parity remains unimplemented."
 
 [[scenario]]
+name = "scene-kimball-guard-heading"
+source = "[documented: #2526 writer brief, main session fnvtool esm decode / ai show] Guard refs 0012FCD4/5 run Travel 00131F13 near linked stage markers 00131F0E/F (xMarkerHeading base 34, z 3.3832 rad). [design: fnv_ai carry.rs::settle] Reference-valued locations share goal.rs::location_reference and supply the marker heading on arrival."
+note = "[design, #2526] Hoover Dam cell 16,5: scene-kimball-speech's three dialogue setup aids, with both guards enabled and SpeechIdle explicitly assigned after placing them 150 units from their own stage markers. This isolates arrival facing; natural package selection (the condition audit in packages.md section 3) is covered by scene-kimball-guard-natural-heading."
+areas = ["ai", "quests", "nav"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/goal.rs", "crates/fnv-game/src/ai.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "3:info:0x00136DCE:VHDColonelMooreREF,6:info:0x001446A7:VHDCaptainGrahamREF,20:info:0x0014469F:VHDCaptainGrahamREF,23:call:VHDRangerKimballGuard01REF:Enable,23.1:call:VHDRangerKimballGuard02REF:Enable,24:moveto:VHDRangerKimballGuard01REF:VHDKimballGuard1StageMarkerREF:150:0:0,24.1:moveto:VHDRangerKimballGuard02REF:VHDKimballGuard2StageMarkerREF:150:0:0,25:call:VHDRangerKimballGuard01REF:AddScriptPackage:VHDKimballGuardSpeechIdlePackage,25.1:call:VHDRangerKimballGuard02REF:AddScriptPackage:VHDKimballGuardSpeechIdlePackage" }
+args = ["--play", "--cell", "16,5", "--world", "WastelandNV", "--npc-packages", "VHDKimballREF,VHDColonelMooreREF,VHDRangerKimballGuard01REF,VHDRangerKimballGuard02REF", "--hour", "9", "--no-voice", "--no-messages"]
+run_seconds = 65
+expect = [
+  { text = "script: VMQ03a stage 20 set", label = "speech visit setup calls the vertibird" },
+  { re = 'VHDRangerKimballGuard01REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "first guard takes its linked stage marker heading" },
+  { re = 'VHDRangerKimballGuard02REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "second guard takes its linked stage marker heading" },
+]
+forbid = [
+  { re = 'VHDRangerKimballGuard0[12]REF: cannot reach', label = "both guards reach their nearby stage markers" },
+]
+
+
+[[scenario]]
+name = "scene-kimball-guard-natural-heading"
+source = "[documented: #2526 w2 brief, main-session fnvtool ai show + quest-script SLSD/SCVR decode, FalloutNV.esm, 2026-11-15] Subject-run AND conditions: at speech iKimballStage 2 and VMQ03a variables 0, StageFront fails AssassinAttack == 2, KimballDead fails bKimballDead == 1, and SpeechIdle passes for both guards before Saferoom/Follow. Linked stage markers have z rotation 3.3832 rad."
+note = "[design, #2526] Direct quest-variable setup in Hoover Dam cell 16,5: first set speech stage 0, enable both guards and place them 150 units from their own linked stage markers; clear all VMQ03a variables used by the package lists, then set speech stage 2 and EvaluatePackage. No AddScriptPackage override or dialogue result script: the actual lists and conditions must select SpeechIdle and each guard must arrive facing its linked marker's heading."
+areas = ["ai", "quests", "nav"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/goal.rs", "crates/fnv-game/src/ai.rs", "crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/quest.rs", "crates/fnv-game/src/functions/refs.rs", "engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "3:var:VHDKimballSpeech:iKimballStage:0,4:call:VHDRangerKimballGuard01REF:Enable,4.1:call:VHDRangerKimballGuard02REF:Enable,5:moveto:VHDRangerKimballGuard01REF:VHDKimballGuard1StageMarkerREF:150:0:0,5.1:moveto:VHDRangerKimballGuard02REF:VHDKimballGuard2StageMarkerREF:150:0:0,6:var:VMQ03a:iKimballFlee:0,6.1:var:VMQ03a:iDetonatorFound:0,6.2:var:VMQ03a:iVertibirdBombActive:0,6.3:var:VMQ03a:AssassinAttack:0,6.4:var:VMQ03a:bKimballDead:0,6.5:var:VMQ03a:bKimballSaferoom:0,7:var:VHDKimballSpeech:iKimballStage:2,8:call:VHDRangerKimballGuard01REF:EvaluatePackage,8.1:call:VHDRangerKimballGuard02REF:EvaluatePackage" }
+args = ["--play", "--cell", "16,5", "--world", "WastelandNV", "--npc-packages", "VHDRangerKimballGuard01REF,VHDRangerKimballGuard02REF", "--hour", "9", "--no-voice", "--no-messages"]
+run_seconds = 45
+order = [
+  [
+    { text = 'test aid: script Var("VHDKimballSpeech", "iKimballStage", 2.0)', label = "natural speech state staged" },
+    { text = "VHDRangerKimballGuard01REF: package VHDKimballGuardSpeechIdlePackage", label = "guard one selects SpeechIdle from its own list" },
+    { re = 'VHDRangerKimballGuard01REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "guard one takes its linked stage marker heading" },
+  ],
+  [
+    { text = 'test aid: script Var("VHDKimballSpeech", "iKimballStage", 2.0)', label = "natural speech state staged" },
+    { text = "VHDRangerKimballGuard02REF: package VHDKimballGuardSpeechIdlePackage", label = "guard two selects SpeechIdle from its own list" },
+    { re = 'VHDRangerKimballGuard02REF: faces (?P<n>[0-9.]+) on arrival', range = [3.38, 3.39], label = "guard two takes its linked stage marker heading" },
+  ],
+]
+forbid = [
+  { re = 'VHDRangerKimballGuard0[12]REF: cannot reach', label = "both guards reach their nearby stage markers" },
+]
+
+[[scenario]]
 name = "load-phases-goodsprings"
 source = "#2407: players' Goodsprings door and save loads took 20-37 s; a loading screen now logs, and a slow load reports, when each thing it waited for came in, its longest frame and what the game files gave under it (nvf_play::loading::LoadPhases, fnv_vfs::read_stats). Out of Doc Mitchell's house into Goodsprings, the heaviest door of a new game"
 note = "2026-11-15 on the bench (i9-14900K, RTX 4070, SATA SSD, files in the OS cache): the start 2.4 s, the door 2.5 s with 2,106 files (248 MB) read. The cap is the reports' slow-load limit (reports/anomaly.rs SLOW_LOAD_MS), far above it"

@@ -237,6 +237,8 @@ pub enum AiEvent {
     DoorWaitCancelled { door: FormId },
     /// The walk ended at the package's place, after `seconds` and `travelled` units.
     Arrived { package: FormId, seconds: f64, travelled: f32, patrol_point: Option<FormId> },
+    /// Arrival's standing heading target, radians [design, #2526; `Ai::settle`].
+    ArrivalFacing { heading: f32 },
     /// No way to the package's location: the package is set aside.
     Unreachable { package: FormId, why: String },
     /// Out of sight, with no door joining where it is and where its package sends it: it
@@ -1267,7 +1269,7 @@ impl Ai {
         if let Some((place, radius)) = a.sandbox.as_ref().filter(|s| s.off_guard_area(here)).map(Sandbox::area) {
             let a = self.agents.get_mut(&actor).expect("listed");
             a.sandbox = None;
-            a.goal = Some(Goal::Near { place, radius });
+            a.goal = Some(Goal::Near { place, radius, reference: None });
         }
         let a = &self.agents[&actor];
         let (Some(package), Activity::There, None, None, None) = (a.package, a.activity, &a.sandbox, a.wait_until, a.talk) else { return };
@@ -2389,13 +2391,14 @@ impl Ai {
             self.set_using(game, actor, Some(f));
         } else if let Some((centre, radius)) = guard {
             sandbox = Some(Sandbox::guard(game, actor, package, def, centre, radius));
-        } else if let Some(heading) = marker_heading(game, def) {
+        } else if let Some(heading) = marker_heading(game, actor, def, a.goal.as_ref()) {
             // At an xMarkerHeading it stands the way the marker faces [documented: GECK
             // wiki, NPC population, level-design.md: the heading version "shows which way
             // an actor standing there will face"]. Mr. Brotch's teaching spot in the
             // G.O.A.T. (CG03MrBrotchTeachMarker, 22°) faces the desks; before, he kept the
             // heading he walked in with and taught the wall.
             self.agents.get_mut(&actor).expect("listed").face_to = Some(heading);
+            self.log(game, actor, AiEvent::ArrivalFacing { heading });
         }
         if let Some(mut sandbox) = sandbox {
             if let Some(s) = self.restored_schedule(actor, package) {
@@ -2643,7 +2646,7 @@ impl Ai {
         };
         match &goal {
             Goal::Here => there(self, game),
-            Goal::Near { place, radius } => {
+            Goal::Near { place, radius, .. } => {
                 if self.within(feet, *place, *radius) {
                     there(self, game)
                 } else {
@@ -2712,7 +2715,7 @@ impl Ai {
         let feet = Place { space: self.agents[&actor].walker.space, pos: self.agents[&actor].walker.feet };
         let at = |place: &Goal| match place {
             Goal::Here => true,
-            Goal::Near { place, radius } => place.space == feet.space && hdist(feet.pos, place.pos) <= radius.max(RESTRAINED_REACH) && (feet.pos[2] - place.pos[2]).abs() <= 256.0,
+            Goal::Near { place, radius, .. } => place.space == feet.space && hdist(feet.pos, place.pos) <= radius.max(RESTRAINED_REACH) && (feet.pos[2] - place.pos[2]).abs() <= 256.0,
             Goal::Inside { space, .. } => *space == feet.space,
             _ => false,
         };
@@ -2747,7 +2750,7 @@ impl Ai {
     /// ([`Goal::Near`], [`Goal::Inside`]); `None`: it is there.
     pub(crate) fn way_to(&self, feet: Place, stay: &Goal) -> Option<Place> {
         match stay {
-            Goal::Near { place, radius } => (!self.within(feet, *place, *radius)).then_some(*place),
+            Goal::Near { place, radius, .. } => (!self.within(feet, *place, *radius)).then_some(*place),
             Goal::Inside { space, at } => (feet.space != *space).then_some(*at),
             _ => None,
         }
@@ -3176,7 +3179,7 @@ impl Ai {
             // radius had "arrived" in the walk's first frame and talked from where it
             // stood, docs/spec-notes/npc-behaviour-compare.md §8).
             _ if own_walk || a.search.is_some() || a.chat.is_some() => false,
-            (Some(Goal::Near { place, radius }), _) => *radius > self.cfg.arrive && self.within(feet, *place, *radius),
+            (Some(Goal::Near { place, radius, .. }), _) => *radius > self.cfg.arrive && self.within(feet, *place, *radius),
             (Some(Goal::Inside { space, .. }), _) => feet.space == *space,
             _ => false,
         };
@@ -3341,11 +3344,25 @@ pub fn guard_wander_radius(def: &fnv_game::package::PackageDef) -> Option<f32> {
 /// steps of a few units would only twitch the actor on the spot.
 pub const GUARD_WANDER_MIN_RADIUS: f32 = 16.0;
 
-/// The heading of the xMarkerHeading a package's location names ("near reference"), if
-/// it names one.
-fn marker_heading(game: &Game, def: &fnv_game::package::PackageDef) -> Option<f32> {
-    let fnv_game::package::LocationKind::NearReference(Some(r)) = def.location.as_ref()?.kind else { return None };
-    game.world.placed.get(r).filter(|p| p.base == X_MARKER_HEADING).map(|p| p.rot[2])
+/// Arrival's standing heading [documented: GECK wiki, Bethsoft Tutorial NPC population,
+/// linked xMarkerHeading destinations; docs/spec-notes/packages.md §3].
+fn marker_heading(game: &Game, actor: FormId, def: &fnv_game::package::PackageDef, goal: Option<&Goal>) -> Option<f32> {
+    // At a small editor location, Travel and standing Guard restore the placed
+    // heading [hypothesis, #2526, observer check 213]. Sandbox/wander choose their own;
+    // a Guard remaining near its target uses that target's place (`goal::resolve`).
+    if def.location.is_some_and(|loc| loc.kind == fnv_game::package::LocationKind::NearEditor && (loc.radius as f32) < GUARD_WANDER_MIN_RADIUS)
+        && (def.ty == PackageType::Travel || def.ty == PackageType::Guard && !def.remain_near_reference())
+    {
+        return game.world.placed.get(actor).map(|p| p.rot[2]);
+    }
+    // Read the effective destination kept when travel began, including a Guard's
+    // target, rather than selecting the location again [design, #2526; goal::resolve].
+    let destination = match goal? {
+        Goal::Talk(talk) => talk.wait.as_ref(),
+        goal => goal,
+    };
+    let Goal::Near { reference: Some(r), .. } = destination else { return None };
+    game.world.placed.get(*r).filter(|p| p.base == X_MARKER_HEADING).map(|p| p.rot[2])
 }
 
 /// The actor is where its package wants it: the package's goal is met, or, for a Use

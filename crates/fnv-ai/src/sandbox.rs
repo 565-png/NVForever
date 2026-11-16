@@ -282,7 +282,7 @@ impl Sandbox {
     /// The sandbox of `actor` under `def`, starting at `at` (where the actor arrived).
     pub fn start(game: &Game, actor: FormId, package: FormId, def: &PackageDef, goal: &Goal, at: Place) -> Sandbox {
         let (centre, radius) = match goal {
-            Goal::Near { place, radius } => (*place, if *radius > 0.0 { *radius } else { DEFAULT_RADIUS }),
+            Goal::Near { place, radius, .. } => (*place, if *radius > 0.0 { *radius } else { DEFAULT_RADIUS }),
             Goal::Inside { .. } => (at, f32::INFINITY),
             _ => (at, def.location.map(|l| l.radius as f32).filter(|r| *r > 0.0).unwrap_or(DEFAULT_RADIUS)),
         };
@@ -642,7 +642,7 @@ impl Sandbox {
     /// radius; its pauses (4 to 12 seconds at a spot) and walk are a sandbox's wander
     /// [design, #2027: the original's cadence is not measured, observer check 115].
     pub fn guard(game: &Game, actor: FormId, package: FormId, def: &PackageDef, centre: Place, radius: f32) -> Sandbox {
-        let mut s = Sandbox::start(game, actor, package, def, &Goal::Near { place: centre, radius }, centre);
+        let mut s = Sandbox::start(game, actor, package, def, &Goal::Near { place: centre, radius, reference: None }, centre);
         s.allowed = Allowed { eating: false, sleeping: false, conversation: false, idle_markers: false, furniture: false, wandering: true };
         s.points = true;
         s
