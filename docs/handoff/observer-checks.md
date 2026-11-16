@@ -3167,3 +3167,27 @@ already talking takes over at once, same topic or another; nothing is queued or 
      then 2, 3 (or he walks first), ours matches. The same with Colonel Hsu on his office
      chair (0x000FB33A, CampMCTermInt02) gives a second case.
 
+## Added 2026-11-16 (sentry bot missile pause, #2739)
+
+221. **How long does a sentry bot wait between two missile shots, and does it switch to its
+     gun between them?** (P1; #2739, combat-rules.md §4.1, combat-ai.md §19.) The owner saw
+     a pause between missiles in the original and none in NVForever [observed: owner
+     playtest]. The launcher `SentryBotMissileLauncher2HL` (0x00057E8F) has Clip Size 1,
+     Reload Animation ReloadB, 1.5789 Attack Shots/Sec and a Semi-Automatic Fire Delay of
+     0.1-0.5 s [documented: fnvtool esm decode, FalloutNV.esm]; the sentry bot's
+     `2hlattackleft.kf` runs 2.0 s with `Hit` at 0.067 s and `a:R` at 0.967 s, and its
+     folder has no reload clip [documented: fnvtool bsa list / nif decode, Fallout -
+     Meshes.bsa]. Ours now: a missile every 0.967 s (the player's rule: the next shot from
+     the `a:` key), no reload, the launcher kept until distance or a crippled limb makes
+     another gun suit [hypothesis]. Place a Hardened Sentry Bot (`CrSentryBotGLHard`
+     0x000E585D, launcher and laser gatling) about 1,500 units from the player in the
+     open, in combat with the player (god mode), and record a video of at least 30 s; then
+     the same with `CrSentryBotMGArmy` (0x000A5C6F, launcher and minigun), and once with
+     its gun arm crippled if the console allows. What to read off: the time from one
+     missile's launch to the next (0.97 s, 2.0 s for the whole clip, or longer); whether
+     anything like a reload plays between them; whether the gun fires between two
+     missiles and for how long; at what distances it uses the launcher at all; and how
+     many missiles it fires in a fight (does it run out: its inventory holds AmmoMissile
+     x1 plus up to four from AmmoMissilelauncher75). Also whether a robot whose folder has
+     no reload clip (Mister Gutsy's plasma gun or flamer) ever pauses as if reloading.
+

@@ -30,6 +30,16 @@ the spec it links to.
   simultaneous activity. Alternatives
   from the issue: an Auto choice, ask once, or discoverability only. Ruling otherwise
   changes this selection policy ([controller section 1](design/controller.md)).
+- **NPC semi-automatic guns fire at their attack clip's pace (#2739).** [design, #2739]
+  An NPC's or creature's semi-automatic gun, in a fight and in a Use Weapon, is now timed
+  by its attack clip in its own rig as the player's is: the clip's `a:` key, else its end,
+  ÷ the weapon's attack multipliers (before: always 1 ÷ Attack Shots/Sec). Where the clip
+  has an `a:` key this matches the record's rate for the people's guns (combat-rules.md
+  §4 table); a gun whose clip has no `a:` key fires more slowly (the player's 5–20 %).
+  The sentry bot's launcher goes from 0.63 s to 0.967 s between missiles; the original's
+  interval is observer check 221. Ruling otherwise: back to 1 ÷ Attack Shots/Sec for
+  NPCs (`fnv_combat::attack::npc_clip_timing`)
+  ([combat-rules section 4.1](spec-notes/combat-rules.md)).
 - **Pip-Boy pages from their menu files by default (#2215).** [design, #2215] An absent
   `[UI] TileMenus` selects StatsMenu, InventoryMenu, RepairMenu, ItemModMenu, MapMenu and
   QuantityMenu, keeping the hand-built fallback for missing or cut-down files. An empty
