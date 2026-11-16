@@ -248,3 +248,14 @@ plus eight authored controls); focused library/unit-test strict lint passed.
 Broader release/live checks remain unrun. This supplies no sink transaction,
 restoration, local-map provider/recipient/projection or native parity.
 Contract: [UI trait external-write serials](spec-notes/ui-trait-write-serial.md).
+
+### Control press and release event producers
+
+[design] The selected keyboard/mouse/controller binding snapshot feeds both existing
+JIP and colon-name control-event interfaces, with disabled-control edges included.
+Four authored engine controls passed Windows CPU libtests on combinedb8da4c3
+(0failed/ignored); one connects source handlers to actual walk/run character steps
+in a collision-free fixture. The separate controller-query/gameplay successor,
+baseline failure, native ordering/synthetic input and original Enhanced Movement1.43
+acceptance remain open.
+Contract: [Control input events](spec-notes/control-input-events.md).
