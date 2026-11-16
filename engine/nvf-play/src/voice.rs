@@ -32,7 +32,8 @@
 //!   hello, a Goodbye greeting or the rest of a Goodbye line the player chose, said on
 //!   after the conversation closed (`fnv_game::game::Speech::farewell`), a line between
 //!   two actors, a detection bark) is heard from where its
-//!   speaker stands ([`hearing`]): at full volume within [`DIALOG_MIN_DISTANCE`] of the
+//!   speaker stands ([`hearing`]), a line said through a talking activator from where the
+//!   activator is (`Speech::place`; the actor need not be there, issues #2451, #2768): at full volume within [`DIALOG_MIN_DISTANCE`] of the
 //!   player's eye, falling as minimum ÷ distance beyond it and fading to nothing at
 //!   [`DIALOG_MAX_DISTANCE`] ([`voice_gain`]),
 //!   and panned to the side it is on (`crate::sfx::pan_gains`), following the speaker and
@@ -175,6 +176,8 @@ pub fn audible(sim: &SimState, player: Option<&Player>, speaker: FormId) -> bool
 /// A sound being played for a line.
 struct Playing {
     info: FormId,
+    /// Where the line is heard from ([`Said::place`]).
+    place: FormId,
     response: usize,
     entity: Option<Entity>,
     /// Real time (seconds since start) at which the sound is over (moved on by the time
@@ -316,6 +319,9 @@ pub fn speech_response(g: &Game, sim: &SimState, s: &Speech) -> usize {
 /// A response being said this frame.
 struct Said {
     speaker: FormId,
+    /// Where it is heard from: the talking activator it is said through, else the speaker
+    /// (`fnv_game::game::Speech::place`, issues #2451 and #2768).
+    place: FormId,
     info: FormId,
     /// Index in record order.
     response: usize,
@@ -332,11 +338,11 @@ struct Said {
 /// Every response being said: the SayTo and Say lines, and the conversation's line.
 fn said_now(g: &Game, sim: &SimState) -> Vec<Said> {
     let mut out: Vec<Said> =
-        g.speech.iter().map(|s| Said { speaker: s.speaker, info: s.info, response: speech_response(g, sim, s), remaining: s.remaining, conversation: false, two_d: s.two_d }).collect();
+        g.speech.iter().map(|s| Said { speaker: s.speaker, place: s.place(), info: s.info, response: speech_response(g, sim, s), remaining: s.remaining, conversation: false, two_d: s.two_d }).collect();
     if let Some((c, line)) = g.dialogue.as_ref().and_then(|c| Some((c, c.line.as_ref()?))) {
         let order = g.data.infos.get(&line.info).map(|d| d.response_order()).unwrap_or_default();
         if let Some(&r) = order.get(line.response) {
-            out.push(Said { speaker: c.actor, info: line.info, response: r, remaining: line.remaining, conversation: true, two_d: false });
+            out.push(Said { speaker: c.actor, place: c.actor, info: line.info, response: r, remaining: line.remaining, conversation: true, two_d: false });
         }
     }
     out
@@ -496,10 +502,10 @@ fn play(
     let cover_now = std::time::Instant::now();
     for (speaker, p) in st.playing.iter() {
         if let Some(pan) = &p.pan {
-            pan.set(placed_gains(&sim, player, *speaker));
+            pan.set(placed_gains(&sim, player, p.place));
             // Heard at the listener while it plays, by the voice's fall-off
             // (`crate::sound_cover`); a held line makes no sound.
-            let heard = player.filter(|_| p.entity.is_some() && !p.held && now < p.ends_at && *speaker != FormId::PLAYER_REF).and_then(|pl| hearing(&sim, pl, *speaker));
+            let heard = player.filter(|_| p.entity.is_some() && !p.held && now < p.ends_at && *speaker != FormId::PLAYER_REF).and_then(|pl| hearing(&sim, pl, p.place));
             if let (Some((_, d)), Some(cover)) = (heard, cover.as_deref_mut()) {
                 cover.note(Some(crate::sound_cover::SoundCover::key(crate::sound_cover::VOICE_KIND, u64::from(speaker.0))), voice_gain(d), d, crate::sound_cover::LOOP_HOLD, cover_now);
             }
@@ -566,16 +572,16 @@ fn play(
         let file = own.or_else(|| fixed.and_then(|f| bank.file(s.info.0, k, f.0)));
         // A line outside the conversation is heard from where it is said, or not at all;
         // a 2D one (Say's is2D) as the conversation's.
-        let heard = if s.conversation || s.two_d { None } else { Some(player.and_then(|p| hearing(&sim, p, s.speaker))) };
+        let heard = if s.conversation || s.two_d { None } else { Some(player.and_then(|p| hearing(&sim, p, s.place))) };
         let out_of_hearing = match heard {
             Some(Some((_, d))) if d >= DIALOG_MAX_DISTANCE => Some(format!("{d:.0} units away")),
             Some(None) if player.is_some() => {
                 let cell = |r: FormId| speaker_place(&sim, r).and_then(|(c, _)| c).map_or("none".to_string(), |c| g.data.name(c));
-                Some(format!("in another cell: {} vs the player's {}", cell(s.speaker), cell(FormId::PLAYER_REF)))
+                Some(format!("in another cell: {} vs the player's {}", cell(s.place), cell(FormId::PLAYER_REF)))
             }
             _ => None,
         };
-        let pan = heard.map(|_| Pan::new(placed_gains(&sim, player, s.speaker)));
+        let pan = heard.map(|_| Pan::new(placed_gains(&sim, player, s.place)));
         // A response with a sound of its own plays it instead of the voice (creatures'
         // and robots' combat lines; docs/spec-notes/combat-dialogue.md §3).
         let own_sound = g.data.infos.get(&s.info).and_then(|d| d.responses.get(k)).and_then(|r| r.sound);
@@ -592,7 +598,7 @@ fn play(
             info!("voice: {who} line {} response {number} plays its sound {}{}", g.data.name(s.info), g.data.name(sound), if out_of_hearing.is_some() { " [out of hearing]" } else { "" });
             st.playing.insert(
                 s.speaker,
-                Playing { info: s.info, response: k, entity: None, ends_at: now + fitted, remaining: s.remaining, path: None, started_at: now, held_secs: 0.0, conversation: s.conversation, held: false, pan, offset: 0.0 },
+                Playing { info: s.info, place: s.place, response: k, entity: None, ends_at: now + fitted, remaining: s.remaining, path: None, started_at: now, held_secs: 0.0, conversation: s.conversation, held: false, pan, offset: 0.0 },
             );
             continue;
         }
@@ -688,7 +694,7 @@ fn play(
         st.unheard += u64::from(out_of_hearing.is_some());
         st.playing.insert(
             s.speaker,
-            Playing { info: s.info, response: k, entity, ends_at: now + seconds, remaining: s.remaining, path: file, started_at: now, held_secs: 0.0, conversation: s.conversation, held: false, pan, offset },
+            Playing { info: s.info, place: s.place, response: k, entity, ends_at: now + seconds, remaining: s.remaining, path: file, started_at: now, held_secs: 0.0, conversation: s.conversation, held: false, pan, offset },
         );
     }
     // The lines cut to one cry end with it (and DeathResponse comes then).
