@@ -759,14 +759,58 @@ struct Args {
     /// alone as the original does; a switch of the settings page (player_body.rs).
     #[arg(long, requires = "play")]
     first_person_body: bool,
+    /// Weapon Inertia: the first-person arms and weapon lag behind turns and steps, bob,
+    /// breathe and recoil (view_sway.rs); off unless given (the owner, 2026-11-16: Advanced
+    /// Movement's parts off by default but Advanced Recoil); a switch of the settings page.
+    #[arg(long, requires = "play", conflicts_with = "no_weapon_sway")]
+    weapon_sway: bool,
     /// Keep the first-person arms and weapon still while turning and moving: no sway or
-    /// bob (view_sway.rs); a switch of the settings page.
+    /// bob (view_sway.rs), the default; a switch of the settings page.
     #[arg(long, requires = "play")]
     no_weapon_sway: bool,
+    /// Camera Motion: in first person the view bobs with each step, breathes and jolts when
+    /// hit (head_bob.rs); off unless given; a switch of the settings page.
+    #[arg(long, requires = "play", conflicts_with = "no_head_bob")]
+    head_bob: bool,
     /// No head bob in first person: the camera stays still while walking and running
-    /// (head_bob.rs); a switch of the settings page.
+    /// (head_bob.rs), the default; a switch of the settings page.
     #[arg(long, requires = "play")]
     no_head_bob: bool,
+    /// No advanced movement: none of the settings page's Advanced movement switches acts
+    /// (inertia, eased crouch, smooth weapon animations, weapon sway, head bob, the breath,
+    /// soft recoil, landing weight, hit jolt; nvf_play::inertia::MovementInertia::advanced),
+    /// as in the original; the main switch of that section.
+    #[arg(long, requires = "play")]
+    no_advanced_movement: bool,
+    /// Movement Inertia: speeding up, gliding to a stop, an eased crouch, landings that dip
+    /// (nvf_play::inertia); off unless given; a switch of the settings page.
+    #[arg(long, requires = "play", conflicts_with = "no_movement_inertia")]
+    movement_inertia: bool,
+    /// No movement inertia: full speed at once and an instant stop (nvf_play::inertia), the
+    /// default; a switch of the settings page.
+    #[arg(long, requires = "play")]
+    no_movement_inertia: bool,
+    /// Weapon Handling: drawing, putting away and aiming take longer by the weapon's weight
+    /// and the attributes (nvf_play::inertia); off unless given; a switch of the settings page.
+    #[arg(long, requires = "play", conflicts_with = "no_weapon_handling")]
+    weapon_handling: bool,
+    /// No Weapon Handling: drawing, putting away and aiming keep the game's own timing,
+    /// whatever the weapon weighs (nvf_play::inertia), the default; a switch of the settings
+    /// page.
+    #[arg(long, requires = "play")]
+    no_weapon_handling: bool,
+    /// Animation Smoothing: the first-person clips ease in and settle softly
+    /// (nvf_play::inertia); off unless given; a switch of the settings page.
+    #[arg(long, requires = "play", conflicts_with = "no_animation_smoothing")]
+    animation_smoothing: bool,
+    /// No Animation Smoothing: the original's clips (nvf_play::inertia), the default; a
+    /// switch of the settings page.
+    #[arg(long, requires = "play")]
+    no_animation_smoothing: bool,
+    /// No Advanced Recoil: the whole kick of a shot stays, as in the original
+    /// (nvf_play::inertia); a switch of the settings page (on by default).
+    #[arg(long, requires = "play")]
+    no_advanced_recoil: bool,
     /// Keep the first-person weapon up against walls and friendly actors close ahead
     /// (weapon_lower.rs); a switch of the settings page.
     #[arg(long, requires = "play")]
@@ -1783,8 +1827,17 @@ fn main() -> AppExit {
             app.add_plugins(creator_view::CreatorViewPlugin { light_scale: args.light_scale });
             // The Vigor Tester's machine: its camera and lights, the room behind it.
             app.add_plugins(vigor_view::VigorViewPlugin);
-            app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, head_bob: !args.no_head_bob, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin, grass_fire_fx::GrassFireFxPlugin));
+            app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: args.weapon_sway, head_bob: args.head_bob, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin, grass_fire_fx::GrassFireFxPlugin));
             app.insert_resource(nvf_play::aim_zoom::Scope3d { on: args.scope_3d, lens: false });
+            // Advanced Movement's parts are off unless switched on, Advanced Recoil on under
+            // the Global Toggle [design: the owner, 2026-11-16, "make sure all advanced
+            // movement features are off by default except the improved/advanced recoil"].
+            let mut inertia = nvf_play::inertia::MovementInertia::switched(args.movement_inertia);
+            inertia.weapon_handling = args.weapon_handling;
+            inertia.smooth = args.animation_smoothing;
+            inertia.recoil = !args.no_advanced_recoil;
+            inertia.advanced = !args.no_advanced_movement;
+            app.insert_resource(inertia);
             app.add_plugins(decals::DecalsPlugin);
             app.add_plugins(knockouts::KnockoutsPlugin);
             // The stress tests' samples (NVF_PLAY_TEST_SAMPLE; nothing without it).

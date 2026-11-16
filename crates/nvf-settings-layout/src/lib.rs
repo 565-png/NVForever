@@ -72,8 +72,9 @@ pub const fn group_section(subgroup: &'static str, heading: &'static str, keys: 
 /// The rows the NVF Features tab may hold: only what the owner named there [design: owner
 /// 2026-11-15]. Adding a key needs the owner's word; a bigger gameplay change is offered to
 /// the owner for this tab, never moved here unasked (docs/design/settings-page.md).
-pub const NVF_FEATURES_KEYS: [&str; 8] = [
+pub const NVF_FEATURES_KEYS: [&str; 9] = [
     "advanced-movement",
+    "movement-weight",
     "movement-inertia",
     "weapon-handling",
     "advanced-recoil",
@@ -95,7 +96,7 @@ pub const SECTIONS: &[Section] = &[
     section("Gameplay", Some("Game"), &["difficulty", "hardcore", "reload-slows", "UsePipBoy", "sound-cover"]),
     // "V.A.T.S." as the data spells it (MESG `HelpVATS`).
     section("Gameplay", Some("V.A.T.S."), &["vats-style", "vats-slowdown", "kill-camera"]),
-    section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-sway", "head-bob", "weapon-lower", "field-of-view", "viewmodel-field-of-view"]),
+    section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-lower", "field-of-view", "viewmodel-field-of-view"]),
     section("Gameplay", Some("Dialogue"), &["dialogue-zoom", "dialogue-look", "dialogue-recentre", "menu-pause", "dialogue-goodbye-hint", "lip-sync"]),
     section("Gameplay", Some("Saving"), &["autosave-travel", "autosave-fast-travel", "autosave-wait", "autosave-sleep", "autosave-scripts"]),
     section("Gameplay", Some("Bug Reports"), &["send-reports", "reports-delete"]),
@@ -198,7 +199,7 @@ pub const SECTIONS: &[Section] = &[
     section("Graphics", Some("Detail and Distance"), &["distant-lod", "grass", "anisotropic", "terrain-height-blend", "terrain-anti-tiling", "smooth-terrain", "object-distance", "actor-distance", "item-distance", "grass-distance"]),
     section("Graphics", Some("World and Animation"), &["head-tracking", "foot-ik", "sky-clock"]),
     // The owner's own layout of the movement work (tech/movement-inertia, 2026-11-15).
-    section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement"]),
+    section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement", "movement-weight"]),
     section(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil"]),
     section(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     section(NVF_FEATURES_TAB, Some("World Interaction"), &["grass-fire"]),

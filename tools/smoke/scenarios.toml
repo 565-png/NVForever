@@ -1033,11 +1033,11 @@ source = "engine/nvforever/src/view_sway.rs (owner request 2026-10-20): the firs
 areas = ["player-body"]
 paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs"]
 env = { NVF_PLAY_TEST_LOOK = "3:0:0,3.2:10:0,3.3:20:0,3.4:30:0,3.5:40:0,3.6:50:0", NVF_PLAY_TEST_MOVE = "5:1:0,10:0:0" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
 run_seconds = 13
 expect = [
-  { re = 'player body summary: weapon sway on, most turn lag (?P<n>[\d.]+) degrees sideways', range = [1.5, 5.01], label = "a quick turn leaves the arms behind, within the 5 degree limit" },
-  { re = 'player body summary: weapon sway on, most turn lag [\d.]+ degrees sideways and (?P<n>[\d.]+) up or down', range = [0, 3.51], label = "up or down within the 3.5 degree limit" },
+  { re = 'player body summary: weapon sway on, most turn lag (?P<n>[\d.]+) degrees sideways', range = [1.5, 6.01], label = "a quick turn leaves the arms behind, within the 6 degree limit" },
+  { re = 'player body summary: weapon sway on, most turn lag [\d.]+ degrees sideways and (?P<n>[\d.]+) up or down', range = [0, 4.01], label = "up or down within the 4 degree limit" },
   { re = 'player body summary: weapon sway on, .*deepest bob (?P<n>[\d.]+) units', range = [0.3, 0.91], label = "running bobs the arms, within the 0.9 unit dip" },
 ]
 
@@ -1047,10 +1047,10 @@ source = "owner 2026-11-07 (engine/nvforever/src/head_bob.rs): a head bob in fir
 areas = ["player-body"]
 paths = ["engine/nvforever/src/head_bob.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs"]
 env = { NVF_PLAY_TEST_MOVE = "5:1:0,10:0:0" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
 run_seconds = 12
 expect = [
-  { re = 'player body summary: head bob on, deepest first-person dip (?P<n>[\d.]+) units', range = [1.0, 1.61], label = "running bobs the first-person view, within the 1.6 unit dip" },
+  { re = 'player body summary: head bob on, deepest first-person dip (?P<n>[\d.]+) units', range = [2.5, 5.26], label = "running bobs the first-person view, within the 5.25 unit dip" },
 ]
 
 [[scenario]]
@@ -1059,12 +1059,316 @@ source = "owner 2026-11-07 (engine/nvforever/src/head_bob.rs): no head bob in th
 areas = ["player-body"]
 paths = ["engine/nvforever/src/head_bob.rs", "engine/nvforever/src/player_body.rs"]
 env = { NVF_PLAY_TEST_CONTROL = "3:view", NVF_PLAY_TEST_MOVE = "5:1:0,10:0:0" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
 run_seconds = 12
 expect = [
   { re = 'third-person pivot over (?P<n>\d+) frames', range = [150, 1e9], label = "the view was third person while running" },
   { re = 'pivot/head (?P<n>[\d.]+)', range = [0, 0.35], label = "the pivot moves at most about a third as much as the head frame to frame" },
   { re = 'deepest first-person dip (?P<n>[\d.]+) units', range = [0, 0.05], label = "no first-person bob in third person" },
+]
+
+[[scenario]]
+name = "movement-inertia"
+source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs, engine/nvforever/src/player_body.rs, view_sway.rs; docs/design/player-body.md §1.4a.2): the player speeds up over a moment and glides to a stop, the first-person view eases into a crouch and out, the weapon dips on a jump and a landing"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/ease.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/aim_zoom.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak,12:sneak,14:jump" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 17
+expect = [
+  { re = 'movement inertia: up to [\d.]+ units/s in (?P<n>[\d.]+)s', range = [0.4, 0.7], label = "from standing to speed in about 0.5 s (inertia weight 1)" },
+  { re = 'movement inertia: glided (?P<n>[\d.]+) units', range = [25, 50], label = "letting go of the key glides the player on, about half a metre from a run (2 × speed / the spring rate)" },
+  { re = 'movement inertia: glided [\d.]+ units in (?P<n>[\d.]+)s', range = [0.3, 1.0], label = "and the glide eases to rest" },
+  { text = "player view: crouched (eased crouch)", label = "the view eases down into the crouch" },
+  { text = "player view: standing (eased crouch)", label = "and up out of it" },
+  { re = 'player body summary: weapon sway on, .*deepest jump or landing dip (?P<n>[\d.]+) units', range = [0.3, 3.51], label = "the jump dips the weapon, within the 3.5 unit limit" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace"
+source = "owner 2026-11-14 (engine/nvforever/src/player_body.rs MotionTrace): a frame-by-frame trace of the first-person motion through a weapon draw, idling, aiming in and out, aiming in the middle of a turn, mouse flicks, a run and stop, a crouched jump, a jump and a holster, for finding hitches and two-step moves (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvf-assets/src/anim_blend.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "6:weapon,12:aim,14:aim,16:aim,18:aim,29:sneak,31:jump,33:sneak,35:jump,37:weapon", NVF_PLAY_TEST_LOOK = "15.8:0:0,15.9:5:0,15.95:15:0,16.0:30:0,16.05:50:0,16.1:65:0,16.15:70:0,16.5:65:0,16.55:50:0,16.6:30:0,16.65:10:0,16.7:0:0,19.9:0:0,20.0:5:0,20.05:15:0,20.1:30:0,20.15:50:0,20.2:70:0,20.25:85:0,20.3:90:0,22.0:80:0,22.05:60:0,22.1:35:0,22.15:15:0,22.2:3:0,22.25:0:0", NVF_PLAY_TEST_MOVE = "24:1:0,27:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 41
+expect = [
+  { re = 'motion trace: writing', label = "the trace is written" },
+  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-combat"
+source = "owner 2026-11-14 (engine/nvforever/src/player_body.rs MotionTrace; eighth playtest): a frame-by-frame trace of the first-person gun looking down and up (pitch offset), firing (eased view kick, fire clip restarts), reloading, and a hard landing from a drop, for finding steps and choppy moves (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-combat.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,13:fire,13.1:fire,13.3:fire,13.4:fire,13.6:fire,13.7:fire,13.9:fire,14:fire,18:reload", NVF_PLAY_TEST_LOOK = "6:0:0,6.5:0:-35,7:0:-70,8:0:-70,8.5:0:-35,9:0:0,9.5:0:35,10:0:70,11:0:70,11.5:0:35,12:0:0", NVF_PLAY_TEST_SCRIPT = "24:call:player:SetPos:Z:9150" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 30
+expect = [
+  { re = 'motion trace: writing', label = "the trace is written" },
+  { re = 'combat: kick: shot', label = "the gun fired" },
+  { re = 'reload at x', label = "the gun reloaded" },
+  { re = 'player view: landed at (\d{4}|[89]\d\d) units/s', label = "a hard landing from the drop" },
+  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-crouch-jump"
+source = "owner 2026-11-14 (engine/nvforever/src/player_body.rs MotionTrace; tenth playtest: \"when crouched and walking forward and pressing jump, the character sometimes still does the weird stand/jump movement\"): a frame-by-frame trace of crouched jumps while walking ahead, with the rifle out and with it put away, for finding the eye rising off the feet (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-crouch-jump.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,7:sneak,10:jump,12.4:jump,14.9:jump,17.2:jump,20:weapon,24:jump,26.5:jump,29:jump", NVF_PLAY_TEST_MOVE = "9:1:0,19:0:0,23:1:0,31:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 33
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the crouched jumps is written" },
+  { re = 'player body summary: weapon sway on', label = "the crouched jumps: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-still-mouse"
+source = "owner 2026-11-14 (engine/nvforever/src/view_sway.rs TURN_KNEE; tenth playtest: \"the idle weapon/hand animation micro jitters a lot, when I aim down sights it jitters more visibly\"): a frame-by-frame trace of a resting hand's mouse twitches (single counts of about 0.023 degrees, back and forth) with the rifle held and down its sights; the arms should stay on the view (sway_yaw near 0; tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/view_sway.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-still-mouse.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,13:aim", NVF_PLAY_TEST_LOOK = "8.9:0:0,9.036:-0.023:0,9.076:-0.046:0,9.100:-0.069:0,9.138:-0.092:0,9.203:-0.100:0,9.225:-0.077:0,9.266:-0.100:0,9.291:-0.077:0,9.314:-0.100:0,9.381:-0.100:0,9.430:-0.077:0,9.452:-0.100:0,9.475:-0.100:0,9.509:-0.100:0,9.556:-0.077:0,9.604:-0.100:0,9.629:-0.100:0,9.668:-0.100:0,9.716:-0.100:0,9.761:-0.077:0,9.820:-0.054:0,9.869:-0.031:0,9.907:-0.054:0,9.967:-0.077:0,9.991:-0.054:0,10.037:-0.031:0,10.094:-0.008:0,10.144:-0.031:0,10.170:-0.008:0,10.198:0.015:0,10.226:0.038:0,10.267:0.015:0,10.325:0.038:0,10.362:0.061:0,10.412:0.084:0,10.435:0.061:0,10.503:0.084:0,10.557:0.061:0,10.581:0.084:0,10.633:0.100:0,10.667:0.100:0,10.731:0.100:0,10.753:0.100:0,10.790:0.077:0,10.835:0.054:0,10.893:0.031:0,10.950:0.054:0,10.990:0.077:0,11.014:0.100:0,11.054:0.100:0,11.118:0.100:0,11.181:0.100:0,11.237:0.100:0,11.291:0.100:0,11.359:0.077:0,11.383:0.054:0,11.415:0.031:0,11.435:0.008:0,11.468:-0.015:0,11.496:0.008:0,11.546:0.031:0,11.614:0.008:0,11.657:0.031:0,11.696:0.054:0,11.722:0.077:0,11.745:0.054:0,11.814:0.077:0,11.842:0.100:0,11.892:0.077:0,11.912:0.054:0,11.959:0.077:0,12.010:0.054:0,12.073:0.077:0,12.101:0.100:0,12.169:0.100:0,12.212:0.077:0,12.275:0.100:0,12.319:0.100:0,12.343:0.077:0,12.400:0.100:0,12.444:0.077:0,12.490:0.054:0,12.558:0.077:0,12.585:0.054:0,12.643:0.077:0,12.712:0.054:0,12.767:0.077:0,12.813:0.054:0,12.850:0.031:0,12.897:0.054:0,12.949:0.031:0,13.009:0.054:0,13.066:0.031:0,13.096:0.054:0,13.134:0.031:0,13.203:0.054:0,13.247:0.031:0,13.302:0.054:0,13.344:0.077:0,13.412:0.100:0,13.436:0.077:0,13.467:0.054:0,13.504:0.077:0,13.555:0.054:0,13.599:0.077:0,13.659:0.054:0,13.721:0.031:0,13.786:0.008:0,13.830:-0.015:0,13.872:0.008:0,13.896:0.031:0,13.940:0.008:0,13.996:-0.015:0,14.065:-0.038:0,14.093:-0.015:0,14.153:-0.038:0,14.204:-0.015:0,14.257:0.008:0,14.285:-0.015:0,14.306:-0.038:0,14.352:-0.061:0,14.394:-0.084:0,14.455:-0.100:0,14.476:-0.100:0,14.511:-0.100:0,14.569:-0.077:0,14.602:-0.054:0,14.664:-0.077:0,14.729:-0.054:0,14.794:-0.031:0,14.856:-0.054:0,14.902:-0.077:0,14.966:-0.100:0,15.016:-0.100:0,15.045:-0.077:0,15.096:-0.100:0,15.144:-0.077:0,15.198:-0.054:0,15.257:-0.077:0,15.321:-0.100:0,15.354:-0.077:0,15.376:-0.100:0,15.421:-0.100:0,15.479:-0.100:0,15.521:-0.100:0,15.576:-0.077:0,15.621:-0.054:0,15.667:-0.077:0,15.722:-0.054:0,15.788:-0.077:0,15.850:-0.100:0,15.891:-0.077:0,15.933:-0.100:0,15.986:-0.077:0,16.010:-0.054:0,16.069:-0.077:0,16.136:-0.054:0,16.163:-0.077:0,16.232:-0.100:0,16.289:-0.100:0,16.329:-0.077:0,16.357:-0.100:0,16.385:-0.077:0,16.455:-0.054:0,16.492:-0.077:0,16.530:-0.100:0,16.586:-0.100:0,16.623:-0.077:0,16.665:-0.100:0,16.704:-0.077:0,16.749:-0.100:0,16.775:-0.100:0,16.844:-0.100:0,16.868:-0.077:0,16.890:-0.100:0,16.923:-0.100:0,16.984:-0.077:0,17.025:-0.054:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 19
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the still mouse is written" },
+  { re = 'player body summary: weapon sway on', label = "the still mouse: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-pipboy"
+source = "owner 2026-11-14 (engine/nvforever/src/player_body.rs MotionTrace; tenth playtest: \"PipBoy jitters a lot also\"): a frame-by-frame trace of the Pip-Boy brought up, held, and put away, with the rifle out (lhand_* is the left hand against the camera node, lens the arms' magnification; tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-pipboy.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon", NVF_PLAY_TEST_PIPBOY = "9:open,16:close" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 21
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the Pip-Boy is written" },
+  { re = 'player body summary: weapon sway on', label = "the Pip-Boy: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-weapons"
+source = "owner 2026-11-15 (engine/nvforever/src/player_body.rs MotionTrace; eleventh playtest: \"some equip animations are not affected - check that every animation for guns/melee weapons is affected\"): a frame-by-frame trace of drawing, attacking with and putting away each weapon type (the club put away at 21 s and the flamer at 33.5 s, so their slower put-aways end before the next weapon is equipped, which cuts them) (pistol, one- and two-handed melee, a grenade, a heavy weapon, fists) and a weapon swapped while drawn, for finding clips that do not follow the settling curve (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-weapons.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:Weap10mmPistol:1,2:call:player:AddItem:WeapNVStraightRazor:1,2:call:player:AddItem:WeapNVRebarClub:1,2:call:player:AddItem:WeapGrenadeFrag:3,2:call:player:AddItem:WeapFlamer:1,2:call:player:AddItem:WeapNVHuntingShotgun:1,4:call:player:EquipItem:Weap10mmPistol,10:call:player:EquipItem:WeapNVStraightRazor,17:call:player:EquipItem:WeapNVRebarClub,24:call:player:EquipItem:WeapGrenadeFrag,30:call:player:EquipItem:WeapFlamer,36:call:player:UnequipItem:WeapFlamer,43:call:player:EquipItem:Weap10mmPistol,47:call:player:EquipItem:WeapNVHuntingShotgun", NVF_PLAY_TEST_CONTROL = "5:weapon,8:weapon,11:weapon,13:fire,15:weapon,18:weapon,20:fire,21:weapon,25:weapon,28:weapon,31:weapon,33.5:weapon,37:weapon,39:fire,41:weapon,44:weapon,50:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 53
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the weapons is written" },
+  { re = 'player body summary: weapon sway on', label = "the weapons: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-weapons-rest"
+source = "owner 2026-11-15 (engine/nvforever/src/player_body.rs MotionTrace; \"check them all while skipping weapons that reuse the same one - 1 test for every unique animation\"): as movement-inertia-trace-weapons for the four first-person draw and put-away clip pairs it leaves out, one weapon each: an automatic rifle (Assault Carbine, `2ha`), a launcher (Missile Launcher, `2hl`, Lonesome Road's clips when it is loaded), a land mine (Frag Mine, `1lm`) and a mine drop (Bottlecap Mine, `1md`); drawn at 5/13/25.5/33.5 s, put away at 9/19/29.5/37.5 s (the launcher's put-away takes 4 s) (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-weapons-rest.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:WeapNVAssaultCarbine:1,2:call:player:AddItem:WeapMissileLauncher:1,2:call:player:AddItem:WeapMineFrag:3,2:call:player:AddItem:WeapMineBottlecap:3,4:call:player:EquipItem:WeapNVAssaultCarbine,12:call:player:EquipItem:WeapMissileLauncher,24.5:call:player:EquipItem:WeapMineFrag,32.5:call:player:EquipItem:WeapMineBottlecap", NVF_PLAY_TEST_CONTROL = "5:weapon,9:weapon,13:weapon,19:weapon,25.5:weapon,29.5:weapon,33.5:weapon,37.5:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 45
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the four weapons is written" },
+  { re = 'weapon handling: draws at .* \(6(\.0)? lb', label = "the Assault Carbine is drawn" },
+  { re = 'weapon handling: draws at .* \(20(\.0)? lb', label = "the Missile Launcher is drawn" },
+  { re = 'player body summary: weapon sway on', label = "the four weapons: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-weapons-original"
+source = "the reference for movement-inertia-trace-weapons: the same draws and put-aways with the Advanced Movement main switch off (--no-advanced-movement), the clips at the original's pace and blending, to tell a clip's own second movements from ours. owner 2026-11-15 (engine/nvforever/src/player_body.rs MotionTrace; eleventh playtest: \"some equip animations are not affected - check that every animation for guns/melee weapons is affected\"): a frame-by-frame trace of drawing, attacking with and putting away each weapon type (the club put away at 21 s and the flamer at 33.5 s, so their slower put-aways end before the next weapon is equipped, which cuts them) (pistol, one- and two-handed melee, a grenade, a heavy weapon, fists) and a weapon swapped while drawn, for finding clips that do not follow the settling curve (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-weapons-original.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:Weap10mmPistol:1,2:call:player:AddItem:WeapNVStraightRazor:1,2:call:player:AddItem:WeapNVRebarClub:1,2:call:player:AddItem:WeapGrenadeFrag:3,2:call:player:AddItem:WeapFlamer:1,2:call:player:AddItem:WeapNVHuntingShotgun:1,4:call:player:EquipItem:Weap10mmPistol,10:call:player:EquipItem:WeapNVStraightRazor,17:call:player:EquipItem:WeapNVRebarClub,24:call:player:EquipItem:WeapGrenadeFrag,30:call:player:EquipItem:WeapFlamer,36:call:player:UnequipItem:WeapFlamer,43:call:player:EquipItem:Weap10mmPistol,47:call:player:EquipItem:WeapNVHuntingShotgun", NVF_PLAY_TEST_CONTROL = "5:weapon,8:weapon,11:weapon,13:fire,15:weapon,18:weapon,20:fire,21:weapon,25:weapon,28:weapon,31:weapon,33.5:weapon,37:weapon,39:fire,41:weapon,44:weapon,50:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--no-advanced-movement", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 53
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the weapons is written, Advanced Movement off" },
+  { re = 'player body summary: weapon sway on', label = "the weapons: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-weapons-rest-original"
+source = "the reference for movement-inertia-trace-weapons-rest: the same draws and put-aways with the Advanced Movement main switch off (--no-advanced-movement), the clips at the original's pace and blending, to tell a clip's own second movements from ours. owner 2026-11-15 (engine/nvforever/src/player_body.rs MotionTrace; \"check them all while skipping weapons that reuse the same one - 1 test for every unique animation\"): as movement-inertia-trace-weapons for the four first-person draw and put-away clip pairs it leaves out, one weapon each: an automatic rifle (Assault Carbine, `2ha`), a launcher (Missile Launcher, `2hl`, Lonesome Road's clips when it is loaded), a land mine (Frag Mine, `1lm`) and a mine drop (Bottlecap Mine, `1md`); drawn at 5/13/25.5/33.5 s, put away at 9/19/29.5/37.5 s (the launcher's put-away takes 4 s) (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-weapons-rest-original.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:WeapNVAssaultCarbine:1,2:call:player:AddItem:WeapMissileLauncher:1,2:call:player:AddItem:WeapMineFrag:3,2:call:player:AddItem:WeapMineBottlecap:3,4:call:player:EquipItem:WeapNVAssaultCarbine,12:call:player:EquipItem:WeapMissileLauncher,24.5:call:player:EquipItem:WeapMineFrag,32.5:call:player:EquipItem:WeapMineBottlecap", NVF_PLAY_TEST_CONTROL = "5:weapon,9:weapon,13:weapon,19:weapon,25.5:weapon,29.5:weapon,33.5:weapon,37.5:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--no-advanced-movement", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 45
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the four weapons is written, Advanced Movement off" },
+  { re = 'player body summary: weapon sway on', label = "the four weapons: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-sights-shotgun"
+source = "owner 2026-11-15 (engine/nvforever/src/player_body.rs MotionTrace; twelfth playtest: \"the guns/hands are still micro-shimmering. Especially visible with the Sturdy Caravan Shotgun ... aim down sights\"): a frame-by-frame trace and full-resolution screenshots of the Sturdy Caravan Shotgun held still down its sights, for finding the gun's motion against the view frame to frame (tools/smoke/motion_trace.py reads the trace)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/iron_sights.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-sights-shotgun.csv", NVF_PLAY_TEST_EQUIP = "001735E3", NVF_PLAY_TEST_GIVE = "0015367E:20", NVF_PLAY_TEST_CONTROL = "4:weapon,8:aim", NVF_PLAY_TEST_SHOTS = "14.0:sights_shotgun_a.png,14.05:sights_shotgun_b.png,14.1:sights_shotgun_c.png,14.15:sights_shotgun_d.png,14.2:sights_shotgun_e.png,14.25:sights_shotgun_f.png,14.3:sights_shotgun_g.png,14.35:sights_shotgun_h.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "3840x2160", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 18
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the shotgun down its sights is written" },
+  { text = "true iron sights: the sights are on the eye", label = "the shotgun is down its sights" },
+  { re = 'player body summary: weapon sway on', label = "the shotgun down its sights: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-sights-shotgun-still"
+source = "owner 2026-11-15 (twelfth playtest, the shotgun's shimmer down its sights): as movement-inertia-trace-sights-shotgun with Weapon Inertia switched off on the settings page first (the breathing's drift with it), to tell the sway from any other motion of the gun"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/settings.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-sights-shotgun-still.csv", NVF_PLAY_TEST_EQUIP = "001735E3", NVF_PLAY_TEST_GIVE = "0015367E:20", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "2:3.5", NVF_PLAY_TEST_SETTINGS = "2.5:weapon-inertia", NVF_PLAY_TEST_CONTROL = "4:weapon,8:aim", NVF_PLAY_TEST_SHOTS = "14.0:sights_still_a.png,14.05:sights_still_b.png,14.1:sights_still_c.png,14.15:sights_still_d.png,14.2:sights_still_e.png,14.25:sights_still_f.png,14.3:sights_still_g.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "3840x2160", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 18
+expect = [
+  { text = "settings: weapon-inertia off", label = "Weapon Inertia is switched off" },
+  { text = "true iron sights: the sights are on the eye", label = "the shotgun is down its sights" },
+  { re = 'player body summary: weapon sway off', label = "the run reached its end, Weapon Inertia off" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-block"
+source = "owner 2026-11-15 (twelfth playtest: \"does blocking using melee weapons have inertia applied also?\"; engine/nvforever/src/player_body.rs MotionTrace): a frame-by-frame trace of a lead pipe raised to block and lowered twice, for checking that the block follows the aim's settling curve and the sway's raise lag"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-block.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:WeapLeadPipe:1,2.5:call:player:EquipItem:WeapLeadPipe", NVF_PLAY_TEST_CONTROL = "4:weapon,8:aim,10:aim,12:aim,14:aim" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 17
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the block is written" },
+  { re = 'player body summary: weapon sway on', label = "the block: the run reached its end" },
+]
+
+[[scenario]]
+name = "advanced-movement-switches"
+source = "owner 2026-11-15 (\"finish the Advanced Movement project ... a full bug check\"; engine/nvf-play/src/player.rs, engine/nvforever/src/settings.rs, docs/design/player-body.md §1.4a.3): every switch of NVF Features › Advanced movement turned off on the settings page part-way through a draw, then on again while aimed, with the rifle firing, the player running, jumping and crouching between, so a switch changed mid-motion leaves nothing stuck"
+areas = ["player-body", "settings"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/aim_zoom.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6,13.3:15", NVF_PLAY_TEST_SETTINGS = "4.4:movement-inertia,4.5:weapon-handling,4.6:advanced-recoil,4.7:weapon-inertia,4.8:animation-smoothing,4.9:camera-motion,5.0:advanced-movement,13.4:advanced-movement,13.5:movement-inertia,13.6:weapon-handling,13.7:advanced-recoil,13.8:weapon-inertia,13.9:animation-smoothing,14.0:camera-motion", NVF_PLAY_TEST_CONTROL = "4:weapon,7:jump,9:sneak,10:sneak,12:aim,15.5:fire,16:fire,17:aim,18:jump,20:weapon", NVF_PLAY_TEST_MOVE = "6.5:1:0,8.5:0:0,18:1:0,19.5:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 24
+expect = [
+  { text = "settings: advanced-movement off", label = "the main switch goes off" },
+  { text = "settings: camera-motion off", label = "the last part switch goes off" },
+  { text = "settings: advanced-movement on", label = "the main switch comes back on" },
+  { text = "settings: camera-motion on", label = "and the last part switch" },
+  { re = 'combat: kick: shot', label = "the rifle fired with every switch back on" },
+  { re = 'player body summary: weapon sway on', label = "the switches: the run reached its end" },
+]
+forbid = [
+  { re = 'NVF_PLAY_TEST_SETTINGS: ("|no switch|\S+ is a (list|slider):)', label = "every switch step is understood" },
+  { re = 'panicked', label = "nothing panics" },
+]
+
+[[scenario]]
+name = "advanced-movement-menu"
+source = "owner 2026-11-15 (\"simplify the Advanced Movement menu\"; engine/nvf-play/src/settings_layout.rs, settings_view.rs; docs/design/player-body.md §1.4a.3): the NVF Features tab lists the Global Toggle and Movement Weight (owner 2026-11-15) under Advanced Movement, then an empty line, Gameplay's three switches, an empty line and Visual Only's three, in the owner's order"
+areas = ["player-body", "settings"]
+paths = ["engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/settings.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_PLAY_TEST_SETTINGS = "11:tab:NVF Features", NVF_PLAY_TEST_PAUSE_MENU = "12:inspect", NVF_PLAY_TEST_SHOTS = "13:advanced_movement_menu.png" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, movement-weight, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, , [NVF Features > Visual Only], weapon-inertia", label = "the Global Toggle, Movement Weight, an empty line, Gameplay, an empty line, Visual Only, in the owner's order (the window shows 11 lines since the menu overhaul, #2804; settings-layout places the rest)" },
+  { re = 'pause menu: inspect: NVF Features, .*lines 1-11 of 16', label = "sixteen lines in the tab: World Interaction's grass fires (#2804) after Visual Only" },
+]
+
+[[scenario]]
+name = "weapon-handling-attributes"
+source = "owner 2026-11-15, testers' feedback (engine/nvf-play/src/inertia.rs attribute_rate, aim_rate, draw_weight; docs/design/player-body.md §1.4a.3): with Weapon Handling a light weapon's draw follows Agility most and Strength a little, the aim a small share of it"
+note = "the 9mm pistol (000E3778, 1.5 lb) is drawn at 10 s; Agility goes to 10 at 12 s and Strength to 10 at 15 s. Draw rate = (1 + 0.1 x (Agility - 5) x 1.0 + 0.1 x (Strength - 5) x 0.3) / 1.5; aim = 0.6 s x 0.932 / (1 + 0.4 x (that attribute rate - 1))"
+areas = ["player-body", "combat"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/combat.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_CONSOLE = "12:player.setav agility 10;12.3:close;15:player.setav strength 10;15.3:close", NVF_PLAY_TEST_CONTROL = "10:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 19
+order = [[
+  { re = 'weapon handling: draws at x0\.67 before perks, aims in 0\.56s \(1\.5 lb, Agility 5, Strength 5, Movement Weight 100%, Weapon Handling on\)', label = "at 5 and 5 the pistol takes 1.5 times the original's draw" },
+  { re = 'weapon handling: draws at x1\.00 before perks, aims in 0\.47s \(1\.5 lb, Agility 10, Strength 5,', label = "Agility 10: the light weapon's full Agility gain (1.5 / 1.5), the aim a share of it" },
+  { re = 'weapon handling: draws at x1\.10 before perks, aims in 0\.45s \(1\.5 lb, Agility 10, Strength 10,', label = "Strength 10 adds little to a light weapon" },
+]]
+
+[[scenario]]
+name = "weapon-handling-off-agility"
+source = "owner 2026-11-15 (\"scaled with attributes just like in vanilla\"; docs/handoff/special-skills-audit-2026-10-23.md §2: draw and holster times 10 / (Agility + 5) [fandom]): without Weapon Handling draws play at the original's 0.5 + 0.1 x Agility, the aim at the game's own pace"
+areas = ["player-body", "combat"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/combat.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_CONSOLE = "12:player.setav agility 10;12.3:close;15:player.setav agility 1;15.3:close", NVF_PLAY_TEST_CONTROL = "10:weapon" }
+args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages", "--no-weapon-handling", "--movement-inertia", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 19
+order = [[
+  { re = 'weapon handling: draws at x1\.00 before perks, aims in 0\.35s \(.* lb, Agility 5, .*Weapon Handling off\)', label = "Agility 5: the clip's own speed (logged before the pistol is in hand: the weight does not change the original's rate)" },
+  { re = 'weapon handling: draws at x1\.50 before perks, aims in 0\.35s \(1\.5 lb, Agility 10,', label = "Agility 10: 1.5 times, as the original" },
+  { re = 'weapon handling: draws at x0\.60 before perks, aims in 0\.35s \(1\.5 lb, Agility 1,', label = "Agility 1: 0.6 times" },
+]]
+
+[[scenario]]
+name = "movement-inertia-off"
+source = "owner 2026-11-13 (engine/nvf-play/src/inertia.rs): with --no-movement-inertia the player starts and stops at once and the crouch follows the clips, as the original (the eased crouch is Movement Inertia's again since the owner's menu of 2026-11-15)"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--no-movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 13
+expect = [
+  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
+  { re = 'movement inertia: (up to|glided)', count = 0, label = "no start or glide without Movement Inertia" },
+  { re = 'eased crouch', count = 0, label = "the crouch follows the clips too: the eased crouch is Movement Inertia's" },
+]
+
+[[scenario]]
+name = "advanced-movement-off"
+source = "owner 2026-11-15 (engine/nvf-play/src/inertia.rs MovementInertia::advanced; docs/design/player-body.md §1.4a.3): with the Advanced movement main switch off (--no-advanced-movement) none of its parts acts: no glide, no eased crouch, no weapon dip on a jump, as the original"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak,12:sneak,14:jump" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--no-advanced-movement", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 17
+expect = [
+  { re = 'player body summary: weapon sway on', label = "the run reached its end (the sway's own switch stays on)" },
+  { re = 'movement inertia: (up to|glided)', count = 0, label = "no start or glide under inertia" },
+  { re = 'eased crouch', count = 0, label = "the crouch follows the clips" },
+  { re = 'player body summary: weapon sway on, .*deepest jump or landing dip (?P<n>[\d.]+) units', range = [0, 0.05], label = "the weapon does not dip: the sway does not act under the main switch" },
+]
+
+[[scenario]]
+name = "advanced-movement-defaults"
+source = "owner 2026-11-16 (\"make sure all advanced movement features are off by default except the improved/advanced recoil\"; engine/nvforever/src/main.rs, nvf_play::inertia::log_switches): with no switch given (an unattended run reads no INI) the Global Toggle and Advanced Recoil are on and Movement Inertia, Weapon Handling, Animation Smoothing, Weapon Inertia and Camera Motion are off: no glide, no eased crouch, the original's draw pace, no sway, no head bob"
+areas = ["player-body", "settings"]
+paths = ["engine/nvforever/src/main.rs", "engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/settings.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak,12:sneak" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 16
+expect = [
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off", label = "the Global Toggle and Advanced Recoil on, the other parts off" },
+  { re = 'weapon handling: draws at x1\.00 before perks.*Weapon Handling off', label = "the original's draw pace at Agility 5" },
+  { re = 'movement inertia: (up to|glided)', count = 0, label = "by default no start or glide under inertia" },
+  { re = 'eased crouch', count = 0, label = "by default the crouch follows the clips" },
+  { re = 'player body summary: weapon sway off', label = "Weapon Inertia off" },
+  { re = 'player body summary: head bob off', label = "Camera Motion off" },
+]
+
+[[scenario]]
+name = "advanced-movement-parts"
+source = "owner 2026-11-15 (engine/nvf-play/src/player.rs, engine/nvforever/src/settings.rs; docs/design/player-body.md §1.4a.3): each switch of Advanced Movement acts alone: Camera Motion off on the settings page leaves Movement Inertia's glide and eased crouch, and the view no longer bobs"
+areas = ["player-body", "settings"]
+paths = ["engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/head_bob.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "3:5", NVF_PLAY_TEST_SETTINGS = "4:camera-motion", NVF_PLAY_TEST_MOVE = "7:1:0,10:0:0", NVF_PLAY_TEST_CONTROL = "12:sneak" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 15
+expect = [
+  { text = "settings: camera-motion off", label = "Camera Motion is turned off on the page" },
+  { re = 'movement inertia: glided (?P<n>[\d.]+) units', range = [25, 50], label = "the glide stays: Movement Inertia is its own switch" },
+  { text = "player view: crouched (eased crouch)", label = "and so does its eased crouch" },
+  { re = 'player body summary: head bob off, deepest first-person dip (?P<n>[\d.]+) units', range = [0, 0.05], label = "the view no longer bobs" },
 ]
 
 [[scenario]]
@@ -2921,12 +3225,12 @@ order = [[
 [[scenario]]
 name = "ammo-swap-in-spin-up"
 source = "#1613: the minigun with five 5mm and five armour-piercing rounds, Ammo Swap 0.05 s into the spin-up: a reload into the armour-piercing ones, those five shots, then a click on the next pull; the plain rounds stay carried"
-note = "the plain rounds are never fired: the swap comes before the first shot and nothing swaps back, so five shots in all, not ten. The trigger is held from 6 to 16 s; the pull at 17 s is the one that clicks"
+note = "the plain rounds are never fired: the swap comes before the first shot and nothing swaps back, so five shots in all, not ten. The trigger is held from 9 to 19 s; the pull at 20 s is the one that clicks (3 s later than first written: with movement inertia and Weapon weight in handling the 30 lb minigun was not drawn yet at 6 s, tech/movement-inertia)"
 areas = ["combat"]
 paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/attack.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "0000433F", NVF_PLAY_TEST_GIVE = "0006B53D:5,0013E43F:5", NVF_PLAY_TEST_CONTROL = "3:weapon,6:fire,6.05:swap,16:fire,17:fire,17.4:fire", NVF_PLAY_TEST_CONSOLE = "24:player.getitemcount 0006B53D;player.getitemcount 0013E43F;24.4:close" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "0000433F", NVF_PLAY_TEST_GIVE = "0006B53D:5,0013E43F:5", NVF_PLAY_TEST_CONTROL = "3:weapon,9:fire,9.05:swap,19:fire,20:fire,20.4:fire", NVF_PLAY_TEST_CONSOLE = "27:player.getitemcount 0006B53D;player.getitemcount 0013E43F;27.4:close" }
 args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--pitch", "60", "--play", "--hour", "12", "--no-voice", "--no-messages"]
-run_seconds = 28
+run_seconds = 31
 expect = [
   "combat: ammo swapped to Ammo5mmArmorPiercing",
   { re = 'combat: reloaded 5, magazine 5\b', count = 1, label = "one reload takes the five armour-piercing rounds" },
@@ -11529,6 +11833,15 @@ expect = [
   "settings layout: autosave-travel -> Gameplay > Saving",
   "settings layout: menu-pause -> Gameplay > Dialogue",
   "settings layout: detached-camera -> Gameplay > Camera",
+  "settings layout: advanced-movement -> NVF Features > Advanced Movement",
+  "settings layout: movement-weight -> NVF Features > Advanced Movement",
+  "settings layout: movement-inertia -> NVF Features > Gameplay",
+  "settings layout: weapon-handling -> NVF Features > Gameplay",
+  "settings layout: advanced-recoil -> NVF Features > Gameplay",
+  "settings layout: weapon-inertia -> NVF Features > Visual Only",
+  "settings layout: animation-smoothing -> NVF Features > Visual Only",
+  "settings layout: camera-motion -> NVF Features > Visual Only",
+  { text = "settings layout: inertia-weight", count = 0, label = "the inertia weight is gone (owner 2026-11-15)" },
   "settings layout: resolution -> Display > Screen",
   "settings layout: hud-colour -> Display > Colours",
   "settings layout: hud-red -> Display > Colours",

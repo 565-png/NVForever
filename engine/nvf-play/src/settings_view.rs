@@ -1054,7 +1054,7 @@ mod tests {
         ("difficulty", "Gameplay"),
         ("hardcore", "Gameplay"),
         ("menu-pause", "Gameplay"),
-        ("head-bob", "Display"),
+        ("field-of-view", "Display"),
         ("autosave-travel", "Saving"),
         ("autosave-wait", "Saving"),
         ("hud-colour", "Interface"),
@@ -1091,14 +1091,14 @@ mod tests {
         let l = resolve_layout(&list);
         let vis = Visibility::default();
         let g = project(&l, &list, SettingsScope::Tab("Gameplay"), &vis, &NONE, &open());
-        assert_eq!(names(&list, &g), ["[Game]", "difficulty", "hardcore", "", "[Camera]", "head-bob", "", "[Dialogue]", "menu-pause", "", "[Saving]", "autosave-travel", "autosave-wait"]);
+        assert_eq!(names(&list, &g), ["[Game]", "difficulty", "hardcore", "", "[Camera]", "field-of-view", "", "[Dialogue]", "menu-pause", "", "[Saving]", "autosave-travel", "autosave-wait"]);
         // A closed category: its heading alone, no empty line after it.
         let mut f = open();
-        assert!(f.put(&heading(&list, &l, "head-bob"), false));
-        assert!(!f.put(&heading(&list, &l, "head-bob"), false), "already closed");
+        assert!(f.put(&heading(&list, &l, "field-of-view"), false));
+        assert!(!f.put(&heading(&list, &l, "field-of-view"), false), "already closed");
         let g = project(&l, &list, SettingsScope::Tab("Gameplay"), &vis, &NONE, &f);
         assert_eq!(names(&list, &g)[..6], ["[Game]", "difficulty", "hardcore", "", "[Camera]", "[Dialogue]"]);
-        assert_eq!(category_count(&l, &list, &heading(&list, &l, "head-bob"), &vis), 1);
+        assert_eq!(category_count(&l, &list, &heading(&list, &l, "field-of-view"), &vis), 1);
         // The colour's sliders only for Custom, the HUD's alone.
         let d = |colours| names(&list, &project(&l, &list, SettingsScope::Tab("Display"), &Visibility { colours, ..Visibility::default() }, &NONE, &open()));
         assert_eq!(d([false, false]), ["[Colours]", "hud-colour"]);
@@ -1145,16 +1145,16 @@ mod tests {
         let l = resolve_layout(&list);
         let g = project(&l, &list, SettingsScope::Tab("Gameplay"), &Visibility::default(), &NONE, &open());
         let k = |n| key(&list, n);
-        let camera = RowId::Heading(heading(&list, &l, "head-bob"));
+        let camera = RowId::Heading(heading(&list, &l, "field-of-view"));
         assert_eq!(step_selectable(&g, Some(k("hardcore")), 1), Some(camera), "over the empty line onto the heading");
-        assert_eq!(step_selectable(&g, Some(camera), 1), Some(k("head-bob")));
+        assert_eq!(step_selectable(&g, Some(camera), 1), Some(k("field-of-view")));
         assert_eq!(step_selectable(&g, Some(camera), -1), Some(k("hardcore")));
         assert_eq!(step_selectable(&g, Some(k("autosave-wait")), 1), Some(RowId::Heading(heading(&list, &l, "difficulty"))), "round the end");
         assert_eq!(step_selectable(&g, None, 1), Some(RowId::Heading(heading(&list, &l, "difficulty"))));
         assert_eq!(step_selectable(&[], None, 1), None, "an empty tab");
         // Nothing chosen: the first row, not its heading.
         assert_eq!(first_row(&g), Some(k("difficulty")));
-        let closed = [ViewEntry::Heading(heading(&list, &l, "difficulty")), ViewEntry::Heading(heading(&list, &l, "head-bob"))];
+        let closed = [ViewEntry::Heading(heading(&list, &l, "difficulty")), ViewEntry::Heading(heading(&list, &l, "field-of-view"))];
         assert_eq!(first_row(&closed), Some(RowId::Heading(heading(&list, &l, "difficulty"))), "only closed categories: the first heading");
     }
 
@@ -1165,14 +1165,14 @@ mod tests {
         let g = project(&l, &list, SettingsScope::Tab("Gameplay"), &Visibility::default(), &NONE, &open());
         let k = |n| key(&list, n);
         let to = |e: &[ViewEntry], from: RowId, step| step_heading(e, Some(from), step).map(|(id, p)| (id.name(&list), p.and_then(|p| p.heading)));
-        assert_eq!(to(&g, k("difficulty"), 1), Some(("head-bob".into(), Some("Camera"))));
-        assert_eq!(to(&g, k("head-bob"), 1), Some(("menu-pause".into(), Some("Dialogue"))));
-        assert_eq!(to(&g, k("menu-pause"), -1), Some(("head-bob".into(), Some("Camera"))));
+        assert_eq!(to(&g, k("difficulty"), 1), Some(("field-of-view".into(), Some("Camera"))));
+        assert_eq!(to(&g, k("field-of-view"), 1), Some(("menu-pause".into(), Some("Dialogue"))));
+        assert_eq!(to(&g, k("menu-pause"), -1), Some(("field-of-view".into(), Some("Camera"))));
         assert_eq!(to(&g, k("autosave-wait"), 1), Some(("difficulty".into(), Some("Game"))), "round the end");
-        assert_eq!(to(&g, RowId::Heading(heading(&list, &l, "head-bob")), 1), Some(("menu-pause".into(), Some("Dialogue"))), "from a heading too");
+        assert_eq!(to(&g, RowId::Heading(heading(&list, &l, "field-of-view")), 1), Some(("menu-pause".into(), Some("Dialogue"))), "from a heading too");
         // A closed category: its heading.
         let mut f = open();
-        f.put(&heading(&list, &l, "head-bob"), false);
+        f.put(&heading(&list, &l, "field-of-view"), false);
         let closed = project(&l, &list, SettingsScope::Tab("Gameplay"), &Visibility::default(), &NONE, &f);
         assert_eq!(to(&closed, k("difficulty"), 1), Some(("[Gameplay > Camera]".into(), Some("Camera"))));
         // A tab without headings is one section: its first row; an empty one, nothing.

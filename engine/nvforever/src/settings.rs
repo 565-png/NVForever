@@ -193,32 +193,39 @@ pub fn register(app: &mut App) {
                 slider: None,
             },
         );
+        // Advanced Movement's visual switches (NVF Features › Visual Only; nvf_play `player.rs`
+        // keeps the rest) [design: the owner, 2026-11-15]. A saved `weapon-sway` or `head-bob`
+        // (the rows they took over from) is read as theirs.
         add_setting(
             app,
             Setting {
-                key: "weapon-sway",
+                key: "weapon-inertia",
                 group: GROUP_PICTURE,
-                label: "Weapon sway",
-                note: "On: in first person the arms and weapon lag behind a turn and bob as you walk and run. Off: they stay still in the view.",
-                switches: "--no-weapon-sway",
+                label: "Weapon Inertia",
+                note: "On: in first person the arms and weapon lag behind turns and steps, bob, dip, breathe and recoil, heavier weapons more. Off: they stay still.",
+                switches: "--weapon-sway --no-weapon-sway",
                 get: |w| w.resource::<PlayerBody>().weapon_sway,
                 set: |w, on| w.resource_mut::<PlayerBody>().weapon_sway = on,
                 slider: None,
             },
         );
+        nvf_play::settings::set_older_key(app, "weapon-inertia", "weapon-sway");
+        nvf_play::settings::set_older_split(app, "weapon-sway", |v| vec![("weapon-inertia", v.to_string())]);
         add_setting(
             app,
             Setting {
-                key: "head-bob",
+                key: "camera-motion",
                 group: GROUP_PICTURE,
-                label: "Head bob",
-                note: "On: in first person the view dips with each step as you walk and run. Off: it stays level.",
-                switches: "--no-head-bob",
+                label: "Camera Motion",
+                note: "On: in first person the view bobs with each step, breathes, gets out of breath after running and jolts when you are hit. Off: it stays still.",
+                switches: "--head-bob --no-head-bob",
                 get: |w| w.resource::<PlayerBody>().head_bob,
                 set: |w, on| w.resource_mut::<PlayerBody>().head_bob = on,
                 slider: None,
             },
         );
+        nvf_play::settings::set_older_key(app, "camera-motion", "head-bob");
+        nvf_play::settings::set_older_split(app, "head-bob", |v| vec![("camera-motion", v.to_string())]);
         add_setting(
             app,
             Setting {
