@@ -524,7 +524,7 @@ impl SkyState {
     }
 
     /// [documented: GECK wiki ForceWeather / SetWeather / ReleaseWeatherOverride]
-    /// An override lasts until released. [hypothesis, #1997; observer check 215 in
+    /// An override lasts until released. [hypothesis, #1997; observer check 208 in
     /// docs/handoff/observer-checks.md] This also holds across worldspace doors.
     /// [design: worldspace.rs::carry_sky] Keep override visuals and their adapters,
     /// including an unfinished fade, without importing the old climate's roll lists.

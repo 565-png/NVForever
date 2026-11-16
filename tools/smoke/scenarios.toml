@@ -30288,7 +30288,7 @@ expect = [
 
 [[scenario]]
 name = "held-weather-worldspace-write"
-source = "[documented: offline GECK wiki ForceWeather / SetWeather / ReleaseWeatherOverride] Override lasts until release. [hypothesis, #1997; observer check 215] It lasts across a worldspace door. [design: sky.rs carry_weather_from; existing strip-crowd-evening and save-weather-write scenarios] Force a hold in Freeside, use the Strip gate, check the shown hold, save for held-weather-worldspace-load."
+source = "[documented: offline GECK wiki ForceWeather / SetWeather / ReleaseWeatherOverride] Override lasts until release. [hypothesis, #1997; observer check 208] It lasts across a worldspace door. [design: sky.rs carry_weather_from; existing strip-crowd-evening and save-weather-write scenarios] Force a hold in Freeside, use the Strip gate, check the shown hold, save for held-weather-worldspace-load."
 note = "[design: strip-crowd-evening] Reuse its gate, start pose and passport test aid. [design: save-weather-write] Reuse its named weather; no command-line weather pin. Run the write and load scenarios together."
 areas = ["sky", "weather", "save"]
 paths = ["engine/nvforever/src/worldspace.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvf-play/src/save.rs"]

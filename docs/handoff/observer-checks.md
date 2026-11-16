@@ -2691,7 +2691,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
 
-215. **Does held weather survive a door into another worldspace?** (P3; #1997;
+208. **Does held weather survive a door into another worldspace?** (P3; #1997;
     `worldspace.rs::carry_sky`, `sky.rs::SkyState::carry_weather_from`.) In Freeside,
     use the console to `ForceWeather` a clearly different weather with override flag 1,
     then go through the gate into the Strip. Does that weather remain shown? Repeat
