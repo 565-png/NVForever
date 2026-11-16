@@ -37,3 +37,10 @@ NPC-list or creature-list edit, as it does without edits. Existing static-list
 regeneration rules remain in force. Synthetic controls cover that preservation
 and relevant edited NPC/creature lists selecting their new inventories; execution
 remains pending.
+
+[design] When resurrection selects another inventory source, created references
+update their saved source and placed references update their reconstructed source.
+ResetInventory must read that same selection immediately and after saving/loading;
+clearing a created source returns it to its own base. This changes the selected
+source, not the inventory-preservation rule above. Synthetic controls cover both
+reference lifetimes and clearing an override; execution remains pending.

@@ -298,8 +298,9 @@ mod actor_addition_tests {
             sub(b"LVLO", [1u16.to_le_bytes().to_vec(), vec![0; 2], item.to_le_bytes().to_vec(), 1u16.to_le_bytes().to_vec(), vec![0; 2]].concat()),
         ]);
         let placed = |id: u32| record(b"ACRE", 0, id, &[sub(b"NAME", 0x831u32.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])]);
+        let placed_npc = record(b"ACHR", 0, 0xA21, &[sub(b"NAME", 0x821u32.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])]);
         let cell = [record(b"CELL", 0, 0xA00, &[sub(b"DATA", vec![1])]),
-            group(0xA00u32.to_le_bytes(), 6, &group(0xA00u32.to_le_bytes(), 9, &[placed(0xA11), placed(0xA12), placed(0xA13)].concat()))].concat();
+            group(0xA00u32.to_le_bytes(), 6, &group(0xA00u32.to_le_bytes(), 9, &[placed(0xA11), placed(0xA12), placed(0xA13), placed_npc].concat()))].concat();
         let bytes = [tes4(),
             top(b"NPC_", &[actor(b"NPC_", 0x801, "InitialNPC", 0x901), actor(b"NPC_", 0x802, "AddedNPC", 0x902)].concat()),
             top(b"CREA", &[actor(b"CREA", 0x811, "InitialCreature", 0x901), actor(b"CREA", 0x812, "AddedCreature", 0x902)].concat()),
@@ -451,6 +452,37 @@ mod actor_addition_tests {
             g.resurrect(actor, false);
             assert_eq!(g.world.item_count(actor, FormId(0x901)).unwrap(), 0);
             assert_eq!(g.world.item_count(actor, FormId(0x902)).unwrap(), 1);
+        }
+    }
+
+    #[test]
+    fn rerolled_actor_inventory_sources_follow_reference_lifetime_through_save_and_reset() {
+        let f = fixture();
+        for (list, placed, selected, edit) in [
+            (0x821, 0xA21, 0x802, "AddNPCToLeveledList NPCTiers AddedNPC 5\n"),
+            (0x831, 0xA11, 0x812, "AddCreatureToLeveledList CreatureTiers AddedCreature 5\n"),
+        ] {
+            for created in [false, true] {
+                let mut g = game(&f);
+                g.player.level = Some(5);
+                let actor = if created {
+                    g.create_at(FormId(list), None, [0.0; 3], [0.0; 3]).unwrap()
+                } else { FormId(placed) };
+                assert_eq!(g.world.item_count(actor, FormId(0x901)).unwrap(), 1);
+                g.world.inventory_mut(actor).unwrap().add(FormId(0x902), 3);
+                source(&mut g, edit);
+                g.extra.entry(actor).or_default().dead = true;
+                g.resurrect(actor, false);
+                assert_eq!(g.world.item_count(actor, FormId(0x901)).unwrap(), 0, "created={created}");
+                assert_eq!(g.world.item_count(actor, FormId(0x902)).unwrap(), 1, "created={created}");
+                let saved = g.checked_snapshot().unwrap();
+                assert_eq!(saved.sim.created_inventory_sources.get(&actor).copied(), created.then_some(FormId(selected)));
+                let world = World::restore(&f.forms, &f.refs, &saved.sim).unwrap();
+                let mut back = Game::restore(&f.data, world, g.cfg, &saved).unwrap();
+                assert!(back.world.reset_inventory(actor).unwrap());
+                assert_eq!(back.world.item_count(actor, FormId(0x901)).unwrap(), 0, "created={created}");
+                assert_eq!(back.world.item_count(actor, FormId(0x902)).unwrap(), 1, "created={created}");
+            }
         }
     }
 }
