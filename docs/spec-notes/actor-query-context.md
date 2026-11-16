@@ -10,8 +10,13 @@ while the actor is in a conversation it returns its conversation partner.
 [Source](https://geckwiki.com/index.php?title=GetPackageTarget).
 [hypothesis] Use the existing current-package resolver, linked-reference target
 resolver, player conversation and actor-conversation records. Missing targets
-and invalid receivers return no reference. Selection keeps the command's actor
+and non-actor receivers return no reference. Selection keeps the command's actor
 template policy and accepts placed leveled actors through the runtime selector.
+[design] An omitted receiver uses the script's actor. An explicit empty receiver
+retains the VM's existing `NoReference` failure and stops the script before host
+dispatch, both for statement and expression source calls. The synthetic VM controls
+assert that failure and that a following implicit-actor mutation does not run;
+their execution remains pending. No adapter guard or failure-policy change is needed.
 
 [documented] `RemoveMerchantContainer actor` clears the actor's merchant
 container assignment (accepted `schemas/script/functions.json` documentation

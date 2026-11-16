@@ -113,6 +113,20 @@ mod tests {
     }
 
     #[test]
+    fn package_target_keeps_omitted_self_and_explicit_empty_receiver_distinct_at_the_vm() {
+        let f = fixture(); let mut g = game(&f);
+        g.extra.entry(FormId(0x302)).or_default().current_package = Some(FormId(0x840));
+        assert_eq!(query(&mut g, "GetPackageTarget", Some(0x302)), XVal::Ref(0x305));
+        for statement in ["empty.GetPackageTarget", "SetFunctionValue (empty.GetPackageTarget)"] {
+            let source = format!("Begin Function {{ }}\nref empty\n{statement}\nSetFactionRank TestFaction 50\nEnd\n");
+            let error = g.run_query(&source, RunCtx { self_ref: Some(FormId(0x302)), ..Default::default() }).unwrap_err();
+            assert_eq!(error, "getpackagetarget called on no reference");
+            assert_eq!(crate::functions::actor::faction_rank(&g, FormId(0x302), FormId(0x830)), -1);
+            assert_eq!(g.extra[&FormId(0x302)].current_package, Some(FormId(0x840)));
+        }
+    }
+
+    #[test]
     fn player_conversation_partner_precedes_the_actors_package_target() {
         let f = fixture(); let mut g = game(&f);
         g.extra.entry(FormId(0x302)).or_default().current_package = Some(FormId(0x840));
