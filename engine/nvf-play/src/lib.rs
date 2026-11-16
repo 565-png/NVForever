@@ -86,6 +86,7 @@ pub mod location_markers;
 pub mod lockpick;
 pub mod roulette;
 pub mod slots;
+pub mod smooth_terrain;
 pub mod softlock;
 pub mod blackjack;
 pub mod borders;
