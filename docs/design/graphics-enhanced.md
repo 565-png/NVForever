@@ -859,7 +859,10 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   serves the fragment. With `d = 1 - smoothstep(2048, 4096, distance)`: both valid, the
   target colour is `mix(cache, layers, d)` and the target normal
   `normalize(mix(geometric, mapped, d))`; detail alone, the layers with the weight faded by
-  `d`; colour alone, the cache and the geometric normal; neither, no blend. The contact
+  `d`; colour alone, the cache and the geometric normal; neither, no blend. #2661 review:
+  where the layers' share is 1 (`d = 1` with both valid, or detail alone) the cache is not
+  read, and where valid detail is nearer than 2048 units (so `d` is exactly 1) the colour
+  footprint is not checked either: status, weight and share are the same either way. The contact
   weight and the residency fade are unchanged. *Overflow layers and the cap* (NVForever's
   choice, round 10a): [observed: the main session's publication lines at the user's test
   road] cell (-17, 0) publishes quadrants `folded+1-layers, folded+2-layers, folded,

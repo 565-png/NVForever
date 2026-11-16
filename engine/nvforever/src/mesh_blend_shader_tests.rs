@@ -227,7 +227,11 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
     // share branch, with explicit gradients from the inputs, and normal maps only for full
     // shading; never from the screen-space prepass normal.
     let bindings = include_str!("../../nvf-assets/src/nif_surface_bindings.wesl").replace("\r\n", "\n");
-    let positive = bindings.find("    if r.weight > 0.0 {\n        if colour_valid { r.colour = terrain_colour_mips(instance_index, slot, uv, resolution, levels); }").expect("the positive-weight branch");
+    let positive = bindings.find("    if r.weight > 0.0 {\n").expect("the positive-weight branch");
+    // #2661 review: the colour cache is read only with a positive weight and only where it
+    // has a share of the target (the layers' share below 1).
+    let cache_read = bindings.find("if colour_valid && r.detail < 1.0 { r.colour = terrain_colour_mips(instance_index, slot, uv, resolution, levels); }").expect("the cache read");
+    assert!(cache_read > positive && cache_read < bindings.find("@if(BINDLESS) if r.detail > 0.0 {").unwrap());
     assert!(bindings.find("@if(BINDLESS) if r.detail > 0.0 {").unwrap() > positive);
     assert!(bindings.contains("let ddx = axes * inputs.ddx * scale;") && bindings.contains("let scale = exp2(inputs.bias) / tile;"));
     assert!(bindings.contains("if full && (flags & 8u) != 0u {") && bindings.contains("        if full {\n            var layer_n = plain;"));
@@ -248,8 +252,15 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
         let body = bindings.split(&format!("fn {name}(")).nth(1).unwrap_or_else(|| panic!("{name}")).split("\n}\n").next().unwrap();
         assert!(!body.contains("textureSample") && !body.contains("dpdx") && !body.contains("fwidth"), "{name}: no implicit derivatives, no sampler");
     }
-    assert!(bindings.contains("let levels = terrain_colour_levels(resolution, terrain_colour_lod(resolution, inputs));"));
-    assert!(bindings.contains("let colour_valid = colour_quadrant && terrain_colour_footprint(instance_index, slot, uv, resolution, levels);"));
+    assert!(bindings.contains("levels = terrain_colour_levels(resolution, terrain_colour_lod(resolution, inputs));"));
+    // #2661 review: the footprint is checked wherever the colour cache can matter, i.e. not
+    // where valid detail nearer than DETAIL_NEAR serves the fragment alone (the distance
+    // mix is exactly 1 there).
+    assert!(bindings.contains("let detail_alone = detail_valid && inputs.distance < DETAIL_NEAR;"));
+    assert!(bindings.contains("if colour_quadrant && !detail_alone {"));
+    assert!(bindings.contains("colour_valid = terrain_colour_footprint(instance_index, slot, uv, resolution, levels);"));
+    assert!(bindings.contains("let near = 1.0 - smoothstep(DETAIL_NEAR, DETAIL_FAR, inputs.distance);"));
+    assert!(bindings.contains("if detail_valid && colour_valid { r.detail = near; } else if detail_valid { r.detail = 1.0; weight *= near; }"));
     assert!(bindings.contains("let footprint = max(length(inputs.ddx), length(inputs.ddy)) * f32(resolution) / CELL_SIZE;")
         && bindings.contains("return clamp(log2(max(footprint, 1e-6)) + inputs.bias, 0.0, f32(terrain_last_level(resolution)));"));
     let taps = bindings.split("fn terrain_colour_taps(").nth(1).unwrap().split("\n}\n").next().unwrap();

@@ -850,11 +850,25 @@ struct NifSurface {
     // every own-cell tap either level with a share reads must lie in a captured quadrant,
     // and neighbouring taps that do not get no weight. The atlas Y axis is reversed by the
     // bake camera.
-    let resolution = terrain_resolution(instance_index);
-    let atlas = (game.xy / CELL_SIZE - s.mesh_terrain_origin.xy) / 3.0;
-    let uv = vec2(atlas.x, 1.0 - atlas.y);
-    let levels = terrain_colour_levels(resolution, terrain_colour_lod(resolution, inputs));
-    let colour_valid = colour_quadrant && terrain_colour_footprint(instance_index, slot, uv, resolution, levels);
+    //
+    // [design] #2661 review: with valid detail nearer than DETAIL_NEAR the colour cache
+    // cannot matter, so its footprint is not checked. There the distance mix `near` below is
+    // exactly 1 (smoothstep of a distance under its lower edge is 0), so with or without a
+    // valid colour footprint the status is LOOKUP_SUCCESS (detail serves), `r.detail` is 1
+    // and the weight is the same (times 1 on the detail-only branch); and at `r.detail == 1`
+    // the cache is not read (below). No view shows `colour_valid` otherwise.
+    let detail_alone = detail_valid && inputs.distance < DETAIL_NEAR;
+    var colour_valid = false;
+    var resolution = 0;
+    var uv = vec2(0.0);
+    var levels = TerrainColourLevels(0, 0, 0.0);
+    if colour_quadrant && !detail_alone {
+        resolution = terrain_resolution(instance_index);
+        let atlas = (game.xy / CELL_SIZE - s.mesh_terrain_origin.xy) / 3.0;
+        uv = vec2(atlas.x, 1.0 - atlas.y);
+        levels = terrain_colour_levels(resolution, terrain_colour_lod(resolution, inputs));
+        colour_valid = terrain_colour_footprint(instance_index, slot, uv, resolution, levels);
+    }
     if !colour_valid && !detail_valid { r.status = LOOKUP_REJECTED_FOOTPRINT; return r; }
     r.status = LOOKUP_SUCCESS;
     var weight = contact * smoothstep(0.0, SPACING, border);
@@ -865,7 +879,10 @@ struct NifSurface {
     if detail_valid && colour_valid { r.detail = near; } else if detail_valid { r.detail = 1.0; weight *= near; }
     r.weight = weight;
     if r.weight > 0.0 {
-        if colour_valid { r.colour = terrain_colour_mips(instance_index, slot, uv, resolution, levels); }
+        // [design] #2661 review: at `r.detail == 1` the target colour is the layers' alone
+        // (`mesh_terrain_target_colour`: mix by 1), and no diagnostic view reads `r.colour`,
+        // so the cache is read only where it has a share.
+        if colour_valid && r.detail < 1.0 { r.colour = terrain_colour_mips(instance_index, slot, uv, resolution, levels); }
         @if(BINDLESS) if r.detail > 0.0 {
             let entry = u32(slot.y * 3 + slot.x) * 4u + quadrant;
             let d = mesh_terrain_detail(instance_index, entry, terrain_triangle(entry, quadrant, square, f, triangle), game.xy, cell, inputs);
