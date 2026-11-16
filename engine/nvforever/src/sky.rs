@@ -1521,7 +1521,9 @@ pub fn reach_toward_light(cascade: &mut bevy::light::cascade::Cascade, extra: f3
 }
 
 /// Stretch the sun's shadow cascades [`SUN_REACH_BACK`] toward the sun (PostUpdate, after
-/// Bevy builds them each frame and before their frusta and shadow views are made).
+/// Bevy builds them each frame and before their frusta and shadow views are made; after
+/// they are anchored and before the held ones are given back: shadow_anchor.rs
+/// `cascade_edits` says why).
 pub fn reach_toward_sun(mut suns: Query<&mut bevy::light::Cascades, With<Sun>>) {
     for mut cascades in &mut suns {
         for view in cascades.cascades.values_mut() {

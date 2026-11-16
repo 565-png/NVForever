@@ -28,18 +28,19 @@
 //! held cascade for up to three frames. Test aid `NVF_PLAY_TEST_SHADOW_STAGGER=0` draws
 //! every cascade every frame.
 //!
-//! Test aids for the shadows' shimmer: `NVF_PLAY_TEST_SHADOW_ANCHOR=1` snaps the sun's
-//! cascades to a texel grid anchored near the camera instead of at the world's origin
-//! (shadow_anchor.rs); `NVF_PLAY_TEST_SUN_STILL=1` holds the sun light's direction still
-//! (sky.rs `update_sky`); `NVF_PLAY_TEST_SHOT_BURST` saves consecutive frames (nvf-play
-//! test_aid.rs).
+//! A held cascade is kept as the sun's cascades stand after they are snapped to a grid
+//! anchored near the camera and stretched toward the sun (shadow_anchor.rs
+//! `cascade_edits`, which schedules [`hold_cascades`] after those two), so it is given back
+//! exactly as its map was drawn. Without the anchoring the sun light's turn with the clock
+//! made the shadows shimmer, strongest on the frames a held cascade is drawn again
+//! (docs/design/frame-rate-audit.md §11).
 //!
 //! What it costs and saves: docs/design/frame-rate-audit.md §9 and §10.
 
 use crate::fly::FlyCam;
 use crate::sky::SkyState;
 use bevy::ecs::entity::EntityHashMap;
-use bevy::light::{Cascades, DirectionalLight, DirectionalLightShadowMap, NotShadowCaster, SimulationLightSystems};
+use bevy::light::{Cascades, DirectionalLight, DirectionalLightShadowMap, NotShadowCaster};
 use bevy::pbr::HoldDirectionalShadowMaps;
 use bevy::prelude::*;
 use bevy::render::extract_resource::ExtractResourcePlugin;
@@ -217,7 +218,8 @@ fn staggered() -> bool {
 /// The cascades not drawn this frame ([`PERFORMANCE_SCHEDULE`], [`STAGGERED_SCHEDULE`]): give
 /// the directional lights back those cascades as the frame that drew them had them, and
 /// have the renderer keep their maps (module notes). Runs after Bevy has built this
-/// frame's cascades and before it fits the lights' frusta to them.
+/// frame's cascades, after they are anchored and stretched toward the sun, and before Bevy
+/// fits the lights' frusta to them (shadow_anchor.rs `cascade_edits` schedules it).
 pub(crate) fn hold_cascades(
     on: Res<PerformanceShadows>,
     map: Option<Res<DirectionalLightShadowMap>>,
@@ -291,10 +293,8 @@ impl Plugin for ShadowRatePlugin {
             .insert_resource(CascadesBeforePerformance(self.performance.then_some(crate::sky::DEFAULT_SHADOW_CASCADES)))
             .init_resource::<HoldDirectionalShadowMaps>()
             .add_plugins(ExtractResourcePlugin::<HoldDirectionalShadowMaps>::default())
-            .add_systems(
-                PostUpdate,
-                hold_cascades.after(SimulationLightSystems::UpdateDirectionalLightCascades).before(SimulationLightSystems::UpdateLightFrusta),
-            )
+            // `hold_cascades` runs with the other edits of the cascades, in their order
+            // (shadow_anchor.rs `cascade_edits`).
             .add_systems(Update, far_trees_cast_no_shadow);
     }
 }

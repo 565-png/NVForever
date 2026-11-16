@@ -1536,7 +1536,8 @@ fn main() -> AppExit {
     // Small objects far away cast no sun shadows (shadow_thin.rs).
     .add_plugins(shadow_thin::ShadowThinPlugin(args.shadow_thin))
     .add_plugins(shadow_rate::ShadowRatePlugin { performance: performance_shadows })
-    // Test aid NVF_PLAY_TEST_SHADOW_ANCHOR: the sun's cascades snapped near the camera (shadow_anchor.rs).
+    // The sun's cascades snapped to a grid anchored near the camera, then reached toward the sun
+    // behind the player's body (sky::SUN_REACH_BACK) and held, in that order (shadow_anchor.rs).
     .add_plugins(shadow_anchor::ShadowAnchorPlugin)
     // Interiors draw the rooms seen through portals only (rooms.rs).
     .add_plugins(rooms::RoomsPlugin { off: args.no_room_culling, planes_off: args.no_occlusion_planes, planes_outdoors: args.occlusion_planes_outdoors })
@@ -1633,12 +1634,10 @@ fn main() -> AppExit {
     .init_resource::<actor_materials::PlayerRigMaterials>()
     .add_systems(Update, actor_materials::pose_player.after(nvf_play::player::BodySet))
     .add_systems(Update, timelapse.after(sky::update_sky))
-    // The sun's cascades reach behind the player's body (sky::SUN_REACH_BACK).
     // Only the sun's casters that can shade the view's slice of each cascade (#1378).
     // Placed models' and effect models' billboard nodes face the camera (#2549).
     .add_systems(PostUpdate, world::face_camera.before(bevy::transform::TransformSystems::Propagate))
     .add_systems(PostUpdate, sky::sun_casters_over_slice.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
-    .add_systems(PostUpdate, sky::reach_toward_sun.after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades).before(bevy::light::SimulationLightSystems::UpdateLightFrusta))
     .add_systems(Startup, (crash::report_start, report_archives))
     .add_systems(Startup, move || cpu_placed.report())
     .add_plugins(start_times::StartTimesPlugin)
