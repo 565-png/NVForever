@@ -419,7 +419,7 @@ words, with where ours stands:
   suppress new births. This provisional generalization is listed in owner-review.
 - [hypothesis, #2685] The visible steam/glow envelope and lingering haze follow these
   authored tracks, with no invented fog density or emitter rates. Original-game
-  timing, final appearance and reload behavior still need observer check **211**.
+  timing, final appearance and reload behavior still need observer check **212**.
 - [design: crates/fnv-game/src/game.rs::object_groups, engine/nvforever/src/object_anims.rs]
   Enabled ground fog (REFR 0x001629DD, model `effects\NV\hChamberGroundFog.NIF`,
   `Forward` CLAMP 0..52.33 s [observed: data, main session #2685]) already draws through

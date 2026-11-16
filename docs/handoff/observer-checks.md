@@ -2950,7 +2950,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-15 (House's chamber steam, glow and ground fog, #2685)
 
-211. **Do the steam, panel glow and ground fog of House's chamber linger, and do they survive a
+212. **Do the steam, panel glow and ground fog of House's chamber linger, and do they survive a
      load?** (P2; #2685, spec-notes/idles.md §10.1, particles.md §7.8.) [hypothesis] From a sealed
      chamber in Lucky38ControlRoom, use the unseal terminal item and record the opening, steam
      bursts, panel glow and ground fog at start, after 20 s and after 55 s. Check that glow and
