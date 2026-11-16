@@ -2594,7 +2594,7 @@ fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut
 fn model_base(script: Option<&ScriptState>, sim: &SimState, actor: u32) -> Option<FormId> {
     let b = sim.base_of(actor)?;
     let r = FormId(actor);
-    Some(script.and_then(|s| s.rt.as_ref()).map_or(b, |rt| { let (seed, at) = sim.pick(&rt.game, r); rt.game.data.model_base_at(b, seed, at) }))
+    Some(script.and_then(|s| s.rt.as_ref()).map_or(b, |rt| { let (seed, at) = sim.pick(&rt.game, r); rt.game.runtime_template_source(b, seed, at, |d| d.template_model).map_or(b, |(id, _)| id) }))
 }
 
 /// An actor's Impact Material Type (NPC_ / CREA `NAM4`) from its Model/Animation source
@@ -2622,7 +2622,7 @@ fn show_impact(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, mut fx: Im
     if let (Some(a), Some(rt)) = (fx.actor, script.and_then(|s| s.rt.as_ref())) {
         if let Some(b) = sim.base_of(a) {
             let (seed, at) = sim.pick(&rt.game, FormId(a));
-            let (spray, decal) = rt.game.data.no_blood(b, seed, at);
+            let (spray, decal) = rt.game.runtime_template_source(b, seed, at, |d| d.template_model).map_or((false, false), |(_, d)| (d.no_blood_spray, d.no_blood_decal));
             (fx.no_spray, fx.no_decal) = (fx.no_spray || spray, fx.no_decal || decal);
         }
     }

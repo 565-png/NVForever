@@ -406,7 +406,7 @@ impl Game<'_> {
     /// gave no karma, a Fiend and a Powder Ganger holding −500 themselves gave +100,
     /// crime-karma.md §4.1]. [`Game::alignment`] when `r` has no actor base.
     pub fn kill_alignment(&mut self, r: FormId) -> Alignment {
-        let own = base_of(self, r).filter(|_| r != FormId::PLAYER_REF).and_then(|b| self.data.template_source_at(b, self.pick_seed(r), self.leveled_at(r), |_| false)).map(|(_, d)| d.karma);
+        let own = base_of(self, r).filter(|_| r != FormId::PLAYER_REF).and_then(|b| self.template_source(b, r, |_| false)).map(|(_, d)| d.karma);
         match own {
             Some(karma) => Alignment::of(karma, self.crime_settings().bounds),
             None => self.alignment(r),

@@ -122,7 +122,7 @@ impl Game<'_> {
     /// again (module notes): how many were added.
     fn roll_again(&mut self, r: FormId, rolls: u32) -> u32 {
         let Some(base) = base_of(self, r) else { return 0 };
-        if self.data.template_sources_any_pick(base, |d| d.template_inventory).len() < 2 {
+        if self.forms.actor_list_additions.is_empty() && self.other.lev_actors.is_empty() && self.data.template_sources_any_pick(base, |d| d.template_inventory).len() < 2 {
             let added = self.world.restock_inventory(r).unwrap_or_default();
             if !added.is_empty() {
                 let said = |items: &[(FormId, i32)]| items.iter().map(|(i, n)| format!("{n} {}", self.data.name(*i))).collect::<Vec<_>>().join(", ");
@@ -131,7 +131,7 @@ impl Game<'_> {
             }
             return added.iter().map(|(_, n)| *n as u32).sum();
         }
-        let source = self.data.template_source_at(base, roll_seed(r, rolls), self.leveled_at(r), |d| d.template_inventory).map(|(s, _)| s).filter(|&s| s != base);
+        let source = self.runtime_template_source(base, roll_seed(r, rolls), self.leveled_at(r), |d| d.template_inventory).map(|(s, _)| s).filter(|&s| s != base);
         self.world.set_inventory_source(r, source);
         // A source with no carried items: it carries nothing (but a planted explosive's
         // live unit, `Extra::live`, #1640).
