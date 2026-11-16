@@ -30,18 +30,60 @@ use bevy::ecs::system::SystemParamItem;
 use bevy::shader::{ShaderRef, ShaderDefVal};
 // [design] Shared CPU packing and shader specialization dimensions. The colour atlas's
 // resolution is not one of them: the shader reads it from the bound texture.
+/// LAND grid squares per cell side: the quadrants and the landscape detail's 17 by 17
+/// vertices per quadrant are on this grid, whatever the surface's subdivision.
 pub const GRID: usize = fnv_world::land::SIDE - 1;
-pub const HEIGHT_TILE_WIDTH: usize = GRID * 6;
-pub const HEIGHT_TILE_HEIGHT: usize = GRID + 1;
-/// [design] The height atlas's width and its rows of heights and metadata (3 by 3 cell
-/// tiles); a publication with landscape detail appends [`DETAIL_ROWS`] rows below them.
-pub const HEIGHT_WIDTH: usize = 3 * HEIGHT_TILE_WIDTH;
-pub const HEIGHT_ROWS: usize = 3 * HEIGHT_TILE_HEIGHT;
+/// [design] #2149/#2661: the height atlas's layout for a run whose landscape surface has
+/// `sub` squares per LAND grid square and side (1 as stored, 2 or 4 smoothed;
+/// `fnv_world::land_surface::Surface::sub`, fixed for the run by nvf_play
+/// `smooth_terrain::spec`). Each of the 3 by 3 cell tiles holds one pair of triangle planes
+/// per surface square ([`HeightLayout::grid`] a side, 6 texels per square: two triangles,
+/// three coefficients each) and one metadata row below them (residency, colour mask, detail
+/// mask), so the atlas holds the very triangles the ground is drawn and collided as
+/// (`grid_triangles`). With `sub` 1 it is the stored layout (576 by 99 texels of heights).
+/// The publication that packs an atlas records its layout, and every blend material binding
+/// that atlas carries it into its shader definitions ([`blend_shader_defs`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Reflect)]
+pub struct HeightLayout { sub: u32 }
+impl Default for HeightLayout {
+    fn default() -> Self { Self::STORED }
+}
+impl HeightLayout {
+    /// The stored LAND triangles (no smoothing).
+    pub const STORED: Self = Self { sub: 1 };
+    /// The layout of a surface with `sub` (1 to 4) squares per LAND square and side.
+    pub const fn new(sub: usize) -> Self {
+        assert!(matches!(sub, 1..=4), "a surface has 1 to 4 squares per LAND square and side");
+        Self { sub: sub as u32 }
+    }
+    pub const fn sub(self) -> usize { self.sub as usize }
+    /// Surface squares per cell side.
+    pub const fn grid(self) -> usize { GRID * self.sub() }
+    /// Surface vertices per cell side (`Surface::side`): a cell's heights are `side * side`.
+    pub const fn side(self) -> usize { self.grid() + 1 }
+    pub const fn tile_width(self) -> usize { self.grid() * 6 }
+    /// A tile's rows: one per surface square, then the metadata row.
+    pub const fn tile_height(self) -> usize { self.grid() + 1 }
+    /// The atlas's width and its rows of heights and metadata (3 by 3 tiles); a publication
+    /// with landscape detail appends [`HeightLayout::detail_rows`] rows below them.
+    pub const fn width(self) -> usize { 3 * self.tile_width() }
+    pub const fn rows(self) -> usize { 3 * self.tile_height() }
+    pub const fn detail_rows(self) -> usize { DETAIL_WORDS.div_ceil(self.width()) }
+    /// The atlas's size in bytes (RGBA8, one 32-bit value per texel), with or without the
+    /// detail rows.
+    pub const fn bytes(self, detail: bool) -> usize {
+        self.width() * (self.rows() + if detail { self.detail_rows() } else { 0 }) * 4
+    }
+    /// Game units between neighbouring surface vertices.
+    pub fn spacing(self) -> f32 { fnv_world::land::SPACING / self.sub as f32 }
+}
 /// [design] Round 10a's landscape detail, packed after the height rows as 32-bit words,
 /// one per RGBA8 texel (read with `textureLoad`, as the heights are): first a table of
 /// [`DETAIL_QUADRANT_WORDS`] words for each of the 36 quadrants (slot-major, quadrant
-/// minor), then [`DETAIL_VERTEX_WORDS`] words for each of each quadrant's 17 by 17
-/// vertices. Word `w` sits at texel `(w % HEIGHT_WIDTH, HEIGHT_ROWS + w / HEIGHT_WIDTH)`.
+/// minor), then [`DETAIL_VERTEX_WORDS`] words for each of each quadrant's 17 by 17 LAND
+/// vertices. Word `w` sits at texel `(w % width, rows + w / width)` of the layout
+/// ([`HeightLayout::width`], [`HeightLayout::rows`]), so the table follows the heights
+/// at any width; the words themselves do not depend on the layout.
 pub const DETAIL_QUADRANTS: usize = 36;
 pub const DETAIL_QUADRANT_WORDS: usize = 32;
 pub const QUAD_VERTICES: usize = fnv_world::land::QUAD_SIDE * fnv_world::land::QUAD_SIDE;
@@ -50,7 +92,6 @@ pub const QUAD_VERTICES: usize = fnv_world::land::QUAD_SIDE * fnv_world::land::Q
 /// snorm16), then one opacity per overlay (unorm16), the last value padding.
 pub const DETAIL_VERTEX_WORDS: usize = 11;
 pub const DETAIL_WORDS: usize = DETAIL_QUADRANTS * DETAIL_QUADRANT_WORDS + DETAIL_QUADRANTS * QUAD_VERTICES * DETAIL_VERTEX_WORDS;
-pub const DETAIL_ROWS: usize = DETAIL_WORDS.div_ceil(HEIGHT_WIDTH);
 /// [design] NVForever's cap (main session's round-10 decision): a quadrant's base and at
 /// most 12 overlays, the folded ones and then the separately drawn overflow ones, in
 /// their drawing order. 12 opacities fit three vec4s; a quadrant with more overlays keeps
@@ -105,11 +146,17 @@ pub const LAND_REFLECTANCE: f32 = 0.2;
 pub fn micro(value: u32) -> f32 { value as f32 / 1e6 }
 fn to_micro(value: f32) -> u32 { (value * 1e6).round() as u32 }
 
-pub fn blend_shader_defs() -> Vec<ShaderDefVal> {
+/// [design] The blend's shader definitions for a height atlas packed with `layout`
+/// (#2149/#2661: the surface's subdivision, `MESH_TERRAIN_SUB`, and the tile and atlas
+/// dimensions that follow from it; `MESH_TERRAIN_SUBDIVIDED` only where it is above 1, so
+/// the stored layout's lookup is today's).
+pub fn blend_shader_defs(layout: HeightLayout) -> Vec<ShaderDefVal> {
     vec![
         ShaderDefVal::UInt("MESH_TERRAIN_GRID".into(), GRID as u32),
-        ShaderDefVal::UInt("MESH_TERRAIN_HEIGHT_TILE_WIDTH".into(), HEIGHT_TILE_WIDTH as u32),
-        ShaderDefVal::UInt("MESH_TERRAIN_HEIGHT_TILE_HEIGHT".into(), HEIGHT_TILE_HEIGHT as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_SUB".into(), layout.sub() as u32),
+        ShaderDefVal::Bool("MESH_TERRAIN_SUBDIVIDED".into(), layout.sub() > 1),
+        ShaderDefVal::UInt("MESH_TERRAIN_HEIGHT_TILE_WIDTH".into(), layout.tile_width() as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_HEIGHT_TILE_HEIGHT".into(), layout.tile_height() as u32),
         ShaderDefVal::UInt("MESH_TERRAIN_CELL_SIZE".into(), fnv_world::CELL_SIZE as u32),
         ShaderDefVal::UInt("MESH_TERRAIN_SPACING".into(), fnv_world::land::SPACING as u32),
         ShaderDefVal::UInt("MESH_TERRAIN_COS_FULL_E6".into(), CONTACT_COS_FULL_E6),
@@ -122,8 +169,8 @@ pub fn blend_shader_defs() -> Vec<ShaderDefVal> {
         ShaderDefVal::UInt("MESH_TERRAIN_ROUGHNESS_E6".into(), to_micro(LAND_PERCEPTUAL_ROUGHNESS)),
         ShaderDefVal::UInt("MESH_TERRAIN_REFLECTANCE_E6".into(), to_micro(LAND_REFLECTANCE)),
         // Round 10a's landscape detail (the module notes; nvforever terrain_surface.rs packs it).
-        ShaderDefVal::UInt("MESH_TERRAIN_HEIGHT_WIDTH".into(), HEIGHT_WIDTH as u32),
-        ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_ROW".into(), HEIGHT_ROWS as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_HEIGHT_WIDTH".into(), layout.width() as u32),
+        ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_ROW".into(), layout.rows() as u32),
         ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_QUADRANT_WORDS".into(), DETAIL_QUADRANT_WORDS as u32),
         ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_VERTEX_WORDS".into(), DETAIL_VERTEX_WORDS as u32),
         ShaderDefVal::UInt("MESH_TERRAIN_DETAIL_QUADRANTS".into(), DETAIL_QUADRANTS as u32),
@@ -367,9 +414,10 @@ pub fn steepness_fade(up: f32) -> f32 {
     smoothstep(micro(STEEP_COS_NONE_E6), micro(STEEP_COS_FULL_E6), up.clamp(0.0, 1.0))
 }
 /// [design] The geometric normal of a ground triangle in game space (x east, y north, z
-/// up) from its plane's per-square slopes (`terrain_surface.rs::height_planes`).
-pub fn terrain_game_normal(dx: f32, dy: f32) -> Vec3 {
-    let spacing = fnv_world::land::SPACING;
+/// up) from its plane's per-square slopes (`terrain_surface.rs::height_planes`), the
+/// squares of `layout` (the shader's `terrain_game_normal`, over `HEIGHT_SPACING`).
+pub fn terrain_game_normal(layout: HeightLayout, dx: f32, dy: f32) -> Vec3 {
+    let spacing = layout.spacing();
     Vec3::new(-dx / spacing, -dy / spacing, 1.0).normalize()
 }
 /// Game-space direction to Bevy world space (nvforever `world.rs::game_to_bevy`).
@@ -444,6 +492,9 @@ pub struct NifSurfaceBlendColour {
     /// In the ordinary type's FaceGen offset slot (module notes).
     #[texture(53)]
     pub mesh_terrain_height: Option<Handle<Image>>,
+    /// How that height atlas is packed (the publication's [`HeightLayout`]); no binding,
+    /// it reaches the shader through the key ([`NifSurfaceBlendKey`], [`blend_shader_defs`]).
+    pub mesh_terrain_layout: HeightLayout,
 }
 
 #[derive(Clone, Default, ShaderType)]
@@ -474,8 +525,10 @@ impl From<&NifSurfaceBlendColour> for NifSurfaceBlendUniform {
 }
 
 
+/// The ordinary type's key for the source's variant, and the height atlas's layout
+/// (#2149/#2661: fixed for a run, so one run specializes for one layout).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct NifSurfaceBlendKey(pub NifSurfaceKey);
+pub struct NifSurfaceBlendKey(pub NifSurfaceKey, pub HeightLayout);
 impl From<&NifSurfaceBlend> for NifSurfaceBlendKey {
     fn from(s: &NifSurfaceBlend) -> Self { Self::from(&s.colour) }
 }
@@ -493,7 +546,7 @@ impl From<&NifSurfaceBlendColour> for NifSurfaceBlendKey {
             add_linear: s.add_linear,
             pipboy_screen: s.pipboy_screen,
             anti_tiling: s.anti_tiling && crate::terrain_sampling::repeat_valid(s.terrain_repeat),
-        })
+        }, s.mesh_terrain_layout)
     }
 }
 /// [design] Round 10a: the layer images and sampler representatives of one publication's
@@ -599,15 +652,16 @@ pub fn palette_index_table(descriptor: &BindlessDescriptor) -> Option<&BindlessI
 
 impl NifSurfaceBlend {
     /// `source` has neither holes nor FaceGen (eligibility); `controls` are band, view,
-    /// contact shape and shading, `widths` hybrid v2's flat and steep widths.
-    pub fn from_source(source: &NifSurface, controls: Vec4, widths: Vec4, origin: Vec4, colour: Handle<Image>, height: Handle<Image>, palette: TerrainPalette) -> Self {
+    /// contact shape and shading, `widths` hybrid v2's flat and steep widths; `height` the
+    /// height atlas and how it is packed.
+    pub fn from_source(source: &NifSurface, controls: Vec4, widths: Vec4, origin: Vec4, colour: Handle<Image>, height: (Handle<Image>, HeightLayout), palette: TerrainPalette) -> Self {
         Self { colour: NifSurfaceBlendColour::from_source(source, controls, widths, origin, colour, height), palette }
     }
 }
 
 impl NifSurfaceBlendColour {
     /// See [`NifSurfaceBlend::from_source`].
-    pub fn from_source(source: &NifSurface, controls: Vec4, widths: Vec4, origin: Vec4, colour: Handle<Image>, height: Handle<Image>) -> Self {
+    pub fn from_source(source: &NifSurface, controls: Vec4, widths: Vec4, origin: Vec4, colour: Handle<Image>, height: (Handle<Image>, HeightLayout)) -> Self {
         debug_assert!(source.holes_texture.is_none() && source.facegen_offset.is_none(), "blend clones are made only without holes or FaceGen");
         Self {
             falloff: source.falloff,
@@ -636,7 +690,8 @@ impl NifSurfaceBlendColour {
             mesh_terrain_origin: origin,
             mesh_terrain_widths: widths,
             mesh_terrain_colour: Some(colour),
-            mesh_terrain_height: Some(height),
+            mesh_terrain_height: Some(height.0),
+            mesh_terrain_layout: height.1,
         }
     }
 }
@@ -645,12 +700,12 @@ impl MaterialExtension for NifSurfaceBlend {
     fn deferred_fragment_shader() -> ShaderRef { NifSurface::deferred_fragment_shader() }
     fn specialize(pipeline: &MaterialExtensionPipeline, descriptor: &mut RenderPipelineDescriptor, layout: &MeshVertexBufferLayoutRef, key: MaterialExtensionKey<Self>) -> Result<(), SpecializedMeshPipelineError> {
         NifSurface::specialize(pipeline, descriptor, layout, MaterialExtensionKey::<NifSurface> { mesh_key: key.mesh_key, bind_group_data: key.bind_group_data.0 })?;
-        blend_interface(descriptor);
+        blend_interface(descriptor, key.bind_group_data.1);
         Ok(())
     }
 }
 
-fn blend_interface(descriptor: &mut RenderPipelineDescriptor) {
+fn blend_interface(descriptor: &mut RenderPipelineDescriptor, layout: HeightLayout) {
     // The separate layout is also declared in the otherwise identical NIF prepass.
     descriptor.vertex.shader_defs.push("NIF_SURFACE_BLEND".into());
     let prepass = descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE"));
@@ -658,7 +713,7 @@ fn blend_interface(descriptor: &mut RenderPipelineDescriptor) {
         fragment.shader_defs.push("NIF_SURFACE_BLEND".into());
         if !prepass {
             fragment.shader_defs.push("MESH_TERRAIN_BLEND".into());
-            fragment.shader_defs.extend(blend_shader_defs());
+            fragment.shader_defs.extend(blend_shader_defs(layout));
         }
     }
 }
@@ -677,7 +732,7 @@ mod tests {
             };
             if prepass { descriptor.vertex.shader_defs.push("PREPASS_PIPELINE".into()); }
             let original = descriptor.clone();
-            blend_interface(&mut descriptor);
+            blend_interface(&mut descriptor, HeightLayout::new(4));
             assert_eq!(descriptor.depth_stencil, original.depth_stencil);
             assert_eq!(descriptor.multisample, original.multisample);
             assert_eq!(descriptor.primitive, original.primitive);
@@ -741,10 +796,29 @@ mod tests {
 
     #[test]
     fn detail_layout_fits_the_height_atlas_and_round_trips() {
-        assert_eq!((HEIGHT_WIDTH, HEIGHT_ROWS), (576, 99));
+        // The stored layout (smoothing off) is the one before #2149: 576 by 99 texels of
+        // heights and metadata, 201 detail rows.
+        let stored = HeightLayout::STORED;
+        assert_eq!((stored.width(), stored.rows()), (576, 99));
         assert_eq!(DETAIL_WORDS, 36 * 32 + 36 * 289 * 11);
-        assert_eq!(DETAIL_ROWS, 201);
-        assert!(detail_vertex_word(DETAIL_QUADRANTS - 1, QUAD_VERTICES - 1) + DETAIL_VERTEX_WORDS <= DETAIL_ROWS * HEIGHT_WIDTH);
+        assert_eq!(stored.detail_rows(), 201);
+        assert_eq!((stored.bytes(false), stored.bytes(true)), (576 * 99 * 4, 576 * 300 * 4));
+        // #2149/#2661: the smoothed surfaces' layouts, one plane pair per surface square.
+        for (sub, width, rows, detail_rows) in [(2, 1152, 195, 101), (4, 2304, 387, 51)] {
+            let l = HeightLayout::new(sub);
+            assert_eq!((l.sub(), l.grid(), l.side(), l.tile_width(), l.tile_height()), (sub, 32 * sub, 32 * sub + 1, 192 * sub, 32 * sub + 1));
+            assert_eq!((l.width(), l.rows(), l.detail_rows()), (width, rows, detail_rows), "{sub}");
+            assert_eq!(l.side(), (fnv_world::land::SIDE - 1) * sub + 1, "Surface::side");
+            assert_eq!(l.spacing(), 128.0 / sub as f32);
+        }
+        assert_eq!(HeightLayout::new(1), HeightLayout::STORED);
+        assert_eq!(HeightLayout::default(), HeightLayout::STORED);
+        assert_eq!((HeightLayout::new(2).bytes(true), HeightLayout::new(4).bytes(false), HeightLayout::new(4).bytes(true)), (1152 * 296 * 4, 2304 * 387 * 4, 2304 * 438 * 4));
+        // The detail table fits after the heights at every width.
+        for l in [stored, HeightLayout::new(2), HeightLayout::new(4)] {
+            assert!(detail_vertex_word(DETAIL_QUADRANTS - 1, QUAD_VERTICES - 1) + DETAIL_VERTEX_WORDS <= l.detail_rows() * l.width());
+            assert!((l.detail_rows() - 1) * l.width() < DETAIL_WORDS, "no whole row to spare");
+        }
         assert_eq!(detail_vertex_word(0, 0), detail_quadrant_word(DETAIL_QUADRANTS));
         // Twelve opacities, colour, normal and tangent in 22 halves; the last is padding.
         let opacity: Vec<f32> = (0..12).map(|k| k as f32 / 11.0).collect();
@@ -956,9 +1030,10 @@ mod tests {
     #[test]
     fn terrain_normal_matches_plane_slopes_and_converts_to_world_space() {
         let spacing = fnv_world::land::SPACING;
-        assert_eq!(terrain_game_normal(0.0, 0.0), Vec3::Z);
+        let stored = HeightLayout::STORED;
+        assert_eq!(terrain_game_normal(stored, 0.0, 0.0), Vec3::Z);
         // A square rising 128 units eastwards (a 1:1 slope in x only).
-        let n = terrain_game_normal(spacing, 0.0);
+        let n = terrain_game_normal(stored, spacing, 0.0);
         assert!((n - Vec3::new(-1.0, 0.0, 1.0).normalize()).length() < 1e-6);
         // Perpendicular to both triangles' edges for arbitrary heights (height_planes'
         // coefficients: [a, east-a, ne-east] and [a, ne-north, north-a]).
@@ -967,9 +1042,13 @@ mod tests {
             (east - a, ne - east, [Vec3::new(0.0, 0.0, a), Vec3::new(spacing, 0.0, east), Vec3::new(spacing, spacing, ne)]),
             (ne - north, north - a, [Vec3::new(0.0, 0.0, a), Vec3::new(spacing, spacing, ne), Vec3::new(0.0, spacing, north)]),
         ] {
-            let n = terrain_game_normal(dx, dy);
+            let n = terrain_game_normal(stored, dx, dy);
             assert!(n.dot(corners[1] - corners[0]).abs() < 1e-3 && n.dot(corners[2] - corners[0]).abs() < 1e-3);
             assert!(n.z > 0.0);
+            // #2149: the same rise over a surface square a quarter as wide is four times as steep.
+            let fine = terrain_game_normal(HeightLayout::new(4), dx, dy);
+            let corners = corners.map(|c| Vec3::new(c.x / 4.0, c.y / 4.0, c.z));
+            assert!(fine.dot(corners[1] - corners[0]).abs() < 1e-3 && fine.dot(corners[2] - corners[0]).abs() < 1e-3);
         }
         // Game (x east, y north, z up) -> Bevy (x, z, -y): up is +Y, north is -Z.
         assert_eq!(game_to_world_normal(Vec3::Z), Vec3::Y);
@@ -992,8 +1071,19 @@ mod tests {
 
     #[test]
     fn shared_constants_reach_the_shader_definitions() {
-        let defs = blend_shader_defs();
+        let defs = blend_shader_defs(HeightLayout::STORED);
         let uint = |name: &str| defs.iter().find_map(|d| match d { ShaderDefVal::UInt(n, v) if n == name => Some(*v), _ => None }).unwrap();
+        // #2149/#2661: the layout's dimensions; the stored layout's are those before it.
+        let bool_def = |defs: &[ShaderDefVal], name: &str| defs.iter().find_map(|d| match d { ShaderDefVal::Bool(n, v) if n == name => Some(*v), _ => None }).unwrap();
+        assert_eq!(["MESH_TERRAIN_GRID", "MESH_TERRAIN_SUB", "MESH_TERRAIN_HEIGHT_TILE_WIDTH", "MESH_TERRAIN_HEIGHT_TILE_HEIGHT", "MESH_TERRAIN_HEIGHT_WIDTH", "MESH_TERRAIN_DETAIL_ROW"].map(uint), [32, 1, 192, 33, 576, 99]);
+        assert!(!bool_def(&defs, "MESH_TERRAIN_SUBDIVIDED"));
+        let fine = blend_shader_defs(HeightLayout::new(4));
+        let fine_uint = |name: &str| fine.iter().find_map(|d| match d { ShaderDefVal::UInt(n, v) if n == name => Some(*v), _ => None }).unwrap();
+        assert_eq!(["MESH_TERRAIN_GRID", "MESH_TERRAIN_SUB", "MESH_TERRAIN_HEIGHT_TILE_WIDTH", "MESH_TERRAIN_HEIGHT_TILE_HEIGHT", "MESH_TERRAIN_HEIGHT_WIDTH", "MESH_TERRAIN_DETAIL_ROW"].map(fine_uint), [32, 4, 768, 129, 2304, 387]);
+        assert!(bool_def(&fine, "MESH_TERRAIN_SUBDIVIDED"));
+        // Everything else is the same for every layout.
+        let rest = |defs: &[ShaderDefVal]| defs.iter().filter(|d| !matches!(d, ShaderDefVal::UInt(n, _) | ShaderDefVal::Bool(n, _) if n.starts_with("MESH_TERRAIN_HEIGHT") || n == "MESH_TERRAIN_SUB" || n == "MESH_TERRAIN_SUBDIVIDED" || n == "MESH_TERRAIN_DETAIL_ROW")).cloned().collect::<Vec<_>>();
+        assert_eq!(rest(&defs), rest(&fine));
         assert_eq!(uint("MESH_TERRAIN_ROUGHNESS_E6"), 950_000);
         assert_eq!(uint("MESH_TERRAIN_REFLECTANCE_E6"), 200_000);
         assert_eq!(uint("MESH_TERRAIN_COS_FULL_E6"), CONTACT_COS_FULL_E6);

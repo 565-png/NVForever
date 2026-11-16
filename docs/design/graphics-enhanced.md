@@ -60,7 +60,7 @@ Constraints that decide what fits:
 | Bevy atmosphere | Would replace the game's sky look | | Rejected |
 | Auto exposure, depth of field, motion blur | Change the look; the game's own HDR/eye-adapt values (IMGS DNAM) are not decoded | | Not now (§6) |
 | PCSS soft shadows | Medium | Needs the `experimental_pbr_pcss` feature, noisy without TAA | Not now |
-| Placed meshes blended into the landscape where they meet it (#2661) | Medium: road shoulders, rock feet and cliff bases lose their hard seam with the ground | Immutable front/back colour atlases (round 10b: about 48 MiB together at the default 512 texels per cell with their per-cell mip chains, against 144 MiB at 1024 without mips before; intermediates, the bake's single-level target while a replacement bakes and retiring handles aside); copies for unchanged cells and rasterization for entering/dirty cells; a lookup in eligible fragments; round 10a: about 0.66 MiB more height atlas per publication (detail rows), 1.6 KB more index table per enabled clone, and near contact fragments read the landscape's own layer textures (up to 13 diffuse and 13 normal reads) | **Built**, off by default and not in `enhanced` (§3.14) |
+| Placed meshes blended into the landscape where they meet it (#2661) | Medium: road shoulders, rock feet and cliff bases lose their hard seam with the ground | Immutable front/back colour atlases (round 10b: about 48 MiB together at the default 512 texels per cell with their per-cell mip chains, against 144 MiB at 1024 without mips before; intermediates, the bake's single-level target while a replacement bakes and retiring handles aside); copies for unchanged cells and rasterization for entering/dirty cells; a lookup in eligible fragments; a height atlas per publication of 0.22 MiB with smoothing off and 3.4 MiB at the default 4 x 4 smoothing (#2149/#2661: it holds the drawn surface's squares), round 10a: about 0.45 MiB more of it (detail rows), 1.6 KB more index table per enabled clone, and near contact fragments read the landscape's own layer textures (up to 13 diffuse and 13 normal reads) | **Built**, off by default and not in `enhanced` (§3.14) |
 
 ## 3. What was built
 
@@ -676,13 +676,44 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   Backfill and cache assembly use this same selection, with southwest origin centre
   minus `(1,1)`; epoch/off transitions reset it. At `y=-8192`, a northward recentre needs
   `y > -7936`, and a southward return needs `y < -8448`. Teleports select directly.
-- *Exact heights.* Beside the colour, a 576 by 99 RGBA8 atlas holds the f32 coefficients of
-  both triangles of every LAND square (`height_planes`), packed losslessly into bytes and
-  read with `textureLoad`, never filtered; the shader picks the triangle with the mesh's own
-  diagonal and evaluates its plane, so the band follows the drawn landscape exactly. Each
-  cell's tile ends in a metadata row: a nine-bit mask of the resident neighbours and a
-  four-bit mask of the quadrants whose colour was captured. Every prepared cell gives its
-  heights even where a quadrant's colour cannot be captured.
+- *Exact heights.* Beside the colour, an RGBA8 atlas holds the f32 coefficients of both
+  triangles of every square of the drawn landscape surface (`height_planes`), packed
+  losslessly into bytes and read with `textureLoad`, never filtered; the shader picks the
+  triangle with the surface's own diagonal (`grid_triangles`) and evaluates its plane, so the
+  band follows the drawn landscape exactly. #2149/#2661: the landscape is drawn and collided
+  as a `Surface` with 1 (smoothing off), 2 or 4 squares per LAND square and side, fixed for
+  the run before the first cell (nvf_play `smooth_terrain::spec`; the Smooth terrain row
+  applies at the next start), and up to 8 units off the stored LAND triangles, so the atlas
+  holds that surface's squares, `32 x sub` a cell side (nif_surface_blend.rs
+  `HeightLayout`): each cell's `SurfaceCell.heights` are the surface's own (`side()`
+  squared, terrain.rs `surface_cell`), and a cell whose heights are not the run's surface's
+  is excluded (`invalid-prepared-heights`). The atlas is 576 by 99 texels with smoothing off
+  (0.22 MiB, the layout before #2149), 1152 by 195 at 2 x 2 (0.86 MiB) and 2304 by 387 at
+  4 x 4 (3.4 MiB), each held twice while a replacement is pending (front and back) and once
+  more on the CPU (the image keeps its main-world bytes for the probes). The subdivision
+  reaches the shader as definitions (`MESH_TERRAIN_SUB`, the tile and atlas dimensions;
+  `MESH_TERRAIN_SUBDIVIDED` only above 1, so with smoothing off the lookup is the one before
+  #2149): each publication records its layout and every enabled clone carries it in its
+  key (`NifSurfaceBlendKey`), so a run specializes the blend for one layout; the ordinary
+  `NifSurface` is unchanged. The lookup finds the ground's square on the surface's grid
+  (`terrain_square`, terrain_surface.rs `ground_square`), its normal from the plane's
+  slopes over the surface's spacing; the quadrant, the region's edge fade and the
+  landscape detail stay on the LAND grid. Each cell's tile ends, after its squares' rows, in
+  a metadata row: a nine-bit mask of the resident neighbours and a four-bit mask of the
+  quadrants whose colour was captured. Every prepared cell gives its heights even where a
+  quadrant's colour cannot be captured.
+- *4 x 4 near (known approximation).* Under the Smooth terrain row's 4 x 4 near (#2676) a
+  quadrant far from the camera is drawn with every other surface vertex
+  (`QuadrantDraw::HALF`, some sides coarse; terrain_lod.rs), while the atlas holds the full
+  4 x 4 surface regardless and is not rebuilt when a quadrant's drawing changes. There the
+  band measures from the 4 x 4 surface, not from the triangles drawn. [design] What bounds
+  the difference: the drawn coarse squares' corners are 4 x 4 surface vertices and their
+  diagonals lie on the LAND squares' diagonals, so each drawn triangle lies within one stored
+  LAND triangle, and its heights (and a coarse side's midpoints, averages of two LAND
+  vertices' heights) are averages of surface heights; the surface lies within its bound
+  (8 units by default) of the stored triangles, so the drawn far ground and the atlas's are
+  at most twice that apart, and only beyond the near distance (2048 units by default),
+  where the camera is far from the contact.
 - *Residency.* Before sampling, the shader needs the fragment's own cell's height and live
   coverage and its quadrant's colour bit, and (round 10b) every own-cell texel the colour
   read takes at each contributing mip level in a captured quadrant of that cell (below); a
@@ -773,8 +804,10 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   ones). Source material edits re-read it (`refresh_captures`); a source that is gone or
   no longer matches the prepared layers leaves that quadrant on the colour cache. Its
   images (normal maps included) join the cell's dependencies. *Publication*: with the
-  capability, each publication's height atlas gains 201 rows (576 by 300 RGBA8 instead of
-  576 by 99; the bytes keep their 32-bit words, read with `textureLoad`): a 32-word entry
+  capability, each publication's height atlas gains rows after its heights (201 with
+  smoothing off, 576 by 300 RGBA8 instead of 576 by 99; #2149/#2661: 101 at 2 x 2 and 51 at
+  4 x 4, the same words in fewer, wider rows; the bytes keep their 32-bit words, read with
+  `textureLoad`): a 32-word entry
   per quadrant (flags with the folded and total overlay counts, palette numbers of the
   base's diffuse and normal map and of each overlay's, the base diffuse and normal
   samplers, normal decoding bits, the base material's colour and texture-coordinate
@@ -1110,8 +1143,9 @@ reads, keeps the layers or no blend, and no texel of an uncaptured quadrant or u
 cell ever gets a weight: never a darkened mix. There are still no gutters; beyond 4096
 units, and where a quadrant keeps the colour cache, geometric triangle normals remain the
 target.
-Round 10a's detail adds about 0.66 MiB of height atlas per publication (1.3 MiB front and
-back), 1600 bytes of index table per enabled clone and the palette's descriptor entries;
+Round 10a's detail adds about 0.45 MiB of height atlas per publication (0.9 MiB front and
+back; whole atlases with detail rows: 0.66 MiB with smoothing off, 1.3 MiB at 2 x 2, 3.85 MiB
+at 4 x 4), 1600 bytes of index table per enabled clone and the palette's descriptor entries;
 the layer images are the landscape's own, not copied. Scorch is excluded: capture has no
 burn-map binding or synchronization, so full shading still differs through scorch,
 separately lit overflow layers (composed before lighting, above), shadows/occlusion and

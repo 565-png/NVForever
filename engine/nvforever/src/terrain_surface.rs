@@ -41,9 +41,8 @@ use bevy::render::render_resource::{AsBindGroup, Extent3d, RenderPipelineDescrip
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{MaterialGate, MaterialPipeline, MaterialPipelineKey};
 use bevy::shader::ShaderRef;
-use fnv_world::land::SIDE;
 
-pub use nvf_assets::nif_surface_blend::{GRID, HEIGHT_TILE_WIDTH, HEIGHT_TILE_HEIGHT, DEFAULT_RESOLUTION, RESOLUTIONS};
+pub use nvf_assets::nif_surface_blend::{GRID, HeightLayout, DEFAULT_RESOLUTION, RESOLUTIONS};
 /// Texels across the 3x3-cell colour atlas.
 pub fn atlas_width(resolution: u32) -> u32 { 3 * resolution }
 /// [design] A resolution the aid accepts and the device can hold as one atlas texture.
@@ -62,8 +61,6 @@ pub fn colour_bytes(resolution: u32) -> u64 {
 }
 /// `bytes` in MiB, rounded to the nearest (the mip chain is a few bytes short of 4/3 of level 0).
 pub fn mib(bytes: u64) -> u64 { (bytes + (1 << 19)) >> 20 }
-const HEIGHT_WIDTH: usize = 3 * HEIGHT_TILE_WIDTH;
-const HEIGHT_HEIGHT: usize = 3 * HEIGHT_TILE_HEIGHT;
 pub const BAKE_LAYER: usize = 16;
 const INVALID_HEIGHT: f32 = -f32::MAX;
 
@@ -336,6 +333,9 @@ impl Default for DetailCapture { fn default() -> Self { Self::Colour("not-captur
 pub struct SurfaceCell {
     pub world: u32,
     pub grid: (i32, i32),
+    /// #2149/#2661: the drawn surface's own heights (`Surface::heights`, `side()` squared,
+    /// row-major, rows south to north); published only when that is the run's surface
+    /// ([`SurfaceCache::layout`]).
     pub heights: Vec<f32>,
     pub quadrants: Vec<(Mesh, CaptureDraw)>,
     pub paths: [CapturePath; 4],
@@ -404,6 +404,8 @@ pub struct PublishedSurface {
     /// Enabled-only mask in this publication's original coordinates.
     pub coverage: u32,
     pub(crate) keys: Vec<CellKey>,
+    /// #2149/#2661: how its height atlas is packed (every clone's shader follows it).
+    pub layout: HeightLayout,
     /// Round 10a: the layer images and samplers its detail quadrants sample (empty without
     /// landscape detail), bound by every enabled clone of this publication.
     pub palette: nvf_assets::nif_surface_blend::TerrainPalette,
@@ -538,6 +540,9 @@ pub struct SurfaceCache {
     /// Round 10a: publications carry landscape detail (the blend material is bindless on
     /// this device, `mesh_terrain_blend.rs::detail_capability`); otherwise colour only.
     pub detail: bool,
+    /// #2149/#2661: the height atlas's layout, the run's landscape surface's
+    /// ([`SurfaceCache::start`]); a cell whose heights are not that surface's is refused.
+    pub layout: HeightLayout,
     /// Round 10a review: frames in a row the front's materials have not settled.
     unsettled_frames: u32,
 }
@@ -562,7 +567,7 @@ impl SurfaceCache {
         if self.context.is_none() { publication.coverage } else { retained_mask(publication, &self.current) }
     }
     pub fn with_resolution(resolution: u32) -> Self {
-        Self { generation: 0, signature: None, context: None, selected_centre: None, captured_inputs: default(), stitched_dirty: default(), epoch: 0, revision: 0, current: vec![], image_revisions: default(), removed_images: default(), awaited_images: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false, detail: false, unsettled_frames: 0 }
+        Self { generation: 0, signature: None, context: None, selected_centre: None, captured_inputs: default(), stitched_dirty: default(), epoch: 0, revision: 0, current: vec![], image_revisions: default(), removed_images: default(), awaited_images: default(), image_events: default(), retirement: 0, job: None, ready: None, submitted: default(), published: None, resolution, rejected: false, detail: false, layout: HeightLayout::STORED, unsettled_frames: 0 }
     }
 
     /// [design] Select independently of the immutable front, including while a job waits.
@@ -598,10 +603,13 @@ impl SurfaceCache {
     /// device's 2D texture limit (`None` without a render device: not checked, not
     /// logged). An unsupported request is rejected in the log and bakes nothing, so no
     /// material samples it. Nothing is allocated here; the first bake allocates.
-    pub fn start(&mut self, resolution: u32, max_texture_dimension_2d: Option<u32>, detail: bool) {
+    /// #2149/#2661: `layout` is the height atlas's, from the run's landscape surface (fixed
+    /// for the run before the first cell; nvf_play `smooth_terrain::spec`).
+    pub fn start(&mut self, resolution: u32, max_texture_dimension_2d: Option<u32>, detail: bool, layout: HeightLayout) {
         self.resolution = resolution;
         self.rejected = false;
         self.detail = detail;
+        self.layout = layout;
         let Some(max) = max_texture_dimension_2d else { return };
         let width = atlas_width(resolution);
         if resolution_supported(resolution, max) {
@@ -637,13 +645,28 @@ impl SurfaceCache {
 
 // [design] One production height representation: the coefficients of both terrain
 // triangles, encoded losslessly. WGSL only selects the triangle and evaluates its plane.
+// #2149/#2661: the triangles are the drawn surface's (`layout`'s squares, `HeightLayout`),
+// the slopes per surface square.
 pub fn height_planes(a: f32, east: f32, north: f32, ne: f32) -> [[f32; 3]; 2] {
     [[a, east - a, ne - east], [a, ne - north, north - a]]
 }
-pub fn height_index(slot: (i32, i32), square: (usize, usize), triangle: usize, coefficient: usize) -> usize {
-    let x = slot.0 as usize * HEIGHT_TILE_WIDTH + square.0 * 6 + triangle * 3 + coefficient;
-    let y = slot.1 as usize * HEIGHT_TILE_HEIGHT + square.1;
-    (y * HEIGHT_WIDTH + x) * 4
+pub fn height_index(layout: HeightLayout, slot: (i32, i32), square: (usize, usize), triangle: usize, coefficient: usize) -> usize {
+    let x = slot.0 as usize * layout.tile_width() + square.0 * 6 + triangle * 3 + coefficient;
+    let y = slot.1 as usize * layout.tile_height() + square.1;
+    (y * layout.width() + x) * 4
+}
+/// The byte index of texel `texel` of `slot`'s metadata row, the row after its squares
+/// (0 the residency mask, 1 the colour mask, 2 the detail mask).
+fn metadata_index(layout: HeightLayout, slot: (i32, i32), texel: usize) -> usize {
+    ((slot.1 as usize * layout.tile_height() + layout.grid()) * layout.width() + slot.0 as usize * layout.tile_width() + texel) * 4
+}
+fn put_metadata(layout: HeightLayout, data: &mut [u8], slot: (i32, i32), texel: usize, value: u32) {
+    let at = metadata_index(layout, slot, texel);
+    data[at..at + 4].copy_from_slice(&(value as f32).to_le_bytes());
+}
+fn metadata(layout: HeightLayout, data: &[u8], slot: (i32, i32), texel: usize) -> u32 {
+    let at = metadata_index(layout, slot, texel);
+    f32::from_le_bytes(data[at..at + 4].try_into().unwrap()) as u32
 }
 pub fn residency_mask(slot: (i32, i32), resident: &HashSet<(i32, i32)>) -> u32 {
     let mut mask = 0;
@@ -654,40 +677,65 @@ pub fn residency_mask(slot: (i32, i32), resident: &HashSet<(i32, i32)>) -> u32 {
     }
     mask
 }
-fn encode_residency(data: &mut [u8], slot: (i32, i32), resident: &HashSet<(i32, i32)>) {
-    let at = ((slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID) * HEIGHT_WIDTH + slot.0 as usize * HEIGHT_TILE_WIDTH) * 4;
-    data[at..at + 4].copy_from_slice(&(residency_mask(slot, resident) as f32).to_le_bytes());
+fn encode_residency(layout: HeightLayout, data: &mut [u8], slot: (i32, i32), resident: &HashSet<(i32, i32)>) {
+    put_metadata(layout, data, slot, 0, residency_mask(slot, resident));
 }
-fn encode_colour_mask(data: &mut [u8], slot: (i32, i32), mask: u32) {
-    let at = ((slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID) * HEIGHT_WIDTH + slot.0 as usize * HEIGHT_TILE_WIDTH + 1) * 4;
-    data[at..at + 4].copy_from_slice(&(mask as f32).to_le_bytes());
+fn encode_colour_mask(layout: HeightLayout, data: &mut [u8], slot: (i32, i32), mask: u32) {
+    put_metadata(layout, data, slot, 1, mask);
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LookupStatus { OutOfRange, InvalidHeight, RejectedFootprint, InvalidColourQuadrant, Success }
 
-fn height_texel(data: &[u8], p: (usize, usize)) -> f32 {
-    let at = (p.1 * HEIGHT_WIDTH + p.0) * 4;
-    f32::from_le_bytes(data[at..at + 4].try_into().unwrap())
+fn colour_mask(layout: HeightLayout, data: &[u8], slot: (i32, i32)) -> u32 {
+    metadata(layout, data, slot, 1)
 }
-fn colour_mask(data: &[u8], slot: (i32, i32)) -> u32 {
-    height_texel(data, (slot.0 as usize * HEIGHT_TILE_WIDTH + 1, slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID)) as u32
+fn colour_valid(layout: HeightLayout, data: &[u8], slot: (i32, i32), quadrant: u32) -> bool {
+    colour_mask(layout, data, slot) & (1 << quadrant) != 0
 }
-fn colour_valid(data: &[u8], slot: (i32, i32), quadrant: u32) -> bool {
-    colour_mask(data, slot) & (1 << quadrant) != 0
+/// [design] #2149/#2661, the shader's `terrain_square` of the ground: the surface square of
+/// `layout` under `local` (LAND squares from the cell's south-west corner, the shader's
+/// `local`), the fraction within it and the triangle (1 above the square's south-west to
+/// north-east diagonal).
+pub fn ground_square(layout: HeightLayout, local: Vec2) -> (UVec2, Vec2, usize) {
+    let fine = local * layout.sub() as f32;
+    let square = fine.floor().as_uvec2().min(UVec2::splat(layout.grid() as u32 - 1));
+    let f = fine - square.as_vec2();
+    (square, f, usize::from(f.y > f.x))
+}
+/// [design] The shader's ground under game-space `point` (`mesh_terrain_lookup`): the
+/// fraction within the ground square and its triangle's plane coefficients `a`, `dx`, `dy`;
+/// `None` outside the atlas or without heights there.
+fn ground_plane(layout: HeightLayout, data: &[u8], origin: (i32, i32), point: Vec2) -> Option<(Vec2, [f32; 3])> {
+    let cell = fnv_world::cell_of(point.x, point.y);
+    let slot = (cell.0 - origin.0, cell.1 - origin.1);
+    if !(0..3).contains(&slot.0) || !(0..3).contains(&slot.1) { return None; }
+    let local = point / fnv_world::land::SPACING - Vec2::new(cell.0 as f32, cell.1 as f32) * GRID as f32;
+    let (square, f, triangle) = ground_square(layout, local);
+    let coefficient = |c| {
+        let at = height_index(layout, slot, (square.x as usize, square.y as usize), triangle, c);
+        f32::from_le_bytes(data[at..at + 4].try_into().unwrap())
+    };
+    (coefficient(0) > -1e30).then(|| (f, [coefficient(0), coefficient(1), coefficient(2)]))
+}
+/// [design] The ground height the shader measures against at `point` (`a + f.x dx + f.y
+/// dy` of [`ground_plane`]); `None` without heights. The tests' twin of the shader's read.
+#[cfg(test)]
+pub fn probe_height(layout: HeightLayout, data: &[u8], origin: (i32, i32), point: Vec2) -> Option<f32> {
+    ground_plane(layout, data, origin, point).map(|(f, [a, dx, dy])| a + f.x * dx + f.y * dy)
 }
 // [design] CPU publication probe, with the same precedence/footprint as the shader.
 // This classifies uploaded bytes; it does not assert that GPU bindings are correct.
-pub fn lookup_status(data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32) -> LookupStatus {
-    lookup_covered_status(data, origin, point, resolution, 0x1ff)
+pub fn lookup_status(layout: HeightLayout, data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32) -> LookupStatus {
+    lookup_covered_status(layout, data, origin, point, resolution, 0x1ff)
 }
 fn covered(slot: (i32, i32), coverage: u32) -> bool {
     (0..3).contains(&slot.0) && (0..3).contains(&slot.1) && coverage & (1 << (slot.1 * 3 + slot.0)) != 0
 }
 /// The lookup of a fragment whose colour read takes level 0 alone (a level of detail of 0
 /// or less: a close or face-on view), as [`lookup_level_status`].
-pub fn lookup_covered_status(data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32, coverage: u32) -> LookupStatus {
-    lookup_level_status(data, origin, point, resolution, coverage, 0.0)
+pub fn lookup_covered_status(layout: HeightLayout, data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32, coverage: u32) -> LookupStatus {
+    lookup_level_status(layout, data, origin, point, resolution, coverage, 0.0)
 }
 /// [design] Round 10b: the lookup of a fragment whose colour read has level of detail `lod`
 /// (the shader's `terrain_colour_lod`). The read takes the levels around it
@@ -696,21 +744,21 @@ pub fn lookup_covered_status(data: &[u8], origin: (i32, i32), point: Vec2, resol
 /// is valid when every own-cell tap either level with a share reads lies in a captured
 /// quadrant; neighbouring taps that are not covered and captured get no weight. The cell's
 /// own live coverage is part of the height check before it.
-pub fn lookup_level_status(data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32, coverage: u32, lod: f32) -> LookupStatus {
+pub fn lookup_level_status(layout: HeightLayout, data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32, coverage: u32, lod: f32) -> LookupStatus {
     let cell = fnv_world::cell_of(point.x, point.y);
     let slot = (cell.0 - origin.0, cell.1 - origin.1);
     if !(0..3).contains(&slot.0) || !(0..3).contains(&slot.1) { return LookupStatus::OutOfRange; }
     let local = point / 4096.0 - Vec2::new(cell.0 as f32, cell.1 as f32);
-    let square = (local * GRID as f32).floor().as_uvec2().min(UVec2::splat(GRID as u32 - 1));
-    let at = height_index(slot, (square.x as usize, square.y as usize), 0, 0);
+    let square = (local * layout.grid() as f32).floor().as_uvec2().min(UVec2::splat(layout.grid() as u32 - 1));
+    let at = height_index(layout, slot, (square.x as usize, square.y as usize), 0, 0);
     if !covered(slot, coverage) || f32::from_le_bytes(data[at..at + 4].try_into().unwrap()) < -1e30 { return LookupStatus::InvalidHeight; }
     let quadrant = u32::from(local.x >= 0.5) + 2 * u32::from(local.y >= 0.5);
-    if !colour_valid(data, slot, quadrant) { return LookupStatus::InvalidColourQuadrant; }
+    if !colour_valid(layout, data, slot, quadrant) { return LookupStatus::InvalidColourQuadrant; }
     let atlas = (point / 4096.0 - Vec2::new(origin.0 as f32, origin.1 as f32)) / 3.0;
     let uv = Vec2::new(atlas.x, 1.0 - atlas.y);
     let (low, high, share) = colour_read_levels(resolution, lod);
-    let valid = colour_read_taps(data, coverage, slot, uv, resolution, low).is_some()
-        && (share <= 0.0 || high == low || colour_read_taps(data, coverage, slot, uv, resolution, high).is_some());
+    let valid = colour_read_taps(layout, data, coverage, slot, uv, resolution, low).is_some()
+        && (share <= 0.0 || high == low || colour_read_taps(layout, data, coverage, slot, uv, resolution, high).is_some());
     if valid { LookupStatus::Success } else { LookupStatus::RejectedFootprint }
 }
 /// [design] Round 10b: the levels a colour read at level of detail `lod` takes, as the
@@ -744,10 +792,10 @@ fn colour_tap_slot(tap: IVec2, size: u32) -> Option<(i32, i32)> {
 /// quadrant of that cell. A texel of a level with two or more texels per cell side covers
 /// level-0 texels of one quadrant only (each level halves whole quadrants), the quadrant its
 /// own position names; the last level's one texel covers all four, so it needs all four.
-pub fn colour_tap_valid(data: &[u8], coverage: u32, tap: IVec2, size: u32) -> bool {
+pub fn colour_tap_valid(layout: HeightLayout, data: &[u8], coverage: u32, tap: IVec2, size: u32) -> bool {
     let Some(slot) = colour_tap_slot(tap, size) else { return false };
     if !covered(slot, coverage) { return false; }
-    let mask = colour_mask(data, slot);
+    let mask = colour_mask(layout, data, slot);
     if size <= 1 { return mask & 0xf == 0xf; }
     let t = tap - IVec2::new(slot.0, 2 - slot.1) * size as i32;
     let half = size as i32 / 2;
@@ -768,7 +816,7 @@ pub type ColourTaps = [(IVec2, f32); 4];
 /// fragment is in, so both sides of an edge between valid cells read the same value. `None`
 /// (the footprint rejected) when no tap is the own cell's or one of the own cell's taps
 /// lies in an uncaptured quadrant.
-pub fn colour_read_taps(data: &[u8], coverage: u32, slot: (i32, i32), uv: Vec2, resolution: u32, level: u32) -> Option<ColourTaps> {
+pub fn colour_read_taps(layout: HeightLayout, data: &[u8], coverage: u32, slot: (i32, i32), uv: Vec2, resolution: u32, level: u32) -> Option<ColourTaps> {
     let size = resolution >> level;
     let (first, f) = colour_read_footprint(uv, size);
     let mut taps = [(IVec2::ZERO, 0.0); 4];
@@ -777,7 +825,7 @@ pub fn colour_read_taps(data: &[u8], coverage: u32, slot: (i32, i32), uv: Vec2, 
     for (i, tap) in taps.iter_mut().enumerate() {
         let offset = IVec2::new(i as i32 % 2, i as i32 / 2);
         let texel = first + offset;
-        let valid = colour_tap_valid(data, coverage, texel, size);
+        let valid = colour_tap_valid(layout, data, coverage, texel, size);
         if colour_tap_slot(texel, size) == Some(slot) {
             if !valid { return None; }
             own = true;
@@ -806,94 +854,86 @@ fn publication_log(generation: u64, origin: (i32, i32), resident: &[String], exc
 }
 /// [design] The ground triangle's game-space normal under `point`, from the uploaded
 /// coefficients (the `normal` view's colour there is 0.5 + 0.5 n); `None` without heights.
-pub fn probe_normal(data: &[u8], origin: (i32, i32), point: Vec2) -> Option<Vec3> {
-    let cell = fnv_world::cell_of(point.x, point.y);
-    let slot = (cell.0 - origin.0, cell.1 - origin.1);
-    if !(0..3).contains(&slot.0) || !(0..3).contains(&slot.1) { return None; }
-    let local = point / fnv_world::land::SPACING - Vec2::new(cell.0 as f32, cell.1 as f32) * GRID as f32;
-    let square = local.floor().as_uvec2().min(UVec2::splat(GRID as u32 - 1));
-    let f = local - square.as_vec2();
-    let triangle = usize::from(f.y > f.x);
-    let coefficient = |c| {
-        let at = height_index(slot, (square.x as usize, square.y as usize), triangle, c);
-        f32::from_le_bytes(data[at..at + 4].try_into().unwrap())
-    };
-    (coefficient(0) > -1e30).then(|| nvf_assets::nif_surface_blend::terrain_game_normal(coefficient(1), coefficient(2)))
+pub fn probe_normal(layout: HeightLayout, data: &[u8], origin: (i32, i32), point: Vec2) -> Option<Vec3> {
+    ground_plane(layout, data, origin, point).map(|(_, [_, dx, dy])| nvf_assets::nif_surface_blend::terrain_game_normal(layout, dx, dy))
 }
-fn publication_probe(data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32) -> String {
+fn publication_probe(layout: HeightLayout, data: &[u8], origin: (i32, i32), point: Vec2, resolution: u32) -> String {
     let cell = fnv_world::cell_of(point.x, point.y);
     let slot = (cell.0 - origin.0, cell.1 - origin.1);
     let local = point / fnv_world::land::SPACING - Vec2::new(cell.0 as f32, cell.1 as f32) * GRID as f32;
-    let square = local.floor().as_uvec2().min(UVec2::splat(GRID as u32 - 1));
-    let f = local - square.as_vec2();
-    let triangle = usize::from(f.y > f.x);
-    let at = height_index(slot, (square.x as usize, square.y as usize), triangle, 0);
-    let normal = probe_normal(data, origin, point).map_or("none".to_string(), |n| format!("({:.3}, {:.3}, {:.3})", n.x + 0.0, n.y + 0.0, n.z + 0.0));
+    // The ground's square and triangle (surface squares, `layout.grid()` a side).
+    let (square, _, triangle) = ground_square(layout, local);
+    let at = height_index(layout, slot, (square.x as usize, square.y as usize), triangle, 0);
+    let normal = probe_normal(layout, data, origin, point).map_or("none".to_string(), |n| format!("({:.3}, {:.3}, {:.3})", n.x + 0.0, n.y + 0.0, n.z + 0.0));
     // [design] Round 10a: the probe cell's detail mask (the colour classification above is
     // the colour cache's; the layers are checked separately, as in the shader).
-    let detail = if (0..3).contains(&slot.0) && (0..3).contains(&slot.1) { detail_mask(data, slot) } else { 0 };
-    format!("probe-cell={cell:?} probe-slot={slot:?} probe-game-xy={point:?} probe-square={square:?} probe-triangle={triangle} probe-height-bytes={:?} probe-status={:?} probe-normal={normal} probe-detail-mask={detail:#x}", &data[at..at + 4], lookup_status(data, origin, point, resolution))
+    let detail = if (0..3).contains(&slot.0) && (0..3).contains(&slot.1) { detail_mask(layout, data, slot) } else { 0 };
+    format!("probe-cell={cell:?} probe-slot={slot:?} probe-game-xy={point:?} probe-square={square:?} probe-triangle={triangle} probe-height-bytes={:?} probe-status={:?} probe-normal={normal} probe-detail-mask={detail:#x}", &data[at..at + 4], lookup_status(layout, data, origin, point, resolution))
 }
-pub fn encode_height_cell(data: &mut [u8], slot: (i32, i32), heights: &[f32]) {
-    for y in 0..GRID {
-        for x in 0..GRID {
-            let i = y * SIDE + x;
-            let planes = height_planes(heights[i], heights[i + 1], heights[i + SIDE], heights[i + SIDE + 1]);
-            for (triangle, plane) in planes.iter().enumerate() {
-                for (coefficient, value) in plane.iter().enumerate() {
-                    let at = height_index(slot, (x, y), triangle, coefficient);
-                    data[at..at + 4].copy_from_slice(&value.to_le_bytes());
-                }
+/// [design] #2149/#2661: a cell's surface `heights` (`layout.side()` squared, row-major,
+/// rows south to north: `Surface::heights`) as both triangles' planes of each surface square
+/// (the diagonal `grid_triangles` draws), in `slot`'s tile: one pass over the squares,
+/// each tile row's planes written in place.
+pub fn encode_height_cell(layout: HeightLayout, data: &mut [u8], slot: (i32, i32), heights: &[f32]) {
+    let (grid, side) = (layout.grid(), layout.side());
+    assert_eq!(heights.len(), side * side, "a cell's heights are its surface's ({side} x {side})");
+    for y in 0..grid {
+        let at = height_index(layout, slot, (0, y), 0, 0);
+        let (south, north) = (&heights[y * side..(y + 1) * side], &heights[(y + 1) * side..(y + 2) * side]);
+        for (x, out) in data[at..at + grid * 24].as_chunks_mut::<24>().0.iter_mut().enumerate() {
+            let planes = height_planes(south[x], south[x + 1], north[x], north[x + 1]);
+            for (texel, value) in out.as_chunks_mut::<4>().0.iter_mut().zip(planes.as_flattened()) {
+                texel.copy_from_slice(&value.to_le_bytes());
             }
         }
     }
 }
-fn encode_surface_cell(data: &mut [u8], slot: (i32, i32), cell: &SurfaceCell, resident: &HashSet<(i32, i32)>) {
-    encode_height_cell(data, slot, &cell.heights);
-    encode_residency(data, slot, resident);
-    encode_colour_mask(data, slot, cell.colour_mask());
-    encode_detail_mask(data, slot, 0);
+fn encode_surface_cell(layout: HeightLayout, data: &mut [u8], slot: (i32, i32), cell: &SurfaceCell, resident: &HashSet<(i32, i32)>) {
+    encode_height_cell(layout, data, slot, &cell.heights);
+    encode_residency(layout, data, slot, resident);
+    encode_colour_mask(layout, data, slot, cell.colour_mask());
+    encode_detail_mask(layout, data, slot, 0);
 }
 #[cfg(test)]
-fn empty_height_atlas() -> Vec<u8> { empty_height_atlas_rows(HEIGHT_HEIGHT) }
-/// [design] The height atlas with `rows` rows: the heights' and, with landscape detail,
-/// the detail words' after them (zero: no quadrant entry is valid).
-fn empty_height_atlas_rows(rows: usize) -> Vec<u8> {
-    let mut heights = vec![0; HEIGHT_WIDTH * rows * 4];
-    for h in heights[..HEIGHT_WIDTH * HEIGHT_HEIGHT * 4].as_chunks_mut::<4>().0 { h.copy_from_slice(&INVALID_HEIGHT.to_le_bytes()); }
+fn empty_height_atlas() -> Vec<u8> { empty_height_atlas_rows(HeightLayout::STORED, HeightLayout::STORED.rows()) }
+/// [design] The height atlas of `layout` with `rows` rows: the heights' and, with landscape
+/// detail, the detail words' after them (zero: no quadrant entry is valid).
+fn empty_height_atlas_rows(layout: HeightLayout, rows: usize) -> Vec<u8> {
+    let mut heights = vec![0; layout.width() * rows * 4];
+    for h in heights[..layout.width() * layout.rows() * 4].as_chunks_mut::<4>().0 { h.copy_from_slice(&INVALID_HEIGHT.to_le_bytes()); }
     heights
 }
 
 // [design] Round 10a: a cell's four-bit mask of the quadrants whose layer detail this
 // publication supplies, beside the residency and colour masks (texel 2 of the metadata row).
-fn encode_detail_mask(data: &mut [u8], slot: (i32, i32), mask: u32) {
-    let at = ((slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID) * HEIGHT_WIDTH + slot.0 as usize * HEIGHT_TILE_WIDTH + 2) * 4;
-    data[at..at + 4].copy_from_slice(&(mask as f32).to_le_bytes());
+fn encode_detail_mask(layout: HeightLayout, data: &mut [u8], slot: (i32, i32), mask: u32) {
+    put_metadata(layout, data, slot, 2, mask);
 }
-pub fn detail_mask(data: &[u8], slot: (i32, i32)) -> u32 {
-    height_texel(data, (slot.0 as usize * HEIGHT_TILE_WIDTH + 2, slot.1 as usize * HEIGHT_TILE_HEIGHT + GRID)) as u32
+pub fn detail_mask(layout: HeightLayout, data: &[u8], slot: (i32, i32)) -> u32 {
+    metadata(layout, data, slot, 2)
 }
-fn put_word(data: &mut [u8], word: usize, value: u32) {
-    let at = (HEIGHT_HEIGHT * HEIGHT_WIDTH + word) * 4;
+/// Detail word `word` sits after the layout's height rows (nif_surface_blend.rs notes).
+fn put_word(layout: HeightLayout, data: &mut [u8], word: usize, value: u32) {
+    let at = (layout.rows() * layout.width() + word) * 4;
     data[at..at + 4].copy_from_slice(&value.to_le_bytes());
 }
 #[cfg(test)]
-pub fn detail_word(data: &[u8], word: usize) -> u32 {
-    let at = (HEIGHT_HEIGHT * HEIGHT_WIDTH + word) * 4;
+pub fn detail_word(layout: HeightLayout, data: &[u8], word: usize) -> u32 {
+    let at = (layout.rows() * layout.width() + word) * 4;
     u32::from_le_bytes(data[at..at + 4].try_into().unwrap())
 }
 /// The detail table's entry number of quadrant `q` of `slot` (slot-major, as the shader).
 pub fn detail_entry(slot: (i32, i32), q: u8) -> usize { (slot.1 as usize * 3 + slot.0 as usize) * 4 + q as usize }
 /// [design] One admitted quadrant's table entry and vertex records.
-pub(crate) fn encode_detail(data: &mut [u8], entry: usize, quadrant: &nvf_assets::nif_surface_blend::DetailQuadrant, detail: &QuadrantDetail) {
+pub(crate) fn encode_detail(layout: HeightLayout, data: &mut [u8], entry: usize, quadrant: &nvf_assets::nif_surface_blend::DetailQuadrant, detail: &QuadrantDetail) {
     use nvf_assets::nif_surface_blend::{detail_quadrant_word, detail_vertex_word, detail_vertex_words, QUAD_VERTICES};
-    for (i, w) in quadrant.words().into_iter().enumerate() { put_word(data, detail_quadrant_word(entry) + i, w); }
+    for (i, w) in quadrant.words().into_iter().enumerate() { put_word(layout, data, detail_quadrant_word(entry) + i, w); }
     let mut opacity = Vec::with_capacity(detail.opacity.len());
     for v in 0..QUAD_VERTICES {
         opacity.clear();
         opacity.extend(detail.opacity.iter().map(|grid| grid[v]));
         let words = detail_vertex_words(detail.tint[v], detail.normal[v], detail.tangent[v], &opacity);
-        for (i, w) in words.into_iter().enumerate() { put_word(data, detail_vertex_word(entry, v) + i, w); }
+        for (i, w) in words.into_iter().enumerate() { put_word(layout, data, detail_vertex_word(entry, v) + i, w); }
     }
 }
 
@@ -1513,6 +1553,7 @@ pub fn update_cache(
     let colour_missing: HashSet<Entity> = cells.iter().filter(|(_, c)| c.colour_images().any(|id| cache.removed_images.contains(&id) && !images.contains(id))).map(|(e, _)| e).collect();
     let resolution = cache.resolution;
     let width = atlas_width(resolution);
+    let layout = cache.layout;
     let Ok(camera) = camera.single() else { return };
     let eye = bevy_to_game(camera.translation());
     let origin = cache.selected_origin(eye.truncate());
@@ -1522,7 +1563,7 @@ pub fn update_cache(
             && !colour_missing.contains(e)
             && (origin.0..origin.0 + 3).contains(&c.grid.0)
             && (origin.1..origin.1 + 3).contains(&c.grid.1)
-            && c.heights.len() == SIDE * SIDE
+            && c.heights.len() == layout.side() * layout.side()
     }).collect();
     resident.sort_by_key(|(_, c)| c.grid);
     let keys: Vec<_> = resident.iter().map(|(entity, c)| {
@@ -1615,8 +1656,8 @@ pub fn update_cache(
     colour.sampler = ImageSampler::linear();
     let colour = images.add(colour);
     // [design] Round 10a: with landscape detail the height atlas carries the detail rows.
-    let rows = if cache.detail { HEIGHT_HEIGHT + nvf_assets::nif_surface_blend::DETAIL_ROWS } else { HEIGHT_HEIGHT };
-    let mut heights = empty_height_atlas_rows(rows);
+    let rows = if cache.detail { layout.rows() + layout.detail_rows() } else { layout.rows() };
+    let mut heights = empty_height_atlas_rows(layout, rows);
     let mut expected = HashSet::new();
     // [design] #2551: the bake's copies and camera sit at the cells' true world places (the
     // slots' offsets from the publication's origin, under a root moved to that origin), so
@@ -1626,7 +1667,7 @@ pub fn update_cache(
     let slots = resident.iter().map(|(_, c)| (c.grid.0 - origin.0, c.grid.1 - origin.1)).collect();
     for (_, cell) in &resident {
         let slot = (cell.grid.0 - origin.0, cell.grid.1 - origin.1);
-        encode_surface_cell(&mut heights, slot, cell, &slots);
+        encode_surface_cell(layout, &mut heights, slot, cell, &slots);
         if copied.contains(&cell.grid) { continue; }
         for (mesh, draw) in &cell.quadrants {
             let mut entity = commands.spawn((
@@ -1652,12 +1693,12 @@ pub fn update_cache(
         for (((grid, q), quadrant), cell) in assembled.admitted.iter().filter_map(|a| resident.iter().find(|(_, c)| c.grid == a.0 .0).map(|(_, c)| (a, c))) {
             let DetailCapture::Layers(d) = &cell.detail[*q as usize] else { continue };
             let slot = (grid.0 - origin.0, grid.1 - origin.1);
-            encode_detail(&mut heights, detail_entry(slot, *q), quadrant, d);
+            encode_detail(layout, &mut heights, detail_entry(slot, *q), quadrant, d);
         }
         for (_, cell) in &resident {
             let slot = (cell.grid.0 - origin.0, cell.grid.1 - origin.1);
             let mask = assembled.admitted.iter().filter(|((g, _), _)| *g == cell.grid).fold(0, |m, ((_, q), _)| m | 1 << q);
-            encode_detail_mask(&mut heights, slot, mask);
+            encode_detail_mask(layout, &mut heights, slot, mask);
         }
         assembled
     });
@@ -1680,9 +1721,9 @@ pub fn update_cache(
     }}
     // Eye XY is inside the centre slot, regardless of eye height. This probes the
     // uploaded coefficients beneath that point, not an unobserved mesh fragment.
-    let probe = publication_probe(&heights, origin, eye.truncate(), resolution);
+    let probe = publication_probe(layout, &heights, origin, eye.truncate(), resolution);
     let height = images.add(Image::new(
-        Extent3d { width: HEIGHT_WIDTH as u32, height: rows as u32, depth_or_array_layers: 1 },
+        Extent3d { width: layout.width() as u32, height: rows as u32, depth_or_array_layers: 1 },
         TextureDimension::D2, heights, TextureFormat::Rgba8Unorm,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     ));
@@ -1731,7 +1772,7 @@ pub fn update_cache(
         root, receipt, copied: copied.len(), baked,
         publication: PublishedSurface { colour, height, origin, cells: resident.len(), resolution, revision: 0,
             coverage: signature.cells.iter().fold(0, |m, k| m | (1 << ((k.grid.1-origin.1)*3+k.grid.0-origin.0))), keys: signature.cells,
-            palette, detail, palette_use },
+            layout, palette, detail, palette_use },
         report,
     });
 }
@@ -1888,7 +1929,7 @@ fn continuity_probe(
             if grid != centre { continue; }
             let Some(key) = cache.current.iter().find(|k| k.grid == grid) else { continue };
             let Some(data) = images.get(&front.height).and_then(|i| i.data.as_ref()) else { continue };
-            if lookup_covered_status(data, front.origin, point, front.resolution, front.coverage) != LookupStatus::Success { continue; }
+            if lookup_covered_status(front.layout, data, front.origin, point, front.resolution, front.coverage) != LookupStatus::Success { continue; }
             probe.witnesses.push((entity, key.clone(), point));
             if probe.witnesses.len() == 32 { break; }
         }
@@ -1938,7 +1979,7 @@ fn continuity_probe(
         let Some(data) = e.mesh_terrain_height.as_ref().and_then(|h| images.get(h)).and_then(|i| i.data.as_ref()) else { failures += 1; continue };
         let origin = (e.mesh_terrain_origin.x as i32, e.mesh_terrain_origin.y as i32);
         let resolution = e.mesh_terrain_colour.as_ref().and_then(|h| images.get(h)).map_or(0, |i| i.texture_descriptor.size.width / 3);
-        if resolution == 0 || lookup_covered_status(data, origin, *point, resolution, e.mesh_terrain_origin.z as u32) != LookupStatus::Success { failures += 1; }
+        if resolution == 0 || lookup_covered_status(e.mesh_terrain_layout, data, origin, *point, resolution, e.mesh_terrain_origin.z as u32) != LookupStatus::Success { failures += 1; }
     }
     probe.retained += retained;
     if pending { probe.pending_retained += retained; probe.unwitnessed_pending += u64::from(retained == 0); }
@@ -1951,12 +1992,19 @@ fn continuity_probe(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use fnv_world::land::SIDE;
+    /// The stored layout (smoothing off), as every test before #2149/#2661 packed.
+    const STORED: HeightLayout = HeightLayout::STORED;
     fn surface(paths: [CapturePath; 4]) -> SurfaceCell {
         SurfaceCell { world: 0, grid: (-17, 0), heights: vec![42.5; SIDE * SIDE], quadrants: vec![], paths, content_revision: 0, sources: vec![], dependencies: default(), detail: default() }
     }
+    /// [`surface`] at grid (0, 0) without heights (the caller gives them).
+    fn surface_cell_with(paths: [CapturePath; 4]) -> SurfaceCell {
+        SurfaceCell { grid: (0, 0), heights: vec![], ..surface(paths) }
+    }
     /// The probe's classification, the same at every accepted resolution.
     fn status(data: &[u8], origin: (i32, i32), point: Vec2) -> LookupStatus {
-        let [a, b, c] = RESOLUTIONS.map(|r| lookup_status(data, origin, point, r));
+        let [a, b, c] = RESOLUTIONS.map(|r| lookup_status(STORED, data, origin, point, r));
         assert!(a == b && b == c, "{point:?}: {a:?} {b:?} {c:?}");
         a
     }
@@ -1969,19 +2017,19 @@ pub(crate) mod tests {
         let mut data = empty_height_atlas();
         let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
         let slots = HashSet::from([(0, 0), (1, 0), (0, 1), (1, 1)]);
-        for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
-        encode_colour_mask(&mut data, (0, 0), 0b1110);
+        for &slot in &slots { encode_surface_cell(STORED, &mut data, slot, &cell, &slots); }
+        encode_colour_mask(STORED, &mut data, (0, 0), 0b1110);
         for origin in [(0, 0), (-3, -2), (-18, -1)] {
             let shift = Vec2::new(origin.0 as f32, origin.1 as f32) * 4096.0;
             let point = shift + Vec2::new(2051.0, 1024.0);
-            assert_eq!(lookup_status(&data, origin, point, 512), LookupStatus::RejectedFootprint, "{origin:?}");
-            assert_eq!(lookup_status(&data, origin, point, 1024), LookupStatus::Success, "{origin:?}");
-            assert_eq!(lookup_status(&data, origin, point, 2048), LookupStatus::Success, "{origin:?}");
+            assert_eq!(lookup_status(STORED, &data, origin, point, 512), LookupStatus::RejectedFootprint, "{origin:?}");
+            assert_eq!(lookup_status(STORED, &data, origin, point, 1024), LookupStatus::Success, "{origin:?}");
+            assert_eq!(lookup_status(STORED, &data, origin, point, 2048), LookupStatus::Success, "{origin:?}");
             // One texel from the cell edge at each resolution, towards the resident east cell.
             for resolution in RESOLUTIONS {
                 let texel = 4096.0 / resolution as f32;
-                assert_eq!(lookup_status(&data, origin, shift + Vec2::new(4096.0 - 0.25 * texel, 1024.0), resolution), LookupStatus::Success, "{origin:?} {resolution}");
-                assert_eq!(lookup_status(&data, origin, shift + Vec2::new(0.25 * texel, 3072.0), resolution), LookupStatus::Success, "{origin:?} {resolution}: taps clamp at the atlas's west edge (the shader's border fade covers it)");
+                assert_eq!(lookup_status(STORED, &data, origin, shift + Vec2::new(4096.0 - 0.25 * texel, 1024.0), resolution), LookupStatus::Success, "{origin:?} {resolution}");
+                assert_eq!(lookup_status(STORED, &data, origin, shift + Vec2::new(0.25 * texel, 3072.0), resolution), LookupStatus::Success, "{origin:?} {resolution}: taps clamp at the atlas's west edge (the shader's border fade covers it)");
             }
             // The missing quadrant itself, at every resolution.
             assert_eq!(status(&data, origin, shift + Vec2::splat(1024.0)), LookupStatus::InvalidColourQuadrant);
@@ -2011,12 +2059,12 @@ pub(crate) mod tests {
         let slots = HashSet::from([(0, 0), (1, 0)]);
         let partial = surface([CapturePath::Folded { layers: 0 }, CapturePath::HeightOnly("missing-base-mesh"), CapturePath::Fallback { layers: 2 }, CapturePath::Folded { layers: 1 }]);
         let height_only = surface([CapturePath::HeightOnly("missing-base-mesh"); 4]);
-        encode_surface_cell(&mut data, (0, 0), &partial, &slots);
-        encode_surface_cell(&mut data, (1, 0), &height_only, &slots);
+        encode_surface_cell(STORED, &mut data, (0, 0), &partial, &slots);
+        encode_surface_cell(STORED, &mut data, (1, 0), &height_only, &slots);
         assert_eq!(partial.colour_mask(), 0b1101);
         assert_eq!(height_only.colour_mask(), 0);
         for slot in [(0, 0), (1, 0)] { for y in 0..GRID { for x in 0..GRID { for triangle in 0..2 {
-            let at = height_index(slot, (x, y), triangle, 0);
+            let at = height_index(STORED, slot, (x, y), triangle, 0);
             assert_eq!(f32::from_le_bytes(data[at..at + 4].try_into().unwrap()), 42.5);
         }}}}
         assert_eq!(status(&data, (-18, -1), Vec2::new(-18.0 * 4096.0 + 1024.0, -3072.0)), LookupStatus::Success);
@@ -2028,7 +2076,7 @@ pub(crate) mod tests {
         let mut data = empty_height_atlas();
         let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
         let slots = HashSet::from([(0, 0), (1, 0), (0, 1)]);
-        for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
+        for &slot in &slots { encode_surface_cell(STORED, &mut data, slot, &cell, &slots); }
         assert_eq!(status(&data, (0, 0), Vec2::new(-1.0, 100.0)), LookupStatus::OutOfRange);
         assert_eq!(status(&data, (0, 0), Vec2::splat(6144.0)), LookupStatus::InvalidHeight);
         // Round 10b review: the read crosses into valid neighbours, and the missing diagonal
@@ -2037,7 +2085,7 @@ pub(crate) mod tests {
         // (before round 10b the whole read was rejected; round 10b clamped it to the cell).
         assert_eq!(status(&data, (0, 0), Vec2::splat(4095.9)), LookupStatus::Success, "the missing diagonal's tap gets no weight");
         assert_eq!(status(&data, (0, 0), Vec2::splat(1024.0)), LookupStatus::Success);
-        encode_colour_mask(&mut data, (0, 0), 0b1110);
+        encode_colour_mask(STORED, &mut data, (0, 0), 0b1110);
         assert_eq!(status(&data, (0, 0), Vec2::splat(1024.0)), LookupStatus::InvalidColourQuadrant);
         assert_eq!(status(&data, (0, 0), Vec2::new(2048.1, 1024.0)), LookupStatus::RejectedFootprint, "one bilinear tap crosses into the invalid neighbour quadrant");
         assert_eq!(status(&data, (0, 0), Vec2::new(3072.0, 1024.0)), LookupStatus::Success, "supported neighbour quadrant is retained");
@@ -2050,11 +2098,11 @@ pub(crate) mod tests {
         assert_eq!(line, format!("mesh terrain blend: publication generation=7 origin=(-18, -1) resident=[(-17, 0):q=[folded,folded+2-layers,fallback+3-layers,height-only:missing-base-mesh] colour-mask=0x7] excluded=[(-18, -1):not-loaded] probe-slot=(1, 1) colour={id:?} height={id:?} resolution=1024"));
         let mut data = empty_height_atlas();
         let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
-        encode_surface_cell(&mut data, (1, 1), &cell, &HashSet::from([(1, 1)]));
-        let probe = publication_probe(&data, (-18, -1), Vec2::new(-17.0 * 4096.0 + 1024.0, 1024.0), 1024);
+        encode_surface_cell(STORED, &mut data, (1, 1), &cell, &HashSet::from([(1, 1)]));
+        let probe = publication_probe(STORED, &data, (-18, -1), Vec2::new(-17.0 * 4096.0 + 1024.0, 1024.0), 1024);
         assert!(probe.contains("probe-cell=(-17, 0) probe-slot=(1, 1)"));
         assert!(probe.contains(&format!("probe-height-bytes={:?} probe-status=Success probe-normal=(0.000, 0.000, 1.000)", 42.5f32.to_le_bytes())), "{probe}");
-        assert!(publication_probe(&empty_height_atlas(), (-18, -1), Vec2::new(-17.0 * 4096.0 + 1024.0, 1024.0), 512).contains("probe-status=InvalidHeight probe-normal=none"));
+        assert!(publication_probe(STORED, &empty_height_atlas(), (-18, -1), Vec2::new(-17.0 * 4096.0 + 1024.0, 1024.0), 512).contains("probe-status=InvalidHeight probe-normal=none"));
     }
     /// [design] The probe's normal comes from the uploaded coefficients of the triangle
     /// under the point, both triangles of a square, in game space; Bevy world space is
@@ -2066,11 +2114,11 @@ pub(crate) mod tests {
         // triangles of each square differ: the north-east corner of every square is raised.
         let h: Vec<f32> = (0..SIDE * SIDE).map(|i| (i % SIDE) as f32 * spacing + (i / SIDE) as f32 * spacing * 0.5 + if (i % SIDE) % 2 == 1 && (i / SIDE) % 2 == 1 { 64.0 } else { 0.0 }).collect();
         let mut data = empty_height_atlas();
-        encode_height_cell(&mut data, (1, 1), &h);
+        encode_height_cell(STORED, &mut data, (1, 1), &h);
         let origin = (-18, -3);
         let square = Vec2::new(-17.0 * 4096.0, -2.0 * 4096.0);
         for (f, triangle) in [(Vec2::new(0.7, 0.2), 0), (Vec2::new(0.2, 0.7), 1)] {
-            let n = probe_normal(&data, origin, square + f * spacing).unwrap();
+            let n = probe_normal(STORED, &data, origin, square + f * spacing).unwrap();
             let (a, east, north, ne) = (h[0], h[1], h[SIDE], h[SIDE + 1]);
             let corners = if triangle == 0 {
                 [Vec3::new(0.0, 0.0, a), Vec3::new(spacing, 0.0, east), Vec3::new(spacing, spacing, ne)]
@@ -2082,9 +2130,9 @@ pub(crate) mod tests {
             assert!((world - crate::world::game_to_bevy().rotation * n).length() < 1e-5);
             assert!(world.y > 0.0, "up in Bevy space");
         }
-        assert_ne!(probe_normal(&data, origin, square + Vec2::new(0.7, 0.2) * spacing), probe_normal(&data, origin, square + Vec2::new(0.2, 0.7) * spacing));
-        assert_eq!(probe_normal(&data, origin, square - Vec2::splat(4096.0 * 2.0)), None, "outside the atlas");
-        assert_eq!(probe_normal(&data, (-17, -2), square), None, "slot without heights");
+        assert_ne!(probe_normal(STORED, &data, origin, square + Vec2::new(0.7, 0.2) * spacing), probe_normal(STORED, &data, origin, square + Vec2::new(0.2, 0.7) * spacing));
+        assert_eq!(probe_normal(STORED, &data, origin, square - Vec2::splat(4096.0 * 2.0)), None, "outside the atlas");
+        assert_eq!(probe_normal(STORED, &data, (-17, -2), square), None, "slot without heights");
     }
     #[test]
     fn production_render_layer_reservations_are_distinct() {
@@ -2130,15 +2178,15 @@ pub(crate) mod tests {
     #[test]
     fn all_atlas_slots_and_plane_bytes_round_trip() {
         let h: Vec<_> = (0..SIDE * SIDE).map(|i| (i as f32 * 0.125) - 123.75).collect();
-        let mut data = vec![0; HEIGHT_WIDTH * HEIGHT_HEIGHT * 4];
+        let mut data = vec![0; STORED.width() * STORED.rows() * 4];
         for y in 0..3 { for x in 0..3 {
-            encode_height_cell(&mut data, (x, y), &h);
+            encode_height_cell(STORED, &mut data, (x, y), &h);
         }}
         for y in 0..3 { for x in 0..3 { for sy in 0..GRID { for sx in 0..GRID {
             let i = sy * SIDE + sx;
             let planes = height_planes(h[i], h[i + 1], h[i + SIDE], h[i + SIDE + 1]);
             for (triangle, plane) in planes.iter().enumerate() { for (c, value) in plane.iter().enumerate() {
-                let at = height_index((x, y), (sx, sy), triangle, c);
+                let at = height_index(STORED, (x, y), (sx, sy), triangle, c);
                 let bytes: [u8; 4] = data[at..at + 4].try_into().unwrap();
                 let loaded = bytes.map(|b| ((b as f32 / 255.0) * 255.0).round() as u8);
                 assert_eq!(f32::from_le_bytes(loaded).to_bits(), value.to_bits());
@@ -2300,18 +2348,18 @@ pub(crate) mod tests {
             assert_eq!((job.publication.detail.len(), job.publication.palette.images.len()), (4, 1));
             {
                 let image = app.world().resource::<Assets<Image>>().get(&job.publication.height).unwrap();
-                assert_eq!(image.texture_descriptor.size.height as usize, HEIGHT_HEIGHT + nvf_assets::nif_surface_blend::DETAIL_ROWS, "the detail rows follow the heights");
+                assert_eq!(image.texture_descriptor.size.height as usize, STORED.rows() + STORED.detail_rows(), "the detail rows follow the heights");
                 let data = image.data.as_ref().unwrap();
-                assert_eq!(detail_mask(data, (1, 1)), 0xf);
-                assert_eq!(detail_mask(data, (0, 0)), 0, "a slot without a cell");
-                let q0 = detail_word(data, nvf_assets::nif_surface_blend::detail_quadrant_word(detail_entry((1, 1), 0)));
+                assert_eq!(detail_mask(STORED, data, (1, 1)), 0xf);
+                assert_eq!(detail_mask(STORED, data, (0, 0)), 0, "a slot without a cell");
+                let q0 = detail_word(STORED, data, nvf_assets::nif_surface_blend::detail_quadrant_word(detail_entry((1, 1), 0)));
                 assert_eq!(((q0 >> 8) & 15, (q0 >> 12) & 15), (if folds { 6 } else { 0 }, 7), "folds={folds}: folded and overflow overlays");
                 assert!(job.report.contains("probe-detail-mask=0xf"), "{}", job.report);
             }
             let height = app.world().resource::<Assets<Image>>().get(&job.publication.height).unwrap().data.clone().unwrap();
             let origin = job.publication.origin;
             for y in 0..GRID { for x in 0..GRID { for triangle in 0..2 {
-                let at = height_index((1, 1), (x, y), triangle, 0);
+                let at = height_index(STORED, (1, 1), (x, y), triangle, 0);
                 assert_eq!(f32::from_le_bytes(height[at..at + 4].try_into().unwrap()), heights[y * SIDE + x], "square ({x}, {y})");
             }}}
             for q in 0..4 {
@@ -2431,9 +2479,9 @@ pub(crate) mod tests {
         let published = cache.published.clone().unwrap();
         assert!(published.palette.images.is_empty() && published.detail.is_empty());
         let image = app.world_mut().resource_mut::<Assets<Image>>().get(&published.height).unwrap().clone();
-        assert_eq!(image.texture_descriptor.size.height as usize, HEIGHT_HEIGHT);
+        assert_eq!(image.texture_descriptor.size.height as usize, STORED.rows());
         let data = image.data.unwrap();
-        for y in 0..3 { for x in 0..3 { assert_eq!(detail_mask(&data, (x, y)), 0); } }
+        for y in 0..3 { for x in 0..3 { assert_eq!(detail_mask(STORED, &data, (x, y)), 0); } }
     }
 
     /// [design] The crossing aid's steps: on the probe's clock after arming, each later step
@@ -2965,7 +3013,7 @@ pub(crate) mod tests {
                 let retained = cache.published.as_ref().unwrap();
                 assert_eq!((retained.colour.id(), retained.origin), (front.colour.id(), front.origin));
                 let height = app.world().resource::<Assets<Image>>().get(&retained.height).unwrap().data.as_ref().unwrap();
-                assert_eq!(lookup_covered_status(height, retained.origin, Vec2::splat(1024.0), 1024, retained.coverage), LookupStatus::Success);
+                assert_eq!(lookup_covered_status(retained.layout, height, retained.origin, Vec2::splat(1024.0), 1024, retained.coverage), LookupStatus::Success);
             }
             finish(&mut app);
             assert_ne!(app.world().resource::<SurfaceCache>().published.as_ref().unwrap().colour.id(), front.colour.id());
@@ -3120,24 +3168,24 @@ pub(crate) mod tests {
         let mut data = empty_height_atlas();
         let cell = surface([CapturePath::Fallback { layers: 0 }; 4]);
         let slots = HashSet::from([(0, 0), (1, 0), (0, 1), (1, 1)]);
-        for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
+        for &slot in &slots { encode_surface_cell(STORED, &mut data, slot, &cell, &slots); }
         let full = 0x1ff;
-        assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, full), LookupStatus::Success);
+        assert_eq!(lookup_covered_status(STORED, &data, (-2, -2), Vec2::splat(-4096.1), 1024, full), LookupStatus::Success);
         let without_diagonal = full & !(1 << 4);
         // Round 10b review: a masked (no longer covered) diagonal cell's tap gets no weight and
         // the other three are renormalized, so the read stays valid and the same on both sides
         // of the fragment's edges with its two covered neighbours (before round 10b it was
         // rejected); the cell's own coverage still rejects (below).
-        assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, without_diagonal), LookupStatus::Success);
+        assert_eq!(lookup_covered_status(STORED, &data, (-2, -2), Vec2::splat(-4096.1), 1024, without_diagonal), LookupStatus::Success);
         let uv = Vec2::new((4096.0 - 0.1) / 12288.0, 1.0 - (4096.0 - 0.1) / 12288.0);
-        let taps = colour_read_taps(&data, without_diagonal, (0, 0), uv, 1024, 0).unwrap();
+        let taps = colour_read_taps(STORED, &data, without_diagonal, (0, 0), uv, 1024, 0).unwrap();
         assert_eq!(taps.map(|t| colour_tap_slot(t.0, 1024)), [Some((0, 1)), Some((1, 1)), Some((0, 0)), Some((1, 0))], "north-west first: rows run north to south");
         assert_eq!(taps[1].1, 0.0, "the masked diagonal");
         assert!(taps.iter().all(|t| t.1 >= 0.0) && (taps.iter().map(|t| t.1).sum::<f32>() - 1.0).abs() < 1e-6);
-        assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, full & !1), LookupStatus::InvalidHeight, "the cell's own coverage");
-        assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-3072.0), 1024, without_diagonal), LookupStatus::InvalidHeight);
-        encode_colour_mask(&mut data, (0, 0), 0b0111);
-        assert_eq!(lookup_covered_status(&data, (-2, -2), Vec2::splat(-4096.1), 1024, full), LookupStatus::InvalidColourQuadrant);
+        assert_eq!(lookup_covered_status(STORED, &data, (-2, -2), Vec2::splat(-4096.1), 1024, full & !1), LookupStatus::InvalidHeight, "the cell's own coverage");
+        assert_eq!(lookup_covered_status(STORED, &data, (-2, -2), Vec2::splat(-3072.0), 1024, without_diagonal), LookupStatus::InvalidHeight);
+        encode_colour_mask(STORED, &mut data, (0, 0), 0b0111);
+        assert_eq!(lookup_covered_status(STORED, &data, (-2, -2), Vec2::splat(-4096.1), 1024, full), LookupStatus::InvalidColourQuadrant);
     }
     /// [design] Round 10b: the colour read's levels and footprint. Every level's bilinear
     /// footprint holds a tap of the fragment's own cell (round 10b review: it may cross into a
@@ -3167,11 +3215,11 @@ pub(crate) mod tests {
         let mut data = empty_height_atlas();
         let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
         let slots = HashSet::from([(0, 0), (1, 0), (0, 1), (1, 1)]);
-        for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
-        encode_colour_mask(&mut data, (0, 0), 0b1110);
+        for &slot in &slots { encode_surface_cell(STORED, &mut data, slot, &cell, &slots); }
+        encode_colour_mask(STORED, &mut data, (0, 0), 0b1110);
         let origin = (-18, -1);
         let shift = Vec2::new(origin.0 as f32, origin.1 as f32) * 4096.0;
-        let status = |point: Vec2, lod: f32| lookup_level_status(&data, origin, shift + point, 512, 0x1ff, lod);
+        let status = |point: Vec2, lod: f32| lookup_level_status(STORED, &data, origin, shift + point, 512, 0x1ff, lod);
         // 20 units east of q0 (uncaptured), in q1 at 512 texels per cell: levels 0-2 (texels
         // of 8 to 32 units) keep both taps in q1; level 3's west tap (64-unit texels) is q0's.
         let near_edge = Vec2::new(2048.0 + 20.0, 1024.0);
@@ -3194,12 +3242,12 @@ pub(crate) mod tests {
         assert_eq!(status(far, 9.0), LookupStatus::RejectedFootprint, "the last level alone");
         // All four captured: every level serves; the uncaptured west neighbour (0, 0) at the last
         // level and the atlas's south edge only lose their taps' weight.
-        assert_eq!(lookup_level_status(&data, origin, shift + Vec2::new(4096.0 + 1024.0, 1024.0), 512, 0x1ff, 9.0), LookupStatus::Success);
+        assert_eq!(lookup_level_status(STORED, &data, origin, shift + Vec2::new(4096.0 + 1024.0, 1024.0), 512, 0x1ff, 9.0), LookupStatus::Success);
         let uv = Vec2::new(1.25 / 3.0, 1.0 - 0.25 / 3.0);
-        let taps = colour_read_taps(&data, 0x1ff, (1, 0), uv, 512, 9).unwrap();
+        let taps = colour_read_taps(STORED, &data, 0x1ff, (1, 0), uv, 512, 9).unwrap();
         assert_eq!(taps.map(|t| (colour_tap_slot(t.0, 1), t.1 > 0.0)), [(Some((0, 0)), false), (Some((1, 0)), true), (None, false), (None, false)]);
         // The cell's own live coverage gates every level.
-        assert_eq!(lookup_level_status(&data, origin, shift + Vec2::new(4096.0 + 1024.0, 1024.0), 512, 0x1ff & !(1 << 1), 0.0), LookupStatus::InvalidHeight);
+        assert_eq!(lookup_level_status(STORED, &data, origin, shift + Vec2::new(4096.0 + 1024.0, 1024.0), 512, 0x1ff & !(1 << 1), 0.0), LookupStatus::InvalidHeight);
     }
     /// [design] Round 10b review: the CPU statement of the shader's colour read
     /// (`terrain_colour_mips` over `terrain_colour_level`) at `point` (game units from the
@@ -3211,7 +3259,7 @@ pub(crate) mod tests {
         let slot = fnv_world::cell_of(point.x, point.y);
         let uv = Vec2::new(point.x / 12288.0, 1.0 - point.y / 12288.0);
         let (low, high, share) = colour_read_levels(resolution, lod);
-        let level = |level: u32| colour_read_taps(data, coverage, slot, uv, resolution, level).map(|taps| {
+        let level = |level: u32| colour_read_taps(STORED, data, coverage, slot, uv, resolution, level).map(|taps| {
             let size = (resolution >> level) as f32;
             taps.iter().map(|&(t, w)| w * ramp(Vec2::new(t.x as f32 + 0.5, 3.0 * size - t.y as f32 - 0.5) * 4096.0 / size)).sum::<f32>()
         });
@@ -3232,7 +3280,7 @@ pub(crate) mod tests {
         let mut data = empty_height_atlas();
         let cell = surface([CapturePath::Folded { layers: 0 }; 4]);
         let slots: HashSet<_> = (0..3).flat_map(|y| (0..3).map(move |x| (x, y))).collect();
-        for &slot in &slots { encode_surface_cell(&mut data, slot, &cell, &slots); }
+        for &slot in &slots { encode_surface_cell(STORED, &mut data, slot, &cell, &slots); }
         let ramp = |p: Vec2| 0.01 * p.x + 0.004 * p.y;
         let across = |coverage: u32, edge: Vec2, normal: Vec2, resolution: u32, lod: f32| {
             let before = ramp_read(&data, coverage, edge - normal * 0.01, resolution, lod, ramp).expect("valid before the edge");
@@ -3495,5 +3543,217 @@ pub(crate) mod tests {
         assert!(draws_ready(&HashSet::new(), &HashSet::new()));
         let extra = world.spawn_empty().id();
         assert!(!draws_ready(&expected, &HashSet::from([a, b, extra])), "unplanned draws can contaminate the bake target");
+    }
+
+    /// A hilly height block written for these tests (no game data): heights in steps of 8
+    /// units (as stored LAND heights come), continuous across the nine cells, so the
+    /// neighbours stitch.
+    fn hilly_block() -> [[Vec<f32>; 3]; 3] {
+        let hilly = |dx: i32, dy: i32| -> Vec<f32> {
+            (0..SIDE * SIDE).map(|i| {
+                let (c, r) = ((i % SIDE) as f32 + dx as f32 * GRID as f32, (i / SIDE) as f32 + dy as f32 * GRID as f32);
+                ((90.0 * (c * 0.37).sin() * (r * 0.23).cos() + 25.0 * ((c + 2.0 * r) * 0.71).sin() + 40.0) / 8.0).round() * 8.0
+            }).collect()
+        };
+        std::array::from_fn(|r| std::array::from_fn(|c| hilly(c as i32 - 1, r as i32 - 1)))
+    }
+    /// The surface of the block's centre cell: stored, or smoothed with `subdiv`.
+    fn block_surface(block: &[[Vec<f32>; 3]; 3], subdiv: Option<usize>) -> fnv_world::land_surface::Surface {
+        use fnv_world::land_surface::{SmoothParams, Surface};
+        let b: fnv_world::land_surface::Block = std::array::from_fn(|r| std::array::from_fn(|c| Some(block[r][c].as_slice())));
+        match subdiv {
+            None => Surface::stored(&block[1][1]),
+            Some(subdiv) => Surface::smoothed(&b, SmoothParams { subdiv, ..SmoothParams::DEFAULT }).unwrap(),
+        }
+    }
+    /// The geometric normal of the surface's triangle under cell-local `p`, taken from its
+    /// vertices with `grid_height_at`'s split (below the diagonal when `u >= v`).
+    fn surface_triangle_normal(s: &fnv_world::land_surface::Surface, p: Vec2) -> Vec3 {
+        let (sp, side, h) = (s.spacing(), s.side(), s.heights());
+        let (fx, fy) = (p.x / sp, p.y / sp);
+        let (c, r) = ((fx as usize).min(side - 2), (fy as usize).min(side - 2));
+        let (u, v) = (fx - c as f32, fy - r as f32);
+        let at = |r: usize, c: usize| Vec3::new(c as f32 * sp, r as f32 * sp, h[r * side + c]);
+        let (sw, se, nw, ne) = (at(r, c), at(r, c + 1), at(r + 1, c), at(r + 1, c + 1));
+        let n = if u >= v { (se - sw).cross(ne - sw) } else { (ne - sw).cross(nw - sw) };
+        n.normalize()
+    }
+    /// Cell-local sample points of a surface with `sub` squares per LAND square: a scatter
+    /// inside squares, LAND vertices, surface vertices, both sides of squares' diagonals,
+    /// and the cell's edges (the south and west edges, and just inside the north and east
+    /// ones, whose points belong to the next cell).
+    fn sample_points(sub: usize) -> Vec<Vec2> {
+        let sp = fnv_world::land::SPACING / sub as f32;
+        let grid = GRID * sub;
+        let mut points = Vec::new();
+        let mut s = 0x2661u32;
+        let mut next = || { s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223); (s >> 8) as f32 / (1u32 << 24) as f32 * 4095.0 };
+        for _ in 0..400 { points.push(Vec2::new(next(), next())); }
+        for j in (0..GRID).step_by(3) { for i in (0..GRID).step_by(5) { points.push(Vec2::new(i as f32, j as f32) * fnv_world::land::SPACING); } }
+        for j in (0..grid).step_by(7) { for i in (0..grid).step_by(5) { points.push(Vec2::new(i as f32, j as f32) * sp); } }
+        for (i, j) in [(0, 0), (5, 9), (grid - 1, 2), (17, grid - 1), (grid / 2, grid / 2 + 1)] {
+            let centre = Vec2::new(i as f32 + 0.5, j as f32 + 0.5) * sp;
+            for side in [-1.0, 1.0] { points.push(centre + Vec2::new(0.2, -0.2) * sp * side); }
+            points.push(centre);
+        }
+        for k in (0..=4000).step_by(173) {
+            let t = k as f32;
+            points.extend([Vec2::new(0.0, t), Vec2::new(t, 0.0), Vec2::new(4095.99, t), Vec2::new(t, 4095.99)]);
+        }
+        points
+    }
+
+    /// [design] #2149/#2661: the height the shader reads (its CPU twin, `probe_height`) at
+    /// every sample point of a resident cell is `Surface::height_at` there, and the normal
+    /// it derives (`probe_normal`) the surface triangle's, for the 4 x 4 and 2 x 2 smoothed
+    /// surfaces and the stored one, each packed with its own layout.
+    #[test]
+    fn the_atlas_holds_the_drawn_surface_at_every_subdivision() {
+        let block = hilly_block();
+        // Cell (0, 0) at slot (1, 1): its cell-local places are its game places, so the
+        // twin's and the surface's fractions are computed from the same numbers.
+        let origin = (-1, -1);
+        for subdiv in [Some(4), Some(2), None] {
+            let surface = block_surface(&block, subdiv);
+            let layout = HeightLayout::new(surface.sub());
+            assert_eq!(surface.side(), layout.side());
+            let mut data = empty_height_atlas_rows(layout, layout.rows());
+            assert_eq!(data.len(), layout.bytes(false));
+            encode_height_cell(layout, &mut data, (1, 1), surface.heights());
+            for p in sample_points(surface.sub()) {
+                let want = surface.height_at(p.x, p.y).unwrap();
+                let got = probe_height(layout, &data, origin, p).unwrap_or_else(|| panic!("{subdiv:?} {p:?}: no heights"));
+                assert!((got - want).abs() <= 1e-3, "{subdiv:?} {p:?}: {got} != {want}");
+                let n = probe_normal(layout, &data, origin, p).unwrap();
+                assert!((n - surface_triangle_normal(&surface, p)).abs().max_element() <= 1e-4, "{subdiv:?} {p:?}: normal {n:?}");
+            }
+            // The smoothed surface differs from its LAND triangles, so the stored layout's
+            // planes would not do (the gap this layout closes).
+            if subdiv.is_some() {
+                assert!(sample_points(surface.sub()).iter().any(|p| (surface.height_at(p.x, p.y).unwrap() - surface.stored_height_at(p.x, p.y).unwrap()).abs() > 1.0), "{subdiv:?}");
+            }
+            // Outside the encoded cell: no heights.
+            assert_eq!(probe_height(layout, &data, origin, Vec2::new(-10.0, 10.0)), None);
+            assert_eq!(probe_normal(layout, &data, origin, Vec2::new(5000.0, 10.0)), None);
+        }
+    }
+
+    /// [design] #2149/#2661: at the stored layout the packing is the one before the layout
+    /// existed (LAND squares, the planes of the stored heights).
+    #[test]
+    fn stored_layout_packs_the_land_squares_as_before() {
+        let block = hilly_block();
+        let h = &block[1][1];
+        let mut data = empty_height_atlas();
+        encode_height_cell(STORED, &mut data, (2, 0), h);
+        for (x, y) in [(0, 0), (31, 0), (0, 31), (31, 31), (12, 7)] {
+            let i = y * SIDE + x;
+            let planes = height_planes(h[i], h[i + 1], h[i + SIDE], h[i + SIDE + 1]);
+            for (triangle, plane) in planes.iter().enumerate() { for (c, value) in plane.iter().enumerate() {
+                // Texel (2 x 192 + 6 x + 3 t + c, y) of the 576-wide atlas.
+                let at = (y * 576 + 2 * 192 + x * 6 + triangle * 3 + c) * 4;
+                assert_eq!(f32::from_le_bytes(data[at..at + 4].try_into().unwrap()), *value, "({x}, {y}) {triangle} {c}");
+            }}
+        }
+        // The metadata row is row 32 of the tile.
+        encode_colour_mask(STORED, &mut data, (2, 0), 0b1010);
+        let at = (32 * 576 + 2 * 192 + 1) * 4;
+        assert_eq!(f32::from_le_bytes(data[at..at + 4].try_into().unwrap()), 10.0);
+    }
+
+    /// [design] #2149/#2661: at the 4 x 4 surface's layout the metadata row follows the 128
+    /// rows of squares and the detail words follow the 387 rows of heights; a table entry
+    /// and a vertex record read back as written, and no write reaches another tile's
+    /// heights.
+    #[test]
+    fn metadata_and_detail_words_round_trip_at_the_wider_atlas() {
+        use nvf_assets::nif_surface_blend::{detail_quadrant_word, detail_unorm, detail_snorm, detail_vertex_word, detail_vertex_words, DetailQuadrant, DETAIL_QUADRANT_WORDS, DETAIL_VERTEX_WORDS, QUAD_VERTICES};
+        let layout = HeightLayout::new(4);
+        let mut data = empty_height_atlas_rows(layout, layout.rows() + layout.detail_rows());
+        assert_eq!(data.len(), layout.bytes(true));
+        assert_eq!(data.len(), 2304 * 438 * 4, "4 x 4: 2304 by 387 texels of heights, 51 detail rows");
+        let block = hilly_block();
+        let surface = block_surface(&block, Some(4));
+        let slots: HashSet<_> = [(0, 0), (1, 1), (2, 2)].into();
+        let cell = SurfaceCell { heights: surface.heights().to_vec(), ..surface_cell_with([CapturePath::Fallback { layers: 0 }; 4]) };
+        for &slot in &slots { encode_surface_cell(layout, &mut data, slot, &cell, &slots); }
+        encode_colour_mask(layout, &mut data, (1, 1), 0b0101);
+        encode_detail_mask(layout, &mut data, (1, 1), 0b0011);
+        assert_eq!((colour_mask(layout, &data, (1, 1)), detail_mask(layout, &data, (1, 1)), colour_mask(layout, &data, (2, 2))), (0b0101, 0b0011, 0xf));
+        assert_eq!(metadata(layout, &data, (1, 1), 0), residency_mask((1, 1), &slots));
+        // Texel 1 of slot (1, 1)'s metadata row: row 129 + 128, column 768 + 1.
+        let at = ((129 + 128) * 2304 + 768 + 1) * 4;
+        assert_eq!(f32::from_le_bytes(data[at..at + 4].try_into().unwrap()), 5.0);
+        // The heights around the metadata are the surface's (the last square row, and slot
+        // (1, 1)'s first square above slot (1, 0)'s metadata row).
+        let origin = (0, 0);
+        for p in [Vec2::new(4096.0 + 1.0, 4096.0 + 4095.0), Vec2::new(4096.0 + 2000.0, 4096.0 + 0.5), Vec2::new(4096.0 * 2.0 + 4095.5, 4096.0 * 2.0 + 4095.5)] {
+            let local = p - Vec2::new((p.x / 4096.0).floor(), (p.y / 4096.0).floor()) * 4096.0;
+            assert!((probe_height(layout, &data, origin, p).unwrap() - surface.height_at(local.x, local.y).unwrap()).abs() <= 1e-3, "{p:?}");
+        }
+        assert_eq!(lookup_status(layout, &data, origin, Vec2::new(4096.0 + 100.0, 4096.0 + 100.0), 512), LookupStatus::Success);
+        assert_eq!(lookup_status(layout, &data, origin, Vec2::new(4096.0 + 3000.0, 4096.0 + 100.0), 512), LookupStatus::InvalidColourQuadrant);
+        assert_eq!(lookup_status(layout, &data, origin, Vec2::new(4096.0 + 100.0, 100.0), 512), LookupStatus::InvalidHeight, "slot (1, 0) holds no cell");
+        // The detail words after the heights: the last quadrant's entry and last vertex.
+        let entry = detail_entry((2, 2), 3);
+        let quadrant = DetailQuadrant { base_diffuse: Some(3), base_normal: Some(4), diffuse_sampler: 1, normal_sampler: 2, overlays: vec![(5, Some(6), true)], folded: 1, tile: 256.0, tangent_sign: -1.0, ..default() };
+        let n = QUAD_VERTICES;
+        let tint = vec![[0.25, 0.5, 1.0]; n];
+        let normal = vec![[0.6, -0.8, 0.0]; n];
+        let tangent = vec![[0.0, 0.6, -0.8]; n];
+        let detail = QuadrantDetail {
+            base: DetailBase::Single(Handle::default()), overflow: vec![], cell_local: false, tile: 256.0,
+            tint, normal, tangent, tangent_sign: -1.0, opacity: vec![(0..n).map(|v| v as f32 / (n - 1) as f32).collect()],
+            resolved: Err("not-resolved"),
+        };
+        let before = data.clone();
+        encode_detail(layout, &mut data, entry, &quadrant, &detail);
+        assert_eq!(data[..layout.rows() * layout.width() * 4], before[..layout.rows() * layout.width() * 4], "the detail words never reach the heights");
+        let words: Vec<u32> = (0..DETAIL_QUADRANT_WORDS).map(|i| detail_word(layout, &data, detail_quadrant_word(entry) + i)).collect();
+        assert_eq!(words, quadrant.words());
+        let last = n - 1;
+        let record: Vec<u32> = (0..DETAIL_VERTEX_WORDS).map(|j| detail_word(layout, &data, detail_vertex_word(entry, last) + j)).collect();
+        assert_eq!(record, detail_vertex_words([0.25, 0.5, 1.0], [0.6, -0.8, 0.0], [0.0, 0.6, -0.8], &[1.0]));
+        assert!((detail_unorm(&record, 1) - 0.5).abs() <= 1.0 / 65535.0 && (detail_snorm(&record, 4) + 0.8).abs() <= 1.0 / 32767.0 && detail_unorm(&record, 9) == 1.0, "the last vertex's green, normal y and opacity");
+        // The last word lies inside the atlas: the detail rows are enough at this width.
+        assert!((layout.rows() * layout.width() + detail_vertex_word(entry, last) + DETAIL_VERTEX_WORDS) * 4 <= data.len());
+    }
+
+    /// [design] #2149/#2661: a publication at the 4 x 4 surface's layout packs the drawn
+    /// surface's heights (its probe reads `Surface::height_at`), names the layout for its
+    /// clones, and refuses a cell whose heights are not that surface's
+    /// (`invalid-prepared-heights`, as heights of no surface are).
+    #[test]
+    fn a_publication_packs_the_run_surface_and_refuses_other_heights() {
+        use bevy::ecs::system::RunSystemOnce;
+        let layout = HeightLayout::new(4);
+        let block = hilly_block();
+        let surface = block_surface(&block, Some(4));
+        let mut app = App::new();
+        app.insert_resource(crate::outfits::tests::empty_world_data())
+            .init_resource::<Assets<Image>>().init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<TerrainMaterial>>().init_resource::<Assets<SurfaceCaptureMaterial>>()
+            .insert_resource(SurfaceCache { layout, ..SurfaceCache::with_resolution(512) });
+        let fine = app.world_mut().spawn(SurfaceCell { grid: (0, 0), heights: surface.heights().to_vec(), ..surface_cell_with([CapturePath::Fallback { layers: 0 }; 4]) }).id();
+        let stored = app.world_mut().spawn(SurfaceCell { grid: (1, 0), heights: block[1][1].clone(), ..surface_cell_with([CapturePath::Fallback { layers: 0 }; 4]) }).id();
+        app.insert_resource(Streamer {
+            radius: 1, loaded: [((0, 0), fine), ((1, 0), stored)].into(), fades: default(), fade_secs: 0.0, settled: true,
+            arrival: None, per_frame: 1, spawning: default(), dying: default(), ahead: default(),
+            hide: default(), interior: None, light_scale: 1.0, managed: default(), manage_actors: false,
+            stats: default(), buffer: default(), centre: None, waiting: default(), model_overrides: default(),
+        });
+        app.world_mut().spawn((Camera3d::default(), crate::fly::FlyCam { yaw: 0.0, pitch: 0.0, speed: 0.0 }, GlobalTransform::from_translation(Vec3::new(2048.0, 600.0, -2048.0))));
+        app.world_mut().run_system_once(update_cache).unwrap();
+        let cache = app.world().resource::<SurfaceCache>();
+        let job = cache.job.as_ref().expect("a publication is pending");
+        assert_eq!((job.publication.layout, job.publication.cells, job.publication.origin), (layout, 1, (-1, -1)));
+        assert!(job.report.contains("excluded=[") && job.report.contains("(1, 0):invalid-prepared-heights"), "{}", job.report);
+        let image = app.world().resource::<Assets<Image>>().get(&job.publication.height).unwrap();
+        assert_eq!((image.texture_descriptor.size.width as usize, image.texture_descriptor.size.height as usize), (layout.width(), layout.rows()));
+        let data = image.data.as_ref().unwrap();
+        for p in sample_points(4) {
+            assert!((probe_height(layout, data, (-1, -1), p).unwrap() - surface.height_at(p.x, p.y).unwrap()).abs() <= 1e-3, "{p:?}");
+        }
+        assert_eq!(lookup_status(layout, data, (-1, -1), Vec2::splat(1024.0), 512), LookupStatus::Success);
     }
 }

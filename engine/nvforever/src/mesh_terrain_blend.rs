@@ -770,7 +770,10 @@ fn follow_setting(
     // detail work while off).
     let detail = detail_capability(device.as_deref(), detail_aid());
     info!("{}", start_line(&c, detail));
-    cache.start(c.resolution, device.map(|d| d.limits().max_texture_dimension_2d), detail.layers());
+    // [design] #2149/#2661: the height atlas holds the run's landscape surface (fixed before
+    // the first cell, at PostStartup; this runs in Update).
+    let layout = nvf_assets::nif_surface_blend::HeightLayout::new(nvf_play::smooth_terrain::spec().subdiv());
+    cache.start(c.resolution, device.map(|d| d.limits().max_texture_dimension_2d), detail.layers(), layout);
     *variants = Variants { readiness: variants.readiness.take(), ..default() };
     state.active = Some(c);
     state.shapes_pending = true;
@@ -866,7 +869,7 @@ fn enabled_material(source: &NifMaterial, c: BlendConfig, surface: &crate::terra
         // [design] Round 10a: every clone of a publication binds that publication's palette
         // (empty without landscape detail), so its table numbers match its height atlas.
         extension: NifSurfaceBlend::from_source(&source.extension, c.controls(), c.width_controls(),
-            Vec4::new(surface.origin.0 as f32, surface.origin.1 as f32, surface.coverage as f32, 0.0), surface.colour.clone(), surface.height.clone(), surface.palette.clone()),
+            Vec4::new(surface.origin.0 as f32, surface.origin.1 as f32, surface.coverage as f32, 0.0), surface.colour.clone(), (surface.height.clone(), surface.layout), surface.palette.clone()),
     }
 }
 

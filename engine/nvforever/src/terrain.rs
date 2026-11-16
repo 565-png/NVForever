@@ -1143,21 +1143,15 @@ pub(crate) fn capture_surface(world: &WorldData, prep: TerrainPrep, tm: &mut Ter
     Some(captured)
 }
 
-/// [design] The ground heights the mesh terrain blend measures against: the drawn
-/// `surface`'s at the LAND vertices (#2149: the stored ones as stored, the smoothed
-/// surface's where it smooths), `SIDE * SIDE`, row-major. The blend's height atlas holds
-/// one pair of triangles per LAND grid square, so a smoothed surface's shape inside a
-/// square is not in it.
-pub(crate) fn blend_heights(surface: &Surface) -> Vec<f32> {
-    let heights = surface.heights();
-    (0..SIDE * SIDE).map(|i| heights[surface.land_vertex(i / SIDE, i % SIDE)]).collect()
-}
-
-/// An empty capture of the cell at `grid`, before its quadrants' draws are added.
+/// An empty capture of the cell at `grid`, before its quadrants' draws are added. [design]
+/// #2149/#2661: the ground heights the mesh terrain blend measures against are the drawn
+/// `surface`'s own (`side() * side()`, row-major: the stored LAND heights as stored, every
+/// vertex of the smoothed surface where it smooths); the blend's height atlas holds that
+/// surface's triangles (terrain_surface.rs `encode_height_cell`).
 fn surface_cell(world: &WorldData, grid: (i32, i32), surface: &Surface) -> crate::terrain_surface::SurfaceCell {
     use crate::terrain_surface::{CapturePath, SurfaceCell};
     SurfaceCell {
-        world: world.world, grid, heights: blend_heights(surface), quadrants: Vec::new(),
+        world: world.world, grid, heights: surface.heights().to_vec(), quadrants: Vec::new(),
         paths: [CapturePath::HeightOnly("missing-base-mesh"); 4],
         content_revision: crate::terrain_surface::capture_revision(), sources: vec![], dependencies: default(),
         detail: default(),
@@ -2274,7 +2268,7 @@ mod tests {
     /// The shader's reconstruction (nif_surface_bindings.wesl `terrain_triangle`,
     /// `detail_attributes`, `detail_opacity`) from the packed words: the corner records of
     /// the square's triangle and their barycentric weights.
-    fn shader_mix(data: &[u8], entry: usize, q: u8, square: (usize, usize), f: Vec2, overlays: usize) -> (Vec3, Vec3, Vec3, Vec<f32>) {
+    fn shader_mix(layout: crate::terrain_surface::HeightLayout, data: &[u8], entry: usize, q: u8, square: (usize, usize), f: Vec2, overlays: usize) -> (Vec3, Vec3, Vec3, Vec<f32>) {
         use nvf_assets::nif_surface_blend::{detail_snorm, detail_unorm, detail_vertex_word, DETAIL_VERTEX_WORDS};
         let half = QUAD_SIDE - 1;
         let local = (square.0 - half * (q as usize % 2), square.1 - half * (q as usize / 2));
@@ -2286,7 +2280,7 @@ mod tests {
         };
         let (mut tint, mut normal, mut tangent, mut opacity) = (Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, vec![0.0; overlays]);
         for (v, w) in vertices.into_iter().zip(weights) {
-            let words: Vec<u32> = (0..DETAIL_VERTEX_WORDS).map(|j| crate::terrain_surface::detail_word(data, detail_vertex_word(entry, v) + j)).collect();
+            let words: Vec<u32> = (0..DETAIL_VERTEX_WORDS).map(|j| crate::terrain_surface::detail_word(layout, data, detail_vertex_word(entry, v) + j)).collect();
             tint += w * Vec3::new(detail_unorm(&words, 0), detail_unorm(&words, 1), detail_unorm(&words, 2));
             normal += w * Vec3::new(detail_snorm(&words, 3), detail_snorm(&words, 4), detail_snorm(&words, 5));
             tangent += w * Vec3::new(detail_snorm(&words, 6), detail_snorm(&words, 7), detail_snorm(&words, 8));
@@ -2773,17 +2767,26 @@ mod tests {
             assert_eq!(palette.admitted.len(), 3, "folds={folds}: q0, q2, q3");
             assert_eq!((palette.palette.images.len(), palette.palette.samplers.len()), (1, 1), "one shared texture, one sampler description");
             let slot = (1, 1);
-            let mut data = vec![0u8; nvf_assets::nif_surface_blend::HEIGHT_WIDTH * (nvf_assets::nif_surface_blend::HEIGHT_ROWS + nvf_assets::nif_surface_blend::DETAIL_ROWS) * 4];
-            for ((_, q), quadrant) in &palette.admitted {
-                crate::terrain_surface::encode_detail(&mut data, crate::terrain_surface::detail_entry(slot, *q), quadrant, detail(*q as usize));
-            }
+            // #2149/#2661: packed after the stored layout's heights and after the 4 x 4
+            // surface's (a wider atlas): the same words, read back alike.
+            use crate::terrain_surface::HeightLayout;
+            let (stored, fine_layout) = (HeightLayout::STORED, HeightLayout::new(4));
+            let [data, fine] = [stored, fine_layout].map(|layout| {
+                let mut data = vec![0u8; layout.bytes(true)];
+                for ((_, q), quadrant) in &palette.admitted {
+                    crate::terrain_surface::encode_detail(layout, &mut data, crate::terrain_surface::detail_entry(slot, *q), quadrant, detail(*q as usize));
+                }
+                data
+            });
             for q in [0u8, 2, 3] {
                 let d = detail(q as usize);
                 let r = d.resolved.as_ref().unwrap();
                 let drawn = quadrant_layers(&reference.layers, q);
                 let folded_count = if folds { drawn.len().min(FOLDED_LAYERS) } else { 0 };
                 assert_eq!((r.folded, d.opacity.len(), d.cell_local, d.tangent_sign), (folded_count, drawn.len(), folds, TANGENT_SIGN), "folds={folds} q{q}");
-                let words: Vec<u32> = (0..nvf_assets::nif_surface_blend::DETAIL_QUADRANT_WORDS).map(|i| crate::terrain_surface::detail_word(&data, nvf_assets::nif_surface_blend::detail_quadrant_word(crate::terrain_surface::detail_entry(slot, q)) + i)).collect();
+                let words: Vec<u32> = (0..nvf_assets::nif_surface_blend::DETAIL_QUADRANT_WORDS).map(|i| crate::terrain_surface::detail_word(stored, &data, nvf_assets::nif_surface_blend::detail_quadrant_word(crate::terrain_surface::detail_entry(slot, q)) + i)).collect();
+                let fine_words: Vec<u32> = (0..nvf_assets::nif_surface_blend::DETAIL_QUADRANT_WORDS).map(|i| crate::terrain_surface::detail_word(fine_layout, &fine, nvf_assets::nif_surface_blend::detail_quadrant_word(crate::terrain_surface::detail_entry(slot, q)) + i)).collect();
+                assert_eq!(fine_words, words, "folds={folds} q{q}: the table entry at the 4 x 4 surface's width");
                 assert_eq!(((words[0] >> 8) & 15, (words[0] >> 12) & 15, words[0] & 2 != 0), (folded_count as u32, drawn.len() as u32, folds), "folds={folds} q{q}: table counts");
                 let quad = &reference.quads[q as usize];
                 let base = if folds { quad.folded.as_ref().unwrap() } else { quad.base.as_ref().unwrap() };
@@ -2814,7 +2817,8 @@ mod tests {
                         let p = (Vec2::new(square.0 as f32, square.1 as f32) + f) * SPACING;
                         let (corners, weights) = mesh_mix(base, p).expect("inside a drawn triangle");
                         let expect = |name| corners.iter().zip(weights).map(|(&i, w)| attr(name, i) * w).sum::<Vec3>();
-                        let (tint, normal, tangent, opacities) = shader_mix(&data, crate::terrain_surface::detail_entry(slot, q), q, square, f, d.opacity.len());
+                        let (tint, normal, tangent, opacities) = shader_mix(stored, &data, crate::terrain_surface::detail_entry(slot, q), q, square, f, d.opacity.len());
+                        assert_eq!(shader_mix(fine_layout, &fine, crate::terrain_surface::detail_entry(slot, q), q, square, f, d.opacity.len()), (tint, normal, tangent, opacities.clone()), "folds={folds} q{q}: the records at the 4 x 4 surface's width");
                         let close = |a: Vec3, b: Vec3| (a - b).abs().max_element() < 2e-4;
                         assert!(close(tint, expect(Mesh::ATTRIBUTE_COLOR)), "folds={folds} q{q} {square:?} {f:?}: tint {tint:?}");
                         assert!(close(normal, expect(Mesh::ATTRIBUTE_NORMAL)), "folds={folds} q{q} {square:?} {f:?}: normal");

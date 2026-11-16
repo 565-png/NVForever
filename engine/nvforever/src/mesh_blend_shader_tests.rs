@@ -82,7 +82,10 @@ fn texture_bindings(source: &str) -> std::collections::BTreeSet<(u32, u32)> {
 
 #[test]
 fn composed_production_blend_module_validates_with_key_on_and_off() {
-    for bindless in [false, true] {
+    use nvf_assets::nif_surface_blend::HeightLayout;
+    // #2149/#2661: the blend at every height atlas layout (smoothing off, 2 x 2, 4 x 4).
+    let layouts = [HeightLayout::STORED, HeightLayout::new(2), HeightLayout::new(4)];
+    for (bindless, layout) in [false, true].into_iter().flat_map(|b| layouts.map(|l| (b, l))) {
         for blend in [false, true] {
             let mut modules: Vec<(String, String)> = vec![
                 ("embedded://bevy_pbr/render/mesh_bindings.wesl".into(), "struct Mesh { material_and_lightmap_bind_group_slot: u32 } @group(2) @binding(0) var<storage> mesh: array<Mesh>;".into()),
@@ -143,7 +146,7 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
                 ShaderDefVal::Bool("MESH_TERRAIN_BLEND".into(), blend),
                 ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 3),
             ];
-            if blend { defs.extend(nvf_assets::nif_surface_blend::blend_shader_defs()); }
+            if blend { defs.extend(nvf_assets::nif_surface_blend::blend_shader_defs(layout)); }
             let source = compose(&modules, "embedded://nvforever/blend_validation.wesl", &defs);
             let module = naga::front::wgsl::parse_str(&source).unwrap();
             let mut surface_sizes = Vec::new();
@@ -159,6 +162,9 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
                 assert!(source.contains("mesh_terrain_origin.z"), "coverage reuses the enabled uniform without another binding");
                 // Round 10a: the layer detail only where the palette exists (bindless).
                 assert_eq!(source.contains("textureSampleGrad"), bindless, "bindless={bindless}: detail reads with explicit gradients, none without bindless");
+                // #2149/#2661: only a subdivided surface's lookup finds the ground's own
+                // square; the stored layout's lookup is the one before it.
+                assert_eq!(source.contains("terrain_square"), layout.sub() > 1, "{layout:?}");
             }
             // Round 9 reuses origin.z; round 6's enabled width and ordinary layouts stay fixed.
             // #2551 added the ordinary `terrain` row (144 bytes); the blend's three rows follow.
@@ -339,10 +345,15 @@ fn shader_detail_transcribes_the_mesh_triangles_and_the_record_layout() {
         assert!(bindings.contains(line), "{line}");
     }
     use nvf_assets::nif_surface_blend::*;
-    let defs = blend_shader_defs();
+    // #2149/#2661: the detail rows follow the heights of every layout.
+    for layout in [HeightLayout::STORED, HeightLayout::new(2), HeightLayout::new(4)] {
+        let defs = blend_shader_defs(layout);
+        let uint = |name: &str| defs.iter().find_map(|d| match d { ShaderDefVal::UInt(n, v) if n == name => Some(*v), _ => None }).unwrap_or_else(|| panic!("{name}"));
+        assert_eq!(uint("MESH_TERRAIN_DETAIL_ROW") as usize, layout.rows());
+        assert_eq!(uint("MESH_TERRAIN_HEIGHT_WIDTH") as usize, layout.width());
+    }
+    let defs = blend_shader_defs(HeightLayout::STORED);
     let uint = |name: &str| defs.iter().find_map(|d| match d { ShaderDefVal::UInt(n, v) if n == name => Some(*v), _ => None }).unwrap_or_else(|| panic!("{name}"));
-    assert_eq!(uint("MESH_TERRAIN_DETAIL_ROW") as usize, HEIGHT_ROWS);
-    assert_eq!(uint("MESH_TERRAIN_HEIGHT_WIDTH") as usize, HEIGHT_WIDTH);
     assert_eq!(uint("MESH_TERRAIN_DETAIL_VERTEX_WORDS") as usize, DETAIL_VERTEX_WORDS);
     assert_eq!(uint("MESH_TERRAIN_DETAIL_QUADRANT_WORDS") as usize, DETAIL_QUADRANT_WORDS);
     assert_eq!(uint("MESH_TERRAIN_PALETTE_IMAGES") as usize, PALETTE_IMAGES);
@@ -379,7 +390,7 @@ fn shader_weight_matches_the_cpu_statement_of_hybrid_v2() {
     }
     use nvf_assets::nif_surface_blend::ContactShape;
     assert_eq!([ContactShape::Height, ContactShape::Penetration, ContactShape::Hybrid, ContactShape::HybridV1].map(|s| s.number()), [0.0, 1.0, 2.0, 3.0]);
-    let defs = nvf_assets::nif_surface_blend::blend_shader_defs();
+    let defs = nvf_assets::nif_surface_blend::blend_shader_defs(nvf_assets::nif_surface_blend::HeightLayout::STORED);
     for name in ["MESH_TERRAIN_V2_COS_PARALLEL_E6", "MESH_TERRAIN_V2_COS_STEEP_E6", "MESH_TERRAIN_COS_FULL_E6", "MESH_TERRAIN_STEEP_COS_FULL_E6", "MESH_TERRAIN_STEEP_COS_NONE_E6"] {
         assert!(defs.iter().any(|d| matches!(d, ShaderDefVal::UInt(n, _) if n == name)), "{name}");
         assert!(bindings.contains(&format!("constants::{name}")), "{name} reaches the shader");
@@ -410,7 +421,47 @@ fn shader_lookup_stops_at_zero_contact_outside_the_diagnostic_views() {
     assert!(bindings.contains("return u32(nif_surface(instance_index).mesh_terrain.y);"), "the view the stop tests is the aid's view");
 }
 
-fn nif_defs(bindless: bool, blend: bool, prepass: bool, soft_edges: bool) -> Vec<ShaderDefVal> {
+/// [design] #2149/#2661: the lookup reads the ground from the drawn surface's squares, as
+/// terrain_surface.rs's CPU twins (`ground_square`, `probe_height`, `probe_normal`) do, and
+/// keeps the LAND square for the quadrant and the detail; the metadata row follows the
+/// surface's squares; the definitions name the layout's dimensions.
+#[test]
+fn shader_ground_lookup_reads_the_surface_squares() {
+    let bindings = include_str!("../../nvf-assets/src/nif_surface_bindings.wesl").replace("\r\n", "\n");
+    let lookup = bindings.split("fn mesh_terrain_lookup(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    let at = |needle: &str| lookup.find(needle).unwrap_or_else(|| panic!("mesh_terrain_lookup: {needle}"));
+    let ground = at("@if(MESH_TERRAIN_SUBDIVIDED) let ground = terrain_square(local * f32(SUB), HEIGHT_GRID);");
+    assert!(at("@if(!MESH_TERRAIN_SUBDIVIDED) let ground = TerrainSquare(square, f, triangle);") > ground);
+    assert!(at("let triangle = select(0, 1, f.y > f.x);") < ground, "the LAND square first");
+    assert!(at("let base = slot * HEIGHT_TILE + vec2(ground.square.x * 6 + ground.triangle * 3, ground.square.y);") > ground);
+    assert!(at("let height = a + ground.f.x * dx + ground.f.y * dy;") > ground);
+    // The quadrant and the detail stay on the LAND grid.
+    assert!(lookup.contains("let quadrant = select(0u, 1u, local.x >= f32(GRID) * 0.5) + select(0u, 2u, local.y >= f32(GRID) * 0.5);"));
+    assert!(lookup.contains("terrain_triangle(entry, quadrant, square, f, triangle)"));
+    let square = bindings.split("fn terrain_square(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    for line in [
+        "let square = min(vec2<i32>(floor(local)), vec2(grid - 1));",
+        "let f = local - vec2<f32>(square);",
+        "return TerrainSquare(square, f, select(0, 1, f.y > f.x));",
+    ] { assert!(square.contains(line), "{line}"); }
+    for line in [
+        "@if(MESH_TERRAIN_BLEND) const HEIGHT_GRID: i32 = GRID * SUB;",
+        "@if(MESH_TERRAIN_BLEND) const HEIGHT_SPACING: f32 = SPACING / f32(SUB);",
+        "return normalize(vec3(-dx / HEIGHT_SPACING, -dy / HEIGHT_SPACING, 1.0));",
+        "slot * HEIGHT_TILE + vec2(1, HEIGHT_GRID)",
+        "slot * HEIGHT_TILE + vec2(2, HEIGHT_GRID)",
+    ] { assert!(bindings.contains(line), "{line}"); }
+    assert!(!bindings.contains("vec2(1, GRID)") && !bindings.contains("vec2(2, GRID)"), "the metadata row is after the surface's squares");
+    // The CPU twin at points of a square: the same square, fraction and triangle.
+    use nvf_assets::nif_surface_blend::HeightLayout;
+    for (sub, local, square, triangle) in [(1, Vec2::new(3.25, 7.5), UVec2::new(3, 7), 1), (4, Vec2::new(3.25, 7.5), UVec2::new(13, 30), 0), (2, Vec2::new(31.9, 0.1), UVec2::new(63, 0), 0), (4, Vec2::splat(32.0), UVec2::splat(127), 0)] {
+        let (s, f, t) = crate::terrain_surface::ground_square(HeightLayout::new(sub), local);
+        assert_eq!((s, t), (square, triangle), "{sub} {local:?}");
+        assert!((f - (local * sub as f32 - s.as_vec2())).abs().max_element() < 1e-6);
+    }
+}
+
+fn nif_defs(bindless: bool, blend: bool, prepass: bool, soft_edges: bool, layout: nvf_assets::nif_surface_blend::HeightLayout) -> Vec<ShaderDefVal> {
     let mut defs = vec![
         ShaderDefVal::Bool("BINDLESS".into(), bindless),
         ShaderDefVal::Bool("NIF_SURFACE_BLEND".into(), blend),
@@ -425,7 +476,7 @@ fn nif_defs(bindless: bool, blend: bool, prepass: bool, soft_edges: bool) -> Vec
         ShaderDefVal::UInt("MAX_CASCADES_PER_LIGHT".into(), 4),
         ShaderDefVal::UInt("MAX_RECT_LIGHTS".into(), 1),
     ];
-    if blend && !prepass { defs.extend(nvf_assets::nif_surface_blend::blend_shader_defs()); }
+    if blend && !prepass { defs.extend(nvf_assets::nif_surface_blend::blend_shader_defs(layout)); }
     defs
 }
 
@@ -439,19 +490,22 @@ fn complete_nif_forward_and_prepass_compose_with_both_interfaces() {
     sources(&root, "nvf_assets", &root, &mut modules);
     // The detail's height blending functions (#2550) live in this crate.
     modules.push(("embedded://nvforever/terrain_weights.wesl".into(), include_str!("terrain_weights.wesl").into()));
+    // #2149/#2661: the blend's forward pass at the stored layout and at the 4 x 4 surface's.
+    use nvf_assets::nif_surface_blend::HeightLayout;
     for bindless in [false, true] { for blend in [false, true] { for prepass in [false, true] {
         let entry = if prepass { "embedded://nvf_assets/nif_prepass.wesl" } else { "embedded://nvf_assets/nif_material.wesl" };
         // SOFT_EDGES is a main-pass variant; the unlit diagnostics write its coverage.
         let soft: &[bool] = if prepass { &[false] } else { &[false, true] };
-        for &soft_edges in soft {
-            let blended = compose(&modules, entry, &nif_defs(bindless, blend, prepass, soft_edges));
+        let layouts: &[HeightLayout] = if blend && !prepass { &[HeightLayout::STORED, HeightLayout::new(4)] } else { &[HeightLayout::STORED] };
+        for (&soft_edges, &layout) in soft.iter().flat_map(|s| layouts.iter().map(move |l| (s, l))) {
+            let blended = compose(&modules, entry, &nif_defs(bindless, blend, prepass, soft_edges, layout));
             if blend && !bindless {
                 // [design] Every texture the blend pipeline's shader uses is a binding of the
                 // ordinary NIF pipeline's layout for the same key: the same view and mesh
                 // bindings, and in the material group only StandardMaterial's and the
                 // ordinary extension's slots 51 and 53 (which the ordinary shader may leave
                 // unused, its layout still has them: nif_material.rs NifSurface).
-                let mut ordinary = texture_bindings(&compose(&modules, entry, &nif_defs(bindless, false, prepass, soft_edges)));
+                let mut ordinary = texture_bindings(&compose(&modules, entry, &nif_defs(bindless, false, prepass, soft_edges, layout)));
                 ordinary.extend([(3, 51), (3, 53)]);
                 let blended = texture_bindings(&blended);
                 assert!(blended.is_subset(&ordinary), "prepass={prepass} soft_edges={soft_edges}: {:?}", blended.difference(&ordinary).collect::<Vec<_>>());

@@ -93,6 +93,13 @@ struct NifSurface {
 @if(MESH_TERRAIN_BLEND) const HEIGHT_TILE: vec2<i32> = vec2(i32(constants::MESH_TERRAIN_HEIGHT_TILE_WIDTH), i32(constants::MESH_TERRAIN_HEIGHT_TILE_HEIGHT));
 @if(MESH_TERRAIN_BLEND) const CELL_SIZE: f32 = f32(constants::MESH_TERRAIN_CELL_SIZE);
 @if(MESH_TERRAIN_BLEND) const SPACING: f32 = f32(constants::MESH_TERRAIN_SPACING);
+// [design] #2149/#2661: the height atlas holds the drawn surface, SUB squares per LAND grid
+// square and side (nif_surface_blend.rs HeightLayout): HEIGHT_GRID squares per cell side,
+// HEIGHT_SPACING game units apart, the metadata row after them. GRID stays the LAND grid
+// (quadrants, landscape detail).
+@if(MESH_TERRAIN_BLEND) const SUB: i32 = i32(constants::MESH_TERRAIN_SUB);
+@if(MESH_TERRAIN_BLEND) const HEIGHT_GRID: i32 = GRID * SUB;
+@if(MESH_TERRAIN_BLEND) const HEIGHT_SPACING: f32 = SPACING / f32(SUB);
 @if(MESH_TERRAIN_BLEND) const COS_FULL: f32 = f32(constants::MESH_TERRAIN_COS_FULL_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const COS_NONE: f32 = f32(constants::MESH_TERRAIN_COS_NONE_E6) / 1e6;
 @if(MESH_TERRAIN_BLEND) const PENETRATION: f32 = f32(constants::MESH_TERRAIN_PENETRATION_E6) / 1e6;
@@ -189,7 +196,7 @@ struct NifSurface {
     @if(!BINDLESS) return false;
     @if(BINDLESS) {
         if !terrain_covered(instance_index, slot) { return false; }
-        let mask = u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(2, GRID)));
+        let mask = u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(2, HEIGHT_GRID)));
         return (mask & (1u << quadrant)) != 0u;
     }
 }
@@ -592,7 +599,7 @@ struct NifSurface {
 }
 
 @if(MESH_TERRAIN_BLEND) fn terrain_colour_mask(instance_index: u32, slot: vec2<i32>) -> u32 {
-    return u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(1, GRID)));
+    return u32(terrain_height_texel(instance_index, slot * HEIGHT_TILE + vec2(1, HEIGHT_GRID)));
 }
 @if(MESH_TERRAIN_BLEND) fn terrain_colour_valid(instance_index: u32, slot: vec2<i32>, quadrant: u32) -> bool {
     if !terrain_covered(instance_index, slot) { return false; }
@@ -720,9 +727,24 @@ struct NifSurface {
     return mix(low, terrain_colour_level(instance_index, slot, uv, resolution, l.high), l.share);
 }
 
-// [design] nif_surface_blend.rs::terrain_game_normal and game_to_world_normal.
+// [design] nif_surface_blend.rs::terrain_game_normal and game_to_world_normal: the slopes
+// are per surface square (HEIGHT_SPACING).
 @if(MESH_TERRAIN_BLEND) fn terrain_game_normal(dx: f32, dy: f32) -> vec3<f32> {
-    return normalize(vec3(-dx / SPACING, -dy / SPACING, 1.0));
+    return normalize(vec3(-dx / HEIGHT_SPACING, -dy / HEIGHT_SPACING, 1.0));
+}
+// [design] #2149/#2661: the square of a `grid`-squares-a-side cell grid under `local`
+// (squares from the cell's south-west corner), the fraction within it and the triangle (1
+// above the south-west to north-east diagonal), as fnv_world land_surface.rs
+// `grid_height_at` splits a surface's squares.
+@if(MESH_TERRAIN_BLEND) struct TerrainSquare {
+    square: vec2<i32>,
+    f: vec2<f32>,
+    triangle: i32,
+}
+@if(MESH_TERRAIN_BLEND) fn terrain_square(local: vec2<f32>, grid: i32) -> TerrainSquare {
+    let square = min(vec2<i32>(floor(local)), vec2(grid - 1));
+    let f = local - vec2<f32>(square);
+    return TerrainSquare(square, f, select(0, 1, f.y > f.x));
 }
 @if(MESH_TERRAIN_BLEND) fn game_to_world_normal(n: vec3<f32>) -> vec3<f32> {
     return vec3(n.x, n.z, -n.y);
@@ -810,7 +832,12 @@ struct NifSurface {
     let square = min(vec2<i32>(floor(local)), vec2(GRID - 1));
     let f = local - vec2<f32>(square);
     let triangle = select(0, 1, f.y > f.x);
-    let base = slot * HEIGHT_TILE + vec2(square.x * 6 + triangle * 3, square.y);
+    // [design] #2149/#2661: the ground's own square, SUB per LAND square and side: the drawn
+    // surface's triangle (terrain_surface.rs `encode_height_cell`); with SUB 1 the LAND
+    // square above. The LAND square stays the quadrant's and the detail's.
+    @if(MESH_TERRAIN_SUBDIVIDED) let ground = terrain_square(local * f32(SUB), HEIGHT_GRID);
+    @if(!MESH_TERRAIN_SUBDIVIDED) let ground = TerrainSquare(square, f, triangle);
+    let base = slot * HEIGHT_TILE + vec2(ground.square.x * 6 + ground.triangle * 3, ground.square.y);
     // Coefficients are built by terrain_surface.rs::height_planes from the real mesh diagonal.
     let a = terrain_height_texel(instance_index, base);
     let dx = terrain_height_texel(instance_index, base + vec2(1, 0));
@@ -818,7 +845,7 @@ struct NifSurface {
     if !terrain_covered(instance_index, slot) || a < -1e30 { r.status = LOOKUP_INVALID_HEIGHT; return r; }
     r.game_normal = terrain_game_normal(dx, dy);
     r.normal = game_to_world_normal(r.game_normal);
-    let height = a + f.x * dx + f.y * dy;
+    let height = a + ground.f.x * dx + ground.f.y * dy;
     // [design] #2661 review: the contact weight needs only the three height loads above, the
     // ground triangle's normal and the face's steepness; the residency fade and the distance
     // mix below only multiply it by values in [0, 1]. Where it is exactly 0 the final weight
