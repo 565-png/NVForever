@@ -37,8 +37,8 @@ one is broken. Read §1–§4 for how the page works.
    stands for it) only where the owner asked: the upscaler's own rows (Upscaling Mode, DLSS
    Model, FSR Library, Anti-Aliasing), Generated Frames, the colour channels unless Custom,
    the controller rows, and Advanced Movement's categories while its Global Toggle is off.
-7. **Words**: write the label in sentence case; the page shows it in Title Case in English
-   (`pause::shown_case`: the short words a, an, the, and, but, or, nor, for, so, yet, as,
+7. **Words**: write the label in sentence case; the page shows it in Title Case in English,
+   and so in another language until its file has a line for it (`pause::on_page`: the short words a, an, the, and, but, or, nor, for, so, yet, as,
    at, by, in, of, off, on, per, to, via stay lower case inside a label). A word written with
    a capital stays as written ("Close In on the Speaker", "HUD", "Pip-Boy"). States are
    On/Off. Under a category, leave out what the heading already says ("Mirrored reflections"

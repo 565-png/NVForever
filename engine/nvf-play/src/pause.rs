@@ -870,18 +870,28 @@ const HEADING_LINKS: [&str; 2] = ["Previous Category", "Next Category"];
 /// should stay lowercase"].
 const MINOR_WORDS: [&str; 20] = ["a", "an", "the", "and", "but", "or", "nor", "for", "so", "yet", "as", "at", "by", "in", "of", "off", "on", "per", "to", "via"];
 
-/// `text` as the page shows a label, a heading or a list's words: in English, Title Case
-/// (each word capitalised but the short words of [`MINOR_WORDS`] inside it; each part of a
-/// hyphenated word; a word with a capital already, as "HUD", "Pip-Boy", "V.A.T.S.", and a
-/// word that starts with a figure, as "16x", left as they are); in another language as the
-/// language writes it [design: owner 2026-11-15, the menu overhaul: "the original uses
-/// Capitalized Case for the menus"]. The rows keep their words as registered (the INI, the
-/// log, the search and the translations go by them); only the page shows them so, so a new
-/// row is in Title Case without anyone writing it so.
-fn shown_case(text: &str) -> String {
-    if fnv_util::words::language() != fnv_util::words::ENGLISH {
-        return text.to_string();
+/// `en` (a label, a heading or a list's words, as registered in English) as the page shows
+/// it: its translation as the chosen language writes it, else in English and in Title Case
+/// ([`title_case`]) [design: owner 2026-11-15, the menu overhaul: "the original uses
+/// Capitalized Case for the menus"]. A word with no line in the chosen language's file is
+/// still in Title Case (owner 2026-11-16: "Latency reduction" read so in Russian). The rows
+/// keep their words as registered (the INI, the log, the search and the translations go by
+/// them); only the page shows them so, so a new row is in Title Case without anyone writing
+/// it so.
+fn on_page(en: &str) -> String {
+    let t = tr_str(en);
+    if std::ptr::eq(t, en) {
+        title_case(en)
+    } else {
+        t.to_string()
     }
+}
+
+/// English `text` in Title Case: each word capitalised but the short words of
+/// [`MINOR_WORDS`] inside it; each part of a hyphenated word; a word with a capital already,
+/// as "HUD", "Pip-Boy", "V.A.T.S.", and a word that starts with a figure, as "16x", left as
+/// they are.
+fn title_case(text: &str) -> String {
     let words: Vec<&str> = text.split(' ').collect();
     let last = words.len().saturating_sub(1);
     let mut after_colon = false;
@@ -1163,7 +1173,9 @@ impl PauseLook {
 /// at any resolution [design: owner 2026-11-15, the menu overhaul: "current typeface is raster
 /// therefore it does look blurry"; Roboto Condensed, `crate::vector_font`; owner 2026-11-16:
 /// "the vanilla font is enabled by default"]. The INI's `menu-font`; a change draws the page
-/// again with it.
+/// again with it. The game's font has only its code page's letters, so where the chosen
+/// language's are not among them (Russian on an English install) the menus are drawn sharp
+/// whatever the row says ([`MenuFont::drawn_sharp`]; owner 2026-11-16: Russian read as `?`).
 #[derive(Resource, Clone, Debug, Default)]
 pub struct MenuFont {
     /// The vector font; false (the default): the game's own.
@@ -1173,6 +1185,12 @@ pub struct MenuFont {
 }
 
 impl MenuFont {
+    /// Whether the menus are drawn in the vector font: the row says Sharp, or the game's
+    /// font cannot write the chosen language ([`language_fits_raster`]).
+    pub fn drawn_sharp(&self) -> bool {
+        self.sharp || !language_fits_raster()
+    }
+
     /// The vector font's asset, made the first time.
     pub fn handle(&mut self, fonts: &mut Assets<bevy::text::Font>) -> Handle<bevy::text::Font> {
         self.handle.get_or_insert_with(|| fonts.add(bevy::text::Font::from_bytes(crate::vector_font::FONT_BYTES.to_vec()))).clone()
@@ -1181,7 +1199,7 @@ impl MenuFont {
     /// `faces` (the game's raster fonts) as the menus draw them: in the vector font where the
     /// Menu Font row says Sharp and the font reads (`Faces::sharp`); else as they are.
     pub fn faces(&mut self, faces: &Faces, fonts: Option<&mut Assets<bevy::text::Font>>) -> Faces {
-        match (self.sharp, crate::vector_font::metrics(), fonts) {
+        match (self.drawn_sharp(), crate::vector_font::metrics(), fonts) {
             (true, Some(m), Some(fonts)) => faces.sharp(m, self.handle(fonts)),
             _ => faces.clone(),
         }
@@ -1191,6 +1209,23 @@ impl MenuFont {
     pub fn title(&mut self, raster: &Face, fonts: Option<&mut Assets<bevy::text::Font>>) -> Face {
         let faces = Faces { entry: raster.clone(), title: raster.clone(), small: raster.clone() };
         self.faces(&faces, fonts).title
+    }
+}
+
+/// Whether the game's raster fonts can write the chosen language: its name, written in it,
+/// has a code in this run's code page (`Русский` has none in Windows-1252, the English,
+/// French, German, Italian and Spanish installs' page).
+pub fn language_fits_raster() -> bool {
+    let id = fnv_util::words::language();
+    fnv_util::words::languages().into_iter().find(|(i, _)| *i == id).is_none_or(|(_, name)| fnv_util::text::encodable(name))
+}
+
+/// The menus' letters may have changed (the Menu Font row, the language): the pause menu's
+/// look is made again and its page drawn again.
+pub fn letters_changed(w: &mut World) {
+    w.remove_resource::<PauseLook>();
+    if let Some(mut v) = w.get_resource_mut::<PauseView>() {
+        v.drawn = None;
     }
 }
 
@@ -1205,10 +1240,7 @@ fn menu_font_chosen(w: &World) -> String {
 fn take_menu_font(w: &mut World, text: &str) -> bool {
     let Some(k) = MENU_FONTS.iter().position(|n| n.eq_ignore_ascii_case(text.trim())) else { return false };
     w.get_resource_or_insert_with(MenuFont::default).sharp = k == 1;
-    w.remove_resource::<PauseLook>();
-    if let Some(mut v) = w.get_resource_mut::<PauseView>() {
-        v.drawn = None;
-    }
+    letters_changed(w);
     true
 }
 
@@ -1602,7 +1634,7 @@ impl Plugin for PausePlugin {
                 key: "menu-font",
                 group: "Interface",
                 label: "Menu font",
-                note: "The menus' letters. Original: the game's own font. Sharp: Roboto Condensed, sharp at any resolution, titles bold.",
+                note: "The menus' letters. Original: the game's own font (Sharp for a language it has no letters for). Sharp: Roboto Condensed, sharp at any resolution, titles bold.",
                 switches: "",
                 get: |_| false,
                 set: |_, _| {},
@@ -2027,7 +2059,7 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     let (line, _) = highlight_colors();
     root.spawn((Node { border: UiRect::all(u(LINE)), ..from_middle(left + lb.row().list_left(), y, LIST_WIDTH, h) }, BorderColor::all(line), BackgroundColor(Color::BLACK), GlobalZIndex(111))).with_children(|b| {
         for (k, name) in names.iter().enumerate().skip(o.first).take(shown) {
-            let name = fit_text(|t| f.entry.font.width(t), &shown_case(tr_str(d.choice_words(o.row, k, name))), LIST_WIDTH - 2.0 * LINE - 2.0 * VALUE_PAD);
+            let name = fit_text(|t| f.entry.font.width(t), &on_page(d.choice_words(o.row, k, name)), LIST_WIDTH - 2.0 * LINE - 2.0 * VALUE_PAD);
             let name = name.as_str();
             let shade = if d.choice_reason(o.row, k).is_some() { Shade::Dim } else { Shade::Bright };
             let nw = f.entry.font.width(name);
@@ -2045,7 +2077,7 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
 #[allow(clippy::too_many_arguments)]
 fn heading_line(root: &mut ChildSpawnerCommands, look: &PauseLook, d: &Drawn, p: crate::settings_layout::Placement, on: bool, lb: ListBox, y: f32, crumb: bool) {
     let (count, open) = d.heading(p);
-    let name = if crumb { shown_case(&heading_words(p, true)) } else { shown_case(tr(p.heading.unwrap_or(p.tab))) };
+    let name = if crumb { [Some(p.tab), p.subgroup, p.heading].into_iter().flatten().map(on_page).collect::<Vec<_>>().join(" > ") } else { on_page(p.heading.unwrap_or(p.tab)) };
     title_line(root, look, &name, count, open, Some((PauseButton::Row(RowId::Heading(p)), on)), lb, y);
 }
 
@@ -2179,7 +2211,7 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
             let Some(s) = list.get(i) else { return };
             let v = d.states.get(i).copied().unwrap_or(0.0);
             let disabled = d.disabled.get(i).copied().flatten();
-            let label = shown_case(tr(s.label));
+            let label = on_page(s.label);
             let label = label.as_str();
             let label_shade = color(if disabled.is_some() { Shade::Dim } else { Shade::Bright });
             root.spawn((Button, PauseButton::Row(id), node)).with_children(|r| {
@@ -2215,7 +2247,7 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
         }
         RowId::Control(c) => {
             let (name, value) = control_line(d, c);
-            let name = shown_case(tr(name));
+            let name = on_page(name);
             let name = name.as_str();
             root.spawn((Button, PauseButton::Row(id), node)).with_children(|r| {
                 if let ControlRow::Sensitivity(_) | ControlRow::Vertical(_) | ControlRow::AimSensitivity(_) = c {
@@ -2251,7 +2283,7 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
             let group = d.group.unwrap_or("");
             root.spawn((Button, PauseButton::Row(id), node)).with_children(|r| {
                 let parts = row_parts(x, ValueKind::List(width(tr(group))));
-                sm_text(r, &f.entry, &fit_text(width, &shown_case(tr(GROUP_ROW)), parts.label_room()), parts.label.0, BASE + 2.0, color(Shade::Bright));
+                sm_text(r, &f.entry, &fit_text(width, &on_page(GROUP_ROW), parts.label_room()), parts.label.0, BASE + 2.0, color(Shade::Bright));
                 list_row(r, look, &parts, id, group, (group, false), d.dropdown.is_some_and(|o| o.row == GROUP_LIST), true);
             });
         }
@@ -2349,7 +2381,7 @@ fn list_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, i:
     }
     let (words, out_of_reach) = shown;
     let font = &look.faces.entry.font;
-    let words = fit_text(|t| font.width(t), &shown_case(tr_str(words)), parts.text_room());
+    let words = fit_text(|t| font.width(t), &on_page(words), parts.text_room());
     sm_text(r, &look.faces.entry, &words, parts.text_x(font.width(&words)), BASE + 2.0, if out_of_reach { color(Shade::Dim) } else { bright });
     // The arrow pointing down, in the middle of its strip (inside the box's line) and of the
     // row [design: owner 2026-11-15, third test: "the arrow down symbol is not aligned"].
@@ -2718,7 +2750,7 @@ fn slider_row(r: &mut ChildSpawnerCommands, look: &PauseLook, parts: &RowParts, 
     }
     // A value with words ("Off" on the frame rate limit) in the language shown.
     let font = &look.faces.entry.font;
-    let value = fit_text(|t| font.width(t), &shown_case(tr_str(value)), parts.text_room());
+    let value = fit_text(|t| font.width(t), &on_page(value), parts.text_room());
     sm_text(r, &look.faces.entry, &value, parts.text_x(font.width(&value)), BASE + 2.0, bright);
 }
 
@@ -5802,7 +5834,7 @@ mod tests {
             ("a", "A"),
             ("", ""),
         ] {
-            assert_eq!(shown_case(registered), shown);
+            assert_eq!(title_case(registered), shown);
         }
     }
 

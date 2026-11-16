@@ -11,8 +11,9 @@ heading by heading, as the menu overhaul placed them
 (`engine/nvf-play/src/settings_layout.rs`, `SECTIONS`). The words are NVForever's own; the
 facts are the rows' (each row's module, named under its key).
 
-The labels here are as the rows register them. The page shows them in Title Case in English:
-it title-cases them itself (`engine/nvf-play/src/pause.rs`, `shown_case`).
+The labels here are as the rows register them. The page shows them in Title Case in English
+(also where another language's file has no line for one): it title-cases them itself
+(`engine/nvf-play/src/pause.rs`, `shown`).
 
 A row whose module is not part of a run (lip sync without lip data, the draw distances, the
 quality presets without the install's preset files) is not on the page then. Some rows are
@@ -488,8 +489,8 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
 
 ### `menu-font`: Menu font
 
-- On the page: The menus' letters. Original: the game's own font. Sharp: Roboto Condensed,
-  sharp at any resolution, titles bold.
+- On the page: The menus' letters. Original: the game's own font (Sharp for a language it
+  has no letters for). Sharp: Roboto Condensed, sharp at any resolution, titles bold.
 - In full: Sharp draws the main menu's entries and the pause menu's text (the column, the
   settings page, the load page) with Roboto Condensed (SIL Open Font License 1.1, Fallout 4's
   own interface font), laid out by Bevy's text at the screen's resolution, without kerning or
@@ -499,7 +500,11 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
   and a drop shadow as the game's own fonts have in their pictures. Original keeps the game's
   raster font, whose letters are stretched at high resolutions. Default Original [design: owner
   2026-11-15, the menu overhaul and its second test; 2026-11-16: the vanilla font by default].
-  The other menus keep the game's font.
+  The game's font has only its code page's 256 letters: where the chosen language's are not
+  among them (Russian on an English install, whose page is Windows-1252) Original draws
+  sharp too, else the words would read as `?`; Sharp draws every letter the font has
+  (Latin and Cyrillic), whatever the install's code page (owner 2026-11-16). The other
+  menus keep the game's font.
 - Registered in `engine/nvf-play/src/pause.rs` (`MenuFont`), the font in
   `engine/nvf-play/src/vector_font.rs`
 ### `sneak-gauges`: Light and noise gauges while sneaking
