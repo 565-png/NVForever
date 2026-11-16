@@ -242,11 +242,55 @@ apart and the last row/column coincides with the neighbour's first.
   - collision (`fnv-phys` terrain, `collider_surface`), `PhysState::terrain_z`, grass,
     the feet and detection probes use the same surface, so actors and objects stand on
     what is drawn.
-  The setting `smooth-terrain` (Graphics, on by default; `--no-smooth-terrain`) takes
-  effect at the next start: off, the stored triangles are drawn and collided exactly as
-  before. Test aids choose another recipe for comparing them, without changing the
+  The setting `smooth-terrain` (Graphics) takes effect at the next start and is a list
+  [design, #2149, #2676]: **Off** (the stored triangles drawn and collided exactly as
+  before; `--no-smooth-terrain`), **2 x 2** and **4 x 4** (each grid square cut 2 × 2 or
+  4 × 4 everywhere, drawn and collided at that level; 4 × 4 is the default, the
+  maintainer's decision of 2026-11-13 with the user's 4 × 4 of 2026-11-15; 2 × 2 is a
+  quarter of the geometry, 4,225 vertices and 8,192 triangles a cell against 16,641 and
+  32,768), and **4 x 4 near**; `--smooth-terrain off|2x2|4x4|4x4-near`, kept in the INI
+  in those words; the INI's older `1`/`0` reads as 4 x 4 and Off. Whether 4 x 4 near
+  becomes the default is the maintainer's call. 4 x 4 near [design, #2676; NVForever's
+  own rule, `engine/nvforever/src/terrain_lod.rs`]:
+  - *the same surface at both levels*: a 2 × 2 surface's vertices are exactly every other
+    vertex of the 4 × 4 surface of the same recipe (a new vertex is worked out from its
+    place in its stored square alone, and 2/4 is 1/2), so a quadrant drawn 2 × 2 is the
+    4 × 4 surface's even vertices with their 4 × 4 normals
+    (`fnv_world::land_surface::QuadrantDraw`; tested bit for bit);
+  - *the rule*: each loaded quadrant is drawn 4 × 4 once the camera comes within 2,048
+    units of its square seen from above (0 over it; one quadrant's side), and 2 × 2 again
+    only beyond 2,560 (512 of hysteresis), keeping its level in between so it does not
+    flicker at the boundary; at that distance the two levels, about a unit apart in
+    height, differ by less than a pixel at 1080p (a unit spans about 0.7 pixels at 1,500
+    units with a 75° view). The distances are to be tuned from pictures
+    (`nvf_play::smooth_terrain::FINE_NEAR`, `FINE_HYSTERESIS`; test aid
+    `NVF_PLAY_TEST_SMOOTH_NEAR=<units>`). A cell's quadrants are first drawn 2 × 2 (new
+    cells load at the edge of the loaded grid);
+  - *no cracks*: a 4 × 4 quadrant's side next to a quadrant drawn 2 × 2 (or one not
+    loaded, which loads as 2 × 2) is drawn coarse: each vertex between two of the 2 × 2
+    side's vertices is put halfway between them, with the normalised sum of their normals,
+    so the side is the 2 × 2 side's straight segments without T-junction gaps and lit as
+    the 2 × 2 side interpolates it; colours and layer opacities need no change (the stored
+    triangles are linear along a quadrant's side). A level change also redraws the 4 × 4
+    neighbours whose sides depend on it; cell edges stay identical from both sides;
+  - *redraws* run one batch at a time on the read pool's worker threads, from the
+    landscape, surface and layers the cell was spawned with (no record read again); a
+    built batch is spawned hidden and swapped in a few frames later, all its quadrants in
+    one frame, so neighbours change together and no quadrant is ever without ground;
+  - *collision* keeps one surface per loaded cell at the finest chosen level: 2 × 2 under
+    2 x 2, 4 × 4 under 4 x 4 and 4 x 4 near. Actors near the player stand on what is drawn
+    there (4 × 4); at a distance the drawn 2 × 2 ground is within about a unit of the
+    collision, below what an actor's feet show from that far, and the collision never
+    changes while cells are loaded (no rebuilt colliders, nothing re-grounded when the
+    camera moves) [design, #2676];
+  - the terrain wireframe shows each quadrant as drawn, and the start line names the rule
+    (`…; drawn 4 x 4 within 2048 units of the camera, 2 x 2 beyond 2560 (4 x 4 near)`); the
+    redraws log `terrain levels: …` (the first, then at most every 10 s) and the exit's
+    `terrain summary` adds their totals.
+  Test aids choose another recipe for comparing them, without changing the
   setting or the INI [design, #2149]:
-  `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit|detail`, `NVF_PLAY_TEST_SMOOTH_SUBDIV=2|4`,
+  `NVF_PLAY_TEST_SMOOTH_MODE=interpolate|fit|detail`, `NVF_PLAY_TEST_SMOOTH_SUBDIV=2|4`
+  (over the row's level; 2 with 4 x 4 near is 2 × 2 everywhere),
   `NVF_PLAY_TEST_SMOOTH_BOUND=<0..16>`, `NVF_PLAY_TEST_SMOOTH_DETAIL=<t0>:<t1>` (detail's
   thresholds, 0 ≤ t0 < t1 ≤ 16; detail only) (a bad value warns once and keeps that
   field's default; with smoothing off they do nothing). Detail logs its thresholds:
@@ -258,8 +302,8 @@ apart and the last row/column coincides with the neighbour's first.
   launches each on a Goodsprings hillside and two fast flights (1500 units/s) over
   Goodsprings]: standing frame time 3.78 ms (2 x 2 interpolate 3.74, off 3.78), the
   flight's worst frame 32.9 ms (2 x 2 32.4), peak working set about 255 MB above 2 x 2
-  (3,038 against 2,783 MB) and video memory about 130 MB above it; #2676 proposes a
-  2 x 2 / 4 x 4 setting and 4 x 4 only near the camera. The Pip-Boy local map's outline reads the same surface beyond the loaded
+  (3,038 against 2,783 MB) and video memory about 130 MB above it; the costs of 2 x 2
+  and 4 x 4 near against it are still to be measured (#2676). The Pip-Boy local map's outline reads the same surface beyond the loaded
   collision, and so do the console's CenterOnWorld and CenterOnExterior (the cell's
   centre on the run's surface; `coc` uses arrival markers). An actor standing without a physics character at
   an authored or navmesh height over the bare landscape (within 32 units of the stored

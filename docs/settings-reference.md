@@ -937,24 +937,30 @@ After the Controls tab's own rows (see the end of this page):
 
 ### `smooth-terrain`: Smooth terrain
 
-- On the page: Smooths height steps while keeping bumps and ridges, with 4 x 4 squares per
-  landscape square and an 8-unit bound. Drawing and collision share the surface. Applies at
-  the next start.
-- In full: [design, #2149] On by default (the maintainer's decision of 2026-11-13).
-  The default recipe is detail, 4 × 4 squares per landscape square, bound 8 units and
-  thresholds 2:6, chosen by the user on 2026-11-15 from in-game comparisons. Detail evens
-  out height steps while keeping bumps and ridges; 4 × 4 gives rounder silhouettes.
-  The surface stays within one height step (8 units) of the stored triangles to keep
-  placed objects in contact (the test aids below allow up to 16); actors and objects
-  stand on what is drawn. Off: the
-  landscape's triangles as stored. It takes effect at the next start (loading a save starts
-  the game again), so drawn ground and collision always change together. Not in the original.
-  For comparing recipes, the test aids `NVF_PLAY_TEST_SMOOTH_MODE` (`interpolate`, `fit`,
-  `detail`: a fit that evens out the height steps but keeps bumps and ridges),
-  `NVF_PLAY_TEST_SMOOTH_SUBDIV` (`2`, `4`), `NVF_PLAY_TEST_SMOOTH_BOUND` (0 to 16 units) and
-  `NVF_PLAY_TEST_SMOOTH_DETAIL` (detail's thresholds, `2:6` by default) override how it
+- On the page: Smooths height steps while keeping bumps and ridges: 2 x 2 or 4 x 4 squares
+  per landscape square, or 4 x 4 near you and 2 x 2 further. Drawing and collision share it.
+  Applies at the next start.
+- In full: [design, #2149, #2676] A list: Off, 2 x 2, 4 x 4 and 4 x 4 near; 4 x 4 by
+  default (smoothing on by the maintainer's decision of 2026-11-13, 4 × 4 the user's choice
+  of 2026-11-15). The recipe is detail, bound 8 units and thresholds 2:6, chosen by the
+  user on 2026-11-15 from in-game comparisons. Detail evens out height steps while keeping
+  bumps and ridges; 4 × 4 gives rounder silhouettes, 2 × 2 a quarter of the geometry for
+  weaker machines. 4 x 4 near collides on the 4 × 4 surface and draws each loaded quadrant
+  4 × 4 within 2,048 units of the camera, 2 × 2 (the same surface, every other vertex)
+  beyond 2,560, with no gaps where the two meet. The surface stays within one height step
+  (8 units) of the stored triangles to keep placed objects in contact (the test aids below
+  allow up to 16); actors and objects stand on what is drawn. Off: the landscape's
+  triangles as stored. It takes effect at the next start (loading a save starts the game
+  again), so drawn ground and collision always change together. The INI's older `1`/`0`
+  (#2149's on/off) reads as 4 x 4 and Off. Not in the original. Kept in the INI as `off`,
+  `2x2`, `4x4` or `4x4-near`. For comparing recipes, the test aids
+  `NVF_PLAY_TEST_SMOOTH_MODE` (`interpolate`, `fit`, `detail`: a fit that evens out the
+  height steps but keeps bumps and ridges), `NVF_PLAY_TEST_SMOOTH_SUBDIV` (`2`, `4`, over
+  the row's level), `NVF_PLAY_TEST_SMOOTH_BOUND` (0 to 16 units),
+  `NVF_PLAY_TEST_SMOOTH_DETAIL` (detail's thresholds, `2:6` by default) and
+  `NVF_PLAY_TEST_SMOOTH_NEAR` (4 x 4 near's distance, 2048 by default) override how it
   smooths for one run without changing this row or its saved default.
-- Command-line switches: `--no-smooth-terrain`
+- Command-line switches: `--smooth-terrain <off|2x2|4x4|4x4-near>`, `--no-smooth-terrain`
 - More: docs/spec-notes/world.md §3 "Smoothing"
 - Registered in `engine/nvforever/src/settings.rs` (state in `engine/nvf-play/src/smooth_terrain.rs`)
 
