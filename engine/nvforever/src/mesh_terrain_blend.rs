@@ -602,13 +602,14 @@ const SHAPE_SIGNALS: [&str; 11] = [
     "blend-shape", "census", "ordinary-convertible", "ordinary-census-only", "marker-added",
     "removed-blend-shape", "removed-census", "removed-ordinary", "removed-fading", "removed-faded", "removed-override",
 ];
-/// At most this many `verify shape-trigger` lines per run of the blend.
-const TRIGGER_LINES: usize = 8;
+/// At most this many `verify shape-trigger` lines per signal per run of the blend (only
+/// the five signals with a shape to name log one: at most 10 lines).
+const TRIGGER_LINES: usize = 2;
 
 /// The verify aid's state; `reasons` counts every pass by its first reason, aid or not.
-struct Verify { on: bool, skipped: u64, diverged: u64, lines: usize, since_line: u64, reasons: [u64; PASS_REASONS.len()], signals: [u64; SHAPE_SIGNALS.len()], trigger_lines: usize }
+struct Verify { on: bool, skipped: u64, diverged: u64, lines: usize, since_line: u64, reasons: [u64; PASS_REASONS.len()], signals: [u64; SHAPE_SIGNALS.len()], trigger_lines: [usize; SHAPE_SIGNALS.len()] }
 impl Default for Verify {
-    fn default() -> Self { Self { on: verify_aid(), skipped: 0, diverged: 0, lines: 0, since_line: 0, reasons: [0; PASS_REASONS.len()], signals: [0; SHAPE_SIGNALS.len()], trigger_lines: 0 } }
+    fn default() -> Self { Self { on: verify_aid(), skipped: 0, diverged: 0, lines: 0, since_line: 0, reasons: [0; PASS_REASONS.len()], signals: [0; SHAPE_SIGNALS.len()], trigger_lines: [0; SHAPE_SIGNALS.len()] } }
 }
 impl Verify {
     /// `verify skipped-frames=N diverged=M passes=P pass-first=.. pass-config=..
@@ -964,7 +965,7 @@ fn shapes_changed(shapes: &mut ShapeQueries, removals: &mut Removals, variants: 
 }
 
 /// The verify aid only, in a frame whose pass ran for `shapes`: which shape signals fired
-/// ([`SHAPE_SIGNALS`]), counted once each, and up to [`TRIGGER_LINES`] lines naming a
+/// ([`SHAPE_SIGNALS`]), counted once each, and up to [`TRIGGER_LINES`] lines per signal naming a
 /// shape that fired one (its model, shape index and recorded reasons).
 fn count_shape_signals(shapes: &mut ShapeQueries, variants: &mut Variants, removed: [bool; 6]) {
     let mut fired = [false; SHAPE_SIGNALS.len()];
@@ -981,8 +982,8 @@ fn count_shape_signals(shapes: &mut ShapeQueries, variants: &mut Variants, remov
         for (i, hit) in hits.iter().enumerate() {
             if !hit { continue; }
             fired[i] = true;
-            if variants.verify.trigger_lines < TRIGGER_LINES {
-                variants.verify.trigger_lines += 1;
+            if variants.verify.trigger_lines[i] < TRIGGER_LINES {
+                variants.verify.trigger_lines[i] += 1;
                 let (model, index, reasons) = census.as_ref().map_or(("-".to_string(), 0, 0), |c| (c.model.to_string(), c.shape, c.reasons));
                 info!("mesh terrain blend: verify shape-trigger signal={} model={model} shape={index} reasons={}", SHAPE_SIGNALS[i], reason::list(reasons));
             }
