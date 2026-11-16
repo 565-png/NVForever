@@ -11931,6 +11931,8 @@ name = "settings-launcher-menu"
 source = "owner 2026-11-16: the launcher's Settings page is the game's menu; the game writes its page (every tab, category and row with its label, note and kind) beside NVForever.ini once every row is registered, for the launcher (engine/nvf-play/src/settings_menu.rs)"
 areas = ["settings"]
 paths = ["engine/nvf-play/src/settings_menu.rs", "engine/nvf-play/src/settings_layout.rs", "crates/nvf-settings-layout/", "crates/nvf-launcher/src/catalog.rs"]
+# Its own home: the run reads that home's INI and writes the menu file beside it, never the machine's.
+env = { NVFOREVER_HOME = "settings-launcher-menu-home" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 10
 expect = [

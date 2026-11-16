@@ -105,6 +105,12 @@ pub fn write_menu(world: &World) {
         info!("settings: menu for the launcher unchanged: {} ({tabs} tabs, {rows} rows)", file.display());
         return;
     }
+    // Through the same gatekeeper as the INI beside it (`settings::write`): never into the
+    // game folder or the original's user folder, whatever the home points at.
+    if let Err(e) = fnv_install::guard_write(&file, None) {
+        warn!("settings: menu for the launcher not written: {e}");
+        return;
+    }
     match std::fs::write(&file, &text) {
         Ok(()) => info!("settings: menu for the launcher written: {} ({tabs} tabs, {rows} rows)", file.display()),
         Err(e) => warn!("settings: menu for the launcher not written: {}: {e}", file.display()),
