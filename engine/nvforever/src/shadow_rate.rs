@@ -377,7 +377,9 @@ mod tests {
         let mut world = World::new();
         world.insert_resource(PerformanceShadows(true));
         world.insert_resource(CascadesBeforePerformance(Some(CascadeLayout::Quality)));
-        world.insert_resource(SkyState { shadow_layout: CascadeLayout::Performance, ..SkyState::default() });
+        let mut sky = SkyState::default();
+        sky.shadow_layout = CascadeLayout::Performance;
+        world.insert_resource(sky);
         set_performance(&mut world, false);
         assert_eq!(world.resource::<SkyState>().shadow_layout, CascadeLayout::Quality);
     }

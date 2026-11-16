@@ -1746,10 +1746,10 @@ pub(crate) fn shadow_cascade_layout(distance: f32, reach: f32, layout: CascadeLa
     let count = layout.count();
     let last = (distance * reach.max(1.0)).max(4.0 * SHADOW_MINIMUM_DISTANCE);
     let (shares, overlap): (&[f32], f32) = match layout {
-        CascadeLayout::Performance => (&SHADOW_SHARES_PERFORMANCE, SHADOW_OVERLAP),
-        CascadeLayout::Quality if map >= WIDE_SHADOW_MAP => (&SHADOW_SHARES_QUALITY_WIDE, WIDE_SHADOW_OVERLAP),
-        CascadeLayout::Quality => (&SHADOW_SHARES_QUALITY, SHADOW_OVERLAP),
-        CascadeLayout::Spaced(_) => (&[], SHADOW_OVERLAP),
+        CascadeLayout::Performance => (&SHADOW_SHARES_PERFORMANCE[..], SHADOW_OVERLAP),
+        CascadeLayout::Quality if map >= WIDE_SHADOW_MAP => (&SHADOW_SHARES_QUALITY_WIDE[..], WIDE_SHADOW_OVERLAP),
+        CascadeLayout::Quality => (&SHADOW_SHARES_QUALITY[..], SHADOW_OVERLAP),
+        CascadeLayout::Spaced(_) => (&[][..], SHADOW_OVERLAP),
     };
     if count == 1 {
         return (vec![last], overlap);
