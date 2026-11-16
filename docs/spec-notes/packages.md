@@ -1445,4 +1445,4 @@ so no triangle was searched; both places were on the navmesh [observed: the code
   locked door would change what every actor behind a locked door does (54 actor-package
   pairs in FalloutNV.esm, `ai reach` "only through a locked door the actor has no key
   for") and the engine's settled rule (tests in `fnv-ai/tests/carry.rs`); observer check
-  203 asks the original first.
+  204 asks the original first.
