@@ -2701,15 +2701,13 @@ pub(crate) fn fight(
                     // gun's shots follow its attack clip there as the player's do (#2739:
                     // `fnv_combat::attack::npc_clip_timing`).
                     if !*reload_timed && matches!(cycle.phase, GunPhase::Ready | GunPhase::Cooldown { .. }) {
-                        if let Some((_, clips)) = times.reloads.get(&id).filter(|r| r.0 == *w) {
-                            let rate = teammate_attack_rate(g, me, Some(*w));
-                            let timed = fnv_combat::attack::npc_clip_timing(clips, ws.automatic);
-                            cycle.timing = Timing::of(ws, &timed, &c.tuning).with_attack_rate(rate);
+                        if let Some((timed, timing)) = times.gun_timing(id, *w, ws, &c.tuning, || teammate_attack_rate(g, me, Some(*w))) {
+                            cycle.timing = timing;
                             *reload_timed = true;
                             // A body gun gets its magazine with its reload clip: it reloads
                             // as the people's guns do; without the clip it fires on without
                             // one (`body_weapon::has_magazine`, #2739).
-                            let magazine = fnv_combat::body_weapon::has_magazine(ws.embedded, clips.reload_len);
+                            let magazine = fnv_combat::body_weapon::has_magazine(ws.embedded, timed.reload_len);
                             if ws.embedded {
                                 let pace = match timed.attack_len {
                                     Some(len) => format!(
@@ -2720,7 +2718,7 @@ pub(crate) fn fight(
                                     None if ws.automatic => format!("fires every {:.2} s (its Fire Rate)", cycle.timing.interval),
                                     None => format!("fires every {:.2} s (1 / Attack Shots/Sec: no attack clip in its rig)", cycle.timing.interval),
                                 };
-                                let mag = match clips.reload_len.filter(|_| magazine) {
+                                let mag = match timed.reload_len.filter(|_| magazine) {
                                     Some(len) => format!("has a magazine of {} and reloads in {len:.2} s", cycle.clip_size),
                                     None => "has no reload clip in its rig: no magazine".to_string(),
                                 };

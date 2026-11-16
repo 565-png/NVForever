@@ -652,6 +652,29 @@ fn folder_of(skeleton: &str) -> String {
     s.rfind('\\').map_or(String::new(), |i| s[..i].to_string())
 }
 
+/// A semi-automatic gun's attack clip as its shots are timed by (#2739): its length
+/// (`None` if empty) and its `a:` key's time into the clip with the group it names, from
+/// the clip's length, start and text keys (`AttackTimes::reloads`).
+pub fn attack_keys(len: f32, start: f32, text_keys: &[(f32, String)]) -> (Option<f32>, Option<(f32, NextAttack)>) {
+    let keys = ClipKeys::parse(text_keys);
+    let next = keys.next_attack.and_then(|(t, v)| NextAttack::parse(&v).map(|n| ((t - start).clamp(0.0, len.max(0.0)), n)));
+    (Some(len).filter(|l| *l > 0.0), next)
+}
+
+impl AttackTimes {
+    /// The timing of the gun `weapon` (`ws`) drawn on actor `id` from its clips in its rig,
+    /// once [`attack_anims`](self) has looked them up for that weapon: the reload clips,
+    /// and for a semi-automatic weapon its attack clip as the player's
+    /// (`fnv_combat::attack::npc_clip_timing`), at the teammate attack rate `rate` gives
+    /// (asked only once the clips are known). The one handoff `npc_combat`'s fights and
+    /// `use_weapon`'s shooters both take (#2739).
+    pub fn gun_timing(&self, id: u32, weapon: FormId, ws: &fnv_combat::data::WeaponStats, tuning: &fnv_combat::tuning::CombatTuning, rate: impl FnOnce() -> f32) -> Option<(fnv_combat::attack::ClipTiming, fnv_combat::attack::Timing)> {
+        let (_, clips) = self.reloads.get(&id).filter(|r| r.0 == weapon)?;
+        let timed = fnv_combat::attack::npc_clip_timing(clips, ws.automatic);
+        Some((timed, fnv_combat::attack::Timing::of(ws, &timed, tuning).with_attack_rate(rate())))
+    }
+}
+
 /// The `Hit` text key's time into a clip, if it has one.
 fn hit_time(c: &BoundClip) -> Option<f32> {
     c.clip.text_keys.iter().find(|(_, k)| k.trim().eq_ignore_ascii_case("hit")).map(|(t, _)| (t - c.clip.start).max(0.0))
@@ -761,10 +784,7 @@ fn start(
             if let Some(ws) = semi {
                 let stem = attack_stem(ws.attack_anim.as_deref());
                 if let Some((_, c)) = clips.first(&mut ctx, &rig.skeleton, &skel, &folder, &attack_clips(Stance::Stand, prefix, &stem, false)) {
-                    let len = c.clip.length();
-                    timing.attack_len = Some(len).filter(|l| *l > 0.0);
-                    let keys = ClipKeys::parse(&c.clip.text_keys);
-                    timing.next_attack = keys.next_attack.and_then(|(t, v)| NextAttack::parse(&v).map(|n| ((t - c.clip.start).clamp(0.0, len), n)));
+                    (timing.attack_len, timing.next_attack) = attack_keys(c.clip.length(), c.clip.start, &c.clip.text_keys);
                 }
             }
             times.reloads.insert(id, (w, timing));
@@ -1146,6 +1166,50 @@ fn report(mut exit: MessageReader<AppExit>, clips: Res<AttackClips>, travel: Res
 
 #[cfg(test)]
 mod tests {
+    /// #2739: the production handoff from an attack clip's keys, as the lookup stores them
+    /// in `AttackTimes::reloads`, to the timing an NPC's (or a Use Weapon shooter's) gun
+    /// cycle runs on (`AttackTimes::gun_timing`). The keys are the test's own, laid out as
+    /// the sentry bot's `2hlattackleft.kf` (`a:R` at 0.967 s, end 2.0 s) and a pistol clip.
+    #[test]
+    fn stored_attack_clips_time_an_npcs_semi_automatic_gun() {
+        use super::{attack_keys, AttackTimes};
+        use fnv_combat::attack::ClipTiming;
+        use fnv_combat::data::WeaponStats;
+        use fnv_combat::tuning::CombatTuning;
+        use fnv_sim::FormId;
+        let t = CombatTuning::default();
+        let keys = |list: &[(f32, &str)]| list.iter().map(|(t, k)| (*t, k.to_string())).collect::<Vec<_>>();
+        let stored = |len: f32, k: &[(f32, &str)]| {
+            let (attack_len, next_attack) = attack_keys(len, 0.0, &keys(k));
+            ClipTiming { attack_len, next_attack, ..ClipTiming::default() }
+        };
+        let (me, launcher_id, pistol_id, minigun_id) = (7u32, FormId(0x0005_7E8F), FormId(0x10), FormId(0x11));
+        let mut times = AttackTimes::default();
+        // The launcher (an embedded semi-automatic weapon): its a: key, not 1 / 1.5789.
+        let launcher = WeaponStats { embedded: true, clip_size: 1, attack_shots_per_sec: 1.578_947_4, attack_mult: 1.0, anim_mult: 1.0, ..WeaponStats::default() };
+        times.reloads.insert(me, (launcher_id, stored(2.0, &[(0.0, "start"), (0.033, "BlendIn:1"), (0.067, "Hit"), (0.967, "a:R"), (2.0, "end")])));
+        let (_, timing) = times.gun_timing(me, launcher_id, &launcher, &t, || 1.0).expect("stored");
+        assert!((timing.interval - 0.967).abs() < 1e-5 && timing.fire_delay == 0.0, "{timing:?}");
+        // Stored for another weapon: none yet (the fight keeps 1 / Attack Shots/Sec).
+        assert!(times.gun_timing(me, pistol_id, &launcher, &t, || 1.0).is_none());
+        // A person's semi-automatic pistol: a: at 0.4 s ÷ speed 1.25 = 0.32 s; without an
+        // a: key, its clip's end (0.5 ÷ 1.25 = 0.4 s); at a teammate rate of 2, half.
+        let pistol = WeaponStats { clip_size: 13, attack_shots_per_sec: 3.125, attack_mult: 1.25, anim_mult: 1.0, ..WeaponStats::default() };
+        times.reloads.insert(me, (pistol_id, stored(0.5, &[(0.0, "start"), (0.4, "a:R"), (0.5, "end")])));
+        let (_, timing) = times.gun_timing(me, pistol_id, &pistol, &t, || 1.0).expect("stored");
+        assert!((timing.interval - 0.32).abs() < 1e-5, "{timing:?}");
+        let (_, fast) = times.gun_timing(me, pistol_id, &pistol, &t, || 2.0).expect("stored");
+        assert!((fast.interval - 0.16).abs() < 1e-5, "{fast:?}");
+        times.reloads.insert(me, (pistol_id, stored(0.5, &[(0.0, "start"), (0.5, "end")])));
+        let (_, timing) = times.gun_timing(me, pistol_id, &pistol, &t, || 1.0).expect("stored");
+        assert!((timing.interval - 0.4).abs() < 1e-5, "{timing:?}");
+        // An automatic weapon: its Fire Rate, whatever is stored.
+        let minigun = WeaponStats { automatic: true, fire_rate: 15.0, clip_size: 255, attack_mult: 1.0, anim_mult: 1.0, ..WeaponStats::default() };
+        times.reloads.insert(me, (minigun_id, stored(2.0, &[(0.967, "a:R")])));
+        let (timed, timing) = times.gun_timing(me, minigun_id, &minigun, &t, || 1.0).expect("stored");
+        assert!(timed.attack_len.is_none() && (timing.interval - 1.0 / 15.0).abs() < 1e-5, "{timing:?}");
+    }
+
     /// A lunge with room carries the actor by its clip's whole root travel, frame by
     /// frame; one that reaches its target's body stops there for the rest of the attack,
     /// its travel back included (`clamp_lunge`, actors.md §8.13).

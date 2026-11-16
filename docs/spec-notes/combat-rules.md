@@ -171,8 +171,10 @@ each the identity by default. Reading PERK records is a later step.
     Timing shots by the clip's end made them 5–20 % slower than the original (owner
     playtest 2026-10-19). NPCs (and creatures' body guns) take the same rule from the
     standing attack clip in their own rig once it is known, 1 ÷ Attack Shots/Sec until
-    then (`attack::npc_clip_timing`, §4.1, #2739); for the people's guns that is the
-    same rate, for a creature's own clip it need not be.
+    then (`attack::npc_clip_timing`, §4.1, #2739). Where the clip has an `a:` key this
+    gives the record's rate, as in the observed table above; a clip without one gives
+    the slower rate of its end, and a creature's own clip can differ from the record
+    (the sentry bot's launcher).
 - **When the shot leaves.** At the attack clip's `Hit` key [documented:
   NiTextKeyExtraData]. Automatic weapons fire at once, except those that spin up.
 - **Spin-up** [owner decision 2026-10-10]. An automatic weapon whose attack clip has
@@ -303,8 +305,9 @@ between them in the original [observed: owner playtest, #2739].
   - the WEAP's Reload Time is "Unused" [documented: GECK wiki Weapons]; it is no source.
 - **Shot timing** (`fnv_combat::attack::npc_clip_timing`) [design, #2739]: an NPC's or a
   creature's semi-automatic gun is timed by the standing attack clip of its WEAP Attack
-  Animation in its own rig (`attack_anims`, with the reload clips), by §4's rule for the
-  player: the `a:` key's time (the clip's length without one) ÷ (attack multiplier ×
+  Animation in its own rig (`attack_anims`, with the reload clips; one handoff,
+  `AttackTimes::gun_timing`, for a fight's gunmen and for Use Weapon shooters, whose
+  volley pauses come on top), by §4's rule for the player: the `a:` key's time (the clip's length without one) ÷ (attack multiplier ×
   animation multiplier). Until the clip is known, and without one, 1 ÷ Attack Shots/Sec as
   before. Automatic weapons keep their Fire Rate. The `Hit` key gives no wind-up: the
   NPC's clip starts with its shot. Sources: "Attack Shots/sec ... is calculated on the Art
