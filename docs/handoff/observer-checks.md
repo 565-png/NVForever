@@ -2690,22 +2690,6 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
-
-
-## Added 2026-11-16 (controller hotkey assignment, #2312)
-
-210. **How does a controller choose a hotkey slot on ITEMS?** (P3; controller.md §3,
-    weapon-wheel.md §3.) [documented: issue #2312's supplied inventory_menu.xml facts]
-    `IM_HotkeyButton` uses RB and `sInventoryHotKey`, opening `IM_HotKeyWheel`.
-    [hypothesis] The original's slot-selection method is unknown; its prefab facts
-    supplied in #2312 bind no pad directions. Select a weapon on ITEMS, press RB, and
-    test D-pad taps/holds and both sticks in cardinal and diagonal directions. Record
-    which box is chosen on opening, whether selection points spatially or steps,
-    whether it wraps/repeats, and whether A assigns and B cancels. Include Ammo Swap
-    and an occupied slot. [design, #2312] NVForever provisionally opens at slot 1,
-    steps right/down forward and left/up backward through eight slots with wrapping,
-    assigns with A (closing on success), and cancels with B; Ammo Swap refuses items.
-
 197. **What does a resurrected actor carry?** (P2; `fnv_game::resurrect`,
     `fnv_sim::World::restock_inventory`, issue #2683.) NVForever makes the items of a
     dead actor's own item list up again when it is resurrected (rolled anew; only what
@@ -2943,3 +2927,18 @@ already talking takes over at once, same topic or another; nothing is queued or 
      If he walks to the door out of Top and is moved on, the original starts a walk
      whose way ends at a locked door (at least as far as the door); if he stands still
      until the door is unlocked, ours is right and the trigger only serves after it.
+
+
+## Added 2026-11-16 (controller hotkey assignment, #2312)
+
+210. **How does a controller choose a hotkey slot on ITEMS?** (P3; controller.md §3,
+    weapon-wheel.md §3.) [documented: issue #2312's supplied inventory_menu.xml facts]
+    `IM_HotkeyButton` uses RB and `sInventoryHotKey`, opening `IM_HotKeyWheel`.
+    [hypothesis] The original's slot-selection method is unknown; its prefab facts
+    supplied in #2312 bind no pad directions. Select a weapon on ITEMS, press RB, and
+    test D-pad taps/holds and both sticks in cardinal and diagonal directions. Record
+    which box is chosen on opening, whether selection points spatially or steps,
+    whether it wraps/repeats, and whether A assigns and B cancels. Include Ammo Swap
+    and an occupied slot. [design, #2312] NVForever provisionally opens at slot 1,
+    steps right/down forward and left/up backward through eight slots with wrapping,
+    assigns with A (closing on success), and cancels with B; Ammo Swap refuses items.
