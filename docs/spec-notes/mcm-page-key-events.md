@@ -75,3 +75,18 @@ same page context. A getter-only test cannot establish this boundary.
 remains open until their original initialization, menu registration, list scrolling,
 option changes and save/load run on the selected installed profile. The authored
 tests do not establish native parity or complete compatibility for those packages.
+
+## Executed consumer checks
+
+[validation: Windows CPU libtest, integrated source b8da4c3d41e9a950a6e43bdb4d95b0e3c60d0a1e]
+The selected consumer controls below passed with zero failures and zero ignored.
+This combined source contains the focused MCM/control/light changes and fresh
+neighboring inventory work. It is not an isolated standalone-head run. Both
+libtest targets compiled; all selected jobs ended and the build source was restored.
+No pristine baseline failure, playable client, physical OS/device acquisition,
+GPU/rendered, native or original installed-mod acceptance is established by this run.
+
+`script_input::mcm_page_tests`:4 passed. Adjacent `script_input::wheel_tests`:4
+passed; `tiles::mods::tests`:2 passed. The authored MCM controls exercise source
+callbacks, list routing, held/released/disabled state, page/menu restoration and
+the actual window/menu-transform consumer, within the limits above.
