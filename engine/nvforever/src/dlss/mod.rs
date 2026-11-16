@@ -120,9 +120,11 @@
 //!   (`Device::poll` wait, `vkDeviceWaitIdle`). Not bounded [design]: every other exit waits
 //!   for the same things without a limit (Bevy's `RenderAppChannels::drop` for the render
 //!   app, `Presenter::drop`, `win.rs` `shutdown`'s drain), and a limit that gave up would
-//!   leave exactly the exit that crashed; the new run is already shown and playing by then,
-//!   so a wait costs the player nothing they see. A renderer or driver that never returns
-//!   would leave the old process behind the new window, as it would hang any exit. The
+//!   leave exactly the exit that crashed. The new run is already shown by then (its loading
+//!   screen may still be up), so a short wait is not seen; the cost is the old process's RAM
+//!   and video memory held for as long as it waits, which a long wait would take from the new
+//!   run's loading or play. A renderer or driver that never returns would leave the old
+//!   process behind the new window holding that memory, as it would hang any exit. The
 //!   handoff's own limits (`handoff.rs` `ACK_WAIT_SECS`, `GIVE_UP_MARGIN_SECS`) time the new
 //!   run's start, not this.
 //!

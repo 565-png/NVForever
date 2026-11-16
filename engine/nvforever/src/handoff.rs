@@ -395,8 +395,9 @@ pub fn add_end_now(app: &mut App) {
 /// The old run, once the new one is up: its exit logs are written, its saves on disk
 /// (waited for before the screen came up), a frame capture finished (`--frame-telemetry`:
 /// its writer otherwise finishes in the teardown this skips), Streamline shut down
-/// (`crate::dlss::end_now`: `main`'s shutdown after `App::run` is skipped too, and DLSS
-/// Frame Generation left to the DLLs' detach crashed the exit, #2733); the process ends
+/// (`crate::dlss::end_now`: `main`'s shutdown after `App::run` is skipped too; a player's
+/// runs that left DLSS Frame Generation to the DLLs' detach crashed on this exit [observed],
+/// the detach being the cause is [hypothesis], #2733); the process ends
 /// here, the system freeing its memory at once.
 fn end_now(world: &mut World) {
     if matches!(world.resource::<Handoff>().0, Leaving::HandedOver) {
