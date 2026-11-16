@@ -304,21 +304,31 @@ pub fn register(app: &mut App) {
             slider: None,
         },
     );
-    // Whether the landscape is smoothed (#2149): read when the game starts, so the row
-    // keeps the next start's state (nvf_play::smooth_terrain).
-    add_setting(
+    // How the landscape is smoothed (#2149, #2676): Off, 2 x 2, 4 x 4, 4 x 4 near; read when
+    // the game starts, so the row keeps the next start's choice (nvf_play::smooth_terrain).
+    // The INI's older on/off still reads (4 x 4 and Off).
+    add_choice_list(
         app,
         Setting {
             key: nvf_play::smooth_terrain::KEY,
             group: GROUP_GRAPHICS,
             label: "Smooth terrain",
             note: nvf_play::smooth_terrain::NOTE,
-            switches: "--no-smooth-terrain",
-            get: |_| nvf_play::smooth_terrain::setting(),
-            set: |_, on| nvf_play::smooth_terrain::set_setting(on),
+            switches: "--smooth-terrain, --no-smooth-terrain",
+            get: |_| false,
+            set: |_, _| {},
             slider: None,
         },
+        ChoiceList {
+            names: |_| nvf_play::smooth_terrain::Smoothing::ALL.iter().map(|s| s.name().to_string()).collect(),
+            chosen: |_| nvf_play::smooth_terrain::setting().name().to_string(),
+            pick: pick_smoothing,
+            save: |_| nvf_play::smooth_terrain::setting().stored().to_string(),
+            load: pick_smoothing,
+            ask_keep: false,
+        },
     );
+    nvf_play::settings::set_choice_labels(app, nvf_play::smooth_terrain::KEY, |_, name| fnv_util::words::tr_str(name).to_string());
     add_setting(
         app,
         Setting {
@@ -1534,6 +1544,14 @@ fn frame_generation_chosen(world: &World) -> String {
 
 fn frame_generation_saved(world: &World) -> String {
     world.resource::<crate::frame_gen::FrameGeneration>().kind.stored().to_string()
+}
+
+/// A Smooth terrain choice by its name or INI text (also the row's older on/off: #2149 kept
+/// `1`/`0`), for the next start (nvf_play::smooth_terrain).
+fn pick_smoothing(_: &mut World, name: &str) -> bool {
+    let Some(s) = nvf_play::smooth_terrain::Smoothing::parse(name) else { return false };
+    nvf_play::smooth_terrain::set_setting(s);
+    true
 }
 
 /// A Frame generation choice by its name or INI text (also the row's old on/off).

@@ -287,9 +287,12 @@ the spec it links to.
   next start so drawn ground and collision change together. Measured 2026-11-15 (1920x1080,
   unpaced, RTX 5070 Ti) [observed]: standing frame time unchanged (3.78 ms, 2 × 2 3.74, off
   3.78), worst frame in a fast flight over Goodsprings unchanged (32.9 ms, 2 × 2 32.4);
-  about 255 MB more RAM and 130 MB more video memory than 2 × 2. The open question is
-  4 × 4 against 2 × 2 by default; #2676 proposes a 2 × 2 / 4 × 4 setting and 4 × 4 only
-  near the camera for low-end machines. The test aids
+  about 255 MB more RAM and 130 MB more video memory than 2 × 2. Since #2676 the row is a
+  list, Off / 2 x 2 / 4 x 4 (still the default) / 4 x 4 near (4 × 4 within 2,048 units of
+  the camera, 2 × 2 further, collision on 4 × 4, no cracks between the levels); the open
+  question is which by default: 4 × 4 (now), 2 × 2 or 4 x 4 near. Measured 2026-11-16 (#2801:
+  same hillside and flight): frame time the same at every level; 4 x 4 near keeps most of
+  2 × 2's memory saving (about 250 MB RAM standing, up to 260 MB video memory in flight). The test aids
   still choose the other recipes, and the Debug row Terrain wireframe shows the triangles.
   Smoke `terrain-smoothing` covers the default; `terrain-smoothing-fit-s2-b8`,
   `-interpolate-s4-b8`, `-fit-s4-b12`, `-detail-s4-b8` cover explicit recipes.

@@ -23,6 +23,17 @@
 //!   or jobs are kept, nothing is uploaded or drawn. Switching off drops the jobs not yet
 //!   done (a dropped task is cancelled), despawns the lines and frees their assets.
 //!
+//! - **4 × 4 near** (#2676): the lines show each quadrant as it is drawn now (4 × 4 or 2 × 2,
+//!   a 4 × 4 quadrant's coarse sides on their 2 × 2 neighbours' segments: `crate::terrain_lod`),
+//!   one grid of lines per quadrant ([`outline_drawn`]; the quadrants' shared sides are drawn
+//!   by both). A cell whose quadrants are redrawn at another level gets a new outline job
+//!   and keeps its old lines until the job is done. The count line then ends `; <n>
+//!   quadrants outlined 4 x 4`. Once the levels have settled (`TerrainLod::settled_revision`)
+//!   and every outline matches the quadrants as drawn at that revision, `terrain wireframe:
+//!   settled terrain revision <r> outlined: <n> quadrants 4 x 4, <c> cells, <e> edges`, once
+//!   per revision (the smoke scenario `terrain-wireframe-near` reads it: it ties the lines
+//!   to the drawing they show, whatever the order of the two systems' frames).
+//!
 //! [design, #2149] One gizmo per cell rather than per quadrant (the plan's sketch): the
 //! cell is what loads and unloads, and its surface is one grid. Jobs are keyed by the
 //! cell's entity; a cell that goes takes its pending job with it, so no stale result can
@@ -37,7 +48,7 @@ use bevy::camera::visibility::VisibilitySystems;
 use bevy::prelude::*;
 use bevy::tasks::{futures::check_ready, Task};
 use fnv_esm::{LoadOrder, Schema};
-use fnv_world::land_surface::{Surface, SurfaceSpec};
+use fnv_world::land_surface::{QuadrantDraw, Surface, SurfaceSpec};
 use fnv_world::WorldIndex;
 use nvf_play::RenderCell;
 use std::collections::HashMap;
@@ -83,11 +94,21 @@ impl WireSource {
     }
 }
 
-/// A cell's outline: its job, its drawn lines, or nothing to draw.
+/// A cell's outline: its job, its drawn lines, or nothing to draw; each with how its
+/// quadrants were drawn when the job was made (`None`: in full, no 4 × 4 near).
+/// A job outlining a cell again after a redraw keeps the old lines (`old`) until it is done.
 enum WireCell {
-    Pending(Task<Option<(GizmoAsset, usize)>>),
-    Drawn { entity: Entity, asset: Handle<GizmoAsset>, edges: usize },
-    Empty,
+    Pending { task: Task<Option<(GizmoAsset, usize)>>, draws: Option<[QuadrantDraw; 4]>, old: Option<(Entity, Handle<GizmoAsset>)> },
+    Drawn { entity: Entity, asset: Handle<GizmoAsset>, edges: usize, draws: Option<[QuadrantDraw; 4]> },
+    Empty(Option<[QuadrantDraw; 4]>),
+}
+
+impl WireCell {
+    fn draws(&self) -> Option<[QuadrantDraw; 4]> {
+        match self {
+            WireCell::Pending { draws: d, .. } | WireCell::Drawn { draws: d, .. } | WireCell::Empty(d) => *d,
+        }
+    }
 }
 
 /// Whether the wireframe is on, and each outlined cell's lines.
@@ -100,6 +121,8 @@ pub struct TerrainWireframe {
     was_on: bool,
     /// The counts last logged.
     logged: Option<Counts>,
+    /// The settled terrain revision last said to be outlined (4 x 4 near).
+    outlined: Option<u64>,
 }
 
 /// What the wireframe holds now.
@@ -109,6 +132,8 @@ pub struct Counts {
     pub edges: usize,
     pub empty: usize,
     pub pending: usize,
+    /// Quadrants outlined at 4 × 4 under 4 × 4 near (0 otherwise).
+    pub fine: usize,
 }
 
 impl TerrainWireframe {
@@ -121,12 +146,13 @@ impl TerrainWireframe {
         let mut c = Counts::default();
         for w in self.cells.values() {
             match w {
-                WireCell::Pending(_) => c.pending += 1,
-                WireCell::Drawn { edges, .. } => {
+                WireCell::Pending { .. } => c.pending += 1,
+                WireCell::Drawn { edges, draws, .. } => {
                     c.drawn += 1;
                     c.edges += edges;
+                    c.fine += draws.map_or(0, |d| d.iter().filter(|d| d.step == 1).count());
                 }
-                WireCell::Empty => c.empty += 1,
+                WireCell::Empty(_) => c.empty += 1,
             }
         }
         c
@@ -190,16 +216,51 @@ pub fn outline(s: &Surface, origin: Vec2) -> (GizmoAsset, usize) {
     (asset, edges)
 }
 
+/// The lines of a cell's quadrants as they are drawn (`draws`, by quadrant: 4 × 4 near,
+/// `crate::terrain_lod`), each quadrant's grid of drawn vertices ([`strips`]) in game space,
+/// and how many edges they are (the quadrants' shared sides counted by both).
+pub fn outline_drawn(s: &Surface, origin: Vec2, draws: [QuadrantDraw; 4]) -> (GizmoAsset, usize) {
+    let mut asset = GizmoAsset::default();
+    let colour = Color::srgb(COLOUR[0], COLOUR[1], COLOUR[2]);
+    let mut edges = 0;
+    for (q, d) in draws.into_iter().enumerate() {
+        let grid = s.drawn_quadrant(q as u8, d);
+        for strip in strips(grid.side) {
+            edges += strip.len() - 1;
+            asset.linestrip(
+                strip.iter().map(|&i| {
+                    let [x, y, z] = grid.positions[i];
+                    Vec3::new(origin.x + x, origin.y + y, z)
+                }),
+                colour,
+            );
+        }
+    }
+    (asset, edges)
+}
+
+fn drop_lines(entity: Entity, asset: &Handle<GizmoAsset>, commands: &mut Commands, assets: &mut Assets<GizmoAsset>) {
+    commands.entity(entity).try_despawn();
+    assets.remove(asset);
+}
+
 fn drop_cell(c: WireCell, commands: &mut Commands, assets: &mut Assets<GizmoAsset>) {
     // A pending job is cancelled when its task is dropped here.
-    if let WireCell::Drawn { entity, asset, .. } = c {
-        commands.entity(entity).try_despawn();
-        assets.remove(&asset);
+    match c {
+        WireCell::Drawn { entity, asset, .. } | WireCell::Pending { old: Some((entity, asset)), .. } => drop_lines(entity, &asset, commands, assets),
+        _ => {}
     }
 }
 
 /// Keep the outlines to the loaded, shown exterior cells while on; let them all go when off.
-fn sync(mut wire: ResMut<TerrainWireframe>, source: Option<Res<WireSource>>, cells: Query<(Entity, &RenderCell, &InheritedVisibility)>, mut commands: Commands, mut assets: ResMut<Assets<GizmoAsset>>) {
+fn sync(
+    mut wire: ResMut<TerrainWireframe>,
+    source: Option<Res<WireSource>>,
+    cells: Query<(Entity, &RenderCell, &InheritedVisibility)>,
+    terrain: Option<Res<crate::terrain::TerrainCache>>,
+    mut commands: Commands,
+    mut assets: ResMut<Assets<GizmoAsset>>,
+) {
     let w = wire.bypass_change_detection();
     if !w.on {
         let removed = w.cells.len();
@@ -211,6 +272,7 @@ fn sync(mut wire: ResMut<TerrainWireframe>, source: Option<Res<WireSource>>, cel
         }
         w.was_on = false;
         w.logged = None;
+        w.outlined = None;
         return;
     }
     let spec = nvf_play::smooth_terrain::spec();
@@ -225,11 +287,25 @@ fn sync(mut wire: ResMut<TerrainWireframe>, source: Option<Res<WireSource>>, cel
             _ => None,
         })
         .collect();
-    // Cells that unloaded or were hidden.
+    // How each cell's quadrants are drawn now (4 x 4 near), `None` in full.
+    let lod = terrain.as_deref().and_then(|t| t.lod.as_ref());
+    let draws_of = |e: Entity| lod.map(|l| l.drawn(e).unwrap_or([QuadrantDraw::FULL; 4]));
+    // Cells that unloaded or were hidden lose their lines; cells whose quadrants are drawn
+    // otherwise now are outlined again below, keeping their lines until that is done.
     let gone: Vec<Entity> = w.cells.keys().filter(|e| !shown.contains_key(e)).copied().collect();
     for e in gone {
         if let Some(c) = w.cells.remove(&e) {
             drop_cell(c, &mut commands, &mut assets);
+        }
+    }
+    let mut kept: HashMap<Entity, (Entity, Handle<GizmoAsset>)> = HashMap::new();
+    let redrawn: Vec<Entity> = w.cells.iter().filter(|(e, c)| c.draws() != draws_of(**e)).map(|(e, _)| *e).collect();
+    for e in redrawn {
+        match w.cells.remove(&e) {
+            Some(WireCell::Drawn { entity, asset, .. }) | Some(WireCell::Pending { old: Some((entity, asset)), .. }) => {
+                kept.insert(e, (entity, asset));
+            }
+            _ => {}
         }
     }
     // Cells loaded or shown since: a job each.
@@ -240,14 +316,28 @@ fn sync(mut wire: ResMut<TerrainWireframe>, source: Option<Res<WireSource>>, cel
             }
             let of = source.0.clone();
             let origin = Vec2::new(x as f32 * fnv_world::CELL_SIZE, y as f32 * fnv_world::CELL_SIZE);
-            let task = nvf_assets::read_pool::read_pool().spawn(async move { of(world, (x, y), spec).map(|s| outline(&s, origin)) });
-            w.cells.insert(e, WireCell::Pending(task));
+            let draws = draws_of(e);
+            let task = nvf_assets::read_pool::read_pool().spawn(async move {
+                of(world, (x, y), spec).map(|s| match draws {
+                    Some(d) => outline_drawn(&s, origin, d),
+                    None => outline(&s, origin),
+                })
+            });
+            w.cells.insert(e, WireCell::Pending { task, draws, old: kept.remove(&e) });
         }
     }
-    // Jobs done: their lines drawn.
+    // Lines kept for a cell no job could be made for (no source).
+    for (_, (entity, asset)) in kept {
+        drop_lines(entity, &asset, &mut commands, &mut assets);
+    }
+    // Jobs done: their lines drawn, in place of the old ones.
     for c in w.cells.values_mut() {
-        let WireCell::Pending(task) = c else { continue };
+        let WireCell::Pending { task, draws, old } = c else { continue };
+        let draws = *draws;
         let Some(done) = check_ready(task) else { continue };
+        if let Some((entity, asset)) = old.take() {
+            drop_lines(entity, &asset, &mut commands, &mut assets);
+        }
         *c = match done {
             Some((asset, edges)) => {
                 let asset = assets.add(asset);
@@ -257,15 +347,25 @@ fn sync(mut wire: ResMut<TerrainWireframe>, source: Option<Res<WireSource>>, cel
                 let place = crate::world::game_to_bevy();
                 let gizmo = Gizmo { handle: asset.clone(), line_config, depth_bias: DEPTH_BIAS };
                 let entity = commands.spawn((Name::new("Terrain wireframe"), gizmo, place, GlobalTransform::from(place))).id();
-                WireCell::Drawn { entity, asset, edges }
+                WireCell::Drawn { entity, asset, edges, draws }
             }
-            None => WireCell::Empty,
+            None => WireCell::Empty(draws),
         };
     }
     let counts = w.counts();
     if counts.pending == 0 && w.logged != Some(counts) {
-        info!("terrain wireframe: {} cells outlined, {} edges, {} without landscape, {} line assets", counts.drawn, counts.edges, counts.empty, counts.drawn);
+        // Under 4 x 4 near, how many quadrants the lines show at 4 x 4 (the smoke scenario
+        // `terrain-wireframe-near` reads it).
+        let fine = if lod.is_some() { format!("; {} quadrants outlined 4 x 4", counts.fine) } else { String::new() };
+        info!("terrain wireframe: {} cells outlined, {} edges, {} without landscape, {} line assets{fine}", counts.drawn, counts.edges, counts.empty, counts.drawn);
         w.logged = Some(counts);
+    }
+    // Every outline is of the quadrants as drawn now (a redrawn cell is pending until its
+    // new lines are in), and the levels are settled at this revision: said once.
+    let settled = lod.and_then(|l| l.settled_revision());
+    if let Some(r) = settled.filter(|r| counts.pending == 0 && w.outlined != Some(*r)) {
+        info!("terrain wireframe: settled terrain revision {r} outlined: {} quadrants 4 x 4, {} cells, {} edges", counts.fine, counts.drawn, counts.edges);
+        w.outlined = Some(r);
     }
 }
 
@@ -329,6 +429,26 @@ mod tests {
             assert!(points.contains(&Vec3::new(origin.x + x, origin.y + y, z)), "{spec:?}");
             assert!(points.iter().all(|p| p.x >= origin.x && p.x <= origin.x + fnv_world::CELL_SIZE && p.y >= origin.y), "{spec:?}");
         }
+    }
+
+    /// Per quadrant as drawn: in full it is the cell's grid by quadrants (four 65 x 65 grids
+    /// at 4 x 4), 2 x 2 a quarter of the vertices, and a coarse side's middle vertices on the
+    /// segment between their neighbours.
+    #[test]
+    fn the_drawn_outline_follows_each_quadrants_level() {
+        let s = surface((2, -1), SurfaceSpec::DEFAULT);
+        let per = |side: usize| 2 * side * (side - 1) + (side - 1) * (side - 1);
+        let (_, full) = outline_drawn(&s, Vec2::ZERO, [QuadrantDraw::FULL; 4]);
+        assert_eq!(full, 4 * per(65));
+        let mut coarse = QuadrantDraw::FULL;
+        coarse.coarse[fnv_world::land_surface::QUADRANT_EAST] = true;
+        let (asset, mixed) = outline_drawn(&s, Vec2::ZERO, [coarse, QuadrantDraw::HALF, QuadrantDraw::HALF, QuadrantDraw::HALF]);
+        assert_eq!(mixed, per(65) + 3 * per(33));
+        // The coarse east side of quadrant 0 (x = 2048): its vertex at row 1 lies halfway
+        // between rows 0 and 2.
+        let p = |r: usize| s.vertex(r * s.side() + 64);
+        let mid = Vec3::new(p(1)[0], p(1)[1], (p(0)[2] + p(2)[2]) * 0.5);
+        assert!(asset.strip_positions.contains(&mid));
     }
 
     fn app(on: bool) -> App {

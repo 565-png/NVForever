@@ -54,11 +54,13 @@ Audio and Controls, observed in the original's pause menu, 2026-11-09].
 | Tweaks | (none) | none named yet |
 | Debug | (none) | `overlay`, `hit-markers`, `god-mode`, `navmesh`, `terrain-wireframe` (#2149), `scope-3d` |
 
-The Smooth terrain row is on by default and applies at the next start. Its default
-recipe is detail, 4 × 4, bound 8, thresholds 2:6: smooth height steps while keeping
-bumps and ridges, with one surface for drawing and collision [design, #2149: the
+The Smooth terrain row is a list, Off, 2 x 2, 4 x 4 (the default) and 4 x 4 near, and
+applies at the next start. Its recipe is detail, bound 8, thresholds 2:6: smooth height
+steps while keeping bumps and ridges, with one surface for drawing and collision
+[design, #2149: the
 contributor's pick from in-game comparisons (2026-11-15), for the maintainer to confirm;
-world.md §3 "Smoothing"].
+world.md §3 "Smoothing"]. 4 x 4 near draws 4 × 4 near the camera and 2 × 2 further on the 4 × 4
+surface [design, #2676]; the INI's older on/off reads as 4 x 4 and Off.
 
 The table names every row the registry can hold [documented: `settings_layout.rs::SECTIONS`],
 118 with #1966's `quality` and `enhanced`,

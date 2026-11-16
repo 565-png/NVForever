@@ -115,7 +115,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError};
 use bevy::shader::ShaderRef;
 use fnv_world::land::{land_texture, load_land, Land, LandParts, Layer, DEFAULT_DIFFUSE, DEFAULT_NORMAL, QUAD_SIDE, SIDE};
-use fnv_world::land_surface::{block_of, load_heights, LandIds, Surface, SurfaceSpec};
+use fnv_world::land_surface::{block_of, load_heights, LandIds, QuadrantDraw, Surface, SurfaceSpec};
 use nvf_assets::model::ModelCtx;
 use nvf_assets::nif_material::sort_first;
 use nvf_assets::{nif_material, NifMaterial};
@@ -148,6 +148,9 @@ pub struct TerrainCache {
     /// Cells drawn on the smoothed surface and on the stored one (#2149).
     pub smoothed_cells: usize,
     pub stored_cells: usize,
+    /// 4 × 4 near's quadrant levels (#2676, `crate::terrain_lod`); `None` unless the run
+    /// chose it (made when its first cell spawns).
+    pub lod: Option<crate::terrain_lod::TerrainLod>,
 }
 
 impl TerrainCache {
@@ -694,13 +697,29 @@ fn refine_quad(grid: &[f32], sub: usize) -> Vec<f32> {
 }
 
 /// Mesh of one quadrant in cell-local game space, on `surface` (17 × 17 vertices as
-/// stored, 65 × 65 with the default 4 × 4 smoothing); `alpha`: a layer's opacities on
-/// the same vertices ([`refine_quad`]).
+/// stored, 65 × 65 with the default 4 × 4 smoothing), drawn in full; `alpha`: a layer's
+/// opacities on the same vertices ([`refine_quad`]).
+#[cfg(test)]
 fn quadrant_mesh(land: &Land, surface: &Surface, q: u8, alpha: Option<&[f32]>, cell_origin: Vec2, tile: f32) -> Option<Mesh> {
-    let h = surface.heights();
-    let (sub, side, spacing) = (surface.sub(), surface.side(), surface.spacing());
-    let qs = quad_side(sub);
-    let (qx, qy) = ((q % 2) as usize * (qs - 1), (q / 2) as usize * (qs - 1));
+    quadrant_mesh_drawn(land, surface, q, QuadrantDraw::FULL, alpha, cell_origin, tile)
+}
+
+/// Squares per LAND grid square and side a quadrant of `surface` is drawn with as `draw`
+/// says (#2676): the surface's own, or half of them drawn with step 2.
+fn drawn_sub(surface: &Surface, draw: QuadrantDraw) -> usize {
+    surface.sub() / surface.draw_step(draw)
+}
+
+/// [`quadrant_mesh`] drawn as `draw` says (`fnv_world::land_surface::QuadrantDraw`, #2676):
+/// every surface vertex or every other one, with its coarse sides on the straight
+/// segments of a coarser neighbour. `alpha` is on the drawn vertices ([`refine_quad`] by
+/// [`drawn_sub`]). The colours and opacities are the stored triangles' at each drawn
+/// vertex either way (a coarse side's moved vertices keep theirs: the stored triangles are
+/// linear along a quadrant's side, so they are what the neighbour interpolates there).
+fn quadrant_mesh_drawn(land: &Land, surface: &Surface, q: u8, draw: QuadrantDraw, alpha: Option<&[f32]>, cell_origin: Vec2, tile: f32) -> Option<Mesh> {
+    let (sub, side) = (surface.sub(), surface.side());
+    let grid = surface.drawn_quadrant(q, draw);
+    let qs = grid.side;
     let n = qs * qs;
     let (mut pos, mut nor, mut uv, mut col) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
     let mut tan = Vec::with_capacity(n);
@@ -708,12 +727,14 @@ fn quadrant_mesh(land: &Land, surface: &Surface, q: u8, alpha: Option<&[f32]>, c
     let linear: Option<Vec<[f32; 3]>> = if sub > 1 { land.colors.as_ref().map(|v| v.iter().map(|c| c.map(srgb_to_linear)).collect()) } else { None };
     for r in 0..qs {
         for c in 0..qs {
-            let (gr, gc) = (qy + r, qx + c);
+            let (gr, gc) = grid.surface_vertex(r, c);
             let i = gr * side + gc;
-            let (x, y) = (gc as f32 * spacing, gr as f32 * spacing);
-            pos.push([x, y, h[i]]);
-            let normal = match surface.normals() {
-                Some(nm) => Vec3::from_array(nm[i]).normalize_or(Vec3::Z),
+            let v = r * qs + c;
+            let p = grid.positions[v];
+            let (x, y) = (p[0], p[1]);
+            pos.push(p);
+            let normal = match &grid.normals {
+                Some(nm) => Vec3::from_array(nm[v]).normalize_or(Vec3::Z),
                 // As stored the surface is the LAND grid: vertex i is LAND vertex i.
                 None => land
                     .normals
@@ -731,7 +752,7 @@ fn quadrant_mesh(land: &Land, surface: &Surface, q: u8, alpha: Option<&[f32]>, c
                 Some(lin) => stored_weights(gr, gc, sub, SIDE).iter().fold([0.0; 3], |acc, &(k, w)| [acc[0] + w * lin[k][0], acc[1] + w * lin[k][1], acc[2] + w * lin[k][2]]),
                 None => land.colors.as_ref().map_or([1.0; 3], |v| v[i].map(srgb_to_linear)),
             };
-            let a = alpha.map_or(1.0, |a| a[r * qs + c]);
+            let a = alpha.map_or(1.0, |a| a[v]);
             col.push([rgb[0], rgb[1], rgb[2], a]);
         }
     }
@@ -810,11 +831,17 @@ fn across(q: u8, side: usize) -> (Option<usize>, u8) {
 /// coordinate, the fourth in the size of the tangent's last number past 1 (its sign stays
 /// [`TANGENT_SIGN`]), and, where [`folded_layers`] is [`FOLDED_LAYERS`], the fifth and
 /// sixth in the first texture coordinate, which the shader then works out.
+#[cfg(test)]
 fn folded_mesh(land: &Land, surface: &Surface, q: u8, alphas: &[&[f32]], cell_origin: Vec2, tile: f32) -> Option<Mesh> {
+    folded_mesh_drawn(land, surface, q, QuadrantDraw::FULL, alphas, cell_origin, tile)
+}
+
+/// [`folded_mesh`] drawn as `draw` says ([`quadrant_mesh_drawn`]).
+fn folded_mesh_drawn(land: &Land, surface: &Surface, q: u8, draw: QuadrantDraw, alphas: &[&[f32]], cell_origin: Vec2, tile: f32) -> Option<Mesh> {
     use bevy::mesh::VertexAttributeValues;
-    let mut mesh = quadrant_mesh(land, surface, q, None, cell_origin, tile)?;
+    let mut mesh = quadrant_mesh_drawn(land, surface, q, draw, None, cell_origin, tile)?;
     let at = |k: usize, v: usize| alphas.get(k).map_or(0.0, |a| a[v]);
-    let n = quad_side(surface.sub()).pow(2);
+    let n = quad_side(drawn_sub(surface, draw)).pow(2);
     if let Some(VertexAttributeValues::Float32x4(col)) = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
         for (v, c) in col.iter_mut().enumerate() {
             c[3] = at(0, v);
@@ -922,9 +949,38 @@ fn quadrant_layers(layers: &[Layer], q: u8) -> Vec<(usize, &Layer)> {
     layers
 }
 
+/// One quadrant's meshes as drawn ([`build_quadrant`]): its base, the blended mesh of each
+/// drawn layer (by its index in the cell's drawn layers) and its base with its first
+/// [`folded_layers`] layers folded in ([`folded_mesh`]; none for a quadrant without layers).
+#[derive(Default)]
+pub struct QuadMeshes {
+    base: Option<Mesh>,
+    layers: HashMap<usize, Mesh>,
+    folded: Option<Mesh>,
+}
+
+/// Build quadrant `q`'s meshes over `surface` as `draw` says (on a worker thread: when a
+/// cell is read ahead, or when 4 × 4 near redraws a quadrant at another level,
+/// `crate::terrain_lod`).
+pub fn build_quadrant(land: &Land, surface: &Surface, layers: &[Layer], q: u8, draw: QuadrantDraw, origin: Vec2, tile: f32) -> QuadMeshes {
+    let mut out = QuadMeshes { base: quadrant_mesh_drawn(land, surface, q, draw, None, origin, tile), ..default() };
+    let quad = quadrant_layers(layers, q);
+    let sub = drawn_sub(surface, draw);
+    let alphas: Vec<Vec<f32>> = quad.iter().map(|(_, l)| refine_quad(&alpha_grid(l), sub)).collect();
+    for ((i, _), alpha) in quad.iter().zip(&alphas) {
+        if let Some(mesh) = quadrant_mesh_drawn(land, surface, q, draw, Some(alpha), origin, tile) {
+            out.layers.insert(*i, mesh);
+        }
+    }
+    if !alphas.is_empty() {
+        let first: Vec<&[f32]> = alphas.iter().take(folded_layers(tile)).map(Vec::as_slice).collect();
+        out.folded = folded_mesh_drawn(land, surface, q, draw, &first, origin, tile);
+    }
+    out
+}
+
 /// A cell's landscape, read and its quadrant meshes built (on a worker thread when it is
-/// read ahead, world.rs): the base mesh of each quadrant, `(quadrant, None)`, and the
-/// blended mesh of each drawn layer, `(quadrant, Some(index in layers))`.
+/// read ahead, world.rs).
 pub struct TerrainPrep {
     /// The cell's landscape as the data has it (grass and footsteps read its layers).
     pub land: Land,
@@ -932,10 +988,11 @@ pub struct TerrainPrep {
     pub surface: Surface,
     /// The layers drawn: the land's, stitched to the neighbours' ([`stitch_layers`]).
     layers: Vec<Layer>,
-    meshes: HashMap<(u8, Option<usize>), Mesh>,
-    /// Each quadrant's base with its first [`folded_layers`] layers folded in
-    /// ([`folded_mesh`]); none for a quadrant without layers.
-    folded: HashMap<u8, Mesh>,
+    /// Each quadrant's meshes, and how they are drawn.
+    quads: [QuadMeshes; 4],
+    draw: QuadrantDraw,
+    /// The cell's south-west corner (game space).
+    origin: Vec2,
     /// The texture repeat the meshes were built for.
     tile: f32,
 }
@@ -944,9 +1001,11 @@ pub struct TerrainPrep {
 /// texture repeat, [`TerrainSettings::tile`]); `lands`: the LAND of the grid squares around
 /// it (`fnv_world::land_surface::LandIds`), whose texture layers its own are stitched to
 /// ([`NEIGHBOURS`]) and, when `spec` (`nvf_play::smooth_terrain::spec`, taken when the job
-/// is made) smooths, whose heights the smoothed surface reads along its edges. `None`: no
-/// landscape or no heights.
-pub fn prepare_terrain(lo: &LoadOrder, schema: &EsmSchema, land_id: u32, grid: (i32, i32), tile: f32, lands: LandIds, spec: SurfaceSpec) -> Option<TerrainPrep> {
+/// is made) smooths, whose heights the smoothed surface reads along its edges; every
+/// quadrant drawn as `draw` says (in full, or 2 × 2 at first under 4 × 4 near:
+/// `crate::terrain_lod::first_draw`). `None`: no landscape or no heights.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_terrain(lo: &LoadOrder, schema: &EsmSchema, land_id: u32, grid: (i32, i32), tile: f32, lands: LandIds, spec: SurfaceSpec, draw: QuadrantDraw) -> Option<TerrainPrep> {
     let land = load_land(lo, schema, land_id, LandParts::ALL)?;
     let centre = land.heights.as_ref()?;
     let surface = match spec {
@@ -963,90 +1022,47 @@ pub fn prepare_terrain(lo: &LoadOrder, schema: &EsmSchema, land_id: u32, grid: (
     let around = NEIGHBOURS.map(|(dx, dy)| lands[(dy + 1) as usize][(dx + 1) as usize].and_then(|id| load_land(lo, schema, id, parts)).map(|l| l.layers));
     let layers = stitch_layers(&land.layers, &around);
     let origin = Vec2::new(grid.0 as f32 * fnv_world::CELL_SIZE, grid.1 as f32 * fnv_world::CELL_SIZE);
-    let mut meshes = HashMap::new();
-    let mut folded = HashMap::new();
-    for q in 0..4u8 {
-        if let Some(mesh) = quadrant_mesh(&land, &surface, q, None, origin, tile) {
-            meshes.insert((q, None), mesh);
-        }
-        let quad = quadrant_layers(&layers, q);
-        let alphas: Vec<Vec<f32>> = quad.iter().map(|(_, l)| refine_quad(&alpha_grid(l), surface.sub())).collect();
-        for ((i, _), alpha) in quad.iter().zip(&alphas) {
-            if let Some(mesh) = quadrant_mesh(&land, &surface, q, Some(alpha), origin, tile) {
-                meshes.insert((q, Some(*i)), mesh);
-            }
-        }
-        if !alphas.is_empty() {
-            let first: Vec<&[f32]> = alphas.iter().take(folded_layers(tile)).map(Vec::as_slice).collect();
-            if let Some(mesh) = folded_mesh(&land, &surface, q, &first, origin, tile) {
-                folded.insert(q, mesh);
-            }
-        }
-    }
-    Some(TerrainPrep { land, surface, layers, meshes, folded, tile })
+    let quads = std::array::from_fn(|q| build_quadrant(&land, &surface, &layers, q as u8, draw, origin, tile));
+    Some(TerrainPrep { land, surface, layers, quads, draw, origin, tile })
 }
 
 /// A mesh of a cell's land (its base or a texture layer over it).
 #[derive(Component)]
 pub struct LandMesh;
 
+/// The quadrant (0 south-west, 1 south-east, 2 north-west, 3 north-east) a [`LandMesh`]
+/// draws, so 4 × 4 near can replace one quadrant's meshes (`crate::terrain_lod`).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LandQuadrant(pub u8);
+
+/// What a cell's quadrants are redrawn from (`crate::terrain_lod`, 4 × 4 near): its
+/// landscape, surface, drawn layers, origin and texture repeat, as the cell was spawned
+/// with them.
+pub struct TerrainSource {
+    pub land: Land,
+    pub surface: Surface,
+    pub layers: Vec<Layer>,
+    pub origin: Vec2,
+    pub tile: f32,
+}
+
 /// Spawn a cell's terrain from its prepared landscape ([`prepare_terrain`]); returns the
-/// landscape and the surface it is drawn on (for the grass).
+/// landscape and the surface it is drawn on (for the grass). Under 4 × 4 near the cell's
+/// quadrants are handed to `crate::terrain_lod` to be redrawn by distance.
 pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx) -> (Land, Surface) {
-    let TerrainPrep { land, surface, layers: drawn, mut meshes, mut folded, tile } = prep;
+    let TerrainPrep { land, surface, layers: drawn, quads, draw, origin, tile } = prep;
     if surface.is_smoothed() {
         tm.tm.cache.smoothed_cells += 1;
     } else {
         tm.tm.cache.stored_cells += 1;
     }
-    let folds = tm.tm.folds();
     let most = folded_layers(tile);
-    // The repeat for the shader to work the texture coordinate out with, 0 when the mesh
-    // carries the coordinate.
-    let shader_tile = if most == FOLDED_LAYERS { tile } else { 0.0 };
     let mut overflow = 0usize;
-    for q in 0..4u8 {
-        let base = drawn.iter().rev().find(|l| l.base && l.quadrant == q);
-        if base.is_none() {
-            tm.tm.cache.quadrants_without_base += 1;
-        }
-        let tex = tm.texture_of(world, base.and_then(|b| b.texture));
-        let layers = quadrant_layers(&drawn, q);
-        // The first layers folded into the base's draw (module notes), when each of them
-        // has a texture; otherwise the base alone and every layer blended over it.
-        let mut blended_from = 0;
-        let folded_mat = match folded.remove(&q).filter(|_| folds) {
-            Some(mesh) => {
-                let first: Option<Vec<String>> = layers.iter().take(most).map(|(_, l)| tm.texture_of(world, l.texture)).collect();
-                first.and_then(|first: Vec<String>| Some((mesh, tm.folded_material(tex.clone(), &first, shader_tile)?, first.len())))
-            }
-            None => None,
-        };
-        if let Some((mesh, mat, n)) = folded_mat {
-            let mesh = tm.assets.meshes.add(mesh);
-            commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
-            tm.tm.cache.folded_quadrants += 1;
-            tm.tm.cache.folded_layers += n;
-            blended_from = n;
-        } else {
-            let mat = tm.base_material(tex);
-            if let Some(mesh) = meshes.remove(&(q, None)) {
-                let mesh = tm.assets.meshes.add(mesh);
-                commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
-            }
-        }
-        for (rank, (i, l)) in layers.into_iter().enumerate().skip(blended_from) {
-            let Some(tex) = tm.texture_of(world, l.texture) else { continue };
-            let Some(mat) = tm.layer_material(tex, rank) else { continue };
-            if let Some(mesh) = meshes.remove(&(q, Some(i))) {
-                let mesh = tm.assets.meshes.add(mesh);
-                commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
-                tm.tm.cache.layers += 1;
-                if blended_from > 0 {
-                    overflow += 1;
-                }
-            }
-        }
+    let mut entities: [Vec<Entity>; 4] = Default::default();
+    for (q, meshes) in quads.into_iter().enumerate() {
+        let spawned = spawn_quadrant(commands, cell, world, &drawn, q as u8, meshes, tile, tm, Visibility::Inherited, true);
+        overflow += spawned.overflow;
+        entities[q] = spawned.entities;
     }
     // The first cell with layers past a folded group says how many it drew blended over
     // them (once a run; the smoke check that such layer draws exist at all).
@@ -1057,7 +1073,100 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
             info!("terrain: {overflow} layers drawn blended over folded quadrants (past the first {most} of a quadrant), in the first cell that has them");
         }
     }
+    // 4 x 4 near (the run's choice, fixed before the first cell): the cell's quadrants are
+    // redrawn by distance from what they were built from.
+    if let Some(rule) = nvf_play::smooth_terrain::distance_rule() {
+        let source = TerrainSource { land: land.clone(), surface: surface.clone(), layers: drawn, origin, tile };
+        tm.tm.cache.lod.get_or_insert_with(|| crate::terrain_lod::TerrainLod::new(rule)).add_cell(cell, std::sync::Arc::new(source), draw, entities);
+    }
     (land, surface)
+}
+
+/// What [`spawn_quadrant`] spawned: the entities and the layers drawn blended over a
+/// folded base.
+pub struct SpawnedQuadrant {
+    pub entities: Vec<Entity>,
+    /// Their meshes (for the swap's readiness check, `crate::terrain_lod`).
+    pub meshes: Vec<AssetId<Mesh>>,
+    pub overflow: usize,
+}
+
+/// Spawn quadrant `q`'s meshes under `cell` with `visibility`; `count`: add them to the
+/// cache's counts (a cell's first spawn; not a redraw at another level).
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_quadrant(commands: &mut Commands, cell: Entity, world: &WorldData, drawn: &[Layer], q: u8, meshes: QuadMeshes, tile: f32, tm: &mut TerrainCtx, visibility: Visibility, count: bool) -> SpawnedQuadrant {
+    let QuadMeshes { base: base_mesh, layers: mut layer_meshes, folded } = meshes;
+    let folds = tm.tm.folds();
+    let most = folded_layers(tile);
+    // The repeat for the shader to work the texture coordinate out with, 0 when the mesh
+    // carries the coordinate.
+    let shader_tile = if most == FOLDED_LAYERS { tile } else { 0.0 };
+    let mut out = SpawnedQuadrant { entities: Vec::new(), meshes: Vec::new(), overflow: 0 };
+    let add = |commands: &mut Commands, mesh: Handle<Mesh>, mat: MeshMaterialAny| -> (Entity, AssetId<Mesh>) {
+        let id = mesh.id();
+        let e = match mat {
+            MeshMaterialAny::Folded(m) => commands.spawn((Mesh3d(mesh), MeshMaterial3d(m), Transform::IDENTITY, visibility, LandMesh, LandQuadrant(q))).id(),
+            MeshMaterialAny::Nif(m) => commands.spawn((Mesh3d(mesh), MeshMaterial3d(m), Transform::IDENTITY, visibility, LandMesh, LandQuadrant(q))).id(),
+        };
+        commands.entity(cell).add_child(e);
+        (e, id)
+    };
+    let push = |out: &mut SpawnedQuadrant, (e, id): (Entity, AssetId<Mesh>)| {
+        out.entities.push(e);
+        out.meshes.push(id);
+    };
+    let base = drawn.iter().rev().find(|l| l.base && l.quadrant == q);
+    if base.is_none() && count {
+        tm.tm.cache.quadrants_without_base += 1;
+    }
+    let tex = tm.texture_of(world, base.and_then(|b| b.texture));
+    let layers = quadrant_layers(drawn, q);
+    // The first layers folded into the base's draw (module notes), when each of them
+    // has a texture; otherwise the base alone and every layer blended over it.
+    let mut blended_from = 0;
+    let folded_mat = match folded.filter(|_| folds) {
+        Some(mesh) => {
+            let first: Option<Vec<String>> = layers.iter().take(most).map(|(_, l)| tm.texture_of(world, l.texture)).collect();
+            first.and_then(|first: Vec<String>| Some((mesh, tm.folded_material(tex.clone(), &first, shader_tile)?, first.len())))
+        }
+        None => None,
+    };
+    if let Some((mesh, mat, n)) = folded_mat {
+        let mesh = tm.assets.meshes.add(mesh);
+        push(&mut out, add(commands, mesh, MeshMaterialAny::Folded(mat)));
+        if count {
+            tm.tm.cache.folded_quadrants += 1;
+            tm.tm.cache.folded_layers += n;
+        }
+        blended_from = n;
+    } else {
+        let mat = tm.base_material(tex);
+        if let Some(mesh) = base_mesh {
+            let mesh = tm.assets.meshes.add(mesh);
+            push(&mut out, add(commands, mesh, MeshMaterialAny::Nif(mat)));
+        }
+    }
+    for (rank, (i, l)) in layers.into_iter().enumerate().skip(blended_from) {
+        let Some(tex) = tm.texture_of(world, l.texture) else { continue };
+        let Some(mat) = tm.layer_material(tex, rank) else { continue };
+        if let Some(mesh) = layer_meshes.remove(&i) {
+            let mesh = tm.assets.meshes.add(mesh);
+            push(&mut out, add(commands, mesh, MeshMaterialAny::Nif(mat)));
+            if count {
+                tm.tm.cache.layers += 1;
+            }
+            if blended_from > 0 {
+                out.overflow += 1;
+            }
+        }
+    }
+    out
+}
+
+/// A land mesh's material: a folded quadrant's or a NIF one.
+enum MeshMaterialAny {
+    Folded(Handle<TerrainMaterial>),
+    Nif(Handle<NifMaterial>),
 }
 
 #[cfg(test)]
