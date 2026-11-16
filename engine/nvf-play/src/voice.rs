@@ -390,10 +390,18 @@ pub enum Step {
     Start(usize),
 }
 
-/// Compare a line being said with what its speaker is playing.
-pub fn step(playing: Option<(FormId, usize, f64)>, info: FormId, response: usize, remaining: f64) -> Step {
+/// Where a line is heard from, and whether it is said through a talking activator
+/// ([`Said::place`], [`Said::through`]).
+pub type Source = (FormId, bool);
+
+/// Compare a line being said with what its speaker is playing (line, response, time
+/// left, [`Source`]). A line heard from elsewhere starts again from there: the same line
+/// of a talking actor said through another activator replaces the first in the game
+/// (`Game::say_line_through`) and must not stay at the first one's place, even while a
+/// menu holds its timer (#2768).
+pub fn step(playing: Option<(FormId, usize, f64, Source)>, info: FormId, response: usize, remaining: f64, source: Source) -> Step {
     match playing {
-        Some((i, r, before)) if i == info && r == response && remaining <= before + 1e-6 => Step::Keep,
+        Some((i, r, before, from)) if i == info && r == response && remaining <= before + 1e-6 && from == source => Step::Keep,
         _ => Step::Start(response),
     }
 }
@@ -568,8 +576,8 @@ fn play(
     }
     for s in &said_now {
         let k = s.response;
-        let was = st.playing.get(&s.speaker).map(|p| (p.info, p.response, p.remaining));
-        if step(was, s.info, k, s.remaining) == Step::Keep {
+        let was = st.playing.get(&s.speaker).map(|p| (p.info, p.response, p.remaining, (p.place, p.through)));
+        if step(was, s.info, k, s.remaining, (s.place, s.through)) == Step::Keep {
             if let Some(p) = st.playing.get_mut(&s.speaker) {
                 p.remaining = s.remaining;
             }
@@ -848,17 +856,32 @@ mod tests {
     #[test]
     fn a_sound_starts_once_per_response() {
         let (a, b) = (FormId(0x10), FormId(0x11));
+        let here = (FormId(0x20), false);
         // Nothing playing: start.
-        assert_eq!(step(None, a, 0, 4.0), Step::Start(0));
+        assert_eq!(step(None, a, 0, 4.0, here), Step::Start(0));
         // The same response, time running down: keep.
-        assert_eq!(step(Some((a, 0, 4.0)), a, 0, 3.9), Step::Keep);
+        assert_eq!(step(Some((a, 0, 4.0, here)), a, 0, 3.9, here), Step::Keep);
         // A menu holds script time: still the same sound.
-        assert_eq!(step(Some((a, 0, 3.9)), a, 0, 3.9), Step::Keep);
+        assert_eq!(step(Some((a, 0, 3.9, here)), a, 0, 3.9, here), Step::Keep);
         // The line's next response.
-        assert_eq!(step(Some((a, 0, 2.1)), a, 1, 1.9), Step::Start(1));
+        assert_eq!(step(Some((a, 0, 2.1, here)), a, 1, 1.9, here), Step::Start(1));
         // Another line by the same speaker.
-        assert_eq!(step(Some((a, 1, 1.9)), b, 0, 5.0), Step::Start(0));
+        assert_eq!(step(Some((a, 1, 1.9, here)), b, 0, 5.0, here), Step::Start(0));
         // The same line said again: its time left went up.
-        assert_eq!(step(Some((a, 0, 0.4)), a, 0, 4.0), Step::Start(0));
+        assert_eq!(step(Some((a, 0, 0.4, here)), a, 0, 4.0, here), Step::Start(0));
+    }
+
+    /// One talking actor's line said through a second activator while a menu holds its
+    /// timer (the same line, response and time left): the sound starts again from the
+    /// second activator instead of staying at the first (#2768); so does a line that
+    /// starts or stops going through an activator at the same place.
+    #[test]
+    fn a_line_moved_to_another_activator_starts_again_there() {
+        let line = FormId(0x10);
+        let (first, second, actor) = (FormId(0x601), FormId(0x607), FormId(0x502));
+        assert_eq!(step(Some((line, 0, 3.0, (first, true))), line, 0, 3.0, (first, true)), Step::Keep);
+        assert_eq!(step(Some((line, 0, 3.0, (first, true))), line, 0, 3.0, (second, true)), Step::Start(0));
+        assert_eq!(step(Some((line, 1, 1.0, (first, true))), line, 1, 1.0, (second, true)), Step::Start(1));
+        assert_eq!(step(Some((line, 0, 3.0, (actor, false))), line, 0, 3.0, (actor, true)), Step::Start(0));
     }
 }
