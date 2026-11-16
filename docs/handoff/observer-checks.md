@@ -3244,6 +3244,11 @@ below; frames at the same view and window size on both sides. The items' FormIDs
 from the GECK or `fnvtool`; they are placed with `player.placeatme` in a lit interior
 such as the Prospector Saloon (GSProspectorSaloonInterior).
 
+Status lines below come from captures of the original, jobs envmap, envmap2 … envmap5
+(run 2026-11-16 at Primm, first person, 1280 × 720; nif.md §6 "Environment maps on
+other shapes" has the numbers). They are exteriors only: interior shots fail in the
+capture setup, so every part of a check that needs an interior is still open.
+
 223. **How strong is the reflection on a masked prop without the window flag, and does it
      follow the view?** (P3; #2841, nif.md §6 "Environment maps on other shapes".) Ours:
      the cube read along the view reflected about the normal, × the shape's
@@ -3255,6 +3260,12 @@ such as the Prospector Saloon (GSProspectorSaloonInterior).
      brighter the empty bottle's are than the full one's says whether the scale
      multiplies as ours does (about 2.4 times). Compare with `NVF_PLAY_DEBUG_ENV_STRENGTH`
      at 0.5 and 2.
+     *Status: partly answered.* The bright patches are fixed in the world (a pot turned
+     in place, the held pistol at four headings) and a streak's place is set by the view
+     [observed]. By day the original needs 1-8 times our strength-1 term depending on the
+     object [observed fit]. Still open: the absolute strength, and whether the scale
+     multiplies: the two bottles' glass differs in colour (4.0-4.6× under moonlight), so
+     they cannot show it; a pair with the same texture and different scales is needed.
 224. **Does a shape with Environment_Mapping and a cube but no slot-5 mask reflect?** (P3;
      #2841, nif.md §6.) Ours: at full strength over the whole shape [hypothesis]. Place
      an empty whiskey bottle (WhiskeyBottle01Empty01, `whiskeybottle01empty.nif`,
@@ -3263,6 +3274,9 @@ such as the Prospector Saloon (GSProspectorSaloonInterior).
      frame, then one strafing past. Even streaks over the whole bottle agree with ours;
      none at all, or streaks only where the normal map's alpha is bright, match
      `NVF_PLAY_DEBUG_ENV_NO_MASK=none` or `=normal-alpha`.
+     *Status: open.* The whiskey bottle is patterned with one glossy patch, not evenly
+     washed; the cafeteria glass is evenly milky [observed]; their own textures cannot be
+     told from an unmasked term.
 225. **Which way is the cube turned on a shape without the window flag, and on a window?**
      (P3; #2841, nif.md §6.) The GECK wiki says the window flag "simply flips the cubemap
      orientation" without saying which axis. Ours: both read the game-space reflection
@@ -3273,6 +3287,10 @@ such as the Prospector Saloon (GSProspectorSaloonInterior).
      window of check 222. Compare where the bright parts of the cube land with
      `NVF_PLAY_DEBUG_ENV_AXES` (`base`, `flip-x`, `flip-y`, `flip-z`, `swap-yz`) and
      `NVF_PLAY_DEBUG_ENV_AXES_WINDOW`.
+     *Status: partly answered.* The lookup is fixed in the world, not in the object or
+     the view [observed, firm: envmap4's pot and held pistol]. Which axis is up and what
+     the window flag flips are open: no cube content could be recognised. Lucky 38 is an
+     interior: not captured.
 226. **On blended glass without the window flag, is the reflection weighted by the glass's
      alpha?** (P3; #2841, nif.md §6.) Ours: the shape keeps its blend, so its reflection
      fades with its alpha like the rest of its colour; window shapes are drawn with the
@@ -3281,18 +3299,33 @@ such as the Prospector Saloon (GSProspectorSaloonInterior).
      wall and take a frame close up (about 60 units) and one strafing. A faint film whose
      streaks are no brighter than the glass itself agrees with ours; bright streaks over a
      nearly clear glass match `NVF_PLAY_DEBUG_ENV_BLEND=premultiplied`.
+     *Status: open.* The glass tried (the cafeteria glass placed in the air) drew opaque
+     in the original, transmission below about 0.1 [observed], so it had no faint alpha
+     to compare; the junk drinking glass named here is the one to use.
 227. **Does the reflection depend on the light, with and without Env Map Fade?** (P3;
      #2841, nif.md §6.) The wiki: Env Map Fade (Shader Flags 2 bit 15) "Fades the
-     cubemap's brightness based on the distance to the nearest light". Ours: no light
-     dependence at all [hypothesis]. Place a Nuka-Cola bottle (NukaColaBottle,
-     `sodabottle01.nif`, sets the bit) and a Sunset Sarsaparilla bottle (SSBottleEmpty,
-     `ssbottle02.nif`; whether it sets the bit is to be read with `fnvtool nif decode`)
-     side by side, first under a lamp, then in a dark corner of the same interior (or
-     with the lamp's light switched off), and frame both each time. Streaks as bright in
-     the dark as under the lamp agree with ours; streaks that dim in the dark on one
-     bottle or both match `NVF_PLAY_DEBUG_ENV_LIGHT=fade-flag` or `=all` (a rough
-     stand-in: it scales by the light the surface receives, not by the distance to a
-     light).
+     cubemap's brightness based on the distance to the nearest light". Ours (since the
+     captures below): shapes without the window flag are scaled by the scene light, the
+     ambient colour plus the sun's or moon's (an interior's ambient plus directional),
+     without N·L, held to 1; point lights are left out; the flag changes nothing
+     [hypothesis]. Place a Nuka-Cola bottle (NukaColaBottle, `sodabottle01.nif`, sets the
+     bit) and a Sunset Sarsaparilla bottle (SSBottleEmpty, `ssbottle02.nif`, which does
+     not: its shader flags 2 are 1) side by side, first under a lamp, then in a dark
+     corner of the same interior (or with the lamp's light switched off), and frame both
+     each time; then the same in two interiors with dark and bright cell lighting.
+     Streaks that follow the cell's light and not the lamp agree with ours; streaks that
+     follow the lamp match `NVF_PLAY_DEBUG_ENV_LIGHT=all` (or `=fade-flag` if only the
+     Nuka-Cola bottle's do; both rough stand-ins); streaks as bright in the dark as in
+     the light match `=off`.
+     *Status: partly answered (exteriors).* A streak on a static Sarsaparilla bottle kept
+     its place under sun, fire and moon, took the light's colour and fell to 0.33× from
+     day to night while the ground fell to 0.07-0.10× [observed for that bottle;
+     hypothesis as a rule]; the fit needs about none of the term at night. The flag
+     showed no difference: fire-made highlights vanished with the fire on flagged and
+     unflagged bottles alike [observed]. No env-mapped bottle kept more of its day
+     brightness at night than the no-cube wine bottle [observed]. Open: interiors, the
+     role of point lights, and what L is exactly (sun intensity, ambient, or a light sum
+     at the surface).
 228. **Do reflections fade out between 1,500 and 1,800 units from the camera?** (P3;
      #2841, nif.md §6.) The INI settings `fEnvMapLOD1` 1500 and `fEnvMapLOD2` 1800
      [documented: GECK wiki "INI Settings"]. Ours: whole up to 1,500 units, none from
@@ -3301,10 +3334,20 @@ such as the Prospector Saloon (GSProspectorSaloonInterior).
      `metalpot.nif`) from 1,200, 1,500, 1,650, 1,800 and 2,000 units, with the same view
      direction. A reflection that is whole at 1,500, about half at 1,650 and gone at
      1,800 agrees with ours; a sudden cut or no change says otherwise
-     (`NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=0` draws no fade).
+     (`NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=0` draws no fade). Ours fades by the distance to
+     the object's origin, so a long object fades as a whole.
+     *Status: open.* The running original reported 1500 and 1800 (envmap); setting both
+     to 1 in memory changed no picture at 51-1,200 units (envmap5), so either the setting
+     does not apply live or the fade does not act there; a crate at 600-1,900 units
+     showed no sheen to lose (envmap4). Use an object with a strong visible sheen, the
+     camera fixed and the object moved, at a fixed game time.
 229. **Does a shape with Environment_Mapping but no cube in slot 4 reflect anything?**
      (P3; #2841, nif.md §6.) 214 such shapes in the data (the wine bottle Wine,
      `clutter\food\winebottle01.nif`, 238 placements; the Pimp-Boy). Ours: no reflection
      (no default cube) [hypothesis]. Frame a wine bottle close up and strafing. A plain
      bottle agrees with ours; moving highlights say the game supplies a cube of its own
      (as the wiki says it does for Eye Environment Mapping).
+     *Status: partly answered.* The wine bottle's glass is near black in every view, with
+     no streak like the env-mapped bottles' [observed]; its glass texture is very dark,
+     so a weak default cube would be hard to see. A lighter bit-7 shape without a cube
+     (the Pimp-Boy's) would settle it.
