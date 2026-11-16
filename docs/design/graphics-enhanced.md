@@ -707,7 +707,7 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   the surface's subdivision): the bake is flat and unlit, and what it reads (vertex
   colour, every opacity, the packed channels of a folded draw, the texture coordinate as
   the world place over the repeat, anti-tiled or not) is linear on the LAND triangles, so
-  the picture is the same as from the drawn mesh, up to float rounding, with a sixteenth of
+  the picture is the same as from the drawn mesh, up to float rounding, with about a fifteenth of
   the vertices kept in the main world at 4 x 4. Switching the blend on while the game runs
   prepares the region's up to 9 loaded cells again on the main thread
   (`terrain_surface.rs::backfill_cells`, `terrain.rs::capture_surface`), at the surface's

@@ -1206,7 +1206,7 @@ pub(crate) fn detail_vertices(mesh: &Mesh) -> Option<DetailVertices> {
 /// channels included: [`stored_weights`], [`refine_quad`]; the texture coordinate: the
 /// world place over the repeat) or not read for the colour at all (the normals, the
 /// tangents' direction, the heights, which the copy flattens), so the copy bakes the same
-/// picture (up to float rounding in the interpolation) from a sixteenth of the vertices at
+/// picture (up to float rounding in the interpolation) from about a fifteenth of the vertices at
 /// the default 4 × 4. A layer's mesh keeps a LAND triangle exactly where one of its corners
 /// paints, as a mesh drawn as stored does ([`quadrant_mesh_drawn`]): its opacity is linear there, so a finer
 /// triangle inside it with three unpainted corners would be degenerate. A mesh at the LAND
@@ -1237,7 +1237,7 @@ pub(crate) fn land_resolution(mesh: &Mesh) -> Mesh {
     let squares = QUAD_SIDE - 1;
     let s3 = 3 * stride;
     let mut kept = vec![false; squares * squares * 2];
-    for t in drawn.chunks_exact(3) {
+    for t in drawn.as_chunks::<3>().0 {
         let (r, c) = t.iter().fold((0, 0), |(r, c), &v| (r + v as usize / qs, c + v as usize % qs));
         let (sr, sc) = ((r / s3).min(squares - 1), (c / s3).min(squares - 1));
         kept[(sr * squares + sc) * 2 + usize::from(r - sr * s3 > c - sc * s3)] = true;
@@ -2364,6 +2364,18 @@ mod tests {
                     // Its colours and opacities are the stored mesh's: the bake reads the same values.
                     let (Some(V::Float32x4(a)), Some(V::Float32x4(b))) = (copy.attribute(Mesh::ATTRIBUTE_COLOR), stored_mesh.attribute(Mesh::ATTRIBUTE_COLOR)) else { panic!() };
                     assert!(a.iter().zip(b).all(|(x, y)| (Vec4::from_array(*x) - Vec4::from_array(*y)).abs().max_element() < 1e-6), "{subdiv} {draw:?} q{q}: colours");
+                    // So are the other channels the bake reads: both texture coordinates (a
+                    // folded draw's packed opacities among them) and the tangent's fourth
+                    // number, against the mesh built as stored, not the copy's own rule.
+                    for uv in [Mesh::ATTRIBUTE_UV_0, Mesh::ATTRIBUTE_UV_1] {
+                        match (copy.attribute(uv), stored_mesh.attribute(uv)) {
+                            (Some(V::Float32x2(a)), Some(V::Float32x2(b))) => assert!(a.iter().zip(b).all(|(x, y)| (Vec2::from_array(*x) - Vec2::from_array(*y)).abs().max_element() < 1e-4), "{subdiv} {draw:?} q{q}: {uv:?}"),
+                            (None, None) => {}
+                            _ => panic!("{subdiv} {draw:?} q{q}: {uv:?} differs in kind"),
+                        }
+                    }
+                    let (Some(V::Float32x4(a)), Some(V::Float32x4(b))) = (copy.attribute(Mesh::ATTRIBUTE_TANGENT), stored_mesh.attribute(Mesh::ATTRIBUTE_TANGENT)) else { panic!() };
+                    assert!(a.iter().zip(b).all(|(x, y)| (x[3] - y[3]).abs() < 1e-6), "{subdiv} {draw:?} q{q}: the tangent's fourth number");
                 }
             }
         }
