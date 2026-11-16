@@ -17,17 +17,17 @@ original-game parity remain unverified.
 
 ## NVForever mapping and open questions
 
-- [documented: repository `levelup::advance`, `experience::level_up` and
-  `chargen::SpecialSheet::apply`] Advance uses the existing level/menu operation,
-  leaving XP unchanged. Attribute changes shift the base using `actor::shift_base`,
+- Advance uses `levelup::advance`, also called by `experience::level_up`, leaving
+  XP unchanged. As in `chargen::SpecialSheet::apply`, attribute changes shift the
+  base using `actor::shift_base`,
   retaining permanent, temporary and damage pools, carry synchronization and
   actor-value event delivery. [hypothesis] The original's exact attribute pool and
   its XP behavior after manual advancement still need captures.
-- [documented: repository `revision::keeps` and `functions::actor::set_actor_value`]
-  The revision policy retains player attribute allocations; the new source call
-  follows it. Arguments are read and SPECIAL admission is checked before mutation.
-- [documented: repository `functions::reputation::{write_axis,change,store}`]
-  Exact removal uses the existing reputation writer, limits and trace event. Invalid
+- The source call follows `revision::keeps`, retaining player attribute allocations
+  as `functions::actor::set_actor_value` does. Arguments are read and SPECIAL
+  admission is checked before mutation.
+- Exact removal uses `functions::reputation::{write_axis,change,store}` for the
+  existing reputation writer, limits and trace event. Invalid
   axes retain the established script-return request and call failure. [hypothesis]
   Those neighboring policies also apply to exact removal; negative and zero amounts,
   boundaries, missing scales and disguise interaction require original-game captures.
@@ -37,8 +37,8 @@ original-game parity remain unverified.
   reinterpreted as an omitted receiver. Omitted calls work without script self.
   Nonfinite amounts and arguments of the wrong type fail without mutation; integer
   amounts use the established `Args::int` conversion.
-- [documented: repository `schemas/script/command_opcodes.json` provenance]
-  Existing original-game command queries record 4309, 4368 and 4668 respectively.
+- The existing `schemas/script/command_opcodes.json` records 4309, 4368 and 4668
+  respectively, with provenance identifying prior original-game command queries.
   They establish command identity, not parameter encoding. This contribution does
   not number the catalogue rows or add a native encoding. Source compilation uses
   the existing named-call IR/SCDA transport. [hypothesis] Native ModPCAttribute enum
@@ -46,7 +46,7 @@ original-game parity remain unverified.
 
 ## Authored controls and acceptance
 
-- [documented: repository `tests/player_source_commands.rs`] Portable controls cover
+- Portable controls in `tests/player_source_commands.rs` cover
   successful compiled source calls, alias, invalid input/receiver, neighboring state,
   existing event consumers and save/restore. They are implementation controls, not
   original-game observations. Baseline missing support and changed-source execution
@@ -90,8 +90,8 @@ after an independent reader agrees with the GECK output. A separate read-only qu
 job can repeat `GetCommandOpcode` for the three names and `AdvLevel`; that query
 does not settle argument encoding or function behavior.
 
-[documented: repository `tools/smoke/fixtures/player-source-commands.steps.json`]
-The authored runtime-query fixture and `player-source-commands` smoke scenario
+The authored `tools/smoke/fixtures/player-source-commands.steps.json` runtime-query
+fixture and `player-source-commands` smoke scenario
 exercise NVForever source compilation through the actual launcher. They are
 UNRUN. Their source and printed deltas are portable implementation expectations,
 not original-game evidence or native bytecode goldens.
