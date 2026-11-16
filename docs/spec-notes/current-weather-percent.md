@@ -65,8 +65,7 @@ twice under different module names.
 
 The controlled baseline neutrally extracts the original report body and exposes
 existing producer/test helpers, with the identical fifteen fixtures. It is not
-pristine main and calls no new Game API. No compiler or test has run for this
-batch. Future results must name their exact source and dependency context;
+pristine main and calls no new Game API. Execution results are qualified per exact source and dependency context;
 authored coverage alone does not qualify execution. Full ScriptState scheduling,
 rendering, native parity and execution of original installed mods remain outside
 this source-only evidence.
