@@ -202,6 +202,7 @@ pub mod pickpocket;
 pub mod poker;
 pub mod provocation;
 pub mod revision;
+mod retired_scene;
 pub mod quest;
 pub mod quest_targets;
 pub mod radiation;
