@@ -49,10 +49,10 @@ original-game parity remain unverified.
 - Portable controls in `tests/player_source_commands.rs` cover
   successful compiled source calls, alias, invalid input/receiver, neighboring state,
   existing event consumers and save/restore. They are implementation controls, not
-  original-game observations. Qualification is revision-specific: execution of the
-  current revision is pending; earlier partial results are recorded in
-  [PR #2772](https://github.com/LootJunkieAzza/NVForever/pull/2772). The baseline
-  comparison remains UNRUN.
+  original-game observations. All seven passed for c4 in hosted composite
+  `23388a32d` with Main `be6db0948`. The identical fixture on official Main
+  `cfa60c0fa` failed all seven at missing named handlers. Revision-specific results
+  are recorded in [PR #2772](https://github.com/LootJunkieAzza/NVForever/pull/2772).
 - [hypothesis] Original-game captures should compare XP before/after repeated
   advancement, attribute base/permanent/current pools with effects and damage,
   fractional reputation loss across each limit, invalid axes and receivers, and
@@ -93,7 +93,18 @@ job can repeat `GetCommandOpcode` for the three names and `AdvLevel`; that query
 does not settle argument encoding or function behavior.
 
 The authored `tools/smoke/fixtures/player-source-commands.steps.json` runtime-query
-fixture and `player-source-commands` smoke scenario
-exercise NVForever source compilation through the actual launcher. They are
-UNRUN. Their source and printed deltas are portable implementation expectations,
-not original-game evidence or native bytecode goldens.
+fixture passed through the actual `player-source-commands` launcher at tested
+composite `23388a32d` (Main `be6db0948` plus c4). The Cargo-emitted QA image
+`b1f63e37` used opt-level 0/debug 0 for `fnv-game`, `nvf-play` and `nvforever`,
+default features, and a 16 MiB executable stack reserve. All six strict smoke
+expectations passed: attribute delta 1, infamy 3.25, unchanged fame 11.5, level delta
+1, sentinel 73 and one completed query row without errors. The returned row was 73;
+the game exited normally with code 0 and every launch process ended. Source, index,
+physical inputs and the image remained unchanged.
+
+The earlier QA image with a 1 MiB stack overflowed before reaching the query. The
+successful runtime case uses the 16 MiB reserve above. This is NVForever
+implementation evidence, not an original-game observation or native bytecode golden.
+Other game-log warnings remain; zero errors here describes the query result.
+Optimized release and performance qualification, native parameter encoding, profile
+and whole-mod acceptance remain unmeasured.

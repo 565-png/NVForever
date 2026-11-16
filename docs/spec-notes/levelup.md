@@ -259,6 +259,6 @@ Rules: `crate::perks` (`ADJUST_GAINED_SKILL_POINTS`, `rank_abilities`,
 The source handlers in `functions/player_source.rs` run `AdvancePCLevel` and
 `AdvLevel` through the same `advance` operation as experience and the console. See
 [player source commands](player-source-commands.md) for the documented contract,
-portable controls, receiver policy and unmeasured native encoding. Current-revision
-execution is pending; prior partial results are recorded in PR #2772. Original-game
-parity remains unverified.
+portable controls, receiver policy and unmeasured native encoding. Portable controls
+passed for c4 in hosted composite `23388a32d`; revision-specific results are recorded
+in PR #2772. Original-game parity remains unverified.

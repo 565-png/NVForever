@@ -5998,7 +5998,7 @@ order = [[{ re = 'GetItemCount on .*>> 1\.00' }, { re = 'death item: 0x00168D1A'
 [[scenario]]
 name = "player-source-commands"
 source = "#2271: authored runtime source calls reach the existing player attribute, fractional reputation and level/menu consumers (docs/spec-notes/player-source-commands.md). Native GECK encoding and original-game parity are unmeasured."
-note = "UNRUN. Uses the real query-job launcher path; a post-command sentinel and nonzero state changes prevent missing named handlers from passing. No profile or whole-mod acceptance claim."
+note = "Passed at tested source 23388a32d on QA image b1f63e37: fnv-game/nvf-play/nvforever opt-level 0/debug 0, default features, 16 MiB stack reserve. Six strict state/sentinel/completion oracles and returned row 73 passed; normal exit 0. Native, optimized-release/performance, profile and whole-mod acceptance remain unmeasured."
 areas = ["scripts"]
 paths = ["crates/fnv-game/src/functions/player_source.rs", "crates/fnv-game/src/functions/reputation.rs", "crates/fnv-game/src/game.rs", "tools/smoke/fixtures/player-source-commands.steps.json"]
 env = { NVF_PLAY_TEST_QUERIES = "{repo}/tools/smoke/fixtures/player-source-commands.steps.json", NVF_PLAY_TEST_QUERIES_AT = "1" }

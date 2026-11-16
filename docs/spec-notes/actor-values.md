@@ -267,6 +267,6 @@ The source handler in `functions/player_source.rs` runs `ModPCAttribute Strength
 through the existing attribute base writer, retaining modifiers, damage, event
 delivery and carry synchronization. The SPECIAL-only contract and the distinction
 between portable source behavior and unmeasured native behavior are recorded in
-[player source commands](player-source-commands.md). Current-revision execution
-is pending; prior partial results are recorded in PR #2772. No additional
-original-game observation is claimed.
+[player source commands](player-source-commands.md). Portable controls passed for c4
+in hosted composite `23388a32d`; revision-specific results are recorded in PR #2772.
+No additional original-game observation is claimed.

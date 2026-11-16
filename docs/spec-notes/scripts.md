@@ -1131,9 +1131,9 @@ masters' start date, is a Tuesday]. IsAlwaysHardcore: on now and never switched 
 The source handler `functions::reputation::remove_reputation_exact` reuses the
 fractional reputation writer and its events for `RemoveReputationExact`.
 See [player source commands](player-source-commands.md) for limits, invalid-axis
-policy and revision-specific authored controls. Current-revision execution is
-pending; prior partial results are recorded in PR #2772. Native parameter encoding and original-game
-parity are unmeasured for this contribution.
+policy and revision-specific authored controls. Portable controls passed for c4 in
+hosted composite `23388a32d`; revision-specific results are recorded in PR #2772.
+Native parameter encoding and original-game parity are unmeasured for this contribution.
 
 ### 7.7 Menus, message boxes and dialogue lines (round 4, 2026-10-09)
 
