@@ -260,6 +260,57 @@ each the identity by default. Reading PERK records is a later step.
   reloaded by hand [documented].
 - **No-ammo weapons.** Melee and unarmed weapons cycle without ammo.
 
+### 4.1 Creatures' body guns reload (#2739)
+
+The owner saw sentry bots fire missiles back to back in NVForever and with a pause
+between them in the original [observed: owner playtest, #2739].
+
+- **The record** [documented: fnvtool esm decode, FalloutNV.esm]:
+  `SentryBotMissileLauncher2HL` (WEAP 0x00057E8F) is an Embedded Weapon, not automatic,
+  Clip Size 1, ammo AmmoMissile, Attack Shots/Sec 1.5789, Fire Rate 1.0, Animation Type
+  Launcher (2 Hand), Reload Animation ReloadB, Semi-Automatic Fire Delay 0.1-0.5 s, Min/Max
+  Range 500/2000, Reload Time 2.3333. Its creatures (`CrSentryBotGLHard` 0x000E585D with
+  the laser gatling, `CrSentryBotMGArmy` 0x000A5C6F with the minigun) fight with combat
+  style `CSSentrybot` (Take Cover Chance 0, Wait-to-Fire Timer 10/10, Fire Timer 2/2,
+  Semi-Auto Firing Delay Mult 1/1).
+- **The cause** [design: `engine/nvforever/src/npc_combat.rs` on be6db0948]: a creature's
+  embedded gun was built with no magazine ("a body weapon has no magazine to change: it
+  never reloads", combat-ai.md §19), so a one-round launcher never reloaded. An NPC's
+  semi-automatic gun fires every 1 ÷ Attack Shots/Sec (§4 above; NPCs know no attack-clip
+  length), so the launcher fired every 0.63 s for as long as it kept it. The other pauses
+  in the data were applied, or do not apply:
+  - the weapon's Semi-Automatic Fire Delay (times the style's multipliers) follows every
+    NPC shot, embedded guns included; the launcher's 0.1-0.5 s is shorter than its 0.63 s
+    interval, so it adds nothing;
+  - the style's Wait / Wait-to-Fire / Fire timers are cover timers ("how long to stand out
+    of cover looking for targets to appear", "how long to stay out of cover firing at
+    targets once they are seen" [documented: GECK wiki Combat Style]); NVForever applies
+    them while a fighter holds cover, and CSSentrybot's Take Cover Chance 0 never takes
+    cover;
+  - the weapon choice (`fnv_combat::body_weapon`, combat-ai.md §19) switches by distance
+    and crippled limbs, at most every 1.5 s, never on a timer: with the launcher the only
+    gun that suits (the target past the other gun's reach and beyond the 1000-unit blast,
+    or the other gun's limb crippled), it fires nothing else.
+  - The WEAP's Reload Time is "Unused" [documented: GECK wiki Weapons]; it is no source.
+- **The rule** (`fnv_combat::body_weapon::has_magazine`) [design, #2739]: an embedded gun
+  has a magazine and reloads by the people's rule (as soon as it is empty, for as long as
+  its reload clip runs) once its creature's rig is known to have the weapon's reload clip
+  (`<stance prefix>reload<x>.kf` of its Reload Animation in the creature's folder or its
+  `specialanims`, `attack_anims`' `AttackTimes::reloads`). A creature without that clip
+  fires on without a magazine as before: the 2.0 s fallback stands in for clips not yet
+  known, and whether the original pauses a creature that has no reload animation is
+  observer check 221 [hypothesis]. With the clip, a one-round launcher fires every 0.63 s
+  plus the clip's length. The same rule covers every embedded gun whose creature has its
+  reload clip (the sentry bot's minigun, 255 rounds, and laser gatling, 40; turrets,
+  protectrons): they reload when empty, as the people do.
+- **Ammunition**: rounds still come from nowhere [design: owner 2026-10-17, "they dont
+  use ammo"]. The WEAP flag NPCs Use Ammo ("Actors will use up the associated ammo in
+  their inventory like the player does. (This setting is disabled by default.)"
+  [documented: GECK wiki Weapons]) is not read; the launcher's flags as decoded for #2739
+  are Embedded Weapon, Can't Drop and Non-Playable [documented: fnvtool esm decode,
+  FalloutNV.esm], so the original's sentry bot is taken
+  not to spend its AmmoMissile either [hypothesis].
+
 ## 5. Projectiles, swings, blasts (`projectile.rs`, `shot.rs`)
 
 - **The world.** `CombatWorld` is the engine's side: `ray(from, to, ignore)` and

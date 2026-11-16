@@ -2946,3 +2946,25 @@ already talking takes over at once, same topic or another; nothing is queued or 
      falls as min ÷ distance, where it stops falling or is cut, whether 2,000 units
      means anything, and whether the speech differs from the ordinary line. Also
      whether the subtitle shows at each distance.
+
+## Added 2026-11-16 (sentry bot missile pause, #2739)
+
+221. **How long does a sentry bot wait between two missile shots, and does it switch to its
+     gun between them?** (P1; #2739, combat-rules.md §4.1, combat-ai.md §19.) The owner saw
+     a pause between missiles in the original and none in NVForever [observed: owner
+     playtest]. The launcher `SentryBotMissileLauncher2HL` (0x00057E8F) has Clip Size 1,
+     Reload Animation ReloadB, 1.5789 Attack Shots/Sec and a Semi-Automatic Fire Delay of
+     0.1-0.5 s [documented: fnvtool esm decode, FalloutNV.esm]. Ours now: a missile every
+     0.63 s plus its reload clip's length where the sentry bot's folder has that clip, and
+     the launcher kept until distance or a crippled limb makes another gun suit
+     [hypothesis: the reload is the pause]. Place a Hardened Sentry Bot
+     (`CrSentryBotGLHard` 0x000E585D, launcher and laser gatling) about 1,500 units from
+     the player in the open, in combat with the player (god mode), and record a video of
+     at least 30 s; then the same with `CrSentryBotMGArmy` (0x000A5C6F, launcher and
+     minigun), and once with its gun arm crippled if the console allows. What to read
+     off: the time from one missile's launch to the next; whether a reload animation plays
+     between them; whether the gun fires between two missiles and for how long; at what
+     distances it uses the launcher at all; and how many missiles it fires in a fight
+     (does it run out: its inventory holds AmmoMissile x1 plus up to four from
+     AmmoMissilelauncher75). Also whether a robot whose folder has no reload clip
+     (Mister Gutsy's plasma gun or flamer) ever pauses as if reloading.
