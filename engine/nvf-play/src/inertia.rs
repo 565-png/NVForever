@@ -241,7 +241,8 @@ pub enum Report {
     Stopped { seconds: f32, distance: f32, speed: f32 },
 }
 
-/// The player's ground velocity under inertia, and the switches (all on by default). Each
+/// The player's ground velocity under inertia, and the switches (by default as shipped: the
+/// Global Toggle and Advanced Recoil on, every other part off [design: the owner, 2026-11-16]). Each
 /// switch's own field is what the settings page shows; whether it acts is its method, under
 /// the main switch.
 #[derive(Resource, Debug, Clone)]
@@ -291,15 +292,22 @@ pub struct MovementInertia {
 }
 
 impl Default for MovementInertia {
+    /// What a new game gets: the Global Toggle and Advanced Recoil on, the rest off, so an app
+    /// that only adds the resource (a test app, `crate::player::PlayerPlugin`) plays as shipped.
     fn default() -> Self {
-        MovementInertia { advanced: true, on: true, smooth: true, recoil: true, weapon_handling: true, handling: 1.0, weight: 1.0, weapon_weight: None, agility: 5.0, strength: 5.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None, last_placed: None }
+        MovementInertia { advanced: true, on: false, smooth: false, recoil: true, weapon_handling: false, handling: 1.0, weight: 1.0, weapon_weight: None, agility: 5.0, strength: 5.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None, last_placed: None }
     }
 }
 
 impl MovementInertia {
-    /// At rest, switched on or off.
+    /// At rest, Movement Inertia switched on or off, the other parts at their defaults.
     pub fn switched(on: bool) -> MovementInertia {
         MovementInertia { on, ..default() }
+    }
+
+    /// At rest with every part on (the tests of the parts).
+    pub fn all_on() -> MovementInertia {
+        MovementInertia { on: true, smooth: true, weapon_handling: true, ..default() }
     }
 
     /// The ground speed rides its springs (Movement Inertia under the Global Toggle).
@@ -622,7 +630,7 @@ mod tests {
 
     #[test]
     fn starts_gently_and_reaches_speed_in_time() {
-        let mut m = MovementInertia::default();
+        let mut m = MovementInertia::all_on();
         let first = m.step([0.0, RUN], false, DT);
         assert!(first[1] > 0.0 && first[1] < 0.2 * RUN, "a gentle first step: {first:?}");
         let v = steps(&mut m, [0.0, RUN], START_SECONDS - DT, DT);
@@ -634,7 +642,7 @@ mod tests {
     #[test]
     fn walking_has_inertia_too() {
         let walk = 86.8;
-        let mut m = MovementInertia::default();
+        let mut m = MovementInertia::all_on();
         let v = steps(&mut m, [0.0, walk], 0.1, DT);
         assert!(v[1] < 0.3 * walk, "not at walking speed at once: {v:?}");
         steps(&mut m, [0.0, walk], 2.0, DT);
@@ -644,7 +652,7 @@ mod tests {
 
     #[test]
     fn glides_to_a_stop_creeping_at_the_end_and_ends_at_rest() {
-        let mut m = MovementInertia::default();
+        let mut m = MovementInertia::all_on();
         steps(&mut m, [RUN, 0.0], 2.0, DT);
         let v = m.step([0.0, 0.0], false, DT);
         assert!(v[0] > 0.95 * RUN, "still moving just after the key is let go: {v:?}");
@@ -659,32 +667,32 @@ mod tests {
 
     #[test]
     fn the_start_takes_its_time_and_the_main_switch_rules_every_switch() {
-        let mut m = MovementInertia::default();
+        let mut m = MovementInertia::all_on();
         let mut t = 0.0;
         while m.step([0.0, RUN], false, DT / 4.0)[1] < 0.95 * RUN {
             t += DT / 4.0;
         }
         assert!((t - START_SECONDS).abs() < 0.01, "{t}");
-        let m = MovementInertia::default();
+        let m = MovementInertia::all_on();
         assert!(m.ground() && m.eased_crouch() && m.landing_weight() && m.smooth_hands() && m.handles() && m.soft_recoil(), "all on by default");
-        let off = MovementInertia { advanced: false, ..default() };
+        let off = MovementInertia { advanced: false, ..MovementInertia::all_on() };
         assert!(!off.ground() && !off.eased_crouch() && !off.smooth_hands() && !off.handles() && !off.soft_recoil() && !off.landing_weight());
         assert!(off.on && off.smooth && off.recoil && off.weapon_handling, "each keeps its own choice under it");
         // Movement Inertia carries the crouch and the landings with it.
-        let still = MovementInertia { on: false, ..default() };
+        let still = MovementInertia { on: false, ..MovementInertia::all_on() };
         assert!(!still.ground() && !still.eased_crouch() && !still.landing_weight() && still.smooth_hands());
         // Without Weapon Handling the aim keeps the game's pace, the weapon's weight none.
-        let plain = MovementInertia { weapon_handling: false, weapon_weight: Some(20.0), agility: 10.0, ..default() };
+        let plain = MovementInertia { weapon_handling: false, weapon_weight: Some(20.0), agility: 10.0, ..MovementInertia::all_on() };
         assert_eq!((plain.aim_seconds(true), plain.aim_seconds(false)), (AIM_IN_PLAIN_SECONDS, AIM_OUT_PLAIN_SECONDS));
-        let heavy = MovementInertia { weapon_weight: Some(20.0), ..default() };
+        let heavy = MovementInertia { weapon_weight: Some(20.0), ..MovementInertia::all_on() };
         assert!((heavy.aim_seconds(true) - AIM_IN_SECONDS * 1.35).abs() < 1e-5);
-        let pistol = MovementInertia { weapon_weight: Some(3.0), ..default() };
+        let pistol = MovementInertia { weapon_weight: Some(3.0), ..MovementInertia::all_on() };
         assert!((pistol.aim_seconds(true) - AIM_IN_SECONDS).abs() < 1e-5 && (pistol.aim_seconds(false) - AIM_OUT_SECONDS).abs() < 1e-5, "a pistol keeps the tuned aim");
     }
 
     #[test]
     fn draws_follow_the_attributes_by_the_weapons_class() {
-        let at = |weight: f32, agility: f32, strength: f32| MovementInertia { weapon_weight: Some(weight), agility, strength, ..default() };
+        let at = |weight: f32, agility: f32, strength: f32| MovementInertia { weapon_weight: Some(weight), agility, strength, ..MovementInertia::all_on() };
         // The original's Agility rate without Weapon Handling, whatever the weapon.
         for (agility, rate) in [(1.0, 0.6), (5.0, 1.0), (10.0, 1.5)] {
             let off = MovementInertia { weapon_handling: false, ..at(25.0, agility, 1.0) };
@@ -732,7 +740,7 @@ mod tests {
 
     #[test]
     fn movement_weight_scales_the_inertia_and_the_extra_handling_only() {
-        let light = MovementInertia { weight: 0.25, ..default() };
+        let light = MovementInertia { weight: 0.25, ..MovementInertia::all_on() };
         // The start four times as quick.
         let mut m = light.clone();
         let mut t = 0.0;
@@ -742,12 +750,12 @@ mod tests {
         assert!((t - START_SECONDS / 4.0).abs() < 0.01, "{t}");
         assert_eq!(light.crouch_seconds(true), CROUCH_DOWN_SECONDS / 4.0);
         assert!((light.land_stretch(2000.0) - (1.0 + (HARD_LAND_STRETCH - 1.0) / 4.0)).abs() < 1e-5);
-        let mut m = MovementInertia { weight: 0.25, ..default() };
+        let mut m = MovementInertia { weight: 0.25, ..MovementInertia::all_on() };
         m.follow([0.0, RUN]);
         m.land(LANDING_HARD_SPEED);
         assert!((m.velocity()[1] - RUN * (1.0 - LANDING_MOST_LOST / 4.0)).abs() < 1e-3);
         // Weapon Handling's time over the original's shrinks; the original's stays.
-        let rifle = |weight: f32| MovementInertia { weight, weapon_weight: Some(8.0), ..default() };
+        let rifle = |weight: f32| MovementInertia { weight, weapon_weight: Some(8.0), ..MovementInertia::all_on() };
         assert!((1.0 / rifle(0.25).equip_rate() - (1.0 + 0.8 / 4.0)).abs() < 1e-4);
         assert!(rifle(0.25).equip_rate() <= 1.0, "never quicker than the original's at 5 and 5");
         let aim = rifle(0.25).aim_seconds(true);
@@ -761,12 +769,12 @@ mod tests {
         assert_eq!(movement_weight_by_name("1"), Some(1.0));
         assert_eq!(movement_weight_name(1.0), "100%");
         assert_eq!(movement_weight_name(0.3), "25%");
-        assert_eq!(MovementInertia { weight: 0.0, ..default() }.weight(), 0.25, "held within the choices");
+        assert_eq!(MovementInertia { weight: 0.0, ..MovementInertia::all_on() }.weight(), 0.25, "held within the choices");
     }
 
     #[test]
     fn turning_back_brakes_first_and_never_overshoots() {
-        let mut m = MovementInertia::default();
+        let mut m = MovementInertia::all_on();
         steps(&mut m, [0.0, RUN], 2.0, DT);
         let mut last = RUN;
         let mut crossed = false;
@@ -785,8 +793,8 @@ mod tests {
     fn the_same_at_any_tick_rate() {
         // 1/12 s is a whole number of steps at each rate.
         for hz in [120.0, 144.0, 240.0] {
-            let mut a = MovementInertia::default();
-            let mut b = MovementInertia::default();
+            let mut a = MovementInertia::all_on();
+            let mut b = MovementInertia::all_on();
             let x = steps(&mut a, [RUN, 0.0], 1.0 / 12.0, DT)[0];
             let y = steps(&mut b, [RUN, 0.0], 1.0 / 12.0, 1.0 / hz)[0];
             assert!((x - y).abs() < 0.05, "{hz} Hz: {y} against {x}");
@@ -795,7 +803,7 @@ mod tests {
 
     #[test]
     fn the_air_hands_its_speed_to_the_ground_and_a_placement_starts_from_rest() {
-        let mut m = MovementInertia::default();
+        let mut m = MovementInertia::all_on();
         m.follow([0.0, 300.0]);
         let v = m.step([0.0, 0.0], false, DT);
         assert!(v[1] > 0.9 * 300.0, "lands gliding: {v:?}");
@@ -816,7 +824,7 @@ mod tests {
 
     #[test]
     fn starts_and_glides_are_timed_for_the_log() {
-        let mut m = MovementInertia::default();
+        let mut m = MovementInertia::all_on();
         steps(&mut m, [0.0, RUN], 2.0, DT);
         steps(&mut m, [0.0, 0.0], 4.0, DT);
         let [Report::Started { seconds, speed }, Report::Stopped { seconds: stop, distance, speed: from }] = m.reports[..] else {
@@ -829,7 +837,7 @@ mod tests {
         assert!(stop > 1.5 * STOP_SECONDS && stop < 1.0 && from == RUN, "{stop} {from}");
         assert!((STOP_SECONDS * 2.0 - START_SECONDS).abs() < 1e-6, "stopping takes half the start (the owner)");
         // Let go before full speed: no start reported, the glide still is.
-        let mut m = MovementInertia::default();
+        let mut m = MovementInertia::all_on();
         steps(&mut m, [0.0, RUN], 0.2, DT);
         steps(&mut m, [0.0, 0.0], 4.0, DT);
         assert!(matches!(m.reports[..], [Report::Stopped { .. }]), "{:?}", m.reports);
@@ -845,17 +853,17 @@ mod tests {
         assert_eq!(land_stretch(2000.0), HARD_LAND_STRETCH);
         assert_eq!(hard_landing(291.0), 291.0, "a hop pushes as before");
         assert!((hard_landing(-1200.0) + 1200.0 * HARD_LANDING_GAIN).abs() < 1e-2);
-        let m = MovementInertia { handling: 1.5, ..default() };
+        let m = MovementInertia { handling: 1.5, ..MovementInertia::all_on() };
         assert_eq!(m.hands(), 1.5);
-        let m = MovementInertia { handling: 1.5, weight: 0.5, ..default() };
+        let m = MovementInertia { handling: 1.5, weight: 0.5, ..MovementInertia::all_on() };
         assert_eq!(m.hands(), 1.25, "the part over 1 at the Movement Weight");
-        let m = MovementInertia { handling: 0.85, weight: 0.25, ..default() };
+        let m = MovementInertia { handling: 0.85, weight: 0.25, ..MovementInertia::all_on() };
         assert_eq!(m.hands(), 0.85, "a light weapon's quicker hand-back stays");
     }
 
     #[test]
     fn a_hard_landing_takes_speed_and_it_builds_up_again() {
-        let mut m = MovementInertia::default();
+        let mut m = MovementInertia::all_on();
         m.follow([0.0, RUN]);
         m.land(290.0);
         assert_eq!(m.velocity(), [0.0, RUN], "a hop keeps its speed");
@@ -867,7 +875,7 @@ mod tests {
 
     #[test]
     fn the_clips_follow_a_glide_and_the_keys_otherwise() {
-        let mut m = MovementInertia::default();
+        let mut m = MovementInertia::all_on();
         // Heading north; running north.
         steps(&mut m, [0.0, RUN], 2.0, DT);
         assert_eq!(m.clip_intent(1.0, 0.0, false, 0.0), (1.0, 0.0, false), "the keys while they agree");

@@ -1036,7 +1036,7 @@ env = { NVF_PLAY_TEST_LOOK = "3:0:0,3.2:10:0,3.3:20:0,3.4:30:0,3.5:40:0,3.6:50:0
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
 run_seconds = 13
 expect = [
-  { re = 'player body summary: weapon sway on, most turn lag (?P<n>[\d.]+) degrees sideways', range = [1.0, 6.01], label = "a quick turn leaves the arms behind, within the 6 degree limit" },
+  { re = 'player body summary: weapon sway on, most turn lag (?P<n>[\d.]+) degrees sideways', range = [1.5, 6.01], label = "a quick turn leaves the arms behind, within the 6 degree limit" },
   { re = 'player body summary: weapon sway on, most turn lag [\d.]+ degrees sideways and (?P<n>[\d.]+) up or down', range = [0, 4.01], label = "up or down within the 4 degree limit" },
   { re = 'player body summary: weapon sway on, .*deepest bob (?P<n>[\d.]+) units', range = [0.3, 0.91], label = "running bobs the arms, within the 0.9 unit dip" },
 ]
@@ -1277,8 +1277,8 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_P
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 16
 expect = [
-  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, movement-weight, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, , [NVF Features > Visual Only], weapon-inertia, animation-smoothing", label = "the Global Toggle, Movement Weight, an empty line, Gameplay, an empty line, Visual Only, in the owner's order (Camera Motion is the 13th line, below the 12 the window shows; settings-layout places it)" },
-  { re = 'pause menu: inspect: NVF Features, .*lines 1-12 of 13', label = "thirteen lines in the tab" },
+  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, movement-weight, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, , [NVF Features > Visual Only], weapon-inertia", label = "the Global Toggle, Movement Weight, an empty line, Gameplay, an empty line, Visual Only, in the owner's order (the window shows 11 lines since the menu overhaul, #2804; settings-layout places the rest)" },
+  { re = 'pause menu: inspect: NVF Features, .*lines 1-11 of 16', label = "sixteen lines in the tab: World Interaction's grass fires (#2804) after Visual Only" },
 ]
 
 [[scenario]]
