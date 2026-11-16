@@ -964,16 +964,27 @@ publications) runs only in a frame where one of its inputs changed since the las
 the blend's look, the publication (`None`, or its revision and colour atlas), a last pass
 that ended with a replacement still pending (then every frame until it settles), a tracked
 shape's components (a `BlendShape` or `BlendCensus` added, replaced or removed, a despawn
-included; an ordinary material put on, edited or removed; a fade's, effect shader's or
-override's marker added or removed), or a source material the last pass read (loaded,
+included; an ordinary material put on, written or removed on a convertible shape; on a
+census-only shape, one put on or written with another handle than the last pass recorded,
+or removed; a fade's, effect shader's or override's marker added or removed), or a source
+material the last pass read (loaded,
 removed, or edited under its handle so that its reasons or its `SourceStamp` differ),
 compared only when the material store was changed since the conversion last ran. The stamp
 is watched only for a source a shape that may blend read; a source only shapes kept out
 read (a fade's or an override's copy, whose alpha moves every frame; a census-only shape's
 material) is watched by its reasons and whether it is loaded, since such a shape becomes
 allowed only through its reasons, its source loading, a temporary marker's removal, or its
-ordinary material, `BlendShape` or `BlendCensus` added, replaced or removed, each a trigger. The first frame after the blend turns on always runs
-it. A pass's own commands can call for one more pass in the next frame, which changes
+ordinary material, `BlendShape` or `BlendCensus` added, replaced or removed, each a trigger.
+Of a census-only shape's ordinary material (no `BlendShape`: an animated STAT's driven
+shapes, kept out by their recorded `rig` reason) the pass reads only the handle, which
+source's reasons join its mask; the source's own changes are the fingerprint's, and the
+eviction of a clone whose owned source was republished under its handle reads only
+convertible shapes. So an animated look published again under the same handle (nvf-assets
+`material_anim.rs`, most frames while it moves) runs no pass. [observed] Smoke
+`mesh-terrain-blend-verify-terrain-switches` at 070c331fa, before this rule: 1064 of 1068
+passes in the seven seconds after loading were for such shapes. A convertible shape keeps
+the wider rule, because there a same-handle republish is the signal of an in-place edit.
+The first frame after the blend turns on always runs it. A pass's own commands can call for one more pass in the next frame, which changes
 nothing. Every frame, pass or not, follows the coverage of the recorded publications
 (`follow_coverage`: one check per publication, a walk over its clones only when its
 coverage changed or it gained a clone). A quiet frame then stores `settled` again and
@@ -984,7 +995,10 @@ WastelandNV (-17, 0): `apply_variants` 0.61-0.65 ms a frame before this change. 
 aid `NVF_PLAY_TEST_MESH_BLEND_VERIFY=1` runs the full pass in every frame the gate would
 skip and logs any change it makes (`verify diverged`, at most 16 lines), and a count line
 `verify skipped-frames=N diverged=M passes=P pass-<reason>=...` (each pass by its first
-reason) with each ready line, every 600 skipped frames and at the stop.
+reason), then `shapes-<signal>=...` (which shape signal fired in a pass run for a shape
+change), with each ready line, every 600 skipped frames and at the stop; up to 8
+`verify shape-trigger` lines name the model, shape index and reasons of a shape that fired
+one.
 
 **Off** [design: `mesh_terrain_blend.rs::BlendGate`, `close_gate`;
 `terrain_surface.rs::SurfaceBakePlugin`; vendored bevy_pbr `MaterialGate` and bevy_render
