@@ -2492,11 +2492,37 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                     Err(e) => return Some(Some(e)),
                 }
             }
+            // Inside the volume anywhere is in it, as the game tells a trigger (its middle
+            // can lie past a gate: The Pitt's arrival trigger spans the locked gate
+            // 0x0C001204, and the walk to its middle was refused).
+            let r = h.game(|g| runner::resolve(g, trigger).ok()).flatten();
+            let inside = r.is_some_and(|r| h.script.rt.as_ref().is_some_and(|rt| rt.triggers.inside.contains(&(r, FormId::PLAYER_REF))));
+            if inside && p.part != 1 {
+                (p.part, p.phase) = (1, Phase::Wait { until: p.now + 1.0 });
+                return None;
+            }
             // A second inside it, for its script to see the player.
             match walk_phase(p, h) {
-                Some(None) if p.part == 0 => {
+                Some(None) if p.part != 1 => {
                     (p.part, p.phase) = (1, Phase::Wait { until: p.now + 1.0 });
                     None
+                }
+                // No way to its middle: once, to the nearest point inside it from here.
+                Some(Some(why)) if p.part == 0 => {
+                    let feet = h.feet();
+                    let near = r.and_then(|r| h.script.rt.as_ref().and_then(|rt| rt.triggers.shapes_of(r).map(<[_]>::to_vec))).and_then(|v| {
+                        v.iter().map(|s| s.nearest_inside(feet, TRIGGER_INSET)).min_by(|a, b| hdist(*a, feet).total_cmp(&hdist(*b, feet)))
+                    });
+                    match near {
+                        Some(at) => {
+                            info!("pilot: step {}: the trigger's middle cannot be reached ({why}): the player goes to its nearest point from here, ({:.0}, {:.0}, {:.0})", p.i, at[0], at[1], at[2]);
+                            let mut w = walk_to(Place { space: space_of(h.location), pos: at }, None, 24.0, p.now, feet);
+                            w.keep_talk = true;
+                            (p.part, p.phase) = (2, Phase::Walk(w));
+                            None
+                        }
+                        None => Some(Some(why)),
+                    }
                 }
                 other => other,
             }
@@ -3480,6 +3506,8 @@ const SHOOT_OBJECT_FROM: f32 = 600.0;
 /// The longest a `call_until` waits, seconds: past [`STEP_SECS`], as end slides run for
 /// minutes (the headless chains give them up to 30).
 const CALL_UNTIL_CAP: f64 = 1800.0;
+/// How far inside a trigger's faces the walk into it from its near side aims, game units.
+const TRIGGER_INSET: f32 = 24.0;
 /// How long a walk waits for a travel a script asked for, seconds.
 const TRAVEL_WAIT: f64 = 10.0;
 /// How often a walk says where the player is on its path, seconds.
