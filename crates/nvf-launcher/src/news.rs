@@ -119,6 +119,9 @@ pub(crate) fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .tls_config(tls())
         .timeout_global(Some(Duration::from_secs(15)))
+        // A release's launcher fetches over HTTPS only; plain http to a local test server
+        // only with the test aids (crate::update::test_aids).
+        .https_only(!crate::update::test_aids())
         .user_agent(concat!("NVForever-Launcher/", env!("CARGO_PKG_VERSION")))
         .build()
         .into()
@@ -131,6 +134,7 @@ pub(crate) fn download_agent() -> ureq::Agent {
         .tls_config(tls())
         .timeout_connect(Some(Duration::from_secs(15)))
         .timeout_per_read(Some(Duration::from_secs(30)))
+        .https_only(!crate::update::test_aids())
         .user_agent(concat!("NVForever-Launcher/", env!("CARGO_PKG_VERSION")))
         .build()
         .into()
@@ -156,7 +160,7 @@ fn release_list(agent: &ureq::Agent) -> Result<String, String> {
     }
     // Test aid: a release list of a local server (docs/design/launcher.md), for trying the
     // updater against a fixture release.
-    let url = std::env::var("NVF_LAUNCHER_RELEASES").ok().filter(|u| !u.is_empty());
+    let url = std::env::var("NVF_LAUNCHER_RELEASES").ok().filter(|u| !u.is_empty() && crate::update::test_aids());
     let text = get_text(agent, url.as_deref().unwrap_or(RELEASES))?;
     *last = Some((Instant::now(), text.clone()));
     Ok(text)
@@ -343,14 +347,51 @@ pub fn newest(list: Vec<Latest>) -> Option<Latest> {
     list.into_iter().max_by(|a, b| cmp_versions(&a.version, &b.version))
 }
 
-/// Versions (`0.8.0`, `v0.10.1`) compared part by part as numbers; a part that is not a
-/// number (a pre-release suffix) counts as 0.
+/// Versions (`0.8.0`, `v0.10.1`, `0.9.0-rc.1`) compared as semantic versions: the numbers
+/// part by part, then a pre-release (`-rc.1`) before the release it leads to, pre-releases
+/// by their parts (numbers as numbers); build data (`+…`) does not count.
 pub fn cmp_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    let parts = |v: &str| -> Vec<u64> { v.trim_start_matches('v').split(['.', '-', '+']).map(|p| p.parse().unwrap_or(0)).collect() };
-    let (a, b) = (parts(a), parts(b));
-    let n = a.len().max(b.len());
+    use std::cmp::Ordering;
+    let split = |v: &str| -> (Vec<u64>, Option<String>) {
+        let v = v.trim().trim_start_matches('v');
+        let v = v.split('+').next().unwrap_or(v);
+        let (core, pre) = match v.split_once('-') {
+            Some((c, p)) => (c, Some(p.to_string())),
+            None => (v, None),
+        };
+        (core.split('.').map(|p| p.parse().unwrap_or(0)).collect(), pre)
+    };
+    let ((ac, ap), (bc, bp)) = (split(a), split(b));
+    let n = ac.len().max(bc.len());
     let at = |v: &[u64], i: usize| v.get(i).copied().unwrap_or(0);
-    (0..n).map(|i| at(&a, i).cmp(&at(&b, i))).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)
+    if let Some(o) = (0..n).map(|i| at(&ac, i).cmp(&at(&bc, i))).find(|o| o.is_ne()) {
+        return o;
+    }
+    match (ap, bp) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(x), Some(y)) => {
+            let (xs, ys): (Vec<&str>, Vec<&str>) = (x.split('.').collect(), y.split('.').collect());
+            for i in 0..xs.len().max(ys.len()) {
+                let o = match (xs.get(i), ys.get(i)) {
+                    (Some(p), Some(q)) => match (p.parse::<u64>(), q.parse::<u64>()) {
+                        (Ok(m), Ok(n)) => m.cmp(&n),
+                        (Ok(_), Err(_)) => Ordering::Less,
+                        (Err(_), Ok(_)) => Ordering::Greater,
+                        _ => p.cmp(q),
+                    },
+                    (None, Some(_)) => Ordering::Less,
+                    (Some(_), None) => Ordering::Greater,
+                    (None, None) => Ordering::Equal,
+                };
+                if o.is_ne() {
+                    return o;
+                }
+            }
+            Ordering::Equal
+        }
+    }
 }
 
 /// Whether version `a` is later than `b` ([`cmp_versions`]).
@@ -413,6 +454,14 @@ mod tests {
         assert_eq!(n.assets[0].size, 225);
         assert_eq!(newest(Vec::new()), None);
         assert_eq!(cmp_versions("0.7", "0.7.0"), std::cmp::Ordering::Equal);
+        // A pre-release comes before its release, and after the one before.
+        assert!(is_newer("0.9.0", "0.9.0-rc.1"));
+        assert!(!is_newer("0.9.0-rc.1", "0.9.0"));
+        assert!(is_newer("0.9.0-rc.2", "0.9.0-rc.1"));
+        assert!(is_newer("0.9.0-rc.10", "0.9.0-rc.9"));
+        assert!(is_newer("0.9.0-rc.1", "0.8.5"));
+        assert!(is_newer("0.9.0-rc.1", "0.9.0-beta.3"));
+        assert_eq!(cmp_versions("0.9.0+build.5", "0.9.0"), std::cmp::Ordering::Equal);
     }
 
     #[test]

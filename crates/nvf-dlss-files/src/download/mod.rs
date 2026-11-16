@@ -72,7 +72,11 @@ pub const RELEASE_PAGE: &str = "https://github.com/NVIDIA-RTX/Streamline/release
 pub struct LicenceAccepted(());
 
 impl LicenceAccepted {
-    /// Made only by the dialog's accept button, after the licence was shown.
+    /// Made only by an I accept button the player clicked with the mouse while NVIDIA's
+    /// licence ([`crate::LICENCE`]) was shown. Public because two crates have such a button:
+    /// the game's dialog (`engine/nvforever/src/dlss_download/dialog.rs`) and the launcher's
+    /// licence window (`crates/nvf-launcher/src/app.rs`, `dlss_licence_window`); no other
+    /// caller may make one, and none does (each caller is the click's handler).
     pub fn by_player() -> Self {
         Self(())
     }

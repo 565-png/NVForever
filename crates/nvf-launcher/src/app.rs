@@ -57,7 +57,9 @@ enum Upd {
 /// updater can be tried against a real release; docs/design/launcher.md).
 fn version() -> &'static str {
     static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    V.get_or_init(|| std::env::var("NVF_LAUNCHER_VERSION").ok().filter(|v| update::safe_component(v)).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()))
+    V.get_or_init(|| {
+        std::env::var("NVF_LAUNCHER_VERSION").ok().filter(|v| update::test_aids() && update::safe_component(v)).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+    })
 }
 
 struct NewestSave {
@@ -218,12 +220,26 @@ impl App {
         if app.launcher_flag("News", true) {
             app.fetch_news(&cc.egui_ctx);
         }
+        // Every write of the launcher's (the INI, the updater's swap) is refused inside the game
+        // folder the INI names (fnv_install::guard_write), even where no GameInstall is passed.
+        if let Some(g) = app.game() {
+            fnv_install::remember_game(&g);
+        }
+        // A swap cut short in its renames (the window closed, the power lost) is finished
+        // first; a swap cut short before them leaves only files to tidy away.
+        if let Ok(dir) = install_dir(app.game().as_ref()) {
+            match update::resume_interrupted(&dir) {
+                Some(Ok(v)) => app.message = Some((format!("An update to v{v} was interrupted; it has been finished."), false)),
+                Some(Err(e)) => app.message = Some((format!("An interrupted update could not be finished: {e}. Download the release from its page."), true)),
+                None => {}
+            }
+        }
         // Started by the updater (update::restart): say what changed.
         for a in std::env::args().skip(1) {
             match a.as_str() {
                 "--updated" | "--rolled-back" => {
                     // The version the swap wrote (an archive without a launcher leaves this one).
-                    let installed = install_dir().ok().and_then(|d| update::read_manifest(&d)).map_or_else(|| version().to_string(), |m| m.version);
+                    let installed = install_dir(app.game().as_ref()).ok().and_then(|d| update::read_manifest(&d)).map_or_else(|| version().to_string(), |m| m.version);
                     app.message = Some(if a == "--updated" {
                         (format!("Updated to v{installed}. Your saves, settings and mods are as they were."), false)
                     } else {
@@ -399,6 +415,10 @@ impl App {
     }
 
     fn start(&mut self, ctx: &egui::Context, start: Start) {
+        if matches!(self.upd, Upd::Installing) {
+            self.message = Some(("The update is being installed: play once it is done.".into(), true));
+            return;
+        }
         if !self.edits.is_empty() {
             let r = self.save_settings();
             if r.is_err() {
@@ -440,6 +460,10 @@ impl eframe::App for App {
         self.poll_news();
         let running = self.running();
         self.poll_update(ctx, running);
+        if matches!(self.upd, Upd::Installing) && ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.message = Some(("Installing the update: the launcher closes by itself when it is done.".into(), false));
+        }
         if running {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
@@ -1485,7 +1509,7 @@ impl App {
         card(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(format!("NVForever v{}", version()));
-            let install = install_dir();
+            let install = install_dir(self.game().as_ref());
             let kept = install.as_ref().ok().and_then(|d| update::previous_version(d));
             match (&install, kept) {
                 (Ok(dir), Some((v, _))) => {
@@ -1528,10 +1552,10 @@ impl App {
 }
 
 /// The folder the launcher runs from, when the updater may change it ([`update::check_install`]).
-fn install_dir() -> Result<PathBuf, String> {
+fn install_dir(game: Option<&GameInstall>) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = exe.parent().ok_or("the launcher's folder is unknown")?.to_path_buf();
-    update::check_install(&dir)?;
+    update::check_install(&dir, game)?;
     Ok(dir)
 }
 
@@ -1545,6 +1569,7 @@ impl App {
     /// Download, check and unpack the newest release in the background.
     fn start_update(&mut self, ctx: &egui::Context) {
         let (Some(latest), Some(home)) = (self.latest.clone(), self.home.clone()) else { return };
+        let game = self.game();
         let (tx, rx) = channel();
         self.upd_cancel = Arc::new(AtomicBool::new(false));
         let (cancel, c) = (self.upd_cancel.clone(), ctx.clone());
@@ -1553,7 +1578,7 @@ impl App {
                 let _ = tx.send(m);
                 c.request_repaint();
             };
-            let r = update::prepare(&latest, &home.cache(), &send, &cancel);
+            let r = update::prepare(&latest, &home.cache(), game.as_ref(), &send, &cancel);
             send(Msg::Ready(r));
         });
         self.upd_rx = Some(rx);
@@ -1561,7 +1586,8 @@ impl App {
     }
 
     fn start_install(&mut self, ctx: &egui::Context, ready: update::Ready) {
-        let dir = match install_dir() {
+        let game = self.game();
+        let dir = match install_dir(game.as_ref()) {
             Ok(d) => d,
             Err(e) => {
                 self.upd = Upd::Failed(e);
@@ -1571,7 +1597,7 @@ impl App {
         let (tx, rx) = channel();
         let c = ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(Msg::Installed(update::install(&dir, &ready, version())));
+            let _ = tx.send(Msg::Installed(update::install(&dir, &ready, version(), game.as_ref())));
             c.request_repaint();
         });
         self.upd_rx = Some(rx);
@@ -1583,7 +1609,7 @@ impl App {
             self.message = Some(("Close the game first, then roll back.".into(), true));
             return;
         }
-        match update::roll_back(&dir, version()) {
+        match update::roll_back(&dir, version(), self.game().as_ref()) {
             Ok(v) => match update::restart(&dir, "--rolled-back") {
                 Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 Err(e) => self.message = Some((format!("Rolled back to v{v}; start the launcher again ({e})."), false)),
@@ -1609,7 +1635,7 @@ impl App {
                 Msg::Ready(Err(e)) => self.upd = Upd::Failed(e),
                 Msg::Installed(Ok(v)) => {
                     self.upd_rx = None;
-                    let restarted = install_dir().and_then(|d| update::restart(&d, "--updated").map_err(|e| e.to_string()));
+                    let restarted = install_dir(self.game().as_ref()).and_then(|d| update::restart(&d, "--updated").map_err(|e| e.to_string()));
                     match restarted {
                         Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                         Err(e) => {
@@ -1620,7 +1646,7 @@ impl App {
                     }
                     return;
                 }
-                Msg::Installed(Err(e)) => self.upd = Upd::Failed(format!("{e} Nothing was changed.")),
+                Msg::Installed(Err(e)) => self.upd = Upd::Failed(e),
             }
         }
         if matches!(self.upd, Upd::Ready(_)) && !running {
@@ -1674,7 +1700,7 @@ impl App {
                     });
                 }
                 ui.add_space(14.0);
-                let install = install_dir();
+                let install = install_dir(self.game().as_ref());
                 match &self.upd {
                     Upd::Idle => {
                         let note = match &install {
@@ -1714,7 +1740,7 @@ impl App {
                     }
                     Upd::Failed(e) => {
                         ui.label(RichText::new(format!("The update did not go in: {e}")).color(BAD));
-                        ui.label(RichText::new("The NVForever folder is as it was. Try again, or download it from the release page.").small().color(WEAK));
+                        ui.label(RichText::new("Try again, or download it from the release page.").small().color(WEAK));
                         ui.horizontal(|ui| {
                             if install.is_ok() && ui.button("Try again").clicked() {
                                 self.start_update(ui.ctx());

@@ -75,10 +75,13 @@ line-height setting for Markdown text, so the room comes from the font and its s
   folders open through `launch::open_folder`.
 - Test aid: `NVF_LAUNCHER_SHOT=<file.png>` saves the window once the news has arrived and
   closes; `NVF_LAUNCHER_PAGE=home|settings|mods|game` opens that page first (`settings:<tab>`: that tab; `delete-reports`: the reports question, open; `dlss-licence`: NVIDIA's licence before Download DLSS, open; `update`: the
-  update dialog over Home, once a newer release is known); `NVF_LAUNCHER_RELEASES=<url>` reads
-  the release list from that address instead of GitHub (a local server with a fixture release,
-  to try the updater); `NVF_LAUNCHER_ZOOM=0.6` draws everything smaller (a whole page in one shot); `NVF_LAUNCHER_VERSION=0.6.9` makes the launcher take itself for that
-  version, so a real release counts as newer (the restarted launcher inherits it).
+  update dialog over Home, once a newer release is known); `NVF_LAUNCHER_ZOOM=0.6` draws everything smaller (a whole page in one shot).
+  Only in debug builds and tests (`update::test_aids`, never in a release's launcher):
+  `NVF_LAUNCHER_RELEASES=<url>` reads the release list from that address instead of GitHub (a
+  local server with a fixture release), `NVF_LAUNCHER_VERSION=0.6.9` makes the launcher take
+  itself for that version so a real release counts as newer (the restarted launcher inherits
+  it), and plain `http` to this machine is allowed; a release's launcher fetches over HTTPS
+  only.
 
 ## DLSS (#2765)
 
@@ -111,7 +114,10 @@ on fixture folders and a fixture zip/tar.gz (no real release is downloaded by an
   launcher reads it first, hashes the archive as it arrives and compares; no list, no line for
   the archive, or a different hash: nothing is installed (the partial file is deleted). This
   catches a broken or cut download, not a release replaced on GitHub itself (the list comes
-  from the same place); signing the list (minisign or similar) would be the next step.
+  from the same place); signing the list (minisign or similar) would be the next step. What ties
+  the archive and the list to this project is their address: both must be files of that very
+  release of this repository (`https://github.com/LootJunkieAzza/NVForever/releases/download/<tag>/`,
+  `update::fetchable`), or the update is refused.
 - **Staging.** `<cache>/updates/<tag>/` in NVForever's cache folder (`EngineHome::cache`, the
   local data folder on Windows): `<archive>.part` while it downloads, the archive once checked
   (a second Update now with a checked archive there skips the download), `unpacked/`. The
@@ -124,25 +130,34 @@ on fixture folders and a fixture zip/tar.gz (no real release is downloaded by an
 - **Where it installs.** The folder the launcher runs from, wherever the player unpacked the
   archive. Refused (the dialog says why and offers the release page) when the launcher is a
   build of a source checkout (an ancestor has `engine/Cargo.toml`: update with git), when
-  `nvforever(.exe)` is not beside it, or when the folder is inside the game's (`guard_write`).
+  `nvforever(.exe)` is not beside it, or when the folder is inside the game folder the INI
+  names (`[Game] Path`): `check_install` refuses it, every path the swap writes goes through
+  `guard_write` with that folder, and the launcher registers it at start (`remember_game`), so
+  no write of the launcher's lands in it.
   The home (saves, `NVForever.ini`, `plugins.txt`, mods, logs) is a different folder and is
   never touched: it is not in the archive, and the swap only moves the archive's files and the
   ones the last update listed.
-- **The swap**, all or nothing (`update::plan`, then `update::apply`):
-  1. Plan: copy every file of the unpacked release; first set aside each of those already in
-     the install, and each file of `update/installed.json` (what the last update installed)
+- **The swap** (`update::plan`, then `update::apply`), in two phases so that a launcher
+  closed or a PC losing power at any moment never leaves an install that cannot start:
+  1. Plan: copy every file of the unpacked release; keep a copy of each of those already in
+     the install, and of each file of `update/installed.json` (what the last update installed)
      the new release no longer has. A file the player put in the folder is never in either
      list. A payload path outside the install or in `update/` refuses the whole update.
-  2. Set aside: rename into `<install>/update/previous/v<running version>/`. A rename within
-     the install's own drive, so it is quick and allowed even for the running launcher's exe
-     (Windows lets a running program be renamed, not overwritten); the backup is beside the
-     install, not in the cache, because the cache may be on another drive.
-  3. Copy each new file to `<name>.nvf-new` and rename it into place, so no file is ever half
-     written in its place.
-  4. Write `update/installed.json` (version, files).
-  Any failure in 2-4 undoes what was done (copied files removed, set-aside files renamed
-  back), so the install is as before and the dialog says so. Afterwards only the one previous
-  version is kept under `update/previous/`; the staging folder is deleted.
+  2. Stage (`stage`; nothing the install runs from changes): the files to be replaced or
+     retired are copied into `<install>/update/previous/v<running version>/` (beside the
+     install, not in the cache, which may be on another drive), each new file is copied whole
+     beside its place as `<name>.nvf-new`, then the journal `update/swap.json` is written. A
+     failure removes what was made and says so (naming anything that could not be removed).
+  3. Commit (`commit`; renames only): each `.nvf-new` takes its place (a running program, the
+     launcher itself, is first renamed to `<name>.nvf-old`: Windows lets a running program be
+     renamed, not replaced), the retired files go, `update/installed.json` is written and the
+     journal removed.
+  A launcher that finds the journal at its start (`resume_interrupted`) finishes the commit:
+  every new file is whole by then, so the swap rolls forward. Without a journal it removes
+  stray `.nvf-new` (a swap cut short while staging; the old release runs as before) and
+  `.nvf-old` files. While the swap runs the window does not close (the close is cancelled with
+  a word) and Play waits. Afterwards only the one previous version is kept under
+  `update/previous/`; the staging folder is deleted.
 - **Not while it runs.** The game, the viewer and fnvtool of the install must not be running:
   the launcher waits while the game it started runs ("installs as soon as the game is
   closed"), and before the swap opens each program for writing, which Windows (sharing
