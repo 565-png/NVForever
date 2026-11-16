@@ -2690,26 +2690,6 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
-
-
-213. **Legate showdown rangers and harmless drops without Allow Falls (#2532).**
-     [documented: supplied main-session fnvtool record brief, 2026-11-15] In the NCR
-     showdown, SCPT 0x001438CA enables 0x001438DA then 0x001438DB when battle state 1,
-     showdownstart 1 and controller 0x001438E3.spawnheroes 1. Their intended Patrol
-     0x001438E8 lacks Allow Falls and starts at VLegateCampRangerRunMarker01REF
-     (0x001438D3), then 02 (0x001438D4), 03 (0x001438D1), 04 (0x001438D2), 05
-     (form ID not supplied). [hypothesis, #2532] An authored downward link within
-     fJumpFallHeightMin is safe without Allow Falls; NVForever now uses that rule
-     if the ordinary route is unavailable (packages.md; actor-jumps.md). In the
-     original, sample both rangers' packages, positions and procedures from enable
-     through marker 01; record where they leave the ledge, land and enter combat.
-     With a synthetic test plugin, compare authored drops at, below and above the
-     damage threshold, with and without Allow Falls. Do harmless drops work without
-     the flag, do damaging ones require it, and is the height measured per link?
-     Separately ask the main session for both rangers' NPC_ PKID/conditions and
-     NAVM triangle/link/drop heights to marker 01 and between markers; no camp
-     navmesh facts or original captures were available to this writer.
-
 197. **What does a resurrected actor carry?** (P2; `fnv_game::resurrect`,
     `fnv_sim::World::restock_inventory`, issue #2683.) NVForever makes the items of a
     dead actor's own item list up again when it is resurrected (rolled anew; only what
@@ -2947,3 +2927,24 @@ already talking takes over at once, same topic or another; nothing is queued or 
      If he walks to the door out of Top and is moved on, the original starts a walk
      whose way ends at a locked door (at least as far as the door); if he stands still
      until the door is unlocked, ours is right and the trigger only serves after it.
+
+
+## Added 2026-11-15 (the Ranger assassins' drop at the Legate's camp, #2532)
+
+213. **Legate showdown rangers and harmless drops without Allow Falls (#2532).**
+     [documented: supplied main-session fnvtool record brief, 2026-11-15] In the NCR
+     showdown, SCPT 0x001438CA enables 0x001438DA then 0x001438DB when battle state 1,
+     showdownstart 1 and controller 0x001438E3.spawnheroes 1. Their intended Patrol
+     0x001438E8 lacks Allow Falls and starts at VLegateCampRangerRunMarker01REF
+     (0x001438D3), then 02 (0x001438D4), 03 (0x001438D1), 04 (0x001438D2), 05
+     (form ID not supplied). [hypothesis, #2532] An authored downward link within
+     fJumpFallHeightMin is safe without Allow Falls; NVForever now uses that rule
+     if the ordinary route is unavailable (packages.md; actor-jumps.md). In the
+     original, sample both rangers' packages, positions and procedures from enable
+     through marker 01; record where they leave the ledge, land and enter combat.
+     With a synthetic test plugin, compare authored drops at, below and above the
+     damage threshold, with and without Allow Falls. Do harmless drops work without
+     the flag, do damaging ones require it, and is the height measured per link?
+     Separately ask the main session for both rangers' NPC_ PKID/conditions and
+     NAVM triangle/link/drop heights to marker 01 and between markers; no camp
+     navmesh facts or original captures were available to this writer.
