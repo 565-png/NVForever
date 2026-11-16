@@ -33,7 +33,12 @@
 //!   after the conversation closed (`fnv_game::game::Speech::farewell`), a line between
 //!   two actors, a detection bark) is heard from where its
 //!   speaker stands ([`hearing`]), a line said through a talking activator from where the
-//!   activator is (`Speech::place`; the actor need not be there, issues #2451, #2768): at full volume within [`DIALOG_MIN_DISTANCE`] of the
+//!   activator is (`Speech::place`; the actor need not be there, issues #2451, #2768),
+//!   panned to its side but at full volume whatever the distance ([`line_gain`],
+//!   [`in_reach`]) [documented: GECK wiki SetTalkingActivatorActor, Notes: "Talking
+//!   Activators set via script will have no distance attenuation in the New Vegas
+//!   engine"; hypothesis: the same for the actor its scripts name before one is set, and
+//!   that one in another cell is still not heard]. Other lines: at full volume within [`DIALOG_MIN_DISTANCE`] of the
 //!   player's eye, falling as minimum ÷ distance beyond it and fading to nothing at
 //!   [`DIALOG_MAX_DISTANCE`] ([`voice_gain`]),
 //!   and panned to the side it is on (`crate::sfx::pan_gains`), following the speaker and
@@ -135,6 +140,24 @@ pub fn voice_gain(distance: f32) -> f32 {
     (min / distance) * (1.0 - (distance - min) / (max - min))
 }
 
+/// The gain of a line heard `distance` units away: [`voice_gain`], or 1 for a line said
+/// through a talking activator (`through`), which has no distance attenuation
+/// [documented: GECK wiki SetTalkingActivatorActor, Notes].
+pub fn line_gain(distance: f32, through: bool) -> f32 {
+    if through {
+        1.0
+    } else {
+        voice_gain(distance)
+    }
+}
+
+/// Whether a line heard `distance` units away is within hearing (and shows its
+/// subtitle): nearer than [`DIALOG_MAX_DISTANCE`] (or `reach`, the player's subtitle
+/// distance, when given), or at any distance through a talking activator ([`line_gain`]).
+pub fn in_reach(distance: f32, through: bool, reach: Option<f32>) -> bool {
+    through || distance < reach.unwrap_or(DIALOG_MAX_DISTANCE)
+}
+
 /// Where the listener hears a speaker: the speaker's mouth (game space) and its distance
 /// from the player's eye; `None` when the speaker is not in the player's cell space (an
 /// interior other than the player's, or inside while the player is outside) or nowhere.
@@ -167,17 +190,25 @@ pub fn speaker_place(sim: &SimState, speaker: FormId) -> Option<(Option<FormId>,
 /// player (its subtitle is shown): in the player's cell space and nearer than
 /// [`DIALOG_MAX_DISTANCE`]. Without a player (no world yet) everything is heard.
 pub fn audible(sim: &SimState, player: Option<&Player>, speaker: FormId) -> bool {
+    audible_line(sim, player, speaker, false, None)
+}
+
+/// [`audible`] for a line heard from `place`, said through a talking activator or not
+/// (`through`, [`in_reach`]), with the player's subtitle distance `reach` if set.
+pub fn audible_line(sim: &SimState, player: Option<&Player>, place: FormId, through: bool, reach: Option<f32>) -> bool {
     match player {
         None => true,
-        Some(p) => hearing(sim, p, speaker).is_some_and(|(_, d)| d < DIALOG_MAX_DISTANCE),
+        Some(p) => hearing(sim, p, place).is_some_and(|(_, d)| in_reach(d, through, reach)),
     }
 }
 
 /// A sound being played for a line.
 struct Playing {
     info: FormId,
-    /// Where the line is heard from ([`Said::place`]).
+    /// Where the line is heard from ([`Said::place`]), and whether through a talking
+    /// activator ([`Said::through`]).
     place: FormId,
+    through: bool,
     response: usize,
     entity: Option<Entity>,
     /// Real time (seconds since start) at which the sound is over (moved on by the time
@@ -322,6 +353,8 @@ struct Said {
     /// Where it is heard from: the talking activator it is said through, else the speaker
     /// (`fnv_game::game::Speech::place`, issues #2451 and #2768).
     place: FormId,
+    /// Said through a talking activator: no distance attenuation ([`line_gain`]).
+    through: bool,
     info: FormId,
     /// Index in record order.
     response: usize,
@@ -338,11 +371,11 @@ struct Said {
 /// Every response being said: the SayTo and Say lines, and the conversation's line.
 fn said_now(g: &Game, sim: &SimState) -> Vec<Said> {
     let mut out: Vec<Said> =
-        g.speech.iter().map(|s| Said { speaker: s.speaker, place: s.place(), info: s.info, response: speech_response(g, sim, s), remaining: s.remaining, conversation: false, two_d: s.two_d }).collect();
+        g.speech.iter().map(|s| Said { speaker: s.speaker, place: s.place(), through: s.through.is_some(), info: s.info, response: speech_response(g, sim, s), remaining: s.remaining, conversation: false, two_d: s.two_d }).collect();
     if let Some((c, line)) = g.dialogue.as_ref().and_then(|c| Some((c, c.line.as_ref()?))) {
         let order = g.data.infos.get(&line.info).map(|d| d.response_order()).unwrap_or_default();
         if let Some(&r) = order.get(line.response) {
-            out.push(Said { speaker: c.actor, place: c.actor, info: line.info, response: r, remaining: line.remaining, conversation: true, two_d: false });
+            out.push(Said { speaker: c.actor, place: c.actor, through: false, info: line.info, response: r, remaining: line.remaining, conversation: true, two_d: false });
         }
     }
     out
@@ -448,11 +481,11 @@ fn hook(state: Res<VoiceState>, settings: Res<VoiceSettings>, mut script: ResMut
 
 /// The left and right gains of a line heard from where its speaker is now (0 out of
 /// hearing).
-fn placed_gains(sim: &SimState, player: Option<&Player>, speaker: FormId) -> [f32; 2] {
+fn placed_gains(sim: &SimState, player: Option<&Player>, speaker: FormId, through: bool) -> [f32; 2] {
     let Some(p) = player else { return [1.0, 1.0] };
     match hearing(sim, p, speaker) {
         Some((at, d)) => {
-            let g = voice_gain(d);
+            let g = line_gain(d, through);
             let [l, r] = pan_gains(p.eye(), p.heading, at);
             [l * g, r * g]
         }
@@ -502,12 +535,12 @@ fn play(
     let cover_now = std::time::Instant::now();
     for (speaker, p) in st.playing.iter() {
         if let Some(pan) = &p.pan {
-            pan.set(placed_gains(&sim, player, p.place));
+            pan.set(placed_gains(&sim, player, p.place, p.through));
             // Heard at the listener while it plays, by the voice's fall-off
             // (`crate::sound_cover`); a held line makes no sound.
             let heard = player.filter(|_| p.entity.is_some() && !p.held && now < p.ends_at && *speaker != FormId::PLAYER_REF).and_then(|pl| hearing(&sim, pl, p.place));
             if let (Some((_, d)), Some(cover)) = (heard, cover.as_deref_mut()) {
-                cover.note(Some(crate::sound_cover::SoundCover::key(crate::sound_cover::VOICE_KIND, u64::from(speaker.0))), voice_gain(d), d, crate::sound_cover::LOOP_HOLD, cover_now);
+                cover.note(Some(crate::sound_cover::SoundCover::key(crate::sound_cover::VOICE_KIND, u64::from(speaker.0))), line_gain(d, p.through), d, crate::sound_cover::LOOP_HOLD, cover_now);
             }
         }
     }
@@ -574,14 +607,14 @@ fn play(
         // a 2D one (Say's is2D) as the conversation's.
         let heard = if s.conversation || s.two_d { None } else { Some(player.and_then(|p| hearing(&sim, p, s.place))) };
         let out_of_hearing = match heard {
-            Some(Some((_, d))) if d >= DIALOG_MAX_DISTANCE => Some(format!("{d:.0} units away")),
+            Some(Some((_, d))) if !in_reach(d, s.through, None) => Some(format!("{d:.0} units away")),
             Some(None) if player.is_some() => {
                 let cell = |r: FormId| speaker_place(&sim, r).and_then(|(c, _)| c).map_or("none".to_string(), |c| g.data.name(c));
                 Some(format!("in another cell: {} vs the player's {}", cell(s.place), cell(FormId::PLAYER_REF)))
             }
             _ => None,
         };
-        let pan = heard.map(|_| Pan::new(placed_gains(&sim, player, s.place)));
+        let pan = heard.map(|_| Pan::new(placed_gains(&sim, player, s.place, s.through)));
         // A response with a sound of its own plays it instead of the voice (creatures'
         // and robots' combat lines; docs/spec-notes/combat-dialogue.md §3).
         let own_sound = g.data.infos.get(&s.info).and_then(|d| d.responses.get(k)).and_then(|r| r.sound);
@@ -598,7 +631,7 @@ fn play(
             info!("voice: {who} line {} response {number} plays its sound {}{}", g.data.name(s.info), g.data.name(sound), if out_of_hearing.is_some() { " [out of hearing]" } else { "" });
             st.playing.insert(
                 s.speaker,
-                Playing { info: s.info, place: s.place, response: k, entity: None, ends_at: now + fitted, remaining: s.remaining, path: None, started_at: now, held_secs: 0.0, conversation: s.conversation, held: false, pan, offset: 0.0 },
+                Playing { info: s.info, place: s.place, through: s.through, response: k, entity: None, ends_at: now + fitted, remaining: s.remaining, path: None, started_at: now, held_secs: 0.0, conversation: s.conversation, held: false, pan, offset: 0.0 },
             );
             continue;
         }
@@ -694,7 +727,7 @@ fn play(
         st.unheard += u64::from(out_of_hearing.is_some());
         st.playing.insert(
             s.speaker,
-            Playing { info: s.info, place: s.place, response: k, entity, ends_at: now + seconds, remaining: s.remaining, path: file, started_at: now, held_secs: 0.0, conversation: s.conversation, held: false, pan, offset },
+            Playing { info: s.info, place: s.place, through: s.through, response: k, entity, ends_at: now + seconds, remaining: s.remaining, path: file, started_at: now, held_secs: 0.0, conversation: s.conversation, held: false, pan, offset },
         );
     }
     // The lines cut to one cry end with it (and DeathResponse comes then).
@@ -767,6 +800,20 @@ mod tests {
         assert!(voice_gain(1000.0) > voice_gain(1500.0) && voice_gain(1500.0) > voice_gain(1999.0));
         assert_eq!(voice_gain(DIALOG_MAX_DISTANCE), 0.0);
         assert_eq!(voice_gain(5000.0), 0.0);
+    }
+
+    /// A line said through a talking activator has no distance attenuation (GECK wiki
+    /// SetTalkingActivatorActor, #2768): full volume and within hearing at any distance;
+    /// other lines as before, the subtitle distance included.
+    #[test]
+    fn a_line_through_a_talking_activator_is_not_attenuated() {
+        for d in [0.0, 1300.0, DIALOG_MAX_DISTANCE, 5000.0] {
+            assert_eq!(line_gain(d, true), 1.0, "{d}");
+            assert_eq!(line_gain(d, false), voice_gain(d), "{d}");
+            assert!(in_reach(d, true, None) && in_reach(d, true, Some(500.0)), "{d}");
+        }
+        assert!(in_reach(1999.0, false, None) && !in_reach(DIALOG_MAX_DISTANCE, false, None));
+        assert!(!in_reach(600.0, false, Some(500.0)) && in_reach(400.0, false, Some(500.0)));
     }
 
     #[test]

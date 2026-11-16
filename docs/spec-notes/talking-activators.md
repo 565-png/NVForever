@@ -109,9 +109,14 @@ activator; the actor does not turn). Tests: `crates/fnv-game/tests/perk_talk.rs`
   While the line is said the activator stands for the actor in the world, as for a
   conversation's line through it (#2451; `Speech::through`): the line goes on while the
   activator is there (the actor's death cuts it), the activator reads IsTalking 1, a
-  repeated Say of the topic on it finds the line playing, the listener looks at the
-  activator and the far actor does not turn, the line is heard from the activator (the
-  engine's voice and subtitles), and its SayToDone blocks run on the activator
+  repeated Say of the topic on it finds the line playing, its own line and a line through
+  it cut each other (whichever starts second wins) [design, #2768], the listener looks at
+  the activator (the engine turns heads to the point where it is placed) and the far
+  actor does not turn, the line is heard from the activator (the engine's voice and
+  subtitles) panned to its side but with no distance attenuation [documented: GECK wiki
+  SetTalkingActivatorActor, Notes: "Talking Activators set via script will have no
+  distance attenuation in the New Vegas engine"; hypothesis: one in another cell is
+  still not heard], and its SayToDone blocks run on the activator
   [hypothesis: the script that said it waits there]. The line's result scripts run on the
   actor, as in a conversation through the activator [hypothesis].
 - Distance attenuation is not an issue in a conversation (heard whole).
