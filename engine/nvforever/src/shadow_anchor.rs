@@ -56,8 +56,8 @@
 //! unit, a few hundredths of the nearest cascade's texel. That error changes from frame to
 //! frame with the light's turn under either snapping; it is the floor, and well below what
 //! a filtered shadow edge can show. The anchoring itself is worked out in 64-bit floats.
-//! What it costs: a few matrices per cascade a frame (three cascades for the sun and one
-//! for the arms' light per view).
+//! What it costs: a few matrices per cascade a frame (four cascades for the sun on Quality,
+//! two on Performance, and one for the arms' light, per view).
 
 use crate::player_body::ArmsShade;
 use crate::sky::Sun;

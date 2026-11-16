@@ -1192,3 +1192,57 @@ Anchored, about 90 % of the change between frames is gone, below what is left wi
 light held still on the origin's grid; the pulse at half the frame rate is gone with it.
 The anchoring is a few matrices per cascade a frame; its frame time was not measured
 separately.
+
+## 12. Where the sun's cascades end (#NNNN, 2026-11-16)
+
+Players found the sun's shadows sharp only in a small radius around the player and coarse
+beyond, worst on Performance. Every count had the same layout (Bevy's builder): the first
+cascade ends at a twelfth of the shadow distance (667 of the default 8,000 units, about
+9.5 m), the others spaced geometrically up to the distance times the reach (1.5 with longer
+shadows). On Performance's 2 cascades everything past 667 units lay on the last cascade.
+
+[observed 2026-11-16: Goodsprings' start view at 09:00 standing still, 2560 × 1440, an RTX
+5070 Ti, ambient occlusion, longer shadows (reach 12,000), light glow, 16x anisotropic
+filtering, sun shafts, `--no-actors`, cascades anchored (§11); the median of five 4-second
+periods, two rounds agreeing within 0.03 ms; sun shadows off 2.84 ms a frame]
+
+| Layout | Far bounds (units) | Texel sizes (units) | ms a frame |
+|---|---|---|---|
+| Performance as it was | 667, 12,000 | 0.765, 13.756 | 3.05 |
+| Performance, first bound 1,500 | 1,500, 12,000 | 1.720, 13.756 | 3.07 |
+| Performance, 3 cascades (the third every fourth frame) | 1,000, 3,500, 12,000 | 1.146, 4.012, 13.756 | 3.10 |
+| Quality as it was | 667, 2,828, 12,000 | 0.765, 3.243, 13.756 | 3.16 |
+| Quality, 3 cascades | 1,200, 3,600, 12,000 | 1.376, 4.127, 13.756 | 3.19 |
+| Quality, 4 cascades, schedule (1,0), (2,1), (4,2), (4,0) | 700, 2,000, 5,000, 12,000 | 0.803, 2.293, 5.732, 13.756 | 3.22 |
+| Quality, 4 cascades, the same schedule | 1,000, 2,800, 6,500, 12,000 | 1.146, 3.210, 7.452, 13.756 | 3.27 |
+| Quality as it was, 4096² maps | 667, 2,828, 12,000 | 0.382, 1.621, 6.878 | 3.38 |
+
+In the pictures: on Performance as it was a telegraph pole's shadow 15-25 m away is a wide
+blur; with the first bound at 1,500 it is as sharp as on Quality. The Quality layouts
+differ modestly in stills; the 4-cascade one is sharper between about 25 and 60 m.
+
+Proposed [engineering choice] (sky.rs `shadow_cascade_bounds`): the bounds as shares of the
+shadow distance, so the Shadow distance slider and `--shadow-distance` move them, with
+only the last stretched by the reach:
+
+- **Performance**, 2 cascades: the first ends at 0.1875 of the distance (1,500 of 8,000),
+  for 0.02 ms.
+- **Quality**, 4 cascades (`DEFAULT_SHADOW_CASCADES`, 3 before): 0.0875, 0.25 and 0.625 of
+  the distance (700, 2,000 and 5,000 of 8,000), for 0.06 ms. The schedule
+  (shadow_rate.rs `STAGGERED_SCHEDULE`) draws the nearest every frame, the second every
+  other frame, the third and the fourth every fourth frame on different frames: two
+  cascades drawn in each frame, 2 of 4 on average against 1.75 of 3. On 2026-10-12
+  (graphics-enhanced.md §5.3; sky.rs `DEFAULT_SHADOW_DISTANCE`) the old default of 16,000
+  units in 4 cascades took 19.0-20.8 ms a frame and 8,000 in 3 13.7-15.2; 8,000 in 4 took
+  15.0-16.8, every cascade drawn every frame, before the casters were culled to the slice
+  (graphics-enhanced.md §5.7) and before the schedule. The reach stays 8,000 here, and
+  the fourth cascade costs 0.06 ms in the table above. 4096² maps sharpen every cascade
+  but cost 0.22 ms over Quality as it was and are not part of this change.
+- 3 cascades (`--graphics-cycle cascades=3`), any other count but 1, and the moon's
+  single cascade keep the layout of before, so measurements of then compare.
+
+At short distances (the slider goes down to a tenth of `--shadow-distance`) the first
+bound keeps its floor of 200 units, under half the last; each in-between bound is then
+the farther of its share and the geometric spacing between the first bound and the last,
+so the bounds always rise. The log says the layout whenever it changes:
+`sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels [..] units`.

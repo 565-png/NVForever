@@ -12,20 +12,22 @@
 //!   rate, and on a fast turn the edge of the view can lie outside a held cascade for one
 //!   frame (unshadowed).
 //! - **The sun's shadows are split over [`PERFORMANCE_CASCADES`] cascades** instead of
-//!   `sky::DEFAULT_SHADOW_CASCADES` ([`set_performance`]): one shadow view less, and shadows
-//!   near the camera a little coarser.
+//!   `sky::DEFAULT_SHADOW_CASCADES` ([`set_performance`]): two shadow views less, and
+//!   shadows near the camera coarser (the first cascade ends at 1,500 of 8,000 units
+//!   instead of 700: `sky::shadow_cascade_bounds`).
 //! - **The first-person arms have no shade light of their own** (player_body.rs
 //!   `shade_light`): another shadow view less; the arms take the sun's own shadows.
 //! - **A tree casts a shadow only within [`TREE_SHADOW_NEAR`] of the camera**
 //!   ([`far_trees_cast_no_shadow`]): a SpeedTree tree is thousands of leaf cards and a
 //!   finely divided trunk in every cascade it falls in.
 //!
-//! Quality (the default) draws the sun's cascades on a staggered schedule
-//! ([`STAGGERED_SCHEDULE`], #2063): the nearest every frame, the middle one every other
-//! frame, the farthest every fourth, each held cascade kept with the matrices of the frame
-//! that drew it, as above. A moving thing's shadow in the far cascades moves at a half or
-//! a quarter of the frame rate, and on a fast turn the edge of the view can lie outside a
-//! held cascade for up to three frames. Test aid `NVF_PLAY_TEST_SHADOW_STAGGER=0` draws
+//! Quality (the default) draws the sun's 4 cascades on a staggered schedule
+//! ([`STAGGERED_SCHEDULE`], #2063; 3 cascades until #NNNN): the nearest every frame, the
+//! second every other frame, the third and the fourth every fourth frame, on different
+//! frames, each held cascade kept with the matrices of the frame that drew it, as above.
+//! A moving thing's shadow in the far cascades moves at a half or a quarter of the frame
+//! rate, and on a fast turn the edge of the view can lie outside a held cascade for up to
+//! three frames. Test aid `NVF_PLAY_TEST_SHADOW_STAGGER=0` draws
 //! every cascade every frame.
 //!
 //! A held cascade is kept as the sun's cascades stand after they are snapped to a grid
@@ -180,12 +182,15 @@ fn far_trees_cast_no_shadow(
 /// the frames where (frame + phase) is a multiple of n; a cascade past the list is drawn
 /// every frame. With the switch on, both cascades every other frame, together.
 pub const PERFORMANCE_SCHEDULE: [(u32, u32); 2] = [(2, 0), (2, 0)];
-/// With the switch off: the nearest cascade every frame, the middle one every other frame
-/// and the farthest every fourth, on different frames, so at most two are drawn in one
-/// frame (1.75 of 3 on average). The farthest holds most of the casters (about 1,150 of
-/// 1,400 at Goodsprings, 1,570 of 2,140 at Novac), and its shadows are the coarsest, so a
-/// moving thing's shadow there moving at a quarter of the frame rate shows least.
-pub const STAGGERED_SCHEDULE: [(u32, u32); 3] = [(1, 0), (2, 1), (4, 2)];
+/// With the switch off: the nearest cascade every frame, the second every other frame,
+/// the third and the fourth every fourth frame, all on different frames, so exactly two
+/// are drawn in each frame (2 of 4 on average; 1.75 of 3 with the 3 cascades of before
+/// #NNNN, which drew the farthest every fourth frame: `--graphics-cycle cascades=3` still
+/// does). The far cascades hold most of the casters (with 3 cascades the farthest held
+/// about 1,150 of 1,400 at Goodsprings, 1,570 of 2,140 at Novac), and their shadows are
+/// the coarsest, so a moving thing's shadow there moving at a quarter of the frame rate
+/// shows least.
+pub const STAGGERED_SCHEDULE: [(u32, u32); 4] = [(1, 0), (2, 1), (4, 2), (4, 0)];
 
 /// The cascades (a bit each, nearest first) whose maps frame `frame` keeps from an earlier
 /// frame under `schedule`, of `cascades` cascades.
@@ -288,7 +293,8 @@ pub(crate) fn hold_cascades(
         if on.0 {
             info!("sun shadows: a frame kept the shadow maps of the frame before ({} light(s))", kept.len());
         } else {
-            info!("sun shadows: a frame kept its farther cascades' maps (staggered schedule, held cascades {mask:#05b}, {} light(s))", kept.len());
+            // As many bits as cascades (`0b0110` of 4).
+            info!("sun shadows: a frame kept its farther cascades' maps (staggered schedule, held cascades {mask:#0width$b}, {} light(s))", kept.len(), width = count + 2);
         }
         *said = Some(on.0);
     }
@@ -349,16 +355,19 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<PerformanceShadows>();
         let mut sky = SkyState::default();
-        sky.shadow_cascades = 4;
+        // A count other than the default's.
+        let given = 3;
+        assert_ne!(given, crate::sky::DEFAULT_SHADOW_CASCADES);
+        sky.shadow_cascades = given;
         world.insert_resource(sky);
         set_performance(&mut world, true);
         assert_eq!(world.resource::<SkyState>().shadow_cascades, PERFORMANCE_CASCADES);
         set_performance(&mut world, true);
         set_performance(&mut world, false);
-        assert_eq!(world.resource::<SkyState>().shadow_cascades, 4);
+        assert_eq!(world.resource::<SkyState>().shadow_cascades, given);
         // Off when it already is: the count stays.
         set_performance(&mut world, false);
-        assert_eq!(world.resource::<SkyState>().shadow_cascades, 4);
+        assert_eq!(world.resource::<SkyState>().shadow_cascades, given);
     }
 
     #[test]
@@ -366,10 +375,15 @@ mod tests {
         // Performance: both cascades every other frame, together.
         let performance: Vec<u32> = (0..4).map(|f| held_mask(&PERFORMANCE_SCHEDULE, f, 2)).collect();
         assert_eq!(performance, [0, 0b11, 0, 0b11]);
-        // Staggered: the nearest every frame, the middle every other, the farthest every
-        // fourth, never both of the far two drawn in one frame.
-        let staggered: Vec<u32> = (0..4).map(|f| held_mask(&STAGGERED_SCHEDULE, f, 3)).collect();
-        assert_eq!(staggered, [0b110, 0b100, 0b010, 0b100]);
+        // Staggered: the nearest every frame, the second every other, the third and the
+        // fourth every fourth on different frames: exactly two drawn in each frame.
+        let staggered: Vec<u32> = (0..4).map(|f| held_mask(&STAGGERED_SCHEDULE, f, 4)).collect();
+        assert_eq!(staggered, [0b0110, 0b1100, 0b1010, 0b1100]);
+        assert!(staggered.iter().all(|m| m.count_ones() == 2));
+        // With 3 cascades (`--graphics-cycle cascades=3`) the schedule of before: the
+        // farthest every fourth frame, never both of the far two drawn in one frame.
+        let three: Vec<u32> = (0..4).map(|f| held_mask(&STAGGERED_SCHEDULE, f, 3)).collect();
+        assert_eq!(three, [0b110, 0b100, 0b010, 0b100]);
         // More cascades than the schedule: those are drawn every frame.
         assert_eq!(held_mask(&PERFORMANCE_SCHEDULE, 1, 3), 0b011);
         assert_eq!(held_mask(&[], 1, 3), 0);

@@ -1126,14 +1126,14 @@ mod tests {
 
     fn shadow_app(phase: SunShadows) -> App {
         let mut app = App::new();
-        app.insert_resource(TestKey(SunShadowKey { phase, shadows: true, distance: 8000.0, reach: 1.0, cascades: 3 }))
+        app.insert_resource(TestKey(SunShadowKey { phase, shadows: true, distance: 8000.0, reach: 1.0, cascades: crate::sky::DEFAULT_SHADOW_CASCADES }))
             .add_systems(Update, (|k: Res<TestKey>| k.0).pipe(sun_shadow_quality));
         app
     }
 
     /// A sun as `setup_sky` spawns it: shadows on, the day's cascades.
     fn spawn_day_sun(app: &mut App) -> Entity {
-        let day = crate::sky::shadow_cascades(8000.0, 1.0, 3);
+        let day = crate::sky::shadow_cascades(8000.0, 1.0, crate::sky::DEFAULT_SHADOW_CASCADES);
         app.world_mut().spawn((Sun, DirectionalLight { shadow_maps_enabled: true, ..default() }, day)).id()
     }
 
@@ -1157,7 +1157,7 @@ mod tests {
         assert_eq!(bounds(&app, second), moon, "the new sun casts the moon's cascade");
 
         // sky::set_shadows(true) with nothing changed puts the day's cascades back.
-        app.world_mut().entity_mut(second).insert(crate::sky::shadow_cascades(8000.0, 1.0, 3));
+        app.world_mut().entity_mut(second).insert(crate::sky::shadow_cascades(8000.0, 1.0, crate::sky::DEFAULT_SHADOW_CASCADES));
         app.update();
         assert_eq!(bounds(&app, second), moon, "someone else's cascades are replaced");
 
@@ -1185,7 +1185,7 @@ mod tests {
         // Indoors the key's phase is Day (SunShadows::at with indoors), whatever the hour.
         app.world_mut().resource_mut::<TestKey>().0.phase = SunShadows::at(true, -0.5, 1.0);
         app.update();
-        assert_eq!(bounds(&app, sun), crate::sky::shadow_cascades(8000.0, 1.0, 3).bounds);
+        assert_eq!(bounds(&app, sun), crate::sky::shadow_cascades(8000.0, 1.0, crate::sky::DEFAULT_SHADOW_CASCADES).bounds);
         // And back out into the night.
         app.world_mut().resource_mut::<TestKey>().0.phase = SunShadows::at(false, -0.5, 1.0);
         app.update();

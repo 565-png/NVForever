@@ -686,7 +686,7 @@ After the Controls tab's own rows (see the end of this page):
 - In full: The sun's shadows, out to --shadow-distance: Off; Performance (the shadow maps
   drawn every other frame in two cascades, trees casting shadows only near you, the
   first-person arms taking the world's shadows: saves frame time outdoors, shadows of moving
-  things update at half the frame rate); or Quality (three cascades, the farther ones drawn
+  things update at half the frame rate); or Quality (four cascades, the farther ones drawn
   less often). The original casts none from the world. Quality by default in the game.
 - Command-line switches: `--shadow-distance`, `--sun-shadows`, `--no-sun-shadows`
 - Registered in `engine/nvforever/src/settings.rs`
