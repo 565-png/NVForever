@@ -158,10 +158,13 @@ mod win;
 
 pub(crate) use sizing::OptimalSizes;
 
-/// The folder's variable, the files it must hold (the interposer first) and the frame
+/// The folder rule, the files it must hold (the interposer first) and the frame
 /// generation files (`nvf-dlss-files`).
 #[cfg(any(windows, test))]
-use nvf_dlss_files::{resolve_folder, FolderSource, ENV_DIR, FG_FILES, FILES};
+use nvf_dlss_files::{resolve_folder, FolderSource, FG_FILES, FILES};
+/// The folder's variable, read where the loader runs (Windows).
+#[cfg(windows)]
+use nvf_dlss_files::ENV_DIR;
 
 /// Whether DLSS Frame Generation can run this session, as far as the loader knows: the files
 /// (none of the four frame generation files, or not the loader at all), the GPU's support (from

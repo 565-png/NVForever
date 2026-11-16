@@ -274,6 +274,9 @@ pub fn start(_accepted: LicenceAccepted, test_url: Option<String>) -> Handle {
             finish(&shared, Phase::Failed(Failure::Write(format!("the download thread did not start: {e}"))));
         }
     }
+    // Off Windows nothing is fetched, so the test address goes unused.
+    #[cfg(not(windows))]
+    let _ = test_url;
     #[cfg(not(windows))]
     finish(&shared, Phase::Failed(Failure::NotWindows));
     Handle { shared }
