@@ -184,7 +184,8 @@ pub struct ResolvedLayout {
     pub tabs: Vec<ResolvedTab>,
     /// Each registered row's place, by its index.
     placements: Vec<Placement>,
-    /// The rows the table does not name.
+    /// The rows the table does not name, the Tweaks tab's left out
+    /// ([`ResolvedLayout::unnamed`]).
     unnamed: usize,
 }
 
@@ -227,7 +228,10 @@ pub fn resolve_layout(list: &[Setting]) -> ResolvedLayout {
             None => unnamed.push((t, vec![i])),
         }
     }
-    let count = unnamed.iter().map(|(_, r)| r.len()).sum();
+    // The Tweaks tab's rows are not counted: #1892 registers them under Tweaks without
+    // naming them here, by design (module notes), so the count stays the rows another
+    // tab's table left out [design: #1953, #1892].
+    let count = unnamed.iter().filter(|(t, _)| tabs[*t].name != TWEAKS_TAB).map(|(_, r)| r.len()).sum();
     for (t, rows) in unnamed {
         let placement = Placement::tab(tabs[t].name);
         tabs[t].sections.push(ResolvedSection { placement, rows });
@@ -250,7 +254,9 @@ impl ResolvedLayout {
         self.placements.get(i).copied()
     }
 
-    /// How many registered rows the table does not name.
+    /// How many registered rows the table does not name, leaving out the Tweaks tab's
+    /// ([`TWEAKS_TAB`]), which #1892 lists in registry order without naming them here
+    /// [design: #1953, #1892].
     pub fn unnamed(&self) -> usize {
         self.unnamed
     }
@@ -529,5 +535,6 @@ mod tests {
         assert_eq!(shown.len(), 650, "no heading: all in one run");
         assert!(shown.iter().zip(&names).all(|(a, b)| a == b), "in the order registered");
         assert_eq!(l.ordered_settings().count(), list.len());
+        assert_eq!(l.unnamed(), 0, "the Tweaks tab's rows are listed by design, not counted as left out of the table");
     }
 }

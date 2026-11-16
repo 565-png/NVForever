@@ -77,7 +77,9 @@ original puts the HUD and Pip-Boy colours and the crosshair in its Display categ
 4. Every registered row is listed exactly once.
 
 So #1892's tweaks, registered under `Tweaks`, show under Tweaks in registry order without
-#1892 naming them here.
+#1892 naming them here. The `layout` aid's `<n> not in the table` counts the rows the table
+leaves out everywhere but the Tweaks tab (`ResolvedLayout::unnamed`), so it stays 0 with
+the Tweaks tab filled (88fbce1c4) and still catches a row another tab's table forgot.
 
 **The Tweaks list** (#1953 point 4, a later change): `Placement` has a `subgroup`, `None`
 throughout today. The later change gives Tweaks rows a placement `Tweaks › <group> ›
