@@ -2690,18 +2690,6 @@ already talking takes over at once, same topic or another; nothing is queued or 
     player stopped at the edge like a wall, or pushed back; is the line a corner message
     or a message box, and how often does it repeat? Does Edge Fall-off (RPLI) move the
     edge?
-
-
-## 211. House chamber steam, glow and ground fog (#2685)
-
-[hypothesis; spec-notes/idles.md section 10.1, particles.md section 7.8] From a sealed
-chamber in Lucky38ControlRoom, use the unseal terminal item and record the opening,
-steam bursts, panel glow and ground fog at start, after 20 s and after 55 s. Check that
-glow and haze linger, then save/load at the held end and compare. Also check whether
-replacing/stopping the idle removes its effect model. The provisional engine rule holds
-CLAMP effect tracks until replacement, using authored values throughout; actor idle
-playback is currently not serialized. No original capture was performed in this run.
-
 197. **What does a resurrected actor carry?** (P2; `fnv_game::resurrect`,
     `fnv_sim::World::restock_inventory`, issue #2683.) NVForever makes the items of a
     dead actor's own item list up again when it is resurrected (rolled anew; only what
@@ -2939,3 +2927,15 @@ playback is currently not serialized. No original capture was performed in this 
      If he walks to the door out of Top and is moved on, the original starts a walk
      whose way ends at a locked door (at least as far as the door); if he stands still
      until the door is unlocked, ours is right and the trigger only serves after it.
+
+
+## Added 2026-11-15 (House's chamber steam, glow and ground fog, #2685)
+
+211. **Do the steam, panel glow and ground fog of House's chamber linger, and do they survive a
+     load?** (P2; #2685, spec-notes/idles.md §10.1, particles.md §7.8.) [hypothesis] From a sealed
+     chamber in Lucky38ControlRoom, use the unseal terminal item and record the opening, steam
+     bursts, panel glow and ground fog at start, after 20 s and after 55 s. Check that glow and
+     haze linger, then save/load at the held end and compare. Also check whether replacing or
+     stopping the idle removes its effect model. The provisional engine rule holds CLAMP effect
+     tracks until replacement, using authored values throughout; actor idle playback is
+     currently not serialized. No original capture was performed in this run.
