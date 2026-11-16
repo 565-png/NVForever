@@ -48,8 +48,12 @@ pub fn menu_of(world: &World, settings: &Settings) -> Menu {
 fn row(world: &World, settings: &Settings, i: usize) -> menu::Row {
     let s = &settings.list()[i];
     let kind = if let Some(list) = settings.choices(i) {
+        // A choice that does something instead of being kept (Download DLSS… on the
+        // Upscaler row) is not a value: the INI never holds it.
+        let action = settings.choice_looks(i).and_then(|l| l.action);
         let choices = (list.names)(world)
             .into_iter()
+            .filter(|name| !action.is_some_and(|is_action| is_action(name)))
             .map(|name| {
                 let label = shown_case(tr_str(&settings.choice_label(world, i, &name)));
                 menu::Choice { name, label }
@@ -106,7 +110,7 @@ pub fn write_menu(world: &World) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{add_choice_list, add_setting, ChoiceList, Setting};
+    use crate::settings::{add_choice_list, add_setting, set_choice_action, ChoiceList, Setting};
 
     #[derive(Resource, Default)]
     struct Part(f32);
@@ -124,6 +128,9 @@ mod tests {
         add_setting(&mut app, Setting { slider: Some(Slider { get: |_| 1.0, set: |_, _| {}, min: 0.1, step: 0.05, shown: None }), ..setting("volume-master", "Audio", "Master volume") });
         let list = ChoiceList { names: |_| vec!["Classic".into(), "Mark and Fire".into()], chosen: |_| "Classic".into(), pick: |_, _| true, save: |_| "Classic".into(), load: |_, _| true, ask_keep: false };
         add_choice_list(&mut app, setting("vats-style", "Gameplay", "V.A.T.S. style"), list);
+        let upscaler = ChoiceList { names: |_| vec!["Off".into(), "DLSS".into(), "Download DLSS...".into()], chosen: |_| "Off".into(), pick: |_, _| true, save: |_| "Off".into(), load: |_, _| true, ask_keep: false };
+        add_choice_list(&mut app, setting("upscaler", "Display", "Upscaler"), upscaler);
+        set_choice_action(&mut app, "upscaler", |name| name.starts_with("Download"));
         add_setting(&mut app, setting("a-later-row", "Gameplay", "A later row"));
         app
     }
@@ -135,7 +142,7 @@ mod tests {
         let m = menu_of(w, w.resource::<Settings>());
         assert_eq!(m.version, env!("CARGO_PKG_VERSION"));
         let tabs: Vec<&str> = m.tabs.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(tabs, ["Gameplay", "Audio"], "in the table's order, a tab with no rows left out");
+        assert_eq!(tabs, ["Gameplay", "Display", "Audio"], "in the table's order, a tab with no rows left out");
         let g = &m.tabs[0];
         let heads: Vec<Option<&str>> = g.categories.iter().map(|c| c.heading.as_deref()).collect();
         assert_eq!(heads, [Some("Game"), Some("V.A.T.S."), None], "the table's categories, then the row it does not place");
@@ -148,7 +155,9 @@ mod tests {
         assert_eq!(steps.iter().map(|s| (s.value, s.label.as_str())).collect::<Vec<_>>(), [(0.0, "Very Easy"), (0.25, "Easy"), (0.5, "Normal"), (0.75, "Hard"), (1.0, "Very Hard")]);
         let menu::Kind::List { choices } = &g.categories[1].rows[0].kind else { panic!() };
         assert_eq!(choices.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Classic", "Mark and Fire"]);
-        let volume = &m.tabs[1].categories[0].rows[0];
+        let menu::Kind::List { choices } = &m.tabs[1].categories[0].rows[0].kind else { panic!() };
+        assert_eq!(choices.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Off", "DLSS"], "an action is not a value the INI keeps");
+        let volume = &m.tabs[2].categories[0].rows[0];
         assert_eq!(volume.kind, menu::Kind::Slider { min: 0.1, step: 0.05, steps: Vec::new() }, "a percentage: no words");
     }
 
@@ -162,7 +171,7 @@ mod tests {
         let file = dir.join(menu::MENU_FILE);
         write_menu(app.world());
         let text = std::fs::read_to_string(&file).unwrap();
-        assert_eq!(Menu::parse(&text).map(|m| m.rows().count()), Some(5));
+        assert_eq!(Menu::parse(&text).map(|m| m.rows().count()), Some(6));
         std::fs::write(&file, "old").unwrap();
         write_menu(app.world());
         assert_eq!(std::fs::read_to_string(&file).unwrap(), text, "an old file is replaced");

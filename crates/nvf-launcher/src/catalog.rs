@@ -63,7 +63,8 @@ impl Catalog {
 
     /// The game's menu `m`, when it is version `version`'s.
     pub fn from_menu(m: &Menu, version: &str) -> Option<Catalog> {
-        if m.version != version {
+        // Not this version's, or with no row (a broken write): the built-in copy.
+        if m.version != version || m.rows().next().is_none() {
             return None;
         }
         let mut rows = Vec::new();
@@ -254,6 +255,8 @@ mod tests {
         assert_eq!(c.rows[1].heading.as_deref(), Some("Combat › In Combat"));
         assert_eq!((c.rows[1].label.as_str(), c.rows[1].kind.clone()), ("TWEAK-NO-COMBAT-MUSIC", Some(menu::Kind::Switch)));
         assert_eq!(Catalog::from_menu(&m, "0.0.1"), None, "another version's menu: built in");
+        let empty = Menu { version: env!("CARGO_PKG_VERSION").into(), tabs: vec![] };
+        assert_eq!(Catalog::from_menu(&empty, env!("CARGO_PKG_VERSION")), None, "no row: built in, not an empty page");
         let dir = std::env::temp_dir().join(format!("nvf-launcher-menu-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

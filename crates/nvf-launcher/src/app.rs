@@ -290,6 +290,10 @@ impl App {
         self.rows = menu.rows;
         if let Some(on) = on {
             self.tab = self.tabs.iter().position(|t| *t == on).unwrap_or(0);
+        } else {
+            // On Other (the tab after the listed ones): still there, or gone (the game's menu
+            // came) and then the first tab, not an empty page.
+            self.tab = if self.other_keys().is_empty() { 0 } else { self.tabs.len() };
         }
         self.game_edit = Config::from_ini(&self.ini_text).game_dir.map(|p| p.display().to_string()).unwrap_or_default();
         let configured = ini_get(&self.ini_text, LAUNCHER, "Exe").filter(|s| !s.is_empty()).map(PathBuf::from);
@@ -773,6 +777,8 @@ fn menu_control(ui: &mut egui::Ui, key: &str, kind: &menu::Kind, v: &str, contro
             toggle(ui, &mut on).changed().then(|| if on { "1" } else { "0" }.to_string())
         }
         menu::Kind::Slider { min, step, steps } => {
+            // A part of 0..1 whatever the file says (a hand edit, a broken write).
+            let min = &if min.is_finite() { min.clamp(0.0, 1.0) } else { 0.0 };
             let mut f: f32 = v.trim().parse().unwrap_or(*min);
             // No egui steps: egui counts them from the range's start, the game from 0
             // (`Slider::fit`), so a value of the game's would move by being drawn. A value the
@@ -1041,6 +1047,11 @@ impl App {
                     }
                     let new = if key == "resolution" {
                         self.resolution_control(ui, &v, control_w)
+                    } else if let Some(kind) = kind.filter(|k| menu_fits(k, &v)) {
+                        // The game's own row (its menu file) whenever the INI's value is one it
+                        // takes: before the launcher's lists below, which are copies that can
+                        // drift (Frame Rate Limit became a list of names in the overhaul).
+                        menu_control(ui, key, kind, &v, control_w)
                     } else if let Some(choices) = self.display_choices(key) {
                         let at = crate::display::chosen(key, &choices, &v);
                         let shown = at.map_or(v.clone(), |i| choices[i].label.clone());
@@ -1053,8 +1064,6 @@ impl App {
                             }
                         });
                         picked.filter(|p| at.is_none_or(|i| &choices[i].stored != p))
-                    } else if let Some(kind) = kind.filter(|k| menu_fits(k, &v)) {
-                        menu_control(ui, key, kind, &v, control_w)
                     } else {
                         match Kind::of_value(&v) {
                         Kind::Switch => {
@@ -1921,6 +1930,193 @@ mod tests {
         assert_eq!(part_text(1.0 / 3.0), "0.333");
         assert_eq!(part_text(1.2), "1.00");
         assert_eq!(part_text(0.25), "0.25");
+    }
+
+    /// The launcher's controls drawn with no window (egui headless), the pointer driven by
+    /// events as a player's mouse would: what each frame's control returned and where its
+    /// words were drawn.
+    struct Headless {
+        ctx: egui::Context,
+        time: f64,
+    }
+
+    type Words = Vec<(String, egui::Pos2)>;
+
+    impl Headless {
+        fn new() -> Headless {
+            Headless { ctx: egui::Context::default(), time: 0.0 }
+        }
+
+        /// One frame with `events`: the control's answer and the frame's words with their middles.
+        fn frame(&mut self, events: Vec<egui::Event>, kind: &menu::Kind, v: &str) -> (Option<String>, Words) {
+            self.time += 0.1;
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(900.0, 600.0))),
+                time: Some(self.time),
+                focused: true,
+                events,
+                ..Default::default()
+            };
+            let mut got = None;
+            let out = self.ctx.run_ui(input, |ui| got = menu_control(ui, "row", kind, v, 260.0));
+            let mut words = Vec::new();
+            for c in &out.shapes {
+                collect_words(&c.shape, &mut words);
+            }
+            out.drop_without_applying_deltas();
+            (got, words)
+        }
+
+        /// Frames with no input until the layout settles; every answer they gave.
+        fn idle(&mut self, kind: &menu::Kind, v: &str) -> Vec<String> {
+            (0..3).filter_map(|_| self.frame(Vec::new(), kind, v).0).collect()
+        }
+
+        /// A press at `from`, a move to `to`, a release: every answer on the way.
+        fn drag(&mut self, kind: &menu::Kind, v: &str, from: egui::Pos2, to: egui::Pos2) -> Vec<String> {
+            let press = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            let steps = [
+                vec![egui::Event::PointerMoved(from)],
+                vec![press(from, true)],
+                vec![egui::Event::PointerMoved(from.lerp(to, 0.5))],
+                vec![egui::Event::PointerMoved(to)],
+                vec![press(to, false)],
+                vec![],
+            ];
+            steps.into_iter().filter_map(|e| self.frame(e, kind, v).0).collect()
+        }
+
+        fn click(&mut self, kind: &menu::Kind, v: &str, at: egui::Pos2) -> Vec<String> {
+            self.drag(kind, v, at, at)
+        }
+
+        /// The middle of the words `w` as drawn now.
+        fn find(&mut self, kind: &menu::Kind, v: &str, w: &str) -> egui::Pos2 {
+            let (_, words) = self.frame(Vec::new(), kind, v);
+            words.iter().filter(|(t, _)| t == w).map(|(_, p)| *p).max_by(|a, b| a.y.total_cmp(&b.y)).unwrap_or_else(|| panic!("{w:?} not drawn: {words:?}"))
+        }
+    }
+
+    fn collect_words(s: &egui::Shape, out: &mut Words) {
+        match s {
+            egui::Shape::Text(t) => out.push((t.galley.text().to_string(), t.pos + t.galley.rect.center().to_vec2())),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| collect_words(s, out)),
+            _ => {}
+        }
+    }
+
+    fn slider(min: f32, step: f32, words: &[&str]) -> menu::Kind {
+        let steps = words.iter().enumerate().map(|(i, w)| menu::Step { value: min + i as f32 * step, label: w.to_string() }).collect();
+        menu::Kind::Slider { min, step, steps }
+    }
+
+    fn kill_camera() -> menu::Kind {
+        let c = |name: &str, label: &str| menu::Choice { name: name.into(), label: label.into() };
+        menu::Kind::List { choices: vec![c("Last enemy", "Last Enemy"), c("Every kill", "Every Kill"), c("Off", "Off")] }
+    }
+
+    /// Opening a tab changes nothing: no row's control answers without the player.
+    #[test]
+    fn a_drawn_row_changes_nothing() {
+        let cases = [
+            (menu::Kind::Switch, "1"),
+            (menu::Kind::Switch, "0"),
+            // Off the slider's own grid but on the game's (steps from 0): the bug of ee6450871.
+            (menu::Kind::Slider { min: 0.1, step: 0.05, steps: vec![] }, "0.35"),
+            (menu::Kind::Slider { min: 0.05, step: 1.0 / 30.0, steps: vec![] }, "0.333"),
+            // Out of the range (an older build's value): kept, not clamped by drawing it.
+            (menu::Kind::Slider { min: 0.2, step: 0.1, steps: vec![] }, "0.10"),
+            (menu::Kind::Slider { min: 0.0, step: 0.1, steps: vec![] }, "1.50"),
+            (slider(0.0, 0.25, &["Very Easy", "Easy", "Normal", "Hard", "Very Hard"]), "0.75"),
+            (kill_camera(), "Last enemy"),
+        ];
+        for (kind, v) in cases {
+            assert_eq!(Headless::new().idle(&kind, v), Vec::<String>::new(), "{kind:?} at {v}");
+        }
+    }
+
+    #[test]
+    fn a_slider_dragged_to_its_ends_is_the_games_first_and_last_value() {
+        let kind = menu::Kind::Slider { min: 0.1, step: 0.05, steps: vec![] };
+        let rail = egui::Pos2::new(20.0, 10.0);
+        let mut h = Headless::new();
+        h.idle(&kind, "0.35");
+        assert_eq!(h.drag(&kind, "0.35", rail, egui::Pos2::new(2000.0, 10.0)).last().map(String::as_str), Some("1.00"));
+        let mut h = Headless::new();
+        h.idle(&kind, "0.35");
+        assert_eq!(h.drag(&kind, "0.35", rail, egui::Pos2::new(-500.0, 10.0)).last().map(String::as_str), Some("0.10"), "its start, not 0");
+        // Moved part of the way: onto a step of the game's (from 0), to the thousandth.
+        let mut h = Headless::new();
+        h.idle(&kind, "0.35");
+        let got = h.drag(&kind, "0.35", rail, egui::Pos2::new(63.0, 10.0));
+        let last = got.last().expect("moved");
+        let v: f32 = last.parse().unwrap();
+        assert!((0.1..=1.0).contains(&v) && ((v / 0.05).round() * 0.05 - v).abs() < 1e-4, "{last} is not on a step of 0.05");
+    }
+
+    #[test]
+    fn a_slider_shows_the_games_words_for_its_steps() {
+        let kind = slider(0.0, 0.25, &["Very Easy", "Easy", "Normal", "Hard", "Very Hard"]);
+        let mut h = Headless::new();
+        h.idle(&kind, "0.75");
+        h.find(&kind, "0.75", "Hard");
+        let got = h.drag(&kind, "0.75", egui::Pos2::new(20.0, 10.0), egui::Pos2::new(-500.0, 10.0));
+        assert_eq!(got.last().map(String::as_str), Some("0.00"));
+        h.find(&kind, "0.00", "Very Easy");
+    }
+
+    #[test]
+    fn a_list_shows_the_games_words_and_keeps_the_choices_name() {
+        let kind = kill_camera();
+        let mut h = Headless::new();
+        h.idle(&kind, "Last enemy");
+        let shown = h.find(&kind, "Last enemy", "Last Enemy");
+        assert!(h.click(&kind, "Last enemy", shown).is_empty(), "opening the list changes nothing");
+        let every = h.find(&kind, "Last enemy", "Every Kill");
+        assert_eq!(h.click(&kind, "Last enemy", every), ["Every kill"], "the INI keeps the name, not the words");
+        // The chosen one picked again: no change.
+        let mut h = Headless::new();
+        h.idle(&kind, "Last enemy");
+        let shown = h.find(&kind, "Last enemy", "Last Enemy");
+        h.click(&kind, "Last enemy", shown);
+        let item = h.find(&kind, "Last enemy", "Last Enemy");
+        assert!(item.y > shown.y, "the open list's own line");
+        assert!(h.click(&kind, "Last enemy", item).is_empty(), "the chosen one picked again");
+    }
+
+    #[test]
+    fn a_switch_clicked_flips() {
+        for (from, to) in [("0", "1"), ("1", "0")] {
+            let mut h = Headless::new();
+            h.idle(&menu::Kind::Switch, from);
+            assert_eq!(h.click(&menu::Kind::Switch, from, egui::Pos2::new(20.0, 10.0)), [to]);
+        }
+    }
+
+    /// A menu file the game did not write as it should (a hand edit, a broken write) draws
+    /// and answers without a panic, and a moved slider stays a value the game reads.
+    #[test]
+    fn odd_rows_draw_and_answer_without_a_panic() {
+        let c = |n: &str| menu::Choice { name: n.into(), label: n.into() };
+        let kinds = [
+            menu::Kind::Slider { min: 2.0, step: 0.1, steps: vec![] },
+            menu::Kind::Slider { min: -1.0, step: -0.5, steps: vec![] },
+            menu::Kind::Slider { min: 0.0, step: 0.0, steps: vec![] },
+            menu::Kind::Slider { min: 0.0, step: 0.5, steps: vec![menu::Step { value: 0.0, label: String::new() }] },
+            menu::Kind::List { choices: vec![] },
+            menu::Kind::List { choices: vec![c("A"), c("A"), c("")] },
+        ];
+        for kind in &kinds {
+            for v in ["0.5", "abc", "", "A", "1e9", "-3"] {
+                let mut h = Headless::new();
+                h.idle(kind, v);
+                let got = h.drag(kind, v, egui::Pos2::new(20.0, 10.0), egui::Pos2::new(2000.0, 10.0));
+                if let (menu::Kind::Slider { .. }, Some(n)) = (kind, got.last()) {
+                    let x: f32 = n.parse().unwrap_or_else(|_| panic!("{kind:?} at {v}: {n} is not a number"));
+                    assert!(x.is_finite() && (0.0..=1.0).contains(&x), "{kind:?} at {v}: {n} out of 0..1");
+                }
+            }
+        }
     }
 
     #[test]

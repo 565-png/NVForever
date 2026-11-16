@@ -18,7 +18,10 @@ without the launcher is the same as before.
   (`settings-menu.json`, `nvf_settings_layout::menu`, `engine/nvf-play/src/settings_menu.rs`):
   each row's label and note as the page shows them, and its kind (switch, slider and its
   steps' words, list and its choices). The launcher shows that file while its version is the
-  launcher's (`src/catalog.rs`). Before the game has written one (a first start, a game
+  launcher's (`src/catalog.rs`); a choice that is an action, not a value (Download DLSS… on
+  the Upscaler row), is not in it. A row whose INI value the game's row takes is drawn from the
+  game's row before the launcher's own lists (`src/display.rs`), which stay for the rows the INI
+  keeps by another word than the choice's name (Display sync `variable`, Language `en`, …). Before the game has written one (a first start, a game
   older than the file, an update not started yet) it shows its built-in copy: the tabs,
   categories and order from the game's own table (`crates/nvf-settings-layout`, `SECTIONS`,
   which the game's pause menu draws from), the labels and notes from
