@@ -434,10 +434,20 @@ struct NifSurface {
             }
             w[0] = remaining;
         } else {
+            // [design] #2661 review: an overlay at opacity exactly 0 is not read. Its paint
+            // stays 0, as 0 x its alpha was, so terrain_ordered_shares gives it the share 0
+            // and leaves every other share as it was; a height is taken only where the share
+            // is not 0, terrain_height_weights keeps a zero share zero, and colour and
+            // normal read a raw texel only where its weight is not 0, so the unread texel is
+            // never used.
             var paint = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
             for (var k = 0u; k < n; k += 1u) {
+                let o = saturate(detail_opacity(instance_index, t, k));
+                if o == 0.0 {
+                    continue;
+                }
                 raw[k + 1u] = detail_sample(instance_index, terrain_detail_word(instance_index, q + 15u + k), diffuse_sampler, uv, ddx, ddy);
-                paint[k] = saturate(detail_opacity(instance_index, t, k)) * raw[k + 1u].a;
+                paint[k] = o * raw[k + 1u].a;
             }
             w = terrain_ordered_shares(paint, n);
         }
@@ -504,8 +514,15 @@ struct NifSurface {
         normal = select(plain, normalize(normal_sum), dot(normal_sum, normal_sum) > 1e-12);
     }
     // The overlays not composed above, in drawing order: every overlay without either switch
-    // on the base draw, else the overflow ones.
+    // on the base draw, else the overflow ones. #2661 review: the opacity is known before the
+    // diffuse read and the share after it; an overlay whose opacity or share is exactly 0 is
+    // skipped (no diffuse read, no normal-map read): mixing by 0 leaves colour and normal
+    // exactly as they were.
     for (var k = select(0u, folded, weighted); k < total; k++) {
+        let o = saturate(detail_opacity(instance_index, t, k));
+        if o == 0.0 {
+            continue;
+        }
         let pair = terrain_detail_word(instance_index, q + 15u + k);
         let anti_k = ((overflow_anti >> k) & 1u) != 0u;
         var texel: vec4<f32>;
@@ -514,7 +531,10 @@ struct NifSurface {
         } else {
             texel = detail_sample(instance_index, pair, diffuse_sampler, uv, ddx, ddy);
         }
-        let share = saturate(detail_opacity(instance_index, t, k)) * texel.a;
+        let share = o * texel.a;
+        if share == 0.0 {
+            continue;
+        }
         colour = mix(colour, texel.rgb * a.tint * select(vec3(1.0), base_rgb, k < folded), share);
         if full {
             var layer_n = plain;

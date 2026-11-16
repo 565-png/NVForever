@@ -2004,10 +2004,15 @@ mod tests {
                 }
                 wt[0] = remaining;
             } else {
+                // #2661 review: an overlay at opacity 0 is not read (its raw texel stays 0).
                 let mut paint = [0.0f32; 6];
                 for (k, l) in c.folded.iter().enumerate().take(n) {
+                    let o = l.1.clamp(0.0, 1.0);
+                    if o == 0.0 {
+                        continue;
+                    }
                     raw[k + 1] = l.0;
-                    paint[k] = l.1.clamp(0.0, 1.0) * raw[k + 1][3];
+                    paint[k] = o * raw[k + 1][3];
                 }
                 wt = ordered_shares(paint, n);
             }
@@ -2040,8 +2045,16 @@ mod tests {
             }
         }
         for k in if weighted { folded } else { 0 }..total {
+            // #2661 review: opacity first, then the share; either exactly 0 skips the overlay.
             let (texel, o, is_folded) = overlay(k);
-            let share = o.clamp(0.0, 1.0) * texel[3];
+            let o = o.clamp(0.0, 1.0);
+            if o == 0.0 {
+                continue;
+            }
+            let share = o * texel[3];
+            if share == 0.0 {
+                continue;
+            }
             let layer = mul3(mul3(rgb(texel), c.tint), if is_folded { c.base_rgb } else { [1.0; 3] });
             for (x, l) in colour.iter_mut().zip(layer) {
                 *x = *x * (1.0 - share) + l * share;
