@@ -113,7 +113,10 @@ worldspace asks for it: world.md §6).
 - Load collision for the cells around the player: terrain heights, references' collision
   objects read from the archives through `nvf_assets::GameData` and
   `fnv_collide::nif::collision_objects` (cache per model path), CollisionMarker
-  primitives, the worldspace's persistent references in those grid squares; skip
+  primitives, the worldspace's persistent references in those grid squares, and the
+  references placed in other squares whose bounds (base OBND, placed) reach into one
+  (`fnv_world::reach`, built once per worldspace; a reference held by several loaded
+  squares is in the world once, removed with the last) [design, #2795]; skip
   disabled/deleted references and those the simulation has removed. Unload with
   hysteresis. Interiors: the one cell. Same selection rules as `fnvtool phys cell`
   (crates/fnvtool/src/phys_cmd.rs `build`) — share code where sensible, do not diverge.

@@ -6,7 +6,12 @@
 //! rapier shapes: [`prepare`]) happens on the loader thread ([`loader`]); the main thread
 //! inserts at most [`CELLS_PER_FRAME`] prepared cells per frame, in the order they were
 //! requested, and loads the player's own cell on the spot if it is not in yet (the
-//! player never stands in a cell without collision). What a reference contributes is
+//! player never stands in a cell without collision). An exterior square holds the
+//! references its cell lists, the worldspace's persistent references standing in it, and
+//! the references placed in other squares whose bounds reach into it
+//! (`fnv_world::reach::ReachIndex`, built once per worldspace; #2795: HELIOS One's plaza,
+//! placed two squares north of its south end); one held by several loaded squares is in
+//! the world once, removed with the last of them [design, #2795]. What a reference contributes is
 //! `fnv_phys::ref_collision`, the rule `fnvtool phys cell` uses; whether it is in the
 //! world is the simulation's call ([`in_world`]), made when the cell is inserted.
 //! `RefChanged` removes or restores one reference's collision; `Travel` rebuilds
@@ -52,6 +57,7 @@ use drawn::DrawnFloors;
 use fnv_phys::{Arrival, Character, CharacterParams, Filter, Owner, PhysParams, PhysWorld, RayHit, RefPose, Stepper, WaterArea};
 use fnv_sim::{FormId, World};
 use fnv_world::placed::placement;
+use fnv_world::reach::ReachIndex;
 use fnv_world::transform::{max_diff, ref_angles, ref_rotation};
 use fnv_world::{cell_of, Placement, WorldIndex, CELL_SIZE};
 use nvf_assets::GameData;
@@ -144,6 +150,15 @@ pub struct PhysState {
     pub(crate) prev_feet: [f32; 3],
     /// The worldspace's persistent references by the grid square they stand in.
     persistent_by_grid: HashMap<(i32, i32), Vec<u32>>,
+    /// The worldspace's references placed in one square whose bounds reach into others
+    /// (`fnv_world::reach`, #2795): each exterior square loads them too.
+    pub(crate) reach: Arc<ReachIndex>,
+    /// [`Self::reach`] of each worldspace played so far, built on the first entry.
+    reach_by_world: HashMap<u32, Arc<ReachIndex>>,
+    /// How many loaded cells list each placed reference ([`LoadedCell::refs`]): a
+    /// reference whose bounds reach over several loaded squares is in the world once, added
+    /// with the first of them and removed with the last (#2795).
+    held: HashMap<u32, u16>,
     /// Collision objects per model path, shared with the loader thread.
     models: Arc<ModelCache>,
     /// Cells being prepared on the loader thread.
@@ -220,6 +235,9 @@ impl Default for PhysState {
             stats: PhysStats::default(),
             prev_feet: [0.0; 3],
             persistent_by_grid: HashMap::new(),
+            reach: Arc::default(),
+            reach_by_world: HashMap::new(),
+            held: HashMap::new(),
             models: Arc::default(),
             loader: loader::Loader::default(),
             #[cfg(test)]
@@ -381,7 +399,9 @@ pub fn npc_params(height: Option<f32>) -> CharacterParams {
 #[derive(Debug, Clone, Default)]
 pub struct LoadedCell {
     /// Its references (and, outdoors, the worldspace's persistent references standing in
-    /// the square), by FormID, in the world or not.
+    /// the square and the references placed in other squares whose bounds reach into it,
+    /// `fnv_world::reach`), by FormID, in the world or not. A reference listed by several
+    /// loaded cells is in the world once (`PhysState::held`).
     pub refs: Vec<u32>,
     /// LAND heights (exterior squares with terrain).
     pub heights: Option<Vec<f32>>,
@@ -698,9 +718,30 @@ impl PhysState {
     /// "Use Map Data" and has its own land, `DNAM` and `NAM2` [observed: `fnvtool world
     /// list`, `esm decode`], so taking the parent's is not implemented (logged when a
     /// plugin asks for it).
+    ///
+    /// The first time a worldspace is played its reach index is built
+    /// (`fnv_world::reach::ReachIndex`: every placed reference of its exterior cells read
+    /// once, #2795) and kept for the session. What that costs in time and memory is
+    /// [hypothesis: tens to hundreds of milliseconds for WastelandNV, not measured yet]; the
+    /// log line below says.
     pub fn set_world(&mut self, d: &PlayData, world: u32) {
         self.worldspace = world;
         self.persistent_by_grid.clear();
+        self.reach = match self.reach_by_world.get(&world) {
+            Some(r) => r.clone(),
+            None => {
+                let t = Instant::now();
+                let r = Arc::new(ReachIndex::build(d.lo, d.schema, d.index, world));
+                info!(
+                    "physics: worldspace {world:08X}: {} references reach beyond their own square ({} square entries), indexed in {:.0} ms",
+                    r.refs,
+                    r.entries(),
+                    ms_since(t)
+                );
+                self.reach_by_world.insert(world, r.clone());
+                r
+            }
+        };
         let ws = d.index.worldspaces.get(&world);
         if let Some(w) = ws.filter(|w| w.parent.is_some() && w.parent_flags & !PNAM_USE_MAP_DATA != 0) {
             warn!(
@@ -964,6 +1005,10 @@ impl PhysState {
         };
         let mut refs: Vec<u32> = record.map(|c| c.refs.clone()).unwrap_or_default();
         refs.extend(persistent.into_iter().flatten());
+        // References placed in other squares whose bounds reach into this one (#2795).
+        if let PhysCell::Exterior(x, y) = cell {
+            refs.extend_from_slice(self.reach.reaching((x, y)));
+        }
         refs.sort_unstable();
         refs.dedup();
         let land = match cell {
@@ -1023,6 +1068,13 @@ impl PhysState {
         let mut with_collision = 0;
         for e in refs {
             ids.push(e.form_id);
+            // Held by another loaded square already (its bounds reach over both, #2795):
+            // that square added it, or left it out, and `sync_ref` keeps it up to date.
+            let holders = self.held.entry(e.form_id).or_default();
+            *holders += 1;
+            if *holders > 1 {
+                continue;
+            }
             self.ref_cell.insert(e.form_id, cell);
             let shapes = e.shapes;
             with_collision += self.apply(ctx, e.placement, |_| shapes.expect("prepared with its placement")) as usize;
@@ -1177,6 +1229,20 @@ impl PhysState {
             self.world.remove_terrain((x, y));
         }
         for r in c.refs {
+            // Still held by another loaded square (#2795): its collision stays, owned by
+            // that square now.
+            if let Some(n) = self.held.get_mut(&r) {
+                *n -= 1;
+                if *n > 0 {
+                    if self.ref_cell.get(&r) == Some(&cell) {
+                        if let Some(other) = self.cells.iter().find(|(_, o)| o.refs.contains(&r)).map(|(k, _)| *k) {
+                            self.ref_cell.insert(r, other);
+                        }
+                    }
+                    continue;
+                }
+                self.held.remove(&r);
+            }
             self.world.remove_ref(r);
             self.created.remove(&r);
             self.placed_dynamic.remove(&r);

@@ -449,6 +449,73 @@ fn a_start_over_a_neighbours_walkway_waits_for_it() {
     assert!((feet[2] - 420.0).abs() < 5.0, "back at the saved height: {feet:?}");
 }
 
+/// A made-up slab placed in square (2, 0) whose bounds reach west over (1, 0) into (0, 0)
+/// (#2795: HELIOS One's plaza, placed two squares from its south end).
+const SLAB: u32 = 0x0200_0002;
+
+/// [`fake_cell`], with the slab wherever the job lists it: 40 units thick, top at z 420,
+/// from x 3240 (square 0) to x 17240 (square 4), 600 units either side of y 2048.
+fn reach_cell(job: &Job) -> Prepared {
+    let mut p = fake_cell(job);
+    if job.refs.contains(&SLAB) {
+        let pl = Placement {
+            form_id: SLAB,
+            sig: *b"REFR",
+            flags: 0,
+            base: None,
+            position: [2.5 * CELL_SIZE, 0.5 * CELL_SIZE, 400.0],
+            rotation: [0.0; 3],
+            scale: 1.0,
+            enable_parent: None,
+            open_by_default: false,
+            teleport: false,
+            emittance: None,
+            imposter: false,
+            primitive: false,
+        };
+        let obj = CollisionObject { shape: Shape::Box { half_extents: [7000.0, 600.0, 20.0] }.into(), ..object(0.0, Motion::Static) };
+        let prepared = PreparedRef::new(&PhysParams::default(), &RefPose::from_placement(&pl), &[obj]);
+        p.refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local: None, door: None, animated: None, drawn: None, model: None }) });
+    }
+    p
+}
+
+#[test]
+fn a_reference_reaching_into_loaded_squares_is_added_once_and_removed_with_the_last() {
+    let (d, sim) = (play_data(), sim());
+    let ctx = LoadCtx { d: &d, sim: &sim, data: None };
+    let mut p = PhysState { fake: Some(reach_cell), loader: loader::Loader::manual(), ..Default::default() };
+    // The index as `fnv_world::reach` builds it: placed in (2, 0), reaching (0, 0)..(4, 0).
+    p.reach = Arc::new(fnv_world::reach::ReachIndex::from_entries([(SLAB, (2, 0), ((0, 0), (4, 0)))]));
+    // A square its bounds do not reach does not load it.
+    p.load(&ctx, PhysCell::Exterior(0, 1));
+    assert!(!p.has_collision(SLAB));
+    assert!(!p.cells[&PhysCell::Exterior(0, 1)].refs.contains(&SLAB));
+    // The player's square, two squares from where the slab is placed: it loads it, and the
+    // player stands on it rather than on the terrain (about z 46 there).
+    p.load(&ctx, PhysCell::Exterior(0, 0));
+    assert!(p.has_collision(SLAB));
+    let hit = p.place_player([3600.0, 0.5 * CELL_SIZE, 500.0], 120.0, 100_000.0).expect("ground");
+    assert!((hit.point[2] - 420.0).abs() < 1.0, "on the slab: {hit:?}");
+    let bodies = p.world.ref_bodies(SLAB).len();
+    assert!(bodies > 0);
+    // The next square reaches it too: still one body.
+    p.load(&ctx, PhysCell::Exterior(1, 0));
+    assert_eq!(p.world.ref_bodies(SLAB).len(), bodies, "added once");
+    assert_eq!(p.held.get(&SLAB), Some(&2));
+    // The first holder goes: the other keeps it.
+    p.unload(PhysCell::Exterior(0, 0));
+    assert_eq!(p.world.ref_bodies(SLAB).len(), bodies, "kept by the square still loaded");
+    assert_eq!(p.ref_cell.get(&SLAB), Some(&PhysCell::Exterior(1, 0)));
+    // The last goes: so does the slab.
+    p.unload(PhysCell::Exterior(1, 0));
+    assert!(!p.has_collision(SLAB));
+    assert!(!p.held.contains_key(&SLAB) && !p.ref_cell.contains_key(&SLAB));
+    // Nothing is left held once every square is gone.
+    p.unload(PhysCell::Exterior(0, 1));
+    assert!(p.held.is_empty());
+}
+
 #[test]
 fn indoors_the_one_cell_is_all_a_start_waits_for() {
     let mut p = state(true);
