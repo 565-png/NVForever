@@ -533,6 +533,8 @@ the spec it links to.
     sets one)? ([actor-behaviour §5.5](design/actor-behaviour.md),
     [packages §3](spec-notes/packages.md); what the original does:
     [observer check 114](handoff/observer-checks.md))
+    - [design, #2715] Idle-marker-only packages now reuse their sole eligible last marker
+      without Standing; every other package retains this default (observer check 208).
 57. **A Use Weapon package with Continue During Combat keeps firing at its own target
     when attacked (#2120, #2145).** With the flag, an actor attacked by the player (or
     anyone) stays at its stand and goes on firing its package's volleys at the package's
