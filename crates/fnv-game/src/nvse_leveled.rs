@@ -418,4 +418,39 @@ mod actor_addition_tests {
         assert_eq!(selected(&back, 0x821, 1), Some(FormId(0x801)));
         assert_eq!(selected(&back, 0x821, 5), Some(FormId(0x802)));
     }
+
+    #[test]
+    fn unrelated_actor_list_edits_preserve_an_ordinary_actors_carried_extras_on_resurrection() {
+        let f = fixture();
+        for edit in [None, Some("AddNPCToLeveledList NPCTiers AddedNPC 5\n"), Some("AddCreatureToLeveledList CreatureTiers AddedCreature 5\n")] {
+            let mut g = game(&f);
+            let actor = g.create_at(FormId(0x801), None, [0.0; 3], [0.0; 3]).unwrap();
+            g.world.inventory_mut(actor).unwrap().add(FormId(0x902), 3);
+            assert_eq!(g.world.item_count(actor, FormId(0x901)).unwrap(), 1);
+            assert_eq!(g.world.item_count(actor, FormId(0x902)).unwrap(), 3);
+            if let Some(edit) = edit { source(&mut g, edit); }
+            g.extra.entry(actor).or_default().dead = true;
+            g.resurrect(actor, false);
+            assert_eq!(g.world.item_count(actor, FormId(0x901)).unwrap(), 1, "{edit:?}");
+            assert_eq!(g.world.item_count(actor, FormId(0x902)).unwrap(), 3, "{edit:?}");
+            assert!(!g.is_dead(actor));
+        }
+    }
+
+    #[test]
+    fn an_edited_list_in_the_actors_inventory_chain_still_regenerates_its_selected_inventory() {
+        let f = fixture();
+        for (list, edit) in [(0x821, "AddNPCToLeveledList NPCTiers AddedNPC 5\n"), (0x831, "AddCreatureToLeveledList CreatureTiers AddedCreature 5\n")] {
+            let mut g = game(&f);
+            g.player.level = Some(5);
+            let actor = g.create_at(FormId(list), None, [0.0; 3], [0.0; 3]).unwrap();
+            g.world.inventory_mut(actor).unwrap().add(FormId(0x902), 3);
+            assert_eq!(g.world.item_count(actor, FormId(0x901)).unwrap(), 1);
+            source(&mut g, edit);
+            g.extra.entry(actor).or_default().dead = true;
+            g.resurrect(actor, false);
+            assert_eq!(g.world.item_count(actor, FormId(0x901)).unwrap(), 0);
+            assert_eq!(g.world.item_count(actor, FormId(0x902)).unwrap(), 1);
+        }
+    }
 }

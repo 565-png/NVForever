@@ -29,3 +29,11 @@ No numeric encoding is inferred from registration or documentation identity.
 list edits remain session edits. Runtime readers combine them with accepted
 list selection, encounter levels and reference seeds. The renderer must read
 the same effective lists as gameplay, including after loading a save.
+
+[design] An edited actor list changes resurrection inventory regeneration only
+when the list is reachable through that actor's Inventory template chain. An
+ordinary actor with its own inventory retains carried extras after an unrelated
+NPC-list or creature-list edit, as it does without edits. Existing static-list
+regeneration rules remain in force. Synthetic controls cover that preservation
+and relevant edited NPC/creature lists selecting their new inventories; execution
+remains pending.
