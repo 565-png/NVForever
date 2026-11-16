@@ -93,6 +93,7 @@ mod set_class;
 mod showoff4;
 mod showoff5;
 mod softlock;
+mod source_metadata;
 mod step_budget;
 mod sup1;
 mod sup4;
