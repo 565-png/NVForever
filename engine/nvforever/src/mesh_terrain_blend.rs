@@ -2449,6 +2449,55 @@ mod tests {
         assert!(blends_on(&app, e));
     }
 
+    /// A source read both ways keeps its stamp whichever reader is recorded first.
+    #[test]
+    fn watch_keeps_the_stamp_of_a_source_read_both_ways_in_either_order() {
+        let mut store = Assets::<NifMaterial>::default();
+        let id = store.add(NifMaterial::default()).id();
+        let source = store.get(id);
+        for order in [[false, true], [true, false]] {
+            let mut watched = HashMap::new();
+            for allowed in order { watch(&mut watched, id, source, allowed); }
+            assert!(stamped(&watched[&id]), "{order:?}");
+            assert_eq!(watched[&id], fingerprint(source, true));
+        }
+        let mut watched = HashMap::new();
+        for _ in 0..2 { watch(&mut watched, id, source, false); }
+        assert!(!stamped(&watched[&id]), "kept-out readers alone record no stamp");
+    }
+
+    /// A kept-out shape (an override's marker) and an allowed shape read one source, in
+    /// both spawn orders: an alpha edit of the source runs the pass and rebuilds the
+    /// allowed shape's clone.
+    #[test]
+    fn a_source_read_both_ways_keeps_its_stamp_watched_in_either_spawn_order() {
+        for kept_out_first in [true, false] {
+            let mut app = conversion_app();
+            publish(&mut app);
+            let s = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(NifMaterial::default());
+            let kept_out = (tracked(0, 0), BlendShape::new(s.clone()), MeshMaterial3d(s.clone()), MaterialOverride { source: s.clone(), copy: s.clone() });
+            let allowed = (tracked(1, 0), BlendShape::new(s.clone()), MeshMaterial3d(s.clone()));
+            let e = if kept_out_first {
+                app.world_mut().spawn(kept_out);
+                app.world_mut().spawn(allowed).id()
+            } else {
+                let e = app.world_mut().spawn(allowed).id();
+                app.world_mut().spawn(kept_out);
+                e
+            };
+            app.update();
+            go_quiet(&mut app);
+            assert!(blends_on(&app, e), "kept_out_first={kept_out_first}");
+            assert!(stamped(&app.world().resource::<Variants>().watched[&s.id()]), "kept_out_first={kept_out_first}");
+            let before = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+            app.world_mut().resource_mut::<Assets<NifMaterial>>().get_mut(&s).unwrap().base.base_color.set_alpha(0.5);
+            runs(&mut app, "an alpha edit of a source read both ways");
+            let after = app.world().get::<MeshMaterial3d<NifBlendMaterial>>(e).unwrap().0.clone();
+            assert_ne!(after, before, "the allowed shape's clone is rebuilt, kept_out_first={kept_out_first}");
+            assert_eq!(app.world().resource::<Assets<NifBlendMaterial>>().get(&after).unwrap().base.base_color.alpha(), 0.5);
+        }
+    }
+
     /// An allowed shape's source edited under its handle in a stamped field (alpha) still
     /// runs the pass, and the clone is rebuilt.
     #[test]
