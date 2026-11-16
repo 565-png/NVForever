@@ -24,7 +24,23 @@ mask interpretation, composition, nested and live arguments, changes to either
 operand, deferred evaluation, direct overrides and cold reloading. Separate
 controls retain ordinary boolean/arithmetic behavior and unknown-tag warnings.
 Boundary controls cover the exact-integer limit and explicitly selected invalid
-input policy. These controls have not yet executed on this source.
+input policy.
+
+[documented: CPU process evidence] The `abba962b` runtime and exact authored
+fixtures were compiled through normal Cargo in an existing Windows CPU host
+with optimization level zero. With public `be6db094` parser/evaluator files,
+112 retained controls passed and all four new controls failed their intended
+numeric assertions. The candidate passed all 116, with zero failures, ignored
+or filtered controls. All eight bounded compile/list/run jobs ended and host
+source was restored. This is focused library qualification, not pristine
+whole-workspace, optimized release, native or rendered acceptance.
+
+[hypothesis: CLI qualification] The authored `ui-bit-test-operator` TOOL scenario
+invokes the actual `fnvtool ui tree` consumer against a portable repository-owned
+fixture. Referenced operands, set/clear bits, nested arguments and a dependent
+trait are checked alongside nonzero arithmetic and sentinel controls. An ignored
+`bt` cannot satisfy the expected set-bit, nested or downstream values. This CLI
+scenario is UNRUN; passing library controls do not qualify its launch boundary.
 
 Native edge behavior remains unobserved: negative or fractional operands,
 nonfinite values, indexes outside the native width and numeric precision/conversion
