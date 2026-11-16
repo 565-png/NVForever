@@ -324,7 +324,7 @@ mod tests {
     /// row, #2551's terrain anti-tiling row, #2662's Grass fires row, #2688's sound cover row,
     /// #2149's Smooth terrain row and its Debug row Terrain wireframe), by the group it registers
     /// with.
-    const KNOWN: [(&str, &str); 118] = [
+    const KNOWN: [(&str, &str); 119] = [
         ("detached-camera", "Gameplay"),
         ("sound-cover", "Gameplay"),
         ("menu-pause", "Gameplay"),
