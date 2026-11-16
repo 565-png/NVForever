@@ -13369,6 +13369,60 @@ expect = [
 forbid = [{ text = "VATSMenu drawn by hand", label = "the file fell back to the engine-drawn screen" }]
 
 [[scenario]]
+name = "vats-classic-align"
+source = "[design, #2659] Queue rows join target/part data names, displayed ammo subtracts queued reservations, and the classic enemy bar stays at bottom centre through playback (docs/design/vats-classic.md section 13; issue #2659 items 1-3)"
+note = "The vats-classic-menu-file scene: queue two attacks, undo both, queue one and accept. Queue text includes both names; ammo returns when undoing. No ammunition is consumed by queueing. Main-session before/after pictures also compare head and leg fill."
+areas = ["combat", "vats", "ui"]
+paths = ["engine/nvf-play/src/vats_mode.rs", "engine/nvf-play/src/hud.rs", "engine/nvf-play/src/hud_target.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvforever/src/vats_highlight.rs", "crates/fnv-game/src/ui_hud/copies.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:combat:0x000F573F:player,3:combat:0x0013E5BB:player", NVF_PLAY_TEST_EQUIP = "0008F216", NVF_PLAY_TEST_GIVE = "0008ED02:24", NVF_PLAY_TEST_CONTROL = "3:weapon,4.5:reload,9.8:aimvats", NVF_PLAY_TEST_KEYS = "10:v,11:s,11.5:mouse-left,12:mouse-left,12.4:mouse-right,12.8:mouse-right,13.2:mouse-left,13.6:e", NVF_PLAY_TEST_VATS_STYLE = "classic" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "000F573F,0013E5BB"]
+run_seconds = 22
+order = [
+  [
+    { re = '1 queued \[Fiend Guard Dog: [^,\]]+\]', label = "queue row joins the target FULL and part name" },
+    { re = '2 queued \[Fiend Guard Dog: [^,\]]+, Fiend Guard Dog: [^,\]]+\]', label = "both rows keep both names" },
+    "vats mode: firing 1 marked shots",
+  ],
+  [
+    "hud: ammo count 6/18",
+    "hud: ammo count 5/18",
+    "hud: ammo count 4/18",
+    "hud: ammo count 5/18",
+    "hud: ammo count 6/18",
+  ],
+  [
+    "hud: classic VATS enemy bar bottom centre (target screen)",
+    "hud: classic VATS enemy bar bottom centre (playback)",
+  ],
+]
+expect = [
+  { re = 'hud: enemy health .* 0x[0-9A-F]{8} 100 %', label = "the selected target has a bar even at full health" },
+  { re = 'vats mode summary: entered 1 times, 3 marks, 1 shots, 26 AP spent', label = "only the accepted attack spends ammunition and AP" },
+]
+forbid = [{ text = "VATSMenu drawn by hand", label = "the file fell back to the engine-drawn screen" }]
+
+[[scenario]]
+name = "vats-classic-enemy-bar-tm"
+source = "[design, #2659] free_cam::hide_menus includes the independent hand-built EnemyPiece; undoing tm restores normal HUD eligibility (docs/design/vats-classic.md section 13)"
+note = "[design: vats_mode.rs::update] Opening the console ends classic VATS. In the vats-classic-menu-file dog scene with the hand-built HUD selected explicitly, show the full-health enemy bar, enter tm and close the console, then re-enter targeting while tm is on. Undo tm, close the console and re-enter targeting again to check restoration."
+areas = ["combat", "vats", "ui", "console"]
+paths = ["engine/nvf-play/src/free_cam.rs", "engine/nvf-play/src/hud.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT = "3:combat:0x000F573F:player,3:combat:0x0013E5BB:player", NVF_PLAY_TEST_EQUIP = "0008F216", NVF_PLAY_TEST_GIVE = "0008ED02:24", NVF_PLAY_TEST_CONTROL = "3:weapon,4.5:reload,9.8:aimvats,11.5:aimvats,13.5:aimvats", NVF_PLAY_TEST_KEYS = "10:v,11.7:v,13.7:v", NVF_PLAY_TEST_VATS_STYLE = "classic", NVF_PLAY_TEST_CONSOLE = "11:tm;11.3:close;13:tm;13.3:close", NVF_PLAY_TEST_SHOTS = "10.8:enemy_bar_tm_before.png,12.5:enemy_bar_tm_hidden.png,14.5:enemy_bar_tm_restored.png" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "000F573F,0013E5BB"]
+run_seconds = 16
+order = [[
+  "hud: classic VATS enemy bar bottom centre (target screen)",
+  "ToggleMenus: the HUD is hidden",
+  "console: close",
+  "hud: classic VATS enemy bar bottom centre (target screen)",
+  "ToggleMenus: the HUD is shown",
+  "console: close",
+  "hud: classic VATS enemy bar bottom centre (target screen)",
+]]
+expect = [{ re = 'hud: enemy health .* 0x[0-9A-F]{8} 100 %', label = "the selected target has a visible bar before tm" }]
+manual = "[design, #2659] enemy_bar_tm_before.png: enemy name/bar at bottom centre; enemy_bar_tm_hidden.png: no enemy name/bar after closing the console; enemy_bar_tm_restored.png: enemy name/bar restored."
+
+[[scenario]]
 name = "vats-classic-engine-screen"
 source = "fork owner 2026-11-10: the engine-drawn target screen stays as the fallback (docs/design/vats-classic.md §11)"
 note = "the same spot with the menu file switched off by its test aid (as [UI] VatsMenuFile=0): V finds the targets, the left button queues an attack, the right button takes it back and a second press leaves; the file is never built"

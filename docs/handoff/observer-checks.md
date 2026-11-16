@@ -3090,6 +3090,19 @@ already talking takes over at once, same topic or another; nothing is queued or 
      NAVM triangle/link/drop heights to marker 01 and between markers; no camp
      navmesh facts or original captures were available to this writer.
 
+## Added 2026-11-15 (classic VATS screen layout, #2659)
+
+215. **Classic VATS unresolved comparisons (#2659, items 6–9).**
+    [documented: issue #2659, original capture description; quoted below with its
+    numbering and wording.] [hypothesis] Keep the existing AP meter, AP cost and
+    target-change rules until these checks settle them. The bottom enemy bar during
+    playback is implemented under item 3; the wider playback comparison stays open.
+
+    6. **AP meter while queueing.** NVForever takes the reserved AP off the HUD's AP bar as attacks are queued. In the original's pictures (1280 wide) the bar did not visibly drop with four .357 attacks queued on 80 AP; a closer capture (a crop of the bar, or `GetUIFloatAlt` reads of the AP meter's tiles before and after each queue) should say whether it drops, dims a share or stays.
+    7. **AP cost of a shot.** The original queued four .357 shots on 80 AP, so 20 AP or less each; NVForever charges 26 AP a shot (`vats mode: on (WeapNV357Revolver, 26 AP a shot ...)`) and allows three. The capture's save (a level 1 character) may have perks or stats that lower the cost; that was not checked. Compare `GetCalculatedAPCost` [documented: GECK wiki] in the original with NVForever's `shot_ap_cost` for the same character.
+    8. **Playback HUD.** In the original, the whole HUD but the enemy bar (bottom centre) is hidden while the queued attacks play, and comes back after with the XP gained. NVForever's playback was not shot in this pass.
+    9. **After a target change.** The original showed the new target with no part boxes at once (the capture moves no pointer); whether they come with the pointer on the body, or after a moment, was not settled.
+
 ## Added 2026-11-15 (L'il Devil's crown, issue #2350)
 
 216. **Does L'il Devil's crown follow the hair colour?** (P3; nif.md §6 "Hair",
