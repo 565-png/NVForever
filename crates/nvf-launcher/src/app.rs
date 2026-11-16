@@ -85,6 +85,8 @@ pub struct App {
     // Mods.
     mods: Option<plugins::PluginList>,
     mods_dirty: bool,
+    /// The row being dragged on the Mods page.
+    mods_drag: Option<usize>,
     // News.
     news: Vec<(Post, Option<Arc<[u8]>>)>,
     news_state: NewsState,
@@ -132,6 +134,7 @@ impl App {
             game_edit: String::new(),
             mods: None,
             mods_dirty: false,
+            mods_drag: None,
             news: Vec::new(),
             news_state: NewsState::Off,
             news_rx: None,
@@ -943,7 +946,7 @@ impl App {
             });
         });
         ui.label(
-            RichText::new("NVForever's own load order (plugins.txt in its folder; the original game's list is never read or changed). Top loads first. Using Mod Organizer 2? Start NVForever from MO2 instead.")
+            RichText::new("NVForever's own load order (plugins.txt in its folder; the original game's list is never read or changed). Top loads first: drag a row to move it. Using Mod Organizer 2? Start NVForever from MO2 instead.")
                 .small()
                 .color(WEAK),
         );
@@ -959,42 +962,89 @@ impl App {
             .and_then(|(h, g)| plugins::present_plugins(&g, &h.mods()).ok())
             .map(|v| v.into_iter().map(|s| s.to_ascii_lowercase()).collect())
             .unwrap_or_default();
-        let mut swap: Option<(usize, usize)> = None;
         let n = list.entries.len();
         let is_base: Vec<bool> = list.entries.iter().map(|e| e.name.eq_ignore_ascii_case("FalloutNV.esm")).collect();
+        // The rows at the top that stay there (FalloutNV.esm): nothing moves above them.
+        let fixed = is_base.iter().take_while(|b| **b).count();
+        let mut moved: Option<(usize, usize)> = None;
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            let mut rects = Vec::with_capacity(n);
             for (i, e) in list.entries.iter_mut().enumerate() {
-                Frame::new().fill(CARD).corner_radius(4).inner_margin(Margin::symmetric(10, 4)).show(ui, |ui| {
+                let base = is_base[i];
+                let dragged = self.mods_drag == Some(i);
+                let fill = if dragged { theme::SELECTED } else { CARD };
+                let stroke = if dragged { Stroke::new(1.0, theme::GOLD_DIM) } else { Stroke::NONE };
+                let row = Frame::new().fill(fill).stroke(stroke).corner_radius(4).inner_margin(Margin::symmetric(10, 4)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        let base = is_base[i];
+                        // The grip: three short lines, drawn (the system font has no grip glyph).
+                        let (grip, resp) = ui.allocate_exact_size(Vec2::new(14.0, 18.0), if base { Sense::hover() } else { Sense::drag() });
+                        if !base {
+                            let c = if resp.hovered() || dragged { GOLD } else { WEAK };
+                            for k in [-4.0, 0.0, 4.0] {
+                                let y = grip.center().y + k;
+                                ui.painter().line_segment([egui::pos2(grip.left() + 1.0, y), egui::pos2(grip.right() - 1.0, y)], Stroke::new(1.5, c));
+                            }
+                            if resp.drag_started() {
+                                self.mods_drag = Some(i);
+                            }
+                            resp.on_hover_cursor(egui::CursorIcon::Grab);
+                        }
                         ui.label(RichText::new(format!("{:02X}", i)).monospace().color(WEAK));
                         if ui.add_enabled(!base, egui::Checkbox::without_text(&mut e.active)).changed() {
                             self.mods_dirty = true;
                         }
-                        // Clicking the name turns the plugin on or off, as its box does.
-                        let name = ui.add(egui::Label::new(&e.name).sense(Sense::click()));
-                        if !base && name.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            e.active = !e.active;
-                            self.mods_dirty = true;
+                        // The name: a click turns the plugin on or off, a drag moves it.
+                        let sense = if base { Sense::hover() } else { Sense::click_and_drag() };
+                        let name = ui.add(egui::Label::new(&e.name).sense(sense));
+                        if !base {
+                            if name.drag_started() {
+                                self.mods_drag = Some(i);
+                            }
+                            if name.clicked() {
+                                e.active = !e.active;
+                                self.mods_dirty = true;
+                            }
+                            name.on_hover_cursor(egui::CursorIcon::PointingHand);
                         }
                         if !present.is_empty() && !present.contains(&e.name.to_ascii_lowercase()) {
                             ui.label(RichText::new("missing").small().color(BAD));
                         }
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.add_enabled(!base && i + 1 < n && !is_base[i + 1], egui::Button::new("Down").small()).clicked() {
-                                swap = Some((i, i + 1));
-                            }
-                            if ui.add_enabled(!base && i > 0 && !is_base[i - 1], egui::Button::new("Up").small()).clicked() {
-                                swap = Some((i, i - 1));
-                            }
-                        });
                     });
                 });
+                rects.push(row.response.rect);
+            }
+            let Some(from) = self.mods_drag else { return };
+            let ctx = ui.ctx().clone();
+            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+            let Some(pos) = ctx.pointer_latest_pos() else { return };
+            let centers: Vec<f32> = rects.iter().map(|r| r.center().y).collect();
+            let gap = insertion_index(&centers, pos.y).max(fixed);
+            // The gold line where the row will land.
+            if let (Some(first), Some(last)) = (rects.first(), rects.last()) {
+                let y = if gap < rects.len() { rects[gap].top() - ui.spacing().item_spacing.y / 2.0 } else { last.bottom() + ui.spacing().item_spacing.y / 2.0 };
+                ui.painter().line_segment([egui::pos2(first.left(), y), egui::pos2(first.right(), y)], Stroke::new(2.0, GOLD));
+            }
+            // Near the list's top or bottom edge, scroll.
+            let clip = ui.clip_rect();
+            let edge = 36.0;
+            if pos.y < clip.top() + edge {
+                ui.scroll_with_delta(Vec2::new(0.0, 8.0));
+            } else if pos.y > clip.bottom() - edge {
+                ui.scroll_with_delta(Vec2::new(0.0, -8.0));
+            }
+            ctx.request_repaint();
+            if !ctx.input(|i| i.pointer.any_down()) {
+                self.mods_drag = None;
+                let to = move_target(from, gap);
+                if to != from {
+                    moved = Some((from, to));
+                }
             }
         });
-        if let Some((a, b)) = swap {
-            list.entries.swap(a, b);
+        if let Some((from, to)) = moved {
+            let e = list.entries.remove(from);
+            list.entries.insert(to, e);
             self.mods_dirty = true;
         }
     }
@@ -1344,6 +1394,22 @@ fn shown_place(location: &str) -> Option<&str> {
     (!l.is_empty() && !grid && !editor_id).then_some(l)
 }
 
+/// The gap a dragged row would drop into: the number of rows whose middle is above `y`
+/// (0 = before the first row, `centers.len()` = after the last).
+fn insertion_index(centers: &[f32], y: f32) -> usize {
+    centers.iter().filter(|c| **c < y).count()
+}
+
+/// The index row `from` ends at when dropped into gap `gap` (taken out first, so a gap below
+/// it is one less).
+fn move_target(from: usize, gap: usize) -> usize {
+    if gap > from {
+        gap - 1
+    } else {
+        gap
+    }
+}
+
 /// `body` cut after the paragraph that passes [`PREVIEW_CHARS`], unless `open`; whether it
 /// was long enough to cut.
 fn preview(body: &str, open: bool) -> (&str, bool) {
@@ -1394,6 +1460,26 @@ mod tests {
         assert_eq!(taken, ["https://nv-forever.com"]);
         assert!(!out.platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::OpenUrl(_))));
         assert!(out.platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::CopyText(_))));
+    }
+
+    #[test]
+    fn dragging_a_row() {
+        let centers = [10.0, 30.0, 50.0, 70.0];
+        assert_eq!(insertion_index(&centers, 0.0), 0);
+        assert_eq!(insertion_index(&centers, 31.0), 2);
+        assert_eq!(insertion_index(&centers, 99.0), 4);
+        // Row 1 dropped below row 3 (gap 4) ends last; dropped at its own gaps it stays.
+        assert_eq!(move_target(1, 4), 3);
+        assert_eq!(move_target(1, 1), 1);
+        assert_eq!(move_target(1, 2), 1);
+        // Row 3 dropped into gap 1 ends second.
+        assert_eq!(move_target(3, 1), 1);
+        // The same move on a list.
+        let mut v = vec!["a", "b", "c", "d"];
+        let (from, to) = (0, move_target(0, insertion_index(&centers, 60.0)));
+        let x = v.remove(from);
+        v.insert(to, x);
+        assert_eq!(v, ["b", "c", "a", "d"]);
     }
 
     #[test]
