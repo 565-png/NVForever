@@ -30467,10 +30467,12 @@ expect = [
   # the thousands and are not bounded. [observed] smoke --slots 3, release build, final
   # verify line: at 070c331fa skipped-frames=424 passes=3137 pass-shapes=1772; at 398b61cda
   # skipped-frames=2875 passes=1547 pass-pending=1530 pass-shapes=5
-  # shapes-ordinary-census-only=3. The bounds are 5 times what 398b61cda showed, on every
-  # (cumulative) count line.
-  { re = 'mesh terrain blend: verify skipped-frames=.* pass-shapes=(?P<n>[0-9]+) ', range = [0, 25], all = true, label = "at most 25 passes for a shape change in the run (5 seen at 398b61cda, 1772 at 070c331fa), through the crossing" },
-  { re = 'mesh terrain blend: verify skipped-frames=.* shapes-ordinary-census-only=(?P<n>[0-9]+) ', range = [0, 15], all = true, label = "at most 15 passes for another handle on a census-only shape (3 seen at 398b61cda), through the crossing" },
+  # shapes-ordinary-census-only=3. These counts follow how loading and streaming spread over
+  # frames, which differs between machines (disk, frame rate), so each bound, on every
+  # (cumulative) count line, is set well above what was seen and well below the more than
+  # 1000 of the failure it guards against: fewer than 100.
+  { re = 'mesh terrain blend: verify skipped-frames=.* pass-shapes=(?P<n>[0-9]+) ', range = [0, 99], all = true, label = "fewer than 100 passes for a shape change in the run (5 seen at 398b61cda, 1772 at 070c331fa), through the crossing" },
+  { re = 'mesh terrain blend: verify skipped-frames=.* shapes-ordinary-census-only=(?P<n>[0-9]+) ', range = [0, 99], all = true, label = "fewer than 100 passes for another handle on a census-only shape (3 seen at 398b61cda), through the crossing" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the crossing" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors, through the crossing" },
 ]
@@ -30530,11 +30532,13 @@ expect = [
   # shapes-ordinary-census-only=3. Only census-only shapes' same-handle republications
   # stopped running the pass between the two heads; that the old shape passes were those
   # (an animated STAT's look, nvf-assets material_anim.rs) is read from that and from the
-  # per-signal counts 398b61cda prints, not seen directly at 070c331fa. The bounds are about
-  # 5 times what 398b61cda showed, on every (cumulative) count line; passes bounds
-  # pass-shapes too.
+  # per-signal counts 398b61cda prints, not seen directly at 070c331fa. These counts follow
+  # how loading spreads over frames, which differs between machines (disk, frame rate), so
+  # each bound, on every (cumulative) count line, is set well above what was seen and well
+  # below the more than 1000 of the failure it guards against: fewer than 100. The passes
+  # bound covers pass-shapes too.
   { re = 'mesh terrain blend: verify skipped-frames=[0-9]+ diverged=[0-9]+ passes=(?P<n>[0-9]+) ', range = [0, 99], all = true, label = "the gate stays quiet in standing play: fewer than 100 full passes in the run (20 seen at 398b61cda, 1289 at 070c331fa), through the terrain switches" },
-  { re = 'mesh terrain blend: verify skipped-frames=.* shapes-ordinary-census-only=(?P<n>[0-9]+) ', range = [0, 15], all = true, label = "at most 15 passes for another handle on a census-only shape (3 seen at 398b61cda), through the terrain switches" },
+  { re = 'mesh terrain blend: verify skipped-frames=.* shapes-ordinary-census-only=(?P<n>[0-9]+) ', range = [0, 99], all = true, label = "fewer than 100 passes for another handle on a census-only shape (3 seen at 398b61cda), through the terrain switches" },
   { re = 'mesh terrain blend: rejected', max = 0, label = "the verify aid is accepted, through the terrain switches" },
   { re = '(?i)(shader.*error|error.*shader|validation error)', max = 0, label = "no shader or GPU validation errors, through the terrain switches" },
 ]
