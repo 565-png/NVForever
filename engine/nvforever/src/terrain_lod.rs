@@ -589,7 +589,7 @@ mod tests {
     /// camera wobbling in the hysteresis band plans nothing; leaving plans them back.
     #[test]
     fn the_plan_follows_the_camera_with_hysteresis() {
-        let grid: Vec<(u32, (i32, i32))> = (0..9).map(|k| (k as u32 + 1, ((k % 3) as i32 - 1, (k / 3) as i32 - 1))).collect();
+        let grid: Vec<(u32, (i32, i32))> = (0..9i32).map(|k| (k as u32 + 1, (k % 3 - 1, k / 3 - 1))).collect();
         let mut lod = lod_with(&grid);
         let centre = Vec2::splat(fnv_world::CELL_SIZE / 2.0);
         let plan = lod.plan(centre);

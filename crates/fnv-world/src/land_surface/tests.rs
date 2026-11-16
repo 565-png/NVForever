@@ -641,7 +641,8 @@ fn side_of(d: &DrawnQuadrant, side: usize) -> Vec<([f32; 3], [f32; 3])> {
 fn a_coarse_side_meets_its_2x2_neighbour_without_gaps() {
     let size = CELL_SIZE;
     // (A's cell, A's quadrant, A's side, B's cell, B's quadrant, B's origin less A's).
-    let pairs: [((i32, i32), u8, usize, (i32, i32), u8, [f32; 2]); 6] = [
+    type Pair = ((i32, i32), u8, usize, (i32, i32), u8, [f32; 2]);
+    let pairs: [Pair; 6] = [
         ((0, 0), 0, QUADRANT_EAST, (0, 0), 1, [0.0, 0.0]),
         ((0, 0), 0, QUADRANT_NORTH, (0, 0), 2, [0.0, 0.0]),
         ((0, 0), 1, QUADRANT_EAST, (1, 0), 0, [size, 0.0]),
