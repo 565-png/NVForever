@@ -692,6 +692,11 @@ removed the effect or striped the road's lip. Rocks stay subtle with it; that wa
   an L-shaped region included) gets no weight instead of rejecting the read. The metadata
   row's residency mask is still written but no longer read by the shader (live coverage
   and the colour masks decide). A failed lookup leaves the fragment exactly as it was.
+  #2661 review: the contact weight (below) needs only the height plane, so the lookup
+  computes it right after the height check and, in the surface view, stops where it is
+  exactly 0, before the colour and detail masks, the neighbour checks and the colour
+  footprint; the diagnostic views always run the whole lookup, so their classification is
+  unchanged.
 - *Publication and continuity.* Each immutable front/back publication owns its images,
   southwest origin and cell identities. A camera crossing retains completed, resident,
   unchanged cells inside the new 3 by 3 region at the **old origin** until replacement

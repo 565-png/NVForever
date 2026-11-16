@@ -374,6 +374,30 @@ fn shader_weight_matches_the_cpu_statement_of_hybrid_v2() {
     }
 }
 
+/// [design] #2661 review: the lookup computes the contact weight from the three height loads
+/// first and, in the surface view only, stops where it is exactly 0, before every colour,
+/// detail, residency and footprint read; the diagnostic views run the whole lookup.
+#[test]
+fn shader_lookup_stops_at_zero_contact_outside_the_diagnostic_views() {
+    let bindings = include_str!("../../nvf-assets/src/nif_surface_bindings.wesl").replace("\r\n", "\n");
+    let lookup = bindings.split("fn mesh_terrain_lookup(").nth(1).unwrap().split("\n}\n").next().unwrap();
+    let at = |needle: &str| lookup.find(needle).unwrap_or_else(|| panic!("mesh_terrain_lookup: {needle}"));
+    let stop = at("if contact == 0.0 && u32(s.mesh_terrain.y) == 0u { r.status = LOOKUP_NO_CONTACT; return r; }");
+    assert!(at("let contact = mesh_terrain_weight(u32(s.mesh_terrain.z), widths, game.z - height, cos_angle) * mesh_terrain_steepness(inputs.up);") < stop);
+    assert!(at("let dy = terrain_height_texel(instance_index, base + vec2(2, 0));") < stop, "after the three height loads");
+    assert!(at("r.status = LOOKUP_INVALID_HEIGHT; return r;") < stop, "after the height check");
+    for later in ["terrain_colour_valid(", "terrain_detail_valid(", "terrain_cell_resident(", "terrain_resolution(", "terrain_colour_lod(", "terrain_colour_footprint(", "terrain_colour_mips(", "mesh_terrain_detail("] {
+        assert!(at(later) > stop, "{later} after the early stop");
+    }
+    assert!(at("var weight = contact * smoothstep(0.0, SPACING, border);") > stop, "the final weight is the same contact weight, faded");
+    assert_eq!(lookup.matches("mesh_terrain_weight(").count(), 1, "the contact weight is computed once");
+    // The stop's status draws nothing: the surface view blends only on success.
+    assert!(bindings.contains("@if(MESH_TERRAIN_BLEND) const LOOKUP_SUCCESS: u32 = 4u;") && bindings.contains("@if(MESH_TERRAIN_BLEND) const LOOKUP_NO_CONTACT: u32 = 5u;"));
+    let material = include_str!("../../nvf-assets/src/nif_material.wesl");
+    assert!(material.contains("} else if terrain.status == LOOKUP_SUCCESS && terrain.weight > 0.0 {"));
+    assert!(bindings.contains("return u32(nif_surface(instance_index).mesh_terrain.y);"), "the view the stop tests is the aid's view");
+}
+
 fn nif_defs(bindless: bool, blend: bool, prepass: bool, soft_edges: bool) -> Vec<ShaderDefVal> {
     let mut defs = vec![
         ShaderDefVal::Bool("BINDLESS".into(), bindless),

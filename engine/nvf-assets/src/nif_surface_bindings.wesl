@@ -125,6 +125,10 @@ struct NifSurface {
 @if(MESH_TERRAIN_BLEND) const LOOKUP_INVALID_COLOUR: u32 = 2u;
 @if(MESH_TERRAIN_BLEND) const LOOKUP_REJECTED_FOOTPRINT: u32 = 3u;
 @if(MESH_TERRAIN_BLEND) const LOOKUP_SUCCESS: u32 = 4u;
+// [design] #2661 review: in the surface view only, the height test alone gave a contact
+// weight of exactly 0 and the lookup stopped before the colour and detail checks
+// (`mesh_terrain_lookup`). The diagnostic views never get it, so it has no colour there.
+@if(MESH_TERRAIN_BLEND) const LOOKUP_NO_CONTACT: u32 = 5u;
 
 // [design] One fragment's landscape lookup: its classification, contact weight (zero
 // unless it succeeded), the cached colour (sampled only with a positive weight), and the
@@ -795,6 +799,19 @@ struct NifSurface {
     r.game_normal = terrain_game_normal(dx, dy);
     r.normal = game_to_world_normal(r.game_normal);
     let height = a + f.x * dx + f.y * dy;
+    // [design] #2661 review: the contact weight needs only the three height loads above, the
+    // ground triangle's normal and the face's steepness; the residency fade and the distance
+    // mix below only multiply it by values in [0, 1]. Where it is exactly 0 the final weight
+    // is 0 and nif_material.wesl's surface view leaves the fragment as it is, so the lookup
+    // stops here, before the colour and detail masks, the neighbour residency, the colour
+    // level and footprint work. A diagnostic view (`mesh_terrain_view` != 0: weight, normal,
+    // selection, status) never stops here, so its classification and precedence are exactly
+    // the full lookup's.
+    let n_length = length(mesh_normal);
+    let cos_angle = select(dot(mesh_normal / max(n_length, 1e-6), r.normal), 1.0, n_length < 1e-6);
+    let widths = vec3(s.mesh_terrain_widths.x, s.mesh_terrain.x, s.mesh_terrain_widths.y);
+    let contact = mesh_terrain_weight(u32(s.mesh_terrain.z), widths, game.z - height, cos_angle) * mesh_terrain_steepness(inputs.up);
+    if contact == 0.0 && u32(s.mesh_terrain.y) == 0u { r.status = LOOKUP_NO_CONTACT; return r; }
     let quadrant = select(0u, 1u, local.x >= f32(GRID) * 0.5) + select(0u, 2u, local.y >= f32(GRID) * 0.5);
     let colour_quadrant = terrain_colour_valid(instance_index, slot, quadrant);
     let detail_valid = inputs.distance < DETAIL_FAR && terrain_detail_valid(instance_index, slot, quadrant);
@@ -819,11 +836,8 @@ struct NifSurface {
     let levels = terrain_colour_levels(resolution, terrain_colour_lod(resolution, inputs));
     let colour_valid = colour_quadrant && terrain_colour_footprint(instance_index, slot, uv, resolution, levels);
     if !colour_valid && !detail_valid { r.status = LOOKUP_REJECTED_FOOTPRINT; return r; }
-    let n_length = length(mesh_normal);
-    let cos_angle = select(dot(mesh_normal / max(n_length, 1e-6), r.normal), 1.0, n_length < 1e-6);
     r.status = LOOKUP_SUCCESS;
-    let widths = vec3(s.mesh_terrain_widths.x, s.mesh_terrain.x, s.mesh_terrain_widths.y);
-    var weight = mesh_terrain_weight(u32(s.mesh_terrain.z), widths, game.z - height, cos_angle) * mesh_terrain_steepness(inputs.up) * smoothstep(0.0, SPACING, border);
+    var weight = contact * smoothstep(0.0, SPACING, border);
     // [design] Round 10a's distance mix d (1 to DETAIL_NEAR, 0 from DETAIL_FAR): with both
     // sources the layers' share of the target; with the layers alone a fade of the weight,
     // so the blend never mixes towards an invalid colour texel.
