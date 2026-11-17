@@ -327,6 +327,11 @@ confirmed those bounded case results and the false overall flag. The accepted-ma
 bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
 
+- String game-setting source setter/readback and the existing talk-prompt consumer:
+  prior hosted engine controls failed a layout-test accessor that omits spaces;
+  bound-prompt checks passed before failure. The fixture now checks spaced text
+  and glyph advances. Validation results are recorded in PR #2914; native and
+  installed-mod behavior remain unqualified. See [string-settings](spec-notes/string-settings.md).
 - Regular preactivation rechecks the existing destroyed-target refusal after callback
   mutations; additional core/engine regressions authored; revision-specific validation is recorded in PR #2908.
 

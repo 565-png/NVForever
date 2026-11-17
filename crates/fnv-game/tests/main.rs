@@ -9,6 +9,7 @@
 //! `[[test]]`; `every_test_file_is_built` fails until it is in one of them.
 
 mod common;
+mod string_settings;
 #[path = "common/digest.rs"]
 mod digest;
 
