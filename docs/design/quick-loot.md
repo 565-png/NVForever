@@ -55,20 +55,27 @@ sound), as in the menu. The rows are read again every half second and after each
 
 ## 4. Look
 
-Design A of the owner's five (2026-11-17): a dark backing between two HUD-coloured lines with
-short ticks at their ends; the name and the selection's place ("3/8") over a rule; up to six
-rows, the selection boxed and filled faintly; a short bar above or below where more rows are;
-the keys' lines under the box. In the HUD colour (`interface::amber`, recoloured with it), the
-crime colour for theft, at the HUD scale (`interface::hud_units`), in the Menu Font row's font
-(the game's font 7, or the sharp font, `pause::MenuFont`), redrawn when either changes.
+Design A of the owner's five (2026-11-17), with the owner's changes after the first build
+the same day: a dark backing (70 %) between two HUD-coloured lines with short ticks at their
+ends; the name and the selection's place ("3/8") over a rule; up to six rows, the selection
+boxed and filled faintly; a short bar above or below where more rows are; the keys' lines under
+the box. The name, the rows' words and the keys' line start at one line; the box ends as far
+past the end of the keys' line as that line starts in from its left, or further for wider
+rows. The room above the name, either side of the rule and under the columns' heads is even.
+The box is centred on the crosshair's height whatever its rows, and starts 150 units right of
+the crosshair; it is never wider than the room to the right bracket of the HUD's bottom right
+pieces (`hud::RIGHT_EDGE_IN`): a name too long for that is cut with "...". In the HUD colour
+(`interface::amber`, recoloured with it), the crime colour for theft, at the HUD scale
+(`interface::hud_units`), in the Menu Font row's font (the game's font 7, or the sharp font,
+`pause::MenuFont`), redrawn when either changes. The place and the columns' heads are in the
+small face (font 3, or the sharp font's small size in bold); the columns' figures in the same
+size, not bold.
 
 Columns, each with its own row (all off by default, greyed while Quick loot is off): **Show
 weight**, **Show value**, **Show value per weight**; a pocket always shows each item's
 **chance**. With no column the count stands right-aligned in a column of its own; with any,
 it goes beside the name, "Stimpak (2)" [owner 2026-11-17]. The columns are as wide as their
-widest figure in the drawn font, so they align in both fonts; a name too long for the list is
-cut with "...". The list starts 90 units right of the crosshair and 170 above it, and moves
-left when a narrow view has no room for it.
+widest figure in the drawn font, 40 units apart, so they align in both fonts.
 
 Each drawing checks itself (`quick_loot::overlaps`: texts that meet, a text outside the list
 or off its row) and logs `quick loot: drawn "<name>" (… font Original|Sharp …): no overlaps`,
