@@ -2777,9 +2777,23 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                                     ByHand::Talk | ByHand::Greeted | ByHand::Choices | ByHand::Script | ByHand::Default(_) => Ok(()),
                                     // Asleep: the first press wakes it; the player presses again.
                                     ByHand::Woken => Err("woken".to_string()),
+                                    // A teammate opens its companion wheel: the player picks Talk on
+                                    // it, as a player does (Sarah Lyons in Take it Back!).
+                                    ByHand::Wheel => Err("wheel".to_string()),
                                     other => Err(format!("activating {actor} did not start a conversation: {}", by_hand(&other))),
                                 })
                             }),
+                        };
+                        let started = match started {
+                            Some(Err(e)) if e == "wheel" => {
+                                let r = h.game(|g| g.wheel_command(fnv_game::companion_wheel::Command::Talk)).unwrap_or_else(|| Err("the scripts are not running".into()));
+                                info!("pilot: step {}: {actor}'s companion wheel: Talk ({r:?})", p.i);
+                                Some(match r {
+                                    Ok(fnv_game::companion_wheel::Outcome::Talk { .. }) => Ok(()),
+                                    other => Err(format!("activating {actor} opened its companion wheel and Talk did not start a conversation ({other:?})")),
+                                })
+                            }
+                            other => other,
                         };
                         if let Some(Err(e)) = &started {
                             if e == "woken" && p.woke < 3 {
