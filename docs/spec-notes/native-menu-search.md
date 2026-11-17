@@ -40,8 +40,13 @@ query, including the existing refresh boundary after repair; a new menu starts c
 
 [hypothesis] Pure model controls exercise real World transfer and barter commands,
 hidden offered items and balance, category changes, selection guards, quantity
-ownership, changed inventory/condition refresh, and query bounds. Compilation and
-runtime are unrun.
+ownership, changed inventory/condition refresh, and query bounds. Two further
+controls run the existing public repair key system on a filtered model: a hidden
+part still repairs the selected modded item, worn state survives, and the same
+model refresh keeps its query. Cancellation and an empty filtered selection leave
+inventory untouched. Physical repair keys are injected through Bevy ButtonInput;
+physical search input remains separate. All twelve controls are compilation/runtime
+unrun.
 
 Physical Control-F/text input, search-bar admission and publication, foreign UI
 write ownership, repair key routing and original-mod startup remain separate
