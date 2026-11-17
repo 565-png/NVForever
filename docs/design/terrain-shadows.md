@@ -307,22 +307,35 @@ was asked for; only new heights refresh a pending job's light), and a faster gam
 moves the edge more than 128 units within the 0.1 s floor. The floor holds maps back only
 when the edge would move 128 units in under 0.1 s: at 5° and 2,000 units of relief that is
 0.028° of sun, about 0.27 s of real time at the game's default TimeScale of 30 (sky.rs,
-citing the GECK wiki), so it binds only with a faster clock [derived from T1's cadence
-formula, not measured].
+citing the GECK wiki), so at 5° it binds only with a faster clock [derived from T1's cadence
+formula]. Nearer the horizon it binds at the default clock too: in a run from 06:02 the map
+was published about 9 times a second for the first minutes (main session run 2026-11-17,
+below). The floor spaces the requests, not the dispatches: a delayed job can be dispatched
+and published and the next one, already due, dispatched at once.
 
 **Debug view.** `NVF_PLAY_DEBUG_SUN_VISIBILITY=terrain` draws T alone (white lit, black
 shaded) in place of the lit colour; `combined` draws V = K · Vsolid. Without the row (or the
 override) T is 1 everywhere: the view turns the plumbing on but not the terrain variant.
 
-**Cost** [hypothesis, unmeasured]: four 16-byte texel loads, four smoothsteps and a few
-multiplies per fragment of the sun's light loop, twice where the transmitted lobe is drawn;
-the producer's four extra loads per texel per map.
+**Cost**: four 16-byte texel loads, four smoothsteps and a few multiplies per fragment of
+the sun's light loop, twice where the transmitted lobe is drawn; the producer's four extra
+loads per texel per map. Whole-frame times on one machine (main session run 2026-11-17,
+fork-notes: Goodsprings standing still, 2560x1440, an RTX 5070 Ti, the clock running, a
+quiet machine, two rounds): main 3.15-3.16 ms at 09:00, the branch with the row off
+3.15-3.16, on 3.20-3.22, on with Cloud shadows 3.22-3.25; at 07:00 main 3.33-3.34 and the
+row on 3.39-3.40. These are frame averages: the producer's own GPU time, spikes on a
+publication and a lower-end GPU are not measured.
 
-**What has been run** (main session run 2026-11-17, fork-notes; on f8d532cca, before the
-review fixes of the same day: the cadence's uncapped length term, the worldspace
-generation, the terrain bit without an uploaded map and the feed's ordering are covered by
-unit tests only). The build, the tests (nvforever 1,308 passed), clippy, and the smoke
-scenarios `terrain-shadows` and `cloud-shadows` passed. Pictures at Goodsprings 06:15,
+**What has been run** (main session runs 2026-11-17, fork-notes). On 4b1cdf3fa, with the
+review fixes: the build, the engine tests (nvforever 1,312 passed), engine and root clippy,
+the root tests, and the smoke scenarios `terrain-shadows`, `cloud-shadows`, `shadows-sun`,
+`sun-shadows-performance`, `graphics-settings` and `settings-headings` passed. Through
+Freeside's gate to the Strip with the row on, the log shows the heightfield started over,
+`terrain shadows: none (heightfield started over)`, then a first publication for the new
+worldspace, and one `sun visibility: ... terrain on` line in the whole run. From 06:02 with
+the clock running, a first publication at 0.57° of sun, then `sun moved: edge 15311 units`,
+and version 424 after 45 seconds, with no error. The pictures are from f8d532cca, before
+those fixes (which change no receiver or march arithmetic). Pictures at Goodsprings 06:15,
 07:00 and 12:00 and Novac 19:00, and from the air above Goodsprings at 07:00, 12:00 and
 19:00: valleys shaded on the side away from the sun with soft edges, no speckle on sunlit
 slopes, nothing at noon. With Sun shadows on, ground inside the cascades' range does not
@@ -330,10 +343,9 @@ change with the row (the cascades already shade it) and ground beyond it does; w
 shadows off a shaded flat area darkens. In three aerial views about 0.3-0.5 % of the pixels
 were slightly brighter with the row on (the end band, above).
 
-**Not run or not shown yet**: the producer's and the receivers' cost (GPU time, spikes, a
-lower-end GPU); a broad smoke; upscalers and MSAA with the row on; a publication watched
-while the sun moves (the cadence through sunrise with the clock running); worldspace travel
-and save/load with the row on; the layouts and pipelines of the reflection and scope views
+**Not run or not shown yet**: the producer's own GPU time, spikes and a lower-end GPU;
+upscalers and MSAA with the row on; how a publication looks while the sun moves (the run
+above shows the log, not the picture); save/load with the row on; the layouts and pipelines of the reflection and scope views
 and the first-person arms with the terrain variant; difficult ground (terraces, narrow
 channels; the bias's limits above); whether the 256-unit grid shows anywhere else.
 
