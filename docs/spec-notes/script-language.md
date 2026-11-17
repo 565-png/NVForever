@@ -428,8 +428,8 @@ compiled by the game, so plain `set`/`if` statements in a job behave as vanilla.
   not been measured for this change. Original Helmet Overlay/Titans execution,
   UI initialization and final rendering remain unqualified.
 
-Four authored controls use start-enabled QUST/SCPT records, ordinary Auto source
+Four core integration controls use start-enabled QUST/SCPT records, ordinary Auto source
 selection and the real startup method. They cover a startup-registered load-event
 recipient, retained no-argument/1013/pause/page/gameplay admission, group-4 queries,
-repeated startup frames and save/restore context lifetime. These controls are
-unexecuted; source registration alone does not establish mod support.
+repeated startup frames and save/restore context lifetime. Source registration
+alone does not establish mod support.
