@@ -50,7 +50,11 @@ impl fnv_script::compile::Env for Env {
 }
 fn script(table: &FunctionTable, id: u32, name: &str, source: &str, quest: bool) -> Vec<u8> {
     let c = fnv_script::compile::compile(source, table, &Env, None);
-    assert!(c.errors().next().is_none(), "owned script {name}: {:?}", c.diags);
+    assert!(
+        c.errors().next().is_none(),
+        "owned script {name}: {:?}",
+        c.diags
+    );
     let vars: Vec<_> = c
         .variables
         .iter()
@@ -69,11 +73,16 @@ fn script(table: &FunctionTable, id: u32, name: &str, source: &str, quest: bool)
     sr[0].data[4..8].copy_from_slice(&(c.refs.len() as u32).to_le_bytes());
     for r in &c.refs {
         sr.push(match r {
-            fnv_script::unit::RefSlot::Form(f) | fnv_script::unit::RefSlot::Unmapped(f) => sub(b"SCRO", f.to_le_bytes().to_vec()),
+            fnv_script::unit::RefSlot::Form(f) | fnv_script::unit::RefSlot::Unmapped(f) => {
+                sub(b"SCRO", f.to_le_bytes().to_vec())
+            }
             fnv_script::unit::RefSlot::Local(v) => sub(b"SCRV", v.to_le_bytes().to_vec()),
         });
     }
-    sr.extend([sub(b"EDID", z(name)), sub(b"SCTX", source.as_bytes().to_vec())]);
+    sr.extend([
+        sub(b"EDID", z(name)),
+        sub(b"SCTX", source.as_bytes().to_vec()),
+    ]);
     record(b"SCPT", 0, id, &sr)
 }
 struct Fixture {
@@ -116,7 +125,10 @@ fn fixture(collisions: bool) -> Fixture {
                 id,
                 &[
                     sub(b"EDID", z(name)),
-                    sub(b"DATA", [500i32.to_le_bytes().to_vec(), vec![5; 7]].concat()),
+                    sub(
+                        b"DATA",
+                        [500i32.to_le_bytes().to_vec(), vec![5; 7]].concat(),
+                    ),
                 ],
             )
         })
@@ -131,14 +143,27 @@ fn fixture(collisions: bool) -> Fixture {
             sub(b"DATA", vec![0; 24]),
         ],
     );
-    let cell = record(b"CELL", 0, 0x902, &[sub(b"EDID", z("OwnedCell")), sub(b"DATA", vec![1])]);
+    let cell = record(
+        b"CELL",
+        0,
+        0x902,
+        &[sub(b"EDID", z("OwnedCell")), sub(b"DATA", vec![1])],
+    );
     let cells = group(
         0i32.to_le_bytes(),
         2,
         &group(
             0i32.to_le_bytes(),
             3,
-            &[cell, group(0x902u32.to_le_bytes(), 6, &group(0x902u32.to_le_bytes(), 9, &placed))].concat(),
+            &[
+                cell,
+                group(
+                    0x902u32.to_le_bytes(),
+                    6,
+                    &group(0x902u32.to_le_bytes(), 9, &placed),
+                ),
+            ]
+            .concat(),
         ),
     );
     let maker = script(
@@ -169,7 +194,12 @@ fn fixture(collisions: bool) -> Fixture {
     }
     let mut header = vec![sub(
         b"HEDR",
-        [1.34f32.to_le_bytes(), 0u32.to_le_bytes(), 0x00f00500u32.to_le_bytes()].concat(),
+        [
+            1.34f32.to_le_bytes(),
+            0u32.to_le_bytes(),
+            0x00f00500u32.to_le_bytes(),
+        ]
+        .concat(),
     )];
     for p in &plugins {
         header.extend([sub(b"MAST", z(&p.name)), sub(b"DATA", vec![0; 8])]);
@@ -191,7 +221,10 @@ fn fixture(collisions: bool) -> Fixture {
         ),
     ];
     if collisions {
-        for (id, name, value) in [(LAMBDA_BASE, "OwnedLambdaSlot", 71), (COMPILED_BASE, "OwnedCompiledSlot", 83)] {
+        for (id, name, value) in [
+            (LAMBDA_BASE, "OwnedLambdaSlot", 71),
+            (COMPILED_BASE, "OwnedCompiledSlot", 83),
+        ] {
             scripts.push(script(
                 &table,
                 id,
@@ -239,8 +272,11 @@ fn game(f: &Fixture) -> Game<'_> {
     )
 }
 fn q(g: &mut Game<'_>, body: &str) -> XVal {
-    g.run_query(&format!("Begin Function {{}}\n{body}\nEnd\n"), RunCtx::default())
-        .unwrap_or_else(|e| panic!("owned source {body}: {e}"))
+    g.run_query(
+        &format!("Begin Function {{}}\n{body}\nEnd\n"),
+        RunCtx::default(),
+    )
+    .unwrap_or_else(|e| panic!("owned source {body}: {e}"))
 }
 fn value(g: &Game<'_>, id: FormId) -> f64 {
     g.world.global(id).unwrap()
@@ -257,11 +293,16 @@ fn hit(g: &mut Game<'_>, on: FormId, damage: f64) {
             limb: None,
         },
     );
-    assert!((result.dealt - damage).abs() < 0.001, "real Game hit must deal its damage");
+    assert!(
+        (result.dealt - damage).abs() < 0.001,
+        "real Game hit must deal its damage"
+    );
 }
 fn no_script_errors(g: &Game<'_>) {
     assert!(
-        !g.events.iter().any(|e| matches!(e.kind, EventKind::ScriptError { .. })),
+        !g.events
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::ScriptError { .. })),
         "callback failure: {:?}",
         g.events
     );
@@ -284,7 +325,11 @@ fn last_slot_record_registration_runs_on_real_hit_receiver_without_becoming_a_la
     let f = fixture(true);
     let mut g = game(&f);
     register_record(&mut g);
-    for (i, on, damage) in [(1, FormId::PLAYER_REF, 17.0), (2, TARGET, 23.0), (3, TARGET, 11.0)] {
+    for (i, on, damage) in [
+        (1, FormId::PLAYER_REF, 17.0),
+        (2, TARGET, 23.0),
+        (3, TARGET, 11.0),
+    ] {
         hit(&mut g, on, damage);
         assert_eq!(value(&g, COUNT), f64::from(i));
         assert_eq!(value(&g, WHO), f64::from(on.0));
@@ -297,14 +342,29 @@ fn last_slot_record_registration_runs_on_real_hit_receiver_without_becoming_a_la
     }
     no_script_errors(&g);
     assert_eq!(
-        g.run_function(&XVal::Ref(LAMBDA_BASE), None, vec![], None, Default::default())
-            .unwrap(),
+        g.run_function(
+            &XVal::Ref(LAMBDA_BASE),
+            None,
+            vec![],
+            None,
+            Default::default()
+        )
+        .unwrap(),
         XVal::Num(71.0)
     );
-    assert_eq!(q(&mut g, "SetFunctionValue (EvaluateString \"1 == 1\")"), XVal::Num(1.0));
     assert_eq!(
-        g.run_function(&XVal::Ref(COMPILED_BASE), None, vec![], None, Default::default())
-            .unwrap(),
+        q(&mut g, "SetFunctionValue (EvaluateString \"1 == 1\")"),
+        XVal::Num(1.0)
+    );
+    assert_eq!(
+        g.run_function(
+            &XVal::Ref(COMPILED_BASE),
+            None,
+            vec![],
+            None,
+            Default::default()
+        )
+        .unwrap(),
         XVal::Num(83.0)
     );
 }
@@ -338,7 +398,10 @@ fn live_lambda_collision_avoidance_keeps_captures_and_saved_handle_identity() {
         &snap,
     )
     .unwrap();
-    assert_eq!(q(&mut restored, "SetFunctionValue (Call OwnedMaker)"), XVal::Ref(handle));
+    assert_eq!(
+        q(&mut restored, "SetFunctionValue (Call OwnedMaker)"),
+        XVal::Ref(handle)
+    );
     let before = value(&restored, COUNT);
     hit(&mut restored, TARGET, 5.0);
     assert_eq!(
@@ -377,13 +440,19 @@ fn legacy_lambda_snapshots_and_high_record_session_callbacks_keep_existing_lifet
     )
     .unwrap();
     restored.put_session(session);
-    assert_eq!(q(&mut restored, "SetFunctionValue (Call OwnedMaker)"), callback);
+    assert_eq!(
+        q(&mut restored, "SetFunctionValue (Call OwnedMaker)"),
+        callback
+    );
     assert_eq!(
         restored.dispatch_event("owned_lambda", vec![], Some(TARGET)),
         0,
         "old-game lambda event callbacks are not session functions"
     );
-    assert_eq!(restored.dispatch_event("owned_event", vec![], Some(TARGET)), 1);
+    assert_eq!(
+        restored.dispatch_event("owned_event", vec![], Some(TARGET)),
+        1
+    );
     let before = value(&restored, COUNT);
     restored.tick();
     assert_eq!(
@@ -412,18 +481,31 @@ fn record_filter_receiver_and_ordinary_function_neighbors_keep_their_admission()
         ..Default::default()
     };
     assert_eq!(
-        g.run_function(&XVal::Ref(ORDINARY.0), None, vec![XVal::Num(2.0)], None, ctx)
-            .unwrap(),
+        g.run_function(
+            &XVal::Ref(ORDINARY.0),
+            None,
+            vec![XVal::Num(2.0)],
+            None,
+            ctx
+        )
+        .unwrap(),
         XVal::Num(f64::from(TARGET.0) + 2.0)
     );
     assert_eq!(
-        g.run_function(&XVal::Ref(ORDINARY.0), Some(Value::Ref(0)), vec![XVal::Num(2.0)], None, ctx)
-            .unwrap(),
+        g.run_function(
+            &XVal::Ref(ORDINARY.0),
+            Some(Value::Ref(0)),
+            vec![XVal::Num(2.0)],
+            None,
+            ctx
+        )
+        .unwrap(),
         XVal::Num(2.0),
         "explicit empty receiver is not the caller"
     );
     assert_eq!(
-        g.run_function(&XVal::Ref(0xFEF0_0999), None, vec![], None, ctx).unwrap_err(),
+        g.run_function(&XVal::Ref(0xFEF0_0999), None, vec![], None, ctx)
+            .unwrap_err(),
         "an unknown lambda",
         "unresolved high handles keep their existing diagnostic"
     );
@@ -446,11 +528,18 @@ fn snapshot_handle_collisions_are_rejected_without_retargeting_loaded_records() 
     );
     assert!(matches!(result,Err(ref e) if e.contains("unambiguous runtime callable")));
     assert_eq!(
-        g.run_function(&XVal::Ref(LAMBDA_BASE), None, vec![], None, Default::default())
-            .unwrap(),
+        g.run_function(
+            &XVal::Ref(LAMBDA_BASE),
+            None,
+            vec![],
+            None,
+            Default::default()
+        )
+        .unwrap(),
         XVal::Num(71.0)
     );
-    g.run_function(&callback, None, vec![], None, Default::default()).unwrap();
+    g.run_function(&callback, None, vec![], None, Default::default())
+        .unwrap();
     assert_eq!(value(&g, CAPTURED), 41.0);
 }
 
@@ -462,11 +551,20 @@ fn high_record_and_owned_lambda_arity_are_checked_before_jip_dispatch() {
         &mut g,
         "SetOnMenuClickEventHandler OwnedHit 1 \"portable\"\nSetOnMenuClickEventHandler (Begin Function {}\nlet HitCount := 100\nEnd) 1 \"portable\"",
     );
-    assert_eq!(g.jip_menu_click("portable", "portable", 1.0, 2.0, "leaf"), 0);
+    assert_eq!(
+        g.jip_menu_click("portable", "portable", 1.0, 2.0, "leaf"),
+        0
+    );
     assert_eq!(value(&g, COUNT), 0.0);
     no_script_errors(&g);
     let error = g
-        .run_function(&XVal::Ref(REGISTRAR.0), None, vec![], None, Default::default())
+        .run_function(
+            &XVal::Ref(REGISTRAR.0),
+            None,
+            vec![],
+            None,
+            Default::default(),
+        )
         .unwrap_err();
     assert!(
         error.contains("has no Function block"),

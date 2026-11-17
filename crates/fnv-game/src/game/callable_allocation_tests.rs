@@ -11,9 +11,16 @@ fn exhausted_callable_regions_return_no_handle_before_adding_units_or_lambdas() 
     let forms = fnv_sim::FormStore::default();
     let refs = fnv_sim::RefTable::default();
     let data = GameData::build(&lo, &schema, table, &json, &refs);
-    let mut g = Game::new(&data, World::new(&forms, &refs, Default::default()), Default::default());
+    let mut g = Game::new(
+        &data,
+        World::new(&forms, &refs, Default::default()),
+        Default::default(),
+    );
     g.next_compiled = TEMP_REF_BASE;
-    assert!(g.compile_source("exhausted", "Begin Function {}\nEnd\n".into()).is_none());
+    assert!(
+        g.compile_source("exhausted", "Begin Function {}\nEnd\n".into())
+            .is_none()
+    );
     assert!(g.compiled_files.is_empty() && g.compiled_slots.is_empty());
     g.next_lambda = FormId::FIRST_DYNAMIC.0;
     let result = g.run_query(
