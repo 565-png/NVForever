@@ -200,7 +200,17 @@ fn required_filename_calls_reach_real_inventory_and_the_existing_ui_image_trait(
     let mut g = game(&f);
     g.world.add_item(FormId::PLAYER_REF, ITEM, 2).unwrap();
     let before = g.world.snapshot();
-    assert_eq!(success(&mut g,"let item := OwnYsiItem\nlet icon := ySIGetTagTrait \"filename\" item\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" icon\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"),XVal::Str("Owned/matched.dds".into()));
+    assert_eq!(success(&mut g,"let item := OwnYsiItem\nlet icon := ySIGetTagTrait \"filename\" item\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" (icon)\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"),XVal::Str("Owned/matched.dds".into()));
+    // Plain legacy string arguments keep their literal-token convention; grouped
+    // values and explicit conversion pass the variable contents instead.
+    assert_eq!(
+        success(&mut g, "let icon := ySIGetTagTrait \"filename\" OwnYsiItem\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" icon\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"),
+        XVal::Str("icon".into())
+    );
+    assert_eq!(
+        success(&mut g, "let icon := ySIGetTagTrait \"filename\" OwnYsiItem\nSetUIStringAlt (\"HUDMainMenu/OwnedIcon/filename\") $icon\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"),
+        XVal::Str("Owned/matched.dds".into())
+    );
     assert_eq!(success(&mut g,"let pair := ar_List OwnYsiItem\nSetFunctionValue (pair[0].ySIGetTagTrait \"filename\")"),XVal::Str("Owned/matched.dds".into()));
     assert_eq!(
         success(
@@ -467,7 +477,7 @@ fn quest_item_filename_uses_authored_and_saved_world_flags_through_real_source_a
             ]),
         ),
     );
-    let assign = "let item := OwnYsiItem\nlet icon := ySIGetTagTrait \"filename\" item\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" icon\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")";
+    let assign = "let item := OwnYsiItem\nlet icon := ySIGetTagTrait \"filename\" item\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" (icon)\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")";
     for flags in [0, 0x400] {
         let f = fixture_with_item_flags(flags);
         let mut g = game(&f);

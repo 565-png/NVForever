@@ -54,21 +54,35 @@ configuration with unresolved potentially winning predicates cannot claim a file
 merely because a lower supported rule exists. No original JSON, icons, scripts or
 private paths are included.
 
+## Source string arguments
+
+[documented] Old string-parameter functions require explicit string conversion or
+an inline expression when given a string variable
+([String Variable](https://geckwiki.com/index.php?title=String_Variable),
+[Inline Expression](https://geckwiki.com/index.php?title=Inline_Expression)).
+The source-to-UI controls use `SetUIString "path" (icon)`; the additional
+`SetUIStringAlt ("path") $icon` route mirrors the original JAM icon writer's
+argument shape with independently authored paths and values [observed: original
+JAM4.6 script workload only, not original-game execution]. A bare variable token
+on the legacy call retains its existing literal-text meaning. Compiler, VM and UI
+string-argument behavior are unchanged by the fixture correction.
+
 ## Authored controls
 
-Seven source controls are authored in the dedicated `ysi_filename_source` test target,
-isolated because the existing file roots are process-wide: source calls with an
-inventory item, array-element receiver and placed item reach the real UI filename
-trait through ordinary SetUIString; multiple files and highest-priority/tie policy;
-unknown higher/lower/decisively-false rules; unsupported traits/invalid receivers and
-missing icons; actual Game save/restore cache lifetime with retained inventory;
-comment preservation versus the existing strict JSON reader on the same path; and
-mapped file-bound/malformed-input refusal. The fixtures contain only independently
-authored configuration, items and menu XML. All compilation/runtime controls remain
-**UNRUN**; no GPU texture loading/render, native or installed-mod success is claimed.
+Nine source controls are in the dedicated `ysi_filename_source` test target,
+isolated because the existing file roots are process-wide. They cover inventory,
+array-element and placed receivers; source-to-existing UI filename assignment;
+multiple files and priority/ties; unknown higher/lower/decisively-false rules;
+unsupported traits/invalid receivers/missing icons; Game save/restore cache lifetime
+with retained inventory; comments versus generic strict JSON; resource bounds and
+malformed input; and authored/script-set/cleared quest flags through source and save.
+The fixtures contain independently authored configuration, items and menu XML.
 
-Two additional controls exercise the quest-item predicate through compiled source
-and the existing UI filename recipient, authored versus script-set/cleared flags,
-Game save/restore and retained inventory. A certainly false quest predicate can
-disqualify an otherwise unknown higher-priority rule; an unknown possible winner
-or unsupported predicate value still refuses. These controls are also **UNRUN**.
+Historical public source `6edb715d` executed all nine controls once: seven passed and
+two failed at their first UI filename reread. Both failing callers passed bare
+`icon` to legacy SetUIString and stored that literal token. Later assertions in
+those tests were not reached. The corrected callers use `(icon)`, preserving all
+expected filenames, receiver, inventory and save assertions. The first consumer
+control also retains the bare-token behavior and exercises explicit Alt/string
+conversion. Production files are unchanged; corrected compilation/runtime remains
+**UNRUN**. No GPU texture loading/render, native or installed-mod success is claimed.
