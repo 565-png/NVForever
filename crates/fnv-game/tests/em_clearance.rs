@@ -3,13 +3,13 @@
 use crate::common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
 use fnv_game::{
+    GameData,
     game::{Game, GameConfig, GameEnv, RunCtx},
     nif_blocks::{ModelView, SceneEdit, SceneNode},
     ray::{self, CastKind, Hit},
     vats::{self, CameraRoom},
-    GameData,
 };
-use fnv_script::{vm::XVal, FunctionTable};
+use fnv_script::{FunctionTable, vm::XVal};
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use std::cell::RefCell;
 
@@ -214,9 +214,21 @@ fn registered_source_uses_clearance_for_real_named_transform_requests_and_fresh_
             g.dispatch_event("OwnedLean", vec![], Some(FormId::PLAYER_REF)),
             1
         );
+        let queued = g.scene.take_edits();
+        assert_eq!(
+            queued.len(),
+            1,
+            "registered source must queue exactly one edit: {queued:?}"
+        );
+        let (view, edit) = queued.into_iter().next().unwrap().into_model();
+        assert_eq!(
+            view,
+            ModelView::FirstPerson,
+            "the source explicitly selected player model 2"
+        );
         assert!(
-            matches!(g.scene.take_edits().as_slice(),[SceneEdit::Translation{r,node,v}] if *r==FormId::PLAYER_REF && node=="OwnedLeanNode" && *v==[3.0,0.0,0.0]),
-            "em-area-transform: registered source must queue the clearance-dependent node request"
+            matches!(&edit, SceneEdit::Translation{r,node,v} if *r==FormId::PLAYER_REF && node=="OwnedLeanNode" && *v==[3.0,0.0,0.0]),
+            "em-area-transform: registered source must queue the clearance-dependent node request: {edit:?}"
         );
         query(&mut g, "", "Player.SetAngle Z 90", Default::default());
         assert_eq!(
@@ -268,7 +280,7 @@ fn unavailable_and_invalid_contexts_do_not_cast_or_mutate_and_unused_calls_are_f
             XVal::Num(0.0)
         );
         let before = serde_json::to_value(g.world.snapshot()).unwrap();
-        let source="ref invalid\nBegin Function {}\nlet invalid := 0\nSetFunctionValue (invalid.GetVATSRightAreaFree)\nEnd\n";
+        let source = "ref invalid\nBegin Function {}\nlet invalid := 0\nSetFunctionValue (invalid.GetVATSRightAreaFree)\nEnd\n";
         let e = g
             .run_query(
                 source,
