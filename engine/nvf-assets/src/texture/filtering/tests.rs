@@ -254,3 +254,110 @@ fn a_real_worker_in_flight_publishes_the_last_request_without_a_duplicate_handle
     );
     assert_eq!(cache.take_workers(&mut images, 1.0), 0);
 }
+
+#[test]
+fn a_live_material_keeps_its_racing_worker_image_reachable_after_the_worker_grace_period() {
+    let _lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = saved();
+    set_anisotropy(8);
+    let owned = OwnedData::new();
+    let mut cache = TextureCache::default();
+    let mut images = Assets::default();
+    let mut materials = Assets::<crate::NifMaterial>::default();
+    let workers = cache.workers.clone();
+    let provider = images.get_handle_provider();
+    let key = ("textures\\old.dds".to_string(), TextureUsage::Color);
+    let worker_key = key.clone();
+    let bytes = owned.data.read("textures\\old.dds").unwrap();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    // Hold the real worker before it publishes its directory entry. The main
+    // consumer can then legitimately finish the same key under another handle.
+    let (main, worker) = std::thread::scope(|scope| {
+        let task = scope.spawn(move || {
+            workers
+                .load_once(worker_key, &provider, |_| {
+                    let image = crate::texture::dds_image(&bytes, true, true).unwrap();
+                    ready_tx.send(()).unwrap();
+                    release_rx
+                        .recv_timeout(std::time::Duration::from_secs(3))
+                        .unwrap();
+                    Ok(image.into())
+                })
+                .unwrap()
+        });
+        ready_rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        let main = cache
+            .get("old.dds", true, &owned.data, &mut images, None)
+            .unwrap();
+        release_tx.send(()).unwrap();
+        (main, task.join().unwrap())
+    });
+    assert_ne!(
+        main, worker.0,
+        "the real race must produce distinct material handles"
+    );
+    let worker_id = worker.0.id();
+    let material = materials.add(crate::nif_material(StandardMaterial {
+        base_color_texture: Some(worker.0.clone()),
+        ..default()
+    }));
+    drop(worker);
+    assert_eq!(cache.take_workers(&mut images, 0.0), 1);
+    assert_eq!(
+        cache.get("old.dds", true, &owned.data, &mut images, None),
+        Some(main.clone())
+    );
+    assert_eq!(
+        crate::release::material_images(materials.get(&material).unwrap())
+            .next()
+            .unwrap()
+            .id(),
+        worker_id
+    );
+    let foreign = images.add(images.get(&main).unwrap().clone());
+    let before_worker = images.get(worker_id).unwrap().clone();
+    let mut idle = crate::release::Unused::default();
+    let hints = crate::release::ImageHints::default();
+    let keep = crate::release::KeepLimits { secs: 0.0, max: 0 };
+    assert_eq!(cache.release(&mut idle, &hints, 31.0, keep), 0);
+    assert!(
+        images.get(worker_id).is_some(),
+        "the live material's image still exists after directory expiry"
+    );
+    cache.apply_anisotropy(&mut images, 16);
+    assert_eq!(level(images.get(&main).unwrap()), 16);
+    let now = images.get(worker_id).unwrap();
+    assert_eq!(level(now), 16, "live racing-worker material must receive the explicit filtering command after the grace period");
+    assert_eq!(now.data, before_worker.data);
+    assert_eq!(
+        now.texture_descriptor.format,
+        before_worker.texture_descriptor.format
+    );
+    assert_eq!(
+        now.texture_descriptor.mip_level_count,
+        before_worker.texture_descriptor.mip_level_count
+    );
+    assert_eq!(
+        level(images.get(&foreign).unwrap()),
+        8,
+        "unrelated image is outside cache ownership"
+    );
+    assert_eq!(
+        materials
+            .get(&material)
+            .unwrap()
+            .base
+            .base_color_texture
+            .as_ref()
+            .unwrap()
+            .id(),
+        worker_id
+    );
+    // Keeping a live worker discoverable must not make its metadata permanent.
+    assert!(materials.remove(material.id()).is_some());
+    cache.release(&mut idle, &hints, 32.0, keep);
+    assert!(!cache.workers.entries.lock().unwrap().contains_key(&key));
+}
