@@ -4,15 +4,18 @@
 //!
 //! `S(x, z) = max over t > 0 of [H((x, z) + t·L) − t·tan(elevation)]`, L the horizontal unit
 //! direction towards the light. A receiver at height y is in terrain shadow when y < S
-//! ([`crate::sun_heightfield::shadowed`]). Nothing samples S yet: stage T2 binds it on
-//! receivers. This stage ends at a published resource ([`TerrainShadows`]) and debug aids.
+//! ([`crate::sun_heightfield::shadowed`]). Stage T2 samples S on receivers through the sun
+//! visibility's terrain slot ([`feed_sun_visibility`], sun_visibility.wesl
+//! `nvf_terrain_visibility`, docs/design/terrain-shadows.md "T2: the receivers").
 //!
 //! **Notes for T2: sampling S on a receiver** (plain words; the map's facts below):
-//! - The map: [`TerrainShadows::image`], `Rg32Float`, R = S in world units (Bevy y), G = the
+//! - The map: [`TerrainShadows::image`], `Rgba32Float`, R = S in world units (Bevy y), G = the
 //!   horizontal distance in world units from the receiver texel's centre to the texel that
-//!   gave S (0 when nothing casts). Where nothing casts, R is [`NO_SHADOW`] (−1e30, the
+//!   gave S (0 when nothing casts), B = the ground's relief around the texel ([`texel_relief`],
+//!   world units, 0 for an invalid texel; T2's bias), A unused. Where nothing casts, R is
+//!   [`NO_SHADOW`] (−1e30, the
 //!   heightfield's own `INVALID_HEIGHT`), so `y < S` is simply false: no separate mask.
-//!   Rg32Float is not filterable without an optional feature: read it with `textureLoad`
+//!   Rgba32Float is not filterable without an optional feature: read it with `textureLoad`
 //!   (or a non-filtering sampler) and, for a soft edge, filter the *comparisons* of a few
 //!   texels by hand, never S itself (S jumps by hundreds of units at a ridge's shadow end).
 //! - Where: `uv = bevy.xz · uv_scale + uv_offset` ([`TerrainShadows::world_to_uv`]), uv in
@@ -28,7 +31,10 @@
 //!   grows with the receiver's slope, about `texel · |slope|` (256 units of texel times the
 //!   ground's rise per unit), plus a small constant; flat ground needs none. Too large a bias
 //!   detaches shadows from the ridge foot: keep it to that slope term. The receiver's own
-//!   texel is already left out of the march (as in the CPU reference).
+//!   texel is already left out of the march (as in the CPU reference). The slope term is the
+//!   map's B channel ([`texel_relief`]): per axis the smaller of the two neighbours' height
+//!   differences, so a uniform slope gives its rise per texel but the flat foot (or top) of
+//!   a cliff gives 0.
 //! - Penumbra: G times the light's angular size (radians) is a penumbra width in world
 //!   units at the receiver, if a later stage softens the edge by distance.
 //! - Freshness: [`TerrainShadows::version`] changes with every publication and the image
@@ -38,8 +44,8 @@
 //!
 //! **The pass** [engineering choice]: a compute pass, `terrain_shadows.wesl`, one invocation
 //! per texel in 8 × 8 workgroups, reading T0's `Rg32Float` image with `textureLoad` (R
-//! height, G validity) and writing a `Rg32Float` storage texture (`write` access).
-//! `Rg32Float` write-only storage and `R32Float` read-write storage are guaranteed formats
+//! height, G validity) and writing a `Rgba32Float` storage texture (`write` access).
+//! `Rgba32Float` and `Rg32Float` write-only storage and `R32Float` read-write storage are guaranteed formats
 //! in wgpu 30 without optional features (`wgpu-types` `TextureFormat::guaranteed_format_features`:
 //! Rg32Float `s_ro_wo`, storage usages) and in WebGPU core, and compute shaders are part of
 //! every backend the game runs on (Vulkan by default, DX12 by `WGPU_BACKEND`, docs/dlss.md)
@@ -98,7 +104,15 @@
 //!
 //! **Off path**: everything behind [`TerrainShadowsWanted`] (false by default), which also
 //! sets T0's `SunHeightfieldWanted`. While false: no job, no target, no pipeline compiled,
-//! the render system's run condition fails. `NVF_PLAY_DEBUG_TERRAIN_SHADOWS=1` turns both on.
+//! the render system's run condition fails. The settings row Terrain shadows
+//! (`Graphics::terrain_shadows`, [`follow_graphics`]) sets it; `NVF_PLAY_DEBUG_TERRAIN_SHADOWS=1`
+//! turns it on whatever the row says ([`TerrainShadowsForced`]).
+//!
+//! **Into the lighting** ([`feed_sun_visibility`]): the switch decides
+//! `SunVisibility::terrain_enabled` (the views' terrain variant and their pipelines), the
+//! publication only fills `SunVisibility::terrain` (the uniform and the texture binding):
+//! switched on with nothing published, the receivers get a neutral T = 1 and the pipelines
+//! stay as they are (sun_visibility.rs module notes, the cloud side's rule).
 //!
 //! **Debug aids** (`NVF_PLAY_DEBUG_*`): `NVF_PLAY_DEBUG_TERRAIN_SHADOW_DUMP=<path.png>`
 //! reads back the first map published at least [`DUMP_AFTER_SECS`] into the run and writes
@@ -154,8 +168,11 @@ pub const EDGE_TOLERANCE_TEXELS: f32 = 0.5;
 pub const MIN_LIGHT_SIN: f32 = 0.1 * 0.099_833_42;
 /// Below this horizontal share the light is overhead: no direction to march in.
 pub const MIN_HORIZONTAL: f32 = 1.0e-4;
-/// The output image's format: R shadow height, G caster distance.
-pub const OUTPUT_FORMAT: TextureFormat = TextureFormat::Rg32Float;
+/// The output image's format: R shadow height, G caster distance, B the ground's relief
+/// ([`texel_relief`]), A unused.
+pub const OUTPUT_FORMAT: TextureFormat = TextureFormat::Rgba32Float;
+/// Bytes of one output texel (four `f32`).
+pub const OUTPUT_TEXEL_BYTES: usize = 16;
 /// Invocations per workgroup side (`terrain_shadows.wesl` `@workgroup_size`).
 pub const WORKGROUP: u32 = 8;
 /// Bytes of the shader's `Params` uniform.
@@ -311,6 +328,42 @@ pub fn produce_map(heights: &[f32], valid: &[u8], p: &MarchParams) -> Vec<(f32, 
     (0..side * side).map(|i| produce_texel(heights, valid, (i % side, i / side), p)).collect()
 }
 
+/// CPU mirror of `terrain_shadows.wesl` `relief`: the ground's relief around texel (`col`,
+/// `row`) of a `side` × `side` map, the output's B. Per axis (east-west, north-south) the
+/// smaller of the two neighbours' height differences (one side alone when the other is
+/// outside the map or invalid, 0 when both are), the two axes summed; 0 for an invalid texel.
+/// On a uniform slope rising `g` per unit it is `texel · (|g_x| + |g_z|)`; at the flat foot
+/// or top of a cliff it is 0 (module notes, "Bias").
+pub fn texel_relief(heights: &[f32], valid: &[u8], side: usize, (col, row): (usize, usize)) -> f32 {
+    let own = row * side + col;
+    if valid[own] == 0 {
+        return 0.0;
+    }
+    let h0 = heights[own];
+    let rise = |c: i64, r: i64| -> Option<f32> {
+        if c < 0 || r < 0 || c >= side as i64 || r >= side as i64 {
+            return None;
+        }
+        let i = r as usize * side + c as usize;
+        (valid[i] != 0).then(|| (heights[i] - h0).abs())
+    };
+    let (c, r) = (col as i64, row as i64);
+    let axis = |dc: i64, dr: i64| match (rise(c - dc, r - dr), rise(c + dc, r + dr)) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) | (None, Some(a)) => a,
+        (None, None) => 0.0,
+    };
+    axis(1, 0) + axis(0, 1)
+}
+
+/// The whole output on the CPU, as the GPU writes it: (S, G, relief) per texel (tests; the
+/// receivers' mirror in sun_visibility.rs reads it).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn produce_output(heights: &[f32], valid: &[u8], p: &MarchParams) -> Vec<Vec4> {
+    let side = p.side as usize;
+    produce_map(heights, valid, p).into_iter().enumerate().map(|(i, (s, g))| Vec4::new(s, g, texel_relief(heights, valid, side, (i % side, i / side)), 0.0)).collect()
+}
+
 /// The shader's `Params` bytes (little-endian, the WGSL uniform layout: offsets 0 dir, 8
 /// tan_texel, 12 texel, 16 top, 20 bottom, 24 side, 28 steps, 32 step_min, 36..48 padding).
 pub fn params_bytes(p: &MarchParams) -> [u8; PARAMS_BYTES] {
@@ -386,10 +439,66 @@ pub fn update_reason(basis: Option<&Basis>, now: f32, version: u64, toward: Vec3
     (d > EDGE_TOLERANCE_TEXELS * texel).then_some(Reason::SunMoved(d))
 }
 
-/// Whether terrain shadows are computed (later: the settings row). Off by default;
-/// `NVF_PLAY_DEBUG_TERRAIN_SHADOWS=1` turns it on. Turning it on turns T0's heightfield on.
+/// Whether terrain shadows are computed and drawn: the settings row
+/// (`Graphics::terrain_shadows`, off by default) or [`TerrainShadowsForced`]. Turning it on
+/// turns T0's heightfield on.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TerrainShadowsWanted(pub bool);
+
+/// `NVF_PLAY_DEBUG_TERRAIN_SHADOWS=1`: terrain shadows on whatever the settings row says.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TerrainShadowsForced(pub bool);
+
+/// The settings row (`Graphics::terrain_shadows`) or the debug override decide the switch.
+pub fn follow_graphics(g: Res<crate::graphics::Graphics>, forced: Res<TerrainShadowsForced>, mut wanted: ResMut<TerrainShadowsWanted>) {
+    let want = forced.0 || g.terrain_shadows;
+    if wanted.0 != want {
+        wanted.0 = want;
+    }
+}
+
+/// What the terrain slot of the sun visibility gets for this switch, map and sun light
+/// (`cascades`: the sun's cascade configuration while its shadow maps are on).
+/// `terrain_enabled` follows the switch alone; `terrain` is set only while switched on with
+/// a map published (module notes, "Into the lighting").
+pub fn terrain_slot(wanted: bool, out: &TerrainShadows, cascades: Option<&bevy::light::CascadeShadowConfig>) -> (bool, Option<crate::sun_visibility::TerrainVisibility>) {
+    let terrain = out.image.as_ref().filter(|_| wanted && out.side > 0 && out.texel > 0.0).map(|image| crate::sun_visibility::TerrainVisibility {
+        image: image.clone(),
+        uv_scale: out.uv_scale,
+        uv_offset: out.uv_offset,
+        fade_band: crate::sun_visibility::cascade_fade_band(cascades),
+        texel: out.texel,
+        side: out.side,
+    });
+    (wanted, terrain)
+}
+
+/// Copy the switch and the published map into the sun visibility's terrain slot when they
+/// changed (the plumbing of sun_visibility.rs samples it on the sun's light). The map's
+/// image is bound by handle, so each publication's texture (the two targets alternate) is
+/// what the views read from the frame it is extracted on (sun_visibility.rs
+/// `prepare_sun_visibility` follows the texture view every frame).
+#[allow(clippy::type_complexity)]
+pub fn feed_sun_visibility(
+    wanted: Res<TerrainShadowsWanted>,
+    out: Res<TerrainShadows>,
+    suns: Query<(&DirectionalLight, Option<&bevy::light::CascadeShadowConfig>), With<crate::sky::Sun>>,
+    mut sink: ResMut<crate::sun_visibility::SunVisibility>,
+) {
+    let cascades = suns.iter().next().and_then(|(light, c)| c.filter(|_| light.shadow_maps_enabled));
+    let (enabled, terrain) = terrain_slot(wanted.0, &out, cascades);
+    if sink.terrain_enabled != enabled {
+        sink.terrain_enabled = enabled;
+    }
+    if sink.terrain != terrain {
+        sink.terrain = terrain;
+    }
+}
+
+/// Run condition of [`feed_sun_visibility`]: switched on, or a slot left to empty.
+fn feeding_needed(wanted: Res<TerrainShadowsWanted>, sink: Res<crate::sun_visibility::SunVisibility>) -> bool {
+    wanted.0 || sink.terrain_on()
+}
 
 /// The last complete shadow-height map (module notes, "Notes for T2"). A main-world
 /// resource, extracted to the render world whenever it changes.
@@ -522,11 +631,14 @@ pub struct TerrainShadowsPlugin;
 impl Plugin for TerrainShadowsPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "terrain_shadows.wesl");
-        if nvf_play::dialogue::debug_switch(std::env::var("NVF_PLAY_DEBUG_TERRAIN_SHADOWS").ok().as_deref()) {
+        let forced = nvf_play::dialogue::debug_switch(std::env::var("NVF_PLAY_DEBUG_TERRAIN_SHADOWS").ok().as_deref());
+        if forced {
+            info!("terrain shadows: on by NVF_PLAY_DEBUG_TERRAIN_SHADOWS, whatever the settings row says");
             app.insert_resource(TerrainShadowsWanted(true)).insert_resource(SunHeightfieldWanted(true));
         } else {
             app.init_resource::<TerrainShadowsWanted>();
         }
+        app.insert_resource(TerrainShadowsForced(forced));
         let path = std::env::var_os("NVF_PLAY_DEBUG_TERRAIN_SHADOW_DUMP").filter(|v| !v.is_empty()).map(PathBuf::from);
         let done = JobsDone::default();
         let wanted = |w: Res<TerrainShadowsWanted>| w.0;
@@ -539,11 +651,15 @@ impl Plugin for TerrainShadowsPlugin {
             .add_systems(
                 Update,
                 (
-                    follow_wanted.before(crate::sun_heightfield::stop_heightfield).before(crate::sun_heightfield::update_heightfield),
+                    (follow_graphics.run_if(resource_exists_and_changed::<crate::graphics::Graphics>), follow_wanted)
+                        .chain()
+                        .before(crate::sun_heightfield::stop_heightfield)
+                        .before(crate::sun_heightfield::update_heightfield),
                     (
                         stop_terrain_shadows.run_if(|w: Res<TerrainShadowsWanted>| w.is_changed() && !w.0),
                         update_terrain_shadows.run_if(wanted),
                         dump_terrain_shadows.run_if(wanted).run_if(|aid: Res<DumpAid>| aid.path.is_some() && !aid.asked),
+                        feed_sun_visibility.run_if(feeding_needed),
                     )
                         .chain()
                         .after(crate::sun_heightfield::update_heightfield),
@@ -883,11 +999,12 @@ fn write_grey(path: &Path, pixels: &[u8], side: u32) -> Result<(), String> {
 /// The S map, its heightfield and the shaded-ground mask as greyscale PNGs, north up.
 fn write_dump(path: &Path, data: &[u8], s: &DumpSnapshot) {
     let (side, n) = (s.side, s.side * s.side);
-    if data.len() < n * 8 || s.heights.len() < n || s.valid.len() < n {
+    let stride = OUTPUT_TEXEL_BYTES;
+    if data.len() < n * stride || s.heights.len() < n || s.valid.len() < n {
         warn!("terrain shadows: dump read back {} bytes for a {side}x{side} map; nothing written", data.len());
         return;
     }
-    let shadow_at = |i: usize| f32::from_le_bytes([data[i * 8], data[i * 8 + 1], data[i * 8 + 2], data[i * 8 + 3]]);
+    let shadow_at = |i: usize| f32::from_le_bytes([data[i * stride], data[i * stride + 1], data[i * stride + 2], data[i * stride + 3]]);
     let (lo, hi) = (s.min, s.max.max(s.min + 1.0));
     let grey = |v: f32| (((v - lo) / (hi - lo)).clamp(0.0, 1.0) * 255.0).round() as u8;
     let (mut shadow, mut height, mut mask) = (vec![0u8; n], vec![0u8; n], vec![0u8; n]);
@@ -1334,7 +1451,9 @@ mod tests {
         }
         match &module.types[binding("shadow_out").2].inner {
             naga::TypeInner::Image { class: naga::ImageClass::Storage { format, access }, .. } => {
-                assert_eq!(*format, naga::StorageFormat::Rg32Float);
+                assert_eq!(*format, naga::StorageFormat::Rgba32Float);
+                assert_eq!(OUTPUT_FORMAT, TextureFormat::Rgba32Float);
+                assert_eq!(OUTPUT_FORMAT.block_copy_size(None), Some(OUTPUT_TEXEL_BYTES as u32));
                 assert!(access.contains(naga::StorageAccess::STORE));
             }
             other => panic!("shadow_out is {other:?}"),
@@ -1354,5 +1473,126 @@ mod tests {
         let f = |o: usize| f32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
         let u = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
         assert_eq!((f(0), f(4), f(8), f(12), f(16), f(20), u(24), u(28), f(32)), (0.6, -0.8, 51.2, TEXEL, 900.0, -20.0, 512, STEPS, STEP_MIN));
+        // B: the relief, mirrored by `texel_relief`.
+        assert!(source.contains("result.z = relief(own, h0.r);"));
+        assert!(source.contains("return axis_relief(own, vec2<i32>(1, 0), h0) + axis_relief(own, vec2<i32>(0, 1), h0);"));
+    }
+
+    /// The relief (the output's B, the receivers' bias): a uniform slope's rise per texel on
+    /// each axis, summed; 0 on flat ground and at a cliff's flat foot or top; one side alone
+    /// at the map's edge or beside an invalid texel; 0 for an invalid texel.
+    #[test]
+    fn relief_is_the_slope_not_the_cliff() {
+        let side = 8;
+        // A plane rising 0.1 per unit east and 0.05 north.
+        let plane: Vec<f32> = (0..side * side).map(|i| 0.1 * TEXEL * (i % side) as f32 + 0.05 * TEXEL * (i / side) as f32).collect();
+        let valid = vec![1u8; side * side];
+        for (col, row) in [(3, 3), (0, 0), (7, 4), (2, 7)] {
+            let r = texel_relief(&plane, &valid, side, (col, row));
+            assert!((r - 0.15 * TEXEL).abs() < 1e-2, "({col}, {row}): {r}");
+        }
+        // A cliff 900 units high between columns 3 and 4 on flat ground.
+        let cliff: Vec<f32> = (0..side * side).map(|i| if i % side >= 4 { 900.0 } else { 0.0 }).collect();
+        for col in 0..side {
+            assert_eq!(texel_relief(&cliff, &valid, side, (col, 2)), 0.0, "column {col}: flat on one side at least");
+        }
+        // A one-texel wall: both its sides drop, so it keeps its relief.
+        let wall: Vec<f32> = (0..side * side).map(|i| if i % side == 4 { 900.0 } else { 0.0 }).collect();
+        assert_eq!(texel_relief(&wall, &valid, side, (4, 2)), 900.0);
+        // An invalid neighbour counts as missing; an invalid texel has none.
+        let mut holed = valid.clone();
+        holed[3 * side + 2] = 0;
+        assert!((texel_relief(&plane, &holed, side, (3, 3)) - 0.15 * TEXEL).abs() < 1e-2, "the east side alone");
+        assert_eq!(texel_relief(&plane, &holed, side, (2, 3)), 0.0);
+        // The output carries it beside S and G.
+        let p = march_params(Vec3::new(0.0, 0.8, 0.6), TEXEL, side as u32, 0.0, 900.0).unwrap();
+        let out = produce_output(&cliff, &valid, &p);
+        assert_eq!(out.len(), side * side);
+        assert!(out.iter().all(|t| t.z == 0.0 && t.w == 0.0));
+        let out = produce_output(&plane, &valid, &p);
+        assert!((out[3 * side + 3].z - 0.15 * TEXEL).abs() < 1e-2);
+    }
+
+    /// The settings row decides whether the views take the terrain variant, not whether a
+    /// map is published: switched on, the views keep their markers through a publication,
+    /// its loss (indoors, the light at the horizon) and a new one in the other target; the
+    /// slot is neutral meanwhile. Switching off takes everything away; the debug override
+    /// holds it on whatever the row says.
+    #[test]
+    fn terrain_bindings_follow_the_switch() {
+        use crate::graphics::{Graphics, Preset};
+        use crate::sun_visibility::{mark_targets, marking_needed, SunVisibility, SunVisibilityUniform, SunVisibilityView, MASK_TERRAIN};
+        let mut app = App::new();
+        app.insert_resource(Graphics::preset(Preset::Vanilla))
+            .insert_resource(TerrainShadowsForced(false))
+            .init_resource::<TerrainShadowsWanted>()
+            .init_resource::<TerrainShadows>()
+            .init_resource::<SunVisibility>()
+            .insert_resource(crate::sky::SkyState::default())
+            .add_systems(
+                Update,
+                (follow_graphics.run_if(resource_exists_and_changed::<Graphics>), feed_sun_visibility.run_if(feeding_needed), mark_targets.run_if(marking_needed)).chain(),
+            );
+        let light = DirectionalLight { shadow_maps_enabled: true, ..default() };
+        let sun = app.world_mut().spawn((crate::sky::Sun, light, crate::sky::shadow_cascades(8_000.0, 1.0, 3))).id();
+        let cam = app.world_mut().spawn(crate::fly::FlyCam { yaw: 0.0, pitch: 0.0, speed: 0.0 }).id();
+        let vis = |app: &App| app.world().resource::<SunVisibility>().clone();
+        app.update();
+        assert!(!app.world().resource::<TerrainShadowsWanted>().0, "off by default");
+        assert!(!vis(&app).active());
+        assert!(app.world().get::<SunVisibilityView>(cam).is_none());
+
+        // The row on, nothing published yet: the variant and the markers, a neutral slot.
+        app.world_mut().resource_mut::<Graphics>().terrain_shadows = true;
+        app.update();
+        assert!(app.world().resource::<TerrainShadowsWanted>().0);
+        let v = vis(&app);
+        assert!(v.terrain_enabled && v.terrain.is_none() && v.terrain_on());
+        assert_eq!(SunVisibilityUniform::pack(&v).mode.x & MASK_TERRAIN, 0, "neutral: T = 1");
+        assert!(app.world().get::<SunVisibilityView>(cam).is_some());
+
+        // A map published: the slot carries it, the band from the sun's cascades.
+        let mut images = Assets::<Image>::default();
+        let (front, back) = (images.add(Image::default()), images.add(Image::default()));
+        let (uv_scale, uv_offset) = TerrainShadows::uv_transform(Vec2::new(-1_000.0, 2_000.0), TEXEL, 512);
+        let published = |image: Handle<Image>, version: u64| TerrainShadows { image: Some(image), texel: TEXEL, side: 512, uv_scale, uv_offset, version, ..default() };
+        *app.world_mut().resource_mut::<TerrainShadows>() = published(front.clone(), 1);
+        app.update();
+        let t = vis(&app).terrain.expect("published");
+        assert_eq!((t.image.id(), t.texel, t.side, t.uv_scale, t.uv_offset), (front.id(), TEXEL, 512, uv_scale, uv_offset));
+        assert!((t.fade_band - Vec2::new(6_400.0, 8_000.0)).length() < 1.0, "{}", t.fade_band);
+        assert_eq!(SunVisibilityUniform::pack(&vis(&app)).mode.x & MASK_TERRAIN, MASK_TERRAIN);
+
+        // The next publication is the other target: the slot follows the handle.
+        *app.world_mut().resource_mut::<TerrainShadows>() = published(back.clone(), 2);
+        app.update();
+        assert_eq!(vis(&app).terrain.expect("published").image.id(), back.id());
+
+        // Gone dark (indoors, the light at the horizon): neutral again, markers kept.
+        *app.world_mut().resource_mut::<TerrainShadows>() = TerrainShadows { version: 3, reason: "light at or under the horizon", ..default() };
+        app.update();
+        let v = vis(&app);
+        assert!(v.terrain_enabled && v.terrain.is_none());
+        assert!(app.world().get::<SunVisibilityView>(cam).is_some(), "the views keep the terrain variant");
+
+        // Sun shadow maps off: no cascades, the band is 0 (Vsolid = T).
+        *app.world_mut().resource_mut::<TerrainShadows>() = published(front.clone(), 4);
+        app.world_mut().get_mut::<DirectionalLight>(sun).unwrap().shadow_maps_enabled = false;
+        app.update();
+        assert_eq!(vis(&app).terrain.expect("published").fade_band, Vec2::ZERO);
+
+        // The row off: nothing, even with a map still standing.
+        app.world_mut().resource_mut::<Graphics>().terrain_shadows = false;
+        app.update();
+        let v = vis(&app);
+        assert!(!v.terrain_on() && !v.active());
+        app.update();
+        assert!(app.world().get::<SunVisibilityView>(cam).is_none());
+
+        // The override wins over the row.
+        app.world_mut().resource_mut::<TerrainShadowsForced>().0 = true;
+        app.world_mut().resource_mut::<Graphics>().set_changed();
+        app.update();
+        assert!(app.world().resource::<TerrainShadowsWanted>().0 && vis(&app).terrain_enabled);
     }
 }

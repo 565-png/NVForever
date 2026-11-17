@@ -41,6 +41,11 @@
 //!   the weather's cloud layers darken the sun's direct light where their shadow falls
 //!   (cloud_shadows.rs, sun_visibility.rs, docs/design/sun-visibility.md). Switching it
 //!   rebuilds the world views' material pipelines.
+//! - **Terrain shadows** (`terrain-shadows`, off in both presets: #2671 asked for it "in
+//!   `enhanced`", likewise, and its softness and bias are not tuned yet): at a low sun the
+//!   landscape shades itself beyond the sun shadows' range (sun_heightfield.rs,
+//!   terrain_shadows.rs, sun_visibility.rs, docs/design/terrain-shadows.md). Switching it
+//!   rebuilds the world views' material pipelines.
 //!
 //! The game's own image space (the grade and the modifiers' blur, imagespace.rs) is left
 //! as it is: none of these replaces or repeats it. Every value here is an engineering
@@ -181,11 +186,14 @@ pub struct Graphics {
     /// The weather's clouds shade the sun (cloud_shadows.rs; off in both presets)
     /// [design, #2670].
     pub cloud_shadows: bool,
+    /// The landscape shades the sun beyond the cascades (terrain_shadows.rs; off in both
+    /// presets) [design, #2671].
+    pub terrain_shadows: bool,
 }
 
 /// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing and
 /// shadow-filter choices that are not vanilla's, in the order of [`Graphics::describe`].
-pub const KEYS: [&str; 15] = [
+pub const KEYS: [&str; 16] = [
     "ambient-occlusion",
     "fine-shadows",
     "bloom",
@@ -201,6 +209,7 @@ pub const KEYS: [&str; 15] = [
     "terrain-height-blend",
     "terrain-anti-tiling",
     "cloud-shadows",
+    "terrain-shadows",
 ];
 
 impl Graphics {
@@ -247,6 +256,9 @@ impl Graphics {
             // The same for cloud shadows, whose strength is still to calibrate [design,
             // #2670; the issue's "in enhanced" names a row the overhaul removed].
             cloud_shadows: false,
+            // The same for terrain shadows, whose softness and bias are still to tune
+            // [design, #2671; the issue's "in enhanced" names a row the overhaul removed].
+            terrain_shadows: false,
         }
     }
 
@@ -267,6 +279,7 @@ impl Graphics {
             "terrain-height-blend" => &mut self.terrain_height_blend,
             "terrain-anti-tiling" => &mut self.terrain_anti_tiling,
             "cloud-shadows" => &mut self.cloud_shadows,
+            "terrain-shadows" => &mut self.terrain_shadows,
             _ => return None,
         })
     }
@@ -317,6 +330,7 @@ impl Graphics {
             (self.terrain_height_blend, "terrain height blending"),
             (self.terrain_anti_tiling, "terrain anti-tiling"),
             (self.cloud_shadows, "cloud shadows"),
+            (self.terrain_shadows, "terrain shadows"),
         ];
         let mut on: Vec<&str> = names.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
         if self.fsr().is_some() {
@@ -1271,6 +1285,19 @@ mod tests {
         assert_eq!(g, on);
         let cycle = FrameTimes::parse_cycle("vanilla;cloud-shadows").expect("cycle");
         assert!(!cycle[0].graphics.cloud_shadows && cycle[1].graphics.cloud_shadows);
+    }
+
+    #[test]
+    fn terrain_shadows_are_off_in_both_looks_and_have_their_own_key() {
+        assert!(!Graphics::preset(Preset::Vanilla).terrain_shadows && !Graphics::preset(Preset::Enhanced).terrain_shadows);
+        let on = Graphics::only(&["terrain-shadows".into()]).expect("terrain-shadows");
+        assert!(on.terrain_shadows && !on.cloud_shadows);
+        assert_eq!(on.describe(), "light glow, terrain shadows");
+        let mut g = Graphics::preset(Preset::Vanilla);
+        *g.switch("terrain-shadows").expect("settings key") = true;
+        assert_eq!(g, on);
+        let cycle = FrameTimes::parse_cycle("vanilla;terrain-shadows").expect("cycle");
+        assert!(!cycle[0].graphics.terrain_shadows && cycle[1].graphics.terrain_shadows);
     }
 
     #[test]

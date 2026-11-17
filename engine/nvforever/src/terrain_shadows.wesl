@@ -4,9 +4,11 @@
 //   S = max over the texels the march visits of [H(texel) - entry(texel) * tan(elevation)],
 // entry the horizontal distance at which the ray towards the light enters that texel. Output
 // R = S, G = the horizontal distance (world units) to the texel that gave S, both
-// NO_SHADOW / 0 where nothing casts. Plain WGSL (no imports, no shader defs), so the module
-// test validates exactly this text. terrain_shadows.rs `march_texel` mirrors `march` line for
-// line; change both together.
+// NO_SHADOW / 0 where nothing casts; B = the ground's relief around the texel (`relief`,
+// world units; 0 for an invalid texel), for the receivers' bias (stage T2). Plain WGSL (no
+// imports, no shader defs), so the module test validates exactly this text.
+// terrain_shadows.rs `march_texel` mirrors `march` line for line and `texel_relief`
+// mirrors `relief`; change both together.
 
 struct Params {
     // Unit horizontal direction towards the light in texel space: x east (+column), y north (+row).
@@ -34,7 +36,7 @@ const NO_SHADOW: f32 = -1.0e30;
 const EDGE_INSET: f32 = 1.0e-3;
 
 @group(0) @binding(0) var heights: texture_2d<f32>;
-@group(0) @binding(1) var shadow_out: texture_storage_2d<rg32float, write>;
+@group(0) @binding(1) var shadow_out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(2) var<uniform> params: Params;
 
 // Where the ray from p along d enters the span [c, c + 1] on one axis (texel units); an axis
@@ -113,17 +115,62 @@ fn march(own: vec2<i32>) -> vec2<f32> {
     return vec2<f32>(best, best_t * params.texel);
 }
 
+// |H(c) - h0| for a valid texel c inside the map; -1 for one outside it or invalid.
+fn rise(c: vec2<i32>, h0: f32) -> f32 {
+    let side = i32(params.side);
+    if c.x < 0 || c.y < 0 || c.x >= side || c.y >= side {
+        return -1.0;
+    }
+    let h = textureLoad(heights, c, 0);
+    if h.g <= 0.5 {
+        return -1.0;
+    }
+    return abs(h.r - h0);
+}
+
+// The smaller of the height differences to the two neighbours along `step` (one side alone
+// when the other is missing, 0 when both are): a uniform slope's rise per texel, but 0 at
+// the foot or the top of a cliff, so the bias it gives does not lift a cliff's own shadow
+// off the ground at its foot.
+fn axis_relief(own: vec2<i32>, step: vec2<i32>, h0: f32) -> f32 {
+    let a = rise(own - step, h0);
+    let b = rise(own + step, h0);
+    if a < 0.0 && b < 0.0 {
+        return 0.0;
+    }
+    if a < 0.0 {
+        return b;
+    }
+    if b < 0.0 {
+        return a;
+    }
+    return min(a, b);
+}
+
+// The ground's relief around texel `own` (height h0): the east-west and north-south
+// differences summed, an upper bound of how far the texel's maximum stands above its
+// ground and its neighbours' maxima above a receiver between them on a slope.
+fn relief(own: vec2<i32>, h0: f32) -> f32 {
+    return axis_relief(own, vec2<i32>(1, 0), h0) + axis_relief(own, vec2<i32>(0, 1), h0);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn produce(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= params.side || id.y >= params.side {
         return;
     }
     let own = vec2<i32>(id.xy);
-    var result = vec2<f32>(NO_SHADOW, 0.0);
-    // An invalid receiver texel gets no shadow; so does every texel when there is no light
-    // to march towards (steps 0).
-    if textureLoad(heights, own, 0).g > 0.5 && params.steps > 0u {
-        result = march(own);
+    var result = vec4<f32>(NO_SHADOW, 0.0, 0.0, 0.0);
+    // An invalid receiver texel gets no shadow and no relief; every texel gets no shadow
+    // when there is no light to march towards (steps 0).
+    let h0 = textureLoad(heights, own, 0);
+    if h0.g > 0.5 {
+        result.z = relief(own, h0.r);
+        if params.steps > 0u {
+            let m = march(own);
+            result.x = m.x;
+            result.y = m.y;
+        }
     }
-    textureStore(shadow_out, own, vec4<f32>(result, 0.0, 1.0));
+    textureStore(shadow_out, own, result);
 }

@@ -118,9 +118,15 @@ marked `NVForever sun visibility`, for nvforever's `sun_visibility.rs`:
   whose render entity has it, so a shader can tell the outdoor sun from other directional
   lights without assuming an index.
 - `src/render/mesh_view_bindings.rs`: the render-world view component
-  `NvfSunVisibilityBindings` (a uniform buffer, two filterable float 2D textures and a
+  `NvfSunVisibilityBindings` (a uniform buffer, a filterable float 2D texture for the
+  clouds, an unfilterable float 2D texture for the terrain shadow-height map and a
   filtering sampler), the layout key bit `MeshPipelineViewLayoutKey::NVF_SUN_VISIBILITY`
   and bindings 39-42 of the mesh view bind group, present only for a view with it.
+  Binding 41 is declared `Float { filterable: false }` (2026-11-17, #2671 stage T2): the
+  terrain map is `Rgba32Float`, which is filterable only with the optional
+  `FLOAT32_FILTERABLE` feature, so nvforever reads it with `textureLoad` and never with
+  the sampler; its stand-in while no map is uploaded is nvforever's own one-texel
+  `Rgba32Float` texture, not Bevy's fallback image.
 - `src/render/mesh.rs`: `MeshPipelineKey::NVF_SUN_VISIBILITY`, `NVF_CLOUD_VISIBILITY` and
   `NVF_TERRAIN_VISIBILITY` (bits 25-27; the key's bit fields above them move up by three,
   well below the base mesh key's bits from 58), set by `check_views_need_specialization`
