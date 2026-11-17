@@ -58,7 +58,14 @@ engine strict checks. Core stopped in the existing console catalogue census:
 these two implemented source handlers, although the console already compiles
 unnumbered function calls. A shared name predicate now connects the handler
 and census, with an unknown-name neighbor control and the original 33/90 pin
-retained; this correction and its new control await execution. The old failure
-is retained. Original mod initialization,
+retained. Composite 1c82c77f (head 3e71f3e2) subsequently passed that census
+control, both ordinary/no-caster core controls and both physics controls; the
+registered transform control failed its bare-Translation predicate. That fixture
+selected FirstPerson, whose accepted queue payload is ForModel-tagged. The
+corrected assertion uses into_model and checks both FirstPerson and the original
+exact reference/node/[3,0,0] payload, retaining later [4,0,0] and one-edit controls.
+The old failed vector was not printed, so its runtime contents are not inferred.
+The corrected fixture remains unexecuted at authoring; both earlier failures are
+retained. Original mod initialization,
 configured inputs, animation/rendering, save/load and full installed acceptance
 remain separate requirements.

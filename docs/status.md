@@ -330,6 +330,9 @@ for the two Enhanced Movement lean calls, with existing CPTH room behavior retai
 Hosted composite ab093471 (head 36db07e7) passed both real-physics caster
 controls once and strict engine checks. Core stopped at the existing catalogue
 census before all three source/callback controls. The narrow source-handler
-census correction and its unknown-name control await execution; the original
-33/90 pin is retained. Native measurement and installed lean animation/input
+census correction retained the original 33/90 pin. Composite 1c82c77f (head
+3e71f3e2) then passed the census, two core and two physics controls; its registered
+transform case failed a bare-payload predicate despite selecting a model-tagged
+first-person request. The corrected fixture now checks model and unchanged exact
+payload through into_model; it remains unexecuted at authoring. Native measurement and installed lean animation/input
 acceptance remain open ([contract](spec-notes/vats-script-clearance.md)).
