@@ -106,7 +106,9 @@ fn nvf_terrain_lit(s: vec4<f32>, y: f32, extra: f32, texel: f32) -> f32 {
 // filtered bilinearly, never S itself (S jumps by hundreds of units at a shadow's end). The
 // receiver is lifted by a bias of NVF_TERRAIN_BIAS_RELIEF times the ground's relief there
 // (B, bilinear) plus NVF_TERRAIN_BIAS_MIN, against the map's max-per-texel heights on
-// slopes. Outside the map T = 1, and it fades to 1 over the last NVF_TERRAIN_EDGE_TEXELS
+// slopes; a heuristic, not an error bound (it can lift a receiver on terraced ground out of
+// a real shadow, and B is 0 for relief inside a texel between equal maxima:
+// terrain_shadows.wesl `relief`). Outside the map T = 1, and it fades to 1 over the last NVF_TERRAIN_EDGE_TEXELS
 // texels; invalid texels hold S = -1e30 and shade nothing. With no map published (mask
 // bit 2 clear: switched on, nothing yet) T = 1 before any read.
 @if(NVF_TERRAIN_VISIBILITY)

@@ -6,7 +6,8 @@ producer (C1, `engine/nvforever/src/cloud_shadows.rs`) and the settings row with
 water highlight and the first-person arms (C2, §7); the relative transmittance (§7a) after the
 contributor's play-test of 2026-11-17. Terrain shadows (#2671, T0-T2) fill the terrain
 slot: the receivers and the row Terrain shadows (experimental) are built (§5a,
-[terrain-shadows.md](terrain-shadows.md)), not yet run. Runs so far: main session run 2026-11-17, fork-notes (the checkerboard
+[terrain-shadows.md](terrain-shadows.md); what has been run with them and what not: its
+"What has been run"). Runs so far: main session run 2026-11-17, fork-notes (the checkerboard
 reached terrain, objects, trees and distant hills at Goodsprings 12:00; no shader or layout
 errors; an interior run clean; with C2 and the relative rule, Goodsprings 12:00 under a clear
 and an overcast weather, the logs free of rendering errors). What is not yet shown is in §6,
@@ -166,7 +167,9 @@ ground's relief there plus 16 units against speckle on lit slopes; T fades to 1 
 map's last 4 texels and is 1 outside it and over texels with no terrain. With a map
 published the band of §2 is active: Vsolid goes from min(C, T) to T over the last 20 % of the
 last cascade (6,400 to 8,000 units at the default distance), so object shadows fade out
-there instead of ending at a line, and with Sun shadows off T acts alone. The switch is the
+there instead of ending at a line (the stated design; its measured effect and the
+alternative, `min(C, T)` throughout with the cut-off kept: terrain-shadows.md, "Only
+terrain-scale shadows; the band"), and with Sun shadows off T acts alone. The switch is the
 row Terrain shadows (experimental) (`terrain-shadows`, Graphics › Shadows, after Cloud
 shadows; off by default and in every preset; Continue waits for its pipelines), or
 `NVF_PLAY_DEBUG_TERRAIN_SHADOWS=1`, which wins; `graphics.rs` key `terrain-shadows`. The

@@ -19,7 +19,10 @@ the camera's cell, each texel the highest stored LAND vertex on its square, with
 mask (no LAND, not loaded, outside the worldspace: invalid, height −1e30). Published as an
 `Rg32Float` image (R height, G validity), row 0 the southernmost, with its origin, texel
 size, side, valid height range and a version. Details and bounds in the module notes of
-`sun_heightfield.rs`.
+`sun_heightfield.rs`. Its limit of 64 loader results a frame bounds only the taking of
+results, not the frame's whole cost: a recentring copies the grid, a publication copies the
+grid and uploads its image, and T1 then dispatches the whole map in one frame [design: the
+code; the frame cost is not measured].
 
 ## T1: the shadow-height map
 
@@ -55,7 +58,8 @@ of the map's edge and `(max − min) / tan(e)`, past which nothing on the map ca
 its lowest height. The samples are held 1e-3 texel short of the reach, so the last one lies
 in the last texel the ray crosses inside the map, never on the edge itself (until
 2026-11-17 it fell on or past the edge and ended the march, so a caster in the last step
-before the edge cast nothing). High sun therefore costs a few samples, and low sun covers the whole map
+before the edge cast nothing). High sun therefore takes few samples (cheap [hypothesis]: the
+pass's time is not measured), and low sun covers the whole map
 with steps that grow as the square root of the distance. Every sampled texel is scored with
 the ray's exact entry distance into it, as the brute-force CPU reference
 (`sun_heightfield::shadow_height_reference`) scores it, and the march stops once a ray
@@ -63,8 +67,17 @@ falling from the map's highest height cannot beat the best so far. The receiver'
 is left out (its maximum is the receiver's own ground), as in the reference.
 
 **Bounds.**
-- The march visits a subset of the texels the reference visits and scores them alike: it
-  is never darker than the reference (tested: `march_matches_reference_on_ridge`).
+- The march visits a subset of the texels the reference visits and scores them alike: its
+  raw shadow height S is never above the reference's (tested:
+  `march_matches_reference_on_ridge`), within this domain only: S at or above the map's
+  lowest valid height (the reach leaves out what falls below it, so a constant-height map
+  gives no shadow where the reference gives a finite S under that height; the tests compare
+  above ground level). It says nothing about the receivers' filtered, soft T: the band
+  grows with the winning caster's distance G, so a march that misses a narrow farther caster
+  and keeps a nearer one can come out darker (review of f8d532cca, finding 4: (S, G) =
+  (90, 1,000) against the reference's (100, 20,000) gives about 0.08 against 0.69 for a
+  receiver at 16 under tan e = 0.2), and the bilinear filter has no pointwise reference.
+  Ordering rendered visibility would need a receiver-level reference.
 - It is lighter only where it steps over a texel. The longest step is 0.5 texel while the
   reach is under 48 texels and 14.5 texels (3,700 units) at the full diagonal of 724 texels
   (`max_step`, test `steps_grow_with_reach`). A caster at least as long along the ray as the
@@ -119,9 +132,10 @@ update, so T1 cannot rely on seeing an empty heightfield in between (tests
 row or the debug override sets it, T2), which turns T0 on with it. While false no job is made, no target allocated, no pipeline compiled, and
 the render system's run condition fails.
 
-**Not measured yet.** The pass's GPU time (it carries a `terrain_shadows` time span), how
-often low sun asks for a new map in play, whether the march's misses or the heightfield's
-max-per-texel are visible, and the producer on the Steam Deck class of GPU. The cost model
+**Not measured yet.** The pass's GPU time (it carries a `terrain_shadows` time span) and its
+spikes, how often low sun asks for a new map in play, whether the march's misses show on
+difficult ground (terraces, narrow channels; the pictures of "What has been run" under T2
+show none at the places taken), and the producer on the Steam Deck class of GPU. The cost model
 in the plan (about 25 million height reads for a full map at 96 samples) is an estimate
 [hypothesis].
 
@@ -172,9 +186,12 @@ shaded `band` under it, where
   past a texel's fall.
 
 The band lies *under* S, not around it: a receiver at S is lit. That makes every shadow
-shorter by about half a band (`band / (2 · tan e)` horizontally: about 200 units at 07:00
-behind a near ridge) and keeps the comparison from shading a lit slope [engineering choice:
-the brief prefers too little shadow to speckle].
+shorter by about half a band (`band / (2 · tan e)` horizontally) and keeps the comparison
+from shading a lit slope [engineering choice: the brief prefers too little shadow to
+speckle]. The figure of about 200 units (0.8 texel) is the near-caster case at about 13°
+(07:00) only; the bias's constant 16 units adds about 0.27 texel there (`16 / tan e`), and
+the relief term and a distant caster's wider band shorten shadows further [derived from the
+formulas, not measured].
 
 **The bias** [engineering choice]. Before comparing, the receiver is lifted:
 
@@ -193,6 +210,22 @@ and the receiver left T at 0.991 on a lit slope; test `lit_slope_has_no_acne`: p
 45° from eight directions under suns at 5°, 13° and 30°, T > 0.9999 everywhere, while the
 unbiased comparison shades the ground at over 10,000 of the samples). The 16 units cover
 f32 noise and the rendered triangles lying under their highest vertex.
+
+What the bias is not: an error bound. The plane cases above are all the tests cover, and
+two failures remain (review of f8d532cca, finding 3, derived, not seen in a picture):
+- On terraced ground it can lift a receiver out of a real shadow. Sunward texel maxima
+  0, 128, 256, 384, 384, constant across rows, under tan e = 0.2: at the centre of the texel
+  whose maximum is 128 the relief is 128 and the lift `2 · 128 + 16 = 272`, so a receiver
+  on a flat terrace at 128 is compared at 400, above S = 384 − 384 · 0.2 = 307.2 from the
+  uphill 384s: lit, though under S.
+- B sees only differences between texel maxima: relief inside a texel whose neighbouring
+  maxima are equal gives B = 0, so a narrow sunlit channel along the light gets no bias
+  while the neighbours' maxima may shade it.
+The bias and the filter are kept as built: with them the pictures of the main session run
+2026-11-17 (fork-notes; "What has been run" below) show no speckle on sunlit slopes, at
+Goodsprings 07:00 and 19:00 among others. Lowering the multiplier would trade the first
+failure for speckle; keeping terrace shadows without acne needs better information about
+the ground's error inside a texel than B.
 
 What **relief** is (`terrain_shadows.wesl` `relief`, mirrored by `texel_relief`): per axis
 (east-west, north-south) the *smaller* of the two neighbours' height differences (one side
@@ -226,6 +259,17 @@ T2 (no terrain variant drew); with a map published it is active (test
 Sun shadows off, C = 1 and Vsolid = T at every distance; the band is then 0 and changes
 nothing.
 
+What the band does to object shadows is the stated design, not a defect: over the last
+fifth of the last cascade, where the terrain does not shade (T = 1), an object's cascade
+shadow fades to lit (at C = 0, T = 1 and the band's middle, Vsolid = 0.5), so object
+shadows end in a fade instead of at the cascades' cut-off line. The main session measured
+it: with the row on, about 0.3-0.5 % of the pixels were slightly brighter in three aerial
+views (main session run 2026-11-17, fork-notes). The noted alternative, if object shadows
+must be kept to the cascades' end: `min(C, T)` throughout the cascades' range, keeping the
+cut-off line (the band then only matters beyond C's reach, where C = 1 anyway); separate
+object and terrain shadow terms would allow a more selective transition. Not taken
+[engineering choice, open for the maintainer].
+
 **Activation** (`terrain_shadows.rs` `feed_sun_visibility`, `follow_graphics`): the settings
 row Terrain shadows (or `NVF_PLAY_DEBUG_TERRAIN_SHADOWS=1`, which wins) sets
 `TerrainShadowsWanted`, which turns T0 and T1 on and `SunVisibility::terrain_enabled`, which
@@ -249,7 +293,8 @@ texture per version: T0's new versions are written into the same GPU texture and
 (the vendored `GpuImage` preparation reuses a texture of the same descriptor with
 `COPY_DST`; earlier notes said every version made a new one, which was wrong), and T1 makes
 a bind group per dispatch; a kept view whose contents change needs nothing rebuilt.
-`feed_sun_visibility` runs after `graphics.rs` `sun_shadow_quality`, so the end band
+`feed_sun_visibility` runs after `graphics.rs` `sun_shadow_quality` (its set
+`SunShadowQuality`), so the end band
 follows a cascade change in the same update. Between two publications the
 map stands still while the sun moves: the step is accepted, not blended [engineering choice:
 the simple one]. T1's cadence asks for a new map once the predicted shadow-edge movement for
@@ -273,11 +318,24 @@ override) T is 1 everywhere: the view turns the plumbing on but not the terrain 
 multiplies per fragment of the sun's light loop, twice where the transmitted lobe is drawn;
 the producer's four extra loads per texel per map.
 
-**Not measured or shown yet** (only a run can): that the patched lighting compiles with the
-unfilterable binding in every pipeline of a marked view and that the layouts match on the
-reflection and scope views; that ridges shade valleys where the dumps say and lit slopes stay
-clean in pictures; that the 256-unit grid does not show; how the band looks at the cascades'
-end; the per-fragment cost.
+**What has been run** (main session run 2026-11-17, fork-notes; on f8d532cca, before the
+review fixes of the same day: the cadence's uncapped length term, the worldspace
+generation, the terrain bit without an uploaded map and the feed's ordering are covered by
+unit tests only). The build, the tests (nvforever 1,308 passed), clippy, and the smoke
+scenarios `terrain-shadows` and `cloud-shadows` passed. Pictures at Goodsprings 06:15,
+07:00 and 12:00 and Novac 19:00, and from the air above Goodsprings at 07:00, 12:00 and
+19:00: valleys shaded on the side away from the sun with soft edges, no speckle on sunlit
+slopes, nothing at noon. With Sun shadows on, ground inside the cascades' range does not
+change with the row (the cascades already shade it) and ground beyond it does; with Sun
+shadows off a shaded flat area darkens. In three aerial views about 0.3-0.5 % of the pixels
+were slightly brighter with the row on (the end band, above).
+
+**Not run or not shown yet**: the producer's and the receivers' cost (GPU time, spikes, a
+lower-end GPU); a broad smoke; upscalers and MSAA with the row on; a publication watched
+while the sun moves (the cadence through sunrise with the clock running); worldspace travel
+and save/load with the row on; the layouts and pipelines of the reflection and scope views
+and the first-person arms with the terrain variant; difficult ground (terraces, narrow
+channels; the bias's limits above); whether the 256-unit grid shows anywhere else.
 
 **Open for tuning** (sun_visibility.wesl and sun_visibility.rs `TERRAIN_*`, changed together):
 - the penumbra per unit of caster distance (0.01) and its floor (0.25 texel);

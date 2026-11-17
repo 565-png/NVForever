@@ -148,8 +148,20 @@ fn axis_relief(own: vec2<i32>, along: vec2<i32>, h0: f32) -> f32 {
 }
 
 // The ground's relief around texel `own` (height h0): the east-west and north-south
-// differences summed, an upper bound of how far the texel's maximum stands above its
-// ground and its neighbours' maxima above a receiver between them on a slope.
+// differences summed. On a uniform slope it is the rise per texel, about how far the
+// texel's maximum stands above its ground and its neighbours' maxima above a receiver
+// between them; the receivers' bias is twice it. It is a heuristic, not an error bound:
+// - on terraced ground it can lift a receiver out of a real shadow: sunward maxima 0, 128,
+//   256, 384, 384 (constant across rows) under tan(e) = 0.2 give a relief of 128 at the
+//   centre of the texel whose maximum is 128, a lift of 2 * 128 + 16 = 272, so a receiver
+//   on a flat terrace at 128 is read at 400, above S = 384 - 384 * 0.2 = 307.2 from the
+//   uphill 384s (entered 384 units away): lit, though under S (review of f8d532cca,
+//   finding 3, derived, not seen in a picture);
+// - it sees only the differences between texel maxima: relief inside a texel whose
+//   neighbours' maxima are equal gives 0 (a narrow sunlit channel along the light gets no
+//   bias while the neighbouring maxima may shade it).
+// The bias was chosen against speckle on lit slopes (sun_visibility.rs `lit_slope_has_no_acne`,
+// planes only); keeping terrace shadows as well needs better ground-error data than B.
 fn relief(own: vec2<i32>, h0: f32) -> f32 {
     return axis_relief(own, vec2<i32>(1, 0), h0) + axis_relief(own, vec2<i32>(0, 1), h0);
 }

@@ -52,8 +52,10 @@
 //! **Loading** [engineering choice]: [`LOADER_THREADS`] thread(s) of their own at the lowest
 //! priority (as the generated-LOD bakes, `lodgen::Baker`, and for the same reason: Bevy's
 //! task pools are shared with pipeline compilation), nearest cells first. The main thread
-//! takes at most [`RESULTS_PER_FRAME`] finished cells a frame (each a copy of 256 heights)
-//! and publishes at most once per [`PUBLISH_INTERVAL_SECS`] while cells keep arriving, and
+//! takes at most [`RESULTS_PER_FRAME`] finished cells a frame (each a copy of 256 heights;
+//! that bounds the taking of results, not the frame's cost: a recentring copies the grid,
+//! a publication copies it and uploads the image, and the shadow producer then dispatches
+//! its whole map in one frame) and publishes at most once per [`PUBLISH_INTERVAL_SECS`] while cells keep arriving, and
 //! at once when the last pending cell is in. Every request carries a generation, bumped
 //! when the worldspace changes: results of an earlier worldspace are dropped, never shown.
 //! Fast travel inside a worldspace moves the window; cells left outside it are dropped when

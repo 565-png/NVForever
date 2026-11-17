@@ -34,7 +34,10 @@
 //!   texel is already left out of the march (as in the CPU reference). The slope term is the
 //!   map's B channel ([`texel_relief`]): per axis the smaller of the two neighbours' height
 //!   differences, so a uniform slope gives its rise per texel but the flat foot (or top) of
-//!   a cliff gives 0.
+//!   a cliff gives 0. As built (sun_visibility.wesl) the bias is `2 · B + 16`, a heuristic
+//!   against speckle on planes, not an error bound: on terraced ground it can lift a
+//!   receiver out of a real shadow, and relief inside a texel between equal neighbouring
+//!   maxima gives B = 0 (`terrain_shadows.wesl` `relief` has the review's worked example).
 //! - Penumbra: G times the light's angular size (radians) is a penumbra width in world
 //!   units at the receiver, if a later stage softens the edge by distance.
 //! - Freshness: [`TerrainShadows::version`] changes with every publication and the image
@@ -60,13 +63,23 @@
 //! distance `(max − min) / tan(elevation)` past which nothing can rise above the map's lowest
 //! valid height. Every sample is held [`EDGE_INSET`] (1e-3 texel) short of the reach, so the
 //! last one lies in the last texel the ray crosses before the edge, never on the edge (which
-//! would read outside the map and end the march). So high sun is nearly free (reach a few texels), and at low sun the steps
+//! would read outside the map and end the march). So at high sun the reach is a few texels
+//! and the march takes few samples (cheap, [hypothesis]: the pass's time is not measured),
+//! and at low sun the steps
 //! grow with distance (as the square root of it) to cover the whole map. Each sampled texel
 //! is scored exactly as the CPU reference scores it, `H − entry·tan(e)` with the ray's exact
 //! entry distance into that texel, and the march stops as soon as the ray, falling from the
 //! map's highest height, cannot beat the best so far. The receiver's own texel is left out.
 //! **Miss bound**: the march only visits texels the reference visits and scores them alike,
-//! so it is never darker than the reference; it is lighter only where it steps over a
+//! so its raw S is never above the reference's, for S at or above the map's lowest valid
+//! height (the reach leaves out what falls below it: a constant-height map gives
+//! [`NO_SHADOW`] where the reference gives a finite S under that height; the tests compare
+//! above ground level). That ordering is of raw S only, not of the receivers' T: the soft
+//! band grows with the winning caster's distance G, so a march that misses a narrow, farther
+//! caster can keep a nearer one with a narrower band and come out darker after the filter
+//! (the review's example: (S, G) = (90, 1,000) against the reference's (100, 20,000), a
+//! receiver at 16 under tan(e) = 0.2 gives about 0.08 against 0.69), and the bilinear filter
+//! has no pointwise reference at all. It is lighter in raw S only where it steps over a
 //! texel. A caster at least as long along the ray as the local step (at most [`max_step`]:
 //! 0.5 texel until the reach exceeds `STEPS·STEP_MIN` = 48 texels, 14.5 texels = 3,700
 //! units at the full 724-texel diagonal) is always sampled, and for a flat-topped caster
