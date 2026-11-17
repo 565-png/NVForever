@@ -332,7 +332,13 @@ itself turns exactly as the mouse says.
   inertia the climb is 60 % of the original's. The fire clip starts again
   at once at each shot and the arms ease across the step back to its start
   (`Animator::smooth_jump`, the loop seams' inertialization below): its kick shows whole,
-  with no snap between shots.
+  with no snap between shots. At such a jump the offset keeps only the part of its rate
+  that takes it back towards nothing, never past it (`anim_blend::toward_rest`, the
+  overshoot clamp of David Bollo's inertialization, GDC 2018): handed the new clip's
+  whole speed, an offset of almost nothing was flung out and back, and the lever-action
+  Trail Carbine fired as fast as it cycles down its sights took the left hand 9.5 units
+  off the gun for a quarter of a second at each shot (the clip's own 4.6; a tester's
+  video and the trace `movement-inertia-trace-lever-sights`, 2026-11-17).
 - Reloads (eighth playtest: "try improving reloads with springs"): with movement inertia
   a reload's, a jam's and each round's clip starts at once and the arms ease across the
   step to it as across a loop seam (the clip's own motion untouched); at its end the arms
