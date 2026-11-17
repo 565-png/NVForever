@@ -134,9 +134,11 @@ mod loaded_tests {
             None,
             "headless/default games retain the original query route"
         );
-        let mut settings = crate::tweaks::Tweaks::default();
-        settings.crit_ignores_fire_rate = true;
-        settings.crit_damage_scale = 1.5;
+        let settings = crate::tweaks::Tweaks {
+            crit_ignores_fire_rate: true,
+            crit_damage_scale: 1.5,
+            ..Default::default()
+        };
         game.bind_stewie_stat_settings(&settings);
         let query = |g: &mut Game<'_>, name: &str, key: &str| {
             g.run_query(
