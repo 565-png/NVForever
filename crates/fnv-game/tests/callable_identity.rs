@@ -20,12 +20,17 @@ const BY: FormId = FormId(0x802);
 const DAMAGE: FormId = FormId(0x803);
 const CAPTURED: FormId = FormId(0x804);
 const ORDINARY: FormId = FormId(0x905);
+const RECEIVER_BODY: FormId = FormId(0x906);
+const RECEIVER_DRIVER: FormId = FormId(0x907);
+const ARRAY_BODY: FormId = FormId(0xFEF0_0450);
+const RECEIVER_HIGH: FormId = FormId(0xFEF0_0451);
 
 struct Env;
 impl fnv_script::compile::Env for Env {
     fn form(&self, name: &str) -> Option<fnv_script::compile::FormInfo> {
         let (form, sig) = match name.to_ascii_lowercase().as_str() {
             "ownedhit" => (HIT.0, *b"SCPT"),
+            "ownedreceiverbody" => (RECEIVER_BODY.0, *b"SCPT"),
             "hitcount" => (COUNT.0, *b"GLOB"),
             "hitwho" => (WHO.0, *b"GLOB"),
             "hitby" => (BY.0, *b"GLOB"),
@@ -49,6 +54,16 @@ impl fnv_script::compile::Env for Env {
     }
 }
 fn script(table: &FunctionTable, id: u32, name: &str, source: &str, quest: bool) -> Vec<u8> {
+    script_source_mode(table, id, name, source, quest, true)
+}
+fn script_source_mode(
+    table: &FunctionTable,
+    id: u32,
+    name: &str,
+    source: &str,
+    quest: bool,
+    include_source: bool,
+) -> Vec<u8> {
     let c = fnv_script::compile::compile(source, table, &Env, None);
     assert!(
         c.errors().next().is_none(),
@@ -79,10 +94,10 @@ fn script(table: &FunctionTable, id: u32, name: &str, source: &str, quest: bool)
             fnv_script::unit::RefSlot::Local(v) => sub(b"SCRV", v.to_le_bytes().to_vec()),
         });
     }
-    sr.extend([
-        sub(b"EDID", z(name)),
-        sub(b"SCTX", source.as_bytes().to_vec()),
-    ]);
+    sr.push(sub(b"EDID", z(name)));
+    if include_source {
+        sr.push(sub(b"SCTX", source.as_bytes().to_vec()));
+    }
     record(b"SCPT", 0, id, &sr)
 }
 struct Fixture {
@@ -91,6 +106,9 @@ struct Fixture {
     refs: RefTable,
 }
 fn fixture(collisions: bool) -> Fixture {
+    fixture_source_mode(collisions, true)
+}
+fn fixture_source_mode(collisions: bool, include_source: bool) -> Fixture {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
     let path = root.join("script/functions.json");
     let table = FunctionTable::load(&path).unwrap();
@@ -180,12 +198,31 @@ fn fixture(collisions: bool) -> Fixture {
         "scn OwnedEcho\nint n\nBegin Function {n}\nSetFunctionValue n + GetSelf\nEnd\n",
         false,
     );
+    let receiver_body = script_source_mode(
+        &table,
+        RECEIVER_BODY.0,
+        "OwnedReceiverBody",
+        "scn OwnedReceiverBody\nBegin Function {}\nlet HitCount := HitCount + 1\nSetFunctionValue GetSelf\nEnd\n",
+        false,
+        include_source,
+    );
+    let receiver_driver = script_source_mode(
+        &table,
+        RECEIVER_DRIVER.0,
+        "OwnedReceiverDriver",
+        "scn OwnedReceiverDriver\nref cb\nref receiver\nint explicit\nfloat result\nBegin Function {cb receiver explicit}\nif explicit\nlet result := receiver.Call cb\nelse\nlet result := Call cb\nendif\nlet HitDamage := 99\nSetFunctionValue result + 0\nEnd\n",
+        false,
+        include_source,
+    );
     let first = [
         tes4(),
         top(b"GLOB", &globals),
         top(b"NPC_", &npcs),
         top(b"CELL", &cells),
-        top(b"SCPT", &[maker, ordinary].concat()),
+        top(
+            b"SCPT",
+            &[maker, ordinary, receiver_body, receiver_driver].concat(),
+        ),
     ]
     .concat();
     let mut plugins = vec![Plugin::parse(&first, "OwnedBase.esm".into()).unwrap()];
@@ -205,6 +242,21 @@ fn fixture(collisions: bool) -> Fixture {
         header.extend([sub(b"MAST", z(&p.name)), sub(b"DATA", vec![0; 8])]);
     }
     let mut scripts = vec![
+        script_source_mode(
+            &table,
+            RECEIVER_HIGH.0,
+            "OwnedReceiverHigh",
+            "scn OwnedReceiverHigh\nBegin Function {}\nlet HitCount := HitCount + 1\nSetFunctionValue GetSelf\nEnd\n",
+            false,
+            include_source,
+        ),
+        script(
+            &table,
+            ARRAY_BODY.0,
+            "OwnedArrayBody",
+            "scn OwnedArrayBody\narray_var scratch\nstring_var text\nref empty\nint mode\nBegin Function {mode}\nlet scratch := Ar_List 4, 9\nlet text := sv_Construct \"portable\"\nif mode == 1\nSetFunctionValue scratch\nelseif mode == 2\nempty.Call OwnedReceiverBody\nendif\nEnd\n",
+            false,
+        ),
         script(
             &table,
             HIT.0,
@@ -499,9 +551,9 @@ fn record_filter_receiver_and_ordinary_function_neighbors_keep_their_admission()
             None,
             ctx
         )
-        .unwrap(),
-        XVal::Num(2.0),
-        "explicit empty receiver is not the caller"
+        .unwrap_err(),
+        "call called on no reference",
+        "explicit empty receiver must stop before entering the UDF"
     );
     assert_eq!(
         g.run_function(&XVal::Ref(0xFEF0_0999), None, vec![], None, ctx)
@@ -570,4 +622,291 @@ fn high_record_and_owned_lambda_arity_are_checked_before_jip_dispatch() {
         error.contains("has no Function block"),
         "an ordinary script keeps its non-UDF admission: {error}"
     );
+}
+
+#[test]
+fn receiver_admission_stops_null_calls_before_mutation_in_source_and_loaded_bytecode() {
+    for include_source in [true, false] {
+        let f = fixture_source_mode(true, include_source);
+        assert_eq!(
+            f.data
+                .script(RECEIVER_DRIVER)
+                .unwrap()
+                .unit
+                .source
+                .is_some(),
+            include_source
+        );
+        assert_eq!(
+            f.data.script(RECEIVER_BODY).unwrap().unit.source.is_some(),
+            include_source
+        );
+        assert!(f.data.script(RECEIVER_DRIVER).unwrap().unit.has_scda);
+        assert_eq!(f.data.script(RECEIVER_DRIVER).unwrap().raw, 0);
+        let mut g = game(&f);
+        let ctx = RunCtx {
+            self_ref: Some(TARGET),
+            ..Default::default()
+        };
+        let lambda = q(
+            &mut g,
+            "SetFunctionValue (Begin Function {}\nlet HitCount := HitCount + 1\nSetFunctionValue GetSelf\nEnd)",
+        );
+        for callback in [
+            XVal::Ref(RECEIVER_BODY.0),
+            XVal::Ref(RECEIVER_HIGH.0),
+            lambda,
+        ] {
+            for (receiver, explicit, expected) in [
+                (0, false, TARGET.0),
+                (FormId::PLAYER_REF.0, true, FormId::PLAYER_REF.0),
+                // Existing UDF admission forwards nonempty references; it does not
+                // impose an actor/base-form existence policy on GetSelf.
+                (0x00AB_CDEF, true, 0x00AB_CDEF),
+            ] {
+                let before = value(&g, COUNT);
+                let result = g
+                    .run_function(
+                        &XVal::Ref(RECEIVER_DRIVER.0),
+                        None,
+                        vec![
+                            callback.clone(),
+                            XVal::Ref(receiver),
+                            XVal::Num(f64::from(u8::from(explicit))),
+                        ],
+                        None,
+                        ctx,
+                    )
+                    .unwrap();
+                assert_eq!(result, XVal::Num(f64::from(expected)));
+                assert_eq!(value(&g, COUNT), before + 1.0);
+                assert_eq!(value(&g, DAMAGE), 99.0);
+            }
+            let before = (value(&g, COUNT), value(&g, DAMAGE));
+            let result = g.run_function(
+                &XVal::Ref(RECEIVER_DRIVER.0),
+                None,
+                vec![callback.clone(), XVal::Ref(0), XVal::Num(1.0)],
+                None,
+                ctx,
+            );
+            assert!(
+                matches!(result, Err(ref e) if e == "call called on no reference"),
+                "nested explicit null: {result:?}"
+            );
+            assert_eq!(
+                (value(&g, COUNT), value(&g, DAMAGE)),
+                before,
+                "null invokes neither callback body nor caller tail"
+            );
+            let result = g.run_function(&callback, Some(Value::Ref(0)), vec![], None, ctx);
+            assert!(
+                matches!(result, Err(ref e) if e == "call called on no reference"),
+                "direct explicit null: {result:?}"
+            );
+            assert_eq!((value(&g, COUNT), value(&g, DAMAGE)), before);
+            let result = g.run_function(&callback, Some(Value::Num(0.5)), vec![], None, ctx);
+            assert!(
+                matches!(result, Err(ref e) if e == "call called on no reference"),
+                "non-reference receiver: {result:?}"
+            );
+            assert_eq!((value(&g, COUNT), value(&g, DAMAGE)), before);
+            assert_eq!(
+                g.run_function(&callback, None, vec![], None, ctx).unwrap(),
+                XVal::Ref(TARGET.0)
+            );
+        }
+        let before = (value(&g, COUNT), value(&g, WHO), value(&g, DAMAGE));
+        let result = g.run_query("ref receiver\nBegin Function {}\nlet HitWho := receiver.Call (Call OwnedReceiverBody)\nlet HitDamage := 123\nEnd\n", ctx);
+        assert!(
+            matches!(result, Err(ref e) if e == "call called on no reference"),
+            "source explicit null: {result:?}"
+        );
+        assert_eq!(
+            (value(&g, COUNT), value(&g, WHO), value(&g, DAMAGE)),
+            before,
+            "null receiver refuses before evaluating a mutating function argument or later statements"
+        );
+        no_script_errors(&g);
+    }
+}
+
+fn travel(g: &mut Game<'_>) -> FormId {
+    q(
+        g,
+        "ref actor\nlet actor := StringToRef \"00000903\"\nactor.TravelToRef PlayerREF 1",
+    );
+    let package = g.extra[&TARGET]
+        .script_package
+        .expect("real travel package");
+    let def = g.package_def(&package).unwrap();
+    assert_eq!(def.ty, fnv_game::package::PackageType::Travel);
+    assert_eq!(
+        def.location.unwrap().kind,
+        fnv_game::package::LocationKind::NearReference(Some(FormId::PLAYER_REF))
+    );
+    assert_ne!(def.flags & fnv_game::package::flags::ALWAYS_RUN, 0);
+    package
+}
+
+#[test]
+fn travel_packages_and_lambdas_keep_distinct_handles_in_both_orders_and_after_restore() {
+    for package_first in [true, false] {
+        let f = fixture(true);
+        let mut g = game(&f);
+        let (package, callback) = if package_first {
+            let package = travel(&mut g);
+            (package, q(&mut g, "SetFunctionValue (Call OwnedMaker)"))
+        } else {
+            let callback = q(&mut g, "SetFunctionValue (Call OwnedMaker)");
+            (travel(&mut g), callback)
+        };
+        let XVal::Ref(handle) = callback else {
+            panic!("owned callback")
+        };
+        assert_ne!(package.0, handle);
+        assert_ne!(package.0, LAMBDA_BASE, "loaded record retains its ID");
+        assert_ne!(handle, LAMBDA_BASE);
+        g.run_function(&callback, None, vec![], None, Default::default())
+            .unwrap();
+        assert_eq!(value(&g, CAPTURED), 41.0);
+        assert_eq!(
+            g.run_function(
+                &XVal::Ref(LAMBDA_BASE),
+                None,
+                vec![],
+                None,
+                Default::default()
+            )
+            .unwrap(),
+            XVal::Num(71.0)
+        );
+        assert!(g.package_def(&package).is_some());
+        let snapshot = g.snapshot();
+        let mut restored = Game::restore(
+            &f.data,
+            World::new(&f.forms, &f.refs, Default::default()),
+            Default::default(),
+            &snapshot,
+        )
+        .unwrap();
+        assert!(
+            restored.package_def(&package).is_none(),
+            "existing transient package definitions are not serialized; no persistence parity claim"
+        );
+        assert_eq!(
+            q(&mut restored, "SetFunctionValue (Call OwnedMaker)"),
+            callback
+        );
+        let next_package = travel(&mut restored);
+        assert_ne!(
+            next_package.0, handle,
+            "post-load package allocation preserves restored lambda identity"
+        );
+        restored
+            .run_function(&callback, None, vec![], None, Default::default())
+            .unwrap();
+        assert_eq!(value(&restored, CAPTURED), 41.0);
+        assert!(restored.package_def(&next_package).is_some());
+        no_script_errors(&g);
+        no_script_errors(&restored);
+    }
+}
+
+#[test]
+fn high_record_arrays_dispose_on_success_and_error_and_return_live_values_to_the_caller() {
+    let f = fixture(true);
+    let mut g = game(&f);
+    assert_eq!(
+        g.run_function(
+            &XVal::Ref(ARRAY_BODY.0),
+            None,
+            vec![XVal::Num(0.0)],
+            None,
+            Default::default()
+        )
+        .unwrap(),
+        XVal::Num(0.0)
+    );
+    assert!(
+        g.ext.is_empty(),
+        "unreturned array and string locals are disposed"
+    );
+    assert_eq!(
+        q(
+            &mut g,
+            "array_var result\nlet result := Call OwnedArrayBody 1\nSetFunctionValue result[0] + result[1]"
+        ),
+        XVal::Num(13.0)
+    );
+    assert!(
+        g.ext.is_empty(),
+        "returned array remains alive in the caller, then leaves with its local"
+    );
+    let before = value(&g, COUNT);
+    let error = g
+        .run_function(
+            &XVal::Ref(ARRAY_BODY.0),
+            None,
+            vec![XVal::Num(2.0)],
+            None,
+            Default::default(),
+        )
+        .unwrap_err();
+    assert_eq!(error, "call called on no reference");
+    assert_eq!(
+        value(&g, COUNT),
+        before,
+        "failed nested receiver never enters the neighbor body"
+    );
+    assert!(
+        g.ext.is_empty(),
+        "error unwind releases the allocated array and string"
+    );
+    assert_eq!(
+        g.run_function(
+            &XVal::Ref(ORDINARY.0),
+            None,
+            vec![XVal::Num(2.0)],
+            None,
+            Default::default()
+        )
+        .unwrap(),
+        XVal::Num(2.0)
+    );
+    register_record(&mut g);
+    hit(&mut g, TARGET, 7.0);
+    assert_eq!(value(&g, COUNT), before + 1.0);
+    assert!(g.ext.is_empty());
+    no_script_errors(&g);
+}
+
+#[test]
+fn sparse_owned_lambda_updates_its_maker_local_during_the_nested_call() {
+    let f = fixture(true);
+    let mut g = game(&f);
+    let package = travel(&mut g);
+    assert_eq!(
+        q(
+            &mut g,
+            "int n\nref cb\nlet n := 40\nlet cb := (Begin Function {}\nlet n := n + 1\nlet CapturedCount := n\nEnd)\nCall cb\nSetFunctionValue n"
+        ),
+        XVal::Num(41.0),
+        "maker observes the nested lambda write before it returns"
+    );
+    assert_eq!(value(&g, CAPTURED), 41.0);
+    let saved = serde_json::to_value(g.snapshot()).unwrap();
+    let handle = saved["lambdas"].as_array().unwrap().last().unwrap()["handle"]
+        .as_u64()
+        .unwrap() as u32;
+    assert_ne!(handle, LAMBDA_BASE);
+    assert_ne!(handle, package.0);
+    g.run_function(&XVal::Ref(handle), None, vec![], None, Default::default())
+        .unwrap();
+    assert_eq!(
+        value(&g, CAPTURED),
+        42.0,
+        "same captured local remains owned after the maker returns"
+    );
+    no_script_errors(&g);
 }

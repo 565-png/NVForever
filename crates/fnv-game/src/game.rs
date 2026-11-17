@@ -3434,10 +3434,11 @@ impl<'a> Game<'a> {
         self.data.script(FormId(id)).or_else(|| self.compiled_slots.get(&id).and_then(|&i| self.compiled_files.get(i).copied()))
     }
 
-    fn free_callable_handle(&self, start: u32, end: u32) -> Option<u32> {
+    pub(crate) fn free_callable_handle(&self, start: u32, end: u32) -> Option<u32> {
         let mut id = start;
         while id < end {
-            if self.data.sig(FormId(id)).is_none() { return Some(id); }
+            if self.data.sig(FormId(id)).is_none() && !self.package_overrides.contains_key(&FormId(id))
+                && !self.lambda_slots.contains_key(&id) && !self.compiled_slots.contains_key(&id) { return Some(id); }
             id = id.checked_add(1)?;
         }
         None
@@ -3477,7 +3478,10 @@ impl<'a> Game<'a> {
         }
         let data = self.data;
         let opts = self.opts();
-        let self_ref = on.and_then(|v| v.as_form()).map(FormId);
+        let self_ref = match on {
+            Some(value) => Some(FormId(value.as_form().ok_or_else(|| VmError::NoReference("call".into()).to_string())?)),
+            None => ctx.self_ref,
+        };
         let lambda = self.lambda_slots.get(&id).copied();
         let (unit, params, body, value, locals): (&Compiled, Vec<VarRef>, Vec<Stmt>, Option<fnv_script::ir::XExpr>, Locals) = if let Some(index) = lambda {
             let d = self.lambdas[index].clone();
@@ -3501,7 +3505,7 @@ impl<'a> Game<'a> {
         };
         self.udf.push(UdfFrame { value: None, caller });
         self.open_run();
-        let ctx = RunCtx { self_ref: self_ref.or(ctx.self_ref), ..ctx };
+        let ctx = RunCtx { self_ref, ..ctx };
         let mut ex = Exec { game: self, unit, locals, ctx, seconds };
         let mut vm = Vm::new(&data.table, &mut ex, opts);
         let mut result = Ok(());

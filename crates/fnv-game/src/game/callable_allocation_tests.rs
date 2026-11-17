@@ -29,4 +29,18 @@ fn exhausted_callable_regions_return_no_handle_before_adding_units_or_lambdas() 
     );
     assert!(matches!(result,Err(ref e) if e.contains("runtime lambda handles exhausted")));
     assert!(g.lambdas.is_empty() && g.lambda_slots.is_empty());
+    g.other.jip13.made_packages = FormId::FIRST_DYNAMIC.0 - LAMBDA_BASE;
+    let result = crate::nvse_jip13::call(
+        &mut g,
+        &Default::default(),
+        "traveltoref",
+        Some(FormId::PLAYER_REF),
+        &[fnv_script::vm::XVal::Ref(1)],
+    );
+    assert!(matches!(result, Some(Err(ref e)) if e == "runtime travel package handles exhausted"));
+    assert!(g.package_overrides.is_empty());
+    assert!(
+        !g.extra.contains_key(&FormId::PLAYER_REF),
+        "capacity failure precedes actor/package mutation"
+    );
 }
