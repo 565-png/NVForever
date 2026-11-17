@@ -1615,6 +1615,35 @@ mod trace_ownership_tests {
     }
 
     #[test]
+    fn dropped_trace_writer_releases_ownership_while_a_duplicate_handle_remains_open() {
+        let root = std::env::temp_dir().join(format!("nvf-duplicate-trace-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let path = root.join("script-trace.jsonl");
+        let mut first = TraceLog::create(&path).unwrap();
+        let duplicate = first.out.get_ref().try_clone().unwrap();
+        first.write(&serde_json::json!({"kind":"finished-owner"}));
+        let overlapping = TraceLog::create(&path).unwrap();
+        assert_ne!(overlapping.path, path, "the trace writer still owns the requested file");
+        drop(overlapping);
+        drop(first);
+
+        // A duplicate models the descriptor retained between another thread's fork
+        // and exec. Its lifetime must not extend the finished trace's ownership.
+        let mut next = TraceLog::create(&path).unwrap();
+        assert_eq!(next.path, path, "a duplicate handle must not retain a finished writer's lock");
+        next.write(&serde_json::json!({"kind":"replacement-owner"}));
+        drop(next);
+        let bytes = std::fs::read_to_string(&path).unwrap();
+        let rows: Vec<serde_json::Value> = bytes.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["format"], "nvforever.play.script_log/1");
+        assert_eq!(rows[0]["processId"], std::process::id());
+        assert_eq!(rows[1]["kind"], "replacement-owner");
+        assert!(!bytes.contains("finished-owner") && !bytes.contains('\0'));
+        drop(duplicate);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn overlapping_trace_processes_hold_locks_until_their_writers_close() {
         const TEST: &str = "script::trace_ownership_tests::overlapping_trace_processes_hold_locks_until_their_writers_close";
         const CHILD: &str = "NVF_OWNED_TRACE_TEST_CHILD";
