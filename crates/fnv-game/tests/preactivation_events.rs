@@ -20,7 +20,7 @@ fn source_script(id: u32, name: &str, body: &str) -> Vec<u8> {
         id,
         &[
             sub(b"EDID", z(name)),
-            sub(b"SCHR", vec![0; 20]),
+            unit(0, &[], &[], &[])[0].clone(),
             sub(b"SCDA", vec![]),
             sub(
                 b"SCTX",
@@ -71,7 +71,12 @@ fn fixture(scripted: bool) -> Fixture {
         &refs,
     );
     for id in 0x850..=0x854 {
-        let unit = data.script(FormId(id)).unwrap();
+        let unit = data.script(FormId(id)).unwrap_or_else(|| {
+            let (units, issues) = fnv_script::unit::read_load_order(&lo, &schema);
+            let headers: Vec<_> = units.iter().map(|u| (&u.owner, &u.header, u.has_scda, u.source.is_some())).collect();
+            panic!("missing enabled fixture SCPT 0x{:08X}; decoded headers={headers:?}; read issues={issues:?}; source selections={:?}", id, data.source_units);
+        });
+        assert!(unit.unit.header.flags & 1 != 0, "fixture SCPT 0x{:08X} disabled: {:?}", id, unit.unit.header);
         assert!(unit.unit.source.is_some());
         assert!(
             data.source_units

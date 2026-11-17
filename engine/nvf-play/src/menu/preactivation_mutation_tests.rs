@@ -5,6 +5,14 @@ use crate::sim::SimState;
 use fnv_script::vm::XVal;
 use fnv_sim::FormId;
 
+// The same enabled Object SCHR fields as the core fixture builder, using the
+// accepted ScriptHeader schema rather than an all-zero (disabled) header.
+fn enabled_script_header() -> Vec<u8> {
+    [0u32.to_le_bytes().to_vec(), 0u32.to_le_bytes().to_vec(),
+     0u32.to_le_bytes().to_vec(), 0u32.to_le_bytes().to_vec(),
+     0u16.to_le_bytes().to_vec(), 1u16.to_le_bytes().to_vec()].concat()
+}
+
 fn fixture() -> (ScriptState, SimState) {
     let text = |sig: &[u8; 4], s: &str| sub(sig, [s.as_bytes(), &[0]].concat());
     let source = "scn EngineMutationBlock\nstring_var sourceMarker\nBegin OnActivate\nSetModLocalData \"engine.mutation.block\" ((GetModLocalData \"engine.mutation.block\") + 1)\nEnd\n";
@@ -43,7 +51,7 @@ fn fixture() -> (ScriptState, SimState) {
                 0x820,
                 &[
                     text(b"EDID", "EngineMutationBlock"),
-                    sub(b"SCHR", vec![0; 20]),
+                    sub(b"SCHR", enabled_script_header()),
                     sub(b"SCDA", vec![]),
                     sub(b"SCTX", source.as_bytes().to_vec()),
                 ],
@@ -53,7 +61,12 @@ fn fixture() -> (ScriptState, SimState) {
     let mut scripts = ScriptState::over_plugins(play.lo.plugins);
     let game = &mut scripts.rt.as_mut().unwrap().game;
     game.cfg.strict = true;
-    let unit = game.data.script(FormId(0x820)).unwrap();
+    let unit = game.data.script(FormId(0x820u32)).unwrap_or_else(|| {
+        let (units, issues) = fnv_script::unit::read_load_order(play.lo, play.schema);
+        let headers: Vec<_> = units.iter().map(|u| (&u.owner, &u.header, u.has_scda, u.source.is_some())).collect();
+        panic!("missing enabled fixture SCPT 0x{:08X}; decoded headers={headers:?}; read issues={issues:?}; source selections={:?}", 0x820u32, game.data.source_units);
+    });
+    assert!(unit.unit.header.flags & 1 != 0, "fixture SCPT 0x{:08X} disabled: {:?}", 0x820u32, unit.unit.header);
     assert!(unit.unit.source.is_some());
     assert!(game
         .data
