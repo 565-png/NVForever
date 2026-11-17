@@ -1559,6 +1559,25 @@ fn finite_extra(value: f64) -> Value {
     Value::Num(if value.is_finite() { value } else { 0.0 })
 }
 
+/// Exact nonnegative integer mapping (mcm-rgb-integer-consumers.md); native edge
+/// behaviour is not inferred.
+/// Unsupported inputs keep the accumulator, as ignored tags previously did.
+fn integer_extra(kind: OpKind, acc: Value, arg: Value) -> Value {
+    const EXACT_LIMIT: u64 = 1_u64 << 53;
+    let integer = |value: &Value| match value {
+        Value::Num(n) if n.is_finite() && (0.0..=EXACT_LIMIT as f64).contains(n) && n.fract() == 0.0 => Some(*n as u64),
+        _ => None,
+    };
+    let (Some(x), Some(y)) = (integer(&acc), integer(&arg)) else { return acc };
+    let result = match kind {
+        OpKind::BitAnd => Some(x & y),
+        OpKind::ShiftLeft if y <= 53 && x <= (EXACT_LIMIT >> y as u32) => Some(x << y as u32),
+        OpKind::ShiftRight if y <= 53 => Some(x >> y as u32),
+        _ => None,
+    };
+    result.map(|value| Value::Num(value as f64)).unwrap_or(acc)
+}
+
 fn apply(kind: OpKind, acc: Value, a: Value, me: TileId, k: usize) -> Value {
     let (x, y) = (acc.num(), a.num());
     let num = Value::Num;
@@ -1595,6 +1614,7 @@ fn apply(kind: OpKind, acc: Value, a: Value, me: TileId, k: usize) -> Value {
                 && x.fract() == 0.0 && y.is_finite() && y >= 0.0 && y.fract() == 0.0;
             Value::from_bool(valid && y <= 53.0 && (x as u64 & (1_u64 << y as u32)) != 0)
         }
+        OpKind::BitAnd | OpKind::ShiftLeft | OpKind::ShiftRight => integer_extra(kind, acc, a),
         // A whole number from 0 below the argument, the same for this tile and operator
         // every time [design: when the original draws is not known].
         OpKind::Rand => {
