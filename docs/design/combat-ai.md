@@ -92,7 +92,7 @@ fists (the default draws it holstered).
   more).
 - **Melee** [design: `npc_combat`]: a base timer of 1.2 s divided by the weapon's
   attack speed, adjusted to the playing clip's `a:` key or held until its end when
-  keyless (#2535; combat-rules.md §10). The target must be within melee reach.
+  keyless, both divided by the same attack speed (#2535; combat-rules.md §10). The target must be within melee reach.
 
 ## 5. Where it stands
 

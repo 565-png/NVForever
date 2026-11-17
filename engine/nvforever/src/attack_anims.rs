@@ -231,12 +231,17 @@ impl SwingClip {
     /// Seconds until the next melee decision: the interrupt key, or the clip's
     /// end as well as the base wait without a key [documented: GECK
     /// NiTextKeyExtraData; observed: capture run15b_b2, 2026-11-15, radscorpions;
-    /// hypothesis: NPC swings, #2535]. Times use the playing clip's clock
-    /// [design: CombatPose::layers].
-    pub(crate) fn ready_in(&self, elapsed: f32, base_left: f32) -> f32 {
+    /// hypothesis: NPC swings, #2535]. The clip's key and length are divided by the
+    /// blow's attack speed (Attack Mult × the teammate rate; `elapsed` and `base_left`
+    /// are real seconds, the base already divided), as the guns' `a:` key is
+    /// (`fnv_combat::attack::Timing::of`, #2739) [documented: GECK wiki Weapons page,
+    /// Attack Multiplier "speeds up or slows down just the attack animation"; design,
+    /// #2535 review]. A speed not above 0 counts as 1 [design].
+    pub(crate) fn ready_in(&self, elapsed: f32, base_left: f32, speed: f32) -> f32 {
+        let speed = if speed > 0.0 { speed } else { 1.0 };
         match self.chain {
-            Some((at, _)) => (at - elapsed).max(0.0),
-            None => base_left.max((self.len - elapsed).max(0.0)),
+            Some((at, _)) => (at / speed - elapsed).max(0.0),
+            None => base_left.max((self.len / speed - elapsed).max(0.0)),
         }
     }
 }

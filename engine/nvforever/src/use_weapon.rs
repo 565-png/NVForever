@@ -200,7 +200,7 @@ impl Swinger {
                 }
             }
             if let Some(clip) = sg.clip {
-                self.strike_in = clip.ready_in(sg.t, self.strike_in);
+                self.strike_in = clip.ready_in(sg.t, self.strike_in, sg.speed);
             }
             if sg.t > sg.clip.map_or(STRIKE_SECONDS * 2.0, |c| c.len) {
                 self.swing = None;
@@ -221,6 +221,9 @@ struct Swing {
     t: f32,
     clip: Option<SwingClip>,
     run: u32,
+    /// The blow's attack speed (the weapon's Attack Mult): its clip's key and end are
+    /// divided by it (`SwingClip::ready_in`, #2535 review).
+    speed: f32,
 }
 
 impl Swing {
@@ -753,14 +756,14 @@ fn swing(
         s.stats.chained += 1;
     }
     times.swings.remove(&id);
-    sw.swing = Some(Swing { t: 0.0, clip: None, run });
+    let speed = weapon.or(c.fists_id()).and_then(|f| c.forms.weapons.get(&f)).map_or(1.0, |ws| ws.attack_mult.max(0.25));
+    sw.swing = Some(Swing { t: 0.0, clip: None, run, speed });
     let delay = times.hit.get(&id).copied().unwrap_or(DEFAULT_HIT);
     let dir = vec::normalize(vec::sub(tchest, x.eyes));
     sw.blows.push((delay, ActorStrike { attacker: me, target: w.target, weapon, creature_damage, point: tchest, dir, anim: None }));
     let pick = SwingPick { next, rolls: [next_unit(&mut s.rng), next_unit(&mut s.rng)] };
     anims.write(PlayAttack { actor: id, weapon, melee: true, sights: false, kind: Move::Attack, power: None, swing: Some(pick) });
     s.stats.blows += 1;
-    let speed = weapon.or(c.fists_id()).and_then(|f| c.forms.weapons.get(&f)).map_or(1.0, |ws| ws.attack_mult.max(0.25));
     sw.strike_in = STRIKE_SECONDS / speed;
     let roll = next_unit(&mut s.rng);
     let Some(u) = g.weapon_uses.get_mut(&me) else { return };
@@ -941,7 +944,7 @@ mod tests {
                     let mut old = base.max(pause);
                     let mut sw = Swinger {
                         seq: 1, strike_in: base, pause_in: pause, blows: Vec::new(),
-                        swing: Some(Swing { t: 0.0, clip: None, run: 1 }), held: None, spent: false,
+                        swing: Some(Swing { t: 0.0, clip: None, run: 1, speed }), held: None, spent: false,
                     };
                     // Include frames after the no-clip swing's expiry [design].
                     for _ in 0..(8.0 / dt) as usize {
@@ -959,16 +962,18 @@ mod tests {
     #[test]
     fn scripted_melee_waits_for_clip_boundaries_and_volley_pauses() {
         use fnv_combat::melee::NextAttack;
-        // Synthetic clips, clocks and pauses [design, #2535]. Exercise the same
-        // advancement and readiness gate used by swing, including late timing.
+        // Synthetic clips, clocks and pauses [design, #2535], the clips published at their
+        // own speed as `attack_anims` publishes them; the swing carries the attack speed.
+        // Exercise the same advancement and readiness gate used by swing, including late
+        // timing.
         for (key, len, earliest) in [(Some(1.267), 1.5, 1.267), (Some(1.3), 1.5, 1.3), (None, 1.5, 1.5), (None, 0.8, STRIKE_SECONDS), (Some(0.6), 1.5, 0.6)] {
             for speed in [0.5, 1.0, 2.0] {
-                let clip = SwingClip { hit: 0.4 / speed, chain: key.map(|at| (at / speed, NextAttack::Left)), len: len / speed };
+                let clip = SwingClip { hit: 0.4, chain: key.map(|at| (at, NextAttack::Left)), len };
                 for pause in [0.0_f32, 0.4, 2.0] {
                     for arrival in [0.02, 0.1] {
                         let mut sw = Swinger {
                             seq: 1, strike_in: STRIKE_SECONDS / speed, pause_in: pause / speed,
-                            blows: Vec::new(), swing: Some(Swing { t: 0.0, clip: None, run: 1 }), held: None, spent: false,
+                            blows: Vec::new(), swing: Some(Swing { t: 0.0, clip: None, run: 1, speed }), held: None, spent: false,
                         };
                         let expected = earliest.max(pause) / speed;
                         sw.advance(arrival / 2.0, None);
@@ -985,11 +990,16 @@ mod tests {
                             assert!(!sw.ready(), "key={key:?}, len={len}, speed={speed}, pause={pause}, t={elapsed}");
                         }
                         sw.advance(0.02, None);
+                        elapsed += 0.02;
                         assert!(sw.ready(), "key={key:?}, len={len}, speed={speed}, pause={pause}");
-                        if expected < clip.len {
-                            assert_eq!(sw.swing.unwrap().next(), key.map(|_| NextAttack::Left));
-                        } else {
-                            assert!(sw.swing.is_none());
+                        // The clip itself plays at its own speed: its combo window and end
+                        // are on its own clock [design: Swing::next].
+                        match sw.swing {
+                            Some(s) => {
+                                assert!(elapsed <= len, "key={key:?}, len={len}, speed={speed}, pause={pause}");
+                                assert_eq!(s.next(), key.filter(|&at| elapsed >= at).map(|_| NextAttack::Left));
+                            }
+                            None => assert!(elapsed > len, "key={key:?}, len={len}, speed={speed}, pause={pause}"),
                         }
                     }
                 }

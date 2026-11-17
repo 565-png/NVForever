@@ -40,6 +40,16 @@ the spec it links to.
   interval is observer check 221. Ruling otherwise: back to 1 ÷ Attack Shots/Sec for
   NPCs (`fnv_combat::attack::npc_clip_timing`)
   ([combat-rules section 4.1](spec-notes/combat-rules.md)).
+- **NPC melee pace follows the attack clip, people included (#2535).** [design, #2535]
+  Every NPC's and creature's next melee decision now waits for its attack clip's `a:` key
+  (even when later than the 1.2 s base), and without a key for the clip's end as well as
+  the base; key and end are divided by the attack speed (Attack Mult × teammate rate).
+  Before: the 1.2 s base ÷ speed, or the `a:` key when sooner; the keyless pace carried the
+  2026-10-16 owner-request tag (combat-ai.md §15). The evidence is a capture of
+  radscorpions only (observer check 244); for people it is [hypothesis], so late-key and
+  keyless clips (two-handed melee, some fists) may swing more slowly than before. Ruling
+  otherwise: restore `min(base, key)` for people in `attack_anims::SwingClip::ready_in`
+  ([combat-rules section 10](spec-notes/combat-rules.md)).
 - **Pip-Boy pages from their menu files by default (#2215).** [design, #2215] An absent
   `[UI] TileMenus` selects StatsMenu, InventoryMenu, RepairMenu, ItemModMenu, MapMenu and
   QuantityMenu, keeping the hand-built fallback for missing or cut-down files. An empty
