@@ -261,3 +261,5 @@ fn original_stat_profile_reaches_startup_source_damage_settings_and_restore_with
     assert!(!chosen_rt.game.tweaks.crit_ignores_fire_rate);
     assert_eq!(chosen_rt.game.tweaks.crit_damage_scale, 1.5);
 }
+
+mod current_profile;
