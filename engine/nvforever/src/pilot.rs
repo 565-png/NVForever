@@ -1453,7 +1453,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         // not hold (Rivet City's swing bridge, RCExBridge1Ref, swung by the
                         // Security Intercom; `fnvtool nav path` finds no way from the shore to
                         // the deck [observed], #2847): a fast travel there, with a finding.
-                        let gap = here_side && !too_far && !w.gapped && w.tried.is_empty() && h.game(|g| match w.goal.space {
+                        let gap = here_side && !too_far && !w.gapped && w.tried.is_empty() && matches!(e, fnv_nav::PathError::Unreachable { .. }) && h.game(|g| match w.goal.space {
                             Space::World(b) => capital_side(g, b),
                             Space::Interior(c) => outside_door(g, c).is_some(),
                         }).unwrap_or(false);
@@ -2671,7 +2671,20 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
         Action::GoToCell { cell } => {
             if matches!(p.phase, Phase::Begin) {
                 let world = h.world;
-                let place = h.game(|g| runner::cell_arrival(g, cell)).unwrap_or_else(|| Err("the scripts are not running".into())).and_then(|(c, pos)| {
+                let place = h.game(|g| runner::cell_arrival(g, cell).map(|(c, mut pos)| {
+                    // An exterior cell with no COC marker arrives at its middle at height
+                    // 0, under the ground: the height is the middle of what is placed in
+                    // it (Paradise Falls' front cell put the player on a ledge the navmesh
+                    // nearest to height 0 held, 130 units from the ground [observed]).
+                    if pos[2] == 0.0 {
+                        let mut zs: Vec<f32> = g.world.placed.by_cell.get(&c).map(|v| v.iter().filter_map(|r| g.world.placed.get(*r)).map(|p| p.pos[2]).collect()).unwrap_or_default();
+                        zs.sort_by(f32::total_cmp);
+                        if let Some(z) = zs.get(zs.len() / 2) {
+                            pos[2] = *z;
+                        }
+                    }
+                    (c, pos)
+                })).unwrap_or_else(|| Err("the scripts are not running".into())).and_then(|(c, pos)| {
                     let space = crate::nav::space_of_cell(world, c.0).ok_or_else(|| format!("{cell}: not indexed"))?;
                     Ok(Place { space, pos })
                 });
