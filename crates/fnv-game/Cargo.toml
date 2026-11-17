@@ -24,21 +24,14 @@ rand_core = "0.9"
 rand_chacha = "0.9"
 rayon = "1"
 tracing = "0.1"
-# Host-local calendar/TZif conversion; platform policy stays in local_time.rs.
-tz-rs = "0.7.3"
+# Host-local time; defaults include system-zone discovery and Windows tzdb.
+jiff = "1"
 # SUP's screenshots and QR codes (image_files.rs): PNG, the version the engine already
 # builds; QR codes for TextToQRCode (docs/design/dependencies.md).
 png = "0.18"
 qrcodegen = "1.8"
 # The runner's save_load op writes and reads the save container.
 fnv-save = { path = "../fnv-save" }
-
-[target.'cfg(unix)'.dependencies]
-# Preserve the existing OS-IANA fallback when TZ or /etc/localtime cannot be read.
-iana-time-zone = "0.1.65"
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Time"] }
 
 [dev-dependencies]
 tracing-subscriber = "0.3"

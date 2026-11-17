@@ -66,13 +66,6 @@ NOTICES = (
         source="https://github.com/google/fonts/tree/main/ofl/robotocondensed",
         file=REPO / "engine" / "nvf-play" / "assets" / "fonts" / "OFL.txt",
     ),
-    Notice(
-        name="Chrono 0.4.45",
-        what="host-local platform policy adapted in crates/fnv-game/src/local_time.rs",
-        licence="MIT OR Apache-2.0",
-        source="https://github.com/chronotope/chrono/tree/v0.4.45",
-        file=REPO / "crates" / "fnv-game" / "src" / "local_time_licenses" / "Chrono-LICENSE.txt",
-    ),
 )
 
 

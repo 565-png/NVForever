@@ -62,7 +62,17 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         // [documented: GetUserTime; observed: a string map of the 8 keys] the computer's
         // local time.
         "getusertime" => {
-            let pairs = crate::local_time::now().user_fields();
+            let now = crate::local_time::now();
+            let pairs: [(&str, u32); 8] = [
+                ("Year", now.year().max(0) as u32),
+                ("Month", now.month() as u32),
+                ("DayOfWeek", now.weekday().to_sunday_zero_offset() as u32),
+                ("Day", now.day() as u32),
+                ("Hour", now.hour() as u32),
+                ("Minute", now.minute() as u32),
+                ("Second", now.second() as u32),
+                ("Millisecond", now.millisecond() as u32),
+            ];
             let entries = pairs.iter().map(|(k, v)| (XKey::Str((*k).to_string()), XVal::Num(f64::from(*v)))).collect();
             XVal::Array(g.ext.new_array(ArrayKind::StringMap, entries))
         }

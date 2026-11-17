@@ -202,7 +202,7 @@ contract and limits: [Built-in luck setting getter fallback](spec-notes/builtin-
 
 | Tool | State | Specifics | Notes |
 |---|---|---|---|
-| Host-local time dependency | In progress | Source-prepared replacement for unmaintained Chrono (RUSTSEC-2026-0543), preserving the four existing field/format/file contracts and platform timezone/range policy. Ordinary root/engine lock resolution completed with only the declared dependency graph change. All 18 authored controls, compilation, advisory validation and native qualification remain unrun. | [host-local time](spec-notes/host-local-time.md) |
+| Host-local time dependency | In progress | Jiff replacement for Chrono in the four existing script APIs; retains fields/formats and file selection, intentionally adopts Jiff range and timezone policy. Windows CPU/source checks passed; full engine and original-game/mod qualification pending. | [host-local time](spec-notes/host-local-time.md) |
 | `fnvtool` | Done | JSON command-line tool over every crate: `bsa`, `esm`, `nif`, `dds`, `spt`, `world`, `phys`, `collide`, `sim`, `script`, `dialogue`, `actor`, `combat`, `nav`, `ai`, `voice`, `setup`, `paths` | [cli-contract](cli-contract.md) |
 | Mod diagnostic CLI | In progress | Static compiled-call/registration coverage, bounded played-log digest/diff and actual Script Runner trace accounting. Named calls remain unchecked; private words require explicit detail. Existing report, scan and MO2 inputs remain supported; effects, native behavior and full mod profiles are separate acceptance. | [mod diagnostics](handoff/mod-diagnostic-cli.md) |
 | Parity lab | Done | Oracle-vs-candidate tests per layer with holdouts and baselines (rules in `parity-lab/AGENT.md`) | [parity-lab/README](../parity-lab/README.md) |

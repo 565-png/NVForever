@@ -1,17 +1,53 @@
-# Host-local time backend
+# Host-local time with Jiff
 
-This note characterizes the existing NVForever consumers, not original-game observations. The private `fnv-game::local_time` adapter serves only GetUserTime, GetTimeStamp, GetFileTime and GetFileTimeSTR. It replaces the unmaintained Chrono dependency identified by RUSTSEC-2026-0543 without changing advisory policy or CI.
+[documented: NVForever `nvse_data.rs`, `nvse_lutana.rs`, `nvse_sup5.rs` before this
+change] The four existing host-time APIs expose local calendar fields, not game
+time. GetUserTime returns Year (negative years become zero), Month, Sunday-based
+DayOfWeek, Day, Hour, Minute, Second and truncated Millisecond. GetTimeStamp
+returns `HH-MM-SS`. GetFileTime returns year through second; GetFileTimeSTR uses
+`DD/MM/YY HH:MM`, or `MM/DD/YY HH:MM` when the integer-cast format selector is one.
+The integer-cast file selector chooses creation (0), access (1) or modification
+(2). Rooted file selection and empty results for unavailable metadata stay with
+the existing file consumer. These are repository contracts, not new original-game
+observations.
 
-GetUserTime produces the existing eight-key string map: Year (negative years become zero), Month, Sunday-based DayOfWeek, Day, Hour, Minute, Second and truncated Millisecond. GetTimeStamp formats `HH-mm-SS`. GetFileTime returns six numeric local fields (year through second); GetFileTimeSTR formats `DD/MM/YY HH:MM`, or `MM/DD/YY HH:MM` when the existing integer-cast format selector is one. The two-digit year uses Euclidean modulo 100. File request selection remains the integer cast: zero creation, one access, two modification. Existing root/layer precedence, path admission and empty results for missing/unavailable metadata remain with `mod_files` and `nvse_sup5`.
+[documented: Jiff 1.0, https://docs.rs/jiff/1.0.0/jiff/ and its
+`_documentation/platform` module] Jiff owns calendar conversion, system-zone
+discovery, timezone caching and timezone data. The private adapter only converts
+SystemTime to a Jiff timestamp and local civil datetime. Default Cargo features
+include the timezone database on Windows; Windows zone names are mapped to IANA
+names and IANA rules replace direct Windows yearly-rule evaluation. Unix uses
+Jiff's installed-zoneinfo selection; environment overrides, cache refresh and
+fallback behavior follow Jiff rather than preserving Chrono's implementation.
+There is no NVForever timezone parser, transition evaluator or additional cache.
 
-The supported calendar remains -262143 through 262142 for both UTC and local fields. Signed timestamps retain subsecond fractions before the Unix epoch. Conversion or platform lookup failure retains a panic at the formerly infallible conversion boundary; it does not become an empty file result or a new UTC success.
+[documented: https://docs.rs/jiff/1.0.0/jiff/civil/struct.Date.html#method.new and
+https://docs.rs/jiff/1.0.0/jiff/struct.Timestamp.html] Civil years are limited to
+-9999 through 9999; timestamps have slightly narrower endpoints to allow all
+valid timezone offsets. This intentionally narrows Chrono's former range. The
+conversion boundary continues to panic on an unrepresentable timestamp. System
+timezone detection uses `TimeZone::try_system`: failure also panics instead of
+silently presenting UTC as local time. In particular, the old Unix final UTC
+fallback is no longer promised. This migration is a policy change, not exact
+Chrono compatibility. A missing file or unsupported metadata clock still returns
+the existing empty result, before time conversion.
 
-On Windows, the current zone is queried with GetTimeZoneInformationForYear, using the UTC year clamped to the documented OS range 1601 through 30827. Returned rules apply to the actual date year, preserving the existing endpoint extrapolation. The adapter resolves recurring nth-weekday or absolute transitions, their previous offsets, northern and southern seasons, and subsecond boundaries. An instant is converted from UTC, so ambiguous local clock values do not require choosing a fold side.
+[documented: Jiff's `TimeZone::try_system` API] Targets without supported
+system-zone discovery also fail at this boundary instead of retaining the former
+zero-offset backend. Jiff's default unknown-zone/UTC fallback is not used.
 
-On other targets, the existing zero-offset fallback remains (the previous optional wasm backend was disabled). This does not apply to a Windows or Unix lookup failure.
+[hypothesis] The existing field and format contracts remain sufficient for mods
+using contemporary host dates. Original-game parity, historical Windows rule
+equivalence, engine execution and installed-mod acceptance require separate
+qualification. Tests exercise fixed instants, pre-epoch fractions, DST boundaries,
+Jiff range/failure boundaries and compiled source/file consumers. Validation
+results are recorded in the pull request; authored tests alone are not passes.
 
-On Unix, TZ overrides `/etc/localtime`; an empty TZ means UTC. Failed selection falls back to the OS IANA identifier and its installed TZif data, then UTC only at the existing final fallback. The per-thread zone cache rechecks source identity after one second, on a backwards clock, or after unavailable file metadata. Named overrides search all four prior directories in order; the first opened file retains selection even when reading or parsing it fails; Android/OHOS try an explicit override in their selected-record system tzdata container before ordinary file/POSIX parsing. Footerless TZif files retain their last type after the final transition; nonempty timezone designations retain the previous minimum three-byte admission. Android/OHOS keep their existing selected-record system tzdata lookup; no database is bundled and no process-wide TZ mutation is introduced.
-
-`tz-rs` owns calendar and TZif/POSIX parsing; the adapter owns platform selection and existing output policies. Direct time and Jiff substitutions were unsuitable for the existing wide-calendar/Windows policy. The retained platform policy was characterized against the previous Chrono 0.4.45 dependency; its copyright, the Rust Project platform-source copyright and dual-license text remain beside the adapter and ship through the release notice consumer. No extender implementation or native encoding is involved.
-
-Validation: module-owned injected backend controls cover output fields, pre-epoch fractions, wide/BCE dates, failure propagation, Windows query-year selection, DST gap/fold and southern/last-weekday/millisecond transitions. The existing isolated SUP5 test target exercises all four compiled source consumers, map keys, formatting/defaults, fractional selectors, each available metadata clock and file refusals. Synthetic loader controls exercise secondary directory selection, explicit Android records, footerless last-type handling and designation admission without mutating global TZ. The release notice control checks the complete adapted-policy license and both source attributions even after the Cargo dependency is removed. Ordinary `cargo update --workspace` completed separately in the root and engine workspaces. Both generated lockfiles remove Chrono 0.4.45 and add tz-rs 0.7.3 with its registry-verified checksum; unrelated package pins are unchanged. All 18 authored controls, compilation, advisory validation, Windows/Unix native execution and original-game/mod parity remain **unrun**. Resolver success does not establish native parity or a passing advisory check.
+[documented: Windows CPU checks for this implementation, Rust/Cargo 1.97.1]
+The release library binary passed 379 tests with one existing ignored test,
+including all five adapter controls. All six SUP5 tests passed; the added consumer
+test executed in separate New York and Kathmandu processes with scoped TZ
+overrides. Focused library/SUP5 Clippy with `--no-deps -D warnings`, both workspace
+dependency-policy checks and all 12 release-tool tests passed. Broader Clippy
+stopped in unchanged `fnv-script/src/vm.rs:78` on `manual_range_contains`.
+Full workspace/engine validation and original-game/mod acceptance remain pending.

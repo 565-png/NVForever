@@ -147,7 +147,7 @@ fn json_file(g: &Game, path: &str) -> Result<serde_json::Value, i32> {
 }
 
 /// A file's time: 0 created, 1 last read, 2 last written [documented: GetFileTime].
-fn file_time(g: &Game, path: &str, request: f64) -> Option<crate::local_time::LocalTime> {
+fn file_time(g: &Game, path: &str, request: f64) -> Option<jiff::civil::DateTime> {
     let (_, disk) = g.mod_files.root_file(&safe_path(path)?)?;
     let m = std::fs::metadata(disk?).ok()?;
     let t = match request as i32 {
@@ -328,15 +328,15 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // session-only write or a request outside 0-2 gives an empty array [hypothesis].
         "getfiletime" => {
             let t = file_time(g, &text(args, 0).unwrap_or_default(), num(args, 1, 0.0));
-            let items = t.map(|t| t.file_fields().map(XVal::Num).to_vec()).unwrap_or_default();
+            let items = t.map(|t| [f64::from(t.year()), f64::from(t.month()), f64::from(t.day()), f64::from(t.hour()), f64::from(t.minute()), f64::from(t.second())].map(XVal::Num).to_vec()).unwrap_or_default();
             list(g, items)
         }
         // `file request type`: "DD/MM/YY HH:MM", or "MM/DD/YY HH:MM" with type 1
         // [documented: GetFileTimeSTR]; "" when there is no time [hypothesis].
         "getfiletimestr" => {
             let t = file_time(g, &text(args, 0).unwrap_or_default(), num(args, 1, 0.0));
-            let month_first = num(args, 2, 0.0) as i32 == 1;
-            XVal::Str(t.map(|t| t.file_stamp(month_first)).unwrap_or_default())
+            let fmt = if num(args, 2, 0.0) as i32 == 1 { "%m/%d/%y %H:%M" } else { "%d/%m/%y %H:%M" };
+            XVal::Str(t.map(|t| t.strftime(fmt).to_string()).unwrap_or_default())
         }
         // The load order into SUPNVSE.log in the game's folder [documented: DumpLoadOrder]
         // (NVForever's copy of it, appended to this session's lines): one line a plugin,
