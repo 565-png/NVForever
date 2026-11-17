@@ -793,6 +793,257 @@ mod tests {
         assert_eq!((cloud.plane_height, cloud.strength), (CHECKER_PLANE, 1.0));
     }
 
+    /// `source` with every `@if(...)` that names one of `known` resolved for those values
+    /// (conjunctions only, as every condition this module writes): a statement whose
+    /// condition is false is taken out with its attribute; a true one keeps the statement,
+    /// its attribute keeping the other names. The statement is what follows the attribute
+    /// (on its line or from the next) up to its `;` outside parentheses or its closing
+    /// brace. Comments stay. Conditions naming none of `known` are left as they are.
+    fn resolve_known(source: &str, known: &[(&str, bool)]) -> String {
+        let lines: Vec<&str> = source.lines().collect();
+        let mut out: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i];
+            let trimmed = line.trim_start();
+            let indent = &line[..line.len() - trimmed.len()];
+            let Some(rest) = trimmed.strip_prefix("@if(") else {
+                out.push(line.to_string());
+                i += 1;
+                continue;
+            };
+            let mut depth = 1;
+            let close = rest
+                .char_indices()
+                .find(|&(_, c)| {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => depth -= 1,
+                        _ => {}
+                    }
+                    depth == 0
+                })
+                .map(|(at, _)| at)
+                .unwrap_or_else(|| panic!("an unclosed @if: {line}"));
+            let (cond, after) = (&rest[..close], rest[close + 1..].trim_start());
+            if !known.iter().any(|(k, _)| cond.contains(k)) {
+                out.push(line.to_string());
+                i += 1;
+                continue;
+            }
+            assert!(!cond.contains("||"), "conjunctions only: {cond}");
+            let mut keep = true;
+            let mut left = Vec::new();
+            for lit in cond.split("&&").map(str::trim) {
+                let (negated, name) = lit.strip_prefix('!').map_or((false, lit), |n| (true, n.trim()));
+                match known.iter().find(|(k, _)| *k == name) {
+                    Some((_, value)) => keep &= *value != negated,
+                    None => left.push(lit),
+                }
+            }
+            // The statement's last line.
+            let first = if after.is_empty() { i + 1 } else { i };
+            let (mut end, mut braces, mut parens) = (first, 0i32, 0i32);
+            'scan: loop {
+                assert!(end < lines.len(), "a statement without its end after {line}");
+                let text = if end == i { after } else { lines[end] };
+                for c in text.split("//").next().unwrap_or("").chars() {
+                    match c {
+                        '{' => braces += 1,
+                        '}' => {
+                            braces -= 1;
+                            if braces == 0 {
+                                break 'scan;
+                            }
+                        }
+                        '(' => parens += 1,
+                        ')' => parens -= 1,
+                        ';' if braces == 0 && parens == 0 => break 'scan,
+                        _ => {}
+                    }
+                }
+                end += 1;
+            }
+            let attribute = (!left.is_empty()).then(|| format!("@if({})", left.join(" && ")));
+            if keep {
+                if first == i {
+                    out.push(match &attribute {
+                        Some(a) => format!("{indent}{a} {after}"),
+                        None => format!("{indent}{after}"),
+                    });
+                    out.extend(lines[i + 1..=end].iter().map(|l| l.to_string()));
+                } else {
+                    if let Some(a) = &attribute {
+                        out.push(format!("{indent}{a}"));
+                    }
+                    out.extend(lines[first..=end].iter().map(|l| l.to_string()));
+                }
+            }
+            i = end + 1;
+        }
+        out.join("\n")
+    }
+
+    /// Brackets, braces and parentheses close in order (comments left out).
+    fn balanced(text: &str) -> bool {
+        let mut stack = Vec::new();
+        for c in text.lines().flat_map(|l| l.split("//").next().unwrap_or("").chars()) {
+            match c {
+                '{' | '(' | '[' => stack.push(c),
+                '}' if stack.pop() != Some('{') => return false,
+                ')' if stack.pop() != Some('(') => return false,
+                ']' if stack.pop() != Some('[') => return false,
+                _ => {}
+            }
+        }
+        stack.is_empty()
+    }
+
+    /// The block (braces included) of the first `{` after `start` in `text`.
+    fn block_after<'a>(text: &'a str, start: &str) -> &'a str {
+        let at = text.find(start).unwrap_or_else(|| panic!("{start} missing"));
+        let open = at + text[at..].find('{').expect("a block");
+        let mut depth = 0;
+        let mut in_comment = false;
+        let bytes = text.as_bytes();
+        for (k, &b) in bytes.iter().enumerate().skip(open) {
+            match b {
+                b'\n' => in_comment = false,
+                b'/' if !in_comment && bytes.get(k + 1) == Some(&b'/') => in_comment = true,
+                b'{' if !in_comment => depth += 1,
+                b'}' if !in_comment => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &text[open..=k];
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("{start}: the block does not close")
+    }
+
+    /// The text without its comments.
+    fn code(text: &str) -> String {
+        text.lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n")
+    }
+
+    /// Code lines only (no blank or comment-only line), trimmed at the end.
+    fn code_lines(text: &str) -> Vec<&str> {
+        text.lines().map(str::trim_end).filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with("//")).collect()
+    }
+
+    /// The whole patched `apply_pbr_lighting` (lights.rs `DISPLAY_EDITS`, then
+    /// [`HOOK_EDITS`]) in each combination of the shader defs it is written against
+    /// (`NVF_SUN_VISIBILITY` on and off, with `DISTANCE_FOG` on, off or left to the
+    /// pipeline): every anchor is found, every condition this module wrote resolves,
+    /// brackets close in the file, in the function and in the directional light loop, and
+    /// what the hook uses is declared before it. Without the def the code lines are the
+    /// display-value patch's exactly. What this cannot show (that naga accepts the module
+    /// with bevy_pbr's imports resolved, for every other def of a real pipeline) only a
+    /// run does: no unit test here resolves bevy_pbr's WESL imports.
+    #[test]
+    fn patched_lighting_resolves_in_every_variant() {
+        let (display, hooked) = hooked();
+        assert!(balanced(&display) && balanced(&hooked), "the patched sources close");
+        for (_, text, _) in HOOK_EDITS {
+            assert!(balanced(text), "each edit's text closes by itself: {text}");
+        }
+        for fog in [None, Some(false), Some(true)] {
+            for on in [false, true] {
+                let mut known = vec![("NVF_SUN_VISIBILITY", on)];
+                if let Some(f) = fog {
+                    known.push(("DISTANCE_FOG", f));
+                }
+                let r = resolve_known(&hooked, &known);
+                let case = format!("NVF_SUN_VISIBILITY {on}, DISTANCE_FOG {fog:?}");
+                assert!(!code(&r).contains("NVF_SUN_VISIBILITY"), "{case}: every condition resolved");
+                assert!(balanced(&r), "{case}: brackets close");
+                let lighting = block_after(&r, "fn nvf_apply_pbr_lighting(");
+                assert!(!lighting.contains("\nfn "), "{case}: the lighting function ends where it should");
+                let post = block_after(&r, "fn main_pass_post_lighting_processing(");
+                assert!(!post.contains("\nfn "), "{case}");
+                let fogs = post.matches("apply_fog(").count();
+                assert_eq!(fogs, usize::from(fog != Some(false)), "{case}: the fog once, or not at all without DISTANCE_FOG");
+                if !on {
+                    // Exactly the display-value patch, line for line (comments aside).
+                    let want = resolve_known(&display, &known[1..]);
+                    assert_eq!(code_lines(&r), code_lines(&want), "{case}");
+                    assert!(!code(&r).contains("nvf_sun_"), "{case}");
+                    continue;
+                }
+                let at = |s: &str| r.find(s).unwrap_or_else(|| panic!("{case}: {s} missing"));
+                assert!(at("import nvforever::sun_visibility::{nvf_sun_visibility, nvf_sun_visibility_parts, nvf_sun_debug_value, nvf_sun_debug_mode};") < at("fn nvf_apply_pbr_lighting("));
+                let wesl = include_str!("sun_visibility.wesl");
+                for f in ["fn nvf_sun_visibility(", "fn nvf_sun_visibility_parts(", "fn nvf_sun_debug_value(", "fn nvf_sun_debug_mode("] {
+                    assert!(wesl.contains(f), "sun_visibility.wesl has {f}");
+                }
+                // Declared before use, in the function.
+                let (decl, set, shown) = (lighting.find("var nvf_sun_debug = 1.0;"), lighting.find("nvf_sun_debug = nvf_sun_debug_value("), lighting.find("vec3<f32>(nvf_sun_debug)"));
+                assert!(decl.is_some() && decl < set && set < shown, "{case}: nvf_sun_debug declared, set, shown");
+                let view_z = lighting.find("let view_z").expect("view_z");
+                assert!(view_z < lighting.find("nvf_sun_visibility_parts(").expect("the hook"), "{case}: view_z before the hook");
+                // The two hooks inside the directional light loop, each after its shadow's
+                // declaration; the loop still closes before the function's end.
+                let directional = block_after(lighting, "for (var i: u32 = 0u; i < n_directional_lights; i = i + 1u) {");
+                let d = |s: &str| directional.find(s).unwrap_or_else(|| panic!("{case}: {s} not in the directional loop"));
+                assert!(d("var shadow: f32 = 1.0;") < d("shadow = nvf_parts.w;"));
+                assert!(d("shadow = nvf_parts.w;") < d("var light_contrib = lighting::directional_light("));
+                assert!(d("var transmitted_shadow: f32 = 1.0;") < d("transmitted_shadow = nvf_sun_visibility("));
+                assert_eq!(directional.matches("DIRECTIONAL_LIGHT_FLAGS_NVF_OUTDOOR_SUN_BIT").count(), 2, "{case}: both hooks test the sun's flag");
+                assert_eq!(lighting.matches("nvf_sun_visibility_parts(").count(), 1);
+                if fog != Some(false) {
+                    assert!(post.contains("nvf_sun_debug_mode() == 0u"), "{case}: no fog over the debug view");
+                }
+            }
+        }
+        // The flag the hooks test is bevy_pbr's.
+        let types = unix_lines(&std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../vendor/bevy_pbr/src/render/mesh_view_types.wesl")).expect("mesh_view_types.wesl"));
+        assert!(types.contains("const DIRECTIONAL_LIGHT_FLAGS_NVF_OUTDOOR_SUN_BIT: u32"));
+    }
+
+    /// water.wesl's highlight and nif_material.wesl's shade-light algebra (#2670 C2) with
+    /// the sun visibility's def on and off: the conditions resolve, brackets close, the
+    /// imports name what sun_visibility.wesl and bevy_pbr have, and without the def
+    /// nothing of the plumbing is left (water: light 0 and a factor of 1; arms: the
+    /// cascade value itself). Neither shader is compiled here (bevy_pbr's imports are not
+    /// resolved by any unit test): that they compile is for a run to show.
+    #[test]
+    fn water_and_arms_edits_resolve() {
+        let read = |p: &str| unix_lines(&std::fs::read_to_string(p).unwrap_or_else(|e| panic!("{p}: {e}")));
+        let water = read(concat!(env!("CARGO_MANIFEST_DIR"), "/src/water.wesl"));
+        let arms = read(concat!(env!("CARGO_MANIFEST_DIR"), "/../nvf-assets/src/nif_material.wesl"));
+        let wesl = include_str!("sun_visibility.wesl");
+        assert!(wesl.contains("fn nvf_sun_visibility(P: vec3<f32>, L: vec3<f32>, cascade_shadow: f32, view_z: f32) -> f32"));
+        for on in [false, true] {
+            let known = [("NVF_SUN_VISIBILITY", on)];
+            let (w, a) = (resolve_known(&water, &known), resolve_known(&arms, &known));
+            for (name, text) in [("water.wesl", &code(&w)), ("nif_material.wesl", &code(&a))] {
+                assert!(!text.contains("NVF_SUN_VISIBILITY"), "{name} {on}: every condition resolved");
+                assert!(balanced(text), "{name} {on}: brackets close");
+                assert_eq!(text.contains("nvf_sun_visibility("), on, "{name} {on}");
+                assert_eq!(text.contains("DIRECTIONAL_LIGHT_FLAGS_NVF_OUTDOOR_SUN_BIT"), on, "{name} {on}");
+            }
+            // Water: the highlight is light 0 times 1 without the def; with it, the flagged
+            // light's, times its visibility once, the reflection image untouched.
+            let highlight = block_after(&w, "if lights.n_directional_lights > 0u {");
+            assert!(highlight.contains("let sun = lights.directional_lights[sun_index];"));
+            assert!(highlight.contains("reflected += spec * sun_light * sun_visibility;"));
+            assert_eq!(highlight.contains("sun_visibility = nvf_sun_visibility(pos, sun.direction_to_light, 1.0, view_z);"), on);
+            assert_eq!(w.matches("* sun_visibility").count(), 1, "the highlight alone takes it");
+            assert_eq!(w.contains("import nvforever::sun_visibility::nvf_sun_visibility;"), on);
+            // Arms: the cascade value itself without the def; with it, V for the flagged sun.
+            let value = block_after(&a, "fn sun_shadow_value(");
+            assert_eq!(code_lines(value).len() == 3, !on, "{value}");
+            assert_eq!(value.contains("return nvf_sun_visibility(in.world_position.xyz, lights.directional_lights[sun].direction_to_light, cascade, view_z);"), on);
+            let shade = block_after(&a, "fn with_shade_light(");
+            for s in ["let v_lit = sun_shadow_value(sun, in, 1.0, view_z);", "let v_own = sun_shadow_value(sun, in, own, view_z);", "let missing = (v_lit - v_own) + share * (1.0 - shade);", "let k = (v_lit + share - sun_shadow_value(sun, in, wanted, view_z)) / missing;"] {
+                assert!(shade.contains(s), "{s}");
+            }
+            assert_eq!(a.contains("@if(!PREPASS_PIPELINE && SHADE_LIGHT) import nvforever::sun_visibility::nvf_sun_visibility;"), on);
+        }
+    }
+
     /// sun_visibility.wesl in each of its four variants (cloud, terrain on or off) is valid
     /// WGSL: the conditions in front of its functions are resolved by hand here.
     #[test]
