@@ -120,6 +120,10 @@ pub enum Given {
         /// The actor has talked to the player (GetTalkedToPC).
         #[serde(default)]
         talked_to_pc: Option<bool>,
+        /// Locked (at its own level) or unlocked, as a script's Lock/Unlock leaves it: the
+        /// Nellis gate Raquel's welcome unlocks, for chains that start past it.
+        #[serde(default)]
+        locked: Option<bool>,
     },
     /// A faction's group combat reaction towards another (0 neutral, 1 enemy, 2 ally,
     /// 3 friend), as SetEnemy/SetAlly leave it (a save's faction changes).
@@ -663,6 +667,7 @@ fn ref_field(g: &mut Game, r: FormId, f: &str) -> Result<Json, String> {
     Ok(match f {
         "dead" => json!(g.extra.get(&r).is_some_and(|e| e.dead)),
         "destroyed" => json!(g.extra.get(&r).is_some_and(|e| e.destroyed)),
+        "locked" => json!(g.world.lock_of(r).is_some_and(|l| l.locked)),
         "disabled" => json!(!g.world.is_enabled(r).map_err(|e| e.to_string())?),
         _ => match f.strip_prefix("var.") {
             Some(v) => {
@@ -980,7 +985,7 @@ fn apply_given(g: &mut Game, gv: &Given) -> Result<(), String> {
             let r = resolve(g, of)?;
             g.world.set_enabled(r, !disabled).map_err(|e| e.to_string())?;
         }
-        Given::Ref { reference, vars, dead, disabled, deleted, talked_to_pc } => {
+        Given::Ref { reference, vars, dead, disabled, deleted, talked_to_pc, locked } => {
             let r = resolve(g, reference)?;
             for (k, v) in vars {
                 let (key, script, i) = ref_var(g, r, k)?;
@@ -998,6 +1003,11 @@ fn apply_given(g: &mut Game, gv: &Given) -> Result<(), String> {
             }
             if let Some(t) = talked_to_pc {
                 g.extra.entry(r).or_default().talked_to_pc = *t;
+            }
+            match locked {
+                Some(true) => g.world.lock(r, None).map_err(|e| e.to_string())?,
+                Some(false) => g.world.unlock(r).map_err(|e| e.to_string())?,
+                None => {}
             }
         }
         Given::FactionReaction { faction, other, reaction } => {

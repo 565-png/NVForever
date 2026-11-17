@@ -69,6 +69,8 @@
     {"op": "choose", "topic": "VMS19VFSOffDutyNCRBarker02Topic019", "label": "barker bear"},
     {"op": "wait_talk"},
     {"op": "get_quest", "quest": "VMS19", "fields": ["objective.75.completed", "objective.80.displayed", "var.LearnedPassword"], "label": "milestone: VMS19 password"},
+    {"op": "note", "text": "The off-duty trooper at the supply drop's door hears the password (Hope): his line (INFO 0x00116C48) unlocks VFSSupplyDropHouseExtDoorREF."},
+    {"op": "say_info", "info": "0x00116C48", "speaker": "placed:VFSOffDutyNCRTrooper01"},
     {"op": "note", "text": "Stand-in for walking past the guards (password Hope) into the supply drop building: its trigger."},
     {"op": "trigger_enter", "trigger": "scripted:VFSSupplyDropHouseScript"},
     {"op": "advance_seconds", "seconds": 1},

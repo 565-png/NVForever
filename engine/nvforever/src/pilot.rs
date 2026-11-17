@@ -362,6 +362,8 @@ pub const FIGHT_CLOSER_SECS: f64 = 6.0;
 /// The farthest the player shoots from where it stands without walking nearer: a 9mm
 /// pistol's spread missed Joe Cobb with every one of 25 shots from the saloon's door.
 pub const SHOOT_FROM: f32 = 450.0;
+/// The longest shot the player takes at a target no walk reaches, game units [design].
+pub const LONG_SHOT: f32 = 6000.0;
 pub const FIGHT_SECS: f64 = 75.0;
 /// Seconds a kill by another actor is waited for.
 pub const AI_KILL_SECS: f64 = 60.0;
@@ -628,6 +630,9 @@ struct Fight {
     /// The target's health when this spell of shooting began: hits landing mean the
     /// player stays where it is (module notes).
     health: Option<f64>,
+    /// No way on foot to the target, but a clear line of fire to it: shot from afar
+    /// (Honest Hearts' White Legs on the cliffs over the ambush).
+    afar: bool,
 }
 
 enum Phase {
@@ -860,6 +865,15 @@ impl Pilot {
     fn finding(&mut self, kind: &str, text: String) {
         warn!("pilot: finding {kind}: step {} {}: {text}", self.i, self.ops.get(self.i).map_or("", String::as_str));
         self.findings.push(json!({"kind": kind, "chain": self.chain, "step": self.i, "op": self.ops.get(self.i), "text": text}));
+    }
+
+    /// The walk's own "unreachable" finding for this step taken back: the step that walked
+    /// deals with it another way (a shot from afar, a kill the headless way said as its own).
+    fn take_back_unreachable(&mut self) {
+        let i = self.i;
+        if self.findings.last().is_some_and(|f| f["kind"] == "unreachable" && f["step"] == json!(i)) {
+            self.findings.pop();
+        }
     }
 
     /// The step is over: the next one begins.
@@ -1468,8 +1482,8 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         }).unwrap_or(false);
                         let arrive = if here_side && !too_far && !gap { None } else {
                             match w.goal.space {
-                                Space::World(b) if h.game(|g| capital_side(g, b)).unwrap_or(false) => nav.graph.nearest(w.goal.space, w.goal.pos, 4096.0).map(|(_, on)| Place { space: w.goal.space, pos: on }),
-                                Space::Interior(cell) => h.game(|g| outside_door(g, cell)).flatten().and_then(|(cell, pos)| {
+                                Space::World(b) if too_far || h.game(|g| capital_side(g, b)).unwrap_or(false) => nav.graph.nearest(w.goal.space, w.goal.pos, 4096.0).map(|(_, on)| Place { space: w.goal.space, pos: on }),
+                                Space::Interior(cell) => h.game(|g| if too_far { outside_door_to(g, cell, |_, _| true) } else { outside_door(g, cell) }).flatten().and_then(|(cell, pos)| {
                                     let space = crate::nav::space_of_cell(h.world, cell)?;
                                     nav.graph.nearest(space, pos, 1024.0).map(|(_, on)| Place { space, pos: on })
                                 }),
@@ -1809,6 +1823,13 @@ fn capital_side(g: &Game, w: u32) -> bool {
 /// into the Museum of History, which opens onto the Mall): the destination's cell and
 /// position.
 fn outside_door(g: &Game, cell: u32) -> Option<(u32, [f32; 3])> {
+    outside_door_to(g, cell, capital_side)
+}
+
+/// [`outside_door`] into a worldspace `side` takes: any, for a way longer than the search
+/// goes on the Mojave's side (Old Lady Gibson's shack to the Jacobstown lodge, 400,012
+/// triangles and no end [observed]).
+fn outside_door_to(g: &Game, cell: u32, side: fn(&Game, u32) -> bool) -> Option<(u32, [f32; 3])> {
     // A door whose script runs on activation is a way only when no other is (GNR's back
     // door from Dupont Circle, DuponttoGNRRef, only says it is barred:
     // MQ02GNRBackDoorScript [observed]), so a plain door out is taken first.
@@ -1823,10 +1844,10 @@ fn outside_door(g: &Game, cell: u32) -> Option<(u32, [f32; 3])> {
                 let Some(to) = g.world.placed.get(r).and_then(|p| p.teleport.as_ref()).map(|t| t.door) else { continue };
                 let Some((Some(dest), pos)) = where_is(g, to) else { continue };
                 match g.world.placed.world_of(dest) {
-                    Some(w) if capital_side(g, w.0) && (door_scripted(g, to.0) || door_scripted(g, r.0)) => {
+                    Some(w) if side(g, w.0) && (door_scripted(g, to.0) || door_scripted(g, r.0)) => {
                         scripted.get_or_insert((dest.0, pos));
                     }
-                    Some(w) if capital_side(g, w.0) => return Some((dest.0, pos)),
+                    Some(w) if side(g, w.0) => return Some((dest.0, pos)),
                     Some(_) => {}
                     None if !seen.contains(&dest.0) => {
                         seen.push(dest.0);
@@ -2222,15 +2243,26 @@ fn engage(p: &mut Pilot, h: &mut Hands, name: &str, f: &mut Fight, w: &mut Walk)
     // In range with a clear line: it shoots from where it stands, as a player does, and
     // does not chase a target that moves about (Joe Cobb ran round the saloon and the walk
     // was planned again and again, the trigger never pulled).
-    let in_range = h.phys.world.actor_aim_point(target.0).is_some_and(|at| {
-        let eye = h.player.eye();
-        hdist(eye, at) <= w.radius.min(SHOOT_FROM) && (eye[2] - at[2]).abs() < 400.0 && crate::combat_tactics::shot_clear(Some(&mut *h.phys), eye, None, at, [at[0], at[1], at[2] + 40.0]).is_some()
-    });
-    let walked = if in_range { Walked::There } else { walk(p, w, h) };
+    let (reach, rise) = if f.afar { (LONG_SHOT, LONG_SHOT) } else { (w.radius.min(SHOOT_FROM), 400.0) };
+    let in_range = |h: &mut Hands, reach: f32, rise: f32| {
+        h.phys.world.actor_aim_point(target.0).is_some_and(|at| {
+            let eye = h.player.eye();
+            hdist(eye, at) <= reach && (eye[2] - at[2]).abs() < rise && crate::combat_tactics::shot_clear(Some(&mut *h.phys), eye, None, at, [at[0], at[1], at[2] + 40.0]).is_some()
+        })
+    };
+    let walked = if in_range(h, reach, rise) { Walked::There } else { walk(p, w, h) };
     match walked {
         Walked::No(why) => {
             f.shooting = None;
             h.control.trigger = false;
+            // No way there on foot: a player with a clear line shoots from where it
+            // stands, as it would at a White Leg on a ledge over the road.
+            if !f.afar && in_range(h, LONG_SHOT, LONG_SHOT) {
+                f.afar = true;
+                p.take_back_unreachable();
+                info!("pilot: step {}: no way on foot to {name} ({why}): a clear line of fire, shot from where the player stands", p.i);
+                return None;
+            }
             return Some(why);
         }
         Walked::Going => {
@@ -3766,7 +3798,7 @@ fn fight(p: &mut Pilot, h: &mut Hands, name: &str, a: &Action) -> Option<Option<
         };
         arm(p, h);
         let Phase::Walk(w) = new_walk(place, Some(r), FIGHT_RANGE, p.now, h.feet()) else { unreachable!() };
-        p.phase = Phase::Fight(Fight { target: r, shooting: None, near: false, blocked: None, began: p.now, in_the_way: None, health: None }, w);
+        p.phase = Phase::Fight(Fight { target: r, shooting: None, near: false, blocked: None, began: p.now, in_the_way: None, health: None, afar: false }, w);
     }
     let Phase::Fight(mut f, mut w) = std::mem::replace(&mut p.phase, Phase::Begin) else { return Some(None) };
     let target = f.target;
@@ -3792,7 +3824,16 @@ fn fight(p: &mut Pilot, h: &mut Hands, name: &str, a: &Action) -> Option<Option<
         return Some(r.and_then(|r| r.err()));
     }
     if let Some(why) = engage(p, h, name, &mut f, &mut w) {
-        return Some(Some(why));
+        // Nowhere a player could reach and no line of fire either: the finding says so,
+        // and the kill is the headless one, so the quest goes on and the rest is tested.
+        p.take_back_unreachable();
+        p.finding("target_unreachable", format!("{name}: {why}: killed as the headless run kills it"));
+        p.headless("kill (a target out of reach)");
+        h.control.trigger = false;
+        let mut applier = std::mem::take(&mut p.applier);
+        let r = h.game(|g| runner::apply_now(g, &mut applier, a));
+        p.applier = applier;
+        return Some(r.and_then(|r| r.err()));
     }
     p.phase = Phase::Fight(f, w);
     None
@@ -4249,7 +4290,7 @@ fn drive(
                 let space = cell.and_then(|c| crate::nav::space_of_cell(world, c.0)).unwrap_or(space_of(h.location));
                 arm(p, &mut h);
                 info!("pilot: step {}: {who} attacks {}: fought before the step goes on", p.i, if friend.is_some() { "the player or the actor it is with" } else { "the player" });
-                p.defend = Some((Fight { target: who, shooting: None, near: false, blocked: None, began: p.now, in_the_way: None, health: None }, walk_to(Place { space, pos }, Some(who), FIGHT_RANGE, p.now, feet)));
+                p.defend = Some((Fight { target: who, shooting: None, near: false, blocked: None, began: p.now, in_the_way: None, health: None, afar: false }, walk_to(Place { space, pos }, Some(who), FIGHT_RANGE, p.now, feet)));
                 p.defend_from = p.now;
             }
         }
