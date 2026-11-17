@@ -323,3 +323,10 @@ confirmed those bounded case results and the false overall flag. The accepted-ma
 060d union retains the tested fnv-ui Rust/fixtures; whole-graph qualification stays
 bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
+
+
+HUD ammo alpha consumed by hover text: engine-created copies materialize the
+renderer's existing omitted local alpha only at creation, retaining explicit
+values/expressions and later script writes. Three authored actual copy/query/layout
+controls are unexecuted; original Quick Loot initialization, native defaults and
+installed blank-bar acceptance remain open ([HUD](spec-notes/hud.md)).
