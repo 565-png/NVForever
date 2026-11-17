@@ -3332,8 +3332,10 @@ capture setup, so every part of a check that needs an interior is still open.
      showed no difference: fire-made highlights vanished with the fire on flagged and
      unflagged bottles alike [observed]. No clear glow in the dark: at night the
      env-mapped bottles kept about the share of their day brightness that the no-cube wine
-     bottle (Environment_Mapping flag, no cube) kept, or somewhat more (1.1-2.0×,
-     confounded by the night light's direction) [observed]. Open: interiors, the
+     bottle (Environment_Mapping flag, no cube) kept, some somewhat more: the
+     Sarsaparilla bottles 1.1-2.0×, the Nuka-Cola bottle 0.7-1.1× (confounded by the night
+     light's direction, and on the blended bottle by the ground seen through it)
+     [observed]. Open: interiors, the
      role of point lights, and what L is exactly (sun intensity, ambient, or a light sum
      at the surface).
 228. **Do reflections fade out between 1,500 and 1,800 units from the camera?** (P3;

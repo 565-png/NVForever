@@ -17,11 +17,12 @@
 //! interior's ambient plus directional colour, as display values, held to 1 per channel)
 //! [hypothesis, from captures of the original (jobs envmap2/envmap3, Primm, 2026-11-16):
 //! a streak on a static bottle kept its screen place under sun, fire and moon, took the
-//! light's colour and fell to about a third from day to night; a fit against NVForever's
-//! unscaled term, itself a hypothesis, asked for 3.75-7.75 times the term by day and
-//! about none at night; observer check 227]. By day L is at most 1, so the default can
-//! only dim the strength-1 term, while that fit asks for up to 8.5 times more on some
-//! objects: the day strength is open and deliberately left at 1. L follows the sun
+//! light's colour and fell to about a third from day to night; a fit (a hypothesis)
+//! against NVForever's unscaled term asked for 3.75-7.75 times the term on that bottle by
+//! day and about none at night; observer check 227]. By day L is at most 1, so the
+//! default can only dim the strength-1 term, while the fit asks for up to 8.5 times the
+//! term on some objects (the other Sarsaparilla bottle): the day strength is open and
+//! deliberately left at 1. L follows the sun
 //! light's fade near the horizon, so around sunrise and sunset the reflection dips
 //! towards the ambient part alone. Window shapes keep #2462's unscaled term by default.
 //!

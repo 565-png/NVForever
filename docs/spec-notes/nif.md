@@ -1399,10 +1399,11 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     flagged bottle did not lose more than an unflagged one as the fire got farther
     (envmap2).
   - No clear "glow in the dark" [observed]: at night the env-mapped bottles kept about the
-    no-cube control's share of their day brightness or somewhat more (1.1-2.0× of the
-    control's night/day ratio, confounded by the night light lighting their upright sides
-    about three times more); the control is the wine bottle, which has the
-    Environment_Mapping flag but no cube (envmap, envmap3).
+    no-cube control's share of their day brightness, some somewhat more: the Sarsaparilla
+    bottles 1.1-2.0× of the control's night/day ratio, the Nuka-Cola bottle 0.7-1.1×
+    (confounded by the night light lighting upright sides about three times more, and on
+    the blended bottle by the darkening ground seen through it); the control is the wine
+    bottle, which has the Environment_Mapping flag but no cube (envmap, envmap3).
   - Strength: by day the fit asks for 1 to 8.5 times NVForever's strength-1 term,
     depending on the object (Nuka-Cola bottle about 1, the Sarsaparilla bottles 3.5-8.5)
     [hypothesis, medium: the same fit]; the absolute strength and whether
@@ -1443,8 +1444,8 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     normal (world-fixed, which fits the bright patches observed), × the scale × the mask,
     added to the lit colour, as for windows [hypothesis for the lookup, the strength and
     the scale; observer check 223]. By day L (next bullet) is at most 1, so the default
-    can only dim the strength-1 term, while the fit asks for up to 8.5 times more on some
-    objects: the day strength is **open** and deliberately left at 1.
+    can only dim the strength-1 term, while the fit asks for up to 8.5 times the term on
+    some objects (a Sarsaparilla bottle): the day strength is **open** and deliberately left at 1.
   - Light: × the scene light L, per channel the ambient colour plus the sun's or moon's
     (indoors the cell's ambient plus directional colour), as display values without any
     N·L, held to 1 (`env_map::scene_light`, `env_scene_light` in nif_material.wesl)
@@ -1458,8 +1459,7 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     sun height around sunrise and sunset the reflection dips towards the ambient part
     alone, as the lit surfaces do. Window shapes keep #2462's unscaled term by default
     (`NVF_PLAY_DEBUG_ENV_LIGHT_WINDOW=scene` scales them too). Views without the world
-    view's display-value lights (the minigame views) keep the term unscaled. A
-    premultiplied shape is premultiplied whether or not its reflection has faded out.
+    view's display-value lights (the minigame views) keep the term unscaled.
   - No slot-5 mask: full strength [hypothesis; observer check 224].
   - Cube orientation: the same lookup as window shapes, (x, z, y) of the game-space
     reflection [hypothesis: the wiki says the two differ by a flip; observer check 225].
@@ -1473,11 +1473,13 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   - Camera distance: whole up to 1500 units, none from 1800, linear between, by the
     distance to the shape node's origin (the mesh instance's translation, usually the
     reference's), so a long shape fades as a whole, while a model whose parts sit under
-    nodes of their own (the HELIOS One reflector row, its reflectors about 240 units
-    apart) fades part by part; on window shapes too [hypothesis for the curve and the origin,
-    documented distances, the fade unobserved; observer check 228]. The
-    `glass-mccarran-*` frames stand well inside 1500 units, so #2462's pictures do not
-    change.
+    nodes of their own (the HELIOS One reflector row, its reflectors about 240 units apart
+    [observed: `heliosone_solarreflector_row.nif` node translations, read with `fnvtool`
+    in a review of #2841]) fades part by part; on window shapes too [hypothesis for the
+    curve and the origin, documented distances, the fade unobserved; observer check 228].
+    A blended window shape (drawn premultiplied) keeps its colour × alpha even where its
+    reflection has faded out or its strength is 0 [design]. The `glass-mccarran-*` frames
+    stand well inside 1500 units, so #2462's pictures do not change.
   - A shape with the flag and no slot-4 file reflects nothing (no default cube)
     [hypothesis; observer check 229].
   - The mask's red channel is read, as for windows [hypothesis; only the 29 masks with
