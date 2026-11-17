@@ -315,5 +315,21 @@ image and actual draw pieces; it retains a nonempty title, repeated target,
 parent hiding, collision eviction and subsequent acquisition. The engine test's
 callback is an in-memory compiled lambda; the file-backed core path covers
 CompileScript without racing the engine suite's global file readers. All cases
-are unexecuted at authoring. No original-mod, native, GPU or popup-resolution
-acceptance is claimed.
+were unexecuted when first authored. Hosted `35677cf5` and `22b8138c`
+engine controls each passed once; their file-backed core controls failed at
+separate earlier boundaries. In a later qualified runtime-only check of
+`d27e4e0b`, file compilation, original callable admission, plain-event callback,
+current getter, Johnny ordering and exact decimal source-value readback passed.
+The first failure was the CONT type-qualified counter, not the plain callback.
+The associated compile controller remained unqualified after descendant cleanup;
+this does not invalidate or promote its separately admitted runtime result.
+
+[design] Type-qualified delivery uses the existing canonical source-VM form-type
+mapping, rather than the inventory-item subset. The source regression queries
+GetType for its actual CONT and DOOR targets, then checks distinct type listeners
+and a nonmatching armor listener. Existing base-reference lookup and callback
+ordering are retained; cloned or dynamically substituted base-type parity is not
+newly established. The new canonical-mapping successor and its two identical-
+fixture baselines require their own compile, strict-lint and execution results.
+The original absent-event baseline is distinct from the d27 typed-delivery
+baseline. No original-mod, native, GPU or popup-resolution acceptance is claimed.

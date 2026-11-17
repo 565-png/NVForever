@@ -159,7 +159,7 @@ End
         compiled_callback.diags
     );
     let source = MemSource::default()
-        .with("menus/owned.xml", r#"<menu name="HUDMainMenu"><_calls>0</_calls><_sequence>0</_sequence><_sourceOrder>0</_sourceOrder><_johnnyOrder>0</_johnnyOrder><_johnnyOld>0</_johnnyOld><_fresh>0</_fresh><_typed>0</_typed><_wrongType>0</_wrongType><_byForm>0</_byForm><_byList>0</_byList><_iconAlpha>0</_iconAlpha><_icon></_icon><_targetLiteral>0</_targetLiteral><rect name="Prompt"><visible>1</visible><text name="Title"><string>Supply cache</string></text></rect></menu>"#)
+        .with("menus/owned.xml", r#"<menu name="HUDMainMenu"><_calls>0</_calls><_sequence>0</_sequence><_sourceOrder>0</_sourceOrder><_johnnyOrder>0</_johnnyOrder><_johnnyOld>0</_johnnyOld><_fresh>0</_fresh><_typed>0</_typed><_wrongType>0</_wrongType><_doorType>0</_doorType><_byForm>0</_byForm><_byList>0</_byList><_iconAlpha>0</_iconAlpha><_icon></_icon><_targetLiteral>0</_targetLiteral><rect name="Prompt"><visible>1</visible><text name="Title"><string>Supply cache</string></text></rect></menu>"#)
         .with("menus/owned/icon.xml", r#"<image name="Icon"><visible>1</visible><width>30</width><height>30</height><alpha><copy src="io()" trait="_iconAlpha"/></alpha><filename><copy src="io()" trait="_icon"/></filename></image>"#);
     g.ui_tree.load_menu(&source, "menus/owned.xml").unwrap();
     g.ui_files = Some(Box::new(source));
@@ -173,6 +173,7 @@ End
     query(&mut g, "SetEventHandler \"OnCrosshairOn\" (CompileScript \"Owned/Prompt.gek\")
 SetEventHandler \"OnCrosshairOn:27\" ({ref looked} => ModUIFloat \"HUDMainMenu/_typed\" 1)
 SetEventHandler \"OnCrosshairOn:24\" ({ref looked} => ModUIFloat \"HUDMainMenu/_wrongType\" 1)
+SetEventHandler \"OnCrosshairOn:28\" ({ref looked} => ModUIFloat \"HUDMainMenu/_doorType\" 1)
 SetEventHandler \"OnCrosshairOn\" ({ref looked} => ModUIFloat \"HUDMainMenu/_byForm\" 1) \"first\"::0xE20
 SetEventHandler \"OnCrosshairOn\" ({ref looked} => ModUIFloat \"HUDMainMenu/_byList\" 1) \"first\"::0xE30
 SetJohnnyOnCrosshairEventHandler 1 (Begin Function {ref looked}
@@ -222,6 +223,11 @@ End) 0");
         XVal::Num(1.0),
         "existing target getter is a baseline positive control"
     );
+    assert_eq!(
+        query(&mut g, "ref typedTarget\nlet typedTarget := GetCrosshairRef\nSetFunctionValue (typedTarget.GetType)"),
+        XVal::Num(27.0),
+        "crosshair-container-type: actual source GetType must identify the container before typed delivery is checked"
+    );
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_johnnyOrder"), Some(1.0));
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_johnnyOld"), Some(1.0));
     assert_eq!(
@@ -237,7 +243,8 @@ End) 0");
         Some(f64::from(0xE20u32)),
         "crosshair-source-literal: callback decimal must equal the actual target FormID"
     );
-    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_typed"), Some(1.0));
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_typed"), Some(1.0),
+        "crosshair-typed-container: registered type27 must run for the actual CONT; trace: {:?}", g.events);
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_wrongType"), Some(0.0));
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byForm"), Some(1.0));
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byList"), Some(0.0));
@@ -271,7 +278,16 @@ End) 0");
     );
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byForm"), Some(1.0));
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byList"), Some(1.0));
-    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_typed"), Some(1.0));
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_typed"), Some(1.0),
+        "crosshair-typed-door-neighbor: DOOR must not increment the CONT listener");
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_doorType"), Some(1.0),
+        "crosshair-typed-door: registered type28 must run for the actual DOOR; trace: {:?}", g.events);
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_wrongType"), Some(0.0));
+    assert_eq!(
+        query(&mut g, "ref typedTarget\nlet typedTarget := GetCrosshairRef\nSetFunctionValue (typedTarget.GetType)"),
+        XVal::Num(28.0),
+        "crosshair-door-type: typed event matches actual source GetType"
+    );
     g.set_crosshair_ref(None);
     assert_eq!(
         query(&mut g, "SetFunctionValue (GetCrosshairRef == 0)"),

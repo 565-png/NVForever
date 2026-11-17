@@ -25,7 +25,7 @@ impl Game<'_> {
         // Snapshot the type before callbacks can change the reference's data.
         let ty = crate::functions::base_of(self, r)
             .and_then(|base| self.data.sig(base))
-            .and_then(|sig| crate::functions::items::form_type_code(&sig));
+            .and_then(|sig| fnv_script::vm::form_type_code(&sig));
         self.dispatch_event("OnCrosshairOn", vec![XVal::Ref(r.0)], Some(r));
         if let Some(ty) = ty {
             self.dispatch_event(
