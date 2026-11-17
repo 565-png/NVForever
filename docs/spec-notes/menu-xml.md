@@ -815,9 +815,13 @@ Candidate package-wide strict Clippy passed. Both compile controllers retained
 a failure from their unchanged descendant-shutdown deadline despite Cargo
 exiting zero. The emitted images were subsequently verified and executed in
 fresh contained jobs, with exact source/index/mtime seals and unchanged image
-hashes. These results qualify this package's CPU behavior, not whole-workspace
-or engine checks, native parity, or rendered installed-menu acceptance; those
-remain pending.
+hashes. These historical results qualify this package's CPU behavior. Hosted
+whole-workspace and engine checks for each published source revision are recorded
+separately in [PR #2858](https://github.com/LootJunkieAzza/NVForever/pull/2858);
+they do not change the local controller results or transfer automatically to
+later revisions. Native parity, rendered installed-menu and complete sentinel
+acceptance remain unqualified; structural script getter queries remain outside
+this change.
 
 ## 7. How mods change menus
 
