@@ -130,7 +130,7 @@ fn source_driver_and_local_values_preserve_case_empty_and_percent_strings() {
         value(&mut g, "GetStringSetting \"sTargetTypeCrown\""),
         XVal::Str("  own value %g  ".into())
     );
-    query(&mut g, "string_var quoted\nlet quoted := (sv_Char 34) + \"quoted\" + (sv_Char 34)\nSetStringSetting \"sTargetTypeTalk\" (quoted)").unwrap();
+    query(&mut g, "string_var quoted\nlet quoted := sv_Construct \"%qquoted%q\"\nSetStringSetting \"sTargetTypeTalk\" (quoted)").unwrap();
     assert_eq!(
         value(&mut g, "GetStringSetting \"sTargetTypeTalk\""),
         XVal::Str("\"quoted\"".into())
