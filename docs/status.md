@@ -324,3 +324,6 @@ confirmed those bounded case results and the false overall flag. The accepted-ma
 060d union retains the tested fnv-ui Rust/fixtures; whole-graph qualification stays
 bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
+
+- Regular preactivation rechecks the existing destroyed-target refusal after callback
+  mutations; additional core/engine regressions authored, runtime checks pending.

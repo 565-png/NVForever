@@ -946,7 +946,7 @@ impl Runtime {
         let r = if has_block {
             info!("script: activating {target} runs its OnActivate block instead of the default action");
             g.activate(player, target, ActMode::Hand).map(|done| {
-                if done["result"] == "prevented" { ByHand::Refused } else { ByHand::Script }
+                if matches!(done["result"].as_str(), Some("prevented" | "destroyed")) { ByHand::Refused } else { ByHand::Script }
             })
         } else {
             // The shared default action; what is this path's own is that `activate.rs`

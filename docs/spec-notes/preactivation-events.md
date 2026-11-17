@@ -49,3 +49,13 @@ actual activate_by_hand function then the existing OpenBarter/OpenContainer mess
 consumers. They do not claim pointer picking, physical device input, a complete
 rendered menu, installed QuickTrade acceptance or original-game parity. All new
 compiler, lint, core and engine controls are unrun for this proposal.
+
+## Mutations before the action
+
+[design] After preactivation handlers finish without an explicit veto, regular
+activation repeats its existing destroyed-door/activator admission before running
+a script block or default action. A void callback may mutate that flag without
+becoming a result-based veto. Clearing it again in the same callback permits the
+ordinary action. The existing policy still allows destroyed containers and actors.
+This preserves the established SetDestroyed refusal rather than adding a new
+callback return rule. Original-game ordering for such mutations remains unobserved.

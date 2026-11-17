@@ -1204,3 +1204,6 @@ mod wheel_hold_tests {
 #[cfg(test)]
 #[path = "menu/preactivation_tests.rs"]
 mod preactivation_tests;
+
+#[cfg(test)]
+mod preactivation_mutation_tests;
