@@ -2199,3 +2199,37 @@ still need runtime checks after this review revision.
   `pipboy/items.rs::draw` and `tiles/inventory_menu.rs::describe`; screenshots
   accompany both selections for visual review. Log checks verify card text
   and selection cleanup; layout still needs the runtime screenshots.
+
+
+### Replacement-art density and map-image dimensions
+
+- [design] The hand-built STATS list, karma and reputation panels retain their
+  existing 256-pixel logical image height and zoom. An actually selected own-file
+  replacement with another pixel density uses the same density conversion already
+  used by the fallback paperdoll: logical height divided by selected image height.
+  The displayed geometry and normalized source region stay unchanged. Selected
+  atlas pieces retain their existing texel contract; the size of a shadowed own
+  file is not used. A missing atlas uses the density of its actual own-file fallback.
+- [design] MapMenu publishes own-file image dimensions before evaluating image
+  layout, using the same file-size writer as StatsMenu. This includes zero-size
+  metadata children used by ratio-based map-marker templates. A replacement
+  image's filename or zoom change refreshes its dimensions; cached decoded sizes
+  do not substitute another image's dimensions. Atlas-backed and runtime images
+  retain their existing metadata owners.
+- [hypothesis] These repair two reported Windows QA boundaries: clipped high-
+  resolution skill art when the Stats page falls back to the hand-built view, and
+  ratio-based map markers whose child-image dimensions were never supplied. They
+  do not establish original-game UI parity or repair a tile-page admission failure.
+- [design] Authored CPU controls call the actual fallback page producer through
+  GameData/VFS and inspect its ImageNode geometry/source rectangle, including TGA
+  content under a DDS name, native atlas selection and missing-atlas fallback. A
+  MapMenu page control reads authored DDS files through the same image provider
+  and checks evaluated image dimensions, normalized crop, zoom and emitted pieces
+  across a filename/density change. Execution results belong to their exact tested
+  revision; source authoring alone supplies no runtime or screenshot acceptance.
+
+- [design] The fallback-art controls explicitly choose General's karma or reputation
+  mode instead of inheriting the default view. Positions and layout units stay exact;
+  positive emitted dimensions may differ by at most one representable f32 step when
+  an atlas subrectangle is multiplied back into canvas units. Normalized source
+  regions and the selected atlas rectangle remain independent, unchanged checks.
