@@ -39,7 +39,10 @@
 //! - **Drift direction** [engineering choice]: the dome's +U offset (which moves its
 //!   clouds towards -U on the mesh) is mapped to the weather's wind direction
 //!   (`tree::wind_vector`: fixed, or a script's SetWindDirection), so the ground pattern
-//!   drifts downwind at the layers' own speeds, one texture repeat per [`REPEAT_UNITS`]
+//!   drifts downwind at the layers' own speeds. The wind's displacement is accumulated
+//!   ([`WindPhase`]: the direction of each moment times the time passed, in f64), so a
+//!   direction change turns the drift from then on and never moves the pattern already
+//!   drifted, nor the layers against each other. One texture repeat per [`REPEAT_UNITS`]
 //!   (a lead, not a mechanism: the GECK wiki's Weather page says the wind speed "affects
 //!   cloud, grass, tree movement" [documented: geck-wiki snapshot 2026-10-28, Weather]).
 //!   The texture's own axes stay on world X/Z (a rotated repeat would not tile).
@@ -390,26 +393,49 @@ pub fn compose(layers: &[ComposeLayer]) -> Vec<u8> {
     t.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8).collect()
 }
 
-/// The texture-space drift of a layer scrolling `scroll` repeats per second after `secs`
-/// seconds along the unit direction `dir` (texture u, v = world x, z), wrapped to 0..1 on
-/// each axis. Worked unwrapped in f64, so a direction off the axes has no jump when the
-/// drift passes a whole repeat.
-pub fn drift(secs: f64, scroll: f64, dir: Vec2) -> [f64; 2] {
-    let d = secs * scroll;
-    [(d * f64::from(dir.x)).rem_euclid(1.0), (d * f64::from(dir.y)).rem_euclid(1.0)]
+/// The wind's accumulated displacement: the integral of the drift direction (Bevy x, z,
+/// unit) over the cloud clock's seconds, in f64. Every layer's drift is its scroll rate
+/// times this, so a direction change alters the velocity from that moment only: the
+/// pattern already drifted and the layers' phases against each other stay where they are.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WindPhase {
+    /// The clock at the last step (`None` before the first).
+    last: Option<f64>,
+    /// Seconds along x and z.
+    pub phase: [f64; 2],
 }
 
-/// `uv_offset` for the reference layer: the ground pattern moves along `wind` (Bevy x, z,
-/// unit) as the dome's offset grows, so its texture offset runs against it.
-pub fn uv_offset(secs: f64, ref_scroll: f64, wind: Vec2) -> Vec2 {
-    let [u, v] = drift(secs, ref_scroll, -wind);
+impl WindPhase {
+    /// Advance to `secs` with the direction now, `dir`; the first step counts from 0 (as
+    /// if the wind had always blown this way, which a frozen clock keeps).
+    pub fn advance(&mut self, secs: f64, dir: Vec2) -> [f64; 2] {
+        let dt = secs - self.last.unwrap_or(0.0);
+        self.phase[0] += dt * f64::from(dir.x);
+        self.phase[1] += dt * f64::from(dir.y);
+        self.last = Some(secs);
+        self.phase
+    }
+}
+
+/// The texture-space drift of a layer scrolling `scroll` repeats per second after the
+/// wind's displacement `phase` (texture u, v = world x, z), wrapped to 0..1 on each axis.
+/// Worked unwrapped in f64, so a direction off the axes has no jump when the drift passes
+/// a whole repeat.
+pub fn drift(phase: [f64; 2], scroll: f64) -> [f64; 2] {
+    [(phase[0] * scroll).rem_euclid(1.0), (phase[1] * scroll).rem_euclid(1.0)]
+}
+
+/// `uv_offset` for the reference layer: the ground pattern moves downwind as the dome's
+/// offset grows, so its texture offset runs against the wind's displacement.
+pub fn uv_offset(phase: [f64; 2], ref_scroll: f64) -> Vec2 {
+    let [u, v] = drift([-phase[0], -phase[1]], ref_scroll);
     Vec2::new(u as f32, v as f32)
 }
 
 /// Where layer `scroll` is sampled against the image composed for the reference layer
 /// `ref_scroll`: its drift beyond the reference's.
-pub fn layer_shift(secs: f64, scroll: f64, ref_scroll: f64, wind: Vec2) -> [f64; 2] {
-    drift(secs, scroll - ref_scroll, -wind)
+pub fn layer_shift(phase: [f64; 2], scroll: f64, ref_scroll: f64) -> [f64; 2] {
+    drift([-phase[0], -phase[1]], scroll - ref_scroll)
 }
 
 /// Distance between two wrapped texture coordinates, in texels.
@@ -464,6 +490,7 @@ enum Alpha {
 struct Composed {
     layers: Vec<ComposedLayer>,
     ref_scroll: f64,
+    /// The drift direction when composed (logged).
     dir: Vec2,
 }
 
@@ -481,9 +508,10 @@ struct ComposedLayer {
 impl Composed {
     /// Whether `want` differs from this enough to compose again.
     fn differs(&self, want: &Composed) -> bool {
+        // The direction is not compared: a change of it moves the shifts on from where they
+        // are (WindPhase), so they say when to compose again.
         self.layers.len() != want.layers.len()
             || (self.ref_scroll - want.ref_scroll).abs() > 1e-9
-            || (self.dir - want.dir).length() > 1e-4
             || self.layers.iter().zip(&want.layers).any(|(a, b)| {
                 a.texture != b.texture
                     || a.covered != b.covered
@@ -532,6 +560,8 @@ pub struct CloudShadowWork {
     generation: u64,
     /// The weather set last seen.
     weather_set: Option<WeatherSet>,
+    /// The wind's accumulated displacement.
+    wind: WindPhase,
 }
 
 impl CloudShadowWork {
@@ -667,6 +697,11 @@ pub fn produce_cloud_shadows(
 ) {
     let work = &mut *work;
     let Some(sky) = sky else { return };
+    // The wind's displacement runs on whatever happens below (indoors too).
+    let cal = calibration();
+    let secs = cloud_seconds(&time);
+    let dir = drift_direction(&sky, cal.direction_deg);
+    let phase = work.wind.advance(secs, dir);
     // Discontinuities first: nothing older than them reaches the image.
     let ws = world.as_deref().map(|w| w.world);
     work.note_world(ws, &mut published, &mut images);
@@ -719,9 +754,6 @@ pub fn produce_cloud_shadows(
         return;
     }
 
-    let cal = calibration();
-    let secs = cloud_seconds(&time);
-    let dir = drift_direction(&sky, cal.direction_deg);
     // The reference: the heaviest covering layer (the first of equals).
     let reference = layers
         .iter()
@@ -737,7 +769,7 @@ pub fn produce_cloud_shadows(
                 weight: l.weight,
                 covered: alpha_of(&work.alphas, &l.texture).is_some(),
                 scroll: l.scroll,
-                shift: layer_shift(secs, l.scroll, ref_scroll, dir),
+                shift: layer_shift(phase, l.scroll, ref_scroll),
             })
             .collect(),
         ref_scroll,
@@ -773,7 +805,7 @@ pub fn produce_cloud_shadows(
     let out = CloudShadowOutput {
         image: image.clone(),
         uv_scale: Vec2::splat(1.0 / cal.repeat),
-        uv_offset: uv_offset(secs, shown.ref_scroll, shown.dir),
+        uv_offset: uv_offset(phase, shown.ref_scroll),
         plane_height: ground + cal.plane_above_ground,
         strength: cal.strength,
     };
@@ -940,6 +972,17 @@ mod tests {
         assert!(projected_uv(low, Vec3::X, plane, scale, offset).is_none());
     }
 
+    /// The wind's displacement after `secs` seconds of one direction.
+    fn steady(secs: f64, wind: Vec2) -> [f64; 2] {
+        WindPhase::default().advance(secs, wind)
+    }
+
+    /// Wrapped distance between two offsets, per axis.
+    fn wrapped(a: Vec2, b: Vec2) -> Vec2 {
+        let d = (a - b).abs();
+        d.min(Vec2::ONE - d)
+    }
+
     #[test]
     fn cloud_drift_follows_wind_without_jumps() {
         let wind = Vec2::new(0.6, -0.8);
@@ -947,20 +990,44 @@ mod tests {
         // Across a whole repeat of drift the offset moves smoothly (wrapped per axis).
         let one = 1.0 / scroll;
         for secs in [0.0, one - 0.5, one, 7.3 * one, 36_000.0] {
-            let (a, b) = (uv_offset(secs, scroll, wind), uv_offset(secs + 0.5, scroll, wind));
-            let d = (a - b).abs();
-            let d = d.min(Vec2::ONE - d);
-            assert!(d.length() < 0.5 * scroll as f32 * 1.01 + 1e-6, "{secs}: {a} {b}");
+            let (a, b) = (uv_offset(steady(secs, wind), scroll), uv_offset(steady(secs + 0.5, wind), scroll));
+            assert!(wrapped(a, b).length() < 0.5 * scroll as f32 * 1.01 + 1e-6, "{secs}: {a} {b}");
         }
         // The pattern moves downwind: a texel of the image lands further along the wind.
-        let (t0, t1) = (uv_offset(10.0, scroll, wind), uv_offset(20.0, scroll, wind));
+        let (t0, t1) = (uv_offset(steady(10.0, wind), scroll), uv_offset(steady(20.0, wind), scroll));
         let world_move = -(t1 - t0) * REPEAT_UNITS;
         assert!(world_move.dot(wind) > 0.0);
         // Layers at the reference's speed are not shifted; others by their extra drift.
-        assert_eq!(layer_shift(1234.5, scroll, scroll, wind), [0.0, 0.0]);
-        let s = layer_shift(100.0, 2.0 * scroll, scroll, wind);
-        let o = uv_offset(100.0, scroll, wind);
+        assert_eq!(layer_shift(steady(1234.5, wind), scroll, scroll), [0.0, 0.0]);
+        let s = layer_shift(steady(100.0, wind), 2.0 * scroll, scroll);
+        let o = uv_offset(steady(100.0, wind), scroll);
         assert!(((s[0] as f32) - o.x).abs() < 1e-5 && ((s[1] as f32) - o.y).abs() < 1e-5);
+    }
+
+    /// A SetWindDirection late in a session turns the drift from then on: the published
+    /// offset and the layers' shifts against each other are where they were at the change,
+    /// and later move along the new direction only.
+    #[test]
+    fn cloud_wind_change_keeps_phase() {
+        let scroll = 65.0 / 25_600.0;
+        let other = 2.5 * scroll;
+        let (east, north) = (Vec2::X, Vec2::new(0.0, -1.0));
+        let mut wind = WindPhase::default();
+        wind.advance(0.0, east);
+        let before = wind.advance(36_000.0, east);
+        let (offset_before, shift_before) = (uv_offset(before, scroll), layer_shift(before, other, scroll));
+        // The direction changes at this moment: nothing moves.
+        let at_change = wind.advance(36_000.0, north);
+        assert_eq!(uv_offset(at_change, scroll), offset_before);
+        assert_eq!(layer_shift(at_change, other, scroll), shift_before);
+        // Ten seconds on: moved by ten seconds' drift along the new direction alone.
+        let later = wind.advance(36_010.0, north);
+        let moved = uv_offset(later, scroll) - offset_before;
+        assert!(wrapped(uv_offset(later, scroll), offset_before).x < 1e-5, "no drift along the old direction: {moved}");
+        assert!((wrapped(uv_offset(later, scroll), offset_before).y - (10.0 * scroll) as f32).abs() < 1e-5, "{moved}");
+        // The old rule (all the time passed times the current direction) would have jumped.
+        let old_rule = uv_offset(steady(36_000.0, north), scroll);
+        assert!(wrapped(old_rule, offset_before).length() > 0.05, "{old_rule} {offset_before}");
     }
 
     #[test]
