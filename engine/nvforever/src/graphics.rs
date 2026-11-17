@@ -36,6 +36,9 @@
 //! - **Terrain anti-tiling** (`terrain-anti-tiling`, off in both presets, likewise): the
 //!   landscape textures are read at a few offset places hashed from the world and blended,
 //!   so their repeat no longer shows as a grid (terrain.rs "Anti-tiling", #2551).
+//! - **Heat haze** (`heat-haze`, a prototype, off in both presets): the far ground near the
+//!   horizon shimmers slightly on hot clear days, by the sun and the live weather
+//!   (`heat_haze.rs`).
 //!
 //! The game's own image space (the grade and the modifiers' blur, imagespace.rs) is left
 //! as it is: none of these replaces or repeats it. Every value here is an engineering
@@ -173,11 +176,13 @@ pub struct Graphics {
     /// Anti-tiling of the landscape textures (terrain.rs "Anti-tiling"; off in both
     /// presets) [design, #2551].
     pub terrain_anti_tiling: bool,
+    /// Heat haze at distance (heat_haze.rs; a prototype, off in both presets) [design].
+    pub heat_haze: bool,
 }
 
 /// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing and
 /// shadow-filter choices that are not vanilla's, in the order of [`Graphics::describe`].
-pub const KEYS: [&str; 14] = [
+pub const KEYS: [&str; 15] = [
     "ambient-occlusion",
     "fine-shadows",
     "bloom",
@@ -192,6 +197,7 @@ pub const KEYS: [&str; 14] = [
     "shadow-filter-temporal",
     "terrain-height-blend",
     "terrain-anti-tiling",
+    "heat-haze",
 ];
 
 impl Graphics {
@@ -235,6 +241,8 @@ impl Graphics {
             terrain_height_blend: false,
             // The same for anti-tiling [design, #2551].
             terrain_anti_tiling: false,
+            // Off in both looks: a prototype of our own [design].
+            heat_haze: false,
         }
     }
 
@@ -254,6 +262,7 @@ impl Graphics {
             "water-reflections" => &mut self.water_reflections,
             "terrain-height-blend" => &mut self.terrain_height_blend,
             "terrain-anti-tiling" => &mut self.terrain_anti_tiling,
+            "heat-haze" => &mut self.heat_haze,
             _ => return None,
         })
     }
@@ -303,6 +312,7 @@ impl Graphics {
             (self.shadow_filter == ShadowFilteringMethod::Temporal, "temporal shadow filtering"),
             (self.terrain_height_blend, "terrain height blending"),
             (self.terrain_anti_tiling, "terrain anti-tiling"),
+            (self.heat_haze, "heat haze"),
         ];
         let mut on: Vec<&str> = names.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
         if self.fsr().is_some() {
@@ -474,7 +484,7 @@ impl Plugin for GraphicsPlugin {
         app.insert_resource(g)
             .insert_resource(MsaaSetting(self.1))
             .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
-            .add_plugins((crate::ssao::SsaoPlugin, crate::post::PostPlugin, crate::taa::TaaPlugin, crate::shafts::ShaftsPlugin, crate::upscaler::prep::PrepPlugin, crate::fsr::FsrPlugin, crate::dlss::DlssPassPlugin))
+            .add_plugins((crate::ssao::SsaoPlugin, crate::post::PostPlugin, crate::taa::TaaPlugin, crate::shafts::ShaftsPlugin, crate::heat_haze::HeatHazePlugin, crate::upscaler::prep::PrepPlugin, crate::fsr::FsrPlugin, crate::dlss::DlssPassPlugin))
             .add_systems(Startup, |g: Res<Graphics>| info!("graphics: {}", g.describe()))
             .add_systems(Update, (crate::upscaler::follow_request, apply, sun_shadow_key.pipe(sun_shadow_quality).after(crate::sky::update_sky)).chain());
         if let Some(ft) = self.2.clone().filter(|f| f.every > 0.0) {
@@ -855,6 +865,11 @@ fn apply(
             e.insert(LightShafts::default());
         } else {
             e.remove::<LightShafts>();
+        }
+        if g.heat_haze {
+            e.insert(crate::heat_haze::HeatHaze::default());
+        } else {
+            e.remove::<crate::heat_haze::HeatHaze>();
         }
     }
     let reach = if g.fine_shadows { FINE_SHADOW_REACH } else { 1.0 };
@@ -1257,6 +1272,18 @@ mod tests {
         let mut g = Graphics::preset(Preset::Vanilla);
         *g.switch("terrain-anti-tiling").expect("settings key") = true;
         assert_eq!(g, on);
+    }
+
+    #[test]
+    fn heat_haze_is_off_in_both_looks_and_has_its_own_key() {
+        assert!(!Graphics::preset(Preset::Vanilla).heat_haze && !Graphics::preset(Preset::Enhanced).heat_haze);
+        let on = Graphics::only(&["heat-haze".into()]).expect("heat-haze");
+        assert!(on.heat_haze);
+        assert_eq!(on.describe(), "light glow, heat haze");
+        let mut g = Graphics::preset(Preset::Vanilla);
+        *g.switch("heat-haze").expect("settings key") = true;
+        assert_eq!(g, on);
+        assert!(!Graphics::preset(Preset::Enhanced).describe().contains("heat haze"));
     }
 
     // The guard alone: repeated requests and an earlier registration. Both callers

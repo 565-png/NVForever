@@ -1114,6 +1114,12 @@ impl SkyState {
         sun_direction(&self.climate, self.hour, SUN_SOUTH)[2].clamp(-1.0, 1.0).asin().to_degrees()
     }
 
+    /// Sun elevation in degrees at another `hour` of the same climate (any value; the
+    /// heat haze's afternoon lag, `heat_haze.rs`).
+    pub fn sun_elevation_at(&self, hour: f32) -> f32 {
+        sun_direction(&self.climate, hour, SUN_SOUTH)[2].clamp(-1.0, 1.0).asin().to_degrees()
+    }
+
     /// Twilight (0..1): 1 while the sun is above the horizon, falling to 0 as it sinks to
     /// `TWILIGHT_END_DEG` (the end of astronomical twilight) [hypothesis fitted 2026-10-23:
     /// the share of the horizon colour's wide floor that fits the original's sky is about
