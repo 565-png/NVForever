@@ -5,6 +5,14 @@ use crate::script_draw::tests::{play_over, record, sub, top};
 use fnv_script::vm::XVal;
 use fnv_sim::FormId;
 
+// The same enabled Object SCHR fields as the core fixture builder, using the
+// accepted ScriptHeader schema rather than an all-zero (disabled) header.
+fn enabled_script_header() -> Vec<u8> {
+    [0u32.to_le_bytes().to_vec(), 0u32.to_le_bytes().to_vec(),
+     0u32.to_le_bytes().to_vec(), 0u32.to_le_bytes().to_vec(),
+     0u16.to_le_bytes().to_vec(), 1u16.to_le_bytes().to_vec()].concat()
+}
+
 fn fixture() -> (ScriptState, SimState, Targeted) {
     let text = |sig: &[u8; 4], s: &str| sub(sig, [s.as_bytes(), &[0]].concat());
     let source="scn PromptStringDriver\nstring_var sourceMarker\nBegin Function {string_var desired}\nSetStringSetting (\"sTargetTypeTalk\") (desired)\nSetFunctionValue (GetStringSetting (\"sTargetTypeTalk\"))\nEnd\n";
@@ -34,7 +42,7 @@ fn fixture() -> (ScriptState, SimState, Targeted) {
                 0x820,
                 &[
                     text(b"EDID", "PromptStringDriver"),
-                    sub(b"SCHR", vec![0; 20]),
+                    sub(b"SCHR", enabled_script_header()),
                     sub(b"SCDA", vec![]),
                     sub(b"SCTX", source.as_bytes().to_vec()),
                 ],
@@ -44,7 +52,12 @@ fn fixture() -> (ScriptState, SimState, Targeted) {
     let mut scripts = ScriptState::over_plugins(play.lo.plugins);
     let g = &mut scripts.rt.as_mut().unwrap().game;
     g.cfg.strict = true;
-    let unit = g.data.script(FormId(0x820)).unwrap();
+    let unit = g.data.script(FormId(0x820u32)).unwrap_or_else(|| {
+        let (units, issues) = fnv_script::unit::read_load_order(play.lo, play.schema);
+        let headers: Vec<_> = units.iter().map(|u| (&u.owner, &u.header, u.has_scda, u.source.is_some())).collect();
+        panic!("missing enabled fixture SCPT 0x{:08X}; decoded headers={headers:?}; read issues={issues:?}; source selections={:?}", 0x820u32, g.data.source_units);
+    });
+    assert!(unit.unit.header.flags & 1 != 0, "fixture SCPT 0x{:08X} disabled: {:?}", 0x820u32, unit.unit.header);
     assert!(unit.unit.source.is_some());
     assert!(g
         .data

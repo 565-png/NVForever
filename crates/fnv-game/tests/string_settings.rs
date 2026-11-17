@@ -59,7 +59,7 @@ fn fixture() -> Fixture {
                 0x820,
                 &[
                     sub(b"EDID", z("OwnedStringDriver")),
-                    sub(b"SCHR", vec![0; 20]),
+                    unit(0, &[], &[], &[])[0].clone(),
                     sub(b"SCDA", vec![]),
                     sub(b"SCTX", source.as_bytes().to_vec()),
                 ],
@@ -82,7 +82,12 @@ fn fixture() -> Fixture {
         &catalogue,
         &refs,
     );
-    let unit = data.script(FormId(0x820)).unwrap();
+    let unit = data.script(FormId(0x820u32)).unwrap_or_else(|| {
+        let (units, issues) = fnv_script::unit::read_load_order(&lo, &schema);
+        let headers: Vec<_> = units.iter().map(|u| (&u.owner, &u.header, u.has_scda, u.source.is_some())).collect();
+        panic!("missing enabled fixture SCPT 0x{:08X}; decoded headers={headers:?}; read issues={issues:?}; source selections={:?}", 0x820u32, data.source_units);
+    });
+    assert!(unit.unit.header.flags & 1 != 0, "fixture SCPT 0x{:08X} disabled: {:?}", 0x820u32, unit.unit.header);
     assert!(unit.unit.source.is_some());
     assert!(data
         .source_units
