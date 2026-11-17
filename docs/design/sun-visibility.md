@@ -14,6 +14,7 @@ Producers write the main-world resource `SunVisibility` (`engine/nvforever/src/s
 
 | Field | Type | Meaning |
 |---|---|---|
+| `cloud_enabled` | `bool` | Cloud shadows is switched on: the views take the cloud variant whether or not `cloud` is set; without `cloud` the cloud is neutral (K = 1) |
 | `cloud` | `Option<CloudVisibility { image, uv_scale, uv_offset, plane_height, strength }>` | K: a transmittance texture (red, 1 clear, 0 opaque) on a horizontal plane `plane_height` up, looked up where the ray from the receiver towards the light meets it, at uv = hit.xz × `uv_scale` + `uv_offset` (repeating); K = 1 − `strength` × (1 − texel) |
 | `terrain` | `Option<TerrainVisibility { image, uv_scale, uv_offset, fade_band, edge_fade, height_softness }>` | T: a shadow-height map over world xz (#2671); its sampling is a stub returning 1 until stage T2 |
 | `debug` | `DebugMode` (`Off`, `Cloud`, `Terrain`, `Combined`) | the debug view |
@@ -30,7 +31,13 @@ Axes are Bevy's world axes (y up), units game units. In the shader
   sampler) (`engine/vendor/bevy_pbr/src/render/mesh_view_bindings.rs`,
   `NvfSunVisibilityBindings`; engine/vendor/README.md).
 - Shader defs: `NVF_SUN_VISIBILITY` while the plumbing is on for the view,
-  `NVF_CLOUD_VISIBILITY` with a cloud producer, `NVF_TERRAIN_VISIBILITY` with a terrain one.
+  `NVF_CLOUD_VISIBILITY` while Cloud shadows is switched on (or the test producer sets a
+  cloud), `NVF_TERRAIN_VISIBILITY` with a terrain producer.
+- Switched on and published are kept apart: the switch alone decides the markers, the
+  layout key bit, the pipeline key bits and the shader defs; the publication only fills
+  the uniform and the texture. Switched on with nothing published, the uniform carries a
+  neutral cloud (strength 0, the plane below every receiver) and the texture binding is the
+  white fallback, so K = 1.
 
 ## 2. The composition rule
 
@@ -65,8 +72,13 @@ applies to the moonlight too. Indoors the same entity is the cell's directional 
 is unmarked. The first-person arms' shade light and menu views' lights never carry it.
 
 Which views: the world camera (`FlyCam`), the water reflection camera and a scope's lens
-camera. They keep their bindings across doors (only the light's mark changes), so going
-in and out builds no new pipelines.
+camera. While Cloud shadows is switched on they keep their bindings, layout key bit and
+shader defs through doors, missing or still-decoding textures and weathers without cover:
+the producer clearing its output (it does indoors, cloud_shadows.rs) only makes the cloud
+neutral, and indoors the light is unmarked, so nothing darkens. Only switching the feature
+on or off changes the views' pipelines. A unit test runs the producer's own door path
+(cloud_shadows.rs `cloud_bindings_survive_doors`); that no pipeline is built at a door is
+for a run to show (§6).
 
 ## 3. Off by default
 

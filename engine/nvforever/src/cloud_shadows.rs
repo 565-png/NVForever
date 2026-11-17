@@ -46,9 +46,11 @@
 //!
 //! It applies outdoors only, day and night alike (at night the directional light is the
 //! moon's, attenuated the same way, no strength added); off, indoors, or with no drawn,
-//! textured cloud layer, the output is `None`. Off by default ([`CloudShadows`]; C2 adds
-//! the settings row); `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1` turns it on. Off, nothing runs
-//! beyond the run condition and no image is held.
+//! textured cloud layer, the output is `None`. While the switch is on, `None` does not take
+//! the pipelines' cloud variant away: sun_visibility.rs keeps the views on it with a
+//! neutral cloud (K = 1), so only the switch changes pipelines ([`follow_switch`]). Off by
+//! default ([`CloudShadows`]); `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1` turns it on. Off, nothing
+//! runs beyond the run conditions and no image is held.
 //!
 //! Test aids: `NVF_PLAY_DEBUG_CLOUD_SHADOW=<plane height>,<repeat>,<strength>[,<direction
 //! deg>]` overrides the calibration constants (direction in game degrees from +x towards
@@ -105,10 +107,20 @@ const PUBLISH_OFFSET_STEP: f32 = 1.0 / 4096.0;
 pub const MIN_LIGHT_Y: f32 = 0.02;
 
 /// Whether cloud shadows are made: off by default (C2 adds the settings row);
-/// `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1` turns them on for now.
+/// `forced` by `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1`.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CloudShadows {
     pub enabled: bool,
+    /// `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1`.
+    pub forced: bool,
+}
+
+/// The switch into the sun-visibility plumbing: `cloud_enabled` decides the views' cloud
+/// variant, whether or not an image is published (sun_visibility.rs module notes).
+pub fn follow_switch(shadows: Res<CloudShadows>, mut sink: ResMut<crate::sun_visibility::SunVisibility>) {
+    if sink.cloud_enabled != shadows.enabled {
+        sink.cloud_enabled = shadows.enabled;
+    }
 }
 
 /// Run condition: the producer runs only while cloud shadows are on.
@@ -152,13 +164,17 @@ pub struct CloudShadowsPlugin;
 
 impl Plugin for CloudShadowsPlugin {
     fn build(&self, app: &mut App) {
-        let enabled = nvf_play::dialogue::debug_switch(std::env::var("NVF_PLAY_DEBUG_CLOUD_SHADOWS").ok().as_deref());
-        app.insert_resource(CloudShadows { enabled })
+        let forced = nvf_play::dialogue::debug_switch(std::env::var("NVF_PLAY_DEBUG_CLOUD_SHADOWS").ok().as_deref());
+        app.insert_resource(CloudShadows { enabled: forced, forced })
             .init_resource::<CloudShadowPublished>()
             .init_resource::<CloudShadowWork>()
             .add_systems(
                 Update,
-                (produce_cloud_shadows.run_if(cloud_shadows_on), release_cloud_shadows.run_if(resource_changed::<CloudShadows>))
+                (
+                    follow_switch.run_if(resource_changed::<CloudShadows>),
+                    produce_cloud_shadows.run_if(cloud_shadows_on),
+                    release_cloud_shadows.run_if(resource_changed::<CloudShadows>),
+                )
                     .chain()
                     .after(crate::sky::update_clouds),
             )
@@ -574,11 +590,12 @@ pub fn produce_cloud_shadows(
     dome: Query<&crate::sky::CloudLayer>,
 ) {
     let work = &mut *work;
-    let (Some(sky), Some(data)) = (sky, data) else { return };
+    let Some(sky) = sky else { return };
     if sky.interior.is_some() {
         work.go_off("indoors", false, &mut published, &mut images);
         return;
     }
+    let Some(data) = data else { return };
     let mut drawn = [false; 4];
     for cl in &dome {
         if let Some(d) = drawn.get_mut(cl.layer()) {
@@ -883,6 +900,75 @@ mod tests {
         let mut other = base.clone();
         other.layers[0].texture = "b.dds".into();
         assert!(base.differs(&other));
+    }
+
+    /// The real producer path through a door (finding 1 of the C0/C1 review): outdoors
+    /// with a published image, indoors (the producer clears its output), and outdoors
+    /// again before anything is composed (no game data here: nothing published). While
+    /// Cloud shadows is on the views keep their markers and the cloud variant, the cloud
+    /// going neutral meanwhile; only switching off takes them away.
+    #[test]
+    fn cloud_bindings_survive_doors() {
+        use crate::sun_visibility::{mark_targets, marking_needed, OutdoorSunLight, SunVisibility, SunVisibilityUniform, SunVisibilityView, NEUTRAL_CLOUD};
+        let mut app = App::new();
+        app.insert_resource(CloudShadows { enabled: true, forced: false })
+            .init_resource::<CloudShadowPublished>()
+            .init_resource::<CloudShadowWork>()
+            .init_resource::<SunVisibility>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Time>()
+            .insert_resource(crate::sky::SkyState::default())
+            .add_systems(
+                Update,
+                (
+                    follow_switch.run_if(resource_changed::<CloudShadows>),
+                    produce_cloud_shadows.run_if(cloud_shadows_on),
+                    release_cloud_shadows.run_if(resource_changed::<CloudShadows>),
+                    publish_cloud_shadows,
+                    mark_targets.run_if(marking_needed),
+                )
+                    .chain(),
+            );
+        let sun = app.world_mut().spawn((crate::sky::Sun, DirectionalLight::default())).id();
+        let cam = app.world_mut().spawn((crate::fly::FlyCam { yaw: 0.0, pitch: 0.0, speed: 0.0 }, Transform::default())).id();
+        // Outdoors, an image published (as the producer leaves it after a composition).
+        let image = app.world_mut().resource_mut::<Assets<Image>>().add(new_image());
+        app.world_mut().resource_mut::<CloudShadowPublished>().0 =
+            Some(CloudShadowOutput { image, uv_scale: Vec2::splat(1.0 / REPEAT_UNITS), uv_offset: Vec2::ZERO, plane_height: PLANE_ABOVE_GROUND, strength: STRENGTH });
+        app.update();
+        app.update();
+        let vis = app.world().resource::<SunVisibility>().clone();
+        assert!(vis.cloud_enabled && vis.cloud.is_some() && vis.cloud_on());
+        assert!(app.world().get::<OutdoorSunLight>(sun).is_some());
+        assert!(app.world().get::<SunVisibilityView>(cam).is_some());
+
+        // Indoors: the producer clears its output; the views keep the cloud variant with a
+        // neutral cloud, and the light (the cell's own now) is unmarked.
+        app.world_mut().resource_mut::<crate::sky::SkyState>().interior = Some(Default::default());
+        app.update();
+        app.update();
+        let vis = app.world().resource::<SunVisibility>().clone();
+        assert!(app.world().resource::<CloudShadowPublished>().0.is_none(), "the producer's door path cleared it");
+        assert!(vis.cloud.is_none() && vis.cloud_on(), "switched on, nothing published");
+        assert_eq!(SunVisibilityUniform::pack(&vis).cloud, NEUTRAL_CLOUD);
+        assert!(app.world().get::<SunVisibilityView>(cam).is_some(), "bindings kept through the door");
+        assert!(app.world().get::<OutdoorSunLight>(sun).is_none());
+
+        // Outdoors again, nothing composed yet: still the same views, the sun marked again.
+        app.world_mut().resource_mut::<crate::sky::SkyState>().interior = None;
+        app.update();
+        app.update();
+        assert!(app.world().resource::<SunVisibility>().cloud_on());
+        assert!(app.world().get::<SunVisibilityView>(cam).is_some());
+        assert!(app.world().get::<OutdoorSunLight>(sun).is_some());
+
+        // Switched off: everything goes.
+        app.world_mut().resource_mut::<CloudShadows>().enabled = false;
+        app.update();
+        app.update();
+        assert!(!app.world().resource::<SunVisibility>().active());
+        assert!(app.world().get::<SunVisibilityView>(cam).is_none());
+        assert!(app.world().get::<OutdoorSunLight>(sun).is_none());
     }
 
     #[test]

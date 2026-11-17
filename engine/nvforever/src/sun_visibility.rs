@@ -4,11 +4,20 @@
 //! visibility, min(C, T) of the cascade shadow C and the terrain's T, fading to T over the
 //! last cascade's end band (sun_visibility.wesl).
 //!
-//! Producers write [`SunVisibility`] (cloud shadows: `cloud`; terrain shadows: `terrain`).
-//! While nothing is set (and no debug view asked for) the plumbing is off: no view has
-//! [`NvfSunVisibilityBindings`], so the mesh view layout, the pipelines' shader text and
-//! the GPU work are upstream's, nothing is allocated, and the systems here stop at their
-//! run conditions.
+//! Producers write [`SunVisibility`] (cloud shadows: `cloud_enabled` and `cloud`; terrain
+//! shadows: `terrain`). Two things are kept apart there: whether a feature is switched on
+//! (`cloud_enabled`, which alone decides the views' markers, the layout key bit, the
+//! pipeline key bits and the shader defs) and whether its producer has a valid image to
+//! show (`cloud`, which only fills the uniform and the texture). While Cloud shadows is on
+//! and no image is published (indoors, a texture still being read, a weather without
+//! cover, a worldspace just changed) the cloud input is neutral (strength 0 and the white
+//! fallback texture: K = 1), so the pipelines stay as they are: only the switch changes
+//! them.
+//!
+//! While nothing is switched on (and no debug view asked for) the plumbing is off: no view
+//! has [`NvfSunVisibilityBindings`], so the mesh view layout and the shader defs are
+//! upstream's, no GPU buffer, sampler or image is made, and the systems here stop at their
+//! run conditions. What the off path still costs is in docs/design/sun-visibility.md §3.
 //!
 //! When on:
 //! - the sun light ([`crate::sky::Sun`]) outdoors gets [`OutdoorSunLight`], extracted as
@@ -55,7 +64,11 @@ const SHADER: Handle<Shader> = uuid_handle!("5b0f3c52-8f0e-4d55-9d77-2a61c4b7e3a
 /// What darkens the sun's direct light; producers write it, everything else reads it.
 #[derive(Resource, Clone, Default, Debug, PartialEq)]
 pub struct SunVisibility {
-    /// Cloud shadows (#2670): K.
+    /// Cloud shadows (#2670) are switched on: the views take the cloud variant and keep it
+    /// whether or not `cloud` is set (module notes).
+    pub cloud_enabled: bool,
+    /// Cloud shadows (#2670): K, while the producer has a valid image; `None` with
+    /// `cloud_enabled` packs a neutral cloud (K = 1).
     pub cloud: Option<CloudVisibility>,
     /// Terrain shadows (#2671): T.
     pub terrain: Option<TerrainVisibility>,
@@ -64,15 +77,21 @@ pub struct SunVisibility {
 }
 
 impl SunVisibility {
-    /// Whether the plumbing is on: a producer is set or a debug view is asked for (a
-    /// debug view alone shows V = C, the cascade shadow).
+    /// Whether the plumbing is on: a feature is switched on or set, or a debug view is
+    /// asked for (a debug view alone shows V = C, the cascade shadow).
     pub fn active(&self) -> bool {
-        self.cloud.is_some() || self.terrain.is_some() || self.debug != DebugMode::Off
+        self.cloud_on() || self.terrain.is_some() || self.debug != DebugMode::Off
+    }
+
+    /// Whether the views take the cloud variant (`NVF_CLOUD_VISIBILITY`): Cloud shadows is
+    /// switched on, or a cloud is set (the test producer sets one without the switch).
+    pub fn cloud_on(&self) -> bool {
+        self.cloud_enabled || self.cloud.is_some()
     }
 
     /// The switches the log line names.
     fn mask(&self) -> (bool, bool, DebugMode) {
-        (self.cloud.is_some(), self.terrain.is_some(), self.debug)
+        (self.cloud_on(), self.terrain.is_some(), self.debug)
     }
 }
 
@@ -163,9 +182,14 @@ pub struct SunVisibilityUniform {
     pub mode: UVec4,
 }
 
-/// Feature bits of `mode.x`.
+/// Feature bits of `mode.x`: a valid image is published (not merely switched on).
 pub const MASK_CLOUD: u32 = 1;
 pub const MASK_TERRAIN: u32 = 2;
+
+/// The neutral cloud (switched on, nothing published): strength 0 and a plane below every
+/// receiver, so sun_visibility.wesl's `nvf_cloud_transmittance` returns 1 at its first test
+/// and never reaches the texture or `smoothstep`.
+pub const NEUTRAL_CLOUD: Vec4 = Vec4::new(f32::MIN, 0.0, CLOUD_FADE_FROM, CLOUD_FADE_TO);
 
 impl SunVisibilityUniform {
     pub fn pack(v: &SunVisibility) -> Self {
@@ -175,6 +199,8 @@ impl SunVisibilityUniform {
             u.cloud_uv = Vec4::new(c.uv_scale.x, c.uv_scale.y, c.uv_offset.x, c.uv_offset.y);
             u.cloud = Vec4::new(c.plane_height, c.strength.clamp(0.0, 1.0), CLOUD_FADE_FROM, CLOUD_FADE_TO);
             mask |= MASK_CLOUD;
+        } else if v.cloud_enabled {
+            u.cloud = NEUTRAL_CLOUD;
         }
         if let Some(t) = &v.terrain {
             u.terrain_uv = Vec4::new(t.uv_scale.x, t.uv_scale.y, t.uv_offset.x, t.uv_offset.y);
@@ -268,7 +294,7 @@ fn log_mask(vis: Res<SunVisibility>, mut last: Local<Option<(bool, bool, DebugMo
 
 /// Whether [`mark_targets`] has anything to do: the plumbing is on, or markers are left
 /// to take off.
-fn marking_needed(vis: Res<SunVisibility>, marked: Query<(), Or<(With<OutdoorSunLight>, With<SunVisibilityView>)>>) -> bool {
+pub(crate) fn marking_needed(vis: Res<SunVisibility>, marked: Query<(), Or<(With<OutdoorSunLight>, With<SunVisibilityView>)>>) -> bool {
     vis.active() || !marked.is_empty()
 }
 
@@ -276,7 +302,7 @@ type ViewCandidate = (Entity, Has<SunVisibilityView>, Has<FlyCam>, Has<Reflectio
 
 /// Put [`OutdoorSunLight`] on the sun light while outdoors and [`SunVisibilityView`] on the
 /// world cameras while the plumbing is on; take them off otherwise.
-fn mark_targets(
+pub(crate) fn mark_targets(
     mut commands: Commands,
     vis: Res<SunVisibility>,
     sky: Option<Res<SkyState>>,
@@ -358,7 +384,8 @@ fn extract_sun_visibility(
     gpu.uniform = SunVisibilityUniform::pack(&vis);
     gpu.cloud = vis.cloud.as_ref().map(|c| c.image.id());
     gpu.terrain = vis.terrain.as_ref().map(|t| t.image.id());
-    let (cloud, terrain) = (vis.cloud.is_some(), vis.terrain.is_some());
+    // The key bits follow the switches, not the publication (module notes).
+    let (cloud, terrain) = (vis.cloud_on(), vis.terrain.is_some());
     let uniform = gpu.uniform;
     let parts = gpu.parts.get_or_insert_with(|| {
         let mut buffer = UniformBuffer::from(uniform);
@@ -643,7 +670,8 @@ mod tests {
         assert!(w.get::<SunVisibilityView>(menu).is_none());
 
         // Indoors the same light is the cell's directional light: unmarked; the views keep
-        // their bindings (no new pipelines at every door).
+        // their bindings while the cloud stays set (the producer's own door path, which
+        // clears the cloud, is cloud_shadows.rs `cloud_bindings_survive_doors`).
         app.world_mut().resource_mut::<SkyState>().interior = Some(Default::default());
         app.update();
         assert!(app.world().get::<OutdoorSunLight>(sun).is_none());
@@ -694,6 +722,7 @@ mod tests {
             cloud: Some(CloudVisibility { image: image.clone(), uv_scale: Vec2::new(0.5, 0.25), uv_offset: Vec2::new(3.0, 4.0), plane_height: 9_000.0, strength: 1.5 }),
             terrain: Some(TerrainVisibility { image, uv_scale: Vec2::splat(2.0), uv_offset: Vec2::new(-1.0, 1.0), fade_band: Vec2::new(7_000.0, 8_000.0), edge_fade: 0.05, height_softness: 64.0 }),
             debug: DebugMode::Terrain,
+            ..default()
         };
         let u = SunVisibilityUniform::pack(&v);
         assert_eq!(u.cloud_uv, Vec4::new(0.5, 0.25, 3.0, 4.0));
@@ -709,6 +738,27 @@ mod tests {
         for b in ["@group(0) @binding(39) var<uniform> nvf_sun", "@group(0) @binding(40) var nvf_cloud_texture: texture_2d<f32>", "@group(0) @binding(41) var nvf_terrain_texture: texture_2d<f32>", "@group(0) @binding(42) var nvf_sun_visibility_sampler: sampler"] {
             assert!(wesl.contains(b), "{b}");
         }
+    }
+
+    /// Switched on with nothing published: the plumbing is on and the views take the cloud
+    /// variant (the key bits follow the switch), but the cloud is neutral (K = 1) and the
+    /// mask says no image is there; a publication fills it, its loss empties it again
+    /// without changing what the views are given.
+    #[test]
+    fn switched_on_without_a_cloud_is_neutral() {
+        let on = SunVisibility { cloud_enabled: true, ..default() };
+        assert!(on.active() && on.cloud_on());
+        assert_eq!(on.mask(), (true, false, DebugMode::Off), "the log names the switch");
+        let u = SunVisibilityUniform::pack(&on);
+        assert_eq!(u.cloud, NEUTRAL_CLOUD);
+        assert_eq!(u.cloud.y, 0.0, "strength 0");
+        assert_eq!(u.mode.x & MASK_CLOUD, 0, "no image published");
+        // Published: the image's values and the mask bit; the switch's bits unchanged.
+        let published = SunVisibility { cloud: Some(checker_cloud(Handle::default())), ..on.clone() };
+        assert_eq!((published.active(), published.cloud_on()), (true, true));
+        assert_eq!(SunVisibilityUniform::pack(&published).mode.x & MASK_CLOUD, MASK_CLOUD);
+        // Off: nothing.
+        assert!(!SunVisibility::default().cloud_on());
     }
 
     #[test]
