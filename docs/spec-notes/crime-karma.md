@@ -205,7 +205,13 @@ against it (GetMajorCrimeCount) [documented: HelpCrime]. Its friends join throug
 assistance (§10.3); the faction enemy flag is **not** set for an assault [design: one
 punch would make a whole town hostile everywhere; owner to decide]. SendAssaultAlarm
 turns the named victim (or, with the player named, the first present member of the
-faction given) on the player and makes it say Assault [documented].
+faction given) on the player and makes it say Assault [documented]. With a faction given
+and no member present and alive, nobody turns and no crime is counted: the calling actor
+is no member of the faction, so it is never the stand-in [documented: the wiki's "it will
+pick an NPC in the … faction"; hypothesis: the original does nothing then, observer
+check 241]. Only the form with no faction falls back to the calling actor [design,
+#2926]; a freed Techatticup hostage's `SendAssaultAlarm Player
+CaesarsLegionTechMineFaction` turned the hostage itself before.
 
 ### 3.6 Who sees, and what turning means
 

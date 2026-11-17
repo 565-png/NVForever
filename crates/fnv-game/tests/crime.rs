@@ -870,3 +870,57 @@ fn a_murder_seen_only_by_hostile_witnesses_restarts_the_count() {
     pass_hours(&mut g, 25.0);
     assert!(!g.would_attack(FormId(SHOPKEEPER_REF), FormId::PLAYER_REF));
 }
+
+const SEND_ASSAULT_ALARM: u16 = 0x105F;
+
+/// `stranger.SendAssaultAlarm Player Gang`, as a freed Techatticup hostage calls it on the
+/// mine's Legion faction (#2926).
+fn alarm_on_gang(g: &mut Game) {
+    call(g, SEND_ASSAULT_ALARM, Some(STRANGER_REF), &[ArgValue::Value(Value::Ref(0x14)), ArgValue::Value(Value::Ref(GANG))]);
+}
+
+/// #2926: with the player named and a faction given, the victim is a present member of the
+/// faction [documented: GECK wiki SendAssaultAlarm], never the calling actor, which is in
+/// no faction.
+#[test]
+fn an_assault_alarm_on_a_faction_turns_a_member_not_the_caller() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.crimes.take_notes();
+    alarm_on_gang(&mut g);
+    assert_eq!(crimes(&mut g), vec![(Kind::Assault, vec![FormId(FIEND_REF)])]);
+    assert!(g.crime_enemy(FormId(FIEND_REF)));
+    assert!(!g.crime_enemy(FormId(STRANGER_REF)));
+}
+
+/// #2926: with no member present (disabled) or alive, nobody is the victim: no crime, and
+/// the caller is not turned [design, #2926; hypothesis: the original does nothing].
+#[test]
+fn an_assault_alarm_on_a_faction_with_no_member_turns_nobody() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.world.set_enabled(FormId(FIEND_REF), false).unwrap();
+    g.crimes.take_notes();
+    alarm_on_gang(&mut g);
+    assert_eq!(crimes(&mut g), vec![]);
+    assert!(!g.crime_enemy(FormId(STRANGER_REF)) && !g.crime_enemy(FormId(FIEND_REF)));
+
+    let mut g = game(&f);
+    assert!(g.kill(FormId(FIEND_REF), None));
+    g.crimes.take_notes();
+    alarm_on_gang(&mut g);
+    assert_eq!(crimes(&mut g), vec![]);
+    assert!(!g.crime_enemy(FormId(STRANGER_REF)));
+}
+
+/// The form with no faction keeps the calling actor as the victim (SCPT 0x0002A43C's
+/// OnHit calls it alone).
+#[test]
+fn an_assault_alarm_without_a_faction_turns_the_caller() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.crimes.take_notes();
+    call(&mut g, SEND_ASSAULT_ALARM, Some(STRANGER_REF), &[]);
+    assert_eq!(crimes(&mut g), vec![(Kind::Assault, vec![FormId(STRANGER_REF)])]);
+    assert!(g.crime_enemy(FormId(STRANGER_REF)));
+}

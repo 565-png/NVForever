@@ -1110,23 +1110,83 @@ pub fn send_trespass_alarm(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, S
 
 /// `[criminal.]SendAssaultAlarm [victim] [faction]`: the victim reacts as to an assault;
 /// with the player (or none) as the victim, a present member of the faction does
-/// [documented: GECK wiki SendAssaultAlarm]. It says Assault "even if … already in
-/// combat" [documented: notes].
+/// [documented: GECK wiki SendAssaultAlarm, "it will pick an NPC in the BigTown faction
+/// to use instead"]. It says Assault "even if … already in combat" [documented: notes].
+///
+/// With a faction given and no member present and alive, nobody is the victim and
+/// nothing happens: the caller is no member, so it is never picked [documented: the
+/// wiki's "an NPC in the … faction"; hypothesis: the original does nothing then,
+/// observer check 241] (#2926: a freed Techatticup hostage's alarm on the Legion turned
+/// the hostage). Only the form without a faction falls back to the calling actor
+/// [design, #2926].
 pub fn send_assault_alarm(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let named = a.opt_form(0).filter(|&f| f != FormId::PLAYER_REF);
     let caller = ctx.on.or(ctx.self_ref).filter(|&f| f != FormId::PLAYER_REF);
-    let victim = named.or_else(|| {
-        let f = a.opt_form(1)?;
-        let mut members: Vec<FormId> = g.world.placed.refs.iter().filter(|(_, p)| matches!(&p.sig, b"ACHR" | b"ACRE")).map(|(r, _)| *r).filter(|&r| g.present(r) && !g.is_dead(r) && faction_rank(g, r, f) >= 0).collect();
-        members.sort();
-        members.into_iter().next()
-    });
-    let victim = victim.or(caller).ok_or("no victim")?;
+    let victim = match named {
+        Some(v) => Some(v),
+        // A faction parameter is given (it may read as no form: an empty reference).
+        None if a.len() > 1 => {
+            let picked = a.opt_form(1).map(|f| faction_member_victim(g, f));
+            match picked {
+                Some(p) => tracing::info!(
+                    "assault alarm: faction {} from {}: victim {}; {} member(s) present and alive, {} not present, {} dead",
+                    p.faction,
+                    caller.map_or_else(|| "no caller".to_string(), |c| c.to_string()),
+                    p.victim.map_or_else(|| "none".to_string(), |v| v.to_string()),
+                    p.alive,
+                    p.absent,
+                    p.dead
+                ),
+                None => tracing::info!("assault alarm: faction parameter is no form; no victim"),
+            }
+            picked.and_then(|p| p.victim)
+        }
+        None => Some(caller.ok_or("no victim")?),
+    };
+    let Some(victim) = victim else {
+        return none();
+    };
     g.count_crime(victim, Kind::Assault);
     g.mark_crime_enemy(victim);
     g.detection_bark(victim, Some(FormId::PLAYER_REF), "Assault");
     g.crimes.notes.push(Note::Crime { kind: Kind::Assault, victim: Some(victim), seen_by: Vec::new(), hostile: vec![victim] });
     none()
+}
+
+/// The member of a faction SendAssaultAlarm picks, and why the others were not.
+#[derive(Debug, Clone, Copy)]
+struct FactionPick {
+    faction: FormId,
+    /// The first placed actor (FormID order) in the faction, present and alive.
+    victim: Option<FormId>,
+    /// Members present and alive.
+    alive: usize,
+    /// Members disabled or deleted.
+    absent: usize,
+    /// Members present but dead.
+    dead: usize,
+}
+
+/// The victim of `SendAssaultAlarm Player <faction>`: the first placed actor in the faction
+/// (rank 0 or more, `faction_rank`) that is present and alive, in FormID order [design:
+/// the order the pick had before #2926].
+fn faction_member_victim(g: &Game, faction: FormId) -> FactionPick {
+    let mut pick = FactionPick { faction, victim: None, alive: 0, absent: 0, dead: 0 };
+    // `refs` is a BTreeMap: FormID order.
+    for (&r, p) in &g.world.placed.refs {
+        if !matches!(&p.sig, b"ACHR" | b"ACRE") || faction_rank(g, r, faction) < 0 {
+            continue;
+        }
+        if !g.present(r) {
+            pick.absent += 1;
+        } else if g.is_dead(r) {
+            pick.dead += 1;
+        } else {
+            pick.alive += 1;
+            pick.victim.get_or_insert(r);
+        }
+    }
+    pick
 }
 
 #[cfg(test)]
