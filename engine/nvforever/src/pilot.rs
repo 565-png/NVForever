@@ -1718,6 +1718,15 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         w.door_since = Some(p.now);
                         return Walked::Going;
                     }
+                    // Another way round first, as for a locked door: Paradise Falls' sewer
+                    // grate 0x0A034A35 turns the player away, and its main gate is the way in
+                    // [observed].
+                    if !w.tried.iter().any(|(t, _)| *t == d.door) {
+                        info!("pilot: step {}: door {:08X} is not locked but did not take the player through in {LOCKED_SECS:.0} s: another way round", p.i, d.door);
+                        w.tried.push((d.door, "not locked, refused the player".into()));
+                        (w.follower, w.door_since) = (None, None);
+                        return Walked::Going;
+                    }
                     let why = format!("door {:08X} is not locked and did not take the player through in {LOCKED_SECS:.0} s after the player tried it (its script refuses the player?): a player could not go on; the player stays in front of it", d.door);
                     p.finding("unreachable", why.clone());
                     return Walked::No(why);
