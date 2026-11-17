@@ -190,15 +190,40 @@ The other fields describe work during the interval, including unrelated work:
 
 [design, #2248: tools/smoke/scenarios.toml] `quality-main-menu-measure` opens
 Settings from the main menu, takes all four made-up preset fixtures, and then
-edits each of the nine mapped rows alone, eight seconds apart. Stage 1 requires
-the thirteen summary lines, with no frame-time limits or zero-load expectations.
+edits each of the nine mapped rows alone, eight seconds apart. Stage 1 required
+the thirteen summary lines, with no frame-time limits or zero-load expectations;
+the fix adds two: each preset's line shows `ini_write_attempts=1`, and 0 cell
+starts, reference attempts, world roots, visual parts and camera spawns.
 Run it on Windows and Linux before choosing a fix. [hypothesis, #2248] Pipeline
 compilation or presentation behavior may differ by GPU, driver and window backend;
 source inspection alone does not establish the reported Linux hitch or the cover
 becoming invisible. The repeated synchronous INI writes are present in the shared
-setters [design: settings.rs `take`, `flip`, `set_slider`, `store`]; their share of
-the hitch still needs measurement. Stage 2 remains deferred until the cause is
-clear. No observer check or gameplay choice is added.
+setters [design: settings.rs `take`, `flip`, `set_slider`, `store`]. No observer
+check or gameplay choice is added.
+
+**What the first run measured** [observed: smoke run `quality-main-menu-measure`,
+2026-11-17, Windows, on a machine loaded by builds so every frame took ~250 ms and
+`longest_frame_ms` is mostly that baseline]. `main_menu=true` on every line;
+`cell_starts`, `reference_attempts`, `world_roots`, `visual_parts`, `camera_spawns`
+and `window_changes` were 0 for every preset and row, so the held house was neither
+rebuilt nor respawned. `setter_ms` followed `ini_write_attempts`: Low 297.8 ms with 10
+writes, Medium 279.9 ms / 8, High 217.2 ms / 8, Very High 168.6 ms / 6, each row alone
+25-37 ms / 1, about 27 ms per write of `NVForever.ini` on the main thread. Low also
+asked 57 pipelines and walked 732 meshes (`range_materials` 0 for every edit:
+no material re-marked); `shadow-filter` alone asked 20 pipelines.
+
+**The fix: one INI write per change** [design, #2248: settings.rs `StoreHold`]. A
+list choice (`take`, so a preset through `pick` and the test aids' numbers through
+`load_text`) and an older key's choice (`pick_alias`) hold the INI write while their
+pick runs; the rows they set ask for a write and it is done once, when the outermost
+change ends, with every row's new state (also when the pick sets rows and then
+refuses). A row changed alone writes once, as before. `ini_write_attempts` counts the
+writes actually made, so a preset now reads 1. The write stays on the frame: the
+same file is read-modified-written by other synchronous writers, so a write on
+another thread could race them and lose lines; with one write per change the cost
+is one write, not ten [design]. The pipelines a renderer row asks for the house
+behind the menu are left as they are: they are the ones the world needs once the
+menu closes, so deferring them would move the wait to New Game.
 
 **What the code says about the house behind the menu** [design, #2248: code read on
 main 72b385a57, not yet measured]. The held new game in Doc Mitchell's house is built

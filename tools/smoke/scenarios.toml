@@ -31814,7 +31814,7 @@ forbid = [
 
 [[scenario]]
 name = "quality-main-menu-measure"
-source = "[design, #2248] Main menu -> Settings -> four invented presets, then each of their nine rows alone; quality_probe.rs records wall-clock frames and correlated work. Stage 1 requires measurement lines without performance or load limits."
+source = "[design, #2248] Main menu -> Settings -> four invented presets, then each of their nine rows alone; quality_probe.rs records wall-clock frames and correlated work. Stage 1 requires measurement lines without performance or load limits. Stage 2 (the fix) adds: each preset writes the INI once, and no preset starts a cell, a reference, a world root, a visual part or a camera (all 0 in the first measured run, 2026-11-17); still no frame-time limit."
 note = "[design, #2248] Eight seconds between edits permits a three-second sample after each setter; overlapping samples remain independent if a stall makes several aid steps due together. No New Game action is sent. Pipeline labels/times use the existing pipeline log aid. Shadow distance, Shadow filtering and Sun shadows are lists since the menu overhaul: each takes a number as the INI does (load_text); Shadow filtering is changed before Sun shadows goes Off so it is measured with shadows on."
 areas = ["main-menu", "settings", "renderer"]
 paths = ["engine/nvforever/src/quality_probe.rs", "engine/nvforever/src/quality.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings.rs", "engine/nvf-play/src/main_menu.rs", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/draw_distance.rs", "engine/nvforever/src/world.rs", "engine/nvforever/src/pipeline_gate.rs", "engine/nvforever/src/sky.rs", "tools/smoke/fixtures/quality-presets/"]
@@ -31838,4 +31838,6 @@ expect = [
   { re = 'quality measure: key=grass-distance value=.* main_menu=true .*longest_frame_ms=[0-9.]+ setter_ms=[0-9.]+ cell_starts=', count = 1 },
   { re = 'quality measure: key=water-mirror value=.* main_menu=true .*longest_frame_ms=[0-9.]+ setter_ms=[0-9.]+ cell_starts=', count = 1 },
   { re = 'quality measure: key=glow value=.* main_menu=true .*longest_frame_ms=[0-9.]+ setter_ms=[0-9.]+ cell_starts=', count = 1 },
+  { re = 'quality measure: key=quality value=.* ini_write_attempts=1\b', count = 4, label = "#2248 fix: each preset writes NVForever.ini once, not once per row (settings.rs StoreHold)" },
+  { re = 'quality measure: key=quality value=.* cell_starts=0 reference_attempts=0 world_roots=0 visual_parts=0 camera_spawns=0 ', count = 4, label = "#2248: a preset rebuilds nothing of the held house behind the main menu" },
 ]

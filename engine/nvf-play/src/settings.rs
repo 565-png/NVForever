@@ -94,7 +94,7 @@ pub enum EditPhase {
 }
 
 /// Attempted INI writes, including failures; present only with the edit diagnostic
-/// [design, #2248: store]. Interior mutability keeps `store`'s read-only world API.
+/// [design, #2248: store_now]. Interior mutability keeps `store_now`'s read-only world API.
 #[derive(Resource, Default)]
 pub struct StoreAttempts(pub AtomicU64);
 
@@ -766,7 +766,10 @@ pub fn pick_alias(world: &mut World, key: &str, name: &str) -> bool {
             Some((i, *k, (settings.choices(i)?.save)(world)))
         })
         .collect();
+    // The rows the older key sets write the INI once, below (StoreHold).
+    hold_store(world);
     if !(alias.pick)(world, name) {
+        release_store(world);
         warn!("settings: {key} has no such choice");
         return false;
     }
@@ -777,6 +780,7 @@ pub fn pick_alias(world: &mut World, key: &str, name: &str) -> bool {
     }
     info!("settings: {key} {}", (alias.chosen)(world));
     store(world);
+    release_store(world);
     true
 }
 
@@ -859,7 +863,11 @@ fn take(world: &mut World, i: usize, apply: impl FnOnce(&mut World) -> bool) -> 
     let (Some(s), Some(c)) = (settings.list().get(i).copied(), settings.choices(i)) else { return false };
     let before = (c.save)(world);
     probe(world, s.key, EditPhase::Begin);
+    // Rows `apply` sets on its way (a preset's) write the INI once, below (StoreHold).
+    hold_store(world);
     if !apply(world) {
+        // What those rows changed before the refusal is still written.
+        release_store(world);
         probe(world, s.key, EditPhase::End { applied: false });
         warn!("settings: {} has no such choice", s.key);
         return false;
@@ -877,6 +885,7 @@ fn take(world: &mut World, i: usize, apply: impl FnOnce(&mut World) -> bool) -> 
         own(world, i);
     }
     store(world);
+    release_store(world);
     probe(world, s.key, EditPhase::End { applied: true });
     true
 }
@@ -1201,8 +1210,44 @@ pub fn apply_stored(world: &mut World) {
     info!("settings: {} of {} switch(es) read from {}, {} changed{what}{kept}", found.len() + listed, list.len(), path.display(), changed.len());
 }
 
-/// Write every switch's state to the INI, keeping its other lines.
-fn store(world: &World) {
+/// Rows set inside another row's change (a preset's rows, an older list's rows) ask for
+/// the INI to be written; it is written once, when the outermost change ends [design,
+/// #2248: each write cost ~27 ms on the main thread in the measured run, ten for one
+/// preset]. `depth` counts the changes under way, `pending` that one of them asked.
+#[derive(Resource, Default)]
+struct StoreHold {
+    depth: u32,
+    pending: bool,
+}
+
+/// Hold the INI write until the matching [`release_store`].
+fn hold_store(world: &mut World) {
+    world.get_resource_or_insert_with(StoreHold::default).depth += 1;
+}
+
+/// End a [`hold_store`]: the outermost one writes the INI if anything inside asked.
+fn release_store(world: &mut World) {
+    let write = {
+        let mut hold = world.get_resource_or_insert_with(StoreHold::default);
+        hold.depth = hold.depth.saturating_sub(1);
+        hold.depth == 0 && std::mem::take(&mut hold.pending)
+    };
+    if write {
+        store_now(world);
+    }
+}
+
+/// Write every switch's state to the INI, keeping its other lines; inside a held change,
+/// once at its end ([`StoreHold`]).
+fn store(world: &mut World) {
+    if let Some(mut hold) = world.get_resource_mut::<StoreHold>().filter(|h| h.depth > 0) {
+        hold.pending = true;
+        return;
+    }
+    store_now(world);
+}
+
+fn store_now(world: &World) {
     let Some(path) = world.get_resource::<SettingsFile>().and_then(|f| f.0.clone()) else { return };
     let Some(settings) = world.get_resource::<Settings>() else { return };
     // A choice waiting to be kept is kept as the one before; a row a test run kept at the
@@ -1282,6 +1327,59 @@ mod tests {
             ("reach".into(), true, false), ("reach".into(), false, true), ("bundle".into(), false, true),
             ("bundle".into(), true, false), ("bundle".into(), false, false),
         ]);
+    }
+
+    /// #2248: a list whose choice sets other rows (as a quality preset does) writes the INI
+    /// once, with every row's new state; each row changed alone writes it once.
+    #[test]
+    fn a_choice_that_sets_other_rows_writes_the_ini_once() {
+        let dir = std::env::temp_dir().join(format!("nvf-settings-batch-{}", std::process::id()));
+        let path = dir.join("NVForever.ini");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = App::new();
+        app.init_resource::<Lamp>().insert_resource(Reach(0.5)).init_resource::<StoreAttempts>();
+        app.insert_resource(SettingsFile(Some(path.clone())));
+        add_setting(&mut app, setting("lamp", "Test"));
+        add_setting(&mut app, slider("reach"));
+        add_choice_list(&mut app, setting("bundle", "Test"), ChoiceList {
+            names: |_| vec!["change".into(), "half".into()], chosen: |_| "before".into(), save: |_| "before".into(),
+            load: |_, _| false, ask_keep: false,
+            pick: |world, name| {
+                match name {
+                    "change" => {
+                        flip(world, 0);
+                        set_slider(world, 1, 0.8);
+                        true
+                    }
+                    // Sets a row, then refuses: what it set is still written, once.
+                    "half" => {
+                        set_slider(world, 1, 0.3);
+                        false
+                    }
+                    _ => false,
+                }
+            },
+        });
+        let world = app.world_mut();
+        let writes = |w: &World| w.resource::<StoreAttempts>().0.load(Relaxed);
+        assert!(pick(world, 2, "change"));
+        assert_eq!(writes(world), 1, "one write for the choice and the two rows it set");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("lamp=1") && text.contains("reach=0.8"), "{text}");
+        flip(world, 0);
+        assert_eq!(writes(world), 2, "a row alone: one write");
+        set_slider(world, 1, 0.5);
+        assert_eq!(writes(world), 3);
+        assert!(!pick(world, 2, "half"));
+        assert_eq!(writes(world), 4, "the row set before the refusal is written once");
+        assert!(std::fs::read_to_string(&path).unwrap().contains("reach=0.3"));
+        assert!(!pick(world, 2, "invalid"));
+        assert_eq!(writes(world), 4, "nothing changed, nothing written");
+        // The hold is released: a later row writes at once again.
+        flip(world, 0);
+        assert_eq!(writes(world), 5);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
