@@ -169,6 +169,12 @@ fn local_plane(a: &mut App, grid: (i32, i32)) -> Entity {
             ),
         ))
         .id();
+    let root = {
+        let w = a.world_mut();
+        let mut roots = w.query_filtered::<Entity, With<WorldRoot>>();
+        roots.single(w).unwrap()
+    };
+    a.world_mut().entity_mut(root).add_child(e);
     a.world_mut()
         .resource_mut::<Streamer>()
         .loaded
