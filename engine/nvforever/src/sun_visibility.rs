@@ -1502,7 +1502,7 @@ mod tests {
             assert_eq!(solid_visibility(&neutral, 0.4, 0.0, z), 0.4);
         }
         // The band from the sun's cascades (sky.rs): the last 20 % of the last one.
-        let band = cascade_fade_band(Some(&crate::sky::shadow_cascades(8_000.0, 1.0, 3)));
+        let band = cascade_fade_band(Some(&crate::sky::shadow_cascades(8_000.0, 1.0, crate::sky::CascadeLayout::Spaced(3), 2048)));
         assert!((band - Vec2::new(6_400.0, 8_000.0)).length() < 1.0, "{band}");
         assert_eq!(cascade_fade_band(None), Vec2::ZERO);
     }

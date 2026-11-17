@@ -1758,7 +1758,7 @@ mod tests {
                 (follow_graphics.run_if(resource_exists_and_changed::<Graphics>), feed_sun_visibility.run_if(feeding_needed), mark_targets.run_if(marking_needed)).chain(),
             );
         let light = DirectionalLight { shadow_maps_enabled: true, ..default() };
-        let sun = app.world_mut().spawn((crate::sky::Sun, light, crate::sky::shadow_cascades(8_000.0, 1.0, 3))).id();
+        let sun = app.world_mut().spawn((crate::sky::Sun, light, crate::sky::shadow_cascades(8_000.0, 1.0, crate::sky::CascadeLayout::Spaced(3), 2048))).id();
         let cam = app.world_mut().spawn(crate::fly::FlyCam { yaw: 0.0, pitch: 0.0, speed: 0.0 }).id();
         let vis = |app: &App| app.world().resource::<SunVisibility>().clone();
         app.update();
