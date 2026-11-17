@@ -772,7 +772,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             zero
         }
         // The computer's local time as "HH-mm-SS" [documented: GetTimeStamp].
-        "gettimestamp" => XVal::Str(chrono::Local::now().format("%H-%M-%S").to_string()),
+        "gettimestamp" => XVal::Str(crate::local_time::now().stamp()),
         // `list`: 1 when the reference under the crosshair is in the list, 2 when its base
         // is, else 0 [documented: CrosshairRefInList].
         "crosshairrefinlist" => {

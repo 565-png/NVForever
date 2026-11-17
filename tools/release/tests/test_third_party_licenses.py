@@ -113,5 +113,20 @@ class BundledFontLicences(unittest.TestCase):
             self.assertEqual(names, ["LICENSE-MIT", "fonts/OFL.txt"])
 
 
+
+class ChronoPlatformNotice(unittest.TestCase):
+    def test_release_consumer_retains_full_adapted_platform_licence_without_cargo_chrono(self):
+        notice = next(n for n in tpl.NOTICES if n.name == "Chrono 0.4.45")
+        self.assertEqual(notice.licence, "MIT OR Apache-2.0")
+        text = notice.file.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+        self.assertIn("Copyright 2012-2014 The Rust Project Developers.", text)
+        self.assertIn("Copyright (c) 2014--2026, Kang Seonghoon and", text)
+        out, missing = tpl.render([], "rustc 1.0.0 (test)")
+        self.assertEqual(missing, [])
+        self.assertIn("- Chrono 0.4.45 (host-local platform policy adapted in crates/fnv-game/src/local_time.rs): MIT OR Apache-2.0", out)
+        self.assertIn("From: Chrono 0.4.45 (crates/fnv-game/src/local_time_licenses/Chrono-LICENSE.txt)", out)
+        self.assertEqual(out.count(text), 1, "ship the complete attributed licence once without a Cargo dependency")
+
+
 if __name__ == "__main__":
     unittest.main()

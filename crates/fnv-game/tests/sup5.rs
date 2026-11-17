@@ -260,3 +260,76 @@ fn screenshots_and_qr_codes() {
     // No dialog: "" [decision].
     assert_eq!(s(&mut g, "OpenFolderDialogBox MarkRef"), "");
 }
+
+// The process-wide roots already belong to this target. Exercise the compiled
+// consumers; arrays are inspected while the source still owns their lifetime.
+#[test]
+fn host_local_time_consumers_keep_keys_formats_defaults_and_file_refusals() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(n(&mut g, "ar_Size (GetUserTime)"), 8.0);
+    for (key, minimum, maximum) in [("Year", 0.0, 262142.0), ("Month", 1.0, 12.0),
+        ("DayOfWeek", 0.0, 6.0), ("Day", 1.0, 31.0), ("Hour", 0.0, 23.0),
+        ("Minute", 0.0, 59.0), ("Second", 0.0, 59.0), ("Millisecond", 0.0, 999.0)] {
+        let body = format!("let aList := GetUserTime\nSetFunctionValue (ar_HasKey aList \"{key}\")");
+        assert_eq!(q(&mut g, &body), XVal::Num(1.0), "{key}");
+        let value = n(&mut g, &format!("(GetUserTime)[\"{key}\"]"));
+        assert!((minimum..=maximum).contains(&value) && value.fract() == 0.0, "{key}: {value}");
+    }
+    let stamp = s(&mut g, "GetTimeStamp");
+    assert_eq!(stamp.len(), 8);
+    assert_eq!((&stamp[2..3], &stamp[5..6]), ("-", "-"));
+    for (part, maximum) in [(0..2, 23), (3..5, 59), (6..8, 59)] {
+        assert!(stamp[part].parse::<u32>().unwrap() <= maximum, "{stamp}");
+    }
+    let fields: Vec<_> = (0..6).map(|i| n(&mut g, &format!("(GetFileTime \"nvac.log\" 2)[{i}]")) as i32).collect();
+    let [year, month, day, hour, minute, _] = fields.as_slice() else { panic!("six file fields") };
+    let day_first = format!("{day:02}/{month:02}/{:02} {hour:02}:{minute:02}", year.rem_euclid(100));
+    let month_first = format!("{month:02}/{day:02}/{:02} {hour:02}:{minute:02}", year.rem_euclid(100));
+    assert_eq!(s(&mut g, "GetFileTimeSTR \"nvac.log\" 2"), day_first);
+    assert_eq!(s(&mut g, "GetFileTimeSTR \"nvac.log\" 2 2"), day_first);
+    assert_eq!(s(&mut g, "GetFileTimeSTR \"nvac.log\" 2.9 1.9"), month_first);
+    for (path, request) in [("none.log", 2), ("../escape", 2), ("nvac.log", -1), ("nvac.log", 3)] {
+        assert_eq!(n(&mut g, &format!("ar_Size (GetFileTime \"{path}\" {request})")), 0.0);
+        assert_eq!(s(&mut g, &format!("GetFileTimeSTR \"{path}\" {request}")), "");
+    }
+}
+
+#[test]
+fn host_file_time_consumers_select_each_metadata_clock_and_retain_unavailable_defaults() {
+    use std::fs::{File, FileTimes};
+    use std::time::{Duration, UNIX_EPOCH};
+    let f = fixture();
+    let mut g = game(&f);
+    let (game_dir, _) = folders();
+    let path = game_dir.join("host-time-selectors.log");
+    let accessed = UNIX_EPOCH + Duration::from_secs(31_536_000 + 9 * 86_400 + 43_200);
+    let modified = UNIX_EPOCH + Duration::from_secs(31_536_000 + 19 * 86_400 + 43_200);
+    {
+        let file = File::create(&path).unwrap();
+        file.set_times(FileTimes::new().set_accessed(accessed).set_modified(modified)).unwrap();
+    }
+    let metadata = std::fs::metadata(&path).unwrap();
+    // This test uses an owned synthetic folder, not the installed game. Some
+    // filesystems do not expose creation/access metadata; retain that failure.
+    for (request, available, day_range) in [(0, metadata.created().is_ok(), None),
+        (1, metadata.accessed().is_ok(), Some(9..=11)),
+        (2, metadata.modified().is_ok(), Some(19..=21))] {
+        let size = n(&mut g, &format!("ar_Size (GetFileTime \"host-time-selectors.log\" {request})"));
+        assert_eq!(size, if available { 6.0 } else { 0.0 }, "request {request}");
+        let explicit = s(&mut g, &format!("GetFileTimeSTR \"host-time-selectors.log\" {request} 0"));
+        if available {
+            let year = n(&mut g, &format!("(GetFileTime \"host-time-selectors.log\" {request})[0]"));
+            let month = n(&mut g, &format!("(GetFileTime \"host-time-selectors.log\" {request})[1]"));
+            let day = n(&mut g, &format!("(GetFileTime \"host-time-selectors.log\" {request})[2]"));
+            if let Some(days) = day_range {
+                assert_eq!((year, month), (1971.0, 1.0));
+                assert!(days.contains(&(day as i32)), "request {request}: {day}");
+            }
+            assert_eq!(explicit.len(), 14);
+        } else { assert!(explicit.is_empty()); }
+        assert_eq!(s(&mut g, &format!("GetFileTimeSTR \"host-time-selectors.log\" {request}.9 0")), explicit);
+    }
+    assert_eq!(s(&mut g, "GetFileTimeSTR \"host-time-selectors.log\""), s(&mut g, "GetFileTimeSTR \"host-time-selectors.log\" 0 0"));
+    assert_eq!(n(&mut g, "ar_Size (GetFileTime \"host-time-selectors.log\")"), n(&mut g, "ar_Size (GetFileTime \"host-time-selectors.log\" 0)"));
+}
