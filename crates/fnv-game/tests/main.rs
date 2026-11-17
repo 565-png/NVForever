@@ -42,6 +42,7 @@ mod player_source_commands;
 mod extender_conditions;
 mod factions;
 mod fixtures_data;
+mod first_person_menu_clock;
 mod functions;
 mod game_clock;
 mod title_menu_group;
@@ -148,3 +149,6 @@ fn every_test_file_is_built() {
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
+
+mod preactivation_events;
+mod preactivation_mutation;
