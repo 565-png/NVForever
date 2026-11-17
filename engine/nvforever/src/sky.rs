@@ -135,7 +135,8 @@ pub const DEFAULT_SHADOW_DISTANCE: f32 = 8_000.0;
 /// 4 then took 15.0-16.8 ms against 13.7-15.2 for 3: graphics-enhanced.md §5.3); now the
 /// reach stays 8,000, the casters are culled to each cascade's slice
 /// ([`sun_casters_over_slice`]) and the cascades are staggered (shadow_rate.rs
-/// `STAGGERED_SCHEDULE`: never more than two drawn in a frame, 2 of 4 on average against
+/// `STAGGERED_SCHEDULE`: two drawn in a frame while they are staggered, all four in the
+/// frame after a change of bounds, map size or texture; 2 of 4 on average against
 /// 1.75 of 3). [observed 2026-11-16: Goodsprings' start view at 09:00 standing still,
 /// 2560 × 1440, RTX 5070 Ti, ambient occlusion, longer shadows (reach 12,000), light glow,
 /// 16x anisotropic filtering, sun shafts, `--no-actors`; sun shadows off 2.81-2.85 ms a
@@ -144,7 +145,7 @@ pub const DEFAULT_SHADOW_DISTANCE: f32 = 8_000.0;
 /// 13.8) 3.22 ms. With 4096² maps 4 with 1,500, 3,500, 7,000, 12,000 and a blend band of
 /// 0.4 (texels 0.86, 2.0, 4.0, 6.9) 3.43-3.48 ms (docs/design/frame-rate-audit.md §12).
 /// Without Longer shadows the 4096² layout is 1,500, 2,400, 4,800, 8,000, derived by
-/// [`SHADOW_CAPS_QUALITY_WIDE`]'s rule and neither measured nor pictured.
+/// [`SHADOW_CAPS_QUALITY_WIDE`]'s rule; its cost was not measured.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum CascadeLayout {
     /// Quality's 4 cascades (the default), their bounds following the shadow maps' size.
@@ -1697,8 +1698,8 @@ pub(crate) fn map_side(map: Option<&bevy::light::DirectionalLightShadowMap>) -> 
 /// before; Quality with the larger maps blends over [`WIDE_SHADOW_OVERLAP`].
 const SHADOW_MINIMUM_DISTANCE: f32 = 5.0;
 const SHADOW_OVERLAP: f32 = 0.2;
-/// The first cascade's far bound is never nearer than this (game units), however short
-/// the shadow distance.
+/// The first cascade's far bound is no nearer than this (game units) at short shadow
+/// distances, unless half the last bound is nearer still ([`shadow_cascade_layout`]).
 const FIRST_CASCADE_FLOOR: f32 = 200.0;
 /// The least step between two neighbouring far bounds, as a share of the room between the
 /// first bound and the last ([`shadow_cascade_layout`]) [engineering choice: small enough
@@ -1733,7 +1734,7 @@ const SHADOW_SHARES_QUALITY_WIDE: [f32; 3] = [0.1875, 0.4375, 0.875];
 /// of 8,000, and with the 0.4 blend band the fourth cascade (4,200-8,000) would add almost
 /// nothing beside the third (2,100-7,000) for a fourth draw]. At reach 1.5 they leave the
 /// measured layout as it is (3,500 under 3,600, 7,000 under 7,200); at reach 1 they give
-/// 1,500, 2,400, 4,800, 8,000, derived by this rule and neither measured nor pictured.
+/// 1,500, 2,400, 4,800, 8,000, derived by this rule; its cost was not measured.
 const SHADOW_CAPS_QUALITY_WIDE: [f32; 3] = [f32::INFINITY, 0.3, 0.6];
 /// The shadow map side from which Quality takes [`SHADOW_SHARES_QUALITY_WIDE`].
 const WIDE_SHADOW_MAP: usize = 4096;

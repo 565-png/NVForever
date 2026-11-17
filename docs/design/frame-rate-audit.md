@@ -1257,7 +1257,7 @@ reach (longer shadows); the moon's single cascade unchanged.
   cascade (4,200-8,000 with the 0.4 band) adds almost nothing beside the third
   (2,100-7,000) for a fourth draw; the caps give 1,500, 2,400, 4,800, 8,000. That reach-1
   layout is derived by this rule [engineering choice, for the maintainer to decide] and
-  was neither measured nor pictured: only reach 1.5 was. With 2048² maps the wider
+  was not measured: only reach 1.5 was. With 2048² maps the wider
   layout's near shadow is softer than before, so 2048 keeps the nearer seams. The schedule (shadow_rate.rs `STAGGERED_SCHEDULE`) draws the nearest every
   frame, the second every other frame, the third and the fourth every fourth frame on
   different frames: two cascades drawn in each frame, 2 of 4 on average against 1.75
@@ -1287,8 +1287,9 @@ drawn every frame, before the casters were culled to the slice, graphics-enhance
 the maintainer plays on; its third cascade measured within the noise of the two of
 before. Whether 4096 is any preset's default is left open.
 
-At short distances (the slider goes down to a tenth of `--shadow-distance`) the first
-bound keeps its floor of 200 units, under half the last; each in-between bound is then
+At short distances (the Shadow distance list goes from 0 % to 100 % of `--shadow-distance`
+in steps of 20 %; 0 % casts none) the first bound keeps its floor of 200 units, or half
+the last bound where that is nearer; each in-between bound is then
 its (capped) share held at least `i` steps above the first bound and `n − 1 − i` steps
 below the last, a step being 5 % of the room between them, so the bounds always rise. The
 limits act only when a share comes within a step of them: at 8,000 units every layout of
