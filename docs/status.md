@@ -296,3 +296,11 @@ source-to-physical-consumer controls and one internal queue/restore control rema
 UNRUN. Native behavior and original B42 Quickthrow3.1b initialization, input, bones,
 animation, throw/inventory/detonation and full lifecycle acceptance remain open.
 Contract: [Projectile launch/session traits](spec-notes/projectile-launch-session-traits.md).
+
+
+Water coverage and camera fog lifecycle: authored source controls for exact loaded-cell
+identity/radius invalidation and current-camera enter/exit restoration are unrun.
+The plane producer retains unaffected meshes/materials; exit uses current weather or
+interior fog, after transform propagation and before reflection fog copying. This is
+bounded renderer work, not installed UnderwaterFX/Radiation Visuals acceptance or a
+claim that every reported flicker/cyan tint is resolved ([world](spec-notes/world.md)).

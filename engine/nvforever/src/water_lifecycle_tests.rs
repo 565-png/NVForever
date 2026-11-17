@@ -4,6 +4,7 @@ use crate::authored_test_records::{record, sub, tes4, top, z};
 use crate::fly::FlyCam;
 use crate::world::{game_to_bevy, ReadAhead, StreamStats};
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
+use bevy::pbr::DistanceFog;
 use fnv_esm::{LoadOrder, Plugin as EsmPlugin, Schema};
 use fnv_world::index::{Cell, Worldspace};
 use nvf_assets::{GameData, ModelCache, NifMaterial, TextureCache};
