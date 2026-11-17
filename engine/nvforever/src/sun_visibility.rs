@@ -236,7 +236,7 @@ pub fn checker_image() -> Image {
     let data = (0..n * n)
         .map(|i| {
             let (x, y) = (i % n, i / n);
-            if (x / CHECKER_CELL_TEXELS + y / CHECKER_CELL_TEXELS) % 2 == 0 { 255 } else { 0 }
+            if (x / CHECKER_CELL_TEXELS + y / CHECKER_CELL_TEXELS).is_multiple_of(2) { 255 } else { 0 }
         })
         .collect();
     Image::new(Extent3d { width: n, height: n, depth_or_array_layers: 1 }, TextureDimension::D2, data, TextureFormat::R8Unorm, RenderAssetUsages::RENDER_WORLD)
@@ -293,13 +293,21 @@ fn log_mask(vis: Res<SunVisibility>, mut last: Local<Option<(bool, bool, DebugMo
     *last = Some(mask);
 }
 
+/// Anything carrying one of the plumbing's markers.
+type Marked = Or<(With<OutdoorSunLight>, With<SunVisibilityView>)>;
+
 /// Whether [`mark_targets`] has anything to do: the plumbing is on, or markers are left
 /// to take off.
-pub(crate) fn marking_needed(vis: Res<SunVisibility>, marked: Query<(), Or<(With<OutdoorSunLight>, With<SunVisibilityView>)>>) -> bool {
+pub(crate) fn marking_needed(vis: Res<SunVisibility>, marked: Query<(), Marked>) -> bool {
     vis.active() || !marked.is_empty()
 }
 
 type ViewCandidate = (Entity, Has<SunVisibilityView>, Has<FlyCam>, Has<ReflectionCamera>, Has<LensCamera>);
+/// The world cameras and the views still marked.
+type ViewFilter = Or<(With<FlyCam>, With<ReflectionCamera>, With<LensCamera>, With<SunVisibilityView>)>;
+/// The sun light and the lights still marked.
+type LightCandidate = (Entity, Has<Sun>, Has<OutdoorSunLight>);
+type LightFilter = Or<(With<Sun>, With<OutdoorSunLight>)>;
 
 /// Put [`OutdoorSunLight`] on the sun light while outdoors and [`SunVisibilityView`] on the
 /// world cameras while the plumbing is on; take them off otherwise.
@@ -307,8 +315,8 @@ pub(crate) fn mark_targets(
     mut commands: Commands,
     vis: Res<SunVisibility>,
     sky: Option<Res<SkyState>>,
-    lights: Query<(Entity, Has<Sun>, Has<OutdoorSunLight>), Or<(With<Sun>, With<OutdoorSunLight>)>>,
-    views: Query<ViewCandidate, Or<(With<FlyCam>, With<ReflectionCamera>, With<LensCamera>, With<SunVisibilityView>)>>,
+    lights: Query<LightCandidate, LightFilter>,
+    views: Query<ViewCandidate, ViewFilter>,
 ) {
     let active = vis.active();
     let outdoors = sky.is_some_and(|s| s.interior.is_none());
