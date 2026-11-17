@@ -333,3 +333,17 @@ newly established. The new canonical-mapping successor and its two identical-
 fixture baselines require their own compile, strict-lint and execution results.
 The original absent-event baseline is distinct from the d27 typed-delivery
 baseline. No original-mod, native, GPU or popup-resolution acceptance is claimed.
+
+[design] Event filters retain their value kinds: numeric literals are numbers, not
+forms with the same integer value. The crosshair fixture supplies actual reference
+and form-list values, then reads the original registered filters through live
+GetEventHandlers arrays to verify both kind and exact FormID. Raw numeric literals
+remain nonmatching controls; no general filter coercion is added.
+
+[validation] Hosted 6a04897b passed file compilation, original callable, plain
+callback, getter/order/literal and typed CONT controls, then failed the form-filter
+counter. Its filter source supplied numeric literals. Later list/image/lifecycle
+controls were unreached. The engine control passed once (full engine 3422 passed,
+zero failed, three ignored; strict engine Clippy passed). The typed-filter fixture
+correction and its identical-fixture baseline are unexecuted at authoring. This
+changes fixture inputs and diagnostics only, preserving production policy.

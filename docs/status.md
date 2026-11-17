@@ -336,10 +336,12 @@ blank-bar acceptance remain open ([HUD](spec-notes/hud.md)).
 
 OnCrosshairOn: activation-range source-event producer reuses the existing ray and
 getter, preserving JohnnyGuitar delivery. Historical engine controls passed on
-35677 and 22b. A separately qualified d27 runtime check passed file compilation,
-original callable/plain-event/getter/order/value controls, then failed typed CONT
-delivery; its compile controller stayed unqualified. The canonical form-type
-mapping correction and identical-fixture baselines need their own execution.
+35677 and 22b. Qualified d27 runtime failed typed CONT delivery while its compile
+controller stayed unqualified. Hosted6a passed that typed boundary, then failed
+the form-filter counter; its engine control and strict engine checks passed. The
+fixture supplied numeric filter values. Typed-form inputs with actual registered
+value readbacks and numeric negative controls are unexecuted at authoring;
+production filter/producer policies are unchanged.
 Original ySI/provider initialization and installed Contextual Prompts acceptance
 remain open; no version or requirement guard changed. Contract:
 [activation-range acquisition](spec-notes/ext-events.md#activation-range-crosshair-acquisition).

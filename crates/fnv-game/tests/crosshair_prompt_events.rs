@@ -76,12 +76,13 @@ End
             sub(b"FULL", z("Workshop door")),
         ],
     );
-    let placed = |id, base: u32| {
+    let placed = |id, base: u32, editor_id: &str| {
         record(
             b"REFR",
             0,
             id,
             &[
+                sub(b"EDID", z(editor_id)),
                 sub(b"NAME", base.to_le_bytes().to_vec()),
                 sub(b"DATA", vec![0; 24]),
             ],
@@ -95,7 +96,7 @@ End
             &group(
                 0xE00u32.to_le_bytes(),
                 9,
-                &[placed(0xE20, 0xE10), placed(0xE21, 0xE11)].concat(),
+                &[placed(0xE20, 0xE10, "OwnedChestRef"), placed(0xE21, 0xE11, "OwnedDoorRef")].concat(),
             ),
         ),
     ]
@@ -104,7 +105,7 @@ End
         b"FLST",
         0,
         0xE30,
-        &[sub(b"LNAM", 0xE11u32.to_le_bytes().to_vec())],
+        &[sub(b"EDID", z("OwnedDoorList")), sub(b"LNAM", 0xE11u32.to_le_bytes().to_vec())],
     );
     let bytes = [
         tes4(),
@@ -159,7 +160,7 @@ End
         compiled_callback.diags
     );
     let source = MemSource::default()
-        .with("menus/owned.xml", r#"<menu name="HUDMainMenu"><_calls>0</_calls><_sequence>0</_sequence><_sourceOrder>0</_sourceOrder><_johnnyOrder>0</_johnnyOrder><_johnnyOld>0</_johnnyOld><_fresh>0</_fresh><_typed>0</_typed><_wrongType>0</_wrongType><_doorType>0</_doorType><_byForm>0</_byForm><_byList>0</_byList><_iconAlpha>0</_iconAlpha><_icon></_icon><_targetLiteral>0</_targetLiteral><rect name="Prompt"><visible>1</visible><text name="Title"><string>Supply cache</string></text></rect></menu>"#)
+        .with("menus/owned.xml", r#"<menu name="HUDMainMenu"><_calls>0</_calls><_sequence>0</_sequence><_sourceOrder>0</_sourceOrder><_johnnyOrder>0</_johnnyOrder><_johnnyOld>0</_johnnyOld><_fresh>0</_fresh><_typed>0</_typed><_wrongType>0</_wrongType><_doorType>0</_doorType><_byForm>0</_byForm><_byList>0</_byList><_byNumber>0</_byNumber><_byNumberList>0</_byNumberList><_iconAlpha>0</_iconAlpha><_icon></_icon><_targetLiteral>0</_targetLiteral><rect name="Prompt"><visible>1</visible><text name="Title"><string>Supply cache</string></text></rect></menu>"#)
         .with("menus/owned/icon.xml", r#"<image name="Icon"><visible>1</visible><width>30</width><height>30</height><alpha><copy src="io()" trait="_iconAlpha"/></alpha><filename><copy src="io()" trait="_icon"/></filename></image>"#);
     g.ui_tree.load_menu(&source, "menus/owned.xml").unwrap();
     g.ui_files = Some(Box::new(source));
@@ -174,8 +175,10 @@ End
 SetEventHandler \"OnCrosshairOn:27\" ({ref looked} => ModUIFloat \"HUDMainMenu/_typed\" 1)
 SetEventHandler \"OnCrosshairOn:24\" ({ref looked} => ModUIFloat \"HUDMainMenu/_wrongType\" 1)
 SetEventHandler \"OnCrosshairOn:28\" ({ref looked} => ModUIFloat \"HUDMainMenu/_doorType\" 1)
-SetEventHandler \"OnCrosshairOn\" ({ref looked} => ModUIFloat \"HUDMainMenu/_byForm\" 1) \"first\"::0xE20
-SetEventHandler \"OnCrosshairOn\" ({ref looked} => ModUIFloat \"HUDMainMenu/_byList\" 1) \"first\"::0xE30
+SetEventHandler \"OnCrosshairOn\" ({ref looked} => ModUIFloat \"HUDMainMenu/_byForm\" 1) \"first\"::OwnedChestRef
+SetEventHandler \"OnCrosshairOn\" ({ref looked} => ModUIFloat \"HUDMainMenu/_byList\" 1) \"first\"::OwnedDoorList
+SetEventHandler \"OnCrosshairOn\" ({ref looked} => ModUIFloat \"HUDMainMenu/_byNumber\" 1) \"first\"::0xE20
+SetEventHandler \"OnCrosshairOn\" ({ref looked} => ModUIFloat \"HUDMainMenu/_byNumberList\" 1) \"first\"::0xE30
 SetJohnnyOnCrosshairEventHandler 1 (Begin Function {ref looked}
 ModUIFloat \"HUDMainMenu/_sequence\" 1
 SetUIFloat \"HUDMainMenu/_johnnyOrder\" (GetUIFloat \"HUDMainMenu/_sequence\")
@@ -216,6 +219,22 @@ End) 0");
         "crosshair-original-registration: {callable:?}; trace: {:?}",
         g.events
     );
+    // Inspect the original registrations while their returned arrays are live.
+    // Numeric hex tokens are numbers; a form filter must actually contain a Form.
+    for (row, expected) in [
+        (1, XVal::Ref(0xE20)),
+        (2, XVal::Ref(0xE30)),
+        (3, XVal::Num(f64::from(0xE20u32))),
+        (4, XVal::Num(f64::from(0xE30u32))),
+    ] {
+        let inspect = format!("array_var registered\narray_var handlerEntry\narray_var filterMap\nBegin Function {{}}\nregistered = GetEventHandlers \"OnCrosshairOn\" 0 1\nhandlerEntry = registered[{row}]\nfilterMap = handlerEntry[1]\nSetFunctionValue filterMap[\"first\"]\nEnd");
+        let compiled = fnv_script::compile::compile_runtime(&inspect, &g.data.table, &fnv_game::game::GameEnv { g: &g });
+        assert!(compiled.errors().next().is_none(), "crosshair-filter-inspection-compile: {:?}", compiled.diags);
+        assert_eq!(
+            g.run_query(&inspect, Default::default()).unwrap(), expected,
+            "crosshair-filter-admission: registered row {row} must retain its actual Form/Number kind and exact value"
+        );
+    }
     g.set_crosshair_ref(Some(FormId(0xE20)));
     g.ui_tree.update();
     assert_eq!(
@@ -246,8 +265,10 @@ End) 0");
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_typed"), Some(1.0),
         "crosshair-typed-container: registered type27 must run for the actual CONT; trace: {:?}", g.events);
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_wrongType"), Some(0.0));
-    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byForm"), Some(1.0));
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byForm"), Some(1.0), "crosshair-form-filter: the admitted Ref(E20) filter must receive its actual target");
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byList"), Some(0.0));
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byNumber"), Some(0.0));
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byNumberList"), Some(0.0));
     assert_eq!(
         g.ui_tree
             .get_string("HUDMainMenu/Prompt/Icon/filename")
@@ -278,6 +299,8 @@ End) 0");
     );
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byForm"), Some(1.0));
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byList"), Some(1.0));
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byNumber"), Some(0.0));
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byNumberList"), Some(0.0));
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_typed"), Some(1.0),
         "crosshair-typed-door-neighbor: DOOR must not increment the CONT listener");
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_doorType"), Some(1.0),
