@@ -3489,7 +3489,12 @@ impl<'a> Game<'a> {
             };
             (unit, params, body, value.map(|v| *v), locals)
         } else {
-            let unit = self.callable_script(id).ok_or_else(|| format!("{}{NOT_A_FUNCTION}", data.name(FormId(id))))?;
+            let unit = self.callable_script(id).ok_or_else(|| {
+                // Preserve unresolved-handle diagnostics and their reporting frequency;
+                // this fallback does not decide whether an existing callable is a lambda.
+                if id >= LAMBDA_BASE { "an unknown lambda".into() }
+                else { format!("{}{NOT_A_FUNCTION}", data.name(FormId(id))) }
+            })?;
             let block = unit.program.blocks.iter().find(|b| b.event == fnv_script::ir::FUNCTION_BLOCK).ok_or_else(|| format!("{}{NO_FUNCTION_BLOCK}", data.name(FormId(id))))?;
             let params = block.params.iter().flatten().filter_map(|a| if let Arg::Var(v) = a { Some(*v) } else { None }).collect();
             (unit, params, block.body.clone(), None, Locals::Temp(BTreeMap::new()))

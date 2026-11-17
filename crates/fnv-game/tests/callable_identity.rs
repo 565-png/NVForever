@@ -422,7 +422,11 @@ fn record_filter_receiver_and_ordinary_function_neighbors_keep_their_admission()
         XVal::Num(2.0),
         "explicit empty receiver is not the caller"
     );
-    assert!(g.run_function(&XVal::Ref(0xFEF0_0999), None, vec![], None, ctx).is_err());
+    assert_eq!(
+        g.run_function(&XVal::Ref(0xFEF0_0999), None, vec![], None, ctx).unwrap_err(),
+        "an unknown lambda",
+        "unresolved high handles keep their existing diagnostic"
+    );
     no_script_errors(&g);
 }
 
