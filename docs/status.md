@@ -306,5 +306,7 @@ ordinary operators. Actual c264 normal-Cargo CPU comparison: baseline116PASS/4
 intendedFAIL, candidate120PASS, all120once/0ignored. Overallcontrollerfalse is
 retained for an unknown post-Cargo descendant terminated during boundedcleanup;
 this is not whole-run qualification. Clippy, engine/native/originalMCM/rendered
-acceptance remain open. No Rust/Cargo change in this documentation successor.
+acceptance remain open. Independent raw/source review confirmed those bounded
+case results and the false overall flag. The later accepted-main 060d union
+retains the tested fnv-ui Rust/fixtures, but its merged dependency graph is UNRUN.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).

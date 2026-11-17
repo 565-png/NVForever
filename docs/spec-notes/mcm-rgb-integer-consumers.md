@@ -76,4 +76,10 @@ Earlier runner attempts remain preserved: the first stopped after baseline tests
 at an immediate descendant check; the next candidate invocation did not establish
 source binding and is excluded. No source, assertion, cap or false result was
 changed to obtain a green flag. Strict Clippy, engine/original-mod/rendered checks
-and native numeric parity remain unexecuted; independent evidence review is open.
+and native numeric parity remain unexecuted. Independent raw/source review
+confirmed the bounded case results while retaining the false overall flag.
+
+[documented: source integration] The accepted-main 060d69dd union retains the
+exact tested fnv-ui Rust/fixture blobs. Its unrelated compiler, launcher, settings
+and dependency changes form a new, unrun graph; the actual test result above
+remains scoped to c264d430.
