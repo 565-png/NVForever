@@ -945,7 +945,9 @@ impl Runtime {
         let has_block = g.ref_script(target).and_then(|s| g.data.script(s)).is_some_and(|u| u.has_block(event::ON_ACTIVATE));
         let r = if has_block {
             info!("script: activating {target} runs its OnActivate block instead of the default action");
-            g.activate(player, target, ActMode::Hand).map(|_| ByHand::Script)
+            g.activate(player, target, ActMode::Hand).map(|done| {
+                if matches!(done["result"].as_str(), Some("prevented" | "destroyed")) { ByHand::Refused } else { ByHand::Script }
+            })
         } else {
             // The shared default action; what is this path's own is that `activate.rs`
             // applies the outcome, so these events do not become effects as well.
