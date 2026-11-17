@@ -202,7 +202,7 @@ impl Swinger {
             if let Some(clip) = sg.clip {
                 self.strike_in = clip.ready_in(sg.t, self.strike_in, sg.speed);
             }
-            if sg.t > sg.clip.map_or(STRIKE_SECONDS * 2.0, |c| c.len) {
+            if sg.t > sg.clip.map_or(STRIKE_SECONDS * 2.0, |c| c.end_at(sg.speed)) {
                 self.swing = None;
             }
         }
@@ -228,10 +228,10 @@ struct Swing {
 
 impl Swing {
     /// What a blow begun now goes on with: the group its clip's `a:` key named, between
-    /// that key and the clip's end (as `npc_combat`'s fighters).
+    /// that key and the clip's end, both at the blow's attack speed (as `npc_combat`'s
+    /// fighters; `SwingClip::next_at`).
     fn next(&self) -> Option<fnv_combat::melee::NextAttack> {
-        let c = self.clip?;
-        c.chain.filter(|(at, _)| self.t >= *at && self.t <= c.len).map(|(_, n)| n)
+        self.clip?.next_at(self.t, self.speed)
     }
 }
 
@@ -992,14 +992,18 @@ mod tests {
                         sw.advance(0.02, None);
                         elapsed += 0.02;
                         assert!(sw.ready(), "key={key:?}, len={len}, speed={speed}, pause={pause}");
-                        // The clip itself plays at its own speed: its combo window and end
-                        // are on its own clock [design: Swing::next].
+                        // The combo window and the swing's end are at the attack speed, as
+                        // the decision is [design: SwingClip::next_at, end_at]: a decision at
+                        // the key goes on the combo at every speed.
                         match sw.swing {
                             Some(s) => {
-                                assert!(elapsed <= len, "key={key:?}, len={len}, speed={speed}, pause={pause}");
-                                assert_eq!(s.next(), key.filter(|&at| elapsed >= at).map(|_| NextAttack::Left));
+                                assert!(elapsed <= len / speed, "key={key:?}, len={len}, speed={speed}, pause={pause}");
+                                assert_eq!(s.next(), key.filter(|&at| elapsed >= at / speed).map(|_| NextAttack::Left));
+                                if pause == 0.0 {
+                                    assert_eq!(s.next(), key.map(|_| NextAttack::Left), "key={key:?}, len={len}, speed={speed}: chains");
+                                }
                             }
-                            None => assert!(elapsed > len, "key={key:?}, len={len}, speed={speed}, pause={pause}"),
+                            None => assert!(elapsed > len / speed, "key={key:?}, len={len}, speed={speed}, pause={pause}"),
                         }
                     }
                 }

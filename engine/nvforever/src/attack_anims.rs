@@ -233,16 +233,36 @@ impl SwingClip {
     /// NiTextKeyExtraData; observed: capture run15b_b2, 2026-11-15, radscorpions;
     /// hypothesis: NPC swings, #2535]. The clip's key and length are divided by the
     /// blow's attack speed (Attack Mult × the teammate rate; `elapsed` and `base_left`
-    /// are real seconds, the base already divided), as the guns' `a:` key is
-    /// (`fnv_combat::attack::Timing::of`, #2739) [documented: GECK wiki Weapons page,
-    /// Attack Multiplier "speeds up or slows down just the attack animation"; design,
-    /// #2535 review]. A speed not above 0 counts as 1 [design].
+    /// are real seconds, the base already divided), in the manner of the guns' `a:` key
+    /// (`fnv_combat::attack::Timing::of`, #2739, which also takes the Animation Mult;
+    /// melee does not) [documented: GECK wiki Weapons page, Attack Multiplier "speeds up
+    /// or slows down just the attack animation"; design, #2535 review]. The combo window
+    /// ([`SwingClip::next_at`]) and the swing's end ([`SwingClip::end_at`]) use the same
+    /// clock; the `Hit` key stays at the clip's own time [design].
     pub(crate) fn ready_in(&self, elapsed: f32, base_left: f32, speed: f32) -> f32 {
-        let speed = if speed > 0.0 { speed } else { 1.0 };
+        let speed = Self::rate(speed);
         match self.chain {
             Some((at, _)) => (at / speed - elapsed).max(0.0),
             None => base_left.max((self.len / speed - elapsed).max(0.0)),
         }
+    }
+
+    /// The clip's end, real seconds into the swing, at attack speed `speed`.
+    pub(crate) fn end_at(&self, speed: f32) -> f32 {
+        self.len / Self::rate(speed)
+    }
+
+    /// What a blow begun `elapsed` real seconds into this swing goes on with at attack
+    /// speed `speed`: the group its `a:` key names, between that key and the clip's end,
+    /// both divided by the speed (as [`SwingClip::ready_in`]).
+    pub(crate) fn next_at(&self, elapsed: f32, speed: f32) -> Option<NextAttack> {
+        let speed = Self::rate(speed);
+        self.chain.filter(|(at, _)| elapsed >= at / speed && elapsed <= self.len / speed).map(|(_, n)| n)
+    }
+
+    /// A speed not above 0 counts as 1 [design].
+    fn rate(speed: f32) -> f32 {
+        if speed > 0.0 { speed } else { 1.0 }
     }
 }
 

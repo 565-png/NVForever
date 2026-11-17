@@ -122,8 +122,9 @@
 //!   weapon's own attack group. Without an `a:` key, the next decision waits for both
 //!   the clip's end and the base [`STRIKE_SECONDS`] pace [observed: capture run15b_b2,
 //!   2026-11-15, radscorpions; hypothesis: the same lower bound for NPC swings, #2535].
-//!   The key and the clip's end are divided by the blow's attack speed (Attack Mult ×
-//!   the teammate rate), as the guns' `a:` key is (#2739) [design, #2535 review].
+//!   The key, the combo window and the clip's end are divided by the blow's attack
+//!   speed (Attack Mult × the teammate rate), in the manner of the guns' `a:` key
+//!   (#2739, which also takes the Animation Mult) [design, #2535 review].
 //!
 //! - **Its combat style** (CSTY, `fnv_game::combat_style`; docs/design/combat-ai.md
 //!   §10.4) [documented: GECK wiki Combat Style]: Weapon Restrictions "Melee Only" has
@@ -569,13 +570,12 @@ impl NpcSwing {
     }
 
     /// What a blow begun now goes on with: the group its `a:` key named, between that key
-    /// and the clip's end.
+    /// and the clip's end, both at the blow's attack speed (`SwingClip::next_at`).
     fn next(&self) -> Option<fnv_combat::melee::NextAttack> {
         if self.power {
             return None;
         }
-        let c = self.clip?;
-        c.chain.filter(|(at, _)| self.t >= *at && self.t <= c.len).map(|(_, n)| n)
+        self.clip?.next_at(self.t, self.speed)
     }
 }
 
@@ -3015,7 +3015,7 @@ pub(crate) fn fight(
                             }
                             fighter.strike_in = sw.ready_in(fighter.strike_in);
                         }
-                        if sw.t > sw.clip.map_or(STRIKE_SECONDS * 2.0, |c| c.len) {
+                        if sw.t > sw.clip.map_or(STRIKE_SECONDS * 2.0, |c| c.end_at(sw.speed)) {
                             fighter.swing = None;
                         }
                     }
@@ -3229,7 +3229,9 @@ pub(crate) fn fight(
                         // A power attack's clip plays out before the next decision (it
                         // is not cut by a combo) [design, as the player's].
                         if let Some(p) = people {
-                            fighter.strike_in = fighter.strike_in.max(p.len);
+                            // At the blow's attack speed, as its clip's end once timed
+                            // (`SwingClip::ready_in`, #2535 review).
+                            fighter.strike_in = fighter.strike_in.max(p.len / speed);
                         }
                         let power = power.or(people.map(|p| (p.power, p.hit)));
                         // The blow lands at its clip's `Hit` key (the last clip's, as the
@@ -3913,7 +3915,7 @@ mod tests {
 
     /// #2535 review: a person striking at x2 (Attack Mult × the teammate rate) is not held
     /// to its clip's unscaled `a:` key: the key and the clip's end are divided by the speed,
-    /// as the guns' `a:` key is (#2739).
+    /// in the manner of the guns' `a:` key (#2739).
     #[test]
     fn melee_cadence_divides_an_unscaled_clip_by_the_attack_speed() {
         use crate::attack_anims::SwingClip;
@@ -3931,6 +3933,21 @@ mod tests {
         // At x1 the clip's own times, as before.
         assert!((at(keyed, 1.0, 0.05) - (0.63 - 0.05)).abs() < 1e-5);
         assert!((at(keyless, 1.0, 0.05) - (1.43 - 0.05)).abs() < 1e-5);
+        // #2535 review r2: the combo window and the swing's end follow the same speed, so
+        // a decision made at the key goes on the combo at x2, x0.8 and x1.5 (a companion's
+        // teammate rate with the fists), and the window closes at the clip's end ÷ speed.
+        let next = |speed, t| NpcSwing { t, clip: Some(keyed), run: 1, power: false, speed }.next();
+        for speed in [2.0_f32, 0.8, 1.5, 1.0] {
+            // (The frame that finds the wait spent is at or just past it.)
+            let decided = 0.05 + at(keyed, speed, 0.05) + 1e-4;
+            assert_eq!(next(speed, decided), Some(NextAttack::Left), "x{speed}: decided at {decided}");
+            assert_eq!(next(speed, 0.63 / speed - 0.01), None, "x{speed}: before the key");
+            assert_eq!(next(speed, 1.43 / speed - 0.01), Some(NextAttack::Left), "x{speed}: before the end");
+            assert_eq!(next(speed, 1.43 / speed + 0.01), None, "x{speed}: after the end");
+            assert!((keyed.end_at(speed) - 1.43 / speed).abs() < 1e-6);
+        }
+        // A power attack never goes on a combo, at any speed.
+        assert_eq!(NpcSwing { t: 0.4, clip: Some(keyed), run: 1, power: true, speed: 2.0 }.next(), None);
     }
 
     #[test]

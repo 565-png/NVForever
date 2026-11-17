@@ -43,12 +43,15 @@ the spec it links to.
 - **NPC melee pace follows the attack clip, people included (#2535).** [design, #2535]
   Every NPC's and creature's next melee decision now waits for its attack clip's `a:` key
   (even when later than the 1.2 s base), and without a key for the clip's end as well as
-  the base; key and end are divided by the attack speed (Attack Mult × teammate rate).
-  Before: the 1.2 s base ÷ speed, or the `a:` key when sooner; the keyless pace carried the
-  2026-10-16 owner-request tag (combat-ai.md §15). The evidence is a capture of
-  radscorpions only (observer check 244); for people it is [hypothesis], so late-key and
-  keyless clips (two-handed melee, some fists) may swing more slowly than before. Ruling
-  otherwise: restore `min(base, key)` for people in `attack_anims::SwingClip::ready_in`
+  the base; key, combo window and clip end are divided by the attack speed (Attack Mult ×
+  teammate rate), so combos follow the speed. Before: the 1.2 s base ÷ speed, or the
+  unscaled `a:` key when sooner; the keyless pace carried the 2026-10-16 owner-request tag
+  (combat-ai.md §15). The evidence is a capture of radscorpions only (observer check 244);
+  for people it is [hypothesis]: late-key and keyless clips (two-handed melee, some fists)
+  may swing more slowly than before, and people faster than x1 with a keyed clip swing
+  sooner than on main (key ÷ speed). Ruling otherwise: restore `min(base, key)` for people
+  at the callers (`npc_combat::NpcSwing::ready_in`, `use_weapon::Swinger::advance`), since
+  `attack_anims::SwingClip::ready_in` is shared with creatures
   ([combat-rules section 10](spec-notes/combat-rules.md)).
 - **Pip-Boy pages from their menu files by default (#2215).** [design, #2215] An absent
   `[UI] TileMenus` selects StatsMenu, InventoryMenu, RepairMenu, ItemModMenu, MapMenu and

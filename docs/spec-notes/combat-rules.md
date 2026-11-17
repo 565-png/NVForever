@@ -735,9 +735,10 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     waits for the clip's end as well as the base timer. An earlier key still brings
     the decision forward for combos. Clip times use the existing playback clock
     (`attack_anims::CombatPose::layers`, `attack_anims::SwingClip::ready_in`) [design].
-    The key and the clip's end are divided by the blow's attack speed (Attack Mult ×
-    the teammate rate, 1 for creatures), as the semi-automatic guns' `a:` key is
-    (§4, §4.1) [documented: GECK wiki Weapons page, Attack Multiplier "speeds up or
+    The key, the combo window and the clip's end are divided by the blow's attack speed
+    (Attack Mult × the teammate rate, 1 for creatures), in the manner of the
+    semi-automatic guns' `a:` key (§4, §4.1; guns also divide by the Animation Mult,
+    melee does not); the `Hit` key stays at the clip's own time [documented: GECK wiki Weapons page, Attack Multiplier "speeds up or
     slows down just the attack animation"; design, #2535 review].
     Ordinary combat uses this boundary calculation. Scripted melee has the shared
     calculation available, but plays no attack clip yet: `attack_anims::start`
