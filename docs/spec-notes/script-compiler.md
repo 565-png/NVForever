@@ -735,6 +735,43 @@ rules; what NVForever decides where they are open is tagged here.
   temporary reference to the stack that stops being valid the next frame [hypothesis
   until B5 builds inventory references].
 
+### Inline surplus operands in mod expressions
+
+[documented: [IsAnimPlayingEx](https://geckwiki.com/index.php/IsAnimPlayingEx)]
+The command has one required category and two optional integer parameters. The
+catalogue keeps that signature. [observed: installed Script Runner data,
+2026-11-17] An installed caller supplies a fourth operand inside a negated
+boolean condition. No fourth native parameter or byte encoding is established.
+
+[implementation evidence: public source 98fb59a9] Standalone extender calls
+already discard surplus operands with a diagnostic, but an unparenthesized
+condition leaves the operand behind and fails syntax checking. A lambda body's
+expression has its own token stream even while the containing handler call is
+parsing an argument.
+
+[design] In mod-source mode only, a bounded-arity call at the current whole
+expression's root applies the existing surplus policy: parse and discard extra
+operands, emit `surplus_arguments`, then leave enclosing operators in place.
+Parsing a discarded operand retains no references, locals, lambda identities or
+incidental diagnostics. An unreadable operand remains a syntax error. The next
+argument of an enclosing call and existing parenthesized/braced/indexed expression
+boundaries retain their previous consumers. Strict runtime/editor compilation,
+catalogue signatures, native encodings and API implementations are unchanged.
+
+[authored, UNRUN] The shared `compile` test target's
+`inline_surplus_operands::` cases compile an independent handler-shaped condition
+through `compile_mod_runtime`, decode its bytes, and exercise call arguments and
+boolean behavior through the VM. Controls cover optional arguments, enclosing
+calls/operators, short circuiting, strict admission, explicit parentheses,
+discarded references/lambdas and unreadable operands. The actual installed file,
+baseline/candidate execution and game-load acceptance are UNRUN for this source
+candidate. No installed mod text is included in the tests.
+
+[hypothesis] Whether the original extender runtime drops these inline operands,
+or the caller intended another behavior, remains open. Extend the owning surplus
+argument observer check with a query-only condition before claiming original-game
+parity; parsing this caller does not establish B42 Optics compatibility.
+
 ## 10. Open
 
 - The editor's error messages and refusals (G2).

@@ -131,6 +131,12 @@ from source; tests in `crates/fnv-script/tests/compile.rs`):
   [hypothesis: spaces between tokens do not matter; documented: Lambda shows
   `(begin function`].
 
+Successful compilation reports its returned warnings once, when the Script Runner
+first caches that unit [design]. The inline-surplus candidate and its UNRUN
+controls are described in [script-compiler.md](script-compiler.md#inline-surplus-operands-in-mod-expressions).
+The candidate preserves the documented function signature; it does not establish
+native parity or full installed-mod acceptance.
+
 Building the files found two compiler gaps that affect every script compiled from source,
 now fixed: a type word after `let` (`let int i := 10`, `let array_var a := …`) and in an
 extender condition (`if eval (int j = …)`, `while`, `foreach array_var e <- a`) declares
