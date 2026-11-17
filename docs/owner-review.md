@@ -48,10 +48,13 @@ the spec it links to.
   unscaled `a:` key when sooner; the keyless pace carried the 2026-10-16 owner-request tag
   (combat-ai.md §15). The evidence is a capture of radscorpions only (observer check 244);
   for people it is [hypothesis]: late-key and keyless clips (two-handed melee, some fists)
-  may swing more slowly than before, and people faster than x1 with a keyed clip swing
-  sooner than on main (key ÷ speed). Ruling otherwise: restore `min(base, key)` for people
-  at the callers (`npc_combat::NpcSwing::ready_in`, `use_weapon::Swinger::advance`), since
-  `attack_anims::SwingClip::ready_in` is shared with creatures
+  may swing more slowly than before; with a keyed clip, people faster than x1 swing sooner
+  and people slower than x1 more slowly than on main (key ÷ speed instead of the 1x key).
+  Ruling otherwise: main's pace for people needs `min(base, key)` with the clip's own times
+  for the decision, the combo window (`SwingClip::next_at`), the swing's end (`end_at`) and
+  the power-attack wait (`p.len`); `NpcSwing` cannot tell a person from a creature, so this
+  goes at the `npc_combat::fight` call site, where the arm is known (and in
+  `use_weapon::Swinger::advance` for scripted swings), or behind a flag
   ([combat-rules section 10](spec-notes/combat-rules.md)).
 - **Pip-Boy pages from their menu files by default (#2215).** [design, #2215] An absent
   `[UI] TileMenus` selects StatsMenu, InventoryMenu, RepairMenu, ItemModMenu, MapMenu and

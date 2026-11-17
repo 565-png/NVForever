@@ -738,8 +738,13 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     The key, the combo window and the clip's end are divided by the blow's attack speed
     (Attack Mult × the teammate rate, 1 for creatures), in the manner of the
     semi-automatic guns' `a:` key (§4, §4.1; guns also divide by the Animation Mult,
-    melee does not); the `Hit` key stays at the clip's own time [documented: GECK wiki Weapons page, Attack Multiplier "speeds up or
-    slows down just the attack animation"; design, #2535 review].
+    melee does not); the `Hit` key stays at the clip's own time [documented: GECK
+    wiki Weapons page, Attack Multiplier "speeds up or slows down just the attack
+    animation"; design, #2535 review]. As the clip itself still plays at 1x while the
+    cut moves, above about x2.1 (an `a:` key at 0.63 s, `Hit` at 0.30 s) the next blow
+    starts before the last one's `Hit` lands, and at x0.25 the fighter stands idle after
+    the clip until its decision [design]. The follow-up is to play melee attack clips at
+    the attack speed.
     Ordinary combat uses this boundary calculation. Scripted melee has the shared
     calculation available, but plays no attack clip yet: `attack_anims::start`
     requires a fighter pitch or existing attack pose, and `npc_combat::fight`
