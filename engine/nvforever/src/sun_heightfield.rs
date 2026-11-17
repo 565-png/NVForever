@@ -601,7 +601,7 @@ impl Work {
 }
 
 #[derive(Resource, Default)]
-struct HeightWork(Option<Work>);
+pub(crate) struct HeightWork(Option<Work>);
 
 pub struct SunHeightfieldPlugin;
 
@@ -622,14 +622,14 @@ impl Plugin for SunHeightfieldPlugin {
 }
 
 /// Switched off: stop the loader, free everything.
-fn stop_heightfield(mut work: ResMut<HeightWork>, mut field: ResMut<SunHeightfield>) {
+pub(crate) fn stop_heightfield(mut work: ResMut<HeightWork>, mut field: ResMut<SunHeightfield>) {
     if work.0.take().is_some() || !field.is_empty() {
         field.clear();
         info!("sun heightfield: off");
     }
 }
 
-fn update_heightfield(
+pub(crate) fn update_heightfield(
     world: Option<Res<WorldData>>,
     streamer: Option<Res<Streamer>>,
     camera: Query<&GlobalTransform, crate::fly::WorldCamera>,

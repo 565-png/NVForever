@@ -185,6 +185,7 @@ mod occlusion;
 mod rooms;
 mod terrain;
 mod terrain_lod;
+mod terrain_shadows;
 mod terrain_wireframe;
 mod texture_swap;
 mod effect_particles;
@@ -1697,6 +1698,9 @@ fn main() -> AppExit {
     // The landscape's height map around the camera for terrain shadows (#2671); off unless
     // wanted (NVF_PLAY_DEBUG_SUN_HEIGHTFIELD), nothing built while off (sun_heightfield.rs).
     .add_plugins(sun_heightfield::SunHeightfieldPlugin)
+    // Terrain shadow heights from that map, on the GPU (#2671); off unless wanted
+    // (NVF_PLAY_DEBUG_TERRAIN_SHADOWS), nothing allocated or dispatched while off (terrain_shadows.rs).
+    .add_plugins(terrain_shadows::TerrainShadowsPlugin)
     .add_systems(Update, (cell_buffer::remember, cell_buffer::tell_game).chain().after(world::stream))
     .add_systems(Update, world::script_markers.before(world::stream))
     .add_systems(Update, world::draw_waiting_actors.after(world::stream))
