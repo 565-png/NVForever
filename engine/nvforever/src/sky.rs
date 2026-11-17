@@ -1695,8 +1695,8 @@ const SHADOW_OVERLAP: f32 = 0.2;
 const FIRST_CASCADE_FLOOR: f32 = 200.0;
 /// The least step between two neighbouring far bounds, as a share of the room between the
 /// first bound and the last ([`shadow_cascade_layout`]) [engineering choice: small enough
-/// to leave every layout's shares alone at the usual distances, and with at most 4
-/// cascades the steps fit the room three times over].
+/// to leave every layout's shares alone at the usual distances; with at most 4
+/// cascades the steps take at most 15 % of the room].
 const MIN_CASCADE_STEP: f32 = 0.05;
 /// The far bounds of all cascades but the last, as shares of the shadow distance
 /// [engineering choice: the contributor's proposal in #2843, for the maintainer to decide.

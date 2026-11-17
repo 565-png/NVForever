@@ -340,7 +340,7 @@ const SHADOW_MAP: usize = 2048;
 /// have, plus one per shadowed spot light), so the row sizes the sun's cascades, the
 /// first-person arms' shade light's cascade (player_body.rs) and the flashlight's shadow
 /// (flashlight.rs). By arithmetic a layer of 4096² takes 64 MiB against 16 MiB at 2048²:
-/// on Quality, four sun cascades and the arms' one, about 240 MiB more; on Performance
+/// on Quality by day in first person, four sun cascades and the arms' one, about 240 MiB more; on Performance
 /// (three, no arms shade light) about 144 MiB more; with the flashlight on 48 MiB more
 /// again, and its shadow pass draws 4096² too. Not measured.
 pub const SHADOW_RESOLUTIONS: [(&str, usize); 2] = [("2048", 2048), ("4096", 4096)];

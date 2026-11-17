@@ -828,7 +828,7 @@ After the Controls tab's own rows (see the end of this page):
   with 4096 and Longer sun shadows they end at 1,500, 3,500 and 7,000 of the default 8,000
   units (blended over a wider band) and stay sharp near the player; with 4096 alone at
   1,500, 2,400 and 4,800; with 2048 nearer (700, 2,000 and 5,000). By arithmetic 4096
-  takes about 240 MiB more video memory on Quality (five layers of 64 MiB against 16 MiB),
+  takes about 240 MiB more video memory on Quality by day in first person (five layers of 64 MiB against 16 MiB),
   144 MiB more on Performance, and 48 MiB more again with the flashlight on. No quality
   preset sets this row.
 - Registered in `engine/nvforever/src/settings.rs`

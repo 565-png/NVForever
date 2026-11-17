@@ -1269,7 +1269,7 @@ reach (longer shadows); the moon's single cascade unchanged.
   directional lights have, plus one layer per shadowed spot light), so the row sizes the
   sun's cascades, the first-person arms' shade light's cascade (Quality only) and the
   flashlight's shadow, whose pass draws 4096² too. By arithmetic a layer is 64 MiB at
-  4096² against 16 MiB: about 240 MiB more on Quality (five layers), 144 MiB on
+  4096² against 16 MiB: about 240 MiB more on Quality by day in first person (five layers), 144 MiB on
   Performance (three), and 48 MiB more again with the flashlight on; not measured. 4096²
   maps measured 0.2-0.3 ms on this GPU (the table); not measured on a slower GPU. No
   quality preset sets the row.
