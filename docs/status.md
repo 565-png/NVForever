@@ -323,3 +323,6 @@ confirmed those bounded case results and the false overall flag. The accepted-ma
 060d union retains the tested fnv-ui Rust/fixtures; whole-graph qualification stays
 bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
+
+- String game-setting source setter/readback and the existing talk-prompt consumer:
+  authored; focused runtime checks pending. See [string-settings](spec-notes/string-settings.md).
