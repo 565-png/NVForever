@@ -2572,14 +2572,15 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
             a.want(&c, tag, w, Mode::Once, 0.0);
         }
     }
-    // A landing with movement inertia: the clip is played by its place along the settling
-    // curve over a longer time, so the view dips about as fast as the clip has it and
-    // stands up slowly to a soft end (at the clip's own pace the standing up took 0.4 s).
+    // A landing with movement inertia: the clip is played by its place along
+    // `land_curve` over a longer time, so the view dips at the clip's own pace from the
+    // landing frame on and stands up slowly to a soft end (at the clip's own pace the
+    // standing up took 0.4 s).
     if let (View::First, Some(stretch)) = (rig.view, f.land_stretch) {
         for l in a.layers.iter_mut().filter(|l| l.tag == TAG_LAND && !l.finished()) {
             let length = l.clip.length().max(1e-3);
-            let x = nvf_play::ease::settle_inv((l.time / length).clamp(0.0, 1.0)) + f.dt.max(0.0) / (length * stretch.max(0.1));
-            (l.time, l.rate) = (nvf_play::ease::settle(x) * length, 0.0);
+            let u = nvf_play::inertia::land_curve_inv((l.time / length).clamp(0.0, 1.0), stretch) + f.dt.max(0.0) / (length * stretch.max(1.0));
+            (l.time, l.rate) = (nvf_play::inertia::land_curve(u, stretch) * length, 0.0);
         }
     }
     // The idles: each at the time its playback is at. One that has ended holds its last
