@@ -879,6 +879,17 @@ fn alarm_on_gang(g: &mut Game) {
     call(g, SEND_ASSAULT_ALARM, Some(STRANGER_REF), &[ArgValue::Value(Value::Ref(0x14)), ArgValue::Value(Value::Ref(GANG))]);
 }
 
+/// The trace's last `assault_alarm` event: (victim, alive, absent, dead).
+fn last_alarm(g: &Game) -> Option<(Option<FormId>, usize, usize, usize)> {
+    g.events.iter().rev().find_map(|e| match &e.kind {
+        fnv_game::trace::EventKind::AssaultAlarm { caller, faction, victim, alive, absent, dead } => {
+            assert_eq!((*caller, *faction), (Some(FormId(STRANGER_REF)), Some(FormId(GANG))));
+            Some((*victim, *alive, *absent, *dead))
+        }
+        _ => None,
+    })
+}
+
 /// #2926: with the player named and a faction given, the victim is a present member of the
 /// faction [documented: GECK wiki SendAssaultAlarm], never the calling actor, which is in
 /// no faction.
@@ -891,6 +902,7 @@ fn an_assault_alarm_on_a_faction_turns_a_member_not_the_caller() {
     assert_eq!(crimes(&mut g), vec![(Kind::Assault, vec![FormId(FIEND_REF)])]);
     assert!(g.crime_enemy(FormId(FIEND_REF)));
     assert!(!g.crime_enemy(FormId(STRANGER_REF)));
+    assert_eq!(last_alarm(&g), Some((Some(FormId(FIEND_REF)), 1, 0, 0)));
 }
 
 /// #2926: with no member present (disabled) or alive, nobody is the victim: no crime, and
@@ -904,6 +916,7 @@ fn an_assault_alarm_on_a_faction_with_no_member_turns_nobody() {
     alarm_on_gang(&mut g);
     assert_eq!(crimes(&mut g), vec![]);
     assert!(!g.crime_enemy(FormId(STRANGER_REF)) && !g.crime_enemy(FormId(FIEND_REF)));
+    assert_eq!(last_alarm(&g), Some((None, 0, 1, 0)));
 
     let mut g = game(&f);
     assert!(g.kill(FormId(FIEND_REF), None));
@@ -911,6 +924,7 @@ fn an_assault_alarm_on_a_faction_with_no_member_turns_nobody() {
     alarm_on_gang(&mut g);
     assert_eq!(crimes(&mut g), vec![]);
     assert!(!g.crime_enemy(FormId(STRANGER_REF)));
+    assert_eq!(last_alarm(&g), Some((None, 0, 0, 1)));
 }
 
 /// The form with no faction keeps the calling actor as the victim (SCPT 0x0002A43C's
@@ -923,6 +937,7 @@ fn an_assault_alarm_without_a_faction_turns_the_caller() {
     call(&mut g, SEND_ASSAULT_ALARM, Some(STRANGER_REF), &[]);
     assert_eq!(crimes(&mut g), vec![(Kind::Assault, vec![FormId(STRANGER_REF)])]);
     assert!(g.crime_enemy(FormId(STRANGER_REF)));
+    assert_eq!(last_alarm(&g), None, "the form without a faction picks no member");
 }
 
 /// The kill loop of the headless walkthrough techatticup-hostages-dead-2926.actions.json

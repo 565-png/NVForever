@@ -1139,7 +1139,9 @@ pub fn send_assault_alarm(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, St
                 ),
                 None => tracing::info!("assault alarm: faction parameter is no form; no victim"),
             }
-            picked.and_then(|p| p.victim)
+            let (victim, alive, absent, dead) = picked.map_or((None, 0, 0, 0), |p| (p.victim, p.alive, p.absent, p.dead));
+            g.emit(crate::trace::EventKind::AssaultAlarm { caller, faction: picked.map(|p| p.faction), victim, alive, absent, dead });
+            victim
         }
         None => Some(caller.ok_or("no victim")?),
     };
