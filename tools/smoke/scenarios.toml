@@ -31375,6 +31375,25 @@ expect = [
 ]
 
 [[scenario]]
+name = "softlock-gomorrah-leave"
+source = "issue #2835 (engine/nvforever/src/residents.rs drive): leaving Gomorrah by the inner hotel door GomorrahHotelDoorREF01 (0x0011A987), whose script resets vDialogueGomorrah.iInGomorrah to 0, let the entrance guard vGOMEntranceGuardREF (0x00127956) take up GomorrahGreeterPackage in the same frame and start his weapons check with a player already on the way out; the hand-over set iInGomorrah to 1 again, so on the next way in (vGOMHotelDoor02, 0x0013BB1D, DisablePlayerControls) no greeting came to give the controls back. Nobody thinks in the frame the player sets off through a load door"
+note = "Gomorrah's main level: the guard greets the player at the start and is answered with the hand-over (INFO 0x0012793F); the player stands at the inner door at 10 s, which at 12 s takes them out to the Strip, and the outer door at 22 s brings them back in, where the guard greets again and his line's end gives the controls back. The race itself is one frame (the guard choosing his package in the frame the player sets off; the quest pilot met it, a build without the fix passed this five times out of five), so this guards the way out and back in, not the race"
+areas = ["ai", "quests", "scripts"]
+paths = ["engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SOFTLOCK_SECS = "8", NVF_PLAY_TEST_TALK = "0:*=Here you go;20:*=Here you go", NVF_PLAY_TEST_GOTO = "10:1790:2440:6410", NVF_PLAY_TEST_SCRIPT = "12:activate:0x0011A987,22:activate:0x0013BB1D" }
+args = ["--play", "--cell", "Gomorrah01", "--pos=1900,1900,6410", "--heading", "0", "--no-voice", "--no-messages"]
+run_seconds = 45
+order = [[
+  { re = 'vGOMEntranceGuardREF: starts a conversation', label = "the guard greets the player inside" },
+  { re = 'script: travel to None / Some\(1291016\)', label = "the inner door takes the player out to the Strip" },
+  { re = 'player controls: .*disabled by scripts', label = "the outer door takes the controls on the way back in" },
+  { re = 'vGOMEntranceGuardREF: starts a conversation', label = "back inside, the guard greets the player again" },
+  { text = "player controls: all enabled", label = "his line's end gives the controls back" },
+]]
+expect = [{ re = 'vGOMEntranceGuardREF: starts a conversation', count = 2, label = "two greetings, both inside" }]
+forbid = [{ re = 'softlock: controls_held', label = "the controls are not left off" }]
+
+[[scenario]]
 name = "softlock-hardin-training"
 source = "issue #2309 (found by the watchdog of #2365): Hardin's power armor training restrains the player and Hardin, turns the controls off and, 4 s on, gives Hardin the Dialogue package HVHardinPowerArmorTrainingPackage; only the line that package opens releases them [observed: INFO 0x001633C9's result script, SCPT HVMcNamaraHardinConvoScript]"
 note = "The console does what the line's result script does (the conversation that leads to it needs the Brotherhood's quests). Hidden Valley bunker L2, beside Hardin; the player is unseen because a bare start has the Brotherhood hostile"
