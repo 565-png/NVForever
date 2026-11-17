@@ -327,7 +327,8 @@ Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
 - String game-setting source setter/readback and the existing talk-prompt consumer:
   prior hosted engine controls failed a layout-test accessor that omits spaces;
   bound-prompt checks passed before failure. The fixture now checks spaced text
-  and glyph advances; corrected checks remain UNRUN. See [string-settings](spec-notes/string-settings.md).
+  and glyph advances. Validation results are recorded in PR #2914; native and
+  installed-mod behavior remain unqualified. See [string-settings](spec-notes/string-settings.md).
 
 
 HUD ammo alpha consumed by hover text: engine-created copies materialize the

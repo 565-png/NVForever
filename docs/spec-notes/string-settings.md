@@ -35,4 +35,5 @@ The preceding bound-prompt assertions passed; the console case also read its edi
 played-World setting before failing. The source-driver call, XATO and session checks
 later in those cases were not reached. The fixture now checks the renderer's existing
 gap-aware text and the actual glyph advances, retaining exact spaced expectations.
-Production is unchanged; corrected compilation and runtime remain UNRUN.
+Production is unchanged. Current validation results are recorded in PR #2914;
+native and installed-mod behavior remain unqualified.
