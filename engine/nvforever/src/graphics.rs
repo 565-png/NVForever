@@ -36,6 +36,9 @@
 //! - **Terrain anti-tiling** (`terrain-anti-tiling`, off in both presets, likewise): the
 //!   landscape textures are read at a few offset places hashed from the world and blended,
 //!   so their repeat no longer shows as a grid (terrain.rs "Anti-tiling", #2551).
+//! - **Desert haze** (`desert-haze`, off in every preset): a thin dust haze added to the
+//!   weather's own distance fog, thicker with distance and toward the ground, warmer toward
+//!   the sun, as far as the weather's fog leaves room for it (haze.rs, #2675).
 //!
 //! The game's own image space (the grade and the modifiers' blur, imagespace.rs) is left
 //! as it is: none of these replaces or repeats it. Every value here is an engineering
@@ -173,11 +176,13 @@ pub struct Graphics {
     /// Anti-tiling of the landscape textures (terrain.rs "Anti-tiling"; off in both
     /// presets) [design, #2551].
     pub terrain_anti_tiling: bool,
+    /// A dust haze in the weather's fog (haze.rs; off in every preset) [design, #2675].
+    pub desert_haze: bool,
 }
 
 /// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing and
 /// shadow-filter choices that are not vanilla's, in the order of [`Graphics::describe`].
-pub const KEYS: [&str; 14] = [
+pub const KEYS: [&str; 15] = [
     "ambient-occlusion",
     "fine-shadows",
     "bloom",
@@ -192,6 +197,7 @@ pub const KEYS: [&str; 14] = [
     "shadow-filter-temporal",
     "terrain-height-blend",
     "terrain-anti-tiling",
+    "desert-haze",
 ];
 
 impl Graphics {
@@ -235,6 +241,8 @@ impl Graphics {
             terrain_height_blend: false,
             // The same for anti-tiling [design, #2551].
             terrain_anti_tiling: false,
+            // Off in every preset: an addition of our own [design, #2675].
+            desert_haze: false,
         }
     }
 
@@ -254,6 +262,7 @@ impl Graphics {
             "water-reflections" => &mut self.water_reflections,
             "terrain-height-blend" => &mut self.terrain_height_blend,
             "terrain-anti-tiling" => &mut self.terrain_anti_tiling,
+            "desert-haze" => &mut self.desert_haze,
             _ => return None,
         })
     }
@@ -303,6 +312,7 @@ impl Graphics {
             (self.shadow_filter == ShadowFilteringMethod::Temporal, "temporal shadow filtering"),
             (self.terrain_height_blend, "terrain height blending"),
             (self.terrain_anti_tiling, "terrain anti-tiling"),
+            (self.desert_haze, "desert haze"),
         ];
         let mut on: Vec<&str> = names.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
         if self.fsr().is_some() {
@@ -1257,6 +1267,18 @@ mod tests {
         let mut g = Graphics::preset(Preset::Vanilla);
         *g.switch("terrain-anti-tiling").expect("settings key") = true;
         assert_eq!(g, on);
+    }
+
+    #[test]
+    fn desert_haze_is_off_in_both_looks_and_has_its_own_key() {
+        assert!(!Graphics::preset(Preset::Vanilla).desert_haze && !Graphics::preset(Preset::Enhanced).desert_haze);
+        let on = Graphics::only(&["desert-haze".into()]).expect("desert-haze");
+        assert!(on.desert_haze);
+        assert_eq!(on.describe(), "light glow, desert haze");
+        let mut g = Graphics::preset(Preset::Vanilla);
+        *g.switch("desert-haze").expect("settings key") = true;
+        assert_eq!(g, on);
+        assert!(!Graphics::preset(Preset::Enhanced).describe().contains("haze"));
     }
 
     // The guard alone: repeated requests and an earlier registration. Both callers

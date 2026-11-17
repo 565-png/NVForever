@@ -1073,7 +1073,7 @@ fn register_graphics(app: &mut App) {
         },
     );
     nvf_play::settings::set_disabled_status(app, "latency-reduction", |w| (!crate::anti_lag::available(w)).then_some("Not on this GPU"));
-    let switches: [Switch; 13] = [
+    let switches: [Switch; 14] = [
         (
             "ambient-occlusion",
             "Ambient occlusion",
@@ -1164,6 +1164,14 @@ fn register_graphics(app: &mut App) {
             "--graphics",
             |w| w.resource::<Graphics>().light_shafts,
             |w, on| w.resource_mut::<Graphics>().light_shafts = on,
+        ),
+        (
+            "desert-haze",
+            "Desert haze (experimental)",
+            "On: a thin dust haze thickens with distance and toward the ground, warmer toward the sun, as far as the weather's fog allows. Not in the original.",
+            "--graphics, --graphics-only",
+            |w| w.resource::<Graphics>().desert_haze,
+            |w, on| w.resource_mut::<Graphics>().desert_haze = on,
         ),
         (
             "water-reflections",
@@ -2525,6 +2533,7 @@ dlss-model=Preset K
             ("terrain-height-blend", &["--graphics", "--graphics-only"]),
             ("terrain-anti-tiling", &["--graphics", "--graphics-only"]),
             ("light-shafts", &["--graphics"]),
+            ("desert-haze", &["--graphics", "--graphics-only"]),
             ("water-reflections", &["--graphics"]),
             ("water-mirror", &["--graphics-only"]),
         ];
