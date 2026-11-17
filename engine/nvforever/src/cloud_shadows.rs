@@ -448,15 +448,14 @@ fn wrapped_texels(a: f64, b: f64) -> f64 {
 #[cfg_attr(not(test), allow(dead_code))]
 /// Reference of the shader contract (C0): where a receiver at Bevy `world` samples the
 /// image, for `to_light` the unit direction towards the light. `None`: the light is at or
-/// below [`MIN_LIGHT_Y`], or the receiver is above the plane (fully lit).
+/// below [`MIN_LIGHT_Y`], or the receiver is at or above the plane (fully lit), as
+/// sun_visibility.wesl's `P.y >= height`. A UV reference only: the shader's fade near the
+/// horizon (`CLOUD_FADE_FROM` to `CLOUD_FADE_TO`) is not modelled here.
 pub fn projected_uv(world: Vec3, to_light: Vec3, plane_height: f32, uv_scale: Vec2, uv_offset: Vec2) -> Option<Vec2> {
-    if to_light.y <= MIN_LIGHT_Y {
+    if to_light.y <= MIN_LIGHT_Y || world.y >= plane_height {
         return None;
     }
     let t = (plane_height - world.y) / to_light.y;
-    if t < 0.0 {
-        return None;
-    }
     let hit = world + to_light * t;
     Some(Vec2::new(hit.x, hit.z) * uv_scale + uv_offset)
 }
@@ -967,8 +966,11 @@ mod tests {
         // Straight overhead light: x, z scaled plus the offset; the camera plays no part.
         let up = projected_uv(low, Vec3::Y, plane, scale, offset).unwrap();
         assert!((up - (Vec2::new(low.x, low.z) * scale + offset)).length() < 1e-6);
-        // Above the plane, or the light at the horizon: not reached.
+        // Above the plane, exactly on it (the shader's `P.y >= height`), or the light at
+        // the horizon: not reached; just under the plane: reached.
         assert!(projected_uv(Vec3::Y * 25_000.0, to_light, plane, scale, offset).is_none());
+        assert!(projected_uv(Vec3::new(10.0, plane, 20.0), to_light, plane, scale, offset).is_none(), "on the plane, as the shader");
+        assert!(projected_uv(Vec3::new(10.0, plane - 1.0, 20.0), to_light, plane, scale, offset).is_some());
         assert!(projected_uv(low, Vec3::X, plane, scale, offset).is_none());
     }
 
