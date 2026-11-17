@@ -22,6 +22,30 @@
 //!   main thread. The shape's vertex alpha is left out: it fades the layer towards the
 //!   dome's horizon, a property of where on the dome a texel is drawn, which a world plane
 //!   does not have [engineering choice].
+//! - **Relative transmittance** [engineering choice, from the contributor's play-test of
+//!   2026-11-17: under an overcast weather the product is nearly uniform, so the switch
+//!   dimmed the whole scene evenly, over a sun colour the weather already darkens]: the
+//!   product is divided by a clear reference taken from the map itself, `K_rel = min(K /
+//!   K_ref, 1)`, `K_ref` the [`REFERENCE_PERCENTILE`] (90th) percentile of the 512 × 512
+//!   values ([`percentile`], a 256-bin histogram). The feature darkens only where there is
+//!   more cloud than elsewhere and never dims overall: uniform cover of any density is all
+//!   1; scattered cloud on clear sky (most texels 1) is unchanged within rounding; heavy
+//!   cloud with gaps reads the gaps fully lit and the cloud darker by its ratio to them.
+//!   Under [`REFERENCE_FLOOR`] the darkening is scaled down in proportion to the reference,
+//!   to none at 0 (an opaque map casts nothing). `NVF_PLAY_DEBUG_CLOUD_REFERENCE=<percentile
+//!   0..100 | off>` overrides the percentile; `off` gives the absolute product.
+//!   `K_ref` changes with the map. The scrolling's reference layer (below) is never
+//!   shifted inside the image, so with one layer, or all at one speed, the map and `K_ref`
+//!   stay put while it scrolls;
+//!   layers at other speeds shift against it, which changes the product's histogram along a
+//!   period of `1 / |speed difference|` seconds (NVWastelandClear's 52 against 65: 1,969 s),
+//!   a quarter texel per composition; during a weather fade `K_ref` moves with the weights
+//!   (a 64th per composition at most). To keep a step between two compositions from showing
+//!   as a "breathing" of the whole pattern, each composition moves the reference it divides
+//!   by [`REFERENCE_SMOOTHING`] of the way towards its map's own ([`smoothed_reference`]),
+//!   composing again at the rate cap until it is within [`REFERENCE_SETTLE`]; a
+//!   discontinuity (below, "Validity") starts it from the next map's own. That this is not
+//!   seen is a hypothesis: nothing has been run with it.
 //! - **Scrolling**: the reference layer (the heaviest) scrolls by `uv_offset`, every frame,
 //!   without recomposing; layers moving at other speeds (one weather's layers differ, and
 //!   two weathers during a fade) are shifted against it inside the image, recomposed when
@@ -70,7 +94,9 @@
 //! Test aids: `NVF_PLAY_DEBUG_CLOUD_SHADOW=<plane height>,<repeat>,<strength>[,<direction
 //! deg>]` overrides the calibration constants (direction in game degrees from +x towards
 //! +y, in place of the wind's), and `NVF_PLAY_DEBUG_CLOUD_PHASE=<seconds>` freezes the
-//! clouds' scroll clock, the dome's and this one ([`cloud_seconds`]), for screenshots.
+//! clouds' scroll clock, the dome's and this one ([`cloud_seconds`]), for screenshots;
+//! `NVF_PLAY_DEBUG_CLOUD_REFERENCE=<percentile 0..100 | off>` sets the clear reference's
+//! percentile, or turns the relative rule off (the absolute product, as before it).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -115,6 +141,23 @@ const LOG_WEIGHT_STEP: f32 = 0.25;
 /// about 15 units) [engineering choice: the consumer's uniform is not touched every frame
 /// for a drift that small; hypothesis, not looked at: invisible].
 const PUBLISH_OFFSET_STEP: f32 = 1.0 / 4096.0;
+/// The percentile of the composed transmittance taken as the map's clear reference
+/// (module notes, "Relative transmittance") [engineering choice: to be calibrated from
+/// pictures; `NVF_PLAY_DEBUG_CLOUD_REFERENCE` overrides it].
+pub const REFERENCE_PERCENTILE: f32 = 90.0;
+/// A reference under this scales the darkening down in proportion, to none at 0: a map
+/// whose clearest tenth still lets less than this through is cover with no clear gaps, and
+/// dividing by a tiny reference would blow the alpha's 8-bit steps up into speckle
+/// [engineering choice: to be calibrated from pictures].
+pub const REFERENCE_FLOOR: f32 = 0.1;
+/// Each composition moves the reference it uses this share of the way from the previous
+/// composition's to the map's own [engineering choice: about four compositions' lag, a
+/// second at the rate cap; hypothesis, not looked at: no visible breathing].
+pub const REFERENCE_SMOOTHING: f32 = 0.25;
+/// Within this of the map's own reference the smoothed one takes it whole: half a step of
+/// the 8-bit image [engineering choice]. Until then the map is composed again (at the rate
+/// cap) so the reference settles even when nothing else moves.
+const REFERENCE_SETTLE: f32 = 0.5 / 255.0;
 /// Below this height of the direction to the light (sine of its elevation) the plane is
 /// not reached [engineering choice: the light has faded out within 0.1 rad of the horizon,
 /// sky.rs `HORIZON_FADE`].
@@ -276,6 +319,32 @@ fn calibration() -> Calibration {
     *CAL.get_or_init(|| parse_calibration(std::env::var("NVF_PLAY_DEBUG_CLOUD_SHADOW").ok().as_deref()))
 }
 
+/// `NVF_PLAY_DEBUG_CLOUD_REFERENCE`: a percentile 0..100 in place of
+/// [`REFERENCE_PERCENTILE`], or `off` (`None`) for the absolute transmittance; unset,
+/// empty or unreadable keeps the default.
+pub fn parse_reference(value: Option<&str>) -> Option<f32> {
+    match value.map(str::trim) {
+        Some(v) if v.eq_ignore_ascii_case("off") => None,
+        Some(v) => Some(v.parse::<f32>().ok().filter(|p| (0.0..=100.0).contains(p)).unwrap_or(REFERENCE_PERCENTILE)),
+        None => Some(REFERENCE_PERCENTILE),
+    }
+}
+
+fn reference_percentile() -> Option<f32> {
+    static PCT: OnceLock<Option<f32>> = OnceLock::new();
+    *PCT.get_or_init(|| {
+        let value = std::env::var("NVF_PLAY_DEBUG_CLOUD_REFERENCE").ok();
+        let pct = parse_reference(value.as_deref());
+        if value.is_some() {
+            match pct {
+                Some(p) => info!("cloud shadows: reference at the {p} percentile (NVF_PLAY_DEBUG_CLOUD_REFERENCE)"),
+                None => info!("cloud shadows: absolute transmittance, no reference (NVF_PLAY_DEBUG_CLOUD_REFERENCE=off)"),
+            }
+        }
+        pct
+    })
+}
+
 // ---------------------------------------------------------------------------------------
 // Pure parts
 // ---------------------------------------------------------------------------------------
@@ -376,9 +445,19 @@ pub struct ComposeLayer {
     pub shift: [f64; 2],
 }
 
-/// The transmittance image: texel (x, y) is `Π (1 - alpha_i(uv + shift_i) × weight_i)`
-/// at its centre uv, each layer sampled bilinearly and wrapped; 255 = fully lit.
+/// The transmittance image, absolute: texel (x, y) is `Π (1 - alpha_i(uv + shift_i) ×
+/// weight_i)` at its centre uv, each layer sampled bilinearly and wrapped; 255 = fully lit.
 pub fn compose(layers: &[ComposeLayer]) -> Vec<u8> {
+    quantize(&compose_transmission(layers))
+}
+
+/// 0..1 to the image's 8 bits.
+fn quantize(t: &[f32]) -> Vec<u8> {
+    t.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8).collect()
+}
+
+/// [`compose`]'s product before it is rounded to 8 bits, 0..1 per texel.
+pub fn compose_transmission(layers: &[ComposeLayer]) -> Vec<f32> {
     let n = MAP_SIZE;
     let mut t = vec![1.0f32; n * n];
     for l in layers {
@@ -406,7 +485,86 @@ pub fn compose(layers: &[ComposeLayer]) -> Vec<u8> {
             }
         }
     }
-    t.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8).collect()
+    t
+}
+
+/// The `pct` percentile (0..100) of the transmittance `t`, from a 256-bin histogram of its
+/// 8-bit values: the largest value inside the bin where the count reaches `pct` % of the
+/// texels (so a uniform map's reference is its own value exactly). 0 for an empty map.
+pub fn percentile(t: &[f32], pct: f32) -> f32 {
+    if t.is_empty() {
+        return 0.0;
+    }
+    let bin = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as usize;
+    let mut hist = [0usize; 256];
+    for &v in t {
+        hist[bin(v)] += 1;
+    }
+    let need = ((pct.clamp(0.0, 100.0) / 100.0 * t.len() as f32).ceil() as usize).clamp(1, t.len());
+    let mut count = 0;
+    let mut at = 255;
+    for (b, n) in hist.iter().enumerate() {
+        count += n;
+        if count >= need {
+            at = b;
+            break;
+        }
+    }
+    t.iter().filter(|&&v| bin(v) == at).fold(0.0f32, |m, &v| m.max(v.clamp(0.0, 1.0)))
+}
+
+/// The reference a composition uses: the map's own, `raw`, approached from the previous
+/// composition's (`prev`, `None` after a discontinuity: the map's own at once) by
+/// [`REFERENCE_SMOOTHING`] of the way, taken whole within [`REFERENCE_SETTLE`].
+pub fn smoothed_reference(prev: Option<f32>, raw: f32) -> f32 {
+    match prev {
+        Some(p) if (raw - p).abs() > REFERENCE_SETTLE => p + (raw - p) * REFERENCE_SMOOTHING,
+        _ => raw,
+    }
+}
+
+/// The relative transmittance `min(K / reference, 1)` in 8 bits (module notes, "Relative
+/// transmittance"). Under [`REFERENCE_FLOOR`] the darkening `1 - min(K / reference, 1)` is
+/// scaled by `reference / REFERENCE_FLOOR`, so it fades out as the map's clearest texels
+/// close up too, and a reference of 0 (an opaque map) casts nothing.
+pub fn relative(t: &[f32], reference: f32) -> Vec<u8> {
+    if reference <= 0.0 {
+        return vec![255; t.len()];
+    }
+    let depth = (reference / REFERENCE_FLOOR).min(1.0);
+    t.iter()
+        .map(|&k| {
+            let r = (k / reference).min(1.0);
+            ((1.0 - (1.0 - r) * depth).clamp(0.0, 1.0) * 255.0).round() as u8
+        })
+        .collect()
+}
+
+/// The reference a composition was made with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Reference {
+    /// The map's own percentile.
+    pub raw: f32,
+    /// What the map was divided by ([`smoothed_reference`]).
+    pub used: f32,
+}
+
+/// A finished composition: the image's texels, and its reference (`None`: absolute, the
+/// rule switched off by `NVF_PLAY_DEBUG_CLOUD_REFERENCE=off`).
+#[derive(Clone, Debug)]
+pub struct Composition {
+    pub texels: Vec<u8>,
+    pub reference: Option<Reference>,
+}
+
+/// Compose `layers` relative to the `pct` percentile of their product (absolute when
+/// `None`), the reference smoothed from `prev` (the last composition's, [`smoothed_reference`]).
+pub fn compose_relative(layers: &[ComposeLayer], pct: Option<f32>, prev: Option<f32>) -> Composition {
+    let Some(pct) = pct else { return Composition { texels: compose(layers), reference: None } };
+    let t = compose_transmission(layers);
+    let raw = percentile(&t, pct);
+    let used = smoothed_reference(prev, raw);
+    Composition { texels: relative(&t, used), reference: Some(Reference { raw, used }) }
 }
 
 /// The wind's accumulated displacement: the integral of the drift direction (Bevy x, z,
@@ -507,6 +665,8 @@ struct Composed {
     ref_scroll: f64,
     /// The drift direction when composed (logged).
     dir: Vec2,
+    /// The reference the image was made with (`None`: absolute, or not composed yet).
+    reference: Option<Reference>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -536,10 +696,15 @@ impl Composed {
                     || wrapped_texels(a.shift[1], b.shift[1]) >= RECOMPOSE_STEP_TEXELS
             })
     }
+
+    /// The reference used has not reached the map's own yet ([`REFERENCE_SETTLE`]).
+    fn unsettled(&self) -> bool {
+        self.reference.is_some_and(|r| r.used != r.raw)
+    }
 }
 
 struct Job {
-    task: Task<Vec<u8>>,
+    task: Task<Composition>,
     composed: Composed,
     /// [`CloudShadowWork::generation`] when it started.
     generation: u64,
@@ -599,6 +764,10 @@ impl CloudShadowWork {
     fn advance_generation(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.job = None;
+        // The reference starts again from the next composition's own (no smoothing across).
+        if let Some(shown) = self.shown.as_mut() {
+            shown.reference = None;
+        }
     }
 
     /// The worldspace now (`ws`): another than the ground reference's is a discontinuity
@@ -784,13 +953,15 @@ pub fn produce_cloud_shadows(
             .collect(),
         ref_scroll,
         dir,
+        reference: None,
     };
 
     // Finished composition: into the image, unless a discontinuity came after its start.
     if let Some(job) = work.job.as_mut() {
-        if let Some(texels) = check_ready(&mut job.task) {
+        if let Some(done) = check_ready(&mut job.task) {
             if let Some(job) = work.job.take() {
-                if !work.install(job.generation, job.composed, texels, &mut images) {
+                let composed = Composed { reference: done.reference, ..job.composed };
+                if !work.install(job.generation, composed, done.texels, &mut images) {
                     debug!("cloud shadows: a composition of an earlier weather or worldspace dropped");
                 }
             }
@@ -798,14 +969,15 @@ pub fn produce_cloud_shadows(
     }
     // A new composition when what is wanted differs, one at a time, at a bounded rate.
     let now = time.elapsed_secs_f64();
-    let due = work.shown.as_ref().is_none_or(|s| s.differs(&want));
+    let due = work.shown.as_ref().is_none_or(|s| s.differs(&want) || s.unsettled());
     if due && !loading && work.job.is_none() && (work.shown.is_none() || now - work.composed_at >= MIN_RECOMPOSE_SECS) {
         if work.image.is_none() {
             work.image = Some(images.add(new_image()));
         }
         let input: Vec<ComposeLayer> =
             layers.iter().zip(&want.layers).map(|(l, w)| ComposeLayer { alpha: alpha_of(&work.alphas, &l.texture), weight: l.weight, shift: w.shift }).collect();
-        let task = AsyncComputeTaskPool::get().spawn(async move { compose(&input) });
+        let (pct, prev) = (reference_percentile(), work.shown.as_ref().and_then(|s| s.reference).map(|r| r.used));
+        let task = AsyncComputeTaskPool::get().spawn(async move { compose_relative(&input, pct, prev) });
         work.job = Some(Job { task, composed: want.clone(), generation: work.generation });
         work.composed_at = now;
     }
@@ -842,14 +1014,16 @@ pub fn produce_cloud_shadows(
         let weights: Vec<String> = shown.layers.iter().map(|l| format!("{:.2}", l.weight)).collect();
         let speeds: Vec<String> = shown.layers.iter().map(|l| format!("{:.5}", l.scroll)).collect();
         let textures: Vec<&str> = shown.layers.iter().map(|l| l.texture.as_str()).collect();
+        let reference = shown.reference.map_or_else(|| "off".to_string(), |r| format!("{:.2}", r.used));
         info!(
-            "cloud shadows: layers {} weights [{}] speeds [{}] offset ({:.4},{:.4}) strength {:.2} plane {:.0} (ground {:.0}) repeat {:.0} drift ({:.3},{:.3}) textures [{}]",
+            "cloud shadows: layers {} weights [{}] speeds [{}] offset ({:.4},{:.4}) strength {:.2} reference {} plane {:.0} (ground {:.0}) repeat {:.0} drift ({:.3},{:.3}) textures [{}]",
             shown.layers.len(),
             weights.join(", "),
             speeds.join(", "),
             out.uv_offset.x,
             out.uv_offset.y,
             out.strength,
+            reference,
             out.plane_height,
             ground,
             cal.repeat,
@@ -924,6 +1098,122 @@ mod tests {
         // Opaque at full weight is black; at weight 0 the layer is not there.
         assert!(compose(&[ComposeLayer { alpha: constant(255), weight: 1.0, shift: [0.0; 2] }]).iter().all(|&t| t == 0));
         assert!(compose(&[ComposeLayer { alpha: constant(255), weight: 0.0, shift: [0.0; 2] }]).iter().all(|&t| t == 255));
+    }
+
+    /// An alpha map of `cloud` with the rows `gap(y)` at `gap_alpha`.
+    fn rows(cloud: u8, gap_alpha: u8, gap: impl Fn(usize) -> bool) -> Option<Arc<[u8]>> {
+        let n = MAP_SIZE;
+        Some(Arc::from((0..n * n).map(|i| if gap(i / n) { gap_alpha } else { cloud }).collect::<Vec<u8>>()))
+    }
+
+    fn relative_of(layers: &[ComposeLayer]) -> Composition {
+        compose_relative(layers, Some(REFERENCE_PERCENTILE), None)
+    }
+
+    /// Uniform cover of any density is its own reference: nothing darkens (the play-test of
+    /// 2026-11-17: an overcast weather dimmed the whole scene evenly).
+    #[test]
+    fn cloud_uniform_cover_casts_nothing() {
+        for alpha in [0u8, 40, 128, 230, 254, 255] {
+            for weight in [1.0, 0.5] {
+                let one = [ComposeLayer { alpha: constant(alpha), weight, shift: [0.0; 2] }];
+                assert!(relative_of(&one).texels.iter().all(|&t| t == 255), "alpha {alpha} weight {weight}");
+                let two = [one[0].clone(), ComposeLayer { alpha: constant(alpha / 2), weight, shift: [0.4, 0.1] }];
+                assert!(relative_of(&two).texels.iter().all(|&t| t == 255), "two layers, alpha {alpha} weight {weight}");
+            }
+        }
+        // The absolute rule (the debug override `off`) still dims it.
+        let dense = [ComposeLayer { alpha: constant(200), weight: 1.0, shift: [0.0; 2] }];
+        assert!(compose_relative(&dense, None, None).texels.iter().all(|&t| t == 55));
+        assert_eq!(compose_relative(&dense, None, None).reference, None);
+    }
+
+    /// Scattered cloud on clear sky: most texels are clear, so the reference is 1 and the
+    /// map is the absolute one within rounding.
+    #[test]
+    fn cloud_scattered_cover_is_kept() {
+        // A 5 % band of opaque cloud and a soft edge below it, the rest clear.
+        let n = MAP_SIZE;
+        let alpha: Vec<u8> = (0..n * n)
+            .map(|i| match i / n {
+                y if y < 26 => 255,
+                y if y < 40 => (255 - (y - 25) * 18) as u8,
+                _ => 0,
+            })
+            .collect();
+        let layers = [ComposeLayer { alpha: Some(Arc::from(alpha)), weight: 0.8, shift: [0.25, 0.0] }];
+        let (absolute, rel) = (compose(&layers), relative_of(&layers));
+        assert_eq!(rel.reference.map(|r| r.raw), Some(1.0));
+        assert!(absolute.iter().zip(&rel.texels).all(|(&a, &r)| a.abs_diff(r) <= 1));
+        assert!(rel.texels.iter().any(|&t| t < 60), "the cloud still darkens");
+    }
+
+    /// Heavy cloud with gaps: the gaps are the reference and read fully lit, the cloud is
+    /// darker by its ratio to them.
+    #[test]
+    fn cloud_gaps_become_the_reference() {
+        let n = MAP_SIZE;
+        // One row in five a thinner gap (20 % of the texels, above the 90th percentile).
+        let layers = [ComposeLayer { alpha: rows(200, 100, |y| y.is_multiple_of(5)), weight: 1.0, shift: [0.0; 2] }];
+        let rel = relative_of(&layers);
+        let (cloud, gap) = (1.0 - 200.0 / 255.0f32, 1.0 - 100.0 / 255.0f32);
+        let r = rel.reference.expect("relative");
+        assert!((r.raw - gap).abs() < 1e-6 && r.used == r.raw, "{r:?}");
+        assert!((0..n).step_by(5).all(|y| rel.texels[y * n..(y + 1) * n].iter().all(|&t| t == 255)), "gaps fully lit");
+        let want = (cloud / gap * 255.0).round() as u8;
+        assert!(rel.texels[n..2 * n].iter().all(|&t| t.abs_diff(want) <= 1), "{} vs {want}", rel.texels[n]);
+        // Absolute, the gaps were dimmed too.
+        assert!(compose(&layers)[0] < 160);
+    }
+
+    /// Cover with no clear gaps: under the floor the darkening fades out in proportion
+    /// (no speckle from the alpha's 8-bit steps), and an opaque map casts nothing.
+    #[test]
+    fn cloud_reference_floor_fades_out() {
+        let layers = [ComposeLayer { alpha: rows(255, 250, |y| y.is_multiple_of(5)), weight: 1.0, shift: [0.0; 2] }];
+        let rel = relative_of(&layers);
+        let r = rel.reference.expect("relative");
+        assert!(r.raw < REFERENCE_FLOOR && r.raw > 0.0, "{r:?}");
+        let least = *rel.texels.iter().min().unwrap();
+        // An opaque texel's darkening is `reference / REFERENCE_FLOOR`, not all of it.
+        let want = ((1.0 - r.used / REFERENCE_FLOOR) * 255.0).round() as u8;
+        assert!(least.abs_diff(want) <= 1 && least > 200, "{least} vs {want}");
+        assert!(relative(&[0.0; 16], 0.0).iter().all(|&t| t == 255));
+    }
+
+    /// The reference approaches the map's own over compositions, takes it within the
+    /// settle step, and starts again at a discontinuity.
+    #[test]
+    fn cloud_reference_smooths_and_resets() {
+        assert_eq!(smoothed_reference(None, 0.4), 0.4);
+        assert!((smoothed_reference(Some(0.8), 0.4) - 0.7).abs() < 1e-6);
+        assert_eq!(smoothed_reference(Some(0.4 + REFERENCE_SETTLE * 0.5), 0.4), 0.4);
+        let mut used = 1.0;
+        let mut steps = 0;
+        while used != 0.3 {
+            used = smoothed_reference(Some(used), 0.3);
+            steps += 1;
+            assert!(steps < 40, "settles");
+        }
+        // The percentile of a map: values 0, 0.01, ... 0.99.
+        let t: Vec<f32> = (0..100).map(|i| i as f32 / 100.0).collect();
+        assert!((percentile(&t, 90.0) - 0.89).abs() < 1e-6);
+        assert!((percentile(&t, 100.0) - 0.99).abs() < 1e-6);
+        assert_eq!(percentile(&t, 0.0), 0.0);
+        // A composition still moving towards its reference is due again; a discontinuity
+        // forgets it (the next composition takes its map's own at once).
+        let mut work = CloudShadowWork { shown: Some(Composed { reference: Some(Reference { raw: 0.3, used: 0.5 }), ..empty_composed() }), ..Default::default() };
+        assert!(work.shown.as_ref().unwrap().unsettled());
+        let (mut images, mut published) = (Assets::<Image>::default(), CloudShadowPublished::default());
+        work.note_weather((1, None), &mut published, &mut images);
+        assert!(work.note_weather((2, Some(1)), &mut published, &mut images));
+        assert_eq!(work.shown.as_ref().and_then(|s| s.reference), None);
+        // The debug override.
+        assert_eq!(parse_reference(None), Some(REFERENCE_PERCENTILE));
+        assert_eq!(parse_reference(Some(" OFF ")), None);
+        assert_eq!(parse_reference(Some("75")), Some(75.0));
+        assert_eq!(parse_reference(Some("150")), Some(REFERENCE_PERCENTILE));
+        assert_eq!(parse_reference(Some("soon")), Some(REFERENCE_PERCENTILE));
     }
 
     #[test]
@@ -1046,7 +1336,7 @@ mod tests {
     #[test]
     fn cloud_recompose_needs_a_material_change() {
         let layer = |weight: f32, shift: [f64; 2]| ComposedLayer { texture: "a.dds".into(), weight, covered: true, scroll: 0.001, shift };
-        let base = Composed { layers: vec![layer(0.5, [0.0, 0.0])], ref_scroll: 0.001, dir: Vec2::X };
+        let base = Composed { layers: vec![layer(0.5, [0.0, 0.0])], ref_scroll: 0.001, dir: Vec2::X, reference: None };
         let mut same = base.clone();
         same.layers[0].shift = [0.1 / MAP_SIZE as f64, 0.0];
         same.layers[0].weight = 0.5 + WEIGHT_STEP * 0.5;
@@ -1132,7 +1422,7 @@ mod tests {
     }
 
     fn empty_composed() -> Composed {
-        Composed { layers: Vec::new(), ref_scroll: 0.001, dir: Vec2::X }
+        Composed { layers: Vec::new(), ref_scroll: 0.001, dir: Vec2::X, reference: None }
     }
 
     /// A composition started before a discontinuity (worldspace or weather set) never

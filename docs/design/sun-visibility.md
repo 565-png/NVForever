@@ -3,7 +3,8 @@
 Status 2026-11-17: cloud shadows (#2670) built as a player's switch: the plumbing (stage
 C0, the base for terrain shadows #2671) with a debug view and a test producer, the cloud
 producer (C1, `engine/nvforever/src/cloud_shadows.rs`) and the settings row with the
-water highlight and the first-person arms (C2, §7). Terrain shadows (T0-T2) fill the
+water highlight and the first-person arms (C2, §7); the relative transmittance (§7a) after the
+contributor's play-test of 2026-11-17. Terrain shadows (T0-T2) fill the
 terrain slot later. Runs so far: main session run 2026-11-17, fork-notes (the checkerboard
 reached terrain, objects, trees and distant hills at Goodsprings 12:00; no shader or layout
 errors; an interior run clean); C2 is not run yet. What is not yet shown is in §6, what is
@@ -125,8 +126,10 @@ views is built again, as any view key change does; it is the only thing that doe
 - Cloud shadows' own (cloud_shadows.rs): `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1` (on whatever the
   row says), `NVF_PLAY_DEBUG_CLOUD_SHADOW=<plane height>,<repeat>,<strength>[,<direction>]`
   (the calibration), `NVF_PLAY_DEBUG_CLOUD_PHASE=<seconds>` (the clouds' scroll clock frozen,
-  dome and shadows alike); log `cloud shadows: layers ...` when the composed layers, their
-  weights or the projection change, `cloud shadows: none (<reason>)` when the output goes.
+  dome and shadows alike), `NVF_PLAY_DEBUG_CLOUD_REFERENCE=<percentile 0..100 | off>` (the
+  clear reference's percentile, §7a; `off` the absolute product); log `cloud shadows: layers
+  ... reference <K_ref | off> ...` when the composed layers, their weights or the projection
+  change, `cloud shadows: none (<reason>)` when the output goes.
 
 ## 5. Outside apply_pbr_lighting
 
@@ -178,6 +181,43 @@ pipeline; the cost, on and off.
   change turns the drift and never moves the pattern (cloud_shadows.rs module notes).
 - Smoke: `cloud-shadows` (tools/smoke/scenarios.toml).
 
+## 7a. Relative transmittance: patches, not an overall dim
+
+Why: the contributor's play-test of 2026-11-17 found that under an overcast weather the
+composed transmittance is nearly uniform, so switching Cloud shadows on only dimmed the
+whole scene evenly ("too monotone"), over a sun colour the overcast weather already makes
+darker. Wanted: the feature darkens where there is more cloud than elsewhere and never dims
+overall.
+
+The rule [engineering choice; cloud_shadows.rs `compose_relative`]: after the product over
+the layers, the map is divided by a clear reference taken from the map itself,
+`K_rel = min(K / K_ref, 1)`, `K_ref` the 90th percentile of the 512 × 512 values
+(`REFERENCE_PERCENTILE`, from a 256-bin histogram; to be calibrated from pictures). Then:
+
+- uniform cover of any density: every texel is the reference, all 1, no dimming at all
+  (`cloud_uniform_cover_casts_nothing`);
+- scattered cloud on clear sky (most texels near 1): the reference is 1, the map unchanged
+  within rounding (`cloud_scattered_cover_is_kept`);
+- heavy cloud with gaps: the gaps are the reference and read fully lit, the cloud darker by
+  its ratio to them (`cloud_gaps_become_the_reference`);
+- cover with no clear gaps: under `REFERENCE_FLOOR` (0.1) the darkening is scaled down in
+  proportion to the reference, to none at 0, so an opaque map casts nothing and a tiny
+  reference does not blow the alpha's 8-bit steps up into speckle
+  (`cloud_reference_floor_fades_out`).
+
+The reference moves with the map. With one layer, or all at one speed, the image is never
+recomposed for the scroll (it moves by `uv_offset`), so `K_ref` stays put. Layers at other
+speeds shift against the scrolling's reference layer, which changes the product's histogram
+along a period of `1 / |speed difference|` seconds (NVWastelandClear's 52 against 65: 1,969 s),
+a quarter texel per composition; a percentile of such a map moves little per step
+[hypothesis]. During a weather fade it moves with the weights, at most a 64th of the fade per
+composition. Each composition divides by a reference moved `REFERENCE_SMOOTHING` (a quarter)
+of the way from the previous one towards its map's own, and the map is composed again at the
+rate cap until the two are within half an 8-bit step; a discontinuity (a worldspace or a
+weather set replaced) starts it from the next map's own (`cloud_reference_smooths_and_resets`).
+That no "breathing" of the whole pattern is seen is a hypothesis: nothing has been run with
+the rule yet.
+
 ## 8. Open for calibration
 
 The values are engineering choices, to be set from pictures (cloud_shadows.rs, the test
@@ -189,8 +229,13 @@ aid `NVF_PLAY_DEBUG_CLOUD_SHADOW=<plane height>,<repeat>,<strength>[,<direction>
   ground.
 - Plane height (`PLANE_ABOVE_GROUND`, 20,000 units above the ground reference): how far the
   pattern shifts with the sun's angle.
-- Overcast weathers: their own sun colour is already darker, so the cloud shadow may dim
-  the ground twice (NVBlackMountainWeather dims the ground almost evenly: main session run
-  2026-11-17, fork-notes); whether to weaken it by the weather's cover is open.
+- Reference percentile (`REFERENCE_PERCENTILE`, 90) and floor (`REFERENCE_FLOOR`, 0.1) of
+  the relative rule (§7a), and its smoothing (`REFERENCE_SMOOTHING`, a quarter per
+  composition).
+- Overcast double dimming (an overcast weather's darker sun colour, then an even cloud
+  shadow on top: NVBlackMountainWeather dimmed the ground almost evenly, main session run
+  2026-11-17, fork-notes): addressed by the relative rule (§7a), which casts nothing for
+  even cover; how strong the patches it leaves should be (strength) and how large (repeat)
+  are still open.
 - Night: the moon's light takes the same factor at the same strength [engineering choice,
   not looked at].
