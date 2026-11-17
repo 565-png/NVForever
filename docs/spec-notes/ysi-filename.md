@@ -84,5 +84,14 @@ two failed at their first UI filename reread. Both failing callers passed bare
 those tests were not reached. The corrected callers use `(icon)`, preserving all
 expected filenames, receiver, inventory and save assertions. The first consumer
 control also retains the bare-token behavior and exercises explicit Alt/string
-conversion. Production files are unchanged; corrected compilation/runtime remains
-**UNRUN**. No GPU texture loading/render, native or installed-mod success is claimed.
+conversion. Public source `eaff6072`, executed as merge `353657d7` with the same
+tree, then passed all nine controls once. Hosted core tests passed 3,463 with five
+ignored; engine tests passed 3,409 with three ignored; both strict Clippy checks
+and all seven required checks passed. These results qualify that exact source
+and the existing UI trait consumer, not texture loading or rendering.
+
+The fixture-identical pre-quest comparator `76e26d14` remains **UNRUN**, as do the
+earlier queued `253`/`5e3` inputs; no baseline/candidate outcome is inferred. This
+documentation-only successor preserves all tested Rust, fixtures, registry and
+Cargo files. Native/provider/default/order/timing behavior, GPU texture loading
+and complete installed ySI/JAM acceptance remain unqualified.
