@@ -56,33 +56,55 @@ consumer; formulas, ordinary condition penalties and unrelated tuning do not
 change. This does not implement menu search, selected-row stat publication or any
 other Stewie service.
 
-## Validation limits
+## Validation and limits
 
-Two ordinary core controls characterize supported and malformed typed inputs.
-One opt-in engine control uses dedicated process-local authored Data/settings
-roots, actual Runtime initialization, Restart/NewGame/Load runner files,
-StewVal calls, real critical chance/damage calculation, settings-file loading and
-restoration. Run its exact selector alone with NVF_STEWIE_PROFILE_HOME pointing to
-a dedicated fixture directory and --test-threads=1; ordinary parallel CI skips it.
-It retains the actual version guard's rejection and queued message. Skipped is not
-passed. Earlier compile attempts failed before selected runtime; corrected
-compilation and all five runtime controls are currently **UNRUN**. The added
-ordinary core control covers both aliases, current-field updates, unbound and
-unrepresented keys, malformed input, save lifetime and rebinding. An additional
-opt-in engine control retains identical conflicting-profile assertions on the
-baseline and candidate, comparing loaded source values and startup-file results
-with actual critical-hit rules without rewriting either input file. The frozen
-baseline mismatch is source-traced, not an executed failure.
+Three ordinary core controls characterize supported and malformed typed inputs,
+both aliases, current-field updates, unbound/unrepresented keys, save lifetime and
+rebinding. Two opt-in engine controls use authored process-local Data/settings
+roots, actual Runtime initialization and source files, critical-hit rules,
+application settings and restoration. Their exact selectors require a dedicated
+`NVF_STEWIE_PROFILE_HOME`, `--ignored` and `--test-threads=1`; ordinary CI skips
+them, and a skipped result is not a pass.
+
+[implementation evidence: head `68a9c978`, 2026-11-17] The
+[natural hosted run](https://github.com/LootJunkieAzza/NVForever/actions/runs/44155882635)
+used checkout `2a932d9b` with parents `[13011912,68a9c978]`. All seven checks
+passed. Six owning non-ignored controls each passed once: these three core
+profile controls, two inventory controls and the ordinary Pip-Boy control.
+The three ignored profile controls received no credit from that run.
+
+[implementation evidence: exact original `68a9c978`, Windows Cargo 1.99 QA]
+The two critical-profile opt-ins and the inventory opt-in subsequently each
+passed once in three separately admitted runtime processes. The critical case
+checked initialization, source files, damage rules, current choices and restore.
+The conflicting-profile case checked current settings against the actual damage
+consumer without rewriting either input file. These five critical-profile
+controls therefore have bounded results on the explicitly stated graphs;
+identical-fixture baseline comparisons remain unrun. The inventory case and its
+per-phase sentinel checks are described in [ext-small.md](ext-small.md#live-inventory-settings).
+
+The Windows Cargo build returned zero, but its compile controller failed
+descendant cleanup and the child identity remains unknown. That controller and
+its overall result remain false. Runtime-only r1 then stopped with `KeyError` on
+missing `priorResult` metadata before any Job, discovery or test. Corrected r2 reused
+the sealed emitted image without rebuilding and passed all three opt-ins; its
+runtime qualification is separate from those failed attempts.
+
+Earlier hosted engine and engine-Clippy jobs stopped at E0599 because the shared
+damage fixture called nonexistent `Rules::default()`. The fixture was corrected
+to the existing `Rules::defaults()` without changing damage inputs or oracles.
+Neither failed job executed an engine control or established a separate lint
+failure. Later results above do not relabel those attempts as successful.
+
+Accepted Main `76f69f6f` is now integrated normally. Its shared runtime/build
+inputs differ from the historical graphs above; all exact integrated-source
+compiler, runtime, strict-lint and hosted checks remain UNRUN. This documentation refresh
+changes no implementation or fixture, and transfers no earlier result to that
+new composition.
 
 There is no provider-version increase, popup suppression, auto-dismissal or mod
 disable. The historical941 report is not validated by this bridge. The960/970
 startup guards remain blocked until their actual required services and compatible
-reporting contract are established. GPU/native/installed-mod acceptance and full
-Stewie compatibility are not claimed.
-
-The hosted engine and engine-Clippy jobs both stopped at E0599 in the shared
-damage fixture: `Rules` has no `Default` constructor. The fixture now calls the
-existing `Rules::defaults`, which uses the documented settings without a load
-order. Its critical-setting assignments, damage inputs and every expected result
-are unchanged. Engine-Clippy did not establish a separate lint failure; neither
-job executed an engine control. The corrected source remains uncompiled/unrun.
+reporting contract are established. Native import/reload and scale-enable parity,
+paired original-game results, GPU/installed-mod acceptance and complete Stewie
+compatibility remain unqualified.

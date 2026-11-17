@@ -93,25 +93,43 @@ Tweaks workloads remain separate acceptance work.
 Authored controls cover both aliases at the source boundary, explicit off versus a
 conflicting INI, unknown/string/malformed fallback, current changes and restore
 rebinding; actual ammunition totals across parent, child and Hardcore-mode choices;
-and actual Pip-Boy stack weight/value. A process-isolated opt-in engine control
-exercises settings loading, startup file caches and restored caches through the
-existing handoff. All four controls are UNRUN. Its opt-in selector requires a
-dedicated `NVF_STEWIE_PROFILE_HOME` and `--test-threads=1`; skipping it supplies no
-validation evidence.
+actual Pip-Boy stack weight/value; and settings/startup/restored caches through
+the existing handoff. The opt-in selector requires a dedicated
+`NVF_STEWIE_PROFILE_HOME`, `--ignored` and `--test-threads=1`; skipping it supplies
+no validation evidence.
 
-The first coordinated compile attempt failed with E0624: the inventory-total
-fixture called a private cross-crate method. The fixture now uses the existing
-public `World::inventory_mut` accessor, retaining the same inventory admission,
-`totals_with` consumer and every expected weight/unknown-weight result. No runtime
-control executed in that attempt; compilation and runtime of this correction
-remain UNRUN.
+[implementation evidence: head `68a9c978`, 2026-11-17] The
+[natural hosted run](https://github.com/LootJunkieAzza/NVForever/actions/runs/44155882635)
+at checkout `2a932d9b`, parents `[13011912,68a9c978]`, passed all seven checks.
+Five owning core controls and the ordinary Pip-Boy control each passed once,
+including these two inventory core controls and the actual stack-figure consumer.
+Its three ignored opt-ins received no credit. On exact original `68a9c978`, a
+later Windows Cargo 1.99 QA runtime-only r2 passed all three opt-ins once in
+separate processes. The inventory case reset each source-cache sentinel to 9
+before Restart, NewGame and restored Restart/Load, then checked expected values
+individually, explicit off and retained-child behavior, and unchanged INI bytes.
+The other two opt-ins cover critical profiles ([profile note](stewie-stat-profile.md)).
 
-The later focused core run of revision326 compiled and executed five cases: the
-three critical-profile controls and the ammo parent/child/totals control passed;
-the all-off query control failed on its ammo child. That fixture had used
-`Tweaks::default`, whose ammo child is true while its parent is false. The query
-correctly returned the retained child choice. The all-off fixture now explicitly
-selects all three booleans false, preserving its zero oracle and every later
-assertion. The user default, query implementation and inventory gating do not
-change. Assertions after the first failed ammo read were not reached in that run;
-new-source compilation/runtime, engine controls and baselines remain unqualified.
+The first coordinated compile failed with E0624 at a private cross-crate
+inventory method. Its fixture now uses public `World::inventory_mut`, retaining
+the same inventory admission, `totals_with` consumer and every weight oracle.
+Revision326 later compiled five core controls: four passed and the all-off query
+failed at its first ammo-child read. It had used `Tweaks::default()`, which
+retains the child true under a disabled parent. Revision68 explicitly selects
+the intended three false inputs; production defaults, the zero oracle and all
+later assertions remain unchanged. Later assertions were not reached in that
+failed run. The earlier focused68 Windows query/ammo-total passes remain scoped
+to their own run and do not change that failure.
+
+The Windows compile used for the three profile opt-ins returned zero, but its
+controller failed descendant cleanup with unknown child identity; strict
+compile-controller and overall success remain false. Runtime-only r1 stopped with
+`KeyError` on missing `priorResult` metadata before any Job, discovery or test. Corrected r2
+reused the sealed source-bound image without a rebuild and qualified only its
+three actual runtime results. No failed attempt is relabelled as passed.
+
+The normal integration of accepted Main `76f69f6f` changes shared runtime/build
+inputs. All exact integrated-source compiler/runtime/strict-lint/hosted checks remain UNRUN;
+the historical six ordinary and three opt-in results do not qualify that new
+graph. Identical-fixture baselines, original-game and installed-workload
+comparisons, native profile semantics and full Stewie compatibility remain open.
