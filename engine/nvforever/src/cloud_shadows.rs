@@ -61,9 +61,11 @@
 //! moon's, attenuated the same way, no strength added); off, indoors, or with no drawn,
 //! textured cloud layer, the output is `None`. While the switch is on, `None` does not take
 //! the pipelines' cloud variant away: sun_visibility.rs keeps the views on it with a
-//! neutral cloud (K = 1), so only the switch changes pipelines ([`follow_switch`]). Off by
-//! default ([`CloudShadows`]); `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1` turns it on. Off, nothing
-//! runs beyond the run conditions and no image is held.
+//! neutral cloud (K = 1), so only the switch changes pipelines ([`follow_switch`]). The
+//! switch is the settings row Cloud shadows (`Graphics::cloud_shadows`, `cloud-shadows`
+//! in `--graphics-only`; off by default and in every preset); `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1`
+//! turns it on whatever the row says. Off, nothing runs beyond the run conditions and no
+//! image is held.
 //!
 //! Test aids: `NVF_PLAY_DEBUG_CLOUD_SHADOW=<plane height>,<repeat>,<strength>[,<direction
 //! deg>]` overrides the calibration constants (direction in game degrees from +x towards
@@ -119,13 +121,21 @@ const PUBLISH_OFFSET_STEP: f32 = 1.0 / 4096.0;
 #[cfg_attr(not(test), allow(dead_code))] // used by `projected_uv`, the shader contract's reference
 pub const MIN_LIGHT_Y: f32 = 0.02;
 
-/// Whether cloud shadows are made: off by default (C2 adds the settings row);
-/// `forced` by `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1`.
+/// Whether cloud shadows are made: the settings row (`Graphics::cloud_shadows`, off by
+/// default), or `forced` by `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1` whatever the row says.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CloudShadows {
     pub enabled: bool,
     /// `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1`.
     pub forced: bool,
+}
+
+/// The settings row (`Graphics::cloud_shadows`) or the debug override decide the switch.
+pub fn follow_graphics(g: Res<crate::graphics::Graphics>, mut shadows: ResMut<CloudShadows>) {
+    let want = shadows.forced || g.cloud_shadows;
+    if shadows.enabled != want {
+        shadows.enabled = want;
+    }
 }
 
 /// The switch into the sun-visibility plumbing: `cloud_enabled` decides the views' cloud
@@ -178,12 +188,16 @@ pub struct CloudShadowsPlugin;
 impl Plugin for CloudShadowsPlugin {
     fn build(&self, app: &mut App) {
         let forced = nvf_play::dialogue::debug_switch(std::env::var("NVF_PLAY_DEBUG_CLOUD_SHADOWS").ok().as_deref());
+        if forced {
+            info!("cloud shadows: on by NVF_PLAY_DEBUG_CLOUD_SHADOWS, whatever the settings row says");
+        }
         app.insert_resource(CloudShadows { enabled: forced, forced })
             .init_resource::<CloudShadowPublished>()
             .init_resource::<CloudShadowWork>()
             .add_systems(
                 Update,
                 (
+                    follow_graphics.run_if(resource_exists_and_changed::<crate::graphics::Graphics>),
                     follow_switch.run_if(resource_changed::<CloudShadows>),
                     produce_cloud_shadows.run_if(cloud_shadows_on),
                     release_cloud_shadows.run_if(resource_changed::<CloudShadows>),
@@ -1176,6 +1190,31 @@ mod tests {
         assert_eq!(work.ground, None, "the new world gets its own plane");
         assert_ne!(work.generation, before);
         assert!(!work.install(before, empty_composed(), vec![0; MAP_SIZE * MAP_SIZE], &mut images), "a job of the old world");
+    }
+
+    /// The settings row turns it on and off; the debug override holds it on whatever the
+    /// row says.
+    #[test]
+    fn cloud_switch_follows_the_row_or_the_override() {
+        use crate::graphics::{Graphics, Preset};
+        let mut app = App::new();
+        app.insert_resource(Graphics::preset(Preset::Vanilla))
+            .insert_resource(CloudShadows::default())
+            .init_resource::<crate::sun_visibility::SunVisibility>()
+            .add_systems(Update, (follow_graphics.run_if(resource_exists_and_changed::<Graphics>), follow_switch.run_if(resource_changed::<CloudShadows>)).chain());
+        app.update();
+        assert!(!app.world().resource::<CloudShadows>().enabled, "off by default");
+        app.world_mut().resource_mut::<Graphics>().cloud_shadows = true;
+        app.update();
+        assert!(app.world().resource::<CloudShadows>().enabled);
+        assert!(app.world().resource::<crate::sun_visibility::SunVisibility>().cloud_enabled, "into the plumbing");
+        app.world_mut().resource_mut::<Graphics>().cloud_shadows = false;
+        app.update();
+        assert!(!app.world().resource::<crate::sun_visibility::SunVisibility>().cloud_enabled);
+        app.world_mut().resource_mut::<CloudShadows>().forced = true;
+        app.world_mut().resource_mut::<Graphics>().set_changed();
+        app.update();
+        assert!(app.world().resource::<CloudShadows>().enabled, "the override wins over the row");
     }
 
     #[test]

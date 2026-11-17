@@ -947,6 +947,21 @@ below cover them all.
 - More: docs/design/graphics-enhanced.md
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `cloud-shadows`: Cloud shadows
+
+- On the page: On: the weather's clouds cast soft shadows that drift over the land with
+  them, darker under heavier cover. Not in the original.
+- In full: The weather's cloud layers, as the sky draws them (both weathers during a
+  change), are composed into one transmittance image that darkens the sun's (and at night
+  the moon's) direct light where it falls, projected along the light from a plane high
+  above the ground and drifting with the wind. Ambient light, lamps, fog and reflections
+  are left alone. Off by default and in every preset; its strength, size and height are not
+  calibrated yet. Switching it rebuilds the world's material pipelines (Continue waits for
+  them). Works with Sun shadows off too.
+- Command-line switches: `--graphics`, `--graphics-only`
+- More: docs/design/sun-visibility.md
+- Registered in `engine/nvforever/src/settings.rs`
+
 ## Graphics › Lighting and Effects
 
 ### `ambient-occlusion`: Ambient occlusion
