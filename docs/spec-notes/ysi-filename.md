@@ -95,10 +95,14 @@ bound and the aggregate 20,000 valid-rule bound. Each accepts the exact limit ac
 two valid JSON files, refuses one additional byte or valid rule before UI/world
 changes, and checks retained success/error session snapshots versus a fresh Game.
 The rule control selects the final matching rule, including a separately counted
-icon rule, so it cannot pass by parsing only an initial subset. These two new
-controls, compilation and the full eleven-case successor target are **UNRUN**;
-the nine-case hosted result above remains scoped to its exact earlier source.
-Production, registry and Cargo files are unchanged.
+icon rule, so it cannot pass by parsing only an initial subset. Public source `fe5cd2f0`, executed as merge `3286e5c8` with the same tree,
+passed all eleven controls exactly once, including both aggregate-cap cases.
+Core tests passed 3,465 with five ignored; engine tests passed 3,409 with three
+ignored. Both strict Clippy checks and all seven required checks passed. The
+earlier nine-case result remains scoped to its own revision. This later
+documentation-only successor changes no Rust, fixture, registry or Cargo bytes
+and has no additional runtime result. These are source/UI-trait consumer checks,
+not texture decoding, GPU, original native or installed-mod acceptance.
 
 The fixture-identical pre-quest comparator `76e26d14` remains **UNRUN**, as do the
 earlier queued `253`/`5e3` inputs; no baseline/candidate outcome is inferred. Native/provider/default/order/timing behavior, GPU texture loading
