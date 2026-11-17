@@ -99,6 +99,13 @@ pub fn winnings_level(earnings: i64, max: u32) -> i32 {
     ((earnings * 4) / max as i64).clamp(0, 3) as i32
 }
 
+/// The shared script/dialogue view of saved standing. No Casino Bans exposes the
+/// last reward instead of the ban without erasing earned standing (blackjack.md §4).
+pub fn script_winnings_level(g: &Game<'_>, casino: FormId) -> i32 {
+    let level = g.player.casino_levels.get(&casino).copied().unwrap_or(0);
+    if g.tweaks.no_casino_bans && level == 4 { 3 } else { level }
+}
+
 /// Source-name SetCasinoWinningsLevel; the same saved standing as the getter and
 /// the table opening consumer (blackjack.md §4), independent of net earnings.
 pub(crate) fn set_winnings_level(g: &mut Game, args: &[fnv_script::vm::XVal]) -> Result<fnv_script::vm::XVal, String> {
