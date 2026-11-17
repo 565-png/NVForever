@@ -161,6 +161,7 @@ mod shadow_probe;
 mod shadow_rate;
 mod shadow_thin;
 mod shafts;
+mod sun_heightfield;
 mod imagespace;
 mod imposters;
 mod sky;
@@ -1693,6 +1694,9 @@ fn main() -> AppExit {
     .add_systems(Update, world::note_other_cameras.after(world::stream))
     // 4 x 4 near's redraws by distance (#2676): after streaming spawned this frame's cells.
     .add_plugins(terrain_lod::TerrainLodPlugin)
+    // The landscape's height map around the camera for terrain shadows (#2671); off unless
+    // wanted (NVF_PLAY_DEBUG_SUN_HEIGHTFIELD), nothing built while off (sun_heightfield.rs).
+    .add_plugins(sun_heightfield::SunHeightfieldPlugin)
     .add_systems(Update, (cell_buffer::remember, cell_buffer::tell_game).chain().after(world::stream))
     .add_systems(Update, world::script_markers.before(world::stream))
     .add_systems(Update, world::draw_waiting_actors.after(world::stream))
