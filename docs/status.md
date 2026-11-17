@@ -326,7 +326,10 @@ Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
 
 
 GetDroppedRefs named source consumer: uses the existing associated world-weapon
-list with selected actor qualification and explicit-invalid receiver preservation.
-Four authored source/World/hover-text/restore controls remain unexecuted. Native
-ordering/null parity, actual death/VATS producer coverage and installed JLM acceptance
-remain open ([combat rules](spec-notes/combat-rules.md#19-source-queries-for-associated-dropped-weapons)).
+list with selected actor qualification and unchanged VM invalid-receiver refusal.
+The original four controls failed on `2c9574ec`/`f2009ad5` at fixture compiler,
+returned-array lifetime and invalid-receiver expectation boundaries. Corrected live
+source/World/hover-text/restore fixtures are unexecuted at correction authoring;
+no original downstream or baseline success is inferred. Native ordering/null parity,
+actual death/VATS producer coverage and installed JLM acceptance remain open
+([combat rules](spec-notes/combat-rules.md#19-source-queries-for-associated-dropped-weapons)).

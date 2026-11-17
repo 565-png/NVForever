@@ -2,7 +2,7 @@
 use crate::common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
 use fnv_game::{
-    game::{Game, GameConfig, GameSnapshot, RunCtx},
+    game::{Game, GameConfig, GameEnv, GameSnapshot, RunCtx},
     GameData,
 };
 use fnv_script::{vm::XVal, FunctionTable};
@@ -191,29 +191,35 @@ fn query(g: &mut Game, declarations: &str, body: &str, ctx: RunCtx) -> XVal {
     )
     .unwrap_or_else(|e| panic!("{body}: {e}"))
 }
-fn refs(g: &mut Game, holder: &str) -> Vec<FormId> {
-    match query(
+fn refs_call(g: &mut Game, call: &str, ctx: RunCtx) -> Vec<FormId> {
+    // Array ownership ends when run_query hands over/sweeps its result. Inspect the
+    // array inside the live source and return only an owned scalar representation.
+    let result = query(
         g,
-        "",
-        &format!("SetFunctionValue ({holder}.GetDroppedRefs)"),
-        RunCtx::default(),
-    ) {
-        XVal::Array(id) => g
-            .ext
-            .array(id)
-            .unwrap()
-            .entries
-            .iter()
-            .map(|(_, v)| {
-                let XVal::Ref(r) = v else {
-                    panic!("world reference: {v:?}")
-                };
-                FormId(*r)
-            })
-            .collect(),
-        XVal::Num(0.0) => Vec::new(),
-        other => panic!("expected associated world references or null: {other:?}"),
-    }
+        "array_var ownedRefs\narray_var ownedIter\nstring_var ownedIds",
+        &format!(
+            r#"
+          let ownedRefs := {call}
+          let ownedIds := ""
+          if ownedRefs != Ar_Null
+            foreach ownedIter <- ownedRefs
+              let ownedIds += (sv_Construct "%i " ownedIter["value"])
+            loop
+          endif
+          SetFunctionValue ownedIds
+        "#
+        ),
+        ctx,
+    );
+    let XVal::Str(ids) = result else {
+        panic!("owned source reference serialization: {result:?}")
+    };
+    ids.split_whitespace()
+        .map(|id| FormId(u32::from_str_radix(id, 16).expect("source returned a FormID")))
+        .collect()
+}
+fn refs(g: &mut Game, holder: &str) -> Vec<FormId> {
+    refs_call(g, &format!("{holder}.GetDroppedRefs"), RunCtx::default())
 }
 /// Exercise real World placement/lifecycle; seed the existing producer's one association.
 /// These controls intentionally do not claim death/VATS drop-producer coverage.
@@ -248,10 +254,7 @@ fn compiled_hover_consumer_combines_inventory_refs_with_associated_world_weapons
         r#"<menu name="HUDMainMenu"><text name="OwnedRow"><string>pending</string></text></menu>"#,
     );
     g.ui_tree.load_menu(&files, "owned-hover.xml").unwrap();
-    let count = query(
-        &mut g,
-        "array_var carried\narray_var dropped\narray_var each\nref entry\nstring_var label",
-        r#"
+    let original_source = format!("array_var carried\narray_var dropped\narray_var each\nref entry\nstring_var label\nBegin Function {{}}\n{}\nEnd\n", r#"
       let carried := OwnedHolder.GetAllItemRefs 0 1 0 0
       let dropped := OwnedHolder.GetDroppedRefs
       if dropped != Ar_Null
@@ -264,9 +267,27 @@ fn compiled_hover_consumer_combines_inventory_refs_with_associated_world_weapons
       loop
       SetUIStringAlt "HUDMainMenu/OwnedRow/string" $label
       SetFunctionValue (Ar_Size carried)
-    "#,
-        RunCtx::default(),
-    );
+    "#);
+    {
+        let rejected = fnv_script::compile::compile_runtime(
+            &original_source,
+            &g.data.table,
+            &GameEnv { g: &g },
+        );
+        let first = rejected
+            .errors()
+            .next()
+            .expect("the original helper must retain its actual declaration refusal");
+        assert_eq!(
+            (first.kind, first.detail.as_str()),
+            ("variable_named_like_a_function", "label"),
+            "original-hover-compile: retain the precise compiler diagnostic"
+        );
+    }
+    let corrected_source = original_source.replace("label", "ownedLabelText");
+    let count = g
+        .run_query(&corrected_source, RunCtx::default())
+        .unwrap_or_else(|e| panic!("corrected hover consumer: {e}"));
     assert_eq!(
         count,
         XVal::Num(3.0),
@@ -362,16 +383,41 @@ fn source_receiver_admission_distinguishes_calling_actor_from_explicit_invalid_s
         self_ref: Some(FormId(HOLDER)),
         ..Default::default()
     };
+    let files = MemSource::default().with(
+        "owned-receiver.xml",
+        r#"<menu name="HUDMainMenu"><rect name="OwnedReceiver"><_after>0</_after></rect></menu>"#,
+    );
+    g.ui_tree.load_menu(&files, "owned-receiver.xml").unwrap();
+    for input in ["let explicit := 0", "let explicit := -1"] {
+        assert!(g.ui_tree.set_float("HUDMainMenu/OwnedReceiver/_after", 0.0));
+        let before = serde_json::to_value(g.world.snapshot()).unwrap();
+        let source = format!("ref explicit\nBegin Function {{}}\n{input}\nSetFunctionValue (explicit.GetDroppedRefs)\nSetUIFloatAlt \"HUDMainMenu/OwnedReceiver/_after\" 1\nEnd\n");
+        let error = g
+            .run_query(&source, ctx)
+            .expect_err("explicit invalid receiver must stop at the existing VM boundary");
+        assert!(
+            error.contains("getdroppedrefs called on no reference"),
+            "exact invalid receiver refusal: {error}"
+        );
+        assert_eq!(
+            g.ui_tree.get_float("HUDMainMenu/OwnedReceiver/_after"),
+            Some(0.0),
+            "the VM must not silently continue"
+        );
+        assert_eq!(
+            serde_json::to_value(g.world.snapshot()).unwrap(),
+            before,
+            "invalid query must not mutate the world"
+        );
+    }
     for body in [
-        "let explicit := 0\nSetFunctionValue (explicit.GetDroppedRefs)",
-        "let explicit := -1\nSetFunctionValue (explicit.GetDroppedRefs)",
         "let explicit := OwnedHolderBase\nSetFunctionValue (explicit.GetDroppedRefs)",
         "let explicit := OwnedBox\nSetFunctionValue (explicit.GetDroppedRefs)",
     ] {
         assert_eq!(
             query(&mut g, "ref explicit", body, ctx),
             XVal::Num(0.0),
-            "invalid receiver must not become the calling actor: {body}"
+            "a valid nonactor/base receiver must not become the calling actor: {body}"
         );
     }
     assert_eq!(
@@ -383,9 +429,9 @@ fn source_receiver_admission_distinguishes_calling_actor_from_explicit_invalid_s
         ),
         XVal::Num(0.0)
     );
-    let result = query(&mut g, "", "SetFunctionValue (GetDroppedRefs)", ctx);
-    let XVal::Array(id) = result else {
-        panic!("calling actor must expose its associated world reference: {result:?}")
-    };
-    assert_eq!(g.ext.array(id).unwrap().entries[0].1, XVal::Ref(expected.0));
+    assert_eq!(
+        refs_call(&mut g, "GetDroppedRefs", ctx),
+        [expected],
+        "calling actor must expose its associated world reference"
+    );
 }
