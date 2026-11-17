@@ -62,7 +62,12 @@ without the launcher is the same as before.
 - **Game folder**: `[Game] Path` with the required-files check, the program to start
   (`[Launcher] Exe`, else `nvforever(.exe)` beside the launcher, else this checkout's
   `engine/target/release`), and buttons that open the saves, logs, screenshots and settings
-  folders.
+  folders. With no usable game folder (none in the INI that holds the game, no Mod
+  Organizer 2 start, no `NVFOREVER_DATA`) the launcher opens on this page and says so
+  (#2938). The box then starts on the game's usual place when the game is there (Steam's
+  default library: `~/.local/share/Steam` or `~/.steam/steam` on Linux, `C:\Program Files
+  (x86)\Steam` on Windows, and GOG's `C:\GOG Games\Fallout New Vegas`); it is stored only
+  by Save.
 - **Website / GitHub**: open nv-forever.com and the repository in the browser.
 
 ## Top and bottom bars
@@ -78,6 +83,12 @@ without the launcher is the same as before.
   (`--explore`) and "Close the launcher when the game starts" (`[Launcher] CloseOnPlay`).
   No `--data` is passed: the game reads its folder from the INI, so a launcher start is a
   player's start in every way (reports included, by the player's own choice).
+- With no usable game folder every start goes to the Game folder page and says the folder
+  must be set first, instead of starting a game that would only ask for it (Windows) or
+  quit (elsewhere) (#2938).
+- A game that ends with an error is said in the message line, with its exit code and the
+  logs folder; a clean exit clears "The game is starting…" (#2938). Not when the launcher
+  closed at the start (`CloseOnPlay`).
 
 ## Fonts
 
@@ -123,10 +134,13 @@ displays' adapters, the game asks the driver itself at start; the four upscaling
 frame generation files in the `dlss` folder), and Download DLSS…, Open dlss folder, NVIDIA's
 release page, Check again. Download DLSS… opens NVIDIA's licence (`nvf_dlss_files::LICENCE`);
 **I accept** takes a mouse click only, as in the game, and starts
-`nvf_dlss_files::download::start`: the game's own download, moved into the shared crate
+`nvf_dlss_files::download::start_into`: the game's own download, moved into the shared crate
 `crates/nvf-dlss-files` with its pins, signature checks and folder rule, so the two cannot
-differ. Its progress shows on the card; the folder is `dlss` beside the launcher, which is
-beside `nvforever.exe` in a release. The launcher never passes the developer test address.
+differ. Its progress shows on the card; the folder is `dlss` beside the game program the
+launcher starts (`dlss::folder_for`; the same folder as the launcher's in a release, and
+`engine/target/release/dlss` for a source checkout's launcher in `target/release`, where a
+folder beside the launcher was never read by the game), `NVF_DLSS_DIR` when set. The launcher
+never passes the developer test address.
 
 ## Updater (#2713)
 

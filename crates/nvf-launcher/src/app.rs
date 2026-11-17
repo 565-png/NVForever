@@ -63,6 +63,12 @@ fn version() -> &'static str {
     })
 }
 
+/// The message line while the game starts, cleared when it ends without an error.
+const STARTING: &str = "The game is starting…";
+/// On a start with no game folder set (#2938): at the launcher's start, and on Play.
+const NEEDS_FOLDER: &str = "Set your Fallout: New Vegas folder here, then Save: the game needs it to start.";
+const NEEDS_FOLDER_FIRST: &str = "Set your Fallout: New Vegas folder first (here, then Save): the game cannot start without it.";
+
 struct NewestSave {
     path: PathBuf,
     name: String,
@@ -161,7 +167,7 @@ impl App {
                 EngineHome::user().map(|h| h.root).as_deref(),
             )),
             reports_confirm: false,
-            dlss: crate::dlss::Status::read(),
+            dlss: crate::dlss::Status::read(None),
             dlss_licence: false,
             reports_rx: None,
             news: Vec::new(),
@@ -213,6 +219,12 @@ impl App {
             app.load_mods();
         }
         app.reload_ini();
+        // No game folder yet (a first start): open on its page (#2938), unless a test aid
+        // chose the page.
+        if !app.folder_known() && std::env::var_os("NVF_LAUNCHER_PAGE").is_none() {
+            app.page = Page::Game;
+            app.message = Some((NEEDS_FOLDER.into(), false));
+        }
         app.find_newest_save();
         if let Some(h) = &app.home {
             app.news = news::load_cache(&h.cache()).into_iter().map(|p| (p, None)).collect();
@@ -284,8 +296,18 @@ impl App {
         self.rows = menu.rows;
         self.tab = on.and_then(|on| self.tabs.iter().position(|t| *t == on)).unwrap_or(0);
         self.game_edit = Config::from_ini(&self.ini_text).game_dir.map(|p| p.display().to_string()).unwrap_or_default();
+        // None set: the box starts on Steam's usual folder when the game is there; it is
+        // stored only by Save (#2938).
+        if self.game_edit.is_empty() {
+            let usual = launch::usual_game_folders(launch::user_home().as_deref(), cfg!(windows));
+            if let Some(f) = launch::first_usable(&usual, |p| GameInstall::open(p).is_ok()) {
+                self.game_edit = f.display().to_string();
+            }
+        }
         let configured = ini_get(&self.ini_text, LAUNCHER, "Exe").filter(|s| !s.is_empty()).map(PathBuf::from);
         self.exe = launch::find_game(configured.as_deref());
+        // The DLSS folder is beside the game this INI starts (crate::dlss::folder_for).
+        self.dlss = crate::dlss::Status::read(self.exe.as_deref());
     }
 
     fn launcher_flag(&self, key: &str, default: bool) -> bool {
@@ -294,6 +316,11 @@ impl App {
 
     fn game(&self) -> Option<GameInstall> {
         Config::from_ini(&self.ini_text).game_dir.and_then(|d| GameInstall::open(d).ok())
+    }
+
+    /// Whether the game would find its folder when started now ([`launch::folder_known`]).
+    fn folder_known(&self) -> bool {
+        launch::folder_known(self.game().is_some(), fnv_install::mo2::usvfs_loaded(), std::env::var_os("NVFOREVER_DATA").as_deref())
     }
 
     /// Write `edit` over the INI as it is on disk now (the game may have written it since it
@@ -415,10 +442,18 @@ impl App {
         match &mut self.child {
             Some(c) => match c.try_wait() {
                 Ok(None) => true,
-                _ => {
+                ended => {
                     self.child = None;
                     self.reload_ini();
                     self.find_newest_save();
+                    // An error is said, with where the logs are; a clean exit only clears
+                    // "The game is starting…" (#2938).
+                    let said = ended.ok().flatten().and_then(|s| launch::exit_message(s.code(), s.success(), self.home.as_ref().map(EngineHome::logs).as_deref()));
+                    match said {
+                        Some(m) => self.message = Some((m, true)),
+                        None if self.message.as_ref().is_some_and(|(m, _)| m == STARTING) => self.message = None,
+                        None => {}
+                    }
                     false
                 }
             },
@@ -439,6 +474,13 @@ impl App {
             }
             self.after_write(r, None);
         }
+        // No game folder: the game would only ask for one (Windows) or quit (elsewhere);
+        // the launcher's own page asks instead (#2938).
+        if !self.folder_known() {
+            self.page = Page::Game;
+            self.message = Some((NEEDS_FOLDER_FIRST.into(), true));
+            return;
+        }
         let Some(exe) = self.exe.clone() else {
             self.message = Some((format!("{} was not found beside the launcher: pick it on the Game folder page.", launch::GAME_EXE), true));
             return;
@@ -446,7 +488,7 @@ impl App {
         match launch::spawn(&exe, &start) {
             Ok(c) => {
                 self.child = Some(c);
-                self.message = Some(("The game is starting…".into(), false));
+                self.message = Some((STARTING.into(), false));
                 if self.launcher_flag("CloseOnPlay", false) {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -1209,7 +1251,7 @@ impl App {
         let running = download::current().map(|h| h.progress()).filter(|p| !p.phase.finished());
         let last = download::current().map(|h| h.progress()).filter(|p| p.phase.finished());
         if matches!(last.as_ref().map(|p| &p.phase), Some(download::Phase::Done(_))) && !self.dlss.complete() {
-            self.dlss = crate::dlss::Status::read();
+            self.dlss = crate::dlss::Status::read(self.exe.as_deref());
         }
         let s = self.dlss.clone();
         let need = |ui: &mut egui::Ui, ok: bool, words: String| {
@@ -1275,7 +1317,7 @@ impl App {
                     launch::open_url(download::RELEASE_PAGE);
                 }
                 if ui.button("Check again").clicked() {
-                    self.dlss = crate::dlss::Status::read();
+                    self.dlss = crate::dlss::Status::read(self.exe.as_deref());
                 }
             });
         });
@@ -1303,7 +1345,7 @@ impl App {
             ui.horizontal(|ui| {
                 let accept = ui.add(gold_button("I accept", true)).on_hover_text("A mouse click only.");
                 if accept.clicked_by(egui::PointerButton::Primary) {
-                    nvf_dlss_files::download::start(nvf_dlss_files::download::LicenceAccepted::by_player(), None);
+                    nvf_dlss_files::download::start_into(nvf_dlss_files::download::LicenceAccepted::by_player(), None, crate::dlss::folder_for(self.exe.as_deref()));
                     self.dlss_licence = false;
                 }
                 if ui.button("Cancel").clicked() {
