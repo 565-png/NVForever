@@ -1103,22 +1103,33 @@ Sources: `fnvtool nif stats` over every mesh archive of the base game and the ad
   applies this only to `Move::TurnLeft` and `Move::TurnRight`, including weapon,
   crouched, hurt and replacement movement sets. Other movement and generic clip
   binding keep their existing policy; there is no actor ID or corrective angle.
-- [authored, unexecuted] `anim_play::tests::turn_in_place_…` exercises the real
+- [implementation validation] `anim_play::tests::turn_in_place_…` exercises the real
   `BlendPlayer::sample` consumer with a tilted static root plus NonAccum, phase
   wrap/release, relative keyed rotation and absent root/rotation controls.
   `locomotion::tests::turn_moves_remove_exported_root_basis_at_the_pose_consumer`
   calls the production move binder and sampler for both turns, idle, forward and
-  backward. The latter fixture also compiles against the previous production
-  interface for an unchanged-expectation baseline comparison.
+  backward. These four portable controls and the three retained generic root
+  height/rotation controls each passed once in hosted CI for implementation head
+  `8548f552`. The same consumer fixture is prepared against the previous production
+  interface for an unchanged-expectation baseline comparison; that baseline is
+  still unrun.
 - [authored, unexecuted] The explicitly ignored local-data fixture
   `locomotion::tests::loaded_turn_assets_keep_accumulation_root_upright` reads
   `2ha` and unarmed left/right KF files through the NIF parser, production move
   binder and pose sampler. Running it requires `NVF_TURN_CLIP_DIR` and
   `NVF_NIF_SCHEMA`, plus `--ignored --exact` on that selector. Its default ignored
-  state is not validation. No game files are included in the source.
-- [open] Exact-source compilation, baseline failure/corrected success, the loaded
-  game's turn files through the Rust consumer, and the installed-mod knight's
-  greeting still require execution. Original-game playback and parity of relative
+  state is not validation: it was explicitly ignored in the hosted run and supplies
+  no actual-KF execution credit. No game files are included in the source.
+- [implementation validation] The [hosted CI run](https://github.com/LootJunkieAzza/NVForever/actions/runs/44024337735)
+  and [game-data guard](https://github.com/LootJunkieAzza/NVForever/actions/runs/44024337705)
+  passed all seven checks for `8548f552`, using Rust 1.100.0. Actual checkout
+  `d2226113` has parents main `a0ebe1c5` and that head, with the same complete tree:
+  core 3,444 passed/0 failed/5 ignored; engine 3,413 passed/0 failed/4 ignored.
+  Root/engine strict Clippy, dependency and tools checks passed. These results
+  qualify that implementation revision; later heads retain their own check status.
+- [open] Same-fixture baseline failure/corrected success, the loaded game's turn
+  files through the Rust consumer, and the installed-mod knight's greeting still
+  require execution. Original-game playback and parity of relative
   root rotation remain unobserved; this change does not qualify all animation or
   dialogue behavior.
 

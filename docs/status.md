@@ -86,13 +86,15 @@ Deleted engine-shot associations also have a focused next-consumer retirement br
 
 ## 3. Actors
 
-NPC turn-in-place root handling is authored in the production movement binder and
+NPC turn-in-place root handling is implemented in the production movement binder and
 pose sampler ([animation §9.13](spec-notes/animation.md#913-npc-turn-clips-and-the-accumulation-root-basis)).
 Both turn directions derive their root basis from the clip while retaining relative
-rotation and child poses. Four portable controls and one ignored local-asset
-regression remain unexecuted;
-exact-source compilation, actual loaded-asset sampling, installed-mod greeting
-acceptance and original-game parity remain open.
+rotation and child poses. Implementation head `8548f552` passed all seven hosted
+checks; its four portable controls and three retained root-height/rotation controls
+each passed once. The actual-KF consumer was ignored and receives no execution
+credit. The unchanged-production baseline, actual loaded-asset sampling,
+installed-mod greeting acceptance and original-game parity remain open. Results
+qualify that tested implementation revision; later heads retain their own checks.
 
 | System | State | Specifics | Notes |
 |---|---|---|---|
