@@ -66,18 +66,18 @@ row's and the keys' line; the words' capitals are centred in it, whatever their 
 game font's capitals measured by their ink: its glyph pictures carry room for the glow).
 The box is centred on the crosshair's height whatever its rows, and starts 150 units right of
 the crosshair; it is never wider than the room to the right bracket of the HUD's bottom right
-pieces (`hud::RIGHT_EDGE_IN`): a name too long for that is cut with "...". In the HUD colour
+pieces (`hud::RIGHT_EDGE_IN`): a name too long for that is cut with "...", before its count, which always shows. The bars' edges are on whole screen pixels, so equal rooms look equal. In the HUD colour
 (`interface::amber`, recoloured with it), the crime colour for theft, at its own scale
 (the **Scale** row, 50% to 100% in steps of 10%, 100% by default; not the HUD
 scale), in the Menu Font row's font (the game's font 7, or the sharp font,
-`pause::MenuFont`), redrawn when either changes. The place and the columns' heads are in the
+`pause::MenuFont`), redrawn when either changes. Its own words (keys, heads, Empty) follow the Language row (`lang/*.toml`). The place and the columns' heads are in the
 small face (font 3, or the sharp font's small size in bold); the columns' figures in the same
 size, not bold.
 
 Columns, each with its own row (all off by default, greyed while Quick Loot is off): **Show
 weight**, **Show value**, **Show value per weight**; a pocket always shows each item's
 **chance**. With no column the count stands right-aligned in a column of its own; with any,
-it goes beside the name, "Stimpak (2)" [owner 2026-11-17]. The columns are as wide as their
+it goes beside the name, "Stimpak (2)", and the heads' line has **ITEM** over the names, where they start; the heads at 70% opacity [owner 2026-11-17]. The columns are as wide as their
 widest figure in the drawn font, 40 units apart, so they align in both fonts.
 
 Each drawing checks itself (`quick_loot::overlaps`: texts that meet, a text outside the list

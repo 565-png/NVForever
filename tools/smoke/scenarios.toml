@@ -4286,6 +4286,25 @@ forbid = [
   { re = 'pickpocket: open on 0x00104C79', label = "E opened the full pickpocket menu" },
 ]
 
+
+[[scenario]]
+name = "quick-loot-language"
+source = "[design] owner 2026-11-17 (the sixth look): Quick Loot's own words follow the Language row (lang/*.toml): its keys, column heads and Empty"
+note = "as quick-loot-container with the Language row set to ru (the repo's lang folder) at 10.8 s; on an English install the menus are drawn sharp for Cyrillic; a shot at 13.5 s (quick_loot_ru.png)"
+areas = ["activate", "menus", "hud"]
+paths = ["engine/nvf-play/src/quick_loot.rs", "lang/ru.toml", "crates/fnv-util/src/words.rs"]
+env = { NVF_LANG_DIR = "{repo}/lang", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12", NVF_PLAY_TEST_SETTINGS = "10.5:quick-loot,10.8:language=ru", NVF_PLAY_TEST_SHOTS = "13.5:quick_loot_ru.png" }
+args = ["--cell", "GSHouseInterior03", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 15
+order = [[
+  "settings: quick-loot on",
+  { re = 'language: ru', label = "the language is Russian" },
+  { re = 'quick loot: drawn "Refrigerator" \(.*keys "E\) Взять \| R\) Взять всё \| T\) Поиск"\): no overlaps', label = "the keys in Russian, nothing overlapping" },
+]]
+forbid = [
+  { re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" },
+  { re = 'quick loot: drawn "Refrigerator" .*keys "E\) Take', label = "the keys stayed English after the language changed" },
+]
 [[scenario]]
 name = "tag-reset-clears"
 source = "[observed 2026-11-06] docs/spec-notes/chargen.md §3: Reset clears the tags the menu opened with, and Done is refused until three are tagged again"

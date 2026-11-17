@@ -42,6 +42,7 @@ use bevy::prelude::*;
 use fnv_sim::forms::BaseData;
 use fnv_sim::FormId;
 use fnv_game::game::event;
+use fnv_util::words::tr;
 use nvf_assets::GameData;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -213,6 +214,8 @@ const STEAL: &str = "Steal";
 const TAKE_ALL: &str = "Take All";
 const STEAL_ALL: &str = "Steal All";
 const SEARCH: &str = "Search";
+/// The names' head, on the columns' heads' line [the owner's sixth look, 2026-11-17].
+const ITEM: &str = "ITEM";
 const WG: &str = "WG";
 const VAL: &str = "VAL";
 const PER_WG: &str = "V/W";
@@ -231,11 +234,12 @@ impl Spec {
             .map(|(i, r)| RowSpec { name: r.name.clone(), count: r.count, weight: r.weight, value: r.value, chance: chance_of(r), selected: i == sel })
             .collect();
         let steal = s.crime;
-        let mut prompts = vec![format!("{} {}", key(Control::Activate), if steal { STEAL } else { TAKE })];
+        // NVForever's own words in the chosen language (`lang/*.toml`, `fnv_util::words`).
+        let mut prompts = vec![format!("{} {}", key(Control::Activate), tr(if steal { STEAL } else { TAKE }))];
         if s.kind != Kind::Pocket {
-            prompts.push(format!("{} {}", key(Control::ReadyItem), if steal { STEAL_ALL } else { TAKE_ALL }));
+            prompts.push(format!("{} {}", key(Control::ReadyItem), tr(if steal { STEAL_ALL } else { TAKE_ALL })));
         }
-        prompts.push(format!("{} {SEARCH}", key(Control::Rest)));
+        prompts.push(format!("{} {}", key(Control::Rest), tr(SEARCH)));
         Spec {
             title: s.title.clone(),
             position: if rows.is_empty() { "0/0".into() } else { format!("{}/{}", sel + 1, rows.len()) },
@@ -324,6 +328,9 @@ pub enum Which {
 pub enum Ink {
     /// The HUD colour, full.
     Hud,
+    /// The columns' heads (ITEM, WG …): the HUD colour at 70% [the owner's sixth look,
+    /// 2026-11-17: "not that visible"].
+    Head,
     /// The HUD colour, dim.
     Dim,
     /// A row's text: the crime colour for theft, else the HUD's; full when selected.
@@ -447,6 +454,9 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
     // A size in whole pixels (at least one), and a place on the nearest pixel.
     let snap = |v: f32| if px > 0.0 { (v / px).round().max(1.0) * px } else { v };
     let on_pixel = |v: f32| if px > 0.0 { (v / px).round() * px } else { v };
+    // The box's width up to the next pixel, never down: rounded down, a name that just fits
+    // was cut, its count with it [the owner's sixth look, 2026-11-17: "Sunset Sarsaparilla (..."].
+    let wide = |v: f32| if px > 0.0 { (v / px - 1e-3).ceil() * px } else { v };
     let (frame, gap_y, half_gap, line_h, row_h, row_gap, rule_h, tick) = (snap(FRAME), snap(GAP_Y), snap(GAP_Y / 2.0), snap(LINE), snap(ROW_H), snap(ROW_GAP), snap(RULE), snap(TICK));
     let pad_x = frame + gap_y;
     let width = |w: Which, s: &str| ink_width(face(fonts, w), s);
@@ -457,20 +467,21 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
     let count = |r: &RowSpec| if counted && r.count > 1 { format!("({})", r.count) } else { String::new() };
     let mut cols: Vec<(&str, Vec<String>)> = Vec::new();
     if c.weight {
-        cols.push((WG, spec.rows.iter().map(|r| crate::reticle::weight_text(r.weight)).collect()));
+        cols.push((tr(WG), spec.rows.iter().map(|r| crate::reticle::weight_text(r.weight)).collect()));
     }
     if c.value {
-        cols.push((VAL, spec.rows.iter().map(|r| crate::reticle::value_text(r.value)).collect()));
+        cols.push((tr(VAL), spec.rows.iter().map(|r| crate::reticle::value_text(r.value)).collect()));
     }
     if c.per_weight {
-        cols.push((PER_WG, spec.rows.iter().map(|r| per_weight_text(r.weight, r.value)).collect()));
+        cols.push((tr(PER_WG), spec.rows.iter().map(|r| per_weight_text(r.weight, r.value)).collect()));
     }
     if c.chance {
-        cols.push((CHANCE, spec.rows.iter().map(|r| r.chance.map_or_else(|| "--".into(), |p| format!("{p}%"))).collect()));
+        cols.push((tr(CHANCE), spec.rows.iter().map(|r| r.chance.map_or_else(|| "--".into(), |p| format!("{p}%"))).collect()));
     }
     let col_w: Vec<f32> = cols.iter().map(|(h, cells)| cells.iter().map(|t| width(Which::Small, t)).fold(width(Which::Head, h), f32::max)).collect();
     let count_w = spec.rows.iter().map(|r| width(Which::Small, &count(r))).fold(0.0, f32::max);
-    let names = spec.rows.iter().map(|r| width(Which::Small, &label(r))).fold(width(Which::Small, EMPTY), f32::max);
+    let item_w = if cols.is_empty() { 0.0 } else { width(Which::Head, tr(ITEM)) };
+    let names = spec.rows.iter().map(|r| width(Which::Small, &label(r))).fold(width(Which::Small, tr(EMPTY)).max(item_w), f32::max);
     let x0 = pad_x + CELL;
     // The box is at least as wide as the keys' line with the words' room on both sides [the
     // owner's step 2 and third look].
@@ -478,7 +489,7 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
     let position_w = width(Which::Head, &spec.position);
     let others = col_w.iter().map(|w| GAP + w).sum::<f32>() + if count_w > 0.0 { GAP + count_w } else { 0.0 };
     let wanted = (2.0 * x0 + names.max(NAME_MIN) + others).max(2.0 * x0 + prompts_w).max(2.0 * x0 + NAME_MIN + GAP + position_w);
-    let w = snap(wanted.min(max_w.max(2.0 * x0 + NAME_MIN + others).max(2.0 * x0 + prompts_w)));
+    let w = wide(wanted.min(max_w.max(2.0 * x0 + NAME_MIN + others).max(2.0 * x0 + prompts_w)));
     let x1 = w - x0;
     let mut pieces = Vec::new();
     let mut bars = Vec::new();
@@ -511,8 +522,10 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
     let count_end = end;
     if !cols.is_empty() {
         line(y);
+        // The names' head where the names start [the owner's sixth look].
+        piece(tr(ITEM).to_string(), Which::Head, x0, centred(&fonts.head, y), Ink::Head);
         for ((h, _), e) in cols.iter().zip(&col_end) {
-            piece((*h).to_string(), Which::Head, e - width(Which::Head, h), centred(&fonts.head, y), Ink::Hud);
+            piece((*h).to_string(), Which::Head, e - width(Which::Head, h), centred(&fonts.head, y), Ink::Head);
         }
         y += line_h;
     }
@@ -539,7 +552,15 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
             bars.push(edge(Rect::new(band.max.x - rule_h, band.min.y, band.max.x, band.max.y)));
         }
         let ink = Ink::Row(r.selected);
-        let name = crate::pause::fit_text(|t| width(Which::Small, t), &label(r), name_end - x0);
+        // A name too long for its room gives way before its count, which always shows
+        // [the owner's sixth look].
+        let name = if !counted && r.count > 1 {
+            let tail = format!(" ({})", r.count);
+            let cut = crate::pause::fit_text(|t| width(Which::Small, &format!("{t}{tail}")), &r.name, name_end - x0);
+            format!("{cut}{tail}")
+        } else {
+            crate::pause::fit_text(|t| width(Which::Small, t), &label(r), name_end - x0)
+        };
         piece(name, Which::Small, x0, centred(&fonts.small, y), ink);
         let n = count(r);
         if !n.is_empty() {
@@ -556,7 +577,7 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
     if spec.rows.is_empty() {
         bands.push(Rect::new(pad_x, y, w - pad_x, y + row_h));
         line(y);
-        piece(EMPTY.into(), Which::Small, x0, centred(&fonts.small, y), Ink::Dim);
+        piece(tr(EMPTY).into(), Which::Small, x0, centred(&fonts.small, y), Ink::Dim);
         y += row_h + row_gap;
     }
     y += gap_y - row_gap;
@@ -839,8 +860,8 @@ struct Kit {
 
 /// What the drawing shows: the words, whether in the sharp font, the room to the HUD's right
 /// edge (whole units), the scale and the backing's darkness (percent), the view's height
-/// (physical pixels).
-type Drawn = Option<(Spec, bool, i32, i32, i32, u32)>;
+/// (physical pixels) and the words' language (`fnv_util::words::generation`).
+type Drawn = Option<(Spec, bool, i32, i32, i32, u32, u32)>;
 
 fn colour(ink: Ink, crime: bool) -> Color {
     let row = |full: bool| {
@@ -853,6 +874,7 @@ fn colour(ink: Ink, crime: bool) -> Color {
     };
     match ink {
         Ink::Hud => amber(255.0),
+        Ink::Head => amber(255.0).with_alpha(0.7),
         Ink::Dim => amber(255.0).with_alpha(0.6),
         Ink::Row(full) => row(full),
         Ink::Fill => row(true).with_alpha(0.16),
@@ -924,11 +946,11 @@ fn draw(
     // height at the list's scale).
     let tall = window.single().map_or(0, |w| w.physical_height());
     let px = if tall > 0 { 960.0 / (tall as f32 * size.max(0.1)) } else { 0.0 };
-    let now = Some((spec, sharp, max_w.round() as i32, (size * 100.0).round() as i32, (backing() * 100.0).round() as i32, tall));
+    let now = Some((spec, sharp, max_w.round() as i32, (size * 100.0).round() as i32, (backing() * 100.0).round() as i32, tall, fnv_util::words::generation()));
     if *drawn == now {
         return;
     }
-    let (spec, _, _, _, _, _) = now.clone().expect("set above");
+    let (spec, _, _, _, _, _, _) = now.clone().expect("set above");
     let raster = kit.raster.as_ref().expect("loaded above");
     let faces = match (sharp, crate::vector_font::metrics(), menu_font.as_deref_mut(), fonts.as_deref_mut()) {
         (true, Some(m), Some(menu), Some(fonts)) => Fonts::sharp(raster, m, menu.handle(fonts)),
@@ -936,14 +958,14 @@ fn draw(
     };
     let laid = layout_on(&spec, &faces, max_w, px);
     // Logged when the words or the font change, not as the selection moves.
-    let new_words = drawn.as_ref().is_none_or(|(d, f, _, z, _, _)| d.title != spec.title || d.columns != spec.columns || *f != sharp || d.rows.len() != spec.rows.len() || *z != (size * 100.0).round() as i32);
+    let new_words = drawn.as_ref().is_none_or(|(d, f, _, z, _, _, _)| d.title != spec.title || d.columns != spec.columns || *f != sharp || d.rows.len() != spec.rows.len() || *z != (size * 100.0).round() as i32);
     if new_words {
         let bad = overlaps(&laid, &faces);
         let font = if sharp { "Sharp" } else { "Original" };
         let c = |w: Which| cap(face(&faces, w));
         info!("quick loot: capitals {:.1} (rows), {:.1} (name), {:.1} (heads), {:.1} (figures) units high, font {}", c(Which::Entry), c(Which::Title), c(Which::Head), c(Which::Small), if sharp { "Sharp" } else { "Original" });
         if bad.is_empty() {
-            info!("quick loot: drawn \"{}\" ({} rows, columns {:?}, font {font}, scale {:.0}%, {:.0} x {:.0} units, box centred, right edge {:.0} of {:.0}): no overlaps", spec.title, spec.rows.len(), spec.columns, size * 100.0, laid.size.x, laid.size.y, LEFT + laid.size.x, half - edge);
+            info!("quick loot: drawn \"{}\" ({} rows, columns {:?}, font {font}, scale {:.0}%, {:.0} x {:.0} units, box centred, right edge {:.0} of {:.0}, keys \"{}\"): no overlaps", spec.title, spec.rows.len(), spec.columns, size * 100.0, laid.size.x, laid.size.y, LEFT + laid.size.x, half - edge, spec.prompts.join(" | "));
         } else {
             warn!("quick loot: drawn \"{}\" (font {font}): overlaps: {}", spec.title, bad.join(", "));
         }
@@ -1185,6 +1207,44 @@ mod tests {
         }
     }
 
+    /// The owner's sixth look: with columns, the names' head on their heads' line, where the
+    /// names start; none without columns.
+    #[test]
+    fn the_item_head_stands_over_the_names() {
+        for (font, fonts) in both_fonts() {
+            let l = layout(&spec(ALL, rows()), &fonts, room());
+            let (head, name, wg) = (find(&l, ITEM), find(&l, "10mm Pistol"), find(&l, WG));
+            assert!((head.x - name.x).abs() < 0.01, "{font}: the head where the names start");
+            assert_eq!((head.base, head.which), (wg.base, Which::Head), "{font}: on the heads' line, in their face");
+            assert_eq!((head.ink, wg.ink), (Ink::Head, Ink::Head), "{font}: the heads faint");
+            let plain = layout(&spec(Columns::default(), rows()), &fonts, room());
+            assert!(!plain.pieces.iter().any(|p| p.text == ITEM), "{font}: no heads' line without columns");
+        }
+    }
+
+    /// The owner's sixth look: a count never gives way, the name before it does; and a name
+    /// that fits is never cut, at any pixel size.
+    #[test]
+    fn a_cut_name_keeps_its_count_and_a_fitting_one_is_not_cut() {
+        for (font, fonts) in both_fonts() {
+            let mut r = rows();
+            r[0].name = "A very long item name that runs on and on past any list the HUD has room for".into();
+            r[0].count = 6;
+            let l = layout(&spec(ALL, r), &fonts, room());
+            let cut = l.pieces.iter().find(|p| p.text.starts_with("A very")).expect("the long row");
+            assert!(cut.text.ends_with("... (6)"), "{font}: {:?}", cut.text);
+            assert_eq!(overlaps(&l, &fonts), Vec::<String>::new(), "{font}");
+            let mut r = rows();
+            r[0].name = "Sunset Sarsaparilla".into();
+            r[0].count = 6;
+            for px in [0.0, 960.0 / 1080.0, 960.0 / 1440.0, 960.0 / (2160.0 * 0.7), 960.0 / (1600.0 * 0.9), 960.0 / (1080.0 * 0.5)] {
+                let l = layout_on(&spec(ALL, r.clone()), &fonts, room(), px);
+                // Found whole: neither the name nor its count cut.
+                find(&l, "Sunset Sarsaparilla (6)");
+            }
+        }
+    }
+
     /// The owner's step 10 and long names: the list stops at the HUD's right edge and the
     /// name gives way.
     #[test]
@@ -1194,7 +1254,7 @@ mod tests {
             r[0].name = "A very long item name that runs on and on past any list the HUD has room for".into();
             let l = layout(&spec(ALL, r), &fonts, room());
             assert!((l.size.x - room()).abs() < 0.01, "{font}: as wide as it may be: {}", l.size.x);
-            assert!(l.pieces.iter().any(|p| p.text.ends_with("...")), "{font}: cut with the mark");
+            assert!(l.pieces.iter().any(|p| p.text.contains("...")), "{font}: cut with the mark");
             assert_eq!(overlaps(&l, &fonts), Vec::<String>::new(), "{font}");
             let fits = layout(&spec(Columns::default(), rows()), &fonts, room());
             for name in ["10mm Pistol", "Purified Water", "Scrap Metal"] {
