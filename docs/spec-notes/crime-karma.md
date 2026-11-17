@@ -213,6 +213,19 @@ check 241]. Only the form with no faction falls back to the calling actor [desig
 #2926]; a freed Techatticup hostage's `SendAssaultAlarm Player
 CaesarsLegionTechMineFaction` turned the hostage itself before.
 
+Techatticup (#2926): each NCR hostage (TechMineNCRHostage2REF 0x0012319C,
+TechMineNCRHostage1REF 0x0012319B, SCPT 0x00123191) ends its "Untie him." branch with
+`SendAssaultAlarm Player 0x001400F9` (CaesarsLegionTechMineFaction) [observed:
+FalloutNV.esm, script decompile and fnvtool esm decode]. With the mine's raiders alive the
+pick works: in a headless run of the untie path, 17 members of the faction are present and
+alive and the victim is TecLegionaryRaider5REF (ACHR 0x0011F654, base 0x00123192)
+[observed: our headless walkthrough techatticup-hostages-2926, its `assault alarm:` log
+line; the reference from fnvtool esm decode]. The reporter's hostage turned because the
+mine had been cleared first, the usual order: no member was alive and the old fallback
+picked the caller [hypothesis, fits the reporter's log]. The walkthrough
+techatticup-hostages-dead-2926 kills the faction's actors first and expects nobody to
+turn.
+
 ### 3.6 Who sees, and what turning means
 
 - A witness is an actor that has the player detected (band Detected, measured within the

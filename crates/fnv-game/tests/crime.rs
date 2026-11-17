@@ -924,3 +924,21 @@ fn an_assault_alarm_without_a_faction_turns_the_caller() {
     assert_eq!(crimes(&mut g), vec![(Kind::Assault, vec![FormId(STRANGER_REF)])]);
     assert!(g.crime_enemy(FormId(STRANGER_REF)));
 }
+
+/// The kill loop of the headless walkthrough techatticup-hostages-dead-2926.actions.json
+/// (every actor of a faction in the player's cell killed, as when the player has cleared a
+/// mine): with the faction's one member killed, the alarm on the faction turns nobody, not
+/// the caller (#2926, the reporter's case).
+#[test]
+fn an_assault_alarm_after_the_factions_members_were_killed_turns_nobody() {
+    let f = fixture();
+    let mut g = game(&f);
+    let script = "Begin Function { }\nref rActor\nint iKilled\nlet rActor := GetFirstRef 200 0\nwhile rActor\n  if rActor.GetInFaction Gang\n    rActor.Kill\n    let iKilled += 1\n  endif\n  let rActor := GetNextRef\nloop\nSetFunctionValue iKilled\nEnd\n";
+    let killed = g.run_query(script, Default::default());
+    assert_eq!(killed, Ok(fnv_script::vm::XVal::Num(1.0)), "{:?}", g.events);
+    assert!(g.is_dead(FormId(FIEND_REF)));
+    g.crimes.take_notes();
+    alarm_on_gang(&mut g);
+    assert_eq!(crimes(&mut g), vec![]);
+    assert!(!g.crime_enemy(FormId(STRANGER_REF)));
+}

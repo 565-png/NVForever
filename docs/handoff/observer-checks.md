@@ -3233,5 +3233,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
      `TechMineNCRHostage2REF.GetAlarmed`, `player.IsInCombat` and the hostage's combat
      target for 10 s, and whether the second hostage's message box still opens. Then once
      with the raiders alive: which raider turns (the nearest, the first in some order, or
-     all of them) and whether the guards at the entrance join.
+     all of them) and whether the guards at the entrance join. Ours picks the first member
+     in FormID order: TecLegionaryRaider5REF (0x0011F654) of 17 present and alive
+     [observed: our headless walkthrough techatticup-hostages-2926, #2926 probe].
 

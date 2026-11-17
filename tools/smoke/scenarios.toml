@@ -19103,13 +19103,12 @@ paths = ["crates/fnv-game/walkthrough/techatticup-hostages-2926.actions.json", "
 commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/techatticup-hostages-2926.actions.json"]]
 expect = [
   { json = "observations.?label=hostages: VTechatticup 10.stage", equals = 10, label = "techatticup-hostage-alarm: VTechatticup 10 from Renolds" },
-  { json = "observations.?label=hostages: first box.found", equals = true, label = "techatticup-hostage-alarm: the first hostage's box opens" },
+  { json = "events.?kind=message_shown.message", equals = "0x001231B8", count = 2, label = "techatticup-hostage-alarm: TecMineHostageMSG shown twice: the first hostage's box, then the second's (none skipped by a fight)" },
   { json = "observations.?label=hostages: first hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm: the first hostage is not alarmed after its alarm on the Legion" },
   { json = "observations.?label=hostages: player in combat after the first.value", equals = 0.0, label = "techatticup-hostage-alarm: the player is not in combat after the first" },
   { json = "observations.?label=hostages: raider 5 disabled.value", equals = 0.0, label = "techatticup-hostage-alarm: probe: raider 5 is enabled" },
   { json = "observations.?label=hostages: raider 5 dead.value", equals = 0.0, label = "techatticup-hostage-alarm: probe: raider 5 is alive" },
   { json = "observations.?label=hostages: raider 5 in the mine's faction.value", equals = 1.0, label = "techatticup-hostage-alarm: probe: raider 5 is in CaesarsLegionTechMineFaction" },
-  { json = "observations.?label=hostages: second box.found", equals = true, label = "techatticup-hostage-alarm: the second hostage's box opens" },
   { json = "observations.?label=hostages: second hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm: the second hostage is not alarmed" },
   { json = "observations.?label=hostages: VTechatticup 20.stage", equals = 20, label = "techatticup-hostage-alarm: both freed: stage 20" },
   { json = "observations.?label=hostages: VTechatticup 20.var.NumHostages", equals = 2.0, label = "techatticup-hostage-alarm: both freed: NumHostages 2" },
@@ -19117,6 +19116,28 @@ expect = [
   { json = "given_errors.*", count = 0, label = "techatticup-hostage-alarm: no given fails" },
 ]
 manual = "#2926 probe: run once by hand with NVFOREVER_LOG=fnv_game::crime=info; each hostage's 'assault alarm: faction 0x001400F9 ...' line gives the victim and the members not present or dead"
+
+[[scenario]]
+name = "techatticup-hostage-alarm-cleared"
+kind = "tool"
+source = "issue #2926, the reporter's case: the headless walkthrough crates/fnv-game/walkthrough/techatticup-hostages-dead-2926.actions.json kills every actor of CaesarsLegionTechMineFaction in the hostages' cell, then frees both hostages; their SendAssaultAlarm Player CaesarsLegionTechMineFaction finds no member alive and must turn nobody (main turned the hostage)"
+areas = ["quests", "scripts", "crime"]
+paths = ["crates/fnv-game/walkthrough/techatticup-hostages-dead-2926.actions.json", "crates/fnv-game/src/crime.rs", "crates/fnv-game/src/runner.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/techatticup-hostages-dead-2926.actions.json"]]
+expect = [
+  { json = "observations.?label=hostages: VTechatticup 10.stage", equals = 10, label = "techatticup-hostage-alarm-cleared: VTechatticup 10 from Renolds" },
+  { json = "observations.?label=hostages: raiders killed.value", range = [1, 17], label = "techatticup-hostage-alarm-cleared: the mine's faction members in the cell killed (17 present in the load order)" },
+  { json = "observations.?label=hostages: raider 5 dead.value", equals = 1.0, label = "techatticup-hostage-alarm-cleared: raider 5 (the pick of the run without kills) is dead" },
+  { json = "observations.?label=hostages: first hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm-cleared: the first hostage is not alarmed by its alarm on a faction with no member alive" },
+  { json = "observations.?label=hostages: player in combat after the first.value", equals = 0.0, label = "techatticup-hostage-alarm-cleared: the player is not in combat after the first" },
+  { json = "events.?kind=message_shown.message", equals = "0x001231B8", count = 2, label = "techatticup-hostage-alarm-cleared: TecMineHostageMSG shown twice: the first hostage's box, then the second's (none skipped by a fight)" },
+  { json = "observations.?label=hostages: second hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm-cleared: the second hostage is not alarmed" },
+  { json = "observations.?label=hostages: VTechatticup 20.stage", equals = 20, label = "techatticup-hostage-alarm-cleared: both freed: stage 20" },
+  { json = "observations.?label=hostages: VTechatticup 20.var.NumHostages", equals = 2.0, label = "techatticup-hostage-alarm-cleared: both freed: NumHostages 2" },
+  { json = "steps.*.error", count = 0, label = "techatticup-hostage-alarm-cleared: no step fails" },
+  { json = "given_errors.*", count = 0, label = "techatticup-hostage-alarm-cleared: no given fails" },
+]
+manual = "#2926: run by hand with NVFOREVER_LOG=fnv_game::crime=info; each hostage's 'assault alarm: faction 0x001400F9 ...' line reads victim none, 0 member(s) present and alive, and the members dead"
 
 [[scenario]]
 name = "mq-beggar"
