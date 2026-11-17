@@ -1,8 +1,6 @@
 //! Authored source-compiler fixture for the Pip-Boy's first-person animation clock.
 //! File availability is an interface seam; no animation decoding is claimed here.
-mod common;
-
-use common::*;
+use crate::common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
 use fnv_game::game::{menus, Game, GameConfig};
 use fnv_game::nvse_knvse::SequenceInfo;
@@ -118,6 +116,28 @@ fn close(actual: f64, expected: f64, boundary: &str) {
 
 #[test]
 fn pipboy_menu_advances_only_player_first_person_samples_and_lifecycle() {
+    // The aggregate runs in parallel; only the exact child owns process-wide Roots.
+    const SELF_TEST: &str = "first_person_menu_clock::pipboy_menu_advances_only_player_first_person_samples_and_lifecycle";
+    const CHILD: &str = "NVF_QA_PIPBOY_MENU_CLOCK_CHILD";
+    if std::env::var(CHILD).as_deref() != Ok("1") {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([SELF_TEST, "--exact", "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .expect("start the isolated exact menu-clock fixture");
+        assert!(
+            output.status.success(),
+            "isolated menu-clock fixture failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let args: Vec<_> = std::env::args().collect();
+    assert!(
+        args.iter().any(|arg| arg == "--exact") && args.iter().any(|arg| arg == SELF_TEST),
+        "Roots seam requires this exact fixture alone in its process"
+    );
     let _availability = Availability::install();
     let fixture = fixture();
     let mut game = Game::new(
