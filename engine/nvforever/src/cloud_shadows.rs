@@ -134,21 +134,11 @@ pub struct CloudShadowOutput {
 #[derive(Resource, Default, Debug)]
 pub struct CloudShadowPublished(pub Option<CloudShadowOutput>);
 
-/// A receiver of the published output (C0's `SunVisibility`).
-pub trait CloudSink: Resource {
-    fn set_cloud(&mut self, cloud: Option<&CloudShadowOutput>);
-}
-
-/// Copy the published output into the sun-visibility resource when it changed.
-pub fn publish_cloud_shadows<S: CloudSink>(published: Res<CloudShadowPublished>, mut sink: ResMut<S>) {
+/// Copy the published output into the sun-visibility resource when it changed (the
+/// plumbing of sun_visibility.rs samples it on the sun's light).
+pub fn publish_cloud_shadows(published: Res<CloudShadowPublished>, mut sink: ResMut<crate::sun_visibility::SunVisibility>) {
     if published.is_changed() {
-        sink.set_cloud(published.0.as_ref());
-    }
-}
-
-impl CloudSink for crate::sun_visibility::SunVisibility {
-    fn set_cloud(&mut self, cloud: Option<&CloudShadowOutput>) {
-        self.cloud = cloud.map(|c| crate::sun_visibility::CloudVisibility { image: c.image.clone(), uv_scale: c.uv_scale, uv_offset: c.uv_offset, plane_height: c.plane_height, strength: c.strength });
+        sink.cloud = published.0.as_ref().map(|c| crate::sun_visibility::CloudVisibility { image: c.image.clone(), uv_scale: c.uv_scale, uv_offset: c.uv_offset, plane_height: c.plane_height, strength: c.strength });
     }
 }
 
@@ -172,7 +162,7 @@ impl Plugin for CloudShadowsPlugin {
                     .chain()
                     .after(crate::sky::update_clouds),
             )
-            .add_systems(Update, publish_cloud_shadows::<crate::sun_visibility::SunVisibility>.after(release_cloud_shadows).run_if(test_producer_absent));
+            .add_systems(Update, publish_cloud_shadows.after(release_cloud_shadows).run_if(test_producer_absent));
     }
 }
 
