@@ -56,6 +56,7 @@ Constraints that decide what fits:
 | Shadow filtering method (Bevy `ShadowFilteringMethod`) | Low: harder or softer sun-shadow edges | Temporal is grainy without TAA | **Offered** as a choice, Bevy's default (Gaussian) kept (§3.9) |
 | Sun shafts (own screen-space pass), tied to the weather's fog | Medium: dusk and dawn, the sun behind roofs and poles | ~0.03 ms here | **Built** (§3.7) |
 | Bevy volumetric fog | Would replace the game's fog look | Tried: darkens the whole picture on the non-HDR view, box edges | Rejected (§4) |
+| Desert haze: exponential height fog in closed form, in the world shaders' fog path, on top of the weather's fog | Medium: far ridges fade in layers, basins haze over, warmer toward the sun | A few arithmetic operations per fragment where the fog runs; no pass | **Built**, off in every preset (§3.14) |
 | SSR on water | Low: the planar reflection is better where it reaches | Own march in the water shader from the depth prepass | **Built** for where the planar reflection does not reach (§3.8) |
 | Bevy atmosphere | Would replace the game's sky look | | Rejected |
 | Auto exposure, depth of field, motion blur | Change the look; the game's own HDR/eye-adapt values (IMGS DNAM) are not decoded | | Not now (§6) |
@@ -636,13 +637,119 @@ LOD noise are prior art only; no code was taken from any of them.
   (`NVF_PLAY_TEST_PIPELINE_LOG`, pipeline_gate.rs). Picture and frame-cost evidence is
   recorded above; future visual checks should cover both landscape draw paths.
 
+### 3.14 Desert haze (`desert-haze`; off in every preset)
+
+[design, #2675] An addition of NVForever's own, an engineering choice for the enhanced look:
+not a fact about the original game, never a parity item, and never to be used to explain a
+difference from the original's frames. Issue #2675 asked for "exponential height fog in low
+ground" pooling in basins at dawn, as part of `enhanced`; the Mojave has dust and haze, not
+mist, so it was reframed (on the issue): a **thin dust haze that thickens with distance and
+toward the ground, far ridges fading in layers, warmer toward the sun**, outdoors only, as
+far as the shown weather's own fog leaves room for it. The `enhanced` row the issue named no
+longer exists (the settings menu overhaul); the haze is a row of its own, "Desert haze
+(experimental)" under Graphics > Lighting and Effects, off by default and in every preset.
+
+- **Technique.** Exponential height fog: the density falls as e^(-k y) with the height y
+  above a base height, integrated in closed form along the view ray from the camera to the
+  fragment: optical depth = density x L x (e^(-k y0) - e^(-k y1)) / (k (y1 - y0)), with the
+  limit e^(-k (y0 + y1) / 2) where the two heights are within 1e-3 / k (2.7 units); share =
+  1 - e^(-depth). The sun's forward glow is a power of the cosine between the view ray and
+  the sun. Both as Inigo Quilez describes them in "Fog"
+  (<https://iquilezles.org/articles/fog/>, the article Bevy's fog shader also cites)
+  [documented: cited article]; our own code from that description, no code from any other
+  project. Not a volume: Bevy's volumetric fog was dropped in 2026-10 (§4).
+- **Where it sits.** Per fragment, in the world shaders' fog path, no pass of its own, so it
+  covers everything the weather's fog covers (NIF materials, terrain, trees, grass, water,
+  the distant LOD, transparent things) under every anti-aliasing and upscaler. Bevy's fog
+  function gets only the distance; its caller `apply_fog` (bevy_pbr `pbr_functions.wesl`)
+  has both positions. `haze.rs` `HAZE_EDITS`, a list of its own beside lights.rs's lighting
+  edits, puts `nvf_haze` before `apply_fog` and passes its result to the atmospheric fog
+  call as the `scattering` argument, which Bevy reads only while the fog's directional
+  light alpha is above 0 (never set here); only that call line changes. fog.rs `GAME_FOG`
+  then blends the haze and the weather's fog **once**, in display values as the fog is
+  blended outdoors: total share 1 - (1 - fog)(1 - haze), the colours weighted as the haze
+  seen through the weather's fog (the same as mixing the haze first and the fog over it), so
+  nothing is darkened twice. Interiors (the linear blend) are untouched.
+- **Carried in the fog uniform's free fields** (the view bind group does not grow): `bi.z`
+  the density at the base height (0 is off), `directional_light_exponent` the base height,
+  `directional_light_color.rgb` the colour toward the sun, its alpha 0. Bevy reads those
+  two fields only when that alpha is above 0 (its fog in-scattering, §4), so they were free.
+  The shader's constants (k, the floor, the reach, the sun's power) are written into its
+  text from `haze.rs`'s Rust constants when it is patched: one place.
+- **Off is as on main.** With the switch off the density is 0, `nvf_haze` returns the
+  argument it was given (vec3(0)) and `GAME_FOG` runs its old two lines: the same picture.
+  The edits are made at the start whatever the switch, with no log line, so the log is as
+  on main too. Both edits fail safe: if Bevy's text is not as expected the edit is not made
+  (an error line), Bevy's shader stays, and the haze stays off; either edit alone changes
+  nothing (no function signature changes).
+- **What follows the weather** (from `SkyState` every frame, through weather fades, so
+  scripted SetWeather/ForceWeather, transitions and the hour show at once and without a
+  pop; no weather names, no hour table, no per-weather result kept):
+  - *Weight* (0..1): the weather's own fog share at 50,000 units with its near, far and
+    power as the fog uniform has them; full up to a share of 0.5, falling smoothly to none at
+    0.85; times the fog's strength (a fade into or out of no fog). From the fog numbers only:
+    continuous, never rising as the fog gets nearer or denser. NVWastelandClear (0..200,000,
+    power 0.6 by day, 0.5 by night) has 0.44 and 0.5: full. NVWastelandGS (10..120,000, 0.5):
+    0.63. NVTheStripWeather (2,000..200,000, 0.35): 0.77. NVWastelandClearEast (0..100,000,
+    0.4): 0.17. Any fog that is full at 50,000 (NVWastelandHazy 1,800..30,000) and
+    HVDustStorm get none [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]. HVDustStorm's day fog 0/0 is no range, so the renderer shows its night fog
+    510..55,000 power 1.0 all day (`Weather::fog_at`): share 0.91 at 50,000, none.
+  - *Reach*: the extinction length at the base height is 0.9 x the fog far and the ray is
+    counted up to 0.5 x the fog far, so the haze at the base height never passes
+    1 - e^(-0.56) (43 %), whatever the far: a mod's far of 1,000,000 gives a haze five times
+    thinner, not a wall, and the distant LOD keeps its shapes.
+  - *Wind*: x(1 + 0.25 (wind - 50) / 50), held to 0.75..1.25 (the base game's weathers
+    nearly all store 50; a wind of 255 gives 1.25 times). Blended across a fade.
+  - *Colour*: the fog colour the weather's fog uses now (`SkyState::fog_color`), moved
+    toward the weather's sunlight colour by up to 0.4 looking into the sun, by the cosine to
+    the sun to the 8th power (Bevy's own default for its fog's directional light); the sun
+    term grows in as the sun climbs from the horizon to 4° and is nothing at night. The
+    sun's direction is the view's first directional light (the sun; the first-person arms'
+    shade light is its child and points the same way). No colour of our own.
+  - *Base height*: the landscape under the camera (the cell's stored LAND heights, decoded
+    once per cell), followed over 2 s, at once after a jump of a cell; 128 units below the
+    camera where there is no landscape. Below it the density grows no further than 2 times
+    (1,893 units down), so basins far below a ridge haze over without turning white.
+- **Chosen values** (by eye, for the user to judge from pictures; constants at the top of
+  `haze.rs`): at a clear noon, the camera on foot and a fragment at its height, the haze
+  alone is 10 % at 20,000 units and 27 % at 60,000 (the starting values asked for were
+  10-15 % and 25-35 %; the weaker end chosen); 3,000 units above the base a third of the
+  optical depth.
+- **Weather and mods** [design]: values outside the base game's ranges are tested as data
+  (fog far 0 and 1,000,000, near above far, power 0 or below, NaN, wind 0 and 255): no NaN,
+  no negative values, no division by zero, the weight monotone.
+- **The sky and the horizon.** The sky dome and clouds are drawn without fog (`sky.wesl`);
+  the dome's horizon band takes the weather's horizon colour (`sky.rs` `dome_color`), the
+  fog the fog colour. The haze is continuous in distance and has no edge of its own, so it
+  adds no seam at the horizon or at the LOD boundary; far land fades further toward the fog
+  colour, so where the fog colour and the horizon colour differ, the edge between land and
+  sky that main already shows stays (stronger or weaker by how far apart they are). The sky
+  is unchanged with the switch on or off. A follow-up could move the haze's colour toward
+  the dome's horizon colour at low view angles (a sky-side change: the horizon colour is not
+  in the fog uniform).
+- **Not done**: no pooling in low ground by the hour (the issue's dawn fog), no noise or
+  drifting dust, nothing indoors, no shadowing of the haze by terrain (Bevy's fog
+  in-scattering fetches a shadow map per fragment; §4). The reflection camera copies the
+  main fog, so the planar reflection's haze is worked from the mirrored camera's height.
+- **Switching**: the row, `--graphics-only desert-haze`, a `--graphics-cycle` set
+  `desert-haze`, `NVF_PLAY_TEST_SETTINGS=<t>:desert-haze`. Switching changes no pipeline
+  (only the uniform), so nothing compiles. Log lines: `haze: desert haze on: <weather>:
+  weight <w>, wind x<f>, <a> % at 20,000 units and <b> % at 60,000 on the base height,
+  reach <r>, base z <z>`; the same figures again (as `haze: <weather>: ...`) when they move
+  notably (weight by 0.1, density by a quarter, another weather), not during a time-lapse;
+  `haze: desert haze off` (`... off indoors` on going in). Debug aid
+  `NVF_PLAY_DEBUG_DESERT_HAZE=<multiplier>`: the density times that (1 as designed; 0 to
+  100), logged once when the haze first turns on; it does not turn the switch on. Smoke:
+  `desert-haze` (switched on and off at Goodsprings at noon). Picture and frame-cost
+  evidence: not yet recorded.
+
 ## 4. Tried and dropped
 
 - **Bevy `ContactShadows`** on the sun (16 steps, 40 units, thickness 12): the right effect on
   sunlit bushes, but a band of dark speckles on near surfaces seen at a grazing angle (the
   near roof at Goodsprings) and per-frame noise, which Bevy expects TAA to clean up.
 - **Fog in-scattering towards the sun**: invisible in NVWastelandClear (fog to 200,000) and
-  a shadow-map fetch per fragment.
+  a shadow-map fetch per fragment. (The desert haze, §3.14, warms toward the sun without it.)
 - **Bevy bloom with an HDR main view** and **Bevy CAS**: see §2.
 - **Bevy volumetric fog** (`VolumetricFog` on the camera, `VolumetricLight` on the sun, a
   30,000 x 6,000 x 30,000-unit `FogVolume` following the camera, density 0.0005, 64 steps) at
