@@ -54,7 +54,16 @@ fn script(table: &FunctionTable, id: u32, name: &str, source: &str, quest: bool)
     let vars: Vec<_> = c
         .variables
         .iter()
-        .map(|v| (v.index, v.name.as_str(), u8::from(v.ty == VarType::Int)))
+        .map(|v| {
+            // The accepted SLSD enumeration keeps the disposal control typed as string.
+            let kind = match &v.ty {
+                VarType::Int => 1,
+                VarType::Other(t) if t == "string_var" => 2,
+                VarType::Other(t) if t == "array_var" => 3,
+                _ => 0,
+            };
+            (v.index, v.name.as_str(), kind)
+        })
         .collect();
     let mut sr = unit(u16::from(quest), &c.bytes, &vars, &[]);
     sr[0].data[4..8].copy_from_slice(&(c.refs.len() as u32).to_le_bytes());
