@@ -179,13 +179,28 @@ ModUIFloat \"HUDMainMenu/_sequence\" 1
 SetUIFloat \"HUDMainMenu/_johnnyOrder\" (GetUIFloat \"HUDMainMenu/_sequence\")
 SetUIFloat \"HUDMainMenu/_johnnyOld\" (GetCrosshairRef != looked)
 End) 0");
-    let callable = query(
-        &mut g,
-        "SetFunctionValue (CompileScript \"Owned/Prompt.gek\")",
+    let registered_source = "array_var registered\narray_var handlerEntry\nBegin Function {}\nregistered = GetEventHandlers \"OnCrosshairOn\" 0 1\nhandlerEntry = registered[0]\nSetFunctionValue handlerEntry[0]\nEnd";
+    let registered_compiled = fnv_script::compile::compile_runtime(
+        registered_source,
+        &g.data.table,
+        &fnv_game::game::GameEnv { g: &g },
     );
     assert!(
+        registered_compiled.errors().next().is_none(),
+        "crosshair-registration-inspection-compile: {:?}",
+        registered_compiled.diags
+    );
+    let callable = g
+        .run_query(registered_source, Default::default())
+        .unwrap_or_else(|e| {
+            panic!(
+                "crosshair-registration-inspection: {e}; trace: {:?}",
+                g.events
+            )
+        });
+    assert!(
         matches!(&callable, XVal::Ref(id) if (fnv_game::game::COMPILED_BASE..fnv_game::game::TEMP_REF_BASE).contains(id)),
-        "crosshair-file-admission: {callable:?}; trace: {:?}",
+        "crosshair-original-registration: {callable:?}; trace: {:?}",
         g.events
     );
     g.set_crosshair_ref(Some(FormId(0xE20)));
