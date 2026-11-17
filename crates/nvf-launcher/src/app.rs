@@ -218,10 +218,11 @@ impl App {
             }
             _ => Page::Home,
         };
+        // The INI first: the mod list's sync needs its game folder.
+        app.reload_ini();
         if app.page == Page::Mods {
             app.load_mods();
         }
-        app.reload_ini();
         // No game folder yet (a first start): open on its page (#2938), unless a test aid
         // chose the page.
         if !app.folder_known() && std::env::var_os("NVF_LAUNCHER_PAGE").is_none() {
