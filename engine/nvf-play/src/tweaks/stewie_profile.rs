@@ -58,5 +58,5 @@ pub(crate) fn prepare(
 }
 /// Settings are application state, not saved game defaults. Restore before Restart.
 pub(crate) fn handoff(game: &mut fnv_game::Game<'_>, settings: &TweakSettings) {
-    game.tweaks = settings.game.clone();
+    game.bind_stewie_stat_settings(&settings.game);
 }

@@ -238,8 +238,23 @@ fn original_stat_profile_reaches_startup_source_damage_settings_and_restore_with
             &mut rt,
             "SetFunctionValue (StewVal \"bCritChanceIgnoresFireRate:Tweaks\")"
         ),
-        XVal::Num(0.0),
-        "StewVal remains a truthful raw-file query"
+        XVal::Num(1.0),
+        "recognized loaded setting follows actual rules after a runtime original-file edit"
+    );
+    assert_eq!(
+        source(
+            &mut rt,
+            "SetFunctionValue (StewieGetValue \"fCriticalDamageMult:Critical Hits\")"
+        ),
+        XVal::Num(2.0)
+    );
+    assert_eq!(
+        source(
+            &mut rt,
+            "SetFunctionValue (StewVal \"bScaleCriticalDamage:Tweaks\")"
+        ),
+        XVal::Num(1.0),
+        "the unrepresented enable switch retains its original-file value"
     );
     // A real stored NVForever choice, including explicit off/default-valued keys,
     // takes precedence. Do not infer whether legacy keys were user-selected.
