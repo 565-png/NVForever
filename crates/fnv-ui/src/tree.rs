@@ -384,6 +384,9 @@ pub struct Ui {
     /// Passes the last [`Ui::update`] made, for the tests.
     #[cfg(test)]
     pub(crate) passes: usize,
+    /// Nodes walked to resolve named expression sources, for work-bound controls.
+    #[cfg(test)]
+    pub(crate) named_source_visits: std::sync::atomic::AtomicUsize,
 }
 
 impl Ui {
@@ -1458,6 +1461,8 @@ impl Ui {
     fn find_named(&self, root: TileId, name: &str) -> Option<TileId> {
         let mut stack = vec![root];
         while let Some(t) = stack.pop() {
+            #[cfg(test)]
+            self.named_source_visits.fetch_add(1, Ordering::Relaxed);
             if t != root && self.tile(t).name.eq_ignore_ascii_case(name) {
                 return Some(t);
             }
