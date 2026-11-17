@@ -50,6 +50,7 @@ Deleted engine-shot associations also have a focused next-consumer retirement br
 | Loaded global-image metrics | In progress | Hidden own images in loaded globals receive bounded filewidth/fileheight updates before expression settle. Six controls passed on public b522; the added node-boundary control and this integrated head require fresh checks. The optional game smoke remains unrun. Atlas and non-global recipients are unchanged; no complete Pip-Boy or native rendering acceptance. | [global-image metrics](spec-notes/global-image-metrics.md) |
 | Four UIO math operators | In progress | Sin/Cos degree arguments, natural Log argument and accumulated Pow are implemented with an explicit finite-zero safety hypothesis. Five authored controls cover the math contract; historical hosted merge 94643ab passed all five plus four retained Neg controls. Later-head CI and portable fnvtool smoke remain separate gates. No installed UIO, held-map or native edge-domain acceptance. | [four UIO operators](spec-notes/uio-four-operators.md) |
 | UIO XML bit test | In progress | `bt` tests a selected bit of the accumulator through the existing XML parser and reactive traits. Paired `abba962b` CPU qualification: baseline passed 112 retained controls and failed four authored numeric assertions; candidate passed all 116. Corrected `fedce260` portable TOOL pair reached actual `fnvtool ui tree`: baseline retained nonzero controls but failed six bit/dependent values and zero-warning expectation; candidate passed all ten strict schema/count/value oracles. Initial registry rejection is preserved separately. Runtime/library-test blobs remain unchanged. Negative/fractional/nonfinite handling is an explicit local policy; native, rendered-menu and installed-mod acceptance remain unobserved. | [XML bit test](spec-notes/ui-bit-test-operator.md) |
+| Structural XML child counts | In progress | Expressions read an absent `childcount` from direct children, with insertion/removal dependencies. Explicit traits and trait-presence initialization guards retain their behavior. Paired normal release `fnv-ui` qualification: baseline three intended failures plus 116 retained passes; candidate 119 passes and strict package Clippy. Compile-controller shutdown failures are preserved separately from verified emitted-image execution. These historical package results are separate from hosted checks for each published source revision, recorded in PR #2858. Original-game parity, rendered installed VUI and complete sentinel acceptance remain unqualified; structural script getter queries are outside this change. | [structural child counts](spec-notes/menu-xml.md#61-structural-childcount-in-expressions) |
 | Fatal no-reference call context | In progress | [hypothesis] Diagnostic-only host notification and bounded shallow Game context for the two extended-call failure paths (#2499); public three-control pair and formatter checks UNRUN. No source-span, registrar or native-parity claim. | [null-call context](spec-notes/null-call-context.md) |
 | Runtime script origin | In progress | Ordinary AuxVar no-plugin origin for ScriptRunner/CompileScript; real ESM/ESP ownership retained. Runtime-origin interfaces have owned regression controls; no string-map or full-mod acceptance. | [runtime script origin](spec-notes/runtime-script-origin.md) |
 | Data-relative file enumeration | In progress | GetFiles/GetFolders enumerate checked Data-layer directories while retaining generic filters and ordinary filenames. Four authored VM controls cover parent namesakes, lexical boundaries and layered/filter/marker neighbors; the separate game-relative array-reader policy is retained. No physical symlink or installed-mod acceptance. | [file enumeration](spec-notes/file-enumeration-data-roots.md) |
@@ -307,6 +308,21 @@ controls drive attached start-enabled quest sources through that startup method
 and a registered load-event recipient. Live title-screen
 execution, native timing and original Helmet Overlay/Titans acceptance remain
 unqualified. Contract: [Title-start MenuMode](spec-notes/script-language.md#title-start-menumode-group-4).
+
+### MCM integer RGB consumer contract
+
+[design] Bounded integer land/shl/shr operations connect packed colour extraction,
+picker packing and live/reopened image previews. Four authored libtests cover those
+consumers and the explicit exact-integer mapping while retaining accepted bt and
+ordinary operators. Actual c264 normal-Cargo CPU comparison: baseline116PASS/4
+intendedFAIL, candidate120PASS, all120once/0ignored. Overallcontrollerfalse is
+retained for an unknown post-Cargo descendant terminated during boundedcleanup;
+this is not whole-run qualification. Engine callback/draw-piece,
+native/originalMCM/rendered acceptance remain open. Independent raw/source review
+confirmed those bounded case results and the false overall flag. The accepted-main
+060d union retains the tested fnv-ui Rust/fixtures; whole-graph qualification stays
+bound to its exact executed source, separately from the c264 comparison.
+Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
 
 
 Water coverage and camera fog lifecycle: four actual renderer-producer/camera-fog
