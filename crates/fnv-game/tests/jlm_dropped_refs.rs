@@ -284,7 +284,34 @@ fn compiled_hover_consumer_combines_inventory_refs_with_associated_world_weapons
             "original-hover-compile: retain the precise compiler diagnostic"
         );
     }
-    let corrected_source = original_source.replace("label", "ownedLabelText");
+    let renamed_source = original_source.replace("label", "ownedLabelText");
+    {
+        let rejected = fnv_script::compile::compile_runtime(
+            &renamed_source,
+            &g.data.table,
+            &GameEnv { g: &g },
+        );
+        assert!(
+            rejected.errors().any(|d| d.kind == "mismatched_quotes"),
+            "renamed-hover-compile: retain the literal-semicolon refusal: {:?}",
+            rejected.diags
+        );
+    }
+    // A literal semicolon starts a source comment, including inside quotes. Keep
+    // the exact rendered delimiter through the existing character conversion.
+    let corrected_source = renamed_source.replace("+ \";\"", "+ (AsciiToChar 59)");
+    {
+        let compiled = fnv_script::compile::compile_runtime(
+            &corrected_source,
+            &g.data.table,
+            &GameEnv { g: &g },
+        );
+        assert!(
+            compiled.errors().next().is_none(),
+            "corrected-hover-compile: {:?}",
+            compiled.diags
+        );
+    }
     let count = g
         .run_query(&corrected_source, RunCtx::default())
         .unwrap_or_else(|e| panic!("corrected hover consumer: {e}"));

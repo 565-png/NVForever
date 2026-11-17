@@ -2007,3 +2007,16 @@ error/no-continuation/no-world-mutation boundary, and are unexecuted at correcti
 authoring. Original and corrected baseline refs remain separate; predicted baseline
 failures are not observations. These fixture corrections do not change compiler,
 array lifetime, drop-producer or generic receiver policy.
+
+
+[validation: PR #2879, `5a61bc59` composite `ddac1b90`]
+The ordinary/leveled actor, filtering/serialized-restore and receiver cases passed
+once. The original Label diagnostic control also passed, but the renamed hover
+query still failed compilation before its count/UI/world assertions. Its quoted
+semicolon is a source comment delimiter under the existing compiler contract
+([extender bytecode §7](ext-bytecode.md#7-what-the-geck-refused-compile-messages)). The next fixture retains
+that refused source as a `mismatched_quotes` control and generates the same delimiter
+with `AsciiToChar 59`; exact title text, counts and references remain unchanged.
+The production getter and compiler/array/receiver policies are unchanged. These
+further corrected fixtures are unexecuted at correction authoring. The historical
+three passes are scoped to `5a61bc59`, not transferred to its successor or baseline.
