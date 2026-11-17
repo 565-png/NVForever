@@ -1197,6 +1197,31 @@ sleeping"). Two causes, both in how rapier picks a contact's points.
   that span the most of such a face (or, for a contact outside them, the most with the
   corner nearest it). Test `a_stone_on_a_table_top_of_many_corners_rests_on_it`.
   **`NVF_PHYS_HULL_FACES=0`** (a test aid, read once) builds parry's plain hull.
+- **Creased ground (#2663)**: rapier merges the contacts of one pair whose normals lie
+  within about 5° into one cluster and solves it with one normal [documented: rapier3d
+  0.36.1 `contact_clustering.rs`, `COS_MERGE_ANGLE` 0.996; `contact_clustering` on by
+  default]. LAND's heights come in 8-unit steps over 128 units (world.md §3), so two
+  neighbouring terrain triangles often meet at 3.6°; a flat body lying across them got
+  one normal for both, tipped one way, then the other (two tilts about 0.4° apart), its
+  farthest point moving at 10-27 units/s and its centre creeping about 0.3 units/s, and
+  never slept, on the stored landscape and the smoothed one alike [observed: issue #2663].
+  The contact skin, the prediction distance, `FIX_INTERNAL_EDGES`, contact recycling,
+  solver iterations, friction and restitution made no real difference; clustering off
+  for the whole world rests them, but changes the contacts of every compound and
+  triangle-mesh pair and rapier has no per-pair switch [observed: issue #2663]. Instead
+  placed dynamic bodies (references' bodies, not ragdolls, gore, characters or bodies
+  the wind blows) sleep once their farthest point moves slower than
+  **`PLACED_SLEEP_SPEED` = 21 units/s** for 0.5 s, three times rapier's 7 [design,
+  #2663]. It changes only when such a body may sleep, not how it moves awake; a body
+  sliding or rolling slower than that for half a second stops a little sooner, and one
+  asleep wakes as before when struck, pushed, grabbed or touched by a moving body. Tests
+  `placed_clutter_on_creased_ground_falls_asleep` (64 drops each of a garment, a folded
+  cloth, a box and a stone on a stepped and a smoothed hill, 60 and 160 Hz: all asleep on
+  the ground after 12 s; with rapier's threshold 3-8 of the 256 stayed awake in each
+  set-up, creeping at 0.2-4 units/s [observed: that set-up, 2026-11-17]) and
+  `a_ball_rolling_slowly_stays_awake` (40 units/s, still rolling 3 s later). On a steeper
+  hill (slopes to about 40°) what stays awake after 12 s is sliding or tumbling down at
+  17-220 units/s, as it should [observed: an uncommitted variant of that test].
 - **Measured** [observed: a probe of `fnvtool phys cell`, not committed, 2026-11-13:
   every dynamic reference of the cell added awake where it is placed, 20 s of settling,
   then a kick from below at 400 units/s and 20 s more; bodies awake at the end of each,
