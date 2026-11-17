@@ -271,3 +271,49 @@ One row per function E1–E3 cover, then one row per built-in event, from §2–
 | RuntimeScriptError | a script raises an extender error | error message | an int |
 | DeleteGame / RenameGame / RenameNewGame | a save is deleted / renamed (old full name / new full name) | file name | its length |
 | DeleteGameName / RenameGameName / RenameNewGameName | the same, relative names | relative file name | its length |
+
+
+## Activation-range crosshair acquisition
+
+[documented] [OnCrosshairOn](https://geckwiki.com/index.php/OnCrosshairOn)
+notifies a registered UDF when a new reference is under the crosshair within
+activation range. Its argument is that reference. The event supports a form or
+form-list filter and a colon-qualified form-type event name. This is separate
+from the JohnnyGuitar-specific crosshair registration API.
+
+[observed: original installed mod data] ySI Contextual Prompts registers a
+CompileScript callback for this event. Its callback chooses an image from the
+current reference and updates HUD root traits that an injected image reads.
+The original restart guard requires yUI 140 as one dependency. That requirement
+alone does not establish that every yUI feature is implemented or executed.
+
+[design] The existing activation ray and its activation distance remain the
+source of GetCrosshairRef. A new nonempty reference produces one plain event and
+its corresponding type-qualified event, through existing registration/filter
+machinery. Repeating the same reference does not produce another acquisition;
+leaving to no target updates the getter without inventing an On event. Acquiring
+a reference after that gap produces a new event. The existing JohnnyGuitar
+callback remains before getter publication. The newly added event sees the
+current getter, before the normal Scripts set. Plain then type-qualified delivery
+is a mapped engine ordering; native relative ordering is not measured.
+
+[design] No extra ray, per-frame target cache, replacement HUD, provider version
+change or original mod/configuration edit is introduced. With no relevant
+handlers, the new source-event path performs no type lookup or argument-vector
+allocation. Session registration, removal and load behavior remain those of the
+existing SetEventHandler implementation. Full original initialization, provider
+coverage, selected XML/layout and native timing remain separate acceptance work.
+GetCrosshairWater's existing unsupported result is not repaired by this event.
+
+[validation plan] One standalone core test owns the process-wide CompileScript
+file reader. Independently authored source and XML exercise real compilation,
+registration, injection, current-reference readback, resolved image filename and
+alpha, one acquisition per transition, form/list/type filters, existing Johnny
+order and removal. One engine library control uses the existing production
+activation ray against real collision, the registered source callback, injected
+image and actual draw pieces; it retains a nonempty title, repeated target,
+parent hiding, collision eviction and subsequent acquisition. The engine test's
+callback is an in-memory compiled lambda; the file-backed core path covers
+CompileScript without racing the engine suite's global file readers. All cases
+are unexecuted at authoring. No original-mod, native, GPU or popup-resolution
+acceptance is claimed.

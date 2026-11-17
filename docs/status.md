@@ -323,3 +323,11 @@ confirmed those bounded case results and the false overall flag. The accepted-ma
 060d union retains the tested fnv-ui Rust/fixtures; whole-graph qualification stays
 bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
+
+
+OnCrosshairOn: authored activation-range source-event producer reuses the existing
+ray and getter, preserving JohnnyGuitar delivery. File-backed compiled-source
+and actual collision-to-draw-piece controls are unexecuted at authoring. Original
+ySI/provider initialization and installed Contextual Prompts acceptance remain
+open; no version or requirement guard changed. Contract:
+[activation-range acquisition](spec-notes/ext-events.md#activation-range-crosshair-acquisition).
