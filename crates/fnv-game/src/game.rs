@@ -7174,7 +7174,10 @@ impl Host for Exec<'_, '_> {
                 action_ref: self.ctx.action_ref, quest: self.ctx.quest, inst: None, in_condition: false };
             return functions::player_source::call(self.game, &source_ctx, on, name, args);
         }
-        let on = on.and_then(|v| v.as_form()).map(FormId);
+        // The newly mapped dropped-world query must not turn an explicit invalid
+        // receiver into its calling actor. Preserve the generic policy for other names.
+        let invalid_dropped_receiver = name == "getdroppedrefs" && on.is_some_and(|v| v.as_form().is_none());
+        let on = on.and_then(|v| v.as_form()).map(FormId).or_else(|| invalid_dropped_receiver.then_some(FormId(0)));
         let ctx = self.ctx;
         // Who calls: DisablePlayerControlsAlt keeps its locks by plugin, GetNthExplicitRef
         // reads the calling script.
