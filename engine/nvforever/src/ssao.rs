@@ -136,12 +136,18 @@ pub(crate) static AO_BEFORE_FSR: std::sync::LazyLock<bool> =
 /// spiral of samples and its blur), `view` shows the ground-truth estimate's factor alone as
 /// a grey picture, `view-old` the old one's; unset, empty, `0`, `off` or `false` run the
 /// ground-truth estimate.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+///
+/// `NVF_PLAY_DEBUG_AO_STRENGTH=<number>` (read once too) replaces [`GTAO_STRENGTH`] for the
+/// ground-truth estimate, held to 0..1, so strengths can be compared by eye from a launcher;
+/// the old estimate keeps its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct AoDebug {
     /// The old estimate instead of ground-truth ambient occlusion.
     old: bool,
     /// The factor alone as grey instead of multiplied into the picture.
     view: bool,
+    /// The ground-truth estimate's strength from `NVF_PLAY_DEBUG_AO_STRENGTH`.
+    gtao_strength: Option<f32>,
 }
 
 impl AoDebug {
@@ -150,15 +156,28 @@ impl AoDebug {
         let v = value.map(str::trim).unwrap_or("");
         match v.to_ascii_lowercase().as_str() {
             "" | "0" | "off" | "false" => Ok(AoDebug::default()),
-            "old" => Ok(AoDebug { old: true, view: false }),
-            "view" => Ok(AoDebug { old: false, view: true }),
-            "view-old" => Ok(AoDebug { old: true, view: true }),
+            "old" => Ok(AoDebug { old: true, ..AoDebug::default() }),
+            "view" => Ok(AoDebug { view: true, ..AoDebug::default() }),
+            "view-old" => Ok(AoDebug { old: true, view: true, ..AoDebug::default() }),
+            _ => Err(v.to_string()),
+        }
+    }
+
+    /// `NVF_PLAY_DEBUG_AO_STRENGTH`'s value: none when unset or empty, a finite number held
+    /// to 0..1, `Err` with the value for anything else.
+    fn parse_strength(value: Option<&str>) -> Result<Option<f32>, String> {
+        let v = value.map(str::trim).unwrap_or("");
+        if v.is_empty() {
+            return Ok(None);
+        }
+        match v.parse::<f32>() {
+            Ok(s) if s.is_finite() => Ok(Some(s.clamp(0.0, 1.0))),
             _ => Err(v.to_string()),
         }
     }
 
     fn strength(self) -> f32 {
-        if self.old { STRENGTH } else { GTAO_STRENGTH }
+        if self.old { STRENGTH } else { self.gtao_strength.unwrap_or(GTAO_STRENGTH) }
     }
 
     /// The uniform's `mode` (ssao.wesl `Ao.mode`).
@@ -171,19 +190,33 @@ impl AoDebug {
         let estimate = if self.old {
             "old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)".to_string()
         } else {
-            format!("ground-truth estimate (GTAO), {GTAO_SLICES} slices x {GTAO_STEPS} steps a side at half resolution, depth-aware denoise")
+            let strength = match self.gtao_strength {
+                Some(s) => format!(", strength {s} (NVF_PLAY_DEBUG_AO_STRENGTH)"),
+                None => String::new(),
+            };
+            format!("ground-truth estimate (GTAO), {GTAO_SLICES} slices x {GTAO_STEPS} steps a side at half resolution, depth-aware denoise{strength}")
         };
         let view = if self.view { ", factor shown alone as grey (NVF_PLAY_DEBUG_AO)" } else { "" };
         format!("ambient occlusion: {estimate}{view}")
     }
 }
 
-static AO_DEBUG: std::sync::LazyLock<AoDebug> = std::sync::LazyLock::new(|| match AoDebug::parse(std::env::var("NVF_PLAY_DEBUG_AO").ok().as_deref()) {
-    Ok(debug) => debug,
-    Err(v) => {
-        warn!("debug switch NVF_PLAY_DEBUG_AO={v}: expected old, view or view-old; the ground-truth estimate runs");
-        AoDebug::default()
-    }
+static AO_DEBUG: std::sync::LazyLock<AoDebug> = std::sync::LazyLock::new(|| {
+    let mut debug = match AoDebug::parse(std::env::var("NVF_PLAY_DEBUG_AO").ok().as_deref()) {
+        Ok(debug) => debug,
+        Err(v) => {
+            warn!("debug switch NVF_PLAY_DEBUG_AO={v}: expected old, view or view-old; the ground-truth estimate runs");
+            AoDebug::default()
+        }
+    };
+    debug.gtao_strength = match AoDebug::parse_strength(std::env::var("NVF_PLAY_DEBUG_AO_STRENGTH").ok().as_deref()) {
+        Ok(s) => s,
+        Err(v) => {
+            warn!("debug switch NVF_PLAY_DEBUG_AO_STRENGTH={v}: expected a number from 0 to 1; strength {GTAO_STRENGTH}");
+            None
+        }
+    };
+    debug
 });
 
 pub struct SsaoPlugin;
@@ -617,10 +650,30 @@ mod tests {
         for off in [None, Some(""), Some("0"), Some("off"), Some("false"), Some(" OFF ")] {
             assert_eq!(AoDebug::parse(off), Ok(AoDebug::default()), "{off:?}");
         }
-        assert_eq!(AoDebug::parse(Some("old")), Ok(AoDebug { old: true, view: false }));
-        assert_eq!(AoDebug::parse(Some("view")), Ok(AoDebug { old: false, view: true }));
-        assert_eq!(AoDebug::parse(Some("View-Old")), Ok(AoDebug { old: true, view: true }));
+        assert_eq!(AoDebug::parse(Some("old")), Ok(AoDebug { old: true, ..AoDebug::default() }));
+        assert_eq!(AoDebug::parse(Some("view")), Ok(AoDebug { view: true, ..AoDebug::default() }));
+        assert_eq!(AoDebug::parse(Some("View-Old")), Ok(AoDebug { old: true, view: true, ..AoDebug::default() }));
         assert_eq!(AoDebug::parse(Some("gtao")), Err("gtao".to_string()));
+    }
+
+    #[test]
+    fn the_strength_aid_is_a_number_held_to_0_1() {
+        for none in [None, Some(""), Some("  ")] {
+            assert_eq!(AoDebug::parse_strength(none), Ok(None), "{none:?}");
+        }
+        assert_eq!(AoDebug::parse_strength(Some("0.6")), Ok(Some(0.6)));
+        assert_eq!(AoDebug::parse_strength(Some(" 0.8 ")), Ok(Some(0.8)));
+        assert_eq!(AoDebug::parse_strength(Some("2")), Ok(Some(1.0)));
+        assert_eq!(AoDebug::parse_strength(Some("-1")), Ok(Some(0.0)));
+        for bad in ["strong", "NaN", "inf"] {
+            assert_eq!(AoDebug::parse_strength(Some(bad)), Err(bad.to_string()));
+        }
+        // Only the ground-truth estimate takes it.
+        let set = AoDebug { gtao_strength: Some(0.8), ..AoDebug::default() };
+        assert_eq!(AmbientOcclusion::with_debug(set).params.y, 0.8);
+        assert_eq!(AmbientOcclusion::with_debug(AoDebug { old: true, ..set }).params.y, STRENGTH);
+        assert!(set.describe().ends_with("depth-aware denoise, strength 0.8 (NVF_PLAY_DEBUG_AO_STRENGTH)"));
+        assert!(!AoDebug { old: true, ..set }.describe().contains("STRENGTH"));
     }
 
     #[test]
@@ -628,10 +681,10 @@ mod tests {
         let new = AmbientOcclusion::with_debug(AoDebug::default());
         assert_eq!(new.params.y, GTAO_STRENGTH);
         assert_eq!(new.mode, Vec4::ZERO);
-        let old = AmbientOcclusion::with_debug(AoDebug { old: true, view: false });
+        let old = AmbientOcclusion::with_debug(AoDebug { old: true, ..AoDebug::default() });
         assert_eq!(old.params.y, STRENGTH);
         assert_eq!(old.mode, Vec4::new(1.0, 0.0, 0.0, 0.0));
-        let view = AmbientOcclusion::with_debug(AoDebug { old: false, view: true });
+        let view = AmbientOcclusion::with_debug(AoDebug { view: true, ..AoDebug::default() });
         assert_eq!(view.mode, Vec4::new(0.0, 1.0, 0.0, 0.0));
         // Everything else as before the change.
         for ao in [new, old, view] {
@@ -646,8 +699,8 @@ mod tests {
             AoDebug::default().describe(),
             "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise"
         );
-        assert_eq!(AoDebug { old: true, view: false }.describe(), "ambient occlusion: old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)");
-        assert!(AoDebug { old: false, view: true }.describe().ends_with("depth-aware denoise, factor shown alone as grey (NVF_PLAY_DEBUG_AO)"));
+        assert_eq!(AoDebug { old: true, ..AoDebug::default() }.describe(), "ambient occlusion: old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)");
+        assert!(AoDebug { view: true, ..AoDebug::default() }.describe().ends_with("depth-aware denoise, factor shown alone as grey (NVF_PLAY_DEBUG_AO)"));
     }
 
     /// ssao.wesl `visible_arc`, the same formula: the integral of cos(t - g) |sin t| from 0 to h.

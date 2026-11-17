@@ -192,8 +192,12 @@ in closed form, ¼(−cos(2h − γ) + cos γ + 2h sin γ) for each horizon h.
 - **Pattern**: the slice turn from the 4 × 4 ordered pattern per half-resolution texel (as
   before), the steps' offset from the same cell's sixteen values in another order
   (i → 7i + 5 mod 16), so the denoise's 4 × 4 texels hold every turn and every offset
-  once. Fixed from frame to frame: under TAA, FSR or DLSS a per-frame turn could add crawl,
-  and it was not needed for the pattern to vanish after the denoise.
+  once. Fixed from frame to frame: under TAA, FSR or DLSS a per-frame turn could add crawl
+  [engineering choice]. On planes the denoise is expected to average all sixteen turns away;
+  the occlusion-alone pictures showed flat walls even and white, but a grain over bushes and
+  other alpha-tested plants, whose depth has no plane [observed, 2026-11-18, main session's
+  runs, 1920 × 1080, MSAA], hence the denoise's fallback below (its effect on plants still to
+  be confirmed in pictures).
 - **Denoise** (`openness_at`): the same 4 × 4 texels around each full-size pixel, all of
   equal spatial weight (so the sixteen turns cancel), each weighted by how far its distance
   lies from the distance this pixel's plane has at that texel: under the reverse-infinite
@@ -202,24 +206,37 @@ in closed form, ¼(−cos(2h − γ) + cos γ + 2h sin γ) for each horizon h.
   drawn texel with the smaller step, as for the normal), a slope seen at a grazing angle
   included. Texels within 3 % of that distance plus one unit (`DENOISE_TOLERANCE`) count,
   falling linearly to nothing; a texel across a depth edge is left out, which is what keeps
-  occlusion from leaking across edges (the halos). A pixel no texel shares a plane with
-  takes the texel nearest its own distance, as before. The old estimate keeps its own blur
-  (within 5 % of the pixel's distance), so `NVF_PLAY_DEBUG_AO=old` draws exactly the old
-  picture at the old cost.
+  occlusion from leaking across edges (the halos). Where the plane-aware weights of the 16
+  texels add up to little (`PLANE_WEIGHT_FEW` = 1, depth with no plane: plants, grass,
+  leaves), the weights blend smoothly (over `PLANE_WEIGHT_BLEND` = 2 more) into the old blur's:
+  the gap to the pixel's own distance, within 5 % plus one unit (`FALLBACK_TOLERANCE`), so
+  foliage averages over most of the sixteen turns again while planes keep the sharp
+  plane-aware result; no hard switch, which would draw an edge of its own. The same 16 texel
+  reads serve both. A pixel no texel takes at all takes the texel nearest its own distance,
+  as before. The old estimate keeps its own blur (within 5 % of the pixel's distance), so
+  `NVF_PLAY_DEBUG_AO=old` draws the old picture; its cost is to be measured (both estimates
+  sit in one pipeline behind a uniform branch).
+- **Positions under an upscaler's expanded depth** (`NVF_AO_BEFORE_FSR=0` with FSR or DLSS):
+  the centre and the horizon samples are taken at the centres of the drawn texels their
+  pixels show, as the normal is, not at display-pixel centres with a texel's depth (which lie
+  off the surface and occluded themselves); a step that lands in the pixel's own texel
+  raises no horizon. Without upscaling the two are the same.
 - **Strength** (`ssao.rs` `GTAO_STRENGTH` = 0.4): factor = 1 − 0.4 (1 − visibility). It
   still multiplies all light, so it is kept low as the old 0.55 was. Open flat ground has
   visibility 1 and stays as bright as with the switch off (the old estimate did not
   guarantee that); a floor point at the foot of a wall has 0.5 (the wall hides half the
   cosine-weighted hemisphere) and becomes 0.8, about what the old estimate gave in such a
   crease [engineering choice from that reckoning; to be checked in pictures].
+  `NVF_PLAY_DEBUG_AO_STRENGTH` (§6) replaces it for comparisons by eye: open ground is now
+  exactly 1, so a higher strength darkens creases and contact without greying open areas.
 - **Cost**: 2 slices × 4 steps a side = 16 depth reads per texel against the old 12, plus
   per-slice trigonometry; the denoise reads 4 more depths per full-size pixel for the
   gradient. Aimed at the old pass's cost (about 0.3 ms at half resolution at 1920 × 1080,
   #1370); `SLICES` and `STEPS` are constants (`ssao.wesl`, mirrored in `ssao.rs` for the log)
   to trade once measured. No extra full-size pass.
 - **What does not change**: the switch (`ambient-occlusion`, no new row; #2897 asked for it
-  "in `enhanced`", but the switch is the one it always was and the old Enhanced effects row
-  no longer exists after the settings menu overhaul), the two placements, MSAA, TAA, FSR and
+  "in `enhanced`": it stays in the `--graphics enhanced` preset as before; only the settings
+  page's Enhanced effects row is gone since the settings menu overhaul), the two placements, MSAA, TAA, FSR and
   DLSS paths, the far fade 4,000–7,000 units, the 60,000-unit distance cap, the main camera
   only (the scope lens and Pip-Boy views carry no `AmbientOcclusion`).
 - **Log**: `ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at
@@ -1047,7 +1064,10 @@ elevation, and the casters each cascade of each light drew; with sun shadows on 
 Debug switch `NVF_PLAY_DEBUG_AO` (read once at the start; for before/after pictures and cost
 runs of the ambient occlusion, §3.1.1): `old` runs the old estimate and its blur, `view`
 shows the ground-truth estimate's factor alone as a grey picture, `view-old` the old one's;
-unset, empty, `0`, `off` or `false` run the ground-truth estimate. Before a temporal upscaler
+unset, empty, `0`, `off` or `false` run the ground-truth estimate.
+`NVF_PLAY_DEBUG_AO_STRENGTH=<number>` (read once at the start) replaces the ground-truth
+estimate's strength (`GTAO_STRENGTH`, 0.4), held to 0..1; the old estimate keeps its 0.55; the
+log line then ends `, strength <number> (NVF_PLAY_DEBUG_AO_STRENGTH)`. Before a temporal upscaler
 the grey replaces the HDR picture and still passes through the upscaler and tonemapping;
 `NVF_AO_BEFORE_FSR=0` shows it after tonemapping instead. Its pass's GPU time is the
 `nvf_ambient_occlusion` span of `--log-frame-times`.

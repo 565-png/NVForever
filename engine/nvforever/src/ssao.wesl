@@ -81,6 +81,17 @@ const FALLOFF_START: f32 = 0.25;
 // The denoise keeps texels within this share of the distance (plus one unit) of the
 // distance this pixel's plane has at them.
 const DENOISE_TOLERANCE: f32 = 0.03;
+// Where the plane-aware weights of the 16 texels add up to less than PLANE_WEIGHT_FEW
+// (depth with no plane: alpha-tested plants, grass, a bush's leaves) the denoise weighs
+// the texels by their gap to this pixel's own distance alone, within FALLBACK_TOLERANCE of
+// it (plus one unit: the old blur's weight); above PLANE_WEIGHT_FEW + PLANE_WEIGHT_BLEND
+// by the plane alone; smoothly between, so no edge is drawn where it changes. Without it a
+// bush kept its own texel and one or two others, and the 4 x 4 turns showed as a grain
+// [observed, 2026-11-18, main session's runs: the occlusion-alone pictures at Goodsprings]
+// [engineering choice: the values, to be confirmed in pictures].
+const PLANE_WEIGHT_FEW: f32 = 1.0;
+const PLANE_WEIGHT_BLEND: f32 = 2.0;
+const FALLBACK_TOLERANCE: f32 = 0.05;
 
 fn dims() -> vec2<i32> {
     if ao.area.x > 0.0 {
@@ -193,7 +204,12 @@ fn occlusion(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     if ao.mode.x > 0.5 {
         open = old_openness(half, c, p, n, on_screen);
     } else {
-        open = 1.0 - ao.params.y * (1.0 - gtao_visibility(half, c, p, n, on_screen));
+        // The centre at the centre of the drawn texel the pixel shows (as `normal_at` and
+        // `horizon_cosine` take positions): under an upscaler's expanded depth
+        // (NVF_AO_BEFORE_FSR=0) a display pixel's centre with its texel's depth lies off the
+        // surface and occluded itself; without upscaling it is the pixel's centre.
+        let centre = view_pos(texel_centre(drawn_texel(c)), d);
+        open = 1.0 - ao.params.y * (1.0 - gtao_visibility(half, c, centre, n, on_screen));
     }
     // Never NaN nor outside 0..1 (comparisons with NaN are false).
     let safe = select(1.0, clamp(open, 0.0, 1.0), open >= 0.0);
@@ -303,12 +319,20 @@ fn horizon_cosine(q: vec2<f32>, p: vec3<f32>, v: vec3<f32>, lowest: f32, size: v
     if any(q < vec2(0.0)) || any(q >= size) {
         return lowest;
     }
-    let qd = depth_at(vec2<i32>(floor(q)));
+    // The position at the centre of the drawn texel `q` shows (without upscaling, the
+    // pixel's centre), as `texel_pos` takes it.
+    let st = texel_centre(drawn_texel(q));
+    let qd = depth_at(vec2<i32>(floor(st)));
     if qd <= 0.0 {
         return lowest;
     }
-    let delta = view_pos(floor(q) + 0.5, qd) - p;
+    let delta = view_pos(st, qd) - p;
     let dd = dot(delta, delta);
+    // The pixel's own drawn texel again (an upscaled depth, a step shorter than a texel):
+    // no horizon from it.
+    if dd < 1e-8 {
+        return lowest;
+    }
     let cosine = dot(delta, v) * inverseSqrt(max(dd, 1e-4)) - HORIZON_BIAS;
     let weight = 1.0 - smoothstep(FALLOFF_START, 1.0, dd / (radius * radius));
     return mix(lowest, cosine, weight);
@@ -359,6 +383,10 @@ fn openness_at(px: vec2<i32>, d: f32) -> f32 {
     let first = (px >> vec2(1u)) - 2 + (px & vec2(1));
     var total = 0.0;
     var weight = 0.0;
+    // The same texels weighed by the gap to this pixel's own distance alone (the fallback
+    // where few lie on its plane, PLANE_WEIGHT_FEW).
+    var dist_total = 0.0;
+    var dist_weight = 0.0;
     // The texel nearest this pixel's distance, for a pixel no texel shares a surface with
     // (a pole or a grass blade a pixel wide, a silhouette pixel in an odd row or column).
     var nearest = 1.0;
@@ -378,13 +406,20 @@ fn openness_at(px: vec2<i32>, d: f32) -> f32 {
             total += t.r * w;
             weight += w;
             let own_gap = abs(t.g - z);
+            let wd = max(1.0 - own_gap / (FALLBACK_TOLERANCE * z + 1.0), 0.0);
+            dist_total += t.r * wd;
+            dist_weight += wd;
             if own_gap < nearest_gap {
                 nearest_gap = own_gap;
                 nearest = t.r;
             }
         }
     }
-    return select(nearest, total / weight, weight > 0.0);
+    // The plane's weights where enough texels lie on it, the distance's where few do.
+    let planar = smoothstep(PLANE_WEIGHT_FEW, PLANE_WEIGHT_FEW + PLANE_WEIGHT_BLEND, weight);
+    let sum = mix(dist_total, total, planar);
+    let sum_weight = mix(dist_weight, weight, planar);
+    return select(nearest, sum / sum_weight, sum_weight > 0.0);
 }
 
 // How the depth value changes per pixel at pixel `px` (depth value `d`): on each axis from
