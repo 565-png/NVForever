@@ -40,7 +40,7 @@ ModUIFloat "HUDMainMenu/_calls" 1
 ModUIFloat "HUDMainMenu/_sequence" 1
 SetUIFloat "HUDMainMenu/_sourceOrder" (GetUIFloat "HUDMainMenu/_sequence")
 SetUIFloat "HUDMainMenu/_fresh" (GetCrosshairRef == looked)
-if looked == 0xE20
+if looked == 3616
 SetUIStringAlt "HUDMainMenu/_icon" "textures/owned/container.dds"
 else
 SetUIStringAlt "HUDMainMenu/_icon" "textures/owned/door.dds"
