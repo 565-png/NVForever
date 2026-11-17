@@ -147,6 +147,16 @@ End
         before,
         "unused transition publishes the getter without a callback trace"
     );
+    let compiled_callback = fnv_script::compile::compile_mod_runtime(
+        std::str::from_utf8(callback).unwrap(),
+        &g.data.table,
+        &fnv_game::game::GameEnv { g: &g },
+    );
+    assert!(
+        compiled_callback.errors().next().is_none(),
+        "crosshair-file-compile: {:?}",
+        compiled_callback.diags
+    );
     let source = MemSource::default()
         .with("menus/owned.xml", r#"<menu name="HUDMainMenu"><_calls>0</_calls><_sequence>0</_sequence><_sourceOrder>0</_sourceOrder><_johnnyOrder>0</_johnnyOrder><_johnnyOld>0</_johnnyOld><_fresh>0</_fresh><_typed>0</_typed><_wrongType>0</_wrongType><_byForm>0</_byForm><_byList>0</_byList><_iconAlpha>0</_iconAlpha><_icon></_icon><rect name="Prompt"><visible>1</visible><text name="Title"><string>Supply cache</string></text></rect></menu>"#)
         .with("menus/owned/icon.xml", r#"<image name="Icon"><visible>1</visible><width>30</width><height>30</height><alpha><copy src="io()" trait="_iconAlpha"/></alpha><filename><copy src="io()" trait="_icon"/></filename></image>"#);
@@ -169,6 +179,15 @@ ModUIFloat \"HUDMainMenu/_sequence\" 1
 SetUIFloat \"HUDMainMenu/_johnnyOrder\" (GetUIFloat \"HUDMainMenu/_sequence\")
 SetUIFloat \"HUDMainMenu/_johnnyOld\" (GetCrosshairRef != looked)
 End) 0");
+    let callable = query(
+        &mut g,
+        "SetFunctionValue (CompileScript \"Owned/Prompt.gek\")",
+    );
+    assert!(
+        matches!(&callable, XVal::Ref(id) if (fnv_game::game::COMPILED_BASE..fnv_game::game::TEMP_REF_BASE).contains(id)),
+        "crosshair-file-admission: {callable:?}; trace: {:?}",
+        g.events
+    );
     g.set_crosshair_ref(Some(FormId(0xE20)));
     g.ui_tree.update();
     assert_eq!(
@@ -181,7 +200,8 @@ End) 0");
     assert_eq!(
         g.ui_tree.get_float("HUDMainMenu/_calls"),
         Some(1.0),
-        "crosshair-prompt: real registered source must run on first acquired target"
+        "crosshair-prompt: real registered source must run on first acquired target; trace: {:?}",
+        g.events
     );
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_fresh"), Some(1.0));
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_sourceOrder"), Some(2.0));
