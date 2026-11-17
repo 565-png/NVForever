@@ -19,7 +19,7 @@
 //!   else's container is theft (`crate::crime::ItemsTaken`), a pocket's take rolls its
 //!   chance and a failure is caught (`crate::pickpocket::Pickpocketed`).
 //! - **Drawn** in the HUD colour (`crate::interface::amber`, recoloured with it), the crime
-//!   colour for theft, at its own scale (the Quick Loot Scale row, 50-100%, not the HUD's), in the font the
+//!   colour for theft, at its own scale (the Quick Loot section's Scale row, 50-100%, not the HUD's), in the font the
 //!   Menu Font row picks (`crate::pause::MenuFont`: the game's font 7 or the sharp one).
 //!   Columns for weight, value and value per weight each have a row of their own (off by
 //!   default); with any column (or a pocket's chance) the count goes beside the name, else
@@ -61,10 +61,10 @@ pub fn backing() -> f32 {
     f32::from_bits(BACKING.load(Ordering::Relaxed)).clamp(0.0, 1.0)
 }
 
-/// The list's own size (the Quick Loot Scale row), the bits of an `f32`.
+/// The list's own size (the Quick Loot section's Scale row), the bits of an `f32`.
 static SCALE: AtomicU32 = AtomicU32::new(0x3F80_0000);
 
-/// The Quick Loot Scale row's choices: 50% to 100% in steps of 10%, the list's own size,
+/// The Quick Loot section's Scale row's choices: 50% to 100% in steps of 10%, the list's own size,
 /// independent of the HUD scale [the owner's second look, 2026-11-17].
 pub const SCALES: [f32; 6] = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
 
@@ -267,8 +267,11 @@ const GAP_Y: f32 = 6.0;
 const RULE: f32 = 1.5;
 const ROW_GAP: f32 = 2.0;
 /// The box's edge to the rows' box, and the rows' box to their words: the name, the heading
-/// and the keys under the box start on one line [the owner's step 1].
-const PAD_X: f32 = 16.0;
+/// and the keys under the box start on one line [the owner's step 1]. The rows' box stands as
+/// far in from the box's sides as the last row from its bottom, the frame and [`GAP_Y`] [the
+/// owner's fourth look, 2026-11-17: the selection's box with the same room beside it as under
+/// it].
+const PAD_X: f32 = FRAME + GAP_Y;
 const CELL: f32 = 10.0;
 /// Between columns [the owner's step 6: wider than the first build's 22].
 pub const GAP: f32 = 40.0;
@@ -948,7 +951,7 @@ impl Plugin for QuickLootPlugin {
             Setting {
                 key: "quick-loot",
                 group,
-                label: "Quick loot",
+                label: "Enabled",
                 note: "On: a container, body or (sneaking) pocket under the crosshair lists its items without pausing. E takes, T takes all, R opens the menu.",
                 switches: "",
                 get: |_| ON.load(Ordering::Relaxed),
@@ -961,7 +964,7 @@ impl Plugin for QuickLootPlugin {
             Setting {
                 key: "quick-loot-scale",
                 group,
-                label: "Quick loot scale",
+                label: "Scale",
                 note: "Size of the Quick Loot list, independent of HUD scale.",
                 switches: "",
                 get: |_| false,

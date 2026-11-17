@@ -211,7 +211,7 @@ pub const SECTIONS: &[Section] = &[
     section(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     section(NVF_FEATURES_TAB, Some("World Interaction"), &["grass-fire"]),
     // The Quick Loot menu (docs/design/quick-loot.md) [design: owner 2026-11-17].
-    section(NVF_FEATURES_TAB, Some("Interface"), &["quick-loot", "quick-loot-scale", "quick-loot-background", "quick-loot-weight", "quick-loot-value", "quick-loot-value-per-weight"]),
+    section(NVF_FEATURES_TAB, Some("Quick Loot"), &["quick-loot", "quick-loot-scale", "quick-loot-background", "quick-loot-weight", "quick-loot-value", "quick-loot-value-per-weight"]),
     // The Tweaks tab (#1892), placed ahead of it: Stewie's Tweaks' groups, each in its
     // categories (docs/design/settings-tweaks-layout.md) [design: owner 2026-11-15].
     // Tweaks > Gameplay.

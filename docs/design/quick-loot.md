@@ -6,7 +6,7 @@ here is a design choice [design: owner 2026-11-17] unless tagged otherwise.
 
 ## 1. What it does
 
-With the NVF Features › Interface row **Quick loot** on (off by default), a container, a body
+With the NVF Features › Quick Loot row **Enabled** on (off by default), a container, a body
 or, while sneaking, a person under the crosshair shows what it holds in a framed list beside
 the crosshair. The game does not stop for it.
 
@@ -68,13 +68,13 @@ The box is centred on the crosshair's height whatever its rows, and starts 150 u
 the crosshair; it is never wider than the room to the right bracket of the HUD's bottom right
 pieces (`hud::RIGHT_EDGE_IN`): a name too long for that is cut with "...". In the HUD colour
 (`interface::amber`, recoloured with it), the crime colour for theft, at its own scale
-(the **Quick loot scale** row, 50% to 100% in steps of 10%, 100% by default; not the HUD
+(the **Scale** row, 50% to 100% in steps of 10%, 100% by default; not the HUD
 scale), in the Menu Font row's font (the game's font 7, or the sharp font,
 `pause::MenuFont`), redrawn when either changes. The place and the columns' heads are in the
 small face (font 3, or the sharp font's small size in bold); the columns' figures in the same
 size, not bold.
 
-Columns, each with its own row (all off by default, greyed while Quick loot is off): **Show
+Columns, each with its own row (all off by default, greyed while Quick Loot is off): **Show
 weight**, **Show value**, **Show value per weight**; a pocket always shows each item's
 **chance**. With no column the count stands right-aligned in a column of its own; with any,
 it goes beside the name, "Stimpak (2)" [owner 2026-11-17]. The columns are as wide as their
