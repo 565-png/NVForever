@@ -2951,7 +2951,10 @@ into the lift with the opposite sign; the prediction is the vertical speed on th
 filtered over 0.2 s, each sample kept within 0.4 × the distance walked of the prediction,
 so a step does not feed it and is not overshot. A change of the drawn ground is taken in
 whole. The lift goes back to 0 as a critically damped spring, ω = 8/s for a small lift
-and stiffer the larger it is (ω × (1 + |lift| / 6)), at most 24 units either way; a
+and stiffer the larger it is (ω × (1 + |lift| / 6)), at most 48 units either way (24,
+the step height, until 2026-11-17: a 27-unit let-down off a road piece's edge after a
+crouched jump, on top of 12 still being eased, went past it and the view dropped the
+excess in one frame; `step_lift::MAX_LIFT`); a
 change over 48 units in a step (a placement), the air and swimming take nothing in and
 restart the prediction from 0. The feet, the capsule, the reference's position and every
 query stay where the controller has them; the player's body, its first- and third-person
