@@ -104,7 +104,7 @@ fn fixture(winning_modifier: Option<i32>) -> Fixture {
     let catalogue = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let forms = FormStore::build(&lo, &schema);
     let refs = RefTable::build(&lo, &schema);
-    let data = GameData::build(&lo, &schema, FunctionTable::load(path).unwrap(), &catalogue, &refs);
+    let data = GameData::build(&lo, &schema, FunctionTable::load(&path).unwrap(), &catalogue, &refs);
     Fixture { data, forms, refs }
 }
 
