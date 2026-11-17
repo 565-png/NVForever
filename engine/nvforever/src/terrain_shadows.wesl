@@ -128,13 +128,13 @@ fn rise(c: vec2<i32>, h0: f32) -> f32 {
     return abs(h.r - h0);
 }
 
-// The smaller of the height differences to the two neighbours along `step` (one side alone
+// The smaller of the height differences to the two neighbours along `along` (one side alone
 // when the other is missing, 0 when both are): a uniform slope's rise per texel, but 0 at
 // the foot or the top of a cliff, so the bias it gives does not lift a cliff's own shadow
 // off the ground at its foot.
-fn axis_relief(own: vec2<i32>, step: vec2<i32>, h0: f32) -> f32 {
-    let a = rise(own - step, h0);
-    let b = rise(own + step, h0);
+fn axis_relief(own: vec2<i32>, along: vec2<i32>, h0: f32) -> f32 {
+    let a = rise(own - along, h0);
+    let b = rise(own + along, h0);
     if a < 0.0 && b < 0.0 {
         return 0.0;
     }
