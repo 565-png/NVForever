@@ -169,14 +169,16 @@ impl Game<'_> {
     /// knvse-anim, Ceil of it reads 1 a few frames after placing an actor].
     fn anim_clock(&mut self, a: FormId, first: bool) -> f64 {
         let now = self.script_sequence_now(a, first);
-        if let Some(&(v, at)) = self.knvse.global.get(&(a, first)) {
-            return v + (now - at);
-        }
+        // Admit the default origins even when this view has an explicit value:
+        // starting the other view must not require a prior getter (ext-knvse.md §2).
         let start = *self.knvse.clock_start.entry(a).or_insert(self.time);
         let menu = if a == FormId::PLAYER_REF {
             let began = *self.knvse.first_person_menu_start.get_or_insert(self.knvse.first_person_menu_seconds);
             if first { self.knvse.first_person_menu_seconds - began } else { 0.0 }
         } else { 0.0 };
+        if let Some(&(v, at)) = self.knvse.global.get(&(a, first)) {
+            return v + (now - at);
+        }
         self.time - start + menu + self.cfg.frame_seconds
     }
 

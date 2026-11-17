@@ -365,3 +365,135 @@ fn pipboy_menu_advances_only_player_first_person_samples_and_lifecycle() {
         "new runtime does not inherit menu time",
     );
 }
+
+#[test]
+fn cold_third_person_global_does_not_freeze_first_person_menu_sequence() {
+    const SELF_TEST: &str = "first_person_menu_clock::cold_third_person_global_does_not_freeze_first_person_menu_sequence";
+    const CHILD: &str = "NVF_QA_PIPBOY_COLD_MENU_CLOCK_CHILD";
+    if std::env::var(CHILD).as_deref() != Ok("1") {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([SELF_TEST, "--exact", "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .expect("start the isolated cold menu-clock fixture");
+        assert!(
+            output.status.success(),
+            "isolated cold menu-clock fixture failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let args: Vec<_> = std::env::args().collect();
+    assert!(args.iter().any(|arg| arg == "--exact") && args.iter().any(|arg| arg == SELF_TEST));
+    let _availability = Availability::install();
+    let fixture = fixture();
+    let mut game = Game::new(
+        &fixture.data,
+        World::new(&fixture.forms, &fixture.refs, Default::default()),
+        GameConfig {
+            frame_seconds: 0.125,
+            ..Default::default()
+        },
+    );
+    game.player_entered(Some(FormId(ROOM)));
+    game.senses.first_person = true;
+    // Neither view's getter nor any animation has warmed the player's origins.
+    q(&mut game, "PlayerREF.SetGlobalAnimTime 20 0");
+    q(&mut game, "ClockNPCRef.SetGlobalAnimTime 7 0");
+    assert!(
+        !game.knvse.clock_start.contains_key(&FormId::PLAYER_REF),
+        "the player must enter the activation cold"
+    );
+    let explicit = game.knvse.global.clone();
+    close(
+        number(
+            &mut game,
+            "PlayerREF.ActivateAnim \"qa\\pipboy-clock\\first.kf\" 1 1 1 1 0.125",
+        ),
+        1.0,
+        "cold first-person activation",
+    );
+    close(
+        number(
+            &mut game,
+            "PlayerREF.ActivateAnim \"qa\\pipboy-clock\\third.kf\" 0 1 1 1 0.125",
+        ),
+        1.0,
+        "third-person activation control",
+    );
+    close(
+        number(
+            &mut game,
+            "ClockNPCRef.ActivateAnim \"qa\\pipboy-clock\\npc.kf\" 0 1 1 1 0.125",
+        ),
+        1.0,
+        "NPC activation control",
+    );
+    let held = game.time;
+    game.menu = Some(menus::INVENTORY);
+    for _ in 0..4 {
+        game.tick();
+    }
+    // Read the renderer's sample before any first-person getter can repair state.
+    close(
+        game.script_sequence_time_for(FormId::PLAYER_REF, FIRST, true),
+        0.5,
+        "cold first-person menu sample advances without a first-person getter",
+    );
+    close(game.time, held, "cold menu keeps world time held");
+    close(
+        game.script_sequence_time_for(FormId::PLAYER_REF, "qa\\pipboy-clock\\third.kf", false),
+        0.0,
+        "explicit third-view sample stays held",
+    );
+    close(
+        game.script_sequence_time_for(FormId(NPC), "qa\\pipboy-clock\\npc.kf", false),
+        0.0,
+        "explicit NPC sample stays held",
+    );
+    close(
+        number(
+            &mut game,
+            "PlayerREF.GetAnimCurrentTime \"qa\\pipboy-clock\\first.kf\"",
+        ),
+        0.5,
+        "cold getter agrees with renderer sample",
+    );
+    close(
+        number(&mut game, "PlayerREF.GetGlobalAnimTime 1"),
+        0.625,
+        "first getter preserves admitted menu time",
+    );
+    close(
+        number(&mut game, "PlayerREF.GetGlobalAnimTime 0"),
+        20.0,
+        "explicit third-view value is preserved",
+    );
+    close(
+        number(&mut game, "ClockNPCRef.GetGlobalAnimTime 0"),
+        7.0,
+        "explicit NPC value is preserved",
+    );
+    assert_eq!(
+        game.knvse.global, explicit,
+        "origin admission must not rewrite explicit values or set times"
+    );
+    game.menu = None;
+    game.tick();
+    close(
+        game.script_sequence_time_for(FormId::PLAYER_REF, FIRST, true),
+        0.625,
+        "world resume neither resets nor replays admitted menu time",
+    );
+    close(
+        number(&mut game, "PlayerREF.GetGlobalAnimTime 0"),
+        20.125,
+        "third-view clock resumes on world time",
+    );
+    close(
+        number(&mut game, "ClockNPCRef.GetGlobalAnimTime 0"),
+        7.125,
+        "NPC clock resumes on world time",
+    );
+}
