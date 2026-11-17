@@ -98,3 +98,10 @@ exercises settings loading, startup file caches and restored caches through the
 existing handoff. All four controls are UNRUN. Its opt-in selector requires a
 dedicated `NVF_STEWIE_PROFILE_HOME` and `--test-threads=1`; skipping it supplies no
 validation evidence.
+
+The first coordinated compile attempt failed with E0624: the inventory-total
+fixture called a private cross-crate method. The fixture now uses the existing
+public `World::inventory_mut` accessor, retaining the same inventory admission,
+`totals_with` consumer and every expected weight/unknown-weight result. No runtime
+control executed in that attempt; compilation and runtime of this correction
+remain UNRUN.

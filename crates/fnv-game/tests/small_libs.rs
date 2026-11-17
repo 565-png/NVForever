@@ -784,7 +784,7 @@ fn stewie_ammo_child_choice_and_actual_inventory_totals_follow_the_parent_separa
             g.sync_perk_weights();
             let rules = g.world.weight_rules(FormId::PLAYER_REF);
             for hardcore in [false, true] {
-                let total = g.world.inventory(FormId::PLAYER_REF).unwrap().totals_with(&f.forms, hardcore, &rules);
+                let total = g.world.inventory_mut(FormId::PLAYER_REF).unwrap().totals_with(&f.forms, hardcore, &rules);
                 let expected = if if parent { child } else { hardcore } { 1.5 } else { 0.0 };
                 assert_eq!(total.weight, expected, "parent={parent} child={child} mode={hardcore}");
                 assert!(total.unknown_weight.is_empty(), "weighted fixture must be admitted");
