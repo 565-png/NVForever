@@ -164,8 +164,8 @@ pipeline; the cost, on and off.
 
 ## 7. The switch (stage C2)
 
-- Settings row `cloud-shadows`, "Cloud shadows", under Graphics › Shadows after Longer sun
-  shadows (`crates/nvf-settings-layout/src/lib.rs`; registered in
+- Settings row `cloud-shadows`, "Cloud shadows (experimental)", under Graphics › Shadows
+  after Longer sun shadows (`crates/nvf-settings-layout/src/lib.rs`; registered in
   `engine/nvforever/src/settings.rs`, docs/settings-reference.md). Off by default. It is
   among the rows Continue waits for (`register_pipeline_waits`): switching it rebuilds the
   world views' material pipelines, nothing else does.
@@ -180,6 +180,9 @@ pipeline; the cost, on and off.
   its output on world travel; the wind's displacement is accumulated, so a direction
   change turns the drift and never moves the pattern (cloud_shadows.rs module notes).
 - Smoke: `cloud-shadows` (tools/smoke/scenarios.toml).
+- The label says "(experimental)", after the existing parenthesised suffix of "3D scopes
+  (test)" (settings.rs; translated in each lang file), and the note says the look is still
+  being tuned: the relative rule (§7a) and the calibration (§8) are first values.
 
 ## 7a. Relative transmittance: patches, not an overall dim
 

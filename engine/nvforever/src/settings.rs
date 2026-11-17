@@ -1092,7 +1092,7 @@ fn register_graphics(app: &mut App) {
         ),
         (
             "cloud-shadows",
-            "Cloud shadows",
+            "Cloud shadows (experimental)",
             CLOUD_SHADOWS_NOTE,
             "--graphics, --graphics-only",
             |w| w.resource::<Graphics>().cloud_shadows,
@@ -1195,8 +1195,10 @@ fn register_graphics(app: &mut App) {
     }
 }
 
-/// The Cloud shadows row's note (#2670; docs/design/sun-visibility.md).
-const CLOUD_SHADOWS_NOTE: &str = "On: the weather's clouds cast soft shadows that drift over the land with them, darker under heavier cover. Not in the original.";
+/// The Cloud shadows row's note (#2670; docs/design/sun-visibility.md): the label says the
+/// feature is experimental (as 3D scopes' says "(test)"), the note that its look is still
+/// being tuned (the relative rule, §7a, and the calibration, §8).
+const CLOUD_SHADOWS_NOTE: &str = "On: the weather's clouds cast soft shadows that drift over the land, only where the cover is heavier than around it. Still being tuned. Not in the original.";
 
 fn register_pipeline_waits(app: &mut App) {
     // Cloud shadows switches the world views' material pipelines (the sun visibility's
