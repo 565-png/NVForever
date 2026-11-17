@@ -16849,6 +16849,120 @@ expect = [
 ]
 
 [[scenario]]
+name = "sinking-drop-varmint-spot"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0); probe round 1, engine/nvf-play/src/phys/sinking.rs logs the moment a body goes under (docs/spec-notes/physics.md §4.3)"
+note = "probe: the player starts 300 units south of the reported Varmint Rifle spot (-68186, 1595) [observed: issue #2753]; GoodspringsSettler03Ref (0x00104F0A) is held (SetRestrained), put on the spot (MoveTo the player, 300 north), given the weapon and made to equip it, and killed at 10 s, so the weapon falls by its corpse as in the reports (iDeathDropWeaponChance); the player drops one of the same weapon at 5 s as a control away from any corpse. A FAIL is the reproduction: read the sank and woke lines"
+areas = ["physics", "ragdoll"]
+paths = ["engine/nvf-play/src/phys/sinking.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "1:call:0x00104F0A:SetRestrained:1,2:call:0x00104F0A:MoveTo:player:0:300:0,3:call:0x00104F0A:AddItem:WeapNVVarmintRifle:1,3.5:call:0x00104F0A:EquipItem:WeapNVVarmintRifle,4:call:player:AddItem:WeapNVVarmintRifle:1,5:call:player:Drop:WeapNVVarmintRifle:1,10:call:0x00104F0A:KillActor" }
+args = ["--play", "--world", "WastelandNV", "--pos=-68186,1295,30000", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 40
+expect = [
+  { re = 'combat: 0x00104F0A died: it drops its ', label = "the settler drops the Varmint Rifle as it dies" },
+  { re = 'collision of dropped 0xFF[0-9A-F]{6} added: .*\(dynamic\)', min = 2, label = "the player's Varmint Rifle and the settler's get dynamic collision" },
+  { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both Varmint Rifles come to rest" },
+]
+forbid = [
+  { re = 'dropped 0x[0-9A-F]{8} fell through the world', label = "no Varmint Rifle falls through the ground (#2753)" },
+  { re = 'dropped 0x[0-9A-F]{8} sank:', label = "no Varmint Rifle sinks under the terrain (#2753)" },
+  { re = 'ragdoll: actor 00104F0A (fell through at|sank:)', label = "the settler's corpse stays on the ground at the Varmint Rifle spot (#2753)" },
+]
+
+[[scenario]]
+name = "sinking-drop-hunting-spot"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0); probe round 1, engine/nvf-play/src/phys/sinking.rs logs the moment a body goes under (docs/spec-notes/physics.md §4.3)"
+note = "probe: the player starts 300 units south of the reported Hunting Rifle spot (1276, 15635) [observed: issue #2753]; GoodspringsSettler03Ref (0x00104F0A) is held (SetRestrained), put on the spot (MoveTo the player, 300 north), given the weapon and made to equip it, and killed at 10 s, so the weapon falls by its corpse as in the reports (iDeathDropWeaponChance); the player drops one of the same weapon at 5 s as a control away from any corpse. A FAIL is the reproduction: read the sank and woke lines"
+areas = ["physics", "ragdoll"]
+paths = ["engine/nvf-play/src/phys/sinking.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "1:call:0x00104F0A:SetRestrained:1,2:call:0x00104F0A:MoveTo:player:0:300:0,3:call:0x00104F0A:AddItem:WeapHuntingRifle:1,3.5:call:0x00104F0A:EquipItem:WeapHuntingRifle,4:call:player:AddItem:WeapHuntingRifle:1,5:call:player:Drop:WeapHuntingRifle:1,10:call:0x00104F0A:KillActor" }
+args = ["--play", "--world", "WastelandNV", "--pos=1276,15335,30000", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 40
+expect = [
+  { re = 'combat: 0x00104F0A died: it drops its ', label = "the settler drops the Hunting Rifle as it dies" },
+  { re = 'collision of dropped 0xFF[0-9A-F]{6} added: .*\(dynamic\)', min = 2, label = "the player's Hunting Rifle and the settler's get dynamic collision" },
+  { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both Hunting Rifles come to rest" },
+]
+forbid = [
+  { re = 'dropped 0x[0-9A-F]{8} fell through the world', label = "no Hunting Rifle falls through the ground (#2753)" },
+  { re = 'dropped 0x[0-9A-F]{8} sank:', label = "no Hunting Rifle sinks under the terrain (#2753)" },
+  { re = 'ragdoll: actor 00104F0A (fell through at|sank:)', label = "the settler's corpse stays on the ground at the Hunting Rifle spot (#2753)" },
+]
+
+[[scenario]]
+name = "sinking-drop-10mm-spot"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0); probe round 1, engine/nvf-play/src/phys/sinking.rs logs the moment a body goes under (docs/spec-notes/physics.md §4.3)"
+note = "probe: the player starts 300 units south of the reported 10mm Pistol spot (-42041, -94388) [observed: issue #2753]; GoodspringsSettler03Ref (0x00104F0A) is held (SetRestrained), put on the spot (MoveTo the player, 300 north), given the weapon and made to equip it, and killed at 10 s, so the weapon falls by its corpse as in the reports (iDeathDropWeaponChance); the player drops one of the same weapon at 5 s as a control away from any corpse. A FAIL is the reproduction: read the sank and woke lines"
+areas = ["physics", "ragdoll"]
+paths = ["engine/nvf-play/src/phys/sinking.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "1:call:0x00104F0A:SetRestrained:1,2:call:0x00104F0A:MoveTo:player:0:300:0,3:call:0x00104F0A:AddItem:0x0000434F:1,3.5:call:0x00104F0A:EquipItem:0x0000434F,4:call:player:AddItem:0x0000434F:1,5:call:player:Drop:0x0000434F:1,10:call:0x00104F0A:KillActor" }
+args = ["--play", "--world", "WastelandNV", "--pos=-42041,-94688,30000", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 40
+expect = [
+  { re = 'combat: 0x00104F0A died: it drops its ', label = "the settler drops the 10mm Pistol as it dies" },
+  { re = 'collision of dropped 0xFF[0-9A-F]{6} added: .*\(dynamic\)', min = 2, label = "the player's 10mm Pistol and the settler's get dynamic collision" },
+  { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both 10mm Pistols come to rest" },
+]
+forbid = [
+  { re = 'dropped 0x[0-9A-F]{8} fell through the world', label = "no 10mm Pistol falls through the ground (#2753)" },
+  { re = 'dropped 0x[0-9A-F]{8} sank:', label = "no 10mm Pistol sinks under the terrain (#2753)" },
+  { re = 'ragdoll: actor 00104F0A (fell through at|sank:)', label = "the settler's corpse stays on the ground at the 10mm Pistol spot (#2753)" },
+]
+
+[[scenario]]
+name = "sinking-corpse-bighorner-spot"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0); probe round 1, engine/nvf-play/src/phys/sinking.rs logs the moment a body goes under (docs/spec-notes/physics.md §4.3)"
+note = "probe: the player starts 300 units south of the spot (-9617, -96521) where the Bighorner 0x001710BB's corpse fell through on 9 installs [observed: issue #2753]; the creature is put there (MoveTo the player, 300 north) at 2 s and killed by a test-aid hit at 6 s; GOD keeps the player alive. A FAIL is the reproduction: read the sank lines"
+areas = ["physics", "ragdoll"]
+paths = ["engine/nvf-play/src/phys/sinking.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:0x001710BB:MoveTo:player:0:300:0", NVF_PLAY_TEST_HIT = "6:0x001710BB:1000" }
+args = ["--play", "--world", "WastelandNV", "--pos=-9617,-96821,30000", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = 'combat: .* 0x001710BB killed', label = "the hit kills the Bighorner" },
+  { re = 'ragdoll: actor 001710BB at rest at', label = "its corpse comes to rest" },
+]
+forbid = [
+  { re = 'ragdoll: actor 001710BB fell through at', label = "the corpse is not caught under the ground (#2753)" },
+  { re = 'ragdoll: actor 001710BB sank:', label = "no bone sinks under the terrain (#2753)" },
+]
+
+[[scenario]]
+name = "sinking-corpse-radscorpion-spot"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0); probe round 1, engine/nvf-play/src/phys/sinking.rs logs the moment a body goes under (docs/spec-notes/physics.md §4.3)"
+note = "probe: the player starts 300 units south of the spot (-48169, 2481) where the Radscorpion 0x0015A0C4's corpse fell through on 9 installs [observed: issue #2753]; the creature is put there (MoveTo the player, 300 north) at 2 s and killed by a test-aid hit at 6 s; GOD keeps the player alive. A FAIL is the reproduction: read the sank lines"
+areas = ["physics", "ragdoll"]
+paths = ["engine/nvf-play/src/phys/sinking.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:0x0015A0C4:MoveTo:player:0:300:0", NVF_PLAY_TEST_HIT = "6:0x0015A0C4:1000" }
+args = ["--play", "--world", "WastelandNV", "--pos=-48169,2181,30000", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = 'combat: .* 0x0015A0C4 killed', label = "the hit kills the Radscorpion" },
+  { re = 'ragdoll: actor 0015A0C4 at rest at', label = "its corpse comes to rest" },
+]
+forbid = [
+  { re = 'ragdoll: actor 0015A0C4 fell through at', label = "the corpse is not caught under the ground (#2753)" },
+  { re = 'ragdoll: actor 0015A0C4 sank:', label = "no bone sinks under the terrain (#2753)" },
+]
+
+[[scenario]]
+name = "sinking-corpse-molerat-spot"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0); probe round 1, engine/nvf-play/src/phys/sinking.rs logs the moment a body goes under (docs/spec-notes/physics.md §4.3)"
+note = "probe: the player starts 300 units south of the spot (4576, -80356) where the Mole rat 0x00161732's corpse fell through on 7 installs [observed: issue #2753]; the creature is put there (MoveTo the player, 300 north) at 2 s and killed by a test-aid hit at 6 s; GOD keeps the player alive. A FAIL is the reproduction: read the sank lines"
+areas = ["physics", "ragdoll"]
+paths = ["engine/nvf-play/src/phys/sinking.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:0x00161732:MoveTo:player:0:300:0", NVF_PLAY_TEST_HIT = "6:0x00161732:1000" }
+args = ["--play", "--world", "WastelandNV", "--pos=4576,-80656,30000", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = 'combat: .* 0x00161732 killed', label = "the hit kills the Mole rat" },
+  { re = 'ragdoll: actor 00161732 at rest at', label = "its corpse comes to rest" },
+]
+forbid = [
+  { re = 'ragdoll: actor 00161732 fell through at', label = "the corpse is not caught under the ground (#2753)" },
+  { re = 'ragdoll: actor 00161732 sank:', label = "no bone sinks under the terrain (#2753)" },
+]
+
+[[scenario]]
 name = "next-quest-active"
 source = "ESM full audit gap 20 (crates/fnv-game/src/game.rs set_stage): a stage entry that completes its quest makes its Next Quest (QUST NAM0) the active quest (GECK wiki Quest Stages)"
 note = "SetStage VCG01 200 (Ain't That a Kick in the Head; its Next Quest is VMQ01, They Went That-a-Way) at 4 s; the Pip-Boy's data page opens at 10 s"

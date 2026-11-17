@@ -164,6 +164,9 @@ pub struct Ragdolls {
     /// References whose ragdoll build is refused, as if it had failed: the test aid
     /// `NVF_PLAY_TEST_RAGDOLL_FAIL=<hex FormIDs>` ([`forced_failures`]).
     pub(crate) fail: HashSet<u32>,
+    /// Corpses whose sinking under the terrain was logged ([`note_sinking`], #2753), until
+    /// they are lifted.
+    sank: HashSet<u32>,
     /// `PhysWorld::steps` when [`pose`] last ran: the calm and awake timers count the
     /// physics time stepped since, not the frame's time (#1049).
     last_steps: Option<u64>,
@@ -654,6 +657,34 @@ fn unbuilt_now(ragdolls: &mut Ragdolls, c: &mut Corpse, dying: Option<&mut Dying
     info!("ragdoll: actor {id:08X}: {why}; shown dead without it: {how}");
 }
 
+/// Log, once, a moving corpse's bone sunk under the terrain at its own x, y
+/// (`nvf_play::phys::sinking`, #2753): which bone, how deep, how fast, whether the corpse
+/// settles, and what the physics world has under it. The fell-through guard in [`pose`]
+/// measures against the terrain under the first bone; a `fell through` line with no `sank`
+/// line before it is that reading on a slope, not a body under the ground.
+fn note_sinking(phys: &mut PhysState, ragdolls: &mut Ragdolls, id: u32, c: &Corpse, nodes: &[Option<BodyState>], first: [f32; 3]) {
+    use nvf_play::phys::sinking::{deepest_under, GROUND_RAY_DOWN, GROUND_RAY_UP};
+    let bones = nodes.iter().enumerate().filter_map(|(i, b)| b.map(|b| (i, b.translation)));
+    let Some((i, depth, t)) = deepest_under(bones, |x, y| phys.terrain_z(x, y)) else { return };
+    let Some(b) = nodes[i] else { return };
+    ragdolls.sank.insert(id);
+    let name = c.data.bodies.get(i).and_then(|b| b.object.node.clone()).unwrap_or_else(|| format!("body {i}"));
+    let p = b.translation;
+    let speed = b.linvel.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let state = if c.settle.is_some() { "settling" } else { "moving" };
+    let under_first = phys.terrain_z(first[0], first[1]).map_or_else(|| "-".to_string(), |z| format!("{z:.0}"));
+    let ground = phys.ground_hits([p[0], p[1], t.max(p[2]) + GROUND_RAY_UP], GROUND_RAY_DOWN, None);
+    info!(
+        "ragdoll: actor {id:08X} sank: bone {name} at ({:.0}, {:.0}, {:.0}), {depth:.0} under the terrain there (z {t:.0}), speed {speed:.0} units/s (vertical {:.0}), {state}, {:.1} s awake, {} lifts; terrain under its first bone z {under_first}; ground there: {ground}",
+        p[0],
+        p[1],
+        p[2],
+        b.linvel[2],
+        c.awake,
+        c.lifts
+    );
+}
+
 /// Per body, how fast its bone moved and turned on average between the poses `a` and `b`
 /// taken `seconds` apart: game units per second and radians per second (0 for a body
 /// missing from either).
@@ -734,6 +765,9 @@ pub(crate) fn pose(
             continue;
         }
         let lowest = nodes.iter().flatten().map(|b| b.translation[2]).fold(f32::INFINITY, f32::min);
+        if !ragdolls.sank.contains(&id) && !phys.world.ragdoll_asleep(id) {
+            note_sinking(&mut phys, &mut ragdolls, id, &c, &nodes, first);
+        }
         if let Some(t) = phys.terrain_z(first[0], first[1]).filter(|t| lowest < t - FELL_THROUGH) {
             warn!("ragdoll: actor {id:08X} fell through at ({:.0}, {:.0}, {lowest:.0}), terrain z {t:.0}: back above the ground", first[0], first[1]);
             // From where it last lay when that is known (its pose now may be torn), else
@@ -745,6 +779,8 @@ pub(crate) fn pose(
             let lifted: Vec<Option<Iso>> = from.into_iter().map(|i| i.map(|mut i| { i.translation[2] += up; i })).collect();
             phys.world.remove_ragdoll(id);
             ragdolls.lifted += 1;
+            // A sinking after the lift is logged again (`note_sinking`).
+            ragdolls.sank.remove(&id);
             c.lifts += 1;
             c.live = false;
             // Start again from the lifted pose (awake): `start` reads the bones. Past the

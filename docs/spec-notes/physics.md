@@ -554,6 +554,23 @@ for the same spot within 0.3 units, simulation.md §5) it came to rest on the gr
 8692.71, 30.9 lower. Repeated runs came to rest within 0.1 units of each other (the steps
 are fixed, but how many run per frame depends on frame times).
 
+**Sinking through the terrain (#2753, open).** Players' logs show weapons dropped by dying
+NPCs and corpses at rest on the terrain in exteriors going through it, the same creatures at
+the same spots on many installs [observed: player reports, build 0.7.0, issue #2753]; the
+safety nets (`dropped 0x… fell through the world`, 10,000 units under the drop point, and
+the ragdoll's `fell through at`, 150 under the terrain under its first bone) put them back.
+Synthetic fnv-phys experiments did not reproduce it (square reloads, waking, the contact
+shell, characters, slow motion, shots, blasts). Diagnostic lines (`engine/nvf-play`
+`phys/sinking.rs` [design, #2753]): `dropped 0x… woke after resting S s … touching …` when a
+resting drop moves again, with what its colliders touch; `dropped 0x… sank: …` and `ragdoll:
+actor … sank: bone …` once, the first frame a body's centre is more than 20 units under the
+terrain at its own x, y, with its speed, its rest or settle state, every collider a ray finds
+straight down there (whether the terrain collider is in place where the surface says) and,
+for a drop, what it touches. A ragdoll `fell through` line with no `sank` line before it is
+the guard's reading on a slope (it measures under the first bone), not a body under the
+ground. Smoke probes `sinking-drop-*-spot` and `sinking-corpse-*-spot` kill at the reported
+spots.
+
 ### 4.3.1 Clutter at cell load: asleep, jointed objects held (`engine/nvf-play`, 2026-10-11)
 
 **The playtest.** Loading Chet's store (GSGeneralStore) threw the shelves' items about
