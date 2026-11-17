@@ -3231,3 +3231,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
      and ResetAI in one script run"). The runtime already does this. A job script cannot
      name a reference, package or quest by Editor ID: build each with `BuildRef 0
      <decimal form ID>`.
+224. **Do Gibson's dogs take up a mole rat's fight against the player?** (P2; #2927;
+     `crates/fnv-game/src/provocation.rs` `call_allies`, `combat_group.rs` `raise_alarms`.)
+     Answered [observed, base game, three runs]: yes. With three mole rats attacking a
+     passive player beside the yard, three of four dogs (run 2) and four of four (run 3)
+     went into combat with the player before any mole rat was harmed and stayed in it
+     after all three were dead; `GetShouldAttack player` stayed 0. In run 1 the mole rats
+     lost the player early and no dog joined. The runtime already does this
+     (combat-groups.md §4). To count placed creatures in a job: walk `GetFirstRef 200 1`
+     and compare `GetBaseObject`.
