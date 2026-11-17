@@ -4695,6 +4695,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nvf-shader-tests"
+version = "0.7.0"
+dependencies = [
+ "bevy_asset",
+ "bevy_shader",
+ "naga",
+]
+
+[[package]]
 name = "nvf-viewer"
 version = "0.7.0"
 dependencies = [
