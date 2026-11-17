@@ -44,6 +44,14 @@
 //!   cloud, grass, tree movement" [documented: geck-wiki snapshot 2026-10-28, Weather]).
 //!   The texture's own axes stay on world X/Z (a rotated repeat would not tile).
 //!
+//! - **Validity** [engineering choice; fork-notes review of C0/C1, finding 2]: jobs carry a
+//!   discontinuity generation, advanced when the worldspace changes and when the weather
+//!   set is replaced (a new weather, a fade turned round; not the fade's ordinary progress
+//!   nor its end). A composition of an older generation is dropped before it touches the
+//!   image; a worldspace change, and a weather replaced at once (no fade), also clear the
+//!   output, which is neutral until the new composition is in. A fade's ordinary progress
+//!   is followed with the bounded lag of the rate cap.
+//!
 //! It applies outdoors only, day and night alike (at night the directional light is the
 //! moon's, attenuated the same way, no strength added); off, indoors, or with no drawn,
 //! textured cloud layer, the output is `None`. While the switch is on, `None` does not take
@@ -490,6 +498,18 @@ impl Composed {
 struct Job {
     task: Task<Vec<u8>>,
     composed: Composed,
+    /// [`CloudShadowWork::generation`] when it started.
+    generation: u64,
+}
+
+/// (current weather, the weather fading out) by form ID.
+type WeatherSet = (u32, Option<u32>);
+
+/// Whether going from `old` to `new` replaced the weather set (a discontinuity): a new
+/// current weather, or another weather fading out. A fade's end (the faded-out one gone,
+/// the current kept) is not one.
+pub fn weather_replaced(old: WeatherSet, new: WeatherSet) -> bool {
+    old.0 != new.0 || (new.1.is_some() && new.1 != old.1)
 }
 
 /// The producer's working state (private to this module).
@@ -508,23 +528,79 @@ pub struct CloudShadowWork {
     off_reason: Option<&'static str>,
     /// Layer count, weights (in [`LOG_WEIGHT_STEP`] steps) and textures last logged.
     logged: Option<(usize, Vec<i32>, Vec<String>)>,
+    /// The discontinuity generation (module notes, "Validity").
+    generation: u64,
+    /// The weather set last seen.
+    weather_set: Option<WeatherSet>,
 }
 
 impl CloudShadowWork {
-    /// Drop the image and the composition (and the alphas unless `keep_alphas`), and
-    /// publish `None` (logged once per reason).
-    fn go_off(&mut self, reason: &'static str, keep_alphas: bool, published: &mut CloudShadowPublished, images: &mut Assets<Image>) {
+    /// Drop the image, the composition and what it showed, and publish `None` (the
+    /// plumbing then gives a neutral cloud while the switch stays on).
+    fn clear_output(&mut self, published: &mut CloudShadowPublished, images: &mut Assets<Image>) {
         if let Some(h) = self.image.take() {
             images.remove(&h);
-        }
-        if !keep_alphas {
-            self.alphas.clear();
         }
         self.job = None;
         self.shown = None;
         self.logged = None;
         if published.0.is_some() {
             published.0 = None;
+        }
+    }
+
+    /// A discontinuity: results of jobs started before it are dropped (the running job's
+    /// handle too, and [`CloudShadowWork::install`] rejects an older generation).
+    fn advance_generation(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.job = None;
+    }
+
+    /// The worldspace now (`ws`): another than the ground reference's is a discontinuity
+    /// that clears the output and the reference. True when it did.
+    fn note_world(&mut self, ws: Option<u32>, published: &mut CloudShadowPublished, images: &mut Assets<Image>) -> bool {
+        if !self.ground.is_some_and(|(w, _)| w != ws) {
+            return false;
+        }
+        self.advance_generation();
+        self.clear_output(published, images);
+        self.ground = None;
+        info!("cloud shadows: another worldspace: output cleared until it is composed again");
+        true
+    }
+
+    /// The weather set now: replaced, it is a discontinuity; replaced at once (no fade),
+    /// the dome changed at once too, and the output is cleared. True when replaced.
+    fn note_weather(&mut self, set: WeatherSet, published: &mut CloudShadowPublished, images: &mut Assets<Image>) -> bool {
+        let replaced = self.weather_set.is_some_and(|old| weather_replaced(old, set));
+        self.weather_set = Some(set);
+        if replaced {
+            self.advance_generation();
+            if set.1.is_none() {
+                self.clear_output(published, images);
+            }
+        }
+        replaced
+    }
+
+    /// A finished composition of `generation` into the image: dropped (false) when it is
+    /// of an older generation or the image is gone.
+    fn install(&mut self, generation: u64, composed: Composed, texels: Vec<u8>, images: &mut Assets<Image>) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        let Some(mut img) = self.image.as_ref().and_then(|h| images.get_mut(h)) else { return false };
+        img.data = Some(texels);
+        self.shown = Some(composed);
+        true
+    }
+
+    /// Drop the image and the composition (and the alphas unless `keep_alphas`), and
+    /// publish `None` (logged once per reason).
+    fn go_off(&mut self, reason: &'static str, keep_alphas: bool, published: &mut CloudShadowPublished, images: &mut Assets<Image>) {
+        self.clear_output(published, images);
+        if !keep_alphas {
+            self.alphas.clear();
         }
         if self.off_reason != Some(reason) {
             self.off_reason = Some(reason);
@@ -591,6 +667,10 @@ pub fn produce_cloud_shadows(
 ) {
     let work = &mut *work;
     let Some(sky) = sky else { return };
+    // Discontinuities first: nothing older than them reaches the image.
+    let ws = world.as_deref().map(|w| w.world);
+    work.note_world(ws, &mut published, &mut images);
+    work.note_weather((sky.weather.form_id, sky.prev.as_ref().map(|p| p.form_id)), &mut published, &mut images);
     if sky.interior.is_some() {
         work.go_off("indoors", false, &mut published, &mut images);
         return;
@@ -608,9 +688,9 @@ pub fn produce_cloud_shadows(
         return;
     }
     // The ground reference: the camera's height when the worldspace's first output is
-    // made, held until the worldspace changes, so the plane never follows the camera.
-    let ws = world.as_deref().map(|w| w.world);
-    if work.ground.is_none_or(|(w, _)| w != ws) {
+    // made, held until the worldspace changes (`note_world`), so the plane never follows
+    // the camera.
+    if work.ground.is_none() {
         let Ok(cam) = cam.single() else { return };
         work.ground = Some((ws, (cam.translation.y / GROUND_SNAP).round() * GROUND_SNAP));
     }
@@ -664,13 +744,13 @@ pub fn produce_cloud_shadows(
         dir,
     };
 
-    // Finished composition: into the image.
+    // Finished composition: into the image, unless a discontinuity came after its start.
     if let Some(job) = work.job.as_mut() {
         if let Some(texels) = check_ready(&mut job.task) {
-            let composed = work.job.take().map(|j| j.composed);
-            if let Some(mut img) = work.image.as_ref().and_then(|h| images.get_mut(h)) {
-                img.data = Some(texels);
-                work.shown = composed;
+            if let Some(job) = work.job.take() {
+                if !work.install(job.generation, job.composed, texels, &mut images) {
+                    debug!("cloud shadows: a composition of an earlier weather or worldspace dropped");
+                }
             }
         }
     }
@@ -684,7 +764,7 @@ pub fn produce_cloud_shadows(
         let input: Vec<ComposeLayer> =
             layers.iter().zip(&want.layers).map(|(l, w)| ComposeLayer { alpha: alpha_of(&work.alphas, &l.texture), weight: l.weight, shift: w.shift }).collect();
         let task = AsyncComputeTaskPool::get().spawn(async move { compose(&input) });
-        work.job = Some(Job { task, composed: want.clone() });
+        work.job = Some(Job { task, composed: want.clone(), generation: work.generation });
         work.composed_at = now;
     }
 
@@ -969,6 +1049,67 @@ mod tests {
         assert!(!app.world().resource::<SunVisibility>().active());
         assert!(app.world().get::<SunVisibilityView>(cam).is_none());
         assert!(app.world().get::<OutdoorSunLight>(sun).is_none());
+    }
+
+    fn empty_composed() -> Composed {
+        Composed { layers: Vec::new(), ref_scroll: 0.001, dir: Vec2::X }
+    }
+
+    /// A composition started before a discontinuity (worldspace or weather set) never
+    /// reaches the image; one of the current generation does.
+    #[test]
+    fn cloud_stale_job_is_dropped() {
+        let mut images = Assets::<Image>::default();
+        let mut work = CloudShadowWork { image: Some(images.add(new_image())), ..Default::default() };
+        let mut published = CloudShadowPublished::default();
+        let started = work.generation;
+        // A weather replaced by a fade: a discontinuity (no clearing: the fade starts from
+        // what the dome shows).
+        assert!(!work.note_weather((1, None), &mut published, &mut images), "the first weather seen is no change");
+        assert!(work.note_weather((2, Some(1)), &mut published, &mut images));
+        assert_ne!(work.generation, started);
+        assert!(work.image.is_some(), "a faded change keeps the image");
+        // The old job finishes now: dropped before it touches the image.
+        let stale = vec![0u8; MAP_SIZE * MAP_SIZE];
+        assert!(!work.install(started, empty_composed(), stale, &mut images));
+        let data = images.get(work.image.as_ref().unwrap()).unwrap().data.clone().unwrap();
+        assert!(data.iter().all(|&t| t == 255), "the image is untouched");
+        assert!(work.shown.is_none());
+        // One of the current generation goes in.
+        assert!(work.install(work.generation, empty_composed(), vec![7u8; MAP_SIZE * MAP_SIZE], &mut images));
+        assert_eq!(images.get(work.image.as_ref().unwrap()).unwrap().data.as_ref().unwrap()[0], 7);
+        assert!(work.shown.is_some());
+        // A fade's progress and its end are no discontinuity; turning it round, another
+        // weather, or a weather forced at once are.
+        assert!(!weather_replaced((2, Some(1)), (2, Some(1))));
+        assert!(!weather_replaced((2, Some(1)), (2, None)), "the fade ended");
+        assert!(weather_replaced((2, Some(1)), (1, Some(2))), "turned round");
+        assert!(weather_replaced((2, None), (3, Some(2))));
+        assert!(weather_replaced((2, None), (3, None)), "forced at once");
+        // Forced at once: the output is cleared too (neutral until composed again).
+        published.0 = Some(CloudShadowOutput { image: work.image.clone().unwrap(), uv_scale: Vec2::ONE, uv_offset: Vec2::ZERO, plane_height: 0.0, strength: 1.0 });
+        assert!(work.note_weather((3, None), &mut published, &mut images));
+        assert!(published.0.is_none() && work.image.is_none() && work.shown.is_none());
+    }
+
+    /// Another worldspace clears the output and the ground reference and drops the running
+    /// composition; the same worldspace again changes nothing.
+    #[test]
+    fn cloud_world_change_clears_output() {
+        let mut images = Assets::<Image>::default();
+        let image = images.add(new_image());
+        let mut work = CloudShadowWork { image: Some(image.clone()), shown: Some(empty_composed()), ground: Some((Some(1), 1024.0)), ..Default::default() };
+        let mut published = CloudShadowPublished(Some(CloudShadowOutput { image: image.clone(), uv_scale: Vec2::ONE, uv_offset: Vec2::ZERO, plane_height: 21_024.0, strength: STRENGTH }));
+        assert!(!work.note_world(Some(1), &mut published, &mut images), "the same worldspace");
+        assert!(published.0.is_some() && work.image.is_some());
+        let before = work.generation;
+        assert!(work.note_world(Some(2), &mut published, &mut images));
+        assert!(published.0.is_none(), "nothing of the old world is shown");
+        assert!(work.image.is_none() && work.shown.is_none() && work.job.is_none());
+        assert!(images.get(&image).is_none(), "the old image is gone");
+        assert_eq!(work.ground, None, "the new world gets its own plane");
+        assert_ne!(work.generation, before);
+        assert!(!work.install(before, empty_composed(), vec![0; MAP_SIZE * MAP_SIZE], &mut images), "a job of the old world");
     }
 
     #[test]
