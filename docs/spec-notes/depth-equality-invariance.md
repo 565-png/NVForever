@@ -57,11 +57,19 @@ does not supply a copied lighting shader or depend on the renderer. All five
 selectors and the strict invariance/SPIR-V/negative/fragment oracles remain intact.
 
 From `engine/`: `cargo test --release --locked -p nvf-shader-tests --test depth_invariance`.
-No extra feature flags or environment variables are required. Cargo dependency
-selection and elapsed-time improvement are qualified per exact run; the corrected
-setup has not been compiled or executed, and no new timing result is claimed.
+No extra feature flags or environment variables are required. A subsequent Windows
+CPU run on an integrated source cohort compiled and executed each of the five strict
+controls once: five passed, none failed or were ignored. The test, display-source
+helper, package manifest and both position-output shader blobs matched this change.
+The positive mesh/prepass and grass/tree cases completed the actual ShaderCache,
+WESL, Naga validation and SPIR-V checks; the baseline rejection, independent missing
+producer and shared-fragment controls also passed. This qualifies that source cohort
+and CPU test configuration, rather than a standalone build of this public head.
+The earlier three-pass/two-failure setup result remains part of the history.
 
-State: corrected source authored; rerunning all five controls, runtime-helper checks,
-Clippy, shader-driver validation, performance measurement and rendered acceptance
-are unrun for this revision. The ordinary engine test check discovers this Cargo
-integration test. Warning disappearance alone would not prove visual acceptance.
+State: focused Windows CPU compiler controls passed on matching integrated sources.
+Runtime-helper unit checks, runtime scheduling, Clippy/Cargo deny, normal-client and
+whole-graph builds, shader-driver validation, performance measurement and rendered
+acceptance remain unrun by this focused target. No timing improvement, warning
+disappearance, native parity or visual repair is established. The ordinary engine
+test check discovers this Cargo integration test.
