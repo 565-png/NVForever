@@ -662,7 +662,7 @@ pub(crate) fn activate(
     } else {
         *hold = None;
     }
-    // Quick Loot has Activate while its list shows (it takes); its Ready Item asks for the
+    // Quick Loot has Activate while its list shows (it takes); its Wait asks for the
     // full menu, activated here as Activate would (`crate::quick_loot`) [design: owner
     // 2026-11-17].
     let full = crate::quick_loot::take_full_request();

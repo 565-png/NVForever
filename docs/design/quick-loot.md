@@ -13,8 +13,8 @@ the crosshair. The game does not stop for it.
 | Key (the player's binding) | What it does |
 |---|---|
 | Activate (E) | takes the selected stack (a pocket: steals it, rolling its chance) |
-| Wait (T) | takes everything; not from a pocket, where each item is its own roll |
-| Ready Item (R) | opens the full container or pickpocket menu, as Activate would without Quick Loot |
+| Ready Item (R) | takes everything; not from a pocket, where each item is its own roll |
+| Wait (T) | opens the full container or pickpocket menu, as Activate would without Quick Loot |
 | mouse wheel | moves the selection (up moves it up) |
 
 While the list shows, those keys do nothing else: no reload or holster, no Wait menu, no

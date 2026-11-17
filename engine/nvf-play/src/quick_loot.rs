@@ -9,10 +9,10 @@
 //!   Loot is on (off by default). Not for a reference whose script has an OnActivate block,
 //!   a reference set off by its activate parents only or one that cannot be activated: the
 //!   game's own activation decides those, so their prompt stays as it is.
-//! - **Keys** (the player's bindings): Activate (E) takes the selected stack, Wait (T)
-//!   takes everything (not from a pocket: each item is its own roll), Ready Item (R) opens
-//!   the full container or pickpocket menu as Activate would without Quick Loot, and the
-//!   mouse wheel moves the selection. While the list shows, those keys do nothing else:
+//! - **Keys** (the player's bindings): Activate (E) takes the selected stack, Ready Item (R)
+//!   takes everything (not from a pocket: each item is its own roll), Wait (T) opens the
+//!   full container or pickpocket menu as Activate would without Quick Loot, and the mouse
+//!   wheel moves the selection [the owner's fifth look, 2026-11-17: R and T swapped]. While the list shows, those keys do nothing else:
 //!   no reload, no Wait menu, no camera zoom ([`holds_input`]).
 //! - **The rules are the container menu's** (`crate::menu::model::MenuModel`, opened on the
 //!   target as the menu opens it, its pickpocket rolls included): a take from someone
@@ -92,7 +92,7 @@ fn take_scale(_: &mut World, text: &str) -> bool {
 }
 /// The list shows and has its keys this frame ([`holds_input`]).
 static HOLDS: AtomicBool = AtomicBool::new(false);
-/// Ready Item asked for the full menu: `crate::activate::activate` activates the target as
+/// Wait asked for the full menu: `crate::activate::activate` activates the target as
 /// Activate would ([`take_full_request`]).
 static FULL: AtomicBool = AtomicBool::new(false);
 
@@ -103,7 +103,7 @@ pub fn holds_input() -> bool {
     HOLDS.load(Ordering::Relaxed)
 }
 
-/// Ready Item asked for the full menu this frame (read once).
+/// Wait asked for the full menu this frame (read once).
 pub fn take_full_request() -> bool {
     FULL.swap(false, Ordering::Relaxed)
 }
@@ -233,9 +233,9 @@ impl Spec {
         let steal = s.crime;
         let mut prompts = vec![format!("{} {}", key(Control::Activate), if steal { STEAL } else { TAKE })];
         if s.kind != Kind::Pocket {
-            prompts.push(format!("{} {}", key(Control::Rest), if steal { STEAL_ALL } else { TAKE_ALL }));
+            prompts.push(format!("{} {}", key(Control::ReadyItem), if steal { STEAL_ALL } else { TAKE_ALL }));
         }
-        prompts.push(format!("{} {SEARCH}", key(Control::ReadyItem)));
+        prompts.push(format!("{} {SEARCH}", key(Control::Rest)));
         Spec {
             title: s.title.clone(),
             position: if rows.is_empty() { "0/0".into() } else { format!("{}/{}", sel + 1, rows.len()) },
@@ -281,10 +281,11 @@ const PROMPT_SPACE: f32 = 30.0;
 const FRAME: f32 = 3.0;
 const TICK: f32 = 14.0;
 
-/// The faces the list is drawn in: the keys' line's (entry), the name's (title, bold in the
-/// sharp font), the columns' heads' and the place's ("1/4": head, bold in the sharp font) and
-/// the rows' words and figures (small, regular, the heads' size) [the owner's steps 4 and 4.5;
-/// the item names at the figures' size, the third look].
+/// The faces the list is drawn in: the name's (title, bold in the sharp font), the columns'
+/// heads' and the place's ("1/4": head, bold in the sharp font) and the rows' words, figures
+/// and the keys' line (small, regular, the heads' size) [the owner's steps 4 and 4.5; the item
+/// names at the figures' size, the third look; the keys at theirs, the fifth]. Entry is the
+/// game's row face, kept for its measures.
 #[derive(Clone)]
 pub struct Fonts {
     pub entry: Face,
@@ -435,6 +436,19 @@ pub fn widest(half: f32, edge: f32) -> f32 {
 /// The list laid out from its top left corner, measured by `fonts` (the drawn faces), at
 /// most `max_w` wide: the names' room gives way (cut with "...") before the list passes it.
 pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
+    layout_on(spec, fonts, max_w, 0.0)
+}
+
+/// [`layout`] with the bars' edges on whole pixels `px` units wide (0: no snapping), so
+/// rooms the same in units are the same on screen: the frame's sides and its bottom stand as
+/// far from the selection's box [the owner's fifth look, 2026-11-17: the bottom line a pixel
+/// closer than the left one, each edge rounded on its own].
+pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
+    // A size in whole pixels (at least one), and a place on the nearest pixel.
+    let snap = |v: f32| if px > 0.0 { (v / px).round().max(1.0) * px } else { v };
+    let on_pixel = |v: f32| if px > 0.0 { (v / px).round() * px } else { v };
+    let (frame, gap_y, half_gap, line_h, row_h, row_gap, rule_h, tick) = (snap(FRAME), snap(GAP_Y), snap(GAP_Y / 2.0), snap(LINE), snap(ROW_H), snap(ROW_GAP), snap(RULE), snap(TICK));
+    let pad_x = frame + gap_y;
     let width = |w: Which, s: &str| ink_width(face(fonts, w), s);
     let c = spec.columns;
     let counted = !c.any();
@@ -457,14 +471,14 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
     let col_w: Vec<f32> = cols.iter().map(|(h, cells)| cells.iter().map(|t| width(Which::Small, t)).fold(width(Which::Head, h), f32::max)).collect();
     let count_w = spec.rows.iter().map(|r| width(Which::Small, &count(r))).fold(0.0, f32::max);
     let names = spec.rows.iter().map(|r| width(Which::Small, &label(r))).fold(width(Which::Small, EMPTY), f32::max);
-    let x0 = PAD_X + CELL;
+    let x0 = pad_x + CELL;
     // The box is at least as wide as the keys' line with the words' room on both sides [the
     // owner's step 2 and third look].
-    let prompts_w = spec.prompts.iter().map(|p| width(Which::Entry, p)).sum::<f32>() + PROMPT_SPACE * spec.prompts.len().saturating_sub(1) as f32;
+    let prompts_w = spec.prompts.iter().map(|p| width(Which::Small, p)).sum::<f32>() + PROMPT_SPACE * spec.prompts.len().saturating_sub(1) as f32;
     let position_w = width(Which::Head, &spec.position);
     let others = col_w.iter().map(|w| GAP + w).sum::<f32>() + if count_w > 0.0 { GAP + count_w } else { 0.0 };
     let wanted = (2.0 * x0 + names.max(NAME_MIN) + others).max(2.0 * x0 + prompts_w).max(2.0 * x0 + NAME_MIN + GAP + position_w);
-    let w = wanted.min(max_w.max(2.0 * x0 + NAME_MIN + others).max(2.0 * x0 + prompts_w));
+    let w = snap(wanted.min(max_w.max(2.0 * x0 + NAME_MIN + others).max(2.0 * x0 + prompts_w)));
     let x1 = w - x0;
     let mut pieces = Vec::new();
     let mut bars = Vec::new();
@@ -477,15 +491,15 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
     let mut line = |top: f32| lines.push(Rect::new(0.0, top, w, top + LINE));
     // The heading: the name and its place in the rows ("1/4") on one line; the rule; the
     // columns' heads on a line of their own.
-    let mut y = FRAME + GAP_Y / 2.0;
+    let mut y = frame + half_gap;
     line(y);
     let title = crate::pause::fit_text(|t| width(Which::Title, t), &spec.title, x1 - x0 - GAP - position_w);
     piece(title, Which::Title, x0, centred(&fonts.title, y), Ink::Hud);
     piece(spec.position.clone(), Which::Head, x1 - position_w, centred(&fonts.head, y), Ink::Hud);
-    y += LINE + GAP_Y / 2.0;
+    y += line_h + half_gap;
     let rule = y;
-    bars.push(Bar { rect: Rect::new(PAD_X, rule, w - PAD_X, rule + RULE), ink: Ink::Dim });
-    y += RULE + GAP_Y / 2.0;
+    bars.push(Bar { rect: Rect::new(pad_x, rule, w - pad_x, rule + rule_h), ink: Ink::Dim });
+    y += rule_h + half_gap;
     // The columns right-aligned at their ends, the last at the rows' right.
     let mut col_end = Vec::new();
     let mut end = x1;
@@ -500,26 +514,29 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
         for ((h, _), e) in cols.iter().zip(&col_end) {
             piece((*h).to_string(), Which::Head, e - width(Which::Head, h), centred(&fonts.head, y), Ink::Hud);
         }
-        y += LINE;
+        y += line_h;
     }
-    y += GAP_Y;
+    y += gap_y;
     // More rows above or below: a short bar in the room before or after them.
-    let more = |y: f32| Bar { rect: Rect::new(w / 2.0 - 16.0, y - 1.5, w / 2.0 + 16.0, y + 1.5), ink: Ink::Dim };
+    let more = |y: f32| {
+        let (x, t) = (on_pixel(w / 2.0 - 16.0), on_pixel(y - 1.5));
+        Bar { rect: Rect::new(x, t, x + snap(32.0), t + snap(3.0)), ink: Ink::Dim }
+    };
     if spec.more_up {
         bars.push(more(y - GAP_Y / 2.0));
     }
     let name_end = if count_w > 0.0 { count_end - count_w - GAP } else { count_end };
     for (i, r) in spec.rows.iter().enumerate() {
-        let band = Rect::new(PAD_X, y, w - PAD_X, y + ROW_H);
+        let band = Rect::new(pad_x, y, w - pad_x, y + row_h);
         bands.push(band);
         line(y);
         if r.selected {
             bars.push(Bar { rect: band, ink: Ink::Fill });
             let edge = |rect: Rect| Bar { rect, ink: Ink::Row(true) };
-            bars.push(edge(Rect::new(band.min.x, band.min.y, band.max.x, band.min.y + RULE)));
-            bars.push(edge(Rect::new(band.min.x, band.max.y - RULE, band.max.x, band.max.y)));
-            bars.push(edge(Rect::new(band.min.x, band.min.y, band.min.x + RULE, band.max.y)));
-            bars.push(edge(Rect::new(band.max.x - RULE, band.min.y, band.max.x, band.max.y)));
+            bars.push(edge(Rect::new(band.min.x, band.min.y, band.max.x, band.min.y + rule_h)));
+            bars.push(edge(Rect::new(band.min.x, band.max.y - rule_h, band.max.x, band.max.y)));
+            bars.push(edge(Rect::new(band.min.x, band.min.y, band.min.x + rule_h, band.max.y)));
+            bars.push(edge(Rect::new(band.max.x - rule_h, band.min.y, band.max.x, band.max.y)));
         }
         let ink = Ink::Row(r.selected);
         let name = crate::pause::fit_text(|t| width(Which::Small, t), &label(r), name_end - x0);
@@ -534,29 +551,29 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
             let tw = width(Which::Small, &t);
             piece(t, Which::Small, e - tw, centred(&fonts.small, y), ink);
         }
-        y += ROW_H + ROW_GAP;
+        y += row_h + row_gap;
     }
     if spec.rows.is_empty() {
-        bands.push(Rect::new(PAD_X, y, w - PAD_X, y + ROW_H));
+        bands.push(Rect::new(pad_x, y, w - pad_x, y + row_h));
         line(y);
         piece(EMPTY.into(), Which::Small, x0, centred(&fonts.small, y), Ink::Dim);
-        y += ROW_H + ROW_GAP;
+        y += row_h + row_gap;
     }
-    y += GAP_Y - ROW_GAP;
+    y += gap_y - row_gap;
     if spec.more_down {
         bars.push(more(y - GAP_Y / 2.0));
     }
-    let box_h = y + FRAME;
+    let box_h = y + frame;
     // The frame: the backing, top and bottom lines with ticks down and up at their ends.
-    let mut frame = vec![
+    let mut frame_bars = vec![
         Bar { rect: Rect::new(0.0, 0.0, w, box_h), ink: Ink::Backing },
-        Bar { rect: Rect::new(0.0, 0.0, w, FRAME), ink: Ink::Hud },
-        Bar { rect: Rect::new(0.0, box_h - FRAME, w, box_h), ink: Ink::Hud },
+        Bar { rect: Rect::new(0.0, 0.0, w, frame), ink: Ink::Hud },
+        Bar { rect: Rect::new(0.0, box_h - frame, w, box_h), ink: Ink::Hud },
     ];
-    for (x, y0) in [(0.0, 0.0), (w - FRAME, 0.0), (0.0, box_h - TICK), (w - FRAME, box_h - TICK)] {
-        frame.push(Bar { rect: Rect::new(x, y0, x + FRAME, y0 + TICK), ink: Ink::Hud });
+    for (x, y0) in [(0.0, 0.0), (w - frame, 0.0), (0.0, box_h - tick), (w - frame, box_h - tick)] {
+        frame_bars.push(Bar { rect: Rect::new(x, y0, x + frame, y0 + tick), ink: Ink::Hud });
     }
-    frame.extend(bars);
+    frame_bars.extend(bars);
     // The keys under the box, centred on it; the box at least as wide as they are with the
     // words' room before them on both sides [the owner's third look].
     let top = box_h + PROMPT_GAP;
@@ -564,10 +581,10 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
     let mut x = (w - prompts_w) / 2.0;
     for (i, p) in spec.prompts.iter().enumerate() {
         let ink = if i == 0 || (i == 1 && spec.prompts.len() == 3) { Ink::Row(true) } else { Ink::Hud };
-        piece(p.clone(), Which::Entry, x, centred(&fonts.entry, top), ink);
-        x += width(Which::Entry, p) + PROMPT_SPACE;
+        piece(p.clone(), Which::Small, x, centred(&fonts.small, top), ink);
+        x += width(Which::Small, p) + PROMPT_SPACE;
     }
-    Laid { size: Vec2::new(w, top + LINE), box_h, pieces, bars: frame, bands, rule, lines }
+    Laid { size: Vec2::new(w, top + LINE), box_h, pieces, bars: frame_bars, bands, rule, lines }
 }
 
 /// A text's box: from the top of its capitals to a little under its baseline.
@@ -736,10 +753,10 @@ pub(crate) fn follow(
     }
     let cmd = if input.just_pressed(Control::Activate) {
         Some(Command::Stack)
-    } else if input.just_pressed(Control::Rest) && s.kind != Kind::Pocket {
+    } else if input.just_pressed(Control::ReadyItem) && s.kind != Kind::Pocket {
         Some(Command::TakeAll)
     } else {
-        if input.just_pressed(Control::ReadyItem) {
+        if input.just_pressed(Control::Rest) {
             info!("quick loot: the full menu on 0x{:08X} \"{}\"", s.target, s.title);
             FULL.store(true, Ordering::Relaxed);
         }
@@ -821,8 +838,9 @@ struct Kit {
 }
 
 /// What the drawing shows: the words, whether in the sharp font, the room to the HUD's right
-/// edge (whole units), the scale and the backing's darkness (percent).
-type Drawn = Option<(Spec, bool, i32, i32, i32)>;
+/// edge (whole units), the scale and the backing's darkness (percent), the view's height
+/// (physical pixels).
+type Drawn = Option<(Spec, bool, i32, i32, i32, u32)>;
 
 fn colour(ink: Ink, crime: bool) -> Color {
     let row = |full: bool| {
@@ -902,19 +920,23 @@ fn draw(
     let half = window.single().map_or(480.0 * 16.0 / 9.0, |w| 480.0 * w.width() / w.height().max(1.0)) / size.max(0.1);
     let edge = crate::hud::RIGHT_EDGE_IN * crate::interface::ui_scale() / size.max(0.1);
     let max_w = widest(half, edge);
-    let now = Some((spec, sharp, max_w.round() as i32, (size * 100.0).round() as i32, (backing() * 100.0).round() as i32));
+    // A physical pixel in the list's units (`crate::interface::u` is a 960th of the view's
+    // height at the list's scale).
+    let tall = window.single().map_or(0, |w| w.physical_height());
+    let px = if tall > 0 { 960.0 / (tall as f32 * size.max(0.1)) } else { 0.0 };
+    let now = Some((spec, sharp, max_w.round() as i32, (size * 100.0).round() as i32, (backing() * 100.0).round() as i32, tall));
     if *drawn == now {
         return;
     }
-    let (spec, _, _, _, _) = now.clone().expect("set above");
+    let (spec, _, _, _, _, _) = now.clone().expect("set above");
     let raster = kit.raster.as_ref().expect("loaded above");
     let faces = match (sharp, crate::vector_font::metrics(), menu_font.as_deref_mut(), fonts.as_deref_mut()) {
         (true, Some(m), Some(menu), Some(fonts)) => Fonts::sharp(raster, m, menu.handle(fonts)),
         _ => Fonts::raster(raster),
     };
-    let laid = layout(&spec, &faces, max_w);
+    let laid = layout_on(&spec, &faces, max_w, px);
     // Logged when the words or the font change, not as the selection moves.
-    let new_words = drawn.as_ref().is_none_or(|(d, f, _, z, _)| d.title != spec.title || d.columns != spec.columns || *f != sharp || d.rows.len() != spec.rows.len() || *z != (size * 100.0).round() as i32);
+    let new_words = drawn.as_ref().is_none_or(|(d, f, _, z, _, _)| d.title != spec.title || d.columns != spec.columns || *f != sharp || d.rows.len() != spec.rows.len() || *z != (size * 100.0).round() as i32);
     if new_words {
         let bad = overlaps(&laid, &faces);
         let font = if sharp { "Sharp" } else { "Original" };
@@ -952,7 +974,7 @@ impl Plugin for QuickLootPlugin {
                 key: "quick-loot",
                 group,
                 label: "Enabled",
-                note: "On: a container, body or (sneaking) pocket under the crosshair lists its items without pausing. E takes, T takes all, R opens the menu.",
+                note: "On: a container, body or (sneaking) pocket under the crosshair lists its items without pausing. E takes, R takes all, T opens the menu.",
                 switches: "",
                 get: |_| ON.load(Ordering::Relaxed),
                 set: |_, on| ON.store(on, Ordering::Relaxed),
@@ -1042,9 +1064,9 @@ mod tests {
     fn spec(columns: Columns, rows: Vec<RowSpec>) -> Spec {
         let mut prompts = vec!["E) Take".to_string()];
         if !columns.chance {
-            prompts.push("T) Take All".into());
+            prompts.push("R) Take All".into());
         }
-        prompts.push("R) Search".into());
+        prompts.push("T) Search".into());
         Spec { title: "Footlocker".into(), position: "3/8".into(), more_up: true, more_down: true, rows, columns, prompts, crime: false }
     }
 
@@ -1104,7 +1126,7 @@ mod tests {
         for (font, fonts) in both_fonts() {
             let short = Spec { title: "Box".into(), rows: vec![row("Gum", 1, true)], ..spec(Columns::default(), Vec::new()) };
             for (what, l) in [("short", layout(&short, &fonts, room())), ("wide", layout(&spec(ALL, rows()), &fonts, room()))] {
-                let (first, last) = (find(&l, "E) Take"), find(&l, "R) Search"));
+                let (first, last) = (find(&l, "E) Take"), find(&l, "T) Search"));
                 let (before, after) = (first.x, l.size.x - (last.x + last.width));
                 assert!((before - after).abs() < 0.01, "{font}, {what}: {before} before the keys, {after} after");
             }
@@ -1137,6 +1159,29 @@ mod tests {
             assert_eq!((place.which, head.which), (Which::Head, Which::Head), "{font}");
             assert!(l.pieces.iter().filter(|p| p.text == "225").all(|p| p.which == Which::Small), "{font}: the figures in the small face");
             assert_eq!(fonts.head.font.size, fonts.small.font.size, "{font}: heads and figures one size");
+        }
+    }
+
+    /// The owner's fifth look: on screen, every bar's edge on a whole pixel, and the rows'
+    /// box as many pixels from the frame's sides as from its bottom; the keys at the item
+    /// names' size.
+    #[test]
+    fn the_rows_box_has_as_many_pixels_beside_it_as_under_it() {
+        for (font, fonts) in both_fonts() {
+            for px in [960.0 / 1080.0, 960.0 / 1440.0, 960.0 / (2160.0 * 0.7), 960.0 / (1080.0 * 0.5), 960.0 / (1600.0 * 0.9)] {
+                let l = layout_on(&spec(ALL, rows()), &fonts, room(), px);
+                let last = *l.bands.last().expect("rows");
+                let frame = l.bars[1].rect.height();
+                let (side, under) = (last.min.x - frame, l.box_h - frame - last.max.y);
+                assert!((side - under).abs() < 1e-3, "{font}, {px}: {side} beside, {under} under");
+                let on_grid = |v: f32| (v / px - (v / px).round()).abs() < 1e-2;
+                for b in &l.bars {
+                    let r = b.rect;
+                    assert!(on_grid(r.min.x) && on_grid(r.min.y) && on_grid(r.max.x) && on_grid(r.max.y), "{font}, {px}: {r:?} off the pixels");
+                }
+            }
+            let l = layout(&spec(ALL, rows()), &fonts, room());
+            assert!(l.pieces.iter().filter(|p| p.text.contains(") ")).all(|p| p.which == Which::Small), "{font}: the keys in the names' face");
         }
     }
 

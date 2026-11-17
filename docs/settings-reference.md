@@ -1241,9 +1241,9 @@ below cover them all.
 ### `quick-loot`: Enabled
 
 - On the page: On: a container, body or (sneaking) pocket under the crosshair lists its items
-  without pausing. E takes, T takes all, R opens the menu.
+  without pausing. E takes, R takes all, T opens the menu.
 - In full: a Fallout 4 style list beside the crosshair for whatever the crosshair is on that
-  holds items. E takes the selected stack, T takes everything (not from a pocket), R opens the
+  holds items. E takes the selected stack, R takes everything (not from a pocket), T opens the
   usual container or pickpocket menu, the mouse wheel moves the selection; the game goes on
   meanwhile. A pocket lists each item's chance to steal it. Drawn in the HUD colour, at its own
   scale (Scale), in the Menu Font row's font. Off by default (the owner, 2026-11-17).

@@ -4228,18 +4228,18 @@ expect = [
 
 [[scenario]]
 name = "quick-loot-container"
-source = "[design] owner 2026-11-17, docs/design/quick-loot.md: with Quick Loot on, a container under the crosshair lists its items beside it without pausing; the wheel moves the selection, E takes the stack, T takes all; drawn in the game's font (Menu Font Original) with nothing overlapping"
+source = "[design] owner 2026-11-17, docs/design/quick-loot.md: with Quick Loot on, a container under the crosshair lists its items beside it without pausing; the wheel moves the selection, E takes the stack, R takes all; drawn in the game's font (Menu Font Original) with nothing overlapping"
 note = "the Refrigerator of container-e-key; Quick Loot is turned on through the settings page (pause at 10 s, the row flipped at 10.5 s, resumed at 12 s); the player starts looking at it (NEAR); a shot at 13.5 s for a look by eye (quick_loot_original.png)"
 areas = ["activate", "menus", "hud"]
 paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/activate.rs", "engine/nvf-play/src/menu/model.rs", "engine/nvf-play/src/reticle.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12", NVF_PLAY_TEST_SETTINGS = "10.5:quick-loot", NVF_PLAY_TEST_SHOTS = "13.5:quick_loot_original.png", NVF_PLAY_TEST_KEYS = "14:wheel-down,15:e,17:t" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12", NVF_PLAY_TEST_SETTINGS = "10.5:quick-loot", NVF_PLAY_TEST_SHOTS = "13.5:quick_loot_original.png", NVF_PLAY_TEST_KEYS = "14:wheel-down,15:e,17:r" }
 args = ["--cell", "GSHouseInterior03", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 20
 order = [[
   "settings: quick-loot on",
   { re = 'quick loot: shown on 0x00105658 "Refrigerator" \(Container', label = "the list shows on the refrigerator" },
   { re = 'quick loot: drawn "Refrigerator" \(\d+ rows, columns Columns \{ weight: false, value: false, per_weight: false, chance: false \}, font Original, .*\): no overlaps', label = "drawn in the game's font, nothing overlapping" },
-  { re = 'quick loot: (Stack|TakeAll) on 0x00105658 "Refrigerator": (Took|Nothing)', label = "E or T takes from it" },
+  { re = 'quick loot: (Stack|TakeAll) on 0x00105658 "Refrigerator": (Took|Nothing)', label = "E or R takes from it" },
 ]]
 forbid = [
   { re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" },
@@ -4248,11 +4248,11 @@ forbid = [
 
 [[scenario]]
 name = "quick-loot-sharp-columns"
-source = "[design] owner 2026-11-17, docs/design/quick-loot.md: in the sharp font (Menu Font Sharp) with the Weight, Value and Value per Weight columns on, the list is laid out by that font with nothing overlapping; R opens the full container menu"
-note = "as quick-loot-container; the four rows, the Menu Font row and the background opacity (90%) set on the settings page at 10.5-11.9 s; a shot at 13.5 s (quick_loot_sharp.png); R at 15 s opens the container menu, E closes it at 17 s and the list shows again"
+source = "[design] owner 2026-11-17, docs/design/quick-loot.md: in the sharp font (Menu Font Sharp) with the Weight, Value and Value per Weight columns on, the list is laid out by that font with nothing overlapping; T opens the full container menu"
+note = "as quick-loot-container; the four rows, the Menu Font row and the background opacity (90%) set on the settings page at 10.5-11.9 s; a shot at 13.5 s (quick_loot_sharp.png); T at 15 s opens the container menu, E closes it at 17 s and the list shows again"
 areas = ["activate", "menus", "hud"]
 paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/vector_font.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12.5", NVF_PLAY_TEST_SETTINGS = "10.5:quick-loot,10.8:quick-loot-weight,11:quick-loot-value,11.2:quick-loot-value-per-weight,11.6:menu-font=Sharp,11.9:quick-loot-background=0.9", NVF_PLAY_TEST_SHOTS = "13.5:quick_loot_sharp.png", NVF_PLAY_TEST_KEYS = "15:r,17:e" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12.5", NVF_PLAY_TEST_SETTINGS = "10.5:quick-loot,10.8:quick-loot-weight,11:quick-loot-value,11.2:quick-loot-value-per-weight,11.6:menu-font=Sharp,11.9:quick-loot-background=0.9", NVF_PLAY_TEST_SHOTS = "13.5:quick_loot_sharp.png", NVF_PLAY_TEST_KEYS = "15:t,17:e" }
 args = ["--cell", "GSHouseInterior03", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 20
 order = [[
