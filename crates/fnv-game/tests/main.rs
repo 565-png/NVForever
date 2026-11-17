@@ -150,3 +150,5 @@ fn every_test_file_is_built() {
 }
 
 mod em_clearance;
+mod preactivation_events;
+mod preactivation_mutation;
