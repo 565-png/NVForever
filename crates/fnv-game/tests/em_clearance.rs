@@ -215,7 +215,8 @@ fn registered_source_uses_clearance_for_real_named_transform_requests_and_fresh_
             1
         );
         assert!(
-            matches!(g.scene.take_edits().as_slice(),[SceneEdit::Translation{r,node,v}] if *r==FormId::PLAYER_REF && node=="OwnedLeanNode" && *v==[3.0,0.0,0.0])
+            matches!(g.scene.take_edits().as_slice(),[SceneEdit::Translation{r,node,v}] if *r==FormId::PLAYER_REF && node=="OwnedLeanNode" && *v==[3.0,0.0,0.0]),
+            "em-area-transform: registered source must queue the clearance-dependent node request"
         );
         query(&mut g, "", "Player.SetAngle Z 90", Default::default());
         assert_eq!(
@@ -293,6 +294,34 @@ fn unavailable_and_invalid_contexts_do_not_cast_or_mutate_and_unused_calls_are_f
             XVal::Num(22.0)
         );
         assert_eq!(*calls.borrow(), 1);
+        assert_eq!(
+            query(
+                &mut g,
+                "",
+                "SetFunctionValue (GetVATSLeftAreaFree)",
+                RunCtx {
+                    self_ref: Some(FormId(0xE20)),
+                    ..Default::default()
+                }
+            ),
+            XVal::Num(22.0),
+            "an omitted receiver retains its calling actor"
+        );
+        assert_eq!(*calls.borrow(), 2);
+        assert_eq!(
+            query(
+                &mut g,
+                "",
+                "SetFunctionValue (GetVATSLeftAreaFree)",
+                Default::default()
+            ),
+            XVal::Num(0.0)
+        );
+        assert_eq!(
+            *calls.borrow(),
+            2,
+            "a missing caller must not invent a player cast"
+        );
     });
     assert_eq!(
         query(
