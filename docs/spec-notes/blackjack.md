@@ -102,6 +102,27 @@ Laid out in `schemas/fnv/objects.json` [documented: xEdit wbDefinitionsFNV.pas]:
 
 ## 4. Winnings and bans
 
+[documented] GetCasinoWinningsLevel reports the player's casino level to scripts,
+and GetCasinoWinningStage supplies the same value to dialogue conditions
+([GECK](https://geckwiki.com/index.php/GetCasinoWinningsLevel)). The public
+[Stewie changelog](https://www.nexusmods.com/newvegas/mods/66347?tab=logs) documents
+a 9.45 correction so No Casino Bans does not report the banned stage through
+GetCasinoWinningStage. That behavior is distinct from a provider version number.
+
+[hypothesis/design] With NVForever's existing No Casino Bans option enabled, these
+shared readers expose the last reward stage (3) in place of the banned stage (4).
+The original game's exact numeric replacement has not been captured. This is a
+read view: stored levels, earnings, earned chips and rewards remain unchanged.
+Turning the option off exposes the saved stage again, and the existing table
+opening check continues to enforce its earnings and saved-level ban. Stages 0..3
+retain their existing results. The option is applied by the existing settings
+consumer after restore; this change does not add preference persistence.
+
+[hypothesis] Source-compiled reward/ban branches, the actual condition evaluator,
+table opening and save/restore controls are authored for this shared view. Their
+execution is pending. Native calibration, the original mod's callback execution
+and complete Casino Rewards Fix compatibility remain separate open checks.
+
 [documented] `SetCasinoWinningsLevel casino level` sets a casino's winnings
 level, with an integer parameter in 0..4. Source:
 [GECK](https://geckwiki.com/index.php?title=SetCasinoWinningsLevel).
