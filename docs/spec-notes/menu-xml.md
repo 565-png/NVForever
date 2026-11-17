@@ -799,12 +799,25 @@ no ordinary trait changed. Unrelated expression values written from outside
 retain their existing lifetime policy. Count lookup takes constant time and
 does not allocate.
 
-[hypothesis] Independently authored CPU controls cover repeated includes and a
+[design] Independently authored CPU controls cover repeated includes and a
 UIO-injected registration trait through the real load/update consumer, empty
 children, nested children, template instantiation, removal, slot reuse and menu
 reload, plus explicit zero/nonzero overrides and retained neighboring values.
 These controls do not establish original-game parity or complete UIO/VUI
-compatibility. Canonical CPU and rendered installed-menu validation are pending.
+compatibility.
+
+[design: CPU validation record, 2026-11-17] Normal locked release Cargo builds
+of `fnv-ui` produced the baseline and candidate library-test executables. The
+same three fixtures failed at their intended numeric assertions with the
+accepted implementation and passed with this fallback. All 116 unchanged
+baseline controls passed; all 119 candidate controls passed, with none ignored.
+Candidate package-wide strict Clippy passed. Both compile controllers retained
+a failure from their unchanged descendant-shutdown deadline despite Cargo
+exiting zero. The emitted images were subsequently verified and executed in
+fresh contained jobs, with exact source/index/mtime seals and unchanged image
+hashes. These results qualify this package's CPU behavior, not whole-workspace
+or engine checks, native parity, or rendered installed-menu acceptance; those
+remain pending.
 
 ## 7. How mods change menus
 
