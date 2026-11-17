@@ -383,8 +383,10 @@ fn leaving_water_into_an_interior_restores_current_lighting_and_preference() {
     };
     a.world_mut().resource_mut::<SkyState>().interior = Some(light);
     a.world_mut().resource_mut::<Streamer>().interior = Some(0x999);
-    let mut tweaks = nvf_play::tweaks::TweakSettings::default();
-    tweaks.no_interior_fog = true;
+    let tweaks = nvf_play::tweaks::TweakSettings {
+        no_interior_fog: true,
+        ..Default::default()
+    };
     a.insert_resource(tweaks);
     let rgb = light.fog_color.map(srgb_to_linear);
     let expected = DistanceFog {
