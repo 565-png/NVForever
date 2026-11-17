@@ -114,8 +114,8 @@ mod tests {
 
     #[test]
     fn prepare_frame_uses_admitted_menu_time_once_when_runtime_ticks_are_skipped() {
-        let forms = Box::leak(Box::new(crate::outfits::tests::actor_forms(vec![])));
-        let refs = Box::leak(Box::default());
+        let forms: &'static fnv_sim::FormStore = Box::leak(Box::new(crate::outfits::tests::actor_forms(vec![])));
+        let refs: &'static fnv_sim::RefTable = Box::leak(Box::default());
         let mut game = crate::outfits::tests::game(fnv_sim::World::new(forms, refs, Default::default()));
         game.cfg.frame_seconds = 0.125;
         game.menu = Some(fnv_game::game::menus::INVENTORY);
@@ -149,5 +149,20 @@ mod tests {
         }
         app.update();
         assert_eq!(app.world().resource::<PlayerSequences>().first_menu_dt, 0.0, "loading keeps the device clock held");
+        // A replacement runtime starts a fresh cumulative clock. The renderer's
+        // old cursor must not turn the reversal into a frame or replay past time.
+        for _ in 0..2 {
+            let mut replacement = crate::outfits::tests::game(fnv_sim::World::new(forms, refs, Default::default()));
+            replacement.cfg.frame_seconds = 0.125;
+            replacement.menu = Some(fnv_game::game::menus::INVENTORY);
+            app.world_mut().resource_mut::<ClockGame>().0 = replacement;
+            app.update();
+            assert_eq!(app.world().resource::<PlayerSequences>().first_menu_dt, 0.0, "a reset/reversed clock establishes a fresh origin");
+            app.world_mut().resource_mut::<ClockGame>().0.tick();
+            app.update();
+            assert_eq!(app.world().resource::<PlayerSequences>().first_menu_dt, 0.125, "the replacement runtime resumes with only its admitted frame");
+            app.update();
+            assert_eq!(app.world().resource::<PlayerSequences>().first_menu_dt, 0.0, "a current frame is never replayed");
+        }
     }
 }
