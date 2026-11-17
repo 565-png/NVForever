@@ -101,9 +101,11 @@ for actors with Auto-calc stats [documented:
 [SetClass](https://geckwiki.com/index.php?title=SetClass), catalogue entry]. Recalculation
 remains open: class/level-dependent attributes and skills must be measured before a
 numeric policy can be implemented. `DuplicateNPCStats` likewise requires class, level,
-and recalculated stats, with Auto-calc stats on the destination [documented:
+and recalculated stats, with Auto-calc stats on the documentation's "target actor"
+[documented:
 [DuplicateNPCStats](https://geckwiki.com/index.php?title=DuplicateNPCStats), catalogue entry].
-It has no implementation; copying a class alone would not satisfy that contract.
+It has no implementation; the target's identity and recalculation inputs need a probe.
+Copying a class alone would not satisfy that contract.
 
 NVForever's existing SetClass policy is retained: the calling reference's base receives
 the class override, ahead of its Traits template; references sharing that base see the

@@ -20,7 +20,7 @@ Pending experiments (all outcomes remain unknown):
   at the same level; snapshot both a destination and another ref of its base before,
   after, after save/load, and after restarting. Include a Traits template and placed
   leveled NPC. Establish class-sharing and recalculated SPECIAL/skills/Health.
-* DuplicateNPCStats: destination Auto-calc stats off/on, distinct source/destination
+* DuplicateNPCStats: source/destination Auto-calc stats off/on independently, distinct
   classes and levels; snapshot both refs and a sibling of the destination base. Compare
   after the command, settling, save/load and restart. Include damaged/modified AVs to
   determine whether current values or recalculated base values are copied.

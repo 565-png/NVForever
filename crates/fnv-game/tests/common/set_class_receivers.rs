@@ -120,6 +120,7 @@ fn explicit_empty_and_invalid_receivers_do_not_change_implicit_self() {
         "r.SetClass ClassB",
         "let n := 0.5\nn.SetClass ClassB",
         "let n := -1\nn.SetClass ClassB",
+        "let n := 4294967296\nn.SetClass ClassB",
         "let r := 3735928559\nr.SetClass ClassB",
         "MiscRef.SetClass ClassB",
         "TestMisc.SetClass ClassB",
