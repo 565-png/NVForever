@@ -296,3 +296,12 @@ source-to-physical-consumer controls and one internal queue/restore control rema
 UNRUN. Native behavior and original B42 Quickthrow3.1b initialization, input, bones,
 animation, throw/inventory/detonation and full lifecycle acceptance remain open.
 Contract: [Projectile launch/session traits](spec-notes/projectile-launch-session-traits.md).
+
+
+Live image-space cinematic edits: a bounded renderer bridge applies session-assigned
+traits37–50 to selected nonanimatable screen/lens modifiers without changing the
+immutable record cache or core getter/setter policy. Three authored compiled-source
+through real grade controls cover updates, removal/re-entry, lens/animated isolation
+and checked restore; all are unrun. Native animated-edit semantics, initial getter
+alpha units and installed Radiation Visuals/UnderwaterFX acceptance remain open
+([image modifiers](spec-notes/image-modifiers.md)).
