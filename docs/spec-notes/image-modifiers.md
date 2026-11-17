@@ -479,3 +479,33 @@ adapters), give a factor per value (`ScreenModifiers::hdr_ratio`):
 
 Log lines: `eye adaptation: … modifiers +1.00 EV` when a Target LUM change starts and
 ends; `eye adaptation: speed S EV/s (Eye Adapt Speed E)` when the speed changes.
+
+
+## Live nonanimated cinematic trait edits
+
+[documented: GECK wiki SetImageSpaceModTrait,
+https://geckwiki.com/index.php/SetImageSpaceModTrait] Traits 37–44 edit the
+saturation, contrast, contrast-average-luminance and brightness multiply/add
+pairs; 45–46 edit blur and double vision; 47–50 edit tint RGBA. [documented:
+GECK wiki ImageSpace Modifiers,
+https://geckwiki.com/index.php?title=ImageSpace_Modifiers] The tint controls use
+0–255 channels and opacity. The renderer uses normalized channels.
+
+[design, mapped] For a nonanimatable modifier actually selected for the screen
+or lens, evaluate its ordinary record and then apply the current session's
+assigned values for these traits. Normalize assigned tint channels by 255.
+Leave every unassigned component, other effect, sound, duration and track alone.
+Read only bounded fields of active modifiers; do not clone the record cache,
+mutate the load order or scan unrelated forms each frame. Nonfinite values which
+cannot be represented as finite renderer floats are left off the visual override;
+the existing core setter/getter state and admission policy are unchanged.
+
+[hypothesis] This maps the installed radiation controller's edit/apply/update/
+remove cycle onto the existing grade consumer. Native first-key versus whole-track
+editing for animatable records and initial getter alpha units remain open; this
+bounded bridge leaves animated evaluation unchanged. Existing session-only trait
+lifetime is preserved, and removal must restore the current base/other effects
+rather than replay a cached grade. Authored fixtures must exercise the compiled
+setter through actual ImageSpaceGrade output, updates after the immutable cache
+is warm, removal, re-entry, lens isolation, missing runtime and fresh restore.
+No native, GPU or full installed-mod acceptance follows from CPU controls.
