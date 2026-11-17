@@ -84,7 +84,10 @@ pub struct SequenceInfo {
 pub struct KnvseState {
     /// When the game first knew each actor's animations (game seconds).
     pub clock_start: HashMap<FormId, f64>,
-    /// SetGlobalAnimTime: (actor, first person) -> (the value, the game time it was set).
+    /// Menu seconds owned by the player's first-person device animations (pipboy.md §2).
+    pub(crate) first_person_menu_seconds: f64,
+    pub(crate) first_person_menu_start: Option<f64>,
+    /// SetGlobalAnimTime: (actor, first person) -> (the value, that view's clock at the set).
     pub global: HashMap<(FormId, bool), (f64, f64)>,
     /// SetAnimCurrentTime's offsets and SetAnimWeight's weights, by (actor, path).
     pub offsets: HashMap<(FormId, String), f64>,
@@ -104,6 +107,19 @@ pub struct KnvseState {
 }
 
 impl Game<'_> {
+    /// The device animates while its menu holds the world. Other actors/views keep
+    /// game time; neither loading nor unrelated menus adds time here (pipboy.md §2).
+    pub(crate) fn advance_first_person_menu_clock(&mut self) {
+        let dt = self.cfg.frame_seconds;
+        if !self.loading && self.in_menu() && self.menu_open(crate::game::menus::PIPBOY) && dt.is_finite() && dt > 0.0 {
+            self.knvse.first_person_menu_seconds += dt;
+        }
+    }
+
+    pub(crate) fn script_sequence_now(&self, actor: FormId, first: bool) -> f64 {
+        self.time + if actor == FormId::PLAYER_REF && first { self.knvse.first_person_menu_seconds } else { 0.0 }
+    }
+
     /// The engine tells what a sequence file's controller sequence holds (its name,
     /// accumulation root, frequency, key times, cycle and text keys), for
     /// GetAnimationAttributes.
@@ -146,12 +162,16 @@ impl Game<'_> {
     /// frame counted [hypothesis: the clock starts with the actor's 3D; observed:
     /// knvse-anim, Ceil of it reads 1 a few frames after placing an actor].
     fn anim_clock(&mut self, a: FormId, first: bool) -> f64 {
+        let now = self.script_sequence_now(a, first);
         if let Some(&(v, at)) = self.knvse.global.get(&(a, first)) {
-            return v + (self.time - at);
+            return v + (now - at);
         }
-        let now = self.time;
-        let start = *self.knvse.clock_start.entry(a).or_insert(now);
-        now - start + self.cfg.frame_seconds
+        let start = *self.knvse.clock_start.entry(a).or_insert(self.time);
+        let menu = if a == FormId::PLAYER_REF {
+            let began = *self.knvse.first_person_menu_start.get_or_insert(self.knvse.first_person_menu_seconds);
+            if first { self.knvse.first_person_menu_seconds - began } else { 0.0 }
+        } else { 0.0 };
+        self.time - start + menu + self.cfg.frame_seconds
     }
 
     /// The text keys of a sequence: the actor's own, else every actor's, else the
@@ -264,7 +284,8 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // `time [firstPerson]` [documented: SetGlobalAnimTime].
         "setglobalanimtime" => {
             let first = num(args, 1, 0.0) != 0.0;
-            g.knvse.global.insert((a, first), (num(args, 0, 0.0), g.time));
+            let now = g.script_sequence_now(a, first);
+            g.knvse.global.insert((a, first), (num(args, 0, 0.0), now));
             zero
         }
         // The sequence's offset plus the actor's clock [documented: GetAnimCurrentTime,

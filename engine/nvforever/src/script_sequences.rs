@@ -26,6 +26,8 @@ pub(crate) struct Sample {
 pub(crate) struct PlayerSequences {
     pub first: Vec<Sample>,
     pub third: Vec<Sample>,
+    /// The device-menu frame, also when the virtual world clock is stopped.
+    pub first_menu_dt: f32,
 }
 
 pub(crate) fn prepare(
@@ -37,9 +39,13 @@ pub(crate) fn prepare(
 ) {
     samples.first.clear();
     samples.third.clear();
+    samples.first_menu_dt = 0.0;
     let Some(script) = script.as_deref_mut() else { return; };
     let Some(runtime) = script.rt.as_mut() else { return; };
     let g = &mut runtime.game;
+    if !g.loading && g.in_menu() && g.menu_open(fnv_game::game::menus::PIPBOY) {
+        samples.first_menu_dt = g.cfg.frame_seconds as f32;
+    }
     let requests: Vec<_> = g.anim_paths.sequences.iter()
         .filter(|((actor, _, _), _)| *actor == FormId::PLAYER_REF)
         .map(|(_, request)| request.clone()).collect();

@@ -140,6 +140,17 @@ pub fn settle_inv(y: f32) -> f32 {
 }
 
 impl Layer {
+    fn advance_fade(&mut self, dt: f32) {
+        if self.leaving {
+            let down = if self.fade_out <= 0.0 { 1.0 } else { dt / self.fade_out };
+            self.ease = (self.ease - down).max(0.0);
+        } else {
+            let up = if self.fade_in <= 0.0 { f32::INFINITY } else { dt / self.fade_in };
+            self.ease = (self.ease + up).min(1.0);
+            self.weight = if self.target > self.weight { (self.weight + up).min(self.target) } else { (self.weight - dt / DEFAULT_FADE).max(self.target) };
+        }
+    }
+
     /// The fade as the blend takes it: straight, or ([`Self::smooth`]) through [`settle`]:
     /// coming in it follows the curve; going out it follows the curve's mirror, so two
     /// layers of a priority crossing over the same time share the bones by the curve
@@ -656,14 +667,7 @@ impl Animator {
                 let next = l.time + dt * l.rate * l.clip.frequency;
                 self.wrapped |= (next / len).floor() != (l.time / len).floor();
             }
-            if l.leaving {
-                let down = if l.fade_out <= 0.0 { 1.0 } else { dt / l.fade_out };
-                l.ease = (l.ease - down).max(0.0);
-            } else {
-                let up = if l.fade_in <= 0.0 { f32::INFINITY } else { dt / l.fade_in };
-                l.ease = (l.ease + up).min(1.0);
-                l.weight = if l.target > l.weight { (l.weight + up).min(l.target) } else { (l.weight - dt / DEFAULT_FADE).max(l.target) };
-            }
+            l.advance_fade(dt);
             match l.mode {
                 Mode::Synced => {
                     let w = l.weight * l.ease;
@@ -679,6 +683,17 @@ impl Animator {
             self.wrapped |= next >= 1.0;
             self.phase = next.rem_euclid(1.0);
         }
+    }
+
+    /// Advance only the selected layers' blends, without moving clip time or the
+    /// locomotion phase. A menu can animate a first-person script layer while the
+    /// rest of the actor stays on the held world clock (pipboy.md §2).
+    pub fn advance_fades(&mut self, dt: f32, select: impl Fn(&Layer) -> bool) {
+        if !dt.is_finite() || dt <= 0.0 { return; }
+        for layer in &mut self.layers {
+            if select(layer) { layer.advance_fade(dt); }
+        }
+        self.layers.retain(|layer| layer.ease > 0.0 || !layer.leaving);
     }
 
     /// Blend the layers into [`Self::locals`].
