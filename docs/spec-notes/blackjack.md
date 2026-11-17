@@ -119,9 +119,15 @@ retain their existing results. The option is applied by the existing settings
 consumer after restore; this change does not add preference persistence.
 
 [hypothesis] Source-compiled reward/ban branches, the actual condition evaluator,
-table opening and save/restore controls are authored for this shared view. Their
-execution is pending. Native calibration, the original mod's callback execution
-and complete Casino Rewards Fix compatibility remain separate open checks.
+table opening and save/restore controls exercise this shared view. Public source
+`c8221af1`, executed as merge `aeefed23` with the same tree, passed all seven
+selected controls exactly once. Hosted core tests passed 3,460 with five ignored;
+engine tests passed 3,409 with three ignored. Both strict Clippy checks and all
+seven required checks passed. The identical-fixture baseline `026ed`, which
+already includes the same setter, remains UNRUN; no paired outcome is inferred.
+This later documentation-only successor changes no executable/fixture bytes and
+has no additional runtime result. Native calibration, original startup/callback
+execution and complete Casino Rewards Fix compatibility remain separate open checks.
 
 [documented] `SetCasinoWinningsLevel casino level` sets a casino's winnings
 level, with an integer parameter in 0..4. Source:
