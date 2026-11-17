@@ -17,6 +17,15 @@ use fnv_world::cell_of;
 use fnv_world::sky::{srgb_to_linear, Water};
 use std::collections::HashMap;
 
+/// Apply the water override to the same camera transform the renderer extracts.
+pub struct UnderwaterFogPlugin;
+
+impl Plugin for UnderwaterFogPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(PostUpdate, underwater_fog.after(bevy::transform::TransformSystems::Propagate));
+    }
+}
+
 /// Water types read so far, by FormID.
 #[derive(Default)]
 pub struct WaterTypes(HashMap<u32, Option<Water>>);
@@ -85,7 +94,7 @@ pub fn underwater_fog(
     world: Res<WorldData>,
     streamer: Res<Streamer>,
     mut dw: ResMut<DistantWater>,
-    mut sky: ResMut<SkyState>,
+    sky: Res<SkyState>,
     ambient: Res<GlobalAmbientLight>,
     sun: Query<&DirectionalLight, With<Sun>>,
     mut cam: Query<(&GlobalTransform, &mut DistanceFog, Option<&Exposure>), crate::fly::WorldCamera>,
@@ -94,6 +103,8 @@ pub fn underwater_fog(
     mut types: Local<WaterTypes>,
     mut placed_types: Local<HashMap<u32, Option<u32>>>,
     mut was_under: Local<bool>,
+    screen: Option<Res<crate::imagespace::ScreenModifiers>>,
+    tweaks: Option<Res<nvf_play::tweaks::TweakSettings>>,
 ) {
     let Ok((gt, mut fog, exposure)) = cam.single_mut() else { return };
     let under = water_above(&world, &streamer, &mut dw, phys.as_deref(), sim.as_deref(), &mut placed_types, bevy_to_game(gt.translation()));
@@ -104,7 +115,8 @@ pub fn underwater_fog(
         if std::mem::take(&mut *was_under) {
             // Back above the surface: the weather's fog again.
             info!("underwater: the camera is out of the water, the cell's fog again");
-            sky.refresh();
+            let emissive = screen.as_deref().map_or(1.0, |s| s.hdr_ratio(fnv_world::imagespace::HDR_EMISSIVE_MULT));
+            crate::sky::apply_cell_fog(&sky, &mut fog, emissive, tweaks.as_ref().is_some_and(|t| t.no_interior_fog));
         }
         return;
     };

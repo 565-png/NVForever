@@ -307,3 +307,11 @@ controls drive attached start-enabled quest sources through that startup method
 and a registered load-event recipient. Live title-screen
 execution, native timing and original Helmet Overlay/Titans acceptance remain
 unqualified. Contract: [Title-start MenuMode](spec-notes/script-language.md#title-start-menumode-group-4).
+
+
+Water coverage and camera fog lifecycle: authored source controls for exact loaded-cell
+identity/radius invalidation and current-camera enter/exit restoration are unrun.
+The plane producer retains unaffected meshes/materials; exit uses current weather or
+interior fog, after transform propagation and before reflection fog copying. This is
+bounded renderer work, not installed UnderwaterFX/Radiation Visuals acceptance or a
+claim that every reported flicker/cyan tint is resolved ([world](spec-notes/world.md)).
