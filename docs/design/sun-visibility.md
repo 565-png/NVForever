@@ -36,7 +36,9 @@ Axes are Bevy's world axes (y up), units game units. In the shader
   `NvfSunVisibility`: cloud uv transform, plane height, strength, horizon fade; terrain uv
   transform, fade band, texel size, side; feature mask, debug mode), 40 (cloud texture,
   filterable), 41 (terrain map, declared unfilterable and read with `textureLoad` only; a
-  one-texel stand-in that casts nothing until a map is uploaded) and 42 (a linear, repeating
+  one-texel stand-in that casts nothing until a map is uploaded, and while it stands in the
+  written uniform's terrain bit is cleared, `usable_uniform`, so T = 1 and Vsolid = C
+  before any load) and 42 (a linear, repeating
   sampler, for 40) (`engine/vendor/bevy_pbr/src/render/mesh_view_bindings.rs`,
   `NvfSunVisibilityBindings`; engine/vendor/README.md).
 - Shader defs: `NVF_SUN_VISIBILITY` while the plumbing is on for the view,

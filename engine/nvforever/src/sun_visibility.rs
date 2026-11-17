@@ -479,9 +479,10 @@ struct GpuParts {
 pub const TERRAIN_FORMAT: TextureFormat = TextureFormat::Rgba32Float;
 
 /// The terrain binding's stand-in while no map is uploaded: one texel of [`TERRAIN_FORMAT`]
-/// that casts nothing (S = -1e30, the producer's `NO_SHADOW`), so a frame whose uniform
-/// already says "published" but whose texture is not uploaded yet reads T = 1 (bevy's white
-/// fallback would read S = 1 and shade every receiver below y = 1).
+/// that casts nothing (S = -1e30, the producer's `NO_SHADOW`; bevy's white fallback would
+/// read S = 1 and shade every receiver below y = 1). Whenever it is bound in place of a
+/// requested map, [`usable_uniform`] clears the uniform's terrain bit, so the shader returns
+/// T = 1 before any load; the texel only matters if something reads it anyway.
 fn terrain_fallback(device: &RenderDevice, queue: &RenderQueue) -> TextureView {
     let texel = [crate::terrain_shadows::NO_SHADOW, 0.0, 0.0, 0.0];
     let bytes: Vec<u8> = texel.iter().flat_map(|v| v.to_le_bytes()).collect();
@@ -580,11 +581,29 @@ fn extract_sun_visibility(
     }
 }
 
+/// The uniform as written for a frame: the packed one, with the terrain bit cleared when the
+/// map it names is not an uploaded GPU image this frame (review of f8d532cca, finding 5).
+/// The packed uniform advertises the map's side (512); with the one-texel stand-in bound
+/// instead, the shader would clamp its loads to texel 511 of a 1 × 1 texture, whose result
+/// is not defined to be the stand-in's texel. Cleared, T = 1 before any load and Vsolid = C
+/// (no end-band blend without a usable map), as with nothing published.
+pub fn usable_uniform(packed: SunVisibilityUniform, terrain_uploaded: bool) -> SunVisibilityUniform {
+    let mut u = packed;
+    if !terrain_uploaded {
+        u.mode.x &= !MASK_TERRAIN;
+    }
+    u
+}
+
 /// Write the uniform when it changed and point the views at this frame's textures (a
 /// texture not uploaded yet: the white fallback for the cloud, which lets the light
-/// through, and [`terrain_fallback`] for the terrain, which casts nothing). The texture
-/// views are compared every frame, so a new GPU texture of the same image (or the
-/// producer's other target) is bound from the frame it is prepared on.
+/// through, and [`terrain_fallback`] for the terrain, which casts nothing, with the
+/// uniform's terrain bit cleared, [`usable_uniform`]). The texture views are compared every
+/// frame, so the producer's other target, or a new texture of the same image, is bound from
+/// the frame it is prepared on. A view kept from one version to the next (Bevy's `GpuImage`
+/// preparation writes a new version of the same size and usage into the existing texture
+/// and keeps its view; engine/vendor bevy_render `texture/gpu_image.rs`) needs nothing
+/// rebuilt: the bind group holds the view, and the view reads the texture's new contents.
 fn prepare_sun_visibility(
     mut gpu: ResMut<SunVisibilityGpu>,
     mut bound: Query<&mut NvfSunVisibilityBindings>,
@@ -597,14 +616,16 @@ fn prepare_sun_visibility(
     }
     let gpu = &mut *gpu;
     let Some(parts) = gpu.parts.as_mut() else { return };
-    if parts.written != Some(gpu.uniform) {
-        parts.buffer.set(gpu.uniform);
-        parts.buffer.write_buffer(&device, &queue);
-        parts.written = Some(gpu.uniform);
-    }
     let uploaded = |id: Option<AssetId<Image>>| id.and_then(|id| images.get(id)).map(|g| &g.texture_view);
+    let terrain_map = uploaded(gpu.terrain);
+    let uniform = usable_uniform(gpu.uniform, terrain_map.is_some());
+    if parts.written != Some(uniform) {
+        parts.buffer.set(uniform);
+        parts.buffer.write_buffer(&device, &queue);
+        parts.written = Some(uniform);
+    }
     let cloud = uploaded(gpu.cloud).unwrap_or(&fallback.d2.texture_view);
-    let terrain = uploaded(gpu.terrain).unwrap_or(&parts.terrain_fallback);
+    let terrain = terrain_map.unwrap_or(&parts.terrain_fallback);
     for mut b in &mut bound {
         if b.cloud_texture.id() != cloud.id() {
             b.cloud_texture = cloud.clone();
@@ -1500,5 +1521,33 @@ mod tests {
         assert_eq!(map.u.mode.x & MASK_TERRAIN, MASK_TERRAIN);
         assert_eq!(map.u.terrain.z, TEXEL);
         assert!(!SunVisibility::default().terrain_on());
+    }
+
+    /// Review of f8d532cca, finding 5: a published map whose GPU image is not uploaded this
+    /// frame (the one-texel stand-in bound) must not be read as a 512-texel map. The written
+    /// uniform's terrain bit is cleared: T = 1 before any load and Vsolid = C at every
+    /// distance (no end-band blend without a usable map); the cloud's part is untouched.
+    #[test]
+    fn terrain_bit_needs_an_uploaded_map() {
+        let (uv_scale, uv_offset) = crate::terrain_shadows::TerrainShadows::uv_transform(Vec2::ZERO, TEXEL, 512);
+        let terrain = TerrainVisibility { image: Handle::default(), uv_scale, uv_offset, fade_band: Vec2::new(6_400.0, 8_000.0), texel: TEXEL, side: 512 };
+        let cloud = checker_cloud(Handle::default());
+        let packed = SunVisibilityUniform::pack(&SunVisibility { terrain_enabled: true, terrain: Some(terrain), cloud_enabled: true, cloud: Some(cloud), ..default() });
+        assert_eq!(packed.mode.x, MASK_TERRAIN | MASK_CLOUD);
+        // Uploaded: as packed.
+        assert_eq!(usable_uniform(packed, true), packed);
+        // Not uploaded: the terrain bit alone goes.
+        let u = usable_uniform(packed, false);
+        assert_eq!(u.mode.x, MASK_CLOUD);
+        assert_eq!((u.cloud_uv, u.cloud, u.mode.y), (packed.cloud_uv, packed.cloud, packed.mode.y));
+        let never = |c: IVec2| -> Vec4 { panic!("a load without an uploaded map: {c}") };
+        let light = bevy_axes(toward_game(0.3, 1.0));
+        assert_eq!(terrain_visibility(&u, never, Vec3::new(100.0 * TEXEL, 0.0, -100.0 * TEXEL), light), 1.0);
+        for z in [-100.0, -6_400.0, -7_200.0, -8_000.0, -50_000.0] {
+            assert_eq!(solid_visibility(&u, 0.0, 1.0, z), 0.0, "view z {z}: C kept");
+        }
+        // Nothing published at all: nothing to clear.
+        let neutral = SunVisibilityUniform::pack(&SunVisibility { terrain_enabled: true, ..default() });
+        assert_eq!(usable_uniform(neutral, false), neutral);
     }
 }

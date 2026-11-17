@@ -234,7 +234,11 @@ fills `SunVisibility::terrain` (the uniform and the texture). Switched on with n
 published (indoors, no heightfield yet, the light under the horizon fade, the first map still
 computing) the uniform's terrain bit is clear: T = 1 and Vsolid = C before any read, and
 binding 41 holds a one-texel stand-in that casts nothing (S = −1e30; Bevy's white fallback
-would read S = 1 and shade every receiver below y = 1). So doors, the sun setting and new
+would read S = 1 and shade every receiver below y = 1). A map published but not uploaded
+yet is treated alike: `prepare_sun_visibility` binds the stand-in and clears the written
+uniform's terrain bit (`usable_uniform`), so the shader never reads the stand-in as a
+512-texel map and the end band does not blend towards T without a usable map (test
+`terrain_bit_needs_an_uploaded_map`; review of f8d532cca, finding 5). So doors, the sun setting and new
 maps never rebuild pipelines; only the switch does (test `terrain_bindings_follow_the_switch`,
 smoke `terrain-shadows`).
 
