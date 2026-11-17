@@ -2044,6 +2044,9 @@ fn keep_by(h: &mut Hands, feet: [f32; 3], owner: [f32; 3]) {
     }
 }
 
+/// How long a `talk` step waits while a script holds the player's movement, seconds.
+const TALK_HELD_SECS: f64 = 30.0;
+
 /// How far from a locked door its owner may be for the walk to wait for it, game units.
 const OWNER_NEAR: f32 = 6000.0;
 /// How long a walk waits at a locked door for its owner to open it, seconds.
@@ -2791,6 +2794,19 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                     info!("pilot: step {}: {actor} is already talking to the player", p.i);
                     p.part = 2;
                 }
+            }
+            // A script holds the player's movement outside a conversation: the player stands
+            // and waits (up to TALK_HELD_SECS) for the scene to give it back or the actor to
+            // speak first. Moira's check-up (SCPT 0x0A02D2C0) holds the controls for 8 s and
+            // then comes to say 0x0A0309E4, whose result ends the check-up; talked to at once,
+            // that line ended it before her timer gave the controls back, and they never came
+            // back (Wasteland Survival Guide, 21 soft locks [observed]).
+            if p.part == 0 && h.locks.movement && p.now - p.step_from < TALK_HELD_SECS && h.game(|g| g.dialogue.is_none()) == Some(true) {
+                if !matches!(p.phase, Phase::Wait { .. }) {
+                    info!("pilot: step {}: a script holds the player's movement: waits before talking to {actor}", p.i);
+                }
+                p.phase = Phase::Wait { until: p.now + 0.5 };
+                return None;
             }
             if p.part == 0 {
                 match approach(p, h, actor, "talk to") {
