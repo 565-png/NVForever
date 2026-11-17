@@ -135,6 +135,7 @@ pub mod nvse_jg_nif;
 pub mod nvse_sup4;
 pub mod image_files;
 pub mod tweaks;
+pub mod stewie_stat_profile;
 pub mod xls;
 pub mod nvse_dialogue;
 pub mod nvse_vheyes;

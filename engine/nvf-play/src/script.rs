@@ -644,13 +644,16 @@ fn inventory_sources(data: &GameData, sim: &SimState, game: &Game<'_>) -> std::c
 }
 
 impl Runtime {
-    fn new(data: &'static GameData, sim: &mut SimState, new_game: bool, packages: bool) -> Runtime {
+    fn new(data: &'static GameData, sim: &mut SimState, new_game: bool, packages: bool, profile: Option<crate::tweaks::stewie_profile::StartupProfile<'_>>) -> Runtime {
         // Message boxes are menus until the player closes them (the default,
         // `GameConfig::modal_message_boxes`). With actors living by their packages, the
         // packages' scripts and idles run from the first frame (the residents ask for the
         // same interval when they start).
         let cfg = GameConfig { frame_seconds: 1.0 / 60.0, package_interval: packages.then_some(PACKAGE_INTERVAL), ..GameConfig::default() };
-        let game = Game::new(data, World::new(sim.forms, sim.refs, sim.world.config()), cfg);
+        let mut game = Game::new(data, World::new(sim.forms, sim.refs, sim.world.config()), cfg);
+        if let Some((settings, state, file)) = profile {
+            crate::tweaks::stewie_profile::prepare(&mut game, settings, state, file);
+        }
         // The simulation's world is the one played (`with_world`): its placed actors carry
         // their template's items too (template flag "Inventory"), each picked at the
         // level it reads leveled lists at, as `Game::new` picks them (not level 1).
@@ -1899,7 +1902,7 @@ pub(crate) fn start_world_aids(
 
 /// The run's furniture, terminal and door messages, a refused load and the save's engine part
 /// still to put back (`crate::save::PendingEngine`).
-type UsesAndLoads<'w> = (MessageWriter<'w, crate::furniture::UseFurniture>, MessageWriter<'w, crate::terminal::OpenTerminal>, Option<ResMut<'w, crate::doors::Doors>>, MessageWriter<'w, crate::save::LoadRefused>, Option<Res<'w, crate::save::PendingEngine>>);
+type UsesAndLoads<'w> = (MessageWriter<'w, crate::furniture::UseFurniture>, MessageWriter<'w, crate::terminal::OpenTerminal>, Option<ResMut<'w, crate::doors::Doors>>, MessageWriter<'w, crate::save::LoadRefused>, Option<Res<'w, crate::save::PendingEngine>>, (Option<ResMut<'w, crate::tweaks::TweakSettings>>, Option<ResMut<'w, crate::tweaks::stewie_profile::ProfileState>>, Option<Res<'w, crate::settings::SettingsFile>>));
 
 /// [`run_scripts`]'s loading screen, keys, menu files, the pause menu's page and the
 /// count of MenuMode frames under its Mods page (`crate::tiles::mods`), and the main menu
@@ -1944,7 +1947,7 @@ pub(crate) fn run_scripts(
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
-    (mut sit, mut terminals, mut doors, mut refused, pending_engine): UsesAndLoads,
+    (mut sit, mut terminals, mut doors, mut refused, pending_engine, (mut tweak_settings, mut stat_profile, settings_file)): UsesAndLoads,
     paused: Res<crate::pause::Paused>,
     (mut screen, bindings, tiles, page, mut mods_ticks, menu_to_open): ScreenAndMenus,
 ) {
@@ -1968,7 +1971,9 @@ pub(crate) fn run_scripts(
             }
             Some(Ok((data, secs))) => {
                 st.loader = None;
-                let mut rt = Runtime::new(data, &mut sim, st.new_game, play.0.packages);
+                let profile = tweak_settings.as_deref_mut().zip(stat_profile.as_deref_mut())
+                    .map(|(settings, state)| (settings, state, settings_file.as_deref()));
+                let mut rt = Runtime::new(data, &mut sim, st.new_game, play.0.packages, profile);
                 // A save loaded later keeps the game's configuration (`Runtime::restore_save`).
                 rt.game.cfg.answer_ok_boxes = st.no_messages;
                 rt.start = st.start.clone();
@@ -1985,6 +1990,9 @@ pub(crate) fn run_scripts(
                         Ok(changed_refs) => {
                             info!("load: restored {}: {} changed references, {} quests, {} script instances", path.display(), changed_refs.len(), rt.game.quests.len(), rt.game.instances.len());
                             restored = true;
+                            if let Some(settings) = tweak_settings.as_deref() {
+                                crate::tweaks::stewie_profile::handoff(&mut rt.game, settings);
+                            }
                             // SUP's GetSaveName and GetLoadedSaveSize read the last save
                             // loaded (`fnv_game::nvse_sup4`).
                             let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -2856,3 +2864,6 @@ mod runtime_start_tests {
         assert!(!runtime_waits(false, false), "the menu is open, paused, or was never asked for");
     }
 }
+
+#[cfg(test)]
+mod stewie_profile_tests;
