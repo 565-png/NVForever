@@ -1,4 +1,7 @@
 //! Owned search controls over the ordinary menu and simulation consumers.
+#[path = "search_repair_tests.rs"]
+mod repair_tests;
+
 use super::*;
 use fnv_sim::inventory::Extra;
 
