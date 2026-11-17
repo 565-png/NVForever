@@ -229,6 +229,12 @@ const CHECKER_CELL_TEXELS: u32 = 8;
 pub const CHECKER_CELL: f32 = 2_000.0;
 pub const CHECKER_PLANE: f32 = 20_000.0;
 
+/// Whether `NVF_PLAY_DEBUG_SUN_VISIBILITY_TEST`'s value asks for the test producer (only
+/// `checker` does): asked here and by cloud_shadows.rs, so the two cannot disagree.
+pub fn test_producer_wanted(value: Option<&str>) -> bool {
+    value.is_some_and(|v| v.trim().eq_ignore_ascii_case("checker"))
+}
+
 /// A transmittance checkerboard: cells of [`CHECKER_CELL_TEXELS`] texels, clear (255) and
 /// opaque (0) in turn.
 pub fn checker_image() -> Image {
@@ -274,7 +280,7 @@ fn debug_aids(mut vis: ResMut<SunVisibility>, mut images: ResMut<Assets<Image>>)
         }
     }
     if let Ok(value) = std::env::var("NVF_PLAY_DEBUG_SUN_VISIBILITY_TEST") {
-        if value.trim().eq_ignore_ascii_case("checker") {
+        if test_producer_wanted(Some(&value)) {
             vis.cloud = Some(checker_cloud(images.add(checker_image())));
             info!("sun visibility: test producer: checkerboard clouds, cells {CHECKER_CELL:.0} units, plane {CHECKER_PLANE:.0} units up, strength 1");
         } else if !value.trim().is_empty() {

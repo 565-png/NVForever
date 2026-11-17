@@ -1804,7 +1804,7 @@ forbid = [
 
 [[scenario]]
 name = "cloud-shadows"
-source = "[design, #2670] docs/design/sun-visibility.md, engine/nvforever/src/cloud_shadows.rs and sun_visibility.rs: the Cloud shadows row (off by default) switched on while the game runs at Goodsprings noon under a pinned cloudy weather turns the sun visibility's cloud variant on once, the producer composes the weather's cloud layers and publishes them, with the patched lighting, the water highlight and the first-person arms' shade light compiling, without a rendering or pipeline error. Whether the ground darkens where it should is checked in pictures by hand"
+source = "[design, #2670] docs/design/sun-visibility.md, engine/nvforever/src/cloud_shadows.rs and sun_visibility.rs: the Cloud shadows row (off by default) switched on while the game runs at Goodsprings noon under a pinned cloudy weather turns the sun visibility's cloud variant on once, the producer composes the weather's cloud layers and publishes them, with the patched lighting of what this view draws compiling, without a rendering or pipeline error (the water highlight and the first-person arms' shade light only as far as this view draws them). Whether the ground darkens where it should is checked in pictures by hand"
 areas = ["renderer", "graphics", "settings"]
 paths = [
   "engine/nvforever/src/cloud_shadows.rs", "engine/nvforever/src/sun_visibility.rs", "engine/nvforever/src/sun_visibility.wesl",

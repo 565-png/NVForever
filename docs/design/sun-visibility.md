@@ -7,8 +7,9 @@ water highlight and the first-person arms (C2, §7); the relative transmittance 
 contributor's play-test of 2026-11-17. Terrain shadows (T0-T2) fill the
 terrain slot later. Runs so far: main session run 2026-11-17, fork-notes (the checkerboard
 reached terrain, objects, trees and distant hills at Goodsprings 12:00; no shader or layout
-errors; an interior run clean); C2 is not run yet. What is not yet shown is in §6, what is
-left to calibrate in §8.
+errors; an interior run clean; with C2 and the relative rule, Goodsprings 12:00 under a clear
+and an overcast weather, the logs free of rendering errors). What is not yet shown is in §6,
+what is left to calibrate in §8.
 
 Like everything in [graphics-enhanced.md](graphics-enhanced.md), this is an engineering
 choice, not a fact about the original game.
@@ -212,14 +213,18 @@ The reference moves with the map. With one layer, or all at one speed, the image
 recomposed for the scroll (it moves by `uv_offset`), so `K_ref` stays put. Layers at other
 speeds shift against the scrolling's reference layer, which changes the product's histogram
 along a period of `1 / |speed difference|` seconds (NVWastelandClear's 52 against 65: 1,969 s),
-a quarter texel per composition; a percentile of such a map moves little per step
-[hypothesis]. During a weather fade it moves with the weights, at most a 64th of the fade per
-composition. Each composition divides by a reference moved `REFERENCE_SMOOTHING` (a quarter)
-of the way from the previous one towards its map's own, and the map is composed again at the
-rate cap until the two are within half an 8-bit step; a discontinuity (a worldspace or a
+a new composition being due after a quarter texel; a percentile of such a map moves little
+per step [hypothesis]. During a weather fade it moves with the weights; a 64th of the fade
+makes a new composition due, and the rate cap, decoding and the task's own time can make the
+step between two compositions larger. A composition whose own reference is lower than the
+previous one takes its own at once (never a reference above the map's own: uniform cover
+that follows a clearer map would otherwise be dimmed evenly until the smoothing caught up);
+a rising one is moved `REFERENCE_SMOOTHING` (a quarter) of the way from the previous one
+towards the map's own, and the map is composed again at the rate cap until the two are
+within half an 8-bit step; a discontinuity (a worldspace or a
 weather set replaced) starts it from the next map's own (`cloud_reference_smooths_and_resets`).
-That no "breathing" of the whole pattern is seen is a hypothesis: nothing has been run with
-the rule yet.
+That no "breathing" of the whole pattern is seen is a hypothesis: the rule has been run
+standing still under two pinned weathers, not through a weather change.
 
 ## 8. Open for calibration
 

@@ -223,9 +223,11 @@ pub fn publish_cloud_shadows(published: Res<CloudShadowPublished>, mut sink: Res
 }
 
 /// Whether sun_visibility.rs's test producer owns the cloud slot
-/// (`NVF_PLAY_DEBUG_SUN_VISIBILITY_TEST`): the weather's clouds then stay out of it.
+/// (`NVF_PLAY_DEBUG_SUN_VISIBILITY_TEST=checker`, [`crate::sun_visibility::test_producer_wanted`]):
+/// the weather's clouds then stay out of it. Any other value starts no test producer and
+/// leaves the slot to the weather's clouds.
 fn test_producer_absent() -> bool {
-    std::env::var_os("NVF_PLAY_DEBUG_SUN_VISIBILITY_TEST").is_none()
+    !crate::sun_visibility::test_producer_wanted(std::env::var("NVF_PLAY_DEBUG_SUN_VISIBILITY_TEST").ok().as_deref())
 }
 
 pub struct CloudShadowsPlugin;
@@ -560,12 +562,15 @@ pub struct Composition {
 }
 
 /// Compose `layers` relative to the `pct` percentile of their product (absolute when
-/// `None`), the reference smoothed from `prev` (the last composition's, [`smoothed_reference`]).
+/// `None`), the reference smoothed from `prev` (the last composition's, [`smoothed_reference`])
+/// and never above this map's own: a falling reference is taken at once, so cover that has
+/// become uniform (a weather fading in) casts nothing in its first composition, and only a
+/// rising one is smoothed.
 pub fn compose_relative(layers: &[ComposeLayer], pct: Option<f32>, prev: Option<f32>) -> Composition {
     let Some(pct) = pct else { return Composition { texels: compose(layers), reference: None } };
     let t = compose_transmission(layers);
     let raw = percentile(&t, pct);
-    let used = smoothed_reference(prev, raw);
+    let used = smoothed_reference(prev, raw).min(raw);
     Composition { texels: relative(&t, used), reference: Some(Reference { raw, used }) }
 }
 
@@ -1124,6 +1129,13 @@ mod tests {
                 assert!(relative_of(&two).texels.iter().all(|&t| t == 255), "two layers, alpha {alpha} weight {weight}");
             }
         }
+        // Uniform cover after a clearer map (a weather fading in): the earlier, higher
+        // reference must not dim it.
+        let grey = [ComposeLayer { alpha: constant(153), weight: 1.0, shift: [0.0; 2] }];
+        let after_clear = compose_relative(&grey, Some(REFERENCE_PERCENTILE), Some(0.8));
+        assert!(after_clear.texels.iter().all(|&t| t == 255), "a higher earlier reference dims uniform cover");
+        let r = after_clear.reference.expect("relative");
+        assert_eq!(r.used, r.raw);
         // The absolute rule (the debug override `off`) still dims it.
         let dense = [ComposeLayer { alpha: constant(200), weight: 1.0, shift: [0.0; 2] }];
         assert!(compose_relative(&dense, None, None).texels.iter().all(|&t| t == 55));
