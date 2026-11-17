@@ -96,6 +96,10 @@ impl Game<'_> {
     }
 }
 
+/// Existing camera-room maximum, reused by named source queries [design].
+/// Native range/measurement policy remains unverified (vats-script-clearance.md).
+pub const AREA_REACH: f32 = 1024.0;
+
 /// The VATS area condition functions, by condition index [documented: xEdit
 /// wbDefinitionsFNV.pas wbCTDAFunctions 518–521 GetVATSRightAreaFree, …LeftAreaFree,
 /// …BackAreaFree, …FrontAreaFree and 525–528 GetVATSRightTargetVisible, …Left…, …Back…,

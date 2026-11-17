@@ -1,0 +1,56 @@
+# Named ordinary-play lateral clearance queries
+
+[documented] The GECK function index lists `GetVATSLeftAreaFree` and
+`GetVATSRightAreaFree` among its VATS/condition functions:
+[function index](https://geckwiki.com/index.php/Function_Page#VATS_Functions).
+The index supplies no origin, shape, filtering or timing contract. A name listing
+is not evidence of a script opcode or native argument encoding.
+
+[observed: original installed mod data] Enhanced Movement 1.43 contains one call
+to each name in its lean controller, with an explicit player receiver and no
+arguments. Those ordinary GameMode results influence the controller's requested
+node transforms. This establishes source demand, not executed native behavior.
+The inspected INI disables leaning; effective saved quest values and installed
+feature execution are unmeasured. No mod setting is changed by this contribution.
+
+## Mapped engine contract
+
+[design] The two named source queries cast sideways from the current qualified
+actor's position/facing through the existing script-tick physics caster, only
+when called. They do not reuse a previous kill-camera measurement, publish a new
+per-frame cache or walk all actors. Omitted receivers keep the existing caller
+context. Explicit invalid source receivers retain the VM refusal before host
+execution; valid nonactors and unavailable physical contexts return zero.
+
+[design] The query frame reuses the current mapped actor-eye height of
+`GetRayCastPos` (64 game units above the feet), with level right/left axes from the
+receiver's heading. Reach is the existing camera-room limit, 1024 game units.
+The ray uses the existing kill-camera static-world filtering: terrain and static
+collision, excluding actors, dynamic bodies and the same ignored collision layers.
+A hit returns its bounded finite distance; unobstructed space with a live caster
+returns the reach. Missing/malformed pose or caster data returns zero. These
+choices are explicit NVForever mappings, not a claimed native measurement policy.
+
+[design] CameraRoom, area_value and CPTH condition evaluation keep their existing
+meaning and values. Named queries neither overwrite them nor mutate World,
+VATS state, camera settings, input, physics geometry or game time. They keep no
+persistent result across a save, new scene or missing caster.
+
+[hypothesis] Native origin height, view selection, ray-versus-volume measurement,
+range limit, collision exclusions, nonplayer receiver support and timing relative
+to lean/camera animation remain unverified. Query-only original-game captures are
+needed before any native-parity claim. No opcode adapter is inferred.
+
+## Acceptance controls
+
+[validation plan] Independently authored compiled-source controls must prove
+numeric distances, current heading, opposite sides, repeated/no-caster and
+invalid/nonactor handling; retain a distinct existing CameraRoom as a no-clobber
+control. A source callback must use clearance to update the existing named-node
+transform request, preserving its real consumer and exact expected effect.
+Engine controls must use the actual PhysWorld caster against asymmetric authored
+static walls, with terrain/dynamic/actor and scene-removal neighbors, rather than
+only supplying invented hit values. Unused queries must do no casts. All newly
+authored controls are unexecuted at authoring. Original mod initialization,
+configured inputs, animation/rendering, save/load and full installed acceptance
+remain separate requirements.

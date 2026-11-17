@@ -323,3 +323,10 @@ confirmed those bounded case results and the false overall flag. The accepted-ma
 060d union retains the tested fnv-ui Rust/fixtures; whole-graph qualification stays
 bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
+
+
+Named ordinary lateral-clearance source queries: authored current-physics mapping
+for the two Enhanced Movement lean calls, with existing CPTH room behavior retained.
+Three core source/callback and two real-physics caster controls are unexecuted at
+authoring; native measurement and installed lean animation/input acceptance remain
+open ([contract](spec-notes/vats-script-clearance.md)).
