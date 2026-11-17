@@ -1,0 +1,49 @@
+# Native item-menu search
+
+## Documented demand
+
+[documented] The public Stewie Tweaks readme describes Control-F filtering for
+inventory, container and barter menus, alongside other menus. It documents options
+to remove the filter on closing search and clear the input on reopening it
+([documentation](https://www.nexusmods.com/newvegas/mods/66347?tab=docs)). Original
+Pip-Boy UI Tweaks 5.2.4 assets address the inventory search bar's text and layout;
+these are workload observations, not original-game execution evidence. Original
+assets and text are not redistributed.
+
+## Model mapping
+
+[hypothesis/design] Search is transient state owned by one MenuModel. A query is a
+literal substring of the displayed row name after Unicode lowercasing; whitespace
+is literal. Empty text preserves the ordinary model. Input is bounded to 256 Unicode
+scalar values, a resource policy rather than a native limit.
+
+Canonical inventory, category, folder and barter construction runs first. Search
+then removes nonmatching shown rows on both columns, without changing inventories,
+category-filter counts, prices, offered quantities or balance. The current folder
+is retained; the Back navigation row remains reachable. Searching hidden folder
+contents is outside this mapping. Bulk actions retain their existing rule of acting
+on the rows actually listed; exact native bulk/search interactions are unobserved.
+
+The normal refresh keeps its existing selection policy when search is unused.
+Search changes and active searches retain the selected row's existing RowKey and
+offered/folder/live role when possible; otherwise the existing index clamp applies.
+Clamping never sends Select, because selecting an already-selected row activates it.
+Existing row guards still check the final shown row identity.
+
+A different query is refused while a quantity prompt owns a row index. An identical
+query does nothing. Over-bound input is refused before model/world changes. A World
+refresh error follows the existing refresh error model, rather than claiming an
+atomic rollback of a failed inventory read. Model cloning and refresh preserve its
+query, including the existing refresh boundary after repair; a new menu starts clear.
+
+## Authored scope
+
+[hypothesis] Pure model controls exercise real World transfer and barter commands,
+hidden offered items and balance, category changes, selection guards, quantity
+ownership, changed inventory/condition refresh, and query bounds. Compilation and
+runtime are unrun.
+
+Physical Control-F/text input, search-bar admission and publication, foreign UI
+write ownership, repair key routing and original-mod startup remain separate
+integration work. No replacement barter UI, provider-version increase, parser or
+compiler change, native numeric admission or full Stewie/mod support is claimed.
