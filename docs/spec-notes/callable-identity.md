@@ -50,3 +50,11 @@ contracts without changing them. [documented: `Exec::make_lambda`, `lambda_key`]
 An existing maker/instance identity is looked up before requesting a new handle.
 Capacity controls therefore retain cached reuse while refusing a distinct new
 lambda, with no new slot, owner mapping or allocator-cursor change on refusal.
+
+[documented: `fnv_script::unit::read_record`, `fnv_game::source_compile`]
+An owned SCPT fixture places record metadata before its contiguous SCHR script
+unit, so its SCTX belongs to that unit. Source presence alone does not establish
+source execution: the receiver fixture's typed local selects the existing Auto
+route, and its admission checks require a successful source-compile entry.
+The paired source-less units require decoded SCDA with no source-compile entry.
+Both paths retain the same receiver, side-effect and no-mutation oracles.

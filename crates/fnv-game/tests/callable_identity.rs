@@ -84,8 +84,12 @@ fn script_source_mode(
             (v.index, v.name.as_str(), kind)
         })
         .collect();
-    let mut sr = unit(u16::from(quest), &c.bytes, &vars, &[]);
-    sr[0].data[4..8].copy_from_slice(&(c.refs.len() as u32).to_le_bytes());
+    let mut script_unit = unit(u16::from(quest), &c.bytes, &vars, &[]);
+    script_unit[0].data[4..8].copy_from_slice(&(c.refs.len() as u32).to_le_bytes());
+    // EDID is record metadata, not part of the contiguous SCHR script unit.
+    // Keep SCTX with that unit so the real reader can attach its source.
+    let mut sr = vec![sub(b"EDID", z(name))];
+    sr.extend(script_unit);
     for r in &c.refs {
         sr.push(match r {
             fnv_script::unit::RefSlot::Form(f) | fnv_script::unit::RefSlot::Unmapped(f) => {
@@ -94,7 +98,6 @@ fn script_source_mode(
             fnv_script::unit::RefSlot::Local(v) => sub(b"SCRV", v.to_le_bytes().to_vec()),
         });
     }
-    sr.push(sub(b"EDID", z(name)));
     if include_source {
         sr.push(sub(b"SCTX", source.as_bytes().to_vec()));
     }
@@ -198,11 +201,13 @@ fn fixture_source_mode(collisions: bool, include_source: bool) -> Fixture {
         "scn OwnedEcho\nint n\nBegin Function {n}\nSetFunctionValue n + GetSelf\nEnd\n",
         false,
     );
+    // The unused typed local selects the accepted Auto source route when SCTX
+    // exists. The source-less variant keeps the same compiled body and locals.
     let receiver_body = script_source_mode(
         &table,
         RECEIVER_BODY.0,
         "OwnedReceiverBody",
-        "scn OwnedReceiverBody\nBegin Function {}\nlet HitCount := HitCount + 1\nSetFunctionValue GetSelf\nEnd\n",
+        "scn OwnedReceiverBody\nstring_var ownedSourceAdmission\nBegin Function {}\nlet HitCount := HitCount + 1\nSetFunctionValue GetSelf\nEnd\n",
         false,
         include_source,
     );
@@ -210,7 +215,7 @@ fn fixture_source_mode(collisions: bool, include_source: bool) -> Fixture {
         &table,
         RECEIVER_DRIVER.0,
         "OwnedReceiverDriver",
-        "scn OwnedReceiverDriver\nref cb\nref receiver\nint explicit\nfloat result\nBegin Function {cb receiver explicit}\nif explicit\nlet result := receiver.Call cb\nelse\nlet result := Call cb\nendif\nlet HitDamage := 99\nSetFunctionValue result + 0\nEnd\n",
+        "scn OwnedReceiverDriver\nref cb\nref receiver\nint explicit\nfloat result\nstring_var ownedSourceAdmission\nBegin Function {cb receiver explicit}\nif explicit\nlet result := receiver.Call cb\nelse\nlet result := Call cb\nendif\nlet HitDamage := 99\nSetFunctionValue result + 0\nEnd\n",
         false,
         include_source,
     );
@@ -246,7 +251,7 @@ fn fixture_source_mode(collisions: bool, include_source: bool) -> Fixture {
             &table,
             RECEIVER_HIGH.0,
             "OwnedReceiverHigh",
-            "scn OwnedReceiverHigh\nBegin Function {}\nlet HitCount := HitCount + 1\nSetFunctionValue GetSelf\nEnd\n",
+            "scn OwnedReceiverHigh\nstring_var ownedSourceAdmission\nBegin Function {}\nlet HitCount := HitCount + 1\nSetFunctionValue GetSelf\nEnd\n",
             false,
             include_source,
         ),
@@ -654,7 +659,8 @@ fn receiver_admission_stops_null_calls_before_mutation_in_source_and_loaded_byte
                 .unit
                 .source
                 .is_some(),
-            include_source
+            include_source,
+            "receiver driver SCTX admission precedes receiver oracles"
         );
         assert_eq!(
             f.data.script(RECEIVER_BODY).unwrap().unit.source.is_some(),
@@ -662,6 +668,28 @@ fn receiver_admission_stops_null_calls_before_mutation_in_source_and_loaded_byte
         );
         assert!(f.data.script(RECEIVER_DRIVER).unwrap().unit.has_scda);
         assert_eq!(f.data.script(RECEIVER_DRIVER).unwrap().raw, 0);
+        for id in [RECEIVER_DRIVER, RECEIVER_BODY, RECEIVER_HIGH] {
+            let unit = f.data.script(id).unwrap();
+            assert_eq!(unit.unit.source.is_some(), include_source);
+            assert!(unit.unit.has_scda);
+            assert_eq!(unit.raw, 0);
+            let selected = f
+                .data
+                .source_units
+                .iter()
+                .find(|entry| entry.key == unit.key());
+            if include_source {
+                assert!(
+                    selected.is_some_and(|entry| entry.error.is_none()),
+                    "source receiver unit {id:?} must be selected and compiled: {selected:?}"
+                );
+            } else {
+                assert!(
+                    selected.is_none(),
+                    "source-less receiver unit {id:?} must retain loaded bytecode"
+                );
+            }
+        }
         let mut g = game(&f);
         let ctx = RunCtx {
             self_ref: Some(TARGET),
