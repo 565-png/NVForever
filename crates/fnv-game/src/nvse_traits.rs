@@ -20,6 +20,13 @@ pub struct TraitState {
     pub ism: HashMap<(FormId, i64), u32>,
 }
 
+impl TraitState {
+    /// A session override for an active image-space modifier's renderer consumer.
+    pub fn image_modifier_override(&self, form: FormId, trait_id: i64) -> Option<f64> {
+        self.values.get(&(form, IMAD, trait_id)).copied()
+    }
+}
+
 const SOUND: u8 = 0;
 const WEATHER: u8 = 1;
 const COLOR: u8 = 2;

@@ -315,3 +315,12 @@ The plane producer retains unaffected meshes/materials; exit uses current weathe
 interior fog, after transform propagation and before reflection fog copying. This is
 bounded renderer work, not installed UnderwaterFX/Radiation Visuals acceptance or a
 claim that every reported flicker/cyan tint is resolved ([world](spec-notes/world.md)).
+
+
+Live image-space cinematic edits: a bounded renderer bridge applies session-assigned
+traits37–50 to selected nonanimatable screen/lens modifiers without changing the
+immutable record cache or core getter/setter policy. Three authored compiled-source
+through real grade controls cover updates, removal/re-entry, lens/animated isolation
+and checked restore; all are unrun. Native animated-edit semantics, initial getter
+alpha units and installed Radiation Visuals/UnderwaterFX acceptance remain open
+([image modifiers](spec-notes/image-modifiers.md)).
