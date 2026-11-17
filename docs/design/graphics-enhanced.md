@@ -640,9 +640,10 @@ LOD noise are prior art only; no code was taken from any of them.
 
 [design] **A prototype**, an addition of NVForever's own for the enhanced look: not a fact
 about the original game and never used to explain a difference from it. Off by default and
-in no preset (the old `enhanced` row and preset are gone since the menu overhaul; this is
-not part of either); the row "Heat haze (experimental)" (Graphics > Lighting and Effects)
-or `--graphics-only heat-haze` turns it on. Code: `heat_haze.rs`, `heat_haze.wesl`.
+in no preset, `--graphics enhanced` (`Graphics::preset(Preset::Enhanced)`) included (a test
+checks it); only the settings page's `enhanced` row went with the menu overhaul. The row
+"Heat haze (experimental)" (Graphics > Lighting and Effects) or `--graphics-only heat-haze`
+turns it on. Code: `heat_haze.rs`, `heat_haze.wesl`.
 
 - **What.** The shimmer over hot ground in the distance: on a hot, clear day the far ground
   band near the horizon is moved a little, mostly up and down, by a slowly rising pattern
@@ -675,8 +676,12 @@ or `--graphics-only heat-haze` turns it on. Code: `heat_haze.rs`, `heat_haze.wes
   first-person arms, weapon and Pip-Boy are drawn with their depth squeezed into the nearest
   share of the range (nvf_assets `first_person_depth.wesl`): read raw they lie within 1.02
   times the near plane's distance, so the distance mask covers them; near things are nearer than the mask's
-  start. A displaced read whose own depth is nearer than 6,000 units is not taken (the
-  pixel keeps its colour), so near outlines never bleed into the far shimmer.
+  start. A pixel with a near direct neighbour is not moved (the anti-aliased fringe of the
+  weapon or a near post), and a displaced read is not taken when any of the four texels of
+  its bilinear footprint is nearer than 6,000 units (the pixel keeps its colour), so near
+  outlines never bleed into the far shimmer. The exception: blended shapes that are not in
+  the depth prepass (a muzzle flash, particles, glass) over the far band are moved with what
+  lies behind them, by up to the amplitude.
 - **The mask** (per pixel): distance along the view ray from the depth prepass (reverse
   infinite depth: view depth = near / depth): none nearer than 6,000 units, full from
   25,000 (smoothstep); the view ray's elevation: full from 6 degrees below the horizon to
@@ -690,7 +695,10 @@ or `--graphics-only heat-haze` turns it on. Code: `heat_haze.rs`, `heat_haze.wes
   wind's strength along the screen's horizontal (`tree::wind_vector`, which follows
   SetWindDirection), and moved with the world as the camera turns. Time is the game's clock
   (`Time<Virtual>`), so a paused game holds still. One bilinear read of the colour where it
-  moves, the pixel's own colour and two depth reads; no blur.
+  moves and the pixel's own colour; the pixel's depth everywhere, its four neighbours' and
+  the read's four only where the mask is above 0; no blur. When the largest displacement
+  (strength x amplitude x the debug multiplier x the picture's height) would be under 0.05
+  pixels the pass does not run.
 - **What follows the weather** (`heat_haze::sky_heat`, a pure function of the live
   `SkyState` every frame, unit-tested; the weather records hold no temperature):
   strength = sun x weather, held to 0..1, finite.
@@ -700,36 +708,54 @@ or `--graphics-only heat-haze` turns it on. Code: `heat_haze.rs`, `heat_haze.wes
   - Weather (each weather's own share, blended from the one fading out to the one fading in
     with the sky's fade, so a transition never pops; a scripted SetWeather or ForceWeather is
     followed the next frame): none in a weather classified Rainy or Snow or with the Rainy
-    flag; a weather classified Cloudy keeps 0.2, and each cloud layer with a texture past the
-    first takes 0.12 off (up to three), read from what the records give today (the composed
-    cloud cover of #2904 can take its place, `weather_heat`); the weather's own fog share at
-    25,000 units by the curve the fog shader draws (((d - near) / (far - near))^power, the
-    span held to at least 1, a power not above 0 read as 1; `--fog` in its place, linear):
-    full up to 0.3, none from 0.8 (NVWastelandClear's day fog gives about 0.29 there
-    [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17; the curve: our arithmetic]);
-    the wind (WTHR DATA wind speed / 255): full up to 0.25, none from 0.45 (most weathers
-    store 50, the dust storm 127 [observed: the same]).
+    flag; a weather classified Cloudy keeps 0.2 (for mods and the Fallout 3 leftovers: no
+    New Vegas weather is); the brightness of the weather's sunlight colour at the hour (WTHR
+    "sunlight", Rec. 709 luma of its bytes as display values): none up to 0.15, full from 0.6
+    (NVWastelandClear's day sunlight 255, 227, 170 gives 0.90, NVWastelandHazy's 0.95,
+    HVDustStorm's 0, 0, 0 gives 0, so the storm is off by its own data); the weather's own
+    fog share at 25,000 units by the curve the fog shader draws (((d - near) / (far -
+    near))^power, the span held to at least 1, a power not above 0 read as 1; `--fog` in its
+    place, linear): full up to 0.6, none from 0.88; the wind (WTHR DATA wind speed / 255):
+    full up to 0.25, none from 0.45 (most weathers store 50, the dust storm 127).
+  - The records' day fog share at 25,000 units [observed: FalloutNV.esm, fnvtool esm decode,
+    2026-11-17; the curve: our arithmetic]: NVWastelandClear 0.29 (0.35 with its night
+    power), NVHooverDamWeather 0.44, NVWastelandGS 0.46, NVWastelandBorders 0.52,
+    NVWastelandClearEast and NVColoradoRiverWeather 0.58, NVSearchlightWeather2 0.73,
+    NVWastelandHazy 0.89, HVDustStorm (far 0) 1.0: every clear-ish weather keeps its full
+    share, the searchlight weather loses some, the hazy weather and the storm keep none.
+  - **The base game's overcast is not weakened.** NVBlackMountainWeather, which looks
+    overcast, is classified Pleasant like the clear weather, has the same four cloud layers
+    (three of them the transparent placeholder `sky\alpha.dds`, as every New Vegas weather
+    looked at has) and the same sunlight and ambient colours; only its fourth cloud texture
+    and its fog colour differ [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]. So
+    neither the classification nor the layer count can tell it from clear (an earlier
+    version that counted layers cut every base weather to 0.64). Cloud cover has to come
+    from the cloud textures' own alpha: the composed cloud cover of #2904 goes in
+    `weather_heat` once it lands.
   - None indoors. Values outside the base game's ranges (fog far 0 or a million, huge or
     negative near, power 0, wind 255, no cloud textures, values that are not numbers) give
     a strength within 0..1 (tests). With the strength 0 the pass does not run.
   It only adds to the picture the weather's own fog and colours made, and the haze in that
   fog bounds it: the hazier the weather, the less shimmer.
-- **Log.** `heat haze: on, strength <s> (sun <a>, weather <b>)` (or `(indoors)`) when it
-  turns on, and `heat haze: strength <s> (...)` when the strength moves by a tenth or
-  reaches or leaves 0; never per frame. GPU time: the `nvf_heat_haze` span
-  (`--log-frame-times`).
+- **Log.** `heat haze: on, strength <s>, at most <p> px (sun <a>, weather <b>)` (or
+  `(indoors)`; `, pass skipped` after the pixels when they are under 0.05) when it turns on,
+  and `heat haze: strength <s>, ...` when the strength moves by a tenth, reaches or leaves 0
+  or crosses the skip; never per frame. The render side logs once, when the pass first
+  draws: `heat haze: pass drawn (<w>x<h>, multisampled depth yes|no)`. GPU time: the
+  `nvf_heat_haze` span (`--log-frame-times`).
 - **Debug aids** (development tools: they do not make a run unattended):
   `NVF_PLAY_DEBUG_HEAT_HAZE=<multiplier>` scales the amplitude (0 to 10),
   `NVF_PLAY_DEBUG_HEAT_HAZE_VIEW=mask` draws the mask times the strength as a grey picture,
   `NVF_PLAY_DEBUG_HEAT_HAZE_FORCE=1` holds the strength at 1 in any weather; each logs a
   `debug switch` line when it is set.
-- **Smoke.** `heat-haze` (Goodsprings at noon under NVWastelandClear: a strength above 0
-  and the pipeline ready, no shader or rendering error) and `heat-haze-interior` (strength 0
-  indoors).
+- **Smoke.** `heat-haze` (Goodsprings at noon under NVWastelandClear: a strength above 0,
+  the pipeline ready and the pass drawn, no shader or rendering error) and
+  `heat-haze-interior` (strength 0 indoors).
 - **Not done.** Every constant is a choice by reasoning, not yet by eye: the pictures
   (noon at Goodsprings, the highway toward Primm, an aerial view, overcast, the dust storm,
   night, an interior; with MSAA, TAA, FSR and DLSS) decide them. No temperature or ground
-  material is read (no record holds one); the pattern lies on the screen and follows
+  material is read (no record holds one); the base game's overcast keeps the clear
+  weather's strength until #2904; the pattern lies on the screen and follows
   turns, not the world's depth; a mirage (the sky refracted into the ground) is not
   attempted; the cost is not measured.
 

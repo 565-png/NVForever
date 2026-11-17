@@ -76,6 +76,28 @@ fn distance_at(p: vec2<i32>, ray_len: f32) -> f32 {
     return haze.params.z / d * ray_len;
 }
 
+// Whether what pixel `p` shows is nearer than a displaced read may show.
+fn near_at(p: vec2<i32>, ray_len: f32) -> bool {
+    return distance_at(p, ray_len) < haze.far.w;
+}
+
+// Whether any of pixel `p`'s four direct neighbours is near: the anti-aliased fringe of a
+// near outline (the first-person weapon, a near post) is not moved.
+fn near_around(p: vec2<i32>, ray_len: f32) -> bool {
+    return near_at(p + vec2<i32>(1, 0), ray_len) || near_at(p - vec2<i32>(1, 0), ray_len)
+        || near_at(p + vec2<i32>(0, 1), ray_len) || near_at(p - vec2<i32>(0, 1), ray_len);
+}
+
+// Whether any of the four texels a bilinear read at `q` (pixel coordinates, centres at +0.5)
+// takes is near, clamped to the picture.
+fn footprint_near(q: vec2<f32>, size: vec2<f32>, ray_len: f32) -> bool {
+    let last = vec2<i32>(size) - vec2<i32>(1);
+    let t = vec2<i32>(floor(q - vec2<f32>(0.5)));
+    let a = clamp(t, vec2<i32>(0), last);
+    let b = clamp(t + vec2<i32>(1, 1), vec2<i32>(0), last);
+    return near_at(a, ray_len) || near_at(vec2<i32>(b.x, a.y), ray_len) || near_at(vec2<i32>(a.x, b.y), ray_len) || near_at(b, ray_len);
+}
+
 // How much this pixel may shimmer (0..1): by its distance, by its view ray's elevation above
 // the horizon (degrees), and less for the sky itself.
 fn haze_mask(dist: f32, elevation_deg: f32) -> f32 {
@@ -96,7 +118,11 @@ fn heat_haze(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let ray = vec3<f32>(ndc.x / haze.proj.x, ndc.y / haze.proj.y, -1.0);
     let ray_len = length(ray);
     let sin_up = clamp(dot(ray, haze.up.xyz) / ray_len, -1.0, 1.0);
-    let m = haze_mask(distance_at(px, ray_len), degrees(asin(sin_up)));
+    var m = haze_mask(distance_at(px, ray_len), degrees(asin(sin_up)));
+    // The neighbours' depths only where the pixel itself may shimmer.
+    if m > 0.0 && near_around(px, ray_len) {
+        m = 0.0;
+    }
     if haze.params.w > 0.5 {
         return vec4<f32>(vec3<f32>(m * haze.params.x), src.a);
     }
@@ -113,9 +139,9 @@ fn heat_haze(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let n = na * 0.65 + nb * 0.35;
     let amp = haze.params.x * haze.params.y * size.y * m;
     let q = in.position.xy + vec2<f32>(n.x * haze.proj.w, n.y) * amp;
-    // A displaced read that lands on something near is not taken: near things never bleed
-    // into the shimmer around their outline.
-    if distance_at(vec2<i32>(floor(q)), ray_len) < haze.far.w {
+    // A displaced read whose bilinear footprint touches something near is not taken: near
+    // things never bleed into the shimmer around their outline.
+    if footprint_near(q, size, ray_len) {
         return src;
     }
     let moved = textureSampleLevel(picture, picture_sampler, q / size, 0.0);

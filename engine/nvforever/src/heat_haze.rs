@@ -23,18 +23,25 @@
 //!   (reverse infinite depth, distance = near / depth along the view ray), nothing nearer
 //!   than [`FAR_START`], full from [`FAR_FULL`]; the view ray's elevation: full from a few
 //!   degrees below the horizon to just above it, gone [`UP_ZERO_DEG`] above it and
-//!   [`DOWN_ZERO_DEG`] below; the sky itself at [`SKY_SHARE`]. A displaced read whose own
-//!   depth is nearer than [`FAR_START`] is not taken (the pixel keeps its own colour), so near
-//!   things never bleed into the shimmer. The first-person arms and weapon are drawn with
+//!   [`DOWN_ZERO_DEG`] below; the sky itself at [`SKY_SHARE`]. A pixel that is near, or has a
+//!   near direct neighbour, is not moved (the anti-aliased fringe of a near outline), and a
+//!   displaced read is not taken when any texel of its bilinear footprint is nearer than
+//!   [`FAR_START`] (the pixel keeps its own colour), so near things never bleed into the
+//!   shimmer. The first-person arms and weapon are drawn with
 //!   their depth squeezed into the nearest share of the range (nvf_assets
 //!   `first_person_depth.wesl`): read raw they lie within 1.02 times the near plane, so the
 //!   distance mask covers them without undoing the squeeze.
 //! - **The strength** follows the sun and the live weather ([`sky_heat`], pure, from
 //!   [`SkyState`] every frame; the weather records hold no temperature): the sun's elevation
-//!   with an afternoon lag, clear weather strongest, less with cloud cover, the weather's own
-//!   fog at [`FOG_REFERENCE`] and strong wind, none at night, indoors and in rain or snow;
-//!   each weather's share is blended through a transition with the sky's fade, so nothing
-//!   pops. With the strength 0 the pass does not run.
+//!   with an afternoon lag; per weather the brightness of its sunlight colour, its own fog at
+//!   [`FOG_REFERENCE`], strong wind and a Cloudy classification; none at night, indoors and in
+//!   rain or snow. Each weather's share is blended through a transition with the sky's fade,
+//!   so nothing pops. The base game's overcast (NVBlackMountainWeather) is NOT weakened: it is
+//!   classified Pleasant like the clear weather, has the same four cloud layers (three of them
+//!   the transparent placeholder) and the same sunlight and ambient colours; only its fourth
+//!   cloud texture and its fog colour differ [observed: FalloutNV.esm, fnvtool esm decode,
+//!   2026-11-17]. That waits for the composed cloud cover of #2904 ([`weather_heat`]). When
+//!   the largest displacement would be under [`MIN_PEAK_PX`] the pass does not run.
 //! - **Time**: the game's clock (`Time<Virtual>`), so a paused game holds still.
 //!
 //! Debug aids (development tools, not test aids: they do not make a run unattended):
@@ -60,7 +67,7 @@ use bevy::render::render_resource::{
 use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
 use bevy::render::view::{ExtractedView, ViewTarget};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
-use fnv_world::sky::{smoothstep, Climate, Weather};
+use fnv_world::sky::{smoothstep, Climate, ColorType, Weather};
 
 /// The most a pixel is moved at strength 1 and full mask, in pixels of a 1080-line picture;
 /// it scales with the picture's height [engineering choice: easy to overdo, so slight].
@@ -103,19 +110,32 @@ pub const SUN_NOW_FULL_DEG: f32 = 8.0;
 pub const SUN_LOW_DEG: f32 = 10.0;
 pub const SUN_HIGH_DEG: f32 = 50.0;
 pub const SUN_LAG_HOURS: f32 = 1.0;
-/// A weather classified Cloudy keeps this share [engineering choice: overcast, much weaker];
-/// each cloud layer with a texture past the first takes [`CLOUD_LAYER_STEP`] off, up to three.
-/// To be replaced by the composed cloud cover of #2904 once it lands ([`weather_heat`]).
+/// A weather classified Cloudy keeps this share [engineering choice: overcast, much weaker].
+/// No New Vegas weather looked at is classified Cloudy (the overcast NVBlackMountainWeather is
+/// Pleasant) [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]: this is for mods and
+/// the Fallout 3 leftovers. The cloud layer count tells nothing (every New Vegas weather has
+/// four, three of them the transparent `sky\alpha.dds` [observed: the same]), so it is not
+/// read; the composed cloud cover of #2904 goes in [`weather_heat`] once it lands.
 pub const CLOUDY_SHARE: f32 = 0.2;
-pub const CLOUD_LAYER_STEP: f32 = 0.12;
+/// The weather's sunlight colour (WTHR NAM0 "sunlight" at the hour, blended on its bytes),
+/// by its Rec. 709 luma in display values 0..1: none up to [`SUNLIGHT_DARK`], full from
+/// [`SUNLIGHT_BRIGHT`] [engineering choice]. NVWastelandClear's day sunlight (255, 227, 170)
+/// has 0.90, NVWastelandHazy's (253, 244, 225) 0.95, HVDustStorm's (0, 0, 0) 0 [observed:
+/// FalloutNV.esm, fnvtool esm decode, 2026-11-17; the luma: our arithmetic].
+pub const SUNLIGHT_DARK: f32 = 0.15;
+pub const SUNLIGHT_BRIGHT: f32 = 0.6;
 /// The weather's own fog share ((d − near) / (far − near))^power, the curve `fog.rs` draws,
 /// at this distance (game units, where the mask is full) [engineering choice]; up to
-/// [`FOG_CLEAR`] the air counts as clear, at [`FOG_THICK`] the haze hides any shimmer.
-/// NVWastelandClear's day fog (near −10, far 200,000, power 0.6) gives about 0.29 there
-/// [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17; the curve: our arithmetic].
+/// [`FOG_CLEAR`] the air counts as clear, from [`FOG_THICK`] the haze hides any shimmer. The
+/// records' day fog gives there: NVWastelandClear 0.29 (0.35 with its night power),
+/// NVHooverDamWeather 0.44, NVWastelandGS 0.46, NVWastelandBorders 0.52, NVWastelandClearEast
+/// and NVColoradoRiverWeather 0.58, NVSearchlightWeather2 0.73, NVWastelandHazy 0.89,
+/// HVDustStorm (far 0) 1.0 [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17; the
+/// curve: our arithmetic]: so every clear-ish weather keeps its full share, the searchlight
+/// weather loses some, the hazy weather and the storm keep none.
 pub const FOG_REFERENCE: f32 = FAR_FULL;
-pub const FOG_CLEAR: f32 = 0.3;
-pub const FOG_THICK: f32 = 0.8;
+pub const FOG_CLEAR: f32 = 0.6;
+pub const FOG_THICK: f32 = 0.88;
 /// Wind strength (WTHR DATA wind speed / 255) up to which the air is calm enough, and where
 /// it is mixed too well for any shimmer [engineering choice: most weathers store 50 (0.2),
 /// the dust storm 127 (0.5) [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]].
@@ -127,6 +147,22 @@ const RAINY: u8 = 4;
 const SNOW: u8 = 8;
 /// The most `NVF_PLAY_DEBUG_HEAT_HAZE` scales the amplitude by.
 pub const MAX_DEBUG_SCALE: f32 = 10.0;
+/// Below this largest displacement (pixels) the pass does not run: nothing would show
+/// [engineering choice].
+pub const MIN_PEAK_PX: f32 = 0.05;
+
+/// The largest displacement in pixels: strength × the amplitude per picture line (the debug
+/// scale in it) × the picture's height.
+pub fn peak_pixels(strength: f32, amplitude_per_line: f32, height: f32) -> f32 {
+    let p = strength * amplitude_per_line * height;
+    if p.is_finite() { p.max(0.0) } else { 0.0 }
+}
+
+/// Whether the pass draws: the mask view always, the picture only when it would move a pixel
+/// by at least [`MIN_PEAK_PX`].
+pub fn pass_draws(strength: f32, amplitude_per_line: f32, height: f32, mask_view: bool) -> bool {
+    mask_view || peak_pixels(strength, amplitude_per_line, height) >= MIN_PEAK_PX
+}
 
 /// `NVF_PLAY_DEBUG_HEAT_HAZE=<multiplier>`: the amplitude's scale (1 unset or unreadable).
 static AMPLITUDE_SCALE: std::sync::LazyLock<f32> = std::sync::LazyLock::new(|| debug_scale(std::env::var("NVF_PLAY_DEBUG_HEAT_HAZE").ok().as_deref()));
@@ -197,12 +233,17 @@ pub struct WeatherTraits {
     pub classification: u8,
     /// DATA flags' Rainy bit.
     pub rainy: bool,
-    /// Cloud layers that name a texture.
-    pub cloud_layers: u32,
+    /// The sunlight colour's luma in display values 0..1 ([`display_luma`]).
+    pub sunlight: f32,
     /// Fog near, far and power at the hour; `None`: no fog.
     pub fog: Option<(f32, f32, f32)>,
     /// Wind strength 0..1 (DATA wind speed / 255).
     pub wind: f32,
+}
+
+/// Rec. 709 luma of a colour given as 0..255 bytes (display values), 0..1.
+pub fn display_luma(bytes: [f32; 3]) -> f32 {
+    unit((0.2126 * bytes[0] + 0.7152 * bytes[1] + 0.0722 * bytes[2]) / 255.0)
 }
 
 /// `x` when it is a finite number, held to 0..1; 0 otherwise.
@@ -232,25 +273,26 @@ pub fn fog_share(fog: Option<(f32, f32, f32)>, d: f32) -> f32 {
     if t <= 0.0 { 0.0 } else { t.powf(p) }
 }
 
-/// A weather's share (0..1): 0 in rain or snow; less with cloud cover (the Cloudy
-/// classification, more cloud layers), with the weather's own fog at [`FOG_REFERENCE`] and
-/// with strong wind. Cloud cover is read from what the records give today; #2904's composed
-/// cloud cover can take the place of `cloud` here.
+/// A weather's share (0..1): 0 in rain or snow; less with dim sunlight (its sunlight colour),
+/// with its own fog at [`FOG_REFERENCE`], with strong wind and when classified Cloudy.
+/// Cloud cover from the cloud textures themselves is not read: #2904's composed cloud cover
+/// goes here, beside `cloudy`, once it lands; until then the base game's overcast keeps the
+/// clear weather's share (module notes).
 pub fn weather_heat(t: &WeatherTraits) -> f32 {
     if t.rainy || t.classification & (RAINY | SNOW) != 0 {
         return 0.0;
     }
     let cloudy = if t.classification & CLOUDY != 0 { CLOUDY_SHARE } else { 1.0 };
-    let layers = 1.0 - CLOUD_LAYER_STEP * t.cloud_layers.saturating_sub(1).min(3) as f32;
+    let sunlit = if t.sunlight.is_finite() { smoothstep(SUNLIGHT_DARK, SUNLIGHT_BRIGHT, t.sunlight) } else { 0.0 };
     let fog = 1.0 - smoothstep(FOG_CLEAR, FOG_THICK, fog_share(t.fog, FOG_REFERENCE));
     let wind = if t.wind.is_finite() { t.wind.clamp(0.0, 1.0) } else { 1.0 };
     let calm = 1.0 - smoothstep(WIND_CALM, WIND_MIXED, wind);
-    unit(cloudy * layers * fog * calm)
+    unit(cloudy * sunlit * fog * calm)
 }
 
 /// What [`weather_heat`] reads of a weather at `hour`: its fog as the sky draws it
 /// (`Weather::fog_at`, `fog_power_at`; `--fog` in its place, linear, as `SkyState::fog_power`
-/// has it), classification, Rainy flag, cloud layers with a texture and wind.
+/// has it), classification, Rainy flag, sunlight colour at the hour and wind.
 pub fn traits(w: &Weather, climate: &Climate, hour: f32, fog_override: Option<(f32, f32)>) -> WeatherTraits {
     let fog = match fog_override {
         Some((near, far)) => Some((near, far, 1.0)),
@@ -259,7 +301,7 @@ pub fn traits(w: &Weather, climate: &Climate, hour: f32, fog_override: Option<(f
     WeatherTraits {
         classification: w.classification,
         rainy: w.rainy,
-        cloud_layers: w.cloud_textures.iter().filter(|t| t.as_deref().is_some_and(|s| !s.trim().is_empty())).count() as u32,
+        sunlight: display_luma(w.color_bytes(climate, ColorType::Sunlight, hour)),
         fog,
         wind: f32::from(w.wind_speed) / 255.0,
     }
@@ -321,8 +363,9 @@ struct Follow {
     scroll: [f64; 4],
     /// The camera's rotation last frame (turning moves the pattern with the world).
     rotation: Option<Quat>,
-    /// What was last logged: the strength in tenths, whether it was 0, indoors.
-    told: Option<(i32, bool, bool)>,
+    /// What was last logged: the strength in tenths, whether it was 0, indoors, whether the
+    /// pass is skipped.
+    told: Option<(i32, bool, bool, bool)>,
     /// The debug aids were logged.
     aids_told: bool,
 }
@@ -331,8 +374,9 @@ struct Follow {
 /// drifting with the wind, following the camera's turns) and the projection into the camera's
 /// [`HeatHaze`]; a log line when it turns on and when the strength changes by a tenth or
 /// reaches or leaves 0.
-fn follow_weather(sky: Option<Res<SkyState>>, time: Res<Time<Virtual>>, mut cams: Query<(&GlobalTransform, &Projection, &mut HeatHaze), With<FlyCam>>, mut state: Local<Follow>) {
-    let (Some(sky), Ok((gt, proj, mut haze))) = (sky, cams.single_mut()) else {
+#[allow(clippy::type_complexity)]
+fn follow_weather(sky: Option<Res<SkyState>>, time: Res<Time<Virtual>>, mut cams: Query<(&GlobalTransform, &Projection, &Camera, &mut HeatHaze), With<FlyCam>>, mut state: Local<Follow>) {
+    let (Some(sky), Ok((gt, proj, camera, mut haze))) = (sky, cams.single_mut()) else {
         // Off (or no camera): the next time it is on says so again.
         state.told = None;
         state.rotation = None;
@@ -343,10 +387,15 @@ fn follow_weather(sky: Option<Res<SkyState>>, time: Res<Time<Virtual>>, mut cams
     if *FORCE {
         heat.strength = 1.0;
     }
-    let told = ((heat.strength * 10.0).round() as i32, heat.strength <= 0.0, heat.indoors);
+    let amplitude = AMPLITUDE_AT_1080 / 1080.0 * *AMPLITUDE_SCALE;
+    let height = camera.physical_viewport_size().map_or(1080.0, |s| s.y as f32);
+    let peak = peak_pixels(heat.strength, amplitude, height);
+    let skipped = !pass_draws(heat.strength, amplitude, height, false);
+    let told = ((heat.strength * 10.0).round() as i32, heat.strength <= 0.0, heat.indoors, skipped);
+    let skip = if skipped { ", pass skipped" } else { "" };
     match state.told {
-        None => info!("heat haze: on, strength {:.2} ({})", heat.strength, heat.describe()),
-        Some(t) if t != told => info!("heat haze: strength {:.2} ({})", heat.strength, heat.describe()),
+        None => info!("heat haze: on, strength {:.2}, at most {peak:.2} px{skip} ({})", heat.strength, heat.describe()),
+        Some(t) if t != told => info!("heat haze: strength {:.2}, at most {peak:.2} px{skip} ({})", heat.strength, heat.describe()),
         _ => {}
     }
     state.told = Some(told);
@@ -392,7 +441,7 @@ fn follow_weather(sky: Option<Res<SkyState>>, time: Res<Time<Virtual>>, mut cams
     let up = rotation.inverse() * Vec3::Y;
     let s = state.scroll;
     *haze = HeatHaze {
-        params: Vec4::new(heat.strength, AMPLITUDE_AT_1080 / 1080.0 * *AMPLITUDE_SCALE, p.near, if *MASK_VIEW { 1.0 } else { 0.0 }),
+        params: Vec4::new(heat.strength, amplitude, p.near, if *MASK_VIEW { 1.0 } else { 0.0 }),
         proj: Vec4::new(px, py, crate::sky::SKY_DEPTH_FROM, HORIZONTAL_SHARE),
         up: up.extend(0.0),
         far: Vec4::new(FAR_START, FAR_FULL, SKY_SHARE, FAR_START),
@@ -476,16 +525,18 @@ fn prepare(mut commands: Commands, cache: Res<PipelineCache>, mut pipelines: Res
 
 /// The picture read again from slightly displaced places where the mask allows.
 pub(crate) fn heat_pass(
-    view: ViewQuery<(&ViewTarget, &DynamicUniformIndex<HeatHaze>, &HeatHaze, &HazeView, &ViewPrepassTextures)>,
+    view: ViewQuery<(&ViewTarget, &DynamicUniformIndex<HeatHaze>, &HeatHaze, &HazeView, &ViewPrepassTextures, &ExtractedView)>,
     pipelines: Res<HazePipelines>,
     cache: Res<PipelineCache>,
     uniforms: Res<ComponentUniforms<HeatHaze>>,
     device: Res<RenderDevice>,
     mut ctx: RenderContext,
 ) {
-    let (target, index, haze, hv, prepass) = view.into_inner();
-    // Nothing to move (no strength: night, indoors, rain, overcast), unless the mask is drawn.
-    if haze.params.x * haze.params.y <= 0.0 && haze.params.w < 0.5 {
+    let (target, index, haze, hv, prepass, extracted) = view.into_inner();
+    // Nothing that would show (night, indoors, rain, haze, a tiny strength), unless the mask
+    // is drawn.
+    let size = extracted.viewport.zw();
+    if !pass_draws(haze.params.x, haze.params.y, size.y as f32, haze.params.w > 0.5) {
         return;
     }
     if crate::ssao::depth_multisampled(prepass) != Some(hv.multi) || !crate::ssao::format_matches(target, hv.format) {
@@ -514,16 +565,41 @@ pub(crate) fn heat_pass(
     pass.draw(0..3, 0..1);
     drop(pass);
     span.end(ctx.command_encoder());
+    if !DRAWN.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        info!("heat haze: pass drawn ({}x{}, multisampled depth {})", size.x, size.y, if hv.multi { "yes" } else { "no" });
+    }
 }
+
+/// The pass has drawn once in this run (its one-time log line).
+static DRAWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A clear weather of the kind the base game has (synthetic values in its ranges:
-    /// weather-facts, NVWastelandClear's fog and wind), with one cloud layer.
+    /// A clear weather as the base game's records have it (weather-facts: NVWastelandClear's
+    /// classification, day fog, wind and sunlight luma).
     fn clear() -> WeatherTraits {
-        WeatherTraits { classification: 1, rainy: false, cloud_layers: 1, fog: Some((-10.0, 200_000.0, 0.6)), wind: 50.0 / 255.0 }
+        WeatherTraits { classification: 1, rainy: false, sunlight: display_luma([255.0, 227.0, 170.0]), fog: Some((-10.0, 200_000.0, 0.6)), wind: 50.0 / 255.0 }
+    }
+
+    /// A weather record with a sunlight colour at every time of day and four cloud layers,
+    /// three the transparent placeholder (as every New Vegas weather has them: weather-facts).
+    fn record(sunlight: [u8; 3]) -> Weather {
+        let mut colors = vec![vec![[128u8, 128, 128]; 6]; 10];
+        colors[ColorType::Sunlight as usize] = vec![sunlight; 6];
+        Weather {
+            classification: 1,
+            wind_speed: 50,
+            fog: [-10.0, 200_000.0, -10.0, 200_000.0, 0.6, 0.5],
+            colors,
+            cloud_textures: [Some("sky\\alpha.dds".into()), Some("sky\\alpha.dds".into()), Some("sky\\alpha.dds".into()), Some("sky\\upper.dds".into())],
+            ..default()
+        }
+    }
+
+    fn climate() -> Climate {
+        Climate { sunrise: (6.0, 7.0), sunset: (18.0, 19.0), ..default() }
     }
 
     #[test]
@@ -538,13 +614,71 @@ mod tests {
     }
 
     #[test]
-    fn overcast_is_much_weaker() {
-        let overcast = WeatherTraits { classification: CLOUDY, cloud_layers: 4, ..clear() };
-        let w = weather_heat(&overcast);
-        assert!(w <= 0.25 * weather_heat(&clear()), "{w}");
-        assert!(w > 0.0);
-        let cloudy_flag_only = WeatherTraits { classification: CLOUDY, ..clear() };
-        assert!((weather_heat(&cloudy_flag_only) - CLOUDY_SHARE).abs() < 1e-6);
+    fn a_weather_classified_cloudy_is_much_weaker() {
+        // For mods and the Fallout 3 leftovers: no New Vegas weather is classified Cloudy.
+        let cloudy = WeatherTraits { classification: CLOUDY, ..clear() };
+        assert!((weather_heat(&cloudy) - CLOUDY_SHARE).abs() < 1e-6);
+    }
+
+    #[test]
+    fn clear_noon_from_the_records_is_full_strength() {
+        // Four layers, three placeholders: the layer count no longer cuts the clear weather.
+        let w = record([255, 227, 170]);
+        let t = traits(&w, &climate(), 13.0, None);
+        assert!((t.sunlight - 0.897).abs() < 0.005, "{}", t.sunlight);
+        assert_eq!(weather_heat(&t), 1.0);
+        // The base game's overcast is the clear weather in every field read here (its fourth
+        // cloud texture and fog colour aside): the same share until #2904's cloud cover.
+        let mut overcast = record([255, 227, 170]);
+        overcast.cloud_textures[3] = Some("sky\\cloudy.dds".into());
+        assert_eq!(weather_heat(&traits(&overcast, &climate(), 13.0, None)), 1.0);
+    }
+
+    #[test]
+    fn black_sunlight_gives_none_and_a_transition_to_it_falls_steadily() {
+        let dark = traits(&record([0, 0, 0]), &climate(), 13.0, None);
+        assert_eq!(dark.sunlight, 0.0);
+        assert_eq!(weather_heat(&dark), 0.0);
+        assert_eq!(weather_heat(&WeatherTraits { sunlight: 0.0, ..clear() }), 0.0);
+        assert_eq!(weather_heat(&WeatherTraits { sunlight: f32::NAN, ..clear() }), 0.0);
+        let (from, to) = (weather_heat(&clear()), weather_heat(&dark));
+        assert_eq!(from, 1.0);
+        let mut last = f32::INFINITY;
+        for i in 0..=20 {
+            let v = blend(from, to, i as f32 / 20.0);
+            assert!(v <= last + 1e-6);
+            last = v;
+        }
+        // Monotone in the sunlight's brightness itself.
+        let mut last = -1.0;
+        for k in 0..=255u8 {
+            let v = weather_heat(&WeatherTraits { sunlight: display_luma([f32::from(k); 3]), ..clear() });
+            assert!(v >= last - 1e-6);
+            last = v;
+        }
+    }
+
+    #[test]
+    fn the_records_fog_keeps_clear_weathers_full_and_hazy_ones_none() {
+        // Day fog near, far, power of the base game's weathers (weather-facts).
+        for fog in [(-10.0, 200_000.0, 0.6), (-10.0, 200_000.0, 0.5), (-1000.0, 100_000.0, 0.6), (10.0, 120_000.0, 0.5), (-10.0, 75_000.0, 0.6), (-500.0, 100_000.0, 0.4), (-100.0, 75_000.0, 0.5)] {
+            assert_eq!(weather_heat(&WeatherTraits { fog: Some(fog), ..clear() }), 1.0, "{fog:?}");
+        }
+        let searchlight = weather_heat(&WeatherTraits { fog: Some((-4000.0, 50_000.0, 0.5)), ..clear() });
+        assert!(searchlight > 0.0 && searchlight < 1.0, "{searchlight}");
+        assert_eq!(weather_heat(&WeatherTraits { fog: Some((1800.0, 30_000.0, 0.6)), ..clear() }), 0.0, "NVWastelandHazy");
+    }
+
+    #[test]
+    fn the_pass_skips_displacements_too_small_to_see() {
+        let line = AMPLITUDE_AT_1080 / 1080.0;
+        assert!((peak_pixels(1.0, line, 1080.0) - 1.5).abs() < 1e-5);
+        assert!(pass_draws(1.0, line, 720.0, false));
+        assert!(!pass_draws(0.0, line, 1080.0, false));
+        assert!(!pass_draws(0.02, line, 1080.0, false), "0.03 px");
+        assert!(pass_draws(0.0, line, 1080.0, true), "the mask view draws");
+        assert!(!pass_draws(f32::NAN, line, 1080.0, false));
+        assert!(!pass_draws(1.0, 0.0, 1080.0, false), "NVF_PLAY_DEBUG_HEAT_HAZE=0");
     }
 
     #[test]
@@ -562,14 +696,14 @@ mod tests {
         assert_eq!(fog_share(storm.fog, FOG_REFERENCE), 1.0);
         assert_eq!(weather_heat(&storm), 0.0);
         // A dust storm as the records give it: the day range 0..0 unset, the night's
-        // 510..55,000 power 1 in its place (Weather::fog_at), wind 127.
-        let w = Weather { fog: [0.0, 0.0, 510.0, 55_000.0, 1.0, 1.0], wind_speed: 127, classification: 0, ..default() };
-        let climate = Climate { sunrise: (6.0, 7.0), sunset: (18.0, 19.0), ..default() };
-        let t = traits(&w, &climate, 13.0, None);
+        // 510..55,000 power 1 in its place (Weather::fog_at), wind 127, black day sunlight.
+        // Each of its wind and its sunlight alone turns it off.
+        let w = Weather { fog: [0.0, 0.0, 510.0, 55_000.0, 1.0, 1.0], wind_speed: 127, classification: 0, ..record([0, 0, 0]) };
+        let t = traits(&w, &climate(), 13.0, None);
         assert_eq!(t.fog, Some((510.0, 55_000.0, 1.0)));
         assert_eq!(weather_heat(&t), 0.0);
-        // Hazy air (short fog) hides the shimmer too.
-        assert_eq!(weather_heat(&WeatherTraits { fog: Some((1800.0, 30_000.0, 0.6)), ..clear() }), 0.0);
+        assert_eq!(weather_heat(&WeatherTraits { sunlight: clear().sunlight, ..t }), 0.0, "by its wind");
+        assert_eq!(weather_heat(&WeatherTraits { wind: clear().wind, ..t }), 0.0, "by its sunlight");
     }
 
     #[test]
@@ -582,13 +716,13 @@ mod tests {
 
     #[test]
     fn a_weather_without_cloud_textures_or_fog_is_clear() {
-        let w = Weather { classification: 1, wind_speed: 50, ..default() };
-        let t = traits(&w, &Climate::default(), 12.0, None);
-        assert_eq!((t.cloud_layers, t.fog), (0, None));
+        let w = Weather { cloud_textures: [None, None, None, None], fog: [0.0; 6], ..record([255, 227, 170]) };
+        let t = traits(&w, &climate(), 13.0, None);
+        assert_eq!(t.fog, None);
         assert_eq!(weather_heat(&t), 1.0);
-        // Empty names are no layer.
-        let named = Weather { cloud_textures: [Some(String::new()), None, Some("a.dds".into()), Some(" ".into())], ..w };
-        assert_eq!(traits(&named, &Climate::default(), 12.0, None).cloud_layers, 1);
+        // No colours at all read as black sunlight, as the sky would light it.
+        let bare = Weather { colors: Vec::new(), ..w };
+        assert_eq!(weather_heat(&traits(&bare, &climate(), 13.0, None)), 0.0);
     }
 
     #[test]
@@ -618,8 +752,8 @@ mod tests {
                     assert!(s.is_finite() && (0.0..=1.0).contains(&s), "share {s} for {near} {far} {power}");
                     for &wind in &winds {
                         for classification in 0..16u8 {
-                            for cloud_layers in [0, 1, 4, 100] {
-                                let t = WeatherTraits { classification, rainy: false, cloud_layers, fog: Some((near, far, power)), wind };
+                            for sunlight in [0.0, 0.5, 1.0, -1.0, 2.0, f32::NAN] {
+                                let t = WeatherTraits { classification, rainy: false, sunlight, fog: Some((near, far, power)), wind };
                                 let w = weather_heat(&t);
                                 assert!(w.is_finite() && (0.0..=1.0).contains(&w), "{w} for {t:?}");
                             }
@@ -647,23 +781,17 @@ mod tests {
             assert!(v <= last + 1e-6, "fog far {far}: {v} after {last}");
             last = v;
         }
-        let mut last = f32::INFINITY;
-        for cloud_layers in 0..6 {
-            let v = weather_heat(&WeatherTraits { cloud_layers, ..clear() });
-            assert!(v <= last + 1e-6);
-            last = v;
-        }
     }
 
     #[test]
     fn the_live_sky_gives_strength_by_day_and_none_at_night_or_indoors() {
         let mut sky = SkyState::default();
-        sky.climate = Climate { sunrise: (6.0, 7.0), sunset: (18.0, 19.0), ..default() };
-        sky.weather = Weather { classification: 1, wind_speed: 50, fog: [-10.0, 200_000.0, -10.0, 200_000.0, 0.6, 0.5], cloud_textures: [None, None, None, Some("a.dds".into())], ..default() };
+        sky.climate = climate();
+        sky.weather = record([255, 227, 170]);
         sky.fade = 1.0;
         sky.hour = 13.0;
         let day = sky_heat(&sky);
-        assert!(day.strength > 0.9 && !day.indoors, "{day:?}");
+        assert!(day.strength > 0.99 && day.weather == 1.0 && !day.indoors, "{day:?}");
         sky.hour = 23.0;
         assert_eq!(sky_heat(&sky).strength, 0.0, "night");
         sky.hour = 13.0;

@@ -971,9 +971,10 @@ below cover them all.
   the sun and the weather. A prototype. Not in the original.
 - In full: On: beyond about 6,000 units, close to the horizon, the picture is moved a pixel
   or two up and down by a slowly rising pattern that drifts with the wind; as strong as the
-  sun is high (a little stronger in the afternoon) and the weather is clear, calm and free
-  of haze; none at night, indoors or in rain or snow. Near things, the weapon and the HUD
-  stay sharp. Off in both presets; not in the original.
+  sun is high (a little stronger in the afternoon) and the weather's sunlight bright, its
+  air calm and free of haze; none at night, indoors or in rain or snow. The base game's
+  overcast is not told from clear yet. Near things, the weapon and the HUD stay sharp. Off
+  in both presets; not in the original.
 - Command-line switches: `--graphics-only`
 - More: docs/design/graphics-enhanced.md §3.14
 - Registered in `engine/nvforever/src/settings.rs`
