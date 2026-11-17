@@ -1851,9 +1851,9 @@ source = "docs/design/frame-rate-audit.md §12 (#2843; nvforever graphics.rs SHA
 areas = ["renderer", "graphics", "settings"]
 paths = [
   "engine/nvforever/src/graphics.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/shadow_anchor.rs",
-  "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings_layout.rs", "engine/vendor/bevy_pbr/src/render/light.rs",
+  "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings_layout.rs", "crates/nvf-settings-layout/src/lib.rs", "engine/vendor/bevy_pbr/src/render/light.rs",
 ]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:12,17:19", NVF_PLAY_TEST_SETTINGS = "11:shadow-resolution=1,18:shadow-resolution=0" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:12,17:19", NVF_PLAY_TEST_SETTINGS = "11:shadow-resolution=4096,18:shadow-resolution=2048" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
 run_seconds = 23
 order = [[
