@@ -981,7 +981,7 @@ activators, trees and grass, water.
 a separate material type, `ExtendedMaterial<StandardMaterial, NifSurfaceBlend>`, a clone of
 its source shared per source handle and visible publication/configuration; the ordinary
 `NifSurface` interface is
-unchanged (its 128-byte uniform, bindings 50-53), and the blend type binds no more textures
+unchanged (its 144-byte uniform, bindings 50-53), and the blend type binds no more textures
 than the ordinary pipeline it replaces (the atlases take the holes and FaceGen slots, which a
 blend clone never has). A source edited under the same handle (blended cut-outs flipping
 Blend and Mask, scripted NIF edits) rebuilds its clone in the same frame. Ordinary-component
@@ -1308,7 +1308,13 @@ last. Its two timestamps go into command encoders of their own, queued at the tw
 places in the render order, so the span pairs the same with `NVF_PLAY_TEST_PROFILE_ENCODERS=1`
 (whose automatic `enc:<system>` span opens on a render context's own encoder) as without
 it. Retained rectangle transfers are submitted after that camera span and are not included
-in it. The lookup in the meshes' fragments shows in the main opaque pass instead.
+in it. The lookup in the meshes' fragments shows in the main opaque pass instead. While the
+blend is on, the bake's receipts reach beyond the bake: from the first bake view on,
+`install_bake_receipts` wraps Bevy's `DrawMaterial` for every Opaque3d and Transparent3d
+draw, not only the bake's, and `reset_receipts` takes finished bake cameras out of Bevy's
+`SortedCameras` in each frame a bake view is in the render world (Bevy rebuilds that list
+every frame); `uninstall_bake_receipts` puts Bevy's own `DrawMaterial` back when the gate
+closes, and frame costs measured with the blend on include both.
 
 **Limits** [hypothesis where marked]: beyond 4096 units, and in quadrants that keep it, the
 colour cache may soften contact detail, and a footprint turning invalid at a missing corner

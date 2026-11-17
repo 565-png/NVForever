@@ -1175,7 +1175,7 @@ mod tests {
         assert!(shadow.fragment.is_none());
     }
 
-    /// [documented] f4dbc82f8:nif_material.rs (main with #2551's `terrain` row): 50..54,
+    /// [design] The ordinary interface as on main (with #2551's `terrain` row): 50..54,
     /// table 100, data 101, and nine 16-byte rows (144 bytes). No enabled-only resource may
     /// enter this type.
     #[test]
