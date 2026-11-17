@@ -12505,6 +12505,37 @@ expect = [
 forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }, { re = 'ragdoll: actor 00000014 held at rest still moving', label = "the body is never frozen part way up" }]
 
 [[scenario]]
+name = "ragdoll-probe-battle-50"
+source = "#2083 probe (round 1): in the 50-a-side battle most corpses were held at rest still moving instead of settling by themselves, while a lone test drop settles in about 1.2 s; one `ragdoll probe:` line per ragdoll set at rest says what woke it, the hits it took while awake, its moving bones and what it touched (another corpse, a loose object, the ground) as its settle began and when it was held (engine/nvforever/src/ragdoll.rs probe, fnv_phys PhysWorld::ragdoll_contacts)"
+note = "the profile campaign's battle-50 layout (tools/profile/campaign.toml, tools/stress battle.py layout): 50 NCR troopers west and 50 Legion raiders east of the Goodsprings road spot, the god-mode, unseen player 1,800 units south looking north, the stress launch's aids; a findings probe: the checks only show the lines are there, the main session reads them"
+areas = ["ragdoll", "physics"]
+paths = ["engine/nvforever/src/ragdoll.rs", "crates/fnv-phys/src/ragdoll.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_STRESS = "1", NVF_PLAY_TEST_BATTLE = "5;LvlNCRTrooper:50:-69875:4800;LvlLegionRaiderMelee:50:-66875:4800" }
+args = ["--cell", "Goodsprings", "--pos=-68375,3000,9000", "--heading", "0", "--hour", "12", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 120
+expect = [
+  { re = 'stress battle: 2 groups, (?P<n>\d+) fighters', range = [60, 100], label = "the battle is placed" },
+  { re = 'ragdoll probe: actor [0-9A-F]{8} (slept|held still|held calm after settling|held moving at its time limit|held calm in slow motion) \(', min = 10, label = "a probe line for each ragdoll set at rest" },
+  { re = 'ragdoll probe summary: ', label = "the probe's totals at exit" },
+]
+
+[[scenario]]
+name = "ragdoll-probe-block"
+source = "#2083 probe (round 1): corpses falling together with nobody left to shoot them, against Goodsprings' residents falling alone, to tell contacts from hits (engine/nvforever/src/ragdoll.rs probe, fnv_phys PhysWorld::ragdoll_contacts)"
+note = "the battle aid places nine NCR troopers in a 3x3 block 140 units apart on the Goodsprings road spot and one Legion raider 3,000 units north (the aid needs two groups); `killall` at 8 s kills them all at once with the town's residents (essential ones knocked out), so no shooter is left to strike a corpse; the block's corpses fall on and beside each other, the residents' alone. A findings probe: the checks only show the lines are there"
+areas = ["ragdoll", "physics"]
+paths = ["engine/nvforever/src/ragdoll.rs", "crates/fnv-phys/src/ragdoll.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_BATTLE = "5;LvlNCRTrooper:9:-68375:4800;LvlLegionRaiderMelee:1:-68375:7800", NVF_PLAY_TEST_CONSOLE = "8:killall;8.5:close" }
+args = ["--cell", "Goodsprings", "--pos=-68375,4300,9000", "--heading", "0", "--hour", "12", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 30
+expect = [
+  { re = 'stress battle: 2 groups, (?P<n>\d+) fighters', range = [6, 10], label = "the block is placed" },
+  { re = 'KillAllActors >> (?P<n>\d+) killed', range = [6, 1000], label = "the block and the town die at once" },
+  { re = 'ragdoll probe: actor [0-9A-F]{8} (slept|held still|held calm after settling|held moving at its time limit|held calm in slow motion) \(', min = 6, label = "a probe line for each ragdoll set at rest" },
+  { re = 'ragdoll probe summary: ', label = "the probe's totals at exit" },
+]
+
+[[scenario]]
 name = "loose-items-float"
 source = "owner 2026-10-25: loose items float like ragdolls; in the original they float or sink by their Havok material (docs/spec-notes/ragdoll.md section 8, captures fl_items_lake and fl_heavy_lake: cloth, wood, bottles and cans floated, metal and glass sank)"
 note = "the player swims out from the Boulder Beach shore as wade-in-swim and drops a teddy bear (cloth), a Nuka-Cola (bottle) and a toaster (metal) at 19-20 s; at exit the bear and the bottle float with their tops at the surface and the toaster lies on the bed"
