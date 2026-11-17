@@ -557,3 +557,126 @@ fn quest_item_false_rules_disqualify_unknowns_but_possible_or_malformed_winners_
         );
     }
 }
+
+#[test]
+fn aggregate_byte_limit_accepts_exact_valid_input_and_refuses_one_more_byte_without_side_effects() {
+    let files = Files::new();
+    let primary = certain("Owned/byte-limit.dds");
+    // Both files are valid JSON. Only their aggregate size crosses the bound.
+    let extra = format!("{{}}{}", " ".repeat(4 * 1024 * 1024 - primary.len() - 2));
+    assert_eq!(primary.len() + extra.len(), 4 * 1024 * 1024);
+    files.write("ySI.json", &primary);
+    files.write("zz-extra.json", &extra);
+    let f = fixture();
+    let mut allowed = game(&f);
+    allowed.world.add_item(FormId::PLAYER_REF, ITEM, 2).unwrap();
+    let before = allowed.world.snapshot();
+    let assign = "let icon := ySIGetTagTrait \"filename\" OwnYsiItem\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" (icon)\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")";
+    assert_eq!(
+        success(&mut allowed, assign),
+        XVal::Str("Owned/byte-limit.dds".into())
+    );
+    assert_eq!(allowed.world.snapshot(), before);
+
+    files.write("zz-extra.json", &format!("{extra} "));
+    assert_eq!(primary.len() + extra.len() + 1, 4 * 1024 * 1024 + 1);
+    let mut refused = game(&f);
+    refused.world.add_item(FormId::PLAYER_REF, ITEM, 2).unwrap();
+    let before = refused.world.snapshot();
+    let expected = Err("ySI filename configuration exceeds the mapped byte bound".into());
+    assert_eq!(query(&mut refused, assign), expected);
+    assert_eq!(refused.world.snapshot(), before);
+    assert_eq!(
+        success(
+            &mut refused,
+            "SetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"
+        ),
+        XVal::Str("Owned/before.dds".into())
+    );
+    assert_eq!(
+        success(
+            &mut refused,
+            "SetFunctionValue (GetUIString \"HUDMainMenu/ForeignIcon/filename\")"
+        ),
+        XVal::Str("Owned/foreign.dds".into())
+    );
+    // An already accepted snapshot is not invalidated by later file growth.
+    assert_eq!(
+        success(&mut allowed, assign),
+        XVal::Str("Owned/byte-limit.dds".into())
+    );
+    // A refused snapshot remains refused; only a fresh Game rereads corrected files.
+    files.write("zz-extra.json", &extra);
+    assert_eq!(query(&mut refused, assign), expected);
+    let mut fresh = game(&f);
+    assert_eq!(
+        success(&mut fresh, assign),
+        XVal::Str("Owned/byte-limit.dds".into())
+    );
+}
+
+#[test]
+fn aggregate_valid_rule_limit_reaches_the_final_winner_and_refuses_the_next_rule() {
+    let files = Files::new();
+    let irrelevant = serde_json::json!({"priority":1,"formType":40,"tag":"NoMatch"});
+    let main_tags = vec![irrelevant.clone(); 9_999];
+    let primary = config(
+        main_tags.into(),
+        serde_json::json!([{"priority":1,"tag":"FinalWinner","filename":"Owned/rule-limit.dds"}]),
+    );
+    let mut extra_tags = vec![irrelevant; 9_999];
+    extra_tags.push(serde_json::json!({"priority":20,"mod":"OwnedYsi.esm","form":"00000820","tag":"FinalWinner"}));
+    assert_eq!(9_999 + 1 + extra_tags.len(), 20_000);
+    let extra = config(extra_tags.clone().into(), serde_json::json!([]));
+    assert!(primary.len() + extra.len() < 4 * 1024 * 1024);
+    files.write("ySI.json", &primary);
+    files.write("zz-extra.json", &extra);
+    let f = fixture();
+    let mut allowed = game(&f);
+    allowed.world.add_item(FormId::PLAYER_REF, ITEM, 3).unwrap();
+    let before = allowed.world.snapshot();
+    let assign = "let icon := ySIGetTagTrait \"filename\" OwnYsiItem\nSetUIStringAlt (\"HUDMainMenu/OwnedIcon/filename\") $icon\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")";
+    assert_eq!(
+        success(&mut allowed, assign),
+        XVal::Str("Owned/rule-limit.dds".into())
+    );
+    assert_eq!(allowed.world.snapshot(), before);
+    // This extra entry is valid and matches the existing icon. Without the rule
+    // cap it would succeed, so the negative control cannot fail on malformed input.
+    extra_tags.push(serde_json::json!({"priority":21,"formType":31,"tag":"FinalWinner"}));
+    assert_eq!(9_999 + 1 + extra_tags.len(), 20_001);
+    let over = config(extra_tags.into(), serde_json::json!([]));
+    assert!(primary.len() + over.len() < 4 * 1024 * 1024);
+    files.write("zz-extra.json", &over);
+    let mut refused = game(&f);
+    refused.world.add_item(FormId::PLAYER_REF, ITEM, 3).unwrap();
+    let before = refused.world.snapshot();
+    let expected = Err("ySI filename configuration exceeds the mapped rule bound".into());
+    assert_eq!(query(&mut refused, assign), expected);
+    assert_eq!(refused.world.snapshot(), before);
+    assert_eq!(
+        success(
+            &mut refused,
+            "SetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"
+        ),
+        XVal::Str("Owned/before.dds".into())
+    );
+    assert_eq!(
+        success(
+            &mut refused,
+            "SetFunctionValue (GetUIString \"HUDMainMenu/ForeignIcon/filename\")"
+        ),
+        XVal::Str("Owned/foreign.dds".into())
+    );
+    assert_eq!(
+        success(&mut allowed, assign),
+        XVal::Str("Owned/rule-limit.dds".into())
+    );
+    files.write("zz-extra.json", &extra);
+    assert_eq!(query(&mut refused, assign), expected);
+    let mut fresh = game(&f);
+    assert_eq!(
+        success(&mut fresh, assign),
+        XVal::Str("Owned/rule-limit.dds".into())
+    );
+}

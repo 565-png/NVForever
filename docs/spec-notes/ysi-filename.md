@@ -90,8 +90,16 @@ ignored; engine tests passed 3,409 with three ignored; both strict Clippy checks
 and all seven required checks passed. These results qualify that exact source
 and the existing UI trait consumer, not texture loading or rendering.
 
+Two additional source-to-UI controls exercise the aggregate 4 MiB accepted-byte
+bound and the aggregate 20,000 valid-rule bound. Each accepts the exact limit across
+two valid JSON files, refuses one additional byte or valid rule before UI/world
+changes, and checks retained success/error session snapshots versus a fresh Game.
+The rule control selects the final matching rule, including a separately counted
+icon rule, so it cannot pass by parsing only an initial subset. These two new
+controls, compilation and the full eleven-case successor target are **UNRUN**;
+the nine-case hosted result above remains scoped to its exact earlier source.
+Production, registry and Cargo files are unchanged.
+
 The fixture-identical pre-quest comparator `76e26d14` remains **UNRUN**, as do the
-earlier queued `253`/`5e3` inputs; no baseline/candidate outcome is inferred. This
-documentation-only successor preserves all tested Rust, fixtures, registry and
-Cargo files. Native/provider/default/order/timing behavior, GPU texture loading
+earlier queued `253`/`5e3` inputs; no baseline/candidate outcome is inferred. Native/provider/default/order/timing behavior, GPU texture loading
 and complete installed ySI/JAM acceptance remain unqualified.
