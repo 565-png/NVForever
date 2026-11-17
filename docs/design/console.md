@@ -135,7 +135,7 @@ The stub audit (`fnvtool script stubs`, `tools/smoke/expected/script-stubs.toml`
 only functions the masters' scripts call. A function typed at the console that no script
 calls is outside it, so `killall` did nothing unnoticed (#1046). The vanilla functions of
 the catalogue that nothing handles (not in `functions::registry`, the console registries,
-or the engine's own words `console::ENGINE_WORDS`: `coc`, `cow`, `coe`, `help`,
+the named ordinary lateral-clearance source handlers, or the engine's own words `console::ENGINE_WORDS`: `coc`, `cow`, `coe`, `help`,
 `AdvLevel`, `bat`) and that no
 master script calls are counted by `console::unhandled_unused`. The test
 `registered_names_are_catalogue_console_commands` pins the two numbers: **33** in the

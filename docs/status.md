@@ -327,6 +327,9 @@ Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
 
 Named ordinary lateral-clearance source queries: authored current-physics mapping
 for the two Enhanced Movement lean calls, with existing CPTH room behavior retained.
-Three core source/callback and two real-physics caster controls are unexecuted at
-authoring; native measurement and installed lean animation/input acceptance remain
-open ([contract](spec-notes/vats-script-clearance.md)).
+Hosted composite ab093471 (head 36db07e7) passed both real-physics caster
+controls once and strict engine checks. Core stopped at the existing catalogue
+census before all three source/callback controls. The narrow source-handler
+census correction and its unknown-name control await execution; the original
+33/90 pin is retained. Native measurement and installed lean animation/input
+acceptance remain open ([contract](spec-notes/vats-script-clearance.md)).

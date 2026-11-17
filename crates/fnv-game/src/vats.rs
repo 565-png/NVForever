@@ -100,6 +100,12 @@ impl Game<'_> {
 /// Native range/measurement policy remains unverified (vats-script-clearance.md).
 pub const AREA_REACH: f32 = 1024.0;
 
+/// Named area queries implemented by the source host (also reached by the
+/// console's existing unnumbered-function compiler fallback).
+pub(crate) fn handles_area_query(name: &str) -> bool {
+    name.eq_ignore_ascii_case("GetVATSLeftAreaFree") || name.eq_ignore_ascii_case("GetVATSRightAreaFree")
+}
+
 /// The VATS area condition functions, by condition index [documented: xEdit
 /// wbDefinitionsFNV.pas wbCTDAFunctions 518–521 GetVATSRightAreaFree, …LeftAreaFree,
 /// …BackAreaFree, …FrontAreaFree and 525–528 GetVATSRightTargetVisible, …Left…, …Back…,

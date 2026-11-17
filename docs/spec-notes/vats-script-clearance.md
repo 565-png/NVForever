@@ -51,6 +51,14 @@ transform request, preserving its real consumer and exact expected effect.
 Engine controls must use the actual PhysWorld caster against asymmetric authored
 static walls, with terrain/dynamic/actor and scene-removal neighbors, rather than
 only supplying invented hit values. Unused queries must do no casts. All newly
-authored controls are unexecuted at authoring. Original mod initialization,
+authored controls were unexecuted at initial authoring. Hosted composite ab093471
+(head 36db07e7) subsequently passed both real-physics controls once and the
+engine strict checks. Core stopped in the existing console catalogue census:
+33/92 versus 33/90, before the three integration cases. The census omitted
+these two implemented source handlers, although the console already compiles
+unnumbered function calls. A shared name predicate now connects the handler
+and census, with an unknown-name neighbor control and the original 33/90 pin
+retained; this correction and its new control await execution. The old failure
+is retained. Original mod initialization,
 configured inputs, animation/rendering, save/load and full installed acceptance
 remain separate requirements.
