@@ -278,3 +278,4 @@ fn original_stat_profile_reaches_startup_source_damage_settings_and_restore_with
 }
 
 mod current_profile;
+mod inventory_settings;

@@ -188,6 +188,7 @@ pub mod nvse_anim;
 pub mod nvse_anim_folders;
 pub mod nif_blocks;
 pub mod nvse_settings;
+mod stewie_inventory_settings;
 pub mod nvse_tokens;
 pub mod nvse_handler_lists;
 pub mod nvse_debug;

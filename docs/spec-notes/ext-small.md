@@ -59,3 +59,42 @@ game, so nothing here is `[observed]`. Changes last for the session.
 | GetCellRegions `cell` | an exterior cell's regions (XCLR); none for an interior [documented] |
 | SetWorldspaceMapBounds `world nwX nwY seX seY` | the WRLD MNAM cells, read by every reader of the record (`Game::world_map_bounds`) [documented; follow-up: the engine's map reads its bounds once] |
 | ySIGetTrait / ySISetTrait `"tag"\|"icon" [value] [form]` | ySI's tag and icon, of the form else the calling reference's base; an icon set on a tagged form goes to every form of that tag [documented]; "" until set [decision: ySI's own files are not read] |
+
+### Live inventory settings
+
+[documented: Stewie's Tweaks readme, `bHardcoreTweaks` and
+`bIndividialItemStats`] Hardcore features can be chosen independently of the
+game's Hardcore mode; its ammo option selects whether ammunition has weight.
+Individual item figures show one item's weight and value for a stack.
+
+[design] After the engine hands its authoritative settings to the game,
+`StewieGetValue` and `StewVal` return the existing choices below as numeric 0 or 1.
+Both functions use the same read-only path; names ignore ASCII case and surrounding
+whitespace. No new settings are added.
+
+| Query | Existing choice and consumer |
+|---|---|
+| `bHardcoreTweaks:Tweaks` | `Tweaks::hardcore_tweaks`; enables the separate Hardcore rules |
+| `bAmmoWeight:Hardcore Tweaks` | `Tweaks::hardcore_ammo_weight`; the inventory rules apply this only when the parent choice is enabled |
+| `bIndividialItemStats:Tweaks` | `Tweaks::single_item_figures`; the Pip-Boy item figures choose one item or the stack's count |
+
+The ammo query retains the child choice while its parent is disabled. Its answer
+does not claim that ammo currently weighs anything: the existing inventory
+consumer also considers the parent and the game's Hardcore mode. The original
+spelling `Individial` is preserved.
+
+Before the authoritative handoff, and for all other keys, the established INI
+fallback applies. Weightless-item parent and child switches remain on that path:
+the engine's per-kind mask does not store independent disabled-parent choices.
+These three mappings establish no provider version or complete mod compatibility.
+Original-game comparison and execution of the installed Item Cards and Pip-Boy UI
+Tweaks workloads remain separate acceptance work.
+
+Authored controls cover both aliases at the source boundary, explicit off versus a
+conflicting INI, unknown/string/malformed fallback, current changes and restore
+rebinding; actual ammunition totals across parent, child and Hardcore-mode choices;
+and actual Pip-Boy stack weight/value. A process-isolated opt-in engine control
+exercises settings loading, startup file caches and restored caches through the
+existing handoff. All four controls are UNRUN. Its opt-in selector requires a
+dedicated `NVF_STEWIE_PROFILE_HOME` and `--test-threads=1`; skipping it supplies no
+validation evidence.

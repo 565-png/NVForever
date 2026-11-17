@@ -70,7 +70,7 @@ pub struct FrameLoop {
 /// The session state of the plugins of this file.
 #[derive(Debug, Default)]
 pub struct SmallState {
-    /// Loaded application critical settings are authoritative after engine handoff.
+    /// Loaded application settings are authoritative after engine handoff.
     /// Session-only: a restored Game must be rebound before startup scripts.
     pub(crate) stewie_stat_settings_loaded: bool,
     /// Seconds of play, menus included: each frame's own length added up (the engine
@@ -584,12 +584,15 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             zero
         }
         // ---- Stewie's Tweaks ----
-        // Recognized loaded critical settings follow the actual engine consumer;
+        // Recognized loaded settings follow their actual engine consumers;
         // unbound games and other keys retain their existing layered-file query.
         "stewiegetvalue" | "stewval" => {
             let ks = text(args, 0);
             let Some((key, section)) = ks.split_once(':') else { return Some(Ok(zero)) };
             if let Some(value) = g.loaded_stewie_stat_value(key, section) {
+                return Some(Ok(XVal::Num(value)));
+            }
+            if let Some(value) = g.loaded_stewie_inventory_value(key, section) {
                 return Some(Ok(XVal::Num(value)));
             }
             let ini = g.mod_files.read_text("NVSE\\Plugins\\nvse_stewie_tweaks.ini");
