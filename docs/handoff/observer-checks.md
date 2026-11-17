@@ -3221,3 +3221,47 @@ already talking takes over at once, same topic or another; nothing is queued or 
      x1 plus up to four from AmmoMissilelauncher75). Also whether a robot whose folder has
      no reload clip (Mister Gutsy's plasma gun or flamer) ever pauses as if reloading.
 
+## Added 2026-11-15 (radscorpion spacing and melee cadence, #2535)
+
+244. **How close do two large creatures come, and how often does a creature attack?**
+     (P2; physics.md §6.8, combat-rules.md §10.) **Answered in part
+     [observed: capture run15b_b2, 2026-11-15; xNVSE 6.4.9, JIP LN 57.30]:**
+     VCrTier2RadscorpionMed and VCrTier3GiantRadscorpionMed on Searchlight Airport's
+     runway against a standing god-mode player, GetDistance between the pair and
+     GetAnimAction of each at 30 samples/s for 17 s. While both were within 300 units
+     of the player (452 samples), centre spacing was median 131, tenth percentile 93,
+     ninetieth 283, minimum 32 briefly. Each entered action 2 seven times in about
+     13 s. Successive attack-start gaps: 2.82, 1.47, 1.39, 2.20, 2.67, 1.28 and
+     2.05, 3.74, 1.93, 2.15, 1.37, 2.00 s (median 2.0, least 1.28). Action 2 lasted
+     0.77–1.18 s, then action 4 for 0.44–1.10 s. No attack began during action 2.
+     The shortest gaps (1.28, 1.37, 1.39, 1.47) are just past the ordinary clips'
+     `a:` keys (1.267/1.300) and the sting's end (1.267).
+
+     [design, #2535] Ours now holds the next melee decision until the playing clip's
+     `a:` key, or its end without one; earlier keys still shorten the base timer.
+     This lower bound for NPC swings is [hypothesis]. Walking creatures use a BBX
+     half-width × actor scale circle when larger than their previous block radius
+     [hypothesis: fits the observed spacing; the original's shape was not seen].
+     The world capsule is unchanged [design: `phys::npc_params`].
+     [design: `hitvol::sync_volumes`, #2535] The wider circle also stays when a
+     fighter stops and its walking character is removed; standing attack blocks
+     therefore retain both creatures' widths.
+
+     **Still open:** the original's extra pause after action 4 (3/14 attacks at once,
+     others after 0.1–2.1 s) is not built; what chooses its duration? Against a player
+     backing away for 10 s, one creature attacked three times (3.5 s apart), the
+     other never [observed: capture run15b_b2, 2026-11-15]. Backing-away cadence
+     parity and the unseen collision shape remain open [design].
+     [observed: the main session's runs of NVForever, 2026-11-15, reproduction on
+     Searchlight Airport's runway: the Radscorpion + Giant Radscorpion pair against
+     a god-mode player who backs away from 16 s to 28 s; pair distance read once
+     a second; three runs of upstream main 99faa23b7 and six of this branch]
+     Standing and fighting, the pair stays 66–84 units apart on upstream main and
+     113 on this branch (the designed sum). Chasing, both builds stay mostly
+     62–64 units apart. On this branch, in four of six runs one reading late in
+     the chase, as the pair comes back to a stop, fell to 7–39 units for about a
+     second. Upstream main showed no such dip in its runs.
+     [design, #2535] The widened block keeps standing creatures apart but not
+     moving ones, and the change from walking to standing can let one creature
+     pass briefly into the other. Both are left for the follow-up on the character
+     controller's movement path.

@@ -31810,3 +31810,32 @@ order = [[
 forbid = [
   { re = 'idle: Lucky38MrHouseREF plays MrHouseTalk', label = "the screen never plays the pod's talk idles" },
 ]
+
+[[scenario]]
+name = "radscorpions-spacing-cadence"
+source = "[design, #2535] Walking creatures use at least their scaled skeleton BBX half-width for actor blocking; every melee attack waits for its clip's a: key, or its end when keyless. [observed: capture run15b_b2, 2026-11-15] The original pair's median spacing was 131, tenth percentile 93; median attack-start gap 2.0 s, minimum 1.28. See physics.md section 6.8 and combat-rules.md section 10"
+note = "[design, #2535] Searchlight Airport runway, same cleared setup as melee-chases-backing-player; two radscorpions set on the standing player. Five reads must be at least 95. Provisional blow range 10-26: two actors, about 16 s contact, minimum interval 1.267 s gives 2 * (1 + floor(16 / 1.267)) = 26 starts; 10 allows style holds and approach. The original's extra pause is not built; main session must measure this range. [observed: main session run on 63db0209c, 2026-11-15] Before the fix distance reads were 71-83, about 26 blows over 18 s"
+areas = ["combat", "creatures", "physics"]
+paths = ["engine/nvf-assets/src/actor.rs", "engine/nvforever/src/actors.rs", "engine/nvf-play/src/hitvol.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/blocking.rs", "engine/nvforever/src/npc_combat.rs", "engine/nvforever/src/attack_anims.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "1:killall;1.3:close", NVF_PLAY_TEST_LOOK = "2:75:0", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:VCrTier2RadscorpionMed:1,3:call:player:PlaceAtMe:VCrTier3GiantRadscorpionMed:1,3.2:moveto:0xFF000000:player:595:97:0,3.2:moveto:0xFF000001:player:564:213:0,3.5:combat:0xFF000000:player,3.5:combat:0xFF000001:player,9:call:0xFF000000:GetDistance:0xFF000001,11:call:0xFF000000:GetDistance:0xFF000001,13:call:0xFF000000:GetDistance:0xFF000001,15:call:0xFF000000:GetDistance:0xFF000001,17:call:0xFF000000:GetDistance:0xFF000001" }
+args = ["--cell", "Goodsprings", "--pos=39511,-116487,6180", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { re = 'script: test aid calls GetDistance on .* = (?P<n>[\d.]+)', count = 5, label = "all five inter-creature distances were read" },
+  { re = 'script: test aid calls GetDistance on .* = (?P<n>[\d.]+)', range = [95, 100000], all = true, label = "the creatures keep apart, at least 95 units" },
+  { re = 'npc combat summary.*?(?P<n>\d+) blows', range = [10, 26], label = "two attackers over about 16 s contact, no sooner than their 1.267 s clip boundary" },
+]
+
+[[scenario]]
+name = "player-short-weapon-wide-creature"
+source = "[design, #2535] Player ground melee uses the published scaled BBX blocking radius as its target margin, with the ordinary 24-unit minimum; obstruction rays remain required. See combat-rules.md section 10 and physics.md section 6.8"
+note = "[design, #2535] Synthetic placement using the supplied Giant Radscorpion (VCrTier3GiantRadscorpionMed) BBX half-width 70.56, scaled by 1.25 to 88.2. A restrained creature is placed 110.2 units north, the player radius 22 plus that block. The player draws WeapKnife (existing use-weapon-melee fixture), looks level and swings once. The 53.5-unit weapon plus player radius reaches 75.5; the old fixed 24-unit fallback missed at this distance. Main session must validate the placement and hit log in play"
+areas = ["combat", "creatures", "physics"]
+paths = ["crates/fnv-combat/src/projectile.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/hitvol.rs", "engine/nvf-play/src/blocking.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "1:killall;1.3:close", NVF_PLAY_TEST_EQUIP = "00004334", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:VCrTier3GiantRadscorpionMed:1,3.2:call:0xFF000000:SetScale:1.25,3.3:call:0xFF000000:SetRestrained:1,4:moveto:0xFF000000:player:0:110.2:0", NVF_PLAY_TEST_CONTROL = "5:weapon,7:aimflat,7.1:fire,7.2:fire" }
+args = ["--cell", "Goodsprings", "--pos=39511,-116487,6180", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 12
+expect = [
+  { re = 'combat: swing reaches 1 actors .*1 of them out of the fan of rays at eye height', label = "the level knife swing reaches the low creature through the ground fallback" },
+  { re = 'combat: .*1 swings \(0 chained, 0 power, 1 hits\)', label = "the short weapon hits once at the widened blocking stop" },
+]

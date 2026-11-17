@@ -90,8 +90,9 @@ fists (the default draws it holstered).
   fires widens it, `npc_combat::shot_stance`, #2125), plus 4° that
   settles away over 3 s of firing at the same target (the first shots of a burst miss
   more).
-- **Melee**: a blow every 1.2 s divided by the weapon's attack speed, while the gap
-  between the two bodies is within 24 units.
+- **Melee** [design: `npc_combat`]: a base timer of 1.2 s divided by the weapon's
+  attack speed, adjusted to the playing clip's `a:` key or held until its end when
+  keyless (#2535; combat-rules.md §10). The target must be within melee reach.
 
 ## 5. Where it stands
 
@@ -1416,8 +1417,10 @@ animation combos". The player's swings already follow the attack clips' `a:` tex
   of both rigs carries `a:L`, every `AttackLeft` clip `a:R`; power clips none]. The key's
   time is when the clip may be cut for the next swing.
 - **When an NPC goes on** [design]: a blow's clip with an `a:` key brings the fighter's
-  next melee decision (§10.4: block, attack by the style's attack chance, or hold) forward
-  to that key. Attacking between the key and the clip's end goes on the combo: the clip
+  next melee decision (§10.4: block, attack by the style's attack chance, or hold)
+  to that key, earlier or later than the base timer. Without a key, it waits for the
+  end as well as the base timer (#2535; combat-rules.md §10: radscorpions observed,
+  NPC extension hypothesis). Attacking between the key and the clip's end goes on the combo: the clip
   of the group named (right → left → right…; fists alternate hands), cut in at once, as
   the player's swing is. The combo ends on a hold, a block, a recoil (its blow was
   blocked), or the target out of reach until the clip ends; the next blow starts again
