@@ -513,7 +513,7 @@ manual = "motion_turning.png against motion_still.png: the street and hills smea
 
 [[scenario]]
 name = "shadows-sun"
-source = "docs/design/graphics-enhanced.md §2 (playtest list 4 items 6-7, 2026-10-12): the sky dome and its sun come back after leaving an interior; the sun's shadows default to 8,000 units in 3 cascades and the arms' shade light draws only what is near the arms"
+source = "docs/design/graphics-enhanced.md §2 (playtest list 4 items 6-7, 2026-10-12): the sky dome and its sun come back after leaving an interior; the sun's shadows default to 8,000 units in 4 cascades (3 until #2843) and the arms' shade light draws only what is near the arms"
 areas = ["renderer", "graphics", "sky"]
 paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/sky.wesl", "engine/nvforever/src/player_body.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "10:00103E61", NVF_PLAY_TEST_ACTIVATE = "12" }
@@ -524,18 +524,19 @@ order = [[
   "sky: outdoors again, the sky dome (with the sun disc and glare) shown",
 ]]
 expect = [
-  "sun shadows to 8000 in 3 cascades",
+  "sun shadows to 8000 in 4 cascades",
+  { re = 'shadow casters per cascade: .*Sun for view: \[\d+, \d+, \d+, \d+\]', min = 1, label = "the casters culled per slice are counted for each of the default layout's four cascades (#2843; no measured ranges for that layout yet)" },
   "sun shadows off",
   { re = 'Arms shade light for view: \[(?P<n>\d+)\]', range = [1, 80], label = "the arms' shade light draws at most 80 casters (about 190 when it was the sun's first cascade)" },
 ]
 
 [[scenario]]
 name = "sun-casters-over-slice"
-source = "docs/design/graphics-enhanced.md §5.7 (#1378, 2026-11-03): each of the sun's cascades draws only the casters over the outline of the view's slice it covers, not its whole square: at Novac 07:00 about 78, 750 and 1,750 casters (154, 1,420 and 3,200 before)"
+source = "docs/design/graphics-enhanced.md §5.7 (#1378, 2026-11-03): each of the sun's cascades draws only the casters over the outline of the view's slice it covers, not its whole square: at Novac 07:00 about 78, 750 and 1,750 casters (154, 1,420 and 3,200 before); held at the 3 cascades those counts were taken with (the default is 4 since #2843)"
 areas = ["renderer", "graphics", "sky"]
 paths = ["engine/nvforever/src/sky.rs"]
 env = { NVF_PLAY_TEST_GOD = "1" }
-args = ["--cell", "Novac", "--play", "--no-voice", "--no-messages", "--hour", "7", "--sun-shadows", "--log-frame-times", "8"]
+args = ["--cell", "Novac", "--play", "--no-voice", "--no-messages", "--hour", "7", "--sun-shadows", "--log-frame-times", "8", "--graphics-cycle", "vanilla,cascades=3"]
 run_seconds = 25
 expect = [
   { re = 'shadow casters per cascade: .*Sun for view: \[\d+, (?P<n>\d+), \d+\]', range = [200, 1100], label = "the middle cascade draws the casters over its slice (about 750; 1,420 with the whole square)" },
@@ -854,7 +855,7 @@ expect = [
   { re = 'player body joints within ([3-9]\d\d|\d{4,})', count = 0, label = "the hidden body never wider than 300" },
   { re = 'checks with views sharing a key 0(?!\d)', min = 3, label = "switching to third person and back four times leaves no shadow view behind (the arms' shade light is despawned, not hidden)" },
   { re = 'views share one view key|checks with views sharing a key [1-9]', count = 0, label = "no two views ever share a key (the first-person shadow flicker of 2026-10-26)" },
-  { re = 'shadow probe: frame \d+ .*LOD terrain casting per cascade \[\d+, \d+, \d+\] of casters', min = 1, label = "the per-frame LOD terrain line names the three cascades" },
+  { re = 'shadow probe: frame \d+ .*LOD terrain casting per cascade \[\d+, \d+, \d+, \d+\] of casters', min = 1, label = "the per-frame LOD terrain line names the four cascades" },
 ]
 
 [[scenario]]
@@ -1779,7 +1780,7 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 
 [[scenario]]
 name = "sun-shadows-performance"
-source = "docs/design/frame-rate-audit.md §9, §10 and §11 (nvforever shadow_rate.rs, shadow_anchor.rs, #2062, #2063, #2833): the sun's cascades are snapped to a grid anchored near the camera; on Quality the sun's farther cascades keep their maps on a staggered schedule; the settings page's Sun shadows row goes to Performance and back to Quality while the game runs: two cascades, the sun's shadow maps kept on alternate frames, three staggered cascades again, without a rendering error"
+source = "docs/design/frame-rate-audit.md §9, §10 and §11 (nvforever shadow_rate.rs, shadow_anchor.rs, #2062, #2063, #2833): the sun's cascades are snapped to a grid anchored near the camera; on Quality the sun's farther cascades keep their maps on a staggered schedule; the settings page's Sun shadows row goes to Performance and back to Quality while the game runs: three cascades (two until #2843), the sun's shadow maps kept on alternate frames, four staggered cascades again (three until #2843), without a rendering error; the cascades' far bounds are logged as each mode lays them out (#2843)"
 areas = ["renderer", "graphics", "settings"]
 paths = [
   "engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/shadow_anchor.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/player_body.rs",
@@ -1791,11 +1792,17 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hou
 run_seconds = 23
 order = [[
   { text = "sun shadows: a frame kept its farther cascades' maps (staggered schedule", label = "on Quality from the start, the farther cascades are held" },
-  "sun shadows: performance (maps drawn every other frame, trees cast near the camera only, no arms shade light), 2 cascades",
+  "sun shadows: performance (maps drawn every other frame, the farthest every fourth, trees cast near the camera only, no arms shade light), 3 cascades",
   "settings: sun-shadows Performance",
   "sun shadows: a frame kept the shadow maps of the frame before",
-  "sun shadows: cascades on a staggered schedule (the nearest every frame, the farther ones less often), 3 cascades",
+  "sun shadows: cascades on a staggered schedule (the nearest every frame, the farther ones less often), 4 cascades",
   { text = "sun shadows: a frame kept its farther cascades' maps (staggered schedule", label = "Quality again: the staggered schedule holds cascades again" },
+], [
+  { text = "sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels […] units", label = "Quality from the start: four cascades, 700, 2,000 and 5,000 of the 8,000 units" },
+  "sun shadows: performance (maps drawn every other frame, the farthest every fourth, trees cast near the camera only, no arms shade light), 3 cascades",
+  { text = "sun shadows: cascades far bounds [1500, 4500, 8000] texels […] units", label = "Performance: three cascades, to 1,500 and 4,500 of the 8,000 units" },
+  "sun shadows: cascades on a staggered schedule (the nearest every frame, the farther ones less often), 4 cascades",
+  { text = "sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels […] units", label = "Quality again: the four cascades' bounds again" },
 ]]
 expect = [
   { text = "sun shadows: cascades snapped to a grid anchored near the camera", count = 1, label = "the cascades are anchored near the camera (logged once)" },
@@ -1803,6 +1810,36 @@ expect = [
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error while the shadow maps are kept or the cascades change" },
   { text = "cascades left on the grid through the world's origin", label = "the anchoring is on without the test aid" },
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
+]
+
+[[scenario]]
+name = "cloud-shadows"
+source = "[design, #2670] docs/design/sun-visibility.md, engine/nvforever/src/cloud_shadows.rs and sun_visibility.rs: the Cloud shadows row (off by default) switched on while the game runs at Goodsprings noon under a pinned cloudy weather turns the sun visibility's cloud variant on once, the producer composes the weather's cloud layers and publishes them, with the patched lighting of what this view draws compiling, without a rendering or pipeline error (the water highlight and the first-person arms' shade light only as far as this view draws them). Whether the ground darkens where it should is checked in pictures by hand"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/cloud_shadows.rs", "engine/nvforever/src/sun_visibility.rs", "engine/nvforever/src/sun_visibility.wesl",
+  "engine/nvforever/src/water.wesl", "engine/vendor/bevy_pbr/src/render/mesh_view_bindings.rs", "engine/vendor/bevy_pbr/src/render/mesh_view_types.wesl",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:cloud-shadows" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--weather", "NVBlackMountainWeather", "--sun-shadows"]
+run_seconds = 24
+order = [[
+  "settings: cloud-shadows on",
+  { text = "sun visibility: cloud on terrain off debug off", label = "the switch turned the plumbing's cloud variant on" },
+  { text = "cloud shadows: layers", label = "the producer composed the weather's layers and published them" },
+]]
+expect = [
+  { re = 'graphics: light glow, cloud shadows$', label = "the graphics line names the switch" },
+  { text = "sun visibility: cloud on terrain off debug off", count = 1, label = "on once: no texture read or publication toggles the pipelines (C0/C1 review, finding 1)" },
+]
+forbid = [
+  { text = "anchors not found", label = "the sun visibility hook did not apply to bevy_pbr's lighting" },
+  { text = "DeviceLost", label = "the GPU device was lost" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the sun visibility's bindings" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (a patched lighting, water or arms shader that does not compile)" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap" },
+  { text = "sun visibility: cloud off", label = "the cloud variant went off while the switch stayed on" },
   { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
 ]
 
@@ -1832,14 +1869,46 @@ env = { NVF_PLAY_TEST_SHADOW_STAGGER = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", 
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
 run_seconds = 23
 order = [[
-  "sun shadows: performance (maps drawn every other frame, trees cast near the camera only, no arms shade light), 2 cascades",
+  "sun shadows: performance (maps drawn every other frame, the farthest every fourth, trees cast near the camera only, no arms shade light), 3 cascades",
   "settings: sun-shadows Performance",
   "sun shadows: a frame kept the shadow maps of the frame before",
-  "sun shadows: drawn every frame, 3 cascades",
+  "sun shadows: drawn every frame, 4 cascades",
 ]]
 forbid = [
   { text = "staggered schedule", label = "with the aid, no cascade is held on the staggered schedule" },
   { text = "Caught rendering error", label = "a rendering (validation) error while the shadow maps are kept or the cascades change" },
+]
+
+[[scenario]]
+name = "sun-shadow-resolution"
+source = "docs/design/frame-rate-audit.md §12 (#2843; nvforever graphics.rs SHADOW_RESOLUTIONS, sky.rs shadow_cascade_layout): the settings page's Shadow resolution row goes to 4096 and back to 2048 while the game runs on Sun shadows Quality: the sun's maps change size, a new shadow texture draws every cascade, and the cascades' far bounds follow the size in the same frame (700, 2,000, 5,000 with 2048; without Longer shadows 1,500, 2,400, 4,800 with 4096, the middle two capped at 0.3 and 0.6 of the last), without a rendering error"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/shadow_rate.rs", "engine/nvforever/src/shadow_anchor.rs",
+  "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings_layout.rs", "crates/nvf-settings-layout/src/lib.rs", "engine/vendor/bevy_pbr/src/render/light.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:12,17:19", NVF_PLAY_TEST_SETTINGS = "11:shadow-resolution=4096,18:shadow-resolution=2048" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sun-shadows"]
+run_seconds = 23
+order = [[
+  { text = "sun shadows: maps 2048 x 2048 texels", label = "the maps start at 2048 (the default)" },
+  { text = "sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels […] units", label = "Quality with 2048 maps: 700, 2,000 and 5,000 of the 8,000 units" },
+  "settings: shadow-resolution 4096",
+  { text = "sun shadows: maps 4096 x 4096 texels", label = "the row makes the maps 4096 in play" },
+  { text = "sun shadows: cascades far bounds [1500, 2400, 4800, 8000] texels […] units", label = "Quality with 4096 maps, reach 1: 1,500, 2,400 and 4,800 of the 8,000 units" },
+  "settings: shadow-resolution 2048",
+  { text = "sun shadows: maps 2048 x 2048 texels", label = "back to 2048 in play" },
+  { text = "sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels […] units", label = "Quality with 2048 maps again: the nearer bounds" },
+]]
+expect = [
+  { text = "sun shadows: a frame kept its farther cascades' maps (staggered schedule", min = 1, label = "the staggered schedule holds cascades" },
+  { text = "held shadow maps: a new directional shadow texture", min = 2, label = "each change of size gives a new shadow texture, every cascade drawn (logged by the render world, so not ordered against the lines above)" },
+  { text = "sun shadows: cascades far bounds [700, 2000, 5000, 8000] texels", count = 2, label = "the 2048 layout said at the start and on the way back only: no frame with the old bounds and the new maps" },
+  { text = "sun shadows: cascades far bounds [1500, 2400, 4800, 8000] texels", count = 1, label = "the 4096 layout said once: no frame with it and the 2048 maps" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error while the shadow maps change size under held cascades" },
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
 ]
 
 [[scenario]]
@@ -15800,6 +15869,38 @@ expect = [
   { re = 'dismember: gore of 00104C79 at rest: [0-9]+ pieces lie', label = "the pieces come to rest (how far from the corpse: the line)" },
 ]
 manual = "dismember_head.png and dismember_after.png: Chet's head gone with a neck cap, bits about; his left arm lying apart with caps at both ends; his left leg gone with a cap"
+
+[[scenario]]
+name = "gore-shake-off"
+source = "owner 2026-11-17: a limb blown apart sets off its body part's own blast (FalloutNV.esm DefaultBodyPartData explodable explosion 0x0001540D), which #1892's explosion shake took for a real explosion: a shake on critical kills. The Gore Shake setting (Gameplay > Camera) is off by default, so that blast leaves the view still (engine/nvf-play/src/shake.rs)"
+note = "as dismember-chet's first hit: the sniper rifle's 500 on Chet's head explodes it a few hundred units from the player, inside the reach a blast is felt; nothing turns the setting on"
+areas = ["combat"]
+paths = ["engine/nvf-play/src/shake.rs", "engine/nvforever/src/dismember.rs"]
+env = { NVFOREVER_HOME = "gore-shake-off-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_HIT = "8:GSChetRef:500:WeapSniperRifle:limb=PerceptionCondition", NVF_PLAY_TEST_GOTO = "5:-583:440:700", NVF_PLAY_TEST_LOOK = "5.5:0:-10" }
+args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 14
+expect = [
+  { re = 'dismember: .* 0x00104C79: Head exploded \(overkill', label = "the head is blown apart" },
+  { re = "shake: a body part's blast \\S+ \\d+ units away leaves the view still \\(Gore Shake off\\)", count = 1, label = "its blast does not shake the view by default" },
+]
+forbid = [
+  { text = "shakes the view (Gore Shake on)", label = "no gore blast shakes the view with the setting off" },
+]
+
+[[scenario]]
+name = "gore-shake-on"
+source = "owner 2026-11-17: the Gore Shake setting turned on brings the shake back for a body part's own blast (engine/nvf-play/src/shake.rs)"
+note = "as gore-shake-off, with the settings page's Gore Shake switch flipped on in the pause menu first (its own home, so the stored switch reaches no other scenario)"
+areas = ["combat", "settings"]
+paths = ["engine/nvf-play/src/shake.rs", "crates/nvf-settings-layout/"]
+env = { NVFOREVER_HOME = "gore-shake-on-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PAUSE = "4:6.5", NVF_PLAY_TEST_SETTINGS = "4.5:page,5:gore-shake", NVF_PLAY_TEST_HIT = "9:GSChetRef:500:WeapSniperRifle:limb=PerceptionCondition", NVF_PLAY_TEST_GOTO = "7:-583:440:700", NVF_PLAY_TEST_LOOK = "7.5:0:-10" }
+args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 16
+order = [[
+  { text = "settings: gore-shake on", label = "the switch is turned on" },
+  { re = 'dismember: .* 0x00104C79: Head exploded \(overkill', label = "the head is blown apart" },
+  { re = "shake: a body part's blast \\S+ \\d+ units away shakes the view \\(Gore Shake on\\)", label = "its blast shakes the view" },
+]]
 
 [[scenario]]
 name = "blast-ragdoll-corpse"
@@ -31667,6 +31768,25 @@ order = [[
 expect = [
   { re = 'WARN nvf_play::softlock: softlock: ', count = 1, label = "one finding for the one hold, none while the player was free" },
 ]
+
+[[scenario]]
+name = "softlock-gomorrah-leave"
+source = "issue #2835 (engine/nvforever/src/residents.rs drive): leaving Gomorrah by the inner hotel door GomorrahHotelDoorREF01 (0x0011A987), whose script resets vDialogueGomorrah.iInGomorrah to 0, let the entrance guard vGOMEntranceGuardREF (0x00127956) take up GomorrahGreeterPackage in the same frame and start his weapons check with a player already on the way out; the hand-over set iInGomorrah to 1 again, so on the next way in (vGOMHotelDoor02, 0x0013BB1D, DisablePlayerControls) no greeting came to give the controls back. Nobody thinks in the frame the player sets off through a load door"
+note = "Gomorrah's main level: the guard greets the player at the start and is answered with the hand-over (INFO 0x0012793F); the player stands at the inner door at 10 s, which at 12 s takes them out to the Strip, and the outer door at 22 s brings them back in, where the guard greets again and his line's end gives the controls back. The race itself is one frame (the guard choosing his package in the frame the player sets off; the quest pilot met it, a build without the fix passed this five times out of five), so this guards the way out and back in, not the race"
+areas = ["ai", "quests", "scripts"]
+paths = ["engine/nvforever/src/residents.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SOFTLOCK_SECS = "8", NVF_PLAY_TEST_TALK = "0:*=Here you go;20:*=Here you go", NVF_PLAY_TEST_GOTO = "10:1790:2440:6410", NVF_PLAY_TEST_SCRIPT = "12:activate:0x0011A987,22:activate:0x0013BB1D" }
+args = ["--play", "--cell", "Gomorrah01", "--pos=1900,1900,6410", "--heading", "0", "--no-voice", "--no-messages"]
+run_seconds = 45
+order = [[
+  { re = 'vGOMEntranceGuardREF: starts a conversation', label = "the guard greets the player inside" },
+  { re = 'script: travel to None / Some\(1291016\)', label = "the inner door takes the player out to the Strip" },
+  { re = 'player controls: .*disabled by scripts', label = "the outer door takes the controls on the way back in" },
+  { re = 'vGOMEntranceGuardREF: starts a conversation', label = "back inside, the guard greets the player again" },
+  { text = "player controls: all enabled", label = "his line's end gives the controls back" },
+]]
+expect = [{ re = 'vGOMEntranceGuardREF: starts a conversation', count = 2, label = "two greetings, both inside" }]
+forbid = [{ re = 'softlock: controls_held', label = "the controls are not left off" }]
 
 [[scenario]]
 name = "softlock-hardin-training"

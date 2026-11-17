@@ -76,6 +76,18 @@ unchanged, so nothing else behaves differently. Upstream has no way to get the s
 out of the prepass's own code; drop this when it has, or when the sampling is written in
 nvf-assets.
 
+Another change (equal-depth position invariance,
+docs/spec-notes/depth-equality-invariance.md), marked `NVForever equal-depth passes`:
+`src/render/forward_io.wesl` and `src/prepass/io.wesl` mark both vertex position
+producers invariant for the engine's Equal-depth passes. Position calculations and
+depth policy are unchanged. `nvf-shader-tests/tests/depth_invariance.rs` composes the actual
+source through Bevy WESL and Naga and checks the SPIR-V decoration, including
+unannotated controls. An earlier integrated run passed three controls and exposed
+two compiler-setup failures; the corrected pass-specific feature matrix and shared
+production lighting preparation are unrun. Reapply both annotations
+after upgrading Bevy until upstream provides the same guarantee, or retire them
+with the Equal-depth policy.
+
 Third change (#1803), in `src/material.rs`, each part marked by a comment starting
 `NVForever material queue probe`: `MaterialQueueProbe`, an optional resource
 that records watched main-pass entries and their pipeline IDs as `queue_material_meshes`
@@ -125,6 +137,34 @@ NVForever material) the plugin does what upstream does. Upstream registers a mat
 systems, loads its shaders and makes its allocator at startup, and a plugin cannot be added
 after startup; nvforever's mesh terrain blend, off in most runs, gates its two material
 types with it. Drop it if upstream gains a way to register a material type lazily.
+
+Another change (sun visibility, #2670 and #2671, docs/design/sun-visibility.md), each part
+marked `NVForever sun visibility`, for nvforever's `sun_visibility.rs`:
+
+- `src/render/light.rs`: the render-world component `NvfOutdoorSun`. `prepare_lights` sets
+  the new `DirectionalLightFlags::NVF_OUTDOOR_SUN` (bit 4; `mesh_view_types.wesl`
+  `DIRECTIONAL_LIGHT_FLAGS_NVF_OUTDOOR_SUN_BIT`) in the GPU flags of the directional light
+  whose render entity has it, so a shader can tell the outdoor sun from other directional
+  lights without assuming an index.
+- `src/render/mesh_view_bindings.rs`: the render-world view component
+  `NvfSunVisibilityBindings` (a uniform buffer, two filterable float 2D textures and a
+  filtering sampler), the layout key bit `MeshPipelineViewLayoutKey::NVF_SUN_VISIBILITY`
+  and bindings 39-42 of the mesh view bind group, present only for a view with it.
+- `src/render/mesh.rs`: `MeshPipelineKey::NVF_SUN_VISIBILITY`, `NVF_CLOUD_VISIBILITY` and
+  `NVF_TERRAIN_VISIBILITY` (bits 25-27; the key's bit fields above them move up by three,
+  well below the base mesh key's bits from 58), set by `check_views_need_specialization`
+  from the same component, and the shader defs of the same names. The pipelines' layout
+  key and the view's bind group are both read from that one component in the same frame,
+  so they cannot disagree; the component is inserted, changed and removed only during
+  extraction.
+
+The shaders that use the bindings are nvforever's (`sun_visibility.wesl`, patched into
+`apply_pbr_lighting` at run time like lights.rs's edits). Bevy inserts neither component;
+without them the flags, layouts and shader defs are upstream's, and so is every view while
+the game's switches are off; the pipeline keys are the same keys numbered differently (the
+packed fields above the new bits moved up by three). The meshlet path (feature off here) builds its
+view key without the bits, so a meshlet view must not get the component. Upstream has no
+way for an application to add bindings to the mesh view bind group.
 
 ## bevy_render 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 

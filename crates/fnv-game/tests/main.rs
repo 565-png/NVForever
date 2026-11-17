@@ -9,6 +9,7 @@
 //! `[[test]]`; `every_test_file_is_built` fails until it is in one of them.
 
 mod common;
+mod string_settings;
 #[path = "common/digest.rs"]
 mod digest;
 
@@ -148,3 +149,6 @@ fn every_test_file_is_built() {
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
+
+mod preactivation_events;
+mod preactivation_mutation;
