@@ -226,10 +226,13 @@ the rule yet.
 The values are engineering choices, to be set from pictures (cloud_shadows.rs, the test
 aid `NVF_PLAY_DEBUG_CLOUD_SHADOW=<plane height>,<repeat>,<strength>[,<direction>]`):
 
-- Strength (`STRENGTH`, 0.6): how much of the sun's light an opaque cloud takes away. The
-  first values read as subtle under clear weather (main session run 2026-11-17, fork-notes).
-- Repeat (`REPEAT_UNITS`, 60,000 units per texture repeat): the size of the pattern on the
-  ground.
+- Strength (`STRENGTH`, 0.6): how much of the sun's light an opaque cloud takes away, and
+  repeat (`REPEAT_UNITS`, 60,000 units per texture repeat): the size of the pattern on the
+  ground. Both are the contributor's pick in play on 2026-11-17, with the relative rule
+  (§7a), at Goodsprings at noon under a clear and an overcast weather, among five pairs:
+  60,000 / 0.6, 40,000 / 0.7, 30,000 / 0.8, 20,000 / 0.8 and 30,000 / 1.0 [engineering
+  choice]. Under clear weather the pick is subtle; at strength 1.0 the ground under a dense
+  cloud went nearly black. To be refined.
 - Plane height (`PLANE_ABOVE_GROUND`, 20,000 units above the ground reference): how far the
   pattern shifts with the sun's angle.
 - Reference percentile (`REFERENCE_PERCENTILE`, 90) and floor (`REFERENCE_FLOOR`, 0.1) of

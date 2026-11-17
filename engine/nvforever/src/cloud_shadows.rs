@@ -113,11 +113,13 @@ pub const MAP_SIZE: usize = 512;
 /// Height of the cloud plane above the worldspace's ground reference, game units
 /// [engineering choice: to be calibrated from pictures].
 pub const PLANE_ABOVE_GROUND: f32 = 20_000.0;
-/// World size of one texture repeat on the plane, game units [engineering choice: to be
-/// calibrated from pictures].
+/// World size of one texture repeat on the plane, game units [engineering choice: the
+/// contributor's pick in play on 2026-11-17 among 60,000, 40,000, 30,000 and 20,000,
+/// docs/design/sun-visibility.md §8; to be refined].
 pub const REPEAT_UNITS: f32 = 60_000.0;
 /// How much of the sun's direct light a fully opaque cloud takes away: K = mix(1, T,
-/// strength) [engineering choice: to be calibrated from pictures].
+/// strength) [engineering choice: the contributor's pick in play on 2026-11-17 among 0.6,
+/// 0.7, 0.8 and 1.0, docs/design/sun-visibility.md §8; to be refined].
 pub const STRENGTH: f32 = 0.6;
 /// The ground reference (the camera's height when the worldspace's first output is made)
 /// is rounded to this, game units [engineering choice: one LAND height step band, so a
