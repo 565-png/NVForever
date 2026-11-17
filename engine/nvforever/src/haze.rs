@@ -15,7 +15,7 @@
 //!
 //! **Where it sits.** Per fragment in the world shaders' fog path, no pass of its own: every
 //! world shader reaches Bevy's `apply_fog` (bevy_pbr `pbr_functions.wesl`), which has the
-//! fragment's and the camera's positions. [`HAZE_EDITS`] (a list of its own, apart from
+//! fragment's and the camera's positions. [`haze_edits`] (a list of its own, apart from
 //! lights.rs's lighting edits) puts `nvf_haze` before it and hands its result to the fog
 //! function in the `scattering` argument, which Bevy reads only while the fog's directional
 //! light alpha is above 0 (never set here). fog.rs `GAME_FOG` blends the haze and the
@@ -58,9 +58,10 @@ pub const WEIGHT_NONE_SHARE: f32 = 0.85;
 /// The haze's extinction length at the base height, times the weather's fog far: a mod's
 /// far of 1,000,000 gets a haze five times thinner than a far of 200,000, not a wall.
 pub const LENGTH_PER_FAR: f32 = 0.9;
-/// The longest stretch of a view ray the haze counts, times the fog far: the haze at the
-/// base height then never passes 1 − e^(−0.56) (43 %), whatever the far, so the distant LOD
-/// keeps its shapes.
+/// The longest stretch of a view ray the haze counts, times the fog far. The optical depth
+/// then stays under 0.5 / 0.9 = 0.56 (43 %) along the base height at normal wind, and at
+/// most 2 × 1.25 times that (1.39, 75 %) with the strongest wind and below the base, whatever
+/// the far (times the debug multiplier), so the distant LOD keeps its shapes.
 pub const REACH_PER_FAR: f32 = 0.5;
 /// Height falloff k (per unit): a third of the density 3,000 units above the base height
 /// (ln 3 / 3,000).
@@ -86,6 +87,12 @@ pub const SUN_RISE_DEG: f32 = 4.0;
 pub const BASE_SECONDS: f32 = 2.0;
 /// Without landscape under the camera the base height is this far below it.
 pub const BASE_BELOW_CAMERA: f32 = 128.0;
+/// Seconds over which that stand-in is followed: much slower than the ground, so the base
+/// does not climb onto roofs with the camera where a worldspace has no landscape under it.
+pub const BASE_SECONDS_NO_LAND: f32 = 20.0;
+/// Cells whose LAND heights are kept (the camera's and the last few it was in): a camera on
+/// a cell border does not decode again at each crossing.
+pub const GROUND_CELLS: usize = 4;
 /// The debug multiplier's largest value.
 pub const DEBUG_MOST: f32 = 100.0;
 
@@ -149,14 +156,16 @@ pub fn density(near: f32, far: f32, power: f32, strength: f32, wind: f32, multip
 
 /// The haze's share for a fragment `distance` away whose height is `rise` above the
 /// camera's (negative below), the camera `camera_above` the base height, with the fog far
-/// `far` (the uniform's, [`effective_far`]): what `nvf_haze` computes.
+/// `far` (the uniform's, [`effective_far`]): what `nvf_haze` computes. The mean density is
+/// taken over the whole ray, camera to fragment; only the length counted is held to the
+/// reach, so for a fragment at a given height the share never falls with distance.
 pub fn share(density: f32, far: f32, distance: f32, camera_above: f32, rise: f32) -> f32 {
     if !density.is_finite() || density <= 0.0 || distance.is_nan() || distance <= 0.0 {
         return 0.0;
     }
     let reach = distance.min(REACH_PER_FAR * far);
     let y0 = camera_above.max(-BELOW_BASE);
-    let y1 = (camera_above + rise * (reach / distance)).max(-BELOW_BASE);
+    let y1 = (camera_above + rise).max(-BELOW_BASE);
     1.0 - (-density * reach * mean_density(y0, y1)).exp()
 }
 
@@ -181,11 +190,12 @@ pub fn sun_target(fog: [f32; 3], sunlight: [f32; 3], sun_up: f32) -> [f32; 3] {
     })
 }
 
-/// The base height (game z) a frame later: `base` moved toward `target` over
-/// [`BASE_SECONDS`]; `target` itself at first and after a jump of a cell or more.
-pub fn follow(base: Option<f32>, target: f32, dt: f32) -> f32 {
+/// The base height (game z) a frame later: `base` moved toward `target` over `seconds`
+/// ([`BASE_SECONDS`] on landscape, [`BASE_SECONDS_NO_LAND`] for the stand-in); `target`
+/// itself at first and after a jump of a cell or more.
+pub fn follow(base: Option<f32>, target: f32, dt: f32, seconds: f32) -> f32 {
     match base {
-        Some(b) if b.is_finite() && (target - b).abs() < fnv_world::CELL_SIZE => b + (target - b) * (1.0 - (-dt.max(0.0) / BASE_SECONDS).exp()),
+        Some(b) if b.is_finite() && (target - b).abs() < fnv_world::CELL_SIZE => b + (target - b) * (1.0 - (-dt.max(0.0) / seconds.max(1e-3)).exp()),
         _ => target,
     }
 }
@@ -206,7 +216,8 @@ const HAZE_FOG_CALL: &str = "        return package::render::fog::atmospheric_fo
 /// `nvf_haze`, put before `apply_fog`. The `NVF_HAZE_*` words are the Rust constants above,
 /// written in by [`haze_function`].
 const HAZE_FUNCTION: &str = "// NVForever (nvforever haze.rs HAZE_FUNCTION): the desert haze, an enhanced-look switch.
-// Exponential height fog integrated in closed form along the view ray up to a reach, and the
+// Exponential height fog integrated in closed form along the view ray (its mean density from
+// the camera to the fragment, its length held to a reach), and the
 // sun's glow as a power of the cosine to the sun (Quilez, \"Fog\"). Returns vec3(share, sun
 // weight, 0) for the game's fog (nvforever fog.rs GAME_FOG) in the scattering argument. The fog
 // uniform holds the density at the base height (bi.z; 0: off, the argument goes through as it
@@ -229,7 +240,7 @@ fn nvf_haze(
     let reach = min(distance, NVF_HAZE_REACH * fog_params.be.y);
     let base_y = fog_params.directional_light_exponent;
     let y0 = max(view_world_position.y - base_y, lowest);
-    let y1 = max(view_world_position.y + view_to_world.y * (reach / distance) - base_y, lowest);
+    let y1 = max(view_world_position.y + view_to_world.y - base_y, lowest);
     var mean_density: f32 = exp(-k * 0.5 * (y0 + y1));
     if abs(k * (y1 - y0)) > 1e-3 {
         mean_density = (exp(-k * y0) - exp(-k * y1)) / (k * (y1 - y0));
@@ -339,7 +350,7 @@ struct Logged {
     density: f32,
 }
 
-/// The stored LAND heights of a cell, by worldspace and cell.
+/// The stored LAND heights of a cell (`None`: no landscape), by worldspace and cell.
 type CellHeights = ((u32, (i32, i32)), Option<Vec<f32>>);
 
 /// The haze's state between frames (no per-weather result: everything weather-made is
@@ -354,8 +365,8 @@ struct HazeState {
     base: Option<f32>,
     /// The camera last frame (game axes), for a jump.
     last_camera: Option<Vec3>,
-    /// The stored LAND heights of the camera's cell, by worldspace and cell.
-    ground: Option<CellHeights>,
+    /// The stored LAND heights of the last [`GROUND_CELLS`] cells, the latest first.
+    ground: Vec<CellHeights>,
     /// The debug multiplier, read once.
     debug: Option<f32>,
     logged: Option<Logged>,
@@ -369,11 +380,19 @@ impl HazeState {
         use fnv_world::land::{load_land, LandParts, SIDE};
         let g = fnv_world::cell_of(x, y);
         let key = (world.world, g);
-        if self.ground.as_ref().is_none_or(|(k, _)| *k != key) {
-            let heights = world.grid_cell(g).and_then(|c| c.land).and_then(|fid| load_land(world.lo, world.schema, fid, LandParts::HEIGHTS)).and_then(|l| l.heights);
-            self.ground = Some((key, heights.filter(|h| h.len() == SIDE * SIDE)));
+        match self.ground.iter().position(|(k, _)| *k == key) {
+            Some(0) => {}
+            Some(i) => {
+                let cell = self.ground.remove(i);
+                self.ground.insert(0, cell);
+            }
+            None => {
+                let heights = world.grid_cell(g).and_then(|c| c.land).and_then(|fid| load_land(world.lo, world.schema, fid, LandParts::HEIGHTS)).and_then(|l| l.heights);
+                self.ground.insert(0, (key, heights.filter(|h| h.len() == SIDE * SIDE)));
+                self.ground.truncate(GROUND_CELLS);
+            }
         }
-        let heights = self.ground.as_ref()?.1.as_ref()?;
+        let heights = self.ground.first()?.1.as_ref()?;
         let size = fnv_world::CELL_SIZE;
         let (ox, oy) = (g.0 as f32 * size, g.1 as f32 * size);
         fnv_world::land_surface::grid_height_at(heights, SIDE, size / (SIDE - 1) as f32, (x - ox).clamp(0.0, size), (y - oy).clamp(0.0, size)).filter(|z| z.is_finite())
@@ -466,8 +485,11 @@ fn update_haze(
         state.base = None;
     }
     state.last_camera = Some(cam);
-    let ground = world.as_deref().and_then(|data| state.ground_height(data, cam.x, cam.y)).unwrap_or(cam.z - BASE_BELOW_CAMERA);
-    let base = follow(state.base, ground, time.delta_secs());
+    let (ground, seconds) = match world.as_deref().and_then(|data| state.ground_height(data, cam.x, cam.y)) {
+        Some(z) => (z, BASE_SECONDS),
+        None => (cam.z - BASE_BELOW_CAMERA, BASE_SECONDS_NO_LAND),
+    };
+    let base = follow(state.base, ground, time.delta_secs(), seconds);
     state.base = Some(base);
 
     // Into the fog uniform's free fields (Bevy y is game z).
@@ -487,18 +509,19 @@ fn update_haze(
     state.shown = true;
 
     // The log: on, and when the weather's figures move notably (not during a time-lapse).
-    let name = sky.weather.edid.clone();
+    // (The weather's name is copied only when a line is written.)
+    let name = sky.weather.edid.as_deref();
     if !state.active {
         state.active = true;
-        info!("haze: desert haze on: {}, base z {base:.0}", describe(name.as_deref(), w, wind, d, far_now, multiplier));
-        state.logged = Some(Logged { weather: name, weight: w, density: d });
+        info!("haze: desert haze on: {}, base z {base:.0}", describe(name, w, wind, d, far_now, multiplier));
+        state.logged = Some(Logged { weather: name.map(str::to_string), weight: w, density: d });
     } else if sky.time_scale <= 0.0 {
         let notable = state.logged.as_ref().is_none_or(|l| {
-            l.weather != name || (l.weight - w).abs() >= 0.1 || (d > 0.0) != (l.density > 0.0) || (l.density > 0.0 && !(0.8..=1.25).contains(&(d / l.density)))
+            l.weather.as_deref() != name || (l.weight - w).abs() >= 0.1 || (d > 0.0) != (l.density > 0.0) || (l.density > 0.0 && !(0.8..=1.25).contains(&(d / l.density)))
         });
         if notable {
-            info!("haze: {}", describe(name.as_deref(), w, wind, d, far_now, multiplier));
-            state.logged = Some(Logged { weather: name, weight: w, density: d });
+            info!("haze: {}", describe(name, w, wind, d, far_now, multiplier));
+            state.logged = Some(Logged { weather: name.map(str::to_string), weight: w, density: d });
         }
     }
 }
@@ -638,7 +661,16 @@ mod tests {
                 }
             }
         }
-        // Thicker with distance (up to the reach), thinner the higher the fragment.
+        // Thicker with distance, past the reach too, for a fragment at a given height above
+        // or below the camera; thinner the higher the fragment.
+        for rise in [-5_000.0f32, -1_000.0, 0.0, 800.0] {
+            let mut last = 0.0;
+            for k in 0..=200 {
+                let s = share(d, far, 2_000.0 * k as f32, 300.0, rise);
+                assert!(s >= last, "rise {rise}, distance {}: {s} after {last}", 2_000 * k);
+                last = s;
+            }
+        }
         let mut last = 0.0;
         for k in 0..=50 {
             let s = share(d, far, 2_000.0 * k as f32, 300.0, -1_000.0);
@@ -677,12 +709,16 @@ mod tests {
 
     #[test]
     fn the_base_height_follows_the_ground_smoothly() {
-        assert_eq!(follow(None, 900.0, 0.016), 900.0);
-        let b = follow(Some(1_000.0), 1_200.0, 0.016);
+        assert_eq!(follow(None, 900.0, 0.016, BASE_SECONDS), 900.0);
+        let b = follow(Some(1_000.0), 1_200.0, 0.016, BASE_SECONDS);
         assert!(b > 1_000.0 && b < 1_010.0, "{b}");
-        assert_eq!(follow(Some(1_000.0), 9_000.0, 0.016), 9_000.0, "a jump of a cell or more snaps");
-        assert!((follow(Some(1_000.0), 1_200.0, 100.0) - 1_200.0).abs() < 1e-3);
-        assert_eq!(follow(Some(f32::NAN), 5.0, 0.016), 5.0);
+        assert_eq!(follow(Some(1_000.0), 9_000.0, 0.016, BASE_SECONDS), 9_000.0, "a jump of a cell or more snaps");
+        assert!((follow(Some(1_000.0), 1_200.0, 100.0, BASE_SECONDS) - 1_200.0).abs() < 1e-3);
+        assert_eq!(follow(Some(f32::NAN), 5.0, 0.016, BASE_SECONDS), 5.0);
+        // Without landscape the stand-in is followed ten times slower.
+        let slow = follow(Some(1_000.0), 1_200.0, 0.016, BASE_SECONDS_NO_LAND);
+        assert!(slow > 1_000.0 && slow - 1_000.0 < (b - 1_000.0) / 5.0, "{slow} vs {b}");
+        assert!(follow(Some(1_000.0), 1_200.0, 0.016, 0.0).is_finite());
     }
 
     #[test]

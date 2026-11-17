@@ -653,7 +653,9 @@ longer exists (the settings menu overhaul); the haze is a row of its own, "Deser
   above a base height, integrated in closed form along the view ray from the camera to the
   fragment: optical depth = density x L x (e^(-k y0) - e^(-k y1)) / (k (y1 - y0)), with the
   limit e^(-k (y0 + y1) / 2) where the two heights are within 1e-3 / k (2.7 units); share =
-  1 - e^(-depth). The sun's forward glow is a power of the cosine between the view ray and
+  1 - e^(-depth). y0 and y1 are the camera's and the fragment's own heights; only the length
+  L is held to the reach (below), so for a fragment at a given height the share never falls
+  with distance. The sun's forward glow is a power of the cosine between the view ray and
   the sun. Both as Inigo Quilez describes them in "Fog"
   (<https://iquilezles.org/articles/fog/>, the article Bevy's fog shader also cites)
   [documented: cited article]; our own code from that description, no code from any other
@@ -662,7 +664,7 @@ longer exists (the settings menu overhaul); the haze is a row of its own, "Deser
   covers everything the weather's fog covers (NIF materials, terrain, trees, grass, water,
   the distant LOD, transparent things) under every anti-aliasing and upscaler. Bevy's fog
   function gets only the distance; its caller `apply_fog` (bevy_pbr `pbr_functions.wesl`)
-  has both positions. `haze.rs` `HAZE_EDITS`, a list of its own beside lights.rs's lighting
+  has both positions. `haze.rs` `haze_edits()`, a list of its own beside lights.rs's lighting
   edits, puts `nvf_haze` before `apply_fog` and passes its result to the atmospheric fog
   call as the `scattering` argument, which Bevy reads only while the fog's directional
   light alpha is above 0 (never set here); only that call line changes. fog.rs `GAME_FOG`
@@ -694,22 +696,27 @@ longer exists (the settings menu overhaul); the haze is a row of its own, "Deser
     0.4): 0.17. Any fog that is full at 50,000 (NVWastelandHazy 1,800..30,000) and
     HVDustStorm get none [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]. HVDustStorm's day fog 0/0 is no range, so the renderer shows its night fog
     510..55,000 power 1.0 all day (`Weather::fog_at`): share 0.91 at 50,000, none.
-  - *Reach*: the extinction length at the base height is 0.9 x the fog far and the ray is
-    counted up to 0.5 x the fog far, so the haze at the base height never passes
-    1 - e^(-0.56) (43 %), whatever the far: a mod's far of 1,000,000 gives a haze five times
-    thinner, not a wall, and the distant LOD keeps its shapes.
+  - *Reach*: the extinction length at the base height is 0.9 x the fog far and the length
+    counted is at most 0.5 x the fog far, so the optical depth stays under 0.56 (43 %)
+    along the base height at normal wind, and at most 2 x 1.25 times that (1.39, 75 %) with
+    the strongest wind and below the base (times the debug multiplier), whatever the far: a
+    mod's far of 1,000,000 gives a haze five times thinner, not a wall, and the distant LOD
+    keeps its shapes.
   - *Wind*: x(1 + 0.25 (wind - 50) / 50), held to 0.75..1.25 (the base game's weathers
     nearly all store 50; a wind of 255 gives 1.25 times). Blended across a fade.
   - *Colour*: the fog colour the weather's fog uses now (`SkyState::fog_color`), moved
     toward the weather's sunlight colour by up to 0.4 looking into the sun, by the cosine to
-    the sun to the 8th power (Bevy's own default for its fog's directional light); the sun
+    the sun to the 8th power (Bevy's own default for its fog's directional light; the two are
+    `haze.rs` `SUN_MIX` and `SUN_POWER`, one line each); the sun
     term grows in as the sun climbs from the horizon to 4° and is nothing at night. The
     sun's direction is the view's first directional light (the sun; the first-person arms'
     shade light is its child and points the same way). No colour of our own.
-  - *Base height*: the landscape under the camera (the cell's stored LAND heights, decoded
-    once per cell), followed over 2 s, at once after a jump of a cell; 128 units below the
-    camera where there is no landscape. Below it the density grows no further than 2 times
-    (1,893 units down), so basins far below a ridge haze over without turning white.
+  - *Base height*: the landscape under the camera (the cells' stored LAND heights, decoded
+    once and kept for the last four cells), followed over 2 s, at once after a jump of a
+    cell. Where the worldspace has no LAND under the camera the stand-in is 128 units below
+    the camera, followed over 20 s, so it does not climb onto roofs with it. Below the base
+    the density grows no further than 2 times (1,893 units down), so basins far below a
+    ridge haze over without turning white.
 - **Chosen values** (by eye, for the user to judge from pictures; constants at the top of
   `haze.rs`): at a clear noon, the camera on foot and a fragment at its height, the haze
   alone is 10 % at 20,000 units and 27 % at 60,000 (the starting values asked for were
@@ -729,8 +736,21 @@ longer exists (the settings menu overhaul); the haze is a row of its own, "Deser
   in the fog uniform).
 - **Not done**: no pooling in low ground by the hour (the issue's dawn fog), no noise or
   drifting dust, nothing indoors, no shadowing of the haze by terrain (Bevy's fog
-  in-scattering fetches a shadow map per fragment; §4). The reflection camera copies the
-  main fog, so the planar reflection's haze is worked from the mirrored camera's height.
+  in-scattering fetches a shadow map per fragment; §4). No land from a parent worldspace:
+  NVForever draws each worldspace's own LAND only (worldspace.rs), so a city worldspace's
+  cells without LAND (the Strip, Freeside) take the slow stand-in above, which follows the
+  camera's height over 20 s instead of the ground.
+- **The water reflection** (left as it is): the reflection camera clones the main camera's
+  fog (`reflection.rs` `update_reflection`), so the planar reflection's haze is worked along
+  the mirrored ray from the camera mirrored below the water. Its length is the real
+  reflected path's, and its far part (water to fragment) lies at the real heights, but its
+  near part (camera to water) lies at heights mirrored below the water, so far below the
+  base that the density there is at the floor's 2 times. From a camera high over a lake a
+  reflected ridge gets up to about 1.4 times the haze its real path would. The main
+  view then fogs the water surface over the camera-to-water distance again, as it does the
+  weather's fog on main. A fix needs the water height in the haze (fold the heights at the
+  water), which the fog uniform has no field for; a base height worked for the reflection
+  camera alone would make the far part too thin instead.
 - **Switching**: the row, `--graphics-only desert-haze`, a `--graphics-cycle` set
   `desert-haze`, `NVF_PLAY_TEST_SETTINGS=<t>:desert-haze`. Switching changes no pipeline
   (only the uniform), so nothing compiles. Log lines: `haze: desert haze on: <weather>:
