@@ -62,7 +62,8 @@ pub const TERRAIN_SHELL: f32 = 3.5;
 /// `contact_clustering.rs`, `COS_MERGE_ANGLE`], so clutter lying across two terrain
 /// triangles that meet at a small angle (LAND's 8-unit steps over 128 units make 3.6°)
 /// rocked between two tilts at 10-27 units/s and never slept [observed: issue #2663;
-/// test `placed_clutter_on_creased_ground_falls_asleep`]. It changes only when such a
+/// also the set-up of test `placed_clutter_on_creased_ground_falls_asleep` with rapier's
+/// default threshold, 3-8 of 256 drops awake]. It changes only when such a
 /// body may sleep, not how it moves awake (physics.md §5.5).
 pub const PLACED_SLEEP_SPEED: f32 = 21.0;
 

@@ -1219,9 +1219,9 @@ sleeping"). Two causes, both in how rapier picks a contact's points.
   cloth, a box and a stone on a stepped and a smoothed hill, 60 and 160 Hz: all asleep on
   the ground after 12 s; with rapier's threshold 3-8 of the 256 stayed awake in each
   set-up, creeping at 0.2-4 units/s [observed: that set-up, 2026-11-17]) and
-  `a_ball_rolling_slowly_stays_awake` (40 units/s, still rolling 3 s later). On a steeper
-  hill (slopes to about 40°) what stays awake after 12 s is sliding or tumbling down at
-  17-220 units/s, as it should [observed: an uncommitted variant of that test].
+  `a_ball_rolling_slowly_stays_awake` (started at 40 and at 21 units/s, still rolling 3 s
+  later; the slower one's centre rolls under 21, its top at twice that, and rapier
+  measures the farthest point).
 - **Measured** [observed: a probe of `fnvtool phys cell`, not committed, 2026-11-13:
   every dynamic reference of the cell added awake where it is placed, 20 s of settling,
   then a kick from below at 400 units/s and 20 s more; bodies awake at the end of each,

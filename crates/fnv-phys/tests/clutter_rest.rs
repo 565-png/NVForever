@@ -227,30 +227,37 @@ fn placed_clutter_on_creased_ground_falls_asleep() {
 }
 
 /// The higher sleep speed stops only what is nearly still: a ball rolling at 40 units/s
-/// on flat ground is still awake and rolling 3 s later.
+/// on flat ground is still awake and rolling 3 s later, and so is one started at 21
+/// whose centre rolls on slower than `PLACED_SLEEP_SPEED` (once rolling, 5/7 of its
+/// start): rapier measures the farthest point, and a rolling ball's top moves at twice
+/// its centre's speed [documented: rapier3d 0.36.1 `relative_pose_drift`, the turn
+/// times the body's extent added to the move].
 #[test]
 fn a_ball_rolling_slowly_stays_awake() {
     use fnv_world::land::SIDE;
-    for hz in RATES {
-        let mut w = PhysWorld::new(PhysParams::default());
-        for x in -1..=0 {
-            for y in -1..=0 {
-                w.add_terrain((x, y), &vec![0.0; SIDE * SIDE]);
+    // Start speed, and the least and most the centre may move in the last second.
+    for (start, least, most) in [(40.0, 20.0, f32::INFINITY), (21.0, 10.0, PLACED_SLEEP_SPEED)] {
+        for hz in RATES {
+            let mut w = PhysWorld::new(PhysParams::default());
+            for x in -1..=0 {
+                for y in -1..=0 {
+                    w.add_terrain((x, y), &vec![0.0; SIDE * SIDE]);
+                }
             }
-        }
-        let ball = object(Shape::Sphere { radius: 6.0 }, Motion::Dynamic, 2.0);
-        w.add_ref(&at(0x400, [-300.0, 0.0, 6.0 + TERRAIN_SHELL]), &[ball]);
-        w.set_step(1.0 / hz);
-        assert_eq!(w.set_ref_velocity(0x400, 0, 40.0), 1);
-        let mut last = [0.0; 3];
-        for i in 0..(3.0 * hz) as usize {
-            if i == (2.0 * hz) as usize {
-                last = w.ref_bodies(0x400)[0].translation;
+            let ball = object(Shape::Sphere { radius: 6.0 }, Motion::Dynamic, 2.0);
+            w.add_ref(&at(0x400, [-300.0, 0.0, 6.0 + TERRAIN_SHELL]), &[ball]);
+            w.set_step(1.0 / hz);
+            assert_eq!(w.set_ref_velocity(0x400, 0, start), 1);
+            let mut last = [0.0; 3];
+            for i in 0..(3.0 * hz) as usize {
+                if i == (2.0 * hz) as usize {
+                    last = w.ref_bodies(0x400)[0].translation;
+                }
+                w.step();
             }
-            w.step();
+            let b = w.ref_bodies(0x400)[0];
+            let moved = dist(&b.translation, &last);
+            assert!(!b.sleeping && moved > least && moved < most, "{start} units/s, {hz} Hz: asleep {}, {moved} units in the last second, {b:?}", b.sleeping);
         }
-        let b = w.ref_bodies(0x400)[0];
-        let moved = dist(&b.translation, &last);
-        assert!(!b.sleeping && moved > 20.0, "{hz} Hz: asleep {}, {moved} units in the last second, {b:?}", b.sleeping);
     }
 }
