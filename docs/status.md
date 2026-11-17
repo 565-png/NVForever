@@ -86,6 +86,14 @@ Deleted engine-shot associations also have a focused next-consumer retirement br
 
 ## 3. Actors
 
+NPC turn-in-place root handling is authored in the production movement binder and
+pose sampler ([animation §9.13](spec-notes/animation.md#913-npc-turn-clips-and-the-accumulation-root-basis)).
+Both turn directions derive their root basis from the clip while retaining relative
+rotation and child poses. Four portable controls and one ignored local-asset
+regression remain unexecuted;
+exact-source compilation, actual loaded-asset sampling, installed-mod greeting
+acceptance and original-game parity remain open.
+
 | System | State | Specifics | Notes |
 |---|---|---|---|
 | Appearance | Done, awaiting owner | Skeleton, body, FaceGen (race + NPC values, skin tint, hair morphs), worn armour, creatures, weapons holstered and drawn (creatures' weapons audited for every creature type: super mutants, ghost people and aliens hold theirs, the rest are body weapons or loot; `fnvtool actor creature-weapons`, actors.md §10.6) | [static-actors](design/static-actors.md), [actors](spec-notes/actors.md) |
