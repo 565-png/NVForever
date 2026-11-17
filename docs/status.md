@@ -309,8 +309,9 @@ execution, native timing and original Helmet Overlay/Titans acceptance remain
 unqualified. Contract: [Title-start MenuMode](spec-notes/script-language.md#title-start-menumode-group-4).
 
 
-Water coverage and camera fog lifecycle: authored source controls for exact loaded-cell
-identity/radius invalidation and current-camera enter/exit restoration are unrun.
+Water coverage and camera fog lifecycle: four actual renderer-producer/camera-fog
+CPU controls passed once on `13c2311e` (hosted composite `df3bbea9`, tree `58b3bb03`),
+covering loaded-cell identity/radius invalidation and current-camera entry/exit.
 The plane producer retains unaffected meshes/materials; exit uses current weather or
 interior fog, after transform propagation and before reflection fog copying. This is
 bounded renderer work, not installed UnderwaterFX/Radiation Visuals acceptance or a
@@ -321,6 +322,8 @@ Live image-space cinematic edits: a bounded renderer bridge applies session-assi
 traits37–50 to selected nonanimatable screen/lens modifiers without changing the
 immutable record cache or core getter/setter policy. Three authored compiled-source
 through real grade controls cover updates, removal/re-entry, lens/animated isolation
-and checked restore; all are unrun. Native animated-edit semantics, initial getter
+and checked restore; all three passed once on `13c2311e` (hosted composite
+`df3bbea9`, tree `58b3bb03`). This is CPU consumer coverage only.
+Native animated-edit semantics, initial getter
 alpha units and installed Radiation Visuals/UnderwaterFX acceptance remain open
 ([image modifiers](spec-notes/image-modifiers.md)).
