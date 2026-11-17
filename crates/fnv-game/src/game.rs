@@ -1399,6 +1399,7 @@ pub struct Game<'a> {
     pub showoff: crate::nvse_showoff::ShowOffState,
     /// Mods' INI and other files (`crate::mod_files`).
     pub mod_files: crate::mod_files::ModFiles,
+    pub(crate) ysi_filename: crate::ysi_filename::State,
     /// SUP batch 6's state: the mouse, the cursor, the debug texts, the lockpick menu …
     /// (`crate::nvse_sup6`; the engine fills and takes it).
     pub sup: crate::nvse_sup6::SupState,
@@ -2516,6 +2517,7 @@ impl<'a> Game<'a> {
             hud: Default::default(),
             showoff: Default::default(),
             mod_files: Default::default(),
+            ysi_filename: Default::default(),
             sup: Default::default(),
             lu3: Default::default(),
             sup7: Default::default(),
@@ -7169,6 +7171,9 @@ impl Host for Exec<'_, '_> {
     }
 
     fn ext_call(&mut self, name: &str, on: Option<Value>, args: &[fnv_script::vm::XVal]) -> Option<Result<fnv_script::vm::XVal, String>> {
+        if crate::ysi_filename::handles(name) {
+            return Some(crate::ysi_filename::call(self.game, on, args));
+        }
         if functions::player_source::handles(name) {
             let source_ctx = Ctx { unit: self.unit.shared_key().clone(), opcode: 0, on: None, self_ref: self.ctx.self_ref,
                 action_ref: self.ctx.action_ref, quest: self.ctx.quest, inst: None, in_condition: false };

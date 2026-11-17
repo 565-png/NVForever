@@ -114,3 +114,8 @@ path = "tests/jip_registration_provenance.rs"
 [[test]]
 name = "get_files_data_roots"
 path = "tests/get_files_data_roots.rs"
+
+# ySI provider fixtures own and restore process-wide Data reader roots.
+[[test]]
+name = "ysi_filename_source"
+path = "tests/ysi_filename_source.rs"
