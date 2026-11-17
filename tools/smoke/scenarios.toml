@@ -6235,6 +6235,25 @@ expect = [
 ]
 
 [[scenario]]
+name = "device-lost-report"
+source = "#2934 (player report panic-18a26827d78d01c8): a lost graphics device ends the run as a lost device, not as the wgpu panic that follows it: the crash report is the loss's and the run stops there (engine/nvforever/src/crash.rs)"
+note = "The test aid destroys the device 10 s in; the next frames fail as in the player's log. wgpu does not announce a loss for a device destroyed this way, so the aid logs Bevy's loss line itself; the line's form is from the player's log (unit test a_lost_device_is_read_from_bevys_line_and_named_in_the_report). The message box is not shown in unattended runs."
+areas = ["crash"]
+paths = ["engine/nvforever/src/crash.rs"]
+env = { NVF_PLAY_TEST_DEVICE_LOST = "10" }
+args = ["--cell", "Goodsprings"]
+run_seconds = 30
+exit = 1
+# The run ends at the first panic after the loss: its last lines are that panic's.
+ends = "panicked at"
+expect = [
+  "test aid: destroying the graphics device (NVF_PLAY_TEST_DEVICE_LOST)",
+  { re = 'render: the graphics device was lost \(Destroyed by the test aid NVF_PLAY_TEST_DEVICE_LOST\); the panic below is its consequence and the game stops', label = "the loss named before the panic that followed it" },
+  { re = 'panic on thread .* crash report written to .*crash-\d{8}-\d{6}-\d+\.txt', label = "one crash report, written by the first panic after the loss" },
+  { text = "run log: the game exited normally", max = 0, label = "the run stops at the loss" },
+]
+
+[[scenario]]
 name = "hello-shared-quest-order"
 source = "[hypothesis] #1895: Info Index places shared lines within the listing quest (docs/spec-notes/dialogue.md section 1.2); [design] crates/fnv-game/src/data.rs shared_lines preserves the Powder Ganger Random pool"
 note = "[design] Only issue-listed actor 000F0AF8 is handed to residents. Detection is disabled before approaching; the player alternates between offsets 900 and 100 units from that actor to rearm hellos (crates/fnv-ai/src/social.rs HELLO_DISTANCE / HELLO_REARM), the approaches 65 s apart since #2156: an actor that said an idle line says no other for 60 s (IDLE_LINE_AGAIN). Four approaches must choose eligible Random lines, never the later plain line; a line said in the last 180 s is not said again, so the four are the pool's four lines. Seeded variation is checked in dialogue_data.rs; this scenario does not require distinct picks. The ganger is restrained at 1 s (#2011): it stays where it stands and keeps its package, so each approach finds it standing; before #2011 it stood through a seatless meal from about 12:09, now it goes on wandering, and an actor on its way does not say hello (crates/fnv-ai/src/social.rs)"
