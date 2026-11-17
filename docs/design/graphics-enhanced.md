@@ -645,8 +645,8 @@ Where a placed road, rock or cliff meets the landscape, the mesh's lower edge ta
 landscape's own colour and shading over a short height band, so a broken asphalt shoulder
 reads as ground-lit dirt instead of a hard seam (#2661). Off by default and in `vanilla`,
 left out of `enhanced` (false in both looks, so `quality.rs::enhanced_keys` leaves it out;
-a test says so) until the maintainer decides; the settings row is under Graphics > Picture
-after the enhanced look's rows, kept in the INI like them, `--graphics-only
+a test says so) until the maintainer decides; the settings row is under Graphics > Detail
+and Distance after the terrain rows, kept in the INI like them, `--graphics-only
 mesh-terrain-blend` on the command line. Skyrim Community Shaders has a Terrain Blending
 feature; the design is our own. Every band, angle, resolution and selection rule below is
 NVForever's choice [design], not a fact about the original game or another renderer.
@@ -1380,8 +1380,8 @@ command line), `mesh-terrain-blend-live`
 (on and off from the settings page, then the gate closing), the verify aid's
 `mesh-terrain-blend-verify-crossing`, `-verify-live` and `-verify-terrain-switches` (the
 gate's skipped frames change nothing), the aid's `mesh-terrain-blend-goodsprings`,
-`-options` and `-widths`; `graphics-enhanced` and `settings-enhanced-effects` check that
-the enhanced look neither turns it on nor logs it.
+`-options` and `-widths`; `graphics-enhanced` checks that the enhanced look neither turns
+it on nor logs it.
 
 ## 4. Tried and dropped
 

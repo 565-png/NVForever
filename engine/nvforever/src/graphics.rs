@@ -701,7 +701,8 @@ fn sun_shadow_quality(
         info!("sun shadows: {phase:?}");
     }
     *done = Some(key);
-    let on = key.shadows && phase != SunShadows::Faded;
+    // A shadow distance of 0% (the menu overhaul) casts none.
+    let on = key.shadows && phase != SunShadows::Faded && key.distance > 0.0;
     for (e, mut light, cascades) in &mut suns {
         if light.shadow_maps_enabled != on {
             light.shadow_maps_enabled = on;
@@ -1235,8 +1236,8 @@ mod tests {
         assert!(Graphics::only(&["bloom".into()]).unwrap().describe().contains("light glow"));
     }
 
-    /// #2661: the mesh terrain blend is off in both looks, so the enhanced look and its
-    /// settings row leave it out, and `--graphics-only` and the row's key switch it.
+    /// #2661: the mesh terrain blend is off in both looks, so the enhanced look leaves it
+    /// out, and `--graphics-only` and the row's key switch it.
     #[test]
     fn mesh_terrain_blend_is_off_in_both_looks_and_not_enhanced() {
         assert!(!Graphics::preset(Preset::Vanilla).mesh_terrain_blend);
