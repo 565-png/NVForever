@@ -161,7 +161,7 @@ impl App {
                 EngineHome::user().map(|h| h.root).as_deref(),
             )),
             reports_confirm: false,
-            dlss: crate::dlss::Status::read(),
+            dlss: crate::dlss::Status::read(None),
             dlss_licence: false,
             reports_rx: None,
             news: Vec::new(),
@@ -286,6 +286,8 @@ impl App {
         self.game_edit = Config::from_ini(&self.ini_text).game_dir.map(|p| p.display().to_string()).unwrap_or_default();
         let configured = ini_get(&self.ini_text, LAUNCHER, "Exe").filter(|s| !s.is_empty()).map(PathBuf::from);
         self.exe = launch::find_game(configured.as_deref());
+        // The DLSS folder is beside the game this INI starts (crate::dlss::folder_for).
+        self.dlss = crate::dlss::Status::read(self.exe.as_deref());
     }
 
     fn launcher_flag(&self, key: &str, default: bool) -> bool {
@@ -1209,7 +1211,7 @@ impl App {
         let running = download::current().map(|h| h.progress()).filter(|p| !p.phase.finished());
         let last = download::current().map(|h| h.progress()).filter(|p| p.phase.finished());
         if matches!(last.as_ref().map(|p| &p.phase), Some(download::Phase::Done(_))) && !self.dlss.complete() {
-            self.dlss = crate::dlss::Status::read();
+            self.dlss = crate::dlss::Status::read(self.exe.as_deref());
         }
         let s = self.dlss.clone();
         let need = |ui: &mut egui::Ui, ok: bool, words: String| {
@@ -1275,7 +1277,7 @@ impl App {
                     launch::open_url(download::RELEASE_PAGE);
                 }
                 if ui.button("Check again").clicked() {
-                    self.dlss = crate::dlss::Status::read();
+                    self.dlss = crate::dlss::Status::read(self.exe.as_deref());
                 }
             });
         });
@@ -1303,7 +1305,7 @@ impl App {
             ui.horizontal(|ui| {
                 let accept = ui.add(gold_button("I accept", true)).on_hover_text("A mouse click only.");
                 if accept.clicked_by(egui::PointerButton::Primary) {
-                    nvf_dlss_files::download::start(nvf_dlss_files::download::LicenceAccepted::by_player(), None);
+                    nvf_dlss_files::download::start_into(nvf_dlss_files::download::LicenceAccepted::by_player(), None, crate::dlss::folder_for(self.exe.as_deref()));
                     self.dlss_licence = false;
                 }
                 if ui.button("Cancel").clicked() {
