@@ -1474,8 +1474,8 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     distance to the shape node's origin (the mesh instance's translation, usually the
     reference's), so a long shape fades as a whole, while a model whose parts sit under
     nodes of their own (the HELIOS One reflector row, its reflectors about 240 units apart
-    [observed: `heliosone_solarreflector_row.nif` node translations, read with `fnvtool`
-    in a review of #2841]) fades part by part; on window shapes too [hypothesis for the
+    [documented: `heliosone_solarreflector_row.nif` node translations, read with `fnvtool`])
+    fades part by part; on window shapes too [hypothesis for the
     curve and the origin, documented distances, the fade unobserved; observer check 228].
     A blended window shape (drawn premultiplied) keeps its colour × alpha even where its
     reflection has faded out or its strength is 0 [design]. The `glass-mccarran-*` frames
