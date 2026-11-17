@@ -35,7 +35,11 @@ Not on a reference whose script has an OnActivate block, one set off by its acti
 only, or one that cannot be activated: the game's own activation decides those, so their
 prompt stays and E acts as it always did. Not under the weapon wheel, VATS, the character
 creator, a kill camera, an idle that holds the camera, or a script's DisablePlayerControls
-(movement or rollover text). Not while the HUD is hidden.
+(movement or rollover text). Not while the HUD is hidden (its keys then do what they always do).
+The list stays on a reference only while it stays what it was: a pocket whose owner stands up,
+dies or turns hostile, a knocked-out body that wakes, or a change of theft makes the list anew
+(or none). The frame a list appears it takes no keys (the systems that read Ready Item and the
+wheel before it saw no list).
 
 ## 3. The rules are the container menu's
 
@@ -49,7 +53,8 @@ the pickpocket's `Steal` (rules, both Sneak skills, its seeded rolls) included. 
   and stays closed on that person;
 - a body's dropped weapon is a row and is picked up from the ground when taken.
 
-What came in is said as a script's AddItem says it ("Stimpak (2) added"; four or more stacks:
+Only a take is sounded as one: while the list shows the game runs on, and a shot's spent
+ammo or a hotkeyed Stimpak is not a take. What came in is said as a script's AddItem says it ("Stimpak (2) added"; four or more stacks:
 "N items added (M in all)"), and each take has its item's pick-up sound (Take All its own
 sound), as in the menu. The rows are read again every half second and after each take.
 
@@ -66,7 +71,7 @@ row's and the keys' line; the words' capitals are centred in it, whatever their 
 game font's capitals measured by their ink: its glyph pictures carry room for the glow).
 The box is centred on the crosshair's height whatever its rows, and starts 150 units right of
 the crosshair; it is never wider than the room to the right bracket of the HUD's bottom right
-pieces (`hud::RIGHT_EDGE_IN`): a name too long for that is cut with "...", before its count, which always shows. The bars' edges are on whole screen pixels, so equal rooms look equal. In the HUD colour
+pieces (`hud::RIGHT_EDGE_IN`): a name too long for that is cut with "...", before its count, which always shows; a list wider than that room even so (every column on a narrow screen, long keys) is drawn smaller until it fits. The container's own name widens the box as far as the room allows. The bars' edges are on whole screen pixels, so equal rooms look equal. In the HUD colour
 (`interface::amber`, recoloured with it), the crime colour for theft, at its own scale
 (the **Scale** row, 50% to 100% in steps of 10%, 100% by default; not the HUD
 scale), in the Menu Font row's font (the game's font 7, or the sharp font,
@@ -77,7 +82,7 @@ size, not bold.
 Columns, each with its own row (all off by default, greyed while Quick Loot is off): **Show
 weight**, **Show value**, **Show value per weight**; a pocket always shows each item's
 **chance**. With no column the count stands right-aligned in a column of its own; with any,
-it goes beside the name, "Stimpak (2)", and the heads' line has **ITEM** over the names, where they start; the heads at 70% opacity [owner 2026-11-17]. The columns are as wide as their
+it goes beside the name, "Stimpak (2)", and the heads' line has **ITEM** over the names, where they start; the heads at 50% opacity [owner 2026-11-17]. The columns are as wide as their
 widest figure in the drawn font, 40 units apart, so they align in both fonts.
 
 Each drawing checks itself (`quick_loot::overlaps`: texts that meet, a text outside the list
@@ -89,4 +94,4 @@ or what overlaps; the unit tests run it for every combination of columns in both
 - A controller has no wheel: its D-pad still steps the hotkeys; the selection moves with the
   mouse only.
 - MenuMode 1008 scripts (GetMenuTargetRef) and a container's open animation and sounds do not
-  run for the list; R's full menu runs them.
+  run for the list; T's full menu runs them.

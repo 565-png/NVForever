@@ -93,6 +93,10 @@ fn take_scale(_: &mut World, text: &str) -> bool {
 }
 /// The list shows and has its keys this frame ([`holds_input`]).
 static HOLDS: AtomicBool = AtomicBool::new(false);
+/// The list took something this frame: `crate::world_sounds` sounds the player's inventory
+/// changes as the container menu's takes only then ([`took_this_frame`]), not a shot's
+/// spent ammo or a hotkeyed Stimpak while the list shows.
+static TOOK: AtomicBool = AtomicBool::new(false);
 /// Wait asked for the full menu: `crate::activate::activate` activates the target as
 /// Activate would ([`take_full_request`]).
 static FULL: AtomicBool = AtomicBool::new(false);
@@ -102,6 +106,11 @@ static FULL: AtomicBool = AtomicBool::new(false);
 /// the input systems before it see the last frame's).
 pub fn holds_input() -> bool {
     HOLDS.load(Ordering::Relaxed)
+}
+
+/// The list took something since the last call (read once, by `crate::world_sounds`).
+pub fn took_this_frame() -> bool {
+    TOOK.swap(false, Ordering::Relaxed)
 }
 
 /// Wait asked for the full menu this frame (read once).
@@ -328,7 +337,7 @@ pub enum Which {
 pub enum Ink {
     /// The HUD colour, full.
     Hud,
-    /// The columns' heads (ITEM, WG …): the HUD colour at 70% [the owner's sixth look,
+    /// The columns' heads (ITEM, WG …): the HUD colour at 50% [the owner's sixth look,
     /// 2026-11-17: "not that visible"].
     Head,
     /// The HUD colour, dim.
@@ -416,7 +425,7 @@ pub fn cap(f: &Face) -> f32 {
     }
 }
 
-/// A weight per unit of value as written: whole above 10, else one place; "--" for nothing
+/// A value per unit of weight as written: whole above 10, else one place; "--" for nothing
 /// carried or nothing worth [design].
 pub fn per_weight_text(weight: Option<f32>, value: Option<i32>) -> String {
     match (weight.filter(|w| *w > 0.0), value.filter(|v| *v > 0)) {
@@ -438,6 +447,12 @@ pub fn per_weight_text(weight: Option<f32>, value: Option<i32>) -> String {
 /// step 10]. Both in the list's own units.
 pub fn widest(half: f32, edge: f32) -> f32 {
     half - edge - LEFT
+}
+
+/// The scale at which a list `width` units wide at `size` fits a room `max_w` units wide at
+/// `size`: the room (`widest`) grows as the scale shrinks, the list's width does not.
+pub fn fitted_scale(max_w: f32, width: f32, size: f32) -> f32 {
+    ((max_w + LEFT) * size / (width + LEFT)).max(0.1)
 }
 
 /// The list laid out from its top left corner, measured by `fonts` (the drawn faces), at
@@ -487,8 +502,9 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
     // owner's step 2 and third look].
     let prompts_w = spec.prompts.iter().map(|p| width(Which::Small, p)).sum::<f32>() + PROMPT_SPACE * spec.prompts.len().saturating_sub(1) as f32;
     let position_w = width(Which::Head, &spec.position);
+    let title_w = width(Which::Title, &spec.title);
     let others = col_w.iter().map(|w| GAP + w).sum::<f32>() + if count_w > 0.0 { GAP + count_w } else { 0.0 };
-    let wanted = (2.0 * x0 + names.max(NAME_MIN) + others).max(2.0 * x0 + prompts_w).max(2.0 * x0 + NAME_MIN + GAP + position_w);
+    let wanted = (2.0 * x0 + names.max(NAME_MIN) + others).max(2.0 * x0 + prompts_w).max(2.0 * x0 + NAME_MIN.max(title_w) + GAP + position_w);
     let w = wide(wanted.min(max_w.max(2.0 * x0 + NAME_MIN + others).max(2.0 * x0 + prompts_w)));
     let x1 = w - x0;
     let mut pieces = Vec::new();
@@ -649,14 +665,19 @@ pub fn overlaps(l: &Laid, fonts: &Fonts) -> Vec<String> {
 /// companion may change what it holds), seconds [design].
 const REREAD: f32 = 0.5;
 
+/// The list's kind for an activation `action`, before the target's own checks.
+fn kind_of(action: &Action, container: bool) -> Option<Kind> {
+    match action {
+        Action::Search => Some(Kind::Body),
+        Action::Open if container => Some(Kind::Container),
+        Action::Steal => Some(Kind::Pocket),
+        _ => None,
+    }
+}
+
 /// The list's kind for target `t`, or none; `container`: its base is a container.
 fn wanted(t: &crate::activate::Targeted, container: bool, g: &mut fnv_game::Game) -> Option<Kind> {
-    let kind = match t.action {
-        Action::Search => Kind::Body,
-        Action::Open if container => Kind::Container,
-        Action::Steal => Kind::Pocket,
-        _ => return None,
-    };
+    let kind = kind_of(&t.action, container)?;
     let id = FormId(t.form_id);
     if kind == Kind::Pocket {
         return g.pickpocket_refusal(id).is_none().then_some(kind);
@@ -705,6 +726,7 @@ type Overlays<'w> = (
     Option<Res<'w, crate::player::ViewDriven>>,
     Option<Res<'w, crate::kill_cam::KillCam>>,
     Option<Res<'w, crate::control::ControlLocks>>,
+    Option<Res<'w, crate::hud::HudHidden>>,
 );
 
 type Out<'w> = (
@@ -725,7 +747,7 @@ pub(crate) fn follow(
     mut ql: ResMut<QuickLoot>,
     mut sim: ResMut<SimState>,
     script: Option<ResMut<crate::script::ScriptState>>,
-    (wheel, vats, creator, driven, kill_cam, locks): Overlays,
+    (wheel, vats, creator, driven, kill_cam, locks, hud_hidden): Overlays,
     (mut taken, mut stolen, mut changed, mut sounds): Out,
     mut corner: Option<ResMut<crate::corner_messages::CornerMessages>>,
 ) {
@@ -735,14 +757,18 @@ pub(crate) fn follow(
         || creator.is_some_and(|c| c.is_open())
         || driven.is_some_and(|d| d.0)
         || kill_cam.is_some_and(|k| k.active())
-        || locks.is_some_and(|l| l.rollover || l.movement);
+        || locks.is_some_and(|l| l.rollover || l.movement)
+        // Not drawn, so not holding the keys either (module notes).
+        || hud_hidden.is_some_and(|h| h.on);
     let t = target.0.as_ref().filter(|_| ON.load(Ordering::Relaxed) && !busy);
     if ql.closed_on.is_some() && t.map(|t| t.form_id) != ql.closed_on {
         ql.closed_on = None;
     }
     let t = t.filter(|t| Some(t.form_id) != ql.closed_on);
-    // The list on the target: kept while it stays, opened anew on another.
-    let same = matches!((t, ql.shown.as_ref()), (Some(t), Some(s)) if s.target == t.form_id);
+    // The list on the target: kept while it stays what it was, opened anew on another or when
+    // the same reference's action changed (a pocket whose owner stood up, died or was
+    // spotted; a knocked-out body that woke) or its theft did.
+    let same = matches!((t, ql.shown.as_ref()), (Some(t), Some(s)) if s.target == t.form_id && s.crime == t.crime && kind_of(&t.action, s.kind == Kind::Container) == Some(s.kind));
     if !same {
         let container = t.is_some_and(|t| sim.base_of(t.form_id).and_then(|b| sim.forms.get(b)).is_some_and(|b| matches!(b.data, BaseData::Container(_))));
         let opened = match (t, script.as_mut().and_then(|s| s.rt.as_mut())) {
@@ -759,6 +785,11 @@ pub(crate) fn follow(
     let shown_now = ql.shown.is_some();
     HOLDS.store(shown_now, Ordering::Relaxed);
     let Some(s) = ql.shown.as_mut() else { return };
+    // The frame a list opens, its keys are not read: the systems that read them before
+    // `PlaySet::Activation` (Ready Item, the wheel) saw no list and may have used them.
+    if !same {
+        return;
+    }
     s.since_read += time.delta_secs();
     if s.since_read >= REREAD {
         s.since_read = 0.0;
@@ -790,6 +821,9 @@ pub(crate) fn follow(
     let forms = sim.world.forms;
     s.model.focus = Side::Container;
     let a = s.model.apply(&mut sim.world, cmd);
+    if !a.taken.is_empty() || !a.picked.is_empty() {
+        TOOK.store(true, Ordering::Relaxed);
+    }
     let status = s.model.status.clone().unwrap_or_default();
     info!("quick loot: {cmd:?} on 0x{:08X} \"{}\": {status}", s.target, s.title);
     if s.kind == Kind::Pocket {
@@ -874,7 +908,7 @@ fn colour(ink: Ink, crime: bool) -> Color {
     };
     match ink {
         Ink::Hud => amber(255.0),
-        Ink::Head => amber(255.0).with_alpha(0.7),
+        Ink::Head => amber(255.0).with_alpha(0.5),
         Ink::Dim => amber(255.0).with_alpha(0.6),
         Ink::Row(full) => row(full),
         Ink::Fill => row(true).with_alpha(0.16),
@@ -909,7 +943,7 @@ fn draw(
 ) {
     // The list's own size, not the HUD's [the owner's second look, 2026-11-17].
     let size = scale();
-    let _units = crate::interface::units_at(size);
+    let units = crate::interface::units_at(size);
     let playing = *state.get() == PlayState::Playing;
     let shown = ql.shown.as_ref().filter(|_| playing && !hidden.is_some_and(|h| h.on));
     if kit.raster.is_none() {
@@ -937,15 +971,18 @@ fn draw(
     let sharp = menu_font.as_deref().is_some_and(crate::pause::MenuFont::drawn_sharp);
     let key = |c: Control| bindings.as_deref().map_or_else(|| "?)".into(), |b| b.prompt(c));
     let spec = Spec::of(s, Columns::chosen(s.kind == Kind::Pocket), key);
-    // The room from the list's left to the HUD's right edge, in the HUD's units (they are
-    // `ui_scale` of the view's).
-    let half = window.single().map_or(480.0 * 16.0 / 9.0, |w| 480.0 * w.width() / w.height().max(1.0)) / size.max(0.1);
-    let edge = crate::hud::RIGHT_EDGE_IN * crate::interface::ui_scale() / size.max(0.1);
-    let max_w = widest(half, edge);
+    // The room from the list's left to the HUD's right edge, in the list's units at `size`
+    // (the HUD's are `ui_scale` of the view's).
+    let aspect = window.single().map_or(16.0 / 9.0, |w| w.width() / w.height().max(1.0));
+    let room = |size: f32| {
+        let (half, edge) = (480.0 * aspect / size.max(0.1), crate::hud::RIGHT_EDGE_IN * crate::interface::ui_scale() / size.max(0.1));
+        (half, edge, widest(half, edge))
+    };
+    let (half, edge, max_w) = room(size);
     // A physical pixel in the list's units (`crate::interface::u` is a 960th of the view's
     // height at the list's scale).
     let tall = window.single().map_or(0, |w| w.physical_height());
-    let px = if tall > 0 { 960.0 / (tall as f32 * size.max(0.1)) } else { 0.0 };
+    let px_at = |size: f32| if tall > 0 { 960.0 / (tall as f32 * size.max(0.1)) } else { 0.0 };
     let now = Some((spec, sharp, max_w.round() as i32, (size * 100.0).round() as i32, (backing() * 100.0).round() as i32, tall, fnv_util::words::generation()));
     if *drawn == now {
         return;
@@ -956,7 +993,21 @@ fn draw(
         (true, Some(m), Some(menu), Some(fonts)) => Fonts::sharp(raster, m, menu.handle(fonts)),
         _ => Fonts::raster(raster),
     };
-    let laid = layout_on(&spec, &faces, max_w, px);
+    let mut laid = layout_on(&spec, &faces, max_w, px_at(size));
+    let (mut size, mut half, mut edge) = (size, half, edge);
+    // Wider than its room even with the names cut (every column on a narrow screen, long
+    // keys): drawn smaller until it fits. The room grows as the scale shrinks, so the scale
+    // that fits is `(max_w + LEFT) * size / (width + LEFT)`.
+    if laid.size.x > max_w + 0.01 {
+        let fitted = fitted_scale(max_w, laid.size.x, size);
+        info!("quick loot: {:.0} units wide in a room of {:.0}: drawn at {:.0}% instead of {:.0}%", laid.size.x, max_w, fitted * 100.0, size * 100.0);
+        size = fitted;
+        let fitted_room = room(size);
+        (half, edge) = (fitted_room.0, fitted_room.1);
+        laid = layout_on(&spec, &faces, fitted_room.2, px_at(size));
+    }
+    drop(units);
+    let _units = crate::interface::units_at(size);
     // Logged when the words or the font change, not as the selection moves.
     let new_words = drawn.as_ref().is_none_or(|(d, f, _, z, _, _, _)| d.title != spec.title || d.columns != spec.columns || *f != sharp || d.rows.len() != spec.rows.len() || *z != (size * 100.0).round() as i32);
     if new_words {
@@ -1204,6 +1255,47 @@ mod tests {
             }
             let l = layout(&spec(ALL, rows()), &fonts, room());
             assert!(l.pieces.iter().filter(|p| p.text.contains(") ")).all(|p| p.which == Which::Small), "{font}: the keys in the names' face");
+        }
+    }
+
+    /// The bug check before the pull request: a pocket list stays only while the pocket is
+    /// one (its owner standing up, dying or waking makes another list or none).
+    #[test]
+    fn the_kind_follows_the_action() {
+        assert_eq!(kind_of(&Action::Steal, false), Some(Kind::Pocket));
+        assert_eq!(kind_of(&Action::Search, false), Some(Kind::Body));
+        assert_eq!(kind_of(&Action::Open, true), Some(Kind::Container));
+        assert_eq!(kind_of(&Action::Open, false), None, "a door is no container");
+        assert_eq!(kind_of(&Action::Talk, false), None, "a pocket's owner who stood up");
+    }
+
+    /// The bug check: a list wider than its room (every column on a 5:4 screen with long
+    /// keys) is drawn at a scale where it fits, never past the HUD's edge.
+    #[test]
+    fn a_list_too_wide_for_its_room_is_drawn_smaller_to_fit() {
+        for (font, fonts) in both_fonts() {
+            let room_at = |s: f32| widest(480.0 * 5.0 / 4.0 / s, crate::hud::RIGHT_EDGE_IN / s);
+            let mut wide = spec(ALL, rows());
+            wide.prompts = vec!["E) Tout prendre ici".into(), "R) Tout voler partout".into(), "T) Fouiller le conteneur".into()];
+            let l = layout(&wide, &fonts, room_at(1.0));
+            assert!(l.size.x > room_at(1.0) + 0.01, "{font}: the case is too wide at 100% ({} in {})", l.size.x, room_at(1.0));
+            let s = fitted_scale(room_at(1.0), l.size.x, 1.0);
+            assert!(s < 1.0, "{font}: drawn smaller");
+            let fitted = layout(&wide, &fonts, room_at(s));
+            assert!(fitted.size.x <= room_at(s) + 0.01, "{font}: {} units in a room of {} at {s}", fitted.size.x, room_at(s));
+        }
+    }
+
+    /// The bug check: a container's long name is whole when the room allows it, however
+    /// short its items' names.
+    #[test]
+    fn a_long_container_name_widens_the_box() {
+        for (font, fonts) in both_fonts() {
+            let mut long = spec(Columns::default(), vec![row("Pen", 1, true)]);
+            long.title = "Vault 21 Overseer's Footlocker".into();
+            let l = layout(&long, &fonts, room());
+            find(&l, "Vault 21 Overseer's Footlocker");
+            assert!(overlaps(&l, &fonts).is_empty(), "{font}: {:?}", overlaps(&l, &fonts));
         }
     }
 

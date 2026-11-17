@@ -4240,6 +4240,7 @@ order = [[
   { re = 'quick loot: shown on 0x00105658 "Refrigerator" \(Container', label = "the list shows on the refrigerator" },
   { re = 'quick loot: drawn "Refrigerator" \(\d+ rows, columns Columns \{ weight: false, value: false, per_weight: false, chance: false \}, font Original, .*\): no overlaps', label = "drawn in the game's font, nothing overlapping" },
   { re = 'quick loot: (Stack|TakeAll) on 0x00105658 "Refrigerator": (Took|Nothing)', label = "E or R takes from it" },
+  { re = 'world sounds: \S+ taken from the container', label = "the take sounds as the container menu's (only a take does, review 2026-11-17)" },
 ]]
 forbid = [
   { re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" },

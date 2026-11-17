@@ -201,7 +201,7 @@ impl Plugin for GrabPlugin {
         let aid = std::env::var("NVF_PLAY_TEST_GRAB").map(|v| parse_aid(&v)).unwrap_or_default();
         app.insert_resource(GrabState { aid, ..default() })
             .add_systems(Update, holding_controls.after(PlaySet::Input).before(PlaySet::Physics))
-            .add_systems(Update, grab.in_set(PlaySet::Activation).after(crate::activate::find_target).before(crate::activate::activate));
+            .add_systems(Update, grab.in_set(PlaySet::Activation).after(crate::quick_loot::follow).before(crate::activate::activate));
     }
 }
 
