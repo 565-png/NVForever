@@ -11,6 +11,8 @@
     {"op": "note", "text": "Path: the Big Town sentry lets the player in (stage 10); Pappy asks for the captives to be rescued (20); at the Germantown police station Red is freed from her cell (30) and asks about Shorty (40), Shorty is untied (45); both walk back to Big Town (80, 90); Red pays the reward (50, Complete Quest); the player offers to defend the town (playerDefend), the Super Mutants come (70) and are killed (200, Complete Quest)."},
     {"op": "note", "text": "Starts with the player out of Vault 101 (the given): Escape! (CG04) done at stage 200, whose script starts Following in His Footsteps (MQ01 stage 10) and Trouble on the Homefront (MS16). [observed: CG04 stage 200 script]"},
     {"op": "note", "text": "Stand-in for the walk to Big Town: the player at the sentry on the bridge."},
+    {"op": "note", "text": "Shorty starts in Big Town and his package walks him to Germantown at game start [observed]; a player arriving later finds him there. Here the chain comes at once, so he is moved to his tied-up marker first, as the time on the road would have done."},
+    {"op": "call", "line": "ShortyREF.MoveTo xMS01ShortyTiedUpMarker"},
     {"op": "move_player", "to": "BigtownSentryRef"},
     {"op": "talk", "actor": "BigtownSentryRef", "label": "sentry greeting"},
     {"op": "choose", "topic": "MS01GreetingA1", "label": "sentry: simple traveler"},

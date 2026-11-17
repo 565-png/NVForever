@@ -6,7 +6,7 @@
     {"kind": "quest", "quest": "MQ01", "running": true, "completed": false, "stage": 10, "done": [10]},
     {"kind": "quest", "quest": "DLC05MZ1", "running": false, "completed": true, "stage": 200, "done": [10, 20, 30, 35, 40, 50, 200], "vars": {"DLC05Abducted": -1}},
     {"kind": "quest", "quest": "DLC05MZ2", "running": false, "completed": true, "stage": 200, "done": [0, 200], "vars": {"MZ2Unfrozen": 1, "MZ2Generator": 3}},
-    {"kind": "place", "ref": "player", "cell": "DLC05EngineCore", "pos": [-1151.7, -12414.3, 248.4]}
+    {"kind": "place", "ref": "player", "cell": "DLC05ExLab01", "pos": [2256.8, -5247.0, 280.0]}
   ],
   "actions": [
     {"op": "note", "text": "Given: the player out of Vault 101 (MQ01 10), Not of This World and Among the Stars done (DLC05MZ1, MZ2 200: their chains), aboard the mothership in the engine core. DLC05MZ2's last stage starts DLC05MZ3 and sets 5 [observed]; done here directly so this chain runs alone."},
@@ -14,8 +14,9 @@
     {"op": "set_stage", "quest": "DLC05MZ3", "stage": 5},
     {"op": "get_quest", "quest": "DLC05MZ3", "fields": ["running", "stage", "objective.5.displayed"], "label": "milestone: DLC05MZ3 5"},
     {"op": "note", "text": "Path: the engine core's teleporter control (DLC05CoreTeleporterControlSCRIPT: 10), Sally's two lab doors and the alien captain's viewscreen speech with the death ray's shots, a companion's word on it (DLC05MZ3GreetDeathRay2, Somah: 20), the bridge (25), its crew killed (the captain: 30; DLC05BridgeLD 50), the main screen and Sally's commands (DLC05BridgeLD 52: 40), and the space battle won at the weapons control (200) [observed]."},
-    {"op": "move_player", "to": "scripted:DLC05CoreTeleporterControlSCRIPT"},
-    {"op": "player_activate", "target": "scripted:DLC05CoreTeleporterControlSCRIPT", "label": "the engine core's teleporter control (stage 10)"},
+    {"op": "note", "text": "The teleporter control that sets stage 10 is 0x0F004E6A (SCPT 0x0F004E6B) in DLC05ExLab01 beside the far pad, not in the engine core; the engine core's pad 0x0F004E64 stays powered down (its state -1) until stage 10 [observed: SCPT 0x0F00D2D8]. MZ2's script starts MZ3 with the player already in the lab, so the given places the player there."},
+    {"op": "move_player", "to": "0x0F004E6A"},
+    {"op": "player_activate", "target": "0x0F004E6A", "label": "the engine core's teleporter control (stage 10)"},
     {"op": "advance_seconds", "seconds": 3},
     {"op": "get_quest", "quest": "DLC05MZ3", "fields": ["stage", "var.DLC05MZ3ViewscreenSpeechStep"], "label": "milestone: DLC05MZ3 10"},
     {"op": "note", "text": "Travel stand-in: through the teleporter to the Experimental Lab (DLC05ExLab01), Sally along (her teleport and follow: put by the player)."},

@@ -3,11 +3,13 @@
   "title": "Headless Oasis (MS10, TTW 3.4): from Birch's welcome through the Ceremony and Harold's request to the sap on Harold's Heart (stage 100)",
   "plugins": ["FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm", "ClassicPack.esm", "MercenaryPack.esm", "TribalPack.esm", "CaravanPack.esm", "Fallout3.esm", "Anchorage.esm", "ThePitt.esm", "BrokenSteel.esm", "PointLookout.esm", "Zeta.esm", "TaleOfTwoWastelands.esm", "YUPTTW.esm", "The Mod Configuration Menu.esp"],
   "given": [
-    {"kind": "quest", "quest": "MQ01", "running": true, "completed": false, "stage": 10, "done": [10]}
+    {"kind": "quest", "quest": "MQ01", "running": true, "completed": false, "stage": 10, "done": [10]},
+    {"kind": "place", "ref": "player", "cell": "0x0A07EA1F", "pos": [-10138.0, 117343.0, 17967.0]}
   ],
   "actions": [
     {"op": "note", "text": "Given: the player is out of Vault 101 in the Capital Wasteland, Following in His Footsteps (MQ01) at its first stage (10) [observed]. MS10 is Start Game Enabled [observed]; the player walks up to Oasis, where Tree Father Birch calls out (his first greeting, BirchGreets)."},
     {"op": "note", "text": "Path (Birch's way, the sap): Birch's calls and the escort to the Pavilion (BirchEscort 1-3); his talk of Him and the Ceremony of Purification (MS10BirchCTCeremony01: CeremonyGo 1, objective 5); the six Treeminders take their places (CeremonyCount 6, CeremonyGo 2); the player drinks from the basin (MS10BowlScript, button 0) and the Treeminders' ceremony lines run on (CeremonyGo 3-10) until the player passes out and wakes by Harold (stage 5, objective 5 complete); Harold asks to be killed and tells his name (MS10HaroldNameReveal03: stage 10); on the way out the exit trigger starts Laurel and Birch's argument (Argue); Birch asks for his sap (MS10BirchPostCT07) and Laurel for her liniment (MS10LaurelPostCT04: stage 20, both items); the sap goes on Harold's Heart (MS10HaroldsHeartScript, button 1: stage 30); Birch thanks the player (MS10BirchEndgame01: stage 100, MS10Fin starts). Other endings: the liniment (35, Laurel's endgame), the heart destroyed (40), Harold burnt, combat (150). [observed: MS10 stage, INFO, package and object scripts on the TTW load order]"},
+    {"op": "note", "text": "The player starts outside Oasis's gate (OasisDoorToWasteland, locked level 255, its key never given to the player: Birch's lines unlock it [observed: INFO 0x0A02A419/0x0A02A41A/0x0A02A421]), where Birch and Maple's opening packages walk them out to meet the player. Inside, the Oasis worldspace uses its parent's land, which NVForever does not yet load (#2345): the player fell through the world."},
     {"op": "move_player", "to": "MS10BirchRef"},
     {"op": "talk", "actor": "MS10BirchRef", "label": "birch calls"},
     {"op": "wait_talk"},

@@ -244,6 +244,11 @@ fn hold(g: &Game, outside: Outside) -> Option<Hold> {
         // the script ends within the frame.
         (Some(c), None) if !c.choices.is_empty() => return None,
         (Some(_), None) => Kind::DialogueDeadEnd,
+        // A line that is not chatter still being said is the scene going on: a SayTo line
+        // counts once when it begins, and Honest Hearts' end slides narrate one of five
+        // responses, about 43 s, while the controls are held [observed: pilot run
+        // 2026-11-17, INFO 0x02010117]; the hold was found at 30 s, mid-line.
+        (None, None) if (locks[0] || restrained) && g.speech.iter().any(|s| s.remaining > 0.0 && !g.chatter_topic(s.topic)) => return None,
         (None, None) if locks[0] || restrained => Kind::ControlsHeld,
         (None, None) => return None,
     };

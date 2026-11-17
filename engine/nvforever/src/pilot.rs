@@ -2752,7 +2752,11 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                     match near {
                         Some(at) => {
                             info!("pilot: step {}: the trigger's middle cannot be reached ({why}): the player goes to its nearest point from here, ({:.0}, {:.0}, {:.0})", p.i, at[0], at[1], at[2]);
-                            let mut w = walk_to(Place { space: space_of(h.location), pos: at }, None, 24.0, p.now, feet);
+                            // In the trigger's own space: from out of doors toward a trigger
+                            // in an interior (Honest Hearts' slide room) the interior's
+                            // point was put in the worldspace [observed].
+                            let space = r.and_then(|r| h.game(|g| where_is(g, r).and_then(|(cell, _)| cell))).flatten().and_then(|c| crate::nav::space_of_cell(h.world, c.0)).unwrap_or_else(|| space_of(h.location));
+                            let mut w = walk_to(Place { space, pos: at }, None, 24.0, p.now, feet);
                             w.keep_talk = true;
                             (p.part, p.phase) = (2, Phase::Walk(w));
                             None
@@ -4254,8 +4258,14 @@ fn drive(
             return;
         }
     }
-    // A terminal left open by a `terminal` step is left when another kind of step follows.
-    if terminal.0.is_some() && !matches!(p.actions.get(p.i), Some(Action::Terminal { .. })) {
+    // A terminal left open by a `terminal` step is left when another kind of step follows,
+    // or a `terminal` step at another terminal: Agatha's Song's three mainframe stations
+    // (MFLock01-03, SCPT 0x0A02FB51) stalled at the first one's screen [observed].
+    let other_terminal = match (p.actions.get(p.i), terminal.0.as_ref()) {
+        (Some(Action::Terminal { target, .. }), Some(open)) => h.game(|g| runner::resolve(g, target).ok()).flatten().is_some_and(|r| r != open.reference),
+        _ => false,
+    };
+    if terminal.0.is_some() && (other_terminal || !matches!(p.actions.get(p.i), Some(Action::Terminal { .. }))) {
         if p.now - p.terminal_at >= TERMINAL_INPUT_SECS {
             info!("pilot: step {}: leaves the terminal", p.i);
             h.terminal_input.write(nvf_play::terminal::TerminalInput::Exit);
