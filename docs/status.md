@@ -325,7 +325,9 @@ bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
 
 - String game-setting source setter/readback and the existing talk-prompt consumer:
-  authored; focused runtime checks pending. See [string-settings](spec-notes/string-settings.md).
+  prior hosted engine controls failed a layout-test accessor that omits spaces;
+  bound-prompt checks passed before failure. The fixture now checks spaced text
+  and glyph advances; corrected checks remain UNRUN. See [string-settings](spec-notes/string-settings.md).
 
 
 HUD ammo alpha consumed by hover text: engine-created copies materialize the

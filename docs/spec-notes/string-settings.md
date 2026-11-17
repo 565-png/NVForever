@@ -28,3 +28,11 @@ there is no new crown action or inferred mapping to another actor category.
 [hypothesis] Native invalid-setting, persistence, numeric encoding and complete
 installed-mod behavior remain unverified. This service does not establish any
 Improved Console provider identity, version or capability.
+
+[validation] The prior hosted engine run reached all three authored prompt controls,
+but their layout assertions used `Line::text`, which intentionally omits spaces.
+The preceding bound-prompt assertions passed; the console case also read its edited
+played-World setting before failing. The source-driver call, XATO and session checks
+later in those cases were not reached. The fixture now checks the renderer's existing
+gap-aware text and the actual glyph advances, retaining exact spaced expectations.
+Production is unchanged; corrected compilation and runtime remain UNRUN.

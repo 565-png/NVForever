@@ -104,12 +104,30 @@ fn shown(target: &Targeted, sim: &SimState, expected: &str) {
     assert_eq!(prompt.key_text(), KEY);
     let font = plain_font(36.0, 17.0);
     let drawn = layout(&prompt, &font);
+    let spaced_line = |line: &Line, text: &str| {
+        // Text rendering uses the gaps between positioned glyphs; Line::text
+        // contains only the words' characters. Keep the exact spaced text and
+        // the advances consumed by the bitmap renderer as separate assertions.
+        assert_eq!(line.text_spaced(&font), text, "layout_spaced_text");
+        let mut glyphs = line.glyphs.iter();
+        let mut x = 0.0;
+        for ch in text.chars() {
+            if ch != ' ' {
+                let glyph = glyphs.next().expect("layout character missing");
+                assert_eq!(glyph.ch, ch, "layout_character");
+                assert_eq!(glyph.x, x, "layout_character_advance");
+            }
+            x += font.glyph_of(ch).advance();
+        }
+        assert!(glyphs.next().is_none(), "extra layout character");
+        assert_eq!(line.width, x, "layout_line_advance");
+    };
     if expected.is_empty() {
         assert_eq!(drawn.texts.len(), 1);
-        assert_eq!(drawn.texts[0].line.text(), "Own recipient");
+        spaced_line(&drawn.texts[0].line, "Own recipient");
     } else {
-        assert_eq!(drawn.texts[1].line.text(), expected);
-        assert_eq!(drawn.texts[2].line.text(), "Own recipient");
+        spaced_line(&drawn.texts[1].line, expected);
+        spaced_line(&drawn.texts[2].line, "Own recipient");
     }
 }
 #[test]
