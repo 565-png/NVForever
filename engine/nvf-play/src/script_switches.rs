@@ -47,7 +47,7 @@ impl Plugin for ScriptSwitchesPlugin {
         app.init_resource::<ScriptSwitches>().add_systems(Update, sync.after(crate::PlaySet::Scripts).before(crate::PlaySet::Ui));
         #[cfg(target_os = "windows")]
         app.init_resource::<crate::script_cursor::CursorRequests>()
-            .add_systems(PreUpdate, crate::script_cursor::refresh.before(bevy::input::InputSystems))
+            .add_systems(PreUpdate, crate::script_cursor::refresh.before(bevy::input::InputSystems).before(crate::script_input::ScriptInputSet))
             .add_systems(PostUpdate, crate::script_cursor::guard);
     }
 }

@@ -1,5 +1,5 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![doc(
     html_logo_url = "https://bevy.org/assets/icon.png",
     html_favicon_url = "https://bevy.org/assets/icon.png"
@@ -41,17 +41,25 @@ use crate::{
     state::winit_runner,
 };
 
+#[forbid(unsafe_code)]
 pub mod accessibility;
+#[forbid(unsafe_code)]
 pub mod converters;
+#[forbid(unsafe_code)]
 mod cursor;
 mod cursor_position;
 pub use cursor_position::{CursorPositionReadiness, CursorPositionRequest, CursorPositionResult};
 #[cfg(feature = "cursor-test-support")]
 pub use cursor_position::CursorPositionTestBackend;
+#[forbid(unsafe_code)]
 mod state;
+#[forbid(unsafe_code)]
 mod system;
+#[forbid(unsafe_code)]
 mod winit_config;
+#[forbid(unsafe_code)]
 mod winit_monitors;
+#[forbid(unsafe_code)]
 mod winit_windows;
 
 thread_local! {

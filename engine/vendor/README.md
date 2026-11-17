@@ -14,6 +14,10 @@ consumer with an injected native result, without creating an OS window.
 See `docs/spec-notes/windows-cursor-ack.md` for ownership, bounds and validation
 limits. Both upstream license files are retained.
 
+The crate root permits an audited Win32 ownership-query function through `deny`
+and a function-local allowance. Every pre-existing module retains `forbid` on
+unsafe code; the remaining new cursor consumer inherits `deny`.
+
 Source: crates.io `bevy_winit` 0.20.1, archive SHA-256
 `397c685e6ab6d4d87b89fb4ce11993c223d0e3c7b34c415cb4b9f69f213d85b6`.
 

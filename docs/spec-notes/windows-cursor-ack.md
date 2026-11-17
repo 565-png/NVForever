@@ -96,6 +96,14 @@ existing MCM consumer case supplies a rejected native result before success and
 then follows Window coordinates into actual menu input and source list routing
 at menu scales 0.5, 0.75 and 1.0.
 
+[authored, UNRUN] Offscreen schedule controls install the actual
+ScriptSwitchesPlugin and ScriptInputPlugin. Source intent is submitted in the
+Scripts stage and cancelled/replaced in the UI stage; an injected production
+consumer in Last must receive no stale native attempt. A success control then
+queries the actual source API inside the production PreUpdate input set before
+Update receipt retirement. This exercises real schedule/Commands application
+instead of invoking each ownership system manually.
+
 Authored selectors (test discovery and execution UNRUN):
 
 - `bevy_winit`: `cursor_position::tests::`

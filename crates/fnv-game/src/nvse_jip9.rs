@@ -193,7 +193,6 @@ impl Game<'_> {
     /// upon opening any game menu"].
     pub(crate) fn hud_cursor_menu_opened(&mut self) {
         self.other.jip9.invalidate_cursor_warp();
-        self.other.jip9.invalidate_cursor_warp();
         self.other.jip9.hud_cursor = false;
     }
 }

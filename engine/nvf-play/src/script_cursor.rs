@@ -189,6 +189,8 @@ pub(crate) mod tests {
     use bevy_winit::{CursorPositionReadiness, CursorPositionTestBackend};
     use fnv_game::game::RunCtx;
 
+    include!("script_cursor_schedule_tests.rs");
+
     pub(crate) fn backend(app: &App, window: Entity) -> CursorPositionTestBackend {
         CursorPositionTestBackend::new(app.world().get::<Window>(window).unwrap())
     }
