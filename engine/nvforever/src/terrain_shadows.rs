@@ -52,7 +52,9 @@
 //! centre along L, at most [`STEPS`] samples at distances `t_i = STEP_MIN·i + b·i²` texels,
 //! b chosen so the last sample lands on the ray's reach: the nearer of the map's edge and the
 //! distance `(max − min) / tan(elevation)` past which nothing can rise above the map's lowest
-//! valid height. So high sun is nearly free (reach a few texels), and at low sun the steps
+//! valid height. Every sample is held [`EDGE_INSET`] (1e-3 texel) short of the reach, so the
+//! last one lies in the last texel the ray crosses before the edge, never on the edge (which
+//! would read outside the map and end the march). So high sun is nearly free (reach a few texels), and at low sun the steps
 //! grow with distance (as the square root of it) to cover the whole map. Each sampled texel
 //! is scored exactly as the CPU reference scores it, `H − entry·tan(e)` with the ray's exact
 //! entry distance into that texel, and the march stops as soon as the ray, falling from the
@@ -63,6 +65,11 @@
 //! 0.5 texel until the reach exceeds `STEPS·STEP_MIN` = 48 texels, 14.5 texels = 3,700
 //! units at the full 724-texel diagonal) is always sampled, and for a flat-topped caster
 //! the result is within `tan(e)·step` of the reference; a narrower one can be missed. A
+//! caster the map's edge cuts shorter than the step is sampled too (by the last sample,
+//! within [`EDGE_INSET`] of the edge; only a sliver under that is missed): tests
+//! `march_reaches_casters_near_the_map_edge`, `march_matches_reference_at_low_sun_from_every_side`.
+//! A receiver on a caster can see the caster's rest as narrower than the step (its ray
+//! leaving it sideways right after its own texel). A
 //! max-height pyramid (one level per step size, a sample reads the level whose texel
 //! covers its step) would remove that miss: [`march_texel`] and the shader's `march` are
 //! one function each with the texel read in one place, so a pyramid read replaces it there.
@@ -129,6 +136,11 @@ pub const STEPS: u32 = 96;
 /// Length of the first steps in texels [engineering choice: half a texel, so a caster a
 /// texel long is never stepped over while the reach is under 48 texels].
 pub const STEP_MIN: f32 = 0.5;
+/// The march's samples stop this many texels short of its reach (`terrain_shadows.wesl`
+/// `EDGE_INSET`) [engineering choice: well over the f32 error of a position on a 512-texel
+/// map, about 1e-4 texel, so the last sample lies in the last texel the ray crosses before
+/// the map's edge, not on the edge where it would read outside the map].
+pub const EDGE_INSET: f32 = 1.0e-3;
 /// The shortest time between two computations (real seconds) [engineering choice, #2671
 /// plan: 0.1 s].
 pub const MIN_INTERVAL_SECS: f32 = 0.1;
@@ -245,12 +257,14 @@ pub fn march_texel(heights: &[f32], valid: &[u8], (col, row): (usize, usize), p:
     let reach = texel_reach(p, (col, row));
     let n = p.steps.min((reach.max(0.0) / p.step_min).ceil() as u32);
     let b = step_growth(p, reach);
+    // The last sample lies just inside the reach, never on the map's edge itself.
+    let end = (reach - EDGE_INSET).max(0.0);
     let mut best = NO_SHADOW;
     let mut best_t = 0.0;
     let mut last = (col as i64, row as i64);
     for i in 1..=n {
         let fi = i as f32;
-        let t = p.step_min * fi + b * fi * fi;
+        let t = (p.step_min * fi + b * fi * fi).min(end);
         let q = pos + t * d;
         let c = (q.x.floor() as i64, q.y.floor() as i64);
         if c.0 < 0 || c.1 < 0 || c.0 >= side || c.1 >= side {
@@ -1100,6 +1114,87 @@ mod tests {
     }
 
     #[test]
+    fn march_reaches_casters_near_the_map_edge() {
+        let side = 96;
+        // Receiver (50, 94), two rows from the north edge, the light low in the west-north-west
+        // (direction (−0.98545, 0.16997), 7.68 units lost per texel): its ray enters the narrow
+        // ridge's column 41 at (50.5 − 42) / 0.98545 = 8.626 texels and leaves the map through
+        // the north edge at (96 − 94.5) / 0.16997 = 8.825, so inside the map the ridge is 0.2
+        // texel long along it. With half-texel steps the sample at 8.5 lies in column 42 and the
+        // one at 9.0 outside the map: before the edge inset the march found nothing there.
+        let (heights, valid) = ridges(side, &[(40..=41, 500.0), (60..=67, 800.0)]);
+        let light = toward(0.03f32.atan(), -1.4);
+        let p = params_for(&heights, &valid, side, light);
+        let reach = texel_reach(&p, (50, 94));
+        assert!((reach - 8.825).abs() < 1e-2, "{reach}");
+        let reference = shadow_height_reference(&heights, &valid, side, TEXEL, light)[94 * side + 50];
+        assert!((reference - (500.0 - 8.626 * 7.68)).abs() < 2e-2, "{reference}");
+        let (s, g) = produce_texel(&heights, &valid, (50, 94), &p);
+        assert!((s - reference).abs() < 1e-2, "march {s}, reference {reference}");
+        assert!((g - 8.626 * TEXEL).abs() < 0.5, "{g}");
+        // A wall one texel wide in the map's last column, the light low in the east-north-east:
+        // along a ray the wall is 1 / 0.932 = 1.07 texels long, shorter than the last step of a
+        // march over 48 texels (1.6 texels at the west edge). The last sample, just inside the
+        // edge, still lands in it: within the stated bound everywhere.
+        let (heights, valid) = ridges(side, &[(side - 1..=side - 1, 1_000.0)]);
+        let light = toward(0.02f32.atan(), 1.2);
+        let p = params_for(&heights, &valid, side, light);
+        let reference = shadow_height_reference(&heights, &valid, side, TEXEL, light);
+        let ours = produce_map(&heights, &valid, &p);
+        let mut long = 0;
+        for row in 0..side {
+            for col in 0..side - 1 {
+                let i = row * side + col;
+                let reach = texel_reach(&p, (col, row));
+                let step = max_step(&p, reach);
+                let (a, r) = (ours[i].0.max(0.0), reference[i].max(0.0));
+                assert!(a <= r + 1e-2, "wall ({col}, {row}): march {a} darker than the reference {r}");
+                assert!(r - a <= p.tan_texel * step + 1e-2, "wall ({col}, {row}): march {a}, reference {r}, step {step}");
+                long += usize::from(r > 0.0 && reach > 48.0 && step > 1.0 / p.dir.x);
+            }
+        }
+        // About 1,600 receivers whose last step is longer than the wall.
+        assert!(long > 1_000, "{long}");
+    }
+
+    #[test]
+    fn march_matches_reference_at_low_sun_from_every_side() {
+        let side = 96;
+        let (heights, valid) = ridges(side, &[(40..=41, 500.0), (60..=67, 800.0)]);
+        for tan_e in [0.03f32, 0.06] {
+            for azimuth in [-2.8f32, -2.2, -1.0, -0.4, 0.3, 0.9, 1.3, 2.0, 2.6, 3.0] {
+                let light = toward(tan_e.atan(), azimuth);
+                let p = params_for(&heights, &valid, side, light);
+                let reference = shadow_height_reference(&heights, &valid, side, TEXEL, light);
+                let ours = produce_map(&heights, &valid, &p);
+                let mut shaded = 0;
+                for row in 0..side {
+                    for col in 0..side {
+                        let i = row * side + col;
+                        let step = max_step(&p, texel_reach(&p, (col, row)));
+                        // The narrow ridge is at least 2 texels long along any ray.
+                        assert!(step <= 2.0, "{tan_e} {azimuth}: step {step} longer than the narrow ridge");
+                        let (a, r) = (ours[i].0.max(0.0), reference[i].max(0.0));
+                        assert!(a <= r + 1e-2, "{tan_e} {azimuth} ({col}, {row}): march {a} darker than the reference {r}");
+                        // The bound holds for receivers on the ground, whose rays cross a ridge
+                        // whole or until the map's edge. A ray from a receiver on a ridge can
+                        // leave it sideways right after its own texel: a caster shorter than the
+                        // step, which the bound leaves out (at azimuth 2.6 the ray from (41, 1)
+                        // crosses (41, 0) for 0.39 texel between samples at 0.5 and 1.0).
+                        if heights[i] == 0.0 {
+                            let bound = p.tan_texel * step + 1e-2;
+                            assert!(r - a <= bound, "{tan_e} {azimuth} ({col}, {row}): march {a}, reference {r}, bound {bound}");
+                        }
+                        assert!(!shadowed(0.0, ours[i].0) || shadowed(0.0, reference[i]), "{tan_e} {azimuth} ({col}, {row}): shaded where the reference is lit");
+                        shaded += usize::from(shadowed(0.0, ours[i].0));
+                    }
+                }
+                assert!(shaded > side * 4, "{tan_e} {azimuth}: the ridges shade something ({shaded})");
+            }
+        }
+    }
+
+    #[test]
     fn march_never_shadows_flat_ground() {
         let side = 48;
         let mut heights = vec![100.0f32; side * side];
@@ -1250,6 +1345,9 @@ mod tests {
         // The CPU mirror's constants.
         assert!(source.contains("const NO_SHADOW: f32 = -1.0e30;"));
         assert_eq!(NO_SHADOW, -1.0e30);
+        assert!(source.contains("const EDGE_INSET: f32 = 1.0e-3;"));
+        assert_eq!(EDGE_INSET, 1.0e-3);
+        assert!(source.contains("let end = max(reach - EDGE_INSET, 0.0);") && source.contains("let t = min(params.step_min * fi + b * fi * fi, end);"));
         // The uniform bytes put each field where the shader reads it.
         let p = MarchParams { dir: Vec2::new(0.6, -0.8), tan_texel: 51.2, texel: TEXEL, top: 900.0, bottom: -20.0, side: 512, steps: STEPS, step_min: STEP_MIN };
         let bytes = params_bytes(&p);

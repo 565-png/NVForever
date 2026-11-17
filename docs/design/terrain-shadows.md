@@ -49,7 +49,10 @@ the whole dispatch, into one of two targets (the other stays published meanwhile
 **The march** [engineering choice]. From the receiver texel's centre, at most 96 samples at
 `t_i = 0.5·i + b·i²` texels, b set so the last sample lands on the ray's reach: the nearer
 of the map's edge and `(max − min) / tan(e)`, past which nothing on the map can rise above
-its lowest height. High sun therefore costs a few samples, and low sun covers the whole map
+its lowest height. The samples are held 1e-3 texel short of the reach, so the last one lies
+in the last texel the ray crosses inside the map, never on the edge itself (until
+2026-11-17 it fell on or past the edge and ended the march, so a caster in the last step
+before the edge cast nothing). High sun therefore costs a few samples, and low sun covers the whole map
 with steps that grow as the square root of the distance. Every sampled texel is scored with
 the ray's exact entry distance into it, as the brute-force CPU reference
 (`sun_heightfield::shadow_height_reference`) scores it, and the march stops once a ray
@@ -64,7 +67,11 @@ is left out (its maximum is the receiver's own ground), as in the reference.
   (`max_step`, test `steps_grow_with_reach`). A caster at least as long along the ray as the
   local step is always sampled, and for a flat-topped caster S is then within
   `tan(e) · step` of the reference (tested on synthetic ridges); a narrower caster can be
-  missed. Replacing the texel read with a max-pyramid read at the step's level would make
+  missed. A caster the map's edge cuts shorter than the step is still sampled, by the last
+  sample (only a sliver under 1e-3 texel is missed; tests
+  `march_reaches_casters_near_the_map_edge`, `march_matches_reference_at_low_sun_from_every_side`).
+  A receiver standing on a caster can see the caster's rest as narrower than the step, when
+  its ray leaves it sideways right after the receiver's own texel. Replacing the texel read with a max-pyramid read at the step's level would make
   the march conservative instead; that is the planned refinement if pictures show leaks.
 - The heightfield keeps each texel's highest point, so on a slope facing the light S can
   stand up to one texel's relief above the receiver's own ground (test

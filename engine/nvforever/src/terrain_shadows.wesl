@@ -30,6 +30,8 @@ struct Params {
 }
 
 const NO_SHADOW: f32 = -1.0e30;
+// Texels short of the reach where the samples stop (terrain_shadows.rs `EDGE_INSET`).
+const EDGE_INSET: f32 = 1.0e-3;
 
 @group(0) @binding(0) var heights: texture_2d<f32>;
 @group(0) @binding(1) var shadow_out: texture_storage_2d<rg32float, write>;
@@ -71,12 +73,15 @@ fn march(own: vec2<i32>) -> vec2<f32> {
     let reach = min(edge_distance(p, d, f32(params.side)), max(params.top - params.bottom, 0.0) / params.tan_texel);
     let n = min(params.steps, u32(ceil(max(reach, 0.0) / params.step_min)));
     let b = max(reach - f32(params.steps) * params.step_min, 0.0) / (f32(params.steps) * f32(params.steps));
+    // The last sample lies just inside the reach, never on the map's edge itself (where it
+    // would read outside the map and skip the last texel the ray crosses).
+    let end = max(reach - EDGE_INSET, 0.0);
     var best = NO_SHADOW;
     var best_t = 0.0;
     var last = own;
     for (var i = 1u; i <= n; i = i + 1u) {
         let fi = f32(i);
-        let t = params.step_min * fi + b * fi * fi;
+        let t = min(params.step_min * fi + b * fi * fi, end);
         let c = vec2<i32>(floor(p + t * d));
         if c.x < 0 || c.y < 0 || c.x >= side || c.y >= side {
             break;
