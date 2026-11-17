@@ -145,7 +145,10 @@ Quality choice or mapped row edit logs `quality measure begin:` and then one
 sliders and already chosen list entries start no measurement. The window follows
 the setter for `FOLLOW_SECS` (three real seconds), retaining any frame crossing
 its deadline; overlapping windows remain independent. No renderer or gameplay
-default is changed by this diagnostic.
+default is changed by this diagnostic. It is a test aid: it is added only with
+`NVF_PLAY_TEST_QUALITY_MEASURE=1` (logged `test aid NVF_PLAY_TEST_QUALITY_MEASURE:
+main-menu quality edits measured`); a player's run has none of its systems, its edit
+hook or its lines [design, #2248 review: quality_probe.rs `register`].
 
 [design: quality_probe.rs `watching`] Asset and entity sampling runs only while
 the main menu is open or an edit's measurement is still active.
@@ -185,8 +188,8 @@ The other fields describe work during the interval, including unrelated work:
   world reloads. Events delayed until frame end can include earlier frame activity.
 - `window_changes`: sampled changes to a window's identity, physical size, scale,
   mode or presentation mode. This does not count backend swapchain recreations.
-- `ini_write_attempts`: settings-file write attempts, including failed writes;
-  nested row writes and the enclosing preset write all count.
+- `ini_write_attempts`: writes of the settings file actually made, including failed
+  ones; a held change (a preset and the rows it sets) writes once (`StoreHold`, below).
 
 [design, #2248: tools/smoke/scenarios.toml] `quality-main-menu-measure` opens
 Settings from the main menu, takes all four made-up preset fixtures, and then
@@ -194,7 +197,8 @@ edits each of the nine mapped rows alone, eight seconds apart. Stage 1 required
 the thirteen summary lines, with no frame-time limits or zero-load expectations;
 the fix adds two: each preset's line shows `ini_write_attempts=1`, and 0 cell
 starts, reference attempts, world roots, visual parts and camera spawns.
-Run it on Windows and Linux before choosing a fix. [hypothesis, #2248] Pipeline
+It has run on Windows only, on a loaded machine (below); Linux, the reporter's
+system, and a quiet machine before and after the fix are still unmeasured. [hypothesis, #2248] Pipeline
 compilation or presentation behavior may differ by GPU, driver and window backend;
 source inspection alone does not establish the reported Linux hitch or the cover
 becoming invisible. The repeated synchronous INI writes are present in the shared
@@ -237,6 +241,8 @@ however, drawn every frame behind the menu: no camera is made inactive while the
 is open, and the menu's black root (`MenuRoot`, `GlobalZIndex(100)`) only hides it in
 the final picture; nothing hides that root itself while the menu is open (only its
 children change visibility, `show_entries`, `slideshow`). A renderer row therefore makes
-its new pipelines for the house's meshes (and shadow casters) behind the cover, and a
-distance row moved below 100% marks every house mesh's material changed
-(`apply_ranges`, `range_materials`). Both are work for a picture nobody sees.
+its new pipelines for the house's meshes (and shadow casters) behind the cover: work
+for a picture nobody sees. A distance row walks every house mesh (`apply_ranges`,
+`range_meshes`) but marks a material changed only for a mesh that has no
+`VisibilityRange` yet and is now to be culled (`draw_distance.rs` `apply_ranges`),
+not every mesh; the measured run shows `range_materials=0` for every edit.

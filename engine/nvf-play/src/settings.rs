@@ -1361,6 +1361,20 @@ mod tests {
                 }
             },
         });
+        // An older key whose choice sets two rows (pick_alias holds the write too).
+        set_list_alias(&mut app, "older", ListAlias {
+            rows: &["bundle"],
+            chosen: |_| "old".into(),
+            pick: |world, name| {
+                if name != "both" {
+                    return false;
+                }
+                flip(world, 0);
+                set_slider(world, 1, 0.6);
+                true
+            },
+            unavailable: |_, _| None,
+        });
         let world = app.world_mut();
         let writes = |w: &World| w.resource::<StoreAttempts>().0.load(Relaxed);
         assert!(pick(world, 2, "change"));
@@ -1376,9 +1390,14 @@ mod tests {
         assert!(std::fs::read_to_string(&path).unwrap().contains("reach=0.3"));
         assert!(!pick(world, 2, "invalid"));
         assert_eq!(writes(world), 4, "nothing changed, nothing written");
+        assert!(pick_alias(world, "older", "both"));
+        assert_eq!(writes(world), 5, "an older key's choice and its two rows: one write");
+        assert!(std::fs::read_to_string(&path).unwrap().contains("reach=0.6"));
+        assert!(!pick_alias(world, "older", "neither"));
+        assert_eq!(writes(world), 5, "a refused older choice that set nothing writes nothing");
         // The hold is released: a later row writes at once again.
         flip(world, 0);
-        assert_eq!(writes(world), 5);
+        assert_eq!(writes(world), 6);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

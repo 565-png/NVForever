@@ -1,6 +1,7 @@
 //! Main-menu quality edit measurements [design, #2248; docs/spec-notes/quality-presets.md].
 //! Counts describe work during the window, including unrelated UI/streaming activity;
 //! they do not assert that an edit caused an asset reload or a driver shader compile.
+//! Test aid only: added with `NVF_PLAY_TEST_QUALITY_MEASURE=1` ([`MEASURE_ENV`]).
 
 use crate::{
     pipeline_gate::PipelineGate,
@@ -251,7 +252,21 @@ fn watching(menu: Option<Res<nvf_play::main_menu::MainMenu>>, probe: Res<Probe>)
     menu.is_some_and(|m| m.open) || !probe.windows.is_empty()
 }
 
+/// Test aid: the measurement runs only with this set (and not `0`); without it nothing of
+/// this module is added, so a player's run has no per-frame system, edit hook or log line
+/// from it [design, #2248 review].
+pub(crate) const MEASURE_ENV: &str = "NVF_PLAY_TEST_QUALITY_MEASURE";
+
+/// Add the measurement when [`MEASURE_ENV`] asks for it.
 pub(crate) fn register(app: &mut App) {
+    if !std::env::var_os(MEASURE_ENV).is_some_and(|v| !v.is_empty() && v != "0") {
+        return;
+    }
+    info!("test aid {MEASURE_ENV}: main-menu quality edits measured");
+    add(app);
+}
+
+fn add(app: &mut App) {
     app.init_resource::<Work>()
         .init_resource::<Probe>()
         .init_resource::<StoreAttempts>()
@@ -309,7 +324,7 @@ mod tests {
     #[test]
     fn nested_preset_rows_make_one_sample_and_failed_edits_release_the_probe() {
         let mut app = App::new();
-        register(&mut app);
+        add(&mut app);
         app.init_resource::<Settings>().init_resource::<nvf_play::main_menu::MainMenu>();
         app.world_mut().resource_mut::<nvf_play::main_menu::MainMenu>().open = true;
         let world = app.world_mut();
