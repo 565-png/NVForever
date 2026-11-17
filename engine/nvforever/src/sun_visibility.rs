@@ -453,8 +453,9 @@ fn prepare_sun_visibility(
     }
 }
 
-/// The hook in bevy_pbr's `apply_pbr_lighting` [observed: bevy_pbr 0.20.1
-/// `pbr_functions.wesl` with lights.rs `DISPLAY_EDITS` made], in order, each at the first
+/// The hook in bevy_pbr's `apply_pbr_lighting` [documented:
+/// engine/vendor/bevy_pbr/src/render/pbr_functions.wesl (bevy_pbr 0.20.1) with lights.rs
+/// `DISPLAY_EDITS` made; the tests here apply both to that file], in order, each at the first
 /// occurrence of its anchor after the last edit: (anchor, text, where the text goes).
 /// Every statement it adds is under `@if(NVF_SUN_VISIBILITY)`, and the fog block is kept
 /// word for word under `@if(DISTANCE_FOG && !NVF_SUN_VISIBILITY)`, so without the shader
@@ -522,7 +523,8 @@ pub enum Place {
     Replace,
 }
 
-/// `main_pass_post_lighting_processing`'s fog [observed: bevy_pbr 0.20.1].
+/// `main_pass_post_lighting_processing`'s fog [documented:
+/// engine/vendor/bevy_pbr/src/render/pbr_functions.wesl, bevy_pbr 0.20.1].
 const FOG_BLOCK: &str = "    @if(DISTANCE_FOG)
     // fog
     if ((pbr_input.material.flags & pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT) != 0u) {

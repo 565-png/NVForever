@@ -131,8 +131,9 @@ marked `NVForever sun visibility`, for nvforever's `sun_visibility.rs`:
 
 The shaders that use the bindings are nvforever's (`sun_visibility.wesl`, patched into
 `apply_pbr_lighting` at run time like lights.rs's edits). Bevy inserts neither component;
-without them the flags, layouts, keys and shader defs are upstream's, and so is every
-view while the game's switches are off. The meshlet path (feature off here) builds its
+without them the flags, layouts and shader defs are upstream's, and so is every view while
+the game's switches are off; the pipeline keys are the same keys numbered differently (the
+packed fields above the new bits moved up by three). The meshlet path (feature off here) builds its
 view key without the bits, so a meshlet view must not get the component. Upstream has no
 way for an application to add bindings to the mesh view bind group.
 

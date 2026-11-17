@@ -26,9 +26,11 @@
 //!   without recomposing; layers moving at other speeds (one weather's layers differ, and
 //!   two weathers during a fade) are shifted against it inside the image, recomposed when
 //!   one has moved by [`RECOMPOSE_STEP_TEXELS`] and at most every [`MIN_RECOMPOSE_SECS`].
-//!   At the largest possible speed difference (ONAM 255 against 0: 0.01 repeats/s, about
-//!   5 texels a second) that is 4 compositions a second; at NVWastelandClear's 65 against
-//!   0 about 1.3.
+//!   Arithmetic, not a measurement: at the largest possible speed difference (ONAM 255
+//!   against 0: 255 / 25,600 = 0.00996 repeats/s, 5.1 texels/s at 512 texels) a layer
+//!   crosses the quarter-texel step about 20 times a second; at NVWastelandClear's 65
+//!   against 0 (0.00254 repeats/s, 1.3 texels/s) about 5.2 times. Both are held to the
+//!   rate cap: at most 4 composition starts a second.
 //! - **Projection** (consumed by the sun-visibility shader, C0): `hit = P + L ×
 //!   (plane_height - P.y) / L.y`, `uv = hit.xz × uv_scale + uv_offset`
 //!   ([`projected_uv`] is the reference). World-anchored: no term follows the camera, so
@@ -94,11 +96,12 @@ pub const STRENGTH: f32 = 0.6;
 /// start a few units higher gives the same plane].
 const GROUND_SNAP: f32 = 1024.0;
 /// A layer shifted against the reference by this many texels since the last composition
-/// is composed again [engineering choice: a quarter texel, about 29 units on the ground,
-/// too small to see as a step in a soft cloud edge].
+/// is composed again [engineering choice: a quarter texel, about 29 units on the ground;
+/// hypothesis, not looked at: too small to see as a step in a soft cloud edge].
 pub const RECOMPOSE_STEP_TEXELS: f64 = 0.25;
 /// Least real time between two compositions, seconds [engineering choice: 4 a second at
-/// most, each a few milliseconds on the compute pool and a 256 KB upload].
+/// most, each a 256 KB upload; hypothesis, unmeasured: a composition takes a few
+/// milliseconds of one compute-pool thread].
 pub const MIN_RECOMPOSE_SECS: f64 = 0.25;
 /// A layer weight moved by this much is composed again [engineering choice: a 30 s
 /// weather fade then composes about 64 times, under the rate cap].
@@ -108,7 +111,7 @@ const WEIGHT_STEP: f32 = 1.0 / 64.0;
 const LOG_WEIGHT_STEP: f32 = 0.25;
 /// The published offset is renewed when it moved by this much of a repeat (1/8 texel,
 /// about 15 units) [engineering choice: the consumer's uniform is not touched every frame
-/// for an invisible drift].
+/// for a drift that small; hypothesis, not looked at: invisible].
 const PUBLISH_OFFSET_STEP: f32 = 1.0 / 4096.0;
 /// Below this height of the direction to the light (sine of its elevation) the plane is
 /// not reached [engineering choice: the light has faded out within 0.1 rad of the horizon,

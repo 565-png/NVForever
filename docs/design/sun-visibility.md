@@ -1,9 +1,13 @@
 # Sun visibility: one factor on the sun's direct light
 
-Status: plumbing built 2026-11-17 (stage C0 of cloud shadows #2670, the base for terrain
-shadows #2671), with a debug view and a test producer. No producer is on: cloud shadows
-(C1/C2) and terrain shadows (T0-T2) fill it later. Not run yet; what only a run can show
-is listed at the end.
+Status 2026-11-17: the plumbing (stage C0 of cloud shadows #2670, the base for terrain
+shadows #2671) with a debug view and a test producer, and the cloud producer (C1,
+`engine/nvforever/src/cloud_shadows.rs`), which fills the cloud slot while Cloud shadows is
+switched on (off by default; `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1` for now). Terrain shadows
+(T0-T2) fill the terrain slot later. Runs so far: main session run 2026-11-17, fork-notes
+(the checkerboard reached terrain, objects, trees and distant hills at Goodsprings 12:00;
+no shader or layout errors; an interior run clean). What is not yet shown is listed at the
+end.
 
 Like everything in [graphics-enhanced.md](graphics-enhanced.md), this is an engineering
 choice, not a fact about the original game.
@@ -82,13 +86,29 @@ for a run to show (§6).
 
 ## 3. Off by default
 
-`SunVisibility` starts empty. While it is empty (no producer, no debug view) no camera is
-marked, no view has the bindings, the mesh view layout key bit and the pipeline key bits
-are clear, the shader text is the display-value patch's (every added statement is under
-`@if(NVF_SUN_VISIBILITY)`), nothing is allocated (the uniform buffer and sampler are made
-the first time it is on, then kept), and the main- and render-world systems stop at a
-cheap check. Turning it on or off changes the views' pipeline keys, so every material
-pipeline of those views is built again, as any view key change does.
+`SunVisibility` starts empty. While nothing is switched on (no producer, no debug view) no
+camera is marked, no view has the bindings, the mesh view layout key bit and the pipeline
+key bits are clear, and every statement the hook adds is under `@if(NVF_SUN_VISIBILITY)`,
+so the shader a pipeline compiles has the display-value patch's statements (the raw text
+differs; compiled-byte identity is not established). No GPU buffer, sampler or image is
+made until it is first on (the uniform buffer and sampler are then kept after switching
+off).
+
+What the off path still costs [documented: the code; hypothesis: negligible, unmeasured]:
+
+- At start: the shader `sun_visibility.wesl` is loaded, the debug aids are read, and the
+  hooked copy of `apply_pbr_lighting` is made as a string (lights.rs, `hook_patched`).
+- Every frame: run-condition checks (`resource_changed`, `marking_needed`, the cloud
+  producer's switch and change checks), extraction's early return and preparation's empty
+  query; in the vendored bevy_pbr, the views' query reads an optional component
+  (`mesh.rs`, `mesh_view_bindings.rs`) and `prepare_lights` tests the sun marker per
+  directional light (`light.rs`); sky.rs calls the cached cloud-phase helper.
+- The pipeline key's packed fields moved up by three bits (`MeshPipelineKey::LAST_FLAG`),
+  a different numbering of the same keys, not more of them.
+
+Turning it on or off changes the views' pipeline keys, so every material pipeline of those
+views is built again, as any view key change does; it is the only thing that does
+(§2, "Which views").
 
 ## 4. Test aids
 
@@ -116,8 +136,8 @@ pipeline of those views is built again, as any view key change does.
 
 ## 6. Not yet proved
 
-Built without running anything. Only a run can show: that every pipeline of a marked view
-compiles with the bindings (the WGSL of `sun_visibility.wesl` is checked by naga in a
-unit test, the patched `pbr_functions` is not); that the layouts match on the world,
-reflection and scope views; that the checkerboard lands on terrain, objects, actors,
-grass, leaves, tree cards and water; the cost.
+Only a run can show: that every pipeline of a marked view compiles with the bindings (the
+WGSL of `sun_visibility.wesl` is checked by naga in a unit test, the patched
+`pbr_functions` is not); that the layouts match on the reflection and scope views; that
+the clouds land on actors, grass, leaves, tree cards and water; that a door, a weather
+change or a texture read builds no pipeline; the cost, on and off.
