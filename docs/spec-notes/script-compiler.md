@@ -758,14 +758,23 @@ argument of an enclosing call and existing parenthesized/braced/indexed expressi
 boundaries retain their previous consumers. Strict runtime/editor compilation,
 catalogue signatures, native encodings and API implementations are unchanged.
 
-[authored, UNRUN] The shared `compile` test target's
-`inline_surplus_operands::` cases compile an independent handler-shaped condition
+[implementation evidence: Linux CI on source eb9bfef2, 2026-11-17] The nine
+shared-target controls compiled: three passed and six stopped at diagnostic
+assertions that incorrectly treated legacy non-error `variable_added` and
+`reference_added` information as semantic warnings. The fixture correction
+retains those informational entries explicitly and checks all other diagnostics;
+VM values, reference/local rollback, strict refusal and byte oracles are retained.
+Corrected controls are authored and UNRUN. Assertions after the failed checks
+were not reached in that run.
+
+The shared `compile` test target's `inline_surplus_operands::` cases compile an
+independent handler-shaped condition
 through `compile_mod_runtime`, decode its bytes, and exercise call arguments and
 boolean behavior through the VM. Controls cover optional arguments, enclosing
 calls/operators, short circuiting, strict admission, explicit parentheses,
 discarded references/lambdas and unreadable operands. The actual installed file,
-baseline/candidate execution and game-load acceptance are UNRUN for this source
-candidate. No installed mod text is included in the tests.
+controlled baseline/candidate comparison and game-load acceptance remain UNRUN
+for this source candidate. No installed mod text is included in the tests.
 
 [hypothesis] Whether the original extender runtime drops these inline operands,
 or the caller intended another behavior, remains open. Extend the owning surplus

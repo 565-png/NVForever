@@ -121,9 +121,11 @@ World-coordinate NIF translation getter has an initial source candidate; current
 
 Inline surplus operands in mod-source conditions are **In progress**: an initial
 parser candidate preserves the documented signature and enclosing operators while
-reporting discarded operands. Nine shared-target controls are authored and
-UNRUN; baseline/candidate compilation of the selected installed caller and B42
-Optics game-load acceptance remain separate ([compiler note](spec-notes/script-compiler.md#inline-surplus-operands-in-mod-expressions)).
+reporting discarded operands. The initial nine shared-target controls compiled
+in Linux CI: three passed and six failed diagnostic expectations for retained
+legacy information. Corrected fixtures are UNRUN; selected whole-file compilation,
+controlled baseline/candidate comparison and B42 Optics game-load acceptance remain
+separate ([compiler note](spec-notes/script-compiler.md#inline-surplus-operands-in-mod-expressions)).
 
 | System | State | Specifics | Notes |
 |---|---|---|---|

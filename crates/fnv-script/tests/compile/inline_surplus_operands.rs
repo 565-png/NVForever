@@ -1,6 +1,6 @@
 //! Independently authored mod-source grammar controls in the shared compile target.
 //! No installed script text is included.
-use fnv_script::compile::{compile_mod_runtime, compile_runtime, Compiled, Env, FormInfo, PLAYER};
+use fnv_script::compile::{compile_mod_runtime, compile_runtime, Compiled, Diag, Env, FormInfo, PLAYER};
 use fnv_script::vm::{ArgValue, Host, RunOpts, Value, Vm, XVal};
 use fnv_script::{decode, FunctionTable, Program, Stmt, VarDecl, VarRef, VarSlot};
 use std::collections::BTreeMap;
@@ -28,6 +28,16 @@ fn build(source: &str) -> (FunctionTable, Compiled, Program) {
     assert!(decoded.report.issues.is_empty(), "INLINE_SURPLUS_DECODE: {:?}", decoded.report.issues);
     assert_eq!(decoded.report.raw_total(), 0);
     (table, compiled, decoded.program)
+}
+
+// Mod-source admission reports newly introduced locals and references as legacy
+// information. Only these two non-error kinds are information: every other
+// diagnostic, including warnings, remains part of the semantic oracle.
+fn semantic_diags(compiled: &Compiled) -> Vec<&Diag> {
+    compiled.diags.iter().filter(|d| d.error || !matches!(d.kind, "variable_added" | "reference_added")).collect()
+}
+fn admission_info(compiled: &Compiled) -> Vec<(&str, &str)> {
+    compiled.diags.iter().filter(|d| !d.error && matches!(d.kind, "variable_added" | "reference_added")).map(|d| (d.kind, d.detail.as_str())).collect()
 }
 
 #[derive(Default)]
@@ -67,6 +77,7 @@ impl Host for Calls {
 fn run(expression: &str) -> (Compiled, Calls) {
     let source = format!("short result\nBegin GameMode\nlet result := {expression}\nEnd");
     let (table, compiled, program) = build(&source);
+    assert_eq!(admission_info(&compiled), [("variable_added", "result"), ("reference_added", "Form(20) as player")]);
     let mut host = Calls { refs: compiled.refs.clone(), ..Default::default() };
     let result = Vm::new(&table, &mut host, RunOpts { strict: true, ..Default::default() }).run(&program.blocks[0].body);
     assert!(result.is_ok(), "INLINE_SURPLUS_VM: {result:?}");
@@ -101,7 +112,7 @@ fn surplus_literals_leave_boolean_operators_and_call_receivers_intact() {
 #[test]
 fn an_outer_calls_next_argument_is_not_an_inner_calls_surplus() {
     let (compiled, host) = run("GetMaxOf player.IsAnimPlayingEx 2 3 0 7");
-    assert!(compiled.diags.is_empty(), "{:?}", compiled.diags);
+    assert!(semantic_diags(&compiled).is_empty(), "{:?}", compiled.diags);
     assert_eq!(host.vars[&1], Value::Num(7.0), "the real VM GetMaxOf consumer receives its outer second argument");
     assert_eq!(host.calls[0].2.len(), 3);
     assert_eq!(host.calls.len(), 1);
@@ -112,7 +123,7 @@ fn existing_signed_subtraction_and_addition_are_not_surplus_arguments() {
     for (expression, expected) in [("player.IsAnimPlayingEx 2 3 0 -7", -7.0), ("player.IsAnimPlayingEx 2 3 0 + 7", 7.0)] {
         let (compiled, host) = run(expression);
         assert_eq!(host.vars[&1], Value::Num(expected));
-        assert!(compiled.diags.is_empty(), "valid surrounding arithmetic must remain valid: {:?}", compiled.diags);
+        assert!(semantic_diags(&compiled).is_empty(), "valid surrounding arithmetic must remain valid: {:?}", compiled.diags);
     }
 }
 
@@ -121,7 +132,7 @@ fn optional_arguments_and_strict_runtime_admission_are_unchanged() {
     for (source, count) in [("player.IsAnimPlayingEx 2", 1), ("player.IsAnimPlayingEx 2 3", 2), ("player.IsAnimPlayingEx 2 3 0", 3)] {
         let (compiled, host) = run(source);
         assert_eq!(host.calls[0].2.len(), count);
-        assert!(compiled.diags.is_empty(), "{:?}", compiled.diags);
+        assert!(semantic_diags(&compiled).is_empty(), "{:?}", compiled.diags);
     }
     let source = "Begin Function {}\nif eval player.IsAnimPlayingEx 2 3 0 7 && 1\nReturn\nendif\nEnd";
     let strict = compile_runtime(source, &table(), &Names);
@@ -137,7 +148,9 @@ fn explicit_parentheses_keep_their_existing_tail_drop_policy() {
     let old = compile_runtime(source, &table, &Names);
     let mapped = compile_mod_runtime(source, &table, &Names);
     assert_eq!(mapped.bytes, old.bytes);
-    assert_eq!(mapped.diags, old.diags);
+    assert_eq!(admission_info(&mapped), [("reference_added", "Form(20) as player")]);
+    assert!(admission_info(&old).is_empty());
+    assert_eq!(semantic_diags(&mapped), semantic_diags(&old));
     assert!(mapped.diags.iter().any(|d| d.kind == "rest_of_parentheses_dropped"));
 }
 
@@ -146,8 +159,9 @@ fn dropped_references_leave_no_compiler_or_vm_side_effect() {
     let (compiled, host) = run("player.IsAnimPlayingEx 2 3 0 OwnedReference && 1");
     assert_eq!(host.calls.len(), 1);
     assert_eq!(compiled.refs, [fnv_script::unit::RefSlot::Form(PLAYER)]);
-    assert_eq!(compiled.diags.len(), 1);
-    assert_eq!(compiled.diags[0].kind, "surplus_arguments");
+    let diags = semantic_diags(&compiled);
+    assert_eq!(diags.len(), 1);
+    assert_eq!(diags[0].kind, "surplus_arguments");
     let invalid = compile_mod_runtime("Begin Function {}\nif eval player.IsAnimPlayingEx 2 3 0 Nobody.GetAV Luck && 1\nReturn\nendif\nEnd", &table(), &Names);
     assert!(invalid.errors().any(|d| d.kind == "syntax"), "an unreadable argument remains a real failure");
 }
@@ -169,7 +183,8 @@ fn discarded_lambda_bookkeeping_is_rolled_back_before_a_retained_lambda() {
     let (_, compiled, program) = build(source);
     assert!(compiled.variables.is_empty(), "discarded lambda declarations must not escape");
     assert_eq!(compiled.refs, [fnv_script::unit::RefSlot::Form(PLAYER)]);
-    assert_eq!(compiled.diags.iter().map(|d| d.kind).collect::<Vec<_>>(), ["surplus_arguments"]);
+    assert_eq!(admission_info(&compiled), [("reference_added", "Form(20) as player")]);
+    assert_eq!(semantic_diags(&compiled).iter().map(|d| d.kind).collect::<Vec<_>>(), ["surplus_arguments"]);
     let call = program.top.iter().find_map(|s| match s {
         Stmt::Eval { expr: fnv_script::ir::XExpr::Call { call } } => Some(call),
         _ => None,
