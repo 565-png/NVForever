@@ -146,6 +146,24 @@ End
             ..Default::default()
         },
     );
+    let compiled_callback = fnv_script::compile::compile_runtime(
+        std::str::from_utf8(callback).unwrap(),
+        &g.data.table,
+        &fnv_game::game::GameEnv { g: &g },
+    );
+    assert!(
+        compiled_callback.errors().next().is_none(),
+        "crosshair-water-file-compile: {:?}",
+        compiled_callback.diags
+    );
+    assert_eq!(
+        query(
+            &mut g,
+            "SetFunctionValue ((CompileScript \"Owned/Water.gek\") != 0)"
+        ),
+        XVal::Num(1.0),
+        "file-backed callback must actually compile before behavioral assertions"
+    );
     let ui = MemSource::default()
         .with("menus/water.xml", r#"<menu name="HUDMainMenu"><_image></_image><_alpha>0</_alpha><rect name="Prompt"><visible>1</visible><text name="Title"><string>Water source</string></text></rect></menu>"#)
         .with("menus/owned/image.xml", r#"<image name="Icon"><visible>1</visible><width>30</width><height>30</height><filename><copy src="io()" trait="_image"/></filename><alpha><copy src="io()" trait="_alpha"/></alpha></image>"#);
