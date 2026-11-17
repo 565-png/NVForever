@@ -323,3 +323,11 @@ confirmed those bounded case results and the false overall flag. The accepted-ma
 060d union retains the tested fnv-ui Rust/fixtures; whole-graph qualification stays
 bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
+
+
+GetCrosshairWater: authored current activation-target ACTI/WNAM query through the
+existing effective record accessor, with file-backed source/image and actual
+collision-to-draw-piece controls unexecuted at authoring. Existing setter changes
+are consumed without a new ray/cache. Surface-water/native and original Contextual
+Prompts/yUI initialization remain unqualified; no guard/version change.
+Contract: [object water](spec-notes/activators.md#object-water-under-the-crosshair).
