@@ -1672,6 +1672,13 @@ fn overlaps(outline: &[Vec2], centre: Vec2, reach: Vec2) -> bool {
     })
 }
 
+/// Whether the sun casts shadows with its shadows switched `on` and a shadow distance of
+/// `distance`: a distance of 0 (the Shadow distance row's 0%, the menu overhaul) casts none.
+/// The one test for both [`set_shadows`] and graphics.rs `SunShadowKey::wanted`.
+pub(crate) fn casts_sun_shadows(on: bool, distance: f32) -> bool {
+    on && distance > 0.0
+}
+
 /// The sun's shadow cascades, in game units ([`shadow_cascade_layout`]), for shadow maps
 /// `map` texels on a side.
 pub(crate) fn shadow_cascades(distance: f32, reach: f32, layout: CascadeLayout, map: usize) -> CascadeShadowConfig {
@@ -1751,8 +1758,9 @@ const WIDE_SHADOW_OVERLAP: f32 = 0.4;
 ///   measurements of then still compare; overlap [`SHADOW_OVERLAP`].
 /// - One cascade (the moon's, Spaced(1)): `distance` × `reach`.
 ///
-/// At short distances (the Shadow distance slider goes down to a tenth of
-/// `--shadow-distance`) the first bound stays at [`FIRST_CASCADE_FLOOR`] but under half the
+/// At short distances (the Shadow distance row's least step above 0 % is a fifth of
+/// `--shadow-distance`, and `--shadow-distance` itself may be short; at 0 the sun casts
+/// none, [`casts_sun_shadows`], though the layout is still well formed there) the first bound stays at [`FIRST_CASCADE_FLOOR`] but under half the
 /// last, and the last at four times the minimum distance at least. The floor on the first
 /// bound (or a cap) can then push a share to or past its neighbour, so each in-between
 /// bound `i` of `n` is its (capped) share held between `first + i × step` and
@@ -1847,6 +1855,8 @@ pub fn set_shadows(world: &mut World, on: bool) {
         (sky.shadow_distance, sky.shadow_reach, sky.shadow_layout)
     };
     let map = map_side(world.get_resource::<bevy::light::DirectionalLightShadowMap>());
+    // A shadow distance of 0% (the menu overhaul) casts none.
+    let on = casts_sun_shadows(on, distance.0);
     let mut suns = world.query_filtered::<(Entity, &mut DirectionalLight), With<Sun>>();
     let lit: Vec<Entity> = suns
         .iter_mut(world)
@@ -3052,15 +3062,17 @@ mod tests {
         assert_eq!(map_side(None), 2048);
     }
 
-    /// Over the slider's whole range and below (from 0 to twice the default distance, every
-    /// 25 units), the bounds rise strictly and the first stays past the minimum distance,
-    /// for every layout, reach and map size.
+    /// Over the Shadow distance row's whole range and below (from 0 to twice the default
+    /// distance, every 25 units, and the row's steps), the bounds rise strictly and the
+    /// first stays past the minimum distance, for every layout, reach and map size. At 0 the
+    /// sun casts none (`casts_sun_shadows`), but the layout stays well formed.
     #[test]
     fn cascade_bounds_rise_at_short_distances() {
         use CascadeLayout::{Performance, Quality, Spaced};
         let layouts = [Quality, Performance, Spaced(1), Spaced(2), Spaced(3), Spaced(4), Spaced(5)];
         let sweep = (0..=640).map(|k| k as f32 * 25.0);
-        for distance in sweep.chain([DEFAULT_SHADOW_DISTANCE * crate::draw_distance::MIN, 10.0, 3.0, 0.5]) {
+        let steps = crate::settings::SHADOW_DISTANCES.map(|v| DEFAULT_SHADOW_DISTANCE * v);
+        for distance in sweep.chain(steps).chain([DEFAULT_SHADOW_DISTANCE * crate::draw_distance::MIN, 10.0, 3.0, 0.5]) {
             for reach in [1.0, 1.5] {
                 for layout in layouts {
                     for map in [2048, 4096] {
@@ -3072,18 +3084,26 @@ mod tests {
                 }
             }
         }
-        // At the slider's low end the first bound is held at 200 and the room to the last
-        // is 600 (a step 30): Quality's second share (200) is lifted one step above the
-        // first; the 4096 caps (240, 480) and the other shares stay as they are.
+        // The Shadow distance row's least step above 0 % (a fifth of 8,000): 1,600, a step
+        // of the room 70 (65 from a first bound of 300); every share and cap stays as it is.
+        assert_eq!(crate::settings::SHADOW_DISTANCES[1], 0.2);
+        near_eq(&shadow_cascade_layout(1600.0, 1.0, Quality, 2048).0, &[200.0, 400.0, 1000.0, 1600.0]);
+        near_eq(&shadow_cascade_layout(1600.0, 1.0, Quality, 4096).0, &[300.0, 480.0, 960.0, 1600.0]);
+        near_eq(&shadow_cascade_layout(1600.0, 1.0, Performance, 2048).0, &[300.0, 900.0, 1600.0]);
+        // At a tenth of the default distance (the slider's low end before the overhaul; a
+        // short `--shadow-distance` at 20 %) the first bound is held at 200 and the room to
+        // the last is 600 (a step 30): Quality's second share (200) is lifted one step above
+        // the first; the 4096 caps (240, 480) and the other shares stay as they are.
         near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 2048).0, &[200.0, 230.0, 500.0, 800.0]);
         near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 4096).0, &[200.0, 240.0, 480.0, 800.0]);
         near_eq(&shadow_cascade_layout(800.0, 1.0, Performance, 2048).0, &[200.0, 450.0, 800.0]);
-        // With no distance at all: the last at 20, the first at half of it, the rest a step
-        // apart above it.
+        // With no distance at all (the row's 0 %, which casts none: `casts_sun_shadows`):
+        // the last at 20, the first at half of it, the rest a step apart above it.
         near_eq(&shadow_cascade_layout(0.0, 1.0, Quality, 2048).0, &[10.0, 10.5, 11.0, 20.0]);
         fn near_eq(got: &[f32], want: &[f32]) {
             assert!(got.len() == want.len() && got.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.5), "{got:?} against {want:?}");
         }
+        assert!(!casts_sun_shadows(true, 0.0) && !casts_sun_shadows(false, 1600.0) && casts_sun_shadows(true, 1600.0));
     }
 
     #[test]

@@ -50,6 +50,7 @@ Deleted engine-shot associations also have a focused next-consumer retirement br
 | Loaded global-image metrics | In progress | Hidden own images in loaded globals receive bounded filewidth/fileheight updates before expression settle. Six controls passed on public b522; the added node-boundary control and this integrated head require fresh checks. The optional game smoke remains unrun. Atlas and non-global recipients are unchanged; no complete Pip-Boy or native rendering acceptance. | [global-image metrics](spec-notes/global-image-metrics.md) |
 | Four UIO math operators | In progress | Sin/Cos degree arguments, natural Log argument and accumulated Pow are implemented with an explicit finite-zero safety hypothesis. Five authored controls cover the math contract; historical hosted merge 94643ab passed all five plus four retained Neg controls. Later-head CI and portable fnvtool smoke remain separate gates. No installed UIO, held-map or native edge-domain acceptance. | [four UIO operators](spec-notes/uio-four-operators.md) |
 | UIO XML bit test | In progress | `bt` tests a selected bit of the accumulator through the existing XML parser and reactive traits. Paired `abba962b` CPU qualification: baseline passed 112 retained controls and failed four authored numeric assertions; candidate passed all 116. Corrected `fedce260` portable TOOL pair reached actual `fnvtool ui tree`: baseline retained nonzero controls but failed six bit/dependent values and zero-warning expectation; candidate passed all ten strict schema/count/value oracles. Initial registry rejection is preserved separately. Runtime/library-test blobs remain unchanged. Negative/fractional/nonfinite handling is an explicit local policy; native, rendered-menu and installed-mod acceptance remain unobserved. | [XML bit test](spec-notes/ui-bit-test-operator.md) |
+| Structural XML child counts | In progress | Expressions read an absent `childcount` from direct children, with insertion/removal dependencies. Explicit traits and trait-presence initialization guards retain their behavior. Paired normal release `fnv-ui` qualification: baseline three intended failures plus 116 retained passes; candidate 119 passes and strict package Clippy. Compile-controller shutdown failures are preserved separately from verified emitted-image execution. These historical package results are separate from hosted checks for each published source revision, recorded in PR #2858. Original-game parity, rendered installed VUI and complete sentinel acceptance remain unqualified; structural script getter queries are outside this change. | [structural child counts](spec-notes/menu-xml.md#61-structural-childcount-in-expressions) |
 | Fatal no-reference call context | In progress | [hypothesis] Diagnostic-only host notification and bounded shallow Game context for the two extended-call failure paths (#2499); public three-control pair and formatter checks UNRUN. No source-span, registrar or native-parity claim. | [null-call context](spec-notes/null-call-context.md) |
 | Runtime script origin | In progress | Ordinary AuxVar no-plugin origin for ScriptRunner/CompileScript; real ESM/ESP ownership retained. Runtime-origin interfaces have owned regression controls; no string-map or full-mod acceptance. | [runtime script origin](spec-notes/runtime-script-origin.md) |
 | Data-relative file enumeration | In progress | GetFiles/GetFolders enumerate checked Data-layer directories while retaining generic filters and ordinary filenames. Four authored VM controls cover parent namesakes, lexical boundaries and layered/filter/marker neighbors; the separate game-relative array-reader policy is retained. No physical symlink or installed-mod acceptance. | [file enumeration](spec-notes/file-enumeration-data-roots.md) |
@@ -264,3 +265,61 @@ in a collision-free fixture. The separate controller-query/gameplay successor,
 baseline failure, native ordering/synthetic input and original Enhanced Movement1.43
 acceptance remain open.
 Contract: [Control input events](spec-notes/control-input-events.md).
+
+### ModelHasBlock published-reference queries
+
+**Partly.** Source-compiled queries use exact names from an available reference
+scene publication, retaining base/cold file fallback and the existing empty-name
+result. A paired CPU run on identical fixtures gave five first-positive-lookup
+assertion failures with accepted runtime at `2b1d5704`, then five passes and zero
+ignored at `f3dc3a14`; 917 integration and four file tests remained filtered.
+The tested candidate runtime blob is
+`d4db1ebd1764d1ac6a6745f43d06cab8de98b467`; this documentation successor
+retains it and the tested fixture blobs. Engine publication/acquisition,
+physical armor changes, native timing/view policy, installed Titans, rendered
+output and full mod compatibility remain unqualified.
+Contract and scope: [ModelHasBlock reference models](spec-notes/nif-player-model-selection.md#modelhasblock-and-published-reference-models).
+
+ModelHasBlock CI follow-up: hosted PR #2827 merge `43776f84` failed before tests
+because shared fixture imports were unresolved in the library's own test crate;
+Core Clippy was skipped. The earlier five target-specific passes remain scoped
+to integration/file consumers. A test-only self-crate alias addresses that
+compilation context without changing runtime or fixture bodies; its compilation,
+execution and hosted core results are pending.
+
+### Live projectile position and source consumers
+
+[design] Canonical SetPos requests on active shots reach actual flight position
+before engine publication. Canonical Shot.source reaches blast causes, settled
+World ownership and visual attribution. Existing velocity, age, travelled distance,
+fuse, collision shooter and resolved-hit policy remain intact. Six authored
+source-to-physical-consumer controls and one internal queue/restore control remain
+UNRUN. Native behavior and original B42 Quickthrow3.1b initialization, input, bones,
+animation, throw/inventory/detonation and full lifecycle acceptance remain open.
+Contract: [Projectile launch/session traits](spec-notes/projectile-launch-session-traits.md).
+
+### Title-start MenuMode group 4
+
+**Partly.** The existing startup/preload frames admit source-compiled title-group
+blocks and queries without treating ordinary pause pages as title frames. The
+current 1013/no-argument block behavior, restart/session policy, input/timers and
+startup-before-load-event consumer remain in place. Four core integration
+controls drive attached start-enabled quest sources through that startup method
+and a registered load-event recipient. Live title-screen
+execution, native timing and original Helmet Overlay/Titans acceptance remain
+unqualified. Contract: [Title-start MenuMode](spec-notes/script-language.md#title-start-menumode-group-4).
+
+### MCM integer RGB consumer contract
+
+[design] Bounded integer land/shl/shr operations connect packed colour extraction,
+picker packing and live/reopened image previews. Four authored libtests cover those
+consumers and the explicit exact-integer mapping while retaining accepted bt and
+ordinary operators. Actual c264 normal-Cargo CPU comparison: baseline116PASS/4
+intendedFAIL, candidate120PASS, all120once/0ignored. Overallcontrollerfalse is
+retained for an unknown post-Cargo descendant terminated during boundedcleanup;
+this is not whole-run qualification. Engine callback/draw-piece,
+native/originalMCM/rendered acceptance remain open. Independent raw/source review
+confirmed those bounded case results and the false overall flag. The accepted-main
+060d union retains the tested fnv-ui Rust/fixtures; whole-graph qualification stays
+bound to its exact executed source, separately from the c264 comparison.
+Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).

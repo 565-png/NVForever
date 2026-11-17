@@ -716,10 +716,11 @@ struct SunShadowKey {
 
 impl SunShadowKey {
     /// The cascades the sun casts under this key: by day the settings' layout, by night the
-    /// moon's single cascade; none with the shadows off or the light faded at the horizon.
+    /// moon's single cascade; none with the shadows off, a shadow distance of 0
+    /// (`crate::sky::casts_sun_shadows`) or the light faded at the horizon.
     fn wanted(&self) -> Option<CascadeShadowConfig> {
         match self.phase {
-            _ if !self.shadows => None,
+            _ if !crate::sky::casts_sun_shadows(self.shadows, self.distance) => None,
             SunShadows::Faded => None,
             SunShadows::Moon => Some(crate::sky::shadow_cascades(MOON_SHADOW_DISTANCE.min(self.distance), 1.0, crate::sky::CascadeLayout::Spaced(1), self.map)),
             SunShadows::Day => Some(crate::sky::shadow_cascades(self.distance, self.reach, self.cascades, self.map)),
@@ -774,6 +775,8 @@ fn sun_shadow_quality(
         info!("sun shadows: {phase:?}");
     }
     *done = Some(key);
+    // None with the shadows off, the light faded or a shadow distance of 0% (the menu
+    // overhaul): [`SunShadowKey::wanted`].
     let want = key.wanted();
     let on = want.is_some();
     for (e, mut light, cascades) in &mut suns {
@@ -1314,6 +1317,17 @@ mod tests {
         assert_eq!(key.wanted().unwrap().bounds, vec![MOON_SHADOW_DISTANCE]);
         assert!(SunShadowKey { phase: SunShadows::Faded, ..key }.wanted().is_none());
         assert!(SunShadowKey { shadows: false, phase: SunShadows::Day, ..key }.wanted().is_none());
+        // A shadow distance of 0 (the Shadow distance row's 0%) casts none, by day or night;
+        // its least step above 0 (a fifth of 8,000) casts the layout.
+        assert!(SunShadowKey { distance: 0.0, phase: SunShadows::Day, ..key }.wanted().is_none());
+        assert!(SunShadowKey { distance: 0.0, ..key }.wanted().is_none());
+        let short = SunShadowKey { distance: 1600.0, reach: 1.0, phase: SunShadows::Day, ..key };
+        assert_eq!(short.wanted().unwrap().bounds, crate::sky::shadow_cascades(1600.0, 1.0, CascadeLayout::Quality, 4096).bounds);
+        // Choosing a resolution at a distance of 0 leaves the cascades alone.
+        world.resource_mut::<SkyState>().shadows = true;
+        world.resource_mut::<SkyState>().shadow_distance = 0.0;
+        set_shadow_resolution_choice(&mut world, 0);
+        assert_eq!(config(&world).0, day(2048).bounds);
     }
 
     /// The Shadow resolution row changes the key's map size: Quality's layout follows it
@@ -1333,6 +1347,23 @@ mod tests {
         app.world_mut().resource_mut::<TestKey>().0.cascades = CascadeLayout::Performance;
         app.update();
         assert_eq!(bounds(&app, sun), crate::sky::shadow_cascades(8000.0, 1.0, CascadeLayout::Performance, 2048).bounds);
+    }
+
+    /// A shadow distance of 0 (the Shadow distance row's 0%) switches the sun's shadow maps
+    /// off and leaves its cascades; the row's least step above 0 brings them back.
+    #[test]
+    fn a_shadow_distance_of_zero_casts_none() {
+        use crate::sky::CascadeLayout;
+        let mut app = shadow_app(SunShadows::Day);
+        let sun = spawn_day_sun(&mut app);
+        app.world_mut().resource_mut::<TestKey>().0.distance = 0.0;
+        app.update();
+        assert!(!app.world().get::<DirectionalLight>(sun).unwrap().shadow_maps_enabled);
+        assert_eq!(bounds(&app, sun), crate::sky::shadow_cascades(8000.0, 1.0, CascadeLayout::Quality, 2048).bounds);
+        app.world_mut().resource_mut::<TestKey>().0.distance = 1600.0;
+        app.update();
+        assert!(app.world().get::<DirectionalLight>(sun).unwrap().shadow_maps_enabled);
+        assert_eq!(bounds(&app, sun), crate::sky::shadow_cascades(1600.0, 1.0, CascadeLayout::Quality, 2048).bounds);
     }
 
     #[test]
