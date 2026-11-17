@@ -305,8 +305,9 @@ consumers and the explicit exact-integer mapping while retaining accepted bt and
 ordinary operators. Actual c264 normal-Cargo CPU comparison: baseline116PASS/4
 intendedFAIL, candidate120PASS, all120once/0ignored. Overallcontrollerfalse is
 retained for an unknown post-Cargo descendant terminated during boundedcleanup;
-this is not whole-run qualification. Clippy, engine/native/originalMCM/rendered
-acceptance remain open. Independent raw/source review confirmed those bounded
-case results and the false overall flag. The later accepted-main 060d union
-retains the tested fnv-ui Rust/fixtures, but its merged dependency graph is UNRUN.
+this is not whole-run qualification. Engine callback/draw-piece,
+native/originalMCM/rendered acceptance remain open. Independent raw/source review
+confirmed those bounded case results and the false overall flag. The accepted-main
+060d union retains the tested fnv-ui Rust/fixtures; whole-graph qualification stays
+bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).

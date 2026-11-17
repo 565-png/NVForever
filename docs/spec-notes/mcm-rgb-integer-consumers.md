@@ -65,8 +65,8 @@ candidate in its own target and ran all 120 fnv-ui libtests: four new controls a
 baseline restored exact accepted `d2b45842` parser/evaluator files and passed 116,
 failing the intended four numeric assertions. Actual source paths, executable
 hashes, unchanged before/after source inputs and finite 2-GiB job/8-GiB global
-reserve were retained privately. This documentation descendant changes no Rust or
-Cargo inputs; it was not rerun.
+reserve were retained privately. This comparison remains scoped to c264d430;
+documentation and integration descendants have separate source identities.
 
 [documented: process limits] The overall runner flag remains false: one unknown
 owned descendant stayed after successful candidate Cargo/test exit and a bounded
@@ -75,11 +75,12 @@ This is separate from the genuine test results, not overall run qualification.
 Earlier runner attempts remain preserved: the first stopped after baseline tests
 at an immediate descendant check; the next candidate invocation did not establish
 source binding and is excluded. No source, assertion, cap or false result was
-changed to obtain a green flag. Strict Clippy, engine/original-mod/rendered checks
-and native numeric parity remain unexecuted. Independent raw/source review
+changed to obtain a green flag. Engine callback/draw-piece, original-mod/rendered
+acceptance and native numeric parity remain unqualified. Independent raw/source review
 confirmed the bounded case results while retaining the false overall flag.
 
 [documented: source integration] The accepted-main 060d69dd union retains the
-exact tested fnv-ui Rust/fixture blobs. Its unrelated compiler, launcher, settings
-and dependency changes form a new, unrun graph; the actual test result above
-remains scoped to c264d430.
+exact tested fnv-ui Rust/fixture blobs alongside unrelated compiler, launcher,
+settings and dependency changes. Validation of an integrated graph is bound to
+its exact executed source; matching Rust/fixture blobs alone does not transfer
+whole-graph qualification from the c264d430 comparison.
