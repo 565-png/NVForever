@@ -146,7 +146,7 @@ const DISPLAY_EDITS: [(&str, &str); 7] = [
 
 /// `source` with [`DISPLAY_EDITS`] made, each to the first occurrence after the last
 /// edit; `None` when one is missing (Bevy changed).
-fn display_patched(source: &str) -> Option<String> {
+pub(crate) fn display_patched(source: &str) -> Option<String> {
     let mut out = String::with_capacity(source.len() + 4096);
     let mut rest = source;
     for (from, to) in DISPLAY_EDITS {
@@ -284,6 +284,15 @@ fn patch_display_sum(mut state: ResMut<FunctionsShader>, mut shaders: ResMut<Ass
     let Some(patched) = display_patched(&source) else {
         error!("{PBR_FUNCTIONS}: apply_pbr_lighting not as expected (Bevy changed?); surfaces keep Bevy's linear lighting sum");
         return;
+    };
+    // The sun visibility's hook goes into the same function, after these edits; it acts
+    // only under its shader def (sun_visibility.rs).
+    let patched = match crate::sun_visibility::hook_patched(&patched) {
+        Some(hooked) => hooked,
+        None => {
+            error!("{PBR_FUNCTIONS}: the sun visibility hook's anchors not found (Bevy changed?); clouds and terrain do not shade the sun");
+            patched
+        }
     };
     let patched = crate::fog::with_source(shader, patched);
     let _ = shaders.insert(&state.handle, patched);

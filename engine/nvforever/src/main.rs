@@ -165,6 +165,7 @@ mod imagespace;
 mod imposters;
 mod sky;
 mod start_times;
+mod sun_visibility;
 mod weather_fx;
 mod limping;
 mod sneaking;
@@ -1595,6 +1596,8 @@ fn main() -> AppExit {
     .add_plugins(nvf_play::audio_out::AudioOutPlugin)
     .add_plugins((ArchivePlugin(game), lights::LightsPlugin, fog::FogPlugin, eye_adapt::EyeAdaptPlugin, emittance::EmittancePlugin, water::WaterPlugin, tree::TreePlugin, terrain::TerrainPlugin, reflection::ReflectionPlugin, ripples::RipplesPlugin))
     .add_plugins((imagespace::ImageSpacePlugin, sky::SkyPlugin, graphics::GraphicsPlugin(graphics, msaa, frame_times)))
+    // The sun visibility factor: cloud and terrain shadows on the sun (off until a producer sets it).
+    .add_plugins(sun_visibility::SunVisibilityPlugin)
     // The switches the settings page weighs against the INI (`--play` only), for the
     // frame split's start-time decision (perf_overlay/split.rs).
     .add_plugins(perf_overlay::PerfOverlayPlugin(args.fps, play.is_some().then(|| settings::given_switches(&args, &command_line()))))
