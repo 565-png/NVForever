@@ -2198,3 +2198,9 @@ still need runtime checks after this review revision.
   and checks evaluated image dimensions, normalized crop, zoom and emitted pieces
   across a filename/density change. Execution results belong to their exact tested
   revision; source authoring alone supplies no runtime or screenshot acceptance.
+
+- [design] The fallback-art controls explicitly choose General's karma or reputation
+  mode instead of inheriting the default view. Positions and layout units stay exact;
+  positive emitted dimensions may differ by at most one representable f32 step when
+  an atlas subrectangle is multiplied back into canvas units. Normalized source
+  regions and the selected atlas rectangle remain independent, unchanged checks.

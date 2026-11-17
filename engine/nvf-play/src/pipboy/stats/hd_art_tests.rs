@@ -61,10 +61,10 @@ fn draw_art(size: u32, atlas: Option<bool>, page: PageArt, tga: bool) -> Drawn {
         let mut c = Ctx::new(&mut kit, Some(&data), &mut images, None, &glyphs);
         let (image, part) = c.picture(&path).expect("actual selected own image or atlas fallback");
         let full = part.unwrap_or_else(|| Rect::from_corners(Vec2::ZERO, c.images.get(&image).unwrap().size().as_vec2()));
-        let mut view = StatsView::default(); let mut snap = Snapshot::default();
+        let mut view = StatsView { reputation: matches!(page, PageArt::Reputation), ..Default::default() }; let mut snap = Snapshot::default();
         match page {
             PageArt::List => snap.skills.push(Row { name: "Owned skill".into(), icon: Some(path.clone()), ..default() }),
-            PageArt::Reputation => { view.reputation = true; snap.standings.push(Standing { form: fnv_sim::FormId(1), name: "Owned town".into(), title: "Known", fame: 0.0, infamy: 0.0, icon: Some(path.clone()) }); }
+            PageArt::Reputation => { snap.standings.push(Standing { form: fnv_sim::FormId(1), name: "Owned town".into(), title: "Known", fame: 0.0, infamy: 0.0, icon: Some(path.clone()) }); }
             PageArt::Karma => snap.karma = Some((0.0, "Neutral", "owned")),
         }
         commands.spawn(Node::default()).with_children(|p| match page {
@@ -74,7 +74,7 @@ fn draw_art(size: u32, atlas: Option<bool>, page: PageArt, tga: bool) -> Drawn {
         commands.insert_resource(Selected { image, full });
     }).unwrap();
     let selected = world.resource::<Selected>(); let (handle, full) = (selected.image.clone(), selected.full);
-    let (node, cut) = world.query::<(&Node, &ImageNode)>().iter(&world).find_map(|(node, image)| (image.image == handle).then(|| (node.clone(), image.rect.expect("fallback art emits an explicit crop")))).unwrap();
+    let (node, cut) = world.query::<(&Node, &ImageNode)>().iter(&world).find_map(|(node, image)| (image.image == handle).then(|| (node.clone(), image.rect.expect("fallback art emits an explicit crop")))).expect("actual fallback page must emit the selected fixture artwork");
     // The karma directory is an exact child created only for this owned fixture.
     if matches!(page, PageArt::Karma) {
         for file in &files.files { let _ = std::fs::remove_file(file); }
@@ -84,7 +84,14 @@ fn draw_art(size: u32, atlas: Option<bool>, page: PageArt, tga: bool) -> Drawn {
 }
 
 fn same_art(native: &Drawn, hd: &Drawn) {
-    assert_eq!((native.node.left, native.node.top, native.node.width, native.node.height), (hd.node.left, hd.node.top, hd.node.width, hd.node.height), "replacement density must preserve the actual page geometry");
+    assert_eq!((native.node.left, native.node.top), (hd.node.left, hd.node.top), "replacement density must preserve the actual page position");
+    // Cutting an atlas subrectangle can round the multiply back to canvas units once
+    // differently. Admit one representable f32 step, not a pixel- or percent-sized drift.
+    for (dimension, native, hd) in [("width", native.node.width, hd.node.width), ("height", native.node.height, hd.node.height)] {
+        let (Val::Vh(native), Val::Vh(hd)) = (native, hd) else { panic!("actual fallback {dimension} must retain canvas-relative units") };
+        assert!(native.is_finite() && hd.is_finite() && native > 0.0 && hd > 0.0, "actual fallback {dimension} must be finite and positive");
+        assert!(native.to_bits().abs_diff(hd.to_bits()) <= 1, "replacement density must preserve actual {dimension} to one f32 step: {native:?} versus {hd:?}");
+    }
     let a = (native.cut.max - native.full.min) / native.full.size();
     let b = (hd.cut.max - hd.full.min) / hd.full.size();
     assert!((a - b).length() < 0.0001, "fallback must sample the same normalized art, not its upper-left quarter: {a:?} versus {b:?}");
