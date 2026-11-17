@@ -739,9 +739,10 @@ rules; what NVForever decides where they are open is tagged here.
 
 [documented: [IsAnimPlayingEx](https://geckwiki.com/index.php/IsAnimPlayingEx)]
 The command has one required category and two optional integer parameters. The
-catalogue keeps that signature. [observed: installed Script Runner data,
-2026-11-17] An installed caller supplies a fourth operand inside a negated
-boolean condition. No fourth native parameter or byte encoding is established.
+catalogue keeps that signature. An installed Script Runner source file inspected
+on 2026-11-17 supplies a fourth operand inside a negated boolean condition. The
+original runtime behavior and any fourth native parameter or byte encoding remain
+unverified.
 
 [implementation evidence: public source 98fb59a9] Standalone extender calls
 already discard surplus operands with a diagnostic, but an unparenthesized
@@ -764,8 +765,9 @@ assertions that incorrectly treated legacy non-error `variable_added` and
 `reference_added` information as semantic warnings. The fixture correction
 retains those informational entries explicitly and checks all other diagnostics;
 VM values, reference/local rollback, strict refusal and byte oracles are retained.
-Corrected controls are authored and UNRUN. Assertions after the failed checks
-were not reached in that run.
+Assertions after the failed checks were not reached in that run. All nine
+corrected controls passed in Linux CI for `ae6c1110` at checkout `50231146`.
+Execution of the later Main integration remains pending.
 
 The shared `compile` test target's `inline_surplus_operands::` cases compile an
 independent handler-shaped condition

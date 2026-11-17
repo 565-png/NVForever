@@ -124,9 +124,9 @@ Inline surplus operands in mod-source conditions are **In progress**: an initial
 parser candidate preserves the documented signature and enclosing operators while
 reporting discarded operands. The initial nine shared-target controls compiled
 in Linux CI: three passed and six failed diagnostic expectations for retained
-legacy information. Corrected fixtures are UNRUN; selected whole-file compilation,
-controlled baseline/candidate comparison and B42 Optics game-load acceptance remain
-separate ([compiler note](spec-notes/script-compiler.md#inline-surplus-operands-in-mod-expressions)).
+legacy information. All nine corrected controls passed in Linux CI for `ae6c1110`.
+Fresh checks of the Main integration, selected whole-file compilation, the identical-fixture
+baseline and B42 Optics game-load acceptance remain open ([compiler note](spec-notes/script-compiler.md#inline-surplus-operands-in-mod-expressions)).
 
 | System | State | Specifics | Notes |
 |---|---|---|---|

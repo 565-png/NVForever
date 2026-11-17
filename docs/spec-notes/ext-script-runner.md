@@ -132,8 +132,9 @@ from source; tests in `crates/fnv-script/tests/compile.rs`):
   `(begin function`].
 
 Successful compilation reports its returned warnings once, when the Script Runner
-first caches that unit [design]. The inline-surplus candidate, initial CI fixture
-failures and corrected UNRUN controls are described in [script-compiler.md](script-compiler.md#inline-surplus-operands-in-mod-expressions).
+first caches that unit [design]. The [compiler notes](script-compiler.md#inline-surplus-operands-in-mod-expressions)
+record the initial fixture failures and all nine corrected controls passing in
+Linux CI for `ae6c1110`. Checks of the later Main integration remain pending.
 The candidate preserves the documented function signature; it does not establish
 native parity or full installed-mod acceptance.
 
