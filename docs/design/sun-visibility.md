@@ -4,8 +4,9 @@ Status 2026-11-17: cloud shadows (#2670) built as a player's switch: the plumbin
 C0, the base for terrain shadows #2671) with a debug view and a test producer, the cloud
 producer (C1, `engine/nvforever/src/cloud_shadows.rs`) and the settings row with the
 water highlight and the first-person arms (C2, §7); the relative transmittance (§7a) after the
-contributor's play-test of 2026-11-17. Terrain shadows (T0-T2) fill the
-terrain slot later. Runs so far: main session run 2026-11-17, fork-notes (the checkerboard
+contributor's play-test of 2026-11-17. Terrain shadows (#2671, T0-T2) fill the terrain
+slot: the receivers and the row Terrain shadows (experimental) are built (§5a,
+[terrain-shadows.md](terrain-shadows.md)), not yet run. Runs so far: main session run 2026-11-17, fork-notes (the checkerboard
 reached terrain, objects, trees and distant hills at Goodsprings 12:00; no shader or layout
 errors; an interior run clean; with C2 and the relative rule, Goodsprings 12:00 under a clear
 and an overcast weather, the logs free of rendering errors). What is not yet shown is in §6,
@@ -22,7 +23,8 @@ Producers write the main-world resource `SunVisibility` (`engine/nvforever/src/s
 |---|---|---|
 | `cloud_enabled` | `bool` | Cloud shadows is switched on: the views take the cloud variant whether or not `cloud` is set; without `cloud` the cloud is neutral (K = 1) |
 | `cloud` | `Option<CloudVisibility { image, uv_scale, uv_offset, plane_height, strength }>` | K: a transmittance texture (red, 1 clear, 0 opaque) on a horizontal plane `plane_height` up, looked up where the ray from the receiver towards the light meets it, at uv = hit.xz × `uv_scale` + `uv_offset` (repeating); K = 1 − `strength` × (1 − texel) |
-| `terrain` | `Option<TerrainVisibility { image, uv_scale, uv_offset, fade_band, edge_fade, height_softness }>` | T: a shadow-height map over world xz (#2671); its sampling is a stub returning 1 until stage T2 |
+| `terrain_enabled` | `bool` | Terrain shadows is switched on: the views take the terrain variant whether or not `terrain` is set; without `terrain` it is neutral (T = 1, Vsolid = C) |
+| `terrain` | `Option<TerrainVisibility { image, uv_scale, uv_offset, fade_band, texel, side }>` | T: the shadow-height map over world xz (#2671, terrain_shadows.rs; `Rgba32Float`, R S, G caster distance, B relief), read at uv = xz × `uv_scale` + `uv_offset`; `fade_band` the last cascade's end band (§2) |
 | `debug` | `DebugMode` (`Off`, `Cloud`, `Terrain`, `Combined`) | the debug view |
 
 Axes are Bevy's world axes (y up), units game units. In the shader
@@ -32,18 +34,19 @@ Axes are Bevy's world axes (y up), units game units. In the shader
   gives V; `nvf_sun_visibility_parts` gives K, T, Vsolid and V together.
 - The resources sit in the mesh view bind group at bindings 39 (uniform
   `NvfSunVisibility`: cloud uv transform, plane height, strength, horizon fade; terrain uv
-  transform, fade band, edge fade, height softness; feature mask, debug mode), 40 (cloud
-  texture), 41 (terrain map; the white fallback for now) and 42 (a linear, repeating
-  sampler) (`engine/vendor/bevy_pbr/src/render/mesh_view_bindings.rs`,
+  transform, fade band, texel size, side; feature mask, debug mode), 40 (cloud texture,
+  filterable), 41 (terrain map, declared unfilterable and read with `textureLoad` only; a
+  one-texel stand-in that casts nothing until a map is uploaded) and 42 (a linear, repeating
+  sampler, for 40) (`engine/vendor/bevy_pbr/src/render/mesh_view_bindings.rs`,
   `NvfSunVisibilityBindings`; engine/vendor/README.md).
 - Shader defs: `NVF_SUN_VISIBILITY` while the plumbing is on for the view,
   `NVF_CLOUD_VISIBILITY` while Cloud shadows is switched on (or the test producer sets a
-  cloud), `NVF_TERRAIN_VISIBILITY` with a terrain producer.
+  cloud), `NVF_TERRAIN_VISIBILITY` while Terrain shadows is switched on.
 - Switched on and published are kept apart: the switch alone decides the markers, the
   layout key bit, the pipeline key bits and the shader defs; the publication only fills
   the uniform and the texture. Switched on with nothing published, the uniform carries a
   neutral cloud (strength 0, the plane below every receiver) and the texture binding is the
-  white fallback, so K = 1.
+  white fallback, so K = 1; for the terrain the mask bit is clear, so T = 1 and Vsolid = C.
 
 ## 2. The composition rule
 
@@ -116,7 +119,7 @@ views is built again, as any view key change does; it is the only thing that doe
 
 - `NVF_PLAY_DEBUG_SUN_VISIBILITY=cloud|terrain|combined`: draws K, T or V (grey, 1 white)
   in place of the lit colour, before ambient and fog (the fog block is left out under the
-  debug view). The image space grade and the eye adaptation still act afterwards
+  debug view). T is 1 unless Terrain shadows is on (the row or its override). The image space grade and the eye adaptation still act afterwards
   (`--no-grade` leaves the grade out). Alone it turns the plumbing on, and `combined` then
   shows the cascade shadow C.
 - `NVF_PLAY_DEBUG_SUN_VISIBILITY_TEST=checker`: a built-in producer filling `cloud` with a
@@ -149,7 +152,25 @@ views is built again, as any view key change does; it is the only thing that doe
   `k = (V(1) + share − V(wanted)) / missing`. With V(C) = C (no def, or indoors) these are
   the old `(1 − own) + share × (1 − shade)` and `(1 + share − wanted) / missing` term for
   term; the derivation is in the shader. The finished colour is not multiplied.
-- Terrain: T's sampling and the fade band come with T2.
+- Terrain: see §5a.
+
+## 5a. Terrain shadows (#2671, stage T2)
+
+T (sun_visibility.wesl `nvf_terrain_visibility`) reads the shadow-height map at the four
+texels around the receiver with `textureLoad` and filters the four comparisons bilinearly,
+never S; each comparison is a smoothstep over a band under S that grows with the caster's
+distance (the sun's size) and with a texel's fall of S; the receiver is lifted by twice the
+ground's relief there plus 16 units against speckle on lit slopes; T fades to 1 over the
+map's last 4 texels and is 1 outside it and over texels with no terrain. With a map
+published the band of §2 is active: Vsolid goes from min(C, T) to T over the last 20 % of the
+last cascade (6,400 to 8,000 units at the default distance), so object shadows fade out
+there instead of ending at a line, and with Sun shadows off T acts alone. The switch is the
+row Terrain shadows (experimental) (`terrain-shadows`, Graphics › Shadows, after Cloud
+shadows; off by default and in every preset; Continue waits for its pipelines), or
+`NVF_PLAY_DEBUG_TERRAIN_SHADOWS=1`, which wins; `graphics.rs` key `terrain-shadows`. The
+formulas, their reasons, what is unmeasured and what is open for tuning:
+[terrain-shadows.md, "T2: the receivers"](terrain-shadows.md#t2-the-receivers). Smoke:
+`terrain-shadows`.
 
 ## 6. Not yet proved
 
