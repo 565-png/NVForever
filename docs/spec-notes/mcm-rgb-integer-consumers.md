@@ -53,8 +53,27 @@ place-value arithmetic rather than the implementation under test.
 The first intended old-consumer failure is a wrong swatch channel or packed
 output, before a later parse-warning assertion. Ignored-operator warnings alone
 do not prove pixel output, physical UI interaction or full mod acceptance.
-The three consumer cases and a mapped-domain/retained-operator control are
-unexecuted. The shared parser/evaluator admits these three operations under the
+The three consumer cases and a mapped-domain/retained-operator control were
+authored for the shared parser/evaluator's three operations under the
 explicit bounded mapping above, preserving accepted `bt` and ordinary arithmetic
 and logical operators. No native renderer, installed MCM options,
 original HSV rounding, input/persistence or UIO-wide compatibility is certified.
+
+[documented: CPU process evidence] At `c264d430`, normal release Cargo compiled the
+candidate in its own target and ran all 120 fnv-ui libtests: four new controls and
+116 retained controls passed once, zero ignored/filtered. The identical-fixture
+baseline restored exact accepted `d2b45842` parser/evaluator files and passed 116,
+failing the intended four numeric assertions. Actual source paths, executable
+hashes, unchanged before/after source inputs and finite 2-GiB job/8-GiB global
+reserve were retained privately. This documentation descendant changes no Rust or
+Cargo inputs; it was not rerun.
+
+[documented: process limits] The overall runner flag remains false: one unknown
+owned descendant stayed after successful candidate Cargo/test exit and a bounded
+shutdown grace, then was terminated with the job; owned active count reached zero.
+This is separate from the genuine test results, not overall run qualification.
+Earlier runner attempts remain preserved: the first stopped after baseline tests
+at an immediate descendant check; the next candidate invocation did not establish
+source binding and is excluded. No source, assertion, cap or false result was
+changed to obtain a green flag. Strict Clippy, engine/original-mod/rendered checks
+and native numeric parity remain unexecuted; independent evidence review is open.

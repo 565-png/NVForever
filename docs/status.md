@@ -302,6 +302,9 @@ Contract: [Projectile launch/session traits](spec-notes/projectile-launch-sessio
 [design] Bounded integer land/shl/shr operations connect packed colour extraction,
 picker packing and live/reopened image previews. Four authored libtests cover those
 consumers and the explicit exact-integer mapping while retaining accepted bt and
-ordinary operators. All four are unrun; native integer-edge parity and original
-MCM/rendered acceptance remain open.
+ordinary operators. Actual c264 normal-Cargo CPU comparison: baseline116PASS/4
+intendedFAIL, candidate120PASS, all120once/0ignored. Overallcontrollerfalse is
+retained for an unknown post-Cargo descendant terminated during boundedcleanup;
+this is not whole-run qualification. Clippy, engine/native/originalMCM/rendered
+acceptance remain open. No Rust/Cargo change in this documentation successor.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
