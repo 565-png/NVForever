@@ -1245,8 +1245,14 @@ below cover them all.
 - In full: a Fallout 4 style list beside the crosshair for whatever the crosshair is on that
   holds items. E takes the selected stack, T takes everything (not from a pocket), R opens the
   usual container or pickpocket menu, the mouse wheel moves the selection; the game goes on
-  meanwhile. A pocket lists each item's chance to steal it. Drawn in the HUD colour, at the HUD
-  scale, in the Menu Font row's font. Off by default (the owner, 2026-11-17).
+  meanwhile. A pocket lists each item's chance to steal it. Drawn in the HUD colour, at its own
+  scale (Quick loot scale), in the Menu Font row's font. Off by default (the owner, 2026-11-17).
+- Registered in `engine/nvf-play/src/quick_loot.rs`
+
+### `quick-loot-scale`: Quick loot scale
+
+- On the page: Size of the Quick Loot list, independent of HUD scale.
+- A list: 50% to 100% in steps of 10%; 100% by default. Greyed while Quick Loot is off.
 - Registered in `engine/nvf-play/src/quick_loot.rs`
 
 ### `quick-loot-weight`: Show weight

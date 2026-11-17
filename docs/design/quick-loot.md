@@ -61,12 +61,15 @@ ends; the name and the selection's place ("3/8") over a rule; up to six rows, th
 boxed and filled faintly; a short bar above or below where more rows are; the keys' lines under
 the box. The name, the rows' words and the keys' line start at one line; the box ends as far
 past the end of the keys' line as that line starts in from its left, or further for wider
-rows. The room above the name, either side of the rule and under the columns' heads is even.
+rows. Every line of words is one height, the rows' (40 units): the name's, the columns' heads', each
+row's and the keys' line; the words' capitals are centred in it, whatever their face (the
+game font's capitals measured by their ink: its glyph pictures carry room for the glow).
 The box is centred on the crosshair's height whatever its rows, and starts 150 units right of
 the crosshair; it is never wider than the room to the right bracket of the HUD's bottom right
 pieces (`hud::RIGHT_EDGE_IN`): a name too long for that is cut with "...". In the HUD colour
-(`interface::amber`, recoloured with it), the crime colour for theft, at the HUD scale
-(`interface::hud_units`), in the Menu Font row's font (the game's font 7, or the sharp font,
+(`interface::amber`, recoloured with it), the crime colour for theft, at its own scale
+(the **Quick loot scale** row, 50% to 100% in steps of 10%, 100% by default; not the HUD
+scale), in the Menu Font row's font (the game's font 7, or the sharp font,
 `pause::MenuFont`), redrawn when either changes. The place and the columns' heads are in the
 small face (font 3, or the sharp font's small size in bold); the columns' figures in the same
 size, not bold.

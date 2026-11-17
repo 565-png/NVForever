@@ -19,7 +19,7 @@
 //!   else's container is theft (`crate::crime::ItemsTaken`), a pocket's take rolls its
 //!   chance and a failure is caught (`crate::pickpocket::Pickpocketed`).
 //! - **Drawn** in the HUD colour (`crate::interface::amber`, recoloured with it), the crime
-//!   colour for theft, at the HUD's scale (`crate::interface::hud_units`), in the font the
+//!   colour for theft, at its own scale (the Quick Loot Scale row, 50-100%, not the HUD's), in the font the
 //!   Menu Font row picks (`crate::pause::MenuFont`: the game's font 7 or the sharp one).
 //!   Columns for weight, value and value per weight each have a row of their own (off by
 //!   default); with any column (or a pocket's chance) the count goes beside the name, else
@@ -31,9 +31,9 @@
 use crate::activate::outcome::Action;
 use crate::activate::Target;
 use crate::bindings::Control;
-use crate::interface::{amber, at, bc_supported, hud_units, set_line, Face};
+use crate::interface::{amber, at, bc_supported, set_line, Face};
 use crate::menu::model::{Command, MenuModel, Row, Side};
-use crate::start_menu::{base_in, Faces};
+use crate::start_menu::Faces;
 use crate::sim::SimState;
 use crate::{PlayState, RefChanged};
 use bevy::image::CompressedImageFormatSupport;
@@ -43,7 +43,7 @@ use fnv_sim::forms::BaseData;
 use fnv_sim::FormId;
 use fnv_game::game::event;
 use nvf_assets::GameData;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 // ---- the settings -----------------------------------------------------------------------
 
@@ -51,6 +51,35 @@ static ON: AtomicBool = AtomicBool::new(false);
 static WEIGHT: AtomicBool = AtomicBool::new(false);
 static VALUE: AtomicBool = AtomicBool::new(false);
 static PER_WEIGHT: AtomicBool = AtomicBool::new(false);
+/// The list's own size (the Quick Loot Scale row), the bits of an `f32`.
+static SCALE: AtomicU32 = AtomicU32::new(0x3F80_0000);
+
+/// The Quick Loot Scale row's choices: 50% to 100% in steps of 10%, the list's own size,
+/// independent of the HUD scale [the owner's second look, 2026-11-17].
+pub const SCALES: [f32; 6] = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+
+/// The size the list is drawn at.
+pub fn scale() -> f32 {
+    f32::from_bits(SCALE.load(Ordering::Relaxed))
+}
+
+fn scale_names() -> Vec<String> {
+    SCALES.iter().map(|s| format!("{:.0}%", s * 100.0)).collect()
+}
+
+fn scale_chosen(_: &World) -> String {
+    scale_names()[crate::settings::nearest(&SCALES, scale())].clone()
+}
+
+fn take_scale(_: &mut World, text: &str) -> bool {
+    match crate::settings::choice_of(text, &scale_names(), |v| crate::settings::nearest(&SCALES, if v > 1.5 { v / 100.0 } else { v })) {
+        Some(i) => {
+            SCALE.store(SCALES[i].to_bits(), Ordering::Relaxed);
+            true
+        }
+        None => false,
+    }
+}
 /// The list shows and has its keys this frame ([`holds_input`]).
 static HOLDS: AtomicBool = AtomicBool::new(false);
 /// Ready Item asked for the full menu: `crate::activate::activate` activates the target as
@@ -216,11 +245,16 @@ impl Spec {
 /// 2026-11-17, design A, and the owner's first look at it the same day]: its left edge right
 /// of the crosshair, its box centred on the crosshair's height.
 pub const LEFT: f32 = 150.0;
-/// Even room above the name, around the rule under it, under the columns' heads and round
-/// the rows (the owner: "the spacing is even").
-const SPACE: f32 = 10.0;
+/// Every line of words is one height, the rows' [the owner's second look, 2026-11-17: "all
+/// text lines ... should be the same height even if their text size is different"]: the
+/// name's, the columns' heads', each row's and the keys'; the words' capitals centred in it
+/// ([`centred`]).
+pub const LINE: f32 = 40.0;
+pub const ROW_H: f32 = LINE;
+/// Between the heading's lines and the rule, and round the rows (where the bars for more
+/// rows stand).
+const GAP_Y: f32 = 6.0;
 const RULE: f32 = 1.5;
-pub const ROW_H: f32 = 40.0;
 const ROW_GAP: f32 = 2.0;
 /// The box's edge to the rows' box, and the rows' box to their words: the name, the heading
 /// and the keys under the box start on one line [the owner's step 1].
@@ -229,8 +263,7 @@ const CELL: f32 = 10.0;
 /// Between columns [the owner's step 6: wider than the first build's 22].
 pub const GAP: f32 = 40.0;
 const NAME_MIN: f32 = 200.0;
-const PROMPT_GAP: f32 = 8.0;
-const PROMPT_H: f32 = 40.0;
+const PROMPT_GAP: f32 = 4.0;
 const PROMPT_SPACE: f32 = 30.0;
 const FRAME: f32 = 3.0;
 const TICK: f32 = 14.0;
@@ -315,6 +348,8 @@ pub struct Laid {
     pub bands: Vec<Rect>,
     /// The top of the rule under the name.
     pub rule: f32,
+    /// Every line of words ([`LINE`] high): the name's, the heads', the rows', the keys'.
+    pub lines: Vec<Rect>,
 }
 
 fn face(fonts: &Fonts, w: Which) -> &Face {
@@ -339,12 +374,23 @@ pub fn ink_width(f: &Face, text: &str) -> f32 {
     })
 }
 
-/// How tall a face's capitals stand above the line (half the line for a stand-in font
-/// without measures).
+/// The baseline that centres a face's capitals in a line from `top`, [`LINE`] high.
+pub fn centred(f: &Face, top: f32) -> f32 {
+    top + (LINE + cap(f)) / 2.0
+}
+
+/// How tall a face's capitals are drawn above the line: the inked part of `H`. A game font's
+/// glyph picture has room round its letter for the glow, as much over it as under the line
+/// (`H` has nothing under the line), so the ink stands `2 * ascent - height` high
+/// [observed: the first build's screenshots, the words a few pixels low in their rows]; the
+/// sharp font's metrics have none. Half the line for a stand-in font without measures.
 pub fn cap(f: &Face) -> f32 {
-    let c = f.font.glyph(b'H').ascent;
-    if c > 0.0 {
-        c
+    let g = f.font.glyph(b'H');
+    let ink = 2.0 * g.ascent - g.height;
+    if ink > 0.0 && g.height > 0.0 {
+        ink
+    } else if g.ascent > 0.0 {
+        g.ascent
     } else {
         f.font.size * 0.5
     }
@@ -367,10 +413,11 @@ pub fn per_weight_text(weight: Option<f32>, value: Option<i32>) -> String {
 }
 
 /// The widest the list may be from [`LEFT`] in a view `half` units from its middle to its
-/// right edge: its right edge on the HUD's bottom right pieces' (`crate::hud::RIGHT_EDGE_IN`)
-/// [the owner's step 10].
-pub fn widest(half: f32) -> f32 {
-    half - crate::hud::RIGHT_EDGE_IN - LEFT
+/// right edge, `edge` units in from which the HUD's bottom right pieces end
+/// (`crate::hud::RIGHT_EDGE_IN` at the HUD's scale): its right edge on theirs [the owner's
+/// step 10]. Both in the list's own units.
+pub fn widest(half: f32, edge: f32) -> f32 {
+    half - edge - LEFT
 }
 
 /// The list laid out from its top left corner, measured by `fonts` (the drawn faces), at
@@ -414,15 +461,19 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
         let width = width(which, &text);
         pieces.push(Piece { text, which, x, base, width, ink });
     };
-    // The heading: the name and its place in the rows ("1/4") on one line; then the rule and
-    // the columns' heads, each [`SPACE`] from the next [the owner's step 5].
-    let title_base = FRAME + SPACE + cap(&fonts.title);
+    let mut lines = Vec::new();
+    let mut line = |top: f32| lines.push(Rect::new(0.0, top, w, top + LINE));
+    // The heading: the name and its place in the rows ("1/4") on one line; the rule; the
+    // columns' heads on a line of their own.
+    let mut y = FRAME + GAP_Y / 2.0;
+    line(y);
     let title = crate::pause::fit_text(|t| width(Which::Title, t), &spec.title, x1 - x0 - GAP - position_w);
-    piece(title, Which::Title, x0, title_base, Ink::Hud);
-    piece(spec.position.clone(), Which::Head, x1 - position_w, title_base, Ink::Hud);
-    let rule = title_base + SPACE;
+    piece(title, Which::Title, x0, centred(&fonts.title, y), Ink::Hud);
+    piece(spec.position.clone(), Which::Head, x1 - position_w, centred(&fonts.head, y), Ink::Hud);
+    y += LINE + GAP_Y / 2.0;
+    let rule = y;
     bars.push(Bar { rect: Rect::new(PAD_X, rule, w - PAD_X, rule + RULE), ink: Ink::Dim });
-    let mut y = rule + RULE + SPACE;
+    y += RULE + GAP_Y / 2.0;
     // The columns right-aligned at their ends, the last at the rows' right.
     let mut col_end = Vec::new();
     let mut end = x1;
@@ -433,21 +484,23 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
     col_end.reverse();
     let count_end = end;
     if !cols.is_empty() {
-        let base = y + cap(&fonts.head);
+        line(y);
         for ((h, _), e) in cols.iter().zip(&col_end) {
-            piece((*h).to_string(), Which::Head, e - width(Which::Head, h), base, Ink::Hud);
+            piece((*h).to_string(), Which::Head, e - width(Which::Head, h), centred(&fonts.head, y), Ink::Hud);
         }
-        y = base + SPACE;
+        y += LINE;
     }
+    y += GAP_Y;
     // More rows above or below: a short bar in the room before or after them.
     let more = |y: f32| Bar { rect: Rect::new(w / 2.0 - 16.0, y - 1.5, w / 2.0 + 16.0, y + 1.5), ink: Ink::Dim };
     if spec.more_up {
-        bars.push(more(y - SPACE / 2.0));
+        bars.push(more(y - GAP_Y / 2.0));
     }
     let name_end = if count_w > 0.0 { count_end - count_w - GAP } else { count_end };
     for (i, r) in spec.rows.iter().enumerate() {
         let band = Rect::new(PAD_X, y, w - PAD_X, y + ROW_H);
         bands.push(band);
+        line(y);
         if r.selected {
             bars.push(Bar { rect: band, ink: Ink::Fill });
             let edge = |rect: Rect| Bar { rect, ink: Ink::Row(true) };
@@ -456,30 +509,30 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
             bars.push(edge(Rect::new(band.min.x, band.min.y, band.min.x + RULE, band.max.y)));
             bars.push(edge(Rect::new(band.max.x - RULE, band.min.y, band.max.x, band.max.y)));
         }
-        let base = y + base_in(&fonts.entry, ROW_H);
         let ink = Ink::Row(r.selected);
         let name = crate::pause::fit_text(|t| width(Which::Entry, t), &label(r), name_end - x0);
-        piece(name, Which::Entry, x0, base, ink);
+        piece(name, Which::Entry, x0, centred(&fonts.entry, y), ink);
         let n = count(r);
         if !n.is_empty() {
             let nw = width(Which::Entry, &n);
-            piece(n, Which::Entry, count_end - nw, base, ink);
+            piece(n, Which::Entry, count_end - nw, centred(&fonts.entry, y), ink);
         }
         for ((_, cells), e) in cols.iter().zip(&col_end) {
             let t = cells[i].clone();
             let tw = width(Which::Small, &t);
-            piece(t, Which::Small, e - tw, base, ink);
+            piece(t, Which::Small, e - tw, centred(&fonts.small, y), ink);
         }
         y += ROW_H + ROW_GAP;
     }
     if spec.rows.is_empty() {
         bands.push(Rect::new(PAD_X, y, w - PAD_X, y + ROW_H));
-        piece(EMPTY.into(), Which::Entry, x0, y + base_in(&fonts.entry, ROW_H), Ink::Dim);
+        line(y);
+        piece(EMPTY.into(), Which::Entry, x0, centred(&fonts.entry, y), Ink::Dim);
         y += ROW_H + ROW_GAP;
     }
-    y += SPACE - ROW_GAP;
+    y += GAP_Y - ROW_GAP;
     if spec.more_down {
-        bars.push(more(y - SPACE / 2.0));
+        bars.push(more(y - GAP_Y / 2.0));
     }
     let box_h = y + FRAME;
     // The frame: the backing, top and bottom lines with ticks down and up at their ends.
@@ -493,14 +546,15 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
     }
     frame.extend(bars);
     // The keys under the box, from the words' line.
-    let base = box_h + PROMPT_GAP + base_in(&fonts.entry, PROMPT_H);
+    let top = box_h + PROMPT_GAP;
+    line(top);
     let mut x = x0;
     for (i, p) in spec.prompts.iter().enumerate() {
         let ink = if i == 0 || (i == 1 && spec.prompts.len() == 3) { Ink::Row(true) } else { Ink::Hud };
-        piece(p.clone(), Which::Entry, x, base, ink);
+        piece(p.clone(), Which::Entry, x, centred(&fonts.entry, top), ink);
         x += width(Which::Entry, p) + PROMPT_SPACE;
     }
-    Laid { size: Vec2::new(w, box_h + PROMPT_GAP + PROMPT_H), box_h, pieces, bars: frame, bands, rule }
+    Laid { size: Vec2::new(w, top + LINE), box_h, pieces, bars: frame, bands, rule, lines }
 }
 
 /// A text's box: from the top of its capitals to a little under its baseline.
@@ -753,9 +807,9 @@ struct Kit {
     raster: Option<Faces>,
 }
 
-/// What the drawing shows: the words, whether in the sharp font, and the room to the HUD's
-/// right edge (whole units).
-type Drawn = Option<(Spec, bool, i32)>;
+/// What the drawing shows: the words, whether in the sharp font, the room to the HUD's right
+/// edge (whole units) and the scale (percent).
+type Drawn = Option<(Spec, bool, i32, i32)>;
 
 fn colour(ink: Ink, crime: bool) -> Color {
     let row = |full: bool| {
@@ -800,7 +854,9 @@ fn draw(
     mut panels: Query<(Entity, &mut Node), With<Panel>>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    let _hud = hud_units();
+    // The list's own size, not the HUD's [the owner's second look, 2026-11-17].
+    let size = scale();
+    let _units = crate::interface::units_at(size);
     let playing = *state.get() == PlayState::Playing;
     let shown = ql.shown.as_ref().filter(|_| playing && !hidden.is_some_and(|h| h.on));
     if kit.raster.is_none() {
@@ -830,13 +886,14 @@ fn draw(
     let spec = Spec::of(s, Columns::chosen(s.kind == Kind::Pocket), key);
     // The room from the list's left to the HUD's right edge, in the HUD's units (they are
     // `ui_scale` of the view's).
-    let half = window.single().map_or(480.0 * 16.0 / 9.0, |w| 480.0 * w.width() / w.height().max(1.0)) / crate::interface::ui_scale().max(0.1);
-    let max_w = widest(half);
-    let now = Some((spec, sharp, max_w.round() as i32));
+    let half = window.single().map_or(480.0 * 16.0 / 9.0, |w| 480.0 * w.width() / w.height().max(1.0)) / size.max(0.1);
+    let edge = crate::hud::RIGHT_EDGE_IN * crate::interface::ui_scale() / size.max(0.1);
+    let max_w = widest(half, edge);
+    let now = Some((spec, sharp, max_w.round() as i32, (size * 100.0).round() as i32));
     if *drawn == now {
         return;
     }
-    let (spec, _, _) = now.clone().expect("set above");
+    let (spec, _, _, _) = now.clone().expect("set above");
     let raster = kit.raster.as_ref().expect("loaded above");
     let faces = match (sharp, crate::vector_font::metrics(), menu_font.as_deref_mut(), fonts.as_deref_mut()) {
         (true, Some(m), Some(menu), Some(fonts)) => Fonts::sharp(raster, m, menu.handle(fonts)),
@@ -844,12 +901,14 @@ fn draw(
     };
     let laid = layout(&spec, &faces, max_w);
     // Logged when the words or the font change, not as the selection moves.
-    let new_words = drawn.as_ref().is_none_or(|(d, f, _)| d.title != spec.title || d.columns != spec.columns || *f != sharp || d.rows.len() != spec.rows.len());
+    let new_words = drawn.as_ref().is_none_or(|(d, f, _, z)| d.title != spec.title || d.columns != spec.columns || *f != sharp || d.rows.len() != spec.rows.len() || *z != (size * 100.0).round() as i32);
     if new_words {
         let bad = overlaps(&laid, &faces);
         let font = if sharp { "Sharp" } else { "Original" };
+        let c = |w: Which| cap(face(&faces, w));
+        info!("quick loot: capitals {:.1} (rows), {:.1} (name), {:.1} (heads), {:.1} (figures) units high, font {}", c(Which::Entry), c(Which::Title), c(Which::Head), c(Which::Small), if sharp { "Sharp" } else { "Original" });
         if bad.is_empty() {
-            info!("quick loot: drawn \"{}\" ({} rows, columns {:?}, font {font}, {:.0} x {:.0} units, box centred, right edge {:.0} of {:.0}): no overlaps", spec.title, spec.rows.len(), spec.columns, laid.size.x, laid.size.y, LEFT + laid.size.x, half - crate::hud::RIGHT_EDGE_IN);
+            info!("quick loot: drawn \"{}\" ({} rows, columns {:?}, font {font}, scale {:.0}%, {:.0} x {:.0} units, box centred, right edge {:.0} of {:.0}): no overlaps", spec.title, spec.rows.len(), spec.columns, size * 100.0, laid.size.x, laid.size.y, LEFT + laid.size.x, half - edge);
         } else {
             warn!("quick loot: drawn \"{}\" (font {font}): overlaps: {}", spec.title, bad.join(", "));
         }
@@ -857,9 +916,10 @@ fn draw(
     // The box centred on the crosshair's height, however many rows it has [the owner's
     // step 3].
     for (e, mut node) in &mut panels {
-        let top = crate::interface::u(-laid.box_h / 2.0);
-        if node.top != top {
+        let (left, top) = (crate::interface::u(LEFT), crate::interface::u(-laid.box_h / 2.0));
+        if node.top != top || node.left != left {
             node.top = top;
+            node.left = left;
         }
         commands.entity(e).despawn_related::<Children>();
         let crime = spec.crime;
@@ -885,6 +945,20 @@ impl Plugin for QuickLootPlugin {
                 set: |_, on| ON.store(on, Ordering::Relaxed),
                 slider: None,
             },
+        );
+        crate::settings::add_choice_list(
+            app,
+            Setting {
+                key: "quick-loot-scale",
+                group,
+                label: "Quick loot scale",
+                note: "Size of the Quick Loot list, independent of HUD scale.",
+                switches: "",
+                get: |_| false,
+                set: |_, _| {},
+                slider: None,
+            },
+            crate::settings::ChoiceList { names: |_| scale_names(), chosen: scale_chosen, pick: take_scale, save: scale_chosen, load: take_scale, ask_keep: false },
         );
         add_setting(
             app,
@@ -974,7 +1048,7 @@ mod tests {
 
     /// A 16:9 view's room at HUD scale 1.
     fn room() -> f32 {
-        widest(480.0 * 16.0 / 9.0)
+        widest(480.0 * 16.0 / 9.0, crate::hud::RIGHT_EDGE_IN)
     }
 
     fn find<'a>(l: &'a Laid, text: &str) -> &'a Piece {
@@ -1012,26 +1086,27 @@ mod tests {
         }
     }
 
-    /// The owner's step 5: the room above the name, either side of the rule and under the
-    /// columns' heads is the same; the place ("3/8") and the heads bold and alike, the figures
-    /// at their size.
+    /// The owner's second look: every line of words is one height, the rows', whatever its
+    /// face; the words' capitals centred in it; the place ("3/8") and the heads bold and alike,
+    /// the figures at their size.
     #[test]
-    fn the_heading_is_spaced_evenly() {
+    fn every_line_is_one_height_with_its_words_centred() {
         for (font, fonts) in both_fonts() {
-            let l = layout(&spec(ALL, rows()), &fonts, room());
-            let title = find(&l, "Footlocker");
-            let head = find(&l, WG);
-            let gaps = [
-                ("above the name", title.base - cap(&fonts.title) - FRAME),
-                ("name to rule", l.rule - title.base),
-                ("rule to heads", head.base - cap(&fonts.head) - (l.rule + RULE)),
-                ("heads to rows", l.bands[0].min.y - head.base),
-            ];
-            for (what, gap) in gaps {
-                assert!((gap - SPACE).abs() < 0.01, "{font}: {what} {gap}");
+            for c in [Columns::default(), ALL, Columns { chance: true, ..Columns::default() }] {
+                let l = layout(&spec(c, rows()), &fonts, room());
+                assert!(l.lines.iter().all(|r| (r.height() - LINE).abs() < 0.01), "{font}: every line {LINE} high");
+                assert_eq!(l.lines.len(), 1 + usize::from(c.any()) + 6 + 1, "{font}, {c:?}: the name's, the heads', six rows', the keys'");
+                for p in &l.pieces {
+                    let line = l.lines.iter().find(|r| p.base > r.min.y && p.base <= r.max.y).unwrap_or_else(|| panic!("{font}: \"{}\" on no line", p.text));
+                    let middle = p.base - cap(face(&fonts, p.which)) / 2.0;
+                    assert!((middle - (line.min.y + line.max.y) / 2.0).abs() < 0.01, "{font}: \"{}\" not centred in its line", p.text);
+                }
             }
+            let l = layout(&spec(ALL, rows()), &fonts, room());
+            let (title, head) = (find(&l, "Footlocker"), find(&l, WG));
+            assert!(title.base < l.rule && head.base > l.rule + RULE, "{font}: the rule between the name and the heads");
             let place = find(&l, "3/8");
-            assert_eq!((place.base, place.which, head.which), (title.base, Which::Head, Which::Head), "{font}");
+            assert_eq!((place.which, head.which), (Which::Head, Which::Head), "{font}");
             assert!(l.pieces.iter().filter(|p| p.text == "225").all(|p| p.which == Which::Small), "{font}: the figures in the small face");
             assert_eq!(fonts.head.font.size, fonts.small.font.size, "{font}: heads and figures one size");
         }

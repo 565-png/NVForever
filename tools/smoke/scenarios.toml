@@ -4268,15 +4268,15 @@ forbid = [{ re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" 
 [[scenario]]
 name = "quick-loot-pickpocket"
 source = "[design] owner 2026-11-17, docs/design/quick-loot.md: sneaking, a person's pocket shows in the list with each item's chance to steal it, no Take All; E steals the selected stack, rolling its chance (unseen or caught, as the pickpocket menu)"
-note = "pickpocket-steal's set-up (Chet held, given two Stimpaks, the player sneaking in front of him); Quick Loot on at 5.5 s on the settings page, in the game's font; E at 10 s; the rolls seeded (NVF_PLAY_TEST_PICKPOCKET_SEED)"
+note = "pickpocket-steal's set-up (Chet held, given two Stimpaks, the player sneaking in front of him); Quick Loot on at 5.5 s on the settings page and its scale set to 80% at 6 s, in the game's font; E at 10 s; the rolls seeded (NVF_PLAY_TEST_PICKPOCKET_SEED)"
 areas = ["activate", "menus", "crime", "hud"]
 paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/pickpocket.rs", "crates/fnv-game/src/pickpocket.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PICKPOCKET_SEED = "7", NVF_PLAY_TEST_NEAR = "00104C79", NVF_PLAY_TEST_FACE = "8:00104C79", NVF_PLAY_TEST_SCRIPT = "0.5:call:GSChetRef:SetRestrained:1,3:call:GSChetRef:AddItem:Stimpak:2", NVF_PLAY_TEST_CONTROL = "4:sneak", NVF_PLAY_TEST_PAUSE = "5:7", NVF_PLAY_TEST_SETTINGS = "5.5:quick-loot", NVF_PLAY_TEST_SHOTS = "9.5:quick_loot_pocket.png", NVF_PLAY_TEST_KEYS = "10:e" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PICKPOCKET_SEED = "7", NVF_PLAY_TEST_NEAR = "00104C79", NVF_PLAY_TEST_FACE = "8:00104C79", NVF_PLAY_TEST_SCRIPT = "0.5:call:GSChetRef:SetRestrained:1,3:call:GSChetRef:AddItem:Stimpak:2", NVF_PLAY_TEST_CONTROL = "4:sneak", NVF_PLAY_TEST_PAUSE = "5:7", NVF_PLAY_TEST_SETTINGS = "5.5:quick-loot,6:quick-loot-scale=80%", NVF_PLAY_TEST_SHOTS = "9.5:quick_loot_pocket.png", NVF_PLAY_TEST_KEYS = "10:e" }
 args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 14
 order = [[
   { re = 'quick loot: shown on 0x00104C79 ".*" \(Pocket, theft, \d+ rows\)', label = "the list shows on Chet's pocket, as theft" },
-  { re = 'quick loot: drawn ".*" \(\d+ rows, columns Columns \{ weight: false, value: false, per_weight: false, chance: true \}, font Original, .*\): no overlaps', label = "drawn with the chance column, nothing overlapping" },
+  { re = 'quick loot: drawn ".*" \(\d+ rows, columns Columns \{ weight: false, value: false, per_weight: false, chance: true \}, font Original, scale 80%, .*\): no overlaps', label = "drawn with the chance column at its own 80% scale, nothing overlapping" },
   { re = 'quick loot: Stack on 0x00104C79 ".*": (Took|Caught!)', label = "E steals the stack or is caught" },
   { re = 'pickpocket: (took .* from .* unseen|caught by .* with )', label = "judged as the pickpocket menu judges it" },
 ]]
