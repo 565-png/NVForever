@@ -166,6 +166,8 @@ fn integer_modifier_source_drives_a_real_inventory_branch_and_preserves_directio
 fn setter_then_mod_then_setter_use_the_same_saved_integer_value() {
     let f = fixture(None);
     let mut g = game(&f);
+    success(&mut g, "ModFactionReaction FirstFaction FirstFaction 0");
+    assert!(g.forms.faction_modifiers.is_empty(), "zero creates no saved override");
     assert_eq!(run(&mut g, "ModFactionReaction FirstFaction SecondFaction 2", None).unwrap(), XVal::Num(0.0));
     assert_eq!(value(&mut g, "FirstFaction", "SecondFaction"), XVal::Num(-10.0));
     success(
@@ -243,7 +245,7 @@ fn fractional_nonfinite_and_out_of_range_deltas_refuse_without_rounding_or_mutat
     let f = fixture(None);
     let mut g = game(&f);
     success(&mut g, "SetFactionReaction FirstFaction SecondFaction 10");
-    for delta in ["0.5", "1e30", "(Pow -1 0.5)", "(Pow 10 400)"] {
+    for delta in ["0.5", "1e30", "9223372036854775808", "(Pow -1 0.5)", "(Pow 10 400)"] {
         let saved = g.forms.faction_modifiers.clone();
         let err = run(
             &mut g,
@@ -254,6 +256,8 @@ fn fractional_nonfinite_and_out_of_range_deltas_refuse_without_rounding_or_mutat
         assert!(err.contains("integral i64 delta"), "{delta}: {err}");
         assert_eq!(g.forms.faction_modifiers, saved);
     }
+    success(&mut g, "ModFactionReaction FirstFaction FirstFaction -9223372036854775808");
+    assert_eq!(g.forms.faction_modifiers[&A][&A], i64::MIN, "the exact lower input bound is representable");
     // Actual stored representation's limits, not a native command limit.
     for (at, delta) in [(i64::MAX, 1), (i64::MIN, -1)] {
         g.forms.faction_modifiers.entry(A).or_default().insert(B, at);
