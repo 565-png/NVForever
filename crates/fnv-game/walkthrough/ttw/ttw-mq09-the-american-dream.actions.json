@@ -8,7 +8,8 @@
   ],
   "actions": [
     {"op": "note", "text": "Joins Finding the Garden of Eden's end (the MQ08 chain's last steps): the player woke in Raven Rock's holding cell and President Eden's intercom talk set MQ09 20 (find a way out). Given here, with the player put in the holding cell (Raven Rock level 3) so this chain runs alone; the gear MQ09's stage-1 script takes off the player is not taken here."},
-    {"op": "go_to_cell", "cell": "RavenRock03"},
+    {"op": "note", "text": "The player wakes in the holding cell by script, not by a walk: the start script (SCPT 0x0A036558 [observed]) runs player.MoveTo MQ09PlayerStartMark; its force field keeps the player in, so walking there from outside could not be done [observed, batch 2026-11-16]."},
+    {"op": "call", "line": "player.MoveTo MQ09PlayerStartMark"},
     {"op": "note", "text": "The player's gear in the cell's container: its OnActivate [observed] sets stage 30 (contact) once MQ09 is at 20."},
     {"op": "move_player", "to": "scripted:MQ09PlayerContainerScript"},
     {"op": "player_activate", "target": "scripted:MQ09PlayerContainerScript"},

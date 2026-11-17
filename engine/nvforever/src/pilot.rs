@@ -557,6 +557,9 @@ struct Walk {
     seen: (f64, [f32; 3]),
     replans: u8,
     cut: bool,
+    /// Whether this walk was already put past a gap no navmesh joins (once a walk: a
+    /// second time is the same gap, Paradise Falls' 1,853 puts in a row).
+    gapped: bool,
     /// Whether a conversation was open when the walk began (`None` until its first frame).
     talking_at_start: Option<bool>,
     /// A conversation that begins on the way ends the walk: the steps after it deal with
@@ -1285,10 +1288,21 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
         params.open_doors.extend(gone);
         // Standing off the navmesh (a given state's place, a ledge): onto the nearest
         // point of it within 500 units first, as the pilot's own clumsiness.
-        if nav.graph.locate(here.space, feet, 96.0).is_none() {
-            if let Some((_, on)) = nav.graph.nearest(here.space, feet, 500.0) {
-                if hdist(on, feet) > 4.0 {
-                    info!("pilot: step {}: off the navmesh at ({:.0}, {:.0}, {:.0}): set on its nearest point, {:.0} units off", p.i, feet[0], feet[1], feet[2], hdist(on, feet));
+        // Or, none within the search's own reach of the start (512 units), within 4,096:
+        // the Jefferson Memorial's intake pipe left the player with no triangle to start
+        // from after the Enclave's arrival [observed: its vertibirds' obstacle cut, #2846],
+        // and every later step failed there.
+        if nav.graph.locate(here.space, feet, 96.0).is_none() || nav.graph.nearest(here.space, feet, fnv_nav::path::SNAP_RADIUS).is_none() {
+            if let Some((_, on)) = nav.graph.nearest(here.space, feet, 500.0).or_else(|| nav.graph.nearest(here.space, feet, 4096.0)) {
+                // Off by height too: under the navmesh of the Jefferson Memorial's intake
+                // pipe the player stood 92 units below it, 0 units off across [observed].
+                let off = hdist(on, feet).hypot(on[2] - feet[2]);
+                if off > 4.0 {
+                    info!("pilot: step {}: off the navmesh at ({:.0}, {:.0}, {:.0}): set on its nearest point, {off:.0} units off", p.i, feet[0], feet[1], feet[2]);
+                    if off > 500.0 {
+                        // Not clumsiness: the ground went from under the player (#2846).
+                        p.finding("no_navmesh_under", format!("no usable navmesh within 512 units of ({:.0}, {:.0}, {:.0}) in {:?}: set on the nearest, {off:.0} units off", feet[0], feet[1], feet[2], here.space));
+                    }
                     h.put(Place { space: here.space, pos: on });
                     return Walked::Going;
                 }
@@ -1434,7 +1448,20 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                             // An interior whose doors lead out onto the Capital Wasteland's side.
                             Space::Interior(c) => h.game(|g| outside_door(g, c).is_some()).unwrap_or(false),
                         };
-                        let arrive = if here_side { None } else {
+                        // Or a way across the Capital Wasteland longer than the search goes
+                        // (Vault 112 to the Jefferson Memorial: 400,955 triangles searched and
+                        // no end [observed]): a fast travel from the side the player is on.
+                        let too_far = !w.gapped && matches!(e, fnv_nav::PathError::TooFar { .. });
+                        // No navmesh joins the two at all, locked doors or not, and no locked
+                        // door was met: a gap a player crosses by something the navmesh does
+                        // not hold (Rivet City's swing bridge, RCExBridge1Ref, swung by the
+                        // Security Intercom; `fnvtool nav path` finds no way from the shore to
+                        // the deck [observed], #2847): a fast travel there, with a finding.
+                        let gap = here_side && !too_far && !w.gapped && w.tried.is_empty() && matches!(e, fnv_nav::PathError::Unreachable { .. }) && h.game(|g| match w.goal.space {
+                            Space::World(b) => capital_side(g, b),
+                            Space::Interior(c) => outside_door(g, c).is_some(),
+                        }).unwrap_or(false);
+                        let arrive = if here_side && !too_far && !gap { None } else {
                             match w.goal.space {
                                 Space::World(b) if h.game(|g| capital_side(g, b)).unwrap_or(false) => nav.graph.nearest(w.goal.space, w.goal.pos, 4096.0).map(|(_, on)| Place { space: w.goal.space, pos: on }),
                                 Space::Interior(cell) => h.game(|g| outside_door(g, cell)).flatten().and_then(|(cell, pos)| {
@@ -1445,8 +1472,12 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                             }
                         };
                         if let Some(at) = arrive {
-                            info!("pilot: step {}: no way to the Capital Wasteland side ({:?}): the player is put at ({:.0}, {:.0}, {:.0}) in {:?}, as the mod list's travel and a fast travel would put it", p.i, w.goal.space, at.pos[0], at.pos[1], at.pos[2], at.space);
-                            p.headless("move_player (between the two wastelands)");
+                            info!("pilot: step {}: {} ({:?}): the player is put at ({:.0}, {:.0}, {:.0}) in {:?}, as the mod list's travel and a fast travel would put it", p.i, if too_far { "a way longer than the search goes" } else if gap { "no navmesh way there" } else { "no way to the Capital Wasteland side" }, w.goal.space, at.pos[0], at.pos[1], at.pos[2], at.space);
+                            w.gapped |= too_far || gap;
+                            if gap {
+                                p.finding("no_navmesh_way", format!("no navmesh way from ({:.0}, {:.0}, {:.0}) in {:?} to {:?}, locked doors or not: put there as a fast travel would", feet[0], feet[1], feet[2], here.space, w.goal.space));
+                            }
+                            p.headless(if too_far || gap { "move_player (a fast travel)" } else { "move_player (between the two wastelands)" });
                             h.put(at);
                             p.followers_due = Some(p.now);
                             w.seen = (p.now, at.pos);
@@ -1641,7 +1672,8 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 w.door_since = Some(p.now);
                 return Walked::Going;
             } else if w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) {
-                p.finding("door", format!("door {door:08X} on the way, not locked, did not open in {LOCKED_SECS:.0} s: walks on as if it had"));
+                let parents = h.game(|g| g.world.placed.get(FormId(door)).map(|r| r.activate_parents.len())).flatten().unwrap_or(0);
+                p.finding("door", format!("door {door:08X} on the way, not locked, did not open in {LOCKED_SECS:.0} s ({parents} activate parents, none taken): walks on as if it had"));
                 f.door_opened();
                 w.door_since = None;
             }
@@ -1724,7 +1756,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
 }
 
 fn walk_to(goal: Place, target: Option<FormId>, radius: f32, now: f64, feet: [f32; 3]) -> Walk {
-    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, owner_wait: None, owner_door: None, reported: now, travel_since: None }
+    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, gapped: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, owner_wait: None, owner_door: None, reported: now, travel_since: None }
 }
 
 /// What a player would use to open a door that stays locked (module notes), not used
@@ -1763,6 +1795,10 @@ fn capital_side(g: &Game, w: u32) -> bool {
 /// into the Museum of History, which opens onto the Mall): the destination's cell and
 /// position.
 fn outside_door(g: &Game, cell: u32) -> Option<(u32, [f32; 3])> {
+    // A door whose script runs on activation is a way only when no other is (GNR's back
+    // door from Dupont Circle, DuponttoGNRRef, only says it is barred:
+    // MQ02GNRBackDoorScript [observed]), so a plain door out is taken first.
+    let mut scripted = None;
     let mut seen = vec![cell];
     let mut cells = vec![cell];
     for _ in 0..OUTSIDE_DEPTH {
@@ -1773,6 +1809,9 @@ fn outside_door(g: &Game, cell: u32) -> Option<(u32, [f32; 3])> {
                 let Some(to) = g.world.placed.get(r).and_then(|p| p.teleport.as_ref()).map(|t| t.door) else { continue };
                 let Some((Some(dest), pos)) = where_is(g, to) else { continue };
                 match g.world.placed.world_of(dest) {
+                    Some(w) if capital_side(g, w.0) && (door_scripted(g, to.0) || door_scripted(g, r.0)) => {
+                        scripted.get_or_insert((dest.0, pos));
+                    }
                     Some(w) if capital_side(g, w.0) => return Some((dest.0, pos)),
                     Some(_) => {}
                     None if !seen.contains(&dest.0) => {
@@ -1785,7 +1824,7 @@ fn outside_door(g: &Game, cell: u32) -> Option<(u32, [f32; 3])> {
         }
         cells = next;
     }
-    None
+    scripted
 }
 
 /// How many interiors deep [`outside_door`] looks for a way out.
@@ -1834,12 +1873,23 @@ fn door_switch(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<Switch> {
         return None;
     }
     let (cell, at) = where_is(g, FormId(door))?;
-    let refs = g.world.placed.by_cell.get(&cell?)?;
+    let mut found: Vec<(u8, f32, FormId, [f32; 3], &'static str)> = Vec::new();
+    // The door's activate parents (XAPR) set it off: a door that only they open (XAPD,
+    // Vault 112's floor hatch Vault112SecretHatchREF under the Tenpenny wall switch
+    // [observed]) refuses the player. A parent that is a trigger volume is not a switch.
+    let parents: Vec<FormId> = g.world.placed.get(FormId(door)).map(|p| p.activate_parents.iter().map(|a| a.reference).collect()).unwrap_or_default();
+    for r in parents {
+        if used.iter().any(|(u, d)| *u == r.0 && *d == door) || g.world.placed.get(r).is_none_or(|p| p.primitive.is_some()) {
+            continue;
+        }
+        let Some((_, pos)) = where_is(g, r) else { continue };
+        found.push((0, hdist(pos, at).hypot(pos[2] - at[2]), r, pos, "the door's activate parent"));
+    }
     let scripted = |r: FormId| {
         let unit = g.data.scripts.get(&g.ref_script(r)?).map(|u| g.data.unit(*u))?;
         unit.program.blocks.iter().any(|b| b.event == fnv_game::game::event::ON_ACTIVATE).then_some(unit)
     };
-    let mut found: Vec<(u8, f32, FormId, [f32; 3], &'static str)> = Vec::new();
+    let refs: &[FormId] = cell.and_then(|c| g.world.placed.by_cell.get(&c)).map(|v| v.as_slice()).unwrap_or(&[]);
     for &r in refs {
         if r.0 == door || used.iter().any(|(u, d)| *u == r.0 && *d == door) || g.is_dead(r) {
             continue;
@@ -2634,7 +2684,20 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
         Action::GoToCell { cell } => {
             if matches!(p.phase, Phase::Begin) {
                 let world = h.world;
-                let place = h.game(|g| runner::cell_arrival(g, cell)).unwrap_or_else(|| Err("the scripts are not running".into())).and_then(|(c, pos)| {
+                let place = h.game(|g| runner::cell_arrival(g, cell).map(|(c, mut pos)| {
+                    // An exterior cell with no COC marker arrives at its middle at height
+                    // 0, under the ground: the height is the middle of what is placed in
+                    // it (Paradise Falls' front cell put the player on a ledge the navmesh
+                    // nearest to height 0 held, 130 units from the ground [observed]).
+                    if pos[2] == 0.0 {
+                        let mut zs: Vec<f32> = g.world.placed.by_cell.get(&c).map(|v| v.iter().filter_map(|r| g.world.placed.get(*r)).map(|p| p.pos[2]).collect()).unwrap_or_default();
+                        zs.sort_by(f32::total_cmp);
+                        if let Some(z) = zs.get(zs.len() / 2) {
+                            pos[2] = *z;
+                        }
+                    }
+                    (c, pos)
+                })).unwrap_or_else(|| Err("the scripts are not running".into())).and_then(|(c, pos)| {
                     let space = crate::nav::space_of_cell(world, c.0).ok_or_else(|| format!("{cell}: not indexed"))?;
                     Ok(Place { space, pos })
                 });
@@ -3081,7 +3144,11 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                 let m = named(g, &marker).ok()?;
                 let (cell, pos) = where_is(g, m)?;
                 let space = crate::nav::space_of_cell(world, cell?.0)?;
-                Some((actor, Place { space, pos }, where_is(g, actor).map(|(_, at)| at)))
+                // Where the actor is counts only in the marker's own space: two interiors
+                // share coordinates (Dad "at" MQ05ControlRoomMarker in PPurity01 while he
+                // stood in PPurity02 [observed]).
+                let at = where_is(g, actor).filter(|(c, _)| same_space(world, *c, cell)).map(|(_, at)| at);
+                Some((actor, Place { space, pos }, at))
             });
             // `X.MoveTo player`: X comes to the player (a follower): a minute is waited,
             // with no Wait menu.
