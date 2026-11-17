@@ -69,7 +69,6 @@
 //! clouds' scroll clock, the dome's and this one ([`cloud_seconds`]), for screenshots.
 
 use bevy::asset::RenderAssetUsages;
-use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::tasks::{futures::check_ready, AsyncComputeTaskPool, Task};
@@ -142,7 +141,7 @@ pub fn cloud_shadows_on(s: Option<Res<CloudShadows>>) -> bool {
 /// What the sun-visibility plumbing samples: the fields of C0's `CloudVisibility`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CloudShadowOutput {
-    /// `R8Unorm`, repeat-wrapped, linear-filtered; 1 = fully lit.
+    /// `R8Unorm`, 1 = fully lit (sampled repeating and linear by the plumbing's sampler).
     pub image: Handle<Image>,
     /// World (Bevy x, z) to texture coordinates: 1 / [`REPEAT_UNITS`] on both axes.
     pub uv_scale: Vec2,
@@ -638,22 +637,17 @@ impl CloudShadowWork {
     }
 }
 
+/// The image, fully lit. Its sampler is left at the default: sun_visibility.rs samples it
+/// with the plumbing's own repeating, linear sampler, and a sampler of the image's own
+/// would be made again at every upload (bevy_render `texture/gpu_image.rs`).
 fn new_image() -> Image {
-    let mut image = Image::new_fill(
+    Image::new_fill(
         Extent3d { width: MAP_SIZE as u32, height: MAP_SIZE as u32, depth_or_array_layers: 1 },
         TextureDimension::D2,
         &[255],
         TextureFormat::R8Unorm,
         RenderAssetUsages::default(),
-    );
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        ..ImageSamplerDescriptor::linear()
-    });
-    image
+    )
 }
 
 /// A texture's alpha, once read (`None` too while it is being read).
