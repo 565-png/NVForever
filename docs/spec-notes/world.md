@@ -1885,3 +1885,26 @@ Textures2.bsa`, `Fallout - Misc.bsa`, DLC archives]:
    21 and the REPCONN basement are still to capture (section 8).
 6. The engine's handling of SCOL references: whether it draws the combined mesh (assumed)
    or the parts.
+
+## Water surface ownership during streaming
+
+[documented: renderer ownership in water.rs/world.rs] Loaded exterior cells own
+their local water planes. Distant water fills eligible cells outside that loaded
+set, inside the configured LOD range. A cell must not retain both owners after
+stream reconciliation. Cell count alone does not identify that set: replacing
+one loaded cell with another can leave its size unchanged.
+
+[design] Distant-water invalidation includes camera cell, effective LOD radius
+(including off/interior) and the exact loaded-cell keys. Compare stable keys
+without allocating each frame; retain a copy only when coverage changes. Then
+remove no-longer-eligible planes, create newly eligible planes and retain the
+same entities/materials for unaffected cells. Existing water type, depth,
+reflection, alpha, material and mesh policy is unchanged.
+
+[hypothesis] Coplanar retained distant/local planes are a causal renderer boundary
+to test for reported water flicker, not yet proof of every observed flicker.
+Controls must invoke the actual renderer producer with same-count replacements,
+steady coverage, LOD off/range changes and cell/world lifecycle; inspecting only
+an invalidation-key getter is insufficient. No original assets or GPU outcome is
+claimed by authored CPU fixtures. User060d observations and actual run logs are
+kept privately; all new controls remain unrun until execution is recorded.
