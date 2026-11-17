@@ -7,6 +7,9 @@
   ],
   "actions": [
     {"op": "note", "text": "Joins where Picking Up the Trail (MQ06) ends: the player walking into Vault 87 sets MQ06 200 [observed], whose script sets MQ08 15 (find the G.E.C.K.). Set here directly so this chain runs alone."},
+    {"op": "note", "text": "Little Lamplight's gate lets only the kids' faction through by hand (SCPT 0x0006823A [observed]); it opens for the player once MayorMacCreadyRef.access is 1: the trigger before it (SCPT 0x0A0A1C1F, OnTriggerEnter player) sets its open state then [observed]. In MQ06 MacCready's gate yell sets access (his SayToDone block, as ttw-mq06-picking-up-the-trail plays it); from this chain's given state it never happened and the player stood at the gate for good [observed, batch 2026-11-16]. Set here as the given state's stand-in."},
+    {"op": "set_ref_var", "ref": "MayorMacCreadyRef", "var": "access", "value": 1},
+    {"op": "advance_seconds", "seconds": 1},
     {"op": "note", "text": "Little Lamplight's back door (to Murder Pass): its terminal MQ06BackDoorTerminalRef says \"The terminal is not powered.\" until MQ06.dbcomputeron is 2 (SCPT 0x0A003A17 [observed]). Joseph's line 0x0A003A0B (\"Sure, if you want.\") sets it to 1 and his package MQ06JosephActivateTerminal's end sets 2 [observed, Fallout3.esm]; the walk there is his AI (its end stands in)."},
     {"op": "say_info", "info": "0x0A003A0B", "speaker": "JosephRef"},
     {"op": "package", "actor": "JosephRef", "package": "MQ06JosephActivateTerminal", "event": "end"},

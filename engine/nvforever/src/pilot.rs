@@ -1727,6 +1727,15 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         w.door_since = Some(p.now);
                         return Walked::Going;
                     }
+                    // Another way round first, as for a locked door: Paradise Falls' sewer
+                    // grate 0x0A034A35 turns the player away, and its main gate is the way in
+                    // [observed].
+                    if !w.tried.iter().any(|(t, _)| *t == d.door) {
+                        info!("pilot: step {}: door {:08X} is not locked but did not take the player through in {LOCKED_SECS:.0} s: another way round", p.i, d.door);
+                        w.tried.push((d.door, "not locked, refused the player".into()));
+                        (w.follower, w.door_since) = (None, None);
+                        return Walked::Going;
+                    }
                     let why = format!("door {:08X} is not locked and did not take the player through in {LOCKED_SECS:.0} s after the player tried it (its script refuses the player?): a player could not go on; the player stays in front of it", d.door);
                     p.finding("unreachable", why.clone());
                     return Walked::No(why);
@@ -2799,9 +2808,23 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                                     ByHand::Talk | ByHand::Greeted | ByHand::Choices | ByHand::Script | ByHand::Default(_) => Ok(()),
                                     // Asleep: the first press wakes it; the player presses again.
                                     ByHand::Woken => Err("woken".to_string()),
+                                    // A teammate opens its companion wheel: the player picks Talk on
+                                    // it, as a player does (Sarah Lyons in Take it Back!).
+                                    ByHand::Wheel => Err("wheel".to_string()),
                                     other => Err(format!("activating {actor} did not start a conversation: {}", by_hand(&other))),
                                 })
                             }),
+                        };
+                        let started = match started {
+                            Some(Err(e)) if e == "wheel" => {
+                                let r = h.game(|g| g.wheel_command(fnv_game::companion_wheel::Command::Talk)).unwrap_or_else(|| Err("the scripts are not running".into()));
+                                info!("pilot: step {}: {actor}'s companion wheel: Talk ({r:?})", p.i);
+                                Some(match r {
+                                    Ok(fnv_game::companion_wheel::Outcome::Talk { .. }) => Ok(()),
+                                    other => Err(format!("activating {actor} opened its companion wheel and Talk did not start a conversation ({other:?})")),
+                                })
+                            }
+                            other => other,
                         };
                         if let Some(Err(e)) = &started {
                             if e == "woken" && p.woke < 3 {
@@ -3767,7 +3790,7 @@ const CALL_UNTIL_CAP: f64 = 1800.0;
 /// How long the run may go without a sign of progress before the stall watchdog gives the
 /// step up, seconds: the step moving on, the player walking [`STALL_MOVE`] units, a line
 /// said, an hour waited or the trigger pulled. Steps that wait on purpose (`call_until`,
-/// `advance_seconds`) are left to their own limits.
+/// `advance_seconds`, `wait_quest`, `wait_menu`, `wait_frames`) are left to their own limits.
 const STALL_SECS: f64 = 90.0;
 /// How far the player has to be from where it stood a while ago for its walking to count
 /// as progress.
@@ -3808,7 +3831,10 @@ fn watch_stall(p: &mut Pilot, h: &mut Hands) -> bool {
         Phase::Walk(w) | Phase::Fight(_, w) | Phase::Shoot(_, w) => w.owner_wait.is_some() || w.enable_wait.is_some(),
         _ => false,
     };
-    let purposeful = walk_waits || matches!(p.actions.get(p.i), Some(Action::CallUntil { .. } | Action::AdvanceSeconds { .. }));
+    // A `wait_quest` / `wait_menu` / `wait_frames` waits out its own `max_frames` too: Vault
+    // 101's birth waits up to 120 s for each of Dad's lines and CG00's timers, and the
+    // watchdog gave them up at 90 s [observed].
+    let purposeful = walk_waits || matches!(p.actions.get(p.i), Some(Action::CallUntil { .. } | Action::AdvanceSeconds { .. } | Action::WaitQuest { .. } | Action::WaitMenu { .. } | Action::WaitFrames { .. }));
     if purposeful || p.i >= p.actions.len() || p.now - since < STALL_SECS {
         return false;
     }
