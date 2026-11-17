@@ -42,3 +42,11 @@ and source-less loaded bytecode, same-maker nested captures, live package/lambda
 allocation, array returns and string/array disposal after success and error.
 No native callable representation or parity
 is established by these engine tests.
+
+[documented: `GameConfig::default`, `Vm::eval` and extended-statement dispatch]
+Default runs recover an ordinary host-expression error and record it as skipped;
+strict runs return that error. Allocator refusal controls exercise both existing
+contracts without changing them. [documented: `Exec::make_lambda`, `lambda_key`]
+An existing maker/instance identity is looked up before requesting a new handle.
+Capacity controls therefore retain cached reuse while refusing a distinct new
+lambda, with no new slot, owner mapping or allocator-cursor change on refusal.
