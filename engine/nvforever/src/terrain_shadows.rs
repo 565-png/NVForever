@@ -82,11 +82,17 @@
 //!
 //! **Cadence** ([`update_reason`]): a new map only when (a) T0's `version` changed, or
 //! (b) the light moved enough that the predicted shadow-edge displacement exceeds half a
-//! texel (128 units) since the last publication, and never sooner than [`MIN_INTERVAL_SECS`]
-//! after the last one. The displacement ([`edge_displacement`]) for a blocker of height h
-//! (the map's `max − min`, so a bound for every blocker on it): the shadow's length
-//! `L = h·cot(e)` (at most the map's diagonal) changes by `|ΔL|`, to first order
-//! `h·csc²(e)·Δe`, and its tip swings by `L·Δazimuth`. The light is the `sky::Sun`
+//! texel (128 units) since the light the published map was computed for, and never sooner
+//! than [`MIN_INTERVAL_SECS`] after the last job was asked for (from the request, not the
+//! publication: [`update_reason`] says why). The displacement ([`edge_displacement`]) for a
+//! blocker of height h (the map's `max − min`, so a bound for every blocker on it): the
+//! shadow's length `h·cot(e)` changes by `h·|Δcot(e)|`, to first order `h·csc²(e)·Δe`, not
+//! capped (a shorter blocker's shadow can lie inside the map while the tallest one's runs off
+//! it), and its tip swings by `L·Δazimuth`, L the length capped at the map's diagonal. This
+//! is a prediction for the light's change between two maps, not a bound on what a receiver
+//! sees: a map's age is not bounded (a job waits for its pipeline and for T0's upload, and
+//! its light is the one asked for), and a faster game clock moves the sun further within the
+//! 0.1 s floor, so a new map can move an edge by more than 128 units. The light is the `sky::Sun`
 //! entity's own transform (it turns every frame), not the sky's quantized hour; at night
 //! it is the moon, handled alike. While the light is within the horizon fade that stops the
 //! sun's own shadows (`sky.rs` `HORIZON_FADE` 0.1 rad, `graphics.rs` `SHADOW_FADED` 0.1:
@@ -378,19 +384,31 @@ pub fn params_bytes(p: &MarchParams) -> [u8; PARAMS_BYTES] {
 /// Predicted shadow-edge displacement (world units) when the light turns from `from` to
 /// `to` (game axes, towards the light), for blockers up to `relief` high on a map whose
 /// shadows can be at most `longest` long (module notes, "Cadence"): the change of the
-/// shadow's length `h·cot(e)` plus its tip's swing `L·Δazimuth`. Infinite when either
-/// direction has no elevation or no horizontal part (always update).
+/// shadow's length, `relief · |cot(e0) − cot(e1)|`, plus its tip's swing
+/// `min(relief · cot(e), longest) · Δazimuth`.
+///
+/// The length term is not capped: a blocker of height h ≤ `relief` moves its shadow's end by
+/// `h · |Δcot|`, and a shorter blocker's shadow can lie inside the map while the tallest one's
+/// runs off it, so capping both lengths at `longest` before subtracting would call a large
+/// movement zero at low sun (review of f8d532cca, finding 1). The swing is capped, as a tip
+/// cannot swing on a longer arm than the longest shadow the map holds.
+///
+/// Called only for lights above the cut-off [`MIN_LIGHT_SIN`] (the caller's `march_params`
+/// succeeded for `to`, and `from` is a published basis); there cot(e) is at most about 100, so
+/// the result is finite. A direction under the cut-off, without elevation or without a
+/// horizontal part gives infinity (always update) rather than a cotangent near the horizon.
 pub fn edge_displacement(from: Vec3, to: Vec3, relief: f32, longest: f32) -> f32 {
     let (Some((_, e0, a0)), Some((_, e1, a1))) = (light_angles(from), light_angles(to)) else { return f32::INFINITY };
-    if e0 <= 0.0 || e1 <= 0.0 {
+    if e0.sin() < MIN_LIGHT_SIN || e1.sin() < MIN_LIGHT_SIN {
         return f32::INFINITY;
     }
-    let length = |e: f32| (relief.max(0.0) / e.tan()).min(longest);
+    let h = relief.max(0.0);
+    let cot = |e: f32| 1.0 / e.tan();
     let mut da = (a1 - a0).abs() % std::f32::consts::TAU;
     if da > std::f32::consts::PI {
         da = std::f32::consts::TAU - da;
     }
-    (length(e0) - length(e1)).abs() + length(e0.min(e1)) * da
+    h * (cot(e0) - cot(e1)).abs() + (h * cot(e0.min(e1))).min(longest) * da
 }
 
 /// What the published map was computed for.
@@ -429,6 +447,16 @@ impl std::fmt::Display for Reason {
 /// and the map's `relief` (max − min), `texel` and longest shadow `longest` (world units).
 pub fn update_reason(basis: Option<&Basis>, now: f32, version: u64, toward: Vec3, relief: f32, texel: f32, longest: f32) -> Option<Reason> {
     let Some(b) = basis else { return Some(Reason::First) };
+    // The floor counts from when the published map was *asked for*, not from when it was
+    // published [engineering choice]. Counted so, jobs start at most every 0.1 s, and as only
+    // one job is in flight at a time (none asked for while `Producer::pending`), a job slower
+    // than the floor is followed by the next as soon as it is published, if one is due.
+    // Counting from the publication would add each job's own latency (the frame or two to
+    // publish, longer while a pipeline compiles or an upload waits) to every interval, leaving
+    // the map that much further behind a moving sun. The floor caps how often jobs start; it
+    // bounds neither a publication's age nor the edge movement per publication (module notes,
+    // "Cadence"). First jobs (no basis) skip it, and a pending job refreshed for new heights
+    // is not held to it (T0 publishes at most every `PUBLISH_INTERVAL_SECS` while loading).
     if now - b.requested_at < MIN_INTERVAL_SECS {
         return None;
     }
@@ -1084,12 +1112,50 @@ mod tests {
         // Across north the azimuth difference wraps.
         let d = edge_displacement(toward(0.3, 0.01), toward(0.3, std::f32::consts::TAU - 0.01), h, longest);
         assert!((d - h / 0.3f32.tan() * 0.02).abs() < 1.0, "{d}");
-        // A shadow cannot be longer than the map: at a grazing light the bound stops growing.
+        // The swing's arm is capped at the longest shadow the map holds: 4,000 units of relief
+        // at 0.015 rad cast 266,664 units, longer than the 185,364-unit diagonal.
         let map = SIDE as f32 * TEXEL * std::f32::consts::SQRT_2;
-        assert!(edge_displacement(toward(0.002, 0.0), toward(0.003, 0.0), h, map) <= map);
-        assert_eq!(edge_displacement(toward(0.001, 0.0), toward(0.0011, 0.0), h, map), 0.0, "both capped");
-        // No horizontal part: always update.
+        let da = 1.0e-3f32;
+        let d = edge_displacement(toward(0.015, 0.0), toward(0.015, da), 4_000.0, map);
+        assert!((d - map * da).abs() / (map * da) < 0.01, "{d} against {}", map * da);
+        // No horizontal part, or under the cut-off: always update.
         assert!(edge_displacement(Vec3::Z, toward(1.0, 0.0), h, map).is_infinite());
+        assert!(edge_displacement(toward(0.005, 0.0), toward(0.3, 0.0), h, map).is_infinite());
+        assert!(edge_displacement(toward(0.3, 0.0), toward(0.005, 0.0), h, map).is_infinite());
+    }
+
+    /// Review of f8d532cca, finding 1: at a grazing sun the map's tallest blocker casts past
+    /// the map's diagonal at both elevations, but a shorter blocker's shadow lies inside the
+    /// map and moves by tens of thousands of units. Capping both lengths before subtracting
+    /// called that zero; the bound must count it.
+    #[test]
+    fn low_sun_movement_is_not_capped_away() {
+        let map = SIDE as f32 * TEXEL * std::f32::consts::SQRT_2;
+        assert!((map - 185_364.0).abs() < 10.0, "{map}");
+        let relief = 4_000.0f32;
+        let (e0, e1) = (0.010f32, 0.020f32);
+        // Both above the cut-off, and the tallest blocker's shadow longer than the map at both.
+        assert!(e0.sin() >= MIN_LIGHT_SIN && e1.sin() >= MIN_LIGHT_SIN);
+        assert!(relief / e0.tan() > map && relief / e1.tan() > map);
+        // A 1,000-unit blocker: about 100,000 units of shadow at 0.010, 50,000 at 0.020, both
+        // inside the map.
+        let shorter = |e: f32| 1_000.0 / e.tan();
+        assert!(shorter(e0) < map && shorter(e1) < map);
+        let moved = shorter(e0) - shorter(e1);
+        assert!(moved > 49_000.0, "{moved}");
+        let d = edge_displacement(toward(e0, 0.0), toward(e1, 0.0), relief, map);
+        assert!(d.is_finite() && d >= moved, "predicted {d}, a 1,000-unit blocker moves {moved}");
+        // The whole relief's own movement, uncapped.
+        let full = relief * (1.0 / e0.tan() - 1.0 / e1.tan());
+        assert!((d - full).abs() / full < 1e-3, "{d} against {full}");
+        // So the cadence asks for a new map ...
+        let basis = Basis { toward: toward(e0, 0.0), heightfield_version: 1, requested_at: 0.0 };
+        assert!(matches!(update_reason(Some(&basis), 1.0, 1, toward(e1, 0.0), relief, TEXEL, map), Some(Reason::SunMoved(m)) if m >= moved));
+        // ... and does so for small steps just above the cut-off too: 0.0001 rad at 0.0105
+        // moves a 4,000-unit relief's shadow end by about 3,600 units.
+        let step = edge_displacement(toward(0.0105, 0.0), toward(0.0106, 0.0), relief, map);
+        assert!(step > 3_000.0 && step.is_finite(), "{step}");
+        assert!(update_reason(Some(&Basis { toward: toward(0.0105, 0.0), ..basis }), 1.0, 1, toward(0.0106, 0.0), relief, TEXEL, map).is_some());
     }
 
     #[test]

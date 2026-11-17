@@ -84,11 +84,18 @@ is left out (its maximum is the receiver's own ground), as in the reference.
   camera stays at least 11 cells (45,056 units) from the edge.
 
 **Cadence** [engineering choice, #2671 plan]. A new map only when T0's version changes or
-when the predicted shadow-edge displacement since the last map exceeds half a texel (128
-units), never sooner than 0.1 s after the last one. For a blocker of height h (the map's
-`max − min`, a bound for every blocker on it) the shadow's length `h·cot(e)`, at most the
-map's diagonal, changes by its difference (to first order `h·csc²(e)·Δe`), and its tip
-swings by `length · Δazimuth`. The light is the sun entity's own transform, which turns every
+when the predicted shadow-edge displacement since the published map's light exceeds half a
+texel (128 units), never sooner than 0.1 s after the last job was asked for (counted from
+the request, not the publication, so a job's own latency is not added to every interval;
+`update_reason`). For a blocker of height h (the map's `max − min`, a bound for every blocker
+on it) the shadow's length `h·cot(e)` changes by `h·|cot(e0) − cot(e1)|` (to first order
+`h·csc²(e)·Δe`), not capped at the map: a shorter blocker's shadow can lie inside the map
+while the tallest one's runs off it (until the review of f8d532cca both lengths were capped
+at the diagonal before subtracting, which called a movement of tens of thousands of units
+zero at a grazing sun; test `low_sun_movement_is_not_capped_away`). Its tip swings by
+`length · Δazimuth`, the length capped at the map's diagonal. The function is only asked
+above the horizon cut-off below, where cot(e) is at most about 100; under it, it answers
+"always update". The light is the sun entity's own transform, which turns every
 frame. For h = 2,000 units the elevation alone allows 0.028° at 5°, 0.25° at 15° and 1.8°
 at 45° before a new map (test `low_sun_updates_more_often`); the sun climbs about 0.21° a
 game minute near the horizon (14 hours from 06:00 to 20:00 over 180°, `fnv_world::sky::sun_direction`),
@@ -225,13 +232,17 @@ smoke `terrain-shadows`).
 `prepare_sun_visibility` compares the bound texture view with the uploaded one every frame,
 so each publication is read from the frame it is extracted on. Between two publications the
 map stands still while the sun moves: the step is accepted, not blended [engineering choice:
-the simple one]. T1's cadence bounds it: a new map once the predicted shadow-edge movement
-for the map's whole relief (a bound for every blocker on it) exceeds half a texel (128
-units), at most every 0.1 s; so a shadow's edge jumps by about 128 units at most when a new
-map lands, plus what the light moves during the frame or two a job takes to be published.
-The 0.1 s floor holds maps back only when the edge would move 128 units in under 0.1 s: at
-5° and 2,000 units of relief that is 0.028° of sun, about 0.27 s of real time at the game's
-default TimeScale of 30 (sky.rs, citing the GECK wiki), so it binds only with a faster clock [derived from T1's cadence
+the simple one]. T1's cadence asks for a new map once the predicted shadow-edge movement for
+the map's whole relief (a bound for every blocker on it) exceeds half a texel (128 units),
+at most every 0.1 s. That is meant to keep the jump when a new map lands near 128 units
+[hypothesis: derived from the cadence formula, not measured], and it is not a bound: the
+light moves further while a job waits to be published, and nothing bounds a publication's
+age (a job waits for its pipeline to compile and for T0's upload, and it keeps the light it
+was asked for; only new heights refresh a pending job's light), and a faster game clock
+moves the edge more than 128 units within the 0.1 s floor. The floor holds maps back only
+when the edge would move 128 units in under 0.1 s: at 5° and 2,000 units of relief that is
+0.028° of sun, about 0.27 s of real time at the game's default TimeScale of 30 (sky.rs,
+citing the GECK wiki), so it binds only with a faster clock [derived from T1's cadence
 formula, not measured].
 
 **Debug view.** `NVF_PLAY_DEBUG_SUN_VISIBILITY=terrain` draws T alone (white lit, black
