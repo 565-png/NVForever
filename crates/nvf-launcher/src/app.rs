@@ -93,6 +93,8 @@ pub struct App {
     edits: BTreeMap<String, String>,
     // Game folder.
     game_edit: String,
+    /// The Mods page's new-game start fields (src/start.rs), as typed.
+    start_edit: crate::start::Fields,
     // Mods.
     mods: Option<plugins::PluginList>,
     mods_dirty: bool,
@@ -158,6 +160,7 @@ impl App {
             stored: BTreeMap::new(),
             edits: BTreeMap::new(),
             game_edit: String::new(),
+            start_edit: crate::start::Fields::default(),
             mods: None,
             mods_dirty: false,
             mods_drag: None,
@@ -287,6 +290,7 @@ impl App {
         self.ini_text = self.ini_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
         self.stored = ini_pairs(&self.ini_text, "Settings").into_iter().collect();
         self.edits.clear();
+        self.start_edit = crate::start::Fields::read(&self.ini_text);
         // The game writes its menu at each start (src/catalog.rs): the page follows it, on the
         // same tab.
         let menu = Catalog::load(self.ini_path().as_deref());
@@ -1480,7 +1484,7 @@ impl App {
                 .small()
                 .color(WEAK),
         );
-        self.ttw_box(ui);
+        self.start_box(ui);
         ui.separator();
         let Some(list) = &mut self.mods else {
             ui.label("No plugin list yet: set the game folder first, or start the game once.");
@@ -1582,35 +1586,60 @@ impl App {
         }
     }
 
-    /// Tale of Two Wastelands' start (src/ttw.rs): shown while its master is in the load
-    /// order; ticking it writes TTW's two `[General]` lines to NVForever.ini at once.
-    fn ttw_box(&mut self, ui: &mut egui::Ui) {
-        let Some(active) = self.mods.as_ref().and_then(|l| l.entries.iter().find(|e| e.name.eq_ignore_ascii_case(crate::ttw::PLUGIN))).map(|e| e.active) else { return };
-        let mut on = crate::ttw::is_on(&self.ini_text);
-        let other = crate::ttw::other_start(&self.ini_text);
-        let mut changed = false;
+    /// A new game's start (src/start.rs, #2945): the start quest and intro film typed in,
+    /// written to NVForever.ini's `[General]` by Save; TTW's values one click away while its
+    /// master is in the load order.
+    fn start_box(&mut self, ui: &mut egui::Ui) {
+        use crate::start;
+        let ttw = self.mods.as_ref().and_then(|l| l.entries.iter().find(|e| e.name.eq_ignore_ascii_case(start::TTW_PLUGIN))).map(|e| e.active);
+        let saved = start::Fields::read(&self.ini_text);
+        let mut save = false;
         ui.add_space(4.0);
         card(ui, |ui| {
             ui.set_width(ui.available_width());
-            changed = ui.checkbox(&mut on, RichText::new("Tale of Two Wastelands: start new games in Vault 101").strong()).changed();
+            ui.label(RichText::new("New game start").strong());
             ui.label(
-                RichText::new("Sets TTW's start in NVForever.ini for you ([General] sCharGenQuest=001FFFF8 and no New Vegas intro film). Off: New Game is the New Vegas opening.")
+                RichText::new("For mods that start somewhere else (their install guide gives the values). Empty: the New Vegas opening and its film. Saved to NVForever.ini's [General].")
                     .small()
                     .color(WEAK),
             );
-            if on && !active {
-                ui.label(RichText::new(format!("{} is off in the list below: turn it on, or New Game stays at the New Vegas opening.", crate::ttw::PLUGIN)).small().color(BAD));
-            }
-            if let Some(q) = &other {
-                ui.label(RichText::new(format!("NVForever.ini names another start quest ({q}); ticking the box replaces it.")).small().color(WEAK));
+            let w = (ui.available_width() - 120.0).max(120.0);
+            egui::Grid::new("start_fields").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                ui.label("Start quest");
+                ui.add(egui::TextEdit::singleline(&mut self.start_edit.quest).hint_text("VCG00 (New Vegas opening); TTW: 001FFFF8").desired_width(w));
+                ui.end_row();
+                ui.label("Intro film");
+                ui.add_enabled(!self.start_edit.no_film, egui::TextEdit::singleline(&mut self.start_edit.film).hint_text(r"fnvintro.bik (a file in Data\Video)").desired_width(w));
+                ui.end_row();
+                ui.label("");
+                ui.checkbox(&mut self.start_edit.no_film, "No intro film");
+                ui.end_row();
+            });
+            ui.horizontal(|ui| {
+                save = ui.add_enabled(self.start_edit != saved, egui::Button::new("Save start")).clicked();
+                if ttw.is_some() && !self.start_edit.is_ttw() && ui.button("Use Tale of Two Wastelands' start").on_hover_text("Start quest 001FFFF8 and no intro film; Save to keep it").clicked() {
+                    self.start_edit = start::ttw();
+                }
+                if self.start_edit != start::Fields::default() && ui.button("Clear").on_hover_text("Back to the New Vegas opening; Save to keep it").clicked() {
+                    self.start_edit = start::Fields::default();
+                }
+                if self.start_edit != saved && ui.button("Undo").clicked() {
+                    self.start_edit = saved.clone();
+                }
+            });
+            if self.start_edit.is_ttw() && ttw == Some(false) {
+                ui.label(RichText::new(format!("{} is off in the list below: turn it on, or this start quest is not found.", start::TTW_PLUGIN)).small().color(BAD));
             }
         });
-        if changed {
+        if save {
+            let fields = self.start_edit.clone();
             // Only the INI's text is read again: unsaved changes on the Settings page stay.
-            match self.write_ini(|t| if on { crate::ttw::turn_on(&t) } else { crate::ttw::turn_off(&t) }) {
+            match self.write_ini(|t| fields.write(&t)) {
                 Ok(()) => {
                     self.ini_text = self.ini_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
-                    self.message = Some(((if on { "New games start in Vault 101 (Tale of Two Wastelands)." } else { "New games start at the New Vegas opening." }).to_string(), false));
+                    self.start_edit = start::Fields::read(&self.ini_text);
+                    let what = if self.start_edit == start::Fields::default() { "New games start at the New Vegas opening." } else { "New game start saved." };
+                    self.message = Some((what.to_string(), false));
                 }
                 Err(e) => self.message = Some((e, true)),
             }
