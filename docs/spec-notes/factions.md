@@ -255,4 +255,11 @@ and NPC disposition preservation; explicit-empty receiver and invalid-form stop/
 mutation; unsupported numeric values and actual storage overflow; real JSON save/
 restore and new sessions; and independent modifier/combat fields from a winning
 record. The fixture-only baseline and candidate retain identical assertions.
-Compilation/runtime, baseline outcomes and native/installed-mod checks are **UNRUN**.
+Hosted checkout `9f79eec1` (parents `72b385a5`, `ba9145af`) has the exact
+`ba9145af` tree. All seven library controls passed once; full root tests reported
+3,470 passed, zero failed and five ignored, and engine tests reported 3,421 passed,
+zero failed and three ignored. Both strict Clippy checks and all seven hosted
+checks passed ([run](https://github.com/LootJunkieAzza/NVForever/actions/runs/44172574256)).
+These results qualify that source tree; the identical-fixture baseline outcomes and
+native/installed-mod checks remain **UNRUN**. Ignored checks receive no execution
+credit. Earlier failure history remains recorded in PR #2888.
