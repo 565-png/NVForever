@@ -297,6 +297,17 @@ UNRUN. Native behavior and original B42 Quickthrow3.1b initialization, input, bo
 animation, throw/inventory/detonation and full lifecycle acceptance remain open.
 Contract: [Projectile launch/session traits](spec-notes/projectile-launch-session-traits.md).
 
+### Title-start MenuMode group 4
+
+**Partly.** The existing startup/preload frames admit source-compiled title-group
+blocks and queries without treating ordinary pause pages as title frames. The
+current 1013/no-argument block behavior, restart/session policy, input/timers and
+startup-before-load-event consumer remain in place. Four core integration
+controls drive attached start-enabled quest sources through that startup method
+and a registered load-event recipient. Live title-screen
+execution, native timing and original Helmet Overlay/Titans acceptance remain
+unqualified. Contract: [Title-start MenuMode](spec-notes/script-language.md#title-start-menumode-group-4).
+
 ### MCM integer RGB consumer contract
 
 [design] Bounded integer land/shl/shr operations connect packed colour extraction,
