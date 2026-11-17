@@ -67,6 +67,8 @@ mod combat_style_session_tests;
 #[cfg(test)]
 #[path = "../tests/common/mod.rs"]
 mod common;
+#[cfg(test)]
+mod faction_modifier_tests;
 pub mod companion_wheel;
 pub mod coop;
 pub mod cond;
