@@ -65,7 +65,8 @@ StewVal calls, real critical chance/damage calculation, settings-file loading an
 restoration. Run its exact selector alone with NVF_STEWIE_PROFILE_HOME pointing to
 a dedicated fixture directory and --test-threads=1; ordinary parallel CI skips it.
 It retains the actual version guard's rejection and queued message. Skipped is not
-passed: all compilation and all five controls are currently **UNRUN**. The added
+passed. Earlier compile attempts failed before selected runtime; corrected
+compilation and all five runtime controls are currently **UNRUN**. The added
 ordinary core control covers both aliases, current-field updates, unbound and
 unrepresented keys, malformed input, save lifetime and rebinding. An additional
 opt-in engine control retains identical conflicting-profile assertions on the
@@ -78,3 +79,10 @@ disable. The historical941 report is not validated by this bridge. The960/970
 startup guards remain blocked until their actual required services and compatible
 reporting contract are established. GPU/native/installed-mod acceptance and full
 Stewie compatibility are not claimed.
+
+The hosted engine and engine-Clippy jobs both stopped at E0599 in the shared
+damage fixture: `Rules` has no `Default` constructor. The fixture now calls the
+existing `Rules::defaults`, which uses the documented settings without a load
+order. Its critical-setting assignments, damage inputs and every expected result
+are unchanged. Engine-Clippy did not establish a separate lint failure; neither
+job executed an engine control. The corrected source remains uncompiled/unrun.

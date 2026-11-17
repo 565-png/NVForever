@@ -101,7 +101,7 @@ fn damage(tweaks: &fnv_game::tweaks::Tweaks) -> fnv_combat::damage::Damage {
         data::WeaponStats,
         tuning::{CombatTuning, Rules},
     };
-    let mut rules = Rules::default();
+    let mut rules = Rules::defaults();
     crate::combat::apply_critical_tweaks(&mut rules, tweaks);
     let weapon = WeaponStats {
         automatic: true,
