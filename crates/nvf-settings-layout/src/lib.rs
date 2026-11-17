@@ -193,7 +193,7 @@ pub const SECTIONS: &[Section] = &[
         ],
     ),
     section("Graphics", Some("Quality"), &["quality"]),
-    section("Graphics", Some("Shadows"), &["sun-shadows", "shadow-filter", "shadow-distance", "fine-shadows", "cloud-shadows"]),
+    section("Graphics", Some("Shadows"), &["sun-shadows", "shadow-filter", "shadow-distance", "fine-shadows", "cloud-shadows", "terrain-shadows"]),
     section("Graphics", Some("Lighting and Effects"), &["ambient-occlusion", "light-shafts", "bloom", "grade", "glow", "eye-adaptation", "neon-glow"]),
     section("Graphics", Some("Water"), &["water-reflections", "water-mirror"]),
     section("Graphics", Some("Detail and Distance"), &["distant-lod", "grass", "anisotropic", "terrain-height-blend", "terrain-anti-tiling", "smooth-terrain", "object-distance", "actor-distance", "item-distance", "grass-distance"]),

@@ -964,6 +964,23 @@ below cover them all.
 - More: docs/design/sun-visibility.md
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `terrain-shadows`: Terrain shadows (experimental)
+
+- On the page: On: at a low sun, hills and mountains shade the land beyond the reach of the
+  sun's shadows. Still being tuned. Not in the original.
+- In full: A height map of the land around you (32 by 32 cells, 256 units a texel) is
+  marched towards the sun on the GPU into a shadow-height map, which darkens the sun's (and
+  at night the moon's) direct light on everything below a ridge's shadow, softened with the
+  ridge's distance. Near you the sun shadows already show the land's own shadows; the
+  terrain's take over towards their end and beyond it, where they fade out. Ambient light,
+  lamps, fog and reflections are left alone. Experimental: off by default and in every
+  preset; its softness and its bias against speckle on slopes are not tuned yet. Switching
+  it rebuilds the world's material pipelines (Continue waits for them). Works with Sun
+  shadows off too.
+- Command-line switches: `--graphics`, `--graphics-only`
+- More: docs/design/terrain-shadows.md, docs/design/sun-visibility.md
+- Registered in `engine/nvforever/src/settings.rs`
+
 ## Graphics › Lighting and Effects
 
 ### `ambient-occlusion`: Ambient occlusion

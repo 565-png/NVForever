@@ -965,5 +965,7 @@ elevation, and the casters each cascade of each light drew; with sun shadows on 
   Cloud shadows is the settings row Cloud shadows (experimental) (`cloud-shadows`,
   Graphics › Shadows),
   off by default and in both presets until its strength is calibrated
-  ([sun-visibility.md §7-§8](sun-visibility.md#7-the-switch-stage-c2)); terrain shadows
-  come later.
+  ([sun-visibility.md §7-§8](sun-visibility.md#7-the-switch-stage-c2)). Terrain shadows is
+  the row Terrain shadows (experimental) (`terrain-shadows`, Graphics › Shadows, after Cloud
+  shadows), off by default and in both presets until its softness and bias are tuned
+  ([terrain-shadows.md](terrain-shadows.md)).
