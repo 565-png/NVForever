@@ -210,5 +210,49 @@ and compare with the figures above; explain any change.
 
 - The game's own leveled pick (player level, encounter zone, level modifier) and when it
   is redone.
-- Disposition modifiers of `XNAM`. (Assistance: combat-ai.md §10.3; the aggro radius,
+- Applying `XNAM` disposition modifiers to NPC disposition; source modifier queries
+  and bounded integer edits are separate (§8). (Assistance: combat-ai.md §10.3; the aggro radius,
   cowards and every template group through leveled lists: combat-ai.md §13, 2026-10-13.)
+
+## 8. Source disposition-modifier queries and integer changes
+
+[documented] [GetFactionReaction](https://geckwiki.com/index.php/GetFactionReaction)
+returns the disposition modifier between two factions.
+[ModFactionReaction](https://geckwiki.com/index.php/ModFactionReaction) changes the
+first faction's reaction towards the second by an amount; its example uses an
+integer delta, while the parameter is documented as float.
+[SetFactionReaction](https://geckwiki.com/index.php?title=SetFactionReaction) assigns
+an integer value. These are distinct from
+[GetFactionCombatReaction](https://geckwiki.com/index.php/GetFactionCombatReaction),
+which returns neutral/enemy/ally/friend codes.
+
+[hypothesis/design] The source-only modifier getter reads the existing saved
+SetFactionReaction override first, otherwise the winning record's decoded XNAM
+modifier. Missing pairs read zero. Invalid/non-FACT getter inputs read zero as a
+source mapping; native failure/default semantics are open.
+No new raw record decoder or native numeric opcode is introduced.
+
+[hypothesis/design] ModFactionReaction currently maps only finite integer-valued
+deltas representable in the existing signed 64-bit modifier storage. It adds with
+checked integer arithmetic, refusing invalid factions, fractional/nonfinite/out-of-
+range deltas or overflow before mutation. Zero adds nothing and creates no override.
+This is an explicit partial mapping, not a native range or rounding rule. The
+documented float parameter alone does not settle native fractional storage, result
+precision or rounding; those require a permitted original-game probe. Source void
+calls return the engine's ordinary zero value; native return semantics are open.
+
+The existing setter remains authoritative for its pair, and existing JSON snapshot
+and restore carry the same integer map. Reverse directions remain independent.
+This gives compiled source a real numeric predicate for inventory/quest branches;
+it does not implement faction-modifier aggregation in GetDisposition or NPC AI.
+Combat reactions, SetAlly/SetEnemy, faction relations and actor-specific disposition
+overrides retain their existing consumers and behavior. No complete function,
+native, installed-mod or NPC disposition acceptance is claimed.
+
+Seven authored library controls exercise compiled modifier queries/changes leading
+to a real World inventory branch; setter/zero/negative precedence; ordinary combat
+and NPC disposition preservation; explicit-empty receiver and invalid-form stop/no-
+mutation; unsupported numeric values and actual storage overflow; real JSON save/
+restore and new sessions; and independent modifier/combat fields from a winning
+record. The fixture-only baseline and candidate retain identical assertions.
+Compilation/runtime, baseline outcomes and native/installed-mod checks are **UNRUN**.
