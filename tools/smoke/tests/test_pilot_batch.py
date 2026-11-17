@@ -27,6 +27,15 @@ class Picking(unittest.TestCase):
             batch.chains(["no-such-chain"])
 
 
+class StartSave(unittest.TestCase):
+    def test_a_missing_start_save_stops_the_batch(self):
+        import contextlib, io, tempfile
+        with tempfile.TemporaryDirectory() as home, contextlib.redirect_stderr(io.StringIO()) as err:
+            code = batch.main(["--exe", "x", "--data", "x", "--fnvtool", "x", "--home", home, "--only", "intro", "--out", home])
+        self.assertEqual(code, 2, "no game is started from a new game in its place")
+        self.assertIn("no start save", err.getvalue())
+
+
 class LoadOrder(unittest.TestCase):
     def test_formids_move_to_the_run_s_load_order(self):
         # A Dead Money chain's 0x01 is DeadMoney.esm; on a load order with it at 0x03 it moves.

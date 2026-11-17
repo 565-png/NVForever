@@ -272,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--home", required=True, help="the pilot's NVForever home (never the player's): holds the start save")
     ap.add_argument("--size", default="640x360", help="the game window's size, WxH (small, to watch several batches at once); empty for the game's own")
     ap.add_argument("--window-at", default="", help="where the game window's top-left corner goes, X,Y on the desktop (a batch each its own place)")
-    ap.add_argument("--start", default="pilot-after-intro", help="save to start each chain from (in <home>/saves); --new-game when absent")
+    ap.add_argument("--start", default="pilot-after-intro", help="save to start each chain from (in <home>/saves); empty for a new game. A named save that is missing stops the batch")
     ap.add_argument("--out", default=str(REPO / "target" / "pilot-batch"))
     ap.add_argument("--jobs", type=int, default=2)
     ap.add_argument("--minutes", type=int, default=40)
@@ -283,6 +283,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--plugins-file", help="a load order of its own, one plugin a line (a mod list merged by mo2_merge.py: Tale of Two Wastelands); the chains' FormIDs are moved to it")
     ap.add_argument("--resume", action="store_true", help="keep the chains that already have a report in --out; run the others")
     args = ap.parse_args(argv)
+    # A missing start save once let a batch fall back to a new game without a word: every
+    # chain then began in Doc Mitchell's house with the controls held (2026-11-17).
+    if args.start and not (Path(args.home) / "saves" / f"{args.start}.nvfsave").exists():
+        print(f"pilot batch: no start save {Path(args.home) / 'saves' / (args.start + '.nvfsave')}: copy one in, or pass --start '' for a new game", file=sys.stderr)
+        return 2
     todo = [c for c in chains(args.only, args.chains_dir) if not (args.skip_fail and c.name.startswith("fail-"))]
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
