@@ -1501,8 +1501,36 @@ pub(crate) fn responses(play: &PlayWorld, info: FormId) -> Vec<String> {
 
 // ---- trace log -------------------------------------------------------------------------
 
+struct TraceFile(std::fs::File);
+
+impl std::io::Write for TraceFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl Drop for TraceFile {
+    fn drop(&mut self) {
+        // BufWriter attempts its final flush before dropping this guard. Release
+        // ownership explicitly:
+        // another thread's fork may still hold a duplicate until its child execs.
+        let _ = self.0.unlock();
+    }
+}
+
+#[cfg(test)]
+impl TraceFile {
+    fn try_clone(&self) -> std::io::Result<std::fs::File> {
+        self.0.try_clone()
+    }
+}
+
 struct TraceLog {
-    out: std::io::BufWriter<std::fs::File>,
+    out: std::io::BufWriter<TraceFile>,
     path: PathBuf,
     lines: u64,
 }
@@ -1523,7 +1551,7 @@ impl TraceLog {
         Ok(TraceLog { out, path, lines: 0 })
     }
 
-    fn create_owned(requested: &std::path::Path) -> std::io::Result<(PathBuf, std::fs::File)> {
+    fn create_owned(requested: &std::path::Path) -> std::io::Result<(PathBuf, TraceFile)> {
         for attempt in 0..64 {
             let path = if attempt == 0 {
                 requested.to_path_buf()
@@ -1541,7 +1569,8 @@ impl TraceLog {
             let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path)?;
             match file.try_lock() {
                 Ok(()) => {
-                    file.set_len(0)?;
+                    let file = TraceFile(file);
+                    file.0.set_len(0)?;
                     return Ok((path, file));
                 }
                 Err(std::fs::TryLockError::WouldBlock) => continue,
@@ -1685,7 +1714,7 @@ mod trace_ownership_tests {
         assert!(parent_bytes.contains("parent-before-child") && parent_bytes.contains("parent-after-child"));
         assert!(!parent_bytes.contains("child-only"));
         assert!(child_bytes.contains("child-only") && !child_bytes.contains("parent-before-child"));
-        // OS close releases ownership without a sidecar lock or explicit unlock.
+        // Dropping the writer releases ownership without a sidecar lock.
         let mut next = TraceLog::create(&path).unwrap();
         assert_eq!(next.path, path);
         next.write(&serde_json::json!({"kind":"next-run"}));
