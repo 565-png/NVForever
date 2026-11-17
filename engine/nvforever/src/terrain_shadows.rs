@@ -108,6 +108,15 @@
 //! **The published resource**: [`TerrainShadows`], a main-world resource extracted to the
 //! render world whenever it changes (T2 reads it there for its bind group).
 //!
+//! **Another worldspace** (review of f8d532cca, finding 2): T0 bumps its `generation` on
+//! every emptying, a worldspace change always. A job carries the generation of its heights
+//! and the publication keeps it ([`TerrainShadows::heightfield_generation`]); when T0's
+//! generation differs, the published map and the job in flight are dropped ("heightfield
+//! started over": no terrain shadow, the neutral input) and a completed job is accepted
+//! only if it is of T0's current generation. So a map of the earlier world is never kept or
+//! published, even when T0 empties and publishes the new world's heights within one update
+//! (tests `world_change_drops_the_published_map`, `stale_world_job_is_not_published`).
+//!
 //! **Off path**: everything behind [`TerrainShadowsWanted`] (false by default), which also
 //! sets T0's `SunHeightfieldWanted`. While false: no job, no target, no pipeline compiled,
 //! the render system's run condition fails. The settings row Terrain shadows
@@ -554,6 +563,9 @@ pub struct TerrainShadows {
     pub computed_at: f32,
     /// T0's version it was computed from.
     pub heightfield_version: u64,
+    /// T0's discontinuity generation it was computed from (`SunHeightfield::generation`):
+    /// a map of another generation describes another worldspace and is never kept.
+    pub heightfield_generation: u64,
     /// Bumped with every change of this resource (publication or going dark).
     pub version: u64,
     /// The heightfield's valid height range it was computed with.
@@ -626,6 +638,8 @@ struct Pending {
     toward_game: Vec3,
     params: MarchParams,
     heightfield_version: u64,
+    /// T0's generation the heights were of: a job of another one is never published.
+    generation: u64,
     origin: Vec2,
     requested_at: f32,
     reason: String,
@@ -774,8 +788,18 @@ fn update_terrain_shadows(
 ) {
     let now = time.elapsed_secs();
     let producer = &mut *producer;
-    // A job the render world has recorded becomes the publication.
-    if producer.pending.as_ref().is_some_and(|p| done.0.load(Ordering::Acquire) >= p.id) {
+    // T0 started over (another worldspace, an interior, switched off and on): a published
+    // map or a job in flight of the earlier heights describes other terrain. Drop both and
+    // show no terrain shadow (the neutral input) until a map of the new heights is complete;
+    // T0 can empty and publish again within one update, so its emptiness alone is not seen.
+    let stale_pending = producer.pending.as_ref().is_some_and(|p| p.generation != field.generation);
+    let stale_map = out.is_active() && out.heightfield_generation != field.generation;
+    if stale_pending || stale_map {
+        go_dark("heightfield started over", producer, &mut job, &mut out);
+    }
+    // A job the render world has recorded becomes the publication, if it is of these heights'
+    // generation (always so after the check above; checked again where it is accepted).
+    if producer.pending.as_ref().is_some_and(|p| p.generation == field.generation && done.0.load(Ordering::Acquire) >= p.id) {
         if let (Some(p), Some(targets)) = (producer.pending.take(), producer.targets.as_ref()) {
             publish(&p, targets[p.target].clone(), now, producer, &mut out);
         }
@@ -832,6 +856,7 @@ fn update_terrain_shadows(
         toward_game,
         params,
         heightfield_version: field.version,
+        generation: field.generation,
         origin: field.origin,
         requested_at: now,
         reason: reason.to_string(),
@@ -854,6 +879,7 @@ fn publish(p: &Pending, image: Handle<Image>, now: f32, producer: &mut Producer,
         azimuth,
         computed_at: p.requested_at,
         heightfield_version: p.heightfield_version,
+        heightfield_generation: p.generation,
         version: out.version + 1,
         min: p.params.bottom,
         max: p.params.top,
@@ -1204,6 +1230,116 @@ mod tests {
         }
         // Twice the relief, half the step.
         assert!((allowed_step(15.0, 2.0 * relief) / steps[1] - 0.5).abs() < 0.02);
+    }
+
+    /// The producer's main-world system alone, with a sun low in the west (0.2 rad) and no
+    /// render world: a test stores [`JobsDone`] itself where the render world would.
+    fn producer_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<Time<Real>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<JobsDone>()
+            .init_resource::<Producer>()
+            .init_resource::<ShadowJob>()
+            .init_resource::<TerrainShadows>()
+            .init_resource::<SunHeightfield>()
+            .add_systems(Update, update_terrain_shadows);
+        // Game (x, y, z) is Bevy (x, z, −y); the sun's back is the direction towards it.
+        let light = toward(0.2, -std::f32::consts::FRAC_PI_2);
+        let bevy = Vec3::new(light.x, light.z, -light.y);
+        app.world_mut().spawn((crate::sky::Sun, Transform::IDENTITY.looking_to(-bevy, Vec3::Y)));
+        app
+    }
+
+    /// T0 publishes 16 × 16 heights of generation `generation`, version `version`: flat
+    /// ground with a north-south ridge `ridge` high (another worldspace: another ridge).
+    fn publish_heights(app: &mut App, generation: u64, version: u64, ridge: f32) {
+        let side = 16usize;
+        let heights: Vec<f32> = (0..side * side).map(|i| if i % side == 3 { ridge } else { 0.0 }).collect();
+        let image = app.world_mut().resource_mut::<Assets<Image>>().add(Image::default());
+        *app.world_mut().resource_mut::<SunHeightfield>() = SunHeightfield {
+            heights,
+            valid: vec![1; side * side],
+            origin: Vec2::ZERO,
+            texel: TEXEL,
+            side,
+            version,
+            generation,
+            min: 0.0,
+            max: ridge,
+            valid_texels: side * side,
+            image: Some(image),
+        };
+    }
+
+    fn job_id(app: &App) -> u64 {
+        app.world().resource::<ShadowJob>().0.as_ref().expect("a job for the render world").id
+    }
+
+    /// The render world has recorded job `id` ([`produce_terrain_shadows`]).
+    fn record(app: &App, id: u64) {
+        app.world().resource::<JobsDone>().0.store(id, Ordering::Release);
+    }
+
+    /// Review of f8d532cca, finding 2: travel to another worldspace, T0 emptying and
+    /// publishing the new world's first heights within one update (no empty frame for T1 to
+    /// see). The old world's map goes at once (the neutral input), and the next map is of
+    /// the new world.
+    #[test]
+    fn world_change_drops_the_published_map() {
+        let mut app = producer_app();
+        publish_heights(&mut app, 1, 1, 500.0);
+        app.update();
+        let first = job_id(&app);
+        record(&app, first);
+        app.update();
+        let out = app.world().resource::<TerrainShadows>();
+        assert!(out.is_active() && out.heightfield_generation == 1 && out.heightfield_version == 1);
+        // Another worldspace: a new generation, the heights already there.
+        publish_heights(&mut app, 2, 3, 900.0);
+        app.update();
+        let out = app.world().resource::<TerrainShadows>();
+        assert!(!out.is_active(), "the earlier worldspace's map is no longer published");
+        assert_eq!(out.reason, "heightfield started over");
+        // A job of the new heights is asked for at once; until it is recorded, nothing shows.
+        let second = job_id(&app);
+        assert!(second > first);
+        assert_eq!(app.world().resource::<Producer>().pending.as_ref().map(|p| (p.generation, p.heightfield_version)), Some((2, 3)));
+        app.update();
+        assert!(!app.world().resource::<TerrainShadows>().is_active());
+        record(&app, second);
+        app.update();
+        let out = app.world().resource::<TerrainShadows>();
+        assert!(out.is_active() && out.heightfield_generation == 2 && out.heightfield_version == 3);
+    }
+
+    /// Review of f8d532cca, finding 2: a job asked for in one worldspace and recorded by the
+    /// render world after the travel is never published; the new world's job is.
+    #[test]
+    fn stale_world_job_is_not_published() {
+        let mut app = producer_app();
+        publish_heights(&mut app, 1, 1, 500.0);
+        app.update();
+        let old = job_id(&app);
+        // Travel, and the render world finishes the old world's job in the same frame.
+        publish_heights(&mut app, 2, 2, 900.0);
+        record(&app, old);
+        app.update();
+        let out = app.world().resource::<TerrainShadows>();
+        assert!(!out.is_active(), "the earlier worldspace's job was published");
+        let new = job_id(&app);
+        assert!(new > old);
+        assert_eq!(app.world().resource::<Producer>().pending.as_ref().map(|p| p.generation), Some(2));
+        app.update();
+        assert!(!app.world().resource::<TerrainShadows>().is_active());
+        record(&app, new);
+        app.update();
+        let out = app.world().resource::<TerrainShadows>();
+        assert!(out.is_active() && out.heightfield_generation == 2 && out.heightfield_version == 2);
+        // Same generation, new heights (T0's ordinary update): the map stays until the next.
+        publish_heights(&mut app, 2, 3, 950.0);
+        app.update();
+        assert!(app.world().resource::<TerrainShadows>().is_active(), "new heights of the same world keep the map");
     }
 
     #[test]

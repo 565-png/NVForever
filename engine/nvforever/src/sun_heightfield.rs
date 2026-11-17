@@ -61,7 +61,10 @@
 //! published map is emptied).
 //!
 //! **Output**: [`SunHeightfield`], a snapshot whose `version` is bumped only when its
-//! contents change, and an `Rg32Float` image of it (R = height, G = 1 valid / 0 invalid),
+//! contents change, whose `generation` is bumped on every emptying (a worldspace change,
+//! always; an interior; switched off), so a reader can tell new heights of the same terrain
+//! from another world's even when the emptying and the next publication fall in one update,
+//! and an `Rg32Float` image of it (R = height, G = 1 valid / 0 invalid),
 //! re-uploaded when the version changes. `Rg32Float` is a core sampled format in WebGPU and
 //! wgpu (sample type unfilterable float: read with `textureLoad` or a non-filtering sampler)
 //! on every backend the game runs on (Vulkan by default, DX12 by `WGPU_BACKEND`; docs/dlss.md)
@@ -544,6 +547,13 @@ pub struct SunHeightfield {
     pub side: usize,
     /// Bumped whenever the contents (or origin) change, emptying included.
     pub version: u64,
+    /// The discontinuity generation: bumped on every emptying ([`SunHeightfield::clear`]: a
+    /// worldspace change, always, even with nothing published; an interior; switched off),
+    /// never by a publication. Heights of two generations are not the same terrain:
+    /// whatever was computed from an earlier one is dropped (terrain_shadows.rs, review of
+    /// f8d532cca finding 2). Not the loader's [`HeightTracker::generation`], which restarts
+    /// with every new loader; this one only grows.
+    pub generation: u64,
     /// Lowest and highest valid height (0, 0 when none is valid).
     pub min: f32,
     pub max: f32,
@@ -573,10 +583,11 @@ impl SunHeightfield {
         (self.valid[i] != 0).then(|| self.heights[i])
     }
 
-    /// Empty it (worldspace change, interior, switched off): a new version, image dropped.
+    /// Empty it (worldspace change, interior, switched off): a new version and a new
+    /// generation, image dropped.
     fn clear(&mut self) {
-        let version = self.version + 1;
-        *self = SunHeightfield { version, ..default() };
+        let (version, generation) = (self.version + 1, self.generation + 1);
+        *self = SunHeightfield { version, generation, ..default() };
     }
 }
 
@@ -654,9 +665,10 @@ pub(crate) fn update_heightfield(
         w.tracker.begin(world.world);
         w.loader.schedule(Vec::new());
         w.last_publish = None;
-        if !field.is_empty() {
-            field.clear();
-        }
+        // Always, even when nothing was published: the new generation tells the shadow
+        // producer that whatever it holds or computes was of another worldspace, and this
+        // same update can publish the new world's first heights before it runs.
+        field.clear();
         info!("sun heightfield: worldspace {:08X}, generation {}", world.world, w.tracker.generation());
     }
     let at = streamer.arrival.or_else(|| {

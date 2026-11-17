@@ -105,6 +105,16 @@ fade where the sun's own shadow maps stop (sine of the elevation under 0.1 · si
 `sky.rs` `HORIZON_FADE`, `graphics.rs` `SHADOW_FADED`) nothing is computed and "no terrain
 shadow" is published; at night the light is the moon and is handled alike.
 
+**Another worldspace** [engineering choice, after the review of f8d532cca]. T0's
+heightfield carries a discontinuity generation (`SunHeightfield::generation`), bumped on
+every emptying and on every worldspace change even with nothing published. T1's job in
+flight and its publication carry the generation of their heights; when T0's differs, both
+are dropped and no terrain shadow is shown (the neutral input, T = 1) until a map of the new
+heights is complete, and a job the render world finishes is published only if it is of
+T0's current generation. T0 can empty and publish the new world's first heights in one
+update, so T1 cannot rely on seeing an empty heightfield in between (tests
+`world_change_drops_the_published_map`, `stale_world_job_is_not_published`).
+
 **Off path.** Everything sits behind `TerrainShadowsWanted` (false by default; the settings
 row or the debug override sets it, T2), which turns T0 on with it. While false no job is made, no target allocated, no pipeline compiled, and
 the render system's run condition fails.
