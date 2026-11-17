@@ -3221,3 +3221,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
      x1 plus up to four from AmmoMissilelauncher75). Also whether a robot whose folder has
      no reload clip (Mister Gutsy's plasma gun or flamer) ever pauses as if reloading.
 
+
+## Added 2026-11-17 (OK on a message box without buttons, #2925)
+
+240. **What does GetButtonPressed give after OK on a message box that has no buttons?**
+     (P2; #2925, scripts.md §7.2 engine API.) The GECK wiki says a message box with no
+     buttons shows a default OK button and that GetButtonPressed gives the pressed
+     button's index from zero once, then -1 [documented: GECK wiki ShowMessage,
+     GetButtonPressed]; it does not say what the default OK gives. Ours: 0, once, then -1,
+     to the script that showed the box; a corner message (no Message Box flag) gives -1
+     [hypothesis: inferred from SCPT 0x000E9483, the Broken Mr. Handy in
+     BlackMountainTreasure, whose GameMode block waits for button 0 after BMRhondaFixMsg,
+     0x000E9551, a box without buttons]. In the Black Mountain treasure room with Science
+     60, activate REFR 0x000E84A4, pick "[Science] Check the robot's circuitry.", press OK
+     on the second box: if the robot gets up (`000E84A4.GetDead` 0, its new name, the
+     prompt no longer "Search"), the original gives 0. For a direct reading, a test
+     plugin's script that shows a buttonless message box and prints GetButtonPressed every
+     frame for a second after the OK (PrintC) gives the value and how many times it comes.
