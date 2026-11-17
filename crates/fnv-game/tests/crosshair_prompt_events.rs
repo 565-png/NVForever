@@ -198,8 +198,19 @@ End) 0");
                 g.events
             )
         });
+    let callable_id = match &callable {
+        XVal::Ref(id) => Some(*id),
+        XVal::Num(n)
+            if n.is_finite() && n.fract() == 0.0 && *n >= 0.0 && *n <= f64::from(u32::MAX) =>
+        {
+            Some(*n as u32)
+        }
+        _ => None,
+    };
     assert!(
-        matches!(&callable, XVal::Ref(id) if (fnv_game::game::COMPILED_BASE..fnv_game::game::TEMP_REF_BASE).contains(id)),
+        callable_id.is_some_and(|id| (fnv_game::game::COMPILED_BASE
+            ..fnv_game::game::TEMP_REF_BASE)
+            .contains(&id)),
         "crosshair-original-registration: {callable:?}; trace: {:?}",
         g.events
     );
