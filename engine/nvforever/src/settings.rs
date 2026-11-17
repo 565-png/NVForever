@@ -1073,7 +1073,7 @@ fn register_graphics(app: &mut App) {
         },
     );
     nvf_play::settings::set_disabled_status(app, "latency-reduction", |w| (!crate::anti_lag::available(w)).then_some("Not on this GPU"));
-    let switches: [Switch; 13] = [
+    let switches: [Switch; 14] = [
         (
             "ambient-occlusion",
             "Ambient occlusion",
@@ -1089,6 +1089,14 @@ fn register_graphics(app: &mut App) {
             "--shadow-distance, --graphics",
             |w| w.resource::<Graphics>().fine_shadows,
             |w, on| w.resource_mut::<Graphics>().fine_shadows = on,
+        ),
+        (
+            "cloud-shadows",
+            "Cloud shadows (experimental)",
+            CLOUD_SHADOWS_NOTE,
+            "--graphics, --graphics-only",
+            |w| w.resource::<Graphics>().cloud_shadows,
+            |w, on| w.resource_mut::<Graphics>().cloud_shadows = on,
         ),
         (
             "bloom",
@@ -1187,12 +1195,19 @@ fn register_graphics(app: &mut App) {
     }
 }
 
+/// The Cloud shadows row's note (#2670; docs/design/sun-visibility.md): the label says the
+/// feature is experimental (as 3D scopes' says "(test)"), the note that its look is still
+/// being tuned (the relative rule, §7a, and the calibration, §8).
+const CLOUD_SHADOWS_NOTE: &str = "On: the weather's clouds cast soft shadows that drift over the land, only where the cover is heavier than around it. Still being tuned. Not in the original.";
+
 fn register_pipeline_waits(app: &mut App) {
+    // Cloud shadows switches the world views' material pipelines (the sun visibility's
+    // view key bits, sun_visibility.rs), so Continue waits for them like the others.
     for key in [
         "anti-aliasing", "shadow-filter", "upscaler", "upscaler-quality", "ambient-occlusion",
         "fine-shadows", "bloom", "glow", "eye-adaptation", "neon-glow", "sharpen",
         "light-shafts", "water-reflections", "water-mirror", "sun-shadows", "grade",
-        "terrain-height-blend", "terrain-anti-tiling",
+        "terrain-height-blend", "terrain-anti-tiling", "cloud-shadows",
     ] {
         nvf_play::settings::wait_for_pipelines(app, key);
     }
@@ -2516,6 +2531,7 @@ dlss-model=Preset K
             ("latency-reduction", &["--latency-reduction"]),
             ("ambient-occlusion", &["--graphics"]),
             ("fine-shadows", &["--shadow-distance", "--graphics"]),
+            ("cloud-shadows", &["--graphics", "--graphics-only"]),
             ("bloom", &["--graphics"]),
             ("glow", &["--graphics-only"]),
             ("eye-adaptation", &["--graphics-only"]),

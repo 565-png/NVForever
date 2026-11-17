@@ -90,6 +90,10 @@ import bevy_pbr::{
     render::shadows::{fetch_directional_shadow, get_cascade_index},
     render::shadow_sampling::sample_shadow_map,
 };
+// The sun visibility (nvforever sun_visibility.rs) for the shade light's algebra, only
+// while the view has the plumbing (the shader def then exists: bevy_pbr mesh.rs).
+@if(!PREPASS_PIPELINE && SHADE_LIGHT && NVF_SUN_VISIBILITY) import bevy_pbr::render::mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_NVF_OUTDOOR_SUN_BIT;
+@if(!PREPASS_PIPELINE && SHADE_LIGHT && NVF_SUN_VISIBILITY) import nvforever::sun_visibility::nvf_sun_visibility;
 
 import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel};
 
@@ -380,6 +384,31 @@ const BODY_CLEARANCE: f32 = 24.0;
 // R + S * wanted with wanted = min(shade, past), is lit - S * (1 + share - wanted).
 // Whatever shades the point past the body lies on the fragment's own line to the sun, so
 // past >= own: where neither map has a shadow (own = shade = 1) the result is `shadowed`.
+//
+// With the sun visibility (nvforever sun_visibility.rs, shader def NVF_SUN_VISIBILITY) the
+// outdoor sun's shadow value C becomes V(C) inside apply_pbr_lighting, for receivers and
+// non-receivers alike (non-receivers with C = 1); the shade light is never flagged, so
+// its values stay as they were. Then
+//   shadowed = R + S * (V(own) + share * shade)
+//   lit      = R + S * (V(1) + share)
+// so S = (lit - shadowed) / missing with missing = (V(1) - V(own)) + share * (1 - shade),
+// and the colour wanted, R + S * V(wanted) (the sun's light with the visibility of the
+// wanted shadow value, the shade light's taken out as before), is
+// lit - S * (V(1) + share - V(wanted)): k = (V(1) + share - V(wanted)) / missing.
+// Off (no def, or the sun not flagged: indoors) V(C) = C, so V(1) = 1, V(own) = own and
+// V(wanted) = wanted, and both lines are the ones above term for term:
+//   missing = (1 - own) + share * (1 - shade),   k = (1 + share - wanted) / missing.
+// `missing` near 0 (V(1) = V(own), e.g. own = 1, or a fully opaque cloud, with shade = 1)
+// returns `shadowed`, which keeps the shade light's share there as it did before.
+@if(!PREPASS_PIPELINE && SHADE_LIGHT) fn sun_shadow_value(sun: u32, in: PbrInput, cascade: f32, view_z: f32) -> f32 {
+    @if(NVF_SUN_VISIBILITY)
+    if (lights.directional_lights[sun].flags & DIRECTIONAL_LIGHT_FLAGS_NVF_OUTDOOR_SUN_BIT) != 0u {
+        // As the hook in apply_pbr_lighting computes it (same position, light, view_z).
+        return nvf_sun_visibility(in.world_position.xyz, lights.directional_lights[sun].direction_to_light, cascade, view_z);
+    }
+    return cascade;
+}
+
 @if(!PREPASS_PIPELINE && SHADE_LIGHT) fn with_shade_light(in: PbrInput, shadowed: vec4<f32>) -> vec4<f32> {
     if (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) == 0u {
         return shadowed;
@@ -418,16 +447,19 @@ const BODY_CLEARANCE: f32 = 24.0;
     ), in.world_position);
     let own = fetch_directional_shadow(sun, in.world_position, in.world_normal, view_z, in.frag_coord.xy);
     let shade = fetch_directional_shadow(shade_light, in.world_position, in.world_normal, view_z, in.frag_coord.xy);
-    let missing = (1.0 - own) + share * (1.0 - shade);
+    // V(1) and V(own): 1 and own without the sun visibility (see above).
+    let v_lit = sun_shadow_value(sun, in, 1.0, view_z);
+    let v_own = sun_shadow_value(sun, in, own, view_z);
+    let missing = (v_lit - v_own) + share * (1.0 - shade);
     if missing < 0.000001 {
-        // Neither map has a shadow here.
+        // Neither map has a shadow here (or the clouds leave no sun to tell apart).
         return shadowed;
     }
     let wanted = min(shade, shadow_past_body(sun, in, view_z));
     var unshadowed = in;
     unshadowed.flags &= ~MESH_FLAGS_SHADOW_RECEIVER_BIT;
     let lit = apply_pbr_lighting(unshadowed);
-    let k = (1.0 + share - wanted) / missing;
+    let k = (v_lit + share - sun_shadow_value(sun, in, wanted, view_z)) / missing;
     if lights.ambient_color.a < 0.0 {
         // The display-value sum (nvforever lights.rs DISPLAY_HELPERS): the diffuse light is
         // texture × sum^2.2, so its display value (^(1/2.2)) is linear in the shadow

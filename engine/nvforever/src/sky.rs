@@ -1249,6 +1249,13 @@ pub struct CloudLayer {
     shows: Option<u32>,
 }
 
+impl CloudLayer {
+    /// The WTHR cloud layer (0-3) this dome shape draws (cloud_shadows.rs).
+    pub(crate) fn layer(&self) -> usize {
+        self.layer
+    }
+}
+
 #[derive(Component)]
 pub struct Sun;
 
@@ -1698,7 +1705,8 @@ pub fn update_clouds(
     mut logged: Local<Option<u32>>,
 ) {
     let Ok(cam_t) = cam.single() else { return };
-    let secs = time.elapsed_secs_f64();
+    // Elapsed seconds, or the frozen phase of NVF_PLAY_DEBUG_CLOUD_PHASE (cloud_shadows.rs).
+    let secs = crate::cloud_shadows::cloud_seconds(&time);
     // Set 0 shows the current weather while no fade runs; during a fade the set whose
     // texture already shows the new weather keeps it.
     for (mut cl, m, mut t, mut vis) in &mut clouds {
