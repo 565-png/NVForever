@@ -127,7 +127,11 @@ impl Compiler {
             definitions.push("PREPASS_PIPELINE".into());
         }
         if normal_attributes {
-            definitions.extend(["VERTEX_NORMALS".into(), "VERTEX_TANGENTS".into()]);
+            definitions.extend(
+                ["VERTEX_NORMALS", "VERTEX_TANGENTS"]
+                    .into_iter()
+                    .map(ShaderDefVal::from),
+            );
         }
         definitions.extend(
             extra
@@ -140,7 +144,7 @@ impl Compiler {
                             "VERTEX_NORMALS_COMPRESSED" | "VERTEX_TANGENTS_COMPRESSED"
                         )
                 })
-                .map(Into::into),
+                .map(ShaderDefVal::from),
         );
         definitions.extend([
             ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 3),
