@@ -4,6 +4,19 @@ Crates copied from crates.io with a small change, used through `[patch.crates-io
 `engine/Cargo.toml`. Each keeps its own licence files. When the crate is upgraded, copy
 the new version here and apply the change again (or drop the patch if upstream fixed it).
 
+## bevy_winit 0.20.1 (MIT OR Apache-2.0, Bevy)
+
+Adds an explicit cursor request/receipt consumer before ordinary Window
+synchronization. Only acknowledged requests update both Window and its private
+cache; ordinary setters retain their existing path. The cache remains private.
+The `cursor-test-support` feature exposes an offscreen fixture for that same
+consumer with an injected native result, without creating an OS window.
+See `docs/spec-notes/windows-cursor-ack.md` for ownership, bounds and validation
+limits. Both upstream license files are retained.
+
+Source: crates.io `bevy_winit` 0.20.1, archive SHA-256
+`397c685e6ab6d4d87b89fb4ce11993c223d0e3c7b34c415cb4b9f69f213d85b6`.
+
 ## gpu-allocator 0.28.0 (MIT OR Apache-2.0, Traverse-Research/gpu-allocator)
 
 Used by wgpu for Vulkan memory. Change, in `src/vulkan/mod.rs` `MemoryType::free`: an

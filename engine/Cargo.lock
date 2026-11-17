@@ -1940,8 +1940,6 @@ dependencies = [
 [[package]]
 name = "bevy_winit"
 version = "0.20.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "397c685e6ab6d4d87b89fb4ce11993c223d0e3c7b34c415cb4b9f69f213d85b6"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -1967,6 +1965,7 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
  "wgpu-types",
+ "windows-sys 0.61.2",
  "winit",
 ]
 
@@ -4657,6 +4656,7 @@ name = "nvf-play"
 version = "0.7.0"
 dependencies = [
  "bevy",
+ "bevy_winit",
  "fnv-actor",
  "fnv-collide",
  "fnv-combat",
