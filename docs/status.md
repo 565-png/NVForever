@@ -323,3 +323,10 @@ confirmed those bounded case results and the false overall flag. The accepted-ma
 060d union retains the tested fnv-ui Rust/fixtures; whole-graph qualification stays
 bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
+
+
+GetDroppedRefs named source consumer: uses the existing associated world-weapon
+list with selected actor qualification and explicit-invalid receiver preservation.
+Four authored source/World/hover-text/restore controls remain unexecuted. Native
+ordering/null parity, actual death/VATS producer coverage and installed JLM acceptance
+remain open ([combat rules](spec-notes/combat-rules.md#19-source-queries-for-associated-dropped-weapons)).

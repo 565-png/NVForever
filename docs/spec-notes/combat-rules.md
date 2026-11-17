@@ -1956,3 +1956,40 @@ npc-behaviour-compare.md §9.
   trooper is about 22 in both. Checking it needs the capture's hits split by attacker
   (`tools/capture/fight_stats.py` gives each actor's hits made and damage taken, not who
   hit whom).
+
+
+## 19. Source queries for associated dropped weapons
+
+[documented] [GetDroppedRefs](https://geckwiki.com/index.php?title=GetDroppedRefs)
+returns world weapon references associated with a calling actor's death or targeted
+weapon drop. These differ from inventory references and ordinary carried items.
+
+[design] The named zero-argument query reads the existing `World::dropped_beside`
+association, filters to weapon bases and returns those actual world references.
+It does not create a drop, change inventory or infer association from proximity.
+Actor qualification uses the current level-aware selected NPC/creature, so placed
+LVLN/LVLC carriers qualify without being mistaken for ordinary actor base records.
+A base form, nonactor or invalid receiver yields the existing null/zero result.
+An omitted receiver uses the calling actor; an explicitly supplied invalid receiver
+remains invalid at the actual source-call boundary. This mapping changes no other
+function's receiver policy and adds no native opcode adapter.
+
+[design] Associated disabled/deleted world references remain excluded by the existing
+world helper. Its deterministic FormID order is an engine mapping, not native order
+parity. No associations yields the existing null/zero convention. Queries store no
+new lifetime state: ordinary World/Game snapshot and restore retain association,
+while a fresh world inherits none.
+
+[hypothesis] Native ordering, exact empty-array/null representation and unusual
+unloaded/disabled-owner timing remain probe questions. The getter relies on existing
+producer association; death/VATS production and the full installed hover mod are not
+qualified by getter tests or a manually seeded association.
+
+[design] Four authored controls in the shared `fnv-game` integration binary use
+compiled source, actual World placements and explicitly seeded existing associations.
+They cover a hover list merging carried inventory references with dropped world
+weapons and publishing its text, ordinary and leveled NPC/creature receivers,
+disabled/deleted filtering, checked serialized restore and invalid-vs-omitted source
+receivers. They are unexecuted at authoring. The identical-fixture baseline retains
+the old zero getter and the old receiver conversion; expected failures remain
+hypotheses until execution at those exact boundaries.
