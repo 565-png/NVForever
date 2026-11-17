@@ -559,7 +559,10 @@ pub struct SunHeightfield {
     pub max: f32,
     pub valid_texels: usize,
     /// The same as an [`IMAGE_FORMAT`] image, `side` × `side`, row 0 the southernmost;
-    /// re-uploaded on every new version (a new GPU texture each time).
+    /// uploaded again on every new version. Bevy's `GpuImage` preparation (engine/vendor
+    /// bevy_render `texture/gpu_image.rs`) writes a version of the same size and usage into
+    /// the existing texture and keeps its view, so a version is not a new texture: whatever
+    /// binds it reads the new contents through the same view, with nothing to rebuild.
     pub image: Option<Handle<Image>>,
 }
 
@@ -715,7 +718,9 @@ fn publish(w: &mut Work, pending: usize, field: &mut SunHeightfield, images: &mu
     if !fits {
         field.image = Some(images.add(heightfield_image(bytes, field.side)));
     } else if let Some(mut image) = field.image.as_ref().and_then(|h| images.get_mut(h)) {
-        // A new version of the same asset: extraction uploads it again (a new GPU texture).
+        // A new version of the same asset: extraction uploads it again, into the same GPU
+        // texture and view (the vendored `GpuImage` preparation reuses a texture of the same
+        // descriptor with COPY_DST), not a new one.
         image.data = Some(bytes);
     }
     g.mark_published();

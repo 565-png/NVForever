@@ -102,8 +102,15 @@
 //! **Double buffering**: two target images, made on the first job; a job writes the one not
 //! published, and the map is published only when the render world has recorded the whole
 //! dispatch ([`JobsDone`], read by the main world a frame or two later), so a receiver never
-//! sees a half-written map. Each job binds T0's image by handle at dispatch, so it follows
-//! T0's new GPU texture on every publication.
+//! sees a half-written map. Each job binds T0's image by handle at dispatch, in a bind group
+//! made for that dispatch, so it reads whatever texture T0's image has then. A new T0
+//! version is usually *not* a new texture: Bevy's `GpuImage` preparation (engine/vendor
+//! bevy_render `texture/gpu_image.rs`) writes a version of the same size and usage into the
+//! existing texture and keeps its view, so nothing here relies on a new texture or view per
+//! version, and nothing needs rebuilding when the view is kept and its contents change. A
+//! job's parameters and the heights it reads are extracted in the same frame (a pending job
+//! is asked again with the new heights in the update T0 publishes them), so the in-place
+//! write does not mix two versions in one dispatch.
 //!
 //! **The published resource**: [`TerrainShadows`], a main-world resource extracted to the
 //! render world whenever it changes (T2 reads it there for its bind group).
@@ -701,7 +708,9 @@ impl Plugin for TerrainShadowsPlugin {
                         stop_terrain_shadows.run_if(|w: Res<TerrainShadowsWanted>| w.is_changed() && !w.0),
                         update_terrain_shadows.run_if(wanted),
                         dump_terrain_shadows.run_if(wanted).run_if(|aid: Res<DumpAid>| aid.path.is_some() && !aid.asked),
-                        feed_sun_visibility.run_if(feeding_needed),
+                        // After the sun's cascades are set for the frame, so the end band is
+                        // never one update behind a cascade configuration change.
+                        feed_sun_visibility.run_if(feeding_needed).after(crate::graphics::SunShadowQuality),
                     )
                         .chain()
                         .after(crate::sun_heightfield::update_heightfield),

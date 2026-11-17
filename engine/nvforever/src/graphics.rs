@@ -504,7 +504,7 @@ impl Plugin for GraphicsPlugin {
             .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
             .add_plugins((crate::ssao::SsaoPlugin, crate::post::PostPlugin, crate::taa::TaaPlugin, crate::shafts::ShaftsPlugin, crate::upscaler::prep::PrepPlugin, crate::fsr::FsrPlugin, crate::dlss::DlssPassPlugin))
             .add_systems(Startup, |g: Res<Graphics>| info!("graphics: {}", g.describe()))
-            .add_systems(Update, (crate::upscaler::follow_request, apply, sun_shadow_key.pipe(sun_shadow_quality).after(crate::sky::update_sky)).chain());
+            .add_systems(Update, (crate::upscaler::follow_request, apply, sun_shadow_key.pipe(sun_shadow_quality).after(crate::sky::update_sky).in_set(SunShadowQuality)).chain());
         if let Some(ft) = self.2.clone().filter(|f| f.every > 0.0) {
             // GPU time per render pass (timestamp queries), logged with the frame time.
             ensure_render_diagnostics(app);
@@ -690,12 +690,19 @@ fn sun_shadow_key(sky: Res<SkyState>) -> SunShadowKey {
     }
 }
 
+/// Where the sun's cascades are set for the update ([`sun_shadow_quality`]): terrain_shadows.rs
+/// `feed_sun_visibility` runs after it, so the terrain end band follows a cascade change in
+/// the same update.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SunShadowQuality;
+
 /// The sun's shadow quality for the hour: by day the settings' cascades, reach and map size;
 /// by night the moon's cheaper ones ([`MOON_SHADOW_DISTANCE`]); none while the light is
 /// faded at the horizon. Applied when the phase or a shadow setting changes, and again when
 /// a sun is spawned (a worldspace switch makes a new one with the day's cascades) or someone
 /// else puts cascades on it ([`apply`], [`crate::sky::set_shadows`] with an unchanged value).
 /// It writes the cascades in place, so its own writes do not count as someone else's.
+/// It runs in [`SunShadowQuality`].
 #[allow(clippy::type_complexity)]
 fn sun_shadow_quality(
     In(key): In<SunShadowKey>,

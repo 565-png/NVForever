@@ -244,7 +244,13 @@ smoke `terrain-shadows`).
 
 **Freshness.** The image is bound by handle: T1's two targets alternate, and
 `prepare_sun_visibility` compares the bound texture view with the uploaded one every frame,
-so each publication is read from the frame it is extracted on. Between two publications the
+so each publication is read from the frame it is extracted on. Nothing relies on a new
+texture per version: T0's new versions are written into the same GPU texture and view
+(the vendored `GpuImage` preparation reuses a texture of the same descriptor with
+`COPY_DST`; earlier notes said every version made a new one, which was wrong), and T1 makes
+a bind group per dispatch; a kept view whose contents change needs nothing rebuilt.
+`feed_sun_visibility` runs after `graphics.rs` `sun_shadow_quality`, so the end band
+follows a cascade change in the same update. Between two publications the
 map stands still while the sun moves: the step is accepted, not blended [engineering choice:
 the simple one]. T1's cadence asks for a new map once the predicted shadow-edge movement for
 the map's whole relief (a bound for every blocker on it) exceeds half a texel (128 units),
