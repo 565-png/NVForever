@@ -105,3 +105,13 @@ public `World::inventory_mut` accessor, retaining the same inventory admission,
 `totals_with` consumer and every expected weight/unknown-weight result. No runtime
 control executed in that attempt; compilation and runtime of this correction
 remain UNRUN.
+
+The later focused core run of revision326 compiled and executed five cases: the
+three critical-profile controls and the ammo parent/child/totals control passed;
+the all-off query control failed on its ammo child. That fixture had used
+`Tweaks::default`, whose ammo child is true while its parent is false. The query
+correctly returned the retained child choice. The all-off fixture now explicitly
+selects all three booleans false, preserving its zero oracle and every later
+assertion. The user default, query implementation and inventory gating do not
+change. Assertions after the first failed ammo read were not reached in that run;
+new-source compilation/runtime, engine controls and baselines remain unqualified.

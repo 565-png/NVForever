@@ -738,7 +738,14 @@ fn stewie_inventory_queries_keep_unbound_fallback_and_follow_current_choices_aft
     for key in keys {
         assert_eq!(q(&mut g, &format!("SetFunctionValue (StewVal \"{key}\")")), n(1.0), "unbound {key} retains file fallback");
     }
-    let chosen = fnv_game::tweaks::Tweaks::default();
+    // The default retains an enabled ammo child under its disabled parent.
+    // This control instead explicitly selects all three choices off.
+    let chosen = fnv_game::tweaks::Tweaks {
+        hardcore_tweaks: false,
+        hardcore_ammo_weight: false,
+        single_item_figures: false,
+        ..Default::default()
+    };
     g.bind_stewie_stat_settings(&chosen);
     let version = q(&mut g, "SetFunctionValue (GetPluginVersion \"lStewieAl's Tweaks\")");
     for name in ["StewVal", "StewieGetValue"] {
