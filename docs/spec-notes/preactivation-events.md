@@ -47,8 +47,8 @@ array-filter lifetime during unregister, invalid-callback diagnostics and ordina
 unlisted, non-teammate and unmodified-input neighbors. Engine controls invoke the
 actual activate_by_hand function then the existing OpenBarter/OpenContainer message
 consumers. They do not claim pointer picking, physical device input, a complete
-rendered menu, installed QuickTrade acceptance or original-game parity. All new
-compiler, lint, core and engine controls are unrun for this proposal.
+rendered menu, installed QuickTrade acceptance or original-game parity. Revision-specific
+compiler, lint, core and engine validation is recorded in PR #2908.
 
 ## Mutations before the action
 

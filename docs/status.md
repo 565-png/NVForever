@@ -42,7 +42,7 @@ Deleted engine-shot associations also have a focused next-consumer retirement br
 
 | System | State | Specifics | Notes |
 |---|---|---|---|
-| Regular preactivation trade callbacks | In progress | Authored ShowOff preactivation dispatch distinguishes an explicit numeric veto from void Call zero, preserves dynamic filters and script Activate bypass, and routes source keyword recipients through custom events into existing barter/container messages. Core/engine controls are unrun; autonomous NPC doors, provider advertisement, installed QuickTrade and native parity remain open. | [preactivation](spec-notes/preactivation-events.md) |
+| Regular preactivation trade callbacks | In progress | Authored ShowOff preactivation dispatch distinguishes an explicit numeric veto from void Call zero, preserves dynamic filters and script Activate bypass, and routes source keyword recipients through custom events into existing barter/container messages. Revision-specific validation is recorded in PR #2908; autonomous NPC doors, provider advertisement, installed QuickTrade and native parity remain open. | [preactivation](spec-notes/preactivation-events.md) |
 | Mods-page physical key events | In progress | The held-world page delegates physical key edges to the existing JIP dispatcher in its temporary menu context. Cursor queries/writes admit that page, and active-menu queries identify StartMenu beneath ordinary overlays. Pending StartMenu XML warps retain their frame context for the engine consumer. Authored controls cover source-registered wheel/search consumers, list routing/bounds, held/released/disabled keys, reentry, frozen world time and actual Bevy-window warp/menu-transform functions at 50/75/100% scales. Windows CPU libtests on combinedb8da4c3 passed MCM4, adjacent wheel4 and Mods2 (0failed/ignored); baseline failure, playable/OS/GPU/native parity and original installed MCM Extender acceptance remain open. | [page key events](spec-notes/mcm-page-key-events.md) |
 
 | Session edits on placed lights | In progress | Existing light setters invalidate placed point/spot and light-backed emittance consumers, with cell-owned dormant carriers and changed-value revision checks. Four authored source-to-scene/model-binding controls cover values, flags, cold edits, repeated updates, held/resumed frames, cell cleanup, fixed-hour emittance and foreign transient lights. Windows CPU libtests on combinedb8da4c3 passed all13 light controls (0failed/ignored); baseline failure, rendered/native parity and installed Megaton acceptance remain open; per-light falloff exponent is still unsupported by the shader. | [light session consumers](spec-notes/light-session-consumers.md) |
@@ -327,7 +327,7 @@ bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
 
 - Regular preactivation rechecks the existing destroyed-target refusal after callback
-  mutations; additional core/engine regressions authored, runtime checks pending.
+  mutations; additional core/engine regressions authored; revision-specific validation is recorded in PR #2908.
 
 
 HUD ammo alpha consumed by hover text: engine-created copies materialize the
