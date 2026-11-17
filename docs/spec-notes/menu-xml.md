@@ -773,6 +773,39 @@ that also have operators; observer check §8 item 3].
 Vanilla, 2026-10-26: 3,529 tiles, 40,583 traits, 19,541 with operators, over the 49
 menus; every menu settles [observed: fnvtool ui menus; loading all 49 takes 0.4 s].
 
+### 6.1 Structural `childcount` in expressions
+
+[observed: installed Vanilla UI Plus menu XML, 2026-11-17] Its StartMenu
+verification reads `childcount` on a diagnostic container and expects four.
+That container includes the same two-image fragment twice. The ordinary
+list-item fragment adds traits, with no child tiles. MCM's injected fragment
+separately declares its registration trait. Successful injection therefore
+does not by itself satisfy the structural verification expression. No menu
+XML or displayed warning text is included here.
+
+[design] When an expression reads an absent `childcount` trait on a resolved
+tile, read the number of direct child tiles. Includes, injected tiles and
+instantiated templates contribute their actual children; template definitions,
+traits and grandchildren do not. Existing explicit XML or code traits take
+precedence, including zero. Keep `Tile::get` and trait-presence APIs unchanged:
+the pause-menu column uses an absent explicit `childcount` as its initialization
+sentinel. This fallback does not add a trait or implement structural
+`GetUIFloat` queries.
+
+[design] A per-tile value-generation stamp records actual child insertion and
+removal. Expression reads depend on that stamp as well as the existing tree
+shape invalidation, so an empty injected child updates its readers even when
+no ordinary trait changed. Unrelated expression values written from outside
+retain their existing lifetime policy. Count lookup takes constant time and
+does not allocate.
+
+[hypothesis] Independently authored CPU controls cover repeated includes and a
+UIO-injected registration trait through the real load/update consumer, empty
+children, nested children, template instantiation, removal, slot reuse and menu
+reload, plus explicit zero/nonzero overrides and retained neighboring values.
+These controls do not establish original-game parity or complete UIO/VUI
+compatibility. Canonical CPU and rendered installed-menu validation are pending.
+
 ## 7. How mods change menus
 
 [observed in the owner's mod folders, 2026-10-26, F:\Modlists\VNV\mods]
