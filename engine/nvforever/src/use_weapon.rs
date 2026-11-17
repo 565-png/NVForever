@@ -867,3 +867,6 @@ mod tests {
         assert!(!acts_on(&walking, false));
     }
 }
+
+#[cfg(test)]
+mod critical_damage_hit_tests;

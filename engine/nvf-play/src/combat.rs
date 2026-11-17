@@ -145,6 +145,8 @@ mod projectile_launch;
 mod projectile_launch_probe;
 #[cfg(test)]
 mod projectile_launch_tests;
+#[cfg(test)]
+mod critical_damage_hit_tests;
 
 /// The shooter's id for projectiles (the player has no hit volume).
 const PLAYER: ActorId = u64::MAX;
