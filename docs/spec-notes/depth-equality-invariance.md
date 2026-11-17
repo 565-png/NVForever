@@ -38,15 +38,30 @@ attribute; and the shared structs as fragment inputs. No render device is create
 The focused test package depends directly on `bevy_shader`, `bevy_asset` and the
 same Naga version; it does not depend on the Bevy umbrella or `nvf-assets`. This
 keeps selection of the compiler tests independent of Bevy's render/PBR/runtime
-dependency chain. It still reads the production shader sources in place. The five
-controls and their specialization inputs are unchanged.
+dependency chain. It still reads the production shader sources in place.
+
+An integrated CPU run of the earlier setup passed the baseline-rejection,
+independent missing-producer/retained-producer, and shared-fragment-input controls.
+Both positive tests failed before the invariant assertions: the depth-only morph
+prepass had normal/tangent flags for fields its IO did not expose, and grass loaded
+the raw Bevy PBR functions without the production display-lighting preparation.
+These three passes and two failures do not establish native or visual acceptance.
+
+The corrected fixture follows the actual prepass specialization: normal/tangent
+attributes occur in normal/deferred prepasses, while depth-only prepasses omit them.
+Morph, skin and compressed families remain, with explicit normal-prepass coverage
+added. The shader registry also uses the same pure display-source helper as
+`LightsPlugin::patch_display_sum`, extracted into `lights/display_shader.rs`; the
+runtime retains the same ordered edits and its `lights::unix_lines` API. The test
+does not supply a copied lighting shader or depend on the renderer. All five
+selectors and the strict invariance/SPIR-V/negative/fragment oracles remain intact.
 
 From `engine/`: `cargo test --release --locked -p nvf-shader-tests --test depth_invariance`.
 No extra feature flags or environment variables are required. Cargo dependency
-selection and elapsed-time improvement must be verified on the ordinary compiler
-run; no timing result is claimed from the source change.
+selection and elapsed-time improvement are qualified per exact run; the corrected
+setup has not been compiled or executed, and no new timing result is claimed.
 
-State: authored; compilation, CPU test execution, shader-driver validation,
-performance measurement and rendered acceptance are unrun. The ordinary engine test
-check discovers this Cargo integration test. Warning disappearance alone would not
-prove visual acceptance.
+State: corrected source authored; rerunning all five controls, runtime-helper checks,
+Clippy, shader-driver validation, performance measurement and rendered acceptance
+are unrun for this revision. The ordinary engine test check discovers this Cargo
+integration test. Warning disappearance alone would not prove visual acceptance.

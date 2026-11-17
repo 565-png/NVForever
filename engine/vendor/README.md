@@ -82,7 +82,9 @@ docs/spec-notes/depth-equality-invariance.md), marked `NVForever equal-depth pas
 producers invariant for the engine's Equal-depth passes. Position calculations and
 depth policy are unchanged. `nvf-shader-tests/tests/depth_invariance.rs` composes the actual
 source through Bevy WESL and Naga and checks the SPIR-V decoration, including
-unannotated controls. These checks are authored and unrun. Reapply both annotations
+unannotated controls. An earlier integrated run passed three controls and exposed
+two compiler-setup failures; the corrected pass-specific feature matrix and shared
+production lighting preparation are unrun. Reapply both annotations
 after upgrading Bevy until upstream provides the same guarantee, or retire them
 with the Equal-depth policy.
 

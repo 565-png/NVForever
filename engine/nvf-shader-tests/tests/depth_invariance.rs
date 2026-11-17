@@ -5,6 +5,9 @@ use bevy_asset::{AssetId, Assets};
 use bevy_shader::{Shader, ShaderCache, ShaderCacheSource, ShaderDefVal};
 use std::{collections::HashMap, fs, path::Path, sync::Arc};
 
+#[path = "../../nvforever/src/lights/display_shader.rs"]
+mod production_display_shader;
+
 struct Compiled {
     module: naga::Module,
     info: naga::valid::ModuleInfo,
@@ -77,6 +80,13 @@ impl Compiler {
                     .replace('\\', "/");
                 let name = format!("{package}/{relative}");
                 let mut source = fs::read_to_string(&path).expect("production WESL source");
+                if name == "bevy_pbr/render/pbr_functions.wesl" {
+                    // LightsPlugin prepares this actual module before grass uses it.
+                    source = production_display_shader::display_patched(
+                        &production_display_shader::unix_lines(&source),
+                    )
+                    .expect("production display-lighting patch anchors match the selected shader");
+                }
                 if remove.contains(&name.as_str()) {
                     source = source.replace("@invariant ", "");
                 }
@@ -95,21 +105,43 @@ impl Compiler {
     fn compile(&mut self, name: &str, extra: &[&'static str]) -> Arc<Compiled> {
         // Representative storage-buffer mesh view; constants are the renderer's
         // specialization inputs, not substitute shader declarations.
+        let prepass =
+            name == "bevy_pbr/prepass/prepass.wesl" || extra.contains(&"PREPASS_PIPELINE");
+        // PrepassPipeline::specialize only supplies normal/tangent attributes for
+        // normal/deferred prepasses; the depth-only morph vertex has neither field.
+        let normal_attributes = !prepass || extra.contains(&"NORMAL_PREPASS_OR_DEFERRED_PREPASS");
         let mut definitions: Vec<ShaderDefVal> = [
             "VERTEX_POSITIONS",
-            "VERTEX_NORMALS",
+            "VERTEX_UVS",
             "VERTEX_UVS_A",
             "VERTEX_UVS_B",
-            "VERTEX_TANGENTS",
             "VERTEX_COLORS",
             "VERTEX_OUTPUT_INSTANCE_INDEX",
             "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3",
             "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_6",
         ]
         .into_iter()
-        .chain(extra.iter().copied())
         .map(Into::into)
         .collect();
+        if prepass && !extra.contains(&"PREPASS_PIPELINE") {
+            definitions.push("PREPASS_PIPELINE".into());
+        }
+        if normal_attributes {
+            definitions.extend(["VERTEX_NORMALS".into(), "VERTEX_TANGENTS".into()]);
+        }
+        definitions.extend(
+            extra
+                .iter()
+                .copied()
+                .filter(|feature| {
+                    normal_attributes
+                        || !matches!(
+                            *feature,
+                            "VERTEX_NORMALS_COMPRESSED" | "VERTEX_TANGENTS_COMPRESSED"
+                        )
+                })
+                .map(Into::into),
+        );
         definitions.extend([
             ShaderDefVal::UInt("MATERIAL_BIND_GROUP".into(), 3),
             ShaderDefVal::UInt("MAX_CASCADES_PER_LIGHT".into(), 4),
@@ -196,9 +228,18 @@ fn production_mesh_and_prepass_positions_are_invariant() {
         &["VERTEX_POSITIONS_COMPRESSED", "VERTEX_NORMALS_COMPRESSED"][..],
     ] {
         for shader in ["bevy_pbr/render/mesh.wesl", "bevy_pbr/prepass/prepass.wesl"] {
-            let compiled = compiler.compile(shader, extra);
-            invariant_position(&compiled).expect("main and depth writer must both be invariant");
-            assert_spirv_position_invariant(&compiled);
+            let mut variants = vec![extra.to_vec()];
+            if shader == "bevy_pbr/prepass/prepass.wesl" {
+                let mut normal_prepass = extra.to_vec();
+                normal_prepass.extend(["NORMAL_PREPASS", "NORMAL_PREPASS_OR_DEFERRED_PREPASS"]);
+                variants.push(normal_prepass);
+            }
+            for variant in variants {
+                let compiled = compiler.compile(shader, &variant);
+                invariant_position(&compiled)
+                    .expect("main and depth writer must both be invariant");
+                assert_spirv_position_invariant(&compiled);
+            }
         }
     }
 }
@@ -216,6 +257,17 @@ fn production_grass_and_tree_positions_are_invariant_in_both_passes() {
             &[][..],
             &["PREPASS_PIPELINE"][..],
             &["PREPASS_PIPELINE", "MOTION_VECTOR_PREPASS"][..],
+            &[
+                "PREPASS_PIPELINE",
+                "NORMAL_PREPASS",
+                "NORMAL_PREPASS_OR_DEFERRED_PREPASS",
+            ][..],
+            &[
+                "PREPASS_PIPELINE",
+                "NORMAL_PREPASS",
+                "NORMAL_PREPASS_OR_DEFERRED_PREPASS",
+                "MOTION_VECTOR_PREPASS",
+            ][..],
         ] {
             let mut features = extra.to_vec();
             features.extend(shape);
