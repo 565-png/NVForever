@@ -46,6 +46,7 @@ else
 SetUIStringAlt "HUDMainMenu/_icon" "textures/owned/door.dds"
 endif
 SetUIFloat "HUDMainMenu/_iconAlpha" 255
+SetUIFloat "HUDMainMenu/_targetLiteral" 3616
 End
 "#;
     let reader: fnv_game::mod_files::Reader = Arc::new(move |p| {
@@ -158,7 +159,7 @@ End
         compiled_callback.diags
     );
     let source = MemSource::default()
-        .with("menus/owned.xml", r#"<menu name="HUDMainMenu"><_calls>0</_calls><_sequence>0</_sequence><_sourceOrder>0</_sourceOrder><_johnnyOrder>0</_johnnyOrder><_johnnyOld>0</_johnnyOld><_fresh>0</_fresh><_typed>0</_typed><_wrongType>0</_wrongType><_byForm>0</_byForm><_byList>0</_byList><_iconAlpha>0</_iconAlpha><_icon></_icon><rect name="Prompt"><visible>1</visible><text name="Title"><string>Supply cache</string></text></rect></menu>"#)
+        .with("menus/owned.xml", r#"<menu name="HUDMainMenu"><_calls>0</_calls><_sequence>0</_sequence><_sourceOrder>0</_sourceOrder><_johnnyOrder>0</_johnnyOrder><_johnnyOld>0</_johnnyOld><_fresh>0</_fresh><_typed>0</_typed><_wrongType>0</_wrongType><_byForm>0</_byForm><_byList>0</_byList><_iconAlpha>0</_iconAlpha><_icon></_icon><_targetLiteral>0</_targetLiteral><rect name="Prompt"><visible>1</visible><text name="Title"><string>Supply cache</string></text></rect></menu>"#)
         .with("menus/owned/icon.xml", r#"<image name="Icon"><visible>1</visible><width>30</width><height>30</height><alpha><copy src="io()" trait="_iconAlpha"/></alpha><filename><copy src="io()" trait="_icon"/></filename></image>"#);
     g.ui_tree.load_menu(&source, "menus/owned.xml").unwrap();
     g.ui_files = Some(Box::new(source));
@@ -231,6 +232,11 @@ End) 0");
     );
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_fresh"), Some(1.0));
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_sourceOrder"), Some(2.0));
+    assert_eq!(
+        g.ui_tree.get_float("HUDMainMenu/_targetLiteral"),
+        Some(f64::from(0xE20u32)),
+        "crosshair-source-literal: callback decimal must equal the actual target FormID"
+    );
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_typed"), Some(1.0));
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_wrongType"), Some(0.0));
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/_byForm"), Some(1.0));
