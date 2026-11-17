@@ -45,8 +45,12 @@ controls run the existing public repair key system on a filtered model: a hidden
 part still repairs the selected modded item, worn state survives, and the same
 model refresh keeps its query. Cancellation and an empty filtered selection leave
 inventory untouched. Physical repair keys are injected through Bevy ButtonInput;
-physical search input remains separate. All twelve controls are compilation/runtime
-unrun.
+physical search input remains separate. Public source `8430d34a`, executed as
+merge `f34703cd` with the same tree, passed all twelve controls exactly once.
+Hosted core tests passed 3,454 with five ignored; engine tests passed 3,421 with
+three ignored. Both strict Clippy checks and all seven required checks passed.
+This later documentation-only successor preserves all executable/fixture bytes
+and has no additional runtime result; these are headless consumer checks.
 
 Physical Control-F/text input, search-bar admission and publication, foreign UI
 write ownership, repair key routing and original-mod startup remain separate
