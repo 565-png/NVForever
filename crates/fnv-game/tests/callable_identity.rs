@@ -2,7 +2,7 @@
 use crate::common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
 use fnv_game::combat::HitInfo;
-use fnv_game::game::{COMPILED_BASE, GameSnapshot, InstKey, LAMBDA_BASE, RunCtx, event};
+use fnv_game::game::{event, GameSnapshot, InstKey, RunCtx, COMPILED_BASE, LAMBDA_BASE};
 use fnv_game::trace::EventKind;
 use fnv_game::{Game, GameConfig, GameData};
 use fnv_script::vm::{Value, XVal};
@@ -331,7 +331,7 @@ fn q(g: &mut Game<'_>, body: &str) -> XVal {
     .unwrap_or_else(|e| panic!("owned source {body}: {e}"))
 }
 fn value(g: &Game<'_>, id: FormId) -> f64 {
-    g.world.global(id).unwrap()
+    f64::from(g.world.global(id).unwrap())
 }
 fn hit(g: &mut Game<'_>, on: FormId, damage: f64) {
     let result = g.hit(
@@ -470,12 +470,26 @@ fn live_lambda_collision_avoidance_keeps_captures_and_saved_handle_identity() {
 #[test]
 fn legacy_lambda_snapshots_and_high_record_session_callbacks_keep_existing_lifetimes() {
     let f = fixture(false);
+    let mut controls = game(&f);
+    q(&mut controls, "SetGameMainLoopCallback OwnedReceiverBody 1 1\nSetGameMainLoopCallback (Begin Function {}\nlet CapturedCount := 9\nEnd) 1 1 3\nPlayerREF.SetGameMainLoopCallback OwnedReceiverBody 1 1 0\nSetGameMainLoopCallback (Begin Function {}\nlet CapturedCount := 99\nEnd) 1 1 0");
+    controls.tick();
+    assert_eq!(
+        value(&controls, COUNT),
+        1.0,
+        "default flags run once; explicit disabled flags stay disabled"
+    );
+    assert_eq!(
+        value(&controls, CAPTURED),
+        9.0,
+        "explicit mode3 runs; disabled lambda does not overwrite it"
+    );
+    no_script_errors(&controls);
     let mut g = game(&f);
     let callback = q(&mut g, "SetFunctionValue (Call OwnedMaker)");
     assert_eq!(callback, XVal::Ref(LAMBDA_BASE));
     q(
         &mut g,
-        "SetEventHandler \"owned_event\" OwnedHit\nSetEventHandler \"owned_lambda\" (Begin Function {}\nlet CapturedCount := 99\nEnd)\nCallFunctionNextFrame OwnedHit 1 0\nSetGameMainLoopCallback OwnedHit 1 1 0\nSetGameMainLoopCallback (Begin Function {}\nlet CapturedCount := 100\nEnd) 1 1 0",
+        "SetEventHandler \"owned_event\" OwnedHit\nSetEventHandler \"owned_lambda\" (Begin Function {}\nlet CapturedCount := 99\nEnd)\nCallFunctionNextFrame OwnedHit 1 0\nSetGameMainLoopCallback OwnedHit 1 1 3\nSetGameMainLoopCallback (Begin Function {}\nlet CapturedCount := 100\nEnd) 1 1 3",
     );
     let session = g.take_session();
     let snap = g.snapshot();
@@ -511,6 +525,11 @@ fn legacy_lambda_snapshots_and_high_record_session_callbacks_keep_existing_lifet
         value(&restored, COUNT),
         before + 2.0,
         "kept deferred and main-loop high-record callbacks run after restore"
+    );
+    assert_eq!(
+        value(&restored, CAPTURED),
+        0.0,
+        "old-game main-loop lambdas do not transfer with the session"
     );
     no_script_errors(&restored);
 }
