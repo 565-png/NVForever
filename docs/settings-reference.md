@@ -1236,6 +1236,37 @@ below cover them all.
   leave the area. Off: fire stays where it hits, as in the original.
 - Registered in `engine/nvf-play/src/grass_fire.rs`
 
+## NVF Features › Interface
+
+### `quick-loot`: Quick loot
+
+- On the page: On: a container, body or (sneaking) pocket under the crosshair lists its items
+  without pausing. E takes, T takes all, R opens the menu.
+- In full: a Fallout 4 style list beside the crosshair for whatever the crosshair is on that
+  holds items. E takes the selected stack, T takes everything (not from a pocket), R opens the
+  usual container or pickpocket menu, the mouse wheel moves the selection; the game goes on
+  meanwhile. A pocket lists each item's chance to steal it. Drawn in the HUD colour, at the HUD
+  scale, in the Menu Font row's font. Off by default (the owner, 2026-11-17).
+- Registered in `engine/nvf-play/src/quick_loot.rs`
+
+### `quick-loot-weight`: Show weight
+
+- On the page: Quick Loot lists each item's weight.
+- Greyed while Quick Loot is off. Off by default.
+- Registered in `engine/nvf-play/src/quick_loot.rs`
+
+### `quick-loot-value`: Show value
+
+- On the page: Quick Loot lists each item's value.
+- Greyed while Quick Loot is off. Off by default.
+- Registered in `engine/nvf-play/src/quick_loot.rs`
+
+### `quick-loot-value-per-weight`: Show value per weight
+
+- On the page: Quick Loot lists each item's value divided by its weight.
+- Greyed while Quick Loot is off. Off by default.
+- Registered in `engine/nvf-play/src/quick_loot.rs`
+
 ## Debug
 
 ### `overlay`: Text overlay

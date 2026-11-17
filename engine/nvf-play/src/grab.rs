@@ -368,7 +368,7 @@ fn grab(
     // other presses are handed here by `activate::activate`), and the aid's press.
     let activate_down = input.pressed(Control::Activate) || g.aid_now.is_some_and(|a| a.activate);
     if let (Some(c), true) = (g.candidate, playing) {
-        let pressed_e = (input.just_pressed(Control::Activate) && target.0.as_ref().is_none_or(|t| t.form_id != c.on.form_id())) || aid_press == Some(true);
+        let pressed_e = (input.just_pressed(Control::Activate) && !crate::quick_loot::holds_input() && target.0.as_ref().is_none_or(|t| t.form_id != c.on.form_id())) || aid_press == Some(true);
         if pressed_e && g.tap.is_none() {
             let t = target.0.clone().filter(|t| t.form_id == c.on.form_id() && aid_press != Some(true));
             g.tap = Some(Tap { target: t, candidate: c, held: 0.0 });

@@ -643,7 +643,8 @@ fn objects(
         *ws.stats.impacts.entry(i.material).or_default() += 1;
         ws.stats.impacts_no_material += i.no_material as u32;
     }
-    let in_container = menu.as_ref().and_then(|m| m.0.as_ref()).is_some_and(|m| matches!(m.mode, Mode::Container(_)));
+    // Quick Loot's takes sound as the container menu's (`crate::quick_loot`).
+    let in_container = menu.as_ref().and_then(|m| m.0.as_ref()).is_some_and(|m| matches!(m.mode, Mode::Container(_))) || crate::quick_loot::holds_input();
     for &RefChanged { form_id: id, restored } in changed.read() {
         let Some(s) = sim.world.peek(FormId(id)) else { continue };
         if !ws.forms.items.contains_key(&s.base) {
