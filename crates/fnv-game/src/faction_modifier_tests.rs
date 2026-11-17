@@ -245,7 +245,19 @@ fn fractional_nonfinite_and_out_of_range_deltas_refuse_without_rounding_or_mutat
     let f = fixture(None);
     let mut g = game(&f);
     success(&mut g, "SetFactionReaction FirstFaction SecondFaction 10");
-    for delta in ["0.5", "1e30", "9223372036854775808", "(Pow -1 0.5)", "(Pow 10 400)"] {
+    // Bare integer tokens use the VM's i32 route. Decimal expressions and exact
+    // source readbacks prove that these controls pass the intended wider values.
+    let upper = "(9223372036854775808.0)";
+    let lower = "(-9223372036854775808.0)";
+    let huge = "(1000000000000000000000000000000.0)";
+    for (expression, expected) in [("0.5", 0.5), (huge, 1e30), (upper, -(i64::MIN as f64)), (lower, i64::MIN as f64)] {
+        assert_eq!(success(&mut g, &format!("SetFunctionValue {expression}")), XVal::Num(expected), "source value: {expression}");
+    }
+    for (expression, nan) in [("(Pow -1 0.5)", true), ("(Pow 10 400)", false)] {
+        let XVal::Num(value) = success(&mut g, &format!("SetFunctionValue {expression}")) else { panic!("non-numeric source value: {expression}") };
+        assert!(if nan { value.is_nan() } else { value == f64::INFINITY }, "source value: {expression}: {value}");
+    }
+    for delta in ["0.5", huge, upper, "(Pow -1 0.5)", "(Pow 10 400)"] {
         let saved = g.forms.faction_modifiers.clone();
         let err = run(
             &mut g,
@@ -256,7 +268,7 @@ fn fractional_nonfinite_and_out_of_range_deltas_refuse_without_rounding_or_mutat
         assert!(err.contains("integral i64 delta"), "{delta}: {err}");
         assert_eq!(g.forms.faction_modifiers, saved);
     }
-    success(&mut g, "ModFactionReaction FirstFaction FirstFaction -9223372036854775808");
+    success(&mut g, &format!("ModFactionReaction FirstFaction FirstFaction {lower}"));
     assert_eq!(g.forms.faction_modifiers[&A][&A], i64::MIN, "the exact lower input bound is representable");
     // Actual stored representation's limits, not a native command limit.
     for (at, delta) in [(i64::MAX, 1), (i64::MIN, -1)] {
