@@ -120,6 +120,12 @@ impl Game<'_> {
         self.time + if actor == FormId::PLAYER_REF && first { self.knvse.first_person_menu_seconds } else { 0.0 }
     }
 
+    /// Menu time actually admitted by game ticks, for the renderer's first-person
+    /// pose clock. Retained frame configuration is not a new animation frame.
+    pub fn first_person_menu_animation_time(&self) -> f64 {
+        self.knvse.first_person_menu_seconds
+    }
+
     /// The engine tells what a sequence file's controller sequence holds (its name,
     /// accumulation root, frequency, key times, cycle and text keys), for
     /// GetAnimationAttributes.

@@ -38,7 +38,7 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
 
 ### First-person script animations while the device is open
 
-[observed: owner's 060d playtest, 2026-11-17] The device can be invisible with
+[reported in NVForever: owner's 060d playtest, 2026-11-17] The device can be invisible with
 holstered hands or no weapon while an opening with a drawn weapon works. The
 engine log records a first-person script animation above the built-in Pip-Boy
 layer during affected openings; a successful menu phase does not establish a
@@ -52,7 +52,11 @@ World time, NPC animations and the player's third-person clock stay held. A
 loading screen and other menus retain their existing clock behavior. The
 first-person sequence's blend also advances under the device menu when the
 virtual world clock is paused; ordinary weapon and locomotion layers keep the
-world clock. Closing the device returns to the world clock without a jump.
+world clock. The final first-person pose's seam smoothing uses that admitted
+menu time too, so smoothing cannot replace the new sample with its last held
+pose. The preparation consumer takes actual menu-clock progress once; retained
+frame configuration during a skipped runtime tick supplies no new time.
+Closing the device returns to the world clock without a jump.
 
 [documented: GECK wiki GetGlobalAnimTime] The argument chooses first-person
 animation time; the page does not specify menu pause behavior. The menu clock

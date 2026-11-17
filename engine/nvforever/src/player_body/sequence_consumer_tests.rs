@@ -517,7 +517,7 @@ fn device_menu_sequence_moves_and_blends_with_holstered_or_drawn_hands_and_a_hel
     let _availability = Availability::install();
     // The prepared-sample seam exercises the real tiered pose and fade consumer.
     // It does not load a weapon model, project a screen or execute installed mods.
-    for phase in [WeaponPhase::Holstered, WeaponPhase::Drawn] {
+    for (smooth, phase) in [false, true].into_iter().flat_map(|smooth| [WeaponPhase::Holstered, WeaponPhase::Drawn].map(|phase| (smooth, phase))) {
         let (mut app, _files) = crate::outfits::tests::asset_fixture();
         app.add_plugins(bevy::transform::TransformPlugin);
         let forms = Box::leak(Box::new(crate::outfits::tests::actor_forms(vec![])));
@@ -527,6 +527,8 @@ fn device_menu_sequence_moves_and_blends_with_holstered_or_drawn_hands_and_a_hel
         game.senses.first_person = true;
         let mut first = authored_rig(app.world_mut(), View::First, 100.0);
         let mut third = authored_rig(app.world_mut(), View::Third, 200.0);
+        first.rig.animator.smooth_seams(smooth.then_some(0.1));
+        third.rig.animator.smooth_seams(smooth.then_some(0.1));
         let ordinary = Arc::new(ClipInfo::new("authored-device-hold".into(), authored_clip(2, false), None));
         first.rig.clips.insert(ClipKey::PipBoy(false), Some(ordinary));
         let clip = authored_clip(2, true);
