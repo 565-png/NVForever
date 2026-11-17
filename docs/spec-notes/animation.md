@@ -1113,13 +1113,20 @@ Sources: `fnvtool nif stats` over every mesh archive of the base game and the ad
   `8548f552`. The same consumer fixture is prepared against the previous production
   interface for an unchanged-expectation baseline comparison; that baseline is
   still unrun.
-- [authored, unexecuted] The explicitly ignored local-data fixture
-  `locomotion::tests::loaded_turn_assets_keep_accumulation_root_upright` reads
-  `2ha` and unarmed left/right KF files through the NIF parser, production move
-  binder and pose sampler. Running it requires `NVF_TURN_CLIP_DIR` and
-  `NVF_NIF_SCHEMA`, plus `--ignored --exact` on that selector. Its default ignored
-  state is not validation: it was explicitly ignored in the hosted run and supplies
-  no actual-KF execution credit. No game files are included in the source.
+- [implementation validation] The local-data fixture
+  `locomotion::tests::loaded_turn_assets_keep_accumulation_root_upright` was ignored
+  in the hosted run. A later Windows Rust 1.99 CPU application-test run on integrated
+  source `01fb825f` (tree `d8190206`) executed it with `NVF_TURN_CLIP_DIR`,
+  `NVF_NIF_SCHEMA` and `--ignored --exact`: one aggregate test passed once, with no
+  failures or ignores. All four pinned armed/unarmed left/right files reached the
+  NIF parser, clip conversion, production move binder and pose sampler; root-up
+  assertions completed at phases 0, .25, .5, .75 and 0 for each file. The portable
+  binder/sampler control also passed once. Both complete Knight runtime/test files,
+  NIF decoder sources and five schemas match public `4d4b353a` byte for byte. This
+  QA opt-level 0/debug 0 CPU result is separate from the hosted graph/profile;
+  compiler exit zero retained a descendant-shutdown warning, and all owned Jobs
+  ended with unchanged source seals. No Game/GPU or native playback was run, and no
+  game files are included in the source.
 - [implementation validation] The [hosted CI run](https://github.com/LootJunkieAzza/NVForever/actions/runs/44024337735)
   and [game-data guard](https://github.com/LootJunkieAzza/NVForever/actions/runs/44024337705)
   passed all seven checks for `8548f552`, using Rust 1.100.0. Actual checkout
@@ -1127,11 +1134,11 @@ Sources: `fnvtool nif stats` over every mesh archive of the base game and the ad
   core 3,444 passed/0 failed/5 ignored; engine 3,413 passed/0 failed/4 ignored.
   Root/engine strict Clippy, dependency and tools checks passed. These results
   qualify that implementation revision; later heads retain their own check status.
-- [open] Same-fixture baseline failure/corrected success, the loaded game's turn
-  files through the Rust consumer, and the installed-mod knight's greeting still
-  require execution. Original-game playback and parity of relative
-  root rotation remain unobserved; this change does not qualify all animation or
-  dialogue behavior.
+- [open] Same-fixture baseline failure/corrected success and the installed-mod
+  knight's rendered greeting still require execution. Original-game playback and
+  parity of relative root rotation remain unobserved; the executed actual-KF CPU
+  consumer does not qualify performance, all animation or dialogue behavior, or
+  full installed-mod acceptance.
 
 ### 9.5 The first-person rig [observed unless tagged]
 

@@ -91,10 +91,15 @@ pose sampler ([animation §9.13](spec-notes/animation.md#913-npc-turn-clips-and-
 Both turn directions derive their root basis from the clip while retaining relative
 rotation and child poses. Implementation head `8548f552` passed all seven hosted
 checks; its four portable controls and three retained root-height/rotation controls
-each passed once. The actual-KF consumer was ignored and receives no execution
-credit. The unchanged-production baseline, actual loaded-asset sampling,
-installed-mod greeting acceptance and original-game parity remain open. Results
-qualify that tested implementation revision; later heads retain their own checks.
+each passed once. The actual-KF consumer was ignored in that hosted run. A later
+Windows QA CPU application-test run on integrated `01fb825f` (tree `d8190206`)
+passed the portable binder/sampler and explicitly opted-in actual-KF aggregate once
+apiece, with no failures or ignores. The latter parsed and sampled all four pinned
+armed/unarmed turn files at five phases through unchanged public Knight consumers,
+NIF decoder and schemas. This is one aggregate test, not four tests, and no Game/GPU
+or native playback ran. The unchanged-production baseline, rendered installed-mod
+greeting, original-game parity and performance remain open. Results qualify their
+identified graphs/profiles; later heads retain their own checks.
 
 | System | State | Specifics | Notes |
 |---|---|---|---|
