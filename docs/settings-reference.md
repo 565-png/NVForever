@@ -895,12 +895,18 @@ below cover them all.
 ### `quality`: Quality preset
 
 - On the page: Sets the rows the original's quality presets cover to the game folder's
-  low.ini to VeryHigh.ini. Custom: those rows match none of them.
+  low.ini to VeryHigh.ini, and Smooth terrain (Off at Low and Medium). Custom: those rows
+  match none of them.
 - In full: Sets the rows the original's quality presets cover to the values of the game
   folder's low.ini, medium.ini, high.ini or VeryHigh.ini: Sun shadows, Shadow filtering,
   Light glow, Mirrored reflections and the object, actor, item, shadow and grass
-  distances. Custom: those rows match none of them. A preset whose file is missing is not
-  offered. The effects, anti-aliasing and the upscaler keep their own rows (the Enhanced effects row is gone since the menu overhaul).
+  distances. It also sets Smooth terrain, a row of NVForever's own that no preset file
+  names [design, #2864]: Off at Low and Medium (on an integrated GPU 4 x 4 costs about 9 ms
+  of a 73 ms frame), 4 x 4, the default, at High and Very High; like the row itself the
+  change applies at the next start. Custom: those rows match none of them, Smooth terrain
+  included. A preset whose file is missing is not offered. A fresh install's default stays
+  4 x 4 whatever the Quality row reads. The effects, anti-aliasing and the upscaler keep
+  their own rows (the Enhanced effects row is gone since the menu overhaul).
 - More: docs/spec-notes/quality-presets.md
 - Registered in `engine/nvforever/src/quality.rs`
 
@@ -1095,7 +1101,9 @@ below cover them all.
   (8 units) of the stored triangles to keep placed objects in contact (the test aids below
   allow up to 16); actors and objects stand on what is drawn. Off: the landscape's
   triangles as stored. It takes effect at the next start (loading a save starts the game
-  again), so drawn ground and collision always change together. The INI's older `1`/`0`
+  again), so drawn ground and collision always change together. The Quality preset row
+  sets it too (Off at Low and Medium, 4 x 4 at High and Very High, #2864), from the next
+  start as well. The INI's older `1`/`0`
   (#2149's on/off) reads as 4 x 4 and Off. Not in the original. Kept in the INI as `off`,
   `2x2`, `4x4` or `4x4-near`. For comparing recipes, the test aids
   `NVF_PLAY_TEST_SMOOTH_MODE` (`interpolate`, `fit`, `detail`: a fit that evens out the

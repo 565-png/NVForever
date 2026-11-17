@@ -135,3 +135,11 @@ switch, so the INI read never reports one overridden.
   reads <name>` at the start and whenever it changes while the pause menu is open.
 - Smoke: `settings-quality-presets`, `settings-quality-presets-missing`,
   `settings-quality-presets-part`, `settings-enhanced-effects`.
+
+## NVForever's own rows (#2864)
+
+[design] Beside the files' keys each preset sets Smooth terrain, a row the original does not
+have: Off at Low and Medium, 4 x 4 at High and Very High (`quality.rs` `OWN`). On an Intel
+N150's integrated GPU at 1920x1080 with the Low preset's rows, 4 x 4 costs 9 ms of a 73 ms
+frame and 2 x 2 3 ms [observed: #2864]. The Quality row reads a preset only when this row
+matches too. The row, and so a preset's change to it, applies at the next start.
