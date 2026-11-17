@@ -194,7 +194,7 @@ pub struct Graphics {
 
 /// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing and
 /// shadow-filter choices that are not vanilla's, in the order of [`Graphics::describe`].
-pub const KEYS: [&str; 15] = [
+pub const KEYS: [&str; 16] = [
     "ambient-occlusion",
     "fine-shadows",
     "bloom",
