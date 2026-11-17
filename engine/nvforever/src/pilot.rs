@@ -1339,7 +1339,12 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
             Err(_) => None,
         };
         match found {
-            Ok(path) if path.length > WALK_MAX && !w.cut && cut_at.is_some_and(|i| fast_travel_to(here.space, path.legs[i].space) || capital_world(h, path.legs[i].space)) => {
+            // Not while a script holds the player's movement: a player cannot fast travel then
+            // either. Moira's medical check-up (her script 0x0A02D2C0) takes the controls and
+            // gives them back 8 s later from her own script; cut away from Megaton before that,
+            // her script stopped running and the controls never came back (Wasteland Survival
+            // Guide, 13 soft locks [observed]). The walk waits where it is until they are back.
+            Ok(path) if path.length > WALK_MAX && !w.cut && !h.locks.movement && cut_at.is_some_and(|i| fast_travel_to(here.space, path.legs[i].space) || capital_world(h, path.legs[i].space)) => {
                 w.cut = true;
                 let leg = &path.legs[cut_at.expect("checked")];
                 let at = Place { space: leg.space, pos: tail_point(&leg.points, WALK_TAIL) };
@@ -1375,7 +1380,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                     // A long way up to the locked door: its stretch out of doors before the
                     // door is cut short as any long way is (from Goodsprings to the Nellis
                     // gate the player walked it all, fighting all the way).
-                    Ok(path) if path.length > WALK_MAX && !w.cut => {
+                    Ok(path) if path.length > WALK_MAX && !w.cut && !h.locks.movement => {
                         w.cut = true;
                         let locked = |d: u32| nav.graph.door_locks.contains_key(&d);
                         let mut upto: Option<(Space, Vec<[f32; 3]>)> = None;
