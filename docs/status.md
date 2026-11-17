@@ -299,8 +299,9 @@ Contract: [Projectile launch/session traits](spec-notes/projectile-launch-sessio
 
 ### MCM integer RGB consumer contract
 
-[design] Three authored, unrun libtests cover packed colour extraction into image
-channels, picker packing and live/reopened preview consistency for bounded integer
-RGB values. Parser/evaluator implementation remains unchanged pending ownership;
-native integer-edge policies and full original MCM acceptance remain open.
+[design] Bounded integer land/shl/shr operations connect packed colour extraction,
+picker packing and live/reopened image previews. Four authored libtests cover those
+consumers and the explicit exact-integer mapping while retaining accepted bt and
+ordinary operators. All four are unrun; native integer-edge parity and original
+MCM/rendered acceptance remain open.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).

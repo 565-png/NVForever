@@ -24,6 +24,16 @@ integer arithmetic: unpacked channels equal their independent input values, and
 packing equals `red * 65536 + green * 256 + blue`. No implementation, clamp,
 conversion, validation or rejection policy is selected by these fixtures.
 
+[hypothesis: mapped engine policy] Admit numeric, finite, nonnegative whole-number
+operands through 2^53 inclusive, the existing XML number type's consecutive-integer
+limit. AND returns the bitwise intersection. Integer shift counts 0 through 53 are
+supported; left shifts additionally require the exact result to remain within this
+domain. Nonnegative right shifts have the documented arithmetic result without
+choosing native signed width. Unsupported operands/counts/results leave the
+accumulator unchanged, preserving the previous ignored-tag accumulator behavior.
+This is an explicit bounded mapping, not a native conversion/invalid-input rule.
+No string coercion, truncation, wrapped shifts or negative arithmetic is added.
+
 [hypothesis] General integer width, sign conversion, fractional values, nonfinite
 values, overflow, negative/out-of-range shift counts and negative packed colour
 sentinels remain unknown. They need explicit permitted captures and a reviewed
@@ -43,6 +53,8 @@ place-value arithmetic rather than the implementation under test.
 The first intended old-consumer failure is a wrong swatch channel or packed
 output, before a later parse-warning assertion. Ignored-operator warnings alone
 do not prove pixel output, physical UI interaction or full mod acceptance.
-All three cases are unexecuted. The shared parser/evaluator is unchanged while
-operator ownership is reconciled. No native renderer, installed MCM options,
+The three consumer cases and a mapped-domain/retained-operator control are
+unexecuted. The shared parser/evaluator admits these three operations under the
+explicit bounded mapping above, preserving accepted `bt` and ordinary arithmetic
+and logical operators. No native renderer, installed MCM options,
 original HSV rounding, input/persistence or UIO-wide compatibility is certified.

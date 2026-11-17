@@ -25,7 +25,11 @@ fn source() -> MemSource {
               <add><copy src="me()" trait="_b"/><shl>0</shl></add>
             </_output>
           </rect>
-          <rect name="Neighbor"><width><copy>31</copy><add>12</add></width></rect>
+          <rect name="Neighbor">
+            <width><copy>31</copy><add>12</add></width>
+            <_bit><copy>5</copy><bt>2</bt></_bit>
+            <_logical><copy>17</copy><and>43</and></_logical>
+          </rect>
         </menu>"#,
     )
 }
@@ -123,4 +127,93 @@ fn selected_colour_roundtrip_live_changes_and_reentry_keep_the_color_consumers_c
         assert_eq!(channels(&reopened), rgb.map(f64::from));
         assert_eq!(reopened.get_float("RgbFixture/Neighbor/width"), Some(43.0));
     }
+}
+
+#[test]
+fn mapped_integer_domain_keeps_unsupported_values_and_retains_existing_operators() {
+    let src = MemSource::default().with(
+        "menus/integer_domain.xml",
+        r#"<menu name="IntegerDomain">
+      <_value>9007199254740992</_value><_argument>255</_argument>
+      <_and><copy src="me()" trait="_value"/><LaNd src="me()" trait="_argument"/></_and>
+      <_left><copy src="me()" trait="_value"/><SHL src="me()" trait="_argument"/></_left>
+      <_right><copy src="me()" trait="_value"/><ShR src="me()" trait="_argument"/></_right>
+      <_bit><copy>5</copy><bt>2</bt></_bit>
+      <_logical><copy>17</copy><and>43</and></_logical>
+      <width><copy>31</copy><add>12</add></width>
+    </menu>"#,
+    );
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "menus/integer_domain.xml").unwrap();
+    ui.update();
+    assert_eq!(
+        ui.get_float("IntegerDomain/_and"),
+        Some(0.0),
+        "mask is bitwise, not logical"
+    );
+    ui.set_float("IntegerDomain/_argument", 53.0);
+    ui.update();
+    assert_eq!(ui.get_float("IntegerDomain/_right"), Some(1.0));
+    assert_eq!(
+        ui.get_float("IntegerDomain/_left"),
+        Some(9007199254740992.0),
+        "out-of-domain result keeps the accumulator, never wraps"
+    );
+    ui.set_float("IntegerDomain/_value", 1.0);
+    ui.update();
+    assert_eq!(
+        ui.get_float("IntegerDomain/_left"),
+        Some(9007199254740992.0),
+        "exact endpoint remains supported"
+    );
+    for (value, argument) in [
+        (13.0, 54.0),
+        (13.0, -1.0),
+        (13.0, 1.5),
+        (-13.0, 8.0),
+        (13.5, 8.0),
+        (9007199254740994.0, 8.0),
+    ] {
+        ui.set_float("IntegerDomain/_value", value);
+        ui.set_float("IntegerDomain/_argument", argument);
+        ui.update();
+        assert_eq!(
+            ui.get_float("IntegerDomain/_left"),
+            Some(value),
+            "unsupported mapped shift {value}, {argument}"
+        );
+        assert_eq!(ui.get_float("IntegerDomain/_right"), Some(value));
+        if value < 0.0
+            || value.fract() != 0.0
+            || value > 9007199254740992.0
+            || argument < 0.0
+            || argument.fract() != 0.0
+        {
+            assert_eq!(ui.get_float("IntegerDomain/_and"), Some(value));
+        }
+    }
+    for value in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+        ui.set_float("IntegerDomain/_value", value);
+        ui.set_float("IntegerDomain/_argument", 8.0);
+        ui.update();
+        for op in ["_and", "_left", "_right"] {
+            let got = ui.get_float(&format!("IntegerDomain/{op}")).unwrap();
+            assert!(
+                got == value || got.is_nan() && value.is_nan(),
+                "unsupported nonfinite input is not coerced: {op}, {got}"
+            );
+        }
+    }
+    ui.set_string("IntegerDomain/_value", "unmapped text");
+    ui.update();
+    for op in ["_and", "_left", "_right"] {
+        assert_eq!(
+            ui.get(&format!("IntegerDomain/{op}")),
+            Some(&crate::Value::Str("unmapped text".into()))
+        );
+    }
+    assert_eq!(ui.get_float("IntegerDomain/_bit"), Some(1.0));
+    assert_eq!(ui.get_float("IntegerDomain/_logical"), Some(1.0));
+    assert_eq!(ui.get_float("IntegerDomain/width"), Some(43.0));
+    assert!(ui.warnings.is_empty(), "{:?}", ui.warnings);
 }
