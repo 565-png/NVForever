@@ -361,3 +361,64 @@ fn a_live_material_keeps_its_racing_worker_image_reachable_after_the_worker_grac
     cache.release(&mut idle, &hints, 32.0, keep);
     assert!(!cache.workers.entries.lock().unwrap().contains_key(&key));
 }
+
+#[test]
+fn a_canonical_worker_still_expires_its_directory_entry_and_releases_after_the_last_user() {
+    let _lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = saved();
+    set_anisotropy(8);
+    let owned = OwnedData::new();
+    let mut cache = TextureCache::default();
+    let mut images = Assets::default();
+    let mut materials = Assets::<crate::NifMaterial>::default();
+    let worker = worker_texture(
+        "old.dds",
+        TextureUsage::Color,
+        &owned.data,
+        &TextureSnapshot::new(),
+        &cache.workers,
+        &images.get_handle_provider(),
+        true,
+    )
+    .unwrap();
+    let worker_id = worker.0.id();
+    let material = materials.add(crate::nif_material(StandardMaterial {
+        base_color_texture: Some(worker.0.clone()),
+        ..default()
+    }));
+    drop(worker);
+    assert_eq!(cache.take_workers(&mut images, 0.0), 1);
+    let mut idle = crate::release::Unused::default();
+    let hints = crate::release::ImageHints::default();
+    let keep = crate::release::KeepLimits { secs: 0.0, max: 0 };
+    assert_eq!(cache.release(&mut idle, &hints, 31.0, keep), 0);
+    assert!(
+        cache.workers.entries.lock().unwrap().is_empty(),
+        "canonical worker directory grace must still expire"
+    );
+    assert_eq!(
+        cache.len(),
+        1,
+        "the real material still owns the cached image"
+    );
+    assert_eq!(cache.apply_anisotropy(&mut images, 16), 1);
+    assert_eq!(level(images.get(worker_id).unwrap()), 16);
+    assert_eq!(
+        materials
+            .get(&material)
+            .unwrap()
+            .base
+            .base_color_texture
+            .as_ref()
+            .unwrap()
+            .id(),
+        worker_id
+    );
+    assert!(materials.remove(material.id()).is_some());
+    assert_eq!(
+        cache.release(&mut idle, &hints, 32.0, keep),
+        1,
+        "worker metadata must not retain its canonical cache entry"
+    );
+    assert!(cache.is_empty());
+}

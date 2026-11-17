@@ -43,17 +43,27 @@ rewritten or recreated. Images no longer represented by the current cache/worker
 pool are outside this subset; no global material rebinding or new lifetime registry
 is introduced.
 
+A worker can decode the same key as a main-thread cold load while keeping a
+different image handle in its material. After the ordinary worker-directory grace,
+that noncanonical handle stays discoverable only while an external strong holder
+retains it. The existing canonical cache map and worker grace remain unchanged;
+canonical handles do not keep worker entries alive indefinitely. Removing the last
+material allows the noncanonical entry to retire on the next sweep. This is bounded
+engine ownership policy, not an inferred native texture-lifetime rule.
+
 ## Authored controls
 
 Three core controls use the public source-query path for supported values, last-call
 coalescing, strict refusal, ordinary non-strict recovery, the existing VM empty-
-receiver boundary, unchanged World data and actual JSON restoration. Four asset
+receiver boundary, unchanged World data and actual JSON restoration. Six asset
 controls exercise real DDS/cache roles and handles, cold loading, both worker
 publication paths, an in-flight producer, unchanged foreign sampler fields and
-external writes/removal. Two headless play controls connect actual source requests
+external writes/removal. A deterministic worker/main-key race also checks a real
+material after directory grace, and a separate canonical-worker control retains
+ordinary expiry and cleanup after the last material owner. Two headless play controls connect actual source requests
 to the registered sampler consumer and verify deferred resource admission.
 
-All nine controls and compilation are **UNRUN**. Static parsing is not a compiler,
+All eleven controls and compilation are **UNRUN**. Static parsing is not a compiler,
 Clippy, rendered or native result. The original game's accepted-level table,
 rounding, encoding and loaded-texture/save timing remain probe gaps. GPU appearance,
 full SetMaxAniso behavior, installed-mod support and dependency-popup removal are

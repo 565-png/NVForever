@@ -432,7 +432,14 @@ impl TextureCache {
             })
             .collect();
         self.ahead.retain(|_, (_, at)| now - *at < AHEAD_KEEP_SECS);
-        self.workers.entries.lock().expect("worker textures").retain(|_, w| w.stored_at.is_none_or(|t| now - t < WORKER_KEEP_SECS));
+        // A worker may lose the canonical-key race while its distinct handle is
+        // still sampled by a material. Keep that handle discoverable only while
+        // an external owner holds it; canonical copies retain their usual grace.
+        let canonical: std::collections::HashSet<_> = ids.values().copied().collect();
+        self.workers.entries.lock().expect("worker textures").retain(|_, w| {
+            w.stored_at.is_none_or(|t| now - t < WORKER_KEEP_SECS)
+                || (!canonical.contains(&w.handle.id()) && held_beyond(&w.handle, 1))
+        });
         let drop = idle.sweep_timed(now, entries, keep.secs, keep.max, |k| ids.get(k).and_then(|&id| hints.since(id)));
         for ((p, usage, clamp), _) in &drop {
             (if *clamp { &mut self.clamped } else { &mut self.map }).remove(&(p.clone(), *usage));
