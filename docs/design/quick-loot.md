@@ -56,12 +56,12 @@ sound), as in the menu. The rows are read again every half second and after each
 ## 4. Look
 
 Design A of the owner's five (2026-11-17), with the owner's changes after the first build
-the same day: a dark backing (70 %) between two HUD-coloured lines with short ticks at their
+the same day: a dark backing (the **Background opacity** slider, 0% to 100%, 70% by default) between two HUD-coloured lines with short ticks at their
 ends; the name and the selection's place ("3/8") over a rule; up to six rows, the selection
 boxed and filled faintly; a short bar above or below where more rows are; the keys' lines under
-the box. The name, the rows' words and the keys' line start at one line; the box ends as far
-past the end of the keys' line as that line starts in from its left, or further for wider
-rows. Every line of words is one height, the rows' (40 units): the name's, the columns' heads', each
+the box, centred on it. The name and the rows' words start at one line; the box is at least as
+wide as the keys' line with that room before it on both sides, wider for wider rows. The item
+names and counts are in the figures' size (regular), the name over the rule in its own. Every line of words is one height, the rows' (40 units): the name's, the columns' heads', each
 row's and the keys' line; the words' capitals are centred in it, whatever their face (the
 game font's capitals measured by their ink: its glyph pictures carry room for the glow).
 The box is centred on the crosshair's height whatever its rows, and starts 150 units right of

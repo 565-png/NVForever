@@ -1255,6 +1255,12 @@ below cover them all.
 - A list: 50% to 100% in steps of 10%; 100% by default. Greyed while Quick Loot is off.
 - Registered in `engine/nvf-play/src/quick_loot.rs`
 
+### `quick-loot-background`: Background opacity
+
+- On the page: How dark the box behind the Quick Loot list's words is.
+- A slider: 0% to 100% in steps of 5%; 70% by default. Greyed while Quick Loot is off.
+- Registered in `engine/nvf-play/src/quick_loot.rs`
+
 ### `quick-loot-weight`: Show weight
 
 - On the page: Quick Loot lists each item's weight.

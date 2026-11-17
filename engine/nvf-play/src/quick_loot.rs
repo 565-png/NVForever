@@ -51,6 +51,16 @@ static ON: AtomicBool = AtomicBool::new(false);
 static WEIGHT: AtomicBool = AtomicBool::new(false);
 static VALUE: AtomicBool = AtomicBool::new(false);
 static PER_WEIGHT: AtomicBool = AtomicBool::new(false);
+/// The backing's darkness (the Background Opacity row, 0 to 1), the bits of an `f32`: 0.7 by
+/// default, the darkness the owner chose after the first build [the owner's third look,
+/// 2026-11-17].
+static BACKING: AtomicU32 = AtomicU32::new(0x3F33_3333);
+
+/// The backing's darkness, 0 to 1.
+pub fn backing() -> f32 {
+    f32::from_bits(BACKING.load(Ordering::Relaxed)).clamp(0.0, 1.0)
+}
+
 /// The list's own size (the Quick Loot Scale row), the bits of an `f32`.
 static SCALE: AtomicU32 = AtomicU32::new(0x3F80_0000);
 
@@ -267,12 +277,11 @@ const PROMPT_GAP: f32 = 4.0;
 const PROMPT_SPACE: f32 = 30.0;
 const FRAME: f32 = 3.0;
 const TICK: f32 = 14.0;
-/// The backing's darkness [the owner's step 7: the first build's 0.45 was too light].
-const BACKING: f32 = 0.7;
 
-/// The faces the list is drawn in: the rows' (entry), the name's (title, bold in the sharp
-/// font), the columns' heads' and the place's ("1/4": head, bold in the sharp font) and the
-/// figures' (small, regular, the heads' size) [the owner's steps 4 and 4.5].
+/// The faces the list is drawn in: the keys' line's (entry), the name's (title, bold in the
+/// sharp font), the columns' heads' and the place's ("1/4": head, bold in the sharp font) and
+/// the rows' words and figures (small, regular, the heads' size) [the owner's steps 4 and 4.5;
+/// the item names at the figures' size, the third look].
 #[derive(Clone)]
 pub struct Fonts {
     pub entry: Face,
@@ -443,11 +452,11 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
         cols.push((CHANCE, spec.rows.iter().map(|r| r.chance.map_or_else(|| "--".into(), |p| format!("{p}%"))).collect()));
     }
     let col_w: Vec<f32> = cols.iter().map(|(h, cells)| cells.iter().map(|t| width(Which::Small, t)).fold(width(Which::Head, h), f32::max)).collect();
-    let count_w = spec.rows.iter().map(|r| width(Which::Entry, &count(r))).fold(0.0, f32::max);
-    let names = spec.rows.iter().map(|r| width(Which::Entry, &label(r))).fold(width(Which::Entry, EMPTY), f32::max);
+    let count_w = spec.rows.iter().map(|r| width(Which::Small, &count(r))).fold(0.0, f32::max);
+    let names = spec.rows.iter().map(|r| width(Which::Small, &label(r))).fold(width(Which::Small, EMPTY), f32::max);
     let x0 = PAD_X + CELL;
-    // The keys' line starts where the words do; the box ends as far past its end [the
-    // owner's steps 1 and 2].
+    // The box is at least as wide as the keys' line with the words' room on both sides [the
+    // owner's step 2 and third look].
     let prompts_w = spec.prompts.iter().map(|p| width(Which::Entry, p)).sum::<f32>() + PROMPT_SPACE * spec.prompts.len().saturating_sub(1) as f32;
     let position_w = width(Which::Head, &spec.position);
     let others = col_w.iter().map(|w| GAP + w).sum::<f32>() + if count_w > 0.0 { GAP + count_w } else { 0.0 };
@@ -510,12 +519,12 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
             bars.push(edge(Rect::new(band.max.x - RULE, band.min.y, band.max.x, band.max.y)));
         }
         let ink = Ink::Row(r.selected);
-        let name = crate::pause::fit_text(|t| width(Which::Entry, t), &label(r), name_end - x0);
-        piece(name, Which::Entry, x0, centred(&fonts.entry, y), ink);
+        let name = crate::pause::fit_text(|t| width(Which::Small, t), &label(r), name_end - x0);
+        piece(name, Which::Small, x0, centred(&fonts.small, y), ink);
         let n = count(r);
         if !n.is_empty() {
-            let nw = width(Which::Entry, &n);
-            piece(n, Which::Entry, count_end - nw, centred(&fonts.entry, y), ink);
+            let nw = width(Which::Small, &n);
+            piece(n, Which::Small, count_end - nw, centred(&fonts.small, y), ink);
         }
         for ((_, cells), e) in cols.iter().zip(&col_end) {
             let t = cells[i].clone();
@@ -527,7 +536,7 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
     if spec.rows.is_empty() {
         bands.push(Rect::new(PAD_X, y, w - PAD_X, y + ROW_H));
         line(y);
-        piece(EMPTY.into(), Which::Entry, x0, centred(&fonts.entry, y), Ink::Dim);
+        piece(EMPTY.into(), Which::Small, x0, centred(&fonts.small, y), Ink::Dim);
         y += ROW_H + ROW_GAP;
     }
     y += GAP_Y - ROW_GAP;
@@ -545,10 +554,11 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
         frame.push(Bar { rect: Rect::new(x, y0, x + FRAME, y0 + TICK), ink: Ink::Hud });
     }
     frame.extend(bars);
-    // The keys under the box, from the words' line.
+    // The keys under the box, centred on it; the box at least as wide as they are with the
+    // words' room before them on both sides [the owner's third look].
     let top = box_h + PROMPT_GAP;
     line(top);
-    let mut x = x0;
+    let mut x = (w - prompts_w) / 2.0;
     for (i, p) in spec.prompts.iter().enumerate() {
         let ink = if i == 0 || (i == 1 && spec.prompts.len() == 3) { Ink::Row(true) } else { Ink::Hud };
         piece(p.clone(), Which::Entry, x, centred(&fonts.entry, top), ink);
@@ -808,8 +818,8 @@ struct Kit {
 }
 
 /// What the drawing shows: the words, whether in the sharp font, the room to the HUD's right
-/// edge (whole units) and the scale (percent).
-type Drawn = Option<(Spec, bool, i32, i32)>;
+/// edge (whole units), the scale and the backing's darkness (percent).
+type Drawn = Option<(Spec, bool, i32, i32, i32)>;
 
 fn colour(ink: Ink, crime: bool) -> Color {
     let row = |full: bool| {
@@ -825,7 +835,7 @@ fn colour(ink: Ink, crime: bool) -> Color {
         Ink::Dim => amber(255.0).with_alpha(0.6),
         Ink::Row(full) => row(full),
         Ink::Fill => row(true).with_alpha(0.16),
-        Ink::Backing => Color::BLACK.with_alpha(BACKING),
+        Ink::Backing => Color::BLACK.with_alpha(backing()),
     }
 }
 
@@ -889,11 +899,11 @@ fn draw(
     let half = window.single().map_or(480.0 * 16.0 / 9.0, |w| 480.0 * w.width() / w.height().max(1.0)) / size.max(0.1);
     let edge = crate::hud::RIGHT_EDGE_IN * crate::interface::ui_scale() / size.max(0.1);
     let max_w = widest(half, edge);
-    let now = Some((spec, sharp, max_w.round() as i32, (size * 100.0).round() as i32));
+    let now = Some((spec, sharp, max_w.round() as i32, (size * 100.0).round() as i32, (backing() * 100.0).round() as i32));
     if *drawn == now {
         return;
     }
-    let (spec, _, _, _) = now.clone().expect("set above");
+    let (spec, _, _, _, _) = now.clone().expect("set above");
     let raster = kit.raster.as_ref().expect("loaded above");
     let faces = match (sharp, crate::vector_font::metrics(), menu_font.as_deref_mut(), fonts.as_deref_mut()) {
         (true, Some(m), Some(menu), Some(fonts)) => Fonts::sharp(raster, m, menu.handle(fonts)),
@@ -901,7 +911,7 @@ fn draw(
     };
     let laid = layout(&spec, &faces, max_w);
     // Logged when the words or the font change, not as the selection moves.
-    let new_words = drawn.as_ref().is_none_or(|(d, f, _, z)| d.title != spec.title || d.columns != spec.columns || *f != sharp || d.rows.len() != spec.rows.len() || *z != (size * 100.0).round() as i32);
+    let new_words = drawn.as_ref().is_none_or(|(d, f, _, z, _)| d.title != spec.title || d.columns != spec.columns || *f != sharp || d.rows.len() != spec.rows.len() || *z != (size * 100.0).round() as i32);
     if new_words {
         let bad = overlaps(&laid, &faces);
         let font = if sharp { "Sharp" } else { "Original" };
@@ -959,6 +969,19 @@ impl Plugin for QuickLootPlugin {
                 slider: None,
             },
             crate::settings::ChoiceList { names: |_| scale_names(), chosen: scale_chosen, pick: take_scale, save: scale_chosen, load: take_scale, ask_keep: false },
+        );
+        add_setting(
+            app,
+            Setting {
+                key: "quick-loot-background",
+                group,
+                label: "Background opacity",
+                note: "How dark the box behind the Quick Loot list's words is.",
+                switches: "",
+                get: |_| false,
+                set: |_, _| {},
+                slider: Some(crate::settings::Slider { get: |_| backing(), set: |_, v| BACKING.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed), min: 0.0, step: 0.05, shown: None }),
+            },
         );
         add_setting(
             app,
@@ -1071,18 +1094,20 @@ mod tests {
         }
     }
 
-    /// The owner's steps 1 and 2: the heading, the names and the keys start on one line; the
-    /// box ends as far past the keys' end as they start in from its left.
+    /// The owner's third look: the keys' line centred under the box; a box no wider than its
+    /// words is as wide as that line with the words' room (the name's start) on both sides.
     #[test]
-    fn the_keys_start_with_the_words_and_the_box_reaches_past_them() {
+    fn the_keys_are_centred_and_the_box_holds_them_with_room() {
         for (font, fonts) in both_fonts() {
             let short = Spec { title: "Box".into(), rows: vec![row("Gum", 1, true)], ..spec(Columns::default(), Vec::new()) };
+            for (what, l) in [("short", layout(&short, &fonts, room())), ("wide", layout(&spec(ALL, rows()), &fonts, room()))] {
+                let (first, last) = (find(&l, "E) Take"), find(&l, "R) Search"));
+                let (before, after) = (first.x, l.size.x - (last.x + last.width));
+                assert!((before - after).abs() < 0.01, "{font}, {what}: {before} before the keys, {after} after");
+            }
             let l = layout(&short, &fonts, room());
-            let (title, name, key) = (find(&l, "Box"), find(&l, "Gum"), find(&l, "E) Take"));
-            assert_eq!((title.x, name.x), (key.x, key.x), "{font}: one line for the heading, the names and the keys");
-            let last = find(&l, "R) Search");
-            let past = l.size.x - (last.x + last.width);
-            assert!((past - key.x).abs() < 0.01, "{font}: the box ends {past} past the keys, they start {} in", key.x);
+            let (title, key) = (find(&l, "Box"), find(&l, "E) Take"));
+            assert!((key.x - title.x).abs() < 0.01, "{font}: the narrowest box has the words' room before E: {} and {}", key.x, title.x);
         }
     }
 
