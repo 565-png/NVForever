@@ -116,12 +116,22 @@ fn class_of(g: &mut Game, name: &str) -> XVal {
 fn explicit_empty_and_invalid_receivers_do_not_change_implicit_self() {
     let f = fixture();
     let mut g = game(&f, 1);
+    // Integer-token literals saturate at i32::MAX (vm::literal). A decimal point
+    // preserves these values; read the actual local before the receiver controls
+    // below apply the same assignments.
+    for (setup, receiver, expected) in [
+        ("let n := 4294967296.0", "n", XVal::Num(4_294_967_296.0)),
+        ("let r := 3735928559.0", "r", XVal::Ref(0xDEAD_BEEF)),
+    ] {
+        let body = format!("{setup}\nSetFunctionValue {receiver}");
+        assert_eq!(query(&mut g, &body, Some(NPC_REF)), expected, "source local supplied to the receiver control: {setup}");
+    }
     for body in [
         "r.SetClass ClassB",
         "let n := 0.5\nn.SetClass ClassB",
         "let n := -1\nn.SetClass ClassB",
-        "let n := 4294967296\nn.SetClass ClassB",
-        "let r := 3735928559\nr.SetClass ClassB",
+        "let n := 4294967296.0\nn.SetClass ClassB",
+        "let r := 3735928559.0\nr.SetClass ClassB",
         "MiscRef.SetClass ClassB",
         "TestMisc.SetClass ClassB",
         "NpcRef.SetClass TestMisc",
