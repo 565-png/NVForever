@@ -247,3 +247,5 @@ pub mod zones;
 
 pub use data::GameData;
 pub use game::{Game, GameConfig, InstKey};
+
+mod texture_filter;

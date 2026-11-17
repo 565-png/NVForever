@@ -130,6 +130,7 @@ pub mod screen_splatter;
 pub mod script;
 pub mod script_input;
 pub mod script_switches;
+mod script_texture_filter;
 pub mod script_draw;
 pub mod script_events;
 pub mod script_hud;
@@ -407,6 +408,7 @@ impl Plugin for PlayPlugin {
             .add_plugins((world_sounds::WorldSoundsPlugin, effect_sounds::EffectSoundsPlugin, reticle::ReticlePlugin, xp_meter::XpMeterPlugin, radiation::RadiationPlugin, borders::BordersPlugin))
             .add_plugins((ui_sounds::UiSoundsPlugin, pad::PadPlugin, key_repeat::KeyRepeatPlugin, rumble::RumblePlugin, shake::ShakePlugin, script_input::ScriptInputPlugin, aim_assist::AimAssistPlugin))
             .add_plugins(script_switches::ScriptSwitchesPlugin)
+            .add_plugins(script_texture_filter::ScriptTextureFilterPlugin)
             .add_plugins((chargen::ChargenPlugin, creator::CreatorPlugin, fade::FadePlugin))
             .add_plugins((levelup::LevelUpPlugin, sneak_gauges::SneakGaugesPlugin, sound_cover::SoundCoverPlugin))
             .add_plugins(perk_marks::PerkMarksPlugin)

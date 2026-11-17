@@ -1,6 +1,8 @@
 //! DDS → GPU textures. BC1/BC2/BC3 retain their mip chains; BC5 data and
 //! explicitly requested normal maps have separate interpretations (dds-bc5.md).
 
+mod filtering;
+
 use crate::data::GameData;
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{
@@ -446,7 +448,8 @@ impl TextureCache {
         let mut n = 0;
         let mut entries = self.workers.entries.lock().expect("worker textures");
         for (key, w) in entries.iter_mut() {
-            let Some(image) = w.image.take() else { continue };
+            let Some(mut image) = w.image.take() else { continue };
+            filtering::publish(&mut image);
             if images.insert(w.handle.id(), image).is_ok() {
                 self.map.entry(key.clone()).or_insert_with(|| Some((w.handle.clone(), w.lacks_alpha)));
                 n += 1;
@@ -562,7 +565,8 @@ impl TextureCache {
         if !clamp {
             let mut entries = self.workers.entries.lock().expect("worker textures");
             if let Some(w) = entries.get_mut(&(path.clone(), usage)) {
-                if let Some(image) = w.image.take() {
+                if let Some(mut image) = w.image.take() {
+                    filtering::publish(&mut image);
                     let _ = images.insert(w.handle.id(), image);
                     w.stored_at = Some(0.0);
                 }

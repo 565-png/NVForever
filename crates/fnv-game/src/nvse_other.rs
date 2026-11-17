@@ -45,6 +45,8 @@ pub(crate) fn objective_teleport_links(g: &mut Game, flat: bool) -> XVal {
 /// "changes are NOT savebaked" [documented]; the rest [hypothesis]).
 #[derive(Debug, Default)]
 pub struct OtherState {
+    /// Bounded SetMaxAniso request; last call wins until the renderer consumes it. Not saved.
+    pub(crate) texture_filter_level: Option<u16>,
     /// The immutable placed-door graph, built lazily; run-time lock state is read
     /// for every route. Not persisted or rebuilt on each minimap callback.
     pub objective_doors: Option<crate::quest_targets::DoorGraph>,
