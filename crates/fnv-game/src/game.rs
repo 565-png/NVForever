@@ -1341,7 +1341,10 @@ pub struct Game<'a> {
     /// loops/02, valid after the loop, invalid a frame later].
     pub(crate) temp_refs: Vec<(FormId, FormId)>,
     /// Form lists as ListAddForm and the ListRemove… functions left them, for the
-    /// session only [documented: ListAddForm, its changes are not saved].
+    /// session only [documented: ListAddForm, its changes are not saved]: a load keeps
+    /// them ([`Game::take_session`]), as the original keeps the edited form in memory
+    /// until it quits [hypothesis: an MCM mod's item added under the main menu was in
+    /// MCM's list on the first pause after a load, job mcm976e, menu-xml.md §10.1].
     pub(crate) list_edits: std::collections::HashMap<FormId, Vec<FormId>>,
     /// xNVSE's queued delayed calls (`crate::delayed`); not saved [documented].
     pub(crate) delayed: Vec<crate::delayed::Delayed>,
@@ -2374,6 +2377,8 @@ pub struct Session {
     save_files: crate::nvse_sup4::SaveFiles,
     /// SUP's CallFunctionNextFrame calls with removeOnLoad 0 (`crate::delayed`).
     kept_calls: Vec<crate::delayed::Delayed>,
+    /// The form lists' ListAddForm/ListRemove… edits (`Game::list_edits`), issue #2944.
+    list_edits: std::collections::HashMap<FormId, Vec<FormId>>,
 }
 
 /// An event handler: the event (lower case), the function or lambda, the filters by
@@ -3697,7 +3702,7 @@ impl<'a> Game<'a> {
             .collect();
         let pp = self.pp_take_session();
         let sr_registered = self.sr.take_registered();
-        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls() }
+        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits) }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -3716,6 +3721,7 @@ impl<'a> Game<'a> {
         self.dialogue_edits = s.dialogue_edits;
         self.save_files = s.save_files;
         self.put_kept_calls(s.kept_calls);
+        self.list_edits = s.list_edits;
     }
 
     /// Run every handler registered for `event` whose filters match, highest priority
