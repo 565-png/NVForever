@@ -7174,9 +7174,7 @@ impl Host for Exec<'_, '_> {
                 action_ref: self.ctx.action_ref, quest: self.ctx.quest, inst: None, in_condition: false };
             return functions::player_source::call(self.game, &source_ctx, on, name, args);
         }
-        // SetClass's explicit empty/invalid receiver must not become implicit self
-        // (docs/spec-notes/actor-flags.md §7). Preserve omission separately.
-        let on = if name == "setclass" { on.map(|v| FormId(v.as_form().unwrap_or(0))) } else { on.and_then(|v| v.as_form()).map(FormId) };
+        let on = on.and_then(|v| v.as_form()).map(FormId);
         let ctx = self.ctx;
         // Who calls: DisablePlayerControlsAlt keeps its locks by plugin, GetNthExplicitRef
         // reads the calling script.

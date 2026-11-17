@@ -103,9 +103,13 @@ fn game(f: &Fixture, level: i32) -> Game<'_> {
     g
 }
 
-fn query(g: &mut Game, body: &str, self_ref: Option<FormId>) -> XVal {
+fn try_query(g: &mut Game, body: &str, self_ref: Option<FormId>) -> Result<XVal, String> {
     let source = format!("ref r\nfloat n\nBegin Function {{ }}\n{body}\nEnd\n");
-    g.run_query(&source, RunCtx { self_ref, ..Default::default() }).unwrap_or_else(|e| panic!("{body}: {e}"))
+    g.run_query(&source, RunCtx { self_ref, ..Default::default() })
+}
+
+fn query(g: &mut Game, body: &str, self_ref: Option<FormId>) -> XVal {
+    try_query(g, body, self_ref).unwrap_or_else(|e| panic!("{body}: {e}"))
 }
 
 fn class_of(g: &mut Game, name: &str) -> XVal {
@@ -113,27 +117,18 @@ fn class_of(g: &mut Game, name: &str) -> XVal {
 }
 
 #[test]
-fn explicit_empty_and_invalid_receivers_do_not_change_implicit_self() {
+fn nonactor_and_unknown_receivers_do_not_receive_class_overrides() {
     let f = fixture();
     let mut g = game(&f, 1);
     // Integer-token literals saturate at i32::MAX (vm::literal). A decimal point
-    // preserves these values; read the actual local before the receiver controls
-    // below apply the same assignments.
-    for (setup, receiver, expected) in [
-        ("let n := 4294967296.0", "n", XVal::Num(4_294_967_296.0)),
-        ("let r := 3735928559.0", "r", XVal::Ref(0xDEAD_BEEF)),
-    ] {
-        let body = format!("{setup}\nSetFunctionValue {receiver}");
-        assert_eq!(query(&mut g, &body, Some(NPC_REF)), expected, "source local supplied to the receiver control: {setup}");
-    }
+    // preserves this unknown positive FormID for the receiver control below.
+    assert_eq!(query(&mut g, "let r := 3735928559.0\nSetFunctionValue r", Some(NPC_REF)), XVal::Ref(0xDEAD_BEEF));
+    // These receivers reach the host: none is an empty/non-form VM error. Keep the
+    // reachable nonactor boundary independent of the refusal controls below.
     for body in [
-        "r.SetClass ClassB",
-        "let n := 0.5\nn.SetClass ClassB",
-        "let n := -1\nn.SetClass ClassB",
-        "let n := 4294967296.0\nn.SetClass ClassB",
-        "let r := 3735928559.0\nr.SetClass ClassB",
         "MiscRef.SetClass ClassB",
         "TestMisc.SetClass ClassB",
+        "let r := 3735928559.0\nr.SetClass ClassB",
         "NpcRef.SetClass TestMisc",
     ] {
         assert_eq!(query(&mut g, &format!("{body}\nSetFunctionValue 91"), Some(NPC_REF)), XVal::Num(91.0), "continues: {body}");
@@ -145,6 +140,27 @@ fn explicit_empty_and_invalid_receivers_do_not_change_implicit_self() {
     query(&mut g, "SetClass ClassB", Some(NPC_REF));
     assert_eq!(g.services(NPC_REF), services::ARMOR);
     assert_eq!(g.services(SIBLING_REF), services::ARMOR, "accepted base sharing is retained");
+}
+
+#[test]
+fn explicit_empty_and_nonform_receivers_preserve_vm_refusal_and_class_state() {
+    let f = fixture();
+    let mut g = game(&f, 1);
+    query(&mut g, "NpcRef.SetClass ClassB", None);
+    let before = g.forms.classes.clone();
+    assert_eq!(g.services(NPC_REF), services::ARMOR);
+    assert_eq!(query(&mut g, "let n := 4294967296.0\nSetFunctionValue n", Some(NPC_REF)), XVal::Num(4_294_967_296.0));
+    for body in [
+        "r.SetClass ClassA",
+        "let n := 0.5\nn.SetClass ClassA",
+        "let n := -1\nn.SetClass ClassA",
+        "let n := 4294967296.0\nn.SetClass ClassA",
+    ] {
+        assert_eq!(try_query(&mut g, &format!("{body}\nSetFunctionValue 91"), Some(NPC_REF)), Err("setclass called on no reference".into()), "VM refusal: {body}");
+        assert_eq!(g.forms.classes, before, "refusal must not mutate any base: {body}");
+        assert_eq!(g.services(NPC_REF), services::ARMOR, "refusal must not fall back to implicit self: {body}");
+        assert_eq!(g.services(SIBLING_REF), services::ARMOR, "shared base state remains intact: {body}");
+    }
 }
 
 #[test]
@@ -191,6 +207,8 @@ fn source_class_change_still_drives_services_after_json_restore() {
         assert_eq!(restored.services(actor), services::ARMOR, "restored vendor consumer: {actor}");
     }
     assert_eq!(class_of(&mut restored, "LeveledNpcRef"), XVal::Ref(CLASS_B));
-    query(&mut restored, "r.SetClass ClassA", Some(NPC_REF));
+    let before = restored.forms.classes.clone();
+    assert_eq!(try_query(&mut restored, "r.SetClass ClassA", Some(NPC_REF)), Err("setclass called on no reference".into()));
+    assert_eq!(restored.forms.classes, before, "refusal after load preserves all class overrides");
     assert_eq!(restored.services(NPC_REF), services::ARMOR, "explicit null is still refused after load");
 }

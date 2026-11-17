@@ -114,15 +114,25 @@ captured in the original]. Its real service-category consumer is `Game::services
 Autocalc Service actors (vendor-services.md). Auto-calc stats and Autocalc Service are
 separate flags; exercising the latter does not demonstrate stat recalculation.
 
-An omitted source-call receiver still selects the calling reference; an explicit empty,
-invalid or nonactor receiver changes nothing and the statement continues [hypothesis:
-the existing vanilla empty-reference admission policy, extended to this by-name call].
-Actor admission resolves a placed LVLN/LVLC using its seed and encounter level without
-following any template field, then retains SetClass's existing base override key and
-Traits precedence. This avoids rejecting valid leveled actors or attaching classes to
-nonactors. Source VM, actual service selection, placed NPC/creature, template, invalid
-receiver and JSON restore controls are in `tests/common/set_class_receivers.rs`; these
-are authored controls, not original-game observations.
+An omitted source-call receiver still selects the calling reference. An explicit empty
+or non-form receiver is already refused by `fnv-script::vm::host_function` before the
+host bridge runs: the query reports `setclass called on no reference`. Preserve that
+error and the existing class state; there is no established source-call fallback to
+implicit self at this boundary [documented: NVForever's existing VM admission; native
+refusal behavior remains unobserved].
+
+A nonzero unknown FormID or a nonactor form reaches the host. SetClass gives 0, changes
+no class override, and the next statement runs [hypothesis: NVForever admission policy;
+native invalid-actor behavior is unprobed]. Actor admission resolves a placed LVLN/LVLC
+using its seed and encounter level without following any template field, then retains
+SetClass's existing base override key and Traits precedence. This avoids rejecting
+valid leveled actors or attaching classes to nonactors. The source VM refusal controls
+and independently reachable nonactor controls are separate, so an earlier empty-ref
+error cannot prevent the nonactor boundary from being exercised. Actual service
+selection, placed NPC/creature, template and JSON restore controls remain in
+`tests/common/set_class_receivers.rs`; these are authored controls, not original-game
+observations. Large numeric source controls use decimal-point literals with source-local
+value readback because integer-only tokens saturate before receiver admission.
 
 `tools/capture/actor_state_observers.py` generates read-only snapshots for controlled
 original-game comparisons. The capture protocol is in its help text; no results have
