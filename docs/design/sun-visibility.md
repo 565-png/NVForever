@@ -1,13 +1,13 @@
 # Sun visibility: one factor on the sun's direct light
 
-Status 2026-11-17: the plumbing (stage C0 of cloud shadows #2670, the base for terrain
-shadows #2671) with a debug view and a test producer, and the cloud producer (C1,
-`engine/nvforever/src/cloud_shadows.rs`), which fills the cloud slot while Cloud shadows is
-switched on (off by default; `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1` for now). Terrain shadows
-(T0-T2) fill the terrain slot later. Runs so far: main session run 2026-11-17, fork-notes
-(the checkerboard reached terrain, objects, trees and distant hills at Goodsprings 12:00;
-no shader or layout errors; an interior run clean). What is not yet shown is listed at the
-end.
+Status 2026-11-17: cloud shadows (#2670) built as a player's switch: the plumbing (stage
+C0, the base for terrain shadows #2671) with a debug view and a test producer, the cloud
+producer (C1, `engine/nvforever/src/cloud_shadows.rs`) and the settings row with the
+water highlight and the first-person arms (C2, §7). Terrain shadows (T0-T2) fill the
+terrain slot later. Runs so far: main session run 2026-11-17, fork-notes (the checkerboard
+reached terrain, objects, trees and distant hills at Goodsprings 12:00; no shader or layout
+errors; an interior run clean); C2 is not run yet. What is not yet shown is in §6, what is
+left to calibrate in §8.
 
 Like everything in [graphics-enhanced.md](graphics-enhanced.md), this is an engineering
 choice, not a fact about the original game.
@@ -122,22 +122,75 @@ views is built again, as any view key change does; it is the only thing that doe
   20,000 units up.
 - Log: `sun visibility: cloud <on|off> terrain <on|off> debug <mode>` whenever the switches
   change, and `sun visibility: test producer: ...` for the test producer.
+- Cloud shadows' own (cloud_shadows.rs): `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1` (on whatever the
+  row says), `NVF_PLAY_DEBUG_CLOUD_SHADOW=<plane height>,<repeat>,<strength>[,<direction>]`
+  (the calibration), `NVF_PLAY_DEBUG_CLOUD_PHASE=<seconds>` (the clouds' scroll clock frozen,
+  dome and shadows alike); log `cloud shadows: layers ...` when the composed layers, their
+  weights or the projection change, `cloud shadows: none (<reason>)` when the output goes.
 
-## 5. What the later stages owe
+## 5. Outside apply_pbr_lighting
 
-- Water's own sun highlight (`engine/nvforever/src/water.wesl`, the `reflected += spec *
-  sun_light` line in the `lights.n_directional_lights > 0u` block) reads directional light 0
-  and is outside `apply_pbr_lighting`: it must pick the light by the sun bit and multiply by
-  `nvf_sun_visibility(pos, L, 1.0, view_z)` under `@if(NVF_SUN_VISIBILITY)` (stage C2).
+- Water's own sun highlight (`engine/nvforever/src/water.wesl`, in the
+  `lights.n_directional_lights > 0u` block) is drawn outside `apply_pbr_lighting`. Under
+  `NVF_SUN_VISIBILITY` it takes the light flagged as the outdoor sun (none flagged indoors:
+  light 0, as without the def) and, when flagged, multiplies the highlight once by
+  `nvf_sun_visibility(pos, L, 1.0, view_z)` (water casts and receives no cascade shadow).
+  The reflection image is not multiplied. The water body is lit by `apply_pbr_lighting`
+  and takes V through the hook.
 - The first-person arms' `with_shade_light` (`engine/nvf-assets/src/nif_material.wesl`)
-  rebuilds the sun's shadow from two `apply_pbr_lighting` results; its algebra must take V
-  into account (stage C2).
+  rebuilds the sun's part of their light from two `apply_pbr_lighting` results (module
+  notes of nif_material.rs, "Shade light"). With the sun's value V(C) in both (C = 1 for
+  the unshadowed one) and the shade light's unchanged:
+  `missing = (V(1) − V(own)) + share × (1 − shade)` and
+  `k = (V(1) + share − V(wanted)) / missing`. With V(C) = C (no def, or indoors) these are
+  the old `(1 − own) + share × (1 − shade)` and `(1 + share − wanted) / missing` term for
+  term; the derivation is in the shader. The finished colour is not multiplied.
 - Terrain: T's sampling and the fade band come with T2.
 
 ## 6. Not yet proved
 
-Only a run can show: that every pipeline of a marked view compiles with the bindings (the
-WGSL of `sun_visibility.wesl` is checked by naga in a unit test, the patched
-`pbr_functions` is not); that the layouts match on the reflection and scope views; that
-the clouds land on actors, grass, leaves, tree cards and water; that a door, a weather
-change or a texture read builds no pipeline; the cost, on and off.
+Unit tests resolve the shader defs this feature writes in the complete patched lighting
+function, water.wesl and nif_material.wesl and check their structure
+(`patched_lighting_resolves_in_every_variant`, `water_and_arms_edits_resolve`), and naga
+validates `sun_visibility.wesl` in its four variants. Only a run can show: that naga
+accepts the patched lighting, water and arms shaders with bevy_pbr's imports resolved
+(no unit test resolves them) in every pipeline of a marked view; that the layouts match on
+the reflection and scope views; that the clouds land on actors, grass, leaves, tree cards
+and water and on the arms; that a door, a weather change or a texture read builds no
+pipeline; the cost, on and off.
+
+## 7. The switch (stage C2)
+
+- Settings row `cloud-shadows`, "Cloud shadows", under Graphics › Shadows after Longer sun
+  shadows (`crates/nvf-settings-layout/src/lib.rs`; registered in
+  `engine/nvforever/src/settings.rs`, docs/settings-reference.md). Off by default. It is
+  among the rows Continue waits for (`register_pipeline_waits`): switching it rebuilds the
+  world views' material pipelines, nothing else does.
+- `graphics.rs`: `Graphics::cloud_shadows`, the key `cloud-shadows` for `--graphics-only`
+  and `--graphics-cycle`, "cloud shadows" in the log's `graphics:` line. Off in both
+  presets: #2670 asks for it "in `enhanced`", a row the menu overhaul removed, and its
+  strength is not calibrated (§8); whether a preset turns it on is the maintainer's call
+  (for the PR text).
+- `NVF_PLAY_DEBUG_CLOUD_SHADOWS=1` turns it on whatever the row says
+  (`CloudShadows::forced`).
+- The producer drops compositions from before a worldspace or weather change and clears
+  its output on world travel; the wind's displacement is accumulated, so a direction
+  change turns the drift and never moves the pattern (cloud_shadows.rs module notes).
+- Smoke: `cloud-shadows` (tools/smoke/scenarios.toml).
+
+## 8. Open for calibration
+
+The values are engineering choices, to be set from pictures (cloud_shadows.rs, the test
+aid `NVF_PLAY_DEBUG_CLOUD_SHADOW=<plane height>,<repeat>,<strength>[,<direction>]`):
+
+- Strength (`STRENGTH`, 0.6): how much of the sun's light an opaque cloud takes away. The
+  first values read as subtle under clear weather (main session run 2026-11-17, fork-notes).
+- Repeat (`REPEAT_UNITS`, 60,000 units per texture repeat): the size of the pattern on the
+  ground.
+- Plane height (`PLANE_ABOVE_GROUND`, 20,000 units above the ground reference): how far the
+  pattern shifts with the sun's angle.
+- Overcast weathers: their own sun colour is already darker, so the cloud shadow may dim
+  the ground twice (NVBlackMountainWeather dims the ground almost evenly: main session run
+  2026-11-17, fork-notes); whether to weaken it by the weather's cover is open.
+- Night: the moon's light takes the same factor at the same strength [engineering choice,
+  not looked at].

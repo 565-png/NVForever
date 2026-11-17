@@ -35,7 +35,8 @@
 //!   the shadow-receiver condition, so `direct_light`, the display-value `nvf_direct` and
 //!   the transmitted lobe all take it, receivers or not (leaves, tree cards, water).
 //!
-//! Test aids (no settings row yet): `NVF_PLAY_DEBUG_SUN_VISIBILITY=cloud|terrain|combined`
+//! The player's switch is cloud_shadows.rs's (the settings row Cloud shadows). Test aids:
+//! `NVF_PLAY_DEBUG_SUN_VISIBILITY=cloud|terrain|combined`
 //! draws K, T or V alone in place of the lit colour (before ambient and fog; the image
 //! space grade still follows, `--no-grade` leaves it out), and
 //! `NVF_PLAY_DEBUG_SUN_VISIBILITY_TEST=checker` fills `cloud` with a generated

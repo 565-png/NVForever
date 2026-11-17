@@ -961,5 +961,8 @@ elevation, and the casters each cascade of each light drew; with sun shadows on 
 - A shadow distance and map size setting with more steps than on/off (the cycle keys of §6
   measure them).
 - Cloud shadows (#2670) and terrain shadows (#2671) on the sun: the shared plumbing, one
-  visibility factor on the sun's direct light, is in [sun-visibility.md](sun-visibility.md);
-  off until a producer sets it.
+  visibility factor on the sun's direct light, is in [sun-visibility.md](sun-visibility.md).
+  Cloud shadows is the settings row Cloud shadows (`cloud-shadows`, Graphics › Shadows),
+  off by default and in both presets until its strength is calibrated
+  ([sun-visibility.md §7-§8](sun-visibility.md#7-the-switch-stage-c2)); terrain shadows
+  come later.
