@@ -356,6 +356,13 @@ Original ySI/provider initialization and installed Contextual Prompts acceptance
 remain open; no version or requirement guard changed. Contract:
 [activation-range acquisition](spec-notes/ext-events.md#activation-range-crosshair-acquisition).
 
+GetCrosshairWater: authored current activation-target ACTI/WNAM query through the
+existing effective record accessor, with file-backed source/image and actual
+collision-to-draw-piece controls unexecuted at authoring. Existing setter changes
+are consumed without a new ray/cache. Surface-water/native and original Contextual
+Prompts/yUI initialization remain unqualified; no guard/version change.
+Contract: [object water](spec-notes/activators.md#object-water-under-the-crosshair).
+
 GetDroppedRefs named source consumer: uses the existing associated world-weapon
 list with selected actor qualification and unchanged VM invalid-receiver refusal.
 The original four controls failed on `2c9574ec`/`f2009ad5` at fixture compiler,
