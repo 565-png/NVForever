@@ -117,7 +117,7 @@ const DISPLAY_EDITS: [(&str, &str); 7] = [
 
 /// `source` with [`DISPLAY_EDITS`] made, each to the first occurrence after the last
 /// edit; `None` when one is missing (Bevy changed).
-pub(super) fn display_patched(source: &str) -> Option<String> {
+pub(crate) fn display_patched(source: &str) -> Option<String> {
     let mut out = String::with_capacity(source.len() + 4096);
     let mut rest = source;
     for (from, to) in DISPLAY_EDITS {
