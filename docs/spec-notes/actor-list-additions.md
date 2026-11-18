@@ -36,16 +36,31 @@ ordinary actor with its own inventory retains carried extras after an unrelated
 NPC-list or creature-list edit, as it does without edits. Existing static-list
 regeneration rules remain in force. Synthetic controls cover that preservation
 and relevant edited NPC/creature lists selecting their new inventories.
+[hypothesis] Whether the original game's resurrection follows the same rule
+after a list edit has not been observed; this extends NVForever's existing
+regeneration rule.
 
 [design] When resurrection selects another inventory source, created references
 update their saved source and placed references update their reconstructed source.
 ResetInventory must read that same selection immediately and after saving/loading;
 clearing a created source returns it to its own base. This changes the selected
 source, not the inventory-preservation rule above. Synthetic controls cover both
-reference lifetimes and clearing an override.
+reference lifetimes and clearing an override. [hypothesis] The original game's
+source after a reroll and a save/load has not been observed.
 
 [design] Restoring a game reconstructs effective source metadata for every placed
 actor after saved list additions, actor rolls and player level are restored, even
 when the actor already has generated contents. This metadata refresh leaves those
 contents intact. A later ResetInventory follows the reconstructed source. Created
 actors retain their saved source until an actual reroll replaces it.
+[hypothesis] The original game's source after restoring a save with additions
+has not been observed.
+
+[hypothesis] Both functions return 0, whether or not an entry was added; no
+cited source or capture establishes their return value.
+
+[design] Engine choices, not claims about the game: additions are stored per
+list as (level, form) pairs in the saved form changes, a level held as 16 bits;
+the Inventory-chain walk used by resurrection stops after 32 steps and at a
+repeated form; the renderer's actor-list copy is updated only for lists whose
+effective definition changed, including removal after a load.
