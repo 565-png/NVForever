@@ -103,7 +103,7 @@ impl PhysState {
     /// (actors, loose dynamic bodies, the layers the character passes through and `exclude`
     /// left out): a floor a body under the terrain's surface stands on.
     pub fn supported_below(&mut self, at: [f32; 3], exclude: Option<Key>) -> bool {
-        let filter = Filter { exclude: exclude.into_iter().collect(), no_actors: true, no_terrain: true, no_dynamic: true, exclude_layers: fnv_phys::layers::character_ignores(), ..Default::default() };
+        let filter = Filter { exclude: exclude.into_iter().collect(), no_actors: true, no_terrain: true, no_dynamic: true, exclude_layers: fnv_phys::layers::character_ignores() };
         self.ray(at, [0.0, 0.0, -1.0], SUPPORT_BELOW, filter).is_some()
     }
 
