@@ -320,6 +320,10 @@ mod merchant_clear_tests {
     }
 }
 
+#[cfg(test)]
+#[path = "menu/merchant_source_tests.rs"]
+mod merchant_source_tests;
+
 /// What `merchant` sells, by its services (`fnv_game::services`,
 /// docs/spec-notes/vendor-services.md §4), logged with whether it offers its services now;
 /// `None` without the script data (everything is sold).
