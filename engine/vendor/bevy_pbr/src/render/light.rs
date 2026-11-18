@@ -1151,7 +1151,7 @@ pub fn prepare_lights(
     ),
     // NVForever held shadow maps: the hold, and the directional shadow texture of the last
     // frame (see where the texture is taken below).
-    (mut hold_directional, mut last_directional_texture, nvf_outdoor_sun, hold_lights, mut nvf_light_record, mut nvf_last_point_texture): (
+    (mut hold_directional, mut last_directional_texture, nvf_outdoor_sun, hold_lights, mut nvf_light_record, mut nvf_last_point_texture, mut nvf_view_cache): (
         Option<ResMut<HoldDirectionalShadowMaps>>,
         Local<Option<TextureId>>,
         // NVForever sun visibility: the light marked as the outdoor sun.
@@ -1162,6 +1162,8 @@ pub fn prepare_lights(
         Local<NvfLightShadowRecord>,
         // NVForever light view counts: the point shadow texture of the last frame.
         Local<Option<TextureId>>,
+        // NVForever cached shadow views.
+        Local<NvfShadowViewCache>,
     ),
 ) {
     // NVForever light view counts: the system's time and its stretches.
@@ -1739,12 +1741,36 @@ pub fn prepare_lights(
 
     live_shadow_mapping_lights.clear();
 
-    let mut point_light_depth_attachments = HashMap::<u32, DepthStencilViewAttachment>::default();
-    let mut directional_light_depth_attachments =
-        HashMap::<u32, DepthStencilViewAttachment>::default();
+    // NVForever cached shadow views (engine/vendor/README.md): the two textures' array views,
+    // the point and spot lights' layer attachments and the cascades' layer views are kept
+    // while the texture is the same, instead of made anew every frame (and every frame a
+    // light's views are made again); an attachment kept is set to clear again each frame.
+    let nvf_cache = &mut *nvf_view_cache;
+    if !nvf_shadow_view_cache_on() {
+        // The measuring aid: every view made anew each frame, as upstream.
+        *nvf_cache = NvfShadowViewCache::default();
+    }
+    if nvf_cache.point_texture != Some(nvf_point_texture_id) {
+        nvf_cache.point_texture = Some(nvf_point_texture_id);
+        nvf_cache.point_array = None;
+        nvf_cache.point_layers.clear();
+    }
+    if nvf_cache.directional_texture != Some(directional_texture_id) {
+        nvf_cache.directional_texture = Some(directional_texture_id);
+        nvf_cache.directional_array = None;
+        nvf_cache.spot_layers.clear();
+        nvf_cache.cascade_views.clear();
+    }
+    for attachment in nvf_cache.point_layers.values().chain(nvf_cache.spot_layers.values()) {
+        attachment.prepare_for_new_frame();
+    }
+    let mut point_light_depth_attachments = mem::take(&mut nvf_cache.point_layers);
+    let mut directional_light_depth_attachments = mem::take(&mut nvf_cache.spot_layers);
+    let mut nvf_cascade_views = mem::take(&mut nvf_cache.cascade_views);
+    let nvf_new_point_array = nvf_cache.point_array.is_none();
+    let nvf_new_directional_array = nvf_cache.directional_array.is_none();
 
-
-    let point_light_depth_texture_view =
+    let point_light_depth_texture_view = nvf_cache.point_array.get_or_insert_with(|| {
         point_light_depth_texture
             .texture
             .create_view(&TextureViewDescriptor {
@@ -1772,11 +1798,13 @@ pub fn prepare_lights(
                 mip_level_count: None,
                 base_array_layer: 0,
                 array_layer_count: None,
-            });
+            })
+    }).clone();
 
     // NVForever held light shadow maps: the directional shadow texture is taken above.
 
-    let directional_light_depth_texture_view =
+    // NVForever cached shadow views: kept while the texture is the same.
+    let directional_light_depth_texture_view = nvf_cache.directional_array.get_or_insert_with(|| {
         directional_light_depth_texture
             .texture
             .create_view(&TextureViewDescriptor {
@@ -1796,7 +1824,9 @@ pub fn prepare_lights(
                 mip_level_count: None,
                 base_array_layer: 0,
                 array_layer_count: None,
-            });
+            })
+    }).clone();
+    nvf_event(NVF_TEXTURE_VIEWS, u64::from(nvf_new_point_array) + u64::from(nvf_new_directional_array));
 
     // NVForever light view counts: the two texture views made above.
     nvf_lap.lap(NVF_TEXTURES);
@@ -2287,20 +2317,27 @@ pub fn prepare_lights(
                         far_bound: *bound,
                     };
 
-                let depth_texture_view =
-                    directional_light_depth_texture
-                        .texture
-                        .create_view(&TextureViewDescriptor {
-                            label: Some("directional_light_shadow_map_array_texture_view"),
-                            format: None,
-                            dimension: Some(TextureViewDimension::D2),
-                            usage: None,
-                            aspect: TextureAspect::All,
-                            base_mip_level: 0,
-                            mip_level_count: None,
-                            base_array_layer: directional_depth_texture_array_index,
-                            array_layer_count: Some(1u32),
-                        });
+                // NVForever cached shadow views: the layer's view is kept while the texture
+                // is the same; the attachment below is still new for each view.
+                let depth_texture_view = nvf_cascade_views
+                    .entry(directional_depth_texture_array_index)
+                    .or_insert_with(|| {
+                        nvf_event(NVF_TEXTURE_VIEWS, 1);
+                        directional_light_depth_texture
+                            .texture
+                            .create_view(&TextureViewDescriptor {
+                                label: Some("directional_light_shadow_map_array_texture_view"),
+                                format: None,
+                                dimension: Some(TextureViewDimension::D2),
+                                usage: None,
+                                aspect: TextureAspect::All,
+                                base_mip_level: 0,
+                                mip_level_count: None,
+                                base_array_layer: directional_depth_texture_array_index,
+                                array_layer_count: Some(1u32),
+                            })
+                    })
+                    .clone();
 
                 // NOTE: For point and spotlights, we reuse the same depth attachment for all views.
                 // However, for directional lights, we want a new depth attachment for each view,
@@ -2438,6 +2475,11 @@ pub fn prepare_lights(
         ));
     }
 
+    // NVForever cached shadow views: kept for the next frame.
+    nvf_view_cache.point_layers = point_light_depth_attachments;
+    nvf_view_cache.spot_layers = directional_light_depth_attachments;
+    nvf_view_cache.cascade_views = nvf_cascade_views;
+
     // NVForever light view counts.
     nvf_lap.lap(NVF_CAMERAS);
 
@@ -2522,6 +2564,8 @@ fn create_point_shadow_maps(
         let depth_attachment = point_light_depth_attachments
             .entry(base_array_layer)
             .or_insert_with(|| {
+                // NVForever light view counts (the attachments are kept: cached shadow views).
+                nvf_event(NVF_TEXTURE_VIEWS, 1);
                 let depth_texture_view =
                     point_light_depth_texture
                         .texture
@@ -2624,6 +2668,8 @@ fn create_spot_shadow_map(
     let depth_attachment = directional_light_depth_attachments
         .entry(base_array_layer)
         .or_insert_with(|| {
+            // NVForever light view counts (the attachments are kept: cached shadow views).
+            nvf_event(NVF_TEXTURE_VIEWS, 1);
             let depth_texture_view =
                 directional_light_depth_texture
                     .texture
@@ -3435,9 +3481,17 @@ const NVF_SWEEP: usize = 9;
 /// because their light's maps were switched off (or had no room), a light's existing views
 /// made again (its light, slot or texture changed), shadow phases made anew and dropped, and
 /// the point and directional shadow textures that were not last frame's.
-pub const NVF_EVENTS: [&str; NVF_EVENT_COUNT] =
-    ["views spawned", "views despawned", "views remade", "phases new", "phases dropped", "new point textures", "new directional textures"];
-pub const NVF_EVENT_COUNT: usize = 7;
+pub const NVF_EVENTS: [&str; NVF_EVENT_COUNT] = [
+    "views spawned",
+    "views despawned",
+    "views remade",
+    "phases new",
+    "phases dropped",
+    "new point textures",
+    "new directional textures",
+    "texture views made",
+];
+pub const NVF_EVENT_COUNT: usize = 8;
 const NVF_SPAWNED: usize = 0;
 const NVF_DESPAWNED: usize = 1;
 const NVF_REMADE: usize = 2;
@@ -3445,6 +3499,36 @@ const NVF_PHASES_NEW: usize = 3;
 const NVF_PHASES_DROPPED: usize = 4;
 const NVF_NEW_POINT_TEXTURE: usize = 5;
 const NVF_NEW_DIRECTIONAL_TEXTURE: usize = 6;
+const NVF_TEXTURE_VIEWS: usize = 7;
+
+/// NVForever cached shadow views: off with `NVF_SHADOW_VIEW_CACHE=0` (a measuring aid of
+/// the game's: every view made anew each frame, as upstream).
+fn nvf_shadow_view_cache_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let off = std::env::var("NVF_SHADOW_VIEW_CACHE").is_ok_and(|v| v.trim() == "0");
+        if off {
+            bevy_log::info!("held light shadow maps: NVF_SHADOW_VIEW_CACHE=0, shadow texture views made anew every frame");
+        }
+        !off
+    })
+}
+
+/// NVForever cached shadow views (engine/vendor/README.md): the shadow textures' views kept
+/// across frames by `prepare_lights` while the texture is the same.
+#[derive(Default)]
+pub struct NvfShadowViewCache {
+    point_texture: Option<TextureId>,
+    directional_texture: Option<TextureId>,
+    point_array: Option<TextureView>,
+    directional_array: Option<TextureView>,
+    /// A point light face's attachment, by layer of the cube texture.
+    point_layers: HashMap<u32, DepthStencilViewAttachment>,
+    /// A spot light's attachment, by layer of the directional texture.
+    spot_layers: HashMap<u32, DepthStencilViewAttachment>,
+    /// A cascade's layer view, by layer of the directional texture.
+    cascade_views: HashMap<u32, TextureView>,
+}
 
 type NvfAtomic = core::sync::atomic::AtomicU64;
 static NVF_LIGHT_VIEW_FRAMES: NvfAtomic = NvfAtomic::new(0);

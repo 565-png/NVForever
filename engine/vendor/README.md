@@ -253,6 +253,21 @@ Two more for the lamp shadows' performance pass (2026-11-18, docs/design/graphic
   game's 10-s lamp shadow summary, `light shadows: renderer over …`). Bevy reads none of it;
   the cost is a few clock reads and relaxed atomic adds a frame. Drop it once the counts
   are not wanted.
+- **Cached shadow views** (`NVForever cached shadow views`, `src/render/light.rs`
+  `prepare_lights`, `NvfShadowViewCache`): the point and directional shadow textures' array
+  views, the point and spot lights' per-layer attachments and the cascades' per-layer views
+  are kept across frames while the texture is the same (by texture id; a new texture
+  starts them anew), instead of made with `create_view` every frame. A kept attachment is
+  set to clear again (`prepare_for_new_frame`) at the start of each frame; the cascades
+  still get a new attachment each view, over the kept view. Upstream makes the two array
+  views and every cascade's layer view every frame, and a point light's six layer views
+  every frame its views are made again (every frame it draws, since its extraction changes).
+  The count `texture views made` shows what is still made. `NVF_SHADOW_VIEW_CACHE=0`
+  (read once) makes every view anew each frame, as upstream, for comparing. [hypothesis:
+  `prepare_lights` took up to 16 ms in the main session's profile while hundreds of
+  references were toggled and faded in Primm (thousands of materials made and dropped
+  on other render threads); fewer device calls there give it less to wait on. Not measured
+  yet.]
 
 Gated materials (#2661, docs/design/graphics-enhanced.md §3.14 "Off"), in `src/material.rs`,
 each part marked `NVForever gated materials`: `MaterialPlugin::gated(MaterialGate)` (a new
