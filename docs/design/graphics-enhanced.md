@@ -420,6 +420,17 @@ pass across warm four-second windows was 0.08–0.09 ms on the original and
 0.22–0.26 ms on the revision. Whole-frame times varied enough that the two pairs
 gave opposite signs for the difference.
 
+[observed, 2026-11-18, the mirror sharing the main camera's cascades] Release explorer,
+RTX 5070 Ti, 1920x1080, `--graphics enhanced --sun-shadows`, Cottonwood Cove looking
+across the river, four 32-second runs in A/B/B/A order with `--log-frame-times 5`; B set
+`NVF_PLAY_TEST_SHADOW_STAGGER=0`, which draws every cascade of both views every frame as
+the first fix did. Warm five-second windows: 5.93 to 6.28 ms a frame with the schedule
+holding (A), 6.78 to 7.05 ms without (B; two of B's first windows read 5.18 and 5.41);
+the shadow pass's GPU time 0.10 to 0.20 ms against 0.20 to 0.30 ms. At Boulder Beach
+(`--play`, 09:00, twelve frames 0.2 s apart, 1280x720) the largest frame-to-frame
+brightness change after the same smoothing was the same with the schedule holding and
+without (5 to 7 of 255 once the start's fades were over): no flash of the reflected shore.
+
 [observed, 2026-11-18, initial water effect before the depth and pattern revision] Release explorer, RTX 5070 Ti, Vulkan, 1280x720, desktop streaming
 active. At each fixed camera `--log-frame-times 5 --graphics-cycle
 "vanilla;water-effects;water-effects;vanilla"` alternated five-second periods. After the
