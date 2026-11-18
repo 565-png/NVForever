@@ -888,6 +888,45 @@ forbid = [
 ]
 
 [[scenario]]
+name = "heat-haze"
+source = "[design] docs/design/graphics-enhanced.md §3.15 (a prototype), engine/nvforever/src/heat_haze.rs and heat_haze.wesl: started with --graphics-only heat-haze at noon under a pinned clear weather (NVWastelandClear), the heat haze turns on with a strength above 0 from the sun and the weather, its pipeline (heat_haze.wesl) compiles and is ready and the pass draws, without a shader, pipeline or rendering error. The look is checked in pictures by hand"
+areas = ["renderer", "graphics", "weather"]
+paths = ["engine/nvforever/src/heat_haze*", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/tree.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--weather", "NVWastelandClear", "--graphics-only", "heat-haze"]
+run_seconds = 14
+expect = [
+  { re = 'heat haze: (?:on, )?strength (?P<n>\d+\.\d+), at most [\d.]+ px \(sun', range = [0.05, 1.0], label = "at noon in clear weather the heat haze has a strength above 0 and the pass is not skipped" },
+  { re = 'heat haze: pass drawn \(\d+x\d+, multisampled depth (?:yes|no)\)', label = "the pass ran (not only a strength above 0)" },
+]
+order = [[
+  { re = 'graphics: light glow, heat haze$', label = "the switch is on from the start" },
+  { re = 'pipeline \d+ ready after \d+ ms: heat_haze_pipeline', label = "heat_haze.wesl compiles: its pipeline is ready" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the heat haze" },
+  { re = 'pipeline \d+ failed after \d+ ms: heat_haze_pipeline', label = "the heat haze pipeline failed (heat_haze.wesl does not compile, or its bindings do not match)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "failed to process shader", label = "a shader that does not build" },
+]
+
+[[scenario]]
+name = "heat-haze-interior"
+source = "[design] docs/design/graphics-enhanced.md §3.15 (a prototype), engine/nvforever/src/heat_haze.rs: with the heat haze switched on in an interior (OVNorthSewers01) its strength is 0 (indoors), so its pass does not run, without a rendering error"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/heat_haze*", "engine/nvforever/src/graphics.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "OVNorthSewers01", "--play", "--no-voice", "--no-messages", "--graphics-only", "heat-haze"]
+run_seconds = 12
+expect = [
+  { re = 'heat haze: (?:on, )?strength 0\.00, at most 0\.00 px, pass skipped \(indoors\)', label = "indoors the heat haze's strength is 0 and the pass skipped" },
+  { re = 'graphics: light glow, heat haze$', label = "the switch is on" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the heat haze on indoors" },
+]
+
+[[scenario]]
 name = "ambient-occlusion-gtao"
 source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ambient-occlusion switch runs the ground-truth estimate (engine/nvforever/src/ssao.wesl gtao_visibility, its plane-aware denoise) on the multisampled view, says so once, and its pipelines build and draw without a shader, pipeline or rendering error"
 areas = ["renderer", "graphics"]

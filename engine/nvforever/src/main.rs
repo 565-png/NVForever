@@ -163,6 +163,7 @@ mod shadow_probe;
 mod shadow_rate;
 mod shadow_thin;
 mod shafts;
+mod heat_haze;
 mod imagespace;
 mod imposters;
 mod sky;
@@ -545,7 +546,7 @@ struct Args {
     dlss_model: Option<upscaler::DlssModel>,
     /// Instead of --graphics: exactly these improvements on, by the settings page's keys
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
-    /// water-reflections, terrain-height-blend, terrain-anti-tiling, cloud-shadows, and
+    /// water-reflections, terrain-height-blend, terrain-anti-tiling, cloud-shadows, heat-haze, and
     /// mesh-terrain-blend, which no look turns on) and choices (fxaa, smaa or taa instead of --msaa;
     /// shadow-filter-hardware or shadow-filter-temporal), for comparing them one at a time.
     #[arg(long, value_delimiter = ',', conflicts_with = "graphics")]
