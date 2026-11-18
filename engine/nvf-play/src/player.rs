@@ -384,6 +384,10 @@ impl Plugin for PlayerPlugin {
             )
             .add_systems(Update, crate::control::place_camera.in_set(PlaySet::Physics).after(log_status));
         app.init_resource::<crate::inertia::MovementInertia>().add_systems(Update, (crate::inertia::follow_weapon, crate::inertia::log_switches));
+        // Sprint's shared state and the bindings kept on its switch.
+        app.add_plugins(crate::stance::StancePlugin);
+        // Sprint (`crate::sprint`): between the frame's walk rules and the physics steps.
+        app.add_plugins(crate::sprint::SprintPlugin);
         // The Advanced Movement section's switches kept here (NVF Features; Weapon Inertia and
         // Camera Motion are nvforever's `settings.rs`): the Global Toggle, then Gameplay's and
         // Animation Smoothing [design: the owner, 2026-11-15, the menu's names and order].
@@ -421,6 +425,16 @@ impl Plugin for PlayerPlugin {
                 "--no-advanced-recoil",
                 |w| w.resource::<Inertia>().recoil,
                 |w, on| w.resource_mut::<Inertia>().recoil = on,
+            ),
+            // Sprint, off by default; its control (`crate::bindings`) is greyed while it is
+            // off, its shared state is `crate::stance`'s.
+            switch(
+                "sprint",
+                "Sprint",
+                SPRINT_NOTE,
+                "--sprint --no-sprint",
+                |w| w.resource::<Inertia>().sprint,
+                |w, on| w.resource_mut::<Inertia>().sprint = on,
             ),
             switch(
                 "animation-smoothing",
@@ -471,6 +485,9 @@ impl Plugin for PlayerPlugin {
         );
     }
 }
+
+/// The Sprint row's note (NVF Features › Advanced Movement › Gameplay).
+pub const SPRINT_NOTE: &str = "On: hold the Sprint key (set it in Controls) to run faster, spending AP every second; stopping low on AP leaves you out of breath. Off: as in the original.";
 
 /// The Movement Weight dropdown's choice, by its name or its number.
 fn movement_weight_pick(w: &mut World, name: &str) -> bool {
@@ -822,7 +839,10 @@ impl Default for ReloadPace {
 
 /// What slows or speeds the player's steps: crippled legs, a two-handed weapon's run, the
 /// Modify Run Speed perks, a reload, Speed Mult and body armour.
-type Paces<'w> = (Option<Res<'w, crate::combat::PlayerLimbs>>, Option<Res<'w, RunPace>>, Option<Res<'w, PerkSpeed>>, Option<Res<'w, ReloadPace>>, Option<Res<'w, StatSpeed>>);
+type Paces<'w> = (Option<Res<'w, crate::combat::PlayerLimbs>>, Option<Res<'w, RunPace>>, Option<Res<'w, PerkSpeed>>, Option<Res<'w, ReloadPace>>, Option<Res<'w, StatSpeed>>, Sprinting<'w>);
+
+/// Sprint's share and speed (`crate::sprint`): from the gait's speed to a multiple of the run's.
+type Sprinting<'w> = (Option<Res<'w, crate::stance::StanceMotion>>, Option<Res<'w, crate::sprint::SprintTuning>>);
 
 /// Turbo's clock for the player, and where the steps' cost is measured: `--log-frame-times`'
 /// counts and the physics rate's guard (`crate::phys_load::Meter`).
@@ -1340,7 +1360,7 @@ fn step(
     mut phys: ResMut<PhysState>,
     mut player: ResMut<Player>,
     mut status: ResMut<Status>,
-    (limbs, pace, perk_pace, reload_pace, stat_pace): Paces,
+    (limbs, pace, perk_pace, reload_pace, stat_pace, sprinting): Paces,
     (turbo, mut load, mut rate): Meters,
     (mut seat, mut landed): (ResMut<crate::furniture::PlayerSeat>, MessageWriter<crate::rumble::Landed>),
     (mut blocks, noclip, mut inertia): (Option<ResMut<crate::blocking::ActorBlocks>>, Res<NoClip>, ResMut<crate::inertia::MovementInertia>),
@@ -1493,8 +1513,9 @@ fn step(
             *stroke_time = 0.0;
             // Crippled legs slow the player (combat C8) [design].
             let k = limbs.as_deref().map_or(1.0, crate::combat::PlayerLimbs::speed_mult);
-            // Running with a two-handed weapon drawn is slower (`RunPace`).
-            let k = if intent.walk { k } else { k * pace.as_deref().map_or(1.0, |p| p.0) };
+            // Running with a two-handed weapon drawn is slower (`RunPace`): on the run's speed
+            // only (below, with the gait).
+            let run_pace = pace.as_deref().map_or(1.0, |p| p.0);
             // The Modify Run Speed perks (Travel Light, Tunnel Runner, Implant M-5 …).
             let k = k * perk_pace.as_deref().map_or(1.0, |p| p.0);
             // Slower while reloading, when the setting is on (`crate::combat::reload_pace`).
@@ -1521,10 +1542,21 @@ fn step(
                 _ => k,
             };
             let [x, y] = velocity(&intent, player.heading, *speeds);
-            let key = [x * k, y * k];
+            let gait = if intent.walk { k } else { k * run_pace };
+            let key = [x * gait, y * gait];
+            // Sprint: from the gait's velocity to a multiple of the run's, all of the paces
+            // above with it, by its eased share, walking or running (`crate::sprint`).
+            let sprint = sprinting.0.as_deref().zip(sprinting.1.as_deref()).map_or((0.0, 1.0), |(s, t)| (s.sprint_share, t.speed));
+            let key = if sprint.0 > 0.0 {
+                let [rx, ry] = velocity(&MoveIntent { walk: false, ..*intent }, player.heading, *speeds);
+                let run = k * run_pace;
+                crate::sprint::sprint_velocity(key, [rx * run, ry * run], sprint.0, sprint.1)
+            } else {
+                key
+            };
             // On the ground the velocity speeds up and slows down (`crate::inertia`); in
             // the air the controller's own rules take the keys' velocity.
-            let [x, y] = if inertia.ground() && c.grounded { inertia.step(key, intent.walk, dt) } else { key };
+            let [x, y] = if inertia.ground() && c.grounded { inertia.step(key, intent.walk && sprint.0 < crate::sprint::RUN_GAIT_FROM, dt) } else { key };
             // An attack's clip carries the player (`Lunge`).
             if lunge.carrying && lunge.from.is_none() {
                 lunge.from = Some(c.feet);
