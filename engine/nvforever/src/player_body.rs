@@ -773,6 +773,11 @@ struct Rig {
     /// While a 3D scope is up: the eye goes behind the eyepiece instead of on the
     /// sighting node (`line_up_sights`).
     use_lens: bool,
+    /// Down the iron sights: how far past the eye along the line of sight the sighting
+    /// node goes (`iron_sights::eye_relief`), measured while the gun is only held (not
+    /// during an attack's or a reload's clip, whose hand moves: a lever worked) and kept
+    /// for the weapon model.
+    sight_relief: Option<f32>,
     /// Third person: the entities drawn for the body's parts.
     drawn: Vec<Drawn>,
     /// First person: whether the rig is shown (last applied).
@@ -876,20 +881,33 @@ impl Rig {
         // A 3D scope: the point behind the eyepiece (`scope_lens`); else the sighting node.
         let second = nvf_play::tweaks::SECOND_SIGHT.load(std::sync::atomic::Ordering::Relaxed) && self.sighting2.is_some();
         let sighting = if second { self.sighting2.as_deref() } else { self.sighting.as_deref() };
-        let (sight, barrel) = match (self.use_lens.then_some(self.scope_eye).flatten(), sighting) {
+        let (sight, barrel, iron) = match (self.use_lens.then_some(self.scope_eye).flatten(), sighting) {
             (Some(e), _) => {
                 let Some(model) = self.weapon_node_at(Transform::IDENTITY, &[]) else { return };
-                (model.transform_point3(crate::scope_lens::eye_point(&e)), model.transform_vector3(Vec3::X))
+                (model.transform_point3(crate::scope_lens::eye_point(&e)), model.transform_vector3(Vec3::X), false)
             }
             (None, Some(path)) => {
                 let (Some(sight), Some(model)) = (self.weapon_node_at(Transform::IDENTITY, path), self.weapon_node_at(Transform::IDENTITY, &path[..path.len() - 1])) else { return };
-                (sight.translation.into(), model.transform_vector3(Vec3::X))
+                (sight.translation.into(), model.transform_vector3(Vec3::X), true)
             }
             (None, None) => return,
         };
         let a = &self.animator;
         let eye: Vec3 = a.model_space(camera).translation.into();
-        let g = crate::iron_sights::correction(eye, view, sight, barrel, share);
+        // Iron sights: the gun pushed on along the line of sight so the gripping hand is
+        // not at the eye (`iron_sights::eye_relief`); a 3D scope keeps its own eye point.
+        let busy = a.layers.iter().any(|l| ((TAG_ATTACK..TAG_ATTACK + 3).contains(&l.tag) || l.tag == TAG_RELOAD) && l.ease > 0.0);
+        if iron && (!busy || self.sight_relief.is_none()) {
+            let grip = a.skel.by_name.get("Bip01 R Hand").map(|&h| Vec3::from(a.model_space(h).translation));
+            let relief = grip.map_or(0.0, |g| crate::iron_sights::eye_relief(sight, barrel, g));
+            if self.sight_relief.is_none_or(|r| (r - relief).abs() > 0.5) {
+                debug!("true iron sights: eye relief {relief:.1} units");
+            }
+            self.sight_relief = Some(relief);
+        }
+        let relief = if iron { self.sight_relief.unwrap_or(0.0) } else { 0.0 };
+        let a = &self.animator;
+        let g = crate::iron_sights::correction(eye + view.normalize_or_zero() * relief, view, sight, barrel, share);
         let parent = a.skel.parents[t].map_or(Affine3A::IDENTITY, |p| a.model_space(p));
         let moved = parent.inverse() * g * parent * affine(self.animator.locals[t]);
         self.animator.locals[t] = Transform::from_matrix(Mat4::from(moved));
@@ -1043,6 +1061,9 @@ struct Motion {
     /// The camera's bob: first person's, and the third-person pivot's smoothing
     /// (`head_bob.rs`).
     head: crate::head_bob::HeadBob,
+    /// The last times (seconds of the game's clock) the sway moved the first-person arms and
+    /// the head moved the view off the clips' pose (the exit summary, a smoke check).
+    moved_at: [Option<f32>; 2],
     /// The first-person weapon lowered against a wall or a friend (`weapon_lower.rs`).
     lower: WeaponLower,
     /// The true iron sights were last reported on the eye (a smoke check).
@@ -1108,6 +1129,7 @@ impl Default for Motion {
             velocity: Vec2::ZERO,
             sway: ViewSway::default(),
             head: crate::head_bob::HeadBob::default(),
+            moved_at: [None; 2],
             lower: WeaponLower::default(),
             sights_told: false,
             lower_told: false,
@@ -1261,7 +1283,7 @@ impl PlayerBody {
                 weapon_node: None, weapon_parent: None, attached: None,
                 weapon_model: None, weapon_emitter: None, weapon_parts: Vec::new(),
                 idle_logged: false, sights_turned: None, muzzle: None, muzzle_entity: None,
-                casing: None, casing_entity: None, sighting: None, scope_eye: None,
+                casing: None, casing_entity: None, sighting: None, scope_eye: None, sight_relief: None,
                 use_lens: false, drawn: Vec::new(), shown: Some(false), seen: None,
                 furniture: None, since_attack: f32::INFINITY, attack_loop: None,
                 wound_up: None, wound_hit: None, sighting2: None, attack_eject: None, ejected: false, carry: None,
@@ -1624,6 +1646,11 @@ fn report(mut exit: MessageReader<AppExit>, body: Res<PlayerBody>) {
         info!("player body summary: head bob {}, deepest first-person dip {:.2} units; third-person pivot over {} frames moved {pivot:.3} units a frame (rms) against the head's {head:.3}, pivot/head {:.2}", if body.head_bob { "on" } else { "off" }, m.head.peak_dip, m.head.frames, pivot / head.max(1e-3));
         info!("player body summary: head inertia, deepest take-off or landing dip {:.2} units; breathing camera {}, highest rise {:.2} units", m.head.peak_land.max(0.0) + 0.0, if body.head_bob { "on" } else { "off" }, m.head.peak_breath.max(0.0) + 0.0);
         info!("player body summary: most gun recoil back {:.2} units, most out of breath {:.2}", m.sway.peak_recoil.max(0.0) + 0.0, m.head.peak_exertion);
+        info!(
+            "player body summary: off the clips' pose, the arms last moved by Weapon Inertia {}, the view by the head's springs (Camera Motion, Movement Inertia's landing dip) {}",
+            m.moved_at[0].map_or("never".to_string(), |t| format!("at {t:.1} s")),
+            m.moved_at[1].map_or("never".to_string(), |t| format!("at {t:.1} s"))
+        );
         info!("player body summary: weapon lowering {}, lowered {} times, most {:.2}", if body.weapon_lower { "on" } else { "off" }, m.lower.times, m.lower.peak);
     }
 }
@@ -1773,6 +1800,7 @@ fn ensure_body(
         rig.sighting = None;
         rig.sighting2 = None;
         rig.scope_eye = None;
+        rig.sight_relief = None;
         for p in rig.weapon_parts.drain(..).filter(|p| p.on_bone) {
             commands.entity(p.entity).despawn();
         }
@@ -2074,6 +2102,7 @@ fn build_rig(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &
         sighting2: None,
         scope_eye: None,
         use_lens: false,
+        sight_relief: None,
         drawn,
         shown: None,
         seen: None,
@@ -2519,6 +2548,20 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
         // A draw's or a holster's clip keeps a straight fade: the hand-over sets it (below).
         if (first_inertia && l.tag != TAG_EQUIP) || (f.aim_fade.is_some() && is_aim(l.tag)) || crouch_fade(l.tag).is_some() {
             l.smooth = true;
+        } else if !first_inertia && l.tag < TAG_SPECIAL {
+            // None of the rules above holds now (Animation Smoothing, Weapon Handling's aim or
+            // the eased crouch switched off, or the crouch done): the rig's own layers take
+            // the clips' own straight fade again. Kept, a layer that stays (the idle, a drawn
+            // weapon's hold) faded the switched-off way for the rest of the session: the hold
+            // crossed over to the sights along the settling curve over the aim's 0.6 s. A layer
+            // already leaving keeps its way out, but one left to the draw's hand-over (which
+            // no longer runs) goes at the clips' pace instead of never.
+            if !l.is_leaving() {
+                l.straighten();
+                l.fade_out = DEFAULT_FADE;
+            } else if !l.fade_out.is_finite() {
+                l.fade_out = DEFAULT_FADE;
+            }
         }
         // A draw's or a holster's clip lets go slowly: its last pose is not the pose that
         // follows (the arms down after a holster), and over its own short time the
@@ -2572,14 +2615,21 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
             a.want(&c, tag, w, Mode::Once, 0.0);
         }
     }
-    // A landing with movement inertia: the clip is played by its place along the settling
-    // curve over a longer time, so the view dips about as fast as the clip has it and
-    // stands up slowly to a soft end (at the clip's own pace the standing up took 0.4 s).
+    // A landing with movement inertia: the clip is played by its place along
+    // `land_curve` over a longer time, so the view dips at the clip's own pace from the
+    // landing frame on and stands up slowly to a soft end (at the clip's own pace the
+    // standing up took 0.4 s).
     if let (View::First, Some(stretch)) = (rig.view, f.land_stretch) {
         for l in a.layers.iter_mut().filter(|l| l.tag == TAG_LAND && !l.finished()) {
             let length = l.clip.length().max(1e-3);
-            let x = nvf_play::ease::settle_inv((l.time / length).clamp(0.0, 1.0)) + f.dt.max(0.0) / (length * stretch.max(0.1));
-            (l.time, l.rate) = (nvf_play::ease::settle(x) * length, 0.0);
+            let u = nvf_play::inertia::land_curve_inv((l.time / length).clamp(0.0, 1.0), stretch) + f.dt.max(0.0) / (length * stretch.max(1.0));
+            (l.time, l.rate) = (nvf_play::inertia::land_curve(u, stretch) * length, 0.0);
+        }
+    } else {
+        // Played by its clock again (Movement Inertia switched off part-way through a
+        // landing): held at the place it was put at, the view stayed dipped.
+        for l in a.layers.iter_mut().filter(|l| l.tag == TAG_LAND && l.rate == 0.0) {
+            l.rate = 1.0;
         }
     }
     // The idles: each at the time its playback is at. One that has ended holds its last
@@ -3632,6 +3682,7 @@ fn drive_body(
         })
     });
     let sway = crate::view_sway::rescale(sway, sway_share);
+    let mut moved = [sway != SwayPose::NONE, false];
     // The head bob in first person moves the whole arms rig, camera node, arms and
     // weapon together (`head_bob.rs`).
     if let Some(f) = body.first.as_ref() {
@@ -3656,6 +3707,12 @@ fn drive_body(
             on: advanced && state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         });
         at = [at[0] + o.x, at[1] + o.y, at[2] + o.z];
+        moved[1] = o != Vec3::ZERO;
+    }
+    for (at, moved) in m.moved_at.iter_mut().zip(moved) {
+        if moved {
+            *at = Some(time.elapsed_secs());
+        }
     }
     // Lowered against a wall or a friend ahead (`weapon_lower.rs`): a drawn weapon, not
     // fists; aiming, the trigger, an attack or a reload bring it up.

@@ -143,6 +143,11 @@ const LIFT_PEAK_PER_SPEED: f32 = 0.008;
 /// (3.5 until the eighth playtest's "fall-scaled landing": hard landings were held to
 /// about a hop's.)
 const MAX_LIFT: f32 = 6.0;
+/// While the jump's or the landing's dip of the gun is deeper than the first of these
+/// (units) the stride's bob fades, gone from the second, and comes back as the gun rises
+/// again: the landing is the footfall (`head_bob.rs`, the same for the view).
+const LIFT_HUSH_FROM: f32 = 0.2;
+const LIFT_HUSH_FULL: f32 = 0.8;
 const LIFT_TIP: f32 = 1.0 * std::f32::consts::PI / 180.0;
 /// The gun with the view's pitch: looking straight down it comes up by `PITCH_DOWN_RAISE`
 /// and back towards the eye by `PITCH_DOWN_BACK` (units), its muzzle a little up; looking
@@ -244,6 +249,9 @@ const SNEAK_BOB: f32 = 0.6;
 const SNEAK_BREATH: f32 = 0.35;
 /// Seconds to fade the whole effect in or out (Pip-Boy, idles, the switch).
 const FADE_SECONDS: f32 = 0.15;
+/// Fading out, below this share the effect is gone (about 1 s after it was let go): the
+/// last of an exponential fade, at most a few thousandths of a degree or a unit.
+pub const GAIN_FLOOR: f32 = 1e-3;
 /// Seconds the shares down the sights and sneaking take to come and go (times the weight):
 /// switched at once they stepped the hand the frame the stance changed [observed: the
 /// motion trace of 2026-11-14, 0.37 units at an aim's end].
@@ -376,6 +384,8 @@ pub struct ViewSway {
     pub peak_recoil: f32,
     /// How much of the bob shows (follows the speed on a spring).
     bob: Spring,
+    /// How much of the bob's lowering (its middle) shows: follows the speed in the air too.
+    bob_carry: Spring,
     /// Breathing: where in the figure of eight (0–1) and how much of it shows.
     breath_phase: f32,
     breath: f32,
@@ -423,6 +433,11 @@ impl ViewSway {
         // The springs' times and the sizes grow with the weapon's weight.
         let slow = heft;
         self.gain += (f32::from(u8::from(i.on)) - self.gain) * follow(FADE_SECONDS);
+        // Switched off, the fade ends at nothing, not a hair over it: the arms are then the
+        // clips' own exactly, as in the original (`SwayPose::NONE`).
+        if !i.on && self.gain < GAIN_FLOOR {
+            self.gain = 0.0;
+        }
 
         // Turn lag: from how fast the view turns this frame. A jump of the view (a
         // teleport, an idle letting go) is not a turn: the arms go with it.
@@ -513,8 +528,12 @@ impl ViewSway {
         // The bob follows the speed; breathing shows standing still, and out of breath
         // always, faster and larger.
         let speed = i.velocity.length();
-        let bob_target = if i.airborne { 0.0 } else { (speed / FULL_BOB_SPEED).min(1.0) };
+        // In the air the stride's bob fades and its middle stays (`head_bob.rs`, the same
+        // for the view): the gun lands where it was carried.
+        let running = (speed / FULL_BOB_SPEED).min(1.0);
+        let bob_target = if i.airborne { 0.0 } else { running };
         self.bob.step(bob_target, omega_for(BOB_SETTLE_SECONDS * slow), dt);
+        self.bob_carry.step(running, omega_for(BOB_SETTLE_SECONDS * slow), dt);
         let exertion = i.exertion.clamp(0.0, 1.0);
         let still = if !i.airborne && speed < BREATH_BELOW_SPEED { 1.0 } else { 0.0f32 };
         let breath_goal = if i.breathing { still.max(exertion) } else { 0.0 };
@@ -530,14 +549,16 @@ impl ViewSway {
         let (a, n) = (self.sighted.value.clamp(0.0, 1.0), self.crouched.value.clamp(0.0, 1.0));
         let mix = |share: f32, by: f32| 1.0 + (share - 1.0) * by;
         let sway_share = g * mix(SIGHTS_SWAY, a);
-        let bob_share = g * self.bob.value * mix(SIGHTS_BOB, a) * mix(SNEAK_BOB, n);
+        let bob_calm = g * mix(SIGHTS_BOB, a) * mix(SNEAK_BOB, n);
+        let hush = 1.0 - smoothstep(LIFT_HUSH_FROM, LIFT_HUSH_FULL, -soft_clamp(self.lift.out.value, MAX_LIFT * heft));
+        let (bob_share, bob_carried) = (bob_calm * self.bob.value * hush, bob_calm * self.bob_carry.value);
         let breath_calm = mix(SNEAK_BREATH, n);
         let breath_share = g * self.breath * heft * (1.0 + (EXERTED_SIZE - 1.0) * exertion) * (breath_calm + (SIGHTS_SWAY - breath_calm) * a);
         let recoil_share = g * mix(SIGHTS_RECOIL, a);
         let back = -soft_clamp(-self.recoil[0].value, MAX_RECOIL_BACK) * recoil_share;
         let kick_up = soft_clamp(self.recoil[1].value, MAX_RECOIL_UP) * recoil_share;
         let kick_side = soft_clamp(self.recoil[2].value, MAX_RECOIL_UP) * recoil_share;
-        self.peak_recoil = self.peak_recoil.max(-back);
+        self.peak_recoil = self.peak_recoil.max(-back) + 0.0; // -0.0 to 0.0 for the summary
         let lag = self.lag * sway_share;
         let lift = soft_clamp(self.lift.out.value, MAX_LIFT * heft) * sway_share;
         // The raise's lag is the act of aiming itself: not calmed down the sights.
@@ -551,11 +572,10 @@ impl ViewSway {
         // muzzle down.
         // Walking ahead tips the muzzle down a little; a reload leans the gun over.
         let ahead_w = omega_for(AHEAD_SECONDS * 0.6 * slow);
-        let ahead_goal = if i.airborne { 0.0 } else { (i.velocity.y / AHEAD_FULL_SPEED).clamp(0.0, 1.0) };
+        let ahead_goal = (i.velocity.y / AHEAD_FULL_SPEED).clamp(0.0, 1.0);
         self.ahead[0].step(ahead_goal, ahead_w, dt);
         let first = self.ahead[0].value;
         self.ahead[1].step(first, ahead_w, dt);
-        let walk = self.ahead[1].value * g * (1.0 - a);
         let reload_w = omega_for(RELOAD_SECONDS * slow);
         self.reload[0].step(i.reloading.clamp(0.0, 1.0), reload_w, dt);
         let first = self.reload[0].value;
@@ -567,6 +587,12 @@ impl ViewSway {
         let first = self.jump_tip[0].value;
         self.jump_tip[1].step(first, jump_w, dt);
         let jump_tip = Quat::from_rotation_x(-JUMP_TIP * self.jump_tip[1].value * g * (1.0 - a));
+        // Off the ground the jump's tip takes the walking tip's place, at its own pace each
+        // way: running ahead the muzzle goes from the one to the other in one move. The walk's
+        // springs follow the speed through the air; with them let go in the air they came
+        // back over 0.6 s after a running landing, a second, slower dip of the gun after the
+        // jump tip's return (the trace `movement-inertia-trace-run-jump`).
+        let walk = self.ahead[1].value * g * (1.0 - a) * (1.0 - self.jump_tip[1].value.clamp(0.0, 1.0));
         // The view's pitch (up positive): down raises the gun and draws it in, up lowers it.
         let s = i.pitch.sin();
         let (down, up) = ((-s).max(0.0) * g * (1.0 - a), s.max(0.0) * g * (1.0 - a));
@@ -575,14 +601,14 @@ impl ViewSway {
         let turn = Quat::from_rotation_z(-lag.x + kick_side) * Quat::from_rotation_x(tip);
         let a = std::f32::consts::TAU * (i.phase - FOOTFALL_PHASE);
         // Down at each footfall (twice a cycle), across once a cycle.
-        let dip = -BOB_DIP * 0.5 * (1.0 + (2.0 * a).cos()) * bob_share;
+        let dip = -BOB_DIP * 0.5 * (bob_carried + (2.0 * a).cos() * bob_share);
         let swing = a.sin();
         let roll = lag.x * LAG_ROLL + BOB_ROLL * swing * bob_share + self.lean.value * sway_share + RELOAD_ROLL * reload;
         let b = std::f32::consts::TAU * self.breath_phase;
         let breath = Vec2::new(b.sin(), 0.5 * (2.0 * b).sin()) * BREATH_WIDTH * breath_share;
         let offset = Vec3::new(BOB_SWAY * swing * bob_share + hand.x + breath.x, hand.y + back, dip + lift + aim + breath.y + hand.y.min(0.0) * AHEAD_DROP) + pitch_offset + Vec3::new(-RELOAD_IN * reload, 0.0, -AHEAD_WALK_DROP * walk - RELOAD_DROP * reload);
         self.peak_lag = self.peak_lag.max(lag.abs());
-        self.peak_dip = self.peak_dip.max(-dip);
+        self.peak_dip = self.peak_dip.max(-dip) + 0.0; // -0.0 to 0.0 for the summary
         self.peak_lift_dip = self.peak_lift_dip.max(-lift);
         // The jump's tip turns about the grip: the turn about the eye and a move that puts
         // the grip back.
@@ -850,11 +876,31 @@ mod tests {
         let mut air = ViewSway::default();
         let a = settle(&mut free, input(0.0, v, FOOTFALL_PHASE), 240).offset.z;
         let b = settle(&mut sights, SwayInput { sights: true, ..input(0.0, v, FOOTFALL_PHASE) }, 240).offset.z;
-        // In the air: no dip where the gun is held (the jump's tip turns it about the grip).
+        // In the air the stride's bob is gone where the gun is held (the jump's tip turns it
+        // about the grip); its middle, half the dip at a run, stays, so the gun lands where
+        // it was carried.
         let c = settle(&mut air, SwayInput { airborne: true, ..input(0.0, v, FOOTFALL_PHASE) }, 240);
         let c = (c.rotation * GRIP_PIVOT + c.offset).z - GRIP_PIVOT.z;
         assert!(b > a * 0.5 && b < 0.0, "{a} {b}");
-        assert!(c.abs() < 1e-3, "{c}");
+        assert!((c + 0.5 * BOB_DIP).abs() < 1e-3, "{c}");
+    }
+
+    #[test]
+    fn a_running_landing_does_not_sink_the_gun_after_it() {
+        // Running ahead, 0.6 s in the air and running on, at the stride's place where the
+        // footfall dip is at its middle (its swing is nothing there) and with no push from
+        // the take-off or the landing: 0.35 s after the landing the gun is where it stays.
+        // With the bob's middle and the walking drop let go in the air, they came back over
+        // half a second after it: the gun sank on after the jump's tip had gone.
+        let v = Vec2::new(0.0, 344.0);
+        let mid = FOOTFALL_PHASE + 0.125;
+        let held = |p: SwayPose| (p.rotation * GRIP_PIVOT + p.offset).z - GRIP_PIVOT.z;
+        let mut s = ViewSway::default();
+        settle(&mut s, input(0.0, v, mid), 240);
+        settle(&mut s, SwayInput { airborne: true, ..input(0.0, v, mid) }, 36);
+        let soon = held(settle(&mut s, input(0.0, v, mid), 21));
+        let later = held(settle(&mut s, input(0.0, v, mid), 90));
+        assert!((soon - later).abs() < 0.05, "0.35 s after the landing {soon}, settled {later}");
     }
 
     #[test]
@@ -1064,5 +1110,55 @@ mod tests {
         settle(&mut s, input(0.0, v, FOOTFALL_PHASE), 120);
         let p = settle(&mut s, SwayInput { on: false, ..input(0.0, v, FOOTFALL_PHASE) }, 120);
         assert!(p.offset.length() < 1e-3, "{p:?}");
+    }
+
+    /// Everything that moves the gun at once, frame `f` of a loop: turning and pitching,
+    /// running with a stride and strafing, breathing out of breath, shots, a blow, a reload,
+    /// raising to aim, drawing, and a jump with its landing.
+    fn busy(f: usize, on: bool) -> SwayInput {
+        let t = f as f32 / 60.0;
+        let jumping = f % 240 >= 200;
+        SwayInput {
+            dt: 1.0 / 60.0,
+            heading: 2.0 * (t * 1.3).sin(),
+            pitch: 0.6 * (t * 0.9).sin(),
+            velocity: Vec2::new(150.0 * (t * 0.7).sin(), 300.0),
+            vertical: if jumping { 290.0 - 980.0 * (f % 240 - 200) as f32 / 60.0 } else { 0.0 },
+            phase: (t / 0.72).fract(),
+            airborne: jumping,
+            sights: f % 300 > 250,
+            raised: f32::from(u8::from(f % 300 > 250)),
+            drawn: f32::from(u8::from(f % 500 > 40)),
+            reloading: f32::from(u8::from(f % 400 > 350)),
+            kick: if f.is_multiple_of(9) { 1.2 } else { 0.0 },
+            punch: if f.is_multiple_of(170) { Vec3::new(0.3, -0.2, -1.0) } else { Vec3::ZERO },
+            exertion: 0.8,
+            heft: heft(12.0),
+            on,
+            ..SwayInput::default()
+        }
+    }
+
+    #[test]
+    fn switched_off_the_arms_are_exactly_the_clips() {
+        // Weapon Inertia (or the Global Toggle) off from the start: no pose at all, whatever
+        // the player does, so `player_body` leaves `Bip01 Translate` as the clips put it, as
+        // in the original. Rescaled for another viewmodel field of view, still none.
+        let mut s = ViewSway::default();
+        for f in 0..1200 {
+            let p = s.update(busy(f, false));
+            assert_eq!(p, SwayPose::NONE, "frame {f}");
+            assert_eq!(rescale(p, 0.8), SwayPose::NONE, "frame {f}, rescaled");
+        }
+        assert_eq!((s.peak_lag, s.peak_dip, s.peak_lift_dip, s.peak_recoil), (Vec2::ZERO, 0.0, 0.0, 0.0), "the exit summary shows none");
+        // On for a while, then off (the settings page part-way through a game): after the
+        // fade, exactly none again.
+        let mut s = ViewSway::default();
+        let most = (0..1200).map(|f| s.update(busy(f, true)).offset.length()).fold(0.0f32, f32::max);
+        assert!(most > 1.0, "it moved while on: {most}");
+        let off: Vec<SwayPose> = (1200..2400).map(|f| s.update(busy(f, false))).collect();
+        let first_exact = off.iter().position(|p| *p == SwayPose::NONE).expect("it ends at none");
+        assert!(first_exact < 90, "it took {first_exact} frames");
+        assert!(off[first_exact..].iter().all(|p| *p == SwayPose::NONE), "exactly none from then on");
     }
 }

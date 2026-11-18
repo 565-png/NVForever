@@ -162,7 +162,13 @@ itself turns exactly as the mouse says.
 - Bob: a dip at each footfall and one sideways swing a stride, at the phase of the
   movement clips (the footstep keys), growing with the ground speed to a run's
   (300 units/s): 0.9 units down, 0.6 across, 1.2° of tilt. Sneaking 60 %, down the sights
-  20 % (the turn lag 35 %), none in the air.
+  20 % (the turn lag 35 %). In the air the stride's swing fades but its middle (half the
+  dip) stays with the ground speed, and while a jump's or landing's dip of the gun is
+  deeper than 0.2-0.8 units the stride fades: the landing is the footfall (2026-11-17,
+  "when holding W - moving forward and jumping, the landing animation has a lag/hitch":
+  with the whole bob gone in the air, the gun rose over a running jump and sank again
+  after it, and the first footfall after the landing dipped it a second time, a dip in
+  two steps; the trace `movement-inertia-trace-run-jump`).
 - Movement lag: a sprung hand pushed by the body's acceleration (spring rate 3.8/s; 10/s
   until the fourth playtest, "the gun slides to the sides too quick", 4.5/s until the
   seventh, "make the gun return to the default position smoother"): starting,
@@ -188,12 +194,17 @@ itself turns exactly as the mouse says.
   the grip (`view_sway::GRIP_PIVOT`, the right hand's place in the view, about 10 right,
   15.7 ahead and 14.6 down) so the gun's back end stays put; from the take-off (rising
   faster than 100 units/s) or once in the air, on two springs of 0.15 s each (× the
-  weights), none down the sights.
+  weights), none down the sights. It takes the walking tip's place (§1.4a, ninth
+  playtest) at its own pace both ways, so running ahead the muzzle goes from the one to
+  the other in one move; the walking tip let go in the air came back over 0.6 s after
+  the landing, a second, slower dip (2026-11-17).
 - The first-person landing clip (it moves `Camera1st`: the view dips about 6 units and
   stands up again, the standing up in 0.4 s at the clip's own pace [observed: the motion
   trace; the head's own landing spring gives 2 of the 8 units]) is played by its
-  place along the settling curve over 1.8 × its length
-  (`inertia::LAND_STRETCH`): the dip comes as fast as before (0.3 s), the standing up
+  place along `1 − (1 − u)^stretch` over 1.8 × its length (`inertia::LAND_STRETCH`,
+  `inertia::land_curve`; the settling curve until 2026-11-17, whose start at no speed
+  played the impact's first frames in slow motion): it starts at the clip's own pace
+  from the landing frame, the dip comes as fast as before (0.3 s), the standing up
   takes 0.7 s and slows to its end (seventh playtest: "make landing after jumping
   smoother - the little stand up to normal position after the camera dips"). Since the
   eighth ("fall-scaled landing") the stretch grows with the fall speed, 1.8 up to 350
@@ -332,7 +343,13 @@ itself turns exactly as the mouse says.
   inertia the climb is 60 % of the original's. The fire clip starts again
   at once at each shot and the arms ease across the step back to its start
   (`Animator::smooth_jump`, the loop seams' inertialization below): its kick shows whole,
-  with no snap between shots.
+  with no snap between shots. At such a jump the offset keeps only the part of its rate
+  that takes it back towards nothing, never past it (`anim_blend::toward_rest`, the
+  overshoot clamp of David Bollo's inertialization, GDC 2018): handed the new clip's
+  whole speed, an offset of almost nothing was flung out and back, and the lever-action
+  Trail Carbine fired as fast as it cycles down its sights took the left hand 9.5 units
+  off the gun for a quarter of a second at each shot (the clip's own 4.6; a tester's
+  video and the trace `movement-inertia-trace-lever-sights`, 2026-11-17).
 - Reloads (eighth playtest: "try improving reloads with springs"): with movement inertia
   a reload's, a jam's and each round's clip starts at once and the arms ease across the
   step to it as across a loop seam (the clip's own motion untouched); at its end the arms
@@ -436,7 +453,7 @@ settings-page.md) [design]:
 | *(an empty line)* | | | |
 | Gameplay | `movement-inertia` | Movement Inertia | The ground speed's springs (starting, gliding to a stop, braking before turning back; the movement clips following a glide); the first-person stance cross-over (1.0 s / 1.1 s) and crouched jumps staying crouched; the view's take-off and landing dip, deeper for a higher fall (`hard_landing`), the longer landing clip (`land_stretch`) and the speed a hard landing takes (`MovementInertia::land`) (`--no-movement-inertia`) |
 | | `weapon-handling` | Weapon Handling | The slower draw and holster (`draw_weight`: 1.5 to 2.4 times the original's) and aim (0.6 s / 0.55 s for a pistol, `aim_weight`), heavier weapons slower still, Agility and Strength by the weapon's class (`attribute_rate`, `aim_rate`); off, the game's own timing with its Agility rate (`--no-weapon-handling`, `MovementInertia::handles`, `equip_rate`, `aim_seconds`) |
-| | `advanced-recoil` | Advanced Recoil | The view's kick eased in and 40 % settling back (`nvf_play::combat`), the view's nudge back from a shot (head bob's springs) |
+| | `advanced-recoil` | Advanced Recoil | The view's kick eased in and 40 % settling back (`nvf_play::combat`), the view's nudge back from a shot (head bob's springs, so shown only with Camera Motion on too) |
 | *(an empty line)* | | | |
 | Visual Only | `weapon-inertia` | Weapon Inertia | The arms' lag, steps, bob, jump and landing dip, the muzzle tip in the air, the breathing drift, the gun's recoil springs, the weapon's weight in all of it (§1.4a); `--no-weapon-sway`, a saved `weapon-sway` read as it |
 | | `animation-smoothing` | Animation Smoothing | Every first-person clip fade on the settling curve, the draw and holster played by their motion along it, eased starts and slow returns of attacks, reloads and jams, the aim's cross-over, the true iron sights' and the zoom's curve, the loop seams, the Pip-Boy's ease; at Weapon Handling's pace, else at the game's own (the aim at the true iron sights' 0.35 s / 0.3 s), so it changes the look only |
@@ -525,6 +542,58 @@ Switching a part off or on while it acts leaves nothing stuck (smoke
 from where it is, and a placement by the game starts the ground velocity from rest
 however near (`MovementInertia::check_game_placed`).
 
+Off means the original's exactly, not "less" (owner, 2026-11-18: with Weapon Inertia off,
+the Global Toggle off and the defaults the held weapon "still shows inertia"; when a part
+is off "the game must fall back to the original's behaviour exactly"). Every first-person
+motion beyond the clips' own pose has one owner, and off it is nothing at all once its
+fade (at most about a second) is over [design]:
+
+| What moves | Where | Owner |
+|---|---|---|
+| The arms and the weapon against the view (`Bip01 Translate`): turn lag, bob, steps, jump and landing dip, muzzle tips, breathing drift, the gun's recoil springs, the trail of a draw or an aim | `view_sway.rs` | Weapon Inertia (a blow's jolt of the gun and its breath out of breath: Camera Motion's, shown only with Weapon Inertia on too) |
+| The whole arms rig with the camera node (the view): bob, head lag, breathing camera, a blow's jolt | `head_bob.rs` | Camera Motion |
+| The view's nudge back from a shot | `head_bob.rs`, on the head's springs | Advanced Recoil, shown only with Camera Motion on (it rides the head's springs) |
+| The view's take-off and landing dip | `head_bob.rs` | Movement Inertia |
+| The view's kick eased in and partly settling back | `nvf_play::combat` | Advanced Recoil (the view and the arms together: the arms rig follows the view) |
+| Clip fades on the settling curve, eased jumps and loop seams (`Animator::smooth_jump`, `Seams`), the draw played by its motion, the hand-over, the stretched landing clip's curve, the Pip-Boy's ease | `player_body.rs` `pose_rig`, `nvf_assets::anim_blend` | Animation Smoothing (the landing clip's stretch: Movement Inertia) |
+| The aim's cross-over time | `pose_rig`, `iron_sights.rs`, `nvf_play::aim_zoom` | Animation Smoothing or Weapon Handling |
+| The stance cross-over | `pose_rig` | Movement Inertia |
+
+Not Advanced Movement, each on its own row: the weapon lowered at a wall or a friend
+(`weapon_lower.rs`, "Lower weapon near walls"), true iron sights and a 3D scope
+(`iron_sights.rs`, `scope_view.rs`), the viewmodel field of view. `Layer::aligned` (the
+blend keeping a rotation on its side of the sphere) is a fix of the shared blend, not an
+effect, and the turn clips (`_1stperson\mtturnleft.kf`, `Blend: 9`) are the original's:
+they key `Bip01 Translate` and `Bip01 Rotate` where the hold clips do (0, 0, −118 and
+the rest pose) [observed: `fnvtool nif decode`, 2026-11-18], so they do not move the gun.
+
+What was left behind when a part was switched off while the game ran (fixed 2026-11-18;
+test `advanced_movement_switched_off_leaves_the_arms_and_the_view_to_the_clips`, which
+runs `drive_body` with every part on, then off, against a game with them off from the
+start):
+
+- The sway's and the head's fades were exponential and never reached nothing; the bob's
+  springs and the breath went on decaying likewise. Below `view_sway::GAIN_FLOOR` they are
+  now nothing, so the arms and the view are the clips' exactly (`SwayPose::NONE`, no
+  offset), as with the part off from the start.
+- A layer that stays (the idle, a drawn weapon's hold, a walk) kept the settling curve and
+  the switched-off part's fade-out time (the aim's 0.6 s, the movement clips' 0.45 s, the
+  crouch's 1.0 s) for the rest of the session: aiming down the sights crossed the hold over
+  along the settling curve. With none of the rules that smooth it holding, a layer is now
+  straightened where it is shown (`Layer::straighten`) and fades over the clips' 0.2 s
+  (`DEFAULT_FADE`); this also ends the eased crouch's hold on the idle and the hold after
+  the crouch. A draw clip left to the hand-over (fade-out "never") goes at the clips' pace.
+- A landing clip played by its place (Movement Inertia) and switched off part-way held
+  still, the view dipped; it plays by its clock again, as a draw clip already did.
+
+The exit summary says when the sway last moved the arms and the head's springs the view
+off the clips' pose (`player body summary: off the clips' pose, the arms last moved by
+Weapon Inertia at <s> s, the view by the head's springs ... at <s> s`, or `never`). Smoke
+`advanced-movement-off-exact-weapon-inertia`, `-global` and `-defaults` reach the owner's
+three states on the settings page from every part on, then walk, aim, fire, jump and
+crouch: the last times must be within the fades after the switch (about 6 s), not during
+the motion after it.
+
 The Global Toggle and Advanced Recoil are on by default; Movement Inertia, Weapon Handling,
 Animation Smoothing, Weapon Inertia and Camera Motion are off (each turned on by its own
 switch, `--movement-inertia`, `--weapon-handling`, `--animation-smoothing`, `--weapon-sway`,
@@ -549,7 +618,12 @@ tuned by eye]:
   showed a 1.5-unit dip, about 2 cm; 3 and 1 in the fourth build, "way too little" at
   the fifth), at the movement clip's
   phase, growing with the ground speed to a run's; sneaking 60 %, down the sights 25 %,
-  none in the air, under the Pip-Boy or while an idle drives the view. The arms' own bob
+  none under the Pip-Boy or while an idle drives the view. In the air the stride's
+  swing fades and its middle (2.6 units at a run) stays with the ground speed, and the
+  stride's footfalls fade while a landing's dip is deeper than 0.5-2 units: a running
+  landing dips the view once and lands it where it was carried (2026-11-17; with the
+  whole bob gone in the air the view rose 2.6 units over a running jump, sank back for
+  half a second after it and dipped a second time at the first footfall). The arms' own bob
   (§1.4a) comes on top. A switch registered in the settings page's Display group and
   shown under NVF Features › Advanced movement (Gameplay › Camera until 2026-11-13, then
   Gameplay › Advanced Inertia until 2026-11-15; `head-bob`,
