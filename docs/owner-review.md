@@ -853,6 +853,13 @@ the spec it links to.
     follow the player's own way from where they stand instead (the last outdoor door
     of that way), which can differ for buildings with several entrances.
     ([quests-dialogue §2](spec-notes/quests-dialogue.md))
+- **Ragdolls for shapeless placeholder corpses (#2753).** [design, #2753] A leveled
+  spawn whose choice is the invisible `nvvoid` placeholder (scale 0.1, no shapes, Health 0)
+  is laid out dead by a new game and gets a two-body ragdoll like any corpse; it is now
+  lifted out of the ground before it starts instead of falling through it. Nothing of it is
+  seen. Ruling otherwise: such corpses are shown dead without a ragdoll (no physics, no
+  fall-through warnings from them) ([physics §4.3](spec-notes/physics.md),
+  [dead-on-spawn §3](spec-notes/dead-on-spawn.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 
