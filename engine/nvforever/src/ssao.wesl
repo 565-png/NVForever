@@ -5,8 +5,10 @@
 // entry `apply` denoises that over the 4 x 4 texels its sample pattern repeats over, keeping
 // to texels on this pixel's surface (so nothing bleeds across a depth edge), and
 // multiplies the picture by it. Under FSR the passes run at the render size before FSR
-// instead, and entry `multiply` gives the factor to a blend (ssao.rs `ao_before_fsr`). An
-// engineering choice, not the original game's.
+// instead, and entry `multiply` gives the factor to a blend (ssao.rs `ao_before_fsr`). In
+// the lighting (ssao.rs `ao_lighting_pass`) entry `denoise` writes the denoised factor per
+// half-resolution texel for the lighting to read instead. An engineering choice, not the
+// original game's.
 //
 // Two estimates of the openness [engineering choice, #2897]: ground-truth ambient occlusion
 // (`gtao_visibility`, the default) and the older count of buried samples on a spiral
@@ -32,7 +34,7 @@ struct Ao {
     area: vec4<f32>,
     // x: 1 for the old estimate, 0 for ground-truth ambient occlusion; y: 1 to show the
     // factor alone as a grey picture (debug switch NVF_PLAY_DEBUG_AO, ssao.rs `AoDebug`);
-    // z, w unused.
+    // z: 1 when the occlusion is asked for in the lighting (ssao.rs; not read here); w unused.
     mode: vec4<f32>,
     // The candidate remedies for the ground-truth estimate's shimmer on plants (debug aid
     // NVF_PLAY_DEBUG_AO_VARIANT, ssao.rs `AoVariant`), all 0 for the estimate as shipped:
@@ -447,6 +449,25 @@ fn multiply(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let open = openness_at(px, d);
     let safe = select(1.0, min(open, 1.0), open >= 0.0);
     return vec4(safe, safe, safe, 1.0);
+}
+
+// In the lighting (ssao.rs `ao_lighting_pass`, ssao_lighting.rs): for each half-resolution
+// texel q the factor of the full pixel 2q, denoised by the same filter `apply` and
+// `multiply` use (`openness_at`, the old estimate's or a variant's included), with that
+// pixel's distance, so the lighting can take each fragment's factor from the texels of its
+// own surface (ssao_lighting.wesl `nvf_ambient_visibility`). The sky and pixels beyond the
+// fade hold 1.
+@fragment
+fn denoise(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
+    let px = vec2<i32>(floor(in.position.xy)) * 2;
+    let d = depth_at(px);
+    if d <= 0.0 {
+        return texel(1.0, SKY);
+    }
+    let open = openness_at(px, d);
+    // Never NaN nor outside 0..1 (comparisons with NaN are false).
+    let safe = select(1.0, clamp(open, 0.0, 1.0), open >= 0.0);
+    return texel(safe, ao.params.z / d);
 }
 
 // How open pixel `px` (depth value `d`, not the sky) is, from the half-resolution texels.

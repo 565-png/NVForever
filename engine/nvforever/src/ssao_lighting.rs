@@ -1,7 +1,7 @@
 //! Ambient occlusion on the ambient light, inside the lighting (#2897 stage two,
 //! docs/design/graphics-enhanced.md §3.1): instead of multiplying the finished picture
-//! (ssao.rs's passes), the occlusion factor scales only the display-value ambient term of
-//! the patched `apply_pbr_lighting` (lights/display_shader.rs `nvf_ambient`), so direct
+//! (ssao.rs's post passes), the occlusion factor scales only the display-value ambient term
+//! of the patched `apply_pbr_lighting` (lights/display_shader.rs `nvf_ambient`), so direct
 //! light, the sun and every highlight stay as they are. An engineering choice, not the
 //! original game's.
 //!
@@ -9,25 +9,30 @@
 //! - bevy_pbr's view component `NvfAmbientOcclusionBindings` (vendored, engine/vendor/README.md):
 //!   a uniform ([`AmbientOcclusionLightingUniform`]) and the half-resolution occlusion at
 //!   mesh view bindings 43-44, which gives the view's depth-writing pipelines the shader def
-//!   `NVF_AMBIENT_OCCLUSION`;
+//!   `NVF_AMBIENT_OCCLUSION`; ssao.rs inserts and removes it during extraction, fills the
+//!   texture in its `ao_lighting_pass` between the prepass and the main pass, and writes the
+//!   uniform;
 //! - ssao_lighting.wesl, imported as `nvforever::ssao_lighting` under that def:
 //!   `nvf_ambient_visibility`, a depth-aware 2 x 2 upsample of the half-resolution texels;
-//! - [`HOOK_EDITS`], patched into `apply_pbr_lighting` by lights.rs right after the sun
+//! - the text hook ([`hook`]), patched into `pbr_functions` by lights.rs right after the sun
 //!   visibility's hook: every statement it adds is under `@if(NVF_AMBIENT_OCCLUSION)`, and
 //!   the one line it replaces is kept word for word under `@if(!NVF_AMBIENT_OCCLUSION)`, so
 //!   without the def the shader text a pipeline compiles is what it was before.
 //!
-//! Nothing inserts the bindings yet: the render-side producer (the pass that fills the
-//! texture, the extraction that inserts the component) comes with the next stages, and
-//! until then no pipeline has the def.
+//! Who reads it (the def's default is the vendored rule: pipelines that write depth): water
+//! and refracting NIF shapes opt out (in no prepass: they would take the bed's or the
+//! wall's occlusion behind them), the landscape's blended layers opt in (they lie on the
+//! prepass's surface), grass and leaf cards read it unless their constants say otherwise
+//! (grass.rs `GRASS_READS_AMBIENT_OCCLUSION`, tree.rs `LEAVES_READ_AMBIENT_OCCLUSION`).
 
 use bevy::asset::{load_internal_asset, uuid_handle};
 use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
 use bevy::shader::Shader;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::sun_visibility::Place;
+pub mod hook;
+pub(crate) use hook::hook_patched;
 
 /// ssao_lighting.wesl, imported by the patched `apply_pbr_lighting` as
 /// `nvforever::ssao_lighting`.
@@ -47,7 +52,6 @@ pub const DISTANCE_TOLERANCE: f32 = 0.05;
 
 /// `NvfAmbientOcclusion` of ssao_lighting.wesl (field for field).
 #[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType)]
-#[cfg_attr(not(test), allow(dead_code))] // the render-side producer (#2897 stage two, C4) fills it
 pub struct AmbientOcclusionLightingUniform {
     /// Exponent, debug view (1 on), fade end (game units), distance tolerance.
     pub params: Vec4,
@@ -55,7 +59,6 @@ pub struct AmbientOcclusionLightingUniform {
     pub extra: Vec4,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // the render-side producer (#2897 stage two, C4) fills it
 impl AmbientOcclusionLightingUniform {
     /// The uniform for an occlusion faded out at `fade_end` (game units), made with
     /// `strength`, with or without the debug view.
@@ -67,19 +70,37 @@ impl AmbientOcclusionLightingUniform {
     }
 }
 
-/// Set once lights.rs has put [`HOOK_EDITS`] into `apply_pbr_lighting`; without it the
-/// occlusion must stay on the picture (stage one's placement).
-static LIGHTING_HOOKED: AtomicBool = AtomicBool::new(false);
-
-/// Record that the hook is in place (lights.rs `patch_display_sum`).
-pub(crate) fn set_lighting_hooked() {
-    LIGHTING_HOOKED.store(true, Ordering::Relaxed);
+/// Whether lights.rs has put the hook into `pbr_functions`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HookState {
+    /// Bevy's `pbr_functions` has not loaded yet.
+    Pending,
+    Installed,
+    /// The source was not as expected: the occlusion stays on the picture.
+    Failed,
 }
 
-/// Whether the hook is in place, so the occlusion can be put in the lighting.
-#[allow(dead_code)] // read by the mode logic in ssao.rs (#2897 stage two, C4)
-pub(crate) fn lighting_hooked() -> bool {
-    LIGHTING_HOOKED.load(Ordering::Relaxed)
+static HOOK_STATE: AtomicU8 = AtomicU8::new(0);
+
+/// Record what became of the hook (lights.rs `patch_display_sum`).
+pub(crate) fn set_hook_state(state: HookState) {
+    HOOK_STATE.store(
+        match state {
+            HookState::Pending => 0,
+            HookState::Installed => 1,
+            HookState::Failed => 2,
+        },
+        Ordering::Relaxed,
+    );
+}
+
+/// What became of the hook; the occlusion goes into the lighting only once it is in place.
+pub(crate) fn hook_state() -> HookState {
+    match HOOK_STATE.load(Ordering::Relaxed) {
+        0 => HookState::Pending,
+        1 => HookState::Installed,
+        _ => HookState::Failed,
+    }
 }
 
 pub struct SsaoLightingPlugin;
@@ -90,91 +111,9 @@ impl Plugin for SsaoLightingPlugin {
     }
 }
 
-/// The display-value ambient line of lights/display_shader.rs `DISPLAY_EDITS`, as it
-/// stands in the patched `apply_pbr_lighting`.
-const AMBIENT_LINE: &str = "        let nvf_ambient = view_bindings::lights.ambient_color.rgb * view_bindings::view.exposure * diffuse_occlusion;\n";
-
-/// The same line kept without the def, and its twin with the occlusion under it. `-view_z`
-/// is the fragment's view distance from its own world position (so the first-person arms,
-/// drawn at a squeezed depth, still compare their real distance with the texels', which the
-/// occlusion pass unsqueezed).
-const AMBIENT_LINE_HOOKED: &str = "        // NVForever ambient occlusion (nvforever ssao_lighting.rs): on the display-value
-        // ambient alone, never on the direct lights nor on Bevy's ambient highlight above.
-        @if(!NVF_AMBIENT_OCCLUSION)
-        let nvf_ambient = view_bindings::lights.ambient_color.rgb * view_bindings::view.exposure * diffuse_occlusion;
-        @if(NVF_AMBIENT_OCCLUSION)
-        let nvf_ambient = view_bindings::lights.ambient_color.rgb * view_bindings::view.exposure * diffuse_occlusion * nvf_ambient_visibility(in.frag_coord.xy, -view_z);
-";
-
-/// The hook in bevy_pbr's `apply_pbr_lighting` [documented:
-/// engine/vendor/bevy_pbr/src/render/pbr_functions.wesl (bevy_pbr 0.20.1) with lights.rs
-/// `DISPLAY_EDITS` and sun_visibility.rs `HOOK_EDITS` made; the tests here apply all three
-/// to that file], in order, each at the first occurrence of its anchor after the last edit:
-/// (anchor, text, where the text goes). Deliberately left alone: Bevy's
-/// `ambient::ambient_light` call and `let diffuse_occlusion = in.diffuse_occlusion;`, since
-/// the NIF and terrain shaders subtract exactly that ambient highlight using the
-/// un-occluded `diffuse_occlusion` (nvf_assets nif_material.wesl, terrain.wesl), and an
-/// occluded highlight would be over-subtracted there.
-pub const HOOK_EDITS: [(&str, &str, Place); 3] = [
-    (
-        "import bevy_render::maths::{E, powsafe};\n",
-        "// NVForever ambient occlusion (nvforever ssao_lighting.rs).
-@if(NVF_AMBIENT_OCCLUSION) import nvforever::ssao_lighting::{nvf_ambient_visibility, nvf_ao_debug};
-",
-        Place::After,
-    ),
-    (AMBIENT_LINE, AMBIENT_LINE_HOOKED, Place::Replace),
-    (
-        "    return output_color;\n}\n",
-        "    // NVForever ambient occlusion: the debug view draws the factor that reached the
-    // ambient (fog still follows).
-    @if(NVF_AMBIENT_OCCLUSION)
-    if nvf_ao_debug() {
-        output_color = vec4<f32>(vec3<f32>(nvf_ambient_visibility(in.frag_coord.xy, -view_z)), output_color.a);
-    }
-
-",
-        Place::Before,
-    ),
-];
-
-/// The index in [`HOOK_EDITS`] of the debug view's edit at the lighting's return line.
-const RETURN_EDIT: usize = 2;
-
-/// `source` (lights.rs's display-value patch and the sun visibility's hook made) with
-/// [`HOOK_EDITS`]; `None` when an anchor is missing (Bevy or the display patch changed),
-/// and the caller keeps `source`.
-pub fn hook_patched(source: &str) -> Option<String> {
-    let mut out = String::with_capacity(source.len() + 2048);
-    let mut rest = source;
-    for (i, (anchor, text, place)) in HOOK_EDITS.into_iter().enumerate() {
-        let at = rest.find(anchor)?;
-        // The debug view's return line is `apply_pbr_lighting`'s own: no other function
-        // begins between the ambient line and it (the next function that ends so is
-        // `main_pass_post_lighting_processing`).
-        if i == RETURN_EDIT && rest[..at].contains("\nfn ") {
-            return None;
-        }
-        out.push_str(&rest[..at]);
-        match place {
-            Place::Before => {
-                out.push_str(text);
-                out.push_str(anchor);
-            }
-            Place::After => {
-                out.push_str(anchor);
-                out.push_str(text);
-            }
-            Place::Replace => out.push_str(text),
-        }
-        rest = &rest[at + anchor.len()..];
-    }
-    out.push_str(rest);
-    Some(out)
-}
-
 #[cfg(test)]
 mod tests {
+    use super::hook::*;
     use super::*;
     use crate::lights::unix_lines;
     use crate::sun_visibility::tests::{balanced, block_after, code, code_lines, resolve_known};
@@ -243,14 +182,17 @@ mod tests {
         let (input, _) = hooked();
         assert_eq!(input.matches(HOOK_EDITS[0].0).count(), 1, "the import line");
         assert_eq!(input.matches(AMBIENT_LINE).count(), 1, "the display-value ambient line");
-        // The return line ends apply_pbr_lighting, the first function after the ambient
-        // line that returns `output_color` so; the other functions that end so lie elsewhere.
-        let after_ambient = &input[input.find(AMBIENT_LINE).expect("ambient line")..];
-        let ret = after_ambient.find(HOOK_EDITS[2].0).expect("the return after the ambient line");
-        assert!(after_ambient[..ret].find("\nfn ").is_none(), "the return is the same function's");
+        // The debug view's anchor ends main_pass_post_lighting_processing, once in the file.
+        assert_eq!(input.matches(DEBUG_ANCHOR).count(), 1, "the debug view's anchor");
+        let at = input.find(DEBUG_ANCHOR).unwrap();
+        let last_fn = input[..at].rfind("\nfn ").expect("a function before it");
+        assert!(input[last_fn..].starts_with(DEBUG_FUNCTION), "the anchor is main_pass_post_lighting_processing's");
         for (anchor, _, _) in HOOK_EDITS {
             assert!(hook_patched(&input.replacen(anchor, "", 1)).is_none(), "missing {anchor:?}");
         }
+        // The debug anchor in another function (Bevy moved it) is refused too.
+        let moved = input.replacen(DEBUG_ANCHOR, &format!("}}\nfn nvf_elsewhere(pbr_input: pbr_types::PbrInput, output_color: vec4<f32>) {{\n{DEBUG_ANCHOR}"), 1);
+        assert!(hook_patched(&moved).is_none());
     }
 
     /// The two lines left alone (module notes, HOOK_EDITS) are the same before and after.
@@ -266,8 +208,9 @@ mod tests {
     }
 
     /// With the def the occlusion reaches the ambient line and the debug view alone: once
-    /// in the ambient, once in the debug view, after `view_z` is declared, the import before
-    /// the function; brackets close in every variant; the names imported are the WESL's.
+    /// in the ambient (after `view_z` is declared), once in the debug view at the end of
+    /// `main_pass_post_lighting_processing`, the import before the function; brackets close in
+    /// every variant; the names imported are the WESL's.
     #[test]
     fn hook_resolves_with_and_without_the_def() {
         let (_, hooked) = hooked();
@@ -285,19 +228,33 @@ mod tests {
                 let lighting = block_after(&r, "fn nvf_apply_pbr_lighting(");
                 assert!(!lighting.contains("\nfn "), "{case}: the lighting function ends where it should");
                 assert_eq!(lighting.matches("let nvf_ambient = ").count(), 1, "{case}: one ambient line");
-                assert_eq!(lighting.matches("nvf_ambient_visibility(in.frag_coord.xy, -view_z)").count(), if on { 2 } else { 0 }, "{case}");
+                assert_eq!(lighting.matches("nvf_ambient_visibility(in.frag_coord.xy, -view_z)").count(), usize::from(on), "{case}: the ambient alone");
+                assert!(!lighting.contains("nvf_ao_debug"), "{case}: no debug view in the lighting itself");
+                let post = block_after(&r, "fn main_pass_post_lighting_processing(");
+                assert!(!post.contains("\nfn "), "{case}");
+                assert_eq!(post.matches("if nvf_ao_debug() {").count(), usize::from(on), "{case}: the debug view at the end");
                 if on {
                     let at = |s: &str| lighting.find(s).unwrap_or_else(|| panic!("{case}: {s}"));
                     assert!(at("let view_z") < at("* nvf_ambient_visibility("), "{case}: view_z before the ambient line");
                     assert!(at("* nvf_ambient_visibility(") < at("    // Total light\n"), "{case}");
-                    assert!(at("    // Total light\n") < at("if nvf_ao_debug()"), "{case}: the debug view after the sum");
-                    if sun {
-                        assert!(at("vec3<f32>(nvf_sun_debug)") < at("if nvf_ao_debug()"), "{case}: the debug view after the sun's, so it wins");
-                    }
+                    let p = |s: &str| post.find(s).unwrap_or_else(|| panic!("{case}: {s}"));
+                    // After the fog (and the dither), before the alpha is premultiplied; the
+                    // same position and distance as the ambient line's.
+                    assert!(p("apply_fog(") < p("if nvf_ao_debug()") && p("if nvf_ao_debug()") < p("premultiply_alpha(pbr_input.material.flags"), "{case}");
+                    assert!(post.contains("nvf_ambient_visibility(pbr_input.frag_coord.xy, -nvf_view_z)"));
                     assert!(r.find("import nvforever::ssao_lighting::{nvf_ambient_visibility, nvf_ao_debug};").expect("import") < r.find("fn nvf_apply_pbr_lighting(").unwrap());
                 }
             }
         }
+        // The debug view's distance is the lighting's `view_z`, written out the same way.
+        let lighting_view_z = &hooked[hooked.find("    let view_z = dot(vec4<f32>(").unwrap()..];
+        let lighting_view_z = &lighting_view_z[..lighting_view_z.find("in.world_position);").unwrap()];
+        let debug_view_z = &DEBUG_TEXT[DEBUG_TEXT.find("        let nvf_view_z = dot(vec4<f32>(").unwrap()..];
+        let debug_view_z = &debug_view_z[..debug_view_z.find("pbr_input.world_position);").unwrap()];
+        fn rows(t: &str) -> Vec<&str> {
+            t.lines().skip(1).map(str::trim).collect()
+        }
+        assert_eq!(rows(lighting_view_z), rows(debug_view_z));
         let wesl = wesl();
         for f in ["fn nvf_ambient_visibility(frag: vec2<f32>, dist: f32) -> f32", "fn nvf_ao_debug() -> bool"] {
             assert!(wesl.contains(f), "ssao_lighting.wesl has {f}");
