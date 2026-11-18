@@ -28,19 +28,27 @@
 //! - **LOD hand-off** ([`DrawnCells`]): an object LOD block's segment holds the LOD of its
 //!   cell's flagged references (world.md §7), so lod.rs hides the segments of ring cells
 //!   and cuts the LOD terrain out under them exactly as for loaded cells, crossfading with
-//!   their fade. A cell keeps its segment when a flagged reference in it cannot be drawn
-//!   here (an actor, placed water, one disabled at the start that the game has enabled):
-//!   then the segment and the full models both show there, rather than nothing.
+//!   their fade. A cell keeps its segment when a flagged reference in it is not drawn here
+//!   (an actor, placed water, one disabled at the start that the game has enabled, one
+//!   whose model drew nothing): then the segment shows beside the full models of the
+//!   cell's other references, which doubles those (a kept segment holds the LOD of all
+//!   the cell's flagged references), rather than leave a hole. Elsewhere no doubling at
+//!   rest. The hand-off with a loaded cell follows one rule ([`hand_off`]): the LOD
+//!   segment, the ring cell and the loaded cell draw each pixel once at every moment.
 //! - **Streaming** ([`stream`]): ring cells are the cells `r + 1 ..= R` steps from the
-//!   loaded grid's centre (`r` the loaded radius, `R` the ring's), retired beyond `R + 1`
-//!   after fading out, and retired once their square is loaded and fully drawn within the
-//!   loaded radius. In the loaded grid's one cell of hysteresis a ring cell may stand by
-//!   under a loaded cell, drawn as the complement of its fade, so it takes over when that
-//!   cell fades out. New ring cells are read ahead on the worker threads only while the
-//!   loaded read-ahead is idle and spawned, nearest first, within their own
-//!   [`SPAWN_BUDGET`] a frame, only while the loaded grid is complete; a start, a door's
-//!   travel or a change of worldspace clears the ring and never waits for it; there is no
-//!   ring indoors.
+//!   loaded grid's centre (`r` the loaded radius, `R` the ring's), faded out beyond
+//!   `R + 1` (and, when the row is turned off or made smaller, those out of its new
+//!   reach), and dropped once their square is loaded and fully drawn within the loaded
+//!   radius. In the loaded grid's one cell of hysteresis a ring cell may stand by under a
+//!   loaded cell, drawn as the complement of its fade, so it takes over when that cell
+//!   fades out. New ring cells are read ahead on the worker threads only while the loaded
+//!   read-ahead is idle and spawned, nearest first, within [`SPAWN_BUDGET`] a frame (the
+//!   read-ahead's bookkeeping included; a cell's landscape or one reference is never
+//!   split, so a frame can pass the budget by one of them), only while the loaded grid is
+//!   complete. No model or landscape is prepared on the main thread for the ring: a
+//!   reference whose model (a destruction stage's too) is not prepared waits for the
+//!   worker threads. A door's travel (`Streamer::travels`), a change of worldspace or
+//!   going indoors drops the ring and its readings at once and never waits for it.
 //! - **Shadows**: ring meshes cast no sun shadow while the sun's cascades end inside the
 //!   ring's inner edge ([`ring_casts_shadows`]: the default 8,000 units against the
 //!   8,192 a ring cell is at least from the camera); with longer reach they cast.
@@ -164,6 +172,22 @@ pub fn ring_range(own: f32, loaded: Option<f32>) -> RingRange {
     }
 }
 
+/// How a ring cell and the loaded cell of its square share the pixels, so that the LOD
+/// segment, the ring cell and the loaded cell cover each pixel once at every moment
+/// [design]: a ring cell under a loaded cell is held at rest (its level 1, so its LOD
+/// segment's level is 1 and the segment draws nothing) and draws the complement of the
+/// loaded cell's step ([`ring_range`]); a ring cell that is fading out when a loaded cell
+/// comes is dropped at once, leaving the loaded cell and the LOD to share the pixels as
+/// they do without the ring. `level`, `leaving`: the ring cell's; `loaded`: a loaded cell
+/// is in its square. The ring cell's new level, or `None` to drop it.
+pub fn hand_off(level: f32, leaving: bool, loaded: bool) -> Option<f32> {
+    match (loaded, leaving) {
+        (false, _) => Some(level),
+        (true, true) => None,
+        (true, false) => Some(1.0),
+    }
+}
+
 /// One drawn ring cell.
 #[derive(Debug)]
 pub struct RingCellState {
@@ -174,13 +198,16 @@ pub struct RingCellState {
     pub leaving: bool,
     /// A flagged reference here is not drawn: the cell's LOD segment stays (module notes).
     pub keep_segment: bool,
+    /// References the size cut left out while the cell was in the ring's outermost step,
+    /// spawned once it is not ([`SIZE_CUT`]).
+    small: Vec<u32>,
     applied: Option<RingRange>,
     shadow: Option<bool>,
 }
 
 impl RingCellState {
-    fn new(entity: Entity, level: f32, keep_segment: bool) -> RingCellState {
-        RingCellState { entity, level, leaving: false, keep_segment, applied: None, shadow: None }
+    fn new(entity: Entity, level: f32, keep_segment: bool, small: Vec<u32>) -> RingCellState {
+        RingCellState { entity, level, leaving: false, keep_segment, small, applied: None, shadow: None }
     }
 
     /// Fully drawn and staying.
@@ -194,10 +221,19 @@ struct RingSpawn {
     entity: Entity,
     refs: Vec<u32>,
     next: usize,
+    /// References whose model was not prepared yet: tried again once `refs` are done.
+    later: Vec<u32>,
     origin: Vec3,
     keep_segment: bool,
-    /// In the ring's outermost cells ([`SIZE_CUT`]).
+    /// In the ring's outermost step ([`SIZE_CUT`]), and what the cut left out.
     outer: bool,
+    small: Vec<u32>,
+}
+
+impl RingSpawn {
+    fn done(&self) -> bool {
+        self.next >= self.refs.len() && self.later.is_empty()
+    }
 }
 
 /// What the ring did over the run, for the exit summary.
@@ -214,8 +250,9 @@ pub struct RingStats {
 pub struct FullDetailRing {
     /// Grid steps it reaches (0: off).
     pub radius: i32,
-    /// The worldspace its cells are of.
+    /// The worldspace its cells are of, and `Streamer::travels` when they were drawn.
     world: u32,
+    travels: u64,
     pub cells: HashMap<Grid, RingCellState>,
     spawning: HashMap<Grid, RingSpawn>,
     dying: Vec<Entity>,
@@ -228,11 +265,13 @@ pub struct FullDetailRing {
 }
 
 impl FullDetailRing {
-    /// Drop every ring cell now (a start, a travel, the setting changed).
+    /// Drop every ring cell and every reading now: a door's travel, a change of
+    /// worldspace, going indoors (the loaded cells go at once then too).
     fn clear(&mut self, commands: &mut Commands) {
         for e in self.cells.drain().map(|(_, s)| s.entity).chain(self.spawning.drain().map(|(_, s)| s.entity)).chain(self.dying.drain(..)) {
             commands.entity(e).try_despawn();
         }
+        self.ahead = ReadAhead::default();
     }
 
     /// Hide a ring cell and despawn it over the next frames.
@@ -259,10 +298,23 @@ pub fn ring_cells(centre: Grid, loaded: i32, ring: i32) -> Vec<Grid> {
     out
 }
 
-/// Whether a drawn ring cell `steps` out goes: beyond the ring's one cell of hysteresis
-/// (`ring + 1`), or inside the loaded radius where its loaded cell is fully drawn.
-pub fn retires(steps: i32, loaded: i32, ring: i32, loaded_full: bool) -> bool {
-    steps > ring + 1 || (steps <= loaded && loaded_full)
+/// Whether a drawn ring cell `steps` out goes at once: inside the loaded radius where its
+/// loaded cell is fully drawn.
+pub fn covered(steps: i32, loaded: i32, loaded_full: bool) -> bool {
+    steps <= loaded && loaded_full
+}
+
+/// Whether a drawn ring cell `steps` out fades out: past the ring's one step of
+/// hysteresis (`ring + 1`), the ring off (`ring` 0), or, in the frame the ring shrank,
+/// past its new reach.
+pub fn fades_out(steps: i32, ring: i32, shrank: bool) -> bool {
+    ring == 0 || steps > ring + 1 || (shrank && steps > ring)
+}
+
+/// Whether a cell whose references the size cut left out should get them now: it is no
+/// longer in the ring's outermost step.
+pub fn small_due(steps: i32, ring: i32, left_out: usize) -> bool {
+    left_out > 0 && steps < ring
 }
 
 /// What the ring does with a reference ([`ring_choice`]).
@@ -333,72 +385,90 @@ pub fn stream(
     children: Query<&Children>,
 ) {
     let ring = &mut *ring;
-    world::despawn_dying(&mut commands, &mut ring.dying, &children);
     let choice = graphics.full_detail;
-    if choice.radius() != ring.radius {
+    if choice.radius() == 0 && ring.radius == 0 && ring.cells.is_empty() && ring.spawning.is_empty() && ring.dying.is_empty() {
+        return;
+    }
+    world::despawn_dying(&mut commands, &mut ring.dying, &children);
+    // Gone at once with the loaded cells: a travel, another worldspace, an interior.
+    let centre = streamer.centre.filter(|_| streamer.interior.is_none());
+    if ring.world != world.world || ring.travels != streamer.travels || centre.is_none() {
         ring.clear(&mut commands);
+        ring.world = world.world;
+        ring.travels = streamer.travels;
+    }
+    // The row changed: cells out of the new reach fade out (below), as cells leaving do.
+    let shrank = choice.radius() < ring.radius;
+    if choice.radius() != ring.radius {
         ring.radius = choice.radius();
         if ring.radius > 0 {
             info!("full detail: {0} x {0} ring (radius {1})", choice.side(), ring.radius);
             ring.used = Some(choice);
+        } else {
+            ring.ahead = ReadAhead::default();
         }
     }
-    if ring.radius == 0 {
-        return;
-    }
-    let Ok(root) = root.single() else { return };
-    // No ring indoors, nor while the loaded cells are drawn anew (a start, a travel).
-    let centre = streamer.centre.filter(|_| streamer.interior.is_none() && streamer.settled);
-    if ring.world != world.world || centre.is_none() {
-        ring.clear(&mut commands);
-        ring.world = world.world;
-    }
     let Some(centre) = centre else { return };
+    let Ok(root) = root.single() else { return };
     let (loaded, outer) = (streamer.radius, ring.radius);
     let fading = streamer.fade_secs > 0.0;
     let loaded_full = |c: &Grid| streamer.loaded.contains_key(c) && !streamer.fades.contains_key(c);
 
-    // Retire: far cells fade out first; cells their loaded cell covers go at once.
-    let gone: Vec<Grid> = ring.cells.keys().filter(|&&c| retires(steps(c, centre), loaded, outer, loaded_full(&c))).copied().collect();
-    for c in gone {
-        if fading && steps(c, centre) > outer + 1 {
-            if let Some(s) = ring.cells.get_mut(&c) {
-                s.leaving = true;
+    // The hand-off with the loaded cells ([`hand_off`]), then the cells that go.
+    let mut gone: Vec<Grid> = Vec::new();
+    for (c, s) in &mut ring.cells {
+        let st = steps(*c, centre);
+        match hand_off(s.level, s.leaving, streamer.loaded.contains_key(c)) {
+            None => gone.push(*c),
+            Some(_) if covered(st, loaded, loaded_full(c)) => gone.push(*c),
+            Some(level) => {
+                s.level = level;
+                if fades_out(st, outer, shrank) {
+                    if fading {
+                        s.leaving = true;
+                    } else {
+                        gone.push(*c);
+                    }
+                }
             }
-        } else if let Some(s) = ring.cells.remove(&c) {
-            ring.retire(&mut commands, s.entity);
         }
     }
-    let gone: Vec<Grid> = ring.spawning.keys().filter(|&&c| steps(c, centre) > outer + 1 || steps(c, centre) <= loaded).copied().collect();
-    for c in gone {
-        if let Some(sp) = ring.spawning.remove(&c) {
-            ring.retire(&mut commands, sp.entity);
-        }
-    }
-    let want = ring_cells(centre, loaded, outer);
+    let want = if outer > 0 { ring_cells(centre, loaded, outer) } else { Vec::new() };
     for c in &want {
         if let Some(s) = ring.cells.get_mut(c) {
             s.leaving = false;
         }
     }
     let rate = if fading { time.delta_secs() / streamer.fade_secs } else { 1.0 };
-    let mut faded = Vec::new();
     for (c, s) in &mut ring.cells {
         s.level = (s.level + if s.leaving { -rate } else { rate }).clamp(0.0, 1.0);
         if s.leaving && s.level <= 0.0 {
-            faded.push(*c);
+            gone.push(*c);
         }
     }
-    for c in faded {
+    for c in gone {
         if let Some(s) = ring.cells.remove(&c) {
             ring.retire(&mut commands, s.entity);
         }
     }
+    // A cell being spawned is not drawn yet: dropped at once.
+    let dropped: Vec<Grid> = ring.spawning.keys().filter(|&&c| fades_out(steps(c, centre), outer, shrank) || steps(c, centre) <= loaded).copied().collect();
+    for c in dropped {
+        if let Some(sp) = ring.spawning.remove(&c) {
+            ring.retire(&mut commands, sp.entity);
+        }
+    }
+    if outer == 0 {
+        return;
+    }
 
-    // New work only while the loaded grid is complete and nothing of it is spawning.
+    // New work only while the loaded grid is complete and nothing of it is spawning. The
+    // budget's clock starts before the read-ahead's bookkeeping, which is part of it.
+    let started = Instant::now();
+    let deadline = started + SPAWN_BUDGET;
     let behind_screen = loading.is_some_and(|l| l.unseen_frames());
     let complete = (-loaded..=loaded).all(|dx| (-loaded..=loaded).all(|dy| streamer.loaded.contains_key(&(centre.0 + dx, centre.1 + dy))));
-    let idle = complete && streamer.spawning.is_empty() && !behind_screen;
+    let idle = streamer.settled && complete && streamer.spawning.is_empty() && !behind_screen;
     let tile = terrain.settings.tile;
     {
         let FullDetailRing { cells, spawning, ahead, .. } = ring;
@@ -406,10 +476,9 @@ pub fn stream(
         world::read_ahead_cells(&world, ahead, area, |c| cells.contains_key(c) || spawning.contains_key(c), &streamer.hide, ring_models, tile, &mut models);
     }
     if !idle {
+        ring.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
         return;
     }
-    let started = Instant::now();
-    let deadline = started + SPAWN_BUDGET;
     let sim = sim.as_deref();
     let ctx = RefCtx { world: &world, streamer: &streamer, centre, sim };
     let mut under_way: Vec<Grid> = ring.spawning.keys().copied().collect();
@@ -420,39 +489,65 @@ pub fn stream(
         }
         let Some(mut sp) = ring.spawning.remove(&c) else { continue };
         spawn_refs(&mut commands, &ctx, &mut sp, deadline, &mut models, &mut emittance, ring);
-        if sp.next < sp.refs.len() {
-            ring.spawning.insert(c, sp);
-        } else {
+        if sp.done() {
             finish(&mut commands, ring, c, sp, fading);
+        } else {
+            ring.spawning.insert(c, sp);
         }
+    }
+    // Drawn cells no longer outermost get what the size cut left out of them.
+    let mut due: Vec<Grid> = ring.cells.iter().filter(|(c, s)| !s.leaving && small_due(steps(**c, centre), outer, s.small.len())).map(|(c, _)| *c).collect();
+    due.sort_by_key(|&c| order_key(c, centre));
+    for c in due {
+        if Instant::now() >= deadline {
+            break;
+        }
+        let Some(mut s) = ring.cells.remove(&c) else { continue };
+        let mut sp = RingSpawn { entity: s.entity, refs: std::mem::take(&mut s.small), next: 0, later: Vec::new(), origin: cell_origin(c), keep_segment: s.keep_segment, outer: false, small: Vec::new() };
+        spawn_refs(&mut commands, &ctx, &mut sp, deadline, &mut models, &mut emittance, ring);
+        s.small = sp.refs.split_off(sp.next.min(sp.refs.len()));
+        s.small.extend(sp.later);
+        s.keep_segment = sp.keep_segment;
+        // The new meshes get the cell's range and shadow rule (fade_ring walks it again).
+        s.applied = None;
+        s.shadow = None;
+        ring.cells.insert(c, s);
     }
     // Cells not drawn yet, nearest first; those standing by under a loaded cell last.
     let mut missing: Vec<Grid> = want.into_iter().filter(|c| !ring.cells.contains_key(c) && !ring.spawning.contains_key(c)).collect();
     missing.sort_by_key(|&c| (streamer.loaded.contains_key(&c), order_key(c, centre)));
     for c in missing {
         if Instant::now() >= deadline || !world::cell_ready(&world, &mut ring.ahead, c, &mut models) {
-            // Drawn once read ahead: nothing is read on this thread for the ring.
+            // Drawn once read ahead (nearest first: a farther cell does not jump the queue).
             break;
         }
         let prep = ring.ahead.take_terrain(c);
-        let origin = Vec3::new(c.0 as f32 * CELL_SIZE, c.1 as f32 * CELL_SIZE, 0.0);
+        let origin = cell_origin(c);
         let entity = commands.spawn((Name::new(format!("Ring cell {},{}", c.0, c.1)), RingCell { grid: c }, Transform::from_translation(origin), Visibility::Hidden)).id();
         commands.entity(root).add_child(entity);
         let mut refs = Vec::new();
         if let Some(cell) = world.grid_cell(c) {
-            world::spawn_cell_terrain(&mut commands, &world, entity, c, cell, prep, tile, &mut models, &mut terrain, true);
+            // Only from the read-ahead: a landscape is never read on this thread here.
+            if prep.is_some() {
+                world::spawn_cell_terrain(&mut commands, &world, entity, c, cell, prep, tile, &mut models, &mut terrain, true);
+            }
             refs = cell.refs.clone();
         }
         refs.extend(world.persistent_by_grid.get(&c).into_iter().flatten());
-        let mut sp = RingSpawn { entity, refs, next: 0, origin, keep_segment: false, outer: steps(c, centre) == outer };
+        let mut sp = RingSpawn { entity, refs, next: 0, later: Vec::new(), origin, keep_segment: false, outer: steps(c, centre) == outer, small: Vec::new() };
         spawn_refs(&mut commands, &ctx, &mut sp, deadline, &mut models, &mut emittance, ring);
-        if sp.next < sp.refs.len() {
-            ring.spawning.insert(c, sp);
-        } else {
+        if sp.done() {
             finish(&mut commands, ring, c, sp, fading);
+        } else {
+            ring.spawning.insert(c, sp);
         }
     }
     ring.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
+}
+
+/// A grid square's south-west corner (game space).
+fn cell_origin(c: Grid) -> Vec3 {
+    Vec3::new(c.0 as f32 * CELL_SIZE, c.1 as f32 * CELL_SIZE, 0.0)
 }
 
 /// What a ring reference's spawn reads.
@@ -463,11 +558,24 @@ struct RefCtx<'a> {
     sim: Option<&'a nvf_play::sim::SimState>,
 }
 
-/// Spawn a ring cell's references until all are in or the deadline has passed.
+/// Spawn a ring cell's references until all are in or the deadline has passed; those
+/// whose model is not prepared go to `later`, tried again (on a later frame) once the
+/// rest are in; those the size cut leaves out to `small`.
 fn spawn_refs(commands: &mut Commands, ctx: &RefCtx, sp: &mut RingSpawn, deadline: Instant, models: &mut ModelCtx, emittance: &mut EmittanceState, ring: &mut FullDetailRing) {
     let target = Target { entity: sp.entity, origin: sp.origin, outer: sp.outer };
-    let keep = &mut sp.keep_segment;
-    world::spawn_until(&sp.refs, &mut sp.next, Some(deadline), |r| spawn_ring_ref(commands, ctx, target, keep, r, models, emittance, ring));
+    while sp.next < sp.refs.len() && Instant::now() < deadline {
+        let r = sp.refs[sp.next];
+        sp.next += 1;
+        match spawn_ring_ref(commands, ctx, target, &mut sp.keep_segment, r, models, emittance, ring) {
+            Spawned::Done => {}
+            Spawned::Later => sp.later.push(r),
+            Spawned::Small => sp.small.push(r),
+        }
+    }
+    if sp.next >= sp.refs.len() && !sp.later.is_empty() {
+        sp.refs = std::mem::take(&mut sp.later);
+        sp.next = 0;
+    }
 }
 
 /// The ring cell a reference is spawned into.
@@ -478,60 +586,84 @@ struct Target {
     outer: bool,
 }
 
+/// What became of a ring reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Spawned {
+    /// Drawn, or left out for good.
+    Done,
+    /// Its model is being prepared on a worker thread: try again later.
+    Later,
+    /// Left out by the size cut ([`SIZE_CUT`]).
+    Small,
+}
+
 /// One reference of a ring cell ([`ring_choice`], [`SIZE_CUT`]); `keep`: its cell keeps
-/// its LOD segment.
+/// its LOD segment. Never prepares a model on this thread: one not prepared yet is asked
+/// of the worker threads and the reference waits ([`Spawned::Later`]).
 #[allow(clippy::too_many_arguments)]
-fn spawn_ring_ref(commands: &mut Commands, ctx: &RefCtx, sp: Target, keep: &mut bool, r: u32, models: &mut ModelCtx, emittance: &mut EmittanceState, ring: &mut FullDetailRing) {
+fn spawn_ring_ref(commands: &mut Commands, ctx: &RefCtx, sp: Target, keep: &mut bool, r: u32, models: &mut ModelCtx, emittance: &mut EmittanceState, ring: &mut FullDetailRing) -> Spawned {
     let world = ctx.world;
-    let Some(p) = placement(world.lo, world.schema, r) else { return };
+    let Some(p) = placement(world.lo, world.schema, r) else { return Spawned::Done };
     let base = p.base.and_then(|b| base_object(world.lo, world.schema, b));
     let flag = flagged(&p);
     match ring_choice(classify_ref(&p, base.as_ref(), || world.enabled(&p, 0)), base.as_ref().map(|b| &b.sig), flag) {
         RingRef::Draw => {}
         RingRef::SkipType => {
             ring.stats.skipped_type += 1;
-            return;
+            return Spawned::Done;
         }
-        RingRef::Skip => return,
+        RingRef::Skip => return Spawned::Done,
         RingRef::KeepSegment => {
             *keep = true;
-            return;
+            return Spawned::Done;
         }
         RingRef::DisabledFlagged => {
             *keep |= !p.deleted() && ctx.sim.is_some_and(|s| s.present(r));
-            return;
+            return Spawned::Done;
         }
     }
-    let Some(base) = base else { return };
+    let Some(base) = base else { return Spawned::Done };
     // A destroyed reference: its destruction stage's model (destroyed.rs), as the loaded
     // cells draw it at the time.
     let base = match ctx.streamer.model_overrides.get(&r) {
         Some(m) => world::base_object_with_model(base, m),
         None => base,
     };
-    if sp.outer && !flag && SIZE_CUT > 0.0 {
-        let radius = base.world_model_path().and_then(|path| models.model_swapped(&path, false, &base.world_alt_textures)).and_then(|m| m.bounds).map(|(lo, hi)| (hi - lo).length() * 0.5 * p.scale);
-        let centre = Vec2::new((ctx.centre.0 as f32 + 0.5) * CELL_SIZE, (ctx.centre.1 as f32 + 0.5) * CELL_SIZE);
-        let distance = Vec2::new(p.position[0], p.position[1]).distance(centre);
-        if radius.is_some_and(|radius| radius < SIZE_CUT * distance) {
-            ring.stats.too_small += 1;
-            return;
+    if let Some(path) = base.world_model_path() {
+        if world::is_drawn_marker(base.form_id, &path) {
+            ring.stats.skipped_type += 1;
+            return Spawned::Done;
+        }
+        if !models.models_ready([(path.as_str(), base.world_alt_textures.as_slice())]) {
+            return Spawned::Later;
+        }
+        if sp.outer && !flag && SIZE_CUT > 0.0 {
+            let radius = models.model_swapped(&path, false, &base.world_alt_textures).and_then(|m| m.bounds).map(|(lo, hi)| (hi - lo).length() * 0.5 * p.scale);
+            let centre = Vec2::new((ctx.centre.0 as f32 + 0.5) * CELL_SIZE, (ctx.centre.1 as f32 + 0.5) * CELL_SIZE);
+            let distance = Vec2::new(p.position[0], p.position[1]).distance(centre);
+            if radius.is_some_and(|radius| radius < SIZE_CUT * distance) {
+                ring.stats.too_small += 1;
+                return Spawned::Small;
+            }
         }
     }
     let rt = Affine3A::from_translation(-sp.origin) * world::ref_affine(&p);
-    world::spawn_model(commands, sp.entity, world, &p, r, &base, rt, models, emittance, &ctx.streamer.hide, &mut ring.models, SpawnMode::Scenery);
+    let drawn = world::spawn_model(commands, sp.entity, world, &p, r, &base, rt, models, emittance, &ctx.streamer.hide, &mut ring.models, SpawnMode::Scenery);
+    // A flagged reference whose model drew nothing keeps its cell's LOD segment.
+    *keep |= flag && !drawn;
+    Spawned::Done
 }
 
 /// A ring cell is all in: shown (its meshes get their range in [`fade_ring`]).
 fn finish(commands: &mut Commands, ring: &mut FullDetailRing, c: Grid, sp: RingSpawn, fading: bool) {
     commands.entity(sp.entity).insert(Visibility::Inherited);
-    ring.cells.insert(c, RingCellState::new(sp.entity, if fading { 0.0 } else { 1.0 }, sp.keep_segment));
+    ring.cells.insert(c, RingCellState::new(sp.entity, if fading { 0.0 } else { 1.0 }, sp.keep_segment, sp.small));
     ring.stats.cells += 1;
 }
 
 /// Give each ring cell's meshes their range (its own fade, or the complement of the
-/// loaded cell under way in its square; with cell fades off, hidden under a loaded cell)
-/// and their shadow rule. Runs after [`stream`], before `fade::fade_cells`.
+/// loaded cell in its square, [`hand_off`]; with cell fades off, hidden under a loaded
+/// cell) and their shadow rule. Runs after [`stream`], before `fade::fade_cells`.
 #[allow(clippy::type_complexity)]
 pub fn fade_ring(
     mut commands: Commands,
@@ -654,7 +786,7 @@ mod tests {
     use super::*;
 
     fn state(level: f32, leaving: bool, keep: bool) -> RingCellState {
-        RingCellState { entity: Entity::PLACEHOLDER, level, leaving, keep_segment: keep, applied: None, shadow: None }
+        RingCellState { entity: Entity::PLACEHOLDER, level, leaving, keep_segment: keep, small: Vec::new(), applied: None, shadow: None }
     }
 
     /// The 9 x 9 ring around a loaded 5 x 5: the 56 cells 3 and 4 steps out, nearest
@@ -674,19 +806,84 @@ mod tests {
         assert_eq!(ring_cells(centre, 3, 4).len(), 81 - 49, "with --radius 3");
     }
 
-    /// Ring cells stay one step beyond the ring (hysteresis), go once their loaded cell is
-    /// fully drawn inside the loaded radius, and stand by under a loaded cell in the
-    /// loaded grid's own hysteresis step.
+    /// Ring cells stay one step beyond the ring (hysteresis), fade out past it, when the
+    /// row is turned off or past a smaller new reach; they go at once once their loaded
+    /// cell is fully drawn inside the loaded radius, and stand by under a loaded cell in
+    /// the loaded grid's own hysteresis step.
     #[test]
     fn ring_cells_retire_with_hysteresis() {
         let (loaded, ring) = (2, 4);
-        assert!(!retires(4, loaded, ring, false));
-        assert!(!retires(5, loaded, ring, false), "one step of hysteresis");
-        assert!(retires(6, loaded, ring, false));
-        assert!(!retires(3, loaded, ring, true), "standing by under a loaded cell in its hysteresis");
-        assert!(!retires(2, loaded, ring, false), "kept until its loaded cell is fully drawn");
-        assert!(retires(2, loaded, ring, true));
-        assert!(retires(0, loaded, ring, true));
+        assert!(!fades_out(4, ring, false));
+        assert!(!fades_out(5, ring, false), "one step of hysteresis");
+        assert!(fades_out(6, ring, false));
+        assert!(fades_out(3, 0, false) && fades_out(4, 0, true), "turned off: every cell fades out");
+        assert!(fades_out(4, 3, true) && !fades_out(3, 3, true), "9 x 9 to 7 x 7: the 4-step cells fade out");
+        assert!(!fades_out(4, 3, false), "afterwards the hysteresis holds again");
+        assert!(!covered(3, loaded, true), "standing by under a loaded cell in its hysteresis");
+        assert!(!covered(2, loaded, false), "kept until its loaded cell is fully drawn");
+        assert!(covered(2, loaded, true));
+        assert!(covered(0, loaded, true));
+    }
+
+    /// The size cut never goes stale: references it left out of an outermost cell are due
+    /// once the cell is nearer, never while it is outermost.
+    #[test]
+    fn left_out_references_come_back_when_the_cell_is_nearer() {
+        assert!(!small_due(4, 4, 12), "still outermost");
+        assert!(small_due(3, 4, 12), "now in the inner ring step");
+        assert!(!small_due(3, 4, 0), "nothing left out");
+        assert!(small_due(3, 4, 1));
+        assert!(!small_due(3, 3, 5) && small_due(2, 3, 5), "7 x 7: outermost is 3");
+    }
+
+    /// CPU mirror of Bevy's `get_visibility_range_dither_level` and `visibility_range_dither`
+    /// (as fade.rs's tests): whether a pixel with dither `threshold` is drawn by a mesh with
+    /// range `r` at distance `d`.
+    fn kept(r: &VisibilityRange, d: f32, threshold: i32) -> bool {
+        let (x, y, z, w) = (r.start_margin.start, r.start_margin.end, r.end_margin.start, r.end_margin.end);
+        let (offset, a, b) = if d >= z { (0, z, w) } else { (-16, x, y) };
+        let level = offset + (((d - a) / (b - a) * 16.0).round() as i32).clamp(0, 16);
+        if level == 0 {
+            return true;
+        }
+        if level <= -16 || level >= 16 {
+            return false;
+        }
+        !((level >= 0 && level + threshold >= 16) || (level < 0 && 1 + level + threshold <= 0))
+    }
+
+    /// The three-way hand-off ([`hand_off`]): for a ring cell at any step, fading in or
+    /// out, with or without a loaded cell in its square at any step, the LOD segment (at
+    /// `block_level`, drawn with the complement of its step), the ring cell (`ring_range`)
+    /// and the loaded cell (`fade::drawn` of its step) together draw every pixel once.
+    #[test]
+    fn lod_ring_and_loaded_cover_each_pixel_once() {
+        let d = 20_000.0;
+        let steps = fade::STEPS as i32;
+        for kr in 0..=steps {
+            for leaving in [false, true] {
+                for loaded in std::iter::once(None).chain((0..=steps).map(Some)) {
+                    let loaded_level = loaded.map(|k| k as f32 / steps as f32);
+                    let ring_level = hand_off(kr as f32 / steps as f32, leaving, loaded.is_some());
+                    let mut cells = HashMap::new();
+                    if let Some(l) = ring_level {
+                        cells.insert((3, 0), state(l, leaving, false));
+                    }
+                    let block = fade::complement(fade::step(block_level(loaded_level.unwrap_or(0.0), Some(&cells), (3, 0))));
+                    let ring = ring_level.map(|l| ring_range(l, loaded_level).range());
+                    let full = loaded.map(|k| fade::drawn(k as u8));
+                    for t in 0..16 {
+                        let n = [Some(block.clone()), ring.clone(), full.clone()].iter().flatten().filter(|r| kept(r, d, t)).count();
+                        assert_eq!(n, 1, "ring step {kr} leaving {leaving}, loaded {loaded:?}: pixel {t} drawn {n} times");
+                    }
+                }
+            }
+        }
+        // The rule itself: a resting ring cell under a loaded one is held at rest, a
+        // leaving one is dropped, one alone keeps its level.
+        assert_eq!(hand_off(0.3, false, true), Some(1.0));
+        assert_eq!(hand_off(0.3, true, true), None);
+        assert_eq!(hand_off(0.3, true, false), Some(0.3));
     }
 
     /// The type filter (module notes).
