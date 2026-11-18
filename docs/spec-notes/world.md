@@ -2001,11 +2001,11 @@ Textures2.bsa`, `Fallout - Misc.bsa`, DLC archives]:
 
 ## Water surface ownership during streaming
 
-[documented: renderer ownership in water.rs/world.rs] Loaded exterior cells own
-their local water planes. Distant water fills eligible cells outside that loaded
-set, inside the configured LOD range. A cell must not retain both owners after
-stream reconciliation. Cell count alone does not identify that set: replacing
-one loaded cell with another can leave its size unchanged.
+[design] Loaded exterior cells own their local water planes. Distant water fills
+eligible cells outside that loaded set, inside the configured LOD range. A cell
+must not retain both owners after stream reconciliation. Cell count alone does
+not identify that set: replacing one loaded cell with another can leave its size
+unchanged.
 
 [design] Distant-water invalidation includes camera cell, effective LOD radius
 (including off/interior) and the exact loaded-cell keys. Compare stable keys
@@ -2019,8 +2019,7 @@ to test for reported water flicker, not yet proof of every observed flicker.
 Controls must invoke the actual renderer producer with same-count replacements,
 steady coverage, LOD off/range changes and cell/world lifecycle; inspecting only
 an invalidation-key getter is insufficient. No original assets or GPU outcome is
-claimed by authored CPU fixtures. User060d observations and actual run logs are
-kept privately; execution is qualified by exact source revision below.
+claimed by authored CPU fixtures.
 
 
 #### Current-camera underwater fog handoff
@@ -2041,23 +2040,11 @@ fog, and cover current exterior/interior restoration. GPU/original-profile
 acceptance remains separate from CPU producer results.
 
 
-### Executed water and live-modifier consumers
+### CPU validation scope
 
-[validation: hosted CI for `13c2311e`, PR #2861]
-The actual checkout `df3bbea93583ec4b136ee63bcee5854e85abb379` has parents
-`a0ebe1c` and `13c2311e`; its tree `58b3bb03` matches the reviewed head. All four
-water producer/camera-fog controls and three live-IMAD grade controls passed once.
-Core: 3,444 passed, 0 failed, 5 ignored. Engine: 3,416 passed, 0 failed, 3 ignored.
-All seven required checks succeeded, including both strict Clippy jobs
-([CI](https://github.com/LootJunkieAzza/NVForever/actions/runs/44029509825)).
-
-The earlier `774a89c` composite `c460da4c` passed those seven controls but failed
-strict engine Clippy on the preference fixture's default-then-field assignment;
-`13c2311e` changes only that equivalent initializer. The old failed overall result
-and all original comparison-source history are retained.
-
-These results qualify only the named CPU consumers at that exact revision. The
+The water producer/camera-fog and live-IMAD grade controls exercise CPU consumers;
+revision-specific CI and failure history are recorded in PR #2861. The
 identical-fixture baseline comparisons, nonfinite/overflow guard, auxiliary-camera
 and reflection scheduling, worldspace clearing, HDR restoration, native behavior,
 original mod initialization and installed-profile/persistent-cyan/GPU/FPS outcomes
-are not established by them. Ignored/skipped/opt-in cases have no execution credit.
+are not established by those controls.

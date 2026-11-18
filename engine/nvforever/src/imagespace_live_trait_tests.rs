@@ -23,16 +23,28 @@ fn records() -> (WorldData, PlayData, &'static FormStore, &'static RefTable) {
             .chain(tint)
             .flat_map(f32::to_le_bytes)
             .collect();
-        record(
-            b"IMAD",
-            0,
-            id,
-            &[
-                sub(b"EDID", z(name)),
-                sub(b"DNAM", header),
-                sub(b"TNAM", color),
-            ],
-        )
+        let mut subs = vec![sub(b"EDID", z(name)), sub(b"DNAM", header)];
+        if id == MAIN {
+            // IMAD DNAM holds one key count per multiply/add track, starting at byte 8.
+            for (index, (sig, value)) in [
+                (b"\x12IAD", 0.0_f32),
+                (b"RIAD", 0.25),
+                (b"\x13IAD", 1.5),
+                (b"SIAD", 0.125),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let count = 8 + 0x12 * 8 + index * 4;
+                subs[1].data[count..count + 4].copy_from_slice(&1_u32.to_le_bytes());
+                subs.push(sub(
+                    sig,
+                    [0.0, value].into_iter().flat_map(f32::to_le_bytes).collect(),
+                ));
+            }
+        }
+        subs.push(sub(b"TNAM", color));
+        record(b"IMAD", 0, id, &subs)
     };
     let bytes = [
         tes4(),
@@ -236,6 +248,17 @@ fn set(a: &mut App, trait_id: i64, value: f64) {
         XVal::Num(value)
     );
 }
+fn round_trip(a: &mut App, trait_id: i64, expected: f32) {
+    let getter = format!("GetImageSpaceModTrait AuthoredRadiationEffect {trait_id}");
+    let XVal::Num(value) = source(a, &format!("SetFunctionValue ({getter})")) else {
+        panic!("trait {trait_id} did not return a number");
+    };
+    close(value as f32, expected);
+    source(
+        a,
+        &format!("SetImageSpaceModTrait AuthoredRadiationEffect {trait_id} ({getter})"),
+    );
+}
 fn grade(a: &App, e: Entity) -> ImageSpaceGrade {
     *a.world().get::<ImageSpaceGrade>(e).unwrap()
 }
@@ -252,6 +275,16 @@ fn compiled_radiation_edits_reach_warm_grade_live_updates_and_real_removal() {
     selected(&mut a, "AuthoredRadiationEffect");
     a.update();
     tint(grade(&a, main).tint, Vec4::new(0.1, 0.3, 0.8, 0.7));
+    close(grade(&a, main).contrast, 1.625);
+    close(grade(&a, main).contrast_avg_lum, 0.25);
+    for (id, value) in [(39, 0.0), (40, 0.25), (41, 1.5), (42, 0.125), (50, 0.7)] {
+        round_trip(&mut a, id, value);
+    }
+    a.update();
+    let g = grade(&a, main);
+    close(g.contrast, 1.625);
+    close(g.contrast_avg_lum, 0.25);
+    tint(g.tint, Vec4::new(0.1, 0.3, 0.8, 0.7));
     for (id, value) in [
         (37, 1.4),
         (38, 0.2),
@@ -266,7 +299,7 @@ fn compiled_radiation_edits_reach_warm_grade_live_updates_and_real_removal() {
         (47, 204.0),
         (48, 51.0),
         (49, 102.0),
-        (50, 63.75),
+        (50, 0.25),
     ] {
         set(&mut a, id, value);
     }
@@ -274,13 +307,13 @@ fn compiled_radiation_edits_reach_warm_grade_live_updates_and_real_removal() {
     let g = grade(&a, main);
     tint(g.tint, Vec4::new(0.8, 0.2, 0.4, 0.25));
     close(g.saturation, 1.6);
-    close(g.contrast, 1.4);
-    close(g.contrast_avg_lum, 0.9);
+    close(g.contrast, 1.5);
+    close(g.contrast_avg_lum, 0.75);
     close(g.brightness, 1.0);
     close(g.blur, 2.25);
     close(g.radial2.w, 0.04);
     set(&mut a, 47, 51.0);
-    set(&mut a, 50, 127.5);
+    set(&mut a, 50, 0.5);
     set(&mut a, 45, 0.75);
     a.update();
     tint(grade(&a, main).tint, Vec4::new(0.2, 0.2, 0.4, 0.5));
@@ -303,16 +336,19 @@ fn lens_uses_live_traits_while_other_and_animated_records_keep_their_own_tracks(
         .resource_mut::<ScreenModifiers>()
         .hold_lens(MAIN, true);
     selected(&mut a, "AuthoredNeighborEffect");
+    round_trip(&mut a, 50, 0.7);
+    a.update();
+    tint(grade(&a, lens).tint, Vec4::new(0.1, 0.3, 0.8, 0.7));
     set(&mut a, 47, 153.0);
     set(&mut a, 48, 102.0);
     set(&mut a, 49, 51.0);
-    set(&mut a, 50, 127.5);
+    set(&mut a, 50, 0.5);
     a.update();
     tint(grade(&a, lens).tint, Vec4::new(0.6, 0.4, 0.2, 0.5));
     tint(grade(&a, main).tint, Vec4::new(0.8, 0.2, 0.1, 0.25));
     source(
         &mut a,
-        "SetImageSpaceModTrait AuthoredAnimatedEffect 50 255",
+        "SetImageSpaceModTrait AuthoredAnimatedEffect 50 1",
     );
     a.world_mut()
         .resource_mut::<ScreenModifiers>()
@@ -340,7 +376,7 @@ fn checked_restore_does_not_inherit_old_edits_and_source_load_reset_restores_bas
     set(&mut a, 47, 230.0);
     set(&mut a, 48, 25.0);
     set(&mut a, 49, 76.0);
-    set(&mut a, 50, 102.0);
+    set(&mut a, 50, 0.4);
     selected(&mut a, "AuthoredRadiationEffect");
     a.update();
     close(grade(&a, main).tint.w, 0.4);
@@ -368,7 +404,7 @@ fn checked_restore_does_not_inherit_old_edits_and_source_load_reset_restores_bas
     set(&mut a, 47, 25.5);
     set(&mut a, 48, 204.0);
     set(&mut a, 49, 51.0);
-    set(&mut a, 50, 51.0);
+    set(&mut a, 50, 0.2);
     selected(&mut a, "AuthoredRadiationEffect");
     a.update();
     tint(grade(&a, main).tint, Vec4::new(0.1, 0.8, 0.2, 0.2));

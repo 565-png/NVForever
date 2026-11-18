@@ -485,15 +485,14 @@ ends; `eye adaptation: speed S EV/s (Eye Adapt Speed E)` when the speed changes.
 
 [documented: GECK wiki SetImageSpaceModTrait,
 https://geckwiki.com/index.php/SetImageSpaceModTrait] Traits 37–44 edit the
-saturation, contrast, contrast-average-luminance and brightness multiply/add
-pairs; 45–46 edit blur and double vision; 47–50 edit tint RGBA. [documented:
-GECK wiki ImageSpace Modifiers,
-https://geckwiki.com/index.php?title=ImageSpace_Modifiers] The tint controls use
-0–255 channels and opacity. The renderer uses normalized channels.
+cinematic multiply/add pairs; 45–46 edit blur and double vision; 47–50 edit tint RGBA.
 
 [design, mapped] For a nonanimatable modifier actually selected for the screen
 or lens, evaluate its ordinary record and then apply the current session's
-assigned values for these traits. Normalize assigned tint channels by 255.
+assigned values. Follow the existing IMAD getter and decoder: 37–38 are saturation,
+39–40 are contrast average luminance (`0x12`/`0x52` IAD), 41–42 are contrast
+(`0x13`/`0x53` IAD), and 43–44 are brightness. Divide assigned RGB (47–49) by
+255; pass through normalized alpha (50), just as the getter reads TNAM alpha.
 Leave every unassigned component, other effect, sound, duration and track alone.
 Read only bounded fields of active modifiers; do not clone the record cache,
 mutate the load order or scan unrelated forms each frame. Nonfinite values which
@@ -502,10 +501,11 @@ the existing core setter/getter state and admission policy are unchanged.
 
 [hypothesis] This maps the installed radiation controller's edit/apply/update/
 remove cycle onto the existing grade consumer. Native first-key versus whole-track
-editing for animatable records and initial getter alpha units remain open; this
-bounded bridge leaves animated evaluation unchanged. Existing session-only trait
-lifetime is preserved, and removal must restore the current base/other effects
-rather than replay a cached grade. Authored fixtures must exercise the compiled
-setter through actual ImageSpaceGrade output, updates after the immutable cache
-is warm, removal, re-entry, lens isolation, missing runtime and fresh restore.
+editing for animatable records and native alpha units remain open; this bridge
+follows NVForever's existing getter units and leaves animated evaluation unchanged.
+Existing session-only trait lifetime is preserved, and removal must restore the
+current base/other effects rather than replay a cached grade. Authored fixtures
+must exercise compiled setter calls and getter-to-setter round trips through
+actual ImageSpaceGrade output, warm-cache updates, removal, re-entry, lens
+isolation, missing runtime and fresh restore.
 No native, GPU or full installed-mod acceptance follows from CPU controls.

@@ -256,15 +256,17 @@ fn live_modifier_effect(m: &ImageModifier, seconds: f32, game: Option<&fnv_game:
         match trait_id {
             37 => effect.cinematic.saturation.mult = value,
             38 => effect.cinematic.saturation.add = value,
-            39 => effect.cinematic.contrast.mult = value,
-            40 => effect.cinematic.contrast.add = value,
-            41 => effect.cinematic.contrast_avg_lum.mult = value,
-            42 => effect.cinematic.contrast_avg_lum.add = value,
+            // Match the IMAD getter's IAD signatures and the record decoder's field order.
+            39 => effect.cinematic.contrast_avg_lum.mult = value,
+            40 => effect.cinematic.contrast_avg_lum.add = value,
+            41 => effect.cinematic.contrast.mult = value,
+            42 => effect.cinematic.contrast.add = value,
             43 => effect.cinematic.brightness.mult = value,
             44 => effect.cinematic.brightness.add = value,
             45 => effect.blur_radius = value,
             46 => effect.double_vision = value,
-            47..=50 => effect.tint[(trait_id - 47) as usize] = value / 255.0,
+            47..=49 => effect.tint[(trait_id - 47) as usize] = value / 255.0,
+            50 => effect.tint[3] = value,
             _ => unreachable!(),
         }
     }
