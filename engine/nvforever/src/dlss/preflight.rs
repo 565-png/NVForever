@@ -911,13 +911,16 @@ pub(super) fn pin(devices: &[DeviceCaps], checked: &[usize], user_name: Option<&
 /// glob [documented: Khronos Vulkan-Loader `docs/LoaderInterfaceArchitecture.md`, "Table of
 /// Debug Environment Variables", `VK_LOADER_DRIVERS_SELECT`, loader 1.3.234 and later], and its
 /// companion that drops drivers; with either set by the player, NVForever adds no filter.
+#[cfg(windows)]
 pub(super) const DRIVERS_SELECT: &str = "VK_LOADER_DRIVERS_SELECT";
+#[cfg(windows)]
 pub(super) const DRIVERS_DISABLE: &str = "VK_LOADER_DRIVERS_DISABLE";
 
 /// NVIDIA's 64-bit Vulkan driver manifest by file name [observed 2026-11-17: driver 616.56,
 /// the RTX 4070's `VulkanDriverName` in the display adapter's registry key ends in
 /// `nv-vk64.json`]. Only a guess at the name: [`narrowed_usable`] checks what the loader then
 /// shows, and a name that no longer matches leaves the game as it was without the filter.
+#[cfg(windows)]
 pub(super) const NVIDIA_DRIVER_GLOB: &str = "*nv-vk64.json";
 
 /// Whether a second look with only NVIDIA's driver is worth taking: an NVIDIA GPU beside another
