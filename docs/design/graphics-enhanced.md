@@ -2139,10 +2139,15 @@ text would have used no longer exists since the settings menu overhaul).
   the patch. The reflection and lens cameras clone the main camera's fog, so they get the same
   vectors; the reflection camera's rays are the mirrored ones, which see the sky above the
   reflected land.
-- **Off is as on main.** With the switch off (or a weight of 0) the vectors are zero,
-  `nvf_aerial` makes the call as the haze left it and `GAME_FOG` runs its old lines; the edits
-  are made at the start for every player, with no log line. Both fail safe (one `warn!` line,
-  the shader as it was, the row does nothing).
+- **Off.** With the switch off (or a weight of 0) the vectors are zero, `nvf_aerial` makes
+  the call as the haze left it and `GAME_FOG` runs its old lines: the picture and the log are
+  as on main. What stays for every player: the fog uniform is 48 bytes larger, and the fog
+  path has one more uniform branch in `nvf_aerial` and one in `GAME_FOG`; the edits are made
+  at the start, with no log line. Both fail safe (one `warn!` line, the shader as it was, the
+  row does nothing). With the row on, the weather's fog numbers and four of its colours are
+  read each frame and the derivation is done again only when they change. The 3D scope's lens
+  camera copies the main camera's fog after the terms are written (and the reflection camera
+  in PostUpdate), so neither shows a frame with the sun's side not yet turned.
 - **What follows the weather** (from `SkyState` every frame, through weather fades, scripted
   SetWeather/ForceWeather and the hour; no weather names, no hour table, no result kept): the
   weight from the fog numbers, the weights from the horizon colour, the in-scatter colours

@@ -400,7 +400,6 @@ fn patch_aerial(mut state: ResMut<AerialShader>, mut shaders: ResMut<Assets<Shad
     let patched = crate::fog::with_source(shader, patched);
     let _ = shaders.insert(&state.handle, patched);
     PATCH.store(PATCH_IN_PLACE, Ordering::Relaxed);
-    debug!("aerial: the aerial perspective's fog call installed");
 }
 
 // ---- Following the sky ----
@@ -410,11 +409,22 @@ pub struct AerialPlugin;
 impl Plugin for AerialPlugin {
     fn build(&self, app: &mut App) {
         let handle: Handle<Shader> = app.world().resource::<AssetServer>().load(PBR_FUNCTIONS);
-        app.insert_resource(AerialShader { handle, patched: false })
-            .add_systems(PreUpdate, patch_aerial.after(crate::haze::patch_haze))
-            .add_systems(Update, update_aerial.after(crate::sky::update_sky));
+        app.insert_resource(AerialShader { handle, patched: false });
+        add_systems(app);
     }
 }
+
+/// The plugin's systems (apart from its shader handle, for the scheduling test). The 3D
+/// scope's lens camera copies the main camera's fog after [`AerialSet`] (scope_view.rs
+/// `ScopeViewPlugin`), and the reflection camera in PostUpdate (reflection.rs), so neither
+/// shows a frame with the sun's side not yet turned at a horizon crossing.
+fn add_systems(app: &mut App) {
+    app.add_systems(PreUpdate, patch_aerial.after(crate::haze::patch_haze)).add_systems(Update, update_aerial.after(crate::sky::update_sky).in_set(AerialSet));
+}
+
+/// Where the aerial terms are written into the main camera's fog (for the cameras that copy it).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AerialSet;
 
 /// What the log last said.
 struct Logged {
@@ -816,6 +826,23 @@ mod tests {
             let old: [f32; 3] = std::array::from_fn(|i| [0.2, 0.15, 0.1][i] + (fog[i] - [0.2, 0.15, 0.1][i]) * f);
             assert!(c.iter().zip(old).all(|(a, b)| (a - b).abs() < 1e-6));
         }
+    }
+
+    /// The cameras that clone the main camera's fog do so after it got this frame's aerial
+    /// terms: at a horizon crossing the lens shows no frame with the lobe on the moon's side.
+    /// (The scope's systems are added first, so the order comes from the constraint.)
+    #[test]
+    fn the_fog_copies_follow_the_aerial_terms() {
+        let mut app = App::new();
+        app.add_plugins(crate::scope_view::ScopeViewPlugin);
+        add_systems(&mut app);
+        app.world_mut().resource_scope(|world, mut schedules: Mut<bevy::ecs::schedule::Schedules>| {
+            let update = schedules.get_mut(Update).expect("Update");
+            update.initialize(world).expect("the Update schedule builds");
+            let names: Vec<String> = update.systems().expect("initialized").map(|(_, s)| s.name().to_string()).collect();
+            let at = |n: &str| names.iter().position(|s| s.ends_with(n)).unwrap_or_else(|| panic!("{n} not in {names:?}"));
+            assert!(at("aerial::update_aerial") < at("scope_view::lens_camera"), "{names:?}");
+        });
     }
 
     #[test]
