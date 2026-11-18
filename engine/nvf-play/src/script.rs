@@ -605,6 +605,12 @@ fn with_ray_caster<R>(phys: &mut PhysState, play: &PlayData, worldspace: u32, f:
         let hit = match kind {
             fnv_game::ray::CastKind::Scene => w.queries().ray(a, d, len, &filter),
             fnv_game::ray::CastKind::World => w.queries().ray(a, d, len, &fnv_phys::world::Filter { no_terrain: false, ..filter.clone() }),
+            fnv_game::ray::CastKind::CameraClearance => w.queries().ray(a, d, len, &fnv_phys::world::Filter {
+                exclude_layers: fnv_phys::layers::character_ignores().union(fnv_phys::layers::actor_volumes()),
+                no_dynamic: true,
+                no_actors: true,
+                ..Default::default()
+            }),
             // The terrain's own hit, past anything standing on it.
             fnv_game::ray::CastKind::Terrain | fnv_game::ray::CastKind::LandTexture => {
                 w.queries().ray_all(a, d, len, &fnv_phys::world::Filter::default()).into_iter().find(|h| matches!(h.owner, fnv_phys::world::Owner::Terrain { .. }))
@@ -2941,3 +2947,6 @@ mod runtime_start_tests {
         assert!(!runtime_waits(false, false), "the menu is open, paused, or was never asked for");
     }
 }
+
+#[cfg(test)]
+mod clearance_tests;

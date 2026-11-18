@@ -348,6 +348,18 @@ unexecuted; original Quick Loot initialization, native defaults and installed
 blank-bar acceptance remain open ([HUD](spec-notes/hud.md)).
 
 
+Named ordinary lateral-clearance source queries: authored current-physics mapping
+for the two Enhanced Movement lean calls, with existing CPTH room behavior retained.
+Hosted composite ab093471 (head 36db07e7) passed both real-physics caster
+controls once and strict engine checks. Core stopped at the existing catalogue
+census before all three source/callback controls. The narrow source-handler
+census correction retained the original 33/90 pin. Composite 1c82c77f (head
+3e71f3e2) then passed the census, two core and two physics controls; its registered
+transform case failed a bare-payload predicate despite selecting a model-tagged
+first-person request. The corrected fixture now checks model and unchanged exact
+payload through into_model; it remains unexecuted at authoring. Native measurement and installed lean animation/input
+acceptance remain open ([contract](spec-notes/vats-script-clearance.md)).
+
 GetCrosshairWater: authored current activation-target ACTI/WNAM query through the
 existing effective record accessor, with file-backed source/image and actual
 collision-to-draw-piece controls unexecuted at authoring. Existing setter changes
