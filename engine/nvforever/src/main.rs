@@ -1108,12 +1108,19 @@ fn main() -> AppExit {
         None => None,
     };
     if let Some(l) = &mo2 {
-        let archives = l.mod_archives();
+        let (archives, listed) = match l.profile_archives() {
+            Some((list, _)) => {
+                let unlisted: Vec<String> = l.mod_archives().into_iter().filter(|a| !list.iter().any(|n| n.eq_ignore_ascii_case(a))).collect();
+                (unlisted, true)
+            }
+            None => (l.mod_archives(), false),
+        };
         if !archives.is_empty() {
             let shown: Vec<&str> = archives.iter().take(5).map(String::as_str).collect();
             eprintln!(
-                "warning: {} mod archive(s) are not mounted yet (#1526 phase 1): {}{}",
+                "warning: {} mod archive(s) {} (#1526): {}{}",
                 archives.len(),
+                if listed { "are not ticked in the profile's archive list, so not mounted" } else { "cannot be mounted: the profile names no archive list" },
                 shown.join(", "),
                 if archives.len() > shown.len() { ", …" } else { "" }
             );
@@ -1221,13 +1228,30 @@ fn main() -> AppExit {
             }
         }
     }
-    // The archives beside a plugin in the mods folder are mounted with it.
-    let game = match &mo2 {
-        Some(_) => {
-            let mut roots = mods.clone();
-            roots.reverse();
-            GameData::open_for_plugins_layered(args.data(), &roots, &args.plugins, &args.nif_schema)
+    // `--mo2`: the profile's own archive list (archives.txt, or its fallout.ini's
+    // SArchiveList) takes NVForever.ini's place, as MO2's Archives tab sets the game's list
+    // (#1526 phase 2).
+    if let Some(l) = &mo2 {
+        match l.profile_archives() {
+            Some((_, from)) if std::env::var(fnv_vfs::ARCHIVE_ORDER_ENV).is_ok_and(|v| !v.trim().is_empty()) => {
+                eprintln!("vfs: the Mod Organizer 2 profile's archive list from {} not used: {} sets the whole order", from.display(), fnv_vfs::ARCHIVE_ORDER_ENV);
+            }
+            Some((list, from)) => {
+                if fnv_vfs::set_archive_list(list.clone()).is_ok() {
+                    eprintln!("vfs: archive list from the Mod Organizer 2 profile ({})", from.display());
+                    for a in fnv_vfs::DEFAULT_ARCHIVE_LIST.iter().filter(|a| !list.iter().any(|n| n.eq_ignore_ascii_case(a))) {
+                        eprintln!("vfs: warning: the profile's archive list leaves out {a}; its files will be missing");
+                    }
+                }
+            }
+            None => eprintln!("setup: the Mod Organizer 2 profile names no archive list; using the shipped default"),
         }
+    }
+    // The archives beside a plugin in the mods folder are mounted with it. The VFS takes
+    // the layers lowest precedence first (usvfs' merge order), unlike the plugin lookup
+    // above, which wants the overwrite folder first.
+    let game = match &mo2 {
+        Some(l) => GameData::open_for_plugins_layered(args.data(), &l.mod_roots(), &args.plugins, &args.nif_schema),
         None => GameData::open_for_plugins_in(args.data(), mods.first().map(|p| p.as_path()), &args.plugins, &args.nif_schema),
     };
     let game = match game {
