@@ -1064,6 +1064,29 @@ fn register_graphics(app: &mut App) {
             ask_keep: false,
         },
     );
+    // Shadows of placed lights (light_shadows.rs; graphics-enhanced.md §3.15): how many,
+    // saved by name, off by default [design].
+    add_choice_list(
+        app,
+        Setting {
+            key: "light-shadows",
+            group: GROUP_GRAPHICS,
+            label: "Lamp shadows",
+            note: LIGHT_SHADOWS_NOTE,
+            switches: "--light-shadows",
+            get: |_| false,
+            set: |_, _| {},
+            slider: None,
+        },
+        ChoiceList {
+            names: |_| crate::light_shadows::BUDGETS.iter().map(|b| b.0.to_string()).collect(),
+            chosen: light_shadows_chosen,
+            pick: take_light_shadows,
+            save: light_shadows_chosen,
+            load: take_light_shadows,
+            ask_keep: false,
+        },
+    );
     nvf_play::settings::set_disabled_status(app, "anti-aliasing", |w| crate::upscaler::temporal_active(w).then_some("Off (upscaling active)"));
     // Frame generation: Off, FSR 3.1 or DLSS (#2317), each choice dimmed with its reason; the
     // INI's old on/off still reads. Then DLSS's frames per real frame.
@@ -1250,6 +1273,8 @@ fn register_pipeline_waits(app: &mut App) {
         "fine-shadows", "bloom", "glow", "eye-adaptation", "neon-glow", "sharpen",
         "light-shafts", "water-reflections", "water-mirror", "sun-shadows", "grade",
         "terrain-height-blend", "terrain-anti-tiling", "cloud-shadows", MESH_BLEND_KEY,
+        // Lamp shadows' first point and spot light shadow views specialize their passes.
+        "light-shadows",
     ] {
         nvf_play::settings::wait_for_pipelines(app, key);
     }
@@ -1456,6 +1481,28 @@ fn take_shadow_resolution(w: &mut World, text: &str) -> bool {
     match nvf_play::settings::choice_of(text, &names, |v| choice_index(v, graphics::SHADOW_RESOLUTIONS.len())) {
         Some(i) => {
             graphics::set_shadow_resolution_choice(w, i);
+            true
+        }
+        None => false,
+    }
+}
+
+/// The Lamp shadows row's note (light_shadows.rs).
+const LIGHT_SHADOWS_NOTE: &str = "How many lamps, fires and spot lights near you cast shadows, the most important first, so walls stop their light. Each costs frame rate. Not in the original.";
+
+fn light_shadows_chosen(w: &World) -> String {
+    let budget = w.get_resource::<crate::light_shadows::LightShadows>().map_or(0, |l| l.budget);
+    let budgets = &crate::light_shadows::BUDGETS;
+    budgets.iter().find(|b| b.1 == budget).unwrap_or(&budgets[0]).0.to_string()
+}
+
+/// The Lamp shadows choice `text` names.
+fn take_light_shadows(w: &mut World, text: &str) -> bool {
+    let budgets = &crate::light_shadows::BUDGETS;
+    let names: Vec<String> = budgets.iter().map(|b| b.0.to_string()).collect();
+    match nvf_play::settings::choice_of(text, &names, |v| choice_index(v, crate::light_shadows::BUDGETS.len())) {
+        Some(i) => {
+            w.insert_resource(crate::light_shadows::LightShadows { budget: budgets[i].1 });
             true
         }
         None => false,
@@ -2586,6 +2633,7 @@ dlss-model=Preset K
             ("anti-aliasing", &["--msaa", "--graphics-only"]),
             ("shadow-filter", &[]),
             ("shadow-resolution", &[]),
+            ("light-shadows", &["--light-shadows"]),
             (FRAME_GENERATION_KEY, &["--frame-generation"]),
             (FRAMES_KEY, &[]),
             ("latency-reduction", &["--latency-reduction"]),

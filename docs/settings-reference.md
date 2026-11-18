@@ -999,6 +999,24 @@ below cover them all.
 - More: docs/design/sun-visibility.md
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `light-shadows`: Lamp shadows
+
+- On the page: How many lamps, fires and spot lights near you cast shadows, the most
+  important first, so walls stop their light. Each costs frame rate. Not in the original.
+- In full: Off (the default), 2, 4 or 8 of the placed lights cast shadows: those drawn
+  whose light reaches into the view and comes within about 29 m of you, the brightest
+  and nearest first, keeping the ones already casting until another is clearly ahead.
+  The world and your body cast them, the first-person arms do not; what lies within 16
+  units of a light (its bulb, shade or flames) casts nothing from it. A point light draws
+  a cube of six 1024² maps, a spot light one map of the Shadow resolution row's size; each
+  is drawn as a view of its own, so the cost is render-thread time as well as GPU time,
+  most indoors. The flashlight casts as before and is not counted. The original's placed
+  lights cast none [design].
+- A list kept in the INI by name (`Off`, `2`, `4`, `8`).
+- Command-line switches: `--light-shadows`
+- More: docs/design/graphics-enhanced.md §3.15
+- Registered in `engine/nvforever/src/settings.rs`
+
 ## Graphics › Lighting and Effects
 
 ### `ambient-occlusion`: Ambient occlusion

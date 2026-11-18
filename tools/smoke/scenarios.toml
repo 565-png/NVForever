@@ -1829,6 +1829,17 @@ order = [[
   { text = "sun visibility: cloud on terrain off debug off", label = "the switch turned the plumbing's cloud variant on" },
   { text = "cloud shadows: layers", label = "the producer composed the weather's layers and published them" },
 ]]
+
+[[scenario]]
+name = "light-shadows"
+source = "[design] docs/design/graphics-enhanced.md §3.15, engine/nvforever/src/light_shadows.rs: with --light-shadows 4 in the Prospector Saloon at night the placed lights in view take shadow maps up to the budget, without a rendering or pipeline error. Whether walls stop their light, and the acne and near plane, are checked in pictures by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs"]
+args = ["--cell", "GSProspectorSaloonInterior", "--play", "--no-voice", "--no-messages", "--hour", "22", "--light-shadows", "4"]
+run_seconds = 20
+order = [[
+  { re = 'light shadows: [1-4] of the budget of 4 cast', label = "placed lights in view took shadow maps, at most the budget" },
+]]
 expect = [
   { re = 'graphics: light glow, cloud shadows$', label = "the graphics line names the switch" },
   { text = "sun visibility: cloud on terrain off debug off", count = 1, label = "on once: no texture read or publication toggles the pipelines (C0/C1 review, finding 1)" },

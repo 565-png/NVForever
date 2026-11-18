@@ -1389,6 +1389,67 @@ gate's skipped frames change nothing), the aid's `mesh-terrain-blend-goodsprings
 `-options` and `-widths`; `graphics-enhanced` checks that the enhanced look neither turns
 it on nor logs it.
 
+### 3.15 Lamp shadows (`light-shadows`; off by default, not part of `enhanced`)
+
+[design] An addition of NVForever's own. The original's placed lights cast no shadows, and
+no LIGH of the masters sets the Spot Shadow flag [observed:
+docs/handoff/esm-data-audit-2026-10-25.md, item 6], so lamps light the rooms behind their
+walls. The row Lamp shadows (Graphics › Shadows; `--light-shadows <n>`) chooses Off, 2, 4 or
+8, which is how many placed lights may cast at once (`engine/nvforever/src/light_shadows.rs`).
+
+- **Which lights.** Every frame, before Bevy clusters the lights, the placed LIGH lights are
+  scored (`lights::SessionLight` with a point or spot light):
+  - Only lights that are drawn count. Their sphere of light must meet the main camera's
+    frustum, and they must reach within 2,048 units of the camera (`REACH`).
+  - The score is brightness (intensity × the colour's largest channel; a flickering
+    light's full intensity) × (range / distance)², with the distance taken as at least
+    half the range.
+  - The best `n` cast. A light already casting counts 1.5 times (`KEEP`), so a shadow does
+    not switch off and on as the camera moves between two similar lights. Bevy itself gives
+    maps to every shadowed light up to the texture's layers, by entity order, not by
+    importance (the vendored bevy_pbr `light.rs` `prepare_lights`), so the choice has to
+    be made here.
+- **The lighting.** Nothing in the shaders changes. The display-value sum
+  (`lights/display_shader.rs`) already multiplies each point and spot light's diffuse
+  term by Bevy's `shadow`, inside the same light loops (the flashlight's shadows have
+  used this since it was built).
+- **What casts.**
+  - A casting light takes the sun's layers (0, `sky::SHADOW_LAYER`, `sky::BODY_LAYER`), so
+    the player's body casts its shadow in both views. The first-person arms do not.
+  - Grass, far tree cards, thin meshes, particles and everything else marked
+    `NotShadowCaster` stays out, as for the sun.
+  - A near plane of 16 units (`NEAR`; the flashlight's is 8) keeps a light's own bulb,
+    shade or flames out of its map. The cost: a wall within 16 units of a light (a sconce)
+    does not stop that light on its own side.
+- **Maps.**
+  - A point light draws a cube of six 1024² faces (Bevy's `PointLightShadowMap`, left at
+    its default; 24 MiB a light).
+  - A spot light draws one layer of the sun's shadow texture, so it takes the Shadow
+    resolution row's side (16 or 64 MiB).
+  - Bias: Bevy's defaults. Its depth bias is in world units, so here it is about 1 mm;
+    its normal bias is scaled to the texel. `NVF_LIGHT_SHADOW_BIAS=<depth>,<normal>` and
+    `NVF_LIGHT_SHADOW_NEAR=<units>` override them for a run, for comparing.
+- **Cost** [hypothesis until measured]. Each shadowed light is a view of its own: a point
+  light is six. Each view runs Bevy's whole view schedule (culling, preprocessing,
+  indirect parameters, the shadow pass), as each cascade did before #652 (§5.5). So the
+  cost falls on the render thread as well as the GPU: roughly 0.1-0.15 ms a view on the
+  render thread (§5.5, §9's per-view figure).
+  - Switching a light's shadow off despawns its views. Switching it on specializes and
+    queues every caster in its range again. The hysteresis keeps that rare.
+  - A change in how many spot lights cast resets the sun's held cascades (Performance
+    mode), since spot maps share the directional texture.
+- **Not built yet.**
+  - Holding a still light's maps between frames while nothing moves in its range. The
+    vendored held-shadow-maps patch covers directional cascades only. Point and spot views
+    would need their own hold: their layer index moves when a lower-sorted shadowed light
+    comes or goes.
+  - Fading a shadow in and out when a light starts or stops casting. It switches at once.
+  - A per-light-kind budget, since a point light costs six views and a spot light one.
+- **Test aids.** The log line `light shadows: <n> of the budget of <b> cast (<p> point,
+  <s> spot lights; <d> placed lights drawn)` is written whenever those numbers change.
+  Smoke `light-shadows` (the Prospector Saloon at 22:00 with `--light-shadows 4`) checks that
+  lights take maps within the budget. The picture is checked by hand.
+
 ## 4. Tried and dropped
 
 - **Bevy `ContactShadows`** on the sun (16 steps, 40 units, thickness 12): the right effect on
