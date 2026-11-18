@@ -45,9 +45,17 @@
 //!   the ring's read-ahead are idle; cells are spawned nearest first within
 //!   [`SPAWN_BUDGET`] a frame, after the ring, only while the loaded grid and the ring are
 //!   complete, and only with models already prepared on the workers (a cell waits for
-//!   its models; the next [`PREFETCH_CELLS`] cells' models are asked for meanwhile). A
-//!   travel, another worldspace, going indoors or turning the distant LOD off drops
-//!   everything at once.
+//!   its models; the next [`PREFETCH_CELLS`] cells' models are asked for meanwhile). The
+//!   budget's fit ([`fit_budget`] over every candidate) runs on a worker too, one at a
+//!   time. What the main thread's budget bounds: starting lists (a cell's reference list
+//!   is copied from the index), the scan for cells to judge again and the cells planned
+//!   and spawned are each stopped at the deadline between items; a single item is never
+//!   split, so a frame can pass the budget by one cell's plan (its entries judged) or one
+//!   reference's spawn (all the shapes of its model). Taking finished lists in is bounded
+//!   by [`MAX_LISTING`]; the override check is one pass over the overrides. Going indoors
+//!   or turning the distant LOD off hides everything at once and despawns it over the next
+//!   frames, in the bounded slices the loaded cells use (`world::despawn_dying`); a travel
+//!   or another worldspace drops everything at once (behind the loading screen).
 //! - **Fades** ([`distant_range`], [`fade_distant`]): a distant cell in a square drawn by
 //!   a loaded or ring cell draws the complement of that cell's fade step (the same
 //!   references in full) and is held at rest as the ring's cells are (`full_detail::hand_off`),
@@ -542,6 +550,10 @@ pub struct DistantState {
     listed: HashMap<Grid, Arc<CellList>>,
     /// Lists came in since the budget was last fitted.
     lists_changed: bool,
+    /// The budget's fit wanted (the centre moved, lists came in) and the one running on a
+    /// worker, with the centre it is for.
+    fit_wanted: bool,
+    fitting: Option<(Task<(Vec<f32>, bool)>, Grid)>,
     /// The centre the size rule was last judged for, and its ratios per ring.
     judged: Option<Grid>,
     ratios: Vec<f32>,
@@ -566,12 +578,23 @@ impl DistantState {
         self.reach == 0 && self.cells.is_empty() && self.spawning.is_empty() && self.dying.is_empty() && self.listing.is_empty() && self.listed.is_empty()
     }
 
-    /// Drop everything now: a travel, another worldspace, an interior, the LOD off.
-    fn clear(&mut self, commands: &mut Commands) {
+    /// Drop every cell, spawn and reading: `at_once` (a travel, another worldspace: behind
+    /// the loading screen) despawns them now; otherwise (indoors, the LOD off) they are
+    /// hidden now and despawned over the next frames in bounded slices.
+    fn clear(&mut self, commands: &mut Commands, at_once: bool) {
         let olds: Vec<Entity> = self.cells.values().filter_map(|s| s.old.map(|o| o.0)).collect();
-        for e in self.cells.drain().map(|(_, s)| s.entity).chain(self.spawning.drain().map(|(_, s)| s.entity)).chain(self.dying.drain(..)).chain(olds) {
-            commands.entity(e).try_despawn();
+        let all: Vec<Entity> = self.cells.drain().map(|(_, s)| s.entity).chain(self.spawning.drain().map(|(_, s)| s.entity)).chain(olds).collect();
+        if at_once {
+            for e in all.into_iter().chain(self.dying.drain(..)) {
+                commands.entity(e).try_despawn();
+            }
+        } else {
+            for e in all {
+                self.retire(commands, e);
+            }
         }
+        self.fitting = None;
+        self.fit_wanted = false;
         self.rebuild.clear();
         self.listing.clear();
         self.listed.clear();
@@ -702,8 +725,9 @@ pub fn stream(
     }
     world::despawn_dying(&mut commands, &mut st.dying, &children);
     let centre = streamer.centre.filter(|_| streamer.interior.is_none());
-    if st.world != world.world || st.travels != streamer.travels || centre.is_none() || !lod.enabled {
-        st.clear(&mut commands);
+    let travelled = st.world != world.world || st.travels != streamer.travels;
+    if travelled || centre.is_none() || !lod.enabled {
+        st.clear(&mut commands, travelled);
         st.world = world.world;
         st.travels = streamer.travels;
     }
@@ -792,20 +816,31 @@ pub fn stream(
     let loaded = streamer.radius;
     let complete = (-loaded..=loaded).all(|dx| (-loaded..=loaded).all(|dy| streamer.loaded.contains_key(&(centre.0 + dx, centre.1 + dy))));
     let idle = streamer.settled && complete && streamer.spawning.is_empty() && !behind_screen && ring.idle(centre, loaded);
-    list_cells(&world, st, &want, centre, inner, idle && !streamer.ahead.busy(), &streamer.hide, &models.data.vfs);
+    list_cells(&world, st, &want, centre, inner, idle && !streamer.ahead.busy(), &streamer.hide, &models.data.vfs, deadline);
     if !idle {
         st.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
         return;
     }
 
-    // The size rule's ratios, fitted to the budget when the centre moved or lists came in.
-    let rejudge = st.judged.is_none_or(|j| steps(j, centre) >= REJUDGE_STEPS);
-    if rejudge || st.lists_changed {
-        let judge_at = if rejudge { centre } else { st.judged.unwrap_or(centre) };
-        fit(st, &want, judge_at, &blocks);
-        if rejudge {
-            st.judged = Some(centre);
-        }
+    // The size rule's ratios, fitted to the budget on a worker when the centre moved or
+    // lists came in; a finished fit is taken in first.
+    let fitted = st.fitting.as_mut().and_then(|(task, at)| check_ready(task).map(|r| (r, *at)));
+    if let Some(((ratios, raised), at)) = fitted {
+        st.fitting = None;
+        take_fit(st, ratios, raised, at);
+    }
+    if st.judged.is_none_or(|j| steps(j, centre) >= REJUDGE_STEPS) {
+        st.judged = Some(centre);
+        st.fit_wanted = true;
+    }
+    if st.lists_changed {
+        st.lists_changed = false;
+        st.fit_wanted = true;
+    }
+    if st.fit_wanted && st.fitting.is_none() {
+        st.fit_wanted = false;
+        let at = st.judged.unwrap_or(centre);
+        start_fit(st, &want, at, &blocks);
     }
     // Model overrides that came or went mark the cells holding those references.
     let changed = override_changes(&st.overrides_seen, &streamer.model_overrides);
@@ -815,8 +850,11 @@ pub fn stream(
     }
     let judged = st.judged.unwrap_or(centre);
     let now = Stamp { centre: judged, ratios: st.ratio_rev };
-    // Cells judged for another centre or table, or whose block answers otherwise now.
-    queue_rebuilds(st, now, &blocks, &cover, deadline);
+    // Cells judged for another centre or table, or whose block answers otherwise now; the
+    // size rule waits for the fit of a new centre, so a cell is not judged twice.
+    if st.fitting.is_none() {
+        queue_rebuilds(st, now, &blocks, &cover, deadline);
+    }
 
     let ctx = SpawnCtx { world: &world, streamer: &streamer, simulated: sim.is_some() };
     // The budget as the cells alive leave it; what this frame spawns is added as it goes.
@@ -903,7 +941,7 @@ fn cell_origin(c: Grid) -> Vec3 {
 /// only when `start`); take in the lists done; forget those far beyond the reach or read
 /// for a larger inner radius than now.
 #[allow(clippy::too_many_arguments)]
-fn list_cells(world: &WorldData, st: &mut DistantState, want: &[Grid], centre: Grid, inner: i32, start: bool, hide: &[String], vfs: &Arc<fnv_vfs::Vfs>) {
+fn list_cells(world: &WorldData, st: &mut DistantState, want: &[Grid], centre: Grid, inner: i32, start: bool, hide: &[String], vfs: &Arc<fnv_vfs::Vfs>, deadline: Instant) {
     let keep = st.reach + KEEP_LISTS;
     st.listing.retain(|c, _| steps(*c, centre) <= keep);
     st.listed.retain(|c, l| steps(*c, centre) <= keep && l.inner <= inner);
@@ -926,7 +964,7 @@ fn list_cells(world: &WorldData, st: &mut DistantState, want: &[Grid], centre: G
         return;
     }
     for &c in want {
-        if st.listing.len() >= MAX_LISTING {
+        if st.listing.len() >= MAX_LISTING || Instant::now() >= deadline {
             break;
         }
         if st.listing.contains_key(&c) || st.listed.contains_key(&c) {
@@ -944,23 +982,38 @@ fn list_cells(world: &WorldData, st: &mut DistantState, want: &[Grid], centre: G
     }
 }
 
-/// Fit the size ratios to the budget over the listed wanted cells, judged from `centre`
-/// ([`fit_budget`]); log once per centre when it bites.
-fn fit(st: &mut DistantState, want: &[Grid], centre: Grid, blocks: &BlockContents) {
-    st.lists_changed = false;
+/// The cells a budget fit reads: each listed wanted cell's steps from the centre, its
+/// block's answer and its list.
+type FitCells = Vec<(i32, Option<bool>, Arc<CellList>)>;
+
+/// The full-model candidates of `cells` judged from `centre` ([`fit_budget`]): references
+/// without a LOD model, with a radius, not left to their block; `tris_of` the triangles of
+/// the full models drawn so far ([`UNKNOWN_TRIANGLES`] for the rest). Runs on a worker.
+pub fn candidates(cells: &[(i32, Option<bool>, Arc<CellList>)], tris_of: &HashMap<String, u64>, centre: Grid) -> Vec<Candidate> {
     let p = centre_point(centre);
-    let mut candidates = Vec::new();
-    for c in want {
-        let Some(list) = st.listed.get(c) else { continue };
-        let k = steps(*c, centre);
-        let segment = blocks.segment(*c);
-        for e in list.entries.iter().filter(|e| e.lod.is_none() && e.radius > 0.0 && !(e.flagged && segment != Some(false))) {
+    let mut out = Vec::new();
+    for (k, segment, list) in cells {
+        for e in list.entries.iter().filter(|e| e.lod.is_none() && e.radius > 0.0 && !(e.flagged && *segment != Some(false))) {
             let d = Vec2::new(e.p.position[0], e.p.position[1]).distance(p).max(1.0);
-            let triangles = st.tris_of.get(&e.full).copied().unwrap_or(UNKNOWN_TRIANGLES);
-            candidates.push(Candidate { steps: k, size: e.radius / d, triangles });
+            let triangles = tris_of.get(&e.full).copied().unwrap_or(UNKNOWN_TRIANGLES);
+            out.push(Candidate { steps: *k, size: e.radius / d, triangles });
         }
     }
-    let (ratios, raised) = fit_budget(&candidates, st.reach, SIZE_RATIO, FULL_TRIANGLE_BUDGET);
+    out
+}
+
+/// Start the budget's fit for `centre` on a worker over the listed wanted cells (the main
+/// thread only gathers the cells' lists).
+fn start_fit(st: &mut DistantState, want: &[Grid], centre: Grid, blocks: &BlockContents) {
+    let cells: FitCells = want.iter().filter_map(|c| Some((steps(*c, centre), blocks.segment(*c), st.listed.get(c)?.clone()))).collect();
+    let (tris_of, reach) = (st.tris_of.clone(), st.reach);
+    let task = nvf_assets::read_pool::read_pool().spawn(async move { fit_budget(&candidates(&cells, &tris_of, centre), reach, SIZE_RATIO, FULL_TRIANGLE_BUDGET) });
+    st.fitting = Some((task, centre));
+}
+
+/// Take a finished fit (for `centre`) in: new ratios make every cell's stamp stale; log
+/// once per centre when the budget bites.
+fn take_fit(st: &mut DistantState, ratios: Vec<f32>, raised: bool, centre: Grid) {
     if ratios != st.ratios {
         st.ratio_rev += 1;
     }
@@ -1562,8 +1615,13 @@ mod tests {
         st.spawning.insert((11, 0), a_spawn((11, 0), false, 50));
         assert_eq!(st.budget().total(), 550);
         assert_eq!(st.budget().total(), sum(&st));
-        st.clear(&mut commands);
+        let before = st.dying.len();
+        st.clear(&mut commands, false);
         assert_eq!(st.budget(), Budget::default());
+        assert_eq!(st.dying.len(), before + 3, "indoors or the LOD off: the cell, its predecessor and the spawn hidden now, despawned in slices");
+        st.cells.insert((12, 0), drawn_cell(0, None));
+        st.clear(&mut commands, true);
+        assert!(st.dying.is_empty() && st.cells.is_empty(), "a travel: everything at once");
     }
 
     /// At the cap a cell rebuilt in place may keep the models of its predecessor (whose
@@ -1688,6 +1746,33 @@ mod tests {
         s.level = 0.5;
         assert!(rejudge_due(&s, Stamp::default(), None, true, false), "even fading and covered");
         assert!(!rejudge_due(&s, Stamp::default(), None, true, true), "not while its replacement spawns");
+    }
+
+    /// The fit's candidates: references without a LOD model and with a radius, not left to
+    /// their block (flagged with a segment holding them or unknown), each with its size over
+    /// its distance and the triangles of its model as drawn, or the estimate.
+    #[test]
+    fn the_fit_reads_the_full_model_candidates() {
+        let base = Arc::new(BaseObject { form_id: 0x200, sig: *b"STAT", edid: None, model: None, world_model: None, world_alt_textures: vec![], worn_only: false, flags: 0, bounds: None });
+        let e = |fid: u32, radius: f32, flagged: bool, lod: bool, full: &str| Entry {
+            p: Placement { form_id: fid, sig: *b"REFR", flags: 0, base: Some(0x200), position: [8.5 * CELL_SIZE, 0.5 * CELL_SIZE, 0.0], rotation: [0.0; 3], scale: 1.0, enable_parent: None, open_by_default: false, teleport: false, emittance: None, imposter: false, primitive: false },
+            base: base.clone(),
+            full: full.into(),
+            lod: lod.then(|| "x_lod.nif".into()),
+            flagged,
+            radius,
+            enabled: true,
+        };
+        let list = Arc::new(CellList { entries: vec![e(1, 400.0, false, false, "a.nif"), e(2, 400.0, false, true, "b.nif"), e(3, 0.0, false, false, "c.nif"), e(4, 400.0, true, false, "d.nif")], small: 0, inner: 2 });
+        let tris: HashMap<String, u64> = [("a.nif".to_string(), 1234)].into();
+        let held = candidates(&[(8, Some(true), list.clone())], &tris, (0, 0));
+        assert_eq!(held.len(), 1, "the LOD model, the one without radius and the held one left out");
+        assert_eq!((held[0].steps, held[0].triangles), (8, 1234));
+        assert!((held[0].size - 400.0 / (8.0 * CELL_SIZE)).abs() < 1e-6);
+        let empty = candidates(&[(8, Some(false), list.clone())], &tris, (0, 0));
+        assert_eq!(empty.len(), 2, "an empty segment: the flagged one is a candidate");
+        assert_eq!(empty[1].triangles, UNKNOWN_TRIANGLES);
+        assert_eq!(candidates(&[(8, None, list)], &tris, (0, 0)).len(), 1, "unknown: held");
     }
 
     /// Off in both looks; `--graphics-only distant-objects-8` / `distant-objects-12` turn
