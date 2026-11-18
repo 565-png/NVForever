@@ -1446,7 +1446,7 @@ struct Drawn {
     /// The Controls tab's values, in `GAME_CONTROLS`' order, on the device in use.
     controls: Vec<String>,
     /// Why each control's row is greyed now, in `GAME_CONTROLS`' order
-    /// (`crate::stance::binding_greyed`: Sprint or Prone with its switch off).
+    /// (`crate::stance::binding_greyed`: Sprint with its switch off).
     controls_greyed: Vec<Option<&'static str>>,
     /// The device in use: its name, and whether it is a controller.
     device: (&'static str, bool),
@@ -1495,7 +1495,7 @@ struct Drawn {
 }
 
 impl Drawn {
-    /// Why Controls row `c` is greyed (a binding of Sprint or Prone with its switch off);
+    /// Why Controls row `c` is greyed (Sprint's binding with its switch off);
     /// `None`: it is not.
     fn control_greyed(&self, c: ControlRow) -> Option<&'static str> {
         let ControlRow::Binding(k, _) = c else { return None };
@@ -2276,7 +2276,7 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
                 }
                 let vw = crate::pad::button_width(&f.entry, &value, glyphs);
                 let parts = row_parts(x, ValueKind::Binding(vw));
-                // A greyed binding (Sprint or Prone with its switch off, `crate::stance`) is
+                // A greyed binding (Sprint with its switch off, `crate::stance`) is
                 // drawn dim like a greyed setting, its reason the state the aids read; why is
                 // the note's.
                 let greyed = d.control_greyed(c);
@@ -3040,7 +3040,7 @@ fn act_on_row(id: RowId, action: RowAction, settings: &Settings, view: &mut Paus
                 commands.queue(move |world: &mut World| crate::bindings::set_device(world, d));
                 sounds.write(flipped);
             }
-            // A greyed binding (Sprint or Prone with its switch off) cannot be rebound or
+            // A greyed binding (Sprint with its switch off) cannot be rebound or
             // cleared; why is in its note.
             (ControlRow::Binding(..), Activate | Clear) if view.drawn.as_ref().and_then(|d| d.control_greyed(c)).is_some() => {}
             (ControlRow::Binding(k, _), Activate) => {

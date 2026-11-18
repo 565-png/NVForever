@@ -19,10 +19,9 @@
 //! - Always Run (Caps Lock) toggles running as the default (on by default:
 //!   `bAlwaysRunByDefault=1`); Run (Left Shift) held does the other; Auto Move (Q) walks
 //!   forward until Forward or Back is pressed (player.rs).
-//! - Sprint (Left Shift; Run moves to X) and Prone (Crouch/Sneak's key held a second, or a
-//!   key of its own pressed), NVForever's own, only with their NVF Features switches on:
-//!   read here into [`PlayerControl::sprint_held`], [`PlayerControl::prone_hold`] and
-//!   [`PlayerControl::prone_request`] for the features (`crate::stance`, the contract).
+//! - Sprint (Left Shift; Run moves to X), NVForever's own, only with its NVF Features switch
+//!   on: read here into [`PlayerControl::sprint_held`] for the feature (`crate::stance`, the
+//!   contract).
 //! - Toggle POV (F, middle mouse): a tap switches first and third person; held while the
 //!   mouse moves, it circles the camera around the player without turning them
 //!   ([`Orbit`]; from first person the view goes to third person meanwhile), and when it
@@ -171,13 +170,6 @@ pub struct PlayerControl {
     /// The Sprint control is held with Sprint on (`crate::stance`; the Sprint feature reads
     /// it). Struck by the movement lock.
     pub sprint_held: bool,
-    /// Seconds the Prone control has been held without a break with Prone on; 0 when it is
-    /// not (`crate::stance`).
-    pub prone_hold: f32,
-    /// Lying down (or getting up) was asked for: on Crouch/Sneak's key when the hold reached
-    /// `crate::stance::PRONE_HOLD_SECONDS`, on a key of its own at the press. The Prone
-    /// feature clears it (`crate::stance`). Struck by the sneaking lock.
-    pub prone_request: bool,
     /// The third-person camera's line through the crosshair, set by [`place_camera`]
     /// each frame; `None` in first person and while the camera circles. Activation and
     /// the player's shots aim along it ([`Crosshair::ray`]).
@@ -212,8 +204,6 @@ impl Default for PlayerControl {
             ammo_swap: false,
             wheel: false,
             sprint_held: false,
-            prone_hold: 0.0,
-            prone_request: false,
             crosshair: None,
             portrait: None,
             cinematic: false,
@@ -232,7 +222,6 @@ impl PlayerControl {
         self.aiming = false;
         self.trigger = false;
         self.sprint_held = false;
-        self.prone_hold = 0.0;
     }
 
     /// Whether the player's own view is from outside (third person, or circling), whatever a
@@ -424,11 +413,9 @@ impl ControlLocks {
             struck[group::POV] = *control != before;
         }
         if self.sneaking {
-            // Lying down is sneaking too (`crate::stance`): its request goes with it.
-            struck[group::SNEAKING] = control.sneak || intent.sneak || control.prone_request;
+            struck[group::SNEAKING] = control.sneak || intent.sneak;
             control.sneak = false;
             intent.sneak = false;
-            (control.prone_hold, control.prone_request) = (0.0, false);
         }
         struck
     }
@@ -610,34 +597,11 @@ const NOT_BUILT: [Control; 0] = [];
 /// The real clock and the tweaks, for the holster hold (`crate::tweaks`).
 type HoldClock<'w> = (Option<Res<'w, Time<Real>>>, Option<Res<'w, crate::tweaks::TweakSettings>>);
 
-/// Sprint and Prone's input (`crate::stance`, the contract): [`PlayerControl::sprint_held`]
-/// while the Sprint control is held with Sprint on; [`PlayerControl::prone_hold`] the seconds
-/// the Prone control is held with Prone on, and [`PlayerControl::prone_request`] raised once a
-/// press: on Crouch/Sneak's key when the hold reaches `crate::stance::PRONE_HOLD_SECONDS`, on
-/// a key of its own at the press. With a switch off its state is at rest. The controls are
-/// read on their effective keys (`crate::bindings::Bindings::effective`).
-fn read_stance(input: &ControlInput, dt: f32, stance: Option<&crate::inertia::MovementInertia>, c: &mut PlayerControl) {
-    let (sprint_on, prone_on) = stance.map_or((false, false), |m| (m.sprint_on(), m.prone_on()));
-    c.sprint_held = sprint_on && input.pressed(Control::Sprint);
-    if !prone_on {
-        (c.prone_hold, c.prone_request) = (0.0, false);
-        return;
-    }
-    if !input.pressed(Control::Prone) {
-        c.prone_hold = 0.0;
-        return;
-    }
-    let before = c.prone_hold;
-    c.prone_hold += dt;
-    if input.bindings.prone_shares_crouch() {
-        if before < crate::stance::PRONE_HOLD_SECONDS && c.prone_hold >= crate::stance::PRONE_HOLD_SECONDS {
-            c.prone_request = true;
-            info!("Prone held {:.1} s on Crouch/Sneak: lying down or getting up asked", c.prone_hold);
-        }
-    } else if input.just_pressed(Control::Prone) {
-        c.prone_request = true;
-        info!("Prone pressed: lying down or getting up asked");
-    }
+/// Sprint's input (`crate::stance`, the contract): [`PlayerControl::sprint_held`] while the
+/// Sprint control is held with Sprint on, read on its effective key
+/// (`crate::bindings::Bindings::effective`).
+fn read_stance(input: &ControlInput, stance: Option<&crate::inertia::MovementInertia>, c: &mut PlayerControl) {
+    c.sprint_held = stance.is_some_and(crate::inertia::MovementInertia::sprint_on) && input.pressed(Control::Sprint);
 }
 
 /// Toggles, holds, the third-person zoom; see the module notes.
@@ -659,10 +623,9 @@ pub fn read_controls(
         control.ready_held = None;
         control.orbit.held = false;
         control.sprint_held = false;
-        control.prone_hold = 0.0;
         return;
     }
-    read_stance(&input, time.delta_secs(), stance.as_deref(), &mut control);
+    read_stance(&input, stance.as_deref(), &mut control);
     let mut message: Option<String> = None;
     let c = &mut *control;
     let was_out = c.weapon_out;
@@ -1241,11 +1204,10 @@ mod tests {
         assert_eq!(control(&app).pov, Pov::Third);
     }
 
-    /// Sprint and Prone's input (`crate::stance`): nothing with their switches off; Sprint
-    /// held on Shift; Prone asked for by a second's hold on Crouch/Sneak's key, or by a press
-    /// of its own key; the sneaking lock strikes the request.
+    /// Sprint's input (`crate::stance`): nothing with its switch off; held on Shift; the
+    /// movement lock strikes it.
     #[test]
-    fn sprint_and_prone_input_follow_their_switches_and_keys() {
+    fn sprint_input_follows_its_switch_and_key() {
         let mut app = app();
         app.init_resource::<crate::inertia::MovementInertia>();
         let step = |app: &mut App, secs: f32| {
@@ -1257,52 +1219,26 @@ mod tests {
             app.world_mut().resource_mut::<ButtonInput<KeyCode>>()
         }
         keys(&mut app).press(KeyCode::ShiftLeft);
-        keys(&mut app).press(KeyCode::ControlLeft);
         for _ in 0..4 {
             step(&mut app, 0.4);
         }
-        let c = control(&app);
-        assert!(!c.sprint_held && c.prone_hold == 0.0 && !c.prone_request, "both off: nothing");
+        assert!(!control(&app).sprint_held, "off: nothing");
         keys(&mut app).release_all();
         step(&mut app, 0.1);
-        // Both on (the switches and the bindings kept on them, `crate::stance::sync_bindings`).
-        {
-            let mut m = app.world_mut().resource_mut::<crate::inertia::MovementInertia>();
-            (m.sprint, m.prone) = (true, true);
-        }
-        {
-            let mut b = app.world_mut().resource_mut::<Bindings>();
-            (b.sprint_on, b.prone_on) = (true, true);
-        }
+        // On (the switch and the bindings kept on it, `crate::stance::sync_bindings`).
+        app.world_mut().resource_mut::<crate::inertia::MovementInertia>().sprint = true;
+        app.world_mut().resource_mut::<Bindings>().sprint_on = true;
         keys(&mut app).press(KeyCode::ShiftLeft);
         step(&mut app, 0.1);
         assert!(control(&app).sprint_held);
         keys(&mut app).release(KeyCode::ShiftLeft);
         step(&mut app, 0.1);
         assert!(!control(&app).sprint_held);
-        // On Crouch/Sneak's key: the request once the hold reaches a second, once.
-        keys(&mut app).press(KeyCode::ControlLeft);
-        step(&mut app, 0.4);
-        step(&mut app, 0.4);
-        assert!(!control(&app).prone_request && (control(&app).prone_hold - 0.8).abs() < 1e-4);
-        step(&mut app, 0.4);
-        assert!(control(&app).prone_request, "held a second");
-        app.world_mut().resource_mut::<PlayerControl>().prone_request = false;
-        step(&mut app, 0.4);
-        assert!(!control(&app).prone_request, "once a hold");
-        keys(&mut app).release(KeyCode::ControlLeft);
-        step(&mut app, 0.1);
-        assert_eq!(control(&app).prone_hold, 0.0);
-        // On a key of its own: a press asks at once.
-        app.world_mut().resource_mut::<Bindings>().rebind(Control::Prone, crate::bindings::Input::Key(KeyCode::KeyK));
-        keys(&mut app).press(KeyCode::KeyK);
-        step(&mut app, 0.05);
-        assert!(control(&app).prone_request);
-        // The sneaking lock strikes it; the movement lock strikes the sprint.
+        // The sneaking lock leaves it; the movement lock strikes it.
         let mut i = MoveIntent::default();
         let mut c = PlayerControl { sprint_held: true, ..control(&app) };
         ControlLocks { sneaking: true, ..Default::default() }.apply(&mut i, &mut c);
-        assert!(!c.prone_request && c.prone_hold == 0.0 && c.sprint_held);
+        assert!(c.sprint_held);
         ControlLocks { movement: true, ..Default::default() }.apply(&mut i, &mut c);
         assert!(!c.sprint_held);
     }

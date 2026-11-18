@@ -892,11 +892,11 @@ below cover them all.
 - On the page: Enter or a click: bind a new key or mouse button to the control (a control
   that had it gets the old one). Delete clears its key.
 - In full: a key replaces the control's key, a mouse button its mouse button. Kept under the
-  control's name in [Controls] of NVForever.ini. Sprint and Prone (NVForever's own, at the end
-  of Movement) are greyed and cannot be rebound while their NVF Features › Advanced Movement
-  switch is off; their note says so. Sprint shares Run's Left Shift and Prone Crouch/Sneak's
-  key on purpose: a rebind never swaps within those pairs, and while Sprint is on the Run row
-  shows X, the key Run acts on then (`sprint`, `prone` under NVF Features › Gameplay below).
+  control's name in [Controls] of NVForever.ini. Sprint (NVForever's own, at the end of
+  Movement) is greyed and cannot be rebound while its NVF Features › Advanced Movement switch
+  is off; its note says so. Sprint shares Run's Left Shift on purpose: a rebind never swaps
+  within that pair, and while Sprint is on the Run row shows X, the key Run acts on then
+  (`sprint` under NVF Features › Gameplay below).
 
 ### A control (controller)
 
@@ -1287,17 +1287,6 @@ below cover them all.
   breath (shown by Camera Motion). The speed and AP perks apply to the sprint
   (docs/design/player-body.md §1.4a.4).
 - Command-line switches: `--sprint`, `--no-sprint`
-- Off by default.
-- Registered in `engine/nvf-play/src/player.rs`
-
-### `prone`: Prone
-
-- On the page: On: hold Crouch/Sneak for a second to lie down: counts as sneaking, steadier aim, less recoil, better V.A.T.S. odds; moving stands you up. Off: as in the original.
-- In full: the Prone control (Controls › Movement) shares Crouch/Sneak's key by default, where
-  a one-second hold lies down; given a key of its own, a press of it does. Lying down is
-  sneaking: the sneak bonuses, sneak attacks, detection, the sneak label and the perks on
-  sneaking all apply (owner, 2026-11-18). The control is greyed while this is off.
-- Command-line switches: `--prone`, `--no-prone`
 - Off by default.
 - Registered in `engine/nvf-play/src/player.rs`
 

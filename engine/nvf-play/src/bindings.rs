@@ -28,13 +28,13 @@
 //! written again. Esc and the console's key (`` ` ``) cannot be bound [design: they
 //! open the pause menu and the console].
 //!
-//! **Sprint and Prone** (NVForever's own, NVF Features › Advanced Movement; `crate::stance`)
-//! act only while their switch is on: off, they act on nothing and their Controls rows are
-//! greyed and cannot be rebound. The controls act on [`Bindings::effective`], worked out each
-//! time and never saved: while Sprint is on and Run is still on its default Left Shift, Run
-//! is on X ([`RUN_SPARE_KEY`]) and Shift is Sprint's; off, Shift is Run's again. Prone shares
-//! Crouch/Sneak's key on purpose, and Sprint Run's, so a rebind never swaps within those pairs
-//! ([`SHARED_PAIRS`]) [design: the owner 2026-11-18].
+//! **Sprint** (NVForever's own, NVF Features › Advanced Movement; `crate::stance`) acts only
+//! while its switch is on: off, it acts on nothing and its Controls row is greyed and cannot
+//! be rebound. The controls act on [`Bindings::effective`], worked out each time and never
+//! saved: while Sprint is on and Run is still on its default Left Shift, Run is on X
+//! ([`RUN_SPARE_KEY`]) and Shift is Sprint's; off, Shift is Run's again. Sprint shares Run's
+//! key on purpose, so a rebind never swaps within that pair ([`SHARED_PAIRS`]) [design: the
+//! owner 2026-11-18].
 //!
 //! **The controller** (`crate::pad`, docs/design/controller.md): `Input Device` in
 //! `[Controls]` (`Keyboard and Mouse` or `Controller`, [`InputDevice`]) says which works
@@ -100,10 +100,6 @@ pub enum Control {
     /// Run faster for AP while held (NVForever's own; acts only with NVF Features ›
     /// Advanced Movement › Sprint on, `crate::stance`).
     Sprint,
-    /// Lie down (NVForever's own; acts only with NVF Features › Advanced Movement › Prone
-    /// on, `crate::stance`): on Crouch/Sneak's key by default, held a second; on a key of
-    /// its own, a press.
-    Prone,
     // The Tweaks tab's keys (`crate::tweaks`, docs/design/tweaks.md): none bound unless
     // the player binds them.
     /// Holster the weapon at once (Stewie's Tweaks iHolsterWeaponKey).
@@ -165,10 +161,9 @@ pub enum Control {
 /// [observed 2026-10-09], then NVForever's own controls (after [`GAME_INI_CONTROLS`],
 /// coded the same way): Lower Weapon on H [design: the owner 2026-10-27, moved off Ready
 /// Item tapped twice so a reload is not held back waiting for a second tap]; Sprint on Left
-/// Shift with no controller button, Prone on Crouch/Sneak's Left Ctrl and left stick press
-/// [design: the owner 2026-11-18: while Sprint is on, Shift is Sprint's and Run moves to X
-/// ([`Bindings::effective`]); Prone shares Crouch/Sneak's key on purpose ([`SHARED_PAIRS`])].
-pub const GAME_CONTROLS: [(Control, &str, u32); 59] = [
+/// Shift with no controller button [design: the owner 2026-11-18: while Sprint is on, Shift
+/// is Sprint's and Run moves to X ([`Bindings::effective`])].
+pub const GAME_CONTROLS: [(Control, &str, u32); 58] = [
     (Control::Forward, "Forward", 0x0011FF13),
     (Control::Back, "Back", 0x001FFF14),
     (Control::SlideLeft, "Slide Left", 0x001EFF17),
@@ -199,7 +194,6 @@ pub const GAME_CONTROLS: [(Control, &str, u32); 59] = [
     (Control::Grab, "Grab", 0x002CFF09),
     (Control::LowerWeapon, "Lower Weapon", 0x0023FFFF),
     (Control::Sprint, "Sprint", 0x002AFFFF),
-    (Control::Prone, "Prone", 0x001DFF08),
     (Control::HolsterWeapon, "Holster Weapon", 0xFFFFFFFF),
     (Control::ToggleLight, "Toggle Light", 0xFFFFFFFF),
     (Control::ToggleCrosshair, "Toggle Crosshair", 0xFFFFFFFF),
@@ -234,7 +228,7 @@ pub const GAME_CONTROLS: [(Control, &str, u32); 59] = [
 /// Where the Tweaks tab's keys start in [`GAME_CONTROLS`]: none is bound unless the
 /// player binds it (`crate::tweaks`), but the console's and the screenshot's at the end
 /// ([`BOUND_EXTRA_CONTROLS`]), bound by default.
-pub const TWEAK_CONTROLS: usize = 31;
+pub const TWEAK_CONTROLS: usize = 30;
 
 /// The controls after the Tweaks tab's that are bound by default: the console and the
 /// screenshot ([`Control::Console`], [`Control::Screenshot`]).
@@ -436,18 +430,16 @@ pub struct Bindings {
     /// a scope, as a multiple of the unzoomed look's; 1 leaves the look as it is unzoomed
     /// (`crate::player::aim_scale`) [design: owner 2026-11-15].
     pub aim: [f32; 2],
-    /// NVF Features › Advanced Movement's Sprint and Prone act now
-    /// (`crate::inertia::MovementInertia::sprint_on`, `prone_on`), kept by
-    /// `crate::stance::sync_bindings`; never saved. They decide [`Bindings::effective`].
+    /// NVF Features › Advanced Movement's Sprint acts now
+    /// (`crate::inertia::MovementInertia::sprint_on`), kept by `crate::stance::sync_bindings`;
+    /// never saved. It decides [`Bindings::effective`].
     pub sprint_on: bool,
-    pub prone_on: bool,
 }
 
 /// Controls that share a key on purpose [design: the owner 2026-11-18]: Sprint takes Run's
-/// Left Shift (while Sprint is on Run moves off it, [`Bindings::effective`]), and Prone
-/// shares Crouch/Sneak's key (held a second, it lies down; `crate::stance`). A rebind never
+/// Left Shift (while Sprint is on Run moves off it, [`Bindings::effective`]). A rebind never
 /// swaps one of a pair for the other ([`Bindings::rebind`]).
-pub const SHARED_PAIRS: [(Control, Control); 2] = [(Control::Sprint, Control::Run), (Control::Prone, Control::CrouchSneak)];
+pub const SHARED_PAIRS: [(Control, Control); 1] = [(Control::Sprint, Control::Run)];
 
 /// Whether `a` and `b` share a key on purpose ([`SHARED_PAIRS`]).
 pub fn shared_pair(a: Control, b: Control) -> bool {
@@ -513,22 +505,17 @@ impl Bindings {
             vertical: [1.0, 1.0],
             aim: [1.0, 1.0],
             sprint_on: false,
-            prone_on: false,
         }
     }
 
-    /// Whether `c` is Sprint or Prone and its switch (under the Global Toggle) is off now:
-    /// it acts on nothing, and its Controls row is greyed (`crate::stance::binding_greyed`).
+    /// Whether `c` is Sprint and its switch (under the Global Toggle) is off now: it acts on
+    /// nothing, and its Controls row is greyed (`crate::stance::binding_greyed`).
     pub fn switched_off(&self, c: Control) -> bool {
-        match c {
-            Control::Sprint => !self.sprint_on,
-            Control::Prone => !self.prone_on,
-            _ => false,
-        }
+        c == Control::Sprint && !self.sprint_on
     }
 
     /// The key and mouse button control `c` acts on now: its own ([`Bindings::get`], what the
-    /// INI keeps), but none for Sprint or Prone while their switch is off, and Run on
+    /// INI keeps), but none for Sprint while its switch is off, and Run on
     /// [`RUN_SPARE_KEY`] while Sprint is on with Run still on its default Left Shift and Sprint
     /// on that key too (none when another control has X) [design: the owner 2026-11-18: "while
     /// Sprint is ON, Left Shift belongs to Sprint and Run moves to X, but only if Run is still
@@ -552,24 +539,12 @@ impl Bindings {
         self.sprint_on && run == default_binding(Control::Run) && run.key.is_some() && self.get(Control::Sprint).key == run.key
     }
 
-    /// Control `c`'s controller input now: none for Sprint or Prone while their switch is off.
+    /// Control `c`'s controller input now: none for Sprint while its switch is off.
     pub fn pad_effective(&self, c: Control) -> Option<PadInput> {
         if self.switched_off(c) {
             None
         } else {
             self.pad(c)
-        }
-    }
-
-    /// Prone is on Crouch/Sneak's input (the default): Prone is a hold of that key; on a key
-    /// of its own a press (`crate::control::read_controls`, `crate::stance`).
-    pub fn prone_shares_crouch(&self) -> bool {
-        match self.device {
-            InputDevice::Controller => self.pad(Control::Prone).is_some() && self.pad(Control::Prone) == self.pad(Control::CrouchSneak),
-            InputDevice::KeyboardMouse => {
-                let (p, c) = (self.get(Control::Prone), self.get(Control::CrouchSneak));
-                (p.key.is_some() && p.key == c.key) || (p.mouse.is_some() && p.mouse == c.mouse)
-            }
         }
     }
 
@@ -646,7 +621,7 @@ impl Bindings {
 
     /// Bind `input` to `c`; any other control that had it gets `c`'s old input of that
     /// kind instead (a swap), but the other of a pair that shares a key on purpose
-    /// ([`SHARED_PAIRS`]: Sprint and Run, Prone and Crouch/Sneak) keeps its own. The controls
+    /// ([`SHARED_PAIRS`]: Sprint and Run) keeps its own. The controls
     /// that gave it up.
     pub fn rebind(&mut self, c: Control, input: Input) -> Vec<Control> {
         let old = self.get(c);
@@ -727,7 +702,6 @@ pub fn label(c: Control) -> &'static str {
         Grab => "Grab",
         LowerWeapon => "Lower Weapon",
         Sprint => "Sprint",
-        Prone => "Prone",
         HolsterWeapon => "Holster Weapon",
         ToggleLight => "Pip-Boy Light",
         ToggleCrosshair => "Show/Hide Crosshair",
@@ -1805,20 +1779,16 @@ mod tests {
         assert_eq!(b.get(Control::Screenshot), Binding { key: Some(KeyCode::F12), mouse: None });
     }
 
-    /// Sprint and Prone (owner 2026-11-18): Left Shift and Crouch/Sneak's Left Ctrl by default,
-    /// nothing while their switch is off; with Sprint on Run moves to X unless the player moved
-    /// it; Prone on Crouch's key is the shared hold; no rebind swaps within those pairs.
+    /// Sprint (owner 2026-11-18): Left Shift by default, nothing while its switch is off; with
+    /// Sprint on Run moves to X unless the player moved it; no rebind swaps within the pair.
     #[test]
-    fn sprint_takes_shift_from_run_only_while_on_and_prone_shares_crouch() {
+    fn sprint_takes_shift_from_run_only_while_on() {
         let mut b = Bindings::game_defaults();
         assert_eq!(b.get(Control::Sprint), Binding { key: Some(KeyCode::ShiftLeft), mouse: None });
-        assert_eq!(b.get(Control::Prone), b.get(Control::CrouchSneak));
-        assert_eq!(b.pad(Control::Prone), b.pad(Control::CrouchSneak));
         assert_eq!(b.pad(Control::Sprint), None);
-        // Off: they act on nothing, Run keeps Shift.
+        // Off: it acts on nothing, Run keeps Shift.
         assert_eq!(b.effective(Control::Sprint), Binding::default());
-        assert_eq!(b.effective(Control::Prone), Binding::default());
-        assert_eq!(b.pad_effective(Control::Prone), None);
+        assert_eq!(b.pad_effective(Control::Sprint), None);
         assert_eq!(b.effective(Control::Run).key, Some(KeyCode::ShiftLeft));
         assert_eq!(b.text_on(Control::Sprint), "Left Shift", "a greyed row shows its own key");
         // Sprint on: Shift is Sprint's, Run on X; nothing saved changes.
@@ -1842,26 +1812,15 @@ mod tests {
         // Sprint off again: Shift is Run's.
         b.sprint_on = false;
         assert_eq!(b.effective(Control::Run).key, Some(KeyCode::ShiftLeft));
-        // Prone: on Crouch/Sneak's key it is the shared hold, on its own a press.
-        b.prone_on = true;
-        assert!(b.prone_shares_crouch());
-        assert_eq!(b.effective(Control::Prone).key, Some(KeyCode::ControlLeft));
-        // A rebind never swaps within a pair: Crouch/Sneak to C leaves Prone on Ctrl, Run to
-        // Shift's Sprint (both on it) takes nothing from Sprint.
-        assert!(b.rebind(Control::CrouchSneak, Input::Key(KeyCode::KeyC)).is_empty());
-        assert_eq!(b.get(Control::Prone).key, Some(KeyCode::ControlLeft));
-        assert!(!b.prone_shares_crouch(), "Prone on a key of its own now");
-        assert!(b.rebind(Control::Prone, Input::Key(KeyCode::KeyC)).is_empty(), "back on Crouch's key, Crouch keeps it");
-        assert_eq!(b.get(Control::CrouchSneak).key, Some(KeyCode::KeyC));
-        assert!(b.prone_shares_crouch());
+        // A rebind never swaps within the pair: Sprint back to Shift takes nothing from Run.
         let mut b = Bindings::game_defaults();
         b.rebind(Control::Sprint, Input::Key(KeyCode::KeyG));
         assert!(b.rebind(Control::Sprint, Input::Key(KeyCode::ShiftLeft)).is_empty());
         assert_eq!(b.get(Control::Run).key, Some(KeyCode::ShiftLeft), "Run keeps Shift beside Sprint");
         // Another control taking the shared key takes it from both, which stay together.
         let mut b = Bindings::game_defaults();
-        assert_eq!(b.rebind(Control::Jump, Input::Key(KeyCode::ControlLeft)), [Control::CrouchSneak, Control::Prone]);
-        assert_eq!((b.get(Control::CrouchSneak).key, b.get(Control::Prone).key), (Some(KeyCode::Space), Some(KeyCode::Space)));
+        assert_eq!(b.rebind(Control::Jump, Input::Key(KeyCode::ShiftLeft)), [Control::Run, Control::Sprint]);
+        assert_eq!((b.get(Control::Run).key, b.get(Control::Sprint).key), (Some(KeyCode::Space), Some(KeyCode::Space)));
     }
 
     #[test]

@@ -384,7 +384,7 @@ impl Plugin for PlayerPlugin {
             )
             .add_systems(Update, crate::control::place_camera.in_set(PlaySet::Physics).after(log_status));
         app.init_resource::<crate::inertia::MovementInertia>().add_systems(Update, (crate::inertia::follow_weapon, crate::inertia::log_switches));
-        // Sprint and Prone's shared state and the bindings kept on their switches.
+        // Sprint's shared state and the bindings kept on its switch.
         app.add_plugins(crate::stance::StancePlugin);
         // Sprint (`crate::sprint`): between the frame's walk rules and the physics steps.
         app.add_plugins(crate::sprint::SprintPlugin);
@@ -426,8 +426,8 @@ impl Plugin for PlayerPlugin {
                 |w| w.resource::<Inertia>().recoil,
                 |w, on| w.resource_mut::<Inertia>().recoil = on,
             ),
-            // Sprint and Prone, off by default; their controls (`crate::bindings`) are greyed
-            // while they are off, their shared state is `crate::stance`'s.
+            // Sprint, off by default; its control (`crate::bindings`) is greyed while it is
+            // off, its shared state is `crate::stance`'s.
             switch(
                 "sprint",
                 "Sprint",
@@ -435,14 +435,6 @@ impl Plugin for PlayerPlugin {
                 "--sprint --no-sprint",
                 |w| w.resource::<Inertia>().sprint,
                 |w, on| w.resource_mut::<Inertia>().sprint = on,
-            ),
-            switch(
-                "prone",
-                "Prone",
-                PRONE_NOTE,
-                "--prone --no-prone",
-                |w| w.resource::<Inertia>().prone,
-                |w, on| w.resource_mut::<Inertia>().prone = on,
             ),
             switch(
                 "animation-smoothing",
@@ -496,8 +488,6 @@ impl Plugin for PlayerPlugin {
 
 /// The Sprint row's note (NVF Features › Advanced Movement › Gameplay).
 pub const SPRINT_NOTE: &str = "On: hold Sprint (Left Shift; Run moves to X) to run faster, spending AP every second; stopping low on AP leaves you out of breath. Off: as in the original.";
-/// The Prone row's note: lying down counts as sneaking (`crate::stance`).
-pub const PRONE_NOTE: &str = "On: hold Crouch/Sneak for a second to lie down: counts as sneaking, steadier aim, less recoil, better V.A.T.S. odds; moving stands you up. Off: as in the original.";
 
 /// The Movement Weight dropdown's choice, by its name or its number.
 fn movement_weight_pick(w: &mut World, name: &str) -> bool {

@@ -72,14 +72,13 @@ pub const fn group_section(subgroup: &'static str, heading: &'static str, keys: 
 /// The rows the NVF Features tab may hold: only what the owner named there [design: owner
 /// 2026-11-15]. Adding a key needs the owner's word; a bigger gameplay change is offered to
 /// the owner for this tab, never moved here unasked (docs/design/settings-page.md).
-pub const NVF_FEATURES_KEYS: [&str; 17] = [
+pub const NVF_FEATURES_KEYS: [&str; 16] = [
     "advanced-movement",
     "movement-weight",
     "movement-inertia",
     "weapon-handling",
     "advanced-recoil",
     "sprint",
-    "prone",
     "weapon-inertia",
     "animation-smoothing",
     "camera-motion",
@@ -150,9 +149,8 @@ pub const SECTIONS: &[Section] = &[
             "controls:bind:Run",
             "controls:bind:Always Run",
             "controls:bind:Auto Move",
-            // NVForever's own, greyed while their NVF Features switch is off (owner 2026-11-18).
+            // NVForever's own, greyed while its NVF Features switch is off (owner 2026-11-18).
             "controls:bind:Sprint",
-            "controls:bind:Prone",
         ],
     ),
     section("Controls", Some("Combat"), &["controls:bind:Use", "controls:bind:Block", "controls:bind:Ready Item", "controls:bind:Vats", "controls:bind:Ammo Swap", "controls:bind:Lower Weapon"]),
@@ -214,8 +212,8 @@ pub const SECTIONS: &[Section] = &[
     section("Graphics", Some("World and Animation"), &["head-tracking", "foot-ik", "sky-clock"]),
     // The owner's own layout of the movement work (tech/movement-inertia, 2026-11-15).
     section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement", "movement-weight"]),
-    // Sprint and Prone after Advanced Recoil (owner 2026-11-18).
-    section(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil", "sprint", "prone"]),
+    // Sprint after Advanced Recoil (owner 2026-11-18).
+    section(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil", "sprint"]),
     section(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     section(NVF_FEATURES_TAB, Some("World Interaction"), &["grass-fire"]),
     // The Quick Loot menu (docs/design/quick-loot.md) [design, #2933].

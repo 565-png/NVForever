@@ -455,7 +455,6 @@ settings-page.md) [design]:
 | | `weapon-handling` | Weapon Handling | The slower draw and holster (`draw_weight`: 1.5 to 2.4 times the original's) and aim (0.6 s / 0.55 s for a pistol, `aim_weight`), heavier weapons slower still, Agility and Strength by the weapon's class (`attribute_rate`, `aim_rate`); off, the game's own timing with its Agility rate (`--no-weapon-handling`, `MovementInertia::handles`, `equip_rate`, `aim_seconds`) |
 | | `advanced-recoil` | Advanced Recoil | The view's kick eased in and 40 % settling back (`nvf_play::combat`), the view's nudge back from a shot (head bob's springs) |
 | | `sprint` | Sprint | Off by default (`--sprint`, `MovementInertia::sprint_on`): the Sprint control (Left Shift) held runs faster for AP, a stop low on AP leaves the player winded; while on, Run acts on X unless the player moved it (`bindings::Bindings::effective`); the shared state and input are `nvf_play::stance`'s (owner, 2026-11-18) |
-| | `prone` | Prone | Off by default (`--prone`, `MovementInertia::prone_on`): Crouch/Sneak held a second (or Prone's own key pressed) lies down; lying down counts as sneaking, for every sneak bonus and perk; moving stands up (`nvf_play::stance`, owner, 2026-11-18) |
 | *(an empty line)* | | | |
 | Visual Only | `weapon-inertia` | Weapon Inertia | The arms' lag, steps, bob, jump and landing dip, the muzzle tip in the air, the breathing drift, the gun's recoil springs, the weapon's weight in all of it (§1.4a); `--no-weapon-sway`, a saved `weapon-sway` read as it |
 | | `animation-smoothing` | Animation Smoothing | Every first-person clip fade on the settling curve, the draw and holster played by their motion along it, eased starts and slow returns of attacks, reloads and jams, the aim's cross-over, the true iron sights' and the zoom's curve, the loop seams, the Pip-Boy's ease; at Weapon Handling's pace, else at the game's own (the aim at the true iron sights' 0.35 s / 0.3 s), so it changes the look only |
@@ -584,9 +583,7 @@ by eye; the speed and the AP rate the owner's].
   none.
 - **What stops it**: Sprint let go, aiming or blocking, the trigger, a reload (owner,
   2026-11-18; `Combat::player_reloading`, logged `sprint: ended (reloading)`), sneaking or
-  crouching (the press stops it at once, eased out), lying down or still getting up (`StanceMotion::prone`
-  or `prone_share` over 0.02: getting up with Shift held stands up first, then the sprint
-  ramps in), over-encumbered, swimming or more than 30 units deep in water, a script's
+  crouching (the press stops it at once, eased out), over-encumbered, swimming or more than 30 units deep in water, a script's
   movement lock, no AP. A jump does not: its speed carries into the air. Held on, the sprint
   comes back once the stop is gone. The log: `sprint: started, …`, `sprint: ended (<why>)
   after <s> s, <n> AP spent, …`.

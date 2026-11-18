@@ -29,9 +29,7 @@
 //!   until the control is let go and AP has come back. None is spent in god mode.
 //! - **What stops it** ([`Blocked`]): the control let go, aiming or blocking, the trigger
 //!   (an attack), a reload (`crate::combat::Combat::player_reloading`) [design: the owner
-//!   2026-11-18], sneaking or crouching, lying down or still getting up
-//!   ([`StanceMotion::prone`], [`StanceMotion::prone_share`] over [`PRONE_CLEAR`]),
-//!   over-encumbered (`crate::player::OVERENCUMBERED`), swimming or deeper in water than
+//!   2026-11-18], sneaking or crouching, over-encumbered (`crate::player::OVERENCUMBERED`), swimming or deeper in water than
 //!   [`WATER_DEPTH`], the keys not going ahead, a script's movement lock (it strikes
 //!   `PlayerControl::sprint_held`), no AP. A jump does not: the sprint's speed carries
 //!   into it as the air control takes it. Each ends the sprint eased, never at once
@@ -74,10 +72,6 @@ pub const RUN_GAIT_FROM: f32 = 0.5;
 /// 0.71 diagonally) under which there is no sprint; from it to straight ahead the sprint
 /// grows ([`direction_share`]) [design: half a sprint diagonally].
 pub const LEAST_AHEAD: f32 = 0.4;
-/// Under this [`StanceMotion::prone_share`] the player counts as up from lying down: the
-/// sprint waits for it [design: the owner 2026-11-18, "stand up first, then sprint ramps
-/// in"].
-pub const PRONE_CLEAR: f32 = 0.02;
 /// Feet deeper in water than this (units, about 43 cm, over the knees) stop a sprint, as
 /// swimming does [design].
 pub const WATER_DEPTH: f32 = 30.0;
@@ -227,7 +221,6 @@ pub enum Blocked {
     Attacking,
     Reloading,
     Sneaking,
-    Prone,
     Encumbered,
     InWater,
     NotAhead,
@@ -243,7 +236,6 @@ impl Blocked {
             Blocked::Attacking => "attacking",
             Blocked::Reloading => "reloading",
             Blocked::Sneaking => "sneaking",
-            Blocked::Prone => "lying down",
             Blocked::Encumbered => "over-encumbered",
             Blocked::InWater => "in water",
             Blocked::NotAhead => "not moving ahead",
@@ -270,9 +262,6 @@ pub struct SprintInput {
     pub reloading: bool,
     pub encumbered: bool,
     pub in_water: bool,
-    /// [`StanceMotion::prone`] and [`StanceMotion::prone_share`] (the Prone feature's).
-    pub prone: bool,
-    pub prone_share: f32,
     /// The player's AP; `None`: unlimited (god mode, no script runtime), nothing spent.
     pub ap: Option<Ap>,
     pub ap_per_second: f32,
@@ -280,7 +269,7 @@ pub struct SprintInput {
 
 impl Default for SprintInput {
     fn default() -> Self {
-        SprintInput { dt: 0.0, on: true, held: false, forward: 0.0, right: 0.0, sneaking: false, aiming: false, attacking: false, reloading: false, encumbered: false, in_water: false, prone: false, prone_share: 0.0, ap: None, ap_per_second: SPRINT_AP_PER_SECOND }
+        SprintInput { dt: 0.0, on: true, held: false, forward: 0.0, right: 0.0, sneaking: false, aiming: false, attacking: false, reloading: false, encumbered: false, in_water: false, ap: None, ap_per_second: SPRINT_AP_PER_SECOND }
     }
 }
 
@@ -327,8 +316,6 @@ impl Sprint {
             Blocked::Attacking
         } else if i.reloading {
             Blocked::Reloading
-        } else if i.prone || i.prone_share > PRONE_CLEAR {
-            Blocked::Prone
         } else if i.sneaking {
             Blocked::Sneaking
         } else if i.encumbered {
@@ -474,8 +461,6 @@ pub fn update(
         reloading: control.reload || combat.as_deref().is_some_and(crate::combat::Combat::player_reloading),
         encumbered: crate::player::OVERENCUMBERED.load(std::sync::atomic::Ordering::Relaxed),
         in_water,
-        prone: stance.prone,
-        prone_share: stance.prone_share,
         ap,
         ap_per_second: tuning.ap_per_second,
     });
@@ -587,8 +572,6 @@ mod tests {
             (SprintInput { attacking: true, ..held(ap) }, Blocked::Attacking),
             (SprintInput { reloading: true, ..held(ap) }, Blocked::Reloading),
             (SprintInput { sneaking: true, ..held(ap) }, Blocked::Sneaking),
-            (SprintInput { prone: true, sneaking: true, ..held(ap) }, Blocked::Prone),
-            (SprintInput { prone_share: 0.3, ..held(ap) }, Blocked::Prone),
             (SprintInput { encumbered: true, ..held(ap) }, Blocked::Encumbered),
             (SprintInput { in_water: true, ..held(ap) }, Blocked::InWater),
             (SprintInput { forward: -1.0, ..held(ap) }, Blocked::NotAhead),
@@ -611,25 +594,6 @@ mod tests {
         }
         // A jump keeps it: nothing in the input says airborne.
         assert_eq!(speed_factor(1.0, SPRINT_SPEED), SPRINT_SPEED);
-    }
-
-    #[test]
-    fn the_sprint_waits_for_the_player_to_be_up_from_lying_down() {
-        let ap = Some(Ap { now: 80.0, max: 80.0 });
-        let mut s = Sprint::default();
-        // Getting up: prone off, its share easing down; Shift and W held all along.
-        let mut started_at = None;
-        for f in 0..120 {
-            let prone_share = (1.0 - f as f32 / 60.0).max(0.0);
-            let st = s.update(SprintInput { prone_share, ..held(ap) });
-            if st.started {
-                started_at = Some(prone_share);
-            }
-            if prone_share > PRONE_CLEAR {
-                assert_eq!(s.share(), 0.0, "no sprint while still getting up");
-            }
-        }
-        assert!(started_at.is_some_and(|p| p <= PRONE_CLEAR), "then it ramps in: {started_at:?}");
     }
 
     #[test]

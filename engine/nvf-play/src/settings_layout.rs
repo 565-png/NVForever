@@ -304,8 +304,8 @@ mod tests {
     /// overhaul's menu font, the Advanced Movement rows of tech/movement-inertia, Weapon
     /// Inertia and Camera Motion in place of weapon sway and head bob, #2843's Shadow
     /// resolution row, Gore Shake and #2670's Cloud shadows; #2661's mesh terrain blend row, the
-    /// Quick Loot rows, Sprint and Prone), by the group it registers with.
-    const KNOWN: [(&str, &str); 136] = [
+    /// Quick Loot rows, Sprint), by the group it registers with.
+    const KNOWN: [(&str, &str); 135] = [
         ("detached-camera", "Gameplay"),
         ("gore-shake", "Gameplay"),
         ("advanced-movement", "Gameplay"),
@@ -314,7 +314,6 @@ mod tests {
         ("weapon-handling", "Gameplay"),
         ("advanced-recoil", "Gameplay"),
         ("sprint", "Gameplay"),
-        ("prone", "Gameplay"),
         ("animation-smoothing", "Gameplay"),
         ("sound-cover", "Gameplay"),
         ("menu-pause", "Gameplay"),
@@ -643,7 +642,7 @@ mod tests {
         assert_eq!(keys(&list, &l, "Controls")[..6], ["[Input]", "@device", "button-style", "@automatic-input", "@rumble", ""]);
         assert_eq!(
             keys(&list, &l, NVF_FEATURES_TAB),
-            ["[Advanced Movement]", "advanced-movement", "movement-weight", "", "[Gameplay]", "movement-inertia", "weapon-handling", "advanced-recoil", "sprint", "prone", "", "[Visual Only]", "weapon-inertia", "animation-smoothing", "camera-motion", "", "[World Interaction]", "grass-fire", "", "[Quick Loot]", "quick-loot", "quick-loot-scale", "quick-loot-background", "quick-loot-weight", "quick-loot-value", "quick-loot-value-per-weight"]
+            ["[Advanced Movement]", "advanced-movement", "movement-weight", "", "[Gameplay]", "movement-inertia", "weapon-handling", "advanced-recoil", "sprint", "", "[Visual Only]", "weapon-inertia", "animation-smoothing", "camera-motion", "", "[World Interaction]", "grass-fire", "", "[Quick Loot]", "quick-loot", "quick-loot-scale", "quick-loot-background", "quick-loot-weight", "quick-loot-value", "quick-loot-value-per-weight"]
         );
         assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "terrain-wireframe", "scope-3d"]);
         assert!(keys(&list, &l, "Tweaks").is_empty(), "an empty tab is still a tab");
@@ -661,10 +660,9 @@ mod tests {
         assert_eq!(at("sound-cover"), "Gameplay > Game", "#2688");
         assert_eq!(l.control_placement("bind:Jump").unwrap().path(), "Controls > Movement");
         assert_eq!(l.control_placement("bind:Sprint").unwrap().path(), "Controls > Movement", "beside the movement controls (owner 2026-11-18)");
-        assert_eq!(l.control_placement("bind:Prone").unwrap().path(), "Controls > Movement");
-        // Sprint and Prone are not greyed under the Global Toggle, as their Advanced Movement
-        // neighbours (owner 2026-11-18); only their bindings are, while they are off.
-        assert!(needs("sprint").is_empty() && needs("prone").is_empty());
+        // Sprint is not greyed under the Global Toggle, as its Advanced Movement neighbours
+        // (owner 2026-11-18); only its binding is, while it is off.
+        assert!(needs("sprint").is_empty());
         // The registry itself is left as it was: its order and each row's group.
         let again = registry(&KNOWN);
         assert!(list.iter().zip(&again).all(|(a, b)| a.key == b.key && a.group == b.group && a.label == b.label && a.note == b.note));

@@ -20,7 +20,7 @@
 //!   over all of them ([`MovementInertia::advanced`]); under Gameplay, Movement Inertia (the
 //!   ground inertia here, the eased crouch, the take-off and landing dip and a hard
 //!   landing's weight), Weapon Handling (the slower draw, put-away and aim, the weapon's
-//!   weight in them), Advanced Recoil, Sprint and Prone (their shared state and contract:
+//!   weight in them), Advanced Recoil, Sprint (its shared state and contract:
 //!   `crate::stance`); under Visual Only, Animation Smoothing here and
 //!   nvforever's Weapon Inertia and Camera Motion (`PlayerBody`) [design: the owner,
 //!   2026-11-15, "simplify the Advanced Movement menu ... add 2 categories"].
@@ -282,8 +282,6 @@ pub struct MovementInertia {
     pub weapon_handling: bool,
     /// Sprint ([`Self::sprint_on`]): the Sprint control runs faster for AP (`crate::stance`).
     pub sprint: bool,
-    /// Prone ([`Self::prone_on`]): a held Crouch/Sneak lies the player down (`crate::stance`).
-    pub prone: bool,
     pub handling: f32,
     /// Movement Weight, 0.25 to 1 ([`MOVEMENT_WEIGHTS`]): the share of the inertia's times.
     pub weight: f32,
@@ -316,7 +314,7 @@ impl Default for MovementInertia {
     /// What a new game gets: the Global Toggle and Advanced Recoil on, the rest off, so an app
     /// that only adds the resource (a test app, `crate::player::PlayerPlugin`) plays as shipped.
     fn default() -> Self {
-        MovementInertia { advanced: true, on: false, smooth: false, recoil: true, weapon_handling: false, sprint: false, prone: false, handling: 1.0, weight: 1.0, weapon_weight: None, agility: 5.0, strength: 5.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None, last_placed: None }
+        MovementInertia { advanced: true, on: false, smooth: false, recoil: true, weapon_handling: false, sprint: false, handling: 1.0, weight: 1.0, weapon_weight: None, agility: 5.0, strength: 5.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None, last_placed: None }
     }
 }
 
@@ -368,12 +366,6 @@ impl MovementInertia {
     /// the Global Toggle; `crate::stance`, `crate::bindings::Bindings::effective`).
     pub fn sprint_on(&self) -> bool {
         self.advanced && self.sprint
-    }
-
-    /// The Prone control acts: a held Crouch/Sneak (or Prone's own key) lies the player down
-    /// (Prone under the Global Toggle; `crate::stance`).
-    pub fn prone_on(&self) -> bool {
-        self.advanced && self.prone
     }
 
     /// Movement Weight as a share, 0.25 to 1.
@@ -600,20 +592,19 @@ impl MovementInertia {
 
 /// Log Advanced Movement's switches kept here at the start and whenever one changes (a smoke
 /// check of the defaults: the owner, 2026-11-16, every part off but Advanced Recoil).
-pub fn log_switches(inertia: Res<MovementInertia>, mut last: Local<Option<[bool; 7]>>) {
-    let now = [inertia.advanced, inertia.on, inertia.weapon_handling, inertia.recoil, inertia.smooth, inertia.sprint, inertia.prone];
+pub fn log_switches(inertia: Res<MovementInertia>, mut last: Local<Option<[bool; 6]>>) {
+    let now = [inertia.advanced, inertia.on, inertia.weapon_handling, inertia.recoil, inertia.smooth, inertia.sprint];
     if *last != Some(now) {
         *last = Some(now);
         let s = |b: bool| if b { "on" } else { "off" };
         info!(
-            "advanced movement: Global Toggle {}, Movement Inertia {}, Weapon Handling {}, Advanced Recoil {}, Animation Smoothing {}, Sprint {}, Prone {}",
+            "advanced movement: Global Toggle {}, Movement Inertia {}, Weapon Handling {}, Advanced Recoil {}, Animation Smoothing {}, Sprint {}",
             s(now[0]),
             s(now[1]),
             s(now[2]),
             s(now[3]),
             s(now[4]),
-            s(now[5]),
-            s(now[6])
+            s(now[5])
         );
     }
 }
@@ -726,13 +717,13 @@ mod tests {
     }
 
     #[test]
-    fn sprint_and_prone_are_off_by_default_and_need_the_global_toggle() {
+    fn sprint_is_off_by_default_and_needs_the_global_toggle() {
         let m = MovementInertia::default();
-        assert!(!m.sprint && !m.prone && !m.sprint_on() && !m.prone_on(), "both off by default");
-        let on = MovementInertia { sprint: true, prone: true, ..MovementInertia::default() };
-        assert!(on.sprint_on() && on.prone_on());
+        assert!(!m.sprint && !m.sprint_on(), "off by default");
+        let on = MovementInertia { sprint: true, ..MovementInertia::default() };
+        assert!(on.sprint_on());
         let off = MovementInertia { advanced: false, ..on };
-        assert!(!off.sprint_on() && !off.prone_on() && off.sprint && off.prone, "each keeps its own choice under the Global Toggle");
+        assert!(!off.sprint_on() && off.sprint, "it keeps its own choice under the Global Toggle");
     }
 
     #[test]
