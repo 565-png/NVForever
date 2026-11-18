@@ -1017,8 +1017,8 @@ below cover them all.
   thing's lamp shadow can lag a frame. The world and your body cast, the first-person arms
   do not; what lies within 8 units of a light casts nothing from it, and lamp housings,
   shades and bulbs cast no lamp shadows. Quality also gives the shadows soft edges (sharp
-  where a thing touches the surface, softer away from it) and, while TAA is the
-  anti-aliasing (not with FSR or DLSS), small contact shadows where things touch. A point light's maps
+  where a thing touches the surface, softer away from it) and, while TAA, FSR or DLSS is
+  on, small contact shadows where things touch. A point light's maps
   are 512² with Shadow resolution 2048, 1024² with 4096. The flashlight casts as before.
   The original's placed lights cast none [design].
 - A list kept in the INI by name (`Off`, `Performance`, `Quality`).

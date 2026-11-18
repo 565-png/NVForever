@@ -14,12 +14,15 @@
 //!   `contact_shadows_enabled`: small shadows where things touch (a bottle on a bar, a foot
 //!   on a floor) that the lamps' 512-texel maps miss, and the only shadows of the lights
 //!   past the cap. The camera then needs a depth prepass (`DepthPrepass`, which
-//!   `ContactShadows` requires), as FSR and DLSS already do. Only while TAA is the
-//!   anti-aliasing: without a temporal method the march's per-pixel noise speckles walls
-//!   and ceilings, and with FSR or DLSS (drawn below the output size) it threw hard-edged
-//!   false shadows that changed as the camera moved [observed 2026-11-18: pictures in the
-//!   Goodsprings General Store; the owner's videos, and a walk along the Prospector
-//!   Saloon's porch with DLSS and with FSR; clean with TAA].
+//!   `ContactShadows` requires), as FSR and DLSS already do. Only while a temporal
+//!   method is on (TAA, FSR or DLSS: the camera jitters): without one the march's
+//!   per-pixel noise speckles walls and ceilings [observed 2026-11-18, General Store
+//!   pictures]. With FSR or DLSS the picture is drawn below its output size into the
+//!   top-left of full-size textures (`MainPassResolutionOverride`); Bevy's march read the
+//!   whole depth texture as the view and threw hard-edged false shadows that changed as
+//!   the camera moved [observed 2026-11-18: the owner's videos, a walk along the
+//!   Prospector Saloon's porch]. The vendored march now reads the main pass's viewport
+//!   only (bevy_pbr raymarch.wesl `depth_uv_scale`, engine/vendor/README.md).
 //! - The sun keeps neither: its soft edges are the cascades' filter, and Bevy's contact
 //!   shadows on it speckled near surfaces at a grazing angle (§4, tried and dropped).
 
@@ -30,6 +33,7 @@ use bevy::pbr::ContactShadows;
 use bevy::ecs::entity::EntityHashMap;
 use bevy::pbr::HoldLightShadowMaps;
 use bevy::prelude::*;
+use bevy::render::camera::TemporalJitter;
 use bevy::transform::TransformSystems;
 
 use crate::light_shadows::{CastingLight, LightShadows, ShadowSource, SourceKind};
@@ -105,7 +109,7 @@ type Lit<'a> = (Entity, Option<&'a mut PointLight>, Option<&'a mut SpotLight>, H
 /// The lights these settings touch: the placed ones and the other sources.
 type Lamps = Or<(With<SessionLight>, With<ShadowSource>)>;
 
-type Cameras<'a> = (Entity, &'a GlobalTransform, Has<ContactShadows>, Has<crate::taa::TemporalAa>);
+type Cameras<'a> = (Entity, &'a GlobalTransform, Has<ContactShadows>, Has<TemporalJitter>);
 
 /// Soft edges on the casting lights on Quality, and on those whose held maps still fade out
 /// (a slot kept, `HoldLightShadowMaps`); off otherwise, each light's own radius given back.
@@ -158,14 +162,14 @@ fn contact(
 ) {
     let mut on = false;
     let mut at = None;
-    for (e, t, has, taa) in &cameras {
+    for (e, t, has, temporal) in &cameras {
         at = Some(t.translation());
-        // Only with TAA, which smooths the march's per-pixel noise (without it the walls
-        // speckle, as with the sun, §4), and so never with FSR or DLSS: drawn below the
-        // output size, the march threw hard-edged false shadows that changed as the camera
-        // moved (owner's videos 2026-11-18, the Prospector Saloon's porch; reproduced
-        // walking along it with DLSS and with FSR, clean with TAA).
-        on = detailed(settings.choice) && !contact_aid_off() && taa;
+        // Only with a temporal method (TAA, FSR, DLSS: the camera jitters), which smooths
+        // the march's per-pixel noise; without one it speckles the walls (§4). Under FSR and
+        // DLSS the vendored march reads the depth of the main pass's viewport only
+        // (raymarch.wesl `depth_uv_scale`): before that it threw hard-edged false shadows
+        // (owner's videos 2026-11-18, the Prospector Saloon's porch).
+        on = detailed(settings.choice) && !contact_aid_off() && temporal;
         if on && !has {
             commands.entity(e).insert((contact_settings(), DepthPrepass));
         } else if !on && has {
@@ -201,7 +205,7 @@ fn contact(
                 "light shadows: soft edges (light size {SOFT_RADIUS}, explosions {BLAST_RADIUS}) and contact shadows on {count} lights ({} steps, thickness {}, length {})",
                 CONTACT.linear_steps, CONTACT.thickness, CONTACT.length
             ),
-            (true, false) => info!("light shadows: soft edges (light size {SOFT_RADIUS}, explosions {BLAST_RADIUS}); no contact shadows (only with TAA, not with FSR or DLSS)"),
+            (true, false) => info!("light shadows: soft edges (light size {SOFT_RADIUS}, explosions {BLAST_RADIUS}); no contact shadows (only with TAA, FSR or DLSS)"),
             _ => info!("light shadows: no soft edges or contact shadows"),
         }
     }

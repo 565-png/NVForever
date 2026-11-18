@@ -61,6 +61,23 @@ by a comment starting `NVForever FSR integration`:
 Without the override both do what upstream does. This is a new patch for Bevy 0.20.1, not
 the dropped 0.19.1 one below.
 
+The same for the contact shadows' depth march (lamp shadows on Quality, light_shadow_detail.rs;
+docs/design/graphics-enhanced.md §3.15), each part marked `NVForever (main pass viewport)`:
+
+- `src/ssr/raymarch.wesl`: `DepthRayMarch` and its distance function carry
+  `depth_uv_scale` and `depth_uv_offset` (default (1, 1) and (0, 0)): the depth texture is
+  sampled at `view_uv * scale + offset`, and a ray's length in pixels is taken over the
+  part of the texture the view was drawn in.
+- `src/render/pbr_functions.wesl` `calculate_contact_shadow`: sets them from
+  `view.main_pass_viewport` and the depth texture's size. With FSR or DLSS the main passes
+  fill only the top-left render-size part of full-size textures; upstream's march read the
+  whole texture as the view and threw hard-edged false shadows that changed as the camera
+  moved [observed 2026-11-18, the owner's videos; a walk along the Prospector Saloon's
+  porch with DLSS Quality, DLSS Performance and FSR was clean after the change].
+
+Without the override the scale and offset are (1, 1) and (0, 0), upstream's march. Bevy's
+screen-space reflections (`ssr.wesl`) keep the defaults.
+
 Another change (one resolve, docs/design/frame-rate-audit.md §9), in `src/transmission/`,
 each part marked `NVForever one resolve`, with `ViewTarget::set_resolve_deferred` in
 bevy_render below:

@@ -1870,7 +1870,7 @@ forbid = [
 ]
 [[scenario]]
 name = "light-shadows-dlss"
-source = "[design] docs/design/graphics-enhanced.md §3.15 'Soft edges and contact shadows': with --light-shadows=quality and DLSS the lamps keep their soft edges but take no contact shadows: drawn below the output size, the contact march threw hard-edged false shadows that changed as the camera moved (owner's videos 2026-11-18, the Prospector Saloon's porch; reproduced walking along it with DLSS and FSR, clean with TAA). The walk along the porch, without a rendering or pipeline error"
+source = "[design] docs/design/graphics-enhanced.md §3.15 'Soft edges and contact shadows': with --light-shadows=quality and DLSS the lamps take soft edges and contact shadows, and the vendored contact march reads the main pass's viewport (bevy_pbr raymarch.wesl depth_uv_scale): before that, drawn below the output size, it threw hard-edged false shadows that changed as the camera moved (owner's videos 2026-11-18, the Prospector Saloon's porch). The walk along the porch compiles the patched march and draws it without a rendering or pipeline error; the picture is checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadows.rs"]
 note = "needs NVF_DLSS_DIR (NVIDIA's files)."
@@ -1879,13 +1879,14 @@ env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_T
 args = ["--cell", "Goodsprings", "--play", "--pos=-67950,3240,8400", "--heading", "0", "--hour", "14.1", "--no-voice", "--no-messages", "--upscaler", "dlss", "--upscaler-quality", "quality", "--light-shadows=quality"]
 run_seconds = 12
 expect = [
-  { text = "no contact shadows (only with TAA, not with FSR or DLSS)", label = "soft edges on, contact shadows off with DLSS" },
+  { re = 'soft edges \(light size [0-9.]+, explosions [0-9.]+\) and contact shadows on [1-9][0-9]* lights', label = "soft edges and contact shadows on with DLSS" },
 ]
 forbid = [
-  { re = 'and contact shadows on [1-9]', label = "contact shadows switched on under DLSS" },
   { text = "DeviceLost", label = "the GPU device was lost on the porch walk" },
   { text = "Caught rendering error", label = "a rendering (validation) error with DLSS and the lamp maps" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (the patched contact march under DLSS)" },
 ]
+
 [[scenario]]
 name = "sun-shadow-hold-flashlight"
 source = "#2182 review (vendored bevy_pbr light.rs prepare_lights, nvforever shadow_rate.rs): the player's flashlight casts shadows, so switching it on or off gives the sun a new shadow texture; that frame draws every cascade instead of holding one, outdoors at noon with the staggered schedule"
