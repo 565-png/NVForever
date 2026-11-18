@@ -43,8 +43,8 @@
 //!   view this frame ([`in_view`]: a new light was not seen last frame), up to
 //!   [`Tuning::transients`], with their own [`Tuning::transient_draws`] a frame; so a
 //!   flash's cube is drawn in the frame it appears, and a firefight and the lamps do not
-//!   starve each other. A flash that moves with the gun is drawn again only once it has
-//!   moved [`LIGHT_MOVE_EPS`]. The effects' own shapes are `NotShadowCaster` (shot_fx.rs
+//!   starve each other. A transient draws its cube once and holds it for the rest of its
+//!   short life (redrawn as recoil moved it, a flash drew 3.5 times on average). The effects' own shapes are `NotShadowCaster` (shot_fx.rs
 //!   `spawn_effect`, `spawn_playing_itself`), and the gun a flash sits at is a small shape
 //!   it sits against ([`skip_fixtures`]).
 //! - **Spot lights** (few among the placed ones) keep their maps switched on while they
@@ -154,8 +154,8 @@ pub const MOVE_EPS: f32 = 4.0;
 
 /// A casting light counts as moved once it is this far from where its maps were last
 /// marked or drawn in full (game units, about 11 cm) [engineering choice, 2026-11-18: a
-/// muzzle flash follows the swaying gun for its tenth of a second; one draw a flash is
-/// enough, a flash's shadow 100 ms stale is not seen].
+/// light an animation or script sways by a few units is not drawn again each frame].
+/// Transients are not redrawn at all once drawn.
 pub const LIGHT_MOVE_EPS: f32 = 8.0;
 
 /// Transient lights cast only when their light reaches within this far of the camera
@@ -687,7 +687,7 @@ fn shadow_lights(
     // The light moved past LIGHT_MOVE_EPS, or its turn for a full redraw came.
     for l in &lamps {
         if let (Some(s), Some(tune)) = (state.lamps.get_mut(&l.entity), tune) {
-            if light_moved(s.at, l.at) || frame.saturating_sub(s.refreshed) >= tune.refresh {
+            if !l.transient && (light_moved(s.at, l.at) || frame.saturating_sub(s.refreshed) >= tune.refresh) {
                 s.dirty = ALL_FACES;
                 s.refreshed = frame;
                 s.at = l.at;
@@ -712,8 +712,14 @@ fn shadow_lights(
         s.dirty &= all;
         let Some(t) = tune else { continue };
         let every = if l.gap <= NEAR { t.near_every } else { t.far_every };
+        // A transient (a muzzle flash, 0.1 s; an explosion's light, still while it fades)
+        // draws once and is held for the rest of its short life: a flash moved by the gun's
+        // recoil was drawn 3.5 times on average, measured in the Prospector Saloon gunfight
+        // [engineering choice, 2026-11-18].
         let want = if hold_all || s.fresh {
             all
+        } else if l.transient {
+            0
         } else if its_turn(frame, s.phase, every) {
             s.dirty
         } else {

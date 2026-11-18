@@ -1434,8 +1434,8 @@ culls, extracts and queues every face view every frame.
     that face moved, appeared, or was shown or hidden. A skeleton (actors, the player's
     body) whose joints' box moved also marks the faces it reaches. The light itself marks
     all its faces once it is more than 8 units (about 11 cm) from where its maps were last
-    marked or drawn in full (`LIGHT_MOVE_EPS`) [engineering choice, 2026-11-18: a muzzle
-    flash follows the swaying gun for its tenth of a second; one draw a flash is enough].
+    marked or drawn in full (`LIGHT_MOVE_EPS`) [engineering choice, 2026-11-18: a light
+    an animation or script sways by a few units is not drawn again each frame].
   - Shapes and skeletons count as moved once they are 4 units (about 6 cm) from where
     they last marked (`MOVE_EPS`). Small moves add up until they reach it.
   - Something removed (a taken item) marks the lights around the camera in full.
@@ -1479,8 +1479,15 @@ culls, extracts and queues every face view every frame.
       Performance (`Tuning::transient_draws`), besides the placed lights' 3 and 1, so a
       firefight does not starve the lamps nor the lamps it [engineering choice].
   - A transient light never drew, so it goes first and draws its whole cube in the frame
-    it appears. A flash moving with the gun draws again only once it has moved 8 units
-    (`LIGHT_MOVE_EPS`); an explosion's faces are redrawn where something moved in them.
+    it appears, **once**: it is held for the rest of its short life, whatever moves
+    [observed 2026-11-18, Trudy's gunfight in the Prospector Saloon at 22:00: redrawn
+    when the gun's recoil carried it past `LIGHT_MOVE_EPS`, a flash was drawn 3.5 times
+    on average (4 flashes, 14 switched on); drawn once, 4 and 4].
+  - Cost [observed 2026-11-18, the same gunfight, RTX 5090, 1280 × 720, `--log-frame-times
+    3`]: 3-second means 3.12-3.29 ms on Quality against 3.04-3.21 ms off; the slowest
+    frame of a window with a flash 8.8-10.7 ms against 4.8-7.6 ms off. A flash costs one
+    frame a few ms longer, as a lamp switched on does (about 1.4 ms of processor time over
+    every thread, against 0.7 ms a frame for a light kept on; `NVF_LIGHT_SHADOW_REFRESH`).
   - The effects' own shapes (flash, explosion and fire models, their particles) are
     `NotShadowCaster`, so a light is not blacked out by the flames around it. The gun a
     muzzle flash sits at is a small shape it sits against, skipped as a fixture.

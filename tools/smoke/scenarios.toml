@@ -1852,6 +1852,23 @@ forbid = [
   { text = "still being retried after", label = "a pipeline still retried at the cap" },
 ]
 [[scenario]]
+name = "light-shadows-gunfight"
+source = "[design] docs/design/graphics-enhanced.md §3.15 'Other lights': with --light-shadows=quality, Trudy's shotgun flashes in the Prospector Saloon at night cast as transient lights, each drawn once (switched on as often as cast), without a rendering or pipeline error. [observed 2026-11-18, these arguments run by hand: transients 4 cast, 4 switched on, 24 faces drawn.] The picture and the cost are checked by hand"
+areas = ["renderer", "graphics", "combat"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/shot_fx.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:enable:TrudyRef,4:call:TrudyRef:AddItem:WithAmmoNVSingleShotgunLoot:1,10:combat:TrudyRef:player" }
+args = ["--cell", "GSProspectorSaloonInterior", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality"]
+run_seconds = 28
+expect = [
+  { re = 'transients [1-9][0-9]* cast, [1-9][0-9]* switched on, [1-9][0-9]* faces drawn', label = "muzzle flashes cast as transient lights" },
+]
+forbid = [
+  { text = "DeviceLost", label = "the GPU device was lost in the gunfight" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the flashes' maps" },
+  { text = "failed and will not be tried again", label = "a shadow pipeline that failed for good" },
+  { text = "still being retried after", label = "a shadow pipeline still retried at the cap" },
+]
+[[scenario]]
 name = "sun-shadow-hold-flashlight"
 source = "#2182 review (vendored bevy_pbr light.rs prepare_lights, nvforever shadow_rate.rs): the player's flashlight casts shadows, so switching it on or off gives the sun a new shadow texture; that frame draws every cascade instead of holding one, outdoors at noon with the staggered schedule"
 areas = ["renderer", "flashlight"]
