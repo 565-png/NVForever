@@ -1104,7 +1104,7 @@ fn register_graphics(app: &mut App) {
         },
     );
     nvf_play::settings::set_disabled_status(app, "latency-reduction", |w| (!crate::anti_lag::available(w)).then_some("Not on this GPU"));
-    let switches: [Switch; 16] = [
+    let switches: [Switch; 17] = [
         (
             "ambient-occlusion",
             "Ambient occlusion",
@@ -1205,6 +1205,14 @@ fn register_graphics(app: &mut App) {
             |w, on| w.resource_mut::<Graphics>().light_shafts = on,
         ),
         (
+            "heat-haze",
+            "Heat haze (experimental)",
+            "On: the far ground near the horizon shimmers slightly on hot, clear days, by the sun and the weather. A prototype. Not in the original.",
+            "--graphics-only",
+            |w| w.resource::<Graphics>().heat_haze,
+            |w, on| w.resource_mut::<Graphics>().heat_haze = on,
+        ),
+        (
             "desert-haze",
             "Desert haze (experimental)",
             "On: a thin dust haze thickens with distance and toward the ground, warmer toward the sun, as far as the weather's fog allows. Not in the original.",
@@ -1257,7 +1265,7 @@ fn register_pipeline_waits(app: &mut App) {
         "anti-aliasing", "shadow-filter", "upscaler", "upscaler-quality", "ambient-occlusion",
         "fine-shadows", "bloom", "glow", "eye-adaptation", "neon-glow", "sharpen",
         "light-shafts", "water-reflections", "water-mirror", "sun-shadows", "grade",
-        "terrain-height-blend", "terrain-anti-tiling", "cloud-shadows", MESH_BLEND_KEY,
+        "terrain-height-blend", "terrain-anti-tiling", "cloud-shadows", "heat-haze", MESH_BLEND_KEY,
     ] {
         nvf_play::settings::wait_for_pipelines(app, key);
     }
@@ -2609,6 +2617,7 @@ dlss-model=Preset K
             ("terrain-height-blend", &["--graphics", "--graphics-only"]),
             ("terrain-anti-tiling", &["--graphics", "--graphics-only"]),
             ("light-shafts", &["--graphics"]),
+            ("heat-haze", &["--graphics-only"]),
             ("desert-haze", &["--graphics", "--graphics-only"]),
             ("water-reflections", &["--graphics"]),
             ("water-mirror", &["--graphics-only"]),

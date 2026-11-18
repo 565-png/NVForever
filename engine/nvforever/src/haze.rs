@@ -1,4 +1,4 @@
-//! The desert haze (`desert-haze`, docs/design/graphics-enhanced.md §3.15, #2675): an
+//! The desert haze (`desert-haze`, docs/design/graphics-enhanced.md §3.16, #2675): an
 //! enhanced-look switch, off by default and in every preset, never a parity item. A thin
 //! dust haze is added on top of the weather's own distance fog (fog.rs), thicker with
 //! distance and toward the ground, warmer toward the sun, as far as that weather's fog
