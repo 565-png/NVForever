@@ -74,6 +74,9 @@ pub struct DrawDistances {
     pub grass: f32,
     /// The farthest a loaded cell reaches from the camera (game units).
     pub reach: f32,
+    /// With the full-detail ring on (full_detail.rs, #2701), the farthest a ring cell
+    /// reaches: the Object distance slider's full distance then [design].
+    pub ring_reach: Option<f32>,
     /// `--shadow-distance`.
     pub shadow_full: f32,
     /// `--grass-distance` and `--grass-fade-range`.
@@ -89,6 +92,7 @@ impl DrawDistances {
             shadows: 1.0,
             grass: 1.0,
             reach: full_reach(args.radius),
+            ring_reach: None,
             shadow_full: args.shadow_distance.max(0.0),
             grass_full: (args.grass_distance.max(0.0), args.grass_fade_range.max(0.0)),
         }
@@ -104,10 +108,15 @@ impl DrawDistances {
         }
     }
 
-    /// How far a class is drawn; `None`: as far as its cells (the full slider).
+    /// How far a class is drawn; `None`: as far as its cells (the full slider). Objects
+    /// reach the full-detail ring's edge at 100% while it is on (`ring_reach`).
     pub fn distance(&self, class: DrawClass) -> Option<f32> {
         let part = self.part(class);
-        (part < 1.0).then_some(self.reach * part)
+        let full = match class {
+            DrawClass::Object => self.ring_reach.unwrap_or(self.reach),
+            _ => self.reach,
+        };
+        (part < 1.0).then_some(full * part)
     }
 }
 
@@ -320,7 +329,21 @@ mod tests {
     }
 
     fn distances() -> DrawDistances {
-        DrawDistances { objects: 1.0, actors: 0.5, items: 0.25, shadows: 1.0, grass: 1.0, reach: full_reach(2), shadow_full: 8000.0, grass_full: (7000.0, 1000.0) }
+        DrawDistances { objects: 1.0, actors: 0.5, items: 0.25, shadows: 1.0, grass: 1.0, reach: full_reach(2), ring_reach: None, shadow_full: 8000.0, grass_full: (7000.0, 1000.0) }
+    }
+
+    /// #2701: with the full-detail ring on, the Object slider's part is of the ring's reach;
+    /// actors and items keep the loaded cells' reach.
+    #[test]
+    fn objects_reach_the_rings_edge_while_it_is_on() {
+        let mut d = distances();
+        d.objects = 0.5;
+        assert_eq!(d.distance(DrawClass::Object), Some(d.reach * 0.5));
+        d.ring_reach = Some(full_reach(4));
+        assert_eq!(d.distance(DrawClass::Object), Some(full_reach(4) * 0.5));
+        assert_eq!(d.distance(DrawClass::Actor), Some(d.reach * 0.5));
+        d.objects = 1.0;
+        assert_eq!(d.distance(DrawClass::Object), None, "100%: not culled");
     }
 
     #[test]
