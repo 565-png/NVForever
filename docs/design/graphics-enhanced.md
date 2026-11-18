@@ -1561,10 +1561,19 @@ culls, extracts and queues every face view every frame.
   - Contact shadows: the world camera takes Bevy's `ContactShadows` (8 steps, thickness
     4, length 24 units) and so a depth prepass, and the placed lights, grass fires and
     attached lights within the shadow distance take `contact_shadows_enabled`: small
-    shadows where things touch, and the only ones of the lights past the cap. Only while a
-    temporal method (TAA, FSR or DLSS) is on: without one the march's per-pixel noise
-    speckled walls and ceilings in a regular dot pattern, thinner settings worse; with TAA
-    the picture was clean [observed 2026-11-18, General Store pictures].
+    shadows where things touch, and the only ones of the lights past the cap. Only while
+    TAA is the anti-aliasing:
+    - Without a temporal method the march's per-pixel noise speckled walls and ceilings in
+      a regular dot pattern, thinner settings worse; with TAA the picture was clean
+      [observed 2026-11-18, General Store pictures].
+    - With FSR or DLSS (the picture drawn below the output size and upscaled) the march
+      threw hard-edged false shadows, a dark block over a door, streaks down a wall, that
+      changed as the camera moved [observed 2026-11-18: the owner's videos with DLSS;
+      reproduced walking along the Prospector Saloon's porch at 14:00 with DLSS and with
+      FSR; gone with `NVF_LIGHT_SHADOW_CONTACT=0`, not with `NVF_LIGHT_SHADOW_SOFT=0`;
+      clean with TAA]. [hypothesis] the march reads the depth prepass in a frame the
+      upscaled view does not match. So with an upscaler Quality has soft edges and no
+      contact shadows.
     `NVF_LIGHT_SHADOW_CONTACT=0` turns them off, `NVF_LIGHT_SHADOW_CONTACT_MARCH=<steps>,
     <thickness>,<length>` tries other settings.
 - **The lighting.** Nothing in the lighting shaders changes. The display-value sum
