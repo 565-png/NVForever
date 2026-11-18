@@ -654,14 +654,25 @@ occlusion and before temporal anti-aliasing: each of the three swaps the view's 
 pictures, and unordered they could record on two threads, one reading a stale picture
 for a frame [hypothesis for the flicker reported under water, from the code].
 
-[design] River currents animate the noise layers on selected exterior reaches. The
-directions follow the Colorado below Hoover Dam through Cottonwood Cove and the western
-channel in Zion Canyon. The table selects cells at the surveyed surface heights (-2300
-and 5000 game units, respectively). Cell coverage was chosen from LAND cross-sections
-below the visible water level; the downstream directions and speed (110 units a second, each noise
-layer at 1.0, 0.75 and 1.3 of it so the surface changes shape as it travels; at 40 the
-river moved slower than the wind moves Lake Mead's first layer, 65) are artistic choices.
-A locally placed surface at the same elevation can share the cell's current. Each noise layer retains a share of its
+[design] River currents animate the noise layers on selected exterior reaches: the
+Colorado below Hoover Dam through Cottonwood Cove, and the western channel in Zion
+Canyon. No record names a flow, so the downstream directions and the speed (110 units a
+second, each noise layer at 1.0, 0.75 and 1.3 of it so the surface changes shape as it
+travels; at 40 the river moved slower than the wind moves Lake Mead's first layer, 65)
+are this project's choices.
+
+[observed, 2026-11-18: a private script of the change's author over their own
+FalloutNV.esm and HonestHearts.esm, read-only; its output is not in the repository] The
+table (`river_flow.rs`) selects cells at the worldspaces' default water heights (WRLD
+DNAM: WastelandNV -2300, NVDLC02ZionCanyon 5000). Which cells: for each exterior cell
+with the "has water" flag, the script read the LAND heights (VHGT) along the row a
+quarter of the way up the cell and listed the stretches lying more than 12 units under
+the cell's water height. On the Colorado they run between cells x 17 and 24 from row y 6
+down to -31 (north of that the water is Lake Mead's, at 2600); in Zion the western stream
+runs from cell (1, 8) to (-3, -9). The table's rectangles cover the cells those
+stretches cross.
+
+[design] A locally placed surface at the same elevation can share the cell's current. Each noise layer retains a share of its
 water type's wind, bounded so its crests travel downstream. Actor ripples keep their
 world position. The current changes surface appearance only.
 

@@ -66,12 +66,21 @@ const fn zion(x: (i32, i32), y: (i32, i32), direction: FlowDirection) -> FlowZon
     FlowZone { worldspace: "NVDLC02ZionCanyon", surface_height: 5000.0, x, y, direction }
 }
 
-// [design] Cell coverage deliberately authored from the supplied read-only wet
-// cross-section survey (2026-11-18); it is not original-engine flow metadata.
-// Inclusive endpoint floors select cells intersected by the surveyed channel.
-// Between surveyed sections, these bounds interpolate the continuous main river;
-// they do not infer side branches. Directions are coherent authored reaches,
-// deliberately coarser than individual shoreline turns. Only drawn water moves.
+// Where the rivers are [observed, 2026-11-18: a private script of this change's author
+// over their own FalloutNV.esm and HonestHearts.esm, read-only; its output is not in the
+// repository]:
+// - the surface heights are the worldspaces' default water heights (WRLD DNAM's second
+//   float): WastelandNV -2300, NVDLC02ZionCanyon 5000 (docs/spec-notes/world.md records both);
+// - the cells: for each exterior cell with the "has water" flag, the LAND heights (VHGT)
+//   along the row a quarter of the way up the cell, and the stretches of it lying more
+//   than 12 units under the cell's water height. On the Colorado those stretches run
+//   between cells x 17 and 24 from row y 6 down to -31 (north of row 6 the water is Lake
+//   Mead's, at 2600); in Zion the western stream runs from cell (1, 8) to (-3, -9).
+// The rectangles below cover the cells those stretches cross, inclusive, and between two
+// surveyed rows the continuous main channel only: no side branch is inferred.
+// [design] The directions and the speed are choices of this project's: no record names
+// a flow. They are coherent reaches, coarser than the shoreline's turns. Only drawn
+// water moves.
 const AUTHORED_ZONES: &[FlowZone] = &[
     // Colorado, below the dam: south, southwest around the northern bend, then
     // south through Cottonwood and southeast toward the southern boundary.
