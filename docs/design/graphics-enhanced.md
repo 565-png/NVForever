@@ -1423,12 +1423,26 @@ culls, extracts and queues every face view every frame.
   - A light already casting keeps its place against one up to 1.25 times nearer (`KEEP`).
 - **Held maps, view-less** (a patched bevy_pbr, engine/vendor/README.md "held light shadow
   maps").
-  - A point light's cube is drawn when the light starts casting, then kept.
+  - A point light's cube, or a spot light's map, is drawn when the light starts casting,
+    then kept.
   - Between draws the light's maps are switched off for Bevy (`shadow_maps_enabled` false:
     no views, culling or queueing). The patched renderer still sets its shadow flag and
-    samples its cube once all six faces hold what that light drew into this texture.
-  - Each light keeps a slot of the cube texture while it casts. Its GPU flags carry the
-    slot, so other lights coming and going do not move its maps.
+    samples its cube once all six faces hold what that light drew into this texture, or
+    its spot map once its layer does.
+  - Each light keeps a slot while it casts: a point light a cube of the cube texture, a
+    spot light a layer of the sun's shadow texture past the sun's cascades. Its GPU flags
+    carry the cube or layer (bits 16..23), so other lights coming and going do not move its
+    maps. Bevy put a spot light's map at its index among the shadowed spot lights, which
+    moved whenever another one started or stopped casting.
+  - Each texture keeps room for its slots, grown in fours while a mode stays on. The spot
+    lights' room also counts the other shadowed spot lights (the flashlight, which takes a
+    free slot of its own), so switching the flashlight on or off does not make a new
+    texture.
+  - A texture made anew holds no light's maps: the cube texture when its room grows or the
+    Shadow resolution row changes, the sun's when its side, the spot room or the sun's
+    cascades change (sun shadows on or off). Its lights then draw again as if new (first,
+    fading in); those fading out are dropped. The renderer never samples a layer another
+    light, the sun's cascades or another texture drew last.
 - **Redrawn where something changed.**
   - A face is marked when, since it was drawn, a shadow-casting shape with its bounds in
     that face moved, appeared, or was shown or hidden. A skeleton (actors, the player's
@@ -1446,15 +1460,31 @@ culls, extracts and queues every face view every frame.
     2nd on Performance) while its light reaches within 1,500 units of the camera (`NEAR`).
     A farther one draws every 2nd frame on Quality and every 4th on Performance. Each
     light takes its turn on frames of its own.
-  - At most 3 point lights are switched on in a frame on Quality, 1 on Performance. Lights
-    that never drew go first, then the nearest; the rest wait.
+  - At most 3 lights (point or spot) are switched on in a frame on Quality, 1 on
+    Performance. Lights that never drew go first, then the nearest; the rest wait.
   - Of a light switched on, only the marked faces are drawn; the others keep their maps.
     A light that has never drawn casts nothing until it has.
   - Only a light the camera saw the frame before is switched on; an unseen one keeps its
     marks. A transient light (below) instead counts as seen when its light reaches into
     this frame's view.
-  - Spot lights (few among the placed ones) keep their maps switched on while they cast.
-    Their map is drawn only on the frames it is marked and its turn comes.
+  - Spot lights (few among the placed ones) are held view-less as the point lights are
+    (2026-11-18; before, they kept their maps switched on, their views alive, while they
+    cast). Switched on only on the frames their map is drawn, they count against the same
+    budget.
+- **Fading** (`FADE_SECS`, 0.3 s of real time [engineering choice: no popping when a light
+  comes into range, leaves it or is swapped at the cap; short enough that a light coming
+  into range shows its shadow at once]).
+  - A light's shadow fades in once its maps were first drawn.
+  - A light no longer chosen is not dropped at once: it stays held (slot kept, nothing
+    drawn, nothing marked) while its shadow fades out, then is dropped. While fading out it
+    does not count against the caps (`Tuning::lights`, `Tuning::transients`). Chosen again
+    meanwhile, it fades back in from where it was and is redrawn in full on its turn.
+  - A light despawned is dropped at once. Transient lights do not fade: a muzzle flash
+    lasts about a tenth of a second and shows its shadow in full at once.
+  - The renderer gets each fade below 1 (`HoldLightShadowMaps::fade`) in bits 24..31 of
+    the light's flags (`255 - round(fade × 255)`, so 0 is full strength for every other
+    light) and takes `mix(1, shadow, fade)` in shadows.wesl's `fetch_point_shadow` and
+    `fetch_spot_shadow`.
 - **Other lights** (owner, 2026-11-18: all light sources cast, muzzle flashes and
   explosions first; `ShadowSource` on the light, `SourceKind`).
   - Grass fires: the light over about one burning patch in six (grass_fire_fx.rs). Still
@@ -1540,12 +1570,15 @@ culls, extracts and queues every face view every frame.
 - **The lighting.** Nothing in the lighting shaders changes. The display-value sum
   (`lights/display_shader.rs`) already multiplies each point and spot light's diffuse term
   by Bevy's `shadow`. The cube lookup takes the light's slot (shadow_sampling.wesl
-  `nvf_point_shadow_cube`).
+  `nvf_point_shadow_cube`), the spot lookup its layer (`nvf_spot_shadow_layer`), and the
+  fade scales the shadow in shadows.wesl.
 - **Maps.**
   - A point light's cube has 512² faces with Shadow resolution 2048, and 1024² with 4096
     (`PointLightShadowMap`): 6 or 24 MiB a light. The cube texture's room grows in fours
     while a mode stays on.
-  - A spot light draws one layer of the sun's shadow texture.
+  - A spot light draws one layer of the sun's shadow texture, at the sun's side: each slot
+    of the spot room (in fours) costs a layer of 2048² or 4096² (16 or 64 MiB at 32 bits
+    a texel), the price of keeping the room from changing as spot lights come and go.
   - Bias: Bevy's defaults. `NVF_LIGHT_SHADOW_BIAS=<depth>,<normal>` and
     `NVF_LIGHT_SHADOW_NEAR=<units>` override them for a run.
   - `NVF_PLAY_TEST_LIGHT_SHADOW_HOLD=0` draws every map every frame, for comparing.
@@ -1570,16 +1603,17 @@ placed lights, release builds, `--log-frame-times 6`; windows after loading]:
 
 **Log.**
 - `light shadows: <n> cast (<p> point, <s> spot lights) within <reach> units, <cap> at most;
-  cubes <side>, room for <c>; transients (muzzle flashes, explosions) within <r> units,
-  <t> at most` is written whenever these change. Its counts leave the transient lights out.
+  cubes <side>, room for <c>; spot maps room for <s>; transients (muzzle flashes,
+  explosions) within <r> units, <t> at most` is written whenever these change. Its counts
+  leave the transient lights out.
 - Every 10 s it writes `light shadows: <l> point lights switched on and <f> faces drawn a
   frame … marked a frame by shapes <a>, skeletons <b>, removals <c>, lights <d>; shapes such
   as <names>; transients <n> cast, <s> switched on, <t> faces drawn`. The first counts are
-  the placed lights' (with grass fires and attached lights); the transients' are totals
-  over the 10 s.
+  the placed lights' (with grass fires and attached lights; the lights switched on count
+  the point lights only, the faces drawn include the spot lights' maps, and the lights
+  casting leave out those fading out); the transients' are totals over the 10 s.
 
 **Not built yet.**
-- Fading a shadow in and out when a light starts or stops casting.
 - Keeping a held light's specialization caches, so switching it on costs less.
 
 **Smoke.** `light-shadows` (the Prospector Saloon at 22:00, `--light-shadows=quality`)

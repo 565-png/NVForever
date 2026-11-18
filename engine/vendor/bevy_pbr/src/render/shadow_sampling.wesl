@@ -312,10 +312,23 @@ fn sample_shadow_map_pcss(
 
 // NVForever held light shadow maps (light.rs `HoldLightShadowMaps`): the cube of the
 // point shadow texture a light's map is in. A light the game gives a slot carries slot + 1
-// in bits 16 and up of its flags; any other light's cube is its index, as in Bevy.
+// in bits 16..23 of its flags (bits 24..31 hold its fade); any other light's cube is its
+// index, as in Bevy.
 fn nvf_point_shadow_cube(light_id: u32) -> i32 {
-    let slot = view_bindings::clustered_lights.data[light_id].flags >> 16u;
+    let slot = (view_bindings::clustered_lights.data[light_id].flags >> 16u) & 0xffu;
     return i32(select(light_id, slot - 1u, slot != 0u));
+}
+
+// NVForever held light shadow maps: the layer of the directional shadow texture a spot
+// light's map is in. A light given a slot carries its layer + 1 in bits 16..23 of its
+// flags; any other light's layer is its index plus the offset, as in Bevy.
+fn nvf_spot_shadow_layer(light_id: u32) -> i32 {
+    let layer = (view_bindings::clustered_lights.data[light_id].flags >> 16u) & 0xffu;
+    return select(
+        i32(light_id) + view_bindings::lights.spot_light_shadowmap_offset,
+        i32(layer) - 1,
+        layer != 0u,
+    );
 }
 
 // NOTE: Due to the non-uniform control flow in `shadows::fetch_point_shadow`,

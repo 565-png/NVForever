@@ -144,19 +144,39 @@ shadows, nvforever light_shadows.rs, docs/design/graphics-enhanced.md §3.15), m
 `NVForever held light shadow maps`:
 
 - `src/render/light.rs`: the render-world resource `HoldLightShadowMaps` (extracted from
-  the main world's) with `slots` (a stable slot per shadowed point light), `point_capacity`
-  and `held` (a bit per cube face, bit 0 for a spot light). In `prepare_lights`:
+  the main world's) with `slots` (a stable slot per shadowed point light), `point_capacity`,
+  `spot_slots` and `spot_capacity` (the same for spot lights), `held` (a bit per cube face,
+  bit 0 for a spot light) and `fade` (a light's shadow strength, 0..1). In
+  `prepare_lights`:
   - A shadowed point light with a slot draws its cube into layers slot × 6 + face, not its
     index among the shadowed lights. Without that a light starting or stopping to cast moved
     every later light's layers. Other shadowed point lights (the poker lamp) take the lowest
     free slot each frame. The cube texture has room for the highest slot and
     `point_capacity`.
-  - The light's GPU flags carry slot + 1 in bits 16 and up (bits 0-15 are Bevy's flags and
-    its `UNINITIALIZED` mark).
+  - The light's GPU flags carry slot + 1 in bits 16..23 (bits 0-15 are Bevy's flags and
+    its `UNINITIALIZED` mark; Bevy's point light flags use bits 0-6 only). A light whose
+    slot + 1 would not fit in 8 bits gets no shadow flag.
   - A point light with a slot whose `shadow_maps_enabled` is false (no views: no culling,
     extraction of casters or queueing) still gets the shadow flag and its slot. It then
     casts from its cube once all six faces hold what it drew into this texture. The game
     switches a light's maps on only on the frames it draws them.
+  - Spot lights the same way, with `spot_slots` and `spot_capacity`: a shadowed spot light
+    with a slot draws its map into layer `cascades + slot` of the directional shadow
+    texture, not `cascades + its index among the spot lights` (that index follows the
+    shadow-enabled order, so it moved whenever another spot light started or stopped
+    casting); any other shadowed spot light (the flashlight) takes the lowest slot left that
+    frame. The texture has room for the cascades plus the highest slot + 1, `spot_capacity`
+    and Bevy's shadowed spot count (without the resource: Bevy's count, as upstream). The
+    flags carry the absolute layer + 1 in bits 16..23; a spot light with a slot and no views
+    gets the shadow flag and its layer once that layer holds what it drew into this texture.
+    The layers below the cascade count are dropped from the record every frame (the sun's
+    cascades draw there; the count changes when sun shadows or the cascade count change), so
+    a layer the cascades took over is never taken for a spot light's map. A slotted spot
+    light whose layer has no room in the texture gets no views and no shadow flag.
+  - The cascade count and the directional texture are taken before the lights' GPU data
+    (moved up from below), since a spot light's layer and the texture's id decide its flag.
+  - `fade` (0..1 per light, absent: 1) goes into bits 24..31 of a slotted light's flags as
+    `255 - round(fade × 255)`, so 0 (every other light) is full strength.
   - A shadowed light's views are made again when its slot (or spot layer) or the texture
     changed, not only when the light changed. Upstream left a light's views pointing at its
     old layer and texture when another light changed the shadowed set.
@@ -167,7 +187,17 @@ shadows, nvforever light_shadows.rs, docs/design/graphics-enhanced.md §3.15), m
     light into the same texture (`NvfLightShadowRecord`); otherwise it is drawn, whatever
     the hold says.
 - `src/render/shadow_sampling.wesl`: `nvf_point_shadow_cube` turns a light's id into its
-  cube (its slot from the flags, else its id, as before), in the two point shadow lookups.
+  cube (its slot from the flags' bits 16..23, else its id, as before), in the two point
+  shadow lookups; `nvf_spot_shadow_layer` turns a spot light's id into its layer (from the
+  same bits, else Bevy's `light_id + spot_light_shadowmap_offset`).
+- `src/render/shadows.wesl`: Bevy's `fetch_point_shadow` and `fetch_spot_shadow` are renamed
+  `nvf_fetch_point_shadow_unfaded` and `nvf_fetch_spot_shadow_unfaded` (the spot one takes
+  its layer from `nvf_spot_shadow_layer`); new `fetch_point_shadow` and `fetch_spot_shadow`
+  of the same signatures return `mix(1, shadow, fade)` with the fade from bits 24..31
+  (`nvf_shadow_fade`). The fade is applied here, not in `pbr_functions.wesl`, whose
+  `apply_pbr_lighting` nvforever's lights/display_shader.rs patches by text anchors.
+- `src/volumetric_fog/volumetric_fog.wesl`: `fetch_spot_shadow_without_normal` takes its
+  layer from `nvf_spot_shadow_layer` too (no fade: fog is not faded).
 
 Without the resource nothing changes. Measured before it (2026-11-18, RTX 5090, 1280 × 720,
 the Prospector Saloon): every shadowed point light cost about 1 ms of frame time, six

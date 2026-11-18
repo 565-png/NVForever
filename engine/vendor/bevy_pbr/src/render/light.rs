@@ -1357,6 +1357,134 @@ pub fn prepare_lights(
             .min(max_texture_cubes);
     }
 
+    // NVForever held light shadow maps: the same for the spot lights. The slot each shadowed
+    // spot light draws into, past the sun's cascades in the directional shadow texture: the
+    // game's slots first (kept while it casts, with or without views), then the lowest slot
+    // left this frame for any other shadowed spot light (the flashlight). Without the hold
+    // the shadowed spot lights keep Bevy's layers (their index among the spot lights).
+    let mut nvf_spot_of = EntityHashMap::<usize>::default();
+    let mut nvf_spot_layers = spot_light_shadow_maps_count;
+    if let Some(hold) = hold_lights.as_deref() {
+        let mut used: HashSet<u32> = hold.spot_slots.values().copied().collect();
+        let mut next_free = 0u32;
+        for entity in point_light_entities.iter() {
+            let (_, main_entity, light, ..) = point_lights.get(*entity).unwrap();
+            if light.spot_light_angles.is_none() {
+                continue;
+            }
+            let slot = match hold.spot_slots.get(&main_entity.id()) {
+                Some(&slot) => slot,
+                None if light.shadow_maps_enabled => {
+                    while used.contains(&next_free) {
+                        next_free += 1;
+                    }
+                    used.insert(next_free);
+                    next_free
+                }
+                None => continue,
+            };
+            nvf_spot_of.insert(*entity, slot as usize);
+        }
+        nvf_spot_layers = nvf_spot_of
+            .values()
+            .map(|slot| slot + 1)
+            .max()
+            .unwrap_or(0)
+            .max(hold.spot_capacity as usize)
+            .max(spot_light_shadow_maps_count);
+    }
+
+    // NVForever held light shadow maps: the cascade count and the directional shadow texture
+    // are taken before the lights' GPU data (moved up from below), as a spot light's layer
+    // (past the cascades) and the texture's id decide whether a held spot light's layer
+    // holds its map.
+    // iterate the views once to find the maximum number of cascade shadowmaps we will need
+    let mut num_directional_cascades_enabled = 0usize;
+    for (
+        _entity,
+        _camera_main_entity,
+        _extracted_view,
+        _clusters,
+        maybe_layers,
+        _no_indirect_drawing,
+        _maybe_ambient_override,
+    ) in sorted_cameras
+        .0
+        .iter()
+        .filter_map(|sorted_camera| views.get(sorted_camera.entity).ok())
+    {
+        let mut num_directional_cascades_for_this_view = 0usize;
+        let render_layers = maybe_layers.unwrap_or_default();
+
+        for light_entity in directional_light_entities.iter() {
+            let (_, _, light, light_render_layers) = directional_lights.get(*light_entity).unwrap();
+            if light.shadow_maps_enabled && light_render_layers.intersects(render_layers) {
+                num_directional_cascades_for_this_view += light
+                    .cascade_shadow_config
+                    .bounds
+                    .len()
+                    .min(MAX_CASCADES_PER_LIGHT);
+            }
+        }
+
+        num_directional_cascades_enabled = num_directional_cascades_enabled
+            .max(num_directional_cascades_for_this_view)
+            .min(max_texture_array_layers);
+    }
+
+    // NVForever held light shadow maps: room past the cascades for every spot slot.
+    let nvf_directional_layers = (num_directional_cascades_enabled + nvf_spot_layers)
+        .min(max_texture_array_layers)
+        .max(1);
+    let directional_light_depth_texture = texture_cache.get(
+        &render_device,
+        TextureDescriptor {
+            size: Extent3d {
+                width: (directional_light_shadow_map.size as u32)
+                    .min(render_device.limits().max_texture_dimension_2d),
+                height: (directional_light_shadow_map.size as u32)
+                    .min(render_device.limits().max_texture_dimension_2d),
+                depth_or_array_layers: nvf_directional_layers as u32,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: CORE_3D_SHADOW_MAP_FORMAT,
+            label: Some("directional_light_shadow_map_texture"),
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+    );
+
+    // NVForever held shadow maps: a held cascade samples what an earlier frame drew into
+    // this texture, so it can only be held when the texture is the one the last frame drew
+    // into. The cache hands out another one whenever the descriptor changes (a shadowed spot
+    // light, such as the player's flashlight, switched on or off changes the layer count) or
+    // the old one was dropped; that frame draws every cascade, with the matrices the main
+    // world gave the held ones, which are then what the following frames hold.
+    let directional_texture_id = directional_light_depth_texture.texture.id();
+    if *last_directional_texture != Some(directional_texture_id) {
+        if let Some(hold) = hold_directional.as_deref_mut() {
+            if last_directional_texture.is_some() {
+                bevy_log::info!(
+                    "held shadow maps: a new directional shadow texture ({} layers): every cascade drawn this frame",
+                    nvf_directional_layers
+                );
+            }
+            if hold.0 != 0 {
+                hold.0 = 0;
+            }
+        }
+        *last_directional_texture = Some(directional_texture_id);
+    }
+
+    // NVForever held light shadow maps: the sun's cascades draw into the layers below
+    // `num_directional_cascades_enabled`, so no spot light's map is held there any more (the
+    // cascade count changes at run time: sun shadows on or off, the cascade count).
+    nvf_light_record
+        .spot
+        .retain(|layer, _| *layer as usize >= num_directional_cascades_enabled);
+
     // NVForever held light shadow maps: the point texture is taken before the lights' GPU
     // data (moved up from below), as its id decides whether a held light's cube holds its maps.
     let point_light_depth_texture = texture_cache.get(
@@ -1460,22 +1588,57 @@ pub fn prepare_lights(
                     .xyz()
                     .extend(1.0 / (light.range * light.range)),
                 position_radius: light.transform.translation().extend(light.radius),
-                // NVForever held light shadow maps: slot + 1 in bits 16 and up; a point light
-                // the game holds without views casts once all six faces hold its maps.
-                flags: match nvf_cube_of.get(entity) {
-                    Some(&cube) if flags.contains(PointLightFlags::SHADOW_MAPS_ENABLED) => {
-                        flags.bits() | ((cube as u32 + 1) << 16)
+                // NVForever held light shadow maps: a point light's slot + 1 in bits 16..23; a
+                // point light the game holds without views casts once all six faces hold its
+                // maps. A spot light's layer of the directional texture + 1 in the same bits;
+                // one the game holds without views casts once its layer holds its map. The
+                // game's fade in bits 24..31 ([`nvf_fade_bits`]). A light whose slot or layer
+                // does not fit in the bits casts nothing.
+                flags: {
+                    let nvf_main = *point_lights.get(*entity).unwrap().1;
+                    let nvf_fade = hold_lights
+                        .as_deref()
+                        .and_then(|hold| hold.fade.get(&nvf_main.id()))
+                        .map_or(0, |fade| nvf_fade_bits(*fade));
+                    let nvf_spot_layer = nvf_spot_of
+                        .get(entity)
+                        .map(|slot| num_directional_cascades_enabled + slot);
+                    match (nvf_cube_of.get(entity), nvf_spot_layer) {
+                        (Some(&cube), _) if cube + 1 > NVF_LAYER_BITS_MAX => {
+                            (flags - PointLightFlags::SHADOW_MAPS_ENABLED).bits()
+                        }
+                        (Some(&cube), _) if flags.contains(PointLightFlags::SHADOW_MAPS_ENABLED) => {
+                            flags.bits() | ((cube as u32 + 1) << 16) | nvf_fade
+                        }
+                        (Some(&cube), _)
+                            if light.spot_light_angles.is_none()
+                                && (0..6).all(|face| {
+                                    nvf_light_record.point.get(&((cube * 6 + face) as u32))
+                                        == Some(&(nvf_main, nvf_point_texture_id))
+                                }) =>
+                        {
+                            (flags | PointLightFlags::SHADOW_MAPS_ENABLED).bits()
+                                | ((cube as u32 + 1) << 16)
+                                | nvf_fade
+                        }
+                        (_, Some(layer))
+                            if layer + 1 > NVF_LAYER_BITS_MAX || layer >= nvf_directional_layers =>
+                        {
+                            (flags - PointLightFlags::SHADOW_MAPS_ENABLED).bits()
+                        }
+                        (_, Some(layer)) if flags.contains(PointLightFlags::SHADOW_MAPS_ENABLED) => {
+                            flags.bits() | ((layer as u32 + 1) << 16) | nvf_fade
+                        }
+                        (_, Some(layer))
+                            if nvf_light_record.spot.get(&(layer as u32))
+                                == Some(&(nvf_main, directional_texture_id)) =>
+                        {
+                            (flags | PointLightFlags::SHADOW_MAPS_ENABLED).bits()
+                                | ((layer as u32 + 1) << 16)
+                                | nvf_fade
+                        }
+                        _ => flags.bits(),
                     }
-                    Some(&cube)
-                        if light.spot_light_angles.is_none()
-                            && (0..6).all(|face| {
-                                nvf_light_record.point.get(&((cube * 6 + face) as u32))
-                                    == Some(&(*point_lights.get(*entity).unwrap().1, nvf_point_texture_id))
-                            }) =>
-                    {
-                        (flags | PointLightFlags::SHADOW_MAPS_ENABLED).bits() | ((cube as u32 + 1) << 16)
-                    }
-                    _ => flags.bits(),
                 },
                 shadow_depth_bias: light.shadow_depth_bias,
                 shadow_normal_bias: light.shadow_normal_bias,
@@ -1534,39 +1697,7 @@ pub fn prepare_lights(
         }
     }
 
-    // iterate the views once to find the maximum number of cascade shadowmaps we will need
-    let mut num_directional_cascades_enabled = 0usize;
-    for (
-        _entity,
-        _camera_main_entity,
-        _extracted_view,
-        _clusters,
-        maybe_layers,
-        _no_indirect_drawing,
-        _maybe_ambient_override,
-    ) in sorted_cameras
-        .0
-        .iter()
-        .filter_map(|sorted_camera| views.get(sorted_camera.entity).ok())
-    {
-        let mut num_directional_cascades_for_this_view = 0usize;
-        let render_layers = maybe_layers.unwrap_or_default();
-
-        for light_entity in directional_light_entities.iter() {
-            let (_, _, light, light_render_layers) = directional_lights.get(*light_entity).unwrap();
-            if light.shadow_maps_enabled && light_render_layers.intersects(render_layers) {
-                num_directional_cascades_for_this_view += light
-                    .cascade_shadow_config
-                    .bounds
-                    .len()
-                    .min(MAX_CASCADES_PER_LIGHT);
-            }
-        }
-
-        num_directional_cascades_enabled = num_directional_cascades_enabled
-            .max(num_directional_cascades_for_this_view)
-            .min(max_texture_array_layers);
-    }
+    // NVForever held light shadow maps: the cascade count is found above.
 
     global_clusterable_object_meta
         .gpu_clustered_lights
@@ -1609,49 +1740,7 @@ pub fn prepare_lights(
                 array_layer_count: None,
             });
 
-    let directional_light_depth_texture = texture_cache.get(
-        &render_device,
-        TextureDescriptor {
-            size: Extent3d {
-                width: (directional_light_shadow_map.size as u32)
-                    .min(render_device.limits().max_texture_dimension_2d),
-                height: (directional_light_shadow_map.size as u32)
-                    .min(render_device.limits().max_texture_dimension_2d),
-                depth_or_array_layers: (num_directional_cascades_enabled
-                    + spot_light_shadow_maps_count)
-                    .max(1) as u32,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: CORE_3D_SHADOW_MAP_FORMAT,
-            label: Some("directional_light_shadow_map_texture"),
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        },
-    );
-
-    // NVForever held shadow maps: a held cascade samples what an earlier frame drew into
-    // this texture, so it can only be held when the texture is the one the last frame drew
-    // into. The cache hands out another one whenever the descriptor changes (a shadowed spot
-    // light, such as the player's flashlight, switched on or off changes the layer count) or
-    // the old one was dropped; that frame draws every cascade, with the matrices the main
-    // world gave the held ones, which are then what the following frames hold.
-    let directional_texture_id = directional_light_depth_texture.texture.id();
-    if *last_directional_texture != Some(directional_texture_id) {
-        if let Some(hold) = hold_directional.as_deref_mut() {
-            if last_directional_texture.is_some() {
-                bevy_log::info!(
-                    "held shadow maps: a new directional shadow texture ({} layers): every cascade drawn this frame",
-                    (num_directional_cascades_enabled + spot_light_shadow_maps_count).max(1)
-                );
-            }
-            if hold.0 != 0 {
-                hold.0 = 0;
-            }
-        }
-        *last_directional_texture = Some(directional_texture_id);
-    }
+    // NVForever held light shadow maps: the directional shadow texture is taken above.
 
     let directional_light_depth_texture_view =
         directional_light_depth_texture
@@ -1806,6 +1895,20 @@ pub fn prepare_lights(
                 &mut commands,
                 mem::take(&mut point_and_spot_light_view_entities.0),
             );
+            // NVForever held light shadow maps.
+            nvf_light_record.views.remove(light_entity);
+            continue;
+        }
+
+        // NVForever held light shadow maps: the light's slot (else its index, as in Bevy)
+        // past the cascades; a layer the texture has no room for draws nothing.
+        let light_index = nvf_spot_of.get(light_entity).copied().unwrap_or(light_index);
+        if num_directional_cascades_enabled + light_index >= nvf_directional_layers {
+            despawn_entities(
+                &mut commands,
+                mem::take(&mut point_and_spot_light_view_entities.0),
+            );
+            nvf_light_record.views.remove(light_entity);
             continue;
         }
 
@@ -3141,7 +3244,7 @@ impl bevy_render::extract_resource::ExtractResource<RenderApp> for HoldDirection
 /// - each shadowed point light named in `slots` draws its cube into the layers of that slot
 ///   (slot × 6 + face) instead of those of its index among the shadowed lights, so it keeps
 ///   its layers while other lights start or stop casting, and while no camera sees it; the
-///   shader finds the cube through bits 16 and up of the light's flags (slot + 1;
+///   shader finds the cube through bits 16..23 of the light's flags (slot + 1;
 ///   shadow_sampling.wesl `nvf_point_shadow_cube`). Any other shadowed point light takes the
 ///   lowest slot left that frame. The cube texture has room for at least `point_capacity`
 ///   lights.
@@ -3155,6 +3258,17 @@ impl bevy_render::extract_resource::ExtractResource<RenderApp> for HoldDirection
 ///   false: no views, no culling, nothing queued) still casts from its cube once all six
 ///   faces hold what it drew into this texture: the game switches a light's maps on only
 ///   on the frames it draws them, and holds them, view-less, in between.
+/// - spot lights the same way: each shadowed spot light named in `spot_slots` draws its map
+///   into layer `cascades + slot` of the directional shadow texture (past the sun's
+///   cascades) instead of `cascades + its index among the spot lights`; any other shadowed
+///   spot light takes the lowest slot left that frame; the texture has room past the
+///   cascades for at least `spot_capacity` maps. The shader finds the layer through bits
+///   16..23 of the light's flags (layer + 1; shadow_sampling.wesl `nvf_spot_shadow_layer`).
+///   A spot light with a slot whose maps are switched off still casts from its layer once
+///   that layer holds what it drew into this texture.
+/// - `fade` (0..1, absent: 1) scales a light's shadow: the shader takes
+///   `mix(1, shadow, fade)` (shadows.wesl). It is carried in bits 24..31 of the light's
+///   flags as `255 - fade × 255`, so a light without one casts at full strength.
 ///
 /// A shadowed light's views are brought up to date when its slot or the texture changed,
 /// not only when the light changed. Bevy inserts none; without it nothing changes.
@@ -3163,6 +3277,19 @@ pub struct HoldLightShadowMaps {
     pub held: EntityHashMap<u8>,
     pub slots: EntityHashMap<u32>,
     pub point_capacity: u32,
+    pub spot_slots: EntityHashMap<u32>,
+    pub spot_capacity: u32,
+    pub fade: EntityHashMap<f32>,
+}
+
+/// NVForever held light shadow maps: the largest slot + 1 (point) or layer + 1 (spot) the
+/// light flags' bits 16..23 carry.
+const NVF_LAYER_BITS_MAX: usize = 0xff;
+
+/// NVForever held light shadow maps: a light's shadow fade (0..1) in bits 24..31 of its
+/// flags, as `255 - fade × 255` (0: full strength, Bevy's default).
+fn nvf_fade_bits(fade: f32) -> u32 {
+    (255 - (fade.clamp(0.0, 1.0) * 255.0).round() as u32) << 24
 }
 
 impl bevy_render::extract_resource::ExtractResource<RenderApp> for HoldLightShadowMaps {

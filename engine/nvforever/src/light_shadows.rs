@@ -13,13 +13,19 @@
 //!   [`Tuning::lights`] (a safety cap for the Strip at night). Not by view: a light behind
 //!   the camera keeps casting, so turning around draws nothing anew. A light already
 //!   casting keeps its place against one [`KEEP`] times nearer.
-//! - **Held maps, as the sun's held cascades.** A point light's cube is drawn when it
-//!   starts casting and then kept (`bevy::pbr::HoldLightShadowMaps`, a patched bevy_pbr:
-//!   engine/vendor/README.md "held light shadow maps"). Between draws the light's maps are
-//!   switched off for Bevy (`shadow_maps_enabled` false: no views, no culling, nothing
-//!   queued, which is what a shadowed point light costs, about 1 ms a frame each on the
-//!   CPU, measured), and the patched renderer still samples its cube. Each light keeps a
-//!   slot of the cube texture while it casts, so others coming and going do not move it.
+//! - **Held maps, as the sun's held cascades.** A point light's cube, or a spot light's
+//!   map, is drawn when it starts casting and then kept (`bevy::pbr::HoldLightShadowMaps`, a
+//!   patched bevy_pbr: engine/vendor/README.md "held light shadow maps"). Between draws the
+//!   light's maps are switched off for Bevy (`shadow_maps_enabled` false: no views, no
+//!   culling, nothing queued, which is what a shadowed point light costs, about 1 ms a frame
+//!   each on the CPU, measured), and the patched renderer still samples them. Each light
+//!   keeps a slot while it casts, so others coming and going do not move it: a point light
+//!   a cube of the cube texture, a spot light a layer of the sun's texture past its
+//!   cascades. Each texture keeps room for its slots, grown in fours ([`grown_room`]; the
+//!   spot lights' also for the other shadowed spot lights, the flashlight,
+//!   [`MapTextureInputs`]). A texture the renderer makes anew (the room grew, the Shadow
+//!   resolution row, the sun's cascades changed) holds no light's maps: its lights draw
+//!   again as if new.
 //! - **Redrawn where something changed.** A face is marked when, since it was drawn, a
 //!   shadow-casting shape moved, appeared or was shown or hidden with its bounds in the
 //!   face, an actor's skeleton moved there, or the light itself moved more than
@@ -47,8 +53,16 @@
 //!   short life (redrawn as recoil moved it, a flash drew 3.5 times on average). The effects' own shapes are `NotShadowCaster` (shot_fx.rs
 //!   `spawn_effect`, `spawn_playing_itself`), and the gun a flash sits at is a small shape
 //!   it sits against ([`skip_fixtures`]).
-//! - **Spot lights** (few among the placed ones) keep their maps switched on while they
-//!   cast; their map is drawn only on the frames it is marked and its turn comes.
+//! - **Spot lights** (few among the placed ones) are held as the point lights are: switched
+//!   on only on the frames their map draws (marked and their turn come, never-drawn first),
+//!   counting against [`Tuning::draws`] (a transient's against [`Tuning::transient_draws`]).
+//! - **Fading** ([`FADE_SECS`]). A light's shadow fades in once its maps were first drawn.
+//!   A light no longer chosen (out of range, swapped at the cap) is not dropped at once: it
+//!   stays held, its slot kept and nothing drawn, while its shadow fades out, and does not
+//!   count against [`Tuning::lights`] or [`Tuning::transients`]; then it is dropped
+//!   ([`leaving_fade`]). A light despawned is dropped at once. Transients do not fade: a
+//!   muzzle flash lasts about a tenth of a second. The fade goes to the renderer in
+//!   `HoldLightShadowMaps::fade`, which scales the shadow term (`mix(1, shadow, fade)`).
 //! - **What casts**: the sun's layers (`sky::SHADOW_LAYER`, `sky::BODY_LAYER` and the
 //!   world's layer 0), so the player's body casts a lamp's shadow as it casts the sun's;
 //!   the first-person arms do not.
@@ -61,7 +75,8 @@
 //!   so the bulb, shade or flames a light sits in do not black out the room
 //!   [engineering choice; `NVF_LIGHT_SHADOW_NEAR` overrides it for a run].
 //! - **Maps**: the cubes' side follows the Shadow resolution row: 512 with 2048, 1024 with
-//!   4096 (`PointLightShadowMap`); a spot light draws one layer of the sun's texture.
+//!   4096 (`PointLightShadowMap`); a spot light draws one layer of the sun's texture (its
+//!   side, so each slot of the spot room costs a layer of 2048 or 4096 texels square).
 //! - The diffuse light of the display-value sum takes the shadow
 //!   (`lights::display_shader`), as the flashlight's always has. The flashlight is not one
 //!   of these lights: it casts whenever it is on (flashlight.rs). Nor are the lights of the
@@ -72,7 +87,7 @@
 use bevy::camera::primitives::{Aabb, CubemapFrusta, Frustum, Sphere};
 use bevy::camera::visibility::{CubemapVisibleEntities, RenderLayers, VisibilitySystems, VisibleMeshEntities};
 use bevy::ecs::entity::EntityHashMap;
-use bevy::light::{DirectionalLightShadowMap, NotShadowCaster, PointLightShadowMap, SimulationLightSystems};
+use bevy::light::{CascadeShadowConfig, DirectionalLightShadowMap, NotShadowCaster, PointLightShadowMap, SimulationLightSystems};
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::pbr::HoldLightShadowMaps;
 use bevy::prelude::*;
@@ -110,7 +125,7 @@ impl LightShadows {
 pub struct Tuning {
     /// At most this many lights cast at once, nearest first.
     pub lights: usize,
-    /// At most this many point lights switched on to draw in a frame.
+    /// At most this many lights (point or spot) switched on to draw in a frame.
     pub draws: usize,
     /// A marked light within [`NEAR`] of the camera draws on every this many frames.
     pub near_every: u64,
@@ -121,7 +136,7 @@ pub struct Tuning {
     /// At most this many transient lights (muzzle flashes, explosions: [`SourceKind`]) cast
     /// at once, nearest first; they do not count against [`Tuning::lights`].
     pub transients: usize,
-    /// At most this many transient point lights switched on to draw in a frame, besides
+    /// At most this many transient lights switched on to draw in a frame, besides
     /// [`Tuning::draws`], so a firefight does not starve the lamps nor the lamps it.
     pub transient_draws: usize,
 }
@@ -166,6 +181,12 @@ pub const LIGHT_MOVE_EPS: f32 = 8.0;
 /// firefight around the player; farther flashes are small on screen and gone in a tenth of
 /// a second].
 pub const TRANSIENT_REACH: f32 = 3000.0;
+
+/// A light's shadow fades in over this long once its maps were first drawn, and out over
+/// this long once it stops casting (real seconds) [engineering choice: no popping when a
+/// light comes into range, leaves it or is swapped at the cap; short enough that a light
+/// coming into range shows its shadow at once]. Transients do not fade.
+pub const FADE_SECS: f32 = 0.3;
 
 /// On a light other than a placed one that casts lamp shadows (main world): what it is.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,6 +269,12 @@ struct LampState {
     at: Vec3,
     /// A muzzle flash or an explosion ([`SourceKind::transient`]).
     transient: bool,
+    /// A spot light (its map is a layer of the sun's texture), not a point light.
+    spot: bool,
+    /// How much of its shadow it casts, 0..1 ([`FADE_SECS`]).
+    fade: f32,
+    /// No longer chosen: held, not drawn, while its fade falls to 0.
+    leaving: bool,
 }
 
 /// The casting lights' slots and states.
@@ -258,6 +285,15 @@ struct LampShadowState {
     slots: EntityHashMap<u32>,
     /// The cube texture's room, in lights; it only grows while a mode stays on.
     capacity: u32,
+    /// Stable slots of the casting spot lights past the sun's cascades in its texture, and
+    /// the room kept there for them; it only grows while a mode stays on.
+    spot_slots: EntityHashMap<u32>,
+    spot_capacity: u32,
+    /// What the cube texture (its side, its room) and the sun's texture (its side, the spot
+    /// room, the cascades) were made for last frame: when either changes the renderer takes
+    /// a new texture, which holds no light's maps.
+    point_maps_key: Option<(usize, u32)>,
+    spot_maps_key: Option<(usize, u32, usize)>,
     frame: u64,
     /// Lights switched on and faces drawn since the last summary, and frames counted.
     switched: u64,
@@ -286,8 +322,10 @@ impl Plugin for LightShadowsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(LightShadows::of(self.0))
             .init_resource::<LampShadowState>()
+            .init_resource::<MapTextureInputs>()
             .init_resource::<HoldLightShadowMaps>()
             .add_plugins(ExtractResourcePlugin::<HoldLightShadowMaps>::default())
+            .add_systems(PostUpdate, watch_map_textures.before(shadow_lights))
             .add_systems(
                 PostUpdate,
                 // Before Bevy resets this frame's view visibility, so the lights' and the
@@ -303,6 +341,71 @@ impl Plugin for LightShadowsPlugin {
             )
             .add_systems(PostUpdate, skip_fixtures.after(SimulationLightSystems::CheckLightVisibility));
     }
+}
+
+/// What else decides the size of the sun's shadow texture the spot lights' maps are in
+/// (main world): the other shadowed spot lights (the flashlight), which take slots of their
+/// own past the lamps' (bevy_pbr's patched `prepare_lights`), and the sun's cascades, which
+/// come before them.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+struct MapTextureInputs {
+    other_spots: u32,
+    cascades: usize,
+}
+
+/// A directional light draws at most this many cascades (Bevy's `MAX_CASCADES_PER_LIGHT`)
+/// [documented: engine/vendor/bevy_pbr/src/render/light.rs].
+const MAX_CASCADES: usize = 4;
+
+/// Count what [`MapTextureInputs`] holds. Separate from [`shadow_lights`], whose query
+/// holds the lamps' `SpotLight`s mutably.
+fn watch_map_textures(
+    mut inputs: ResMut<MapTextureInputs>,
+    spots: Query<&SpotLight, (Without<SessionLight>, Without<ShadowSource>)>,
+    suns: Query<(&DirectionalLight, &CascadeShadowConfig)>,
+) {
+    let now = MapTextureInputs {
+        other_spots: spots.iter().filter(|s| s.shadow_maps_enabled).count() as u32,
+        cascades: suns.iter().filter(|(d, _)| d.shadow_maps_enabled).map(|(_, c)| c.bounds.len().min(MAX_CASCADES)).sum(),
+    };
+    if *inputs != now {
+        *inputs = now;
+    }
+}
+
+/// A light's fade after `dt` real seconds, rising (it casts) or falling (it is leaving),
+/// over [`FADE_SECS`]; within 0..1.
+pub fn fade_step(fade: f32, rising: bool, dt: f32) -> f32 {
+    let step = dt / FADE_SECS;
+    (if rising { fade + step } else { fade - step }).clamp(0.0, 1.0)
+}
+
+/// A light no longer chosen: its fade after `dt` while it is held fading out, `None` once it
+/// is dropped (at once when it despawned, `alive` false; never drew; or is a transient,
+/// which does not fade).
+pub fn leaving_fade(fade: f32, drawn: bool, transient: bool, alive: bool, dt: f32) -> Option<f32> {
+    if !alive || !drawn || transient {
+        return None;
+    }
+    let fade = fade_step(fade, false, dt);
+    (fade > 0.0).then_some(fade)
+}
+
+/// The room a texture keeps for `slots` and `others` lights besides them: `room`, grown in
+/// fours until it holds the highest slot and the others.
+pub fn grown_room(room: u32, slots: impl Iterator<Item = u32>, others: u32) -> u32 {
+    let needed = slots.map(|s| s + 1).max().unwrap_or(0) + others;
+    room.max(needed.div_ceil(4) * 4)
+}
+
+/// `e`'s slot in `slots`: the one it has, else the lowest free one.
+pub fn assign_slot(slots: &mut EntityHashMap<u32>, e: Entity) -> u32 {
+    if let Some(&slot) = slots.get(&e) {
+        return slot;
+    }
+    let slot = free_slot(slots.values().copied());
+    slots.insert(e, slot);
+    slot
 }
 
 /// The order of a light among the candidates: the distance from the camera to the edge of
@@ -506,7 +609,7 @@ fn shadow_lights(
     directional: Option<Res<DirectionalLightShadowMap>>,
     mut cube: ResMut<PointLightShadowMap>,
     mut state: ResMut<LampShadowState>,
-    mut out: ResMut<HoldLightShadowMaps>,
+    (mut out, inputs): (ResMut<HoldLightShadowMaps>, Res<MapTextureInputs>),
     camera: Query<(&GlobalTransform, Option<&Frustum>), crate::fly::WorldCamera>,
     mut lights: Query<Placed, Casters>,
     moved: Query<MovedCasters, MovedFilter>,
@@ -559,15 +662,23 @@ fn shadow_lights(
         _ => (Vec::new(), Vec::new()),
     };
     if tune.is_some() {
-        let side = cube_side(directional.map_or(2048, |d| d.size));
+        let side = cube_side(directional.as_ref().map_or(2048, |d| d.size));
         if cube.size != side {
             cube.size = side;
         }
     }
-    // Their states and slots; the rest lose theirs.
+    // Their states and slots. A light no longer chosen is held, its slot kept and nothing
+    // drawn, while its shadow fades out; then it loses them, as does a light despawned.
     let mut lamps: Vec<Lamp> = Vec::with_capacity(chosen.len());
+    let mut alive: Vec<Entity> = Vec::new();
     for (e, t, _, seen, point, spot, ..) in &lights {
+        if point.is_none() && spot.is_none() {
+            continue;
+        }
         if !chosen.contains(&e) {
+            if state.lamps.contains_key(&e) {
+                alive.push(e);
+            }
             continue;
         }
         let is_point = point.is_some();
@@ -576,26 +687,95 @@ fn shadow_lights(
         if transient && !state.lamps.contains_key(&e) {
             state.transients_cast += 1;
         }
-        let entry = state.lamps.entry(e).or_insert(LampState { dirty: 0, fresh: true, refreshed: 0, phase: e.index_u32() as u64, at: t.translation(), transient });
+        let entry = state.lamps.entry(e).or_insert(LampState {
+            dirty: 0,
+            fresh: true,
+            refreshed: 0,
+            phase: e.index_u32() as u64,
+            at: t.translation(),
+            transient,
+            spot: !is_point,
+            fade: 0.0,
+            leaving: false,
+        });
         if entry.fresh {
             // Its full redraws fall at a time of its own.
             entry.refreshed = frame.saturating_sub(entry.phase % tune.map_or(1, |t| t.refresh).max(1));
         }
-        if is_point && !state.slots.contains_key(&e) {
-            let slot = free_slot(state.slots.values().copied());
-            state.slots.insert(e, slot);
+        if entry.leaving {
+            // Chosen again while fading out: what changed meanwhile was not marked.
+            entry.leaving = false;
+            entry.dirty = ALL_FACES;
         }
+        assign_slot(if is_point { &mut state.slots } else { &mut state.spot_slots }, e);
         let gap = at.map_or(0.0, |a| (t.translation().distance(a) - range).max(0.0));
         // A transient was chosen only if the camera sees it this frame (a new light's
         // `ViewVisibility` is still false).
         lamps.push(Lamp { entity: e, at: t.translation(), range, spot: !is_point, seen: transient || seen.get(), gap, transient });
     }
-    state.lamps.retain(|e, _| chosen.contains(e));
-    state.slots.retain(|e, _| chosen.contains(e) && lamps.iter().any(|l| l.entity == *e && !l.spot));
+    // The fades: rising once a light's maps were first drawn (a transient's full at once),
+    // falling while it leaves (with a mode on; turned off, every light is dropped at once).
+    let dt = time.delta_secs();
+    state.lamps.retain(|e, s| {
+        if chosen.contains(e) {
+            s.fade = if s.transient {
+                1.0
+            } else if s.fresh {
+                0.0
+            } else {
+                fade_step(s.fade, true, dt)
+            };
+            return true;
+        }
+        match leaving_fade(s.fade, !s.fresh, s.transient, tune.is_some() && alive.contains(e), dt) {
+            Some(fade) => {
+                s.fade = fade;
+                s.leaving = true;
+                true
+            }
+            None => false,
+        }
+    });
+    state.slots.retain(|e, _| state.lamps.get(e).is_some_and(|s| !s.spot));
+    state.spot_slots.retain(|e, _| state.lamps.get(e).is_some_and(|s| s.spot));
     state.capacity = match tune {
-        Some(_) => state.capacity.max(state.slots.values().map(|s| s + 1).max().unwrap_or(0).div_ceil(4) * 4),
+        Some(_) => grown_room(state.capacity, state.slots.values().copied(), 0),
         None => 0,
     };
+    // The spot lights' room also holds the other shadowed spot lights (the flashlight), so
+    // switching one on or off does not change the texture; none while no lamp spot casts.
+    state.spot_capacity = match tune {
+        Some(_) if !state.spot_slots.is_empty() || state.spot_capacity > 0 => grown_room(state.spot_capacity, state.spot_slots.values().copied(), inputs.other_spots),
+        _ => 0,
+    };
+    // A texture made anew holds no light's maps: its lights draw again as if new, and those
+    // leaving are dropped.
+    let point_key = (cube.size, state.capacity);
+    let spot_key = (directional.as_ref().map_or(2048, |d| d.size), state.spot_capacity, inputs.cascades);
+    let new_point = state.point_maps_key.is_some_and(|k| k != point_key);
+    let new_spot = state.spot_maps_key.is_some_and(|k| k != spot_key);
+    (state.point_maps_key, state.spot_maps_key) = match tune {
+        Some(_) => (Some(point_key), Some(spot_key)),
+        None => (None, None),
+    };
+    if new_point || new_spot {
+        state.lamps.retain(|_, s| {
+            let made_anew = if s.spot { new_spot } else { new_point };
+            if !made_anew {
+                return true;
+            }
+            if s.leaving {
+                return false;
+            }
+            (s.fresh, s.dirty) = (true, ALL_FACES);
+            if !s.transient {
+                s.fade = 0.0;
+            }
+            true
+        });
+        state.slots.retain(|e, _| state.lamps.contains_key(e));
+        state.spot_slots.retain(|e, _| state.lamps.contains_key(e));
+    }
 
     // 2. What changed in their maps since last frame.
     let layers = casting_layers();
@@ -700,8 +880,8 @@ fn shadow_lights(
     }
 
     // 3. Which lights draw this frame: those never drawn first, then the nearest marked ones
-    // on their turn; at most `draws` point lights, and apart from them `transient_draws`
-    // transient ones.
+    // on their turn; at most `draws` lights (point or spot), and apart from them
+    // `transient_draws` transient ones.
     lamps.sort_by(|a, b| b.seen.cmp(&a.seen).then(a.gap.total_cmp(&b.gap)));
     let hold_all = !holding();
     let mut order: Vec<&Lamp> = lamps.iter().collect();
@@ -731,8 +911,8 @@ fn shadow_lights(
         // Only a light the camera saw last frame (a transient: sees this frame) is drawn by
         // Bevy this frame.
         let budget = if l.transient { &mut transient_draws } else { &mut draws };
-        let draw = if want != 0 && l.seen && (l.spot || hold_all || *budget > 0) {
-            if !l.spot && !hold_all {
+        let draw = if want != 0 && l.seen && (hold_all || *budget > 0) {
+            if !hold_all {
                 *budget -= 1;
             }
             want
@@ -754,15 +934,14 @@ fn shadow_lights(
             }
             drawing.insert(l.entity, draw);
         }
-        // A spot light's map stays switched on and is held unless drawn; a point light is
-        // switched on only to draw, its other faces held.
-        if l.spot || draw != 0 {
+        // A light is switched on only to draw, a point light's other faces held.
+        if draw != 0 {
             out.held.insert(l.entity, all & !draw);
         }
     }
 
-    // 4. Set the lights up: shadows switched on to draw (spot lights while they cast), the
-    // casters' layers, the near plane and biases.
+    // 4. Set the lights up: shadows switched on to draw, the casters' layers, the near plane
+    // and biases.
     let (near, bias) = (near_z(), biases());
     let (mut points, mut spots) = (0, 0);
     for (e, _, _, _, point, spot, _, _, _, casting, _) in &mut lights {
@@ -786,8 +965,9 @@ fn shadow_lights(
         }
         if let Some(mut s) = spot {
             spots += usize::from(counted);
-            if s.shadow_maps_enabled != cast {
-                s.shadow_maps_enabled = cast;
+            let on = cast && drawing.contains_key(&e);
+            if s.shadow_maps_enabled != on {
+                s.shadow_maps_enabled = on;
             }
             if cast && s.shadow_map_near_z != near {
                 s.shadow_map_near_z = near;
@@ -814,6 +994,15 @@ fn shadow_lights(
     if out.point_capacity != state.capacity {
         out.point_capacity = state.capacity;
     }
+    if out.spot_slots != state.spot_slots {
+        out.spot_slots.clone_from(&state.spot_slots);
+    }
+    if out.spot_capacity != state.spot_capacity {
+        out.spot_capacity = state.spot_capacity;
+    }
+    // The fades below 1 (a light absent casts in full).
+    out.fade.clear();
+    out.fade.extend(state.lamps.iter().filter(|(_, s)| s.fade < 1.0).map(|(e, s)| (*e, s.fade)));
     removed.clear();
 
     let now = (settings.choice, points, spots);
@@ -822,12 +1011,13 @@ fn shadow_lights(
         match tune {
             None => info!("light shadows: off"),
             Some(t) => info!(
-                "light shadows: {} cast ({points} point, {spots} spot lights) within {reach:.0} units, {} at most; cubes {}x{}, room for {}; transients (muzzle flashes, explosions) within {:.0} units, {} at most",
+                "light shadows: {} cast ({points} point, {spots} spot lights) within {reach:.0} units, {} at most; cubes {}x{}, room for {}; spot maps room for {}; transients (muzzle flashes, explosions) within {:.0} units, {} at most",
                 points + spots,
                 t.lights,
                 cube.size,
                 cube.size,
                 state.capacity,
+                state.spot_capacity,
                 transient_reach(reach),
                 t.transients
             ),
@@ -844,7 +1034,7 @@ fn shadow_lights(
                 per(state.switched),
                 per(state.drawn),
                 state.frames,
-                state.lamps.values().filter(|l| !l.transient).count(),
+                state.lamps.values().filter(|l| !l.transient && !l.leaving).count(),
                 per(state.causes[0]),
                 per(state.causes[1]),
                 per(state.causes[2]),
@@ -1009,6 +1199,71 @@ mod tests {
         assert_eq!(free_slot([1, 2].into_iter()), 0);
         assert_eq!(cube_side(2048), 512);
         assert_eq!(cube_side(4096), 1024);
+    }
+
+    #[test]
+    fn a_shadow_fades_in_and_out_over_the_fade_time() {
+        let half = FADE_SECS * 0.5;
+        assert!((fade_step(0.0, true, half) - 0.5).abs() < 1e-5);
+        assert_eq!(fade_step(0.9, true, half), 1.0, "no more than full");
+        assert!((fade_step(1.0, false, half) - 0.5).abs() < 1e-5);
+        assert_eq!(fade_step(0.2, false, half), 0.0, "no less than none");
+        // At 60 frames a second it takes the fade time to come in full.
+        let mut fade = 0.0;
+        let frames = (0..100).position(|_| {
+            fade = fade_step(fade, true, 1.0 / 60.0);
+            fade >= 1.0
+        });
+        let expected = (FADE_SECS * 60.0).round() as usize;
+        assert!(frames.is_some_and(|f| (f + 1).abs_diff(expected) <= 1), "{frames:?} frames, {expected} expected (a frame either way: rounding)");
+    }
+
+    #[test]
+    fn a_light_no_longer_chosen_is_kept_while_its_shadow_fades_out() {
+        let dt = 1.0 / 60.0;
+        // A drawn lamp, alive: kept, fading, until its fade reaches 0.
+        let mut fade = 1.0;
+        let mut frames = 0usize;
+        while let Some(f) = leaving_fade(fade, true, false, true, dt) {
+            assert!(f < fade, "it falls");
+            fade = f;
+            frames += 1;
+        }
+        let expected = (FADE_SECS * 60.0).round() as usize;
+        assert!((frames + 1).abs_diff(expected) <= 1, "dropped once at 0: {frames} frames kept, {expected} expected");
+        // Half faded in when it left: half the time.
+        let mut fade = 0.5;
+        let mut half = 0;
+        while let Some(f) = leaving_fade(fade, true, false, true, dt) {
+            fade = f;
+            half += 1;
+        }
+        assert!(half <= frames / 2 + 1, "{half} frames from half, {frames} from full");
+        // Dropped at once: despawned, never drawn, a transient.
+        assert_eq!(leaving_fade(1.0, true, false, false, dt), None, "despawned");
+        assert_eq!(leaving_fade(0.0, false, false, true, dt), None, "never drew");
+        assert_eq!(leaving_fade(1.0, true, true, true, dt), None, "a muzzle flash");
+    }
+
+    #[test]
+    fn spot_lights_keep_stable_slots_and_their_room_grows_in_fours() {
+        let e = |n: u32| Entity::from_raw_u32(n).unwrap();
+        let mut slots: EntityHashMap<u32> = EntityHashMap::default();
+        assert_eq!(assign_slot(&mut slots, e(10)), 0);
+        assert_eq!(assign_slot(&mut slots, e(11)), 1);
+        assert_eq!(assign_slot(&mut slots, e(12)), 2);
+        assert_eq!(assign_slot(&mut slots, e(10)), 0, "kept");
+        // One leaves: the others keep theirs, a new one takes the freed slot.
+        slots.remove(&e(10));
+        assert_eq!(assign_slot(&mut slots, e(13)), 0);
+        assert_eq!((slots[&e(11)], slots[&e(12)]), (1, 2));
+        // The room: in fours, never shrinking, with the other shadowed spot lights.
+        assert_eq!(grown_room(0, std::iter::empty(), 0), 0);
+        assert_eq!(grown_room(0, [0, 1, 2].into_iter(), 0), 4);
+        assert_eq!(grown_room(0, [0, 1, 2].into_iter(), 1), 4, "and the flashlight");
+        assert_eq!(grown_room(0, [0, 1, 2].into_iter(), 2), 8);
+        assert_eq!(grown_room(8, [0].into_iter(), 0), 8, "never shrinks");
+        assert_eq!(grown_room(4, [4].into_iter(), 0), 8);
     }
 
     #[test]
