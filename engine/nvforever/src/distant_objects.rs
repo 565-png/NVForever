@@ -13,8 +13,10 @@
 //!   blocks are made for one load order, so plugins and LOD packs added later change
 //!   nothing until the blocks are made again.
 //! - **What is drawn** ([`choose`]): exterior STAT and SCOL references that pass the
-//!   ring's scenery filter (not deleted, not an imposter, primitive or marker, not hidden,
-//!   not drawn with a destruction model). Conservative first rule, free of doubling while
+//!   ring's scenery filter (not deleted, not an imposter, primitive or marker, not hidden).
+//!   A reference with a model override (`Streamer::model_overrides`: a destroyed object's
+//!   stage, a swap) is not drawn here at all; when the overrides of a cell's references
+//!   change either way, the cell is judged again ([`override_changes`]). Conservative first rule, free of doubling while
 //!   the blocks match the load order: a reference flagged visible when distant (its own
 //!   flag or its base's, in any plugin's version: `fnv_world::placed::visible_when_distant`)
 //!   is left to the block while its cell's segment is not empty or not known yet
@@ -275,6 +277,9 @@ pub enum Choice {
     Unknown,
     /// Left out: no LOD model and too small for its distance (or past the budget).
     Small,
+    /// Left out for its state: a model override (destroyed, swapped), or not enabled with
+    /// no simulation to show it.
+    Skipped,
 }
 
 impl Choice {
@@ -454,6 +459,8 @@ pub struct CellState {
     segment: Option<bool>,
     /// It holds flagged references (a block becoming known may change it).
     flagged: bool,
+    /// The model override of one of its references came or went: judged again.
+    dirty: bool,
     /// Triangles of its full models.
     full_tris: u64,
     /// The cell it replaces, drawn as the complement of this one's step until it rests,
@@ -480,6 +487,8 @@ struct CellSpawn {
     /// What was drawn of each reference so far.
     drawn: HashMap<u32, Choice>,
     full_tris: u64,
+    /// An override of one of its references changed while it was spawned.
+    dirty: bool,
 }
 
 impl CellSpawn {
@@ -522,6 +531,8 @@ pub struct DistantState {
     /// Counts the changes of `ratios` (a cell's [`Stamp`] names the table it was judged
     /// with).
     ratio_rev: u64,
+    /// The references with a model override last seen ([`override_changes`]).
+    overrides_seen: HashSet<u32>,
     /// The centre the budget's raise was last logged for.
     budget_logged: Option<Grid>,
     /// Triangles of each full model drawn so far, by path.
@@ -609,8 +620,16 @@ pub fn admits(b: Budget, predecessor: u64, tris: u64, cap: u64) -> bool {
     b.retained.saturating_sub(predecessor) + b.reserved + b.fading + tris <= cap
 }
 
-/// The plan of cell `c` from its list: each entry's [`Choice`] (module notes).
-fn plan_cell(list: &CellList, c: Grid, centre: Grid, ratios: &[f32], segment: Option<bool>, before: Option<&HashMap<u32, Choice>>) -> Vec<(usize, Choice)> {
+/// The references whose model override came or went between `seen` and `now`.
+pub fn override_changes(seen: &HashSet<u32>, now: &HashMap<u32, String>) -> HashSet<u32> {
+    let mut out: HashSet<u32> = seen.iter().filter(|r| !now.contains_key(r)).copied().collect();
+    out.extend(now.keys().filter(|r| !seen.contains(r)));
+    out
+}
+
+/// The plan of cell `c` from its list: each entry's [`Choice`] (module notes); `skip`
+/// leaves an entry out for its state ([`Choice::Skipped`]).
+fn plan_cell(list: &CellList, c: Grid, centre: Grid, ratios: &[f32], segment: Option<bool>, before: Option<&HashMap<u32, Choice>>, skip: &dyn Fn(&Entry) -> bool) -> Vec<(usize, Choice)> {
     let p = centre_point(centre);
     let ratio = ratio_at(ratios, steps(c, centre));
     list.entries
@@ -618,6 +637,9 @@ fn plan_cell(list: &CellList, c: Grid, centre: Grid, ratios: &[f32], segment: Op
         .enumerate()
         .map(|(i, e)| {
             let d = Vec2::new(e.p.position[0], e.p.position[1]).distance(p);
+            if skip(e) {
+                return (i, Choice::Skipped);
+            }
             let was_full = before.and_then(|b| b.get(&e.p.form_id)) == Some(&Choice::Full);
             (i, choose(Judge { flagged: e.flagged, has_lod: e.lod.is_some(), radius: e.radius }, segment, d, ratio, was_full))
         })
@@ -768,6 +790,12 @@ pub fn stream(
             st.judged = Some(centre);
         }
     }
+    // Model overrides that came or went mark the cells holding those references.
+    let changed = override_changes(&st.overrides_seen, &streamer.model_overrides);
+    if !changed.is_empty() {
+        st.overrides_seen = streamer.model_overrides.keys().copied().collect();
+        mark_overridden(st, &changed);
+    }
     let judged = st.judged.unwrap_or(centre);
     let now = Stamp { centre: judged, ratios: st.ratio_rev };
     // Cells judged for another centre or table, or whose block answers otherwise now.
@@ -796,6 +824,8 @@ pub fn stream(
     let mut again: Vec<Grid> = st.rebuild.iter().filter(|c| !st.spawning.contains_key(c)).copied().collect();
     again.sort_by_key(|&c| order_key(c, centre));
     todo.extend(again.into_iter().map(|c| (c, true)));
+    let simulated = sim.is_some();
+    let skip = |e: &Entry| streamer.model_overrides.contains_key(&e.p.form_id) || !full_detail::drawn_for_enable_state(e.enabled, e.p.deleted(), simulated);
     let mut waiting = 0usize;
     for (c, replaces) in todo {
         if Instant::now() >= deadline || waiting >= PREFETCH_CELLS {
@@ -811,7 +841,7 @@ pub fn stream(
         };
         let segment = blocks.segment(c);
         let before = if replaces { st.cells.get(&c).map(|s| &s.plan) } else { None };
-        let plan = plan_cell(&list, c, judged, &st.ratios, segment, before);
+        let plan = plan_cell(&list, c, judged, &st.ratios, segment, before, &skip);
         if replaces {
             st.rebuild.remove(&c);
             let same = st.cells.get(&c).is_some_and(|s| drawn_set(&list, &plan) == s.plan.iter().filter(|(_, ch)| ch.drawn()).map(|(r, ch)| (*r, *ch)).collect::<BTreeMap<u32, Choice>>());
@@ -819,6 +849,7 @@ pub fn stream(
                 if let Some(s) = st.cells.get_mut(&c) {
                     s.stamp = now;
                     s.segment = segment;
+                    s.dirty = false;
                 }
                 continue;
             }
@@ -835,7 +866,7 @@ pub fn stream(
         let origin = cell_origin(c);
         let entity = commands.spawn((Name::new(format!("Distant cell {},{}", c.0, c.1)), DistantCell { grid: c }, nvf_play::DrawOnlyCell, Transform::from_translation(origin), Visibility::Hidden)).id();
         commands.entity(root).add_child(entity);
-        let mut sp = CellSpawn { entity, grid: c, replaces, list, plan, next: 0, later: Vec::new(), origin, stamp: now, segment, drawn: HashMap::new(), full_tris: 0 };
+        let mut sp = CellSpawn { entity, grid: c, replaces, list, plan, next: 0, later: Vec::new(), origin, stamp: now, segment, drawn: HashMap::new(), full_tris: 0, dirty: false };
         spawn_refs(&mut commands, &ctx, st, &mut sp, &mut budget, deadline, &mut models, &mut emittance);
         if sp.done() {
             finish(&mut commands, st, c, sp, fading);
@@ -947,12 +978,34 @@ fn queue_rebuilds(st: &mut DistantState, now: Stamp, blocks: &BlockContents, cov
 
 /// Whether a drawn cell is to be judged again now ([`queue_rebuilds`]): `segment` is its
 /// block's answer now, `covered` a loaded or ring cell over it, `spawning` a replacement
-/// under way.
+/// under way. A cell whose references' overrides changed goes even while fading or
+/// covered (its old look must not stay).
 fn rejudge_due(s: &CellState, now: Stamp, segment: Option<bool>, covered: bool, spawning: bool) -> bool {
-    if s.leaving || s.level < 1.0 || s.old.is_some() || covered || spawning {
+    if s.leaving || s.old.is_some() || spawning {
+        return false;
+    }
+    if s.dirty {
+        return true;
+    }
+    if s.level < 1.0 || covered {
         return false;
     }
     s.stamp != now || (s.flagged && s.segment != segment)
+}
+
+/// Mark the drawn cells and the cells being spawned that hold one of `changed` (their
+/// override came or went): judged again.
+fn mark_overridden(st: &mut DistantState, changed: &HashSet<u32>) {
+    for s in st.cells.values_mut() {
+        if changed.iter().any(|r| s.plan.contains_key(r)) {
+            s.dirty = true;
+        }
+    }
+    for sp in st.spawning.values_mut() {
+        if sp.list.entries.iter().any(|e| changed.contains(&e.p.form_id)) {
+            sp.dirty = true;
+        }
+    }
 }
 
 /// What a distant reference's spawn reads.
@@ -988,10 +1041,14 @@ fn spawn_one(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp:
     let list = sp.list.clone();
     let e = &list.entries[i];
     let r = e.p.form_id;
-    // Drawn with a destruction model by the loaded cells, or not shown for its enable
-    // state (the game's simulation shows and hides the rest): out.
-    if !ch.drawn() || ctx.streamer.model_overrides.contains_key(&r) || !full_detail::drawn_for_enable_state(e.enabled, e.p.deleted(), ctx.simulated) {
+    if !ch.drawn() {
         sp.drawn.insert(r, ch);
+        return true;
+    }
+    // An override that came since the plan, or not shown for its enable state (the game's
+    // simulation shows and hides the rest): recorded as left out, as the plan would.
+    if ctx.streamer.model_overrides.contains_key(&r) || !full_detail::drawn_for_enable_state(e.enabled, e.p.deleted(), ctx.simulated) {
+        sp.drawn.insert(r, Choice::Skipped);
         return true;
     }
     let Some((path, alt)) = model_of(e, ch) else { return true };
@@ -1052,6 +1109,7 @@ fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn
             Choice::Held => st.stats.held += 1,
             Choice::Unknown => st.stats.unknown += 1,
             Choice::Small => st.stats.small += 1,
+            Choice::Skipped => {}
         }
     }
     st.stats.small += sp.list.small;
@@ -1065,6 +1123,7 @@ fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn
         stamp: sp.stamp,
         segment: sp.segment,
         flagged,
+        dirty: sp.dirty,
         full_tris: sp.full_tris,
         old,
         applied: None,
@@ -1154,6 +1213,10 @@ mod tests {
     use super::*;
 
     const J: Judge = Judge { flagged: false, has_lod: false, radius: 400.0 };
+
+    fn no_skip(_: &Entry) -> bool {
+        false
+    }
 
     /// Every branch of the rule: a flagged reference is left to a block that holds it or
     /// is not known yet and drawn like the rest when its segment is empty; a LOD model wins
@@ -1355,20 +1418,20 @@ mod tests {
         // Cell (8, 0) from centre (0, 0): references about 8 cells out.
         let x = 8.5 * CELL_SIZE;
         let list = CellList { entries: vec![entry(1, x, 400.0, false, false), entry(2, x, 100.0, false, false), entry(3, x, 10.0, false, true), entry(4, x, 900.0, true, false)], small: 0, inner: 2 };
-        let plan = plan_cell(&list, (8, 0), (0, 0), &[], Some(true), None);
+        let plan = plan_cell(&list, (8, 0), (0, 0), &[], Some(true), None, &no_skip);
         assert_eq!(plan.iter().map(|p| p.1).collect::<Vec<_>>(), [Choice::Full, Choice::Small, Choice::Lod, Choice::Held]);
         let set = drawn_set(&list, &plan);
         assert_eq!(set.len(), 2);
         // The block not known yet: the flagged one waits.
-        assert_eq!(plan_cell(&list, (8, 0), (0, 0), &[], None, None)[3].1, Choice::Unknown);
+        assert_eq!(plan_cell(&list, (8, 0), (0, 0), &[], None, None, &no_skip)[3].1, Choice::Unknown);
         // Its segment empty: drawn by size.
-        assert_eq!(plan_cell(&list, (8, 0), (0, 0), &[], Some(false), None)[3].1, Choice::Full);
+        assert_eq!(plan_cell(&list, (8, 0), (0, 0), &[], Some(false), None, &no_skip)[3].1, Choice::Full);
         // A raised ratio for 8 steps leaves the 400-unit rock out unless drawn before.
         let mut ratios = vec![SIZE_RATIO; 9];
         ratios[8] = 0.0135;
-        assert_eq!(plan_cell(&list, (8, 0), (0, 0), &ratios, Some(true), None)[0].1, Choice::Small);
+        assert_eq!(plan_cell(&list, (8, 0), (0, 0), &ratios, Some(true), None, &no_skip)[0].1, Choice::Small);
         let before = HashMap::from([(1u32, Choice::Full)]);
-        assert_eq!(plan_cell(&list, (8, 0), (0, 0), &ratios, Some(true), Some(&before))[0].1, Choice::Full, "hysteresis");
+        assert_eq!(plan_cell(&list, (8, 0), (0, 0), &ratios, Some(true), Some(&before), &no_skip)[0].1, Choice::Full, "hysteresis");
     }
 
     /// A drawn cell for the lifecycle tests, with its full models' triangles and those of
@@ -1382,6 +1445,7 @@ mod tests {
             stamp: Stamp::default(),
             segment: None,
             flagged: false,
+            dirty: false,
             full_tris,
             old: old.map(|t| (Entity::PLACEHOLDER, t)),
             applied: None,
@@ -1403,6 +1467,7 @@ mod tests {
             segment: None,
             drawn: HashMap::new(),
             full_tris,
+            dirty: false,
         }
     }
 
@@ -1523,10 +1588,57 @@ mod tests {
             enabled: true,
         };
         let list = CellList { entries: vec![e], small: 0, inner: 2 };
-        let unknown = plan_cell(&list, (8, 0), (0, 0), &[], None, None);
+        let unknown = plan_cell(&list, (8, 0), (0, 0), &[], None, None, &no_skip);
         assert!(drawn_set(&list, &unknown).is_empty(), "unknown: left to the block");
-        assert_eq!(drawn_set(&list, &plan_cell(&list, (8, 0), (0, 0), &[], Some(false), None)).get(&7), Some(&Choice::Lod), "empty: drawn, so the cell is rebuilt");
-        assert!(drawn_set(&list, &plan_cell(&list, (8, 0), (0, 0), &[], Some(true), None)).is_empty(), "held: the same drawn set, no rebuild");
+        assert_eq!(drawn_set(&list, &plan_cell(&list, (8, 0), (0, 0), &[], Some(false), None, &no_skip)).get(&7), Some(&Choice::Lod), "empty: drawn, so the cell is rebuilt");
+        assert!(drawn_set(&list, &plan_cell(&list, (8, 0), (0, 0), &[], Some(true), None, &no_skip)).is_empty(), "held: the same drawn set, no rebuild");
+    }
+
+    /// Model overrides both ways: a reference whose override comes is left out of the plan
+    /// (the drawn set changes, so the cell is rebuilt without the original), one whose
+    /// override goes is drawn again (the drawn set changes back); the change marks the
+    /// cells holding it, which are judged again even while covered or fading.
+    #[test]
+    fn overrides_applied_and_cleared_rebuild_the_cell() {
+        let base = Arc::new(BaseObject { form_id: 0x200, sig: *b"STAT", edid: None, model: Some("rocks\\rock.nif".into()), world_model: None, world_alt_textures: vec![], worn_only: false, flags: 0, bounds: None });
+        let e = |fid: u32| Entry {
+            p: Placement { form_id: fid, sig: *b"REFR", flags: 0, base: Some(0x200), position: [8.5 * CELL_SIZE, 0.5 * CELL_SIZE, 0.0], rotation: [0.0; 3], scale: 1.0, enable_parent: None, open_by_default: false, teleport: false, emittance: None, imposter: false, primitive: false },
+            base: base.clone(),
+            full: "meshes\\rocks\\rock.nif".into(),
+            lod: Some("meshes\\rocks\\rock_lod.nif".into()),
+            flagged: false,
+            radius: 50.0,
+            enabled: true,
+        };
+        let list = CellList { entries: vec![e(1), e(2)], small: 0, inner: 2 };
+        let plain = drawn_set(&list, &plan_cell(&list, (8, 0), (0, 0), &[], None, None, &no_skip));
+        let overridden = |x: &Entry| x.p.form_id == 2;
+        let with = drawn_set(&list, &plan_cell(&list, (8, 0), (0, 0), &[], None, None, &overridden));
+        assert_eq!(plain.len(), 2);
+        assert_eq!(with.keys().copied().collect::<Vec<_>>(), [1], "applied: the original is left out");
+        assert_ne!(plain, with, "applied: rebuilt");
+        assert_ne!(with, plain, "cleared: rebuilt, drawn again");
+        // The changes, both ways.
+        let seen: HashSet<u32> = [2, 5].into();
+        let now: HashMap<u32, String> = [(5, "a".to_string()), (9, "b".to_string())].into();
+        assert_eq!(override_changes(&seen, &now), [2, 9].into(), "2 cleared, 9 applied, 5 unchanged");
+        assert!(override_changes(&seen, &[(2, String::new()), (5, String::new())].into()).is_empty());
+        // The cells holding them are marked, drawn or being spawned.
+        let mut st = DistantState::default();
+        let mut holding = drawn_cell(0, None);
+        holding.plan.insert(2, Choice::Lod);
+        st.cells.insert((8, 0), holding);
+        st.cells.insert((9, 0), drawn_cell(0, None));
+        let mut sp = a_spawn((10, 0), false, 0);
+        sp.list = Arc::new(CellList { entries: vec![e(9)], small: 0, inner: 2 });
+        st.spawning.insert((10, 0), sp);
+        mark_overridden(&mut st, &[2, 9].into());
+        assert!(st.cells[&(8, 0)].dirty && !st.cells[&(9, 0)].dirty && st.spawning[&(10, 0)].dirty);
+        let mut s = drawn_cell(0, None);
+        s.dirty = true;
+        s.level = 0.5;
+        assert!(rejudge_due(&s, Stamp::default(), None, true, false), "even fading and covered");
+        assert!(!rejudge_due(&s, Stamp::default(), None, true, true), "not while its replacement spawns");
     }
 
     /// Off in both looks; `--graphics-only distant-objects-8` / `distant-objects-12` turn
