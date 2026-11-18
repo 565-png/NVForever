@@ -1,9 +1,9 @@
-//! Ambient occlusion on the ambient light, inside the lighting (#2897 stage two,
-//! docs/design/graphics-enhanced.md §3.1): instead of multiplying the finished picture
-//! (ssao.rs's post passes), the occlusion factor scales only the display-value ambient term
-//! of the patched `apply_pbr_lighting` (lights/display_shader.rs `nvf_ambient`), so direct
-//! light, the sun and every highlight stay as they are. An engineering choice, not the
-//! original game's.
+//! Ambient occlusion inside the lighting (#2897 stage two, docs/design/graphics-enhanced.md
+//! §3.1.2; the switch's default placement): instead of multiplying the finished picture
+//! (ssao.rs's post passes, now the fallback), the occlusion factor scales the display-value
+//! ambient term of the patched `apply_pbr_lighting` (lights/display_shader.rs `nvf_ambient`)
+//! and the light of lamps that cast no shadow ([`LAMPS`]), so the sun, the moon and every
+//! highlight stay as they are. An engineering choice, not the original game's.
 //!
 //! The parts, built the way the sun visibility's are (sun_visibility.rs):
 //! - bevy_pbr's view component `NvfAmbientOcclusionBindings` (vendored, engine/vendor/README.md):
@@ -38,21 +38,32 @@ pub(crate) use hook::hook_patched;
 /// `nvforever::ssao_lighting`.
 const SHADER: Handle<Shader> = uuid_handle!("8d1e6a2c-3f47-4b9e-a5c1-6e02d7f4b318");
 
-/// The exponent the factor is raised to before it scales the display-value ambient: the
-/// display sum is raised to 2.2 afterwards (display_shader.rs), so in a pixel lit by the
-/// ambient alone the light is scaled by the factor itself, as stage one scaled it
-/// [engineering choice, #2897 stage two plan §5; the uniform carries it so a picture pair can
-/// settle it].
-pub const EXPONENT: f32 = 1.0 / 2.2;
+/// The exponent the factor is raised to before it scales the display-value sum (the ambient
+/// term, and the lamps' by [`LAMPS`]). The sum is a display value: the light is the texture
+/// times its 2.2nd power (lights/display_shader.rs) and the shown value comes back as about
+/// the sum itself, so with exponent 1 the shown value of a surface lit by what the factor
+/// reaches falls by the factor itself, as the picture placement (stage one) multiplies the
+/// shown picture by it. The first value, 1/2.2, scaled the linear light by the factor instead,
+/// so the shown value fell by only about f^0.45, less than half the picture placement's
+/// darkening at the same strength; its comment's claim that it kept stage one's meaning was
+/// wrong, stage one multiplying the tonemapped, multisample-resolved picture. At exponent 1
+/// the Goodsprings street changes as many pixels as stage one (20.3 % against 20.9 % by more
+/// than 2 levels of 255 at strength 0.8, mean darkening 1.85 against 2.34 levels) [observed
+/// 2026-11-18, the main session's pictures] [engineering choice: 1; the aid
+/// `NVF_PLAY_DEBUG_AO_EXPONENT` (ssao.rs `AoDebug`) replaces it for comparisons].
+pub const EXPONENT: f32 = 1.0;
 
-/// The exponent in use: [`EXPONENT`], or `NVF_PLAY_DEBUG_AO_EXPONENT=<0.1..2>` for judging by eye (1 darkens the
-/// display value by the factor itself, as the picture placement does after tonemapping).
-fn exponent() -> f32 {
-    static VALUE: std::sync::LazyLock<f32> = std::sync::LazyLock::new(|| {
-        std::env::var("NVF_PLAY_DEBUG_AO_EXPONENT").ok().and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| v.is_finite()).map_or(EXPONENT, |v| v.clamp(0.1, 2.0))
-    });
-    *VALUE
-}
+/// How much of the factor reaches the light of lamps (point and spot lights) that cast no
+/// shadow at the surface: all of it. #2897 asked for the ambient term only, but interiors are
+/// lit almost wholly by such lamps (in the sum's direct part), and on the ambient alone the
+/// occlusion all but vanished there: Doc Mitchell's house changed 0.7 % of its pixels against
+/// stage one's 9.7 %, with the lamps at 1 as well 5.1 % (the Prospector Saloon 5.9 % against
+/// 7.4 %) [observed 2026-11-18, the main session's pictures at exponent 1, strength 0.8]. A
+/// lamp casting no shadow lights a crease as fully as open floor, so nothing else keeps its
+/// light out; the sun, the moon and an interior's directional light are never touched
+/// [engineering choice: 1, the player's, judged in play on 2026-11-18;
+/// `NVF_PLAY_DEBUG_AO_LAMPS` replaces it, 0 for the ambient term alone].
+pub const LAMPS: f32 = 1.0;
 
 /// The share of the fragment's distance (plus one unit) within which a texel's distance
 /// counts as the same surface: stage one's fallback tolerance (ssao.wesl
@@ -69,12 +80,12 @@ pub struct AmbientOcclusionLightingUniform {
 }
 
 impl AmbientOcclusionLightingUniform {
-    /// The uniform for an occlusion faded out at `fade_end` (game units), made with
-    /// `strength`, on lamps without a shadow by `lamps` (held to 0..1), with or without the
-    /// debug view.
-    pub fn new(fade_end: f32, strength: f32, lamps: f32, debug: bool) -> Self {
+    /// The uniform for an occlusion raised to `exponent`, faded out at `fade_end` (game
+    /// units), made with `strength`, on lamps without a shadow by `lamps` (held to 0..1), with
+    /// or without the debug view.
+    pub fn new(exponent: f32, fade_end: f32, strength: f32, lamps: f32, debug: bool) -> Self {
         AmbientOcclusionLightingUniform {
-            params: Vec4::new(exponent(), if debug { 1.0 } else { 0.0 }, fade_end, DISTANCE_TOLERANCE),
+            params: Vec4::new(exponent, if debug { 1.0 } else { 0.0 }, fade_end, DISTANCE_TOLERANCE),
             extra: Vec4::new(strength, lamps.clamp(0.0, 1.0), 0.0, 0.0),
         }
     }
@@ -321,12 +332,14 @@ mod tests {
         let fields: Vec<usize> = ["params: vec4<f32>,", "extra: vec4<f32>,"].iter().map(|f| wesl.find(f).unwrap_or_else(|| panic!("{f}"))).collect();
         assert!(fields.windows(2).all(|w| w[0] < w[1]));
         assert_eq!(AmbientOcclusionLightingUniform::min_size().get(), 32, "two vec4s, as ssao_lighting.wesl's struct");
-        let u = AmbientOcclusionLightingUniform::new(7000.0, 0.4, 0.0, true);
+        let u = AmbientOcclusionLightingUniform::new(EXPONENT, 7000.0, 0.4, 0.0, true);
         assert_eq!(u.params, Vec4::new(EXPONENT, 1.0, 7000.0, DISTANCE_TOLERANCE));
         assert_eq!(u.extra, Vec4::new(0.4, 0.0, 0.0, 0.0));
-        assert_eq!(AmbientOcclusionLightingUniform::new(7000.0, 0.4, 0.0, false).params.y, 0.0);
-        assert_eq!(AmbientOcclusionLightingUniform::new(7000.0, 0.4, 0.5, false).extra, Vec4::new(0.4, 0.5, 0.0, 0.0));
-        assert_eq!(AmbientOcclusionLightingUniform::new(7000.0, 0.4, 3.0, false).extra.y, 1.0, "held to 1");
+        assert_eq!(AmbientOcclusionLightingUniform::new(0.5, 7000.0, 0.4, 0.0, false).params, Vec4::new(0.5, 0.0, 7000.0, DISTANCE_TOLERANCE));
+        assert_eq!(AmbientOcclusionLightingUniform::new(EXPONENT, 7000.0, 0.4, 0.5, false).extra, Vec4::new(0.4, 0.5, 0.0, 0.0));
+        assert_eq!(AmbientOcclusionLightingUniform::new(EXPONENT, 7000.0, 0.4, 3.0, false).extra.y, 1.0, "held to 1");
+        // The defaults built in (the player's choice, docs/design/graphics-enhanced.md §3.1.2).
+        assert_eq!((EXPONENT, LAMPS), (1.0, 1.0));
         assert!(wesl.contains(&format!("const NVF_AO_MIN_WEIGHT: f32 = {MIN_WEIGHT};")), "the WESL's minimum weight is the Rust mirror's");
         // A zeroed uniform (fade end 0) reads as open everywhere.
         assert_eq!(upsample(&Texels::plane(4, 4, 0.5, 100.0), Vec2::new(2.5, 2.5), 100.0, &AmbientOcclusionLightingUniform::default()), 1.0);
@@ -343,7 +356,7 @@ mod tests {
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
             .validate(&module)
             .unwrap_or_else(|e| panic!("{e:?}"));
-        for f in ["nvf_ambient_visibility", "nvf_ao_debug"] {
+        for f in ["nvf_ambient_visibility", "nvf_ao_debug", "nvf_lamp_visibility"] {
             assert!(module.functions.iter().any(|(_, func)| func.name.as_deref() == Some(f)), "{f}");
         }
     }
@@ -399,28 +412,22 @@ mod tests {
         safe.powf(u.params.x)
     }
 
-    /// The factor as the display sum takes it back: a fully shaded pixel's light scales by
-    /// (g)^2.2.
-    fn linear(g: f32) -> f32 {
-        g.powf(2.2)
-    }
-
     fn uniform() -> AmbientOcclusionLightingUniform {
-        AmbientOcclusionLightingUniform::new(7000.0, 0.4, 0.0, false)
+        AmbientOcclusionLightingUniform::new(EXPONENT, 7000.0, 0.4, 0.0, false)
     }
 
-    /// On a plane every fragment gets the plane's factor exactly (after the exponent and
-    /// the display gamma, the factor itself), at even and odd pixels and at the borders.
+    /// On a plane every fragment gets the plane's factor exactly (at the exponent built in,
+    /// 1, the factor itself), at even and odd pixels and at the borders.
     #[test]
     fn a_plane_gives_its_factor() {
         let tex = Texels::plane(8, 6, 0.7, 500.0);
         for frag in [Vec2::new(4.5, 4.5), Vec2::new(5.5, 4.5), Vec2::new(5.5, 5.5), Vec2::new(0.5, 0.5), Vec2::new(15.5, 11.5), Vec2::new(16.5, 12.5)] {
             let g = upsample(&tex, frag, 500.0, &uniform());
-            assert!((linear(g) - 0.7).abs() < 1e-5, "{frag}: {}", linear(g));
+            assert!((g - 0.7).abs() < 1e-6, "{frag}: {g}");
         }
         // A slightly different distance on the same plane (a slope) still matches.
         let g = upsample(&tex, Vec2::new(5.5, 5.5), 510.0, &uniform());
-        assert!((linear(g) - 0.7).abs() < 1e-5);
+        assert!((g - 0.7).abs() < 1e-6);
     }
 
     /// Across a depth edge each side keeps its own texels: the background beside a near
@@ -439,7 +446,7 @@ mod tests {
         let wall = upsample(&tex, edge, 2000.0, &uniform());
         assert_eq!(wall, 1.0, "the wall's fragment ignores the box");
         let boxed = upsample(&tex, edge, 200.0, &uniform());
-        assert!((linear(boxed) - 0.2).abs() < 1e-4, "the box's fragment ignores the wall: {}", linear(boxed));
+        assert!((boxed - 0.2).abs() < 1e-6, "the box's fragment ignores the wall: {boxed}");
     }
 
     /// Where no texel holds the fragment's surface (something the depth prepass does not
@@ -478,12 +485,23 @@ mod tests {
         }
     }
 
-    /// The exponent undoes the display gamma: (f^(1/2.2))^2.2 = f across the range.
+    /// The exponent sets how the shown value falls. The display-value sum is shown as about
+    /// itself (light = texture × sum^2.2, shown ≈ light^(1/2.2)), so with the exponent built in,
+    /// 1, the shown value of a surface lit by what the factor reaches falls by the factor
+    /// itself, as the picture placement multiplies the shown picture by it; with the first
+    /// value, 1/2.2, it was the light that fell by the factor and the shown value only by
+    /// f^(1/2.2).
     #[test]
-    fn the_exponent_undoes_the_display_gamma() {
+    fn the_exponent_sets_how_the_shown_value_falls() {
+        let tex = |f: f32| Texels::plane(4, 4, f, 300.0);
+        let at = |f: f32, e: f32| upsample(&tex(f), Vec2::new(2.5, 2.5), 300.0, &AmbientOcclusionLightingUniform::new(e, 7000.0, 0.8, 0.0, false));
+        let shown = |sum: f32| (sum.powf(2.2)).powf(1.0 / 2.2);
         for i in 1..=20 {
             let f = i as f32 / 20.0;
-            assert!((linear(f.powf(EXPONENT)) - f).abs() < 1e-5, "{f}");
+            // A pixel lit by the ambient alone (sum = A): shown A × g against A.
+            assert!((shown(0.5 * at(f, EXPONENT)) / shown(0.5) - f).abs() < 1e-4, "exponent 1: the shown value falls by f = {f}");
+            assert!((shown(0.5 * at(f, 1.0 / 2.2)) / shown(0.5) - f.powf(1.0 / 2.2)).abs() < 1e-4, "exponent 1/2.2: only by f^0.45, f = {f}");
+            assert!(((0.5 * at(f, 1.0 / 2.2)).powf(2.2) / 0.5f32.powf(2.2) - f).abs() < 1e-4, "exponent 1/2.2: the light falls by f = {f}");
         }
     }
 
@@ -504,11 +522,11 @@ mod tests {
         let wesl = wesl();
         assert!(wesl.contains("let w = clamp(nvf_ao.extra.y, 0.0, 1.0);") && wesl.contains("return mix(1.0, nvf_ambient_visibility(frag, dist), w);"));
         let tex = Texels::plane(4, 4, 0.6, 300.0);
-        let at = |w: f32| lamps(&tex, Vec2::new(2.5, 2.5), 300.0, &AmbientOcclusionLightingUniform::new(7000.0, 0.4, w, false));
+        let at = |w: f32| lamps(&tex, Vec2::new(2.5, 2.5), 300.0, &AmbientOcclusionLightingUniform::new(EXPONENT, 7000.0, 0.4, w, false));
         let g = upsample(&tex, Vec2::new(2.5, 2.5), 300.0, &uniform());
         assert_eq!(at(0.0), 1.0);
         assert!((at(1.0) - g).abs() < 1e-6);
-        assert!((linear(at(1.0)) - 0.6).abs() < 1e-4, "a lamp-only crease scales by the factor");
+        assert!((at(1.0) - 0.6).abs() < 1e-6, "a lamp-only crease: its shown value falls by the factor");
         assert!((at(0.5) - (1.0 + g) * 0.5).abs() < 1e-6);
         assert!(at(0.0) > at(0.5) && at(0.5) > at(1.0));
     }

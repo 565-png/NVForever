@@ -77,8 +77,26 @@ const STRENGTH: f32 = 0.55;
 /// switch off; a floor point at the foot of a wall has 0.5 (the wall hides half the
 /// cosine-weighted hemisphere), which this darkens to 0.8, about what the old estimate gave
 /// in such a crease [engineering choice, from that estimate, not yet from pictures: the
-/// factor still multiplies all light, so it is kept low as the old one was].
+/// factor still multiplies all light, so it is kept low as the old one was]. The picture
+/// placement's (`NVF_PLAY_DEBUG_AO=post`, and the fallback while the lighting hook is not in
+/// place): stage one's value, unchanged.
 const GTAO_STRENGTH: f32 = 0.4;
+/// The ground-truth estimate's strength in the lighting placement (the default): there the
+/// factor reaches only the ambient light and the lamps that cast no shadow, never the sun,
+/// the moon or highlights, so the reason for keeping the picture placement's low is gone
+/// [engineering choice, the player's: at exponent 1 and lamps 1, indoors 0.4 and 0.8 looked
+/// about the same and neither too dark, and outdoors 0.8 with `thin+soft` "feels about right"
+/// (observed 2026-11-18, the player's play test)].
+const LIGHTING_STRENGTH: f32 = 0.8;
+/// The remedies for the shimmer on plants in the lighting placement: `thin` and `soft`
+/// ([`AoVariant`]). Measured on the occlusion alone at the Goodsprings street, two bush crops
+/// (median change per pixel between frames 0.12 s apart, levels of 255): the plain estimate
+/// 1.96 / 2.87, `thin+soft` 0.87 / 1.11, against the old estimate's 0.67 / 0.92 [observed
+/// 2026-11-18, the main session's pictures; docs/design/graphics-enhanced.md §3.1.2]; with it
+/// at strength 0.8 the player saw no shimmer and no halos [observed 2026-11-18, the player's
+/// play test]. `thin+wide+soft` measured a little steadier (0.74 / 0.86) but was not the one
+/// played [engineering choice: the player's]. The picture placement keeps none.
+const LIGHTING_VARIANT: AoVariant = AoVariant { slices: None, steps: None, wide: None, soft: true, thin: true, nearest: false };
 /// Slice directions per pixel and depth samples on each side of a slice: the shader's
 /// `SLICES` and `STEPS` (ssao.wesl; a test keeps them the same), for the log line. Two by
 /// four at half resolution, about the old pass's twelve samples in cost [engineering choice:
@@ -121,20 +139,21 @@ pub struct AmbientOcclusion {
 
 impl Default for AmbientOcclusion {
     fn default() -> Self {
-        AmbientOcclusion::with_debug(*AO_DEBUG)
+        AmbientOcclusion::with_debug(*AO_DEBUG, AO_DEBUG.in_lighting_now())
     }
 }
 
 impl AmbientOcclusion {
-    fn with_debug(debug: AoDebug) -> Self {
+    /// The settings for the debug aids `debug`, in the lighting placement or on the picture
+    /// (`lighting`: where the occlusion goes this frame, [`AoDebug::in_lighting_now`]).
+    fn with_debug(debug: AoDebug, lighting: bool) -> Self {
         AmbientOcclusion {
-            params: Vec4::new(RADIUS, debug.strength(), 5.0, FADE_END),
+            params: Vec4::new(RADIUS, debug.strength(lighting), 5.0, FADE_END),
             proj: Vec4::new(1.0, 1.0, MAX_SCREEN_RADIUS, FADE_START),
             render_scale: Vec4::ONE,
             area: Vec4::ZERO,
             mode: debug.mode(),
-            // The old estimate reads none of it (`nearest` would reach its depth reads too).
-            variant: if debug.old { Vec4::ZERO } else { debug.variant.uniform() },
+            variant: debug.variant_for(lighting).uniform(),
         }
     }
 
@@ -150,8 +169,8 @@ impl AmbientOcclusion {
         self.area.z > 0.5
     }
 
-    /// The occlusion is asked for in the lighting (`NVF_PLAY_DEBUG_AO=lighting` or
-    /// `view-lighting`); whether it goes there also takes the lighting hook
+    /// The occlusion is asked for in the lighting (the default; not `post`, `old`, `view`
+    /// or `view-old`); whether it goes there also takes the lighting hook
     /// ([`extract_lighting`]).
     pub(crate) fn wants_lighting(&self) -> bool {
         self.mode.z > 0.5
@@ -160,60 +179,68 @@ impl AmbientOcclusion {
 
 /// Whether the occlusion is applied before FSR while FSR upscales ([`ao_before_fsr`]);
 /// `NVF_AO_BEFORE_FSR=0` applies it after tonemapping, at the display size, as without FSR
-/// (the way of builds before 2026-11-08), for comparisons.
+/// (the way of builds before 2026-11-08), for comparisons. The picture placement only: in the
+/// lighting it always runs at the render size (upscaler/prep.rs).
 pub(crate) static AO_BEFORE_FSR: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| !std::env::var("NVF_AO_BEFORE_FSR").is_ok_and(|v| v.trim() == "0"));
 
 /// Debug switch `NVF_PLAY_DEBUG_AO` (read once at the start; a development aid for
-/// before/after pictures and cost runs, not a setting): `old` runs the old estimate (the
-/// spiral of samples and its blur), `view` shows the ground-truth estimate's factor alone as
-/// a grey picture, `view-old` the old one's; unset, empty, `0`, `off`, `false` or `post` run
-/// the ground-truth estimate, multiplied into the picture. `lighting` puts the ground-truth
-/// estimate on the ambient light inside the lighting instead (#2897 stage two, still a test
-/// aid), and `view-lighting` does that and shows the factor each fragment's ambient took in
-/// place of its colour (ssao_lighting.rs).
+/// before/after pictures and cost runs, not a setting). Unset, empty, `0`, `off` or `false`:
+/// the ground-truth estimate on the ambient light and the lamps inside the lighting
+/// (ssao_lighting.rs; #2897 stage two), the placement the switch has by default.
+/// `view-lighting`: the same, the factor each surface took drawn in place of its colour. On
+/// the picture (stage one's placement, also what runs while the lighting hook is not in
+/// place): `post` the ground-truth estimate multiplied into the picture, `old` the old
+/// estimate (the spiral of samples and its blur), `view` the ground-truth estimate's factor
+/// alone as a grey picture, `view-old` the old one's. Anything else (the stage's earlier
+/// `lighting` among them) is unknown: a warning, and the default runs.
 ///
-/// `NVF_PLAY_DEBUG_AO_STRENGTH=<number>` (read once too) replaces [`GTAO_STRENGTH`] for the
-/// ground-truth estimate, held to 0..1, so strengths can be compared by eye from a launcher;
-/// the old estimate keeps its own.
+/// The remaining aids (each read once too) replace one default of the placement that runs:
 ///
-/// `NVF_PLAY_DEBUG_AO_LAMPS=<number>` (read once too), in the lighting only: how much of the
-/// factor also reaches the light of lamps (point and spot lights) that cast no shadow at the
-/// surface, held to 0..1; unset or 0, none (ssao_lighting.wesl `nvf_lamp_visibility`).
-/// Interiors are lit mostly by such lamps, so on the ambient light alone the occlusion all but
-/// vanishes there [observed 2026-11-18, the main session's runs: the Prospector Saloon and
-/// Doc Mitchell's house].
-///
-/// `NVF_PLAY_DEBUG_AO_VARIANT=<names>` (read once too) picks candidate remedies for the
-/// ground-truth estimate's shimmer on plants ([`AoVariant`]); the old estimate ignores it.
+/// - `NVF_PLAY_DEBUG_AO_STRENGTH=<number>`, held to 0..1: the ground-truth estimate's strength
+///   ([`LIGHTING_STRENGTH`] in the lighting, [`GTAO_STRENGTH`] on the picture); the old
+///   estimate keeps its own.
+/// - `NVF_PLAY_DEBUG_AO_VARIANT=<names>`: the candidate remedies for the shimmer on plants
+///   ([`AoVariant`]); unset or empty, [`LIGHTING_VARIANT`] in the lighting and none on the
+///   picture; `none` (or `0`, `off`) the plain estimate in either; the old estimate ignores it.
+/// - `NVF_PLAY_DEBUG_AO_LAMPS=<number>`, held to 0..1, the lighting only: how much of the
+///   factor reaches the light of lamps that cast no shadow at the surface
+///   (ssao_lighting.rs `LAMPS`; 0 puts the occlusion on the ambient light alone).
+/// - `NVF_PLAY_DEBUG_AO_EXPONENT=<number>`, held to 0.1..2, the lighting only: the exponent
+///   the factor is raised to before it scales the display-value sum (ssao_lighting.rs
+///   `EXPONENT`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct AoDebug {
-    /// The old estimate instead of ground-truth ambient occlusion.
+    /// The old estimate instead of ground-truth ambient occlusion (always on the picture).
     old: bool,
-    /// The factor alone as grey instead of multiplied into the picture (with `lighting`: the
-    /// factor the ambient took, drawn by the lighting).
+    /// The factor alone instead of the lit picture: as grey on the picture (`view`,
+    /// `view-old`), or drawn by the lighting (`view-lighting`).
     view: bool,
-    /// On the ambient light inside the lighting instead of on the picture.
-    lighting: bool,
+    /// On the picture (stage one's placement) instead of in the lighting.
+    post: bool,
     /// The ground-truth estimate's strength from `NVF_PLAY_DEBUG_AO_STRENGTH`.
     gtao_strength: Option<f32>,
     /// The lamps' weight from `NVF_PLAY_DEBUG_AO_LAMPS` (the lighting only).
     lamps: Option<f32>,
-    /// The candidate remedies from `NVF_PLAY_DEBUG_AO_VARIANT`.
-    variant: AoVariant,
+    /// The exponent from `NVF_PLAY_DEBUG_AO_EXPONENT` (the lighting only).
+    exponent: Option<f32>,
+    /// The candidate remedies from `NVF_PLAY_DEBUG_AO_VARIANT`; `None` when unset or empty
+    /// (the placement's default).
+    variant: Option<AoVariant>,
 }
 
 /// Debug aid `NVF_PLAY_DEBUG_AO_VARIANT` (#2897): candidate remedies for the ground-truth
-/// estimate's shimmer on swaying alpha-tested plants, to be measured against each other in
-/// one build; the one kept becomes the estimate and the aid goes [engineering choice:
-/// experiments]. Names joined by `+`, any order, case ignored: `slices3` / `slices4` (3 or 4
-/// slice directions a texel instead of 2), `steps8` (8 depth samples a side instead of 4),
-/// `wide` / `wide6` (where few texels lie on the pixel's plane, the denoise widens from
-/// 4 x 4 texels to 8 x 8 / 6 x 6), `soft` (there, the result pulled towards the plain mean
-/// of the nearby texels), `thin` (a lower sample lets the horizon sink: thin occluders),
-/// `nearest` (under multisampling, every depth read takes the nearest of the pixel's
-/// samples instead of sample 0, whose share of a leaf's soft edge changes from pixel to
-/// pixel). Unset, empty, `0`, `off` or `none`: the estimate as shipped, bit for bit.
+/// estimate's shimmer on swaying alpha-tested plants, measured against each other in one
+/// build (docs/design/graphics-enhanced.md §3.1.2); `thin+soft` is the lighting placement's
+/// default ([`LIGHTING_VARIANT`]), the others stay for comparisons [engineering choice].
+/// Names joined by `+`, any order, case ignored: `slices3` / `slices4` (3 or 4 slice
+/// directions a texel instead of 2), `steps8` (8 depth samples a side instead of 4), `wide` /
+/// `wide6` (where few texels lie on the pixel's plane, the denoise widens from 4 x 4 texels to
+/// 8 x 8 / 6 x 6), `soft` (there, the result pulled towards the plain mean of the nearby
+/// texels), `thin` (a lower sample lets the horizon sink: thin occluders), `nearest` (under
+/// multisampling, every depth read takes the nearest of the pixel's samples instead of sample
+/// 0, whose share of a leaf's soft edge changes from pixel to pixel). `0`, `off` or `none`:
+/// the plain estimate, bit for bit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AoVariant {
     /// Slice directions per texel (3 or 4) instead of [`GTAO_SLICES`].
@@ -267,6 +294,15 @@ impl AoVariant {
         Ok(out)
     }
 
+    /// The aid as set: `None` unset or empty (the placement's default), else as
+    /// [`AoVariant::parse`] takes it.
+    fn parse_aid(value: Option<&str>) -> Result<Option<AoVariant>, String> {
+        match value.map(str::trim) {
+            None | Some("") => Ok(None),
+            Some(v) => AoVariant::parse(Some(v)).map(Some),
+        }
+    }
+
     fn is_set(self) -> bool {
         self != AoVariant::default()
     }
@@ -304,73 +340,143 @@ impl AoDebug {
     fn parse(value: Option<&str>) -> Result<AoDebug, String> {
         let v = value.map(str::trim).unwrap_or("");
         match v.to_ascii_lowercase().as_str() {
-            "" | "0" | "off" | "false" | "post" => Ok(AoDebug::default()),
-            "old" => Ok(AoDebug { old: true, ..AoDebug::default() }),
-            "view" => Ok(AoDebug { view: true, ..AoDebug::default() }),
-            "view-old" => Ok(AoDebug { old: true, view: true, ..AoDebug::default() }),
-            "lighting" => Ok(AoDebug { lighting: true, ..AoDebug::default() }),
-            "view-lighting" => Ok(AoDebug { lighting: true, view: true, ..AoDebug::default() }),
+            "" | "0" | "off" | "false" => Ok(AoDebug::default()),
+            "view-lighting" => Ok(AoDebug { view: true, ..AoDebug::default() }),
+            "post" => Ok(AoDebug { post: true, ..AoDebug::default() }),
+            "old" => Ok(AoDebug { old: true, post: true, ..AoDebug::default() }),
+            "view" => Ok(AoDebug { view: true, post: true, ..AoDebug::default() }),
+            "view-old" => Ok(AoDebug { old: true, view: true, post: true, ..AoDebug::default() }),
             _ => Err(v.to_string()),
         }
     }
 
-    /// `NVF_PLAY_DEBUG_AO_STRENGTH`'s value: none when unset or empty, a finite number held
-    /// to 0..1, `Err` with the value for anything else.
+    /// `NVF_PLAY_DEBUG_AO_STRENGTH`'s (and `NVF_PLAY_DEBUG_AO_LAMPS`') value: none when unset
+    /// or empty, a finite number held to 0..1, `Err` with the value for anything else.
     fn parse_strength(value: Option<&str>) -> Result<Option<f32>, String> {
+        AoDebug::parse_number(value, 0.0, 1.0)
+    }
+
+    /// `NVF_PLAY_DEBUG_AO_EXPONENT`'s value: none when unset or empty, a finite number held to
+    /// 0.1..2, `Err` with the value for anything else.
+    fn parse_exponent(value: Option<&str>) -> Result<Option<f32>, String> {
+        AoDebug::parse_number(value, 0.1, 2.0)
+    }
+
+    fn parse_number(value: Option<&str>, low: f32, high: f32) -> Result<Option<f32>, String> {
         let v = value.map(str::trim).unwrap_or("");
         if v.is_empty() {
             return Ok(None);
         }
         match v.parse::<f32>() {
-            Ok(s) if s.is_finite() => Ok(Some(s.clamp(0.0, 1.0))),
+            Ok(s) if s.is_finite() => Ok(Some(s.clamp(low, high))),
             _ => Err(v.to_string()),
         }
     }
 
-    fn strength(self) -> f32 {
-        if self.old { STRENGTH } else { self.gtao_strength.unwrap_or(GTAO_STRENGTH) }
+    /// The occlusion is asked for in the lighting (every value but the picture's).
+    fn lighting(self) -> bool {
+        !self.post
+    }
+
+    /// Whether the occlusion goes into the lighting now: asked for, and the lighting hook in
+    /// place (lights.rs; until then, or if it failed, the picture placement runs).
+    fn in_lighting_now(self) -> bool {
+        self.lighting() && hook_state() == HookState::Installed
+    }
+
+    /// The strength in the placement that runs (`lighting`).
+    fn strength(self, lighting: bool) -> f32 {
+        match (self.old, self.gtao_strength) {
+            (true, _) => STRENGTH,
+            (false, Some(s)) => s,
+            (false, None) if lighting => LIGHTING_STRENGTH,
+            (false, None) => GTAO_STRENGTH,
+        }
+    }
+
+    /// The remedies in the placement that runs (`lighting`): the aid's, or the placement's
+    /// default; none for the old estimate.
+    fn variant_for(self, lighting: bool) -> AoVariant {
+        match (self.old, self.variant) {
+            (true, _) => AoVariant::default(),
+            (false, Some(v)) => v,
+            (false, None) if lighting => LIGHTING_VARIANT,
+            (false, None) => AoVariant::default(),
+        }
+    }
+
+    /// The lamps' weight in the lighting.
+    fn lamps(self) -> f32 {
+        self.lamps.unwrap_or(crate::ssao_lighting::LAMPS)
+    }
+
+    /// The exponent in the lighting.
+    fn exponent(self) -> f32 {
+        self.exponent.unwrap_or(crate::ssao_lighting::EXPONENT)
     }
 
     /// The uniform's `mode` (ssao.wesl `Ao.mode`).
     fn mode(self) -> Vec4 {
         let on = |b: bool| if b { 1.0 } else { 0.0 };
-        Vec4::new(on(self.old), on(self.view), on(self.lighting), 0.0)
+        Vec4::new(on(self.old), on(self.view), on(self.lighting()), 0.0)
     }
 
-    /// The lighting's uniform for an occlusion of `settings` (ssao_lighting.rs): its fade
-    /// end and strength, the lamps' weight (0 unless asked for), the debug view with
+    /// The lighting's uniform for an occlusion of `settings` (ssao_lighting.rs): the
+    /// exponent, its fade end and strength, the lamps' weight, the debug view with
     /// `view-lighting`.
     fn lighting_uniform(self, settings: &AmbientOcclusion) -> AmbientOcclusionLightingUniform {
-        AmbientOcclusionLightingUniform::new(settings.params.w, settings.params.y, self.lamps.unwrap_or(0.0), self.view && self.lighting)
+        AmbientOcclusionLightingUniform::new(self.exponent(), settings.params.w, settings.params.y, self.lamps(), self.view && self.lighting())
     }
 
-    /// The log line when the occlusion turns on on the main camera.
-    fn describe(self) -> String {
+    /// The log line for the placement that runs (`lighting`): the estimate, the remedies and
+    /// the strength actually used, and where it goes; an aid's value is named after it.
+    fn describe(self, lighting: bool) -> String {
+        let aid = |set: bool, name: &str| if set { format!(" ({name})") } else { String::new() };
         let estimate = if self.old {
-            let variant = if self.variant.is_set() { format!(", variant {} ignored (NVF_PLAY_DEBUG_AO_VARIANT)", self.variant.name()) } else { String::new() };
+            let variant = match self.variant {
+                Some(v) if v.is_set() => format!(", variant {} ignored (NVF_PLAY_DEBUG_AO_VARIANT)", v.name()),
+                _ => String::new(),
+            };
             format!("old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO){variant}")
         } else {
-            let strength = match self.gtao_strength {
-                Some(s) => format!(", strength {s} (NVF_PLAY_DEBUG_AO_STRENGTH)"),
-                None => String::new(),
+            let variant = self.variant_for(lighting);
+            let slices = variant.slices.unwrap_or(GTAO_SLICES);
+            let steps = variant.steps.unwrap_or(GTAO_STEPS);
+            let remedies = match (variant.is_set(), lighting) {
+                (true, _) => format!(", variant {}{}", variant.name(), aid(self.variant.is_some(), "NVF_PLAY_DEBUG_AO_VARIANT")),
+                // The plain estimate in the lighting only by the aid's `none`.
+                (false, true) => format!(", variant none{}", aid(self.variant.is_some(), "NVF_PLAY_DEBUG_AO_VARIANT")),
+                // On the picture the plain estimate is the default: stage one's line.
+                (false, false) if self.variant.is_some() => ", variant none (NVF_PLAY_DEBUG_AO_VARIANT)".to_string(),
+                (false, false) => String::new(),
             };
-            let variant = if self.variant.is_set() { format!(", variant {} (NVF_PLAY_DEBUG_AO_VARIANT)", self.variant.name()) } else { String::new() };
-            let slices = self.variant.slices.unwrap_or(GTAO_SLICES);
-            let steps = self.variant.steps.unwrap_or(GTAO_STEPS);
-            format!("ground-truth estimate (GTAO), {slices} slices x {steps} steps a side at half resolution, depth-aware denoise{variant}{strength}")
+            let strength = match (self.gtao_strength, lighting) {
+                (Some(s), _) => format!(", strength {s} (NVF_PLAY_DEBUG_AO_STRENGTH)"),
+                (None, true) => format!(", strength {LIGHTING_STRENGTH}"),
+                (None, false) => String::new(),
+            };
+            format!("ground-truth estimate (GTAO), {slices} slices x {steps} steps a side at half resolution, depth-aware denoise{remedies}{strength}")
         };
-        let view = match (self.lighting, self.view) {
-            (false, false) => "",
-            (false, true) => ", factor shown alone as grey (NVF_PLAY_DEBUG_AO)",
-            (true, false) => ", asked for on the ambient light in the lighting (NVF_PLAY_DEBUG_AO=lighting)",
-            (true, true) => ", asked for on the ambient light in the lighting, the factor each surface took shown alone (NVF_PLAY_DEBUG_AO=view-lighting)",
+        let placement = if lighting {
+            let lamps = self.lamps();
+            let reach = if lamps > 0.0 { format!("on the ambient light and on lamps without a shadow by {lamps}") } else { "on the ambient light alone".to_string() };
+            let view = if self.view { ", the factor each surface took shown alone (NVF_PLAY_DEBUG_AO=view-lighting)" } else { "" };
+            format!(
+                ", in the lighting: {reach}{}, exponent {}{}{view}",
+                aid(self.lamps.is_some(), "NVF_PLAY_DEBUG_AO_LAMPS"),
+                self.exponent(),
+                aid(self.exponent.is_some(), "NVF_PLAY_DEBUG_AO_EXPONENT")
+            )
+        } else {
+            let view = if self.view { ", factor shown alone as grey (NVF_PLAY_DEBUG_AO)" } else { "" };
+            let post = if self.post && !self.old && !self.view { ", on the picture (NVF_PLAY_DEBUG_AO=post)" } else { "" };
+            let ignored = match (self.lamps.is_some() || self.exponent.is_some(), self.lighting()) {
+                (true, false) => ", lamps and exponent ignored on the picture (NVF_PLAY_DEBUG_AO_LAMPS, NVF_PLAY_DEBUG_AO_EXPONENT)",
+                _ => "",
+            };
+            format!("{view}{post}{ignored}")
         };
-        let lamps = match (self.lamps, self.lighting) {
-            (Some(w), true) => format!(", on lamps without a shadow by {w} (NVF_PLAY_DEBUG_AO_LAMPS)"),
-            (Some(w), false) => format!(", lamps {w} ignored on the picture (NVF_PLAY_DEBUG_AO_LAMPS)"),
-            (None, _) => String::new(),
-        };
-        format!("ambient occlusion: {estimate}{view}{lamps}")
+        format!("ambient occlusion: {estimate}{placement}")
     }
 }
 
@@ -378,32 +484,39 @@ static AO_DEBUG: std::sync::LazyLock<AoDebug> = std::sync::LazyLock::new(|| {
     let mut debug = match AoDebug::parse(std::env::var("NVF_PLAY_DEBUG_AO").ok().as_deref()) {
         Ok(debug) => debug,
         Err(v) => {
-            warn!("debug switch NVF_PLAY_DEBUG_AO={v}: expected post, lighting, view-lighting, old, view or view-old; the ground-truth estimate runs on the picture");
+            warn!("debug switch NVF_PLAY_DEBUG_AO={v}: expected post, view-lighting, old, view or view-old; the default (in the lighting) runs");
             AoDebug::default()
         }
     };
     debug.gtao_strength = match AoDebug::parse_strength(std::env::var("NVF_PLAY_DEBUG_AO_STRENGTH").ok().as_deref()) {
         Ok(s) => s,
         Err(v) => {
-            warn!("debug switch NVF_PLAY_DEBUG_AO_STRENGTH={v}: expected a number from 0 to 1; strength {GTAO_STRENGTH}");
+            warn!("debug switch NVF_PLAY_DEBUG_AO_STRENGTH={v}: expected a number from 0 to 1; the placement's own strength");
             None
         }
     };
     debug.lamps = match AoDebug::parse_strength(std::env::var("NVF_PLAY_DEBUG_AO_LAMPS").ok().as_deref()) {
         Ok(w) => w,
         Err(v) => {
-            warn!("debug switch NVF_PLAY_DEBUG_AO_LAMPS={v}: expected a number from 0 to 1; the lamps keep their whole light");
+            warn!("debug switch NVF_PLAY_DEBUG_AO_LAMPS={v}: expected a number from 0 to 1; lamps {}", crate::ssao_lighting::LAMPS);
             None
         }
     };
-    debug.variant = match AoVariant::parse(std::env::var("NVF_PLAY_DEBUG_AO_VARIANT").ok().as_deref()) {
+    debug.exponent = match AoDebug::parse_exponent(std::env::var("NVF_PLAY_DEBUG_AO_EXPONENT").ok().as_deref()) {
+        Ok(e) => e,
+        Err(v) => {
+            warn!("debug switch NVF_PLAY_DEBUG_AO_EXPONENT={v}: expected a number from 0.1 to 2; exponent {}", crate::ssao_lighting::EXPONENT);
+            None
+        }
+    };
+    debug.variant = match AoVariant::parse_aid(std::env::var("NVF_PLAY_DEBUG_AO_VARIANT").ok().as_deref()) {
         Ok(variant) => variant,
         Err(v) => {
             warn!(
-                "debug aid NVF_PLAY_DEBUG_AO_VARIANT={v}: expected names from {} joined by + (each once; not slices3 with slices4 nor wide with wide6); the estimate as shipped runs",
+                "debug aid NVF_PLAY_DEBUG_AO_VARIANT={v}: expected names from {} joined by + (each once; not slices3 with slices4 nor wide with wide6), or none; the placement's default runs",
                 AoVariant::NAMES.join(", ")
             );
-            AoVariant::default()
+            None
         }
     };
     debug
@@ -430,26 +543,33 @@ impl Plugin for SsaoPlugin {
     }
 }
 
-/// The camera's projection into the uniform (the aspect follows the window).
+/// The camera's projection into the uniform (the aspect follows the window), and the
+/// strength and remedies of the placement that runs this frame: on the picture until the
+/// lighting hook is in place (or for good if it failed), then the lighting's.
 fn follow_projection(mut cams: Query<(&Projection, &mut AmbientOcclusion), With<FlyCam>>) {
+    let lighting = AO_DEBUG.in_lighting_now();
     for (proj, mut ao) in &mut cams {
         let Projection::Perspective(p) = proj else { continue };
         let y = 1.0 / (p.fov * 0.5).tan();
         let x = y / p.aspect_ratio.max(1e-3);
-        let params = Vec4::new(RADIUS, AO_DEBUG.strength(), p.near, FADE_END);
+        let params = Vec4::new(RADIUS, AO_DEBUG.strength(lighting), p.near, FADE_END);
         let projv = Vec4::new(x, y, MAX_SCREEN_RADIUS, FADE_START);
-        if ao.params != params || ao.proj != projv {
+        let variant = AO_DEBUG.variant_for(lighting).uniform();
+        if ao.params != params || ao.proj != projv || ao.variant != variant {
             ao.params = params;
             ao.proj = projv;
+            ao.variant = variant;
         }
     }
 }
 
-/// Which estimate runs, said once each time the occlusion turns on on the main camera.
+/// Which estimate runs and where, said once each time the occlusion turns on on the main
+/// camera (for the placement asked for; the extraction says when it goes into the lighting,
+/// or that it stays on the picture).
 fn log_estimate(cams: Query<(), (With<AmbientOcclusion>, With<FlyCam>)>, mut was_on: Local<bool>) {
     let on = !cams.is_empty();
     if on && !*was_on {
-        info!("{}", AO_DEBUG.describe());
+        info!("{}", AO_DEBUG.describe(AO_DEBUG.lighting()));
     }
     *was_on = on;
 }
@@ -551,7 +671,7 @@ fn extract_lighting(
     for line in &plan.lines {
         match line {
             LightingLine::On | LightingLine::Off => info!("{}", line.text()),
-            LightingLine::HookFailed => warn!("{}", line.text()),
+            LightingLine::HookFailed => warn!("{}: {}", line.text(), AO_DEBUG.describe(false).trim_start_matches("ambient occlusion: ")),
         }
     }
     for e in &plan.remove {
@@ -1149,34 +1269,63 @@ mod tests {
     }
 
     #[test]
+    fn the_variant_aid_tells_unset_from_none() {
+        // Unset or empty: the placement's default; `none` (`0`, `off`): the plain estimate.
+        for unset in [None, Some(""), Some("  ")] {
+            assert_eq!(AoVariant::parse_aid(unset), Ok(None), "{unset:?}");
+        }
+        for none in ["none", "0", "off", " None "] {
+            assert_eq!(AoVariant::parse_aid(Some(none)), Ok(Some(AoVariant::default())), "{none}");
+        }
+        assert_eq!(AoVariant::parse_aid(Some("thin+soft")), Ok(Some(LIGHTING_VARIANT)));
+        assert_eq!(AoVariant::parse_aid(Some("thick")), Err("thick".to_string()));
+        assert_eq!(LIGHTING_VARIANT.name(), "soft+thin");
+    }
+
+    #[test]
     fn the_variant_reaches_the_uniform_and_the_log_line() {
-        // None set: the uniform's variant all 0 (the shader's own SLICES, STEPS, no flags)
-        // and the log line as before the aid.
-        let shipped = AmbientOcclusion::with_debug(AoDebug::default());
+        // On the picture with none set: the uniform's variant all 0 (the shader's own SLICES,
+        // STEPS, no flags) and stage one's log line.
+        let post = AoDebug { post: true, ..AoDebug::default() };
+        let shipped = AmbientOcclusion::with_debug(post, false);
         assert_eq!(shipped.variant, Vec4::ZERO);
-        let with = |variant: &str| AoDebug { variant: AoVariant::parse(Some(variant)).unwrap(), ..AoDebug::default() };
-        assert_eq!(AmbientOcclusion::with_debug(with("slices3")).variant, Vec4::new(3.0, 0.0, 0.0, 0.0));
-        assert_eq!(AmbientOcclusion::with_debug(with("slices4+steps8")).variant, Vec4::new(4.0, 8.0, 0.0, 0.0));
-        assert_eq!(AmbientOcclusion::with_debug(with("wide")).variant, Vec4::new(0.0, 0.0, VARIANT_WIDE as f32, 0.0));
-        assert_eq!(AmbientOcclusion::with_debug(with("wide6")).variant, Vec4::new(0.0, 0.0, VARIANT_WIDE6 as f32, 0.0));
-        assert_eq!(AmbientOcclusion::with_debug(with("wide+soft+thin")).variant.z, (VARIANT_WIDE | VARIANT_SOFT | VARIANT_THIN) as f32);
-        assert_eq!(AmbientOcclusion::with_debug(with("nearest+wide6")).variant.z, (VARIANT_NEAREST | VARIANT_WIDE6) as f32);
+        // In the lighting with none set: thin and soft.
+        let lighting = AmbientOcclusion::with_debug(AoDebug::default(), true);
+        assert_eq!(lighting.variant, Vec4::new(0.0, 0.0, (VARIANT_THIN | VARIANT_SOFT) as f32, 0.0));
+        let with = |variant: &str| AoDebug { variant: AoVariant::parse_aid(Some(variant)).unwrap(), ..post };
+        let picture = |d: AoDebug| AmbientOcclusion::with_debug(d, false);
+        assert_eq!(picture(with("slices3")).variant, Vec4::new(3.0, 0.0, 0.0, 0.0));
+        assert_eq!(picture(with("slices4+steps8")).variant, Vec4::new(4.0, 8.0, 0.0, 0.0));
+        assert_eq!(picture(with("wide")).variant, Vec4::new(0.0, 0.0, VARIANT_WIDE as f32, 0.0));
+        assert_eq!(picture(with("wide6")).variant, Vec4::new(0.0, 0.0, VARIANT_WIDE6 as f32, 0.0));
+        assert_eq!(picture(with("wide+soft+thin")).variant.z, (VARIANT_WIDE | VARIANT_SOFT | VARIANT_THIN) as f32);
+        assert_eq!(picture(with("nearest+wide6")).variant.z, (VARIANT_NEAREST | VARIANT_WIDE6) as f32);
+        // `none` in the lighting: the plain estimate there too; a name: that one, not thin+soft.
+        let none = AoDebug { variant: Some(AoVariant::default()), ..AoDebug::default() };
+        assert_eq!(AmbientOcclusion::with_debug(none, true).variant, Vec4::ZERO);
+        assert_eq!(AmbientOcclusion::with_debug(AoDebug { variant: Some(AoVariant::parse(Some("wide")).unwrap()), ..AoDebug::default() }, true).variant.z, VARIANT_WIDE as f32);
         // The old estimate gets none of it.
-        assert_eq!(AmbientOcclusion::with_debug(AoDebug { old: true, ..with("nearest+slices4") }).variant, Vec4::ZERO);
+        assert_eq!(picture(AoDebug { old: true, ..with("nearest+slices4") }).variant, Vec4::ZERO);
+        assert_eq!(picture(AoDebug { old: true, ..post }).variant, Vec4::ZERO);
         // Nothing else moves with it.
-        let soft = AmbientOcclusion::with_debug(with("soft"));
+        let soft = picture(with("soft"));
         assert_eq!((soft.params, soft.proj, soft.mode), (shipped.params, shipped.proj, shipped.mode));
         assert_eq!(
-            with("slices4+wide").describe(),
-            "ambient occlusion: ground-truth estimate (GTAO), 4 slices x 4 steps a side at half resolution, depth-aware denoise, variant slices4+wide (NVF_PLAY_DEBUG_AO_VARIANT)"
+            with("slices4+wide").describe(false),
+            "ambient occlusion: ground-truth estimate (GTAO), 4 slices x 4 steps a side at half resolution, depth-aware denoise, variant slices4+wide (NVF_PLAY_DEBUG_AO_VARIANT), on the picture (NVF_PLAY_DEBUG_AO=post)"
         );
-        assert!(with("steps8").describe().contains("2 slices x 8 steps a side"));
+        assert!(with("steps8").describe(false).contains("2 slices x 8 steps a side"));
         let strong = AoDebug { gtao_strength: Some(0.6), ..with("soft") };
-        assert!(strong.describe().ends_with("denoise, variant soft (NVF_PLAY_DEBUG_AO_VARIANT), strength 0.6 (NVF_PLAY_DEBUG_AO_STRENGTH)"));
+        assert!(strong.describe(false).ends_with("denoise, variant soft (NVF_PLAY_DEBUG_AO_VARIANT), strength 0.6 (NVF_PLAY_DEBUG_AO_STRENGTH), on the picture (NVF_PLAY_DEBUG_AO=post)"));
         assert_eq!(
-            AoDebug { old: true, ..with("thin") }.describe(),
+            AoDebug { old: true, ..with("thin") }.describe(false),
             "ambient occlusion: old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO), variant thin ignored (NVF_PLAY_DEBUG_AO_VARIANT)"
         );
+        // The lighting's line names the remedies that run: the default without the aid's
+        // name, `none` and a chosen one with it.
+        assert!(AoDebug::default().describe(true).contains("depth-aware denoise, variant soft+thin, strength 0.8, in the lighting"));
+        assert!(none.describe(true).contains("depth-aware denoise, variant none (NVF_PLAY_DEBUG_AO_VARIANT), strength 0.8"));
+        assert!(AoDebug { variant: Some(AoVariant::default()), ..post }.describe(false).contains("denoise, variant none (NVF_PLAY_DEBUG_AO_VARIANT), on the picture"));
     }
 
     /// ssao.wesl `pattern`: the 4 x 4 ordered turns (0..1).
@@ -1313,55 +1462,63 @@ mod tests {
     }
 
     #[test]
-    fn the_debug_switch_picks_the_estimate_and_the_view() {
+    fn the_debug_switch_picks_the_placement_the_estimate_and_the_view() {
+        // Unset or off: the default, in the lighting.
         for off in [None, Some(""), Some("0"), Some("off"), Some("false"), Some(" OFF ")] {
             assert_eq!(AoDebug::parse(off), Ok(AoDebug::default()), "{off:?}");
         }
-        assert_eq!(AoDebug::parse(Some("old")), Ok(AoDebug { old: true, ..AoDebug::default() }));
-        assert_eq!(AoDebug::parse(Some("view")), Ok(AoDebug { view: true, ..AoDebug::default() }));
-        assert_eq!(AoDebug::parse(Some("View-Old")), Ok(AoDebug { old: true, view: true, ..AoDebug::default() }));
-        assert_eq!(AoDebug::parse(Some("gtao")), Err("gtao".to_string()));
-        // The placements (#2897 stage two): `post` is the default, `lighting` and
-        // `view-lighting` put the ground-truth estimate on the ambient light.
-        assert_eq!(AoDebug::parse(Some("post")), Ok(AoDebug::default()));
-        assert_eq!(AoDebug::parse(Some(" Lighting ")), Ok(AoDebug { lighting: true, ..AoDebug::default() }));
-        assert_eq!(AoDebug::parse(Some("view-lighting")), Ok(AoDebug { lighting: true, view: true, ..AoDebug::default() }));
-        assert_eq!(AoDebug::parse(Some("old-lighting")), Err("old-lighting".to_string()));
+        assert!(AoDebug::default().lighting());
+        assert_eq!(AoDebug::parse(Some("view-lighting")), Ok(AoDebug { view: true, ..AoDebug::default() }));
+        // On the picture: post, and the old estimate and the grey views as before.
+        assert_eq!(AoDebug::parse(Some("post")), Ok(AoDebug { post: true, ..AoDebug::default() }));
+        assert_eq!(AoDebug::parse(Some("old")), Ok(AoDebug { old: true, post: true, ..AoDebug::default() }));
+        assert_eq!(AoDebug::parse(Some("view")), Ok(AoDebug { view: true, post: true, ..AoDebug::default() }));
+        assert_eq!(AoDebug::parse(Some("View-Old")), Ok(AoDebug { old: true, view: true, post: true, ..AoDebug::default() }));
+        for picture in ["post", "old", "view", "view-old"] {
+            assert!(!AoDebug::parse(Some(picture)).unwrap().lighting(), "{picture}");
+        }
+        // The stage's temporary `lighting` is gone: unknown, as anything else.
+        for bad in ["gtao", "lighting", "old-lighting"] {
+            assert_eq!(AoDebug::parse(Some(bad)), Err(bad.to_string()), "{bad}");
+        }
     }
 
     #[test]
     fn the_lighting_mode_reaches_the_settings_and_the_uniform() {
-        let post = AmbientOcclusion::with_debug(AoDebug::default());
-        assert!(!post.wants_lighting());
-        let lighting = AoDebug { lighting: true, ..AoDebug::default() };
-        let settings = AmbientOcclusion::with_debug(lighting);
+        let post = AoDebug { post: true, ..AoDebug::default() };
+        let picture = AmbientOcclusion::with_debug(post, false);
+        assert!(!picture.wants_lighting());
+        let lighting = AoDebug::default();
+        let settings = AmbientOcclusion::with_debug(lighting, true);
         assert!(settings.wants_lighting());
         assert_eq!(settings.mode, Vec4::new(0.0, 0.0, 1.0, 0.0));
-        // Nothing else of the estimate moves with the placement.
-        assert_eq!((settings.params, settings.proj, settings.variant), (post.params, post.proj, post.variant));
-        // The lighting's uniform: the fade end and strength of the settings; the debug view
-        // only with view-lighting (the post `view` draws its own grey).
+        // The lighting's own strength and remedies; the rest of the estimate as on the picture.
+        assert_eq!((settings.params.y, picture.params.y), (LIGHTING_STRENGTH, GTAO_STRENGTH));
+        assert_eq!((settings.params.x, settings.params.w, settings.proj), (picture.params.x, picture.params.w, picture.proj));
+        // Asked for but not in the lighting yet (the hook pending or failed): stage one's.
+        let waiting = AmbientOcclusion::with_debug(lighting, false);
+        assert!(waiting.wants_lighting());
+        assert_eq!((waiting.params, waiting.variant), (picture.params, picture.variant));
+        // The lighting's uniform: the exponent, the fade end, the strength of the settings,
+        // the lamps' weight; the debug view only with view-lighting (the post `view` draws its
+        // own grey).
         let u = lighting.lighting_uniform(&settings);
-        assert_eq!((u.params.z, u.extra.x, u.params.y), (FADE_END, GTAO_STRENGTH, 0.0));
-        let view = AoDebug { lighting: true, view: true, ..AoDebug::default() };
-        assert_eq!(view.lighting_uniform(&AmbientOcclusion::with_debug(view)).params.y, 1.0);
-        let grey = AoDebug { view: true, ..AoDebug::default() };
-        assert_eq!(grey.lighting_uniform(&AmbientOcclusion::with_debug(grey)).params.y, 0.0);
-        let strong = AoDebug { gtao_strength: Some(0.8), ..lighting };
-        assert_eq!(strong.lighting_uniform(&AmbientOcclusion::with_debug(strong)).extra.x, 0.8);
-        // The lamps' weight: 0 unless NVF_PLAY_DEBUG_AO_LAMPS says otherwise.
-        assert_eq!(u.extra.y, 0.0);
-        let lamps = AoDebug { lamps: Some(0.5), ..lighting };
-        assert_eq!(lamps.lighting_uniform(&AmbientOcclusion::with_debug(lamps)).extra.y, 0.5);
-        assert!(lamps.describe().ends_with("(NVF_PLAY_DEBUG_AO=lighting), on lamps without a shadow by 0.5 (NVF_PLAY_DEBUG_AO_LAMPS)"), "{}", lamps.describe());
-        assert!(AoDebug { lamps: Some(1.0), ..AoDebug::default() }.describe().ends_with(", lamps 1 ignored on the picture (NVF_PLAY_DEBUG_AO_LAMPS)"));
-        assert_eq!(AoDebug::parse_strength(Some("1.5")), Ok(Some(1.0)), "the lamps' aid parses as the strength's");
-        // The log line says it is asked for; the estimate's part is unchanged.
-        assert_eq!(
-            lighting.describe(),
-            "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, asked for on the ambient light in the lighting (NVF_PLAY_DEBUG_AO=lighting)"
-        );
-        assert!(view.describe().ends_with("(NVF_PLAY_DEBUG_AO=view-lighting)"));
+        assert_eq!(u.params, Vec4::new(crate::ssao_lighting::EXPONENT, 0.0, FADE_END, crate::ssao_lighting::DISTANCE_TOLERANCE));
+        assert_eq!((u.extra.x, u.extra.y), (LIGHTING_STRENGTH, crate::ssao_lighting::LAMPS));
+        let view = AoDebug { view: true, ..AoDebug::default() };
+        assert_eq!(view.lighting_uniform(&AmbientOcclusion::with_debug(view, true)).params.y, 1.0);
+        let grey = AoDebug { view: true, post: true, ..AoDebug::default() };
+        assert_eq!(grey.lighting_uniform(&AmbientOcclusion::with_debug(grey, false)).params.y, 0.0);
+        let strong = AoDebug { gtao_strength: Some(0.6), ..lighting };
+        assert_eq!(strong.lighting_uniform(&AmbientOcclusion::with_debug(strong, true)).extra.x, 0.6);
+        // The lamps: 1 unless NVF_PLAY_DEBUG_AO_LAMPS says otherwise; 0 is the ambient alone.
+        let ambient_only = AoDebug { lamps: Some(0.0), ..lighting };
+        assert_eq!(ambient_only.lighting_uniform(&settings).extra.y, 0.0);
+        let half = AoDebug { lamps: Some(0.5), ..lighting };
+        assert_eq!(half.lighting_uniform(&settings).extra.y, 0.5);
+        // The exponent: 1 unless NVF_PLAY_DEBUG_AO_EXPONENT says otherwise.
+        let gamma = AoDebug { exponent: Some(1.0 / 2.2), ..lighting };
+        assert_eq!(gamma.lighting_uniform(&settings).params.x, 1.0 / 2.2);
         // The texel the pass clears to when it cannot run is open at the farthest distance.
         assert!(include_str!("ssao.wesl").contains(&format!("const SKY: f32 = {:.1};", OPEN_TEXEL.g)));
         assert_eq!(OPEN_TEXEL.r, 1.0);
@@ -1374,8 +1531,8 @@ mod tests {
     #[test]
     fn the_bindings_follow_the_row_the_mode_and_the_hook() {
         let cam = Entity::from_raw_u32(7).unwrap();
-        let lighting = AmbientOcclusion::with_debug(AoDebug { lighting: true, ..AoDebug::default() });
-        let post = AmbientOcclusion::with_debug(AoDebug::default());
+        let lighting = AmbientOcclusion::with_debug(AoDebug::default(), true);
+        let post = AmbientOcclusion::with_debug(AoDebug { post: true, ..AoDebug::default() }, false);
         let mut log = LightingLog::default();
         let ids = |p: &LightingPlan| p.wanted.iter().map(|(e, _)| *e).collect::<Vec<_>>();
 
@@ -1432,50 +1589,78 @@ mod tests {
     }
 
     #[test]
-    fn the_strength_aid_is_a_number_held_to_0_1() {
+    fn the_number_aids_are_held_to_their_ranges() {
         for none in [None, Some(""), Some("  ")] {
             assert_eq!(AoDebug::parse_strength(none), Ok(None), "{none:?}");
+            assert_eq!(AoDebug::parse_exponent(none), Ok(None), "{none:?}");
         }
         assert_eq!(AoDebug::parse_strength(Some("0.6")), Ok(Some(0.6)));
         assert_eq!(AoDebug::parse_strength(Some(" 0.8 ")), Ok(Some(0.8)));
         assert_eq!(AoDebug::parse_strength(Some("2")), Ok(Some(1.0)));
         assert_eq!(AoDebug::parse_strength(Some("-1")), Ok(Some(0.0)));
+        // The exponent's: 0.1..2.
+        assert_eq!(AoDebug::parse_exponent(Some("1")), Ok(Some(1.0)));
+        assert_eq!(AoDebug::parse_exponent(Some("0.4545")), Ok(Some(0.4545)));
+        assert_eq!(AoDebug::parse_exponent(Some("0")), Ok(Some(0.1)));
+        assert_eq!(AoDebug::parse_exponent(Some("5")), Ok(Some(2.0)));
         for bad in ["strong", "NaN", "inf"] {
             assert_eq!(AoDebug::parse_strength(Some(bad)), Err(bad.to_string()));
+            assert_eq!(AoDebug::parse_exponent(Some(bad)), Err(bad.to_string()));
         }
-        // Only the ground-truth estimate takes it.
-        let set = AoDebug { gtao_strength: Some(0.8), ..AoDebug::default() };
-        assert_eq!(AmbientOcclusion::with_debug(set).params.y, 0.8);
-        assert_eq!(AmbientOcclusion::with_debug(AoDebug { old: true, ..set }).params.y, STRENGTH);
-        assert!(set.describe().ends_with("depth-aware denoise, strength 0.8 (NVF_PLAY_DEBUG_AO_STRENGTH)"));
-        assert!(!AoDebug { old: true, ..set }.describe().contains("STRENGTH"));
+        // Only the ground-truth estimate takes the strength, in either placement.
+        let set = AoDebug { gtao_strength: Some(0.6), ..AoDebug::default() };
+        assert_eq!(AmbientOcclusion::with_debug(set, true).params.y, 0.6);
+        assert_eq!(AmbientOcclusion::with_debug(set, false).params.y, 0.6);
+        let old = AoDebug { old: true, post: true, ..set };
+        assert_eq!(AmbientOcclusion::with_debug(old, false).params.y, STRENGTH);
+        let post = AoDebug { post: true, ..set };
+        assert!(post.describe(false).ends_with("depth-aware denoise, strength 0.6 (NVF_PLAY_DEBUG_AO_STRENGTH), on the picture (NVF_PLAY_DEBUG_AO=post)"));
+        assert!(!old.describe(false).contains("STRENGTH"));
     }
 
     #[test]
     fn the_uniform_carries_the_estimates_strength_and_mode() {
-        let new = AmbientOcclusion::with_debug(AoDebug::default());
+        let new = AmbientOcclusion::with_debug(AoDebug { post: true, ..AoDebug::default() }, false);
         assert_eq!(new.params.y, GTAO_STRENGTH);
         assert_eq!(new.mode, Vec4::ZERO);
-        let old = AmbientOcclusion::with_debug(AoDebug { old: true, ..AoDebug::default() });
+        let old = AmbientOcclusion::with_debug(AoDebug { old: true, post: true, ..AoDebug::default() }, false);
         assert_eq!(old.params.y, STRENGTH);
         assert_eq!(old.mode, Vec4::new(1.0, 0.0, 0.0, 0.0));
-        let view = AmbientOcclusion::with_debug(AoDebug { view: true, ..AoDebug::default() });
+        let view = AmbientOcclusion::with_debug(AoDebug { view: true, post: true, ..AoDebug::default() }, false);
         assert_eq!(view.mode, Vec4::new(0.0, 1.0, 0.0, 0.0));
+        let lighting = AmbientOcclusion::with_debug(AoDebug::default(), true);
+        assert_eq!((lighting.params.y, lighting.mode), (LIGHTING_STRENGTH, Vec4::new(0.0, 0.0, 1.0, 0.0)));
         // Everything else as before the change.
-        for ao in [new, old, view] {
+        for ao in [new, old, view, lighting] {
             assert_eq!((ao.params.x, ao.params.w, ao.proj.z, ao.proj.w), (RADIUS, FADE_END, MAX_SCREEN_RADIUS, FADE_START));
             assert_eq!((ao.render_scale, ao.area), (Vec4::ONE, Vec4::ZERO));
         }
     }
 
+    /// The log line says what runs. The default, in the lighting: the remedies, the strength,
+    /// the lamps and the exponent built in. On the picture the line is stage one's with the
+    /// placement named; the old estimate's and the grey view's as before. The smoke scenarios
+    /// match the common start, "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4
+    /// steps a side at half resolution, depth-aware denoise".
     #[test]
-    fn the_log_line_names_the_estimate() {
+    fn the_log_line_names_the_estimate_and_the_placement() {
+        let start = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise";
+        assert_eq!(AoDebug::default().describe(true), format!("{start}, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1"));
+        let post = AoDebug { post: true, ..AoDebug::default() };
+        assert_eq!(post.describe(false), format!("{start}, on the picture (NVF_PLAY_DEBUG_AO=post)"));
+        // The default asked for, on the picture while the hook is not in place: stage one's.
+        assert_eq!(AoDebug::default().describe(false), start);
+        assert_eq!(AoDebug { old: true, post: true, ..AoDebug::default() }.describe(false), "ambient occlusion: old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)");
+        assert!(AoDebug { view: true, post: true, ..AoDebug::default() }.describe(false).ends_with("depth-aware denoise, factor shown alone as grey (NVF_PLAY_DEBUG_AO)"));
+        assert!(AoDebug { view: true, ..AoDebug::default() }.describe(true).ends_with(", exponent 1, the factor each surface took shown alone (NVF_PLAY_DEBUG_AO=view-lighting)"));
+        // The aids that were set are named.
+        let aids = AoDebug { lamps: Some(0.5), exponent: Some(0.5), gtao_strength: Some(0.4), ..AoDebug::default() };
         assert_eq!(
-            AoDebug::default().describe(),
-            "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise"
+            aids.describe(true),
+            format!("{start}, variant soft+thin, strength 0.4 (NVF_PLAY_DEBUG_AO_STRENGTH), in the lighting: on the ambient light and on lamps without a shadow by 0.5 (NVF_PLAY_DEBUG_AO_LAMPS), exponent 0.5 (NVF_PLAY_DEBUG_AO_EXPONENT)")
         );
-        assert_eq!(AoDebug { old: true, ..AoDebug::default() }.describe(), "ambient occlusion: old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)");
-        assert!(AoDebug { view: true, ..AoDebug::default() }.describe().ends_with("depth-aware denoise, factor shown alone as grey (NVF_PLAY_DEBUG_AO)"));
+        assert!(AoDebug { lamps: Some(0.0), ..AoDebug::default() }.describe(true).contains("in the lighting: on the ambient light alone (NVF_PLAY_DEBUG_AO_LAMPS), exponent 1"));
+        assert!(AoDebug { lamps: Some(1.0), ..post }.describe(false).ends_with(", lamps and exponent ignored on the picture (NVF_PLAY_DEBUG_AO_LAMPS, NVF_PLAY_DEBUG_AO_EXPONENT)"));
     }
 
     /// ssao.wesl `visible_arc`, the same formula: the integral of cos(t - g) |sin t| from 0 to h.
