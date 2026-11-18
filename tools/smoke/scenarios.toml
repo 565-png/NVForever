@@ -18499,6 +18499,27 @@ expect_file = "expected/modlist-begin-again.toml"
 manual = "a rise: compare the report's per_plugin failed lists with main's; a drop: write the new summary into expected/modlist-begin-again.toml"
 
 [[scenario]]
+name = "ttw-child-worlds-parent-land"
+kind = "tool"
+source = "issue #2345: a child worldspace takes land and default heights from its parent by WRLD PNAM (crates/fnv-world/src/index.rs take_parent_data; docs/spec-notes/world.md section 1.1): Tale of Two Wastelands' Oasis has no LAND of its own (the player fell through the world), MegatonWorld lacks it on 4 squares, ParadiseFalls on 10"
+areas = ["world", "mods"]
+paths = ["crates/fnv-world/src/index.rs", "crates/fnv-world/tests/parent_data.rs"]
+requires = ["NVF_TTW_DATA"]
+note = "NVF_TTW_DATA: a Data folder holding Tale of Two Wastelands' masters beside the New Vegas ones (the owner's merged folder). The counts are of cells with a LAND record after the parent's are taken; before #2345 they were 0, 12, 2 and 85, with no default heights"
+commands = [["world", "list", "--schema", "schemas/fnv", "{env:NVF_TTW_DATA}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm", "Fallout3.esm"]]
+expect = [
+  { json = "worldspaces.?edid=Oasis.land_cells", schema = "fnv.world.list/1", equals = 34, count = 1, label = "Oasis: land on all 34 cells, from the parent" },
+  { json = "worldspaces.?edid=Oasis.default_land_height", schema = "fnv.world.list/1", equals = -2048.0, count = 1, label = "Oasis: the parent's default land height" },
+  { json = "worldspaces.?edid=Oasis.default_water_height", schema = "fnv.world.list/1", equals = 10500.0, count = 1, label = "Oasis: the parent's default water height" },
+  { json = "worldspaces.?edid=MegatonWorld.land_cells", schema = "fnv.world.list/1", equals = 16, count = 1, label = "MegatonWorld: its own 12 and the parent's 4" },
+  { json = "worldspaces.?edid=ParadiseFalls.land_cells", schema = "fnv.world.list/1", equals = 12, count = 1, label = "ParadiseFalls: its own 2 and the parent's 10" },
+  { json = "worldspaces.?edid=GNRroofWorld.land_cells", schema = "fnv.world.list/1", equals = 143, count = 1, label = "GNRroofWorld: its own 85 and the parent's 58" },
+  { json = "worldspaces.?edid=MonumentWorld.land_cells", schema = "fnv.world.list/1", equals = 73, count = 1, label = "MonumentWorld (no Use Land Data): its own records only" },
+  { json = "worldspaces.?edid=MonumentWorld.default_land_height", schema = "fnv.world.list/1", equals = 12288.0, count = 1, label = "MonumentWorld keeps its own default land height" },
+  { json = "worldspaces.?edid=FreesideWorld.land_cells", schema = "fnv.world.list/1", equals = 108, count = 1, label = "a New Vegas child (Use Map Data only) is unchanged" },
+]
+
+[[scenario]]
 name = "modlist-high-dry"
 kind = "tool"
 source = "issue #2275: a second real mod list's extender scripts as the game builds them at start (fnvtool ext report), read straight from its Mod Organizer 2 profile (--mo2-profile)"
