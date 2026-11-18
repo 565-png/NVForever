@@ -16,19 +16,28 @@ fn current_explicit_profile_source_values_match_actual_critical_rules_without_re
     let file = SettingsFile(Some(files.nvf.clone()));
     let mut app = App::new();
     app.add_plugins(crate::tweaks::TweaksPlugin);
-    app.insert_resource(file.clone());
+    app.insert_resource(file);
     crate::settings::apply_stored(app.world_mut());
-    let mut settings = app.world().resource::<TweakSettings>().clone();
+    let settings = app.world().resource::<TweakSettings>();
     assert!(!settings.game.crit_ignores_fire_rate);
     assert_eq!(settings.game.crit_damage_scale, 1.0);
-    let (mut rt, mut sim) = fresh(&mut settings, &mut ProfileState::default(), &file);
-    let parsed_original = rt.game.stewie_stat_profile().unwrap();
-    assert_eq!(parsed_original.crit_ignores_fire_rate, Some(true));
+    let (mut unbound, _) = fresh(None);
     assert_eq!(
-        parsed_original.crit_damage_scale,
-        Some(1.75),
+        source(
+            &mut unbound,
+            "SetFunctionValue (StewVal \"bCritChanceIgnoresFireRate:Tweaks\")"
+        ),
+        XVal::Num(1.0)
+    );
+    assert_eq!(
+        source(
+            &mut unbound,
+            "SetFunctionValue (StewieGetValue \"fCriticalDamageMult:Critical Hits\")"
+        ),
+        XVal::Num(1.75),
         "the original file and existing preference really disagree"
     );
+    let (mut rt, mut sim) = fresh(Some(settings));
     let real_hit = damage(&rt.game.tweaks);
     assert_eq!(
         real_hit.crit_bonus,
@@ -43,22 +52,8 @@ fn current_explicit_profile_source_values_match_actual_critical_rules_without_re
         XVal::Num(1.0),
         "recognized loaded scalar must agree with actual critical damage"
     );
-    script_runner(&mut rt, &mut sim, Moment::Restart);
-    script_runner(&mut rt, &mut sim, Moment::NewGame);
-    assert_eq!(
-        source(
-            &mut rt,
-            "SetFunctionValue (GetModLocalData \"profile.restart.rate\")"
-        ),
-        XVal::Num(0.0)
-    );
-    assert_eq!(
-        source(
-            &mut rt,
-            "SetFunctionValue (GetModLocalData \"profile.load.rate\")"
-        ),
-        XVal::Num(0.0)
-    );
+    check_rate_cache(&mut rt, &mut sim, Moment::Restart, "profile.restart.rate", 0.0);
+    check_rate_cache(&mut rt, &mut sim, Moment::NewGame, "profile.load.rate", 0.0);
     assert_eq!(
         std::fs::read(files.data.join("NVSE/Plugins/nvse_stewie_tweaks.ini")).unwrap(),
         original

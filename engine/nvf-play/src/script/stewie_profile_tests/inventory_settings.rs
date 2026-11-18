@@ -34,7 +34,7 @@ fn loaded_inventory_choices_reach_startup_and_restore_without_importing_conflict
     let file = SettingsFile(Some(files.nvf.clone()));
     let mut app = App::new();
     app.add_plugins(crate::tweaks::TweaksPlugin);
-    app.insert_resource(file.clone());
+    app.insert_resource(file);
     crate::settings::apply_stored(app.world_mut());
     let mut settings = app.world().resource::<TweakSettings>().clone();
     assert!(!settings.game.hardcore_tweaks);
@@ -44,7 +44,7 @@ fn loaded_inventory_choices_reach_startup_and_restore_without_importing_conflict
     for name in ["gr_owned_profile.txt", "ln_owned_profile.txt"] {
         std::fs::write(files.data.join("NVSE/Plugins/scripts").join(name), body).unwrap();
     }
-    let (mut rt, mut sim) = fresh(&mut settings, &mut ProfileState::default(), &file);
+    let (mut rt, mut sim) = fresh(Some(&settings));
     assert_queries(&mut rt, false, false, false);
     preseed_caches(&mut rt);
     script_runner(&mut rt, &mut sim, Moment::Restart);
@@ -56,7 +56,7 @@ fn loaded_inventory_choices_reach_startup_and_restore_without_importing_conflict
     settings.game.hardcore_ammo_weight = true;
     settings.game.single_item_figures = true;
     rt.restore_save(&mut sim, saved).unwrap();
-    stewie_profile::handoff(&mut rt.game, &settings);
+    rt.game.bind_stewie_stat_settings(&settings.game);
     assert_queries(&mut rt, false, true, true);
     preseed_caches(&mut rt);
     script_runner(&mut rt, &mut sim, Moment::Restart);

@@ -1104,7 +1104,7 @@ fn register_graphics(app: &mut App) {
         },
     );
     nvf_play::settings::set_disabled_status(app, "latency-reduction", |w| (!crate::anti_lag::available(w)).then_some("Not on this GPU"));
-    let switches: [Switch; 15] = [
+    let switches: [Switch; 18] = [
         (
             "ambient-occlusion",
             "Ambient occlusion",
@@ -1128,6 +1128,14 @@ fn register_graphics(app: &mut App) {
             "--graphics, --graphics-only",
             |w| w.resource::<Graphics>().cloud_shadows,
             |w, on| w.resource_mut::<Graphics>().cloud_shadows = on,
+        ),
+        (
+            "terrain-shadows",
+            "Terrain shadows (experimental)",
+            TERRAIN_SHADOWS_NOTE,
+            "--graphics, --graphics-only",
+            |w| w.resource::<Graphics>().terrain_shadows,
+            |w, on| w.resource_mut::<Graphics>().terrain_shadows = on,
         ),
         (
             "bloom",
@@ -1205,6 +1213,22 @@ fn register_graphics(app: &mut App) {
             |w, on| w.resource_mut::<Graphics>().light_shafts = on,
         ),
         (
+            "heat-haze",
+            "Heat haze (experimental)",
+            "On: the far ground near the horizon shimmers slightly on hot, clear days, by the sun and the weather. A prototype. Not in the original.",
+            "--graphics-only",
+            |w| w.resource::<Graphics>().heat_haze,
+            |w, on| w.resource_mut::<Graphics>().heat_haze = on,
+        ),
+        (
+            "desert-haze",
+            "Desert haze (experimental)",
+            "On: a thin dust haze thickens with distance and toward the ground, warmer toward the sun, as far as the weather's fog allows. Not in the original.",
+            "--graphics, --graphics-only",
+            |w| w.resource::<Graphics>().desert_haze,
+            |w, on| w.resource_mut::<Graphics>().desert_haze = on,
+        ),
+        (
             "water-reflections",
             "Screen-space reflections",
             "On: water the mirrored reflection does not reach (another height, interiors) reflects what is on the screen instead of only the sky.",
@@ -1242,14 +1266,19 @@ fn register_graphics(app: &mut App) {
 /// being tuned (the relative rule, §7a, and the calibration, §8).
 const CLOUD_SHADOWS_NOTE: &str = "On: the weather's clouds cast soft shadows that drift over the land, only where the cover is heavier than around it. Still being tuned. Not in the original.";
 
+/// The Terrain shadows row's note (#2671; docs/design/terrain-shadows.md): experimental
+/// like Cloud shadows, its softness and bias still being tuned.
+const TERRAIN_SHADOWS_NOTE: &str = "On: at a low sun, hills and mountains shade the land beyond the reach of the sun's shadows. Still being tuned. Not in the original.";
+
 fn register_pipeline_waits(app: &mut App) {
-    // Cloud shadows switches the world views' material pipelines (the sun visibility's
-    // view key bits, sun_visibility.rs), so Continue waits for them like the others.
+    // Cloud shadows and Terrain shadows switch the world views' material pipelines (the sun
+    // visibility's view key bits, sun_visibility.rs), so Continue waits for them like the
+    // others.
     for key in [
         "anti-aliasing", "shadow-filter", "upscaler", "upscaler-quality", "ambient-occlusion",
         "fine-shadows", "bloom", "glow", "eye-adaptation", "neon-glow", "sharpen",
         "light-shafts", "water-reflections", "water-mirror", "sun-shadows", "grade",
-        "terrain-height-blend", "terrain-anti-tiling", "cloud-shadows", MESH_BLEND_KEY,
+        "terrain-height-blend", "terrain-anti-tiling", "cloud-shadows", "terrain-shadows", "heat-haze", MESH_BLEND_KEY,
     ] {
         nvf_play::settings::wait_for_pipelines(app, key);
     }
@@ -2592,6 +2621,7 @@ dlss-model=Preset K
             ("ambient-occlusion", &["--graphics"]),
             ("fine-shadows", &["--shadow-distance", "--graphics"]),
             ("cloud-shadows", &["--graphics", "--graphics-only"]),
+            ("terrain-shadows", &["--graphics", "--graphics-only"]),
             ("bloom", &["--graphics"]),
             ("glow", &["--graphics-only"]),
             ("eye-adaptation", &["--graphics-only"]),
@@ -2601,6 +2631,8 @@ dlss-model=Preset K
             ("terrain-height-blend", &["--graphics", "--graphics-only"]),
             ("terrain-anti-tiling", &["--graphics", "--graphics-only"]),
             ("light-shafts", &["--graphics"]),
+            ("heat-haze", &["--graphics-only"]),
+            ("desert-haze", &["--graphics", "--graphics-only"]),
             ("water-reflections", &["--graphics"]),
             ("water-mirror", &["--graphics-only"]),
             (MESH_BLEND_KEY, &["--graphics-only"]),

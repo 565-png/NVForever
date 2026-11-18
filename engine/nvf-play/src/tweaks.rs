@@ -1127,15 +1127,12 @@ macro_rules! part {
     };
 }
 
-pub(crate) mod stewie_profile;
-
 pub struct TweaksPlugin;
 
 impl Plugin for TweaksPlugin {
     fn build(&self, app: &mut App) {
         crate::save::add_save_hook(app, ITEM_PLACES_SAVE_HOOK);
         crate::save::add_save_hook(app, HIDE_HUD_SAVE_HOOK);
-        app.init_resource::<stewie_profile::ProfileState>();
         app.init_resource::<TweakSettings>()
             .init_resource::<ItemPlaces>()
             .add_systems(Update, remember_item_places.after(crate::menu::MenuSystems))

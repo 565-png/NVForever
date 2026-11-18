@@ -1,12 +1,6 @@
-//! Process-local original-profile startup and real damage-rule controls.
+//! Live settings, startup/restore scripts and real damage-rule controls.
 use super::*;
-use crate::{
-    settings::SettingsFile,
-    tweaks::{
-        stewie_profile::{self, ProfileState},
-        TweakSettings,
-    },
-};
+use crate::{settings::SettingsFile, tweaks::TweakSettings};
 use fnv_script::vm::XVal;
 use std::path::PathBuf;
 
@@ -64,11 +58,7 @@ impl Drop for OwnedInputs {
         }
     }
 }
-fn fresh(
-    settings: &mut TweakSettings,
-    state: &mut ProfileState,
-    file: &SettingsFile,
-) -> (Runtime, SimState) {
+fn fresh(settings: Option<&TweakSettings>) -> (Runtime, SimState) {
     let original = ScriptState::over_no_plugins().rt.unwrap();
     let data = original.game.data;
     let forms = original.game.world.forms;
@@ -83,7 +73,7 @@ fn fresh(
         &mut sim,
         true,
         false,
-        Some((settings, state, Some(file))),
+        settings.map(|settings| &settings.game),
     );
     (rt, sim)
 }
@@ -130,56 +120,63 @@ fn damage(tweaks: &fnv_game::tweaks::Tweaks) -> fnv_combat::damage::Damage {
     )
 }
 
+fn check_rate_cache(rt: &mut Runtime, sim: &mut SimState, moment: Moment, key: &str, expected: f64) {
+    let read = format!("SetFunctionValue (GetModLocalData \"{key}\")");
+    source(rt, &format!("SetModLocalData \"{key}\" 9"));
+    assert_eq!(source(rt, &read), XVal::Num(9.0));
+    script_runner(rt, sim, moment);
+    assert_eq!(source(rt, &read), XVal::Num(expected), "cache {key}");
+}
+
 #[test]
 #[ignore = "process-local ModFiles roots: run this exact selector alone with dedicated NVF_STEWIE_PROFILE_HOME and --test-threads=1"]
-fn original_stat_profile_reaches_startup_source_damage_settings_and_restore_without_version_uplift()
-{
+fn application_defaults_ignore_original_ini_at_startup_and_live_choices_reach_restore_without_version_uplift() {
     let files = OwnedInputs::new();
     let file = SettingsFile(Some(files.nvf.clone()));
     let mut settings = TweakSettings::default();
-    let mut state = ProfileState::default();
-    let (no_profile, _) = fresh(&mut settings, &mut state, &file);
+    let (no_profile, _) = fresh(Some(&settings));
     assert_eq!(no_profile.game.tweaks, fnv_game::tweaks::Tweaks::default());
     let ordinary = damage(&no_profile.game.tweaks);
     assert!(ordinary.critical && ordinary.crit_bonus > 0.0);
     files.profile(1, 1.5);
-    let mut settings = TweakSettings::default();
-    let mut state = ProfileState::default();
-    let (mut rt, mut sim) = fresh(&mut settings, &mut state, &file);
+    let (mut unbound, _) = fresh(None);
+    assert_eq!(
+        source(
+            &mut unbound,
+            "SetFunctionValue (StewVal \"bCritChanceIgnoresFireRate:Tweaks\")"
+        ),
+        XVal::Num(1.0),
+        "the original INI admits a contrary value through the unbound query"
+    );
+    assert_eq!(
+        source(
+            &mut unbound,
+            "SetFunctionValue (StewVal \"fCriticalDamageMult:Critical Hits\")"
+        ),
+        XVal::Num(1.5)
+    );
+    let (mut rt, mut sim) = fresh(Some(&settings));
+    assert_eq!(rt.game.tweaks, no_profile.game.tweaks);
     assert_eq!(
         source(
             &mut rt,
             "SetFunctionValue (StewVal \"bCritChanceIgnoresFireRate:Tweaks\")"
         ),
-        XVal::Num(1.0)
+        XVal::Num(0.0)
     );
     assert_eq!(
         source(
             &mut rt,
             "SetFunctionValue (StewVal \"fCriticalDamageMult:Critical Hits\")"
         ),
-        XVal::Num(1.5)
-    );
-    script_runner(&mut rt, &mut sim, Moment::Restart);
-    script_runner(&mut rt, &mut sim, Moment::NewGame);
-    assert_eq!(
-        source(
-            &mut rt,
-            "SetFunctionValue (GetModLocalData \"profile.restart.rate\")"
-        ),
         XVal::Num(1.0)
     );
-    assert_eq!(
-        source(
-            &mut rt,
-            "SetFunctionValue (GetModLocalData \"profile.load.rate\")"
-        ),
-        XVal::Num(1.0)
-    );
-    let imported = damage(&rt.game.tweaks);
-    assert_eq!(imported.crit_chance, ordinary.crit_chance * 10.0);
-    assert_eq!(imported.crit_bonus, ordinary.crit_bonus * 1.5);
-    assert!(imported.dealt > ordinary.dealt);
+    check_rate_cache(&mut rt, &mut sim, Moment::Restart, "profile.restart.rate", 0.0);
+    check_rate_cache(&mut rt, &mut sim, Moment::NewGame, "profile.load.rate", 0.0);
+    let with_profile = damage(&rt.game.tweaks);
+    assert_eq!(with_profile.crit_chance, ordinary.crit_chance);
+    assert_eq!(with_profile.crit_bonus, ordinary.crit_bonus);
+    assert_eq!(with_profile.dealt, ordinary.dealt);
     // Preserve the original dependency predicate and a real message branch. This
     // bounded behavior repair is not a version-based popup bypass.
     assert_eq!(source(&mut rt, "if eval (GetPluginVersion \"lStewieAl's Tweaks\") < 960\nMessageBoxEx \"Unsupported compatibility level\"\nSetFunctionValue 0\nreturn\nendif\nSetFunctionValue 1"), XVal::Num(0.0));
@@ -201,37 +198,22 @@ fn original_stat_profile_reaches_startup_source_damage_settings_and_restore_with
         .as_object()
         .unwrap()
         .contains_key("tweaks"));
+    files.profile(0, 0.5);
+    settings.game.crit_ignores_fire_rate = true;
     settings.game.crit_damage_scale = 2.0;
     rt.restore_save(&mut sim, serde_json::from_slice(&bytes).unwrap())
         .unwrap();
-    stewie_profile::handoff(&mut rt.game, &settings);
-    script_runner(&mut rt, &mut sim, Moment::Restart);
-    script_runner(&mut rt, &mut sim, Moment::Load);
+    rt.game.bind_stewie_stat_settings(&settings.game);
+    check_rate_cache(&mut rt, &mut sim, Moment::Restart, "profile.restart.rate", 1.0);
+    check_rate_cache(&mut rt, &mut sim, Moment::Load, "profile.load.rate", 1.0);
+    let chosen_hit = damage(&rt.game.tweaks);
+    assert_eq!(chosen_hit.crit_chance, ordinary.crit_chance * 10.0);
     assert_eq!(
-        source(
-            &mut rt,
-            "SetFunctionValue (GetModLocalData \"profile.restart.rate\")"
-        ),
-        XVal::Num(1.0)
-    );
-    assert_eq!(
-        source(
-            &mut rt,
-            "SetFunctionValue (GetModLocalData \"profile.load.rate\")"
-        ),
-        XVal::Num(1.0)
-    );
-    assert_eq!(
-        damage(&rt.game.tweaks).crit_bonus,
+        chosen_hit.crit_bonus,
         ordinary.crit_bonus * 2.0,
         "saved game defaults do not replace current application settings before Restart"
     );
-    files.profile(0, 0.5);
-    stewie_profile::prepare(&mut rt.game, &mut settings, &mut state, Some(&file));
-    assert!(
-        rt.game.tweaks.crit_ignores_fire_rate,
-        "runtime INI changes are not imported over live settings in this startup-only subset"
-    );
+    assert!(chosen_hit.dealt > ordinary.dealt);
     assert_eq!(rt.game.tweaks.crit_damage_scale, 2.0);
     assert_eq!(
         source(
@@ -256,8 +238,7 @@ fn original_stat_profile_reaches_startup_source_damage_settings_and_restore_with
         XVal::Num(1.0),
         "the unrepresented enable switch retains its original-file value"
     );
-    // A real stored NVForever choice, including explicit off/default-valued keys,
-    // takes precedence. Do not infer whether legacy keys were user-selected.
+    // A real stored NVForever choice reaches both combat and the live query.
     std::fs::write(
         &files.nvf,
         "[Settings]\ntweak-crit-ignores-fire-rate=0\ntweak-crit-damage-scale=0.75\n",
@@ -265,16 +246,151 @@ fn original_stat_profile_reaches_startup_source_damage_settings_and_restore_with
     .unwrap();
     let mut app = App::new();
     app.add_plugins(crate::tweaks::TweaksPlugin);
-    app.insert_resource(file.clone());
+    app.insert_resource(file);
     crate::settings::apply_stored(app.world_mut());
-    let mut chosen = app.world().resource::<TweakSettings>().clone();
+    let chosen = app.world().resource::<TweakSettings>();
     assert_eq!(
         chosen.game.crit_damage_scale, 1.5,
         "the existing settings reader really applies slider part0.75 as x1.5"
     );
-    let (chosen_rt, _) = fresh(&mut chosen, &mut ProfileState::default(), &file);
-    assert!(!chosen_rt.game.tweaks.crit_ignores_fire_rate);
-    assert_eq!(chosen_rt.game.tweaks.crit_damage_scale, 1.5);
+    let (mut chosen_rt, _) = fresh(Some(chosen));
+    let chosen_hit = damage(&chosen_rt.game.tweaks);
+    assert_eq!(chosen_hit.crit_chance, ordinary.crit_chance);
+    assert_eq!(chosen_hit.crit_bonus, ordinary.crit_bonus * 1.5);
+    assert!(chosen_hit.dealt > ordinary.dealt);
+    assert_eq!(
+        source(
+            &mut chosen_rt,
+            "SetFunctionValue (StewVal \"bCritChanceIgnoresFireRate:Tweaks\")"
+        ),
+        XVal::Num(0.0)
+    );
+    assert_eq!(
+        source(
+            &mut chosen_rt,
+            "SetFunctionValue (StewieGetValue \"fCriticalDamageMult:Critical Hits\")"
+        ),
+        XVal::Num(1.5)
+    );
+}
+
+#[test]
+#[ignore = "process-local ModFiles roots: run this exact selector alone with dedicated NVF_STEWIE_PROFILE_HOME and --test-threads=1"]
+fn scheduled_restore_reads_current_settings_at_restart_and_deferred_load() {
+    let files = OwnedInputs::new();
+    std::fs::write(
+        files.data.join("NVSE/Plugins/nvse_stewie_tweaks.ini"),
+        "[Tweaks]\nbIndividialItemStats=0\n[Critical Hits]\nfCriticalDamageMult=1.75\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &files.nvf,
+        "[Settings]\ntweak-single-item-figures=1\ntweak-crit-damage-scale=0.75\n",
+    )
+    .unwrap();
+    for (name, phase) in [("gr_owned_profile.txt", "restart"), ("ln_owned_profile.txt", "load")] {
+        std::fs::write(
+            files.data.join("NVSE/Plugins/scripts").join(name),
+            format!(
+                "SetModLocalData \"restore.{phase}.scale\" (StewVal \"fCriticalDamageMult:Critical Hits\")\n\
+                 SetModLocalData \"restore.{phase}.single\" (StewieGetValue \"bIndividialItemStats:Tweaks\")\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    let mut state = ScriptState::over_no_plugins();
+    let mut before = state.rt.take().unwrap();
+    assert_eq!(
+        source(&mut before, "SetFunctionValue (StewVal \"fCriticalDamageMult:Critical Hits\")"),
+        XVal::Num(1.75),
+        "the conflicting original INI is visible to a game with no application handoff"
+    );
+    assert_eq!(
+        source(&mut before, "SetFunctionValue (StewieGetValue \"bIndividialItemStats:Tweaks\")"),
+        XVal::Num(0.0)
+    );
+    let (forms, refs) = (before.game.world.forms, before.game.world.placed);
+    let saved = before.game.snapshot();
+    let (send, recv) = std::sync::mpsc::channel();
+    send.send(Ok((before.game.data, 0.0))).unwrap();
+    state.loader = Some(Mutex::new(recv));
+
+    use std::sync::LazyLock;
+    static LO: LazyLock<fnv_esm::LoadOrder<'static>> =
+        LazyLock::new(|| fnv_esm::LoadOrder::new(&[]).unwrap());
+    static SCHEMA: LazyLock<fnv_esm::Schema> = LazyLock::new(|| {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/fnv");
+        fnv_esm::Schema::load_dir(dir).unwrap()
+    });
+    static INDEX: LazyLock<fnv_world::WorldIndex> = LazyLock::new(fnv_world::WorldIndex::default);
+    let mut app = App::new();
+    app.add_plugins(crate::tweaks::TweaksPlugin)
+        .insert_resource(SettingsFile(Some(files.nvf.clone())))
+        .insert_resource(state)
+        .insert_resource(PendingGame(Box::new(saved), files.root.join("owned-restore.nvfsave")))
+        .insert_resource(SimState { forms, refs, world: World::new(forms, refs, default()) })
+        .insert_resource(PlayWorld(PlayData {
+            lo: &LO,
+            schema: &SCHEMA,
+            index: &INDEX,
+            world: 0,
+            interior: None,
+            eye: [0.0; 3],
+            heading_deg: 0.0,
+            pitch_deg: 0.0,
+            auto_walk: 0.0,
+            start_at_cell_spot: false,
+            packages: false,
+        }))
+        .insert_resource(Location { world: 0, interior: None })
+        .init_resource::<Time>()
+        .init_resource::<crate::pause::PlayClock>()
+        .init_resource::<crate::pause::Paused>()
+        .init_resource::<crate::pause::Page>()
+        .init_resource::<crate::loading::Loading>()
+        .init_resource::<crate::tiles::mods::ModsPage>()
+        .init_resource::<PhysState>()
+        .init_resource::<ScriptHud>()
+        .init_resource::<crate::corner_messages::CornerMessages>()
+        .init_resource::<crate::quest_messages::QuestMessages>()
+        .add_message::<RefChanged>()
+        .add_message::<crate::fade::RefFade>()
+        .add_message::<crate::RefRepose>()
+        .add_message::<TravelRequest>()
+        .add_message::<OpenContainer>()
+        .add_message::<ItemUsed>()
+        .add_message::<crate::furniture::UseFurniture>()
+        .add_message::<crate::terminal::OpenTerminal>()
+        .add_message::<crate::save::LoadRefused>();
+
+    let world = app.world_mut();
+    crate::settings::apply_stored(world);
+    let mut schedule = Schedule::default();
+    schedule.add_systems((take_pending_game, run_scripts).chain());
+    schedule.run(world);
+
+    let read = |rt: &mut Runtime, key: &str| {
+        source(rt, &format!("SetFunctionValue (GetModLocalData \"restore.{key}\")"))
+    };
+    {
+        let mut script = world.resource_mut::<ScriptState>();
+        let rt = script.rt.as_mut().unwrap();
+        assert_eq!(rt.game.save_files.loaded.as_ref().unwrap().name, "owned-restore");
+        assert_eq!(read(rt, "restart.scale"), XVal::Num(1.5), "restored Restart scale");
+        assert_eq!(read(rt, "restart.single"), XVal::Num(1.0), "restored Restart inventory");
+        assert_eq!(read(rt, "load.scale"), XVal::Num(0.0), "Load still waits for the player");
+        assert_eq!(read(rt, "load.single"), XVal::Num(0.0), "Load still waits for the player");
+    }
+
+    // Advance the real system past its player gate, without a render or physics schedule.
+    let _ = world.resource_mut::<PhysState>().place_player([0.0; 3], 60.0, 1000.0);
+    world.resource_mut::<Time>().advance_by(std::time::Duration::from_millis(16));
+    schedule.run(world);
+    let mut script = world.resource_mut::<ScriptState>();
+    let rt = script.rt.as_mut().unwrap();
+    assert_eq!(read(rt, "load.scale"), XVal::Num(1.5), "deferred Load scale");
+    assert_eq!(read(rt, "load.single"), XVal::Num(1.0), "deferred Load inventory");
 }
 
 mod current_profile;

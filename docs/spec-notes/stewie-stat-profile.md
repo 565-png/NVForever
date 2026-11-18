@@ -1,20 +1,20 @@
-# Original Stewie stat-profile defaults
+# Live Stewie critical-setting queries
 
 ## Supported behavior and policy
 
 [documented: Stewie Tweaks v9.87 readme and generated `nvse_stewie_tweaks.ini`, see
 [tweaks](../design/tweaks.md#sources-and-clean-room)] The original profile names
-bCritChanceIgnoresFireRate in Tweaks and bScaleCriticalDamage plus
-fCriticalDamageMult in Critical Hits. The existing engine critical-hit rules already
-implement those choices. StewieGetValue/StewVal reads a key:section setting
-(existing catalogue and
-[behavior page](https://geckwiki.com/index.php?title=StewieGetValue)). [documented] The behavior page identifies StewVal as an alias and describes a
-queried boolean as whether its tweak is enabled; it does not specify a disk-read
-or reload contract.
+`bCritChanceIgnoresFireRate` and `bScaleCriticalDamage` in `Tweaks`, and
+`fCriticalDamageMult` in `Critical Hits`. NVForever has a fire-rate choice and a
+critical-damage multiplier, not a separate scale-enable switch.
+[documented: the existing catalogue and
+the StewieGetValue behavior page](https://geckwiki.com/index.php?title=StewieGetValue)
+StewieGetValue reads a `key:section` setting; StewVal is its alias. The page
+describes a queried boolean as whether its tweak is enabled; it does not specify
+a disk-read or reload contract.
 
-[hypothesis] fCriticalDamageMult multiplies critical damage the way the engine's
-existing critical-damage scale does, so its value can feed that scale directly. The
-plugin's own formula has not been observed in the original game.
+[hypothesis] The original uses fCriticalDamageMult as a multiplier like the existing
+NVForever critical-damage scale. The plugin's own formula has not been observed.
 
 [design] After application settings are handed to the actual combat
 consumer, the recognized bCritChanceIgnoresFireRate and fCriticalDamageMult queries
@@ -31,36 +31,22 @@ conflicting scale-switch/profile combination.
 re-reading the file, so answering from the live engine setting matches it. Not
 observed in the original game.
 
-[design] An installed original profile now supplies defaults for these
-two existing engine options when their NVForever setting keys are absent. This is
-an intentional compatibility-profile policy change: without an original profile,
-ordinary off/no-change defaults remain. Stored tweak-crit-ignores-fire-rate and
-tweak-crit-damage-scale values retain the existing settings reader's precedence,
-including explicit off/default-valued keys. Legacy serialized keys cannot be
-classified as user intent from their values alone; their precedence is logged,
-not silently overridden or guessed.
-
-[design] Only boolean 0/1 inputs are imported. Scaling enabled by bScaleCriticalDamage
-uses a finite multiplier within the existing engine slider's 0..2 range (an engine
-bound, not the plugin's); disabled scaling selects 1. Missing, malformed and
-unsupported inputs do not enable new behavior.
-Other original keys are not imported or advertised as supported by this bridge.
+[design] The original INI does not supply defaults for any NVForever-owned option.
+As in [Tweaks](../design/tweaks.md), NVForever settings keep their ordinary defaults
+unless changed through NVForever. The critical options default to respecting fire
+rate and using a ×1 damage scale. The existing NVForever settings reader remains
+the only source of stored application preferences, including explicit off and
+default-valued choices.
 
 ## Startup, restoration and lifetime
 
-The profile is reduced to a typed input by Game; the engine receives no new raw
-ModFiles access. Runtime initialization applies the settings before new-game
-initialization and before Restart files. After restoring a saved game, current
-application settings are handed back before Restart files, preserving live
-settings rather than serialized game defaults. Ordinary frame synchronization
-continues through the existing Tweaks consumer.
-
-[design] Import occurs once per application profile. Later NVForever
-settings changes retain their normal effect. Runtime edits of the original INI
-are not reimported over live settings by this startup-only subset. Recognized
-loaded queries continue to report the real current consumer fields; unrelated
-queries retain their existing file behavior. No new watcher, per-frame disk read, save field or
-installation write is introduced. Native import/reload parity remains unmeasured.
+Runtime initialization binds the application settings before new-game initialization
+and Restart files. After restoring a saved game, the current application settings
+are rebound before Restart and Load observers, rather than persisted in the save.
+Ordinary frame synchronization continues through the existing Tweaks consumer.
+Changes to the original INI can affect the existing fallback but never alter
+NVForever settings. There is no new watcher, per-frame disk read, save field or
+installation write.
 
 The existing two critical-rule assignments are shared with the actual damage
 consumer; formulas, ordinary condition penalties and unrelated tuning do not
@@ -69,29 +55,30 @@ other Stewie service.
 
 ## Validation and limits
 
-Three ordinary core controls characterize supported and malformed typed inputs,
-both aliases, current-field updates, unbound/unrepresented keys, save lifetime and
-rebinding. Two opt-in engine controls use authored process-local Data/settings
-roots, actual Runtime initialization and source files, critical-hit rules,
-application settings and restoration. Their exact selectors require a dedicated
-`NVF_STEWIE_PROFILE_HOME`, `--ignored` and `--test-threads=1`; ordinary CI skips
-them, and a skipped result is not a pass.
+The retained ordinary core control checks both aliases, current-field updates,
+unbound/unrepresented keys, save lifetime and rebinding. Two opt-in engine controls
+exercise actual Runtime initialization, source files, critical-hit calculations,
+application defaults and explicit choices in the presence of a contrary original
+INI, and restoration. They retain the provider-version and warning controls.
+Run each exact selector in its own process with a dedicated `NVF_STEWIE_PROFILE_HOME`,
+`--ignored` and `--test-threads=1`; ordinary CI skips them.
 
 [implementation evidence: head `68a9c978`, 2026-11-17] The
 [natural hosted run](https://github.com/LootJunkieAzza/NVForever/actions/runs/44155882635)
 used checkout `2a932d9b` with parents `[13011912,68a9c978]`. All seven checks
-passed. Six owning non-ignored controls each passed once: these three core
-profile controls, two inventory controls and the ordinary Pip-Boy control.
-The three ignored profile controls received no credit from that run.
+passed. Six owning non-ignored controls each passed once: one live critical query
+control, two controls for the now-removed typed profile reader, two inventory
+controls and the ordinary Pip-Boy control. The three ignored controls received
+no credit from that run.
 
 [implementation evidence: exact original `68a9c978`, Windows Cargo 1.99 QA]
 The two critical-profile opt-ins and the inventory opt-in subsequently each
-passed once in three separately admitted runtime processes. The critical case
-checked initialization, source files, damage rules, current choices and restore.
-The conflicting-profile case checked current settings against the actual damage
-consumer without rewriting either input file. These five critical-profile
-controls therefore have bounded results on the explicitly stated graphs;
-identical-fixture baseline comparisons remain unrun. The inventory case and its
+passed once in three separately admitted runtime processes, under the former
+profile-import policy. The critical case checked initialization, source files,
+damage rules, current choices and restore. The conflicting-profile case checked
+current settings against the actual damage consumer without rewriting either input
+file. These are historical results only; identical-fixture baseline comparisons
+remain unrun. The inventory case and its
 per-phase sentinel checks are described in [ext-small.md](ext-small.md#live-inventory-settings).
 
 The Windows Cargo build returned zero, but its compile controller failed
@@ -107,15 +94,12 @@ to the existing `Rules::defaults()` without changing damage inputs or oracles.
 Neither failed job executed an engine control or established a separate lint
 failure. Later results above do not relabel those attempts as successful.
 
-Accepted Main `76f69f6f` is now integrated normally. Its shared runtime/build
-inputs differ from the historical graphs above; all exact integrated-source
-compiler, runtime, strict-lint and hosted checks remain UNRUN. This documentation refresh
-changes no implementation or fixture, and transfers no earlier result to that
-new composition.
+No compiler, runtime, strict-lint or hosted checks have run on the corrected
+integration. The historical results do not qualify this candidate.
 
 There is no provider-version increase, popup suppression, auto-dismissal or mod
 disable. The historical941 report is not validated by this bridge. The960/970
 startup guards remain blocked until their actual required services and compatible
-reporting contract are established. Native import/reload and scale-enable parity,
-paired original-game results, GPU/installed-mod acceptance and complete Stewie
+reporting contract are established. Native reload and scale-enable parity, paired
+original-game results, GPU/installed-mod acceptance and complete Stewie
 compatibility remain unqualified.

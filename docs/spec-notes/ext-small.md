@@ -55,7 +55,7 @@ game, so nothing here is `[observed]`. Changes last for the session.
 | TTW_GetEquippedWeaponSkill `skill` | 1 when the equipped weapon's skill (DNAM, an actor value code) is that one [documented] |
 | TTW_GetPlugins | `[name, version, description]` per loaded plugin [documented]: the version is the TES4 HEDR version (as GetPluginHeaderVersion), the description "" [decision]. Until 2026-11-08 the version was 0, and TTW's start-up check (a plugin below 1.3 is an unconverted Fallout 3 mod) showed its "Fallout 3 mods installed" message for every load order |
 | TTW_ShowGeneProjector | opens the race menu (1036), NVForever's character creator, as ShowRaceMenu does [observed: TTW's scripts wait in `MenuMode 1036` after it; design: owner 2026-11-02] |
-| StewieGetValue `"key:section"` (StewVal) | the value in `Data\NVSE\Plugins\nvse_stewie_tweaks.ini`, a number when it reads as one; 0 without [documented; hypothesis: the file's name] |
+| StewieGetValue `"key:section"` (StewVal) | [documented: StewieGetValue] Reads a setting. [design] After handoff, the mapped [critical](stewie-stat-profile.md) and [inventory](#live-inventory-settings) keys read NVForever choices. Other keys and unbound games keep the layered `Data\NVSE\Plugins\nvse_stewie_tweaks.ini` lookup: a number when it reads as one, otherwise text, or 0 when absent. |
 | GetCellRegions `cell` | an exterior cell's regions (XCLR); none for an interior [documented] |
 | SetWorldspaceMapBounds `world nwX nwY seX seY` | the WRLD MNAM cells, read by every reader of the record (`Game::world_map_bounds`) [documented; follow-up: the engine's map reads its bounds once] |
 | ySIGetTrait / ySISetTrait `"tag"\|"icon" [value] [form]` | ySI's tag and icon, of the form else the calling reference's base; an icon set on a tagged form goes to every form of that tag [documented]; "" until set [decision: ySI's own files are not read] |
@@ -71,8 +71,8 @@ Individual item figures show one item's weight and value for a stack.
 [design] After the engine hands its authoritative settings to the game,
 `StewieGetValue` and `StewVal` return the existing choices below as numeric 0 or 1.
 Both functions use the same read-only path; names ignore ASCII case and surrounding
-whitespace. No new settings are added. [hypothesis] The original plugin matches names
-the same way; not observed.
+whitespace. The original INI never supplies NVForever defaults. No new settings are
+added. [hypothesis] The original plugin matches names the same way; not observed.
 
 | Query | Existing choice and consumer |
 |---|---|
@@ -131,8 +131,7 @@ compile-controller and overall success remain false. Runtime-only r1 stopped wit
 reused the sealed source-bound image without a rebuild and qualified only its
 three actual runtime results. No failed attempt is relabelled as passed.
 
-The normal integration of accepted Main `76f69f6f` changes shared runtime/build
-inputs. All exact integrated-source compiler/runtime/strict-lint/hosted checks remain UNRUN;
-the historical six ordinary and three opt-in results do not qualify that new
-graph. Identical-fixture baselines, original-game and installed-workload
+Compiler, runtime, strict-lint and hosted checks on the corrected integration remain
+UNRUN. The historical six ordinary and three opt-in results do not qualify this
+candidate. Identical-fixture baselines, original-game and installed-workload
 comparisons, native profile semantics and full Stewie compatibility remain open.

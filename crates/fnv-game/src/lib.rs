@@ -67,6 +67,8 @@ mod combat_style_session_tests;
 #[cfg(test)]
 #[path = "../tests/common/mod.rs"]
 mod common;
+#[cfg(test)]
+mod faction_modifier_tests;
 pub mod companion_wheel;
 pub mod coop;
 pub mod cond;
@@ -97,10 +99,12 @@ pub mod idles;
 pub mod intro;
 pub mod jip_ccc;
 pub mod jip_events;
+mod crosshair_events;
 mod jip_provenance;
 #[cfg(test)]
 mod handler_diagnostics_tests;
 pub mod nvse;
+mod nvse_faction_modifiers;
 pub mod nvse_ttw;
 pub mod nvse_unlisted;
 pub mod nvse_unlisted2;
@@ -135,7 +139,7 @@ pub mod nvse_jg_nif;
 pub mod nvse_sup4;
 pub mod image_files;
 pub mod tweaks;
-pub mod stewie_stat_profile;
+mod stewie_stat_profile;
 pub mod xls;
 pub mod nvse_dialogue;
 pub mod nvse_vheyes;
@@ -172,6 +176,7 @@ pub mod nvse_lu2;
 pub mod nvse_lu3;
 pub mod nvse_showoff4;
 pub mod nvse_leveled;
+mod nvse_actor_queries;
 pub mod nvse_jip2;
 pub mod nvse_gaps;
 pub mod nvse_jip3;
@@ -192,6 +197,7 @@ mod stewie_inventory_settings;
 pub mod nvse_tokens;
 pub mod nvse_handler_lists;
 pub mod nvse_debug;
+mod local_time;
 pub mod text_codes;
 pub mod script_input;
 pub mod levelup;
