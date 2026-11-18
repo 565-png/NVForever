@@ -1846,6 +1846,8 @@ expect = [
   { re = 'light shadows: light \S+ at .* skips [0-9A-F]{8} fixture', label = "a light skipped a lamp model's shapes (NVF_LIGHT_SHADOW_FIXTURES)" },
   { re = 'light shadows: renderer over [0-9]+ frames: light views a frame [0-9.]+ alive', label = "the renderer's 10-s line (light views, prepare_lights times)" },
   { re = 'light shadows: performance pass over [0-9]+ frames: .*caster grid \(on\) [0-9.]+ lamps served a frame', label = "the performance pass's 10-s line, the caster grid on" },
+  { re = 'light shadows: [1-9][0-9]* cast \(.*; static shadow cache on \([0-9]+ MB\)', label = "the static shadow cache on, its memory logged" },
+  { re = 'light shadows: performance pass over [0-9]+ frames: .*static cache \(on\) [0-9.]+ static redraws \(faces\) a frame, [0-9.]+ dynamic recomposites a frame, [0-9.]+ layer copies a frame', label = "the performance pass's 10-s line gives the static cache's counts" },
 ]
 forbid = [
   { text = "DeviceLost", label = "the GPU device was lost" },

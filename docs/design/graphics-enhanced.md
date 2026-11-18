@@ -1729,8 +1729,58 @@ tier in the flags beside the slot, a second binding in `mesh_view_bindings` and
 `shadow_sampling.wesl`, hysteresis on the tier, a full redraw on a change: it touches the
 vendored renderer's bindings and shaders, left for after these are measured).
 
+**Static shadow cache (2026-11-18).** The owner: "Since most of the lights in New Vegas are
+static, could we not bake the shadows at least partially?" Approved: a static cache with the
+dynamic casters drawn on top, and the lamps drawn in full under a loading screen. **Not
+measured in game yet.**
+
+- **Static and dynamic casters** (light_shadows.rs `ShadowDynamic`, `classify_casters`,
+  `shape_change`). Dynamic from the start: skinned shapes, every shape under an actor's or
+  creature's rig (`ActorRig`, `PlayerRig`: weapons, hats, eyes follow the skeleton) and the
+  player's body (its layers, `sky::SHADOW_LAYER`, `sky::BODY_LAYER`). Every other shape is
+  static until it moves after it marked the lamps (clutter pushed by physics, which
+  nvf-play's `moved.rs` writes into the drawn transform; a door or activator turning; what a
+  script moves): it becomes dynamic then, for good, and the caches of the faces it was and
+  is in are drawn again without it [engineering choice: one rule for every way a thing can
+  move, instead of a marker at each place that moves things]. Shown, hidden, new or gone, a
+  static shape stays static (a cell loading, Primm's scripted mass enable and disable).
+- **Bookkeeping per face.** `dirty` as before (the sampled map is out of date) and
+  `static_dirty` within it (the cache is): a static shape's change, the light's first draw,
+  a new texture, a refresh, a finer step, a removal of static shapes and a light chosen
+  again mark both; a dynamic caster's move, show or hide, or a removal of dynamic shapes
+  only, marks `dirty`. A dynamic caster marks where it was and where it is (one sphere round
+  both), so the face it left is composited too.
+- **Drawing** (`face_modes`, `keeps_caster`, `put_back`). Of a lamp's faces drawn this
+  frame, those with `static_dirty` are drawn from the static casters into the cache and
+  copied into the sampled cube; the others are composited: the cache's face copied into
+  the sampled face and the dynamic casters drawn over it with the depth loaded, not cleared
+  (vendored bevy_pbr, engine/vendor/README.md "static shadow cache"). A face drawn into the
+  cache whose caster list held dynamic casters lacks them until its composite, which goes
+  next, before other lights' turns (`pending`); a composite with no dynamic caster left is
+  the cache copied back once. Transients, spot lights (few among the placed ones, one map:
+  left on the old path, simpler) and lights that move (their cache would be drawn again each
+  time) take the plain path: every caster into the sampled map, as before. Every rule
+  before stays: slots, held maps, fades, the fixtures skipped (in both passes), the steps,
+  cut-off, grid and face culling, DLSS and contact shadows.
+- **Memory**: the cache is a second cube texture of the same slots and size (Depth32Float):
+  at 512 × 512 6 MB a lamp, 151 MB for 24 lamps' room; at 1,024 (Shadow resolution 4096)
+  25 MB a lamp. The start line says `static shadow cache on (<n> MB)`.
+- **Log**: the performance line ends `static cache (on) <s> static redraws (faces) a frame,
+  <c> dynamic recomposites a frame, <k> layer copies a frame, <p> faces put back after a
+  static redraw, <d> shapes became dynamic`; the renderer line's events add `static cache
+  draws`, `static cache composites` and `static cache misses` (a composite whose cache layer
+  held no map of its light: drawn with the dynamic casters only; expected 0).
+- **Aid** `NVF_LIGHT_SHADOW_STATIC_CACHE=0`: no cache, every face drawn with every caster,
+  as before.
+- [hypothesis] Where it should help: a lamp near an idle or walking actor redrew every
+  caster of the room on each skeleton mark; now the room is copied (a 1 MB layer copy at
+  512²) and the actor alone drawn. Where it costs: a static change now draws the cache and,
+  with an actor in the face, a composite after it (two switch-ons instead of one); the
+  copies' bandwidth; the memory.
+
 **Not built yet.**
 - Keeping a held light's specialization caches, so switching it on costs less.
+- The static cache for spot lights (a second set of layers past the cascades).
 
 **Smoke.** `light-shadows` (the Prospector Saloon at 22:00, `--light-shadows=quality`)
 checks that lights cast and that their maps are drawn. The picture is checked by hand.

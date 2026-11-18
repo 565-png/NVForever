@@ -103,6 +103,26 @@
 //!     renderer's light views, events and `prepare_lights` times, and these systems'
 //!     times, [`renderer_summary`], [`systems_summary`]) and `light shadows: performance
 //!     pass over …` ([`pass_summary`]).
+//! - **Static shadow cache** (2026-11-18, owner: "Since most of the lights in New Vegas are
+//!   static, could we not bake the shadows at least partially?"; graphics-enhanced.md §3.15
+//!   "Static shadow cache"; not measured in game yet). Shadow casters are static (the
+//!   placed world) or dynamic ([`ShadowDynamic`], [`classify_casters`]: skinned shapes,
+//!   actors' and creatures' shapes, the player's body, and any shape once it moves after it
+//!   marked the lamps, [`shape_change`]). Each cached point lamp keeps a second cube (the
+//!   patched renderer's cache texture, same slots and size: engine/vendor/README.md "static
+//!   shadow cache") drawn from the static casters alone. A face whose cache is out of date
+//!   ([`LampState::static_dirty`]: a static shape appeared, vanished, was shown, hidden or
+//!   moved in it, the light's first draw, a removal of static shapes, a refresh, a finer
+//!   step) is drawn into the cache and copied into the sampled cube; a face marked only by
+//!   dynamic casters is composited: the cache's face copied in and the dynamic casters drawn
+//!   over it, the depth loaded ([`face_modes`]; the casters' lists split in
+//!   [`skip_fixtures`], [`keeps_caster`]). A face drawn into the cache whose list held
+//!   dynamic casters is composited next, before other lights ([`put_back`]); a dynamic
+//!   caster leaving a face marks it (where it was and is, [`merged_sphere`]), and its
+//!   composite with none left is the cache copied back. Transients, spot lights and lights
+//!   that move keep the plain path ([`plain_path`]). The cache costs as much memory as the
+//!   cubes ([`cube_texture_mb`], logged). Aid `NVF_LIGHT_SHADOW_STATIC_CACHE=0`: the plain
+//!   path for all, as before. The 10-s performance line ends with its counts.
 
 use bevy::camera::primitives::{Aabb, CubemapFrusta, Frustum, Sphere, CUBE_MAP_FACES};
 use bevy::camera::visibility::{CubemapVisibleEntities, RenderLayers, VisibilitySystems, VisibleMeshEntities};
@@ -274,6 +294,107 @@ const ALL_FACES: u8 = 0b11_1111;
 #[derive(Component)]
 pub struct CastingLight;
 
+/// On a shadow-casting shape that moves (the static shadow cache, [`static_cache_on`]): it
+/// is left out of the lamps' static caches and drawn over them. Put by [`classify_casters`]
+/// on a skinned shape, on every shape of an actor or creature (under an `ActorRig` or a
+/// `PlayerRig`) and of the player's body (`sky::SHADOW_LAYER`, `sky::BODY_LAYER`), and by
+/// [`shadow_lights`] on any other shape once it moves after it marked the lamps (clutter
+/// physics pushed, a door or activator that turns, what a script moves): [`shape_change`].
+#[derive(Component)]
+pub struct ShadowDynamic;
+
+/// `NVF_LIGHT_SHADOW_STATIC_CACHE=0` (a measuring aid): no static shadow cache; every face
+/// drawn is drawn with every caster, as before 2026-11-18.
+fn static_cache_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let off = std::env::var("NVF_LIGHT_SHADOW_STATIC_CACHE").is_ok_and(|v| v.trim() == "0");
+        if off {
+            info!("light shadows: NVF_LIGHT_SHADOW_STATIC_CACHE=0, no static shadow cache: every caster drawn into every face");
+        }
+        !off
+    })
+}
+
+/// What a shadow-casting shape's change does to the lamps' maps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeChange {
+    /// A static shape appeared, vanished, or was shown or hidden (a cell loading, Primm's
+    /// scripted mass enable): the static caches of the faces it is in are drawn again.
+    Static,
+    /// A dynamic shape moved, appeared, vanished, or was shown or hidden: the faces it was and
+    /// is in are composited again; no cache is drawn.
+    Dynamic,
+    /// A static shape moved after it marked the lamps: from now on it is dynamic, and the
+    /// caches of the faces it was and is in are drawn again without it.
+    Promoted,
+}
+
+/// What a shape's change is: `dynamic` it already is ([`ShadowDynamic`]); `shown_or_hidden`
+/// its visibility changed (or it is new); `known` it marked the lamps before, from where it
+/// is said to have moved.
+pub fn shape_change(dynamic: bool, shown_or_hidden: bool, known: bool) -> ShapeChange {
+    if dynamic {
+        ShapeChange::Dynamic
+    } else if shown_or_hidden || !known {
+        ShapeChange::Static
+    } else {
+        ShapeChange::Promoted
+    }
+}
+
+/// The sphere holding both spheres: a moved caster marks where it was and where it is.
+pub fn merged_sphere(a: &Sphere, b: &Sphere) -> Sphere {
+    let (ca, cb) = (Vec3::from(a.center), Vec3::from(b.center));
+    let d = ca.distance(cb);
+    if d + b.radius <= a.radius {
+        return *a;
+    }
+    if d + a.radius <= b.radius {
+        return *b;
+    }
+    let radius = (d + a.radius + b.radius) * 0.5;
+    // From a's far side towards b, `radius` along.
+    let centre = ca + (cb - ca) * ((radius - a.radius) / d.max(1.0e-6));
+    Sphere { center: centre.into(), radius }
+}
+
+/// How a light's faces `draw` this frame are drawn: those whose static cache must be drawn
+/// again (`static_dirty`) into the cache, then copied into the sampled map; the rest
+/// composited (the cache copied in, the dynamic casters drawn over). `(to_static,
+/// composite)`; both 0 for a light on the plain path (`cached` false).
+pub fn face_modes(draw: u8, static_dirty: u8, cached: bool) -> (u8, u8) {
+    if !cached {
+        return (0, 0);
+    }
+    (draw & static_dirty, draw & !static_dirty)
+}
+
+/// Which casters a face's list keeps: on the plain path all; drawn into the static cache
+/// the static ones; composited the dynamic ones.
+pub fn keeps_caster(to_static: bool, composite: bool, dynamic: bool) -> bool {
+    match (to_static, composite) {
+        (true, _) => !dynamic,
+        (false, true) => dynamic,
+        _ => true,
+    }
+}
+
+/// The faces drawn into the static cache this frame (`to_static`) whose lists held dynamic
+/// casters (`dynamic_in`): the post-draw copy left them out of the sampled map, so they are
+/// composited again, first.
+pub fn put_back(to_static: u8, dynamic_in: u8) -> u8 {
+    to_static & dynamic_in
+}
+
+/// Whether a light's maps take the plain path: the cache off, every map drawn every frame
+/// (the hold aid), a transient (drawn once), a spot light (one map, few among the lamps:
+/// [engineering choice, left on the old path]), or a light that moved (its cache would be
+/// drawn again each time).
+pub fn plain_path(cache_on: bool, hold_all: bool, transient: bool, spot: bool, moved: bool) -> bool {
+    !cache_on || hold_all || transient || spot || moved
+}
+
 /// What a casting light's maps need (main world).
 #[derive(Debug, Clone, Copy)]
 struct LampState {
@@ -309,6 +430,18 @@ struct LampState {
     /// Marked faces held last frame because the camera could not see them
     /// ([`faces_in_view`]): one coming into view draws before other lights' faces.
     deferred: u8,
+    /// The static shadow cache ([`static_cache_on`]): faces whose cache (the static casters'
+    /// map) must be drawn again; always within [`Self::dirty`].
+    static_dirty: u8,
+    /// Faces drawn into the cache whose lists held dynamic casters: the sampled face lacks
+    /// them until it is composited, which goes before other lights' turns.
+    pending: u8,
+    /// Its maps take the plain path, every caster drawn into the sampled map: a transient, a
+    /// spot light, a light that moved, or the cache off.
+    plain: bool,
+    /// This frame's faces drawn into the cache, and composited from it ([`face_modes`]).
+    to_static: u8,
+    composite: u8,
 }
 
 /// The casting lights' slots and states.
@@ -326,7 +459,7 @@ struct LampShadowState {
     /// What the cube texture (its side, its room) and the sun's texture (its side, the spot
     /// room, the cascades) were made for last frame: when either changes the renderer takes
     /// a new texture, which holds no light's maps.
-    point_maps_key: Option<(usize, u32)>,
+    point_maps_key: Option<(usize, u32, bool)>,
     spot_maps_key: Option<(usize, u32, usize)>,
     frame: u64,
     /// Lights switched on and faces drawn since the last summary, and frames counted.
@@ -370,6 +503,14 @@ pub struct Pass {
     pub distance_faded: u64,
     /// Marked faces held on their light's turn because the camera could not see them.
     pub faces_out_of_view: u64,
+    /// The static shadow cache: faces drawn into it (each then copied into the sampled map),
+    /// faces composited from it (copied in, the dynamic casters drawn over), and of the faces
+    /// drawn into it those whose dynamic casters were put back by a composite after.
+    pub static_faces: u64,
+    pub composited: u64,
+    pub put_back: u64,
+    /// Shapes that moved after they were in the static caches and became dynamic.
+    pub promoted: u64,
 }
 
 /// A light's shadow fades out over this last fraction of the reach it is chosen within (the
@@ -416,6 +557,7 @@ impl Plugin for LightShadowsPlugin {
             .init_resource::<HoldLightShadowMaps>()
             .add_plugins(ExtractResourcePlugin::<HoldLightShadowMaps>::default())
             .add_systems(PostUpdate, watch_map_textures.before(shadow_lights))
+            .add_systems(PostUpdate, classify_casters.before(shadow_lights))
             .add_systems(
                 PostUpdate,
                 // Before Bevy resets this frame's view visibility, so the lights' and the
@@ -602,7 +744,7 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
     let on = |b: bool| if b { "on" } else { "OFF" };
     let [served, candidates, filed, everywhere] = p.grid;
     format!(
-        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light); distance fade ({}) {:.1} lights fading a frame; face culling ({}) {:.2} marked faces held out of view a frame",
+        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light); distance fade ({}) {:.1} lights fading a frame; face culling ({}) {:.2} marked faces held out of view a frame; static cache ({}) {:.2} static redraws (faces) a frame, {:.2} dynamic recomposites a frame, {:.2} layer copies a frame, {} faces put back after a static redraw, {} shapes became dynamic",
         per(p.steps[0]),
         per(p.steps[1]),
         per(p.steps[2]),
@@ -616,7 +758,14 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
         on(distance_fade_on()),
         per(p.distance_faded),
         on(face_cull_on()),
-        per(p.faces_out_of_view)
+        per(p.faces_out_of_view),
+        on(static_cache_on()),
+        per(p.static_faces),
+        per(p.composited),
+        // Each face drawn into the cache is copied out after, each composite copied in first.
+        per(p.static_faces + p.composited),
+        p.put_back,
+        p.promoted
     )
 }
 
@@ -665,11 +814,14 @@ pub struct Marked {
 /// is marked) is not tested face by face, nor is a face already marked. With `cut` (the
 /// small-caster cut-off on), a caster under a lamp's cut-off where it is now and where it
 /// last marked (`old`; none for one shown, hidden or new) marks nothing on that lamp: it is
-/// not in its maps.
+/// not in its maps. With `static_mark` (a static shape's change, [`ShapeChange`]) the faces'
+/// static caches are marked too ([`LampState::static_dirty`]).
+#[allow(clippy::too_many_arguments)]
 fn mark_sphere(
     sphere: &Sphere,
     old: Option<&Sphere>,
     cut: bool,
+    static_mark: bool,
     candidates: impl Iterator<Item = usize>,
     lamps: &[Lamp],
     frusta: &[(Option<CubemapFrusta>, Option<Frustum>)],
@@ -694,12 +846,22 @@ fn mark_sphere(
             let faces = faces_reached(sphere, cube, spot, 0);
             marked |= faces != 0;
             s.dirty |= faces;
+            if static_mark {
+                s.static_dirty |= faces;
+            }
             continue;
         }
         // A sphere that reaches a point light's lies in one of its faces at least.
         marked = true;
-        if !s.fresh && s.dirty & ALL_FACES != ALL_FACES {
-            s.dirty |= faces_reached(sphere, cube, spot, s.dirty & ALL_FACES);
+        // Faces already marked as this mark would are not tested again (the static marks
+        // within the faces marked: `static_dirty` lies within `dirty`).
+        let have = if static_mark { s.static_dirty } else { s.dirty } & ALL_FACES;
+        if !s.fresh && have != ALL_FACES {
+            let faces = faces_reached(sphere, cube, spot, have);
+            s.dirty |= faces;
+            if static_mark {
+                s.static_dirty |= faces;
+            }
         }
     }
     Marked { reached, marked, cut: cuts }
@@ -944,6 +1106,13 @@ pub fn cube_side(directional: usize) -> usize {
     if directional >= 4096 { 1024 } else { 512 }
 }
 
+/// Megabytes (10^6 bytes) of a cube texture of `cubes` cubes of `side` texels square, 32-bit
+/// depth (`CORE_3D_SHADOW_MAP_FORMAT`, Depth32Float): the static shadow cache costs as much
+/// again as the sampled cubes.
+pub fn cube_texture_mb(side: usize, cubes: u32) -> f64 {
+    (side * side * 4 * 6) as f64 * f64::from(cubes) / 1.0e6
+}
+
 type Placed<'a> = (
     Entity,
     &'a GlobalTransform,
@@ -966,7 +1135,59 @@ type MovedFilter = (With<Mesh3d>, Without<NotShadowCaster>, Without<SkinnedMesh>
 
 type Skinned<'a> = (Entity, &'a SkinnedMesh, &'a GlobalTransform, &'a InheritedVisibility, Option<&'a RenderLayers>);
 
-type MovedCasters<'a> = (Entity, &'a GlobalTransform, &'a Aabb, Ref<'a, InheritedVisibility>, Option<&'a RenderLayers>, Option<&'a Name>, Option<&'a ChildOf>);
+type MovedCasters<'a> = (
+    Entity,
+    &'a GlobalTransform,
+    &'a Aabb,
+    Ref<'a, InheritedVisibility>,
+    Option<&'a RenderLayers>,
+    Option<&'a Name>,
+    Option<&'a ChildOf>,
+    Has<ShadowDynamic>,
+);
+
+/// Shapes new this frame, or whose layers changed, not yet dynamic ([`classify_casters`]).
+type NewShapes<'a> = (Entity, Has<SkinnedMesh>, Option<&'a RenderLayers>);
+type NewShapesFilter = (With<Mesh3d>, Without<ShadowDynamic>, Or<(Added<Mesh3d>, Changed<RenderLayers>)>);
+
+/// An actor's or creature's rig root, and the player's ragdoll rig.
+type Rigs = Or<(With<crate::limbs::ActorRig>, With<crate::ragdoll::PlayerRig>)>;
+type NewRigs = Or<(Added<crate::limbs::ActorRig>, Added<crate::ragdoll::PlayerRig>)>;
+
+/// The layers only the player's body is on (sky.rs): its shapes are dynamic.
+fn body_layers() -> RenderLayers {
+    RenderLayers::from_layers(&[crate::sky::SHADOW_LAYER, crate::sky::BODY_LAYER])
+}
+
+/// Mark the shapes that move as [`ShadowDynamic`] from the start: skinned shapes, the
+/// player's body's (its layers), and every shape under an actor's or creature's rig (its
+/// weapons, hat, eyes: they follow the skeleton), found from a new shape up its ancestors
+/// and from a new rig down its descendants. Any other shape becomes dynamic in
+/// [`shadow_lights`] once it moves ([`shape_change`]). Runs whatever the mode, so a shape
+/// spawned while the lamp shadows are off is classified when they are switched on.
+fn classify_casters(
+    mut commands: Commands,
+    new: Query<NewShapes, NewShapesFilter>,
+    rigs: Query<Entity, NewRigs>,
+    rigged: Query<(), Rigs>,
+    parents: Query<&ChildOf>,
+    children: Query<&Children>,
+    shapes: Query<(), (With<Mesh3d>, Without<ShadowDynamic>)>,
+) {
+    let body = body_layers();
+    let mut marked = EntityHashSet::default();
+    for (e, skinned, layers) in &new {
+        if skinned || layers.is_some_and(|l| l.intersects(&body)) || parents.iter_ancestors(e).any(|a| rigged.contains(a)) {
+            marked.insert(e);
+        }
+    }
+    for rig in &rigs {
+        marked.extend(children.iter_descendants(rig).filter(|d| shapes.contains(*d)));
+    }
+    for e in marked {
+        commands.entity(e).try_insert(ShadowDynamic);
+    }
+}
 
 /// A light this frame: what [`shadow_lights`] works out for it.
 struct Lamp {
@@ -1000,7 +1221,7 @@ fn shadow_lights(
     skinned: Query<Skinned, Without<NotShadowCaster>>,
     names: Query<&Name>,
     joints: Query<Ref<GlobalTransform>>,
-    mut removed: RemovedComponents<Mesh3d>,
+    (mut removed, mut removed_dynamic): (RemovedComponents<Mesh3d>, RemovedComponents<ShadowDynamic>),
     mut logged: Local<Option<(usize, usize, usize)>>,
 ) {
     let _timed = Timed::start(0);
@@ -1010,6 +1231,10 @@ fn shadow_lights(
     let state = &mut *state;
     state.frame += 1;
     let frame = state.frame;
+    let hold_all = !holding();
+    // The static shadow cache: point lamps' faces drawn from the static casters into a cache
+    // and the dynamic casters drawn over a copy of it.
+    let cache_on = static_cache_on() && tune.is_some();
 
     // 1. Which lights cast: the placed ones (with grass fires and attached lights) up to
     // their cap; apart from them, the transients the camera sees, up to theirs within a
@@ -1095,6 +1320,11 @@ fn shadow_lights(
             cut_any: false,
             far_fade: 1.0,
             deferred: 0,
+            static_dirty: ALL_FACES,
+            pending: 0,
+            plain: plain_path(cache_on, hold_all, transient, !is_point, false),
+            to_static: 0,
+            composite: 0,
         });
         // Its shadow fades out over the last stretch of the reach (not a transient's: it is
         // chosen within a shorter reach and lasts a moment).
@@ -1110,12 +1340,14 @@ fn shadow_lights(
             // Chosen again while fading out: what changed meanwhile was not marked.
             entry.leaving = false;
             entry.dirty = ALL_FACES;
+            entry.static_dirty = ALL_FACES;
         }
         // Its step of detail, with hysteresis; a step finer draws its maps again in full when
         // a caster was cut from them, so it comes back.
         let step = stepped(entry.step, gap, STEP_HYSTERESIS);
         if step < entry.step && entry.cut_any && cutoff_on() {
             entry.dirty = ALL_FACES;
+            entry.static_dirty = ALL_FACES;
             entry.cut_any = false;
             state.pass.step_redraws += 1;
         }
@@ -1163,7 +1395,8 @@ fn shadow_lights(
     };
     // A texture made anew holds no light's maps: its lights draw again as if new, and those
     // leaving are dropped.
-    let point_key = (cube.size, state.capacity);
+    // The static cache gives the cube texture another use (copied into): another texture.
+    let point_key = (cube.size, state.capacity, cache_on);
     let spot_key = (directional.as_ref().map_or(2048, |d| d.size), state.spot_capacity, inputs.cascades);
     let new_point = state.point_maps_key.is_some_and(|k| k != point_key);
     let new_spot = state.spot_maps_key.is_some_and(|k| k != spot_key);
@@ -1180,7 +1413,7 @@ fn shadow_lights(
             if s.leaving {
                 return false;
             }
-            (s.fresh, s.dirty) = (true, ALL_FACES);
+            (s.fresh, s.dirty, s.static_dirty, s.pending) = (true, ALL_FACES, ALL_FACES, 0);
             if !s.transient {
                 s.fade = 0.0;
             }
@@ -1208,26 +1441,41 @@ fn shadow_lights(
         let cut = cutoff_on();
         let mut grid: Option<LampGrid> = None;
         let mut shapes_seen = 0usize;
-        for (e, t, aabb, vis, rl, name, parent) in &moved {
+        for (e, t, aabb, vis, rl, name, parent, dynamic) in &moved {
             if rl.is_some_and(|l| !l.intersects(&layers)) {
                 continue;
             }
             // Shown, hidden or new at once; moved once it went MOVE_EPS from its last mark.
             let centre = t.transform_point(Vec3::from(aabb.center));
-            let moved_enough = state.shapes_at.get(&e).is_none_or(|(c, _)| c.distance(centre) > MOVE_EPS);
+            let last = state.shapes_at.get(&e).map(|(c, _)| *c);
+            let moved_enough = last.is_none_or(|c| c.distance(centre) > MOVE_EPS);
             if !vis.is_changed() && !moved_enough {
                 continue;
             }
             let sphere = Sphere { center: centre.into(), radius: Vec3::from(aabb.half_extents).length() * max_scale(t) };
             // Where it last marked, for the cut-off (a shape shown, hidden or new: none).
-            let old = (!vis.is_changed()).then(|| state.shapes_at.get(&e).map(|(c, _)| Sphere { center: (*c).into(), radius: sphere.radius })).flatten();
+            let old = (!vis.is_changed()).then(|| last.map(|c| Sphere { center: c.into(), radius: sphere.radius })).flatten();
+            // With the static cache: a static shape shown, hidden or new marks the caches
+            // where it is; one that moved becomes dynamic and marks the caches where it was
+            // and is; a dynamic one marks only the composites, where it was and is.
+            let change = shape_change(dynamic, vis.is_changed(), last.is_some());
+            let static_mark = cache_on && change != ShapeChange::Dynamic;
+            if cache_on && change == ShapeChange::Promoted {
+                commands.entity(e).try_insert(ShadowDynamic);
+                state.pass.promoted += 1;
+            }
+            let sphere = match &old {
+                Some(o) if cache_on => merged_sphere(&sphere, o),
+                _ => sphere,
+            };
             shapes_seen += 1;
             if shapes_seen > GRID_AFTER && grid.is_none() {
                 grid = Some(LampGrid::new(&spheres));
             }
+            let at = Vec3::from(sphere.center);
             let m = match &grid {
-                Some(g) => mark_sphere(&sphere, old.as_ref(), cut, g.candidates(centre, sphere.radius).iter().map(|&i| i as usize), &lamps, &frusta, &mut state.lamps),
-                None => mark_sphere(&sphere, old.as_ref(), cut, 0..lamps.len(), &lamps, &frusta, &mut state.lamps),
+                Some(g) => mark_sphere(&sphere, old.as_ref(), cut, static_mark, g.candidates(at, sphere.radius).iter().map(|&i| i as usize), &lamps, &frusta, &mut state.lamps),
+                None => mark_sphere(&sphere, old.as_ref(), cut, static_mark, 0..lamps.len(), &lamps, &frusta, &mut state.lamps),
             };
             state.pass.cut_marks += u64::from(m.cut);
             // Where it was is kept only for shapes near a lamp.
@@ -1271,7 +1519,14 @@ fn shadow_lights(
             // The joints' box, grown by a limb's thickness [engineering choice].
             let box_sphere = |lo: Vec3, hi: Vec3| Sphere { center: ((lo + hi) * 0.5).into(), radius: (hi - lo).length() * 0.5 + 16.0 };
             let old = last.map(|(l, h, _)| box_sphere(l, h));
-            let m = mark_sphere(&box_sphere(lo, hi), old.as_ref(), cut, 0..lamps.len(), &lamps, &frusta, &mut state.lamps);
+            // A skeleton is dynamic: with the static cache it marks the composites of the
+            // faces it was and is in.
+            let now = box_sphere(lo, hi);
+            let sphere = match &old {
+                Some(o) if cache_on => merged_sphere(&now, o),
+                _ => now,
+            };
+            let m = mark_sphere(&sphere, old.as_ref(), cut, false, 0..lamps.len(), &lamps, &frusta, &mut state.lamps);
             state.pass.cut_marks += u64::from(m.cut);
             if m.marked {
                 state.causes[1] += 1;
@@ -1279,12 +1534,22 @@ fn shadow_lights(
         }
     }
     // Something removed: the lights around the camera, where the player takes, kills and
-    // breaks things, are drawn again in full [engineering choice].
-    if removed.read().count() > 0 {
+    // breaks things, are drawn again in full [engineering choice]. With the static cache, a
+    // removal of dynamic shapes only (an actor's part, a moved item) redraws no cache.
+    let gone_dynamic: EntityHashSet = removed_dynamic.read().collect();
+    let (mut any_gone, mut static_gone) = (false, false);
+    for e in removed.read() {
+        any_gone = true;
+        static_gone |= !gone_dynamic.contains(&e);
+    }
+    if any_gone {
         if let Some(a) = at {
             for l in lamps.iter().filter(|l| l.at.distance(a) <= l.range + 512.0) {
                 if let Some(s) = state.lamps.get_mut(&l.entity) {
                     s.dirty = ALL_FACES;
+                    if static_gone || !cache_on {
+                        s.static_dirty = ALL_FACES;
+                    }
                     state.causes[2] += 1;
                 }
             }
@@ -1293,11 +1558,15 @@ fn shadow_lights(
     // The light moved past LIGHT_MOVE_EPS, or its turn for a full redraw came.
     for l in &lamps {
         if let (Some(s), Some(tune)) = (state.lamps.get_mut(&l.entity), tune) {
-            if !l.transient && (light_moved(s.at, l.at) || frame.saturating_sub(s.refreshed) >= tune.refresh) {
+            let moved = light_moved(s.at, l.at);
+            if !l.transient && (moved || frame.saturating_sub(s.refreshed) >= tune.refresh) {
                 s.dirty = ALL_FACES;
+                s.static_dirty = ALL_FACES;
                 s.refreshed = frame;
                 s.at = l.at;
                 state.causes[3] += 1;
+                // A light that moves would draw its cache again each time: the plain path.
+                s.plain |= moved;
             }
         }
     }
@@ -1306,7 +1575,6 @@ fn shadow_lights(
     // on their turn; at most `draws` lights (point or spot), and apart from them
     // `transient_draws` transient ones.
     lamps.sort_by(|a, b| b.seen.cmp(&a.seen).then(a.gap.total_cmp(&b.gap)));
-    let hold_all = !holding();
     // The faces of each point light that can show in the camera's view (all for a spot
     // light, one never drawn, a transient, or with face culling off): a marked face out of
     // view stays marked, held, until it comes into view.
@@ -1321,21 +1589,27 @@ fn shadow_lights(
             }
         })
         .collect();
-    // Never drawn first, then those with marked faces that came into view, then the rest
-    // as sorted.
+    // Never drawn first, then those whose dynamic casters are to be put back over a fresh
+    // static cache, then those with marked faces that came into view, then the rest as
+    // sorted.
     let mut order: Vec<usize> = (0..lamps.len()).collect();
     order.sort_by_key(|&i| {
         let s = state.lamps.get(&lamps[i].entity);
-        (!s.is_some_and(|s| s.fresh), !s.is_some_and(|s| s.deferred & in_view[i] != 0))
+        (!s.is_some_and(|s| s.fresh), !s.is_some_and(|s| s.pending != 0), !s.is_some_and(|s| s.deferred & in_view[i] != 0))
     });
     let (mut draws, mut transient_draws) = tune.map_or((0, 0), |t| (t.draws, t.transient_draws));
     let mut drawing: EntityHashMap<u8> = EntityHashMap::default();
     out.held.clear();
+    out.to_static.clear();
+    out.on_static.clear();
     for i in order {
         let l = &lamps[i];
         let Some(s) = state.lamps.get_mut(&l.entity) else { continue };
         let all = if l.spot { 1 } else { ALL_FACES };
         s.dirty &= all;
+        s.static_dirty &= s.dirty;
+        s.pending &= s.dirty;
+        (s.to_static, s.composite) = (0, 0);
         let Some(t) = tune else { continue };
         let every = if l.gap <= NEAR { t.near_every } else { t.far_every };
         // A transient (a muzzle flash, 0.1 s; an explosion's light, still while it fades)
@@ -1346,7 +1620,7 @@ fn shadow_lights(
             all
         } else if l.transient {
             0
-        } else if its_turn(frame, s.phase, every) {
+        } else if s.pending != 0 || its_turn(frame, s.phase, every) {
             state.pass.faces_out_of_view += u64::from((s.dirty & !in_view[i]).count_ones());
             s.dirty & in_view[i]
         } else {
@@ -1365,6 +1639,20 @@ fn shadow_lights(
             0
         };
         if draw != 0 {
+            // With the static cache: faces whose cache is out of date drawn into it (then
+            // copied out), the others composited from it.
+            let (to_static, composite) = face_modes(draw, if s.fresh { all } else { s.static_dirty }, !s.plain);
+            (s.to_static, s.composite) = (to_static, composite);
+            if to_static != 0 {
+                out.to_static.insert(l.entity, to_static);
+            }
+            if composite != 0 {
+                out.on_static.insert(l.entity, composite);
+            }
+            state.pass.static_faces += u64::from(to_static.count_ones());
+            state.pass.composited += u64::from(composite.count_ones());
+            s.static_dirty &= !draw;
+            s.pending &= !draw;
             s.dirty &= !draw;
             s.fresh = false;
             if draw == all {
@@ -1436,6 +1724,9 @@ fn shadow_lights(
     if out.slots != state.slots {
         out.slots.clone_from(&state.slots);
     }
+    if out.static_cache != cache_on {
+        out.static_cache = cache_on;
+    }
     if out.point_capacity != state.capacity {
         out.point_capacity = state.capacity;
     }
@@ -1457,7 +1748,7 @@ fn shadow_lights(
         match tune {
             None => info!("light shadows: off"),
             Some(t) => info!(
-                "light shadows: {} cast ({points} point, {spots} spot lights) within {reach:.0} units, {} at most; cubes {}x{}, room for {}; spot maps room for {}; transients (muzzle flashes, explosions) within {:.0} units, {} at most",
+                "light shadows: {} cast ({points} point, {spots} spot lights) within {reach:.0} units, {} at most; cubes {}x{}, room for {}; spot maps room for {}; transients (muzzle flashes, explosions) within {:.0} units, {} at most; static shadow cache {}",
                 points + spots,
                 t.lights,
                 cube.size,
@@ -1465,7 +1756,8 @@ fn shadow_lights(
                 state.capacity,
                 state.spot_capacity,
                 transient_reach(reach),
-                t.transients
+                t.transients,
+                if cache_on { format!("on ({:.0} MB)", cube_texture_mb(cube.size, state.capacity)) } else { "off".to_string() }
             ),
         }
     }
@@ -1521,7 +1813,7 @@ type CasterLists<'a> = (
     Option<&'a SpotLight>,
 );
 
-type Shapes<'a> = (&'a GlobalTransform, &'a Aabb, Has<LightFixture>, Option<&'a nvf_play::RefVisual>);
+type Shapes<'a> = (&'a GlobalTransform, &'a Aabb, Has<LightFixture>, Option<&'a nvf_play::RefVisual>, Has<ShadowDynamic>, Has<SkinnedMesh>);
 
 /// Take the light fixtures out of the shapes Bevy found for each casting light's maps this
 /// frame: every shape marked [`LightFixture`], and a small shape the light sits in or
@@ -1546,6 +1838,11 @@ fn skip_fixtures(
         // The light's step and map scale, for the cut-off (none for a light not in the
         // game's states).
         let cut = state.lamps.get(&light).filter(|_| cutoff_on()).map(|s| (s.step, s.map_scale));
+        // The static shadow cache: the faces drawn into it this frame (static casters only)
+        // and those composited from it (dynamic casters only); the faces whose lists hold
+        // dynamic casters.
+        let (to_static, composite) = state.lamps.get(&light).map_or((0, 0), |s| (s.to_static, s.composite));
+        let mut dynamic_in = 0u8;
         let mut cuts = 0u64;
         let at = t.translation();
         let mut lists: Vec<&mut Vec<Entity>> = Vec::with_capacity(6);
@@ -1557,9 +1854,12 @@ fn skip_fixtures(
         }
         // For the test aid: the shapes skipped, and the small ones kept near the light.
         let (mut skipped, mut kept): (Vec<Entity>, Vec<Entity>) = (Vec::new(), Vec::new());
-        for list in lists {
+        // Bit `face` for the cube's faces in order (a spot light's one list: bit 0).
+        for (face, list) in lists.into_iter().enumerate() {
+            let bit = 1u8 << face.min(7);
+            let (into_cache, over_cache) = (to_static & bit != 0, composite & bit != 0);
             list.retain(|e| {
-                let Ok((st, aabb, marked, _)) = shapes.get(*e) else { return true };
+                let Ok((st, aabb, marked, _, dynamic, skinned)) = shapes.get(*e) else { return true };
                 let gap = if marked { None } else { fixture_gap(at, &st.affine(), aabb) };
                 let skip = marked || gap.is_some_and(|g| g <= FIXTURE_MARGIN);
                 if log {
@@ -1577,7 +1877,14 @@ fn skip_fixtures(
                     cut_off(radius, st.transform_point(Vec3::from(aabb.center)).distance(at), scale, step)
                 });
                 cuts += u64::from(small);
-                !small
+                if small {
+                    return false;
+                }
+                let dynamic = dynamic || skinned;
+                if dynamic {
+                    dynamic_in |= bit;
+                }
+                keeps_caster(into_cache, over_cache, dynamic)
             });
         }
         if cuts > 0 {
@@ -1586,13 +1893,21 @@ fn skip_fixtures(
                 s.cut_any = true;
             }
         }
+        // Faces drawn into the cache that held dynamic casters: composited again, first.
+        let back = put_back(to_static, dynamic_in);
+        if back != 0 {
+            state.pass.put_back += u64::from(back.count_ones());
+            if let Some(s) = state.lamps.get_mut(&light) {
+                (s.dirty, s.pending) = (s.dirty | back, s.pending | back);
+            }
+        }
         if log && (!skipped.is_empty() || !kept.is_empty()) && logged.insert(light) {
             // Each by its reference, whether it is marked, its size and its gap to the light.
             let shown = |v: &[Entity]| {
                 let all: Vec<String> = v
                     .iter()
                     .filter_map(|e| shapes.get(*e).ok())
-                    .map(|(st, aabb, marked, r)| {
+                    .map(|(st, aabb, marked, r, ..)| {
                         let size = Vec3::from(aabb.half_extents) * 2.0 * st.compute_transform().scale.abs();
                         let gap = fixture_gap(at, &st.affine(), aabb).map_or("large".to_string(), |g| format!("{g:.0}"));
                         format!("{:08X}{} {:.0}x{:.0}x{:.0} gap {gap}", r.map_or(0, |r| r.0), if marked { " fixture" } else { "" }, size.x, size.y, size.z)
@@ -1836,7 +2151,7 @@ mod tests {
         let mut states: EntityHashMap<LampState> = EntityHashMap::default();
         states.insert(e(1), test_state(false, 0b1));
         states.insert(e(2), test_state(false, 0));
-        let mark = |s: &Sphere, c: &[usize], states: &mut EntityHashMap<LampState>| mark_sphere(s, None, false, c.iter().copied(), &lamps, &frusta, states);
+        let mark = |s: &Sphere, c: &[usize], states: &mut EntityHashMap<LampState>| mark_sphere(s, None, false, false, c.iter().copied(), &lamps, &frusta, states);
         let near = Sphere { center: Vec3::new(300.0, 0.0, 0.0).into(), radius: 20.0 };
         assert_eq!(mark(&near, &[0, 1], &mut states), Marked { reached: true, marked: true, cut: 0 });
         assert_eq!(states[&e(1)].dirty, ALL_FACES, "without frusta every face");
@@ -1870,6 +2185,11 @@ mod tests {
             cut_any: false,
             far_fade: 1.0,
             deferred: 0,
+            static_dirty: 0,
+            pending: 0,
+            plain: false,
+            to_static: 0,
+            composite: 0,
         }
     }
 
@@ -1965,32 +2285,136 @@ mod tests {
         states.insert(e(1), test_state(false, 0));
         let tiny = |x: f32| Sphere { center: Vec3::new(x, 0.0, 0.0).into(), radius: 1.0 };
         // 1 unit at 400: 1.3 texels, under step 2's 4: nothing marked, one cut counted.
-        let m = mark_sphere(&tiny(400.0), Some(&tiny(390.0)), true, 0..1, &lamps, &frusta, &mut states);
+        let m = mark_sphere(&tiny(400.0), Some(&tiny(390.0)), true, false, 0..1, &lamps, &frusta, &mut states);
         assert_eq!(m, Marked { reached: true, marked: false, cut: 1 });
         assert_eq!(states[&e(1)].dirty, 0);
         // Shown, hidden or new (no old place): the same.
-        assert_eq!(mark_sphere(&tiny(400.0), None, true, 0..1, &lamps, &frusta, &mut states).cut, 1);
+        assert_eq!(mark_sphere(&tiny(400.0), None, true, false, 0..1, &lamps, &frusta, &mut states).cut, 1);
         // Moved away from where it was over the cut-off (50 units: 10 texels): it was in the
         // map, so it marks.
-        let m = mark_sphere(&tiny(400.0), Some(&tiny(50.0)), true, 0..1, &lamps, &frusta, &mut states);
+        let m = mark_sphere(&tiny(400.0), Some(&tiny(50.0)), true, false, 0..1, &lamps, &frusta, &mut states);
         assert_eq!((m.marked, m.cut), (true, 0));
         assert_eq!(states[&e(1)].dirty, ALL_FACES);
         // The aid off: it marks.
         states.insert(e(1), test_state(false, 0));
-        assert_eq!(mark_sphere(&tiny(400.0), None, false, 0..1, &lamps, &frusta, &mut states).cut, 0);
+        assert_eq!(mark_sphere(&tiny(400.0), None, false, false, 0..1, &lamps, &frusta, &mut states).cut, 0);
         assert_eq!(states[&e(1)].dirty, ALL_FACES);
     }
 
     #[test]
     fn the_performance_pass_line_gives_each_technique_a_frame() {
-        let p = Pass { cut_casters: 300, cut_marks: 20, step_redraws: 3, steps: [100, 50, 50], grid: [50, 25_000, 9000, 40], distance_faded: 250, faces_out_of_view: 30 };
+        let p = Pass {
+            cut_casters: 300,
+            cut_marks: 20,
+            step_redraws: 3,
+            steps: [100, 50, 50],
+            grid: [50, 25_000, 9000, 40],
+            distance_faded: 250,
+            faces_out_of_view: 30,
+            static_faces: 12,
+            composited: 40,
+            put_back: 5,
+            promoted: 2,
+        };
         let s = pass_summary(&p, 100);
         assert!(s.starts_with("light shadows: performance pass over 100 frames: lights at steps near/mid/far 1.0/0.5/0.5 a frame;"), "{s}");
         assert!(s.contains("casters cut 3.0 a frame, marks skipped 0.20 a frame, redraws for a finer step 3"), "{s}");
         assert!(s.contains("0.50 lamps served a frame, 500 candidates each, 9000 meshes filed (40 for every light)"), "{s}");
         assert!(s.contains("distance fade (on) 2.5 lights fading a frame"), "{s}");
-        assert!(s.ends_with("face culling (on) 0.30 marked faces held out of view a frame"), "{s}");
+        assert!(s.contains("face culling (on) 0.30 marked faces held out of view a frame;"), "{s}");
+        assert!(
+            s.ends_with("static cache (on) 0.12 static redraws (faces) a frame, 0.40 dynamic recomposites a frame, 0.52 layer copies a frame, 5 faces put back after a static redraw, 2 shapes became dynamic"),
+            "{s}"
+        );
         assert!(pass_summary(&Pass::default(), 0).contains("over 0 frames"), "no division by zero");
+    }
+
+    #[test]
+    fn a_static_shape_that_moves_becomes_dynamic_and_a_dynamic_one_stays_so() {
+        // Shown, hidden or new: the static caches where it is.
+        assert_eq!(shape_change(false, true, true), ShapeChange::Static, "shown or hidden (Primm's mass enable)");
+        assert_eq!(shape_change(false, false, false), ShapeChange::Static, "new: a cell loading");
+        // Moved after it marked the lamps: promoted (clutter pushed, a door turning).
+        assert_eq!(shape_change(false, false, true), ShapeChange::Promoted);
+        // An actor's part, a skinned shape, one promoted before: composites only.
+        for (shown, known) in [(false, false), (false, true), (true, false), (true, true)] {
+            assert_eq!(shape_change(true, shown, known), ShapeChange::Dynamic);
+        }
+    }
+
+    #[test]
+    fn a_moved_caster_marks_where_it_was_and_where_it_is() {
+        let s = |x: f32, r: f32| Sphere { center: Vec3::new(x, 0.0, 0.0).into(), radius: r };
+        let holds = |m: &Sphere, a: &Sphere| Vec3::from(m.center).distance(Vec3::from(a.center)) + a.radius <= m.radius + 1e-3;
+        for (a, b) in [(s(0.0, 10.0), s(30.0, 10.0)), (s(0.0, 40.0), s(5.0, 2.0)), (s(100.0, 3.0), s(-50.0, 25.0)), (s(7.0, 5.0), s(7.0, 5.0))] {
+            let m = merged_sphere(&a, &b);
+            assert!(holds(&m, &a) && holds(&m, &b), "{m:?} from {a:?} and {b:?}");
+            assert!(m.radius <= (Vec3::from(a.center).distance(Vec3::from(b.center)) + a.radius + b.radius) * 0.5 + 1e-3 || m.radius == a.radius.max(b.radius), "no larger than needed");
+        }
+        assert_eq!(merged_sphere(&s(0.0, 40.0), &s(5.0, 2.0)).radius, 40.0, "one inside the other: the outer");
+        let m = merged_sphere(&s(0.0, 10.0), &s(30.0, 10.0));
+        assert!((m.radius - 25.0).abs() < 1e-4 && (Vec3::from(m.center).x - 15.0).abs() < 1e-4, "{m:?}");
+    }
+
+    #[test]
+    fn faces_with_an_old_cache_are_drawn_into_it_the_rest_composited() {
+        // Faces 0-2 drawn this frame; 1 and 4 have an out-of-date cache.
+        let (to_static, composite) = face_modes(0b0111, 0b1_0010, true);
+        assert_eq!((to_static, composite), (0b0010, 0b0101));
+        assert_eq!(face_modes(0b0111, 0b1_0010, false), (0, 0), "the plain path: neither");
+        assert_eq!(face_modes(ALL_FACES, ALL_FACES, true), (ALL_FACES, 0), "a first draw: all into the cache");
+        // Which casters each face's list keeps.
+        assert!(keeps_caster(true, false, false) && !keeps_caster(true, false, true), "into the cache: the static ones");
+        assert!(!keeps_caster(false, true, false) && keeps_caster(false, true, true), "over the cache: the dynamic ones");
+        assert!(keeps_caster(false, false, false) && keeps_caster(false, false, true), "the plain path: all");
+        // A face drawn into the cache whose list held an actor: composited again, first; a
+        // face composited with no dynamic caster left is the cache copied back, done.
+        assert_eq!(put_back(0b0011, 0b0110), 0b0010);
+        assert_eq!(put_back(0, ALL_FACES), 0, "composites are not put back");
+    }
+
+    #[test]
+    fn transients_spot_lights_moving_lights_and_the_aids_take_the_plain_path() {
+        assert!(!plain_path(true, false, false, false, false), "a still point lamp is cached");
+        assert!(plain_path(false, false, false, false, false), "NVF_LIGHT_SHADOW_STATIC_CACHE=0");
+        assert!(plain_path(true, true, false, false, false), "NVF_PLAY_TEST_LIGHT_SHADOW_HOLD=0");
+        assert!(plain_path(true, false, true, false, false), "a muzzle flash");
+        assert!(plain_path(true, false, false, true, false), "a spot light");
+        assert!(plain_path(true, false, false, false, true), "a light that moved");
+    }
+
+    #[test]
+    fn a_static_mark_marks_the_cache_and_a_dynamic_one_the_composite_only() {
+        let e = |n: u32| Entity::from_raw_u32(n).unwrap();
+        let lamps = vec![test_lamp(1, Vec3::ZERO, 0)];
+        let frusta = vec![(None, None)];
+        let mut states: EntityHashMap<LampState> = EntityHashMap::default();
+        states.insert(e(1), test_state(false, 0));
+        let near = Sphere { center: Vec3::new(200.0, 0.0, 0.0).into(), radius: 20.0 };
+        // An actor moved: the faces to composite, no cache.
+        mark_sphere(&near, None, false, false, 0..1, &lamps, &frusta, &mut states);
+        assert_eq!((states[&e(1)].dirty, states[&e(1)].static_dirty), (ALL_FACES, 0));
+        // A static shape shown in the same faces: their caches too, though the faces were
+        // marked already.
+        mark_sphere(&near, None, false, true, 0..1, &lamps, &frusta, &mut states);
+        assert_eq!((states[&e(1)].dirty, states[&e(1)].static_dirty), (ALL_FACES, ALL_FACES));
+        // A spot light: its one map.
+        let mut spot = test_lamp(2, Vec3::ZERO, 0);
+        spot.spot = true;
+        use bevy::camera::CameraProjection;
+        let lens = bevy::camera::PerspectiveProjection { fov: std::f32::consts::FRAC_PI_2, aspect_ratio: 1.0, near: 8.0, ..default() };
+        let cone = Frustum(bevy::shape::ViewFrustum::from_clip_from_world(&lens.get_clip_from_view()));
+        states.insert(e(2), test_state(false, 0));
+        mark_sphere(&Sphere { center: Vec3::new(0.0, 0.0, -100.0).into(), radius: 20.0 }, None, false, true, 0..1, &[spot], &[(None, Some(cone))], &mut states);
+        assert_eq!((states[&e(2)].dirty, states[&e(2)].static_dirty), (1, 1));
+    }
+
+    #[test]
+    fn the_cache_costs_as_much_again_as_the_cubes() {
+        // 512 squared, 24 lamps: about 150 MB (the owner's figure); 1024: four times that.
+        assert!((cube_texture_mb(512, 24) - 150.99).abs() < 0.01);
+        assert!((cube_texture_mb(1024, 32) - 805.31).abs() < 0.01);
+        assert_eq!(cube_texture_mb(512, 0), 0.0);
     }
 
     #[test]
