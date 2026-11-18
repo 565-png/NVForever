@@ -32,13 +32,14 @@ const BEVY_ATMOSPHERIC: &str = "    let extinction_factor = 1.0 - 1.0 / exp(dist
 /// haze seen through the weather's fog. Without haze (`scattering.x` 0) the old two lines
 /// run unchanged [design, #2675]. The aerial perspective (aerial.rs, an enhanced-look switch)
 /// comes first: only when aerial.rs `nvf_aerial` resolved this fragment's in-scatter colour
-/// into the uniform's copy (`nvf_params[0]`, display values, alpha -1; `nvf_params[1].rgb` the
+/// into the uniform's copy (`nvf_params[0]`, display values, alpha -2, which the CPU never
+/// writes (its lobe strength is within -1..1); `nvf_params[1].rgb` the
 /// channel weights) the weather's share becomes one per channel, 1 - (1 - fog)^w, still one
 /// blend with the haze over it; otherwise the lines below run as before [design, #2993].
 const GAME_FOG: &str = "    let fog_t = clamp((distance - fog_params.be.x) / max(fog_params.be.y - fog_params.be.x, 1.0), 0.0, 1.0);
     let fog_share = select(0.0, pow(fog_t, fog_params.be.z), fog_t > 0.0) * fog_color.a;
     if fog_params.bi.x > 0.5 {
-        if fog_params.nvf_params[0].w < 0.0 {
+        if fog_params.nvf_params[0].w < -1.5 {
             // NVForever aerial perspective (aerial.rs): per-channel shares, the in-scatter colour.
             let kept = 1.0 - clamp(fog_share, 0.0, 1.0);
             var air_share = vec3<f32>(1.0);

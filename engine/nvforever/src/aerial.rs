@@ -20,8 +20,10 @@
 //!   in the ray's direction (horizon to sky-lower by the ray's elevation, as the dome mixes
 //!   them, sky.rs `dome_color`), then toward the weather's sun colour by a normalised
 //!   Henyey-Greenstein lobe ([`lobe`]; Henyey and Greenstein, "Diffuse radiation in the
-//!   galaxy", ApJ 93, 1941), fading out as the sun sets. Mixes only: the colour stays within
-//!   the weather's own colours (#2915: nothing is pushed above the display range).
+//!   galaxy", ApJ 93, 1941) toward the real sun (the light turns to the moon's side below the
+//!   horizon; the shader turns it back), fading out as the sun sets. Mixes only: the colour
+//!   stays within the weather's own colours, the sky's as the dome draws them (#2915: nothing
+//!   is pushed above what the sky itself shows).
 //! - Both scale with the weight the desert haze uses ([`crate::haze::weight`]): full under a
 //!   clear weather, none as the weather's own fog gets short or dense (a hazy weather, the dust
 //!   storm keep their look exactly).
@@ -147,10 +149,14 @@ pub struct SkyColours {
     pub horizon: [f32; 3],
     pub lower: [f32; 3],
     pub sun: [f32; 3],
-    /// The dome's sky level (`SkyState::sky_scale`), held to at most 1 here.
+    /// The dome's sky level (`SkyState::sky_scale`, by which sky.wesl scales the dome).
     pub sky_scale: f32,
     /// The sun's elevation in degrees.
     pub sun_elevation: f32,
+    /// Whether the directional light points at the sun (its own clock's sun at or above the
+    /// horizon) rather than the opposite side (sky.rs `aim_sun` turns it to the moon's side
+    /// below the horizon).
+    pub light_is_sun: bool,
 }
 
 /// What the CPU works out each frame for the uniform; colours in display values.
@@ -163,9 +169,11 @@ pub struct Aerial {
     /// The in-scatter colour looking at the horizon and up at the sky-lower height.
     pub horizon: [f32; 3],
     pub lower: [f32; 3],
-    /// The sun colour and the lobe's strength looking straight at the sun.
+    /// The sun colour and the lobe's strength looking straight at the sun (0..1).
     pub sun: [f32; 3],
     pub lobe: f32,
+    /// The directional light points at the sun (else away from it).
+    pub light_is_sun: bool,
 }
 
 /// The aerial terms for `strength` (the weight times the debug multiplier) under `sky`;
@@ -175,7 +183,7 @@ pub fn aerial(strength: f32, sky: &SkyColours) -> Option<Aerial> {
         return None;
     }
     let a = strength.min(DEBUG_MOST);
-    let scale = if sky.sky_scale.is_finite() { sky.sky_scale.clamp(0.0, 1.0) } else { 1.0 };
+    let scale = if sky.sky_scale.is_finite() { sky.sky_scale.max(0.0) } else { 1.0 };
     let fog = sky.fog.map(display);
     let sky_share = (a * DOME_MIX).min(1.0);
     let toward = |c: [f32; 3]| -> [f32; 3] {
@@ -192,27 +200,29 @@ pub fn aerial(strength: f32, sky: &SkyColours) -> Option<Aerial> {
         lower: toward(sky.lower),
         sun: sky.sun.map(display),
         lobe: (a * LOBE_MOST).min(1.0) * up,
+        light_is_sun: sky.light_is_sun,
     })
 }
 
 /// The fog uniform's three vectors (`DistanceFog::nvf_params`): [0] the sun colour and the
-/// lobe's strength, [1] the in-scatter colour at the horizon and the red weight, [2] the one at
+/// lobe's strength (negative while the directional light points away from the sun, -1..1),
+/// [1] the in-scatter colour at the horizon and the red weight, [2] the one at
 /// the sky-lower height and the blue weight (green follows from the mean of 1, in the
 /// shader). All zero: off.
 pub fn pack(a: Option<&Aerial>) -> [Vec4; 3] {
     let Some(a) = a else { return [Vec4::ZERO; 3] };
     [
-        Vec4::new(a.sun[0], a.sun[1], a.sun[2], a.lobe),
+        Vec4::new(a.sun[0], a.sun[1], a.sun[2], if a.light_is_sun { a.lobe } else { -a.lobe }),
         Vec4::new(a.horizon[0], a.horizon[1], a.horizon[2], a.weights[0]),
         Vec4::new(a.lower[0], a.lower[1], a.lower[2], a.weights[2]),
     ]
 }
 
 /// What `nvf_aerial` resolves from the uniform for a view ray whose elevation's sine is
-/// `ray_y` and whose cosine to the sun is `toward_sun`: the in-scatter colour (display values)
+/// `ray_y` and whose cosine to the directional light is `toward_light`: the in-scatter colour (display values)
 /// and the three weights; `None` when off (the shader's mirror, for the tests).
 #[cfg(test)]
-pub fn resolve(p: &[Vec4; 3], ray_y: f32, toward_sun: f32) -> Option<([f32; 3], [f32; 3])> {
+pub fn resolve(p: &[Vec4; 3], ray_y: f32, toward_light: f32) -> Option<([f32; 3], [f32; 3])> {
     let red = p[1].w;
     if red <= 0.0 {
         return None;
@@ -221,8 +231,9 @@ pub fn resolve(p: &[Vec4; 3], ray_y: f32, toward_sun: f32) -> Option<([f32; 3], 
     let green = ((1.0 - LUMA[0] * red - LUMA[2] * blue) / LUMA[1]).max(0.0);
     let t = smoothstep(0.0, LOWER_SIN, ray_y);
     let mut air: [f32; 3] = std::array::from_fn(|i| p[1][i] + (p[2][i] - p[1][i]) * t);
-    if p[0].w > 0.0 {
-        let k = (p[0].w * lobe(toward_sun)).clamp(0.0, 1.0);
+    if p[0].w != 0.0 {
+        let toward_sun = if p[0].w > 0.0 { toward_light } else { -toward_light };
+        let k = (p[0].w.abs() * lobe(toward_sun)).clamp(0.0, 1.0);
         air = std::array::from_fn(|i| air[i] + (p[0][i] - air[i]) * k);
     }
     Some((air, [red, green, blue]))
@@ -260,7 +271,7 @@ pub fn debug_multiplier(text: Option<&str>) -> Result<Option<f32>, String> {
 
 /// The embedded asset path under which bevy_pbr registers `bevy_pbr::pbr_functions`.
 const PBR_FUNCTIONS: &str = "embedded://bevy_pbr/render/pbr_functions.wesl";
-/// Bevy's fog function's head [observed: bevy_pbr 0.20.1 `pbr_functions.wesl`]; the haze's
+/// Bevy's fog function's head [documented: engine/vendor/bevy_pbr/src/render/pbr_functions.wesl]; the haze's
 /// function goes in front of it too, which leaves it there once.
 const BEVY_APPLY_FOG: &str = "@if(DISTANCE_FOG)\nfn apply_fog(";
 /// The haze's fog call (haze.rs `HAZE_FOG_CALL`) wrapped by `nvf_aerial`.
@@ -272,10 +283,12 @@ const AERIAL_FUNCTION: &str = "// NVForever (nvforever aerial.rs AERIAL_FUNCTION
 // After Hoffman and Preetham, \"Rendering Outdoor Light Scattering in Real Time\" (GDC 2002): the
 // in-scattered colour follows the view ray's direction (the sky toward it, a Henyey-Greenstein
 // lobe toward the sun), the extinction differs per channel. The fog uniform's nvf_params hold
-// (aerial.rs pack): [0] the sun colour (display values) and the lobe's strength, [1] the colour
-// toward the horizon and the red weight, [2] the colour toward the sky-lower height and the blue
-// weight. All zero: off, Bevy's call as it was. On, the game's fog (fog.rs GAME_FOG) gets a copy
-// of the uniform with [0] the colour resolved for this ray (alpha -1) and [1] the three weights.
+// (aerial.rs pack): [0] the sun colour (display values) and the lobe's strength (negative while
+// the directional light points away from the sun: below the horizon it is the moon's side), [1]
+// the colour toward the horizon and the red weight, [2] the colour toward the sky-lower height
+// and the blue weight. All zero: off, Bevy's call as it was. On, the game's fog (fog.rs GAME_FOG)
+// gets a copy of the uniform with [0] the colour resolved for this ray (alpha -2) and [1] the
+// three weights.
 @if(DISTANCE_FOG)
 fn nvf_aerial(
     fog_params: mesh_view_types::Fog,
@@ -285,22 +298,22 @@ fn nvf_aerial(
     scattering: vec3<f32>,
 ) -> vec4<f32> {
     let red_weight = fog_params.nvf_params[1].w;
-    if red_weight <= 0.0 || distance <= 0.0 {
+    if red_weight <= 0.0 {
         return package::render::fog::atmospheric_fog(fog_params, input_color, distance, scattering);
     }
     let blue_weight = fog_params.nvf_params[2].w;
     let green_weight = max((1.0 - NVF_AERIAL_LUMA_R * red_weight - NVF_AERIAL_LUMA_B * blue_weight) / NVF_AERIAL_LUMA_G, 0.0);
-    let ray = view_to_world / distance;
+    let ray = view_to_world / max(distance, 1e-6);
     var air = mix(fog_params.nvf_params[1].rgb, fog_params.nvf_params[2].rgb, smoothstep(0.0, NVF_AERIAL_LOWER_SIN, ray.y));
     let lobe_strength = fog_params.nvf_params[0].w;
-    if lobe_strength > 0.0 && view_bindings::lights.n_directional_lights > 0u {
+    if lobe_strength != 0.0 && view_bindings::lights.n_directional_lights > 0u {
         let g: f32 = NVF_AERIAL_HG_G;
-        let toward = dot(ray, view_bindings::lights.directional_lights[0].direction_to_light);
+        let toward = sign(lobe_strength) * dot(ray, view_bindings::lights.directional_lights[0].direction_to_light);
         let q = (1.0 - g) * (1.0 - g) / max(1.0 + g * g - 2.0 * g * toward, 1e-6);
-        air = mix(air, fog_params.nvf_params[0].rgb, clamp(lobe_strength * q * sqrt(q), 0.0, 1.0));
+        air = mix(air, fog_params.nvf_params[0].rgb, clamp(abs(lobe_strength) * q * sqrt(q), 0.0, 1.0));
     }
     var resolved = fog_params;
-    resolved.nvf_params[0] = vec4<f32>(air, -1.0);
+    resolved.nvf_params[0] = vec4<f32>(air, -2.0);
     resolved.nvf_params[1] = vec4<f32>(red_weight, green_weight, blue_weight, 0.0);
     return package::render::fog::atmospheric_fog(resolved, input_color, distance, scattering);
 }
@@ -420,6 +433,9 @@ struct AerialState {
     debug: Option<f32>,
     logged: Option<Logged>,
     said_not_installed: bool,
+    /// The last derivation's inputs (the weight times the debug multiplier, the sky) and its
+    /// result, used again while they stay the same.
+    derived: Option<(f32, SkyColours, Option<Aerial>)>,
 }
 
 /// The figures for the log.
@@ -460,6 +476,7 @@ fn update_aerial(
             info!("aerial: aerial perspective off{}", if wanted && indoors { " indoors" } else { "" });
         }
         state.logged = None;
+        state.derived = None;
         return;
     };
     let multiplier = *state.debug.get_or_insert_with(|| match debug_multiplier(std::env::var(DEBUG_VAR).ok().as_deref()) {
@@ -485,8 +502,17 @@ fn update_aerial(
         sun: sky.color(ColorType::Sun),
         sky_scale: sky.sky_scale(),
         sun_elevation: sky.sun_elevation(),
+        light_is_sun: sky.sun_elevation_at(sky.sun_light_hour()) >= 0.0,
     };
-    let now = aerial(weight * multiplier, &colours);
+    let strength = weight * multiplier;
+    let now = match state.derived {
+        Some((s, c, a)) if s == strength && c == colours => a,
+        _ => {
+            let a = aerial(strength, &colours);
+            state.derived = Some((strength, colours, a));
+            a
+        }
+    };
     let packed = pack(now.as_ref());
     if fog.nvf_params != packed {
         fog.nvf_params = packed;
@@ -519,13 +545,13 @@ mod tests {
     fn clear_noon() -> SkyColours {
         let l = fnv_world::sky::srgb_to_linear;
         let c = |r: u8, g: u8, b: u8| [l(r), l(g), l(b)];
-        SkyColours { fog: c(150, 168, 190), horizon: c(162, 194, 204), lower: c(123, 156, 242), sun: c(255, 240, 200), sky_scale: 0.88, sun_elevation: 70.0 }
+        SkyColours { fog: c(150, 168, 190), horizon: c(162, 194, 204), lower: c(123, 156, 242), sun: c(255, 240, 200), sky_scale: 0.88, sun_elevation: 70.0, light_is_sun: true }
     }
 
     fn dusk() -> SkyColours {
         let l = fnv_world::sky::srgb_to_linear;
         let c = |r: u8, g: u8, b: u8| [l(r), l(g), l(b)];
-        SkyColours { fog: c(170, 140, 120), horizon: c(230, 150, 100), lower: c(120, 110, 150), sun: c(255, 180, 90), sky_scale: 0.88, sun_elevation: 2.0 }
+        SkyColours { fog: c(170, 140, 120), horizon: c(230, 150, 100), lower: c(120, 110, 150), sun: c(255, 180, 90), sky_scale: 0.88, sun_elevation: 2.0, light_is_sun: true }
     }
 
     fn mean(w: [f32; 3]) -> f32 {
@@ -636,14 +662,14 @@ mod tests {
     }
 
     /// The in-scatter colour for every ray stays within the weather's own colours (display
-    /// values; the sky colours darkened by the sky level at most), per channel.
+    /// values; the sky colours times the sky level, as the dome draws them), per channel.
     #[test]
     fn the_in_scatter_colour_stays_within_the_weathers_colours() {
-        for sky in [clear_noon(), dusk(), SkyColours { sky_scale: 1.55, ..clear_noon() }, SkyColours { sun_elevation: -30.0, ..dusk() }] {
+        for sky in [clear_noon(), dusk(), SkyColours { sky_scale: 1.55, ..clear_noon() }, SkyColours { sun_elevation: -30.0, light_is_sun: false, ..dusk() }] {
             for strength in [0.1, 0.5, 1.0, 4.0] {
                 let a = aerial(strength, &sky).expect("on");
                 let p = pack(Some(&a));
-                let scale = sky.sky_scale.clamp(0.0, 1.0);
+                let scale = sky.sky_scale.max(0.0);
                 for y in [-1.0, -0.1, 0.0, 0.05, 0.2, 0.5, 1.0] {
                     for c in [-1.0, 0.0, 0.5, 0.9, 1.0] {
                         let (air, w) = resolve(&p, y, c).expect("on");
@@ -651,7 +677,9 @@ mod tests {
                             let pts = [display(sky.fog[i]), display(sky.horizon[i] * scale), display(sky.lower[i] * scale), display(sky.sun[i])];
                             let (lo, hi) = pts.iter().fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
                             assert!(air[i] >= lo - 1e-5 && air[i] <= hi + 1e-5, "{strength} {y} {c} ch {i}: {} not in {lo}..{hi}", air[i]);
-                            assert!(air[i] <= 1.0 + 1e-6);
+                            if hi <= 1.0 {
+                                assert!(air[i] <= 1.0 + 1e-6, "within the display range when the weather's colours are");
+                            }
                         }
                         // The shader's green is the CPU's.
                         assert!((w[1] - a.weights[1]).abs() < 1e-4, "{w:?} vs {:?}", a.weights);
@@ -670,12 +698,70 @@ mod tests {
         assert_eq!(resolve(&[Vec4::ZERO; 3], 0.0, 1.0), None);
     }
 
+    /// The sun's direction as sky.rs works it out for an elevation (degrees) at a fixed
+    /// heading, Bevy axes (y up), and the directional light's (aim_sun: the opposite side
+    /// below the horizon).
+    fn sun_and_light(elevation: f32) -> (Vec3, Vec3) {
+        let e = elevation.to_radians();
+        let sun = Vec3::new(e.cos(), e.sin(), 0.0);
+        (sun, if sun.y >= 0.0 { sun } else { -sun })
+    }
+
+    /// Across the horizon the lobe follows the real sun, not the light that turns to the
+    /// moon's side: the in-scatter colour is continuous through 0 degrees.
+    #[test]
+    fn the_sun_lobe_is_continuous_across_the_horizon() {
+        let at = |elevation: f32, ray: Vec3| {
+            let (_, light) = sun_and_light(elevation);
+            let sky = SkyColours { sun_elevation: elevation, light_is_sun: elevation >= 0.0, ..dusk() };
+            let p = pack(aerial(1.0, &sky).as_ref());
+            resolve(&p, ray.y, ray.dot(light)).unwrap().0
+        };
+        let toward = Vec3::new(1.0, 0.0, 0.0);
+        let away = Vec3::new(-1.0, 0.0, 0.0);
+        for ray in [toward, away, Vec3::new(0.7, 0.1, 0.7).normalize()] {
+            let (above, below) = (at(0.01, ray), at(-0.01, ray));
+            assert!(above.iter().zip(below).all(|(a, b)| (a - b).abs() < 2e-3), "{ray:?}: {above:?} vs {below:?}");
+        }
+        // Below the horizon, still brighter toward the sun than away from it.
+        let sky = SkyColours { sun_elevation: -1.0, light_is_sun: false, ..dusk() };
+        let p = pack(aerial(1.0, &sky).as_ref());
+        assert!(p[0].w < 0.0, "the light points away from the sun");
+        let (_, light) = sun_and_light(-1.0);
+        let sun_side = resolve(&p, 0.0, toward.dot(light)).unwrap().0;
+        let moon_side = resolve(&p, 0.0, away.dot(light)).unwrap().0;
+        let a = aerial(1.0, &sky).unwrap();
+        assert!(sun_side.iter().zip(a.sun).zip(a.horizon).all(|((v, s), h)| (v - s).abs() <= (h - s).abs() + 1e-6), "toward the sun the colour is nearer the sun's: {sun_side:?}");
+        assert!(moon_side.iter().zip(a.horizon).all(|(v, h)| (v - h).abs() < 1e-3), "away from it hardly any: {moon_side:?}");
+    }
+
+    /// Under a brighter image space the far land's target is the dome as drawn (its colour
+    /// times the actual sky level), not held to the weather's colour.
+    #[test]
+    fn the_sky_colours_follow_the_actual_sky_level() {
+        let dim = SkyColours { horizon: [0.2, 0.25, 0.3], lower: [0.15, 0.2, 0.35], sky_scale: 1.55, ..clear_noon() };
+        let a = aerial(1.0 / DOME_MIX, &dim).expect("on");
+        assert_eq!(a.sky_share, 1.0);
+        for i in 0..3 {
+            assert!((a.horizon[i] - display(dim.horizon[i] * 1.55)).abs() < 1e-6, "{:?}", a.horizon);
+            assert!((a.lower[i] - display(dim.lower[i] * 1.55)).abs() < 1e-6, "{:?}", a.lower);
+            assert!(a.horizon[i] < 1.0 && a.lower[i] < 1.0, "colours under 1 stay under 1");
+        }
+        // Not finite: as drawn at 1; below 0: black, never negative.
+        let one = aerial(1.0, &SkyColours { sky_scale: f32::NAN, ..dim }).unwrap();
+        let at_one = aerial(1.0, &SkyColours { sky_scale: 1.0, ..dim }).unwrap();
+        assert_eq!(one.horizon, at_one.horizon);
+        let none = aerial(1.0, &SkyColours { sky_scale: -2.0, ..dim }).unwrap();
+        assert!(none.horizon.iter().all(|v| *v >= 0.0));
+    }
+
     #[test]
     fn extreme_skies_give_finite_figures() {
         let odd = [
-            SkyColours { fog: [0.0; 3], horizon: [0.0; 3], lower: [0.0; 3], sun: [0.0; 3], sky_scale: 0.0, sun_elevation: 0.0 },
-            SkyColours { fog: [f32::NAN; 3], horizon: [f32::INFINITY, 0.0, -1.0], lower: [1e9; 3], sun: [-5.0; 3], sky_scale: f32::NAN, sun_elevation: f32::NAN },
-            SkyColours { fog: [1.0; 3], horizon: [1.0, 0.0, 0.0], lower: [0.0, 0.0, 1.0], sun: [1.0; 3], sky_scale: 1e9, sun_elevation: 90.0 },
+            SkyColours { fog: [0.0; 3], horizon: [0.0; 3], lower: [0.0; 3], sun: [0.0; 3], sky_scale: 0.0, sun_elevation: 0.0, light_is_sun: true },
+            SkyColours { fog: [f32::NAN; 3], horizon: [f32::INFINITY, 0.0, -1.0], lower: [1e9; 3], sun: [-5.0; 3], sky_scale: f32::NAN, sun_elevation: f32::NAN, light_is_sun: false },
+            SkyColours { fog: [1.0; 3], horizon: [1.0, 0.0, 0.0], lower: [0.0, 0.0, 1.0], sun: [1.0; 3], sky_scale: 1e9, sun_elevation: 90.0, light_is_sun: true },
+            SkyColours { fog: [0.5; 3], horizon: [0.5; 3], lower: [0.5; 3], sun: [0.5; 3], sky_scale: -3.0, sun_elevation: 1.0, light_is_sun: false },
         ];
         for sky in odd {
             for strength in [1e-6, 1.0, 4.0, 1e9, f32::INFINITY, f32::NAN, -1.0] {
@@ -684,7 +770,8 @@ mod tests {
                     continue;
                 };
                 let p = pack(Some(&a));
-                assert!(p.iter().all(|v| v.is_finite() && v.min_element() >= 0.0), "{p:?}");
+                assert!(p.iter().all(|v| v.is_finite()) && p[0].truncate().min_element() >= 0.0 && p[1].min_element() >= 0.0 && p[2].min_element() >= 0.0, "{p:?}");
+                assert!((-1.0..=1.0).contains(&p[0].w), "the lobe's strength and the sun's side: {p:?}");
                 assert!(p[1].w > 0.0, "on is marked by a red weight above 0");
                 let (air, w) = resolve(&p, 0.1, 0.9).unwrap();
                 assert!(air.iter().chain(w.iter()).all(|v| v.is_finite() && *v >= 0.0));
@@ -776,7 +863,7 @@ mod tests {
     fn the_game_fog_takes_the_aerial_branch_first_and_keeps_its_old_lines() {
         let fog = crate::fog::patched_vendored_fog();
         let at = |s: &str| fog.find(s).unwrap_or_else(|| panic!("{s}"));
-        let aerial = at("if fog_params.nvf_params[0].w < 0.0 {");
+        let aerial = at("if fog_params.nvf_params[0].w < -1.5 {");
         assert!(aerial > at("if fog_params.bi.x > 0.5 {"), "outdoors only");
         assert!(aerial < at("if scattering.x > 0.0 && fog_params.directional_light_color.a <= 0.0 {\n            // NVForever desert haze"));
         assert!(fog.contains("        let shown = mix(pow(max(input_color.rgb, vec3(0.0)), vec3(1.0 / 2.2)), pow(max(fog_color.rgb, vec3(0.0)), vec3(1.0 / 2.2)), fog_share);"));

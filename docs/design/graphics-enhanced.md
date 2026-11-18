@@ -2092,13 +2092,19 @@ text would have used no longer exists since the settings menu overhaul).
     below the horizon, moving to the sky-lower colour by 20° up (`LOWER_SIN`). The dome mixes
     the same two colours (sky.rs `dome_color`) by atmosphere.nif's own vertex weights, which
     the fog path does not have, so the elevation curve here is ours. Each is taken times the
-    dome's sky level (`SkyState::sky_scale`, held to at most 1), so a far ridge meets the sky
-    drawn behind it. Then toward the weather's sun colour by the normalised Henyey-Greenstein
+    dome's sky level (`SkyState::sky_scale`, the factor sky.wesl draws the dome with, 0.88 in
+    the Mojave by day, 1.55 in the Capital Wasteland), so a far ridge meets the sky drawn behind
+    it. Then toward the weather's sun colour by the normalised Henyey-Greenstein
     lobe ((1 - g)^2 / (1 + g^2 - 2 g cos))^1.5 with g = 0.6 (`HG_G`), at most 0.35 at the sun
     (`LOBE_MOST`), fading in as the sun rises through -2..3° as the sky's disc and glare do
-    (`SkyState::light`): nothing at night. All mixes: the colour stays within the weather's
-    own fog, horizon, sky-lower and sun colours (the sky colours darkened by the sky level at
-    most), never above the display range (#2915: no clamp added, nothing made brighter).
+    (`SkyState::light`): nothing at night. The lobe follows the real sun: below the horizon
+    sky.rs `aim_sun` turns the directional light to the moon's side while this fade still runs,
+    so the CPU packs which side the light points to (the sign of the lobe's strength, from the
+    light's own clock) and the shader turns the light's direction back toward the sun; the
+    colour is continuous through 0° (tested). All mixes: the colour stays within the weather's
+    own fog and sun colours and its horizon and sky-lower colours as the dome draws them (times
+    the sky level), so it is above the display range only where the drawn sky already is
+    (#2915: no clamp added).
   - *Weight.* Both scale with the desert haze's weight (§3.16, `haze::weight`, reused): full
     under a clear weather, none as the weather's own fog gets short or dense, so
     NVWastelandHazy and HVDustStorm (weight 0 [observed: FalloutNV.esm, fnvtool esm decode,
@@ -2110,8 +2116,8 @@ text would have used no longer exists since the settings menu overhaul).
   replacing that call again, and its edit is made after the haze's, only once those are in
   place. It works out the in-scatter colour for the fragment's view ray and hands it, with the
   three weights, to `GAME_FOG` in a copy of the fog uniform (`nvf_params[0]` the colour with
-  alpha -1, `nvf_params[1].rgb` the weights). `GAME_FOG`'s new first outdoor branch, taken
-  only on that -1, blends **once**, per channel, in the values the fog is blended in outdoors
+  alpha -2, which the CPU never writes, `nvf_params[1].rgb` the weights). `GAME_FOG`'s new
+  first outdoor branch, taken only on that -2, blends **once**, per channel, in the values the fog is blended in outdoors
   (the pow(1/2.2) encoding: the main view is HDR, but the outdoor fog blend is in that
   encoding, and the in-scatter colours are encoded on the CPU the same way; `dome_color`
   mixes in the sRGB curve, a small difference). Interiors (the linear blend) are untouched,
@@ -2126,7 +2132,8 @@ text would have used no longer exists since the settings menu overhaul).
   `GpuFog`, the shader's `Fog`; a patch of engine/vendor/bevy_pbr, listed in its README): one
   uniform grows by 48 bytes, the view bind group keeps its bindings. [0] the sun colour
   (display values) and the lobe's strength, [1] the in-scatter colour at the horizon and the
-  red weight, [2] the one at the sky-lower height and the blue weight; green follows from the
+  red weight, [2] the one at the sky-lower height and the blue weight; [0]'s alpha is negative
+  while the directional light points away from the sun; green follows from the
   mean of 1, in the shader. The haze uses up the uniform's free fields, per-frame values
   written into shader text are not acceptable and the view bind group is not to grow, hence
   the patch. The reflection and lens cameras clone the main camera's fog, so they get the same
@@ -2154,8 +2161,8 @@ text would have used no longer exists since the settings menu overhaul).
   range), logged once; it does not turn the switch on. Smoke: `aerial-perspective`.
 - **Not done**: no height dependence (the weather's fog has none; the haze has its own); no
   shadowing of the in-scattered light; the dome's own vertex weights not followed (above); the
-  sun's direction is the view's first directional light, as for the haze (the sun; the
-  first-person arms' shade light points the same way); the cloud cover is not read (the base
+  sun's direction is the view's first directional light turned back toward the sun where it is
+  the moon's side, as above (the first-person arms' shade light points the same way); the cloud cover is not read (the base
   game's overcast is not told from clear, weather-facts). The cost is not measured yet, and
   the pictures are owed: far ranges from the air over Goodsprings and along the I-15 toward
   Primm at noon, 06:30 and 18:30, the hazy weather, the dust storm, an interior, and with the
