@@ -23,7 +23,7 @@ pub(crate) fn call(g: &mut Game<'_>, name: &str, args: &[XVal]) -> Option<Result
             g.other.texture_filter_level = Some(*level as u16);
             Ok(XVal::Num(0.0))
         }
-        _ => Err("SetMaxAniso supports one of the mapped filtering levels1,2,4,8,16".into()),
+        _ => Err("SetMaxAniso supports one of the mapped filtering levels 1, 2, 4, 8, 16".into()),
     })
 }
 

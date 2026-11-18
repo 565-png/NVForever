@@ -69,11 +69,7 @@ material after directory grace, and a separate canonical-worker control retains
 ordinary expiry and cleanup after the last material owner. Two headless play controls connect actual source requests
 to the registered sampler consumer and verify deferred resource admission.
 
-All eleven controls passed in [hosted CI for the earlier candidate `9b0b34e`](https://github.com/LootJunkieAzza/NVForever/actions/runs/44090441220)
-on Linux, and again in [hosted CI for the integration with Main `d1c0130`](https://github.com/LootJunkieAzza/NVForever/actions/runs/44213321267).
-The baseline with the same two worker-lifetime
-fixtures remains unrun, so there is no measured baseline comparison. The
-original game's accepted-level table,
-rounding, encoding and loaded-texture/save timing remain probe gaps. GPU appearance,
-full SetMaxAniso behavior, installed-mod support and dependency-popup removal are
-not claimed. No original DDS, game data, private paths or captures are included.
+The original game's accepted-level table, rounding, encoding and loaded-texture/save
+timing remain probe gaps. GPU appearance, full SetMaxAniso behavior, installed-mod
+support and dependency-popup removal are not claimed. No original DDS, game data,
+private paths or captures are included.
