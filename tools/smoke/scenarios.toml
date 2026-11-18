@@ -1892,6 +1892,98 @@ forbid = [
 ]
 
 [[scenario]]
+name = "light-shadows-novac"
+source = "[design] docs/design/graphics-enhanced.md §3.15, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in Novac, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
+args = ["--cell", "Novac", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality"]
+run_seconds = 30
+expect = [
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "lamps cast (Novac)" },
+  { re = 'light shadows: [0-9.]+ point lights switched on and [0-9.]+ faces drawn a frame over [0-9]+ frames', label = "the 10-s lamp summary (Novac)" },
+  { re = 'static shadow cache on \([0-9]+ MB\)', label = "the static shadow cache on (Novac)" },
+  { re = 'static cache draws [0-9]+, static cache composites [0-9]+, static cache misses 0', label = "no static cache misses (Novac)" },
+  { re = 'light shadows: soft edges \(light size [0-9.]+, explosions [0-9.]+\)', label = "soft edges on Quality (Novac)" },
+]
+forbid = [
+  { re = 'static cache misses [1-9]', label = "a composite without its static layer (Novac)" },
+  { text = "DeviceLost", label = "the GPU device was lost (Novac)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the lamp maps (Novac)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (Novac)" },
+]
+
+[[scenario]]
+name = "light-shadows-novac-dlss"
+source = "[design] docs/design/graphics-enhanced.md §3.15, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in Novac with DLSS Quality, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
+note = "needs NVF_DLSS_DIR (NVIDIA's files)."
+requires = ["NVF_DLSS_DIR"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0", WGPU_BACKEND = "vulkan" }
+args = ["--cell", "Novac", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality", "--upscaler", "dlss", "--upscaler-quality", "quality"]
+run_seconds = 30
+expect = [
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "lamps cast (Novac with DLSS Quality)" },
+  { re = 'light shadows: [0-9.]+ point lights switched on and [0-9.]+ faces drawn a frame over [0-9]+ frames', label = "the 10-s lamp summary (Novac with DLSS Quality)" },
+  { re = 'static shadow cache on \([0-9]+ MB\)', label = "the static shadow cache on (Novac with DLSS Quality)" },
+  { re = 'static cache draws [0-9]+, static cache composites [0-9]+, static cache misses 0', label = "no static cache misses (Novac with DLSS Quality)" },
+  { re = 'soft edges \(light size [0-9.]+, explosions [0-9.]+\) and contact shadows on [1-9][0-9]* lights', label = "soft edges and contact shadows with DLSS (Novac)" },
+]
+forbid = [
+  { re = 'static cache misses [1-9]', label = "a composite without its static layer (Novac with DLSS Quality)" },
+  { text = "DeviceLost", label = "the GPU device was lost (Novac with DLSS Quality)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the lamp maps (Novac with DLSS Quality)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (Novac with DLSS Quality)" },
+]
+
+[[scenario]]
+name = "light-shadows-interior"
+source = "[design] docs/design/graphics-enhanced.md §3.15, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in UnderpassRanchInterior01, a random interior, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
+args = ["--cell", "UnderpassRanchInterior01", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality"]
+run_seconds = 30
+expect = [
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "lamps cast (UnderpassRanchInterior01, a random interior)" },
+  { re = 'light shadows: [0-9.]+ point lights switched on and [0-9.]+ faces drawn a frame over [0-9]+ frames', label = "the 10-s lamp summary (UnderpassRanchInterior01, a random interior)" },
+  { re = 'static shadow cache on \([0-9]+ MB\)', label = "the static shadow cache on (UnderpassRanchInterior01, a random interior)" },
+  { re = 'static cache draws [0-9]+, static cache composites [0-9]+, static cache misses 0', label = "no static cache misses (UnderpassRanchInterior01, a random interior)" },
+  { re = 'light shadows: soft edges \(light size [0-9.]+, explosions [0-9.]+\)', label = "soft edges on Quality (UnderpassRanchInterior01, a random interior)" },
+]
+forbid = [
+  { re = 'static cache misses [1-9]', label = "a composite without its static layer (UnderpassRanchInterior01, a random interior)" },
+  { text = "DeviceLost", label = "the GPU device was lost (UnderpassRanchInterior01, a random interior)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the lamp maps (UnderpassRanchInterior01, a random interior)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (UnderpassRanchInterior01, a random interior)" },
+]
+
+[[scenario]]
+name = "light-shadows-interior-dlss"
+source = "[design] docs/design/graphics-enhanced.md §3.15, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in UnderpassRanchInterior01, a random interior with DLSS Quality, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
+note = "needs NVF_DLSS_DIR (NVIDIA's files)."
+requires = ["NVF_DLSS_DIR"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0", WGPU_BACKEND = "vulkan" }
+args = ["--cell", "UnderpassRanchInterior01", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality", "--upscaler", "dlss", "--upscaler-quality", "quality"]
+run_seconds = 30
+expect = [
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "lamps cast (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { re = 'light shadows: [0-9.]+ point lights switched on and [0-9.]+ faces drawn a frame over [0-9]+ frames', label = "the 10-s lamp summary (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { re = 'static shadow cache on \([0-9]+ MB\)', label = "the static shadow cache on (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { re = 'static cache draws [0-9]+, static cache composites [0-9]+, static cache misses 0', label = "no static cache misses (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { re = 'soft edges \(light size [0-9.]+, explosions [0-9.]+\) and contact shadows on [1-9][0-9]* lights', label = "soft edges and contact shadows with DLSS (UnderpassRanchInterior01, a random interior)" },
+]
+forbid = [
+  { re = 'static cache misses [1-9]', label = "a composite without its static layer (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { text = "DeviceLost", label = "the GPU device was lost (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the lamp maps (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+]
+
+[[scenario]]
 name = "sun-shadow-hold-flashlight"
 source = "#2182 review (vendored bevy_pbr light.rs prepare_lights, nvforever shadow_rate.rs): the player's flashlight casts shadows, so switching it on or off gives the sun a new shadow texture; that frame draws every cascade instead of holding one, outdoors at noon with the staggered schedule"
 areas = ["renderer", "flashlight"]
