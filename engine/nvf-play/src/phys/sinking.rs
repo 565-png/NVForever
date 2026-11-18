@@ -3,9 +3,14 @@
 //! reports, build 0.7.0, issue #2753]. The cause is not known; these lines say, at the moment
 //! a body goes under, where it is against the terrain under its own position, what the
 //! physics world has there (the terrain collider, other collision) and what it touches.
-//! They decide nothing in the game. Lines: `dropped 0x… woke after resting`, `dropped 0x…
-//! sank:` (`PhysState::settle_created`) and `ragdoll: actor … sank:` (nvforever
-//! `ragdoll.rs`); docs/spec-notes/physics.md §4.3.
+//! Lines: `dropped 0x… woke after resting`, `dropped 0x… sank:` (`PhysState::settle_created`)
+//! and `ragdoll: actor … sank:` (nvforever `ragdoll.rs`).
+//!
+//! The probe found the corpses starting under the ground (a body whose centre starts under
+//! the two-sided terrain mesh is pushed down through it): a ragdoll ([`start_lift`],
+//! nvforever `ragdoll.rs` `out_of_terrain`) and a dropped item
+//! ([`PhysState::lift_out_of_terrain`]) that would start so are lifted over the surface
+//! first. docs/spec-notes/physics.md §4.3.
 
 use super::{trace::owner_name, PhysState};
 use fnv_phys::{Filter, Key};
@@ -23,6 +28,29 @@ pub const GROUND_RAY_DOWN: f32 = 800.0;
 
 /// The most contacts or ray hits a line lists [design, #2753].
 const LISTED: usize = 6;
+
+/// A body that starts with its centre under the terrain surface (the two-sided terrain
+/// mesh then pushes it down, and it falls through: `ragdoll: actor … sank` 0.0 to 0.2 s after
+/// a placed-dead corpse's ragdoll started, [observed: smoke sinking-corpse-bighorner-spot
+/// and sinking-corpse-radscorpion-spot, 2026-11-18]) is lifted so that its centre is this
+/// far over the surface, game units [design, #2753: past the terrain's 3.5-unit contact
+/// shell].
+pub const START_CLEARANCE: f32 = 5.0;
+
+/// How far under a body a ray looks for something of its own to stand on (a floor built
+/// below the terrain's surface): with such a support it is not under the ground and is left
+/// where it is, game units [design, #2753].
+pub const SUPPORT_BELOW: f32 = 100.0;
+
+/// How far `points` (an index and a game-space centre) must rise so that none starts with
+/// its centre under the terrain height `terrain` gives at its own x, y: the most any one is
+/// under, plus [`START_CLEARANCE`], with that point's index; `None` when none is under.
+pub fn start_lift(points: impl IntoIterator<Item = (usize, [f32; 3])>, terrain: impl Fn(f32, f32) -> Option<f32>) -> Option<(usize, f32)> {
+    points
+        .into_iter()
+        .filter_map(|(i, p)| terrain(p[0], p[1]).filter(|&t| p[2] < t).map(|t| (i, t + START_CLEARANCE - p[2])))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+}
 
 /// Of `points` (an index and a game-space position), the one deepest under the terrain
 /// height `terrain` gives at its own x, y, when that depth is more than [`SANK_NOTE`]: its
@@ -47,6 +75,35 @@ impl PhysState {
             return "nothing".into();
         }
         hits.iter().take(LISTED).map(|h| format!("{} at z {:.1}", owner_name(Some(h.owner)), h.point[2])).collect::<Vec<_>>().join(", ")
+    }
+
+    /// Whether something other than the terrain lies within [`SUPPORT_BELOW`] under `at`
+    /// (actors, the layers the character passes through and `exclude` left out): a floor a
+    /// body under the terrain's surface stands on.
+    pub fn supported_below(&mut self, at: [f32; 3], exclude: Option<Key>) -> bool {
+        let filter = Filter { exclude: exclude.into_iter().collect(), no_actors: true, no_terrain: true, exclude_layers: fnv_phys::layers::character_ignores(), ..Default::default() };
+        self.ray(at, [0.0, 0.0, -1.0], SUPPORT_BELOW, filter).is_some()
+    }
+
+    /// A created dynamic reference made reaching into the terrain deeper than
+    /// `lift_onto_support` takes up (an NPC's weapon dropped `fnv_sim::world::DROP_AHEAD`
+    /// in front of it and `DROP_ABOVE` over its feet, into a slope) is lifted
+    /// onto the terrain's contact shell, unless something of its own lies under it (a floor
+    /// below the terrain's surface). Outdoors only (no terrain indoors) [design, #2753: a
+    /// body started under the two-sided terrain mesh is pushed down through it, as the
+    /// placed-dead corpses were, observed: smoke sinking-corpse-*-spot, 2026-11-18; the
+    /// players' dropped weapons sank slowly at first (8-24 units/s), then fell, observed:
+    /// issue #2753].
+    pub(super) fn lift_out_of_terrain(&mut self, id: u32) {
+        let Some(c) = self.world.ref_center(id) else { return };
+        let Some(t) = self.terrain_z(c[0], c[1]) else { return };
+        let Some(low) = self.world.ref_lowest_z(id) else { return };
+        let reach = t + fnv_phys::TERRAIN_SHELL - low;
+        if reach <= super::LIFT_ONTO_SUPPORT_MOST || self.supported_below(c, Some(Key::Ref(id))) {
+            return;
+        }
+        self.world.lift_ref(id, reach);
+        bevy::log::info!("collision of dropped 0x{id:08X} started {reach:.1} units into the terrain (lowest point {low:.1}, terrain z {t:.1}): lifted onto it");
     }
 
     /// What a reference's colliders touch, as of the last narrow-phase update: each other
@@ -135,5 +192,25 @@ mod tests {
     #[test]
     fn points_with_no_terrain_under_them_are_left_out() {
         assert_eq!(deepest_under([(0, [0.0, 0.0, -1000.0])], |_, _| None), None);
+        assert_eq!(start_lift([(0, [0.0, 0.0, -1000.0])], |_, _| None), None);
+    }
+
+    #[test]
+    fn a_start_over_the_surface_is_not_lifted() {
+        // On the surface or over it (even a hair over), at each point's own height.
+        assert_eq!(start_lift([(0, [0.0, 0.0, 100.0]), (1, [200.0, 0.0, 200.5]), (2, [-100.0, 0.0, 60.0])], slope), None);
+    }
+
+    #[test]
+    fn a_start_under_the_surface_rises_until_the_deepest_centre_is_clear() {
+        // 3 under at x 0 (a placed corpse a little in the ground), 360 under uphill.
+        let (i, up) = start_lift([(0, [0.0, 0.0, 97.0]), (1, [100.0, 0.0, 150.0 - 360.0]), (2, [50.0, 0.0, 200.0])], slope).expect("under the surface");
+        assert_eq!(i, 1);
+        assert!((up - (360.0 + START_CLEARANCE)).abs() < 1e-3, "{up}");
+        // A body a few units under is lifted too, however little: its centre is what the
+        // two-sided terrain pushes on.
+        let (i, up) = start_lift([(0, [0.0, 0.0, 97.0])], slope).expect("3 under");
+        assert_eq!(i, 0);
+        assert!((up - (3.0 + START_CLEARANCE)).abs() < 1e-3, "{up}");
     }
 }

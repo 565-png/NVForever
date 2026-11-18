@@ -568,8 +568,40 @@ terrain at its own x, y, with its speed, its rest or settle state, every collide
 straight down there (whether the terrain collider is in place where the surface says) and,
 for a drop, what it touches. A ragdoll `fell through` line with no `sank` line before it is
 the guard's reading on a slope (it measures under the first bone), not a body under the
-ground. Smoke probes `sinking-drop-*-spot` and `sinking-corpse-*-spot` kill at the reported
+ground. Smoke probes `sinking-drop-*-spot` and `sinking-corpse-*-spot` run at the reported
 spots.
+
+What the probes found [observed: smoke runs of 241f1581d, 2026-11-18, logs in the session's
+notes]:
+
+- **The corpses** of the reports (Bighorner 001710BB, Radscorpion 0015A0C4, Mole rat
+  00161732) are leveled spawns (`VSpawnTier2BigHornerMed75` …) whose leveled choice in those
+  runs was the invisible `nvvoid` placeholder (scale 0.1, no shapes; actors.md §10): with
+  Health 0 a new game lays it out dead (dead-on-spawn.md) where its reference is placed,
+  and its two-body ragdoll starts when the cell loads. 001710BB's root started about 3 units
+  under the terrain and fell straight down (0.2 s later 20 under at 158 units/s, then caught
+  152 under the terrain, the reports' figure); 0015A0C4's started 360 under (the reports'
+  355), where a terrain-layer rock (001613EC) stands 49 over the heightfield; 001710B3 nearby
+  did as 001710BB. A body whose centre starts under the two-sided terrain mesh is pushed
+  down and falls through it. Players see nothing of these (the model has no shapes); the
+  fall-through warnings and the lifts were all there was.
+- **The dropped weapons** did not reproduce: the settler of the drop probes held its weapon
+  holstered (SetRestrained, no combat), so it dropped nothing (combat.rs `death_drops` takes
+  the weapon in the hand); the player's own drops came to rest. An NPC's death drop is
+  placed 50 units in front of it and 30 over its feet (`fnv_sim::world::DROP_AHEAD`,
+  `DROP_ABOVE`): on a slope rising more than 0.6 ahead of it, or under feet drawn below the
+  surface, it starts in the ground, and the reports' weapons first sank slowly (8 to 24
+  units/s) and then fell, as a body pushed out downwards does [hypothesis].
+
+So [design, #2753]: a ragdoll about to start with a body's centre under the terrain at its
+own x, y, and nothing of its own within 100 units under that body (a floor built below the
+surface), is lifted whole until every centre is 5 units over the surface (`ragdoll: actor …
+starts with bone … under the terrain: lifted …`); a dropped item whose collision would reach
+more than `LIFT_ONTO_SUPPORT_MOST` into the terrain's shell, with nothing of its own under
+it, is lifted onto that shell (`collision of dropped 0x… started … units into the terrain …:
+lifted onto it`). The safety nets stay. The drop probes were set up again (the settler
+fights the player, its weapon drawn); a fifth runs at the shotgun's spot (WastelandNVmini,
+10798, 17343, flat at z 9920).
 
 ### 4.3.1 Clutter at cell load: asleep, jointed objects held (`engine/nvf-play`, 2026-10-11)
 

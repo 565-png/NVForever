@@ -1573,6 +1573,7 @@ impl PhysState {
         );
         if dynamic {
             self.lift_onto_support(id);
+            self.lift_out_of_terrain(id);
         }
         let added_at = self.world.stepped_secs();
         self.created.insert(id, CreatedBody { local, dynamic, start: s.pos, added_at, settled: false, marks: 0, rested_at: None, sank: false });
