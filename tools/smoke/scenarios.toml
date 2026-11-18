@@ -1674,14 +1674,16 @@ forbid = [
 [[scenario]]
 name = "advanced-movement-menu"
 source = "owner 2026-11-15 (\"simplify the Advanced Movement menu\"; engine/nvf-play/src/settings_layout.rs, settings_view.rs; docs/design/player-body.md §1.4a.3): the NVF Features tab lists the Global Toggle and Movement Weight (owner 2026-11-15) under Advanced Movement, then an empty line, Gameplay's three switches, an empty line and Visual Only's three, in the owner's order"
+note = "With Sprint (#3000) the tab is main's 24 lines and Sprint's row: 25. The window is 11 lines, but `settings_view::drawn_slots` leaves off its last lines while they are an empty line or a heading whose rows would only start in the next window (#2377: a heading is drawn with its first row): lines 10 and 11 are now the empty line before Visual Only and Visual Only's heading, so lines 1-9 are drawn, ending at Sprint. On main, line 11 is Weapon Inertia's row and all 11 are drawn"
 areas = ["player-body", "settings"]
 paths = ["engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/settings.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_PLAY_TEST_SETTINGS = "11:tab:NVF Features", NVF_PLAY_TEST_PAUSE_MENU = "12:inspect", NVF_PLAY_TEST_SHOTS = "13:advanced_movement_menu.png" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 16
 expect = [
-  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, movement-weight, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, , [NVF Features > Visual Only], weapon-inertia", label = "the Global Toggle, Movement Weight, an empty line, Gameplay, an empty line, Visual Only, in the owner's order (the window shows 11 lines since the menu overhaul, #2804; settings-layout places the rest)" },
-  { re = 'pause menu: inspect: NVF Features, .*lines 1-11 of 16', label = "sixteen lines in the tab: World Interaction's grass fires (#2804) after Visual Only" },
+  { re = 'pause menu: inspect: shown \[NVF Features > Advanced Movement\], advanced-movement, movement-weight, , \[NVF Features > Gameplay\], movement-inertia, weapon-handling, advanced-recoil, sprint$', label = "the Global Toggle, Movement Weight, an empty line, Gameplay with Sprint last (#3000), in the owner's order, and nothing after Sprint in this window (the note: why nine lines of eleven)" },
+  { re = 'pause menu: inspect: NVF Features, .*lines 1-9 of 25$', label = "twenty-five lines in the tab, main's 24 and Sprint; lines 1 to 9 drawn (the note)" },
+  { text = "pause menu: inspect: window 11 lines, 9 drawn", label = "an 11-line window (the menu overhaul, #2804) drawing nine: its last two would be an empty line and Visual Only's heading without its first row" },
 ]
 
 [[scenario]]
@@ -1751,7 +1753,7 @@ env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak,12
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 16
 expect = [
-  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off", label = "the Global Toggle and Advanced Recoil on, the other parts off" },
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off, Sprint off", label = "the Global Toggle and Advanced Recoil on, the other parts off (Sprint too, #3000)" },
   { re = 'weapon handling: draws at x1\.00 before perks.*Weapon Handling off', label = "the original's draw pace at Agility 5" },
   { re = 'movement inertia: (up to|glided)', count = 0, label = "by default no start or glide under inertia" },
   { re = 'eased crouch', count = 0, label = "by default the crouch follows the clips" },
@@ -1772,6 +1774,92 @@ expect = [
   { re = 'movement inertia: glided (?P<n>[\d.]+) units', range = [25, 50], label = "the glide stays: Movement Inertia is its own switch" },
   { text = "player view: crouched (eased crouch)", label = "and so does its eased crouch" },
   { re = 'player body summary: head bob off, deepest first-person dip (?P<n>[\d.]+) units', range = [0, 0.05], label = "the view no longer bobs" },
+]
+
+[[scenario]]
+name = "sprint-on"
+source = "#3000 (engine/nvf-play/src/stance.rs, engine/nvf-play/src/bindings.rs; docs/design/player-body.md §1.4a.3): Sprint switched on from the command line is logged on, with no key of its own by default, and Run keeps Left Shift (the maintainer's decision on #3002)"
+note = "the switch and the keys only: sprint-run and sprint-trace check the sprint itself. A test aid (NVF_PLAY_TEST_SCRIPT_MENUS) makes it an unattended run, which reads no INI, so the defaults hold: without one the run read the player's own NVForever.ini (its switches and Run's key) and the expectations could not hold"
+areas = ["player-body", "settings"]
+paths = ["engine/nvf-play/src/stance.rs", "engine/nvf-play/src/bindings.rs", "engine/nvf-play/src/inertia.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--sprint"]
+run_seconds = 8
+expect = [
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off, Sprint on", label = "the switch on from the command line" },
+  { text = "controls: Sprint on; Sprint's key None, Run's Left Shift", label = "Sprint has no key by default and Run keeps Left Shift with Sprint on" },
+]
+
+[[scenario]]
+name = "sprint-greyed-binding"
+source = "#3000 (engine/nvf-play/src/stance.rs binding_greyed, engine/nvf-play/src/pause.rs; docs/settings-reference.md Controls): with Sprint off (the default) its binding on the Controls tab is greyed and cannot be rebound; a control of the game's still rebinds"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/stance.rs", "engine/nvf-play/src/bindings.rs", "engine/nvf-play/src/pause.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "5:10", NVF_PLAY_TEST_SETTINGS = "6:controls,7:bind:Sprint=K,8:bind:Jump=J" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 11
+expect = [
+  { text = "controls: Sprint not changed: greyed (Turn on Sprint in NVF Features > Advanced Movement first.)", label = "the greyed Sprint binding is not rebound" },
+  { text = "controls: Jump bound to J (was Space)", label = "a game control still rebinds" },
+]
+forbid = [
+  { text = "controls: Sprint bound to", label = "nothing binds a greyed control" },
+]
+
+[[scenario]]
+name = "sprint-run"
+source = "#3000 (engine/nvf-play/src/sprint.rs; docs/design/player-body.md §1.4a.4): with Sprint on and bound to G on the Controls tab (it has no key by default), G held while walking ahead sprints for AP until the AP runs out, which ends it and leaves the player fully out of breath; it starts again only after G is let go, and letting go ends it"
+note = "NVF_SPRINT_AP_PER_SECOND=40 drains a level-1 character's AP within a few seconds (the shipped rate is 10). The second press is half a second (20 AP): about 48 AP have come back by then (the run of 2026-11-18), so a longer one ran out of AP before the key was let go"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/sprint.rs", "engine/nvf-play/src/stance.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/vats_mode.rs", "engine/nvf-play/src/heartbeat.rs", "engine/nvforever/src/sprint_view.rs"]
+env = { NVF_SPRINT_AP_PER_SECOND = "40", NVF_PLAY_TEST_PAUSE = "2:4", NVF_PLAY_TEST_SETTINGS = "3:bind:Sprint=G", NVF_PLAY_TEST_MOVE = "5:1:0,22:0:0", NVF_PLAY_TEST_KEYS = "6:g:6,18:g:0.5" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sprint", "--head-bob"]
+run_seconds = 24
+expect = [
+  { text = "sprint: test aid: 1.45 x the run, 40.0 AP a second", label = "the test aid's AP rate" },
+  { text = "controls: Sprint bound to G (was None)", label = "the run binds Sprint (no key by default, #3000: the maintainer's decision on #3002) on the Controls tab" },
+  { re = 'sprint: started, \d+ of \d+ AP', label = "G, Sprint's key, held while walking ahead sprints" },
+  { re = 'sprint: ended \(out of AP\) after [\d.]+ s, [\d.]+ AP spent, 0 of \d+ AP left', label = "the AP runs out, to 0 and not under" },
+  { text = "sprint: out of breath, strength 1.00", label = "out of AP: fully out of breath" },
+  { text = "sprint: heartbeat slow", label = "under 40 % AP the slower heartbeat" },
+  { text = "sprint: heartbeat fast", label = "under 20 % AP the faster heartbeat" },
+  { re = 'sprint: ended \(the control let go\)', label = "the second, short sprint ends when G is let go" },
+  { re = 'sprint: started', count = 2, label = "two presses, two sprints: running out does not start one again while G stays held" },
+]
+
+[[scenario]]
+name = "sprint-off-original"
+source = "#3000 (engine/nvf-play/src/sprint.rs, engine/nvf-play/src/bindings.rs): with Sprint off (the default) Left Shift is Run's as in the original: held while running it walks, and nothing sprints or spends AP for it; Sprint has no key"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/sprint.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/bindings.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,12:0:0", NVF_PLAY_TEST_KEYS = "6:shift:4" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 13
+expect = [
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off, Sprint off", label = "Sprint off by default" },
+  { text = "controls: Sprint off; Sprint's key None, Run's Left Shift", label = "Run on Left Shift, Sprint with no key" },
+]
+forbid = [
+  { re = 'sprint: (started|ended|test aid|out of breath)', label = "nothing of the sprint with its switch off" },
+]
+
+[[scenario]]
+name = "sprint-trace"
+source = "#3000 (engine/nvforever/src/player_body.rs MotionTrace, engine/nvforever/src/sprint_view.rs; docs/design/player-body.md §1.4a.4): a frame-by-frame trace of the first-person view and gun through a sprint with the 10mm pistol out (the sprint pose easing in, the bigger bob), Crouch/Sneak pressed mid-sprint (eased out), standing up and sprinting again until the AP runs out, and the out-of-breath breathing standing still after it, for finding steps and pops (tools/smoke/motion_trace.py reads it)"
+note = "NVF_SPRINT_AP_PER_SECOND=15 so the second sprint runs out of AP within the run. Sprint has no key by default (#3000, the maintainer's decision on #3002): the pause menu's Controls tab binds it to G at 3 s"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/sprint.rs", "engine/nvforever/src/sprint_view.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_SPRINT_AP_PER_SECOND = "15", NVF_PLAY_TEST_PAUSE = "2:4", NVF_PLAY_TEST_SETTINGS = "3:bind:Sprint=G", NVF_PLAY_TEST_MOTION_TRACE = "sprint-trace.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,11:sneak,13:sneak", NVF_PLAY_TEST_MOVE = "7:1:0,21:0:0", NVF_PLAY_TEST_KEYS = "8:g:12" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sprint", "--movement-inertia", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 30
+expect = [
+  { text = "motion trace: writing", label = "the trace is written" },
+  { text = "controls: Sprint bound to G (was None)", label = "the run binds Sprint (no key by default, #3000: the maintainer's decision on #3002) on the Controls tab" },
+  { re = 'sprint: started', label = "the sprint starts" },
+  { re = 'sprint: ended \(sneaking\)', label = "Crouch/Sneak ends it" },
+  { re = 'sprint: ended \(out of AP\)', label = "the second sprint runs out of AP" },
+  { re = 'sprint: out of breath, strength', label = "and leaves the player out of breath" },
+  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
 ]
 
 [[scenario]]
@@ -12495,6 +12583,7 @@ expect = [
   "settings layout: movement-inertia -> NVF Features > Gameplay",
   "settings layout: weapon-handling -> NVF Features > Gameplay",
   "settings layout: advanced-recoil -> NVF Features > Gameplay",
+  "settings layout: sprint -> NVF Features > Gameplay",
   "settings layout: weapon-inertia -> NVF Features > Visual Only",
   "settings layout: animation-smoothing -> NVF Features > Visual Only",
   "settings layout: camera-motion -> NVF Features > Visual Only",
