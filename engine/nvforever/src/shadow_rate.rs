@@ -279,11 +279,36 @@ fn staggered() -> bool {
 /// was kept and given back like the others; when it cast again with the same layout a held
 /// frame gave it the cascades of the frame its shadows went off, read against maps drawn
 /// before then, or, with a new shadow texture, drawn with those stale matrices.)
+/// The main camera and the water mirror while the mirror shares the main camera's shadow
+/// maps this frame ([`hold_cascades`]), for [`share_mirror_casters`].
+#[derive(Resource, Default)]
+pub(crate) struct MirrorShadowShare(pub Option<(Entity, Entity)>);
+
+/// The mirror draws the main camera's casters too. The same matrices are not enough for
+/// the same maps: after the light's visibility pass each view's caster lists are cut down
+/// by that view's own outline (`sky::sun_casters_over_slice`) and eye
+/// (`player_body::near_shade_casters`), so the mirror drew other casters into the shared
+/// layers than the main camera draws over them, and a held frame would have shown the
+/// reflection the main camera's set where a drawn frame showed the mirror's. Runs after
+/// both cuts.
+pub(crate) fn share_mirror_casters(share: Res<MirrorShadowShare>, mut lights: Query<&mut bevy::camera::visibility::CascadesVisibleEntities, With<DirectionalLight>>) {
+    let Some((main, mirror)) = share.0 else { return };
+    for mut visible in &mut lights {
+        if !visible.entities.contains_key(&mirror) {
+            continue;
+        }
+        if let Some(lists) = visible.entities.get(&main).cloned() {
+            visible.entities.insert(mirror, lists);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn hold_cascades(
     on: Res<PerformanceShadows>,
     map: Option<Res<DirectionalLightShadowMap>>,
     mut hold: ResMut<HoldDirectionalShadowMaps>,
+    mut share: Option<ResMut<MirrorShadowShare>>,
     mut all_lights: Query<(Entity, &DirectionalLight, &mut Cascades, Option<&CascadeShadowConfig>, Option<&RenderLayers>)>,
     views: Query<(Entity, &Camera, Option<&RenderLayers>, Has<FlyCam>, Has<crate::reflection::ReflectionCamera>), With<Camera3d>>,
     mut kept: Local<EntityHashMap<Kept>>,
@@ -291,6 +316,9 @@ pub(crate) fn hold_cascades(
     mut said: Local<Option<bool>>,
 ) {
     *frame = frame.wrapping_add(1);
+    if let Some(share) = share.as_mut().filter(|s| s.0.is_some()) {
+        share.0 = None;
+    }
     let schedule: &[(u32, u32)] = if on.0 {
         &PERFORMANCE_SCHEDULE
     } else if staggered() {
@@ -370,6 +398,9 @@ pub(crate) fn hold_cascades(
     // Every frame, drawn or held, so the reflection's shadows do not change fit with the
     // schedule: the mirror draws (on drawn frames) and reads the main camera's maps.
     if let Some((main, mirror)) = shared {
+        if let Some(share) = share.as_mut() {
+            share.0 = shared;
+        }
         for (_, directional, mut cascades, _, _) in &mut all_lights {
             if directional.shadow_maps_enabled && cascades.cascades.contains_key(&mirror) {
                 if let Some(list) = cascades.cascades.get(&main).cloned() {
@@ -407,6 +438,7 @@ impl Plugin for ShadowRatePlugin {
         app.insert_resource(PerformanceShadows(self.performance))
             .insert_resource(CascadesBeforePerformance(self.performance.then_some(CascadeLayout::Quality)))
             .init_resource::<HoldDirectionalShadowMaps>()
+            .init_resource::<MirrorShadowShare>()
             .add_plugins(ExtractResourcePlugin::<HoldDirectionalShadowMaps>::default())
             // `hold_cascades` runs with the other edits of the cascades, in their order
             // (shadow_anchor.rs `cascade_edits`).
@@ -632,6 +664,30 @@ mod tests {
         schedule.run(&mut world);
         schedule.run(&mut world);
         assert_eq!(world.resource::<HoldDirectionalShadowMaps>().0, 0b11);
+    }
+
+    /// The mirror takes the main camera's final caster lists while it shares its maps.
+    #[test]
+    fn the_sharing_mirror_draws_the_main_cameras_casters() {
+        use bevy::camera::visibility::{CascadesVisibleEntities, VisibleMeshEntities};
+        let mut world = World::new();
+        let (main, mirror, other) = (world.spawn_empty().id(), world.spawn_empty().id(), world.spawn_empty().id());
+        let (a, b) = (world.spawn_empty().id(), world.spawn_empty().id());
+        let list = |e: &[Entity]| vec![VisibleMeshEntities { entities: e.to_vec() }];
+        let mut visible = CascadesVisibleEntities::default();
+        visible.entities.insert(main, list(&[a]));
+        visible.entities.insert(mirror, list(&[a, b]));
+        visible.entities.insert(other, list(&[b]));
+        let light = world.spawn((DirectionalLight::default(), visible)).id();
+        world.insert_resource(MirrorShadowShare(None));
+        let mut schedule = Schedule::default();
+        schedule.add_systems(share_mirror_casters);
+        let lists = |world: &World, view: Entity| world.get::<CascadesVisibleEntities>(light).unwrap().entities[&view][0].entities.clone();
+        schedule.run(&mut world);
+        assert_eq!(lists(&world, mirror), vec![a, b], "not sharing: the mirror's own list");
+        world.insert_resource(MirrorShadowShare(Some((main, mirror))));
+        schedule.run(&mut world);
+        assert_eq!((lists(&world, mirror), lists(&world, main), lists(&world, other)), (vec![a], vec![a], vec![b]));
     }
 
     /// The water mirror is given the main camera's cascades, held ones included, every

@@ -168,11 +168,13 @@ pub fn underwater_fog(
             // fog as it last wrote it now, rather than one frame of under-water fog above
             // the surface.
             info!("underwater: the camera is out of the water, the cell's fog again");
-            if let Some((color, falloff)) = (*weather).take() {
+            // Only over this system's own fog: after a door or a weather change this
+            // frame `update_sky` has already written the fog that belongs here.
+            let ours = (*written).take().is_some_and(|(c, f)| c == fog.color && same_falloff(&f, &fog.falloff));
+            if let Some((color, falloff)) = (*weather).take().filter(|_| ours) {
                 fog.color = color;
                 fog.falloff = falloff;
             }
-            *written = None;
             sky.refresh();
         }
         return;

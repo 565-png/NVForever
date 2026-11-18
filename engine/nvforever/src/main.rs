@@ -1812,6 +1812,7 @@ fn main() -> AppExit {
     // Placed models' and effect models' billboard nodes face the camera (#2549).
     .add_systems(PostUpdate, world::face_camera.before(bevy::transform::TransformSystems::Propagate))
     .add_systems(PostUpdate, sky::sun_casters_over_slice.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
+    .add_systems(PostUpdate, shadow_rate::share_mirror_casters.after(sky::sun_casters_over_slice).after(player_body::near_shade_casters))
     // The sun's cascades' far bounds and texel sizes, logged when they change.
     .add_systems(PostUpdate, sky::log_sun_cascades.after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades).before(shadow_anchor::anchor_cascades))
     .add_systems(Startup, (crash::report_start, report_archives))

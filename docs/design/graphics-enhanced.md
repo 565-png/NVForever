@@ -498,7 +498,7 @@ taps a pixel for nine. The water mirror is given the main camera's cascades ever
 (`shadow_rate.rs`): the renderer numbers each view's shadow-map layers from zero, so a
 held layer holds the main camera's map, and the mirror reading it with matrices of its
 own made whole patches of reflected riverbank flash at Cottonwood Cove. With the same
-matrices in both views the staggered schedule keeps holding near water. Drawing every
+matrices in both views the staggered schedule keeps holding near water. The mirror also takes the main camera's caster lists after each view's own cuts (`sky::sun_casters_over_slice`, `player_body::near_shade_casters`): with the matrices alone the two views drew different casters into the same layers. Drawing every
 cascade of both views every frame was the first fix and doubled the cascade passes near
 water for every player. Reflected shadows reach as far as the main camera's cascades;
 past that the reflection is sunlit. The submerged pass is ordered after ambient

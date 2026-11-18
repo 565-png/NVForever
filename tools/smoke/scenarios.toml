@@ -361,11 +361,12 @@ source = "[design, #2674] From a fixed noon camera at Cottonwood Cove the water 
 areas = ["renderer", "graphics", "water"]
 paths = ["engine/nvforever/src/water*", "engine/nvforever/src/river_flow.rs", "engine/nvforever/src/caustics.wesl", "engine/nvforever/src/underwater*", "engine/nvforever/src/graphics.rs"]
 env = { NVF_PLAY_TEST_PIPELINE_LOG = "1" }
-args = ["--explore", "--pos=70250,-90750,-2100", "--heading", "140", "--pitch=-25", "--hour", "12", "--graphics-only", "water-effects"]
+args = ["--explore", "--sun-shadows", "--pos=70250,-90750,-2100", "--heading", "140", "--pitch=-25", "--hour", "12", "--graphics-only", "water-effects"]
 run_seconds = 20
 expect = [
   "water caustics and river flow",
   "water reflection: on (the water of cell 17,-23 on screen)",
+  { text = "sun shadows: a frame kept its farther cascades' maps (staggered schedule", label = "the shadow schedule holds with the mirror on: it shares the main camera's maps" },
 ]
 forbid = [
   { text = "Caught rendering error", label = "water effects shader validation" },

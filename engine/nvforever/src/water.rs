@@ -566,6 +566,11 @@ pub fn caustic_sun(sky: &SkyState) -> Vec4 {
     sun.extend(light)
 }
 
+/// How far the caustics' sun must move (direction components, daylight) before the water
+/// materials are written again: an explorer's running clock moved it every frame, and
+/// each write prepares every water material anew.
+const SUN_STEP: f32 = 2.0e-3;
+
 /// Keep the reflected sky in step with the sky dome (weather colours at the current hour;
 /// the fog colour indoors).
 pub fn update_water_sky(sky: Res<SkyState>, graphics: Option<Res<crate::graphics::Graphics>>, cache: Res<WaterCache>, mut materials: ResMut<Assets<WaterMaterial>>) {
@@ -583,7 +588,7 @@ pub fn update_water_sky(sky: Res<SkyState>, graphics: Option<Res<crate::graphics
     for h in cache.materials.values() {
         let stale = materials.get(h).is_some_and(|m| {
             let layers = if effects { m.current_layers } else { m.wind_layers };
-            m.params.sky_upper != upper || m.params.sky_horizon != horizon || m.params.water_sun != sun
+            m.params.sky_upper != upper || m.params.sky_horizon != horizon || !m.params.water_sun.abs_diff_eq(sun, SUN_STEP) || (m.params.water_sun == Vec4::ZERO) != (sun == Vec4::ZERO)
                 || m.params.layers != layers || m.params.under_fog.w != f32::from(effects)
         });
         if stale {
