@@ -89,6 +89,7 @@ mod frame_pace;
 mod frame_telemetry;
 mod blit_warm;
 mod handoff;
+mod full_detail;
 mod furniture;
 mod graphics;
 mod grass;
@@ -1839,6 +1840,9 @@ fn main() -> AppExit {
     .add_systems(Last, activators::report)
     .add_plugins(nvf_play::doors::DoorsPlugin)
     .add_plugins(destroyed::DestroyedPlugin)
+    // The full-detail scenery ring (#2701), off unless the settings or --graphics-only turn
+    // it on: draw-only cells beyond the loaded ones (full_detail.rs).
+    .add_plugins(full_detail::FullDetailPlugin)
     .add_systems(Update, (doors::script_drawn, doors::register, doors::open_all.run_if(move || open_doors), doors::pose).chain().after(nvf_play::doors::DoorSystems).after(advance_animations))
     .init_resource::<locomotion::ActorAnimCost>()
     .add_systems(PreUpdate, actors::take_background_work)

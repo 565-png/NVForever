@@ -126,6 +126,6 @@ fn swap_models(
         };
         let rt = Affine3A::from_translation(-cell.translation) * ref_affine(&p);
         let Streamer { hide, stats, .. } = &mut *streamer;
-        spawn_model(&mut commands, cell_e, &world, &p, r, &base, rt, &mut models, &mut emittance, hide, stats);
+        spawn_model(&mut commands, cell_e, &world, &p, r, &base, rt, &mut models, &mut emittance, hide, stats, crate::world::SpawnMode::Full);
     }
 }

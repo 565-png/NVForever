@@ -547,7 +547,7 @@ fn retire(commands: &mut Commands, dying: &mut Vec<Entity>, e: Entity) {
 
 /// Despawn up to [`DESPAWN_PER_FRAME`] children of retired cells, and the cells left
 /// empty.
-fn despawn_dying(commands: &mut Commands, dying: &mut Vec<Entity>, children: &Query<&Children>) {
+pub(crate) fn despawn_dying(commands: &mut Commands, dying: &mut Vec<Entity>, children: &Query<&Children>) {
     let mut left = DESPAWN_PER_FRAME;
     dying.retain(|&cell| {
         if left == 0 {
@@ -593,6 +593,19 @@ pub struct ReadAhead {
     listed: HashMap<(i32, i32), CellAhead>,
     /// When each cell wanted for drawing was first found not ready (seconds).
     waiting: HashMap<(i32, i32), f64>,
+}
+
+impl ReadAhead {
+    /// Cells still being read on worker threads.
+    pub(crate) fn busy(&self) -> bool {
+        !self.listing.is_empty()
+    }
+
+    /// The landscape read ahead for cell `c`, taken (the cell's reading is done with).
+    pub(crate) fn take_terrain(&mut self, c: (i32, i32)) -> Option<TerrainPrep> {
+        self.waiting.remove(&c);
+        self.listed.remove(&c).and_then(|a| a.terrain)
+    }
 }
 
 /// Which references' models a cell's read-ahead prepares: the placement and its base
@@ -1385,7 +1398,7 @@ fn spawn_ref(
         None => base,
     };
     // The reference transform replaces the model root's own (world.md §4).
-    spawn_model(commands, cell_e, world, &p, r, &base, to_cell * ref_affine(&p), models, emittance, hide, stats);
+    spawn_model(commands, cell_e, world, &p, r, &base, to_cell * ref_affine(&p), models, emittance, hide, stats, SpawnMode::Full);
 }
 
 /// A placeable water reference (PWAT): the shapes of its model (a flat square, e.g.
@@ -1428,9 +1441,22 @@ fn spawn_placed_water(
     true
 }
 
+/// How [`spawn_model`] draws a model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpawnMode {
+    /// As the loaded cells draw it: rigs for what moves, stored poses, emitters, the mesh
+    /// terrain blend's census, the error marker for a model that did not load.
+    Full,
+    /// Drawn only, for the full-detail ring (full_detail.rs, #2701): the static model's
+    /// shapes baked as the file stores them (billboard nodes still turn, damage stages
+    /// still follow the game), every entity marked `nvf_play::DrawOnly`; no rig, pose,
+    /// emitter, census, mine light or error marker, and nothing logged [design].
+    Scenery,
+}
+
 /// Draw a reference's model as children of `parent`, `rt` being the reference's
 /// transform in the parent's space: an exterior or interior cell, or the world root for
-/// imposters (`imposters.rs`).
+/// imposters (`imposters.rs`); `mode`: [`SpawnMode`].
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_model(
     commands: &mut Commands,
@@ -1444,11 +1470,16 @@ pub fn spawn_model(
     emittance: &mut crate::emittance::EmittanceState,
     hide: &[String],
     stats: &mut StreamStats,
+    mode: SpawnMode,
 ) {
+    let scenery = mode == SpawnMode::Scenery;
     // Armour only ever worn (Non-Playable, no world model): its biped model would hang in
     // the air at the reference (the Fort's slave backpacks, #2439; `fnv_world::placed::worn_only`).
     if base.worn_only {
         stats.refs_no_model += 1;
+        if scenery {
+            return;
+        }
         info!("world: 0x{r:08X} {}: armour only ever worn (Non-Playable, no world model), not drawn on its own", base.edid.as_deref().unwrap_or("?"));
         return;
     }
@@ -1467,7 +1498,7 @@ pub fn spawn_model(
     // With the base's alternate textures on the shapes they name (texture-swaps.md §4).
     let Some(model) = models.model_swapped(&path, false, &base.world_alt_textures) else {
         stats.refs_no_model += 1;
-        if spawn_error_marker(commands, parent, r, rt, models) {
+        if !scenery && spawn_error_marker(commands, parent, r, rt, models) {
             stats.refs_error_marker += 1;
             // Once per model: a broken mod can place hundreds of one missing model.
             static TOLD: std::sync::Mutex<Option<HashSet<String>>> = std::sync::Mutex::new(None);
@@ -1503,7 +1534,7 @@ pub fn spawn_model(
     // passes this test too; wrecks.rs lets the parts fall only when the game has the
     // reference destroyed to that model and physics built its collision from it.
     let wreck = model.loose && p.base.and_then(|b| base_object(world.lo, world.schema, b)).and_then(|b| b.world_model_path()).is_some_and(|m| m != path);
-    if let Some(rig) = model.rig.as_ref().filter(|rig| (rig.idle.is_some() && idle.is_some()) || door.is_some() || activator.is_some() || scripted || jointed || wreck) {
+    if let Some(rig) = model.rig.as_ref().filter(|rig| !scenery && ((rig.idle.is_some() && idle.is_some()) || door.is_some() || activator.is_some() || scripted || jointed || wreck)) {
         // Animated (Idle sequence): its own node hierarchy per reference.
         // "Random Anim Start" bases start their idle at a phase spread by reference
         // (fnv_actor::anims::random_anim_start; animation.md §8).
@@ -1570,21 +1601,26 @@ pub fn spawn_model(
     // body on a named node below the model's root), the same condition the collision
     // uses and the same function `nvf_play::script_draw` draws references enabled later
     // with (issue #2339).
-    let posed = nvf_play::clutter_pose::drawn(world.lo, &base.sig, r, &path, &model.nodes, || nvf_play::clutter_pose::body_nodes(&models.data, &path));
+    let posed = if scenery { None } else { nvf_play::clutter_pose::drawn(world.lo, &base.sig, r, &path, &model.nodes, || nvf_play::clutter_pose::body_nodes(&models.data, &path)) };
     if let Some(p) = &posed {
         info!("clutter pose: 0x{r:08X} {path} drawn in its stored pose ({} bodies)", p.bodies);
     }
     stats.refs_posed += usize::from(posed.is_some());
     // [design] Census of every STAT and SCOL shape while the blend is on, before any
     // selection (#2661).
-    let census = blend_census(world, p, r, base, &path, &model, posed.is_some());
+    let census = if scenery { None } else { blend_census(world, p, r, base, &path, &model, posed.is_some()) };
     // Shapes below a billboard node go under an entity for it that turns to the camera
     // (#2549: a torch's glow card, else a flat sheet); a posed model stays as posed. Its
     // holder carries the reference's RefVisual, so moving and redrawing it take them along.
     let mut boards = nvf_assets::model::BakedBillboards::default();
     for (index, s) in model.shapes.iter().enumerate() {
         let shape = nvf_play::clutter_pose::shape_transform(posed.as_ref(), s);
-        let (parent, m, billboard) = match posed.is_none().then(|| boards.place(commands, parent, &model, rt, s, RefVisual(r))).flatten() {
+        let board = match posed.is_none().then_some(scenery) {
+            None => None,
+            Some(false) => boards.place(commands, parent, &model, rt, s, RefVisual(r)),
+            Some(true) => boards.place(commands, parent, &model, rt, s, (RefVisual(r), nvf_play::DrawOnly)),
+        };
+        let (parent, m, billboard) = match board {
             Some((board, below)) => (board, Mat4::from(below), true),
             None => (parent, Mat4::from(rt * shape), false),
         };
@@ -1609,10 +1645,17 @@ pub fn spawn_model(
         let e = match stages {
             Some(st) => {
                 let holder = commands.spawn((Transform::IDENTITY, Visibility::Inherited, RefVisual(r), ChildOf(parent))).id();
+                if scenery {
+                    commands.entity(holder).insert(nvf_play::DrawOnly);
+                }
                 commands.spawn((Mesh3d(s.mesh.clone()), MeshMaterial3d(material), Transform::from_matrix(m), Visibility::Hidden, crate::destroyed::StagedShape::new(r, st), ChildOf(holder))).id()
             }
             None => commands.spawn((Mesh3d(s.mesh.clone()), MeshMaterial3d(material), Transform::from_matrix(m), RefVisual(r), ChildOf(parent))).id(),
         };
+        // In the same command as the spawn: no system sees the entity without its mark.
+        if scenery {
+            commands.entity(e).insert(nvf_play::DrawOnly);
+        }
         if let Some((tracked, original)) = blend {
             if tracked.reasons == 0 {
                 commands.entity(e).insert(crate::mesh_terrain_blend::BlendShape::new(original));
@@ -1620,14 +1663,16 @@ pub fn spawn_model(
             commands.entity(e).insert(tracked);
         }
         // A mine's light parts: shown and hidden by its state (`nvf_play::mines`).
-        if let Some(l) = nvf_play::mines::MineLight::of(s.name.as_deref(), &s.ancestors) {
+        if let Some(l) = nvf_play::mines::MineLight::of(s.name.as_deref(), &s.ancestors).filter(|_| !scenery) {
             commands.entity(e).insert(l);
         }
         stats.shapes += 1;
     }
     stats.billboards += boards.len();
     stats.refs_billboards += usize::from(!boards.is_empty());
-    spawn_emitters(commands, parent, r, &model, &path, rt);
+    if !scenery {
+        spawn_emitters(commands, parent, r, &model, &path, rt);
+    }
     stats.refs_drawn += 1;
 }
 

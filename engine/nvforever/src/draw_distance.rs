@@ -137,16 +137,20 @@ fn share_actor_distance(distances: Res<DrawDistances>, mut shared: ResMut<nvf_pl
 
 /// The class of a mesh: from its ancestors (an actor's rig, a dropped item, the cell it
 /// is in) and the reference's records, kept per reference.
-fn classify(e: Entity, r: u32, parents: &Query<&ChildOf>, marks: &Query<(Has<CellEntity>, Has<ActorRig>, Has<DroppedRoot>)>, world: Option<&WorldData>, known: &mut HashMap<u32, DrawClass>) -> DrawClass {
+fn classify(e: Entity, r: u32, parents: &Query<&ChildOf>, marks: &Query<Marks>, world: Option<&WorldData>, known: &mut HashMap<u32, DrawClass>) -> DrawClass {
     let mut in_cell = false;
     let mut at = e;
     loop {
-        if let Ok((cell, actor, dropped)) = marks.get(at) {
+        if let Ok((cell, actor, dropped, ring)) = marks.get(at) {
             if actor {
                 return DrawClass::Actor;
             }
             if dropped {
                 return DrawClass::Item;
+            }
+            // The full-detail ring draws scenery only (full_detail.rs, #2701).
+            if ring {
+                return DrawClass::Object;
             }
             if cell {
                 in_cell = true;
@@ -174,6 +178,9 @@ fn classify(e: Entity, r: u32, parents: &Query<&ChildOf>, marks: &Query<(Has<Cel
     })
 }
 
+/// What [`classify`] looks for on a mesh's ancestors.
+type Marks = (Has<CellEntity>, Has<ActorRig>, Has<DroppedRoot>, Has<crate::full_detail::RingCell>);
+
 /// Give the meshes of placed references the range of their class's distance: new meshes
 /// and those whose range changed (a fade ended) each frame, every one when a slider
 /// moved (module notes).
@@ -186,7 +193,7 @@ pub(crate) fn apply_ranges(
     all: Query<Entity, (With<RefVisual>, Or<(With<MeshMaterial3d<NifMaterial>>, With<MeshMaterial3d<nvf_assets::nif_surface_blend::NifBlendMaterial>>)>)>,
     mut meshes: Query<(&RefVisual, Option<&mut MeshMaterial3d<NifMaterial>>, Option<&mut MeshMaterial3d<nvf_assets::nif_surface_blend::NifBlendMaterial>>, Option<&VisibilityRange>, Option<&DrawClass>)>,
     parents: Query<&ChildOf>,
-    marks: Query<(Has<CellEntity>, Has<ActorRig>, Has<DroppedRoot>)>,
+    marks: Query<Marks>,
     mut known: Local<HashMap<u32, DrawClass>>,
     mut work: Option<ResMut<crate::quality_probe::Work>>,
 ) {

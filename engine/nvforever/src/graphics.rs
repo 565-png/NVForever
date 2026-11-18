@@ -208,11 +208,15 @@ pub struct Graphics {
     pub heat_haze: bool,
     /// A dust haze in the weather's fog (haze.rs; off in every preset) [design, #2675].
     pub desert_haze: bool,
+    /// Full models of static scenery in the cells beyond the loaded ones, draw-only
+    /// (full_detail.rs; off in both presets) [design, #2701].
+    pub full_detail: crate::full_detail::FullDetail,
 }
 
-/// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing and
-/// shadow-filter choices that are not vanilla's, in the order of [`Graphics::describe`].
-pub const KEYS: [&str; 19] = [
+/// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing,
+/// shadow-filter and full-detail choices that are not vanilla's, in the order of
+/// [`Graphics::describe`].
+pub const KEYS: [&str; 21] = [
     "ambient-occlusion",
     "fine-shadows",
     "bloom",
@@ -232,6 +236,8 @@ pub const KEYS: [&str; 19] = [
     "terrain-shadows",
     "heat-haze",
     "desert-haze",
+    "full-detail-7x7",
+    "full-detail-9x9",
 ];
 
 impl Graphics {
@@ -287,6 +293,9 @@ impl Graphics {
             heat_haze: false,
             // Off in every preset: an addition of our own [design, #2675].
             desert_haze: false,
+            // Off in both looks: an addition of our own for machines with GPU headroom;
+            // whether `enhanced` turns it on is the maintainer's call [design, #2701].
+            full_detail: crate::full_detail::FullDetail::Off,
         }
     }
 
@@ -316,7 +325,8 @@ impl Graphics {
     }
 
     /// Exactly the improvements named ([`KEYS`]) on (`--graphics-only`); of the
-    /// anti-aliasings and of the shadow filters the last named wins.
+    /// anti-aliasings, of the shadow filters and of the full-detail sizes the last named
+    /// wins.
     pub fn only(keys: &[String]) -> Result<Self, String> {
         let mut g = Graphics::preset(Preset::Vanilla);
         for k in keys.iter().map(|k| k.trim()).filter(|k| !k.is_empty()) {
@@ -326,6 +336,8 @@ impl Graphics {
                 "taa" => g.screen_aa = ScreenAa::Taa,
                 "shadow-filter-hardware" => g.shadow_filter = ShadowFilteringMethod::Hardware2x2,
                 "shadow-filter-temporal" => g.shadow_filter = ShadowFilteringMethod::Temporal,
+                "full-detail-7x7" => g.full_detail = crate::full_detail::FullDetail::Seven,
+                "full-detail-9x9" => g.full_detail = crate::full_detail::FullDetail::Nine,
                 "no-glow" => g.glow = false,
                 "no-eye-adaptation" => g.eye_adaptation = false,
                 "no-neon-glow" => g.neon_glow = false,
@@ -365,6 +377,7 @@ impl Graphics {
             (self.terrain_shadows, "terrain shadows"),
             (self.heat_haze, "heat haze"),
             (self.desert_haze, "desert haze"),
+            (self.full_detail != crate::full_detail::FullDetail::Off, self.full_detail.describe()),
         ];
         let mut on: Vec<&str> = names.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
         if self.fsr().is_some() {
@@ -1455,8 +1468,10 @@ mod tests {
     #[test]
     fn every_key_is_a_switch_and_enhanced_leaves_taa_off() {
         let all = Graphics::only(&KEYS.map(String::from)).expect("keys");
-        // Of the three anti-aliasings and the two shadow filters the last named is on.
-        assert_eq!(all.describe().split(", ").count(), KEYS.len() + 1 - 3);
+        // Of the three anti-aliasings, the two shadow filters and the two full-detail sizes
+        // the last named is on.
+        assert_eq!(all.describe().split(", ").count(), KEYS.len() + 1 - 4);
+        assert_eq!(all.full_detail, crate::full_detail::FullDetail::Nine);
         assert_eq!((all.screen_aa, all.shadow_filter), (ScreenAa::Taa, ShadowFilteringMethod::Temporal));
         let enhanced = Graphics::preset(Preset::Enhanced);
         assert!(enhanced.screen_aa == ScreenAa::Off && enhanced.light_shafts && enhanced.water_reflections);
