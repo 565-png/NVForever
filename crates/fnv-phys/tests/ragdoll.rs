@@ -1107,7 +1107,7 @@ fn a_ragdoll_reports_what_it_touches_by_kind() {
             assert!(a.moving_ragdolls.pairs > 0 && a.ragdolls == vec![0x21], "the lower one is touched back: {}", a.summary());
             assert!(a.terrain.pairs > 0, "and lies on the ground: {}", a.summary());
             assert_eq!(b.resting_ragdolls.pairs, 0);
-            assert!(b.summary().contains("moving ragdolls ") && b.summary().ends_with("touching [00000020]"), "{}", b.summary());
+            assert!(b.summary().contains("moving ragdolls ") && b.summary().ends_with("touching [00000020], refs []"), "{}", b.summary());
             // One body's contacts are a share of the whole ragdoll's.
             let parts: usize = (0..rag.bodies.len()).map(|i| w.ragdoll_contacts(0x21, Some(i)).moving_ragdolls.pairs).sum();
             assert_eq!(parts, b.moving_ragdolls.pairs);

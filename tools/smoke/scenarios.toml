@@ -12502,7 +12502,7 @@ expect = [
   "death camera: the player died in first person: the body drops as a ragdoll, the view stays on its head",
   { re = 'ragdoll: actor 00000014 floats at \(5\d{4}, 37\d{3}, [\d.]+\), its trunk (?P<n>-?\d+) units under the surface at 2600', range = [-25, 25], label = "the body comes to rest floating, its trunk at the lake's surface (6 under, 13 s after the death, 2026-10-25)" },
 ]
-forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }, { re = 'ragdoll: actor 00000014 held at rest still moving', label = "the body is never frozen part way up" }]
+forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }, { re = 'ragdoll: actor 00000014 held at rest still moving', label = "the body is never frozen part way up" }, { re = 'ragdoll: actor 00000014 held at rest calm at its time limit', label = "nor held at its time limit once calm (#2083 counts those apart)" }]
 
 [[scenario]]
 name = "ragdoll-probe-battle-50"
@@ -12515,8 +12515,9 @@ args = ["--cell", "Goodsprings", "--pos=-68375,3000,9000", "--heading", "0", "--
 run_seconds = 120
 expect = [
   { re = 'stress battle: 2 groups, (?P<n>\d+) fighters', range = [60, 100], label = "the battle is placed" },
-  { re = 'ragdoll probe: actor [0-9A-F]{8} (slept|held still|held calm after settling|held moving at its time limit|held calm in slow motion) \(', min = 10, label = "a probe line for each ragdoll set at rest" },
+  { re = 'ragdoll probe: actor [0-9A-F]{8} (slept|held still|held calm after settling|held moving at its time limit|held calm at its time limit|held calm in slow motion) \(', min = 10, label = "a probe line for each ragdoll set at rest" },
   { re = 'ragdoll probe summary: ', label = "the probe's totals at exit" },
+  { re = 'ragdolls: .* held at their time limit already calm, ', label = "the exit report counts those held calm at their limit apart (#2083)" },
 ]
 
 [[scenario]]
@@ -12531,8 +12532,9 @@ run_seconds = 30
 expect = [
   { re = 'stress battle: 2 groups, (?P<n>\d+) fighters', range = [6, 10], label = "the block is placed" },
   { re = 'KillAllActors >> (?P<n>\d+) killed', range = [6, 1000], label = "the block and the town die at once" },
-  { re = 'ragdoll probe: actor [0-9A-F]{8} (slept|held still|held calm after settling|held moving at its time limit|held calm in slow motion) \(', min = 6, label = "a probe line for each ragdoll set at rest" },
-  { re = 'ragdoll probe summary: ', label = "the probe's totals at exit" },
+  { re = 'ragdoll probe: actor [0-9A-F]{8} (slept|held still|held calm after settling|held moving at its time limit|held calm at its time limit|held calm in slow motion) \(', min = 6, label = "a probe line for each ragdoll set at rest" },
+  { re = 'ragdoll probe summary: ', label = "the probe's totals at exit, block" },
+  { re = 'ragdolls: .* held at their time limit already calm, ', label = "the exit report counts those held calm at their limit apart (#2083), block" },
 ]
 
 [[scenario]]

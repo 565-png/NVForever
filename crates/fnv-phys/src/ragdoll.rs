@@ -134,6 +134,8 @@ pub struct RagdollContacts {
     pub other: ContactTally,
     /// The other actors' ragdolls it touches, by FormID, ascending.
     pub ragdolls: Vec<u32>,
+    /// The references (fixed and loose) it touches, by FormID, ascending.
+    pub refs: Vec<u32>,
 }
 
 /// Contact pairs of one kind, and the deepest overlap among them (game units, 0 when
@@ -145,12 +147,12 @@ pub struct ContactTally {
 }
 
 impl RagdollContacts {
-    /// For a log line: `terrain 3 (0.4 deep), fixed 0, loose 0, moving ragdolls 2 (1.2 deep), resting ragdolls 0, own 1 (0.0 deep), other 0, touching [00012345]`.
+    /// For a log line: `terrain 3 (0.4 deep), fixed 0, loose 0, moving ragdolls 2 (1.2 deep), resting ragdolls 0, own 1 (0.0 deep), other 0, touching [00012345], refs [0001ABCD]`.
     pub fn summary(&self) -> String {
         let t = |name: &str, c: &ContactTally| if c.pairs == 0 { format!("{name} 0") } else { format!("{name} {} ({:.1} deep)", c.pairs, c.deepest) };
         let ids: Vec<String> = self.ragdolls.iter().map(|f| format!("{f:08X}")).collect();
         format!(
-            "{}, {}, {}, {}, {}, {}, {}, touching [{}]",
+            "{}, {}, {}, {}, {}, {}, {}, touching [{}], refs [{}]",
             t("terrain", &self.terrain),
             t("fixed", &self.fixed),
             t("loose", &self.loose),
@@ -158,7 +160,8 @@ impl RagdollContacts {
             t("resting ragdolls", &self.resting_ragdolls),
             t("own", &self.own),
             t("other", &self.other),
-            ids.join(" ")
+            ids.join(" "),
+            self.refs.iter().map(|f| format!("{f:08X}")).collect::<Vec<_>>().join(" ")
         )
     }
 }
@@ -721,6 +724,7 @@ impl PhysWorld {
         let Some(r) = self.ragdolls.get(&form_id) else { return out };
         let mut seen = std::collections::HashSet::new();
         let mut others = std::collections::BTreeSet::new();
+        let mut refs = std::collections::BTreeSet::new();
         for (i, h) in r.bodies.iter().enumerate() {
             if body.is_some_and(|b| b != i) {
                 continue;
@@ -750,10 +754,13 @@ impl PhysWorld {
                             }
                         }
                         (None, Some(Owner::Terrain { .. })) => &mut out.terrain,
-                        (None, Some(Owner::Ref { .. })) => match parent.and_then(|p| self.w.bodies.get(p)) {
-                            Some(p) if p.is_dynamic() => &mut out.loose,
-                            _ => &mut out.fixed,
-                        },
+                        (None, Some(Owner::Ref { form_id: f, .. })) => {
+                            refs.insert(f);
+                            match parent.and_then(|p| self.w.bodies.get(p)) {
+                                Some(p) if p.is_dynamic() => &mut out.loose,
+                                _ => &mut out.fixed,
+                            }
+                        }
                         _ => &mut out.other,
                     };
                     touch.pairs += 1;
@@ -762,6 +769,7 @@ impl PhysWorld {
             }
         }
         out.ragdolls = others.into_iter().collect();
+        out.refs = refs.into_iter().collect();
         out
     }
 

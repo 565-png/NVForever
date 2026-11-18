@@ -305,6 +305,12 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- **Corpses in a crowd held while a head or hand still turns (#2083).** [observed, #2083]
+  In battle-50, 34 corpses were held still moving at their time limit: 26 shot corpses
+  at the 1 s `MAX_AWAKE_SHOVED`, 8 fresh ones (mostly at the 3 s `MAX_AWAKE_CROWDED`),
+  with a head, hand or foot turning 0.7-4 rad/s. Both limits are yours (item 51) and stay.
+  Longer limits would let more settle, at the solver cost those limits guard against.
+  Keep them, or raise one? ([ragdoll §4](spec-notes/ragdoll.md), "Corpses in a crowd")
 - [design, #2659] **Selected-part mesh boundary:** mixed-mesh triangles are selected at
   a mean bone-weight share of `PART_TRIANGLE_SHARE = 0.5`, then filled at the same mask
   opacity as whole parts. A different threshold changes the boundary, not its strength;

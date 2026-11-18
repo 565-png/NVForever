@@ -306,6 +306,34 @@ corpse or a loose object as their settle began. Smoke `ragdoll-probe-battle-50` 
 battle) and `ragdoll-probe-block` (nine corpses falling together with no shooter left,
 the town's residents falling alone) run it.
 
+What the probe found [observed: both scenarios, one run each, 2026-11-17, logs private]:
+
+- **Most "still moving" holds were calm.** A ragdoll whose settle began at its time limit
+  was counted as held still moving even when it had calmed down during the settle. In the
+  battle 56 of the 90 such holds had a last calm window under 12 units/s and 0.6 rad/s
+  (`CALM_SPEED`, `CALM_SPIN`), several calm for 1.5 s or more; in the block 6 of 12 (down
+  to about 1 unit/s and 0.04 rad/s). They are now counted apart: `ragdoll: actor <id> held at
+  rest calm at its time limit …` and `… held at their time limit already calm` in the exit
+  report; `held at rest still moving` keeps the ones whose last window was not calm [design,
+  #2083]. Nothing about when they are held changed.
+- **Hits are not the main cause.** The probe's first hit count included the killing (or
+  rousing) shove. Of the 34 truly moving holds in the battle, 26 were shoved corpses at
+  their 1 s limit (`MAX_AWAKE_SHOVED`), 23 of them hit no more than the once that roused
+  them; 5 of the 8 fresh ones had been hit again. In the block nothing was hit and 6 of 12
+  were still moving at the 3 s crowded limit. The summary now counts `hit again`.
+- **What keeps them moving** is a light end bone turning 0.7-4 rad/s with the trunk all
+  but still (head 11 of 34, a hand 10, a foot 8), the shiver described above; another
+  corpse (moving or at rest) was touched by 7 of the 8 fresh ones. In the block the fast
+  ones (60-90 units/s when held) lay draped over fixed references (trunk 40-63 units over
+  their lowest bone, no terrain contact) overlapping them 2-4 units deep (6 under a calm
+  one), while their terrain contacts showed no overlap [hypothesis: limbs that started inside the object, or a shape whose
+  Havok shell is not a contact skin as the terrain's is (`TERRAIN_SHELL`); the probe now
+  names the references touched, `refs [...]`].
+- So within the 3 s crowded and 1 s shoved limits a corpse in a crowd often has not
+  settled: the limits are shorter than its own calming takes (a lone figure ~1.2 s plus
+  its settle). Those limits are the owner's (owner-review item 51; owner-review.md,
+  #2083).
+
 **Memory.** The bone poses of a ragdoll at rest are remembered by reference. A ragdoll
 whose ground unloads, or whose actor is no longer drawn, leaves the world and is
 remembered the same way; put back later it is held in that pose. The memory lasts for the
