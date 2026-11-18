@@ -110,8 +110,9 @@ bitflags::bitflags! {
 /// NVForever sun visibility (2026-11-17, engine/vendor/README.md): what a view's mesh
 /// view bind group holds for the game's sun visibility factor (nvforever
 /// `sun_visibility.rs`), at bindings 39 (uniform), 40 (cloud transmittance, a filterable
-/// float 2D texture), 41 (terrain shadow-height map, the same kind) and 42 (a filtering
-/// sampler). A view with it gets [`MeshPipelineViewLayoutKey::NVF_SUN_VISIBILITY`] and
+/// float 2D texture), 41 (terrain shadow-height map, an unfilterable float 2D texture,
+/// `Rgba32Float`, read with `textureLoad` only) and 42 (a filtering sampler, used with 40
+/// only). A view with it gets [`MeshPipelineViewLayoutKey::NVF_SUN_VISIBILITY`] and
 /// those bindings, and its pipelines `MeshPipelineKey::NVF_SUN_VISIBILITY` with the
 /// shader def of the same name (`cloud` and `terrain` add `NVF_CLOUD_VISIBILITY` and
 /// `NVF_TERRAIN_VISIBILITY`). Both sides read this one component in the same frame, so
@@ -552,9 +553,11 @@ fn layout_entries(
                 40,
                 texture_2d(TextureSampleType::Float { filterable: true }),
             ),
+            // The terrain shadow-height map is Rgba32Float, which is not filterable
+            // without an optional feature: unfilterable, read with loads only.
             (
                 41,
-                texture_2d(TextureSampleType::Float { filterable: true }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
             ),
             (42, sampler(SamplerBindingType::Filtering)),
         ));

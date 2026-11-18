@@ -167,6 +167,7 @@ mod shadow_rate;
 mod shadow_thin;
 mod shafts;
 mod heat_haze;
+mod sun_heightfield;
 mod imagespace;
 mod imposters;
 mod sky;
@@ -194,6 +195,7 @@ mod terrain;
 mod terrain_surface;
 mod mesh_terrain_blend;
 mod terrain_lod;
+mod terrain_shadows;
 mod terrain_wireframe;
 mod texture_swap;
 mod effect_particles;
@@ -550,7 +552,7 @@ struct Args {
     dlss_model: Option<upscaler::DlssModel>,
     /// Instead of --graphics: exactly these improvements on, by the settings page's keys
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
-    /// water-reflections, terrain-height-blend, terrain-anti-tiling, cloud-shadows, heat-haze, desert-haze, and
+    /// water-reflections, terrain-height-blend, terrain-anti-tiling, cloud-shadows, terrain-shadows, heat-haze, desert-haze, and
     /// mesh-terrain-blend, which no look turns on) and choices (fxaa, smaa or taa instead of --msaa;
     /// shadow-filter-hardware or shadow-filter-temporal), for comparing them one at a time.
     #[arg(long, value_delimiter = ',', conflicts_with = "graphics")]
@@ -1805,6 +1807,13 @@ fn main() -> AppExit {
     .add_systems(Update, world::note_other_cameras.after(world::stream))
     // 4 x 4 near's redraws by distance (#2676): after streaming spawned this frame's cells.
     .add_plugins(terrain_lod::TerrainLodPlugin)
+    // The landscape's height map around the camera for terrain shadows (#2671); built only
+    // while the Terrain shadows row (or NVF_PLAY_DEBUG_SUN_HEIGHTFIELD) wants it (sun_heightfield.rs).
+    .add_plugins(sun_heightfield::SunHeightfieldPlugin)
+    // Terrain shadow heights from that map, on the GPU (#2671); the Terrain shadows row
+    // (terrain_shadows::follow_graphics) or NVF_PLAY_DEBUG_TERRAIN_SHADOWS turns them on,
+    // nothing allocated or dispatched while off (terrain_shadows.rs).
+    .add_plugins(terrain_shadows::TerrainShadowsPlugin)
     .add_systems(Update, (cell_buffer::remember, cell_buffer::tell_game).chain().after(world::stream))
     .add_systems(Update, world::script_markers.before(world::stream))
     .add_systems(Update, world::draw_waiting_actors.after(world::stream))
