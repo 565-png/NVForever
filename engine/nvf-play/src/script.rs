@@ -648,8 +648,11 @@ pub fn with_world<R>(rt: &mut Runtime, sim: &mut SimState, f: impl FnOnce(&mut R
 /// "Inventory", or a leveled pick), each pick made as the game makes it: at the level the
 /// reference reads leveled lists at in `sim`'s world, with its pick seed (a saved
 /// ResurrectActor roll included; `SimState::pick`, docs/spec-notes/actors.md §1.3).
-fn inventory_sources(data: &GameData, sim: &SimState, game: &Game<'_>) -> std::collections::BTreeMap<FormId, FormId> {
-    data.inventory_sources_at(sim.refs, |r| sim.pick(game, r))
+fn inventory_sources(_data: &GameData, sim: &SimState, game: &Game<'_>) -> std::collections::BTreeMap<FormId, FormId> {
+    sim.refs.refs.iter().filter(|(_, p)| matches!(&p.sig, b"ACHR" | b"ACRE")).filter_map(|(&r, p)| {
+        let (seed, at) = sim.pick(game, r);
+        game.runtime_template_source(p.base, seed, at, |d| d.template_inventory).map(|(source, _)| source).filter(|&source| source != p.base).map(|source| (r, source))
+    }).collect()
 }
 
 impl Runtime {
