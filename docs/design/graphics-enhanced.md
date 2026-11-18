@@ -1432,8 +1432,10 @@ culls, extracts and queues every face view every frame.
 - **Redrawn where something changed.**
   - A face is marked when, since it was drawn, a shadow-casting shape with its bounds in
     that face moved, appeared, or was shown or hidden. A skeleton (actors, the player's
-    body) whose joints' box moved also marks the faces it reaches, as does the light
-    itself moving.
+    body) whose joints' box moved also marks the faces it reaches. The light itself marks
+    all its faces once it is more than 8 units (about 11 cm) from where its maps were last
+    marked or drawn in full (`LIGHT_MOVE_EPS`) [engineering choice, 2026-11-18: a muzzle
+    flash follows the swaying gun for its tenth of a second; one draw a flash is enough].
   - Shapes and skeletons count as moved once they are 4 units (about 6 cm) from where
     they last marked (`MOVE_EPS`). Small moves add up until they reach it.
   - Something removed (a taken item) marks the lights around the camera in full.
@@ -1449,9 +1451,42 @@ culls, extracts and queues every face view every frame.
   - Of a light switched on, only the marked faces are drawn; the others keep their maps.
     A light that has never drawn casts nothing until it has.
   - Only a light the camera saw the frame before is switched on; an unseen one keeps its
-    marks.
+    marks. A transient light (below) instead counts as seen when its light reaches into
+    this frame's view.
   - Spot lights (few among the placed ones) keep their maps switched on while they cast.
     Their map is drawn only on the frames it is marked and its turn comes.
+- **Other lights** (owner, 2026-11-18: all light sources cast, muzzle flashes and
+  explosions first; `ShadowSource` on the light, `SourceKind`).
+  - Grass fires: the light over about one burning patch in six (grass_fire_fx.rs). Still
+    while it burns; its intensity flickers.
+  - Lights a script attached to a node (JIP AttachLight, nif_mirror.rs). They move with
+    their node.
+  - These two rank and count with the placed lights, under the same rules and cap.
+  - Muzzle flashes (shot_fx.rs, a light at the muzzle for the flash's time, about a tenth
+    of a second, moving with the gun) and explosions (shot_fx.rs, 32 units above the blast
+    point, fading over 0.6 s) are **transient**, chosen apart from the placed lights:
+    - nearest first, measured to the edge of each light's range, only while that edge lies
+      within 3,000 units (about 43 m; `TRANSIENT_REACH`) of the camera and within the sun's
+      shadow distance [engineering choice: the firefight around the player; a farther flash
+      is small on screen and gone in a tenth of a second];
+    - only while their light reaches into the camera's view this frame (the camera's
+      frustum, far plane left out, as Bevy culls lights). A new light was not seen the
+      frame before, so the placed lights' rule would hold it back a frame; a light in view
+      is one Bevy's culling finds visible, so its maps are drawn;
+    - at most 2 at once on Quality and 1 on Performance (`Tuning::transients`), not counted
+      against the placed lights' cap;
+    - with their own budget of point lights switched on a frame, 2 on Quality and 1 on
+      Performance (`Tuning::transient_draws`), besides the placed lights' 3 and 1, so a
+      firefight does not starve the lamps nor the lamps it [engineering choice].
+  - A transient light never drew, so it goes first and draws its whole cube in the frame
+    it appears. A flash moving with the gun draws again only once it has moved 8 units
+    (`LIGHT_MOVE_EPS`); an explosion's faces are redrawn where something moved in them.
+  - The effects' own shapes (flash, explosion and fire models, their particles) are
+    `NotShadowCaster`, so a light is not blacked out by the flames around it. The gun a
+    muzzle flash sits at is a small shape it sits against, skipped as a fixture.
+  - Not these: the flashlight casts on its own (flashlight.rs); the lights of the menu and
+    preview scenes (the character creator, the Vigor Tester, the poker table) and the
+    sky's do not.
 - **What casts.**
   - A casting light takes the sun's layers (0, `sky::SHADOW_LAYER`, `sky::BODY_LAYER`), so
     the player's body casts in both views. The first-person arms do not.
@@ -1510,10 +1545,13 @@ placed lights, release builds, `--log-frame-times 6`; windows after loading]:
 
 **Log.**
 - `light shadows: <n> cast (<p> point, <s> spot lights) within <reach> units, <cap> at most;
-  cubes <side>, room for <c>` is written whenever these change.
+  cubes <side>, room for <c>; transients (muzzle flashes, explosions) within <r> units,
+  <t> at most` is written whenever these change. Its counts leave the transient lights out.
 - Every 10 s it writes `light shadows: <l> point lights switched on and <f> faces drawn a
   frame … marked a frame by shapes <a>, skeletons <b>, removals <c>, lights <d>; shapes such
-  as <names>`.
+  as <names>; transients <n> cast, <s> switched on, <t> faces drawn`. The first counts are
+  the placed lights' (with grass fires and attached lights); the transients' are totals
+  over the 10 s.
 
 **Not built yet.**
 - Fading a shadow in and out when a light starts or stops casting.

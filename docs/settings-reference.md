@@ -1007,9 +1007,12 @@ below cover them all.
 - In full: Off (the default), Performance or Quality, as Sun shadows. Every drawn placed
   light whose light reaches within the sun's shadow distance (the Shadow distance and
   Longer sun shadows rows) casts, nearest first, up to 32 lights on Quality and 16 on
-  Performance. A light's maps are drawn when it starts casting and then kept; a part of
-  them is drawn again only when something there moved more than about 6 cm, appeared or
-  vanished. At most 3 lights redraw in a frame on Quality, 1 on Performance, nearer ones
+  Performance; grass fires' lights and lights a script attached count among them. Muzzle
+  flashes and explosions cast too, apart from them: the nearest whose light reaches within
+  3,000 units (about 43 m) and into view, 2 at once on Quality and 1 on Performance, each
+  drawn in the frame it appears. A light's maps are drawn when it starts casting and then
+  kept; a part of them is drawn again only when something there moved more than about 6 cm,
+  appeared or vanished, all of them once the light itself moved about 11 cm. At most 3 lights redraw in a frame on Quality, 1 on Performance, nearer ones
   every frame (every 2nd on Performance), farther ones every 2nd (every 4th), so a moving
   thing's lamp shadow can lag a frame. The world and your body cast, the first-person arms
   do not; what lies within 16 units of a light casts nothing from it. A point light's maps
