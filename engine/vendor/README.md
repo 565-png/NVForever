@@ -27,6 +27,24 @@ single slow frame charged to a render system that only writes a buffer
 (`upload_light_probes`, `write_binned_instance_buffers`) can be matched to a new memory
 block. `std` is linked for the clock (wgpu-hal turns the crate's `std` feature off).
 
+## bevy_post_process 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
+
+Bevy's post-processing, for its auto exposure, which meters the view for the game's eye
+adaptation (`engine/nvforever/src/eye_adapt.rs`). One change (#2892), marked `NVForever
+exact curve`, in `src/auto_exposure/`:
+
+- `compensation_curve.rs`: the compensation curve's table holds the compensation values
+  themselves as `f32` (texture `R32Float`); upstream keeps a `u8` between the curve's
+  lowest and highest value, rounded down (`R8Unorm`). `AutoExposureCompensationCurve::
+  compensation` gives the value for an average as the shader reads it, for tests.
+- `auto_exposure.wesl`: the curve is read between two table entries in proportion;
+  upstream reads the one entry at or below the average.
+
+Why: the exposure is `curve(average) − average`. With one byte entry per 0.086 EV of
+average and bytes 0.067 EV apart, a curve `y = x` (no change) came out as a sawtooth
+between 0 and about −0.15 EV, so a daylight picture was darkened by up to 10 %, by an
+amount that jumped as the view's average crossed an entry.
+
 ## bevy_pbr 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
 Bevy's 3D passes, for FSR upscaling (docs/design/fsr-upscaling.md), which draws the main
@@ -121,6 +139,23 @@ Whoever sets it must hand the lights the held cascades as the frame that drew th
 them, as the game does.
 Upstream has no way to draw a light's shadow map less often than every frame.
 
+Gated materials (#2661, docs/design/graphics-enhanced.md §3.14 "Off"), in `src/material.rs`,
+each part marked `NVForever gated materials`: `MaterialPlugin::gated(MaterialGate)` (a new
+`gate` field, `None` by default). With a gate, the material type's own systems run only
+while it is open (main world: `mark_meshes_as_changed_if_their_materials_changed`,
+`check_entities_needing_specialization`; render world: `extract_mesh_materials`,
+`early_sweep_material_instances`, the two specialization extractions, and the asset
+extraction and preparation through `ErasedRenderAssetPlugin::gated` below); its shaders are
+loaded and its bind group allocator (with the bindless fallback buffers) made at the first
+extraction after the gate opens, and both dropped at the first extraction after it closes
+(a device recovery while open makes the allocator again, as upstream's startup system
+does). The owner opens the gate before the type's first asset or component and closes it
+only once none has been left for a few frames. Without a gate (every Bevy and every other
+NVForever material) the plugin does what upstream does. Upstream registers a material's
+systems, loads its shaders and makes its allocator at startup, and a plugin cannot be added
+after startup; nvforever's mesh terrain blend, off in most runs, gates its two material
+types with it. Drop it if upstream gains a way to register a material type lazily.
+
 Another change (sun visibility, #2670 and #2671, docs/design/sun-visibility.md), each part
 marked `NVForever sun visibility`, for nvforever's `sun_visibility.rs`:
 
@@ -210,6 +245,11 @@ only the CPU writes (`render_binned_mesh_instance_buffer`, `bin_metadata_buffer`
 `unpack_bins.wesl`). Upstream writes all three every frame: about 300 of a Goodsprings
 frame's 400 `queue.write_buffer` calls, each a copy with its own barrier before the frame's
 first pass. Test aid `NVF_PLAY_TEST_SAME_WRITES=1` writes every frame again.
+
+Gated render assets (#2661), in `src/erased_render_asset.rs`, marked `NVForever gated
+materials`: `ErasedRenderAssetPlugin::gated(Arc<AtomicBool>)` runs the asset type's
+extraction and preparation systems only while the flag is set, for bevy_pbr's gated
+materials above. `Default` has no flag and does what upstream does.
 
 A measuring aid for the encoder spans (`NVF_PLAY_TEST_PROFILE_ENCODERS=1`, `enc:<system>`, #2060),
 in `src/diagnostic/internal.rs` (marked `NVForever encoder gaps`), adds
