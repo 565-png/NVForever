@@ -1104,7 +1104,7 @@ fn register_graphics(app: &mut App) {
         },
     );
     nvf_play::settings::set_disabled_status(app, "latency-reduction", |w| (!crate::anti_lag::available(w)).then_some("Not on this GPU"));
-    let switches: [Switch; 19] = [
+    let switches: [Switch; 20] = [
         (
             "ambient-occlusion",
             "Ambient occlusion",
@@ -1229,6 +1229,14 @@ fn register_graphics(app: &mut App) {
             |w, on| w.resource_mut::<Graphics>().desert_haze = on,
         ),
         (
+            "distant-lights",
+            "Distant lights (experimental)",
+            "On: at night, lamps in the places beyond the loaded area show as small glows, so towns can be seen from afar. They light nothing. Not in the original.",
+            "--graphics, --graphics-only",
+            |w| w.resource::<Graphics>().distant_lights,
+            |w, on| w.resource_mut::<Graphics>().distant_lights = on,
+        ),
+        (
             "water-reflections",
             "Screen-space reflections",
             "On: water the mirrored reflection does not reach (another height, interiors) reflects what is on the screen instead of only the sky.",
@@ -1286,7 +1294,7 @@ fn register_pipeline_waits(app: &mut App) {
         "anti-aliasing", "shadow-filter", "upscaler", "upscaler-quality", "ambient-occlusion",
         "fine-shadows", "bloom", "glow", "eye-adaptation", "neon-glow", "sharpen",
         "light-shafts", "water-reflections", "water-effects", "water-mirror", "sun-shadows", "grade",
-        "terrain-height-blend", "terrain-anti-tiling", "cloud-shadows", "terrain-shadows", "heat-haze", MESH_BLEND_KEY,
+        "terrain-height-blend", "terrain-anti-tiling", "cloud-shadows", "terrain-shadows", "heat-haze", MESH_BLEND_KEY, "distant-lights",
     ] {
         nvf_play::settings::wait_for_pipelines(app, key);
     }
@@ -2641,6 +2649,7 @@ dlss-model=Preset K
             ("light-shafts", &["--graphics"]),
             ("heat-haze", &["--graphics-only"]),
             ("desert-haze", &["--graphics", "--graphics-only"]),
+            ("distant-lights", &["--graphics", "--graphics-only"]),
             ("water-reflections", &["--graphics"]),
             ("water-effects", &["--graphics", "--graphics-only"]),
             ("water-mirror", &["--graphics-only"]),
