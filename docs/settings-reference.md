@@ -1313,7 +1313,7 @@ below cover them all.
   holds items. Activate (E by default) takes the selected stack, Ready Item (R) takes everything
   (not from a pocket), Wait (T) opens the usual container or pickpocket menu, the mouse wheel
   moves the selection; the game goes on meanwhile. A pocket lists each item's chance to steal it. Drawn in the HUD colour, at its own
-  scale (Scale), in the Menu Font row's font. Off by default (the owner, 2026-11-17).
+  scale (Scale), in the Menu Font row's font. Off by default [design, #2933].
 - Registered in `engine/nvf-play/src/quick_loot.rs`
 
 ### `quick-loot-scale`: Scale

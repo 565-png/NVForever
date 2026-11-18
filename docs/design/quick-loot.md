@@ -1,8 +1,8 @@
 # Quick Loot
 
 A design feature, not a parity target: the original has no such list. It follows Fallout 4's
-looting list, which the owner asked for (2026-11-17), in the original's HUD look. Every figure
-here is a design choice [design: owner 2026-11-17] unless tagged otherwise.
+looting list (#2933), in the original's HUD look. Every figure here is a design choice
+[design, #2933] unless tagged otherwise.
 
 ## 1. What it does
 
@@ -63,8 +63,7 @@ sound), as in the menu. The rows are read again every half second and after each
 
 ## 4. Look
 
-Design A of the owner's five (2026-11-17), with the owner's changes after the first build
-the same day: a dark backing (the **Background opacity** slider, 0% to 100%, 70% by default) between two HUD-coloured lines with short ticks at their
+Design A of five mockups (#2933), with the changes after the first build: a dark backing (the **Background opacity** slider, 0% to 100%, 70% by default) between two HUD-coloured lines with short ticks at their
 ends; the name and the selection's place ("3/8") over a rule; up to six rows, the selection
 boxed and filled faintly; a short bar above or below where more rows are; the keys' lines under
 the box, centred on it. The name and the rows' words start at one line; the box is at least as
@@ -85,7 +84,7 @@ size, not bold.
 Columns, each with its own row (all off by default, greyed while Quick Loot is off): **Show
 weight**, **Show value**, **Show value per weight**; a pocket always shows each item's
 **chance**. With no column the count stands right-aligned in a column of its own; with any,
-it goes beside the name, "Stimpak (2)", and the heads' line has **ITEM** over the names, where they start; the heads at 50% opacity [owner 2026-11-17]. The columns are as wide as their
+it goes beside the name, "Stimpak (2)", and the heads' line has **ITEM** over the names, where they start; the heads at 50% opacity [design, #2933]. The columns are as wide as their
 widest figure in the drawn font, 40 units apart, so they align in both fonts.
 
 Each drawing checks itself (`quick_loot::overlaps`: texts that meet, a text outside the list

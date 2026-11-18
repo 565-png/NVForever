@@ -663,8 +663,8 @@ pub(crate) fn activate(
         *hold = None;
     }
     // Quick Loot has Activate while its list shows (it takes); its Wait asks for the
-    // full menu, activated here as Activate would (`crate::quick_loot`) [design: owner
-    // 2026-11-17].
+    // full menu, activated here as Activate would (`crate::quick_loot`) [design,
+    // #2933].
     let full = crate::quick_loot::take_full_request();
     if full || crate::quick_loot::holds_input() {
         pressed_now = full;

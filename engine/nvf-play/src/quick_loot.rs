@@ -1,4 +1,4 @@
-//! **Quick Loot** [design: owner 2026-11-17, docs/design/quick-loot.md]: a container, a body
+//! **Quick Loot** [design, #2933, docs/design/quick-loot.md]: a container, a body
 //! or (sneaking) a person under the crosshair shows what it holds in a small list beside the
 //! crosshair, without the menu that stops the game.
 //!
@@ -12,7 +12,7 @@
 //! - **Keys** (the player's bindings): Activate (E) takes the selected stack, Ready Item (R)
 //!   takes everything (not from a pocket: each item is its own roll), Wait (T) opens the
 //!   full container or pickpocket menu as Activate would without Quick Loot, and the mouse
-//!   wheel moves the selection [the owner's fifth look, 2026-11-17: R and T swapped]. While the list shows, those keys do nothing else:
+//!   wheel moves the selection [design, #2933: fifth look, R and T swapped]. While the list shows, those keys do nothing else:
 //!   no reload, no Wait menu, no camera zoom ([`holds_input`]).
 //! - **The rules are the container menu's** (`crate::menu::model::MenuModel`, opened on the
 //!   target as the menu opens it, its pickpocket rolls included): a take from someone
@@ -23,7 +23,7 @@
 //!   Menu Font row picks (`crate::pause::MenuFont`: the game's font 7 or the sharp one).
 //!   Columns for weight, value and value per weight each have a row of their own (off by
 //!   default); with any column (or a pocket's chance) the count goes beside the name, else
-//!   it is right-aligned in a column of its own [design: owner 2026-11-17].
+//!   it is right-aligned in a column of its own [design, #2933].
 //! - **Logs** (smoke): `quick loot: shown on 0x… "<name>" (<kind>, <n> rows)`,
 //!   `quick loot: took …`, `quick loot: the full menu`, and per drawing `quick loot: drawn
 //!   "<name>" … font Original|Sharp …: no overlaps` (or what overlaps, [`overlaps`]).
@@ -53,8 +53,8 @@ static WEIGHT: AtomicBool = AtomicBool::new(false);
 static VALUE: AtomicBool = AtomicBool::new(false);
 static PER_WEIGHT: AtomicBool = AtomicBool::new(false);
 /// The backing's darkness (the Background Opacity row, 0 to 1), the bits of an `f32`: 0.7 by
-/// default, the darkness the owner chose after the first build [the owner's third look,
-/// 2026-11-17].
+/// default, the darkness chosen after the first build [design, #2933: third
+/// look].
 static BACKING: AtomicU32 = AtomicU32::new(0x3F33_3333);
 
 /// The backing's darkness, 0 to 1.
@@ -66,7 +66,7 @@ pub fn backing() -> f32 {
 static SCALE: AtomicU32 = AtomicU32::new(0x3F80_0000);
 
 /// The Quick Loot section's Scale row's choices: 50% to 100% in steps of 10%, the list's own size,
-/// independent of the HUD scale [the owner's second look, 2026-11-17].
+/// independent of the HUD scale [design, #2933: second look].
 pub const SCALES: [f32; 6] = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
 
 /// The size the list is drawn at.
@@ -147,8 +147,8 @@ pub enum Kind {
     Pocket,
 }
 
-/// Rows shown at once; the list scrolls to keep the selection in them [design: owner
-/// 2026-11-17, design A].
+/// Rows shown at once; the list scrolls to keep the selection in them [design, #2933:
+/// design A].
 pub const VISIBLE: usize = 6;
 
 /// The list on one target.
@@ -237,7 +237,7 @@ fn search_word() -> &'static str {
         w
     }
 }
-/// The names' head, on the columns' heads' line [the owner's sixth look, 2026-11-17].
+/// The names' head, on the columns' heads' line [design, #2933: sixth look].
 const ITEM: &str = "ITEM";
 const WG: &str = "WG";
 const VAL: &str = "VAL";
@@ -278,11 +278,11 @@ impl Spec {
 
 // ---- layout -----------------------------------------------------------------------------
 
-/// The list's measures, interface units (960 to the view's height) [design: owner
-/// 2026-11-17, design A, and the owner's first look at it the same day]: its left edge right
+/// The list's measures, interface units (960 to the view's height) [design, #2933:
+/// design A, and the first look at it]: its left edge right
 /// of the crosshair, its box centred on the crosshair's height.
 pub const LEFT: f32 = 150.0;
-/// Every line of words is one height, the rows' [the owner's second look, 2026-11-17: "all
+/// Every line of words is one height, the rows' [design, #2933: second look, "all
 /// text lines ... should be the same height even if their text size is different"]: the
 /// name's, the columns' heads', each row's and the keys'; the words' capitals centred in it
 /// ([`centred`]).
@@ -294,13 +294,13 @@ const GAP_Y: f32 = 6.0;
 const RULE: f32 = 1.5;
 const ROW_GAP: f32 = 2.0;
 /// The box's edge to the rows' box, and the rows' box to their words: the name, the heading
-/// and the keys under the box start on one line [the owner's step 1]. The rows' box stands as
-/// far in from the box's sides as the last row from its bottom, the frame and [`GAP_Y`] [the
-/// owner's fourth look, 2026-11-17: the selection's box with the same room beside it as under
+/// and the keys under the box start on one line [design, #2933: step 1]. The rows' box stands as
+/// far in from the box's sides as the last row from its bottom, the frame and [`GAP_Y`] [design,
+/// #2933: fourth look, the selection's box with the same room beside it as under
 /// it].
 const PAD_X: f32 = FRAME + GAP_Y;
 const CELL: f32 = 10.0;
-/// Between columns [the owner's step 6: wider than the first build's 22].
+/// Between columns [design, #2933: step 6, wider than the first build's 22].
 pub const GAP: f32 = 40.0;
 const NAME_MIN: f32 = 200.0;
 const PROMPT_GAP: f32 = 4.0;
@@ -310,7 +310,7 @@ const TICK: f32 = 14.0;
 
 /// The faces the list is drawn in: the name's (title, bold in the sharp font), the columns'
 /// heads' and the place's ("1/4": head, bold in the sharp font) and the rows' words, figures
-/// and the keys' line (small, regular, the heads' size) [the owner's steps 4 and 4.5; the item
+/// and the keys' line (small, regular, the heads' size) [design, #2933: steps 4 and 4.5; the item
 /// names at the figures' size, the third look; the keys at theirs, the fifth]. Entry is the
 /// game's row face, kept for its measures.
 #[derive(Clone)]
@@ -351,8 +351,8 @@ pub enum Which {
 pub enum Ink {
     /// The HUD colour, full.
     Hud,
-    /// The columns' heads (ITEM, WG …): the HUD colour at 50% [the owner's sixth look,
-    /// 2026-11-17: "not that visible"].
+    /// The columns' heads (ITEM, WG …): the HUD colour at 50% [design, #2933: sixth
+    /// look, "not that visible"].
     Head,
     /// The HUD colour, dim.
     Dim,
@@ -406,7 +406,7 @@ fn face(fonts: &Fonts, w: Which) -> &Face {
 
 /// How wide a text is drawn: its advances, or further where the last glyph's picture reaches
 /// past its advance (the game's font 7 has glyphs with room after them less than nothing), so
-/// right edges and the room after the keys' line are where the ink is [the owner's step 2].
+/// right edges and the room after the keys' line are where the ink is [design, #2933: step 2].
 pub fn ink_width(f: &Face, text: &str) -> f32 {
     f.font.lines(text, None).first().map_or(0.0, |l| {
         l.glyphs.iter().map(|p| {
@@ -457,8 +457,8 @@ pub fn per_weight_text(weight: Option<f32>, value: Option<i32>) -> String {
 
 /// The widest the list may be from [`LEFT`] in a view `half` units from its middle to its
 /// right edge, `edge` units in from which the HUD's bottom right pieces end
-/// (`crate::hud::RIGHT_EDGE_IN` at the HUD's scale): its right edge on theirs [the owner's
-/// step 10]. Both in the list's own units.
+/// (`crate::hud::RIGHT_EDGE_IN` at the HUD's scale): its right edge on theirs [design,
+/// #2933: step 10]. Both in the list's own units.
 pub fn widest(half: f32, edge: f32) -> f32 {
     half - edge - LEFT
 }
@@ -477,14 +477,14 @@ pub fn layout(spec: &Spec, fonts: &Fonts, max_w: f32) -> Laid {
 
 /// [`layout`] with the bars' edges on whole pixels `px` units wide (0: no snapping), so
 /// rooms the same in units are the same on screen: the frame's sides and its bottom stand as
-/// far from the selection's box [the owner's fifth look, 2026-11-17: the bottom line a pixel
+/// far from the selection's box [design, #2933: fifth look, the bottom line a pixel
 /// closer than the left one, each edge rounded on its own].
 pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
     // A size in whole pixels (at least one), and a place on the nearest pixel.
     let snap = |v: f32| if px > 0.0 { (v / px).round().max(1.0) * px } else { v };
     let on_pixel = |v: f32| if px > 0.0 { (v / px).round() * px } else { v };
     // The box's width up to the next pixel, never down: rounded down, a name that just fits
-    // was cut, its count with it [the owner's sixth look, 2026-11-17: "Sunset Sarsaparilla (..."].
+    // was cut, its count with it [design, #2933: sixth look, "Sunset Sarsaparilla (..."].
     let wide = |v: f32| if px > 0.0 { (v / px - 1e-3).ceil() * px } else { v };
     let (frame, gap_y, half_gap, line_h, row_h, row_gap, rule_h, tick) = (snap(FRAME), snap(GAP_Y), snap(GAP_Y / 2.0), snap(LINE), snap(ROW_H), snap(ROW_GAP), snap(RULE), snap(TICK));
     let pad_x = frame + gap_y;
@@ -512,8 +512,8 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
     let item_w = if cols.is_empty() { 0.0 } else { width(Which::Head, tr(ITEM)) };
     let names = spec.rows.iter().map(|r| width(Which::Small, &label(r))).fold(width(Which::Small, tr(EMPTY)).max(item_w), f32::max);
     let x0 = pad_x + CELL;
-    // The box is at least as wide as the keys' line with the words' room on both sides [the
-    // owner's step 2 and third look].
+    // The box is at least as wide as the keys' line with the words' room on both sides [design,
+    // #2933: step 2 and third look].
     let prompts_w = spec.prompts.iter().map(|p| width(Which::Small, p)).sum::<f32>() + PROMPT_SPACE * spec.prompts.len().saturating_sub(1) as f32;
     let position_w = width(Which::Head, &spec.position);
     let title_w = width(Which::Title, &spec.title);
@@ -552,7 +552,7 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
     let count_end = end;
     if !cols.is_empty() {
         line(y);
-        // The names' head where the names start [the owner's sixth look].
+        // The names' head where the names start [design, #2933: sixth look].
         piece(tr(ITEM).to_string(), Which::Head, x0, centred(&fonts.head, y), Ink::Head);
         for ((h, _), e) in cols.iter().zip(&col_end) {
             piece((*h).to_string(), Which::Head, e - width(Which::Head, h), centred(&fonts.head, y), Ink::Head);
@@ -583,7 +583,7 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
         }
         let ink = Ink::Row(r.selected);
         // A name too long for its room gives way before its count, which always shows
-        // [the owner's sixth look].
+        // [design, #2933: sixth look].
         let name = if !counted && r.count > 1 {
             let tail = format!(" ({})", r.count);
             let cut = crate::pause::fit_text(|t| width(Which::Small, &format!("{t}{tail}")), &r.name, name_end - x0);
@@ -626,7 +626,7 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
     }
     frame_bars.extend(bars);
     // The keys under the box, centred on it; the box at least as wide as they are with the
-    // words' room before them on both sides [the owner's third look].
+    // words' room before them on both sides [design, #2933: third look].
     let top = box_h + PROMPT_GAP;
     line(top);
     let mut x = (w - prompts_w) / 2.0;
@@ -645,8 +645,8 @@ pub fn text_box(p: &Piece, fonts: &Fonts) -> Rect {
 }
 
 /// What overlaps in a laid-out list, as words for the log: two texts whose boxes meet, a
-/// text outside the box or across the rule, a row's text off its row [design: owner
-/// 2026-11-17, "no elements should overlap"].
+/// text outside the box or across the rule, a row's text off its row [design, #2933:
+/// "no elements should overlap"].
 pub fn overlaps(l: &Laid, fonts: &Fonts) -> Vec<String> {
     let mut out = Vec::new();
     let boxes: Vec<Rect> = l.pieces.iter().map(|p| text_box(p, fonts)).collect();
@@ -965,7 +965,7 @@ fn draw(
     mut panels: Query<(Entity, &mut Node), With<Panel>>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    // The list's own size, not the HUD's [the owner's second look, 2026-11-17].
+    // The list's own size, not the HUD's [design, #2933: second look].
     let size = scale();
     let units = crate::interface::units_at(size);
     let playing = *state.get() == PlayState::Playing;
@@ -1045,8 +1045,8 @@ fn draw(
             warn!("quick loot: drawn \"{}\" (font {font}): overlaps: {}", spec.title, bad.join(", "));
         }
     }
-    // The box centred on the crosshair's height, however many rows it has [the owner's
-    // step 3].
+    // The box centred on the crosshair's height, however many rows it has [design,
+    // #2933: step 3].
     for (e, mut node) in &mut panels {
         let (left, top) = (crate::interface::u(LEFT), crate::interface::u(-laid.box_h / 2.0));
         if node.top != top || node.left != left {
@@ -1262,7 +1262,7 @@ mod tests {
         }
     }
 
-    /// The owner's third look: the keys' line centred under the box; a box no wider than its
+    /// Third look (#2933): the keys' line centred under the box; a box no wider than its
     /// words is as wide as that line with the words' room (the name's start) on both sides.
     #[test]
     fn the_keys_are_centred_and_the_box_holds_them_with_room() {
@@ -1279,7 +1279,7 @@ mod tests {
         }
     }
 
-    /// The owner's second look: every line of words is one height, the rows', whatever its
+    /// Second look (#2933): every line of words is one height, the rows', whatever its
     /// face; the words' capitals centred in it; the place ("3/8") and the heads bold and alike,
     /// the figures at their size.
     #[test]
@@ -1305,7 +1305,7 @@ mod tests {
         }
     }
 
-    /// The owner's fifth look: on screen, every bar's edge on a whole pixel, and the rows'
+    /// Fifth look (#2933): on screen, every bar's edge on a whole pixel, and the rows'
     /// box as many pixels from the frame's sides as from its bottom; the keys at the item
     /// names' size.
     #[test]
@@ -1369,7 +1369,7 @@ mod tests {
         }
     }
 
-    /// The owner's sixth look: with columns, the names' head on their heads' line, where the
+    /// Sixth look (#2933): with columns, the names' head on their heads' line, where the
     /// names start; none without columns.
     #[test]
     fn the_item_head_stands_over_the_names() {
@@ -1384,7 +1384,7 @@ mod tests {
         }
     }
 
-    /// The owner's sixth look: a count never gives way, the name before it does; and a name
+    /// Sixth look (#2933): a count never gives way, the name before it does; and a name
     /// that fits is never cut, at any pixel size.
     #[test]
     fn a_cut_name_keeps_its_count_and_a_fitting_one_is_not_cut() {
@@ -1407,7 +1407,7 @@ mod tests {
         }
     }
 
-    /// The owner's step 10 and long names: the list stops at the HUD's right edge and the
+    /// Step 10 (#2933) and long names: the list stops at the HUD's right edge and the
     /// name gives way.
     #[test]
     fn a_long_name_is_cut_at_the_huds_edge() {

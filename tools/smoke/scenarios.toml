@@ -4370,7 +4370,7 @@ expect = [
 
 [[scenario]]
 name = "quick-loot-container"
-source = "[design] owner 2026-11-17, docs/design/quick-loot.md: with Quick Loot on, a container under the crosshair lists its items beside it without pausing; the wheel moves the selection, E takes the stack, R takes all; drawn in the game's font (Menu Font Original) with nothing overlapping"
+source = "[design] #2933, docs/design/quick-loot.md: with Quick Loot on, a container under the crosshair lists its items beside it without pausing; the wheel moves the selection, E takes the stack, R takes all; drawn in the game's font (Menu Font Original) with nothing overlapping"
 note = "the Refrigerator of container-e-key; Quick Loot is turned on through the settings page (pause at 10 s, the row flipped at 10.5 s, resumed at 12 s); the player starts looking at it (NEAR); a shot at 13.5 s for a look by eye (quick_loot_original.png)"
 areas = ["activate", "menus", "hud"]
 paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/activate.rs", "engine/nvf-play/src/menu/model.rs", "engine/nvf-play/src/reticle.rs"]
@@ -4391,7 +4391,7 @@ forbid = [
 
 [[scenario]]
 name = "quick-loot-sharp-columns"
-source = "[design] owner 2026-11-17, docs/design/quick-loot.md: in the sharp font (Menu Font Sharp) with the Weight, Value and Value per Weight columns on, the list is laid out by that font with nothing overlapping; T opens the full container menu"
+source = "[design] #2933, docs/design/quick-loot.md: in the sharp font (Menu Font Sharp) with the Weight, Value and Value per Weight columns on, the list is laid out by that font with nothing overlapping; T opens the full container menu"
 note = "as quick-loot-container; the four rows, the Menu Font row and the background opacity (90%) set on the settings page at 10.5-11.9 s; a shot at 13.5 s (quick_loot_sharp.png); T at 15 s opens the container menu, E closes it at 17 s and the list shows again"
 areas = ["activate", "menus", "hud"]
 paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/vector_font.rs"]
@@ -4411,7 +4411,7 @@ forbid = [{ re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" 
 
 [[scenario]]
 name = "quick-loot-pickpocket"
-source = "[design] owner 2026-11-17, docs/design/quick-loot.md: sneaking, a person's pocket shows in the list with each item's chance to steal it, no Take All; E steals the selected stack, rolling its chance (unseen or caught, as the pickpocket menu)"
+source = "[design] #2933, docs/design/quick-loot.md: sneaking, a person's pocket shows in the list with each item's chance to steal it, no Take All; E steals the selected stack, rolling its chance (unseen or caught, as the pickpocket menu)"
 note = "pickpocket-steal's set-up (Chet held, given two Stimpaks, the player sneaking in front of him); Quick Loot on at 5.5 s on the settings page and its scale set to 80% at 6 s, in the game's font; E at 10 s; the rolls seeded (NVF_PLAY_TEST_PICKPOCKET_SEED)"
 areas = ["activate", "menus", "crime", "hud"]
 paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/pickpocket.rs", "crates/fnv-game/src/pickpocket.rs"]
@@ -4432,7 +4432,7 @@ forbid = [
 
 [[scenario]]
 name = "quick-loot-language"
-source = "[design] owner 2026-11-17 (the sixth look): Quick Loot's own words follow the Language row (lang/*.toml): its keys, column heads and Empty"
+source = "[design] #2933 (the sixth look): Quick Loot's own words follow the Language row (lang/*.toml): its keys, column heads and Empty"
 note = "as quick-loot-container with the Language row set to ru (the repo's lang folder) at 10.8 s; on an English install the menus are drawn sharp for Cyrillic; a shot at 13.5 s (quick_loot_ru.png)"
 areas = ["activate", "menus", "hud"]
 paths = ["engine/nvf-play/src/quick_loot.rs", "lang/ru.toml", "crates/fnv-util/src/words.rs"]
