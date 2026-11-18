@@ -3438,6 +3438,49 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             }
             None
         }
+        // An AI walk the chain stands in for by ending its package (Liberty Prime's march
+        // to Project Purity, MQ11PrimeToGatePKG04): in a campaign the player goes along with
+        // the actor, as a player escorts it, until the package has run and ended. Left
+        // behind, the player ran ahead past the force fields Prime breaks, and the march's
+        // end never came (Take It Back, 2026-11-18).
+        Action::Package { actor, package, event } if p.campaign && event.eq_ignore_ascii_case("end") => {
+            let (r, place) = match h.place_of(actor) {
+                Ok(x) => x,
+                Err(e) => return Some(Some(e)),
+            };
+            let wanted = h.game(|g| runner::resolve(g, package).ok()).flatten();
+            let now_running = h.game(|g| g.extra.get(&r).and_then(|e| e.current_package)).flatten();
+            if wanted.is_some() && now_running == wanted && p.part == 0 {
+                p.part = 1;
+                info!("pilot: step {}: {actor} is on {package}: the player goes along until it ends", p.i);
+            }
+            if p.part == 1 && now_running != wanted {
+                info!("pilot: step {}: {actor}'s {package} ended {:.0} s into the step", p.i, p.now - p.step_from);
+                (h.intent.forward, h.intent.right) = (0.0, 0.0);
+                return Some(None);
+            }
+            if p.now - p.step_from > PACKAGE_FOLLOW_SECS {
+                p.finding("package_not_ended", format!("{actor}'s {package} did not {} in {PACKAGE_FOLLOW_SECS:.0} s with the player alongside: ended as the headless run ends it", if p.part == 0 { "begin" } else { "end" }));
+                p.headless("package (an AI walk not over)");
+                let mut applier = std::mem::take(&mut p.applier);
+                let r = h.game(|g| runner::apply_now(g, &mut applier, &a));
+                p.applier = applier;
+                return Some(r.and_then(|r| r.err()));
+            }
+            let mut phase = std::mem::replace(&mut p.phase, Phase::Begin);
+            let away = space_of(h.location) != place.space || hdist(h.feet(), place.pos) > PACKAGE_FOLLOW_NEAR * 1.5;
+            match &mut phase {
+                Phase::Walk(w) => {
+                    if !matches!(walk(p, w, h), Walked::Going) {
+                        phase = Phase::Begin;
+                    }
+                }
+                _ if away => phase = Phase::Walk(walk_to(place, Some(r), PACKAGE_FOLLOW_NEAR, p.now, h.feet())),
+                _ => (h.intent.forward, h.intent.right) = (0.0, 0.0),
+            }
+            p.phase = phase;
+            None
+        }
         Action::Package { actor, package, event } => {
             info!("pilot: step {}: left to the AI: {actor}'s package {package} ({event})", p.i);
             Some(None)
@@ -3864,6 +3907,12 @@ fn fight(p: &mut Pilot, h: &mut Hands, name: &str, a: &Action) -> Option<Option<
     None
 }
 
+/// The longest the player goes along with an actor whose package a step waits to end,
+/// seconds [design]: Liberty Prime's march takes minutes.
+const PACKAGE_FOLLOW_SECS: f64 = 900.0;
+/// How near the player keeps to that actor, game units [design].
+const PACKAGE_FOLLOW_NEAR: f32 = 600.0;
+
 /// How near the player goes to an object it shoots, game units [design].
 const SHOOT_OBJECT_FROM: f32 = 600.0;
 /// The longest a `call_until` waits, seconds: past [`STEP_SECS`], as end slides run for
@@ -3916,7 +3965,7 @@ fn watch_stall(p: &mut Pilot, h: &mut Hands) -> bool {
     // A `wait_quest` / `wait_menu` / `wait_frames` waits out its own `max_frames` too: Vault
     // 101's birth waits up to 120 s for each of Dad's lines and CG00's timers, and the
     // watchdog gave them up at 90 s [observed].
-    let purposeful = walk_waits || matches!(p.actions.get(p.i), Some(Action::CallUntil { .. } | Action::AdvanceSeconds { .. } | Action::WaitQuest { .. } | Action::WaitMenu { .. } | Action::WaitFrames { .. }));
+    let purposeful = walk_waits || matches!(p.actions.get(p.i), Some(Action::CallUntil { .. } | Action::AdvanceSeconds { .. } | Action::WaitQuest { .. } | Action::WaitMenu { .. } | Action::WaitFrames { .. } | Action::Package { .. }));
     if purposeful || p.i >= p.actions.len() || p.now - since < STALL_SECS {
         return false;
     }
