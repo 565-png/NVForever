@@ -1180,6 +1180,86 @@ forbid = [
 ]
 
 [[scenario]]
+name = "ambient-occlusion-novac"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in Novac at 12:00, without a rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
+args = ["--cell", "Novac", "--play", "--hour", "12", "--no-voice", "--no-messages", "--graphics", "enhanced"]
+run_seconds = 28
+expect = [
+  { text = "in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1, multi-bounce by surface colour", label = "the occlusion in the lighting with the multi-bounce fit (Novac at 12:00)" },
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera (Novac at 12:00)" },
+]
+forbid = [
+  { text = "ambient occlusion: off the lighting", label = "the occlusion fell off the lighting (Novac at 12:00)" },
+  { text = "DeviceLost", label = "the GPU device was lost, ambient occlusion (Novac at 12:00)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error, ambient occlusion (Novac at 12:00)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good, the hooked lighting (Novac at 12:00)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-novac-dlss"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in Novac at 12:00 with DLSS Quality, without a rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
+note = "needs NVF_DLSS_DIR (NVIDIA's files)."
+requires = ["NVF_DLSS_DIR"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0", WGPU_BACKEND = "vulkan" }
+args = ["--cell", "Novac", "--play", "--hour", "12", "--no-voice", "--no-messages", "--graphics", "enhanced", "--upscaler", "dlss", "--upscaler-quality", "quality"]
+run_seconds = 28
+expect = [
+  { text = "in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1, multi-bounce by surface colour", label = "the occlusion in the lighting with the multi-bounce fit (Novac at 12:00 with DLSS Quality)" },
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera (Novac at 12:00 with DLSS Quality)" },
+]
+forbid = [
+  { text = "ambient occlusion: off the lighting", label = "the occlusion fell off the lighting (Novac at 12:00 with DLSS Quality)" },
+  { text = "DeviceLost", label = "the GPU device was lost, ambient occlusion (Novac at 12:00 with DLSS Quality)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error, ambient occlusion (Novac at 12:00 with DLSS Quality)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good, the hooked lighting (Novac at 12:00 with DLSS Quality)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-interior-underpass"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in UnderpassRanchInterior01, a random interior, without a rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
+args = ["--cell", "UnderpassRanchInterior01", "--play", "--hour", "12", "--no-voice", "--no-messages", "--graphics", "enhanced"]
+run_seconds = 28
+expect = [
+  { text = "in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1, multi-bounce by surface colour", label = "the occlusion in the lighting with the multi-bounce fit (UnderpassRanchInterior01, a random interior)" },
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera (UnderpassRanchInterior01, a random interior)" },
+]
+forbid = [
+  { text = "ambient occlusion: off the lighting", label = "the occlusion fell off the lighting (UnderpassRanchInterior01, a random interior)" },
+  { text = "DeviceLost", label = "the GPU device was lost, ambient occlusion (UnderpassRanchInterior01, a random interior)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error, ambient occlusion (UnderpassRanchInterior01, a random interior)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good, the hooked lighting (UnderpassRanchInterior01, a random interior)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-interior-underpass-dlss"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in UnderpassRanchInterior01, a random interior with DLSS Quality, without a rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
+note = "needs NVF_DLSS_DIR (NVIDIA's files)."
+requires = ["NVF_DLSS_DIR"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0", WGPU_BACKEND = "vulkan" }
+args = ["--cell", "UnderpassRanchInterior01", "--play", "--hour", "12", "--no-voice", "--no-messages", "--graphics", "enhanced", "--upscaler", "dlss", "--upscaler-quality", "quality"]
+run_seconds = 28
+expect = [
+  { text = "in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1, multi-bounce by surface colour", label = "the occlusion in the lighting with the multi-bounce fit (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+]
+forbid = [
+  { text = "ambient occlusion: off the lighting", label = "the occlusion fell off the lighting (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { text = "DeviceLost", label = "the GPU device was lost, ambient occlusion (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error, ambient occlusion (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good, the hooked lighting (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+]
+
+[[scenario]]
 name = "ui-scale-write"
 source = "issue #1631: the settings page's Display row UI scale (ui-scale) sets the HUD's size, kept in NVForever.ini; the first half of the round trip, ui-scale-read starts with what this run keeps"
 note = "The home's INI may hold any scales from an earlier run: set both rows to 100%, then both to 70% (the rows are lists of 50-100% in tens since the menu overhaul, owner 2026-11-15; 75% was the slider's). #2519 makes the menu row independent; the existing three following 70% drawing/pointer oracles are unchanged."
