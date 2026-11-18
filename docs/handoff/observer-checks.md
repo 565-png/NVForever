@@ -3305,3 +3305,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
      again on SetStage and on SetObjectiveDisplayed (layer5-captures.md §5.8). Not
      separated: whether CompleteAllObjectives or the stage's Complete Quest flag completed
      the objective; FailAllObjectives; what the Pip-Boy lists for such a quest.
+
+
+## Added 2026-11-17 (SendAssaultAlarm on a faction with no member present, #2926)
+
+241. **What does `SendAssaultAlarm Player <faction>` do when no member of the faction is
+     present and alive?** (P3; #2926, crime-karma.md §3.5.) The wiki says only that it picks
+     "an NPC in the … faction" in place of the player [documented: GECK wiki
+     SendAssaultAlarm]. Ours: nobody turns and no crime is counted; the calling actor is
+     never the stand-in [hypothesis]. In Techatticup Mine, kill every raider of
+     `CaesarsLegionTechMineFaction` (0x001400F9) with the console, then free an NCR
+     hostage (`TechMineNCRHostage2REF`, button "Untie him."): log
+     `TechMineNCRHostage2REF.GetAlarmed`, `player.IsInCombat` and the hostage's combat
+     target for 10 s, and whether the second hostage's message box still opens. Then once
+     with the raiders alive: which raider turns (the nearest, the first in some order, or
+     all of them) and whether the guards at the entrance join. Ours picks the first member
+     in FormID order: TecLegionaryRaider5REF (0x0011F654) of 17 present and alive
+     [observed: our headless walkthrough techatticup-hostages-2926, #2926 probe].
