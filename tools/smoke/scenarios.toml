@@ -4401,6 +4401,86 @@ expect = [
 ]
 
 [[scenario]]
+name = "quick-loot-container"
+source = "[design] #2933, docs/design/quick-loot.md: with Quick Loot on, a container under the crosshair lists its items beside it without pausing; the wheel moves the selection, E takes the stack, R takes all; drawn in the game's font (Menu Font Original) with nothing overlapping"
+note = "the Refrigerator of container-e-key; Quick Loot is turned on through the settings page (pause at 10 s, the row flipped at 10.5 s, resumed at 12 s); the player starts looking at it (NEAR); a shot at 13.5 s for a look by eye (quick_loot_original.png)"
+areas = ["activate", "menus", "hud"]
+paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/activate.rs", "engine/nvf-play/src/menu/model.rs", "engine/nvf-play/src/reticle.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12", NVF_PLAY_TEST_SETTINGS = "10.5:quick-loot", NVF_PLAY_TEST_SHOTS = "13.5:quick_loot_original.png", NVF_PLAY_TEST_KEYS = "14:wheel-down,15:e,17:r" }
+args = ["--cell", "GSHouseInterior03", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 20
+order = [[
+  "settings: quick-loot on",
+  { re = 'quick loot: shown on 0x00105658 "Refrigerator" \(Container', label = "the list shows on the refrigerator" },
+  { re = 'quick loot: drawn "Refrigerator" \(\d+ rows, columns Columns \{ weight: false, value: false, per_weight: false, chance: false \}, font Original, .*\): no overlaps', label = "drawn in the game's font, nothing overlapping" },
+  { re = 'quick loot: (Stack|TakeAll) on 0x00105658 "Refrigerator": (Took|Nothing)', label = "E or R takes from it" },
+  { re = 'world sounds: \S+ taken from the container', label = "the take sounds as the container menu's (only a take does, review 2026-11-17)" },
+]]
+forbid = [
+  { re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" },
+  { re = 'menu: open Container\(0x00105658\)', label = "E opened the full menu instead of taking" },
+]
+
+[[scenario]]
+name = "quick-loot-sharp-columns"
+source = "[design] #2933, docs/design/quick-loot.md: in the sharp font (Menu Font Sharp) with the Weight, Value and Value per Weight columns on, the list is laid out by that font with nothing overlapping; T opens the full container menu"
+note = "as quick-loot-container; the four rows, the Menu Font row and the background opacity (90%) set on the settings page at 10.5-11.9 s; a shot at 13.5 s (quick_loot_sharp.png); T at 15 s opens the container menu, E closes it at 17 s and the list shows again"
+areas = ["activate", "menus", "hud"]
+paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/vector_font.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12.5", NVF_PLAY_TEST_SETTINGS = "10.5:quick-loot,10.8:quick-loot-weight,11:quick-loot-value,11.2:quick-loot-value-per-weight,11.6:menu-font=Sharp,11.9:quick-loot-background=0.9", NVF_PLAY_TEST_SHOTS = "13.5:quick_loot_sharp.png", NVF_PLAY_TEST_KEYS = "15:t,17:e" }
+args = ["--cell", "GSHouseInterior03", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 20
+order = [[
+  "settings: quick-loot-value-per-weight on",
+  "settings: quick-loot-background 90%",
+  { re = 'quick loot: drawn "Refrigerator" \(\d+ rows, columns Columns \{ weight: true, value: true, per_weight: true, chance: false \}, font Sharp, .*\): no overlaps', label = "drawn in the sharp font with three columns, nothing overlapping" },
+  'quick loot: the full menu on 0x00105658 "Refrigerator"',
+  'menu: open Container(0x00105658) "Refrigerator"',
+  "menu: close",
+  { re = 'quick loot: shown on 0x00105658 "Refrigerator"', label = "back in play, the list shows again" },
+]]
+forbid = [{ re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" }]
+
+[[scenario]]
+name = "quick-loot-pickpocket"
+source = "[design] #2933, docs/design/quick-loot.md: sneaking, a person's pocket shows in the list with each item's chance to steal it, no Take All; E steals the selected stack, rolling its chance (unseen or caught, as the pickpocket menu)"
+note = "pickpocket-steal's set-up (Chet held, given two Stimpaks, the player sneaking in front of him); Quick Loot on at 5.5 s on the settings page and its scale set to 80% at 6 s, in the game's font; E at 10 s; the rolls seeded (NVF_PLAY_TEST_PICKPOCKET_SEED)"
+areas = ["activate", "menus", "crime", "hud"]
+paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/pickpocket.rs", "crates/fnv-game/src/pickpocket.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PICKPOCKET_SEED = "7", NVF_PLAY_TEST_NEAR = "00104C79", NVF_PLAY_TEST_FACE = "8:00104C79", NVF_PLAY_TEST_SCRIPT = "0.5:call:GSChetRef:SetRestrained:1,3:call:GSChetRef:AddItem:Stimpak:2", NVF_PLAY_TEST_CONTROL = "4:sneak", NVF_PLAY_TEST_PAUSE = "5:7", NVF_PLAY_TEST_SETTINGS = "5.5:quick-loot,6:quick-loot-scale=80%", NVF_PLAY_TEST_SHOTS = "9.5:quick_loot_pocket.png", NVF_PLAY_TEST_KEYS = "10:e" }
+args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 14
+order = [[
+  { re = 'quick loot: shown on 0x00104C79 ".*" \(Pocket, theft, \d+ rows\)', label = "the list shows on Chet's pocket, as theft" },
+  { re = 'quick loot: drawn ".*" \(\d+ rows, columns Columns \{ weight: false, value: false, per_weight: false, chance: true \}, font Original, scale 80%, .*\): no overlaps', label = "drawn with the chance column at its own 80% scale, nothing overlapping" },
+  { re = 'quick loot: Stack on 0x00104C79 ".*": (Took|Caught!)', label = "E steals the stack or is caught" },
+  { re = 'pickpocket: (took .* from .* unseen|caught by .* with )', label = "judged as the pickpocket menu judges it" },
+]]
+forbid = [
+  { re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" },
+  { re = 'pickpocket: open on 0x00104C79', label = "E opened the full pickpocket menu" },
+]
+
+
+[[scenario]]
+name = "quick-loot-language"
+source = "[design] #2933 (the sixth look): Quick Loot's own words follow the Language row (lang/*.toml): its keys, column heads and Empty"
+note = "as quick-loot-container with the Language row set to ru (the repo's lang folder) at 10.8 s; on an English install the menus are drawn sharp for Cyrillic; a shot at 13.5 s (quick_loot_ru.png)"
+areas = ["activate", "menus", "hud"]
+paths = ["engine/nvf-play/src/quick_loot.rs", "lang/ru.toml", "crates/fnv-util/src/words.rs"]
+env = { NVF_LANG_DIR = "{repo}/lang", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12", NVF_PLAY_TEST_SETTINGS = "10.5:quick-loot,10.8:language=ru", NVF_PLAY_TEST_SHOTS = "13.5:quick_loot_ru.png" }
+args = ["--cell", "GSHouseInterior03", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 15
+order = [[
+  "settings: quick-loot on",
+  { re = 'language: ru', label = "the language is Russian" },
+  { re = 'quick loot: drawn "Refrigerator" \(.*keys "E\) Взять \| R\) Взять всё \| T\) Обыскать"\): no overlaps', label = "the keys in Russian, nothing overlapping" },
+]]
+forbid = [
+  { re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" },
+  { re = 'quick loot: drawn "Refrigerator" .*keys "E\) Take', label = "the keys stayed English after the language changed" },
+]
+[[scenario]]
 name = "tag-reset-clears"
 source = "[observed 2026-11-06] docs/spec-notes/chargen.md §3: Reset clears the tags the menu opened with, and Done is refused until three are tagged again"
 note = "[design] The second opening starts with the first's three tags, so the old rule (back to the opening state) would finish with those at the first Done."
