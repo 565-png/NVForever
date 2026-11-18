@@ -1350,3 +1350,27 @@ Blue Moon list showed: `*:N` counted from the last child, `_Has360Controller` ne
 written (MCM took the pointer for a controller), bracket-less sources read as names
 (Vanilla UI Plus's option titles all at y 0), and JIP CCC's sub-menu lines with no mod
 chosen.
+
+## 11. Modern Minimap's map picture (ModernMinimap.dll)
+
+[observed: menus\prefabs\stentorious\modernminimap\main.xml, its "ModernMinimap.dll
+Traits"; NVSE\CompileScript\ModernMinimap\OnRender.gek; nvse.log "ModernMinimap; version
+1"] The mod's HUD window `HUDMainMenu/ModernMinimap` leaves the map picture to its plugin.
+The file computes `_Render` (true when `_ForceUpdate`, or when `MapRender`'s offset from
+the window's centre passes `_UpdateWidth`; the mod's scripts force it by setting
+`_MapOriginX` to -999999 on load, cell change, fast travel and key presses), and reads the
+render's centre back from `_MapOriginX`/`_MapOriginY` to place the picture
+(`_PosXOffset = (_MapOriginX - _PlrX) * _WorldScale`, `_WorldScale = _MapScaleLocal /
+_Frustum`) and every icon. The picture spans `_FrustumSize` (`_Frustum` 2048 /
+`_MapScaleLocal`) game units each way, from a camera `_CameraOffset` (10,000) over the
+player. The mod's render-update handler writes `_PlrX`/`_PlrY`/`_PlrZ` and `_PlrDeg`.
+
+NVForever [design] (`nvf_play::tiles::modern_minimap`, `nvforever::minimap_render`): while
+`_Render` reads true, an orthographic camera straight down over `_PlrX`/`_PlrY` (north
+up, the world layer only, no fog, black elsewhere) renders a 1024-texel picture
+[hypothesis: `textureSize=1024`, the plugin INI's default], given to `MapRender` as the
+runtime picture `nvf:modern_minimap`, and the render's centre is written to
+`_MapOriginX`/`_MapOriginY`. The file's own tint (`systemcolor`, `brightness`) colours it.
+Open: the plugin's exact look (classic mode's shading, interiors under a ceiling 10,000
+over the player) and the INI's other settings are not read; the picture is the lit scene
+from above.
