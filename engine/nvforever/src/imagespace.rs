@@ -265,8 +265,8 @@ fn live_modifier_effect(m: &ImageModifier, seconds: f32, game: Option<&fnv_game:
             44 => effect.cinematic.brightness.add = value,
             45 => effect.blur_radius = value,
             46 => effect.double_vision = value,
-            47..=49 => effect.tint[(trait_id - 47) as usize] = value / 255.0,
-            50 => effect.tint[3] = value,
+            // Tint RGBA are all 0–255, alpha included (image-modifiers.md).
+            47..=50 => effect.tint[(trait_id - 47) as usize] = value / 255.0,
             _ => unreachable!(),
         }
     }

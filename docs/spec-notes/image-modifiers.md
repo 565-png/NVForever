@@ -491,8 +491,11 @@ cinematic multiply/add pairs; 45–46 edit blur and double vision; 47–50 edit 
 or lens, evaluate its ordinary record and then apply the current session's
 assigned values. Follow the existing IMAD getter and decoder: 37–38 are saturation,
 39–40 are contrast average luminance (`0x12`/`0x52` IAD), 41–42 are contrast
-(`0x13`/`0x53` IAD), and 43–44 are brightness. Divide assigned RGB (47–49) by
-255; pass through normalized alpha (50), just as the getter reads TNAM alpha.
+(`0x13`/`0x53` IAD), and 43–44 are brightness. Tint RGBA (47–50) are all 0–255:
+divide each assigned value by 255; the getter reads TNAM alpha ×255 like its RGB
+[observed: the installed radiation controller writes 47–49 as 0–255 and 50 as
+`strength * 255`, default strength 0.3; reading 50 as normalized alpha drew an
+opaque tint, the playtest's whole screen cyan in irradiated water].
 Leave every unassigned component, other effect, sound, duration and track alone.
 Read only bounded fields of active modifiers; do not clone the record cache,
 mutate the load order or scan unrelated forms each frame. Nonfinite values which
@@ -501,8 +504,8 @@ the existing core setter/getter state and admission policy are unchanged.
 
 [hypothesis] This maps the installed radiation controller's edit/apply/update/
 remove cycle onto the existing grade consumer. Native first-key versus whole-track
-editing for animatable records and native alpha units remain open; this bridge
-follows NVForever's existing getter units and leaves animated evaluation unchanged.
+editing for animatable records remains open; this bridge leaves animated
+evaluation unchanged. NAM3 alpha (54) keeps its normalized getter units (unobserved).
 Existing session-only trait lifetime is preserved, and removal must restore the
 current base/other effects rather than replay a cached grade. Authored fixtures
 must exercise compiled setter calls and getter-to-setter round trips through
