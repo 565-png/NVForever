@@ -6288,6 +6288,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "failed-quest-stays-stopped"
+source = "#2958 (docs/spec-notes/layer5-captures.md section 5.8, observer check 226): Joe Cobb's reason lines set Ghost Town Gunfight's fail stage 110 (the game's own data); in the original a later SetStage on the failed quest marks the stage done but does not start the quest again, and its objectives no longer change (crates/fnv-game/src/game.rs set_stage, set_objective)"
+areas = ["quests", "scripts"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/quest.rs"]
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+# Ghost Town Gunfight started (10), failed as Cobb's lines fail it (110), then the stage the townspeople's lines set (50).
+env = { NVF_PLAY_TEST_CONSOLE = "2:SetStage VMS16 10;3:SetStage VMS16 110;4:SetStage VMS16 50;5:GetQuestRunning VMS16;6:GetObjectiveDisplayed VMS16 50;7:GetStageDone VMS16 50;8:GetQuestCompleted VMS16;9:GetQuestRunning VMS16b;10:close" }
+run_seconds = 13
+expect = [
+  { text = "console: GetQuestRunning >> 0.00", count = 2, label = "the failed quest is not started again by SetStage, and Run Goodsprings Run is not running" },
+  { text = "console: GetObjectiveDisplayed >> 0.00", count = 1, label = "stage 50's objective is not displayed on the failed quest" },
+  { text = "console: GetStageDone >> 1.00", count = 1, label = "the stage itself is marked done" },
+  { text = "console: GetQuestCompleted >> 1.00", count = 1, label = "a failed quest reads as completed" },
+]
+
+[[scenario]]
 name = "underwater-colour-by-depth"
 source = "#2916 (docs/spec-notes/world.md section 6, Under-water colour): under water the camera's fog goes from the water type's shallow colour at the surface to its deep colour 1,000 units down and is not lit (engine/nvforever/src/underwater.rs); the original under Lake Mead at noon is (67, 75, 34) with the feet 300 units down, the same whichever way the camera looks"
 areas = ["water", "render"]

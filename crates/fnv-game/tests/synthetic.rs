@@ -683,9 +683,60 @@ fn quest_targets_are_marked_while_their_conditions_pass() {
     // The subject is the target: disabling it fails its own GetDisabled == 0.
     g.world.set_enabled(FormId(ACT_REF), false).unwrap();
     assert_eq!(shown(&mut g), vec![(0, true), (1, false), (2, false)]);
-    // A completed objective has no targets.
-    g.set_objective(q(), 10, None, Some(true));
+    // A completed objective has no targets. (Stage 20 completed the quest, and a
+    // completed quest's objectives no longer change, #2958: complete it as
+    // CompleteAllObjectives does.)
+    assert!(!g.set_objective(q(), 10, None, Some(true)));
+    assert_eq!(shown(&mut g), vec![(0, true), (1, false), (2, false)]);
+    g.set_objective_whatever(q(), 10, None, Some(true));
     assert!(g.check_quest_targets(q()).is_empty());
+}
+
+/// #2958 (layer5-captures.md §5.8): once a quest is completed or failed, SetStage still marks the
+/// stage and runs its entries but does not start the quest again, and
+/// SetObjectiveDisplayed / SetObjectiveCompleted do nothing, running or not. A quest
+/// stopped without being completed starts again on both.
+#[test]
+fn a_completed_quest_stays_stopped_and_its_objectives_no_longer_change() {
+    let f = fixture();
+    let objective = |g: &mut Game| g.quest(q()).objectives.get(&10).map_or((false, false), |o| (o.displayed, o.completed));
+    // Stopped, not completed: SetStage starts it, and so does displaying an objective.
+    let mut g = game(&f);
+    g.new_game();
+    g.set_stage(q(), 10);
+    g.stop_quest(q());
+    assert!(!g.quest_state(q()).running);
+    g.set_stage(q(), 30);
+    assert!(g.quest_state(q()).running);
+    g.stop_quest(q());
+    assert!(g.set_objective(q(), 10, Some(true), None));
+    assert!(g.quest_state(q()).running);
+    assert_eq!(objective(&mut g), (true, false));
+    // Completed (stage 20 has the Complete Quest flag) and stopped.
+    let mut g = game(&f);
+    g.new_game();
+    g.set_stage(q(), 20);
+    assert!(g.quest_state(q()).completed);
+    g.stop_quest(q());
+    let before = objective(&mut g);
+    g.world.set_global(FormId(GLOBAL), 0.0).unwrap();
+    assert!(g.set_stage(q(), 30));
+    assert!(g.quest_state(q()).stages_done.contains(&30), "the stage is marked done");
+    assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 7.0, "and its entry ran");
+    assert!(!g.quest_state(q()).running, "but the quest is not started again");
+    // Its objectives no longer change, stopped or started again.
+    for running in [false, true] {
+        if running {
+            g.start_quest(q());
+            assert!(g.quest_state(q()).running);
+        }
+        assert!(!g.set_objective(q(), 10, Some(!before.0), None));
+        assert!(!g.set_objective(q(), 10, None, Some(!before.1)));
+        assert_eq!(objective(&mut g), before);
+    }
+    // CompleteAllObjectives' way still completes one.
+    assert!(g.set_objective_whatever(q(), 10, None, Some(true)));
+    assert!(objective(&mut g).1);
 }
 
 /// Displaying an objective already shown keeps its completed flag; showing a hidden one

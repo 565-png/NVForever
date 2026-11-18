@@ -2859,7 +2859,12 @@ impl<'a> Game<'a> {
     /// - a stage already done does nothing unless the quest allows repeated stages
     ///   [observed: VMS16 stage 10 and VCG03 stage 10 set again did not rerun their
     ///   scripts; Generic, with the flag, did];
-    /// - the quest starts if it is not running [observed: VMS16];
+    /// - the quest starts if it is not running [observed: VMS16], unless it is already
+    ///   completed or failed: then the stage is still marked done and its entries run,
+    ///   but the quest stays stopped [observed 2026-11-18, #2958, layer5-captures.md §5.8: VMS16
+    ///   failed by its stage 110, then SetStage 50 and 100: GetStageDone 1, GetQuestRunning
+    ///   0; the same after its complete stage 100. A quest stopped without being
+    ///   completed does start: SetStage 10, StopQuest, SetStage 50, GetQuestRunning 1];
     /// - the stage is marked done, then every entry whose conditions pass runs its result
     ///   script immediately, nested in the caller [documented: wiki, "resolves any of the
     ///   attached stage items that pass their conditions"], then applies its Complete /
@@ -2876,7 +2881,9 @@ impl<'a> Game<'a> {
             self.emit(EventKind::StageIgnored { quest: q, stage, reason: "already_done" });
             return false;
         }
-        self.start_quest(q);
+        if !self.quest(q).completed {
+            self.start_quest(q);
+        }
         self.quest(q).stages_done.insert(stage);
         let player = Some(FormId::PLAYER_REF);
         let label = format!("QUST {q} stage {stage}");
@@ -2934,7 +2941,27 @@ impl<'a> Game<'a> {
     /// clears the completed flag [observed: VMS16 objectives 10 and 5, layer5-captures.md
     /// §5.2], displaying one already shown keeps it [observed: o5_00, VMS19 65 and
     /// VFSAtomicPimp 34, observer check 40, issue #1108].
+    ///
+    /// On a quest already completed or failed neither does anything, running or not
+    /// [observed 2026-11-18, #2958, layer5-captures.md §5.8: VMS16 after its fail stage 110,
+    /// `SetObjectiveDisplayed VMS16 50 1` and `SetObjectiveCompleted VMS16 10 1` left
+    /// both as they were; after its complete stage 100, `SetObjectiveDisplayed VMS16 60
+    /// 1` did nothing, stopped and again after StartQuest]. That is why a player who
+    /// fails Ghost Town Gunfight through Joe Cobb sees no new objective when the
+    /// townspeople's lines set its later stages.
     pub fn set_objective(&mut self, q: FormId, index: i32, displayed: Option<bool>, completed: Option<bool>) -> bool {
+        if self.quests.get(&q).is_some_and(|s| s.completed) {
+            return false;
+        }
+        self.set_objective_whatever(q, index, displayed, completed)
+    }
+
+    /// [`Game::set_objective`] without its completed-quest rule: for
+    /// `CompleteAllObjectives`, which does act on a failed quest [observed 2026-11-18,
+    /// #2958: VMS16 failed, then SetStage 100, whose script calls it: objective 10 read
+    /// completed afterwards, where SetObjectiveCompleted had left it open; hypothesis
+    /// that the function, and not the stage's Complete Quest flag, did it].
+    pub fn set_objective_whatever(&mut self, q: FormId, index: i32, displayed: Option<bool>, completed: Option<bool>) -> bool {
         let data = self.data;
         let Some(def) = data.quests.get(&q) else { return false };
         if !def.objectives.contains_key(&index) {

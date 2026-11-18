@@ -3272,3 +3272,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
      height or the parent's. NVForever keeps the child's own LAND and takes the parent's
      only where the child has none. Also: per-cell water in ParadiseFalls (Use Water
      Data), which NVForever does not take from the parent's cells.
+226. **What do SetStage and the objective functions do on a quest already completed or
+     failed?** (P2; #2958; `crates/fnv-game/src/game.rs` `set_stage`, `set_objective`.)
+     Answered [observed, base game, four jobs]: SetStage marks the stage done and runs its
+     script but does not start the quest again; SetObjectiveDisplayed and
+     SetObjectiveCompleted do nothing, even after StartQuest; CompleteAllObjectives (in
+     the stage's script) still completes. A quest stopped without being completed starts
+     again on SetStage and on SetObjectiveDisplayed (layer5-captures.md §5.8). Not
+     separated: whether CompleteAllObjectives or the stage's Complete Quest flag completed
+     the objective; FailAllObjectives; what the Pip-Boy lists for such a quest.
