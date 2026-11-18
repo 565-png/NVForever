@@ -1125,6 +1125,19 @@ below cover them all.
 - More: docs/design/graphics-enhanced.md §3.13
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `mesh-terrain-blend`: Blend meshes into ground
+
+- On the page: On: softens where outdoor roads, rocks and cliffs meet the landscape, giving
+  them the ground's colour and light there. Not in the original.
+- In full: On: rigid outdoor statics and static collections (roads, rocks, cliffs) take the
+  landscape's colour and shading over the lowest 8 units above the ground (fading out on
+  faces steeper than 60 degrees, none on near-vertical ones), from a cache of the landscape
+  around the camera. Off by default and in both presets; switches at once, no restart.
+  The test aid `NVF_PLAY_TEST_MESH_BLEND` overrides it.
+- Command-line switches: `--graphics-only` (`--graphics-only mesh-terrain-blend`)
+- More: docs/design/graphics-enhanced.md §3.14
+- Registered in `engine/nvforever/src/settings.rs`
+
 ### `smooth-terrain`: Smooth terrain
 
 - On the page: Smooths height steps while keeping bumps and ridges: 2 x 2 or 4 x 4 squares

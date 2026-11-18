@@ -185,6 +185,8 @@ mod perf_overlay;
 mod occlusion;
 mod rooms;
 mod terrain;
+mod terrain_surface;
+mod mesh_terrain_blend;
 mod terrain_lod;
 mod terrain_wireframe;
 mod texture_swap;
@@ -535,7 +537,8 @@ struct Args {
     dlss_model: Option<upscaler::DlssModel>,
     /// Instead of --graphics: exactly these improvements on, by the settings page's keys
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
-    /// water-reflections, terrain-height-blend, terrain-anti-tiling, cloud-shadows) and choices (fxaa, smaa or taa instead of --msaa;
+    /// water-reflections, terrain-height-blend, terrain-anti-tiling, cloud-shadows, and
+    /// mesh-terrain-blend, which no look turns on) and choices (fxaa, smaa or taa instead of --msaa;
     /// shadow-filter-hardware or shadow-filter-temporal), for comparing them one at a time.
     #[arg(long, value_delimiter = ',', conflicts_with = "graphics")]
     graphics_only: Option<Vec<String>>,
@@ -1600,6 +1603,7 @@ fn main() -> AppExit {
     .add_plugins((imagespace::ImageSpacePlugin, sky::SkyPlugin, cloud_shadows::CloudShadowsPlugin, graphics::GraphicsPlugin(graphics, msaa, frame_times)))
     // The sun visibility factor: cloud and terrain shadows on the sun (off until a producer sets it).
     .add_plugins(sun_visibility::SunVisibilityPlugin)
+    .add_plugins(mesh_terrain_blend::MeshTerrainBlendPlugin)
     // The switches the settings page weighs against the INI (`--play` only), for the
     // frame split's start-time decision (perf_overlay/split.rs).
     .add_plugins(perf_overlay::PerfOverlayPlugin(args.fps, play.is_some().then(|| settings::given_switches(&args, &command_line()))))
@@ -2729,3 +2733,6 @@ mod tests {
         assert!((horizontal(16.0 / 9.0) - 91.31).abs() < 0.01);
     }
 }
+
+#[cfg(test)]
+mod mesh_blend_shader_tests;
