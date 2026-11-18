@@ -604,7 +604,7 @@ pub fn hook_patched(source: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::lights::unix_lines;
 
@@ -814,7 +814,7 @@ mod tests {
     /// its attribute keeping the other names. The statement is what follows the attribute
     /// (on its line or from the next) up to its `;` outside parentheses or its closing
     /// brace. Comments stay. Conditions naming none of `known` are left as they are.
-    fn resolve_known(source: &str, known: &[(&str, bool)]) -> String {
+    pub(crate) fn resolve_known(source: &str, known: &[(&str, bool)]) -> String {
         let lines: Vec<&str> = source.lines().collect();
         let mut out: Vec<String> = Vec::new();
         let mut i = 0;
@@ -900,7 +900,7 @@ mod tests {
     }
 
     /// Brackets, braces and parentheses close in order (comments left out).
-    fn balanced(text: &str) -> bool {
+    pub(crate) fn balanced(text: &str) -> bool {
         let mut stack = Vec::new();
         for c in text.lines().flat_map(|l| l.split("//").next().unwrap_or("").chars()) {
             match c {
@@ -915,7 +915,7 @@ mod tests {
     }
 
     /// The block (braces included) of the first `{` after `start` in `text`.
-    fn block_after<'a>(text: &'a str, start: &str) -> &'a str {
+    pub(crate) fn block_after<'a>(text: &'a str, start: &str) -> &'a str {
         let at = text.find(start).unwrap_or_else(|| panic!("{start} missing"));
         let open = at + text[at..].find('{').expect("a block");
         let mut depth = 0;
@@ -939,12 +939,12 @@ mod tests {
     }
 
     /// The text without its comments.
-    fn code(text: &str) -> String {
+    pub(crate) fn code(text: &str) -> String {
         text.lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n")
     }
 
     /// Code lines only (no blank or comment-only line), trimmed at the end.
-    fn code_lines(text: &str) -> Vec<&str> {
+    pub(crate) fn code_lines(text: &str) -> Vec<&str> {
         text.lines().map(str::trim_end).filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with("//")).collect()
     }
 
