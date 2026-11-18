@@ -1443,7 +1443,7 @@ forbid = [
 
 [[scenario]]
 name = "advanced-movement-off-exact-weapon-inertia"
-source = "owner 2026-11-18 (the held weapon \"still shows inertia\" with Weapon Inertia off; engine/nvforever/src/view_sway.rs, player_body.rs; docs/design/player-body.md §1.4a.3, \"Off means the original's exactly\"): every part on, the rifle drawn and walked with, then Weapon Inertia alone switched off on the settings page; afterwards walking, aiming, firing, jumping and crouching: the sway never moves the arms off the clips' pose again once its fade is over (the exit summary's last time, the switch at about 6 s)"
+source = "the reporter of #3001 (the held weapon \"still shows inertia\" with Weapon Inertia off; engine/nvforever/src/view_sway.rs, player_body.rs; docs/design/player-body.md §1.4a.3, \"Off means the original's exactly\"): every part on, the rifle drawn and walked with, then Weapon Inertia alone switched off on the settings page; afterwards walking, aiming, firing, jumping and crouching: the sway never moves the arms off the clips' pose again once its fade is over (the exit summary's last time, the switch at about 6 s)"
 areas = ["player-body", "settings"]
 paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:weapon-inertia", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
@@ -1462,7 +1462,7 @@ forbid = [
 
 [[scenario]]
 name = "advanced-movement-off-exact-global"
-source = "owner 2026-11-18 (the held weapon \"still shows inertia\" with the Global Toggle off; engine/nvforever/src/view_sway.rs, head_bob.rs, player_body.rs; docs/design/player-body.md §1.4a.3): every part on, the rifle drawn and walked with, then the Global Toggle switched off on the settings page; afterwards walking, aiming, firing, jumping and crouching: neither the sway nor the head moves the arms or the view off the clips' pose again once their fades are over (the breath's ends last, about 6 s after the switch)"
+source = "the reporter of #3001 (the held weapon \"still shows inertia\" with the Global Toggle off; engine/nvforever/src/view_sway.rs, head_bob.rs, player_body.rs; docs/design/player-body.md §1.4a.3): every part on, the rifle drawn and walked with, then the Global Toggle switched off on the settings page; afterwards walking, aiming, firing, jumping and crouching: neither the sway nor the head moves the arms or the view off the clips' pose again once their fades are over (the breath's ends last, about 6 s after the switch)"
 areas = ["player-body", "settings"]
 paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:advanced-movement", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
@@ -1482,7 +1482,7 @@ forbid = [
 
 [[scenario]]
 name = "advanced-movement-off-exact-defaults"
-source = "owner 2026-11-18 (the held weapon \"still shows inertia\" at the defaults; engine/nvforever/src/view_sway.rs, head_bob.rs, player_body.rs; docs/design/player-body.md §1.4a.3): every part on, the rifle drawn and walked with, then the five parts that are off by default switched off on the settings page (the Global Toggle and Advanced Recoil stay on); afterwards walking, aiming, firing, jumping and crouching: Advanced Recoil eases the view's kick, but neither the sway nor the head moves the arms or the view off the clips' pose again once their fades are over"
+source = "the reporter of #3001 (the held weapon \"still shows inertia\" at the defaults; engine/nvforever/src/view_sway.rs, head_bob.rs, player_body.rs; docs/design/player-body.md §1.4a.3): every part on, the rifle drawn and walked with, then the five parts that are off by default switched off on the settings page (the Global Toggle and Advanced Recoil stay on); afterwards walking, aiming, firing, jumping and crouching: Advanced Recoil eases the view's kick, but neither the sway nor the head moves the arms or the view off the clips' pose again once their fades are over"
 areas = ["player-body", "settings"]
 paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/combat.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:movement-inertia,4.5:weapon-handling,4.6:weapon-inertia,4.7:animation-smoothing,4.8:camera-motion", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
