@@ -139,6 +139,40 @@ Whoever sets it must hand the lights the held cascades as the frame that drew th
 them, as the game does.
 Upstream has no way to draw a light's shadow map less often than every frame.
 
+The same for point and spot lights (held light shadow maps, 2026-11-18; the game's Lamp
+shadows, nvforever light_shadows.rs, docs/design/graphics-enhanced.md §3.15), marked
+`NVForever held light shadow maps`:
+
+- `src/render/light.rs`: the render-world resource `HoldLightShadowMaps` (extracted from
+  the main world's) with `slots` (a stable slot per shadowed point light), `point_capacity`
+  and `held` (a bit per cube face, bit 0 for a spot light). In `prepare_lights`:
+  - A shadowed point light with a slot draws its cube into layers slot × 6 + face, not its
+    index among the shadowed lights. Without that a light starting or stopping to cast moved
+    every later light's layers. Other shadowed point lights (the poker lamp) take the lowest
+    free slot each frame. The cube texture has room for the highest slot and
+    `point_capacity`.
+  - The light's GPU flags carry slot + 1 in bits 16 and up (bits 0-15 are Bevy's flags and
+    its `UNINITIALIZED` mark).
+  - A point light with a slot whose `shadow_maps_enabled` is false (no views: no culling,
+    extraction of casters or queueing) still gets the shadow flag and its slot. It then
+    casts from its cube once all six faces hold what it drew into this texture. The game
+    switches a light's maps on only on the frames it draws them.
+  - A shadowed light's views are made again when its slot (or spot layer) or the texture
+    changed, not only when the light changed. Upstream left a light's views pointing at its
+    old layer and texture when another light changed the shadowed set.
+  - The point texture is taken before the lights' GPU data, since its id decides the flag.
+  - A held face, or spot map, is left out of the frame's root views: its
+    `RootNonCameraView` is removed, so the camera driver runs no Core3d schedule (culling,
+    preprocessing, pass) for it. It is held only if its layer was last drawn by the same
+    light into the same texture (`NvfLightShadowRecord`); otherwise it is drawn, whatever
+    the hold says.
+- `src/render/shadow_sampling.wesl`: `nvf_point_shadow_cube` turns a light's id into its
+  cube (its slot from the flags, else its id, as before), in the two point shadow lookups.
+
+Without the resource nothing changes. Measured before it (2026-11-18, RTX 5090, 1280 × 720,
+the Prospector Saloon): every shadowed point light cost about 1 ms of frame time, six
+Core3d schedule runs a frame.
+
 Gated materials (#2661, docs/design/graphics-enhanced.md §3.14 "Off"), in `src/material.rs`,
 each part marked `NVForever gated materials`: `MaterialPlugin::gated(MaterialGate)` (a new
 `gate` field, `None` by default). With a gate, the material type's own systems run only

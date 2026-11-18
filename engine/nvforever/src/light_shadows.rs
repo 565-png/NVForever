@@ -2,115 +2,252 @@
 //! docs/design/graphics-enhanced.md §3.15). An addition of NVForever's own, not a fact
 //! about the original game: there placed lights cast none, and no LIGH record of the
 //! masters sets the Spot Shadow flag [observed: docs/handoff/esm-data-audit-2026-10-25.md,
-//! item 6]. Off by default.
+//! item 6]. Off by default. Built as the sun's shadows are (shadow_rate.rs), owner
+//! 2026-11-18: "look how sun shadows are calculated and do the same", "use the same
+//! performance optimizations also for the lamp shadows".
 //!
-//! - **Which lights**: up to the row's budget (Off, 2, 4 or 8) of the placed LIGH lights
-//!   ([`SessionLight`] with a point or spot light) that are drawn, whose lit sphere meets
-//!   the main camera's view and reaches within [`REACH`] of the camera. The most important
-//!   come first: brightness × (range / distance)², the distance taken as at least half
-//!   the range [engineering choice: the share of the view a light brightens, roughly]. A
-//!   light that already casts keeps its place until another scores [`KEEP`] times as
-//!   much, so shadows do not flip on and off as the camera moves.
+//! - **Which lights: by distance, as the sun's shadows.** Every drawn placed LIGH light
+//!   ([`SessionLight`] with a point or spot light) whose light reaches within the sun's
+//!   shadow distance of the camera (`sky::SkyState::shadow_distance` × its reach: the
+//!   Shadow distance and Longer sun shadows rows) casts, nearest first, up to
+//!   [`Tuning::lights`] (a safety cap for the Strip at night). Not by view: a light behind
+//!   the camera keeps casting, so turning around draws nothing anew. A light already
+//!   casting keeps its place against one [`KEEP`] times nearer.
+//! - **Held maps, as the sun's held cascades.** A point light's cube is drawn when it
+//!   starts casting and then kept (`bevy::pbr::HoldLightShadowMaps`, a patched bevy_pbr:
+//!   engine/vendor/README.md "held light shadow maps"). Between draws the light's maps are
+//!   switched off for Bevy (`shadow_maps_enabled` false: no views, no culling, nothing
+//!   queued, which is what a shadowed point light costs, about 1 ms a frame each on the
+//!   CPU, measured), and the patched renderer still samples its cube. Each light keeps a
+//!   slot of the cube texture while it casts, so others coming and going do not move it.
+//! - **Redrawn where something changed.** A face is marked when, since it was drawn, a
+//!   shadow-casting shape moved, appeared or was shown or hidden with its bounds in the
+//!   face, an actor's skeleton moved there, or the light itself moved; something removed
+//!   (a taken item) marks the lights around the camera in full; every light is redrawn in
+//!   full every [`Tuning::refresh`] frames anyway, each at its own time.
+//! - **Staggered, as the sun's cascades.** A light with marked faces is switched on to
+//!   draw them on every [`Tuning::near_every`] frame when its light reaches within [`NEAR`]
+//!   of the camera, every [`Tuning::far_every`] frame otherwise (each light on frames of
+//!   its own), and no more than [`Tuning::draws`] lights a frame, those that never drew
+//!   first, then the nearest; the rest wait, and so a moving thing's lamp shadow can lag a
+//!   frame or more. Of a light switched on, only the marked faces are drawn; the others
+//!   keep their maps. A light that has never drawn casts nothing until it has.
+//! - **Spot lights** (few among the placed ones) keep their maps switched on while they
+//!   cast; their map is drawn only on the frames it is marked and its turn comes.
 //! - **What casts**: the sun's layers (`sky::SHADOW_LAYER`, `sky::BODY_LAYER` and the
 //!   world's layer 0), so the player's body casts a lamp's shadow as it casts the sun's;
-//!   the first-person arms do not. A light lights the views its layers meet, so the main
-//!   and the reflection camera as before (sky.rs, the sun).
-//! - **Near plane** [`NEAR`]: what lies nearer the light than that casts nothing from it,
-//!   so the bulb, shade or flames a light sits in do not black out the room [engineering
-//!   choice; `NVF_LIGHT_SHADOW_NEAR` overrides it for a run].
-//! - **Maps**: a point light draws a cube of six faces (Bevy's `PointLightShadowMap`,
-//!   1024² each); a spot light one layer of the sun's shadow texture (the Shadow
-//!   resolution row's side). Each shadowed light is a view of its own for the renderer
-//!   (a point light six), which costs render-thread time as well as GPU time
-//!   (graphics-enhanced.md §5.5).
-//! - The diffuse light of the display-value sum takes the shadow too
-//!   (`lights::display_shader`), as the flashlight's always has. The flashlight is not
-//!   counted against the budget: it casts whenever it is on (flashlight.rs).
+//!   the first-person arms do not.
+//! - **Near plane** [`NEAR_Z`]: what lies nearer the light than that casts nothing from it,
+//!   so the bulb, shade or flames a light sits in do not black out the room
+//!   [engineering choice; `NVF_LIGHT_SHADOW_NEAR` overrides it for a run].
+//! - **Maps**: the cubes' side follows the Shadow resolution row: 512 with 2048, 1024 with
+//!   4096 (`PointLightShadowMap`); a spot light draws one layer of the sun's texture.
+//! - The diffuse light of the display-value sum takes the shadow
+//!   (`lights::display_shader`), as the flashlight's always has. The flashlight is not one
+//!   of these lights: it casts whenever it is on (flashlight.rs).
+//! - Test aid `NVF_PLAY_TEST_LIGHT_SHADOW_HOLD=0`: every casting light draws every face
+//!   every frame, for comparing the picture and the cost.
 
-use bevy::camera::primitives::{Frustum, Sphere};
+use bevy::camera::primitives::{Aabb, CubemapFrusta, Frustum, Sphere};
 use bevy::camera::visibility::{RenderLayers, VisibilitySystems};
-use bevy::light::SimulationLightSystems;
+use bevy::ecs::entity::EntityHashMap;
+use bevy::light::{DirectionalLightShadowMap, NotShadowCaster, PointLightShadowMap, SimulationLightSystems};
+use bevy::mesh::skinning::SkinnedMesh;
+use bevy::pbr::HoldLightShadowMaps;
 use bevy::prelude::*;
+use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::transform::TransformSystems;
 
 use crate::lights::{MovingLight, SessionLight};
 
-/// The row's choices, in its order: the name shown and saved, and how many lights cast.
-pub const BUDGETS: [(&str, usize); 4] = [("Off", 0), ("2", 2), ("4", 4), ("8", 8)];
+/// `--light-shadows=<mode>`: the mode lamp shadows start in.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LightShadowMode {
+    Off,
+    Performance,
+    Quality,
+}
 
-/// How far beyond its own range a light may lie from the camera and still cast, game
-/// units (about 29 m) [engineering choice: farther lamps' shadows are a few pixels].
-pub const REACH: f32 = 2048.0;
+/// The row's choices, in the order the page and the INI keep them (the Sun shadows row's).
+pub const CHOICES: [&str; 3] = ["Off", "Performance", "Quality"];
 
-/// How much more another light must score to take a casting light's place.
-pub const KEEP: f32 = 1.5;
+/// The Lamp shadows row's choice: an index into [`CHOICES`] (0: off).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LightShadows {
+    pub choice: usize,
+}
+
+impl LightShadows {
+    pub fn of(mode: LightShadowMode) -> Self {
+        Self { choice: mode as usize }
+    }
+}
+
+/// How a mode spends its frame time [engineering choices, measured in
+/// graphics-enhanced.md §3.15].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tuning {
+    /// At most this many lights cast at once, nearest first.
+    pub lights: usize,
+    /// At most this many point lights switched on to draw in a frame.
+    pub draws: usize,
+    /// A marked light within [`NEAR`] of the camera draws on every this many frames.
+    pub near_every: u64,
+    /// A farther one on every this many frames.
+    pub far_every: u64,
+    /// Every light is drawn again in full every this many frames anyway.
+    pub refresh: u64,
+}
+
+/// The tuning of a choice; `None` for Off.
+pub fn tuning(choice: usize) -> Option<Tuning> {
+    match choice {
+        1 => Some(Tuning { lights: 16, draws: 1, near_every: 2, far_every: 4, refresh: 1200 }),
+        2 => Some(Tuning { lights: 32, draws: 3, near_every: 1, far_every: 2, refresh: 600 }),
+        _ => None,
+    }
+}
+
+/// Lights whose light reaches within this far of the camera count as near (game units,
+/// about 21 m) [engineering choice: the room around the player].
+pub const NEAR: f32 = 1500.0;
+
+/// A light already casting keeps its place against one this many times nearer.
+pub const KEEP: f32 = 1.25;
 
 /// Shadow near plane of a placed light, game units (about 23 cm) [engineering choice:
 /// clears the bulbs, shades and fire barrels' rims lights sit in; the flashlight's is 8].
-pub const NEAR: f32 = 16.0;
+pub const NEAR_Z: f32 = 16.0;
 
-/// How many placed lights cast shadows (0: none). Set by the row and `--light-shadows`.
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LightShadows {
-    pub budget: usize,
-}
+/// A shape or a skeleton counts as moved for the lamps' maps once it is this far from where
+/// it last marked them (game units, about 6 cm) [engineering choice, 2026-11-18: in the
+/// Prospector Saloon the actors' idle skeletons and the head parts that follow them (eyes,
+/// mouth, hat) marked about 116 times a frame, every lamp near an actor every frame].
+pub const MOVE_EPS: f32 = 4.0;
+
+/// The faces of a point light's cube (bit `i` for face `i`).
+const ALL_FACES: u8 = 0b11_1111;
 
 /// On a placed light while it casts shadows.
 #[derive(Component)]
 pub struct CastingLight;
 
-/// The budget the command line asks for, as one of [`BUDGETS`] (the nearest at or under it).
-pub fn budget_of(lights: usize) -> usize {
-    BUDGETS.iter().rev().map(|b| b.1).find(|&b| b <= lights).unwrap_or(0)
+/// What a casting light's maps need (main world).
+#[derive(Debug, Clone, Copy)]
+struct LampState {
+    /// Faces changed since they were last drawn (bit 0 for a spot light).
+    dirty: u8,
+    /// It has not drawn yet (its maps hold nothing of it).
+    fresh: bool,
+    /// Frame its maps were last drawn in full.
+    refreshed: u64,
+    /// A number of its own, for its turn in the staggered schedule.
+    phase: u64,
 }
 
-pub struct LightShadowsPlugin(pub usize);
+/// The casting lights' slots and states.
+#[derive(Resource, Default)]
+struct LampShadowState {
+    lamps: EntityHashMap<LampState>,
+    /// Stable slots of the casting point lights in the cube texture.
+    slots: EntityHashMap<u32>,
+    /// The cube texture's room, in lights; it only grows while a mode stays on.
+    capacity: u32,
+    frame: u64,
+    /// Lights switched on and faces drawn since the last summary, and frames counted.
+    switched: u64,
+    drawn: u64,
+    /// What marked faces since the last summary: shapes, skeletons, removals, the lights
+    /// themselves (moved or their full redraw due); and a few of the shapes' names.
+    causes: [u64; 4],
+    names: Vec<String>,
+    /// Where each shape (its bounds' centre) and each skeleton (its joints' box) was when
+    /// it last marked the lamps, and the frame: moves under [`MOVE_EPS`] add up until they
+    /// reach it.
+    shapes_at: EntityHashMap<(Vec3, u64)>,
+    skeletons_at: EntityHashMap<(Vec3, Vec3, u64)>,
+    frames: u64,
+    since: f32,
+}
+
+pub struct LightShadowsPlugin(pub LightShadowMode);
 
 impl Plugin for LightShadowsPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(LightShadows { budget: budget_of(self.0) }).add_systems(
-            PostUpdate,
-            choose
-                .after(TransformSystems::Propagate)
-                .after(VisibilitySystems::UpdateFrusta)
-                .before(SimulationLightSystems::AssignLightsToClusters)
-                .before(SimulationLightSystems::UpdateLightFrusta),
-        );
+        app.insert_resource(LightShadows::of(self.0))
+            .init_resource::<LampShadowState>()
+            .init_resource::<HoldLightShadowMaps>()
+            .add_plugins(ExtractResourcePlugin::<HoldLightShadowMaps>::default())
+            .add_systems(
+                PostUpdate,
+                // Before Bevy resets this frame's view visibility, so the lights' and the
+                // shapes' `ViewVisibility` still say what the last frame saw.
+                shadow_lights
+                    .after(TransformSystems::Propagate)
+                    .before(VisibilitySystems::VisibilityPropagate)
+                    .before(SimulationLightSystems::AssignLightsToClusters)
+                    .before(SimulationLightSystems::UpdateLightFrusta),
+            );
     }
 }
 
-/// A light's claim to a shadow: its brightness (`intensity` × its colour's largest
-/// channel) × (range / distance)², the distance at least half the range; `None` when it is
-/// out of reach of the camera at `distance`.
-pub fn score(brightness: f32, range: f32, distance: f32) -> Option<f32> {
-    if range <= 0.0 || brightness <= 0.0 || distance - range > REACH {
-        return None;
-    }
-    let d = distance.max(range * 0.5);
-    Some(brightness * (range / d) * (range / d))
+/// The order of a light among the candidates: the distance from the camera to the edge of
+/// its light (0 inside it), then to the light; a casting light's divided by [`KEEP`].
+pub fn rank(distance: f32, range: f32, casting: bool) -> (f32, f32) {
+    let k = if casting { KEEP } else { 1.0 };
+    ((distance - range).max(0.0) / k, distance / k)
 }
 
-/// The lights that cast: the `budget` best of `(id, score, casting now)`, a casting light's
-/// score counted [`KEEP`] times; ties keep the order given.
-pub fn pick<T: Copy>(candidates: &mut [(T, f32, bool)], budget: usize) -> Vec<T> {
-    candidates.sort_by(|a, b| {
-        let (sa, sb) = (a.1 * if a.2 { KEEP } else { 1.0 }, b.1 * if b.2 { KEEP } else { 1.0 });
-        sb.total_cmp(&sa)
-    });
-    candidates.iter().take(budget).map(|c| c.0).collect()
+/// The lights that cast: the `cap` first of `(id, rank)` with a rank's edge distance
+/// within `reach`, nearest first; ties keep the order given.
+pub fn pick<T: Copy>(candidates: &mut [(T, (f32, f32))], reach: f32, cap: usize) -> Vec<T> {
+    candidates.sort_by(|a, b| a.1 .0.total_cmp(&b.1 .0).then(a.1 .1.total_cmp(&b.1 .1)));
+    candidates.iter().filter(|c| c.1 .0 <= reach).take(cap).map(|c| c.0).collect()
 }
 
-/// The near plane in use: [`NEAR`], or `NVF_LIGHT_SHADOW_NEAR` (game units) for a run.
-fn near() -> f32 {
-    static NEAR_Z: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    *NEAR_Z.get_or_init(|| {
-        match std::env::var("NVF_LIGHT_SHADOW_NEAR").ok().and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| *v > 0.0) {
-            Some(v) => {
-                info!("light shadows: NVF_LIGHT_SHADOW_NEAR={v}");
-                v
-            }
-            None => NEAR,
+/// The lowest slot not in `used`.
+pub fn free_slot(used: impl Iterator<Item = u32>) -> u32 {
+    let mut taken: Vec<u32> = used.collect();
+    taken.sort_unstable();
+    let mut slot = 0;
+    for t in taken {
+        if t == slot {
+            slot += 1;
+        } else if t > slot {
+            break;
         }
+    }
+    slot
+}
+
+/// Whether a light with these turns draws on `frame`.
+pub fn its_turn(frame: u64, phase: u64, every: u64) -> bool {
+    (frame + phase).is_multiple_of(every.max(1))
+}
+
+/// Which of a point light's faces (or a spot light's map, bit 0) a sphere reaches.
+fn faces_reached(sphere: &Sphere, cube: Option<&CubemapFrusta>, spot: Option<&Frustum>) -> u8 {
+    if let Some(f) = spot {
+        return u8::from(f.intersects_sphere(sphere, true));
+    }
+    let Some(cube) = cube else { return ALL_FACES };
+    cube.frusta.iter().enumerate().fold(0, |m, (i, f)| if f.intersects_sphere(sphere, true) { m | 1 << i } else { m })
+}
+
+/// Whether the light's sphere at `light` with `range` and a caster's sphere meet.
+fn reaches(light: Vec3, range: f32, sphere: &Sphere) -> bool {
+    Vec3::from(sphere.center).distance_squared(light) <= (range + sphere.radius) * (range + sphere.radius)
+}
+
+/// The near plane in use: [`NEAR_Z`], or `NVF_LIGHT_SHADOW_NEAR` (game units) for a run.
+fn near_z() -> f32 {
+    static NEAR_PLANE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *NEAR_PLANE.get_or_init(|| match std::env::var("NVF_LIGHT_SHADOW_NEAR").ok().and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| *v > 0.0) {
+        Some(v) => {
+            info!("light shadows: NVF_LIGHT_SHADOW_NEAR={v}");
+            v
+        }
+        None => NEAR_Z,
     })
 }
 
@@ -127,67 +264,296 @@ fn biases() -> Option<(f32, f32)> {
     })
 }
 
+/// `NVF_PLAY_TEST_LIGHT_SHADOW_HOLD=0`: nothing held, every casting light draws in full
+/// every frame.
+fn holding() -> bool {
+    static HOLD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *HOLD.get_or_init(|| {
+        let off = std::env::var("NVF_PLAY_TEST_LIGHT_SHADOW_HOLD").is_ok_and(|v| v.trim() == "0");
+        if off {
+            info!("light shadows: test aid NVF_PLAY_TEST_LIGHT_SHADOW_HOLD=0, every map drawn every frame");
+        }
+        !off
+    })
+}
+
 /// The layers a casting light draws its shadow casters from (the sun's, sky.rs).
 fn casting_layers() -> RenderLayers {
     RenderLayers::from_layers(&[0, crate::sky::SHADOW_LAYER, crate::sky::BODY_LAYER])
 }
 
+/// The cube side for the Shadow resolution row's side.
+pub fn cube_side(directional: usize) -> usize {
+    if directional >= 4096 { 1024 } else { 512 }
+}
+
 type Placed<'a> = (
     Entity,
-    &'a GlobalTransform,
+    Ref<'a, GlobalTransform>,
     &'a InheritedVisibility,
+    &'a ViewVisibility,
     Option<&'a mut PointLight>,
     Option<&'a mut SpotLight>,
     Option<&'a MovingLight>,
+    Option<&'a CubemapFrusta>,
+    Option<&'a Frustum>,
     Has<CastingLight>,
 );
 
-/// Give the budget's lights their shadows and take them from the rest.
-fn choose(
+/// Shapes whose place or visibility changed (skinned ones go by their skeleton).
+type MovedFilter = (With<Mesh3d>, Without<NotShadowCaster>, Without<SkinnedMesh>, Or<(Changed<GlobalTransform>, Changed<InheritedVisibility>)>);
+
+type Skinned<'a> = (Entity, &'a SkinnedMesh, &'a GlobalTransform, &'a InheritedVisibility, Option<&'a RenderLayers>);
+
+type MovedCasters<'a> = (Entity, &'a GlobalTransform, &'a Aabb, Ref<'a, InheritedVisibility>, Option<&'a RenderLayers>, Option<&'a Name>, Option<&'a ChildOf>);
+
+/// A light this frame: what [`shadow_lights`] works out for it.
+struct Lamp {
+    entity: Entity,
+    at: Vec3,
+    range: f32,
+    spot: bool,
+    seen: bool,
+    gap: f32,
+}
+
+/// Choose the lights that cast, mark what changed in their maps, choose which draw this
+/// frame, and set them up for Bevy and the patched renderer.
+#[allow(clippy::too_many_arguments)]
+fn shadow_lights(
     mut commands: Commands,
+    time: Res<Time<Real>>,
     settings: Res<LightShadows>,
-    camera: Query<(&GlobalTransform, &Frustum), crate::fly::WorldCamera>,
+    sky: Option<Res<crate::sky::SkyState>>,
+    directional: Option<Res<DirectionalLightShadowMap>>,
+    mut cube: ResMut<PointLightShadowMap>,
+    mut state: ResMut<LampShadowState>,
+    mut out: ResMut<HoldLightShadowMaps>,
+    camera: Query<&GlobalTransform, crate::fly::WorldCamera>,
     mut lights: Query<Placed, With<SessionLight>>,
-    mut logged: Local<Option<(usize, usize, usize, usize)>>,
+    moved: Query<MovedCasters, MovedFilter>,
+    skinned: Query<Skinned, Without<NotShadowCaster>>,
+    names: Query<&Name>,
+    joints: Query<Ref<GlobalTransform>>,
+    mut removed: RemovedComponents<Mesh3d>,
+    mut logged: Local<Option<(usize, usize, usize)>>,
 ) {
-    let chosen: Vec<Entity> = match (settings.budget, camera.iter().next()) {
-        (0, _) | (_, None) => Vec::new(),
-        (budget, Some((cam, frustum))) => {
-            let at = cam.translation();
-            let mut candidates: Vec<(Entity, f32, bool)> = lights
+    let tune = tuning(settings.choice);
+    let reach = sky.as_ref().map_or(0.0, |s| s.shadow_distance * s.shadow_reach.max(1.0));
+    let at = camera.iter().next().map(|c| c.translation());
+    let state = &mut *state;
+    state.frame += 1;
+    let frame = state.frame;
+
+    // 1. Which lights cast.
+    let chosen: Vec<Entity> = match (tune, at) {
+        (Some(t), Some(at)) if reach > 0.0 => {
+            let mut candidates: Vec<(Entity, (f32, f32))> = lights
                 .iter()
-                .filter(|(_, _, seen, ..)| seen.get())
-                .filter_map(|(e, t, _, point, spot, moving, casting)| {
-                    let (range, intensity, colour) = match (&point, &spot) {
-                        (Some(p), _) => (p.range, p.intensity, p.color),
-                        (None, Some(s)) => (s.range, s.intensity, s.color),
+                .filter(|q| q.2.get())
+                .filter_map(|(e, t, _, _, point, spot, moving, _, _, casting)| {
+                    let (range, intensity) = match (&point, &spot) {
+                        (Some(p), _) => (p.range, p.intensity),
+                        (None, Some(s)) => (s.range, s.intensity),
                         _ => return None,
                     };
-                    let c = colour.to_linear();
-                    let brightness = moving.map_or(intensity, |m| m.full) * c.red.max(c.green).max(c.blue);
-                    let centre = t.translation();
-                    if !frustum.intersects_sphere(&Sphere { center: centre.into(), radius: range }, true) {
-                        return None;
-                    }
-                    score(brightness, range, centre.distance(at)).map(|s| (e, s, casting))
+                    (range > 0.0 && moving.map_or(intensity, |m| m.full) > 0.0).then(|| (e, rank(t.translation().distance(at), range, casting)))
                 })
                 .collect();
-            pick(&mut candidates, budget)
+            pick(&mut candidates, reach, t.lights)
         }
+        _ => Vec::new(),
     };
-    let (near, bias) = (near(), biases());
-    let (mut points, mut spots, mut drawn) = (0, 0, 0);
-    for (e, _, seen, point, spot, _, casting) in &mut lights {
-        if seen.get() && (point.is_some() || spot.is_some()) {
-            drawn += 1;
+    if tune.is_some() {
+        let side = cube_side(directional.map_or(2048, |d| d.size));
+        if cube.size != side {
+            cube.size = side;
         }
+    }
+    // Their states and slots; the rest lose theirs.
+    let mut lamps: Vec<Lamp> = Vec::with_capacity(chosen.len());
+    for (e, t, _, seen, point, spot, ..) in &lights {
+        if !chosen.contains(&e) {
+            continue;
+        }
+        let is_point = point.is_some();
+        let range = point.map(|p| p.range).or(spot.map(|s| s.range)).unwrap_or(0.0);
+        let entry = state.lamps.entry(e).or_insert(LampState { dirty: 0, fresh: true, refreshed: 0, phase: e.index_u32() as u64 });
+        if entry.fresh {
+            // Its full redraws fall at a time of its own.
+            entry.refreshed = frame.saturating_sub(entry.phase % tune.map_or(1, |t| t.refresh).max(1));
+        }
+        if is_point && !state.slots.contains_key(&e) {
+            let slot = free_slot(state.slots.values().copied());
+            state.slots.insert(e, slot);
+        }
+        let gap = at.map_or(0.0, |a| (t.translation().distance(a) - range).max(0.0));
+        lamps.push(Lamp { entity: e, at: t.translation(), range, spot: !is_point, seen: seen.get(), gap });
+    }
+    state.lamps.retain(|e, _| chosen.contains(e));
+    state.slots.retain(|e, _| chosen.contains(e) && lamps.iter().any(|l| l.entity == *e && !l.spot));
+    state.capacity = match tune {
+        Some(_) => state.capacity.max(state.slots.values().map(|s| s + 1).max().unwrap_or(0).div_ceil(4) * 4),
+        None => 0,
+    };
+
+    // 2. What changed in their maps since last frame.
+    let layers = casting_layers();
+    {
+        let frusta: EntityHashMap<(Option<CubemapFrusta>, Option<Frustum>)> = lights
+            .iter()
+            .filter(|q| chosen.contains(&q.0))
+            .map(|(e, _, _, _, _, spot, _, cube, frustum, _)| (e, (cube.cloned(), if spot.is_some() { frustum.copied() } else { None })))
+            .collect();
+        // Marks the faces a sphere reaches; whether it reached any.
+        let mark = |sphere: Sphere, lamps_state: &mut EntityHashMap<LampState>| {
+            let mut any = false;
+            for l in &lamps {
+                if !reaches(l.at, l.range, &sphere) {
+                    continue;
+                }
+                let (cube, spot) = frusta.get(&l.entity).map_or((None, None), |f| (f.0.as_ref(), f.1.as_ref()));
+                if let Some(s) = lamps_state.get_mut(&l.entity) {
+                    let faces = faces_reached(&sphere, cube, spot);
+                    any |= faces != 0;
+                    s.dirty |= faces;
+                }
+            }
+            any
+        };
+        for (e, t, aabb, vis, rl, name, parent) in &moved {
+            if rl.is_some_and(|l| !l.intersects(&layers)) {
+                continue;
+            }
+            // Shown, hidden or new at once; moved once it went MOVE_EPS from its last mark.
+            let centre = t.transform_point(Vec3::from(aabb.center));
+            let moved_enough = state.shapes_at.get(&e).is_none_or(|(c, _)| c.distance(centre) > MOVE_EPS);
+            if !vis.is_changed() && !moved_enough {
+                continue;
+            }
+            state.shapes_at.insert(e, (centre, frame));
+            let scale = t.compute_transform().scale.abs().max_element();
+            if mark(Sphere { center: centre.into(), radius: Vec3::from(aabb.half_extents).length() * scale }, &mut state.lamps) {
+                state.causes[0] += 1;
+                if state.names.len() < 6 {
+                    let parent = parent.and_then(|c| names.get(c.parent()).ok());
+                    let n = format!("{}/{}", parent.map_or("-", |n| n.as_str()), name.map_or("-", |n| n.as_str()));
+                    if !state.names.contains(&n) {
+                        state.names.push(n);
+                    }
+                }
+            }
+        }
+        for (e, skin, t, seen, rl) in &skinned {
+            if !seen.get() || rl.is_some_and(|l| !l.intersects(&layers)) {
+                continue;
+            }
+            let root = t.translation();
+            if !lamps.iter().any(|l| l.at.distance_squared(root) <= (l.range + 512.0) * (l.range + 512.0)) {
+                continue;
+            }
+            let (mut changed, mut lo, mut hi) = (false, Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+            for j in skin.joints.iter().filter_map(|&j| joints.get(j).ok()) {
+                changed |= j.is_changed();
+                lo = lo.min(j.translation());
+                hi = hi.max(j.translation());
+            }
+            if !changed || lo.x > hi.x {
+                continue;
+            }
+            let moved_enough = state
+                .skeletons_at
+                .get(&e)
+                .is_none_or(|(l, h, _)| (*l - lo).abs().max_element() > MOVE_EPS || (*h - hi).abs().max_element() > MOVE_EPS);
+            if !moved_enough {
+                continue;
+            }
+            state.skeletons_at.insert(e, (lo, hi, frame));
+            // The joints' box, grown by a limb's thickness [engineering choice].
+            if mark(Sphere { center: ((lo + hi) * 0.5).into(), radius: (hi - lo).length() * 0.5 + 16.0 }, &mut state.lamps) {
+                state.causes[1] += 1;
+            }
+        }
+    }
+    // Something removed: the lights around the camera, where the player takes, kills and
+    // breaks things, are drawn again in full [engineering choice].
+    if removed.read().count() > 0 {
+        if let Some(a) = at {
+            for l in lamps.iter().filter(|l| l.at.distance(a) <= l.range + 512.0) {
+                if let Some(s) = state.lamps.get_mut(&l.entity) {
+                    s.dirty = ALL_FACES;
+                    state.causes[2] += 1;
+                }
+            }
+        }
+    }
+    // The light moved, or its turn for a full redraw came.
+    for (e, t, ..) in &lights {
+        if let (Some(s), Some(tune)) = (state.lamps.get_mut(&e), tune) {
+            if t.is_changed() || frame.saturating_sub(s.refreshed) >= tune.refresh {
+                s.dirty = ALL_FACES;
+                s.refreshed = frame;
+                state.causes[3] += 1;
+            }
+        }
+    }
+
+    // 3. Which lights draw this frame: those never drawn first, then the nearest marked ones
+    // on their turn; at most `draws` point lights.
+    lamps.sort_by(|a, b| b.seen.cmp(&a.seen).then(a.gap.total_cmp(&b.gap)));
+    let hold_all = !holding();
+    let mut order: Vec<&Lamp> = lamps.iter().collect();
+    order.sort_by_key(|l| !state.lamps.get(&l.entity).is_some_and(|s| s.fresh));
+    let mut draws = tune.map_or(0, |t| t.draws);
+    let mut drawing: EntityHashMap<u8> = EntityHashMap::default();
+    out.held.clear();
+    for l in order {
+        let Some(s) = state.lamps.get_mut(&l.entity) else { continue };
+        let all = if l.spot { 1 } else { ALL_FACES };
+        s.dirty &= all;
+        let Some(t) = tune else { continue };
+        let every = if l.gap <= NEAR { t.near_every } else { t.far_every };
+        let want = if hold_all || s.fresh {
+            all
+        } else if its_turn(frame, s.phase, every) {
+            s.dirty
+        } else {
+            0
+        };
+        // Only a light the camera saw last frame is drawn by Bevy this frame.
+        let draw = if want != 0 && l.seen && (l.spot || hold_all || draws > 0) {
+            if !l.spot && !hold_all {
+                draws -= 1;
+            }
+            want
+        } else {
+            0
+        };
+        if draw != 0 {
+            s.dirty &= !draw;
+            s.fresh = false;
+            state.drawn += u64::from(draw.count_ones());
+            state.switched += u64::from(!l.spot);
+            drawing.insert(l.entity, draw);
+        }
+        // A spot light's map stays switched on and is held unless drawn; a point light is
+        // switched on only to draw, its other faces held.
+        if l.spot || draw != 0 {
+            out.held.insert(l.entity, all & !draw);
+        }
+    }
+
+    // 4. Set the lights up: shadows switched on to draw (spot lights while they cast), the
+    // casters' layers, the near plane and biases.
+    let (near, bias) = (near_z(), biases());
+    let (mut points, mut spots) = (0, 0);
+    for (e, _, _, _, point, spot, _, _, _, casting) in &mut lights {
         let cast = chosen.contains(&e);
         if let Some(mut p) = point {
-            if cast {
-                points += 1;
-            }
-            if p.shadow_maps_enabled != cast {
-                p.shadow_maps_enabled = cast;
+            points += usize::from(cast);
+            let on = cast && drawing.contains_key(&e);
+            if p.shadow_maps_enabled != on {
+                p.shadow_maps_enabled = on;
             }
             if cast && p.shadow_map_near_z != near {
                 p.shadow_map_near_z = near;
@@ -199,9 +565,7 @@ fn choose(
             }
         }
         if let Some(mut s) = spot {
-            if cast {
-                spots += 1;
-            }
+            spots += usize::from(cast);
             if s.shadow_maps_enabled != cast {
                 s.shadow_maps_enabled = cast;
             }
@@ -224,13 +588,53 @@ fn choose(
             _ => {}
         }
     }
-    let now = (settings.budget, points, spots, drawn.min(1));
+    if out.slots != state.slots {
+        out.slots.clone_from(&state.slots);
+    }
+    if out.point_capacity != state.capacity {
+        out.point_capacity = state.capacity;
+    }
+    removed.clear();
+
+    let now = (settings.choice, points, spots);
     if *logged != Some(now) {
         *logged = Some(now);
-        if settings.budget == 0 {
-            info!("light shadows: off");
-        } else {
-            info!("light shadows: {} of the budget of {} cast ({points} point, {spots} spot lights; {drawn} placed lights drawn)", points + spots, settings.budget);
+        match tune {
+            None => info!("light shadows: off"),
+            Some(t) => info!(
+                "light shadows: {} cast ({points} point, {spots} spot lights) within {reach:.0} units, {} at most; cubes {}x{}, room for {}",
+                points + spots,
+                t.lights,
+                cube.size,
+                cube.size,
+                state.capacity
+            ),
+        }
+    }
+    // A summary of what was drawn, every 10 s of real time.
+    if tune.is_some() {
+        state.frames += 1;
+        state.since += time.delta_secs();
+        if state.since >= 10.0 {
+            let per = |n: u64| n as f32 / state.frames as f32;
+            info!(
+                "light shadows: {:.2} point lights switched on and {:.1} faces drawn a frame over {} frames ({} lights casting); marked a frame by shapes {:.2}, skeletons {:.2}, removals {:.2}, lights {:.2}; shapes such as {}",
+                per(state.switched),
+                per(state.drawn),
+                state.frames,
+                state.lamps.len(),
+                per(state.causes[0]),
+                per(state.causes[1]),
+                per(state.causes[2]),
+                per(state.causes[3]),
+                if state.names.is_empty() { "none".to_string() } else { state.names.join(", ") }
+            );
+            (state.switched, state.drawn, state.frames, state.since, state.causes) = (0, 0, 0, 0.0, [0; 4]);
+            state.names.clear();
+            // Forget shapes and skeletons that have not marked for a while.
+            let old = frame.saturating_sub(4800);
+            state.shapes_at.retain(|_, (_, f)| *f >= old);
+            state.skeletons_at.retain(|_, (_, _, f)| *f >= old);
         }
     }
 }
@@ -240,40 +644,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn budgets_are_a_short_list_and_the_command_line_takes_the_nearest_below() {
-        assert!(BUDGETS.len() <= 7, "a list row (settings-page.md §0)");
-        assert_eq!(BUDGETS[0], ("Off", 0));
-        assert_eq!(budget_of(0), 0);
-        assert_eq!(budget_of(1), 0);
-        assert_eq!(budget_of(3), 2);
-        assert_eq!(budget_of(4), 4);
-        assert_eq!(budget_of(100), 8);
+    fn the_choices_are_the_sun_shadows_rows_and_each_on_choice_is_tuned() {
+        assert_eq!(CHOICES, crate::shadow_rate::SUN_SHADOW_CHOICES);
+        assert_eq!(tuning(0), None);
+        let (p, q) = (tuning(1).unwrap(), tuning(2).unwrap());
+        assert!(q.lights > p.lights && q.draws > p.draws, "Quality draws more");
+        assert!(q.near_every <= p.near_every && q.far_every <= p.far_every, "and as often or more");
+        assert_eq!(LightShadows::of(LightShadowMode::Quality).choice, 2);
+        assert_eq!(LightShadows::of(LightShadowMode::Off).choice, 0);
     }
 
     #[test]
-    fn nearer_brighter_and_larger_lights_score_higher() {
-        let near = score(1.0, 400.0, 300.0).unwrap();
-        let far = score(1.0, 400.0, 1200.0).unwrap();
-        assert!(near > far);
-        assert!(score(2.0, 400.0, 1200.0).unwrap() > far);
-        assert!(score(1.0, 800.0, 1200.0).unwrap() > far);
-        // Inside half its range a light scores as at half its range.
-        assert_eq!(score(1.0, 400.0, 10.0), score(1.0, 400.0, 200.0));
-        // Out of reach, dark or without range: none.
-        assert_eq!(score(1.0, 400.0, 400.0 + REACH + 1.0), None);
-        assert_eq!(score(0.0, 400.0, 100.0), None);
-        assert_eq!(score(1.0, 0.0, 100.0), None);
+    fn lights_are_picked_by_how_near_their_light_reaches_within_the_shadow_distance() {
+        // Inside a light (edge distance 0) before one whose light ends 100 units away.
+        let mut c = vec![(1, rank(500.0, 400.0, false)), (2, rank(300.0, 400.0, false)), (3, rank(5000.0, 400.0, false))];
+        assert_eq!(pick(&mut c, 8000.0, 8), vec![2, 1, 3]);
+        assert_eq!(pick(&mut c, 1000.0, 8), vec![2, 1], "beyond the shadow distance: none");
+        assert_eq!(pick(&mut c, 8000.0, 1), vec![2], "the cap");
+        // A casting light keeps its place against one KEEP times nearer.
+        let mut c = vec![(1, rank(1200.0, 400.0, true)), (2, rank(1050.0, 400.0, false))];
+        assert_eq!(pick(&mut c, 8000.0, 1), vec![1]);
+        let mut c = vec![(1, rank(1200.0, 400.0, true)), (2, rank(700.0, 400.0, false))];
+        assert_eq!(pick(&mut c, 8000.0, 1), vec![2]);
     }
 
     #[test]
-    fn a_casting_light_keeps_its_place_until_another_scores_keep_times_as_much() {
-        let mut c = vec![(1, 1.0, true), (2, 1.4, false)];
-        assert_eq!(pick(&mut c, 1), vec![1]);
-        let mut c = vec![(1, 1.0, true), (2, 1.6, false)];
-        assert_eq!(pick(&mut c, 1), vec![2]);
-        let mut c = vec![(1, 3.0, false), (2, 1.0, false), (3, 2.0, false)];
-        assert_eq!(pick(&mut c, 2), vec![1, 3]);
-        assert_eq!(pick(&mut c, 0), Vec::<i32>::new());
-        assert_eq!(pick(&mut c, 8).len(), 3);
+    fn slots_are_the_lowest_free_and_cubes_follow_the_shadow_resolution() {
+        assert_eq!(free_slot([].into_iter()), 0);
+        assert_eq!(free_slot([0, 1, 3].into_iter()), 2);
+        assert_eq!(free_slot([3, 1, 0, 2].into_iter()), 4);
+        assert_eq!(free_slot([1, 2].into_iter()), 0);
+        assert_eq!(cube_side(2048), 512);
+        assert_eq!(cube_side(4096), 1024);
+    }
+
+    #[test]
+    fn turns_are_staggered_by_phase() {
+        let every = 4;
+        let frames: Vec<u64> = (0..12).filter(|&f| its_turn(f, 1, every)).collect();
+        assert_eq!(frames, vec![3, 7, 11]);
+        assert!((0..8).all(|f| its_turn(f, 5, 1)), "every frame");
+        let a: Vec<bool> = (0..4).map(|f| its_turn(f, 0, 2)).collect();
+        let b: Vec<bool> = (0..4).map(|f| its_turn(f, 1, 2)).collect();
+        assert_ne!(a, b, "two lights on different frames");
+    }
+
+    #[test]
+    fn a_sphere_dirties_the_faces_it_reaches() {
+        let light = Vec3::ZERO;
+        let sphere = |c: Vec3, r: f32| Sphere { center: c.into(), radius: r };
+        assert!(reaches(light, 400.0, &sphere(Vec3::new(450.0, 0.0, 0.0), 60.0)));
+        assert!(!reaches(light, 400.0, &sphere(Vec3::new(500.0, 0.0, 0.0), 60.0)));
+        // Without frusta (a light that never drew) every face counts.
+        assert_eq!(faces_reached(&sphere(Vec3::X * 100.0, 10.0), None, None), ALL_FACES);
     }
 }

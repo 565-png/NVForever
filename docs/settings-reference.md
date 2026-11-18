@@ -1001,18 +1001,21 @@ below cover them all.
 
 ### `light-shadows`: Lamp shadows
 
-- On the page: How many lamps, fires and spot lights near you cast shadows, the most
-  important first, so walls stop their light. Each costs frame rate. Not in the original.
-- In full: Off (the default), 2, 4 or 8 of the placed lights cast shadows: those drawn
-  whose light reaches into the view and comes within about 29 m of you, the brightest
-  and nearest first, keeping the ones already casting until another is clearly ahead.
-  The world and your body cast them, the first-person arms do not; what lies within 16
-  units of a light (its bulb, shade or flames) casts nothing from it. A point light draws
-  a cube of six 1024² maps, a spot light one map of the Shadow resolution row's size; each
-  is drawn as a view of its own, so the cost is render-thread time as well as GPU time,
-  most indoors. The flashlight casts as before and is not counted. The original's placed
-  lights cast none [design].
-- A list kept in the INI by name (`Off`, `2`, `4`, `8`).
+- On the page: Lamps, fires and spot lights cast shadows within the shadow distance, so
+  walls stop their light. Performance redraws them less often. Costs frame rate. Not in the
+  original.
+- In full: Off (the default), Performance or Quality, as Sun shadows. Every drawn placed
+  light whose light reaches within the sun's shadow distance (the Shadow distance and
+  Longer sun shadows rows) casts, nearest first, up to 32 lights on Quality and 16 on
+  Performance. A light's maps are drawn when it starts casting and then kept; a part of
+  them is drawn again only when something there moved more than about 6 cm, appeared or
+  vanished. At most 3 lights redraw in a frame on Quality, 1 on Performance, nearer ones
+  every frame (every 2nd on Performance), farther ones every 2nd (every 4th), so a moving
+  thing's lamp shadow can lag a frame. The world and your body cast, the first-person arms
+  do not; what lies within 16 units of a light casts nothing from it. A point light's maps
+  are 512² with Shadow resolution 2048, 1024² with 4096. The flashlight casts as before.
+  The original's placed lights cast none [design].
+- A list kept in the INI by name (`Off`, `Performance`, `Quality`).
 - Command-line switches: `--light-shadows`
 - More: docs/design/graphics-enhanced.md §3.15
 - Registered in `engine/nvforever/src/settings.rs`

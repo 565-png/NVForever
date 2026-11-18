@@ -1394,61 +1394,115 @@ it on nor logs it.
 [design] An addition of NVForever's own. The original's placed lights cast no shadows, and
 no LIGH of the masters sets the Spot Shadow flag [observed:
 docs/handoff/esm-data-audit-2026-10-25.md, item 6], so lamps light the rooms behind their
-walls. The row Lamp shadows (Graphics › Shadows; `--light-shadows <n>`) chooses Off, 2, 4 or
-8, which is how many placed lights may cast at once (`engine/nvforever/src/light_shadows.rs`).
+walls. The row Lamp shadows (Graphics › Shadows; `--light-shadows[=performance|quality|off]`)
+offers Off, Performance or Quality, as the Sun shadows row does
+(`engine/nvforever/src/light_shadows.rs`). It is built as the sun's shadows are (owner,
+2026-11-18: "look how sun shadows are calculated and do the same", "use the same
+performance optimizations also for the lamp shadows").
 
-- **Which lights.** Every frame, before Bevy clusters the lights, the placed LIGH lights are
-  scored (`lights::SessionLight` with a point or spot light):
-  - Only lights that are drawn count. Their sphere of light must meet the main camera's
-    frustum, and they must reach within 2,048 units of the camera (`REACH`).
-  - The score is brightness (intensity × the colour's largest channel; a flickering
-    light's full intensity) × (range / distance)², with the distance taken as at least
-    half the range.
-  - The best `n` cast. A light already casting counts 1.5 times (`KEEP`), so a shadow does
-    not switch off and on as the camera moves between two similar lights. Bevy itself gives
-    maps to every shadowed light up to the texture's layers, by entity order, not by
-    importance (the vendored bevy_pbr `light.rs` `prepare_lights`), so the choice has to
-    be made here.
-- **The lighting.** Nothing in the shaders changes. The display-value sum
-  (`lights/display_shader.rs`) already multiplies each point and spot light's diffuse
-  term by Bevy's `shadow`, inside the same light loops (the flashlight's shadows have
-  used this since it was built).
+**First version (dropped the same day).** It used a budget of the 2, 4 or 8 lights that
+scored highest on brightness × (range / distance)². The owner's test: "The shadows pop in
+only when you are very close". Among the saloon's 24 lights, a lamp across the room cast
+nothing until it beat the nearest ones. It was also costly: each shadowed point light cost
+about 1 ms of frame time, most of it on the CPU. Each of a point light's six cube faces is
+a view of its own, and each such view runs Bevy's whole Core3d schedule (culling,
+preprocessing, indirect parameters, its pass), unlike the sun's cascades, which ride inside
+the camera's. Holding the maps with the views kept alive did not fix that: Bevy still
+culls, extracts and queues every face view every frame.
+
+**How it works now.**
+
+- **Which lights: by distance, as the sun's shadows.**
+  - Every drawn placed light casts if its light reaches within the sun's shadow distance of
+    the camera (`SkyState::shadow_distance` × `shadow_reach`: the Shadow distance and
+    Longer sun shadows rows; 0% casts none). Nearest first, measured to the edge of each
+    light's range.
+  - At most 32 lights on Quality and 16 on Performance, a cap for the Strip at night.
+  - Lights are not chosen by view. A light behind the camera keeps casting, so turning
+    around draws nothing anew.
+  - A light already casting keeps its place against one up to 1.25 times nearer (`KEEP`).
+- **Held maps, view-less** (a patched bevy_pbr, engine/vendor/README.md "held light shadow
+  maps").
+  - A point light's cube is drawn when the light starts casting, then kept.
+  - Between draws the light's maps are switched off for Bevy (`shadow_maps_enabled` false:
+    no views, culling or queueing). The patched renderer still sets its shadow flag and
+    samples its cube once all six faces hold what that light drew into this texture.
+  - Each light keeps a slot of the cube texture while it casts. Its GPU flags carry the
+    slot, so other lights coming and going do not move its maps.
+- **Redrawn where something changed.**
+  - A face is marked when, since it was drawn, a shadow-casting shape with its bounds in
+    that face moved, appeared, or was shown or hidden. A skeleton (actors, the player's
+    body) whose joints' box moved also marks the faces it reaches, as does the light
+    itself moving.
+  - Shapes and skeletons count as moved once they are 4 units (about 6 cm) from where
+    they last marked (`MOVE_EPS`). Small moves add up until they reach it.
+  - Something removed (a taken item) marks the lights around the camera in full.
+  - Every light is redrawn in full every 600 frames on Quality and 1,200 on Performance
+    anyway, each at its own time.
+- **Staggered, as the sun's cascades.**
+  - A light with marked faces is switched on to draw them on every frame on Quality (every
+    2nd on Performance) while its light reaches within 1,500 units of the camera (`NEAR`).
+    A farther one draws every 2nd frame on Quality and every 4th on Performance. Each
+    light takes its turn on frames of its own.
+  - At most 3 point lights are switched on in a frame on Quality, 1 on Performance. Lights
+    that never drew go first, then the nearest; the rest wait.
+  - Of a light switched on, only the marked faces are drawn; the others keep their maps.
+    A light that has never drawn casts nothing until it has.
+  - Only a light the camera saw the frame before is switched on; an unseen one keeps its
+    marks.
+  - Spot lights (few among the placed ones) keep their maps switched on while they cast.
+    Their map is drawn only on the frames it is marked and its turn comes.
 - **What casts.**
   - A casting light takes the sun's layers (0, `sky::SHADOW_LAYER`, `sky::BODY_LAYER`), so
-    the player's body casts its shadow in both views. The first-person arms do not.
-  - Grass, far tree cards, thin meshes, particles and everything else marked
-    `NotShadowCaster` stays out, as for the sun.
-  - A near plane of 16 units (`NEAR`; the flashlight's is 8) keeps a light's own bulb,
-    shade or flames out of its map. The cost: a wall within 16 units of a light (a sconce)
-    does not stop that light on its own side.
+    the player's body casts in both views. The first-person arms do not.
+  - Everything `NotShadowCaster` stays out, as for the sun.
+  - A near plane of 16 units (`NEAR_Z`; the flashlight's is 8) keeps a light's own bulb,
+    shade or flames out of its map. The cost: a wall within 16 units of a light does not
+    stop that light on its own side.
+- **The lighting.** Nothing in the lighting shaders changes. The display-value sum
+  (`lights/display_shader.rs`) already multiplies each point and spot light's diffuse term
+  by Bevy's `shadow`. The cube lookup takes the light's slot (shadow_sampling.wesl
+  `nvf_point_shadow_cube`).
 - **Maps.**
-  - A point light draws a cube of six 1024² faces (Bevy's `PointLightShadowMap`, left at
-    its default; 24 MiB a light).
-  - A spot light draws one layer of the sun's shadow texture, so it takes the Shadow
-    resolution row's side (16 or 64 MiB).
-  - Bias: Bevy's defaults. Its depth bias is in world units, so here it is about 1 mm;
-    its normal bias is scaled to the texel. `NVF_LIGHT_SHADOW_BIAS=<depth>,<normal>` and
-    `NVF_LIGHT_SHADOW_NEAR=<units>` override them for a run, for comparing.
-- **Cost** [hypothesis until measured]. Each shadowed light is a view of its own: a point
-  light is six. Each view runs Bevy's whole view schedule (culling, preprocessing,
-  indirect parameters, the shadow pass), as each cascade did before #652 (§5.5). So the
-  cost falls on the render thread as well as the GPU: roughly 0.1-0.15 ms a view on the
-  render thread (§5.5, §9's per-view figure).
-  - Switching a light's shadow off despawns its views. Switching it on specializes and
-    queues every caster in its range again. The hysteresis keeps that rare.
-  - A change in how many spot lights cast resets the sun's held cascades (Performance
-    mode), since spot maps share the directional texture.
-- **Not built yet.**
-  - Holding a still light's maps between frames while nothing moves in its range. The
-    vendored held-shadow-maps patch covers directional cascades only. Point and spot views
-    would need their own hold: their layer index moves when a lower-sorted shadowed light
-    comes or goes.
-  - Fading a shadow in and out when a light starts or stops casting. It switches at once.
-  - A per-light-kind budget, since a point light costs six views and a spot light one.
-- **Test aids.** The log line `light shadows: <n> of the budget of <b> cast (<p> point,
-  <s> spot lights; <d> placed lights drawn)` is written whenever those numbers change.
-  Smoke `light-shadows` (the Prospector Saloon at 22:00 with `--light-shadows 4`) checks that
-  lights take maps within the budget. The picture is checked by hand.
+  - A point light's cube has 512² faces with Shadow resolution 2048, and 1024² with 4096
+    (`PointLightShadowMap`): 6 or 24 MiB a light. The cube texture's room grows in fours
+    while a mode stays on.
+  - A spot light draws one layer of the sun's shadow texture.
+  - Bias: Bevy's defaults. `NVF_LIGHT_SHADOW_BIAS=<depth>,<normal>` and
+    `NVF_LIGHT_SHADOW_NEAR=<units>` override them for a run.
+  - `NVF_PLAY_TEST_LIGHT_SHADOW_HOLD=0` draws every map every frame, for comparing.
+
+**Cost** [observed 2026-11-18: RTX 5090, 1280 × 720, the Prospector Saloon at 22:00, 24
+placed lights, release builds, `--log-frame-times 6`; windows after loading]:
+
+| Mode | Free camera standing still | `--play`, walking back and forth |
+|---|---|---|
+| Off | 2.7-2.9 ms | 3.0-3.25 ms |
+| Performance (16 lights) | 3.0-3.3 ms | 3.3-3.9 ms |
+| Quality (24 lights) | 2.75-2.9 ms | 3.3-3.7 ms |
+| Quality, nothing held (test aid) | 14-15 ms | |
+
+- Before the 4-unit rule, the actors' idle skeletons and the head parts that follow them
+  (eyes, mouth, hat) marked about 116 times a frame. Quality then switched on its full 3
+  lights every frame: 5.5 ms standing still.
+- Standing still now, about one light in 50 frames is switched on (its full redraw due).
+  The slowest frames were 8.3-8.7 ms against 3.3-6.8 ms with the lights off, so a light
+  switched on costs a few ms in its frame.
+- Walking, 0.5-0.9 lights a frame are switched on.
+
+**Log.**
+- `light shadows: <n> cast (<p> point, <s> spot lights) within <reach> units, <cap> at most;
+  cubes <side>, room for <c>` is written whenever these change.
+- Every 10 s it writes `light shadows: <l> point lights switched on and <f> faces drawn a
+  frame … marked a frame by shapes <a>, skeletons <b>, removals <c>, lights <d>; shapes such
+  as <names>`.
+
+**Not built yet.**
+- Fading a shadow in and out when a light starts or stops casting.
+- Keeping a held light's specialization caches, so switching it on costs less.
+
+**Smoke.** `light-shadows` (the Prospector Saloon at 22:00, `--light-shadows=quality`)
+checks that lights cast and that maps are drawn and held. The picture is checked by hand.
 
 ## 4. Tried and dropped
 

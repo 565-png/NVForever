@@ -1064,8 +1064,8 @@ fn register_graphics(app: &mut App) {
             ask_keep: false,
         },
     );
-    // Shadows of placed lights (light_shadows.rs; graphics-enhanced.md §3.15): how many,
-    // saved by name, off by default [design].
+    // Shadows of placed lights (light_shadows.rs; graphics-enhanced.md §3.15): Off,
+    // Performance or Quality as the Sun shadows row, saved by name, off by default [design].
     add_choice_list(
         app,
         Setting {
@@ -1079,7 +1079,7 @@ fn register_graphics(app: &mut App) {
             slider: None,
         },
         ChoiceList {
-            names: |_| crate::light_shadows::BUDGETS.iter().map(|b| b.0.to_string()).collect(),
+            names: |_| crate::light_shadows::CHOICES.iter().map(|c| c.to_string()).collect(),
             chosen: light_shadows_chosen,
             pick: take_light_shadows,
             save: light_shadows_chosen,
@@ -1488,21 +1488,19 @@ fn take_shadow_resolution(w: &mut World, text: &str) -> bool {
 }
 
 /// The Lamp shadows row's note (light_shadows.rs).
-const LIGHT_SHADOWS_NOTE: &str = "How many lamps, fires and spot lights near you cast shadows, the most important first, so walls stop their light. Each costs frame rate. Not in the original.";
+const LIGHT_SHADOWS_NOTE: &str = "Lamps, fires and spot lights cast shadows within the shadow distance, so walls stop their light. Performance redraws them less often. Costs frame rate. Not in the original.";
 
 fn light_shadows_chosen(w: &World) -> String {
-    let budget = w.get_resource::<crate::light_shadows::LightShadows>().map_or(0, |l| l.budget);
-    let budgets = &crate::light_shadows::BUDGETS;
-    budgets.iter().find(|b| b.1 == budget).unwrap_or(&budgets[0]).0.to_string()
+    let choice = w.get_resource::<crate::light_shadows::LightShadows>().map_or(0, |l| l.choice);
+    crate::light_shadows::CHOICES[choice.min(crate::light_shadows::CHOICES.len() - 1)].to_string()
 }
 
 /// The Lamp shadows choice `text` names.
 fn take_light_shadows(w: &mut World, text: &str) -> bool {
-    let budgets = &crate::light_shadows::BUDGETS;
-    let names: Vec<String> = budgets.iter().map(|b| b.0.to_string()).collect();
-    match nvf_play::settings::choice_of(text, &names, |v| choice_index(v, crate::light_shadows::BUDGETS.len())) {
+    let names: Vec<String> = crate::light_shadows::CHOICES.iter().map(|c| c.to_string()).collect();
+    match nvf_play::settings::choice_of(text, &names, |v| choice_index(v, crate::light_shadows::CHOICES.len())) {
         Some(i) => {
-            w.insert_resource(crate::light_shadows::LightShadows { budget: budgets[i].1 });
+            w.insert_resource(crate::light_shadows::LightShadows { choice: i });
             true
         }
         None => false,
