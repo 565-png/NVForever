@@ -1601,6 +1601,22 @@ placed lights, release builds, `--log-frame-times 6`; windows after loading]:
   switched on costs a few ms in its frame.
 - Walking, 0.5-0.9 lights a frame are switched on.
 
+**Cost at the menus' top settings in 4K** [observed 2026-11-18: RTX 5090, 3840 × 2160
+borderless, every graphics row at its top (ambient occlusion, TAA, sun shafts, water
+reflections, shadow resolution 4096 so 1024² cubes, temporal shadow filter, all draw
+distances 100%), upscaler and frame generation off; the Prospector Saloon at 22:00, 10 s
+standing then Trudy's shotgun gunfight (7 flashes); `--log-frame-times 3`, 3-second means
+after loading]:
+
+| Lamp shadows | Standing (3 windows) | Gunfight (6 windows) | Slowest frame in the gunfight |
+|---|---|---|---|
+| Off | 3.21-3.28 ms | 3.23-3.29 ms | 4.2-7.0 ms |
+| Performance | 3.21-3.26 ms | 3.31-3.40 ms | 5.6-15.5 ms |
+| Quality (soft edges, contact shadows on 24 lights) | 3.23-3.31 ms | 3.33-3.39 ms | 5.3-19.3 ms |
+
+- 24 lamps cast, 5 flashes cast with one draw each. The mean costs about 0.1 ms; the
+  slowest frames are those of a flash or a lamp switched on.
+
 **Log.**
 - `light shadows: <n> cast (<p> point, <s> spot lights) within <reach> units, <cap> at most;
   cubes <side>, room for <c>; spot maps room for <s>; transients (muzzle flashes,
