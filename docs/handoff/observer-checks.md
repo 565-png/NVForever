@@ -3263,3 +3263,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
      lost the player early and no dog joined. The runtime already does this
      (combat-groups.md §4). To count placed creatures in a job: walk `GetFirstRef 200 1`
      and compare `GetBaseObject`.
+225. **In a child worldspace with Use Land Data, which landscape is drawn where the child
+     has its own LAND and it differs from the parent's?** (P2; #2345;
+     `crates/fnv-world/src/index.rs` `take_parent_data`.) Tale of Two Wastelands:
+     MegatonWorld squares (-1, -7) and (1, -6), ParadiseFalls (-9, 15) and (-9, 16),
+     GNRroofWorld (flat at about 12,280 over the parent's ground at about 10,700). Stand
+     in each and read the player's z on the ground (`player.GetPos Z`): the child's
+     height or the parent's. NVForever keeps the child's own LAND and takes the parent's
+     only where the child has none. Also: per-cell water in ParadiseFalls (Use Water
+     Data), which NVForever does not take from the parent's cells.
