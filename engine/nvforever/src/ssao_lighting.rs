@@ -45,6 +45,15 @@ const SHADER: Handle<Shader> = uuid_handle!("8d1e6a2c-3f47-4b9e-a5c1-6e02d7f4b31
 /// settle it].
 pub const EXPONENT: f32 = 1.0 / 2.2;
 
+/// The exponent in use: [`EXPONENT`], or `NVF_PLAY_DEBUG_AO_EXPONENT=<0.1..2>` for judging by eye (1 darkens the
+/// display value by the factor itself, as the picture placement does after tonemapping).
+fn exponent() -> f32 {
+    static VALUE: std::sync::LazyLock<f32> = std::sync::LazyLock::new(|| {
+        std::env::var("NVF_PLAY_DEBUG_AO_EXPONENT").ok().and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| v.is_finite()).map_or(EXPONENT, |v| v.clamp(0.1, 2.0))
+    });
+    *VALUE
+}
+
 /// The share of the fragment's distance (plus one unit) within which a texel's distance
 /// counts as the same surface: stage one's fallback tolerance (ssao.wesl
 /// `FALLBACK_TOLERANCE`) [engineering choice].
@@ -65,7 +74,7 @@ impl AmbientOcclusionLightingUniform {
     /// debug view.
     pub fn new(fade_end: f32, strength: f32, lamps: f32, debug: bool) -> Self {
         AmbientOcclusionLightingUniform {
-            params: Vec4::new(EXPONENT, if debug { 1.0 } else { 0.0 }, fade_end, DISTANCE_TOLERANCE),
+            params: Vec4::new(exponent(), if debug { 1.0 } else { 0.0 }, fade_end, DISTANCE_TOLERANCE),
             extra: Vec4::new(strength, lamps.clamp(0.0, 1.0), 0.0, 0.0),
         }
     }
