@@ -33,7 +33,10 @@ The activation target (`activate::Target`) is:
 
 Not on a reference whose script has an OnActivate block, one set off by its activate parents
 only, or one that cannot be activated: the game's own activation decides those, so their
-prompt stays and E acts as it always did. Not under the weapon wheel, VATS, the character
+prompt stays and E acts as it always did. That holds for pockets too: a sneaking target whose
+script has an OnActivate block (a quest guard that withholds `Activate`) cannot be picked by
+hand, so it gets no list. A perk's activate choices on a body (Cannibal and the like) are
+not offered by E or R; T's full menu path offers them as before. Not under the weapon wheel, VATS, the character
 creator, a kill camera, an idle that holds the camera, or a script's DisablePlayerControls
 (movement or rollover text). Not while the HUD is hidden (its keys then do what they always do).
 The list stays on a reference only while it stays what it was: a pocket whose owner stands up,

@@ -648,7 +648,9 @@ fn objects(
     // is sounded (the game runs on under it: a shot's ammo, a hotkeyed Stimpak are not takes).
     let menu_open = menu.as_ref().and_then(|m| m.0.as_ref()).is_some_and(|m| matches!(m.mode, Mode::Container(_)));
     let in_container = menu_open || crate::quick_loot::holds_input();
-    let took = menu_open || crate::quick_loot::took_this_frame();
+    // Read every frame, so a take flagged while the container menu is open is not left to
+    // sound a later frame after it closes.
+    let took = crate::quick_loot::took_this_frame() | menu_open;
     for &RefChanged { form_id: id, restored } in changed.read() {
         let Some(s) = sim.world.peek(FormId(id)) else { continue };
         if !ws.forms.items.contains_key(&s.base) {

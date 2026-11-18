@@ -223,6 +223,20 @@ const STEAL: &str = "Steal";
 const TAKE_ALL: &str = "Take All";
 const STEAL_ALL: &str = "Steal All";
 const SEARCH: &str = "Search";
+/// The translation key for [`SEARCH`] in the sense of searching a body or container: the
+/// settings page's search box shares the English word but not its translation (fr
+/// "Rechercher" looks up a text, "Fouiller" searches a body), so the list has its own key
+/// and shows the English word where no table has it (review of #2935).
+const SEARCH_KEY: &str = "Search (a body or container)";
+
+fn search_word() -> &'static str {
+    let w = tr(SEARCH_KEY);
+    if w == SEARCH_KEY {
+        SEARCH
+    } else {
+        w
+    }
+}
 /// The names' head, on the columns' heads' line [the owner's sixth look, 2026-11-17].
 const ITEM: &str = "ITEM";
 const WG: &str = "WG";
@@ -246,9 +260,9 @@ impl Spec {
         // NVForever's own words in the chosen language (`lang/*.toml`, `fnv_util::words`).
         let mut prompts = vec![format!("{} {}", key(Control::Activate), tr(if steal { STEAL } else { TAKE }))];
         if s.kind != Kind::Pocket {
-            prompts.push(format!("{} {}", key(Control::ReadyItem), tr(if steal { STEAL_ALL } else { TAKE_ALL })));
+            prompts.push(format!("{} {}", key(Control::ReadyItem), if steal { tr(STEAL_ALL) } else { crate::pipboy::labels::label("sTakeAll", tr(TAKE_ALL)) }));
         }
-        prompts.push(format!("{} {}", key(Control::Rest), tr(SEARCH)));
+        prompts.push(format!("{} {}", key(Control::Rest), search_word()));
         Spec {
             title: s.title.clone(),
             position: if rows.is_empty() { "0/0".into() } else { format!("{}/{}", sel + 1, rows.len()) },
@@ -679,15 +693,25 @@ fn kind_of(action: &Action, container: bool) -> Option<Kind> {
 fn wanted(t: &crate::activate::Targeted, container: bool, g: &mut fnv_game::Game) -> Option<Kind> {
     let kind = kind_of(&t.action, container)?;
     let id = FormId(t.form_id);
-    if kind == Kind::Pocket {
-        return g.pickpocket_refusal(id).is_none().then_some(kind);
-    }
-    // The game's own activation decides these (module notes).
-    if g.activation_refused(id) || g.parent_activate_only(id) {
+    // The game's own activation decides these (module notes), pockets too: a refused or
+    // parent-only reference, or one whose OnActivate block runs instead of the default
+    // action, is never stolen from by hand (`script.rs` `activate_by_hand`).
+    if !by_hand_default(id, g) {
         return None;
     }
-    let scripted = g.ref_script(id).and_then(|s| g.data.script(s)).is_some_and(|u| u.has_block(event::ON_ACTIVATE));
-    (!scripted).then_some(kind)
+    if kind == Kind::Pocket && g.pickpocket_refusal(id).is_some() {
+        return None;
+    }
+    Some(kind)
+}
+
+/// Whether activating `id` by hand takes the default action: not refused, not parent-only,
+/// and no OnActivate block on its script.
+fn by_hand_default(id: FormId, g: &fnv_game::Game) -> bool {
+    if g.activation_refused(id) || g.parent_activate_only(id) {
+        return false;
+    }
+    !g.ref_script(id).and_then(|s| g.data.script(s)).is_some_and(|u| u.has_block(event::ON_ACTIVATE))
 }
 
 fn open(t: &crate::activate::Targeted, kind: Kind, sim: &mut SimState, rt: &mut crate::script::Runtime) -> Option<Shown> {
@@ -1047,7 +1071,7 @@ impl Plugin for QuickLootPlugin {
                 key: "quick-loot",
                 group,
                 label: "Enabled",
-                note: "On: a container, body or (sneaking) pocket under the crosshair lists its items without pausing. E takes, R takes all, T opens the menu.",
+                note: "On: a container, body or (sneaking) pocket under the crosshair lists its items without pausing. Activate takes, Ready Item takes all, Wait opens the menu.",
                 switches: "",
                 get: |_| ON.load(Ordering::Relaxed),
                 set: |_, on| ON.store(on, Ordering::Relaxed),
@@ -1174,6 +1198,52 @@ mod tests {
 
     fn find<'a>(l: &'a Laid, text: &str) -> &'a Piece {
         l.pieces.iter().find(|p| p.text == text).unwrap_or_else(|| panic!("no \"{text}\""))
+    }
+
+    /// A sneaking target whose script has an OnActivate block is not pickpocketed by hand on
+    /// main (`script::activate_by_hand` runs the block instead), so the list never shows its
+    /// pockets either; the same actor without the script does show them (review of #2935).
+    #[test]
+    fn a_scripted_actors_pockets_are_not_listed() {
+        use crate::script::ScriptState;
+        use crate::script_draw::tests::{play_over, record, sub, top};
+        use fnv_script::vm::XVal;
+        let text = |sig: &[u8; 4], s: &str| sub(sig, [s.as_bytes(), &[0]].concat());
+        // An enabled Object script header (`menu::preactivation_tests`).
+        let header = [0u32.to_le_bytes().to_vec(), 0u32.to_le_bytes().to_vec(), 0u32.to_le_bytes().to_vec(), 0u32.to_le_bytes().to_vec(), 0u16.to_le_bytes().to_vec(), 1u16.to_le_bytes().to_vec()].concat();
+        // The string_var makes the build compile the unit from its source (`source_compile`).
+        let source = "scn QuickLootGuardScript\nstring_var guardNote\nBegin OnActivate\nSetModLocalData \"guard.block\" 1\nEnd\n";
+        let play = play_over(&[
+            top(
+                b"NPC_",
+                &[
+                    record(b"NPC_", 0, 7, &[text(b"EDID", "Player")]),
+                    record(b"NPC_", 0, 0x810, &[text(b"EDID", "QuickLootGuard"), sub(b"SCRI", 0x820u32.to_le_bytes().to_vec())]),
+                    record(b"NPC_", 0, 0x811, &[text(b"EDID", "QuickLootPlain")]),
+                ]
+                .concat(),
+            ),
+            top(b"SCPT", &record(b"SCPT", 0, 0x820, &[text(b"EDID", "QuickLootGuardScript"), sub(b"SCHR", header), sub(b"SCDA", vec![]), sub(b"SCTX", source.as_bytes().to_vec())])),
+        ]);
+        let mut scripts = ScriptState::over_plugins(play.lo.plugins);
+        let mut sim = SimState::new(play.lo, play.schema, play.index);
+        let rt = scripts.rt.as_mut().unwrap();
+        let target = |form_id: u32| crate::activate::Targeted { form_id, name: "Guard".into(), action: Action::Steal, distance: 50.0, source: crate::activate::pick::Source::Collision, crime: true, empty: false };
+        // Placed and judged with the world attached, as the frame does (`script::with_world`).
+        let (guard, plain) = crate::script::with_world(rt, &mut sim, |rt| {
+            let mut placed = |base: &str| {
+                let body = format!("ref r\nBegin Function {{}}\nlet r := player.PlaceAtMe {base}\nSetFunctionValue r\nEnd");
+                match rt.game.run_query(&body, default()).unwrap() {
+                    XVal::Ref(id) if id != 0 => id,
+                    other => panic!("placing {base}: {other:?}"),
+                }
+            };
+            let guard = placed("QuickLootGuard");
+            let plain = placed("QuickLootPlain");
+            (wanted(&target(guard), false, &mut rt.game), wanted(&target(plain), false, &mut rt.game))
+        });
+        assert_eq!(guard, None, "an OnActivate block runs instead of the theft");
+        assert_eq!(plain, Some(Kind::Pocket));
     }
 
     #[test]
