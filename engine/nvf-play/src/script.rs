@@ -605,6 +605,12 @@ fn with_ray_caster<R>(phys: &mut PhysState, play: &PlayData, worldspace: u32, f:
         let hit = match kind {
             fnv_game::ray::CastKind::Scene => w.queries().ray(a, d, len, &filter),
             fnv_game::ray::CastKind::World => w.queries().ray(a, d, len, &fnv_phys::world::Filter { no_terrain: false, ..filter.clone() }),
+            fnv_game::ray::CastKind::CameraClearance => w.queries().ray(a, d, len, &fnv_phys::world::Filter {
+                exclude_layers: fnv_phys::layers::character_ignores().union(fnv_phys::layers::actor_volumes()),
+                no_dynamic: true,
+                no_actors: true,
+                ..Default::default()
+            }),
             // The terrain's own hit, past anything standing on it.
             fnv_game::ray::CastKind::Terrain | fnv_game::ray::CastKind::LandTexture => {
                 w.queries().ray_all(a, d, len, &fnv_phys::world::Filter::default()).into_iter().find(|h| matches!(h.owner, fnv_phys::world::Owner::Terrain { .. }))
@@ -642,8 +648,11 @@ pub fn with_world<R>(rt: &mut Runtime, sim: &mut SimState, f: impl FnOnce(&mut R
 /// "Inventory", or a leveled pick), each pick made as the game makes it: at the level the
 /// reference reads leveled lists at in `sim`'s world, with its pick seed (a saved
 /// ResurrectActor roll included; `SimState::pick`, docs/spec-notes/actors.md §1.3).
-fn inventory_sources(data: &GameData, sim: &SimState, game: &Game<'_>) -> std::collections::BTreeMap<FormId, FormId> {
-    data.inventory_sources_at(sim.refs, |r| sim.pick(game, r))
+fn inventory_sources(_data: &GameData, sim: &SimState, game: &Game<'_>) -> std::collections::BTreeMap<FormId, FormId> {
+    sim.refs.refs.iter().filter(|(_, p)| matches!(&p.sig, b"ACHR" | b"ACRE")).filter_map(|(&r, p)| {
+        let (seed, at) = sim.pick(game, r);
+        game.runtime_template_source(p.base, seed, at, |d| d.template_inventory).map(|(source, _)| source).filter(|&source| source != p.base).map(|source| (r, source))
+    }).collect()
 }
 
 impl Runtime {
@@ -792,7 +801,8 @@ impl Runtime {
         if let Some(f) = front {
             if let Some(m) = self.game.message_box.as_mut().filter(|m| m.message == f && m.pressed.is_none()) {
                 let b = button.unwrap_or(0);
-                if b < 0 || b as usize >= m.buttons {
+                // A box without buttons shows OK alone: button 0 (#2925).
+                if b < 0 || b as usize >= m.buttons.max(1) {
                     return false;
                 }
                 m.pressed = Some(b);
@@ -2757,16 +2767,18 @@ pub fn asks_nothing(buttons: usize) -> bool {
     buttons <= 1
 }
 
-#[cfg(any(test, feature = "report-test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "report-test-support"))]
 impl ScriptState {
     /// A runtime over an empty load order, for tests of what works the open menu: nothing
     /// has run, no menu is open.
+    #[cfg(any(test, feature = "report-test-support"))]
     pub(crate) fn over_no_plugins() -> ScriptState {
         Self::over_plugins(&[])
     }
 
-    /// As [`ScriptState::over_no_plugins`], over these plugins.
-    pub(crate) fn over_plugins(plugins: &[fnv_esm::Plugin]) -> ScriptState {
+    /// [design, #2652] A runtime over authored plugins, without loading assets or
+    /// running scripts; available to downstream engine tests through `test-support`.
+    pub fn over_plugins(plugins: &[fnv_esm::Plugin]) -> ScriptState {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
         let lo = fnv_esm::LoadOrder::new(plugins).unwrap();
         let schema = fnv_esm::Schema::load_dir(root.join("fnv")).unwrap();
@@ -2926,6 +2938,44 @@ mod no_messages_tests {
         assert!(asks_nothing(0) && asks_nothing(1));
         assert!(!asks_nothing(2));
     }
+
+    /// The front box, waiting, of a message with `buttons` buttons.
+    fn box_open(buttons: usize) -> ScriptState {
+        let mut s = ScriptState::over_no_plugins();
+        let g = &mut s.rt.as_mut().unwrap().game;
+        let m = FormId(0x810);
+        g.message_box = Some(fnv_game::game::MessageBox { message: m, buttons, pressed: None, owner: Some("owner".into()), hidden: Vec::new() });
+        g.show_box_buttons(m, buttons);
+        assert_eq!(g.menu, Some(MENU_MESSAGE));
+        s
+    }
+
+    fn pressed(s: &ScriptState) -> Option<i32> {
+        s.rt.as_ref().unwrap().game.message_box.as_ref().and_then(|m| m.pressed)
+    }
+
+    /// #2925: OK on a box without buttons (the Broken Mr. Handy's "the robot jumps to
+    /// life") answers button 0, as the player's OK; before, the box's OK was refused once
+    /// the box had a `message_box` of 0 buttons, and had none to answer before that.
+    #[test]
+    fn ok_on_a_box_without_buttons_answers_button_0() {
+        let mut s = box_open(0);
+        assert!(!s.answer(Some(1), "key"), "no second button");
+        assert_eq!(pressed(&s), None);
+        assert!(s.answer(None, "OK"));
+        assert_eq!(pressed(&s), Some(0));
+        assert!(s.answered(), "the box closes after the frame's scripts");
+    }
+
+    /// A box with buttons still refuses a button it does not have.
+    #[test]
+    fn a_box_with_buttons_refuses_a_button_past_its_last() {
+        let mut s = box_open(2);
+        assert!(!s.answer(Some(2), "key"));
+        assert_eq!(pressed(&s), None);
+        assert!(s.answer(Some(1), "key"));
+        assert_eq!(pressed(&s), Some(1));
+    }
 }
 
 #[cfg(test)]
@@ -2939,3 +2989,6 @@ mod runtime_start_tests {
         assert!(!runtime_waits(false, false), "the menu is open, paused, or was never asked for");
     }
 }
+
+#[cfg(test)]
+mod clearance_tests;

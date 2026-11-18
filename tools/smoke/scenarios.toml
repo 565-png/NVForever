@@ -888,29 +888,73 @@ forbid = [
 ]
 
 [[scenario]]
+name = "heat-haze"
+source = "[design] docs/design/graphics-enhanced.md §3.15 (a prototype), engine/nvforever/src/heat_haze.rs and heat_haze.wesl: started with --graphics-only heat-haze at noon under a pinned clear weather (NVWastelandClear), the heat haze turns on with a strength above 0 from the sun and the weather, its pipeline (heat_haze.wesl) compiles and is ready and the pass draws, without a shader, pipeline or rendering error. The look is checked in pictures by hand"
+areas = ["renderer", "graphics", "weather"]
+paths = ["engine/nvforever/src/heat_haze*", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/tree.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--weather", "NVWastelandClear", "--graphics-only", "heat-haze"]
+run_seconds = 14
+expect = [
+  { re = 'heat haze: (?:on, )?strength (?P<n>\d+\.\d+), at most [\d.]+ px \(sun', range = [0.05, 1.0], label = "at noon in clear weather the heat haze has a strength above 0 and the pass is not skipped" },
+  { re = 'heat haze: pass drawn \(\d+x\d+, multisampled depth (?:yes|no)\)', label = "the pass ran (not only a strength above 0)" },
+]
+order = [[
+  { re = 'graphics: light glow, heat haze$', label = "the switch is on from the start" },
+  { re = 'pipeline \d+ ready after \d+ ms: heat_haze_pipeline', label = "heat_haze.wesl compiles: its pipeline is ready" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the heat haze" },
+  { re = 'pipeline \d+ failed after \d+ ms: heat_haze_pipeline', label = "the heat haze pipeline failed (heat_haze.wesl does not compile, or its bindings do not match)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "failed to process shader", label = "a shader that does not build" },
+]
+
+[[scenario]]
+name = "heat-haze-interior"
+source = "[design] docs/design/graphics-enhanced.md §3.15 (a prototype), engine/nvforever/src/heat_haze.rs: with the heat haze switched on in an interior (OVNorthSewers01) its strength is 0 (indoors), so its pass does not run, without a rendering error"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/heat_haze*", "engine/nvforever/src/graphics.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "OVNorthSewers01", "--play", "--no-voice", "--no-messages", "--graphics-only", "heat-haze"]
+run_seconds = 12
+expect = [
+  { re = 'heat haze: (?:on, )?strength 0\.00, at most 0\.00 px, pass skipped \(indoors\)', label = "indoors the heat haze's strength is 0 and the pass skipped" },
+  { re = 'graphics: light glow, heat haze$', label = "the switch is on" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the heat haze on indoors" },
+]
+
+[[scenario]]
 name = "ambient-occlusion-gtao"
-source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ambient-occlusion switch runs the ground-truth estimate (engine/nvforever/src/ssao.wesl gtao_visibility, its plane-aware denoise) on the multisampled view, says so once, and its pipelines build and draw without a shader, pipeline or rendering error"
+source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ambient-occlusion switch runs the ground-truth estimate (engine/nvforever/src/ssao.wesl gtao_visibility, its plane-aware denoise) on the multisampled view, says so once, and its pipelines build and draw without a shader, pipeline or rendering error. Since stage b (§3.1.2) stage a's picture placement is NVF_PLAY_DEBUG_AO=post, the fallback: this run keeps checking it, and that post keeps the occlusion out of the lighting"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl"]
+env = { NVF_PLAY_DEBUG_AO = "post" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "ambient-occlusion"]
 run_seconds = 14
 order = [[
   { re = 'graphics: ambient occlusion, light glow$', label = "the switch is on from the start" },
   { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise", label = "the ground-truth estimate runs, not the old one" },
 ]]
-expect = [{ re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "said once: the switch stays on" }]
+expect = [
+  { re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "said once: the switch stays on" },
+  { text = "depth-aware denoise, on the picture (NVF_PLAY_DEBUG_AO=post)", count = 1, label = "stage a's placement with its own strength and no remedy (nothing between the denoise and the placement)" },
+]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error with the occlusion drawn" },
   { text = "failed and will not be tried again", label = "a pipeline (the occlusion's among them) that failed for good" },
   { text = "Shader validation error", label = "ssao.wesl does not compile" },
+  { text = "ambient occlusion: on the ambient light in the lighting", label = "post keeps the occlusion on the picture" },
 ]
 
 [[scenario]]
 name = "ambient-occlusion-gtao-fsr"
-source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ground-truth estimate before FSR (engine/nvforever/src/ssao.rs ao_before_fsr, single-sampled depth at the render size) in Doc Mitchell's house, without a shader, pipeline or rendering error"
+source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ground-truth estimate before FSR (engine/nvforever/src/ssao.rs ao_before_fsr, single-sampled depth at the render size) in Doc Mitchell's house, without a shader, pipeline or rendering error. Since stage b (§3.1.2) that placement is NVF_PLAY_DEBUG_AO=post; ambient-occlusion-lighting-fsr checks the default"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl"]
-env = { WGPU_BACKEND = "vulkan" }
+env = { WGPU_BACKEND = "vulkan", NVF_PLAY_DEBUG_AO = "post" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "quality", "--graphics-only", "ambient-occlusion", "--no-voice", "--no-lodgen"]
 run_seconds = 16
 expect = [
@@ -918,6 +962,171 @@ expect = [
   { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise", count = 1, label = "the ground-truth estimate runs before FSR" },
 ]
 forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error", "failed and will not be tried again"]
+
+[[scenario]]
+name = "ambient-occlusion-lighting"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the switch's default placement, the occlusion on the ambient light and on lamps without a shadow inside the lighting, on the multisampled view at Goodsprings at noon: the hook goes in, the main camera takes the bindings once, and every material that reads it (NIF, terrain, grass, trees, Bevy's own) compiles and draws"
+areas = ["renderer", "graphics"]
+paths = [
+  "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
+  "engine/nvforever/src/water.rs", "engine/nvforever/src/grass.rs", "engine/nvforever/src/tree.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-shader-tests/**",
+]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "ambient-occlusion"]
+run_seconds = 14
+order = [
+  [
+    { re = 'graphics: ambient occlusion, light glow$', label = "the switch is on from the start (Goodsprings, MSAA)" },
+    { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1", label = "the default: in the lighting, with the player's strength, remedies, lamps and exponent (Goodsprings, MSAA)" },
+  ],
+  [
+    "lights: ambient occlusion hook installed",
+    { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera once the hook is in (Goodsprings, MSAA)" },
+  ],
+]
+expect = [
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 1, label = "said once: it stays in the lighting (Goodsprings, MSAA)" },
+  { re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "the estimate said once (Goodsprings, MSAA)" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the occlusion in the lighting (Goodsprings, MSAA)" },
+  { text = "Shader validation error", label = "a material shader with NVF_AMBIENT_OCCLUSION (or ssao.wesl's denoise) does not compile (Goodsprings, MSAA)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (Goodsprings, MSAA)" },
+  { text = "hook's anchors not found", label = "the lighting hooks (sun visibility, ambient occlusion) apply (Goodsprings, MSAA)" },
+  { text = "lighting hook is not installed", label = "the occlusion goes into the lighting, not the fallback (Goodsprings, MSAA)" },
+  { text = "ambient occlusion: off the lighting", label = "it stays in the lighting while the switch stays on (Goodsprings, MSAA)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-lighting-interior"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the default placement in an interior lit by lamps (the Prospector Saloon), where the lamps take the factor too"
+areas = ["renderer", "graphics"]
+paths = [
+  "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
+  "engine/nvforever/src/water.rs", "engine/nvforever/src/grass.rs", "engine/nvforever/src/tree.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-shader-tests/**",
+]
+args = ["--cell", "GSProspectorSaloonInterior", "--play", "--no-voice", "--no-messages", "--graphics-only", "ambient-occlusion"]
+run_seconds = 14
+order = [
+  [
+    { re = 'graphics: ambient occlusion, light glow$', label = "the switch is on from the start (the saloon)" },
+    { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1", label = "the default: in the lighting, with the player's strength, remedies, lamps and exponent (the saloon)" },
+  ],
+  [
+    "lights: ambient occlusion hook installed",
+    { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera once the hook is in (the saloon)" },
+  ],
+]
+expect = [
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 1, label = "said once: it stays in the lighting (the saloon)" },
+  { re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "the estimate said once (the saloon)" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the occlusion in the lighting (the saloon)" },
+  { text = "Shader validation error", label = "a material shader with NVF_AMBIENT_OCCLUSION (or ssao.wesl's denoise) does not compile (the saloon)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (the saloon)" },
+  { text = "hook's anchors not found", label = "the lighting hooks (sun visibility, ambient occlusion) apply (the saloon)" },
+  { text = "lighting hook is not installed", label = "the occlusion goes into the lighting, not the fallback (the saloon)" },
+  { text = "ambient occlusion: off the lighting", label = "it stays in the lighting while the switch stays on (the saloon)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-lighting-taa"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the default placement with temporal anti-aliasing instead of multisampling: the single-sampled pipelines without an upscaler"
+areas = ["renderer", "graphics"]
+paths = [
+  "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
+  "engine/nvforever/src/water.rs", "engine/nvforever/src/grass.rs", "engine/nvforever/src/tree.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-shader-tests/**",
+]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "ambient-occlusion,taa"]
+run_seconds = 14
+order = [
+  [
+    { re = 'graphics: ambient occlusion, .*temporal anti-aliasing', label = "the switch and TAA on from the start" },
+    { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1", label = "the default: in the lighting, with the player's strength, remedies, lamps and exponent (TAA)" },
+  ],
+  [
+    "lights: ambient occlusion hook installed",
+    { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera once the hook is in (TAA)" },
+  ],
+]
+expect = [
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 1, label = "said once: it stays in the lighting (TAA)" },
+  { re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "the estimate said once (TAA)" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the occlusion in the lighting (TAA)" },
+  { text = "Shader validation error", label = "a material shader with NVF_AMBIENT_OCCLUSION (or ssao.wesl's denoise) does not compile (TAA)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (TAA)" },
+  { text = "hook's anchors not found", label = "the lighting hooks (sun visibility, ambient occlusion) apply (TAA)" },
+  { text = "lighting hook is not installed", label = "the occlusion goes into the lighting, not the fallback (TAA)" },
+  { text = "ambient occlusion: off the lighting", label = "it stays in the lighting while the switch stays on (TAA)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-lighting-fsr"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the default placement under FSR Quality in Doc Mitchell's house: the occlusion at the render size (engine/nvforever/src/upscaler/prep.rs) between the prepass and the main pass, which draws at that size"
+areas = ["renderer", "graphics"]
+paths = [
+  "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
+  "engine/nvforever/src/water.rs", "engine/nvforever/src/grass.rs", "engine/nvforever/src/tree.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-shader-tests/**", "engine/nvforever/src/upscaler/prep.rs",
+]
+env = { WGPU_BACKEND = "vulkan" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "quality", "--graphics-only", "ambient-occlusion", "--no-voice", "--no-lodgen"]
+run_seconds = 16
+order = [
+  [
+    { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1", label = "the default: in the lighting, with the player's strength, remedies, lamps and exponent (FSR)" },
+    { text = "FSR dispatch active: 3.1.4, 853x480 -> 1280x720", label = "FSR draws at the render size after the occlusion said where it runs (the estimate line comes with the camera, FSR's with its first dispatch)" },
+  ],
+  [
+    "lights: ambient occlusion hook installed",
+    { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera once the hook is in (FSR)" },
+  ],
+]
+expect = [
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 1, label = "said once: it stays in the lighting (FSR)" },
+  { re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "the estimate said once (FSR)" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the occlusion in the lighting (FSR)" },
+  { text = "Shader validation error", label = "a material shader with NVF_AMBIENT_OCCLUSION (or ssao.wesl's denoise) does not compile (FSR)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (FSR)" },
+  { text = "hook's anchors not found", label = "the lighting hooks (sun visibility, ambient occlusion) apply (FSR)" },
+  { text = "lighting hook is not installed", label = "the occlusion goes into the lighting, not the fallback (FSR)" },
+  { text = "ambient occlusion: off the lighting", label = "it stays in the lighting while the switch stays on (FSR)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-lighting-switch"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the switch off and on again in play: the bindings go and come back (each said once), and the pause menu waits for the material pipelines the change rebuilds"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
+  "engine/nvforever/src/water.rs", "engine/nvforever/src/grass.rs", "engine/nvforever/src/tree.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-shader-tests/**",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:ambient-occlusion,12.5:ambient-occlusion" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "ambient-occlusion"]
+run_seconds = 24
+order = [[
+  "ambient occlusion: on the ambient light in the lighting (main camera)",
+  "pause menu: open",
+  "settings: ambient-occlusion off",
+  { text = "ambient occlusion: off the lighting", label = "the bindings go with the switch" },
+  "settings: ambient-occlusion on",
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "and come back with it" },
+  { re = 'pause menu: resume after graphics change: pipelines waited [\d.]+ s, pending 0, capped false$' },
+]]
+expect = [
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 2, label = "on at the start and again after the switch" },
+  { text = "ambient occlusion: off the lighting", count = 1, label = "off once" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error while the bindings come and go" },
+  { text = "Shader validation error", label = "a material shader with NVF_AMBIENT_OCCLUSION does not compile" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "capped true", label = "the pipelines the switch rebuilds within the resume wait" },
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
+]
 
 [[scenario]]
 name = "ui-scale-write"
@@ -1403,16 +1612,78 @@ forbid = [
 ]
 
 [[scenario]]
+name = "advanced-movement-off-exact-weapon-inertia"
+source = "the reporter of #3001 (the held weapon \"still shows inertia\" with Weapon Inertia off; engine/nvforever/src/view_sway.rs, player_body.rs; docs/design/player-body.md §1.4a.3, \"Off means the original's exactly\"): every part on, the rifle drawn and walked with, then Weapon Inertia alone switched off on the settings page; afterwards walking, aiming, firing, jumping and crouching: the sway never moves the arms off the clips' pose again once its fade is over (the exit summary's last time, the switch at about 6 s)"
+areas = ["player-body", "settings"]
+paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:weapon-inertia", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 28
+expect = [
+  { text = "settings: weapon-inertia off", label = "Weapon Inertia goes off (Weapon Inertia off)" },
+  { re = 'combat: kick: shot', label = "the rifle fired after the switch (Weapon Inertia off)" },
+  { re = 'player view: landed at', label = "a jump landed (Weapon Inertia off)" },
+  { re = "player body summary: off the clips' pose, the arms last moved by Weapon Inertia at (?P<n>[\\d.]+) s", range = [4, 10], label = "the arms are the clips' own from the end of the switch's fade on (Weapon Inertia off)" },
+]
+forbid = [
+  { re = 'NVF_PLAY_TEST_SETTINGS: ("|no switch|\S+ is a (list|slider):)', label = "the switch step is understood (Weapon Inertia off)" },
+  { re = 'panicked', label = "nothing panics (Weapon Inertia off)" },
+]
+
+[[scenario]]
+name = "advanced-movement-off-exact-global"
+source = "the reporter of #3001 (the held weapon \"still shows inertia\" with the Global Toggle off; engine/nvforever/src/view_sway.rs, head_bob.rs, player_body.rs; docs/design/player-body.md §1.4a.3): every part on, the rifle drawn and walked with, then the Global Toggle switched off on the settings page; afterwards walking, aiming, firing, jumping and crouching: neither the sway nor the head moves the arms or the view off the clips' pose again once their fades are over (the breath's ends last, about 6 s after the switch)"
+areas = ["player-body", "settings"]
+paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:advanced-movement", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 28
+expect = [
+  { text = "settings: advanced-movement off", label = "the Global Toggle goes off (Global Toggle off)" },
+  { re = 'combat: kick: shot', label = "the rifle fired after the switch (Global Toggle off)" },
+  { re = 'player view: landed at', label = "a jump landed (Global Toggle off)" },
+  { re = "player body summary: off the clips' pose, the arms last moved by Weapon Inertia at (?P<n>[\\d.]+) s", range = [4, 10], label = "the arms are the clips' own from the end of the fade on (Global Toggle off)" },
+  { re = "player body summary: off the clips' pose, .*, the view by the head's springs \\(Camera Motion, Movement Inertia's landing dip\\) at (?P<n>[\\d.]+) s", range = [4, 14], label = "the view is the clips' own from the end of the fades on (Global Toggle off)" },
+]
+forbid = [
+  { re = 'NVF_PLAY_TEST_SETTINGS: ("|no switch|\S+ is a (list|slider):)', label = "the switch step is understood (Global Toggle off)" },
+  { re = 'panicked', label = "nothing panics (Global Toggle off)" },
+]
+
+[[scenario]]
+name = "advanced-movement-off-exact-defaults"
+source = "the reporter of #3001 (the held weapon \"still shows inertia\" at the defaults; engine/nvforever/src/view_sway.rs, head_bob.rs, player_body.rs; docs/design/player-body.md §1.4a.3): every part on, the rifle drawn and walked with, then the five parts that are off by default switched off on the settings page (the Global Toggle and Advanced Recoil stay on); afterwards walking, aiming, firing, jumping and crouching: Advanced Recoil eases the view's kick, but neither the sway nor the head moves the arms or the view off the clips' pose again once their fades are over"
+areas = ["player-body", "settings"]
+paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:movement-inertia,4.5:weapon-handling,4.6:weapon-inertia,4.7:animation-smoothing,4.8:camera-motion", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 28
+expect = [
+  { text = "settings: camera-motion off", label = "the last of the five parts goes off (at the defaults)" },
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off", label = "the defaults reached on the page (at the defaults)" },
+  { re = 'combat: kick: shot', label = "the rifle fired after the switches (at the defaults)" },
+  { re = 'player view: landed at', label = "a jump landed (at the defaults)" },
+  { re = "player body summary: off the clips' pose, the arms last moved by Weapon Inertia at (?P<n>[\\d.]+) s", range = [4, 10], label = "the arms are the clips' own from the end of the fade on (at the defaults)" },
+  { re = "player body summary: off the clips' pose, .*, the view by the head's springs \\(Camera Motion, Movement Inertia's landing dip\\) at (?P<n>[\\d.]+) s", range = [4, 14], label = "the view is the clips' own from the end of the fades on (at the defaults)" },
+]
+forbid = [
+  { re = 'NVF_PLAY_TEST_SETTINGS: ("|no switch|\S+ is a (list|slider):)', label = "every switch step is understood (at the defaults)" },
+  { re = 'panicked', label = "nothing panics (at the defaults)" },
+]
+
+[[scenario]]
 name = "advanced-movement-menu"
 source = "owner 2026-11-15 (\"simplify the Advanced Movement menu\"; engine/nvf-play/src/settings_layout.rs, settings_view.rs; docs/design/player-body.md §1.4a.3): the NVF Features tab lists the Global Toggle and Movement Weight (owner 2026-11-15) under Advanced Movement, then an empty line, Gameplay's three switches, an empty line and Visual Only's three, in the owner's order"
+note = "With Sprint (#3000) the tab is main's 24 lines and Sprint's row: 25. The window is 11 lines, but `settings_view::drawn_slots` leaves off its last lines while they are an empty line or a heading whose rows would only start in the next window (#2377: a heading is drawn with its first row): lines 10 and 11 are now the empty line before Visual Only and Visual Only's heading, so lines 1-9 are drawn, ending at Sprint. On main, line 11 is Weapon Inertia's row and all 11 are drawn"
 areas = ["player-body", "settings"]
 paths = ["engine/nvf-play/src/settings_layout.rs", "engine/nvf-play/src/settings_view.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/settings.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_PLAY_TEST_SETTINGS = "11:tab:NVF Features", NVF_PLAY_TEST_PAUSE_MENU = "12:inspect", NVF_PLAY_TEST_SHOTS = "13:advanced_movement_menu.png" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 16
 expect = [
-  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, movement-weight, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, , [NVF Features > Visual Only], weapon-inertia", label = "the Global Toggle, Movement Weight, an empty line, Gameplay, an empty line, Visual Only, in the owner's order (the window shows 11 lines since the menu overhaul, #2804; settings-layout places the rest)" },
-  { re = 'pause menu: inspect: NVF Features, .*lines 1-11 of 16', label = "sixteen lines in the tab: World Interaction's grass fires (#2804) after Visual Only" },
+  { re = 'pause menu: inspect: shown \[NVF Features > Advanced Movement\], advanced-movement, movement-weight, , \[NVF Features > Gameplay\], movement-inertia, weapon-handling, advanced-recoil, sprint$', label = "the Global Toggle, Movement Weight, an empty line, Gameplay with Sprint last (#3000), in the owner's order, and nothing after Sprint in this window (the note: why nine lines of eleven)" },
+  { re = 'pause menu: inspect: NVF Features, .*lines 1-9 of 25$', label = "twenty-five lines in the tab, main's 24 and Sprint; lines 1 to 9 drawn (the note)" },
+  { text = "pause menu: inspect: window 11 lines, 9 drawn", label = "an 11-line window (the menu overhaul, #2804) drawing nine: its last two would be an empty line and Visual Only's heading without its first row" },
 ]
 
 [[scenario]]
@@ -1482,7 +1753,7 @@ env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak,12
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 16
 expect = [
-  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off", label = "the Global Toggle and Advanced Recoil on, the other parts off" },
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off, Sprint off", label = "the Global Toggle and Advanced Recoil on, the other parts off (Sprint too, #3000)" },
   { re = 'weapon handling: draws at x1\.00 before perks.*Weapon Handling off', label = "the original's draw pace at Agility 5" },
   { re = 'movement inertia: (up to|glided)', count = 0, label = "by default no start or glide under inertia" },
   { re = 'eased crouch', count = 0, label = "by default the crouch follows the clips" },
@@ -1503,6 +1774,92 @@ expect = [
   { re = 'movement inertia: glided (?P<n>[\d.]+) units', range = [25, 50], label = "the glide stays: Movement Inertia is its own switch" },
   { text = "player view: crouched (eased crouch)", label = "and so does its eased crouch" },
   { re = 'player body summary: head bob off, deepest first-person dip (?P<n>[\d.]+) units', range = [0, 0.05], label = "the view no longer bobs" },
+]
+
+[[scenario]]
+name = "sprint-on"
+source = "#3000 (engine/nvf-play/src/stance.rs, engine/nvf-play/src/bindings.rs; docs/design/player-body.md §1.4a.3): Sprint switched on from the command line is logged on, with no key of its own by default, and Run keeps Left Shift (the maintainer's decision on #3002)"
+note = "the switch and the keys only: sprint-run and sprint-trace check the sprint itself. A test aid (NVF_PLAY_TEST_SCRIPT_MENUS) makes it an unattended run, which reads no INI, so the defaults hold: without one the run read the player's own NVForever.ini (its switches and Run's key) and the expectations could not hold"
+areas = ["player-body", "settings"]
+paths = ["engine/nvf-play/src/stance.rs", "engine/nvf-play/src/bindings.rs", "engine/nvf-play/src/inertia.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--sprint"]
+run_seconds = 8
+expect = [
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off, Sprint on", label = "the switch on from the command line" },
+  { text = "controls: Sprint on; Sprint's key None, Run's Left Shift", label = "Sprint has no key by default and Run keeps Left Shift with Sprint on" },
+]
+
+[[scenario]]
+name = "sprint-greyed-binding"
+source = "#3000 (engine/nvf-play/src/stance.rs binding_greyed, engine/nvf-play/src/pause.rs; docs/settings-reference.md Controls): with Sprint off (the default) its binding on the Controls tab is greyed and cannot be rebound; a control of the game's still rebinds"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/stance.rs", "engine/nvf-play/src/bindings.rs", "engine/nvf-play/src/pause.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "5:10", NVF_PLAY_TEST_SETTINGS = "6:controls,7:bind:Sprint=K,8:bind:Jump=J" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 11
+expect = [
+  { text = "controls: Sprint not changed: greyed (Turn on Sprint in NVF Features > Advanced Movement first.)", label = "the greyed Sprint binding is not rebound" },
+  { text = "controls: Jump bound to J (was Space)", label = "a game control still rebinds" },
+]
+forbid = [
+  { text = "controls: Sprint bound to", label = "nothing binds a greyed control" },
+]
+
+[[scenario]]
+name = "sprint-run"
+source = "#3000 (engine/nvf-play/src/sprint.rs; docs/design/player-body.md §1.4a.4): with Sprint on and bound to G on the Controls tab (it has no key by default), G held while walking ahead sprints for AP until the AP runs out, which ends it and leaves the player fully out of breath; it starts again only after G is let go, and letting go ends it"
+note = "NVF_SPRINT_AP_PER_SECOND=40 drains a level-1 character's AP within a few seconds (the shipped rate is 10). The second press is half a second (20 AP): about 48 AP have come back by then (the run of 2026-11-18), so a longer one ran out of AP before the key was let go"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/sprint.rs", "engine/nvf-play/src/stance.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/vats_mode.rs", "engine/nvf-play/src/heartbeat.rs", "engine/nvforever/src/sprint_view.rs"]
+env = { NVF_SPRINT_AP_PER_SECOND = "40", NVF_PLAY_TEST_PAUSE = "2:4", NVF_PLAY_TEST_SETTINGS = "3:bind:Sprint=G", NVF_PLAY_TEST_MOVE = "5:1:0,22:0:0", NVF_PLAY_TEST_KEYS = "6:g:6,18:g:0.5" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sprint", "--head-bob"]
+run_seconds = 24
+expect = [
+  { text = "sprint: test aid: 1.45 x the run, 40.0 AP a second", label = "the test aid's AP rate" },
+  { text = "controls: Sprint bound to G (was None)", label = "the run binds Sprint (no key by default, #3000: the maintainer's decision on #3002) on the Controls tab" },
+  { re = 'sprint: started, \d+ of \d+ AP', label = "G, Sprint's key, held while walking ahead sprints" },
+  { re = 'sprint: ended \(out of AP\) after [\d.]+ s, [\d.]+ AP spent, 0 of \d+ AP left', label = "the AP runs out, to 0 and not under" },
+  { text = "sprint: out of breath, strength 1.00", label = "out of AP: fully out of breath" },
+  { text = "sprint: heartbeat slow", label = "under 40 % AP the slower heartbeat" },
+  { text = "sprint: heartbeat fast", label = "under 20 % AP the faster heartbeat" },
+  { re = 'sprint: ended \(the control let go\)', label = "the second, short sprint ends when G is let go" },
+  { re = 'sprint: started', count = 2, label = "two presses, two sprints: running out does not start one again while G stays held" },
+]
+
+[[scenario]]
+name = "sprint-off-original"
+source = "#3000 (engine/nvf-play/src/sprint.rs, engine/nvf-play/src/bindings.rs): with Sprint off (the default) Left Shift is Run's as in the original: held while running it walks, and nothing sprints or spends AP for it; Sprint has no key"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/sprint.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/bindings.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,12:0:0", NVF_PLAY_TEST_KEYS = "6:shift:4" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 13
+expect = [
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off, Sprint off", label = "Sprint off by default" },
+  { text = "controls: Sprint off; Sprint's key None, Run's Left Shift", label = "Run on Left Shift, Sprint with no key" },
+]
+forbid = [
+  { re = 'sprint: (started|ended|test aid|out of breath)', label = "nothing of the sprint with its switch off" },
+]
+
+[[scenario]]
+name = "sprint-trace"
+source = "#3000 (engine/nvforever/src/player_body.rs MotionTrace, engine/nvforever/src/sprint_view.rs; docs/design/player-body.md §1.4a.4): a frame-by-frame trace of the first-person view and gun through a sprint with the 10mm pistol out (the sprint pose easing in, the bigger bob), Crouch/Sneak pressed mid-sprint (eased out), standing up and sprinting again until the AP runs out, and the out-of-breath breathing standing still after it, for finding steps and pops (tools/smoke/motion_trace.py reads it)"
+note = "NVF_SPRINT_AP_PER_SECOND=15 so the second sprint runs out of AP within the run. Sprint has no key by default (#3000, the maintainer's decision on #3002): the pause menu's Controls tab binds it to G at 3 s"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/sprint.rs", "engine/nvforever/src/sprint_view.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_SPRINT_AP_PER_SECOND = "15", NVF_PLAY_TEST_PAUSE = "2:4", NVF_PLAY_TEST_SETTINGS = "3:bind:Sprint=G", NVF_PLAY_TEST_MOTION_TRACE = "sprint-trace.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,11:sneak,13:sneak", NVF_PLAY_TEST_MOVE = "7:1:0,21:0:0", NVF_PLAY_TEST_KEYS = "8:g:12" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sprint", "--movement-inertia", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 30
+expect = [
+  { text = "motion trace: writing", label = "the trace is written" },
+  { text = "controls: Sprint bound to G (was None)", label = "the run binds Sprint (no key by default, #3000: the maintainer's decision on #3002) on the Controls tab" },
+  { re = 'sprint: started', label = "the sprint starts" },
+  { re = 'sprint: ended \(sneaking\)', label = "Crouch/Sneak ends it" },
+  { re = 'sprint: ended \(out of AP\)', label = "the second sprint runs out of AP" },
+  { re = 'sprint: out of breath, strength', label = "and leaves the player out of breath" },
+  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
 ]
 
 [[scenario]]
@@ -1730,6 +2087,41 @@ forbid = [
   { text = "failed and will not be tried again", label = "a pipeline that failed for good (repeat 300)" },
   { text = "still being retried after", label = "a pipeline still retried at the cap (repeat 300)" },
   { text = "anti-tiling needs a texture repeat above 0", label = "repeat 300 places the reads" },
+]
+
+[[scenario]]
+name = "desert-haze"
+source = "[design, #2675] engine/nvforever/src/haze.rs, fog.rs GAME_FOG, docs/design/graphics-enhanced.md §3.16: the Desert haze switch (off by default and in every preset) turned on while the game runs outdoors at Goodsprings at noon writes the haze's figures, worked from the shown weather, into the fog and logs them; turned off it logs off; the shader edits it rides on (pbr_functions.wesl apply_fog, fog.wesl) are in place and every world pipeline compiles, without a rendering error"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/haze.rs", "engine/nvforever/src/fog.rs", "engine/vendor/bevy_pbr/src/render/pbr_functions.wesl",
+  "engine/vendor/bevy_pbr/src/render/fog.wesl",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:desert-haze,13:desert-haze" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 18
+expect = [
+  "fog: the game's fog curve installed",
+  { re = 'haze: desert haze on: .*?, (\d+) % at 20,000 units and \d+ % at 60,000 on the base height', range = [3, 25], label = "Goodsprings' weather leaves room for the haze at noon: a thin share at 20,000 units" },
+]
+order = [
+  [
+    "settings: desert-haze on",
+    { text = "haze: desert haze on: ", label = "the haze's line once the switch is on, outdoors" },
+    "settings: desert-haze off",
+    { text = "haze: desert haze off", label = "and off again" },
+  ],
+  [
+    { re = 'graphics: light glow, desert haze$' },
+    { re = 'graphics: light glow$', label = "off again" },
+  ],
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the haze" },
+  { re = '(?i)failed to process shader', label = "a world shader that does not compile with the haze's edits (pbr_functions.wesl nvf_haze, fog.wesl GAME_FOG)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "apply_fog not as expected", label = "the haze's edit of Bevy's fog call not made" },
+  { text = "the desert haze's shader edit is not in place", label = "the switch on without its shader edit" },
 ]
 
 [[scenario]]
@@ -6046,6 +6438,25 @@ order = [[
   { text = "terminal: closed (Esc)", label = "and is left" },
 ]]
 forbid = [{ text = "terminal: request for 000FAA48 ignored", label = "the request is not dropped" }]
+
+[[scenario]]
+name = "rhonda-repaired"
+source = "#2925: the Broken Mr. Handy's script (SCPT 0x000E9483) shows BMRhondaBrokenMsg on activation; its GameMode block takes button 1 (\"[Science] Check the robot's circuitry.\"), shows BMRhondaFixMsg (MESG 0x000E9551, no buttons: the box shows OK) and, once GetButtonPressed reads 0 for that OK, resurrects the robot (ResurrectActor, SetActorFullName, MoveTo, health 500) and sets repairedstate to 1. Before the fix a box without buttons had no Game::message_box, so the OK answered nothing and GetButtonPressed read -1 for good: the robot stayed dead on its table"
+note = "Black Mountain treasure room (interior BlackMountainTreasure), REFR 0x000E84A4 (BMRhonda, \"Broken Mr. Handy\", a dead actor) [observed: the player's events file in #2925; FalloutNV.esm records as the issue gives them]. Science set to 60 at 3 s (the box with the Science button, 0x000E9557); script boxes close themselves after 1 s (NVF_PLAY_TEST_SCRIPT_MENUS), so the start-up boxes of a new game with messages on (the four pre-order packs' and the add-ons' load messages, ten boxes from about 5 s) are gone by about 16 s; activated at 20 s by the script aid, as the player's own activation; button 1 at 20.6 s, frames later and before the 1 s close: with 15 s and 15.1 s both steps came in one frame (frames were 0.26 s apart on a loaded machine, 2026-11-17) and the box's answer was logged before its message line, which is logged from the frame's events after the tick. The second box is closed by that auto-close, which answers it through ScriptState::answer(None), the path of the player's OK. At 25 s the console (on the world aids' clock, which delay_late_aids does not move) reads GetDead and the robot's script variables"
+areas = ["scripts"]
+paths = ["crates/fnv-game/src/functions/misc.rs", "engine/nvf-play/src/script.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:set_av:player:Science:60,20:activate:0x000E84A4,20.6:button:1", NVF_PLAY_TEST_CONSOLE = "25:000E84A4.getdead;ShowVars 000E84A4;25.5:close" }
+args = ["--play", "--cell", "BlackMountainTreasure", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
+run_seconds = 28
+order = [[
+  { re = 'script: message BMRhondaBroken\w* .*buttons', label = "the robot's script shows its first box" },
+  { re = 'script: menu \d+ \(message BMRhondaBroken\w*\) answered \(button 1\)', label = "[Science] Check the robot's circuitry." },
+  { re = 'script: message BMRhondaFixMsg ', label = "the box without buttons: \"the robot jumps to life\"" },
+  { re = 'script: menu \d+ \(message BMRhondaFixMsg\) answered \(OK\)', label = "its OK" },
+  { re = 'console: GetDead on .+ >> 0\.00', label = "the robot is alive (GetDead 0; it stayed 1 before #2925)" },
+  { re = 'console: +(?i:repairedstate) = 1$', label = "its script's repairedstate is 1: the chain after button 0 ran" },
+]]
 
 [[scenario]]
 name = "hacking"
@@ -12172,6 +12583,7 @@ expect = [
   "settings layout: movement-inertia -> NVF Features > Gameplay",
   "settings layout: weapon-handling -> NVF Features > Gameplay",
   "settings layout: advanced-recoil -> NVF Features > Gameplay",
+  "settings layout: sprint -> NVF Features > Gameplay",
   "settings layout: weapon-inertia -> NVF Features > Visual Only",
   "settings layout: animation-smoothing -> NVF Features > Visual Only",
   "settings layout: camera-motion -> NVF Features > Visual Only",
@@ -19622,6 +20034,56 @@ expect = [
   { json = "given_errors.*", count = 0, label = "anywhere-i-wander: no given fails" },
 ]
 manual = "on a failure, the chain's notes say what each step stands for; the stalls and data notes are in the walk4 main-quest/faction group's report (issue #918)"
+
+[[scenario]]
+name = "techatticup-hostage-alarm"
+kind = "tool"
+source = "issue #2926: the headless walkthrough crates/fnv-game/walkthrough/techatticup-hostages-2926.actions.json frees both Techatticup hostages through their message boxes; each one's SendAssaultAlarm Player CaesarsLegionTechMineFaction must not turn the hostage, and the second box must open"
+areas = ["quests", "scripts", "crime"]
+paths = ["crates/fnv-game/walkthrough/techatticup-hostages-2926.actions.json", "crates/fnv-game/src/crime.rs", "crates/fnv-game/src/runner.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/techatticup-hostages-2926.actions.json"]]
+expect = [
+  { json = "observations.?label=hostages: VTechatticup 10.stage", equals = 10, label = "techatticup-hostage-alarm: VTechatticup 10 from Renolds" },
+  { json = "events.?kind=message_shown.message", equals = "0x001231B8", count = 2, label = "techatticup-hostage-alarm: TecMineHostageMSG shown twice: the first hostage's box, then the second's (none skipped by a fight)" },
+  { json = "observations.?label=hostages: first hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm: the first hostage is not alarmed after its alarm on the Legion" },
+  { json = "observations.?label=hostages: player in combat after the first.value", equals = 0.0, label = "techatticup-hostage-alarm: the player is not in combat after the first" },
+  { json = "observations.?label=hostages: raider 5 alarmed before.value", equals = 0.0, label = "techatticup-hostage-alarm: raider 5 is not alarmed before the untie" },
+  { json = "observations.?label=hostages: raider 5 alarmed after the first.value", equals = 1.0, label = "techatticup-hostage-alarm: raider 5 (the faction's first member, 0x0011F654) is alarmed by the first hostage's alarm" },
+  { json = "events.?kind=assault_alarm.victim", equals = "0x0011F654", count = 2, label = "techatticup-hostage-alarm: both alarms pick TecLegionaryRaider5REF as the victim" },
+  { json = "observations.?label=hostages: raider 5 disabled.value", equals = 0.0, label = "techatticup-hostage-alarm: probe: raider 5 is enabled" },
+  { json = "observations.?label=hostages: raider 5 dead.value", equals = 0.0, label = "techatticup-hostage-alarm: probe: raider 5 is alive" },
+  { json = "observations.?label=hostages: raider 5 in the mine's faction.value", equals = 1.0, label = "techatticup-hostage-alarm: probe: raider 5 is in CaesarsLegionTechMineFaction" },
+  { json = "observations.?label=hostages: second hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm: the second hostage is not alarmed" },
+  { json = "observations.?label=hostages: VTechatticup 20.stage", equals = 20, label = "techatticup-hostage-alarm: both freed: stage 20" },
+  { json = "observations.?label=hostages: VTechatticup 20.var.NumHostages", equals = 2.0, label = "techatticup-hostage-alarm: both freed: NumHostages 2" },
+  { json = "steps.*.error", count = 0, label = "techatticup-hostage-alarm: no step fails" },
+  { json = "given_errors.*", count = 0, label = "techatticup-hostage-alarm: no given fails" },
+]
+manual = "#2926 probe: run once by hand with NVFOREVER_LOG=fnv_game::crime=info; each hostage's 'assault alarm: faction 0x001400F9 ...' line gives the victim and the members not present or dead"
+
+[[scenario]]
+name = "techatticup-hostage-alarm-cleared"
+kind = "tool"
+source = "issue #2926, the reporter's case: the headless walkthrough crates/fnv-game/walkthrough/techatticup-hostages-dead-2926.actions.json kills every actor of CaesarsLegionTechMineFaction in the hostages' cell, then frees both hostages; their SendAssaultAlarm Player CaesarsLegionTechMineFaction finds no member alive and must turn nobody (main turned the hostage)"
+areas = ["quests", "scripts", "crime"]
+paths = ["crates/fnv-game/walkthrough/techatticup-hostages-dead-2926.actions.json", "crates/fnv-game/src/crime.rs", "crates/fnv-game/src/runner.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/techatticup-hostages-dead-2926.actions.json"]]
+expect = [
+  { json = "observations.?label=hostages: VTechatticup 10.stage", equals = 10, label = "techatticup-hostage-alarm-cleared: VTechatticup 10 from Renolds" },
+  { json = "observations.?label=hostages: raiders killed.value", range = [1, 17], label = "techatticup-hostage-alarm-cleared: the mine's faction members in the cell killed (17 present in the load order)" },
+  { json = "observations.?label=hostages: raider 5 dead.value", equals = 1.0, label = "techatticup-hostage-alarm-cleared: raider 5 (the pick of the run without kills) is dead" },
+  { json = "events.?kind=assault_alarm.alive", equals = 0, count = 2, label = "techatticup-hostage-alarm-cleared: each alarm finds 0 members of the faction present and alive in the whole load order" },
+  { json = "events.?kind=assault_alarm.victim", null = true, count = 2, label = "techatticup-hostage-alarm-cleared: each alarm picks no victim" },
+  { json = "observations.?label=hostages: first hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm-cleared: the first hostage is not alarmed by its alarm on a faction with no member alive" },
+  { json = "observations.?label=hostages: player in combat after the first.value", equals = 0.0, label = "techatticup-hostage-alarm-cleared: the player is not in combat after the first" },
+  { json = "events.?kind=message_shown.message", equals = "0x001231B8", count = 2, label = "techatticup-hostage-alarm-cleared: TecMineHostageMSG shown twice: the first hostage's box, then the second's (none skipped by a fight)" },
+  { json = "observations.?label=hostages: second hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm-cleared: the second hostage is not alarmed" },
+  { json = "observations.?label=hostages: VTechatticup 20.stage", equals = 20, label = "techatticup-hostage-alarm-cleared: both freed: stage 20" },
+  { json = "observations.?label=hostages: VTechatticup 20.var.NumHostages", equals = 2.0, label = "techatticup-hostage-alarm-cleared: both freed: NumHostages 2" },
+  { json = "steps.*.error", count = 0, label = "techatticup-hostage-alarm-cleared: no step fails" },
+  { json = "given_errors.*", count = 0, label = "techatticup-hostage-alarm-cleared: no given fails" },
+]
+manual = "#2926: run by hand with NVFOREVER_LOG=fnv_game::crime=info; each hostage's 'assault alarm: faction 0x001400F9 ...' line reads victim none, 0 member(s) present and alive, and the members dead"
 
 [[scenario]]
 name = "mq-beggar"
@@ -32338,6 +32800,38 @@ expect = [
   { re = 'vats mode summary: entered 1 times, 0 marks, 0 shots, 0 AP spent, 1 refused', label = "one stay, one refusal" },
 ]
 
+
+[[scenario]]
+name = "use-weapon-silo-mainframe"
+source = "[design, #2652] Player activation and button 1 give ED-E its mainframe package; its Always Hit / Do No Damage shot must run OnHit ED-E and set NVDLC04MQ01a 55. Record chain: #2652; launch-code preparation: crates/fnv-game/walkthrough/lonesome-road.actions.json."
+note = "[design] Start at quest 50 with the launch-code note and ED-E enabled beside its stand marker; only preparation uses aids. Activation, button choice, package arrival, UseWeapon and the harmless hit perform the unlock. The lonesome-road area skips this launch without LonesomeRoad.esm."
+areas = ["combat", "use-weapon", "lonesome-road"]
+paths = ["engine/nvforever/src/use_weapon.rs", "engine/nvforever/src/use_weapon/**", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "5:start:NVDLC04MQ01a,5:stage:NVDLC04MQ01a:50,6:enable:NVDLC04EDEREF,7:moveto:player:NVDLC04Silo01MainframeREF:0:-200:0,7:moveto:NVDLC04EDEREF:NVDLC04Silo01MainframeMarkerREF,8:call:player:AddNote:NVDLC04Silo02LaunchCode,12:activate:NVDLC04Silo01MainframeREF,13:button:1" }
+args = ["--cell", "NVDLC04Silo01", "--play", "--no-voice", "--npc-packages", "all"]
+run_seconds = 70
+order = [[
+  { re = 'use weapon: NVDLC04EDEREF .* uses NVDLC04WeapEDEArcWelder on (NVDLC04Silo01MainframeREF|Hopeville Silo Mainframe Controls)', label = "ED-E fires at the mainframe through its package" },
+  { re = 'combat: a harmless shot by .* hits 0x[0-9A-F]{2}0075E5: its hit blocks ran, no damage', label = "the harmless zap runs the mainframe hit block" },
+  { text = 'script: NVDLC04MQ01a stage 55 set', label = "the mainframe unlock sets stage 55" },
+]]
+expect = [
+  { re = 'use weapon: NVDLC04EDEREF .* has fired its 1 shots at (NVDLC04Silo01MainframeREF|Hopeville Silo Mainframe Controls)', label = "the finite mainframe use ends" },
+]
+
+[[scenario]]
+name = "use-weapon-gi-blues-shelter"
+source = "[design, #2652, #2715 shooter half] The King's INFO 0x0012931B effect starts the staged NCR fight; VFSNCRBarker01REF's Repeat Fire package targets VFSPacerBusShelterREF (STAT 0x0011BD4E), as supplied in #2652's last comment."
+note = "[design, #2652 w4] MoveTo uses Pacer's cower marker 0x001293EC in FreesideNorthWorld, retaining player coordinates (-3961,4646,1133). The barker at grid (-2,1) is within the default two-cell loaded radius of player grid (-1,1). The King's effect starts the package; expectations are unchanged. Pacer's cover pose belongs to separate work."
+areas = ["combat", "use-weapon", "quests"]
+paths = ["engine/nvforever/src/use_weapon.rs", "engine/nvforever/src/use_weapon/**", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "3:moveto:player:0x001293EC:-98:-588:84,5:start:VMS19,8:info:0x0012931B:VFSTheKingREF" }
+args = ["--world", "FreesideNorthWorld", "--play", "--hour", "12", "--no-voice", "--npc-packages", "all"]
+run_seconds = 70
+expect = [
+  { re = 'use weapon: VFSNCRBarker01REF .* uses .* on VFSPacerBusShelterREF.*on and on', label = "the barker repeats fire at the shelter", known_failing = "main 2026-11-16 (1790ab94a) and this branch: after the King's line 0x0012931B moves them, the barkers and the off-duty troopers choose no package at all in this aid-staged start (ai summary: 0 packages chosen), so the Use Weapon package never runs; the shooter change is covered by the engine tests" },
+  { re = 'use weapon summary: .*? (?P<n>\d+) shots \(', range = [1, 100000], label = "the staged fight fires shots", known_failing = "main 2026-11-16 (1790ab94a) and this branch: after the King's line 0x0012931B moves them, the barkers and the off-duty troopers choose no package at all in this aid-staged start (ai summary: 0 packages chosen), so the Use Weapon package never runs; the shooter change is covered by the engine tests" },
+]
 
 [[scenario]]
 name = "roy-say-pause-resume"

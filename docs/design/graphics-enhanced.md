@@ -40,7 +40,7 @@ Constraints that decide what fits:
 
 | Candidate | Value | Cost / risk | Decision |
 |---|---|---|---|
-| Ambient occlusion (own pass from the depth prepass) | High: grounds objects, adds depth to interiors | ~1-2 ms; darkens direct light too (post-process) | **Built** (§3.1) |
+| Ambient occlusion (own pass from the depth prepass) | High: grounds objects, adds depth to interiors | ~1-2 ms; first a post-process darkening direct light too, since #2897 stage b inside the lighting on the ambient light and unshadowed lamps | **Built** (§3.1) |
 | Bevy SSAO (GTAO-like) | High | Needs MSAA off + normal prepass in every custom prepass shader | Rejected |
 | Longer sun shadows (reach ×1.5; 4096² maps until #1367) | Medium: shadows further out | About 0.2-0.3 ms at Novac for the longer reach; the 4096² maps cost about 2 ms more and went | **Built** (§3.2) |
 | Contact shadows (Bevy, screen-space ray march) | Low-medium | Tried: speckled self-shadowing on near surfaces and per-frame noise without TAA | Rejected (§4) |
@@ -56,6 +56,7 @@ Constraints that decide what fits:
 | Shadow filtering method (Bevy `ShadowFilteringMethod`) | Low: harder or softer sun-shadow edges | Temporal is grainy without TAA | **Offered** as a choice, Bevy's default (Gaussian) kept (§3.9) |
 | Sun shafts (own screen-space pass), tied to the weather's fog | Medium: dusk and dawn, the sun behind roofs and poles | ~0.03 ms here | **Built** (§3.7) |
 | Bevy volumetric fog | Would replace the game's fog look | Tried: darkens the whole picture on the non-HDR view, box edges | Rejected (§4) |
+| Desert haze: exponential height fog in closed form, in the world shaders' fog path, on top of the weather's fog | Medium: far ridges fade in layers, basins haze over, warmer toward the sun | A few arithmetic operations per fragment where the fog runs; no pass | **Built**, off in every preset (§3.16) |
 | SSR on water | Low: the planar reflection is better where it reaches | Own march in the water shader from the depth prepass | **Built** for where the planar reflection does not reach (§3.8) |
 | Bevy atmosphere | Would replace the game's sky look | | Rejected |
 | Auto exposure, depth of field, motion blur | Change the look; the game's own HDR/eye-adapt values (IMGS DNAM) are not decoded | | Not now (§6) |
@@ -112,19 +113,23 @@ timing and the two smoke setups remain unverified until run. State tests use syn
 settings and controlled gate samples; smoke scenarios are `settings-resume-pipelines`
 and `settings-resume-unchanged` in `tools/smoke/scenarios.toml`.
 
-Pass order after the main pass (under FSR 3.1 the ambient occlusion comes before FSR, §3.1): tonemapping → ambient occlusion → temporal anti-aliasing, FXAA or
-SMAA → sun shafts → bloom and sharpening → the game's image-space blur and grade (imagespace.rs) → UI. So the game's grade and its modifiers
+The ambient occlusion runs between the depth prepass and the main pass, which reads it inside the lighting (§3.1.2; its picture placement, `NVF_PLAY_DEBUG_AO=post`, comes after tonemapping, or before FSR or DLSS under them, §3.1).
+Pass order after the main pass: tonemapping → (the ambient occlusion's picture placement) → temporal anti-aliasing, FXAA or
+SMAA → sun shafts → heat haze (§3.15) → bloom and sharpening → the game's image-space blur and grade (imagespace.rs) → UI. So the game's grade and its modifiers
 (fades, blur, double vision) work on top of the improvements exactly as on the vanilla picture,
 and nothing repeats them.
 
 ### 3.1 Ambient occlusion (`ambient-occlusion`)
 
-**Since #2897 (stage a) the estimate is ground-truth ambient occlusion** (§3.1.1); the older
-estimate described next stays in the code as the fallback until the new one is measured
-(`NVF_PLAY_DEBUG_AO=old`, §6). Both share everything but the estimate and the denoise: the
-inputs, half resolution, the two placements (after tonemapping, or before a temporal
-upscaler), the radius, the screen-radius cap, the far fade and the output (a factor
-multiplied into the picture).
+**Since #2897 (stage a) the estimate is ground-truth ambient occlusion** (§3.1.1), and **since
+stage b it goes into the lighting** (§3.1.2): it scales the ambient light and the lamps that cast
+no shadow, never the sun, the moon or highlights. The placement described below and in §3.1.1,
+a factor multiplied into the picture, is kept as the fallback (`NVF_PLAY_DEBUG_AO=post`, and
+what runs while the lighting hook is not in place). The older estimate described next stays in
+the code as a fallback too (`NVF_PLAY_DEBUG_AO=old`, on the picture, §6). Both share everything
+but the estimate and the denoise: the inputs, half resolution, the picture's two placements
+(after tonemapping, or before a temporal upscaler), the radius, the screen-radius cap, the far
+fade and the output.
 
 The old estimate: from the depth prepass alone (multisampled or not: sample 0 is read): the view-space position
 from the reverse-infinite depth (distance = near / depth), the normal from the neighbouring
@@ -144,7 +149,8 @@ distance. Distances are held to 60,000 units (half floats end at 65,504; the sky
 fog takes over). The sky is left alone: the dome is opaque and in the depth prepass, but at
 175,000 units or more, far beyond the fade (corrected 2026-10-12: not depth 0 as first written).
 
-Known limits: it darkens sunlit creases too (a post-process cannot tell ambient from direct
+Known limits of the picture placement (stage b's lighting placement removes the first two,
+§3.1.2): it darkens sunlit creases too (a post-process cannot tell ambient from direct
 light); water is not in the depth prepass, so the lake bed's occlusion shows faintly through
 the water surface; the first-person arms take a little occlusion from their own folds.
 
@@ -227,8 +233,9 @@ in closed form, ¼(−cos(2h − γ) + cos γ + 2h sin γ) for each horizon h.
   pixels show, as the normal is, not at display-pixel centres with a texel's depth (which lie
   off the surface and occluded themselves); a step that lands in the pixel's own texel
   raises no horizon. Without upscaling the two are the same.
-- **Strength** (`ssao.rs` `GTAO_STRENGTH` = 0.4): factor = 1 − 0.4 (1 − visibility). It
-  still multiplies all light, so it is kept low as the old 0.55 was. Open flat ground has
+- **Strength** (`ssao.rs` `GTAO_STRENGTH` = 0.4, the picture placement's; the lighting's is
+  0.8, §3.1.2): factor = 1 − 0.4 (1 − visibility). It still multiplies all light, so it is kept
+  low as the old 0.55 was. Open flat ground has
   visibility 1 and stays as bright as with the switch off (the old estimate did not
   guarantee that); a floor point at the foot of a wall has 0.5 (the wall hides half the
   cosine-weighted hemisphere) and becomes 0.8, about what the old estimate gave in such a
@@ -246,20 +253,162 @@ in closed form, ¼(−cos(2h − γ) + cos γ + 2h sin γ) for each horizon h.
   DLSS paths, the far fade 4,000–7,000 units, the 60,000-unit distance cap, the main camera
   only (the scope lens and Pip-Boy views carry no `AmbientOcclusion`).
 - **Log**: `ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at
-  half resolution, depth-aware denoise` each time the occlusion turns on on the main camera
-  (`old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)` with the debug switch; smoke
-  scenarios `ambient-occlusion-gtao`, `ambient-occlusion-gtao-fsr`).
+  half resolution, depth-aware denoise` each time the occlusion turns on on the main camera;
+  since stage b the line goes on with what runs (§3.1.2), on the picture `, on the picture
+  (NVF_PLAY_DEBUG_AO=post)` (`old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)` with the
+  old estimate; smoke scenarios `ambient-occlusion-gtao`, `ambient-occlusion-gtao-fsr`, both
+  with `NVF_PLAY_DEBUG_AO=post` since stage b).
 
-**Not done** (in this stage):
+**Not done** (in this stage; stage b, §3.1.2, did the first):
 
 - Applying the occlusion to the ambient term inside the lighting instead of to the finished
-  picture (#2897 stage b): it edits the patched lighting function that open pull requests
-  #2904 and #2920 also edit, so it waits for them. Until then sunlit creases darken too.
+  picture (#2897 stage b): done in stage b (§3.1.2).
 - The paper's multi-bounce fit: it needs the surface colour, which a pass on the finished
   (tonemapped, or HDR before the upscaler) picture does not have.
-- A bent normal for the ambient lookup (needs stage b), a per-frame turn of the pattern
-  accumulated by TAA or the upscalers (left fixed, see above), the paper's thickness
-  heuristic of a slowly sinking horizon (the distance falloff stands in for it).
+- A bent normal for the ambient lookup, a per-frame turn of the pattern accumulated by TAA or
+  the upscalers (left fixed, see above), the paper's thickness heuristic of a slowly sinking
+  horizon (the distance falloff stands in for it; stage b's `thin` remedy lets the horizon
+  sink, §3.1.2).
+
+#### 3.1.2 In the lighting (#2897 stage b)
+
+An engineering choice for the enhanced look, like the rest of this page, and the switch's
+default placement since stage b. Code: `ssao.rs` (the producer, the extraction, the debug
+switch), `ssao_lighting.rs` / `ssao_lighting.wesl` (the uniform, the upsample, the lamps'
+factor), `ssao_lighting/hook.rs` (the text hook in `pbr_functions`), the vendored mesh view
+bindings (engine/vendor/README.md, "NVForever ambient occlusion").
+
+**Why.** On the picture the factor darkens everything a crease receives, the sun included:
+sunlit creases darkened, and the lake bed's occlusion showed through the water. Inside the
+lighting it can be kept to the light that a crease really loses.
+
+**Frame order.** `ao_lighting_pass` runs in `Core3d` after the depth prepass is complete and
+before the main pass (where Bevy's own SSAO runs): the occlusion pass as before, then a
+half-resolution `denoise` pass (`ssao.wesl` `denoise`) that writes, per texel q, the factor of
+full pixel 2q through the apply pass's own filter (`openness_at`, the old estimate and the
+remedies included) with that pixel's distance, into a second two-channel texture. The main
+pass reads it. Under FSR or DLSS the passes run at the render size, the size the main pass
+draws at (`upscaler/prep.rs`), whatever `NVF_AO_BEFORE_FSR` says. Whenever the passes cannot run
+(a pipeline still compiling, the depth's sample count changing for a frame, no uniform) the
+texture is cleared to "open", so the main pass never reads stale or undefined data. Texel q
+stands for the depth prepass's pixel 2q, the same pixel coordinates as a fragment's position
+(no viewport term).
+
+**Bindings.** bevy_pbr's mesh view bind group gains bindings 43 (a uniform) and 44 (the
+denoised texture) through a view component, `NvfAmbientOcclusionBindings`, built as the sun
+visibility's (engine/vendor/README.md). The extraction puts it on the main camera's view while
+the switch is on, the placement asked for is the lighting and the hook is in (`lights.rs`;
+`ssao_lighting.rs` `HookState`), and takes it away otherwise; the view's pipelines then get the
+shader def `NVF_AMBIENT_OCCLUSION`, and `prepare` points the binding at this frame's texture.
+Switching the row rebuilds the world's material pipelines, which the pause menu's resume wait
+covers [observed 2026-11-18, the main session's run: off and on again in play, `pipelines
+waited 0.62 s, capped false`, no white or black frame in 14 screenshots].
+
+**The hook** (`ssao_lighting/hook.rs`, applied after lights.rs's display-value patch and the
+sun visibility's hook): every statement it adds is under `@if(NVF_AMBIENT_OCCLUSION)` and the
+lines it replaces are kept word for word under the def's negation, so without the def the text
+compiled is the one before (unit tests). Bevy's own ambient call and `diffuse_occlusion` are
+left alone: the NIF and terrain shaders subtract exactly that ambient highlight with the
+un-occluded value.
+
+**The upsample** (`nvf_ambient_visibility`): the 2 × 2 half-resolution texels around the
+fragment, each weighted bilinearly and by how near its distance is to the fragment's own (from
+its world position, so the first-person arms' squeezed depth does not matter), within 5 % plus
+one unit; 1 where no texel matches, beyond the fade, for a texel never written. Under
+multisampling each sample's fragment reads with its own distance, so a plant's outline does
+not take the ground's factor nor the ground the plant's, where the picture placement multiplied
+the resolved pixel by one factor [observed 2026-11-18, the player's play test: no halos at plant
+outlines; the main session's `view-lighting` pictures at the Goodsprings bushes: smooth, no rim
+at plant outlines].
+
+**Who reads it.** By bevy_pbr's rule, the pipelines that write depth (Bevy's own SSAO rule):
+NIF objects opaque and alpha-tested, the terrain, grass, trees, the first-person arms, skinned
+actors. Opted in: the landscape's blended texture layers (they lie on the prepass's surface;
+`nvf_assets` `NifSurfaceKey::terrain_layer`). Opted out: water and refracting NIF shapes (in no
+prepass, the texels under them are the bed's or the wall's behind). Grass and leaf cards read
+it unless their constants say otherwise (`grass.rs` `GRASS_READS_AMBIENT_OCCLUSION`, `tree.rs`
+`LEAVES_READ_AMBIENT_OCCLUSION`, both on). Blended shapes, decals and every other view (the
+reflection camera, the scope lens, the Pip-Boy) do not. A compile test composes the materials
+that read it with the def through Bevy's shader cache (`nvf-shader-tests`).
+
+**What it scales.** The display-value sum (lights.rs `DISPLAY_HELPERS`): the ambient term, and
+the light of the point and spot lights that cast no shadow at the surface (where bevy_pbr leaves
+their shadow unread: every placed lamp; the Pip-Boy light casts one). Never the directional
+lights (the sun, the moon, an interior's directional light), never a highlight. #2897 asked for
+the ambient term only; it was widened to the lamps because interiors are lit almost wholly by
+them, and on the ambient alone the occlusion all but vanished indoors: at strength 0.8 and
+exponent 1, Doc Mitchell's house changed 0.7 % of its pixels by more than 2 levels of 255
+against stage one's 9.7 %, with the lamps as well 5.1 %; the Prospector Saloon 5.9 % against
+7.4 % [observed 2026-11-18, the main session's pictures]. A lamp that casts no shadow lights a
+crease as fully as open floor, so nothing else keeps its light out. The lamps' weight is
+`ssao_lighting.rs` `LAMPS` = 1 (`NVF_PLAY_DEBUG_AO_LAMPS`, 0 for the ambient term alone).
+
+**Exponent** (`ssao_lighting.rs` `EXPONENT` = 1): the factor scales the display-value sum, which
+is shown as about itself, so the shown value falls by the factor, as the picture placement
+multiplies the shown picture by it. The first value, 1/2.2, scaled the linear light, so the
+shown value fell by only about f^0.45: the main reason the placement first looked weak. At 1
+the Goodsprings street at noon changes as many pixels as stage one (20.3 % against 20.9 % by
+more than 2 levels at strength 0.8, mean darkening 1.85 against 2.34 levels) [observed
+2026-11-18, the main session's pictures].
+
+**Strength** (`ssao.rs` `LIGHTING_STRENGTH` = 0.8): the reason for keeping the picture
+placement's low (it darkened the sun's light too) is gone. Indoors 0.4 and 0.8 looked about the
+same and neither too dark; outdoors 0.8 with the remedies below "feels about right" [observed
+2026-11-18, the player's play test at exponent 1 and lamps 1] [engineering choice: the
+player's].
+
+**Remedies on plants** (`ssao.rs` `LIGHTING_VARIANT`, `thin+soft`; `NVF_PLAY_DEBUG_AO_VARIANT`).
+The ground-truth estimate shimmers on swaying alpha-tested plants, more than the old one. The
+candidates were measured on the occlusion alone, on the picture, at the Goodsprings street at
+1920 × 1080 with 4x multisampling: 24 screenshots 0.12 s apart, the median over consecutive pairs
+of the mean absolute change per pixel in levels of 255, for two bush crops and the bare road
+[observed 2026-11-18, the main session's pictures]:
+
+| Estimate / remedy | Bush 1 | Bush 2 | Road |
+|---|---|---|---|
+| Ground-truth, plain | 1.96 | 2.87 | 0.23 |
+| Old estimate | 0.67 | 0.92 | 0.24 |
+| `thin` | 1.26 | 1.70 | |
+| `soft` | 1.43 | 1.83 | |
+| `thin+soft` | 0.87 | 1.11 | |
+| `thin+wide+soft` | 0.74 | 0.86 | |
+| `slices4` | 1.82 | 2.48 | |
+| `steps8` | 2.07 | 3.06 | |
+| `nearest` | 1.46 | 2.15 | |
+| `wide` | 1.54 | 2.07 | |
+
+At strength 0.8 with no remedy the player still saw the shimmer; with `thin+soft` neither
+shimmer nor halos [observed 2026-11-18, the player's play test]. `thin+soft` is the lighting's
+default [engineering choice: the player's; `thin+wide+soft` measured a little steadier and was
+not played]; the picture placement keeps none, and `NVF_PLAY_DEBUG_AO_VARIANT=none` gives the
+plain estimate in either. The other remedies stay in the aid for comparisons.
+
+**Debug and log.** `NVF_PLAY_DEBUG_AO=view-lighting` draws the factor each fragment's ambient
+took in place of its colour, at the very end of the material's colour (after the fog); the
+image-space grade and the light glow's eye adaptation still follow (`--no-grade`, light glow
+off, for a plain picture). The start's line says what runs: `ambient occlusion: ground-truth
+estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant
+soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by
+1, exponent 1` (an aid's value is named after it); then `lights: ambient occlusion hook
+installed`, `ambient occlusion: on the ambient light in the lighting (main camera)` when the
+view takes the bindings and `ambient occlusion: off the lighting` when it gives them up; a
+failed hook warns once and names the picture placement that runs instead. Smoke scenarios
+`ambient-occlusion-lighting`, `-interior`, `-taa`, `-fsr` and `-switch`.
+
+**Cost** [observed 2026-11-18, GPU spans in ms, the occlusion's passes / the main opaque pass; Sun shadows on, no actors;
+4x MSAA unless FSR is named; the 2560x1440 figures are single 40 s runs on the final build, the others medians of five
+4 s periods, two rounds, on the build before the lamp factor shared the ambient's read]: Goodsprings at 2560x1440: main's old
+pass 0.24 / 0.86, the first stage 0.40 / 0.87, this placement 0.30 / 0.91 (0.25 / 0.87 with the lamp weight at 0); Doc
+Mitchell's house at 2560x1440: 0.34 / 0.46, 0.45 / 0.40, 0.41 / 0.48; Goodsprings at 1920x1080: 0.13 / 0.66, 0.23 / 0.66,
+0.18 / 0.70; Doc Mitchell's house at 1920x1080: 0.18 / 0.28, 0.29 / 0.28, 0.24 / 0.31; Goodsprings under FSR Quality to
+2560x1440: 0.10 / 0.52, 0.20 / 0.52, 0.08 / 0.51-0.54. The main pass reads four texels per shaded fragment (the lamp factor
+is formed from the ambient's read). Not measured: a slower GPU.
+
+**Not measured yet:** the shimmer with the view moving; the Freeside alley and the gas station exterior pictures #2897 asks for.
+
+**Not done:** the paper's multi-bounce fit (the lighting has the surface colour now; a later
+step), a bent normal (the ambient is a flat colour with no direction), occlusion on decals and
+blended shapes (not in the prepass), on lamps that cast a shadow and on highlights.
 
 ### 3.2 Longer sun shadows (`fine-shadows`)
 
@@ -368,7 +517,7 @@ over the frames instead of by alpha to coverage.
 
 - The projection is shifted every frame by a sub-pixel amount (Halton 2,3, eight steps;
   Bevy's `TemporalJitter`), textures sampled at a mip bias of -0.5.
-- After tonemapping and the ambient occlusion, before the sun shafts, bloom, sharpening and the
+- After tonemapping and the ambient occlusion's picture placement (§3.1), before the sun shafts, bloom, sharpening and the
   game's image space (so the grade, fades and blurs are not smeared over the frames): each
   pixel's point is carried from this frame's camera to the last frame's (the depth and both
   cameras' matrices; the reprojection is worked out on the CPU in double precision, the world
@@ -519,7 +668,7 @@ enhanced "Bloom" (§3.3), when on, stands in for it.
 - What emits light is brighter than white only in this view: unlit shapes are drawn at
   their emissive colour × multiplier (nif.md §6 "Emissive multiplier of unlit shapes"),
   so Gomorrah's neon at multiplier 25 burns; lit shapes' emissive light already is.
-- Every pass after the tonemapper (ambient occlusion, anti-aliasing, sun shafts, Bloom and
+- Every pass after the tonemapper (the ambient occlusion's picture placement, anti-aliasing, sun shafts, Bloom and
   sharpening, the image-space grade) sees the same tonemapped values as before; the
   passes key their pipelines on the view's format.
 
@@ -1504,13 +1653,283 @@ gate's skipped frames change nothing), the aid's `mesh-terrain-blend-goodsprings
 `-options` and `-widths`; `graphics-enhanced` checks that the enhanced look neither turns
 it on nor logs it.
 
+### 3.15 Heat haze at distance (`heat-haze`; a prototype, off in both presets)
+
+[design] **A prototype**, an addition of NVForever's own for the enhanced look: not a fact
+about the original game and never used to explain a difference from it. Off by default and
+in no preset, `--graphics enhanced` (`Graphics::preset(Preset::Enhanced)`) included (a test
+checks it); only the settings page's `enhanced` row went with the menu overhaul. The row
+"Heat haze (experimental)" (Graphics > Lighting and Effects) or `--graphics-only heat-haze`
+turns it on. Code: `heat_haze.rs`, `heat_haze.wesl`.
+
+- **What.** The shimmer over hot ground in the distance: on a hot, clear day the far ground
+  band near the horizon is moved a little, mostly up and down, by a slowly rising pattern
+  that drifts sideways with the weather's wind. Easy to overdo, so slight.
+- **Technique.** Screen-space refraction: the picture read again at a place offset by a
+  perturbation, with a mask so that what stands in front does not leak into the refracted
+  read, as T. Sousa describes it in "Generic Refraction Simulation", GPU Gems 2 (2005),
+  ch. 19 [documented: cited publication]. The perturbation is two layers of lattice value
+  noise (Ebert et al., "Texturing and Modeling: A Procedural Approach", lattice noises
+  [documented: cited publication]) written in the shader: an integer hash of each cell
+  (odd multipliers chosen at random), smoothstep-interpolated, repeating every 64 cells so
+  the CPU keeps the scroll within one period without a seam. No texture and nothing of the
+  game's data; no code taken from any source.
+- **Where in the frame.** One full-screen pass on the main camera (`PostProcess`) after the
+  temporal resolve (the game's TAA after tonemapping; FSR and DLSS in `EarlyPostProcess`),
+  after the ambient occlusion and the sun shafts, before bloom and sharpening and the game's
+  image-space blur and grade. A distortion before the resolve would move pixels the motion
+  vectors do not describe, and smear. It reads the picture and the depth prepass only, and
+  writes neither the depth nor the motion vectors. Both upscalers expand their render-size
+  depth to the display size by nearest texels and copy it back over the prepass depth
+  before this pass (`upscaler/prep.rs` `expand_depth`, run by `fsr_pass` and `dlss_pass`
+  alike), so under FSR and DLSS the mask reads a display-size depth; with multisampling it
+  reads sample 0, as the ambient occlusion does. DLSS frame generation and FSR's frame
+  generation take their frame without the HUD after `PostProcess`, before the UI
+  (`dlss/frame_gen.rs` `tag`, `frame_gen.rs` `capture_hudless`): that copy includes the
+  shimmer, while the depth and motion they are given do not move with it.
+- **What is never distorted.** The HUD, menus and the pause page are Bevy UI drawn after
+  `PostProcess`; the Pip-Boy's screen and a 3D scope's lens are other cameras drawing into
+  textures shown on first-person shapes, and the pass is only on the main camera. The
+  first-person arms, weapon and Pip-Boy are drawn with their depth squeezed into the nearest
+  share of the range (nvf_assets `first_person_depth.wesl`): read raw they lie within 1.02
+  times the near plane's distance, so the distance mask covers them; near things are nearer than the mask's
+  start. A pixel with a near direct neighbour is not moved (the anti-aliased fringe of the
+  weapon or a near post), and a displaced read is not taken when any of the four texels of
+  its bilinear footprint is nearer than 6,000 units (the pixel keeps its colour), so near
+  outlines never bleed into the far shimmer. The exception: blended shapes that are not in
+  the depth prepass (a muzzle flash, particles, glass) over the far band are moved with what
+  lies behind them, by up to the amplitude.
+- **The mask** (per pixel): distance along the view ray from the depth prepass (reverse
+  infinite depth: view depth = near / depth): none nearer than 6,000 units, full from
+  25,000 (smoothstep); the view ray's elevation: full from 6 degrees below the horizon to
+  0.5 above it, gone at 4 above (the sky just above a far ridge may shimmer a little, the
+  upper sky never) and at 15 below (a steep view down crosses little hot air); the sky dome
+  itself (beyond `SKY_DEPTH_FROM`) at half.
+- **The displacement.** Up to 1.5 pixels at 1080 lines at strength 1 and full mask, scaled
+  with the picture's height; the horizontal part 0.35 of the vertical. Two layers (36 x 100
+  and 85 x 230 cells per picture height, weighted 0.65 and 0.35), rising at 0.012 and 0.02
+  picture heights a second, drifting sideways at 0.04 picture heights a second times the
+  wind's strength along the screen's horizontal (`tree::wind_vector`, which follows
+  SetWindDirection), and moved with the world as the camera turns. Time is the game's clock
+  (`Time<Virtual>`), so a paused game holds still. One bilinear read of the colour where it
+  moves and the pixel's own colour; the pixel's depth everywhere, its four neighbours' and
+  the read's four only where the mask is above 0; no blur. When the largest displacement
+  (strength x amplitude x the debug multiplier x the picture's height) would be under 0.05
+  pixels the pass does not run.
+- **What follows the weather** (`heat_haze::sky_heat`, a pure function of the live
+  `SkyState` every frame, unit-tested; the weather records hold no temperature):
+  strength = sun x weather, held to 0..1, finite.
+  - Sun: smoothstep(0, 8 degrees) of the elevation now x smoothstep(10, 50 degrees) of the
+    elevation an hour earlier (the ground is hottest after noon): none at and below the
+    horizon.
+  - Weather (each weather's own share, blended from the one fading out to the one fading in
+    with the sky's fade, so a transition never pops; a scripted SetWeather or ForceWeather is
+    followed the next frame): none in a weather classified Rainy or Snow or with the Rainy
+    flag; a weather classified Cloudy keeps 0.2 (for mods and the Fallout 3 leftovers: no
+    New Vegas weather is); the brightness of the weather's sunlight colour at the hour (WTHR
+    "sunlight", Rec. 709 luma of its bytes as display values): none up to 0.15, full from 0.6
+    (NVWastelandClear's day sunlight 255, 227, 170 gives 0.90, NVWastelandHazy's 0.95,
+    HVDustStorm's 0, 0, 0 gives 0, so the storm is off by its own data); the weather's own
+    fog share at 25,000 units by the curve the fog shader draws (((d - near) / (far -
+    near))^power, the span held to at least 1, a power not above 0 read as 1; `--fog` in its
+    place, linear): full up to 0.6, none from 0.88; the wind (WTHR DATA wind speed / 255):
+    full up to 0.25, none from 0.45 (most weathers store 50, the dust storm 127).
+  - The records' day fog share at 25,000 units [observed: FalloutNV.esm, fnvtool esm decode,
+    2026-11-17; the curve: our arithmetic]: NVWastelandClear 0.29 (0.35 with its night
+    power), NVHooverDamWeather 0.44, NVWastelandGS 0.46, NVWastelandBorders 0.52,
+    NVWastelandClearEast and NVColoradoRiverWeather 0.58, NVSearchlightWeather2 0.73,
+    NVWastelandHazy 0.89, HVDustStorm (far 0) 1.0: every clear-ish weather keeps its full
+    share, the searchlight weather loses some, the hazy weather and the storm keep none.
+  - **The base game's overcast is not weakened.** NVBlackMountainWeather, which looks
+    overcast, is classified Pleasant like the clear weather, has the same four cloud layers
+    (three of them the transparent placeholder `sky\alpha.dds`, as every New Vegas weather
+    looked at has) and the same sunlight and ambient colours; only its fourth cloud texture
+    and its fog colour differ [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]. So
+    neither the classification nor the layer count can tell it from clear (an earlier
+    version that counted layers cut every base weather to 0.64). Cloud cover has to come
+    from the cloud textures' own alpha: the composed cloud cover of #2904 (now on main)
+    is to go in `weather_heat`, a follow-up.
+  - None indoors. Values outside the base game's ranges (fog far 0 or a million, huge or
+    negative near, power 0, wind 255, no cloud textures, values that are not numbers) give
+    a strength within 0..1 (tests). With the strength 0 the pass does not run.
+  It only adds to the picture the weather's own fog and colours made, and the haze in that
+  fog bounds it: the hazier the weather, the less shimmer.
+- **Log.** `heat haze: on, strength <s>, at most <p> px (sun <a>, weather <b>)` (or
+  `(indoors)`; `, pass skipped` after the pixels when they are under 0.05) when it turns on,
+  and `heat haze: strength <s>, ...` when the strength moves by a tenth, reaches or leaves 0
+  or crosses the skip; never per frame. The render side logs once, when the pass first
+  draws: `heat haze: pass drawn (<w>x<h>, multisampled depth yes|no)`. GPU time: the
+  `nvf_heat_haze` span (`--log-frame-times`).
+- **Debug aids** (development tools: they do not make a run unattended):
+  `NVF_PLAY_DEBUG_HEAT_HAZE=<multiplier>` scales the amplitude (0 to 10),
+  `NVF_PLAY_DEBUG_HEAT_HAZE_VIEW=mask` draws the mask times the strength as a grey picture,
+  `NVF_PLAY_DEBUG_HEAT_HAZE_FORCE=1` holds the strength at 1 in any weather; each logs a
+  `debug switch` line when it is set.
+- **Smoke.** `heat-haze` (Goodsprings at noon under NVWastelandClear: a strength above 0,
+  the pipeline ready and the pass drawn, no shader or rendering error) and
+  `heat-haze-interior` (strength 0 indoors).
+- **Measured** [observed 2026-11-18, PR #2977: Goodsprings start view at 13:00 under
+  NVWastelandClear, 2560x1440, sun shadows on, `--no-actors`; median of five 4-second
+  periods, two rounds, on the contributor's machine]: with the row off the frame time
+  matches main's (3.09-3.10 ms against 3.11-3.13); on at full strength +0.10 ms a frame,
+  the pass 0.09 ms on the GPU. With the row off the pictures match main's to within what
+  two runs of main differ by; the mask-alone pictures show it under the clear weather and
+  none under the hazy weather, the dust storm or at night.
+- **Not done.** The sky band's height above a ridgeline (about 4 degrees at half weight)
+  and the strength are starting values judged by eye in play at half, full and double
+  strength; the other constants are choices by reasoning. No temperature or ground
+  material is read (no record holds one); the base game's overcast keeps the clear
+  weather's strength until the composed cloud cover of #2904 (now on main) is read in
+  `weather_heat`, a follow-up; the pattern lies on the screen and follows turns, not the
+  world's depth; a mirage (the sky refracted into the ground) is not attempted. Not
+  measured: a slower GPU, 1920x1080, a weather mod.
+
+### 3.16 Desert haze (`desert-haze`; off in every preset)
+
+[design, #2675] An addition of NVForever's own, an engineering choice for the enhanced look:
+not a fact about the original game, never a parity item, and never to be used to explain a
+difference from the original's frames. Issue #2675 asked for "exponential height fog in low
+ground" pooling in basins at dawn, as part of `enhanced`; the Mojave has dust and haze, not
+mist, so it was reframed (on the issue): a **thin dust haze that thickens with distance and
+toward the ground, far ridges fading in layers, warmer toward the sun**, outdoors only, as
+far as the shown weather's own fog leaves room for it. The `enhanced` row the issue named no
+longer exists (the settings menu overhaul); the haze is a row of its own, "Desert haze
+(experimental)" under Graphics > Lighting and Effects, off by default and in every preset.
+
+- **Technique.** Exponential height fog: the density falls as e^(-k y) with the height y
+  above a base height, integrated in closed form along the view ray from the camera to the
+  fragment: optical depth = density x L x (e^(-k y0) - e^(-k y1)) / (k (y1 - y0)), with the
+  limit e^(-k (y0 + y1) / 2) where the two heights are within 1e-3 / k (2.7 units); share =
+  1 - e^(-depth). y0 and y1 are the camera's and the fragment's own heights; only the length
+  L is held to the reach (below), so for a fragment at a given height the share never falls
+  with distance. The sun's forward glow is a power of the cosine between the view ray and
+  the sun. Both as Inigo Quilez describes them in "Fog"
+  (<https://iquilezles.org/articles/fog/>, the article Bevy's fog shader also cites)
+  [documented: cited article]; our own code from that description, no code from any other
+  project. Not a volume: Bevy's volumetric fog was dropped in 2026-10 (§4).
+- **Where it sits.** Per fragment, in the world shaders' fog path, no pass of its own, so it
+  covers everything the weather's fog covers (NIF materials, terrain, trees, grass, water,
+  the distant LOD, transparent things) under every anti-aliasing and upscaler. Bevy's fog
+  function gets only the distance; its caller `apply_fog` (bevy_pbr `pbr_functions.wesl`)
+  has both positions. `haze.rs` `haze_edits()`, a list of its own beside lights.rs's lighting
+  edits, puts `nvf_haze` before `apply_fog` and passes its result to the atmospheric fog
+  call as the `scattering` argument, which Bevy reads only while the fog's directional
+  light alpha is above 0 (never set here); only that call line changes. fog.rs `GAME_FOG`
+  then blends the haze and the weather's fog **once**, in display values as the fog is
+  blended outdoors: total share 1 - (1 - fog)(1 - haze), the colours weighted as the haze
+  seen through the weather's fog (the same as mixing the haze first and the fog over it), so
+  nothing is darkened twice. Interiors (the linear blend) are untouched.
+- **Carried in the fog uniform's free fields** (the view bind group does not grow): `bi.z`
+  the density at the base height (0 is off), `directional_light_exponent` the base height,
+  `directional_light_color.rgb` the colour toward the sun, its alpha 0. Bevy reads those
+  two fields only when that alpha is above 0 (its fog in-scattering, §4), so they were free.
+  The shader's constants (k, the floor, the reach, the sun's power) are written into its
+  text from `haze.rs`'s Rust constants when it is patched: one place.
+- **Off is as on main.** With the switch off the density is 0, `nvf_haze` returns the
+  argument it was given (vec3(0)) and `GAME_FOG` runs its old two lines: the same picture.
+  The edits are made at the start whatever the switch, with no log line, so the log is as
+  on main too. Both edits fail safe: if Bevy's text is not as expected the edit is not made
+  (an error line), Bevy's shader stays, and the haze stays off; either edit alone changes
+  nothing (no function signature changes).
+- **What follows the weather** (from `SkyState` every frame, through weather fades, so
+  scripted SetWeather/ForceWeather, transitions and the hour show at once and without a
+  pop; no weather names, no hour table, no per-weather result kept):
+  - *Weight* (0..1): the weather's own fog share at 50,000 units with its near, far and
+    power as the fog uniform has them; full up to a share of 0.5, falling smoothly to none at
+    0.85; times the fog's strength (a fade into or out of no fog). From the fog numbers only:
+    continuous, never rising as the fog gets nearer or denser. NVWastelandClear (0..200,000,
+    power 0.6 by day, 0.5 by night) has 0.44 and 0.5: full. NVWastelandGS (10..120,000, 0.5):
+    0.63. NVTheStripWeather (2,000..200,000, 0.35): 0.77. NVWastelandClearEast (0..100,000,
+    0.4): 0.17. Any fog that is full at 50,000 (NVWastelandHazy 1,800..30,000) and
+    HVDustStorm get none [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]. HVDustStorm's day fog 0/0 is no range, so the renderer shows its night fog
+    510..55,000 power 1.0 all day (`Weather::fog_at`): share 0.91 at 50,000, none.
+  - *Reach*: the extinction length at the base height is 0.9 x the fog far and the length
+    counted is at most 0.5 x the fog far, so the optical depth stays under 0.56 (43 %)
+    along the base height at normal wind, and at most 2 x 1.25 times that (1.39, 75 %) with
+    the strongest wind and below the base (times the debug multiplier), whatever the far: a
+    mod's far of 1,000,000 gives a haze five times thinner, not a wall, and the distant LOD
+    keeps its shapes.
+  - *Wind*: x(1 + 0.25 (wind - 50) / 50), held to 0.75..1.25 (the base game's weathers
+    nearly all store 50; a wind of 255 gives 1.25 times). Blended across a fade.
+  - *Colour*: the fog colour the weather's fog uses now (`SkyState::color(ColorType::Fog)`), moved
+    toward the weather's sunlight colour by up to 0.4 looking into the sun, by the cosine to
+    the sun to the 8th power (Bevy's own default for its fog's directional light; the two are
+    `haze.rs` `SUN_MIX` and `SUN_POWER`, one line each); the sun
+    term grows in as the sun climbs from the horizon to 4° and is nothing at night. The
+    sun's direction is the view's first directional light (the sun; the first-person arms'
+    shade light is its child and points the same way). No colour of our own.
+  - *Base height*: the landscape under the camera (the cells' stored LAND heights, decoded
+    once and kept for the last four cells), followed over 2 s, at once after a jump of a
+    cell. Where the worldspace has no LAND under the camera the stand-in is 128 units below
+    the camera, followed over 20 s, so it does not climb onto roofs with it. Below the base
+    the density grows no further than 2 times (1,893 units down), so basins far below a
+    ridge haze over without turning white.
+- **Chosen values** (by eye, for the user to judge from pictures; constants at the top of
+  `haze.rs`): at a clear noon, the camera on foot and a fragment at its height, the haze
+  alone is 10 % at 20,000 units and 27 % at 60,000 (the starting values asked for were
+  10-15 % and 25-35 %; the weaker end chosen); 3,000 units above the base a third of the
+  optical depth.
+- **Weather and mods** [design]: values outside the base game's ranges are tested as data
+  (fog far 0 and 1,000,000, near above far, power 0 or below, NaN, wind 0 and 255): no NaN,
+  no negative values, no division by zero, the weight monotone.
+- **The sky and the horizon.** The sky dome and clouds are drawn without fog (`sky.wesl`);
+  the dome's horizon band takes the weather's horizon colour (`sky.rs` `dome_color`), the
+  fog the fog colour. The haze is continuous in distance and has no edge of its own, so it
+  adds no seam at the horizon or at the LOD boundary; far land fades further toward the fog
+  colour, so where the fog colour and the horizon colour differ, the edge between land and
+  sky that main already shows stays (stronger or weaker by how far apart they are). The sky
+  is unchanged with the switch on or off. A follow-up could move the haze's colour toward
+  the dome's horizon colour at low view angles (a sky-side change: the horizon colour is not
+  in the fog uniform).
+- **Not done**: no pooling in low ground by the hour (the issue's dawn fog), no noise or
+  drifting dust, nothing indoors, no shadowing of the haze by terrain (Bevy's fog
+  in-scattering fetches a shadow map per fragment; §4). No land from a parent worldspace:
+  NVForever draws each worldspace's own LAND only (worldspace.rs), so a city worldspace's
+  cells without LAND (the Strip, Freeside) take the slow stand-in above, which follows the
+  camera's height over 20 s instead of the ground.
+- **The water reflection** (left as it is): the reflection camera clones the main camera's
+  fog (`reflection.rs` `update_reflection`), so the planar reflection's haze is worked along
+  the mirrored ray from the camera mirrored below the water. Its length is the real
+  reflected path's, and its far part (water to fragment) lies at the real heights, but its
+  near part (camera to water) lies at heights mirrored below the water, so far below the
+  base that the density there is at the floor's 2 times. From a camera high over a lake a
+  reflected ridge gets up to about 1.4 times the haze its real path would. The main
+  view then fogs the water surface over the camera-to-water distance again, as it does the
+  weather's fog on main. A fix needs the water height in the haze (fold the heights at the
+  water), which the fog uniform has no field for; a base height worked for the reflection
+  camera alone would make the far part too thin instead.
+- **Switching**: the row, `--graphics-only desert-haze`, a `--graphics-cycle` set
+  `desert-haze`, `NVF_PLAY_TEST_SETTINGS=<t>:desert-haze`. Switching changes no pipeline
+  (only the uniform), so nothing compiles. Log lines: `haze: desert haze on: <weather>:
+  weight <w>, wind x<f>, <a> % at 20,000 units and <b> % at 60,000 on the base height,
+  reach <r>, base z <z>`; the same figures again (as `haze: <weather>: ...`) when they move
+  notably (weight by 0.1, density by a quarter, another weather), not during a time-lapse;
+  `haze: desert haze off` (`... off indoors` on going in). Debug aid
+  `NVF_PLAY_DEBUG_DESERT_HAZE=<multiplier>`: the density times that (1 as designed; 0 to
+  100), logged once when the haze first turns on; it does not turn the switch on. Smoke:
+  `desert-haze` (switched on and off at Goodsprings at noon). The fog call is patched
+  into Bevy's `apply_fog` at start for every player, row on or off; if Bevy's text no
+  longer matches, one `warn!` line says so and the row does nothing (the fog stays
+  Bevy's).
+- **Measured** [observed 2026-11-18, PR #2976: Goodsprings start view at 13:00 under
+  NVWastelandClear, 2560x1440, sun shadows on, `--no-actors`; median of five 4-second
+  periods, two rounds, on the contributor's machine]: with the row off the frame time
+  matches main's (3.09-3.10 ms against 3.11-3.13), on +0.03-0.04 ms. With the row off the
+  pictures match main's to within what two runs of main differ by (pixels more than 2
+  levels apart, HUD masked: the street at noon 0.34 % against 0.30 %, at 18:30 0.61 %
+  against 0.41 %, an interior 0.002 % against 0.002 %); with it on, NVWastelandHazy,
+  HVDustStorm and an interior stay as with it off (0.0-0.1 %). Pictures against main
+  (1920x1080): from the air over Goodsprings at 12:00 looking north-east, at 18:30 west,
+  at 06:30 east, under the overcast and the hazy weather, and the street, in the PR. The
+  cost is not measured on a slower GPU or at 1920x1080.
+
 ## 4. Tried and dropped
 
 - **Bevy `ContactShadows`** on the sun (16 steps, 40 units, thickness 12): the right effect on
   sunlit bushes, but a band of dark speckles on near surfaces seen at a grazing angle (the
   near roof at Goodsprings) and per-frame noise, which Bevy expects TAA to clean up.
 - **Fog in-scattering towards the sun**: invisible in NVWastelandClear (fog to 200,000) and
-  a shadow-map fetch per fragment.
+  a shadow-map fetch per fragment. (The desert haze, §3.16, warms toward the sun without it.)
 - **Bevy bloom with an HDR main view** and **Bevy CAS**: see §2.
 - **Bevy volumetric fog** (`VolumetricFog` on the camera, `VolumetricLight` on the sun, a
   30,000 x 6,000 x 30,000-unit `FogVolume` following the camera, density 0.0005, 64 steps) at
@@ -1828,12 +2247,19 @@ elevation, and the casters each cascade of each light drew; with sun shadows on 
 `--shadow-thin` thinned and the sun's last cascade broken down by angular size (§5.5).
 
 Debug switch `NVF_PLAY_DEBUG_AO` (read once at the start; for before/after pictures and cost
-runs of the ambient occlusion, §3.1.1): `old` runs the old estimate and its blur, `view`
-shows the ground-truth estimate's factor alone as a grey picture, `view-old` the old one's;
-unset, empty, `0`, `off` or `false` run the ground-truth estimate.
+runs of the ambient occlusion, §3.1.1, §3.1.2): unset, empty, `0`, `off` or `false` put the
+ground-truth estimate in the lighting (the default), `view-lighting` does that and draws the
+factor each fragment took; on the picture, `post` runs the ground-truth estimate, `old` the old
+estimate and its blur, `view` the ground-truth estimate's factor alone as a grey picture,
+`view-old` the old one's. Anything else is unknown (a warning; the default runs).
 `NVF_PLAY_DEBUG_AO_STRENGTH=<number>` (read once at the start) replaces the ground-truth
-estimate's strength (`GTAO_STRENGTH`, 0.4), held to 0..1; the old estimate keeps its 0.55; the
-log line then ends `, strength <number> (NVF_PLAY_DEBUG_AO_STRENGTH)`. Before a temporal upscaler
+estimate's strength (0.8 in the lighting, `LIGHTING_STRENGTH`; 0.4 on the picture,
+`GTAO_STRENGTH`), held to 0..1; the old estimate keeps its 0.55; the log line then names it
+`strength <number> (NVF_PLAY_DEBUG_AO_STRENGTH)`. `NVF_PLAY_DEBUG_AO_VARIANT=<names>` picks the
+remedies for the plants' shimmer (unset: `thin+soft` in the lighting, none on the picture;
+`none` the plain estimate), `NVF_PLAY_DEBUG_AO_LAMPS=<0..1>` the lamps' weight in the lighting
+(default 1, 0 the ambient term alone), `NVF_PLAY_DEBUG_AO_EXPONENT=<0.1..2>` its exponent
+(default 1). Before a temporal upscaler
 the grey replaces the HDR picture and still passes through the upscaler and tonemapping;
 `NVF_AO_BEFORE_FSR=0` shows it after tonemapping instead. Its pass's GPU time is the
 `nvf_ambient_occlusion` span of `--log-frame-times`.
