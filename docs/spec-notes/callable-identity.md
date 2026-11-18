@@ -27,6 +27,27 @@ older snapshots retain the previous base-plus-position interpretation. A snapsho
 with duplicate or record-colliding handles is ambiguous and cannot be silently
 retargeted; this is an engine validation limit, not an original-game observation.
 
+[documented: `engine/nvf-play/src/save.rs`, `read_for_load`; `fnv_save::remap_json_with`]
+Load-order remapping rewrites saved script-variable `ref` tokens by plugin index but
+leaves numeric fields, including a saved lambda handle, unchanged; a lambda token and
+a loaded record in the same index are also indistinguishable to it. [decision: engine
+design, conservative] A save carrying any lambda definition, with explicit or legacy
+positional handles, is therefore refused before generic remapping when its plugin list
+is reordered or a plugin is missing. Identical and appended orders keep every token and
+handle unchanged; lambda-free saves keep the existing remapping. Owned reader controls
+cover these three cases at the actual container boundary. Handle-aware remapping is not
+implemented.
+
+[decision: compatibility disposition, open maintainer question] A reader built before
+the optional `handle` field ignores it and reassigns lambda handles from list positions.
+A save whose handles are not contiguous from the lambda base (allocation skips numbers
+occupied by loaded records) can therefore reach such a reader with tokens that no
+longer name their lambdas. Older binaries cannot be changed: this is a forward-only
+format extension, and the snapshot format string is unchanged. Reading legacy snapshots
+in this reader does not establish the reverse direction. Whether to accept this, bump
+the snapshot format so older readers refuse, or write only contiguous handles is left to
+the maintainers.
+
 [documented: `crates/fnv-game/src/game.rs`, snapshot/restore; `nvse_jip13.rs`]
 Generated travel-package definitions are transient and are not serialized by the
 accepted snapshot format. This change does not add their persistence; a newly made
