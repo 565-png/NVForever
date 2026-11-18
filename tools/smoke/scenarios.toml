@@ -928,28 +928,33 @@ forbid = [
 
 [[scenario]]
 name = "ambient-occlusion-gtao"
-source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ambient-occlusion switch runs the ground-truth estimate (engine/nvforever/src/ssao.wesl gtao_visibility, its plane-aware denoise) on the multisampled view, says so once, and its pipelines build and draw without a shader, pipeline or rendering error"
+source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ambient-occlusion switch runs the ground-truth estimate (engine/nvforever/src/ssao.wesl gtao_visibility, its plane-aware denoise) on the multisampled view, says so once, and its pipelines build and draw without a shader, pipeline or rendering error. Since stage b (§3.1.2) stage a's picture placement is NVF_PLAY_DEBUG_AO=post, the fallback: this run keeps checking it, and that post keeps the occlusion out of the lighting"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl"]
+env = { NVF_PLAY_DEBUG_AO = "post" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "ambient-occlusion"]
 run_seconds = 14
 order = [[
   { re = 'graphics: ambient occlusion, light glow$', label = "the switch is on from the start" },
   { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise", label = "the ground-truth estimate runs, not the old one" },
 ]]
-expect = [{ re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "said once: the switch stays on" }]
+expect = [
+  { re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "said once: the switch stays on" },
+  { text = "depth-aware denoise, on the picture (NVF_PLAY_DEBUG_AO=post)", count = 1, label = "stage a's placement with its own strength and no remedy (nothing between the denoise and the placement)" },
+]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error with the occlusion drawn" },
   { text = "failed and will not be tried again", label = "a pipeline (the occlusion's among them) that failed for good" },
   { text = "Shader validation error", label = "ssao.wesl does not compile" },
+  { text = "ambient occlusion: on the ambient light in the lighting", label = "post keeps the occlusion on the picture" },
 ]
 
 [[scenario]]
 name = "ambient-occlusion-gtao-fsr"
-source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ground-truth estimate before FSR (engine/nvforever/src/ssao.rs ao_before_fsr, single-sampled depth at the render size) in Doc Mitchell's house, without a shader, pipeline or rendering error"
+source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ground-truth estimate before FSR (engine/nvforever/src/ssao.rs ao_before_fsr, single-sampled depth at the render size) in Doc Mitchell's house, without a shader, pipeline or rendering error. Since stage b (§3.1.2) that placement is NVF_PLAY_DEBUG_AO=post; ambient-occlusion-lighting-fsr checks the default"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl"]
-env = { WGPU_BACKEND = "vulkan" }
+env = { WGPU_BACKEND = "vulkan", NVF_PLAY_DEBUG_AO = "post" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "quality", "--graphics-only", "ambient-occlusion", "--no-voice", "--no-lodgen"]
 run_seconds = 16
 expect = [
@@ -957,6 +962,171 @@ expect = [
   { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise", count = 1, label = "the ground-truth estimate runs before FSR" },
 ]
 forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error", "failed and will not be tried again"]
+
+[[scenario]]
+name = "ambient-occlusion-lighting"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the switch's default placement, the occlusion on the ambient light and on lamps without a shadow inside the lighting, on the multisampled view at Goodsprings at noon: the hook goes in, the main camera takes the bindings once, and every material that reads it (NIF, terrain, grass, trees, Bevy's own) compiles and draws"
+areas = ["renderer", "graphics"]
+paths = [
+  "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
+  "engine/nvforever/src/water.rs", "engine/nvforever/src/grass.rs", "engine/nvforever/src/tree.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-shader-tests/**",
+]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "ambient-occlusion"]
+run_seconds = 14
+order = [
+  [
+    { re = 'graphics: ambient occlusion, light glow$', label = "the switch is on from the start (Goodsprings, MSAA)" },
+    { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1", label = "the default: in the lighting, with the player's strength, remedies, lamps and exponent (Goodsprings, MSAA)" },
+  ],
+  [
+    "lights: ambient occlusion hook installed",
+    { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera once the hook is in (Goodsprings, MSAA)" },
+  ],
+]
+expect = [
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 1, label = "said once: it stays in the lighting (Goodsprings, MSAA)" },
+  { re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "the estimate said once (Goodsprings, MSAA)" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the occlusion in the lighting (Goodsprings, MSAA)" },
+  { text = "Shader validation error", label = "a material shader with NVF_AMBIENT_OCCLUSION (or ssao.wesl's denoise) does not compile (Goodsprings, MSAA)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (Goodsprings, MSAA)" },
+  { text = "hook's anchors not found", label = "the lighting hooks (sun visibility, ambient occlusion) apply (Goodsprings, MSAA)" },
+  { text = "lighting hook is not installed", label = "the occlusion goes into the lighting, not the fallback (Goodsprings, MSAA)" },
+  { text = "ambient occlusion: off the lighting", label = "it stays in the lighting while the switch stays on (Goodsprings, MSAA)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-lighting-interior"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the default placement in an interior lit by lamps (the Prospector Saloon), where the lamps take the factor too"
+areas = ["renderer", "graphics"]
+paths = [
+  "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
+  "engine/nvforever/src/water.rs", "engine/nvforever/src/grass.rs", "engine/nvforever/src/tree.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-shader-tests/**",
+]
+args = ["--cell", "GSProspectorSaloonInterior", "--play", "--no-voice", "--no-messages", "--graphics-only", "ambient-occlusion"]
+run_seconds = 14
+order = [
+  [
+    { re = 'graphics: ambient occlusion, light glow$', label = "the switch is on from the start (the saloon)" },
+    { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1", label = "the default: in the lighting, with the player's strength, remedies, lamps and exponent (the saloon)" },
+  ],
+  [
+    "lights: ambient occlusion hook installed",
+    { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera once the hook is in (the saloon)" },
+  ],
+]
+expect = [
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 1, label = "said once: it stays in the lighting (the saloon)" },
+  { re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "the estimate said once (the saloon)" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the occlusion in the lighting (the saloon)" },
+  { text = "Shader validation error", label = "a material shader with NVF_AMBIENT_OCCLUSION (or ssao.wesl's denoise) does not compile (the saloon)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (the saloon)" },
+  { text = "hook's anchors not found", label = "the lighting hooks (sun visibility, ambient occlusion) apply (the saloon)" },
+  { text = "lighting hook is not installed", label = "the occlusion goes into the lighting, not the fallback (the saloon)" },
+  { text = "ambient occlusion: off the lighting", label = "it stays in the lighting while the switch stays on (the saloon)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-lighting-taa"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the default placement with temporal anti-aliasing instead of multisampling: the single-sampled pipelines without an upscaler"
+areas = ["renderer", "graphics"]
+paths = [
+  "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
+  "engine/nvforever/src/water.rs", "engine/nvforever/src/grass.rs", "engine/nvforever/src/tree.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-shader-tests/**",
+]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "ambient-occlusion,taa"]
+run_seconds = 14
+order = [
+  [
+    { re = 'graphics: ambient occlusion, .*temporal anti-aliasing', label = "the switch and TAA on from the start" },
+    { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1", label = "the default: in the lighting, with the player's strength, remedies, lamps and exponent (TAA)" },
+  ],
+  [
+    "lights: ambient occlusion hook installed",
+    { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera once the hook is in (TAA)" },
+  ],
+]
+expect = [
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 1, label = "said once: it stays in the lighting (TAA)" },
+  { re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "the estimate said once (TAA)" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the occlusion in the lighting (TAA)" },
+  { text = "Shader validation error", label = "a material shader with NVF_AMBIENT_OCCLUSION (or ssao.wesl's denoise) does not compile (TAA)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (TAA)" },
+  { text = "hook's anchors not found", label = "the lighting hooks (sun visibility, ambient occlusion) apply (TAA)" },
+  { text = "lighting hook is not installed", label = "the occlusion goes into the lighting, not the fallback (TAA)" },
+  { text = "ambient occlusion: off the lighting", label = "it stays in the lighting while the switch stays on (TAA)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-lighting-fsr"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the default placement under FSR Quality in Doc Mitchell's house: the occlusion at the render size (engine/nvforever/src/upscaler/prep.rs) between the prepass and the main pass, which draws at that size"
+areas = ["renderer", "graphics"]
+paths = [
+  "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
+  "engine/nvforever/src/water.rs", "engine/nvforever/src/grass.rs", "engine/nvforever/src/tree.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-shader-tests/**", "engine/nvforever/src/upscaler/prep.rs",
+]
+env = { WGPU_BACKEND = "vulkan" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "quality", "--graphics-only", "ambient-occlusion", "--no-voice", "--no-lodgen"]
+run_seconds = 16
+order = [
+  [
+    { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1", label = "the default: in the lighting, with the player's strength, remedies, lamps and exponent (FSR)" },
+    { text = "FSR dispatch active: 3.1.4, 853x480 -> 1280x720", label = "FSR draws at the render size after the occlusion said where it runs (the estimate line comes with the camera, FSR's with its first dispatch)" },
+  ],
+  [
+    "lights: ambient occlusion hook installed",
+    { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera once the hook is in (FSR)" },
+  ],
+]
+expect = [
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 1, label = "said once: it stays in the lighting (FSR)" },
+  { re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "the estimate said once (FSR)" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the occlusion in the lighting (FSR)" },
+  { text = "Shader validation error", label = "a material shader with NVF_AMBIENT_OCCLUSION (or ssao.wesl's denoise) does not compile (FSR)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (FSR)" },
+  { text = "hook's anchors not found", label = "the lighting hooks (sun visibility, ambient occlusion) apply (FSR)" },
+  { text = "lighting hook is not installed", label = "the occlusion goes into the lighting, not the fallback (FSR)" },
+  { text = "ambient occlusion: off the lighting", label = "it stays in the lighting while the switch stays on (FSR)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-lighting-switch"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the switch off and on again in play: the bindings go and come back (each said once), and the pause menu waits for the material pipelines the change rebuilds"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
+  "engine/nvforever/src/water.rs", "engine/nvforever/src/grass.rs", "engine/nvforever/src/tree.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-shader-tests/**",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:ambient-occlusion,12.5:ambient-occlusion" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "ambient-occlusion"]
+run_seconds = 24
+order = [[
+  "ambient occlusion: on the ambient light in the lighting (main camera)",
+  "pause menu: open",
+  "settings: ambient-occlusion off",
+  { text = "ambient occlusion: off the lighting", label = "the bindings go with the switch" },
+  "settings: ambient-occlusion on",
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "and come back with it" },
+  { re = 'pause menu: resume after graphics change: pipelines waited [\d.]+ s, pending 0, capped false$' },
+]]
+expect = [
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 2, label = "on at the start and again after the switch" },
+  { text = "ambient occlusion: off the lighting", count = 1, label = "off once" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error while the bindings come and go" },
+  { text = "Shader validation error", label = "a material shader with NVF_AMBIENT_OCCLUSION does not compile" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "capped true", label = "the pipelines the switch rebuilds within the resume wait" },
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
+]
 
 [[scenario]]
 name = "ui-scale-write"
