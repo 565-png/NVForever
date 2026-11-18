@@ -515,6 +515,9 @@ pub struct RefExtra {
     /// reference's (`Game::merchant_container`).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub merchant_container: Option<FormId>,
+    /// RemoveMerchantContainer explicitly clears even an authored XMRC assignment.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub merchant_container_cleared: bool,
     /// Wait: the Follow or Accompany package the actor waits in, standing where it is,
     /// until StopWaiting (`functions::fo3`; the AI's follow step reads [`Game::waits`]).
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -588,6 +591,10 @@ impl FastTravel {
 /// SetQuestObject, SetCellOwnership, SetCellPublicFlag, SetItemValue, SetEnemy, SetAlly].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct FormChanges {
+    /// Permanent actor-list entries (actor-list-additions.md), separate from
+    /// the session-only leveled-list edits in OtherState.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub actor_list_additions: BTreeMap<FormId, Vec<(u16, FormId)>>,
     /// Faction → other faction → group combat reaction (0 neutral, 1 enemy, 2 ally,
     /// 3 friend), over the FACT XNAM list.
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
@@ -1985,8 +1992,8 @@ pub struct RetiredSceneBase {
     pub model_override: Option<String>,
 }
 
-/// Snapshot of the Layer 5 state plus the world's. Ordinary saves remain `/1`;
-/// retired scene provenance requires `/2-retired-scenes`, which older readers explicitly reject.
+/// Snapshot of the Layer 5 state plus the world's. Retired scene provenance and
+/// explicit lambda handles each require an opt-in format that older readers reject.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameSnapshot {
     pub format: String,
@@ -2158,7 +2165,9 @@ impl GameSnapshot {
     /// Whether [`Game::restore`] and `World::restore` can take this snapshot: a load asks
     /// before it starts anything from the save (docs/design/save-load.md §6).
     pub fn check(&self) -> Result<(), String> {
-        if self.format != SNAPSHOT_FORMAT && self.format != crate::retired_scene::FORMAT {
+        if !matches!(self.format.as_str(),
+            SNAPSHOT_FORMAT | LAMBDA_SNAPSHOT_FORMAT | crate::retired_scene::FORMAT | crate::retired_scene::FORMAT_WITH_LAMBDAS)
+        {
             return Err(format!("unsupported snapshot format {:?}", self.format));
         }
         self.check_retired_scene_bases()?;
@@ -2243,6 +2252,7 @@ impl GameSnapshot {
 }
 
 pub const SNAPSHOT_FORMAT: &str = "fnv.game.state/1";
+pub(crate) const LAMBDA_SNAPSHOT_FORMAT: &str = "fnv.game.state/2-lambda-handles";
 
 /// The player led by an actor's Dialogue package to its trigger location
 /// ([`Game::player_lead`]).
@@ -4580,6 +4590,13 @@ impl<'a> Game<'a> {
     /// observed: the Begin Again list 2026-11-13, MCM listed none of the 23 it loaded].
     /// How many handlers ran.
     pub fn page_menu_event(&mut self, code: u16, open: bool) -> usize {
+        // Input callbacks can run just before the held page's first script tick.
+        // A new request from that same opening belongs to the new page lifetime.
+        let carry_cursor = open && self.other.jip9.cursor_warp.is_some()
+            && self.other.jip9.cursor_warp_start_menu
+            && self.other.jip9.cursor_warp_requested_generation == self.other.jip9.cursor_warp_generation;
+        self.other.jip9.invalidate_cursor_warp();
+        if carry_cursor { self.other.jip9.cursor_warp_requested_generation = self.other.jip9.cursor_warp_generation; }
         let before = self.page_menu.replace(code);
         let ran = self.jip_event(if open { "menuopen" } else { "menuclose" }, None, vec![fnv_script::vm::XVal::Num(f64::from(code))]);
         self.page_menu = before;
@@ -4778,6 +4795,7 @@ impl<'a> Game<'a> {
 
     pub fn close_menu(&mut self) -> Option<u16> {
         let m = self.menu.take()?;
+        self.other.jip9.invalidate_cursor_warp();
         if m == menus::TUTORIAL {
             // The menu under it is the open one again (`Game::show_tutorial`).
             self.tutorial.clear();
@@ -6497,7 +6515,12 @@ impl<'a> Game<'a> {
         let retired_scene_bases = self.retired_scene_snapshot(&sim);
         let clone_sequence_floor = (!retired_scene_bases.is_empty()).then_some(self.clone_seq);
         GameSnapshot {
-            format: if retired_scene_bases.is_empty() { SNAPSHOT_FORMAT } else { crate::retired_scene::FORMAT }.into(),
+            format: match (retired_scene_bases.is_empty(), self.lambdas.is_empty()) {
+                (true, true) => SNAPSHOT_FORMAT,
+                (true, false) => LAMBDA_SNAPSHOT_FORMAT,
+                (false, true) => crate::retired_scene::FORMAT,
+                (false, false) => crate::retired_scene::FORMAT_WITH_LAMBDAS,
+            }.into(),
             retired_scene_bases,
             clone_sequence_floor,
             ext: self.ext.clone(),
@@ -6635,6 +6658,7 @@ impl<'a> Game<'a> {
         g.time = s.time;
         g.pending_onload = s.pending_onload.clone();
         g.forms = s.forms.clone();
+        g.refresh_actor_inventory_sources(true);
         g.effects = s.effects.clone();
         g.next_effect = s.next_effect.max(1);
         g.image_modifiers = s.image_modifiers.clone();

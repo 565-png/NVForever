@@ -447,6 +447,7 @@ fn live_lambda_collision_avoidance_keeps_captures_and_saved_handle_identity() {
     no_script_errors(&g);
     let snap = g.snapshot();
     let json = serde_json::to_value(&snap).unwrap();
+    assert_eq!(json["format"], "fnv.game.state/2-lambda-handles");
     assert_eq!(json["lambdas"][0]["handle"], handle);
     let mut restored = Game::restore(
         &f.data,
@@ -499,6 +500,7 @@ fn legacy_lambda_snapshots_and_high_record_session_callbacks_keep_existing_lifet
     let session = g.take_session();
     let snap = g.snapshot();
     let mut json = serde_json::to_value(&snap).unwrap();
+    json["format"] = "fnv.game.state/1".into();
     for item in json["lambdas"].as_array_mut().unwrap() {
         item.as_object_mut().unwrap().remove("handle");
     }

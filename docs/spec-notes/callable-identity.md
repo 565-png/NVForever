@@ -29,7 +29,7 @@ older snapshots retain the previous base-plus-position interpretation. A snapsho
 with duplicate or record-colliding handles is ambiguous and cannot be silently
 retargeted; this is an engine validation limit, not an original-game observation.
 
-[documented: `engine/nvf-play/src/save.rs`, `read_for_load`; `fnv_save::remap_json_with`]
+[design: `engine/nvf-play/src/save.rs`, `read_for_load`; `fnv_save::remap_json_with`]
 Load-order remapping rewrites saved script-variable `ref` tokens by plugin index but
 leaves numeric fields, including a saved lambda handle, unchanged. Lambda handles and
 their tokens all have index FE. When the save had no plugin at FE, or that plugin keeps
@@ -38,19 +38,17 @@ together. When the save's plugin at FE now sits elsewhere, the walker would move
 tokens but not the handles, and cannot tell a lambda token from that plugin's record.
 [decision: engine design, conservative] A save carrying any lambda definition, with
 explicit or legacy positional handles, is refused in exactly that case, before generic
-remapping. Identical, appended and other reorderings keep tokens and handles unchanged;
-lambda-free saves keep the existing remapping. Owned reader controls cover these cases
-at the actual container boundary. Handle-aware remapping is not implemented.
+remapping. Otherwise the lambda check leaves existing remapping alone, including the
+separate restriction on retired scene provenance. Owned reader controls cover these
+cases at the actual container boundary. Handle-aware remapping is not implemented.
 
-[decision: compatibility disposition, open maintainer question] A reader built before
-the optional `handle` field ignores it and reassigns lambda handles from list positions.
-A save whose handles are not contiguous from the lambda base (allocation skips numbers
-occupied by loaded records) can therefore reach such a reader with tokens that no
-longer name their lambdas. Older binaries cannot be changed: this is a forward-only
-format extension, and the snapshot format string is unchanged. Reading legacy snapshots
-in this reader does not establish the reverse direction. Whether to accept this, bump
-the snapshot format so older readers refuse, or write only contiguous handles is left to
-the maintainers.
+[decision: engine save compatibility] Snapshots writing explicit lambda handles use
+`fnv.game.state/2-lambda-handles`, or `fnv.game.state/2-retired-scenes-lambda-handles`
+when they also carry retired scene provenance. Readers that accept only `fnv.game.state/1`
+and `fnv.game.state/2-retired-scenes` reject both new formats instead of ignoring
+`handle` and silently renumbering sparse identities. Lambda-free saves keep their
+existing formats. Older saves still load; a lambda definition with no `handle`
+keeps its base-plus-position identity.
 
 [design: existing engine code, `crates/fnv-game/src/game.rs`, snapshot/restore; `nvse_jip13.rs`]
 Generated travel-package definitions are transient and are not serialized by the
@@ -61,12 +59,12 @@ package after restore must still exclude the restored owned lambda handles.
 references, and loaded script records are eligible regardless of numeric prefix
 [hypothesis: that the original keeps a script record's callbacks across a load whatever
 its load-order index, like the existing low-index rule; not observed].
-Owned lambda callbacks remain scoped to their existing game lifetime. Authored, unexecuted
-regressions target registration through the compiler, the real Game hit recorder
-and callback execution, ordinary UDFs, captured lambdas, filters, receivers,
-snapshot identity and deferred calls. Further authored controls exercise source
-and source-less loaded bytecode, same-maker nested captures, live package/lambda
-allocation, array returns and string/array disposal after success and error.
+Owned lambda callbacks remain scoped to their existing game lifetime. Engine regressions
+cover registration through the compiler, the real Game hit recorder and callback
+execution, ordinary UDFs, captured lambdas, filters, receivers, snapshot identity and
+deferred calls. Further controls exercise source and source-less loaded bytecode,
+same-maker nested captures, live package/lambda allocation, array returns and
+string/array disposal after success and error.
 No native callable representation or parity
 is established by these engine tests.
 
