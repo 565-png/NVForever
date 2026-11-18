@@ -1024,7 +1024,7 @@ mod tests {
             form_id: 0x100, sig: *b"REFR", flags, base: Some(0x200), position: [0.0; 3], rotation: [0.0; 3], scale: 1.0,
             enable_parent: None, open_by_default: false, teleport: false, emittance: None, imposter, primitive,
         };
-        let base = |sig: [u8; 4], model: &str| BaseObject { form_id: 0x200, sig, edid: None, model: Some(model.into()), world_model: None, world_alt_textures: vec![], worn_only: false };
+        let base = |sig: [u8; 4], model: &str| BaseObject { form_id: 0x200, sig, edid: None, model: Some(model.into()), world_model: None, world_alt_textures: vec![], worn_only: false, flags: 0, bounds: None };
         let vwd = ref_flags::VISIBLE_WHEN_DISTANT;
         assert!(ring_models(&p(0, false, false), &base(*b"STAT", "rocks\\rock01.nif")));
         assert!(!ring_models(&p(0, false, false), &base(*b"DOOR", "doors\\door01.nif")));

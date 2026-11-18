@@ -2321,7 +2321,7 @@ mod blend_census_tests {
             enable_parent: None, open_by_default: false, teleport: false, emittance: None, imposter, primitive: false,
         };
         let base = |sig: [u8; 4]| BaseObject {
-            form_id: 0x200, sig, edid: None, model: Some("scol/synthetic_road.nif".into()), world_model: None, world_alt_textures: vec![], worn_only: false,
+            form_id: 0x200, sig, edid: None, model: Some("scol/synthetic_road.nif".into()), world_model: None, world_alt_textures: vec![], worn_only: false, flags: 0, bounds: None,
         };
         let model = PreparedModel::default();
         let path = "scol/synthetic_road.nif";
