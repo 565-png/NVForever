@@ -888,6 +888,38 @@ forbid = [
 ]
 
 [[scenario]]
+name = "ambient-occlusion-gtao"
+source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ambient-occlusion switch runs the ground-truth estimate (engine/nvforever/src/ssao.wesl gtao_visibility, its plane-aware denoise) on the multisampled view, says so once, and its pipelines build and draw without a shader, pipeline or rendering error"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl"]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "ambient-occlusion"]
+run_seconds = 14
+order = [[
+  { re = 'graphics: ambient occlusion, light glow$', label = "the switch is on from the start" },
+  { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise", label = "the ground-truth estimate runs, not the old one" },
+]]
+expect = [{ re = 'ambient occlusion: (ground-truth|old) estimate', count = 1, label = "said once: the switch stays on" }]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the occlusion drawn" },
+  { text = "failed and will not be tried again", label = "a pipeline (the occlusion's among them) that failed for good" },
+  { text = "Shader validation error", label = "ssao.wesl does not compile" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-gtao-fsr"
+source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ground-truth estimate before FSR (engine/nvforever/src/ssao.rs ao_before_fsr, single-sampled depth at the render size) in Doc Mitchell's house, without a shader, pipeline or rendering error"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl"]
+env = { WGPU_BACKEND = "vulkan" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "quality", "--graphics-only", "ambient-occlusion", "--no-voice", "--no-lodgen"]
+run_seconds = 16
+expect = [
+  "FSR dispatch active: 3.1.4, 853x480 -> 1280x720",
+  { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise", count = 1, label = "the ground-truth estimate runs before FSR" },
+]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error", "failed and will not be tried again"]
+
+[[scenario]]
 name = "ui-scale-write"
 source = "issue #1631: the settings page's Display row UI scale (ui-scale) sets the HUD's size, kept in NVForever.ini; the first half of the round trip, ui-scale-read starts with what this run keeps"
 note = "The home's INI may hold any scales from an earlier run: set both rows to 100%, then both to 70% (the rows are lists of 50-100% in tens since the menu overhaul, owner 2026-11-15; 75% was the slider's). #2519 makes the menu row independent; the existing three following 70% drawing/pointer oracles are unchanged."
