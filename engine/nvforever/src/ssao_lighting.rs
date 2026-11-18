@@ -370,7 +370,8 @@ mod tests {
 
     /// ssao_lighting.wesl `nvf_ambient_visibility`, step for step.
     fn upsample(tex: &Texels, frag: Vec2, dist: f32, u: &AmbientOcclusionLightingUniform) -> f32 {
-        if !(dist > 0.0) || dist >= u.params.z {
+        // The shader's `!(dist > 0.0)`: NaN too.
+        if dist.is_nan() || dist <= 0.0 || dist >= u.params.z {
             return 1.0;
         }
         let t = (frag - 0.5) * 0.5;
@@ -390,7 +391,7 @@ mod tests {
                 weight += w;
             }
         }
-        if !(weight >= MIN_WEIGHT) {
+        if weight.is_nan() || weight < MIN_WEIGHT {
             return 1.0;
         }
         let open = total / weight;
