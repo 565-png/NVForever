@@ -1281,6 +1281,74 @@ expect = [
 ]
 
 [[scenario]]
+name = "movement-inertia-trace-run-jump"
+source = "owner 2026-11-17 (\"when holding W - moving forward and jumping, the landing animation has a lag/hitch\"; engine/nvforever/src/player_body.rs MotionTrace): a frame-by-frame trace of jumps while running east down Goodsprings' main street with the rifle out (10/12.5/15 s) and back west with it put away (23/25.5/28 s), the street clear ahead both ways (the cell's start ran into a house), for finding a hitch at the landing (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/view_sway.rs", "engine/nvf-play/src/inertia.rs", "engine/nvf-play/src/player.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-run-jump.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,10:jump,12.5:jump,15:jump,19:weapon,23:jump,25.5:jump,28:jump", NVF_PLAY_TEST_MOVE = "8:1:0,17:0:0,21:1:0,30:0:0", NVF_PLAY_TEST_LOOK = "18.5:270:0", NVF_PLAY_TEST_SHOTS = "7.5:run_jump_east.png,14:run_jump_east_mid.png,20.5:run_jump_west.png,27:run_jump_west_mid.png" }
+args = ["--pos=-72000,2152,8390", "--heading", "90", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 32
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the running jumps is written" },
+  { re = 'player body summary: [4-9] falls', label = "the running jumps: the jumps were taken" },
+  { re = 'player body summary: weapon sway on', label = "the running jumps: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-run-jump-original"
+source = "the reference for movement-inertia-trace-run-jump: the same running jumps with the Advanced Movement main switch off (--no-advanced-movement), to tell the landing clip's own motion from ours"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-run-jump-original.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,10:jump,12.5:jump,15:jump,19:weapon,23:jump,25.5:jump,28:jump", NVF_PLAY_TEST_MOVE = "8:1:0,17:0:0,21:1:0,30:0:0", NVF_PLAY_TEST_LOOK = "18.5:270:0" }
+args = ["--pos=-72000,2152,8390", "--heading", "90", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob", "--no-advanced-movement"]
+run_seconds = 32
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the running jumps is written, Advanced Movement off" },
+  { re = 'player view: landed at', label = "the running jumps, Advanced Movement off: a jump landed" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-crouch-jump-slope"
+source = "owner 2026-11-17 (video: \"player character teleports to the ground while crouch walking forward and jumping\"; engine/nvforever/src/player_body.rs MotionTrace): a frame-by-frame trace of crouched jumps while walking west up Goodsprings' sloped road by the house west of the cell's start (the place in the video), the rifle out, physics at 144 Hz and the body in first person as in the video, for finding the view snapping down at a touchdown (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-play/src/phys/step_lift.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-crouch-jump-slope.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_LOOK = "1:270:0", NVF_PLAY_TEST_CONTROL = "4:weapon,6:sneak,9:jump,10.6:jump,12.2:jump,13.8:jump,15.4:jump", NVF_PLAY_TEST_MOVE = "8:1:0,17:0:0", NVF_PLAY_TEST_SHOTS = "7.5:crouch_slope_ahead.png,13:crouch_slope_mid.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob", "--first-person-body", "--physics-hz", "144"]
+run_seconds = 19
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the crouched jumps on the slope is written" },
+  { re = 'player view: landed at', label = "a crouched jump on the slope landed" },
+  { re = 'player body summary: weapon sway on', label = "the crouched jumps on the slope: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-lever-sights"
+source = "owner 2026-11-17 (a tester's video: with Animation Smoothing on, the Trail Carbine fired down its sights takes the left hand off the gun after each shot; engine/nvforever/src/player_body.rs MotionTrace): a frame-by-frame trace of the lever-action Trail Carbine fired as fast as it cycles (a click every 0.3 s) down its sights for 4.5 s and then from the hip, with the body in first person on as in the report, for checking that the left hand stays on the gun (lhand_* against the camera node; tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/inertia.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-lever-sights.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:WeapNVTrailCarbine:1,2:call:player:AddItem:Ammo44Magnum:60,2.5:call:player:EquipItem:WeapNVTrailCarbine", NVF_PLAY_TEST_CONTROL = "4:weapon,8:aim,10.00:fire,10.05:fire,10.30:fire,10.35:fire,10.60:fire,10.65:fire,10.90:fire,10.95:fire,11.20:fire,11.25:fire,11.50:fire,11.55:fire,11.80:fire,11.85:fire,12.10:fire,12.15:fire,12.40:fire,12.45:fire,12.70:fire,12.75:fire,13.00:fire,13.05:fire,13.30:fire,13.35:fire,13.60:fire,13.65:fire,13.90:fire,13.95:fire,14.20:fire,14.25:fire,14.50:fire,14.55:fire,15.5:aim,17.00:fire,17.05:fire,17.30:fire,17.35:fire,17.60:fire,17.65:fire,17.90:fire,17.95:fire,18.20:fire,18.25:fire,18.50:fire,18.55:fire,18.80:fire,18.85:fire,19.10:fire,19.15:fire,19.40:fire,19.45:fire", NVF_PLAY_TEST_SHOTS = "9.6:lever_on_aimed.png,10.2:lever_on_shot.png,10.45:lever_on_lever.png,18.2:lever_on_hip.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob", "--first-person-body"]
+run_seconds = 22
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the lever-action shots is written" },
+  { re = 'combat: kick: shot', label = "the Trail Carbine fired" },
+  { re = 'player body summary: weapon sway on', label = "the lever-action shots: the run reached its end" },
+]
+
+[[scenario]]
+name = "movement-inertia-trace-lever-sights-original"
+source = "the reference for movement-inertia-trace-lever-sights: the same shots with Animation Smoothing off (--no-animation-smoothing), where the tester's video shows the left hand staying on the gun"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "movement-inertia-trace-lever-sights-original.csv", NVF_PLAY_TEST_SCRIPT = "2:call:player:AddItem:WeapNVTrailCarbine:1,2:call:player:AddItem:Ammo44Magnum:60,2.5:call:player:EquipItem:WeapNVTrailCarbine", NVF_PLAY_TEST_CONTROL = "4:weapon,8:aim,10.00:fire,10.05:fire,10.30:fire,10.35:fire,10.60:fire,10.65:fire,10.90:fire,10.95:fire,11.20:fire,11.25:fire,11.50:fire,11.55:fire,11.80:fire,11.85:fire,12.10:fire,12.15:fire,12.40:fire,12.45:fire,12.70:fire,12.75:fire,13.00:fire,13.05:fire,13.30:fire,13.35:fire,13.60:fire,13.65:fire,13.90:fire,13.95:fire,14.20:fire,14.25:fire,14.50:fire,14.55:fire,15.5:aim,17.00:fire,17.05:fire,17.30:fire,17.35:fire,17.60:fire,17.65:fire,17.90:fire,17.95:fire,18.20:fire,18.25:fire,18.50:fire,18.55:fire,18.80:fire,18.85:fire,19.10:fire,19.15:fire,19.40:fire,19.45:fire", NVF_PLAY_TEST_SHOTS = "9.6:lever_off_aimed.png,10.2:lever_off_shot.png,10.45:lever_off_lever.png,18.2:lever_off_hip.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--no-animation-smoothing", "--weapon-sway", "--head-bob", "--first-person-body"]
+run_seconds = 22
+expect = [
+  { re = 'motion trace: writing', label = "the trace of the lever-action shots is written, Animation Smoothing off" },
+  { re = 'combat: kick: shot', label = "the Trail Carbine fired, Animation Smoothing off" },
+]
+
+[[scenario]]
 name = "advanced-movement-switches"
 source = "owner 2026-11-15 (\"finish the Advanced Movement project ... a full bug check\"; engine/nvf-play/src/player.rs, engine/nvforever/src/settings.rs, docs/design/player-body.md §1.4a.3): every switch of NVF Features › Advanced movement turned off on the settings page part-way through a draw, then on again while aimed, with the rifle firing, the player running, jumping and crouching between, so a switch changed mid-motion leaves nothing stuck"
 areas = ["player-body", "settings"]
