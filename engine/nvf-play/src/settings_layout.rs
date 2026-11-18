@@ -303,10 +303,10 @@ mod tests {
     /// #2688's sound cover, #2670's cloud shadows, #2671's terrain shadows, #2149's smooth terrain and its Debug row terrain wireframe, the
     /// overhaul's menu font, the Advanced Movement rows of tech/movement-inertia, Weapon
     /// Inertia and Camera Motion in place of weapon sway and head bob, #2843's Shadow
-    /// resolution row, Gore Shake and #2670's Cloud shadows; #2661's mesh terrain blend row, and
-    /// the Quick Loot rows; #2965's heat haze row; #2675's desert haze row; #2671's terrain shadows row), by
-    /// the group it registers with.
-    const KNOWN: [(&str, &str); 137] = [
+    /// resolution row, Gore Shake and #2670's Cloud shadows; #2661's mesh terrain blend row, the
+    /// Quick Loot rows; #2965's heat haze row; #2675's desert haze row; Sprint; #2671's terrain
+    /// shadows row), by the group it registers with.
+    const KNOWN: [(&str, &str); 138] = [
         ("detached-camera", "Gameplay"),
         ("gore-shake", "Gameplay"),
         ("advanced-movement", "Gameplay"),
@@ -314,6 +314,7 @@ mod tests {
         ("movement-inertia", "Gameplay"),
         ("weapon-handling", "Gameplay"),
         ("advanced-recoil", "Gameplay"),
+        ("sprint", "Gameplay"),
         ("animation-smoothing", "Gameplay"),
         ("sound-cover", "Gameplay"),
         ("menu-pause", "Gameplay"),
@@ -645,7 +646,7 @@ mod tests {
         assert_eq!(keys(&list, &l, "Controls")[..6], ["[Input]", "@device", "button-style", "@automatic-input", "@rumble", ""]);
         assert_eq!(
             keys(&list, &l, NVF_FEATURES_TAB),
-            ["[Advanced Movement]", "advanced-movement", "movement-weight", "", "[Gameplay]", "movement-inertia", "weapon-handling", "advanced-recoil", "", "[Visual Only]", "weapon-inertia", "animation-smoothing", "camera-motion", "", "[World Interaction]", "grass-fire", "", "[Quick Loot]", "quick-loot", "quick-loot-scale", "quick-loot-background", "quick-loot-weight", "quick-loot-value", "quick-loot-value-per-weight"]
+            ["[Advanced Movement]", "advanced-movement", "movement-weight", "", "[Gameplay]", "movement-inertia", "weapon-handling", "advanced-recoil", "sprint", "", "[Visual Only]", "weapon-inertia", "animation-smoothing", "camera-motion", "", "[World Interaction]", "grass-fire", "", "[Quick Loot]", "quick-loot", "quick-loot-scale", "quick-loot-background", "quick-loot-weight", "quick-loot-value", "quick-loot-value-per-weight"]
         );
         assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "terrain-wireframe", "scope-3d"]);
         assert!(keys(&list, &l, "Tweaks").is_empty(), "an empty tab is still a tab");
@@ -663,6 +664,10 @@ mod tests {
         assert_eq!(at("terrain-shadows"), "Graphics > Shadows", "after Cloud shadows (#2671)");
         assert_eq!(at("sound-cover"), "Gameplay > Game", "#2688");
         assert_eq!(l.control_placement("bind:Jump").unwrap().path(), "Controls > Movement");
+        assert_eq!(l.control_placement("bind:Sprint").unwrap().path(), "Controls > Movement", "beside the movement controls (#3000)");
+        // Sprint is not greyed under the Global Toggle, as its Advanced Movement neighbours
+        // (#3000); only its binding is, while it is off.
+        assert!(needs("sprint").is_empty());
         // The registry itself is left as it was: its order and each row's group.
         let again = registry(&KNOWN);
         assert!(list.iter().zip(&again).all(|(a, b)| a.key == b.key && a.group == b.group && a.label == b.label && a.note == b.note));

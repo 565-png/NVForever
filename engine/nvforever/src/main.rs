@@ -159,6 +159,7 @@ mod iron_sights;
 mod head_bob;
 mod view_sway;
 mod weapon_lower;
+mod sprint_view;
 mod setup;
 mod shadow_anchor;
 mod shadow_probe;
@@ -177,6 +178,7 @@ mod limping;
 mod sneaking;
 mod swimming;
 mod ssao;
+mod ssao_lighting;
 mod taa;
 mod fg_presenter;
 mod ffx_api;
@@ -832,6 +834,14 @@ struct Args {
     /// (nvf_play::inertia); a switch of the settings page (on by default).
     #[arg(long, requires = "play")]
     no_advanced_recoil: bool,
+    /// Sprint: the Sprint control (a key the player binds; none by default) runs faster for AP
+    /// (nvf_play::stance); off unless given; a switch of the settings page.
+    #[arg(long, requires = "play", conflicts_with = "no_sprint")]
+    sprint: bool,
+    /// No Sprint: the Sprint control does nothing (nvf_play::stance), the default; a switch of
+    /// the settings page.
+    #[arg(long, requires = "play")]
+    no_sprint: bool,
     /// Keep the first-person weapon up against walls and friendly actors close ahead
     /// (weapon_lower.rs); a switch of the settings page.
     #[arg(long, requires = "play")]
@@ -1672,6 +1682,8 @@ fn main() -> AppExit {
     .add_plugins((imagespace::ImageSpacePlugin, sky::SkyPlugin, cloud_shadows::CloudShadowsPlugin, graphics::GraphicsPlugin(graphics, msaa, frame_times), minimap_render::MinimapRenderPlugin))
     // The sun visibility factor: cloud and terrain shadows on the sun (off until a producer sets it).
     .add_plugins(sun_visibility::SunVisibilityPlugin)
+    // The ambient occlusion's shader for the lighting (imported only under its def).
+    .add_plugins(ssao_lighting::SsaoLightingPlugin)
     .add_plugins(mesh_terrain_blend::MeshTerrainBlendPlugin)
     // The switches the settings page weighs against the INI (`--play` only), for the
     // frame split's start-time decision (perf_overlay/split.rs).
@@ -1934,6 +1946,7 @@ fn main() -> AppExit {
             inertia.weapon_handling = args.weapon_handling;
             inertia.smooth = args.animation_smoothing;
             inertia.recoil = !args.no_advanced_recoil;
+            inertia.sprint = args.sprint;
             inertia.advanced = !args.no_advanced_movement;
             app.insert_resource(inertia);
             app.add_plugins(decals::DecalsPlugin);

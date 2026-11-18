@@ -190,6 +190,30 @@ packed fields above the new bits moved up by three). The meshlet path (feature o
 view key without the bits, so a meshlet view must not get the component. Upstream has no
 way for an application to add bindings to the mesh view bind group.
 
+Another change (ambient occlusion on the ambient light, #2897 stage two,
+docs/design/graphics-enhanced.md §3.1), each part marked `NVForever ambient occlusion`, for
+nvforever's `ssao_lighting.rs`, built the same way as the sun visibility's:
+
+- `src/render/mesh_view_bindings.rs`: the render-world view component
+  `NvfAmbientOcclusionBindings` (a uniform buffer and an unfilterable float 2D texture, the
+  half-resolution occlusion read with `textureLoad`), the layout key bit
+  `MeshPipelineViewLayoutKey::NVF_AMBIENT_OCCLUSION` and bindings 43-44 of the mesh view
+  bind group, present only for a view with it.
+- `src/render/mesh.rs`: `MeshPipelineKey::NVF_AMBIENT_OCCLUSION` (bit 28; the key's bit
+  fields above it move up by one more, their top, the colour target format, ending at bit
+  49, still below the base mesh key's bits from 58, which the file's `const_assert_eq!`
+  checks), set by `check_views_need_specialization` from the same component, and the shader
+  def of the same name, pushed only for a pipeline that writes depth (opaque, alpha mask,
+  alpha to coverage), the rule Bevy's own `SCREEN_SPACE_AMBIENT_OCCLUSION` def follows: a
+  blended draw is not in the depth prepass the occlusion is worked out from. A blended
+  pipeline of such a view keeps the bindings in its layout and leaves them unread.
+
+The shader that reads the bindings is nvforever's (`ssao_lighting.wesl`, patched into
+`apply_pbr_lighting` at run time after the sun visibility's hook). Bevy inserts no such
+component; without it the layouts and shader defs are upstream's, and the pipeline keys are
+the same keys numbered differently (the packed fields above the new bit moved up by one).
+As for the sun visibility, a meshlet view must not get the component.
+
 ## bevy_render 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
 [documented: `src/render_resource/pipeline_cache.rs::create_pipeline_task`, #2317]

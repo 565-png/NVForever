@@ -1311,6 +1311,12 @@ impl Combat {
     pub fn player_flinching(&self) -> bool {
         self.time < self.flinch_until
     }
+
+    /// Whether the player's weapon is reloading (a reload, a jam's clearing): it ends a sprint
+    /// (`crate::sprint`).
+    pub fn player_reloading(&self) -> bool {
+        self.cycle.as_ref().is_some_and(Cycle::reloading)
+    }
 }
 
 impl Combat {
