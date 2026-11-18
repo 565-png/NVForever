@@ -1103,6 +1103,12 @@ Sources: `fnvtool nif stats` over every mesh archive of the base game and the ad
   applies this only to `Move::TurnLeft` and `Move::TurnRight`, including weapon,
   crouched, hurt and replacement movement sets. Other movement and generic clip
   binding keep their existing policy; there is no actor ID or corrective angle.
+- [hypothesis] The original game plays these turn clips with the actor upright,
+  keeping only the root rotation relative to each clip's start; how it treats the
+  exported static root orientation has not been observed in its playback. The
+  same is assumed, unobserved, for every turn clip of the weapon, crouched, hurt
+  and replacement movement sets, which the design above covers beyond the four
+  files inspected.
 - [implementation validation] `anim_play::tests::turn_in_place_…` exercises the real
   `BlendPlayer::sample` consumer with a tilted static root plus NonAccum, phase
   wrap/release, relative keyed rotation and absent root/rotation controls.
