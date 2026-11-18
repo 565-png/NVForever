@@ -269,6 +269,41 @@ Two more for the lamp shadows' performance pass (2026-11-18, docs/design/graphic
   on other render threads); fewer device calls there give it less to wait on. Not measured
   yet.]
 
+One more for the lamp shadows (static shadow cache, 2026-11-18; docs/design/graphics-enhanced.md
+§3.15 "Static shadow cache"), marked `NVForever static shadow cache`, all in
+`src/render/light.rs`:
+
+- `HoldLightShadowMaps` gains `static_cache` (keep the cache), `to_static` and `on_static`
+  (bits per cube face of a point light, this frame). With `static_cache`, `prepare_lights`
+  takes a second cube texture from the texture cache, `nvf_point_light_static_shadow_cache`,
+  of the same size and layers as the sampled point texture (`RENDER_ATTACHMENT | COPY_SRC`;
+  the sampled texture gets `COPY_DST` too, so it is another texture while the cache is on),
+  every frame so the texture cache keeps it. Of a point light's faces drawn this frame (not
+  held):
+  - a face in `to_static` gets an `NvfStaticShadowFace` on its view: the pass draws into the
+    cache's layer (an attachment that clears) in place of the `ShadowView`'s, and after the
+    pass the layer is copied into the same layer of the sampled texture (whole face, one
+    array layer, `copy_texture_to_texture`; depth copies take whole subresources of one
+    format [documented: WebGPU `copyTextureToTexture` validation for depth-or-stencil
+    formats]). What the layer was drawn with (light, cache texture) is recorded.
+  - a face in `on_static` whose cache layer holds what this light drew into this cache
+    texture gets the cache's layer copied into the sampled layer before the pass, and the
+    pass draws over it with an attachment that loads (no clear value). Otherwise (no such
+    record) it is drawn as any face, and counted as a miss.
+  - any other face loses the component and is drawn as before.
+  The copies are recorded in `view_shadow_pass` (the shared shadow pass of the point light
+  views), on the view's own encoder: the copy in before the early pass, the copy out after
+  the last pass (the late one only with occlusion culling, which light views do not have).
+  Which casters each face's list holds is the game's to choose (nvforever light_shadows.rs
+  `skip_fixtures`: the static ones into the cache, the moving ones over it). The cache's
+  layer attachments and the sampled texture's loading attachments are kept in
+  `NvfShadowViewCache` like the others. Three more events in the light view counts: `static
+  cache draws`, `static cache composites`, `static cache misses`.
+  Without `static_cache` (Bevy's default, and the game's `NVF_LIGHT_SHADOW_STATIC_CACHE=0`)
+  nothing changes. The cache costs as much memory as the sampled cubes (at 512 × 512, 6 MB a
+  lamp). Upstream has no way to draw a shadow map over an earlier picture: its shadow
+  attachments always clear. Not measured in game yet.
+
 Gated materials (#2661, docs/design/graphics-enhanced.md §3.14 "Off"), in `src/material.rs`,
 each part marked `NVForever gated materials`: `MaterialPlugin::gated(MaterialGate)` (a new
 `gate` field, `None` by default). With a gate, the material type's own systems run only

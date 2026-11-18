@@ -1513,6 +1513,9 @@ pub fn prepare_lights(
         .spot
         .retain(|layer, _| *layer as usize >= num_directional_cascades_enabled);
 
+    // NVForever static shadow cache: on while the game asks for it (and holds the lamps).
+    let nvf_static_cache = hold_lights.as_deref().is_some_and(|hold| hold.static_cache);
+
     // NVForever held light shadow maps: the point texture is taken before the lights' GPU
     // data (moved up from below), as its id decides whether a held light's cube holds its maps.
     let point_light_depth_texture = texture_cache.get(
@@ -1529,10 +1532,40 @@ pub fn prepare_lights(
             dimension: TextureDimension::D2,
             format: CORE_3D_SHADOW_MAP_FORMAT,
             label: Some("point_light_shadow_map_texture"),
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            // NVForever static shadow cache: the cache's layers are copied into it.
+            usage: if nvf_static_cache {
+                TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST
+            } else {
+                TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING
+            },
             view_formats: &[],
         },
     );
+
+    // NVForever static shadow cache: a second cube texture of the same layers, each point
+    // light's faces drawn with the static casters alone, copied into the sampled texture
+    // (above) before the dynamic casters are drawn over them. Taken every frame while the
+    // cache is on, so the texture cache keeps it.
+    let nvf_static_texture = nvf_static_cache.then(|| {
+        texture_cache.get(
+            &render_device,
+            TextureDescriptor {
+                size: Extent3d {
+                    width: point_light_shadow_map.size as u32,
+                    height: point_light_shadow_map.size as u32,
+                    depth_or_array_layers: nvf_cubes.max(point_light_shadow_maps_count).max(1) as u32 * 6,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: CORE_3D_SHADOW_MAP_FORMAT,
+                label: Some("nvf_point_light_static_shadow_cache"),
+                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
+                view_formats: &[],
+            },
+        )
+    });
+    let nvf_static_texture_id = nvf_static_texture.as_ref().map(|t| t.texture.id());
 
     let nvf_point_texture_id = point_light_depth_texture.texture.id();
     // NVForever light view counts.
@@ -1754,6 +1787,20 @@ pub fn prepare_lights(
         nvf_cache.point_texture = Some(nvf_point_texture_id);
         nvf_cache.point_array = None;
         nvf_cache.point_layers.clear();
+        // NVForever static shadow cache: the sampled layers' loading attachments.
+        nvf_cache.load_layers.clear();
+    }
+    // NVForever static shadow cache: the cache's layer attachments, kept while it is the same
+    // texture and set to clear again each frame.
+    if nvf_cache.static_texture != nvf_static_texture_id {
+        nvf_cache.static_texture = nvf_static_texture_id;
+        nvf_cache.static_layers.clear();
+    }
+    for attachment in nvf_cache.static_layers.values() {
+        attachment.prepare_for_new_frame();
+    }
+    if nvf_static_texture_id.is_none() {
+        nvf_light_record.static_point.clear();
     }
     if nvf_cache.directional_texture != Some(directional_texture_id) {
         nvf_cache.directional_texture = Some(directional_texture_id);
@@ -1856,6 +1903,8 @@ pub fn prepare_lights(
             );
             // NVForever held light shadow maps.
             nvf_light_record.views.remove(light_entity);
+            // NVForever static shadow cache: its views (and their components) are gone.
+            nvf_light_record.static_faces.remove(light_entity);
             continue;
         }
 
@@ -1935,13 +1984,65 @@ pub fn prepare_lights(
                     .unwrap()
             });
             let drawn_with = (*light_main_entity, nvf_point_texture_id);
+            // NVForever static shadow cache: the faces drawn into the cache, and those
+            // composited from it, this frame; the faces that carry the component.
+            let main_id = light_main_entity.id();
+            let to_static = hold.to_static.get(&main_id).copied().unwrap_or(0);
+            let on_static = hold.on_static.get(&main_id).copied().unwrap_or(0);
+            let mut with_face = nvf_light_record.static_faces.get(light_entity).copied().unwrap_or(0);
             for (face, &view) in point_and_spot_light_view_entities.0.iter().enumerate() {
                 let layer = (cube * 6 + face) as u32;
                 if held & (1 << face) != 0 && nvf_light_record.point.get(&layer) == Some(&drawn_with) {
                     commands.entity(view).remove::<RootNonCameraView>();
                 } else {
                     nvf_light_record.point.insert(layer, drawn_with);
+                    // NVForever static shadow cache: how this face is drawn.
+                    let bit = 1u8 << face;
+                    let face_copy = match (&nvf_static_texture, nvf_static_texture_id) {
+                        (Some(cache), Some(cache_id)) if (to_static | on_static) & bit != 0 => {
+                            let copy = NvfLayerCopy {
+                                cache: cache.texture.clone(),
+                                sampled: point_light_depth_texture.texture.clone(),
+                                layer,
+                                size: point_light_shadow_map.size as u32,
+                            };
+                            if to_static & bit != 0 {
+                                // Drawn into the cache (cleared), then copied out after.
+                                nvf_light_record.static_point.insert(layer, (*light_main_entity, cache_id));
+                                nvf_event(NVF_STATIC_DRAWS, 1);
+                                let attachment = nvf_static_layer_attachment(&mut nvf_cache.static_layers, &cache.texture, layer, true);
+                                Some(NvfStaticShadowFace { attachment, copy, after: true })
+                            } else if nvf_light_record.static_point.get(&layer) == Some(&(*light_main_entity, cache_id)) {
+                                // Copied in from the cache first, then drawn over (loaded).
+                                nvf_event(NVF_STATIC_COMPOSITES, 1);
+                                let attachment = nvf_static_layer_attachment(&mut nvf_cache.load_layers, &point_light_depth_texture.texture, layer, false);
+                                Some(NvfStaticShadowFace { attachment, copy, after: false })
+                            } else {
+                                // The cache's layer holds no static map of this light: drawn
+                                // as ever (with only the casters the game left in its list).
+                                nvf_event(NVF_STATIC_MISSES, 1);
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    match face_copy {
+                        Some(face_copy) => {
+                            commands.entity(view).insert(face_copy);
+                            with_face |= bit;
+                        }
+                        None if with_face & bit != 0 => {
+                            commands.entity(view).remove::<NvfStaticShadowFace>();
+                            with_face &= !bit;
+                        }
+                        None => {}
+                    }
                 }
+            }
+            if with_face != 0 {
+                nvf_light_record.static_faces.insert(*light_entity, with_face);
+            } else {
+                nvf_light_record.static_faces.remove(light_entity);
             }
         }
 
@@ -3315,11 +3416,12 @@ pub const LATE_SHADOW_PASS: bool = true;
 /// At present, these consist of the point and spot light shadow maps.
 pub fn shared_shadow_pass<const IS_LATE: bool>(
     world: &World,
-    view_light_query: ViewQuery<(Entity, &ShadowView, &ExtractedView, Has<OcclusionCulling>)>,
+    // NVForever static shadow cache: a face drawn into the cache or composited from it.
+    view_light_query: ViewQuery<(Entity, &ShadowView, &ExtractedView, Has<OcclusionCulling>, Option<&NvfStaticShadowFace>)>,
     shadow_render_phases: Res<ViewBinnedRenderPhases<Shadow>>,
     mut ctx: RenderContext,
 ) {
-    let (view_light_entity, view_light, extracted_light_view, occlusion_culling) =
+    let (view_light_entity, view_light, extracted_light_view, occlusion_culling, nvf_static_face) =
         view_light_query.into_inner();
     view_shadow_pass::<IS_LATE>(
         view_light_entity,
@@ -3329,6 +3431,7 @@ pub fn shared_shadow_pass<const IS_LATE: bool>(
         world,
         &shadow_render_phases,
         &mut ctx,
+        nvf_static_face,
     );
 }
 
@@ -3397,6 +3500,17 @@ impl bevy_render::extract_resource::ExtractResource<RenderApp> for HoldDirection
 ///
 /// A shadowed light's views are brought up to date when its slot or the texture changed,
 /// not only when the light changed. Bevy inserts none; without it nothing changes.
+///
+/// NVForever static shadow cache (2026-11-18, engine/vendor/README.md "static shadow
+/// cache"): with `static_cache`, a second cube texture of the same layers is kept (the cache;
+/// the sampled cube texture gets `COPY_DST`). Of a point light's faces drawn this frame (not
+/// held), those in `to_static` are drawn into the cache's layer (cleared), and that layer is
+/// then copied into the sampled layer; those in `on_static` get the cache's layer copied into
+/// the sampled layer first and are then drawn over it, the depth loaded, not cleared. Which
+/// casters each face's list holds is the game's to choose (the static ones for `to_static`,
+/// the moving ones for `on_static`). A face in `on_static` whose cache layer does not hold a
+/// static map this light drew into this cache texture is drawn as any other (counted as a
+/// miss). Faces in neither are drawn as before.
 #[derive(Resource, Clone, Default, Debug)]
 pub struct HoldLightShadowMaps {
     pub held: EntityHashMap<u8>,
@@ -3405,6 +3519,80 @@ pub struct HoldLightShadowMaps {
     pub spot_slots: EntityHashMap<u32>,
     pub spot_capacity: u32,
     pub fade: EntityHashMap<f32>,
+    pub static_cache: bool,
+    pub to_static: EntityHashMap<u8>,
+    pub on_static: EntityHashMap<u8>,
+}
+
+/// NVForever static shadow cache: one layer copied between the cache texture and the
+/// sampled cube texture (the same layer of each), a whole face.
+#[derive(Clone)]
+pub struct NvfLayerCopy {
+    pub cache: Texture,
+    pub sampled: Texture,
+    pub layer: u32,
+    pub size: u32,
+}
+
+impl NvfLayerCopy {
+    /// Record the copy, from the cache into the sampled texture. Depth copies take whole
+    /// subresources (the face's full size, one array layer) of one format [documented:
+    /// WebGPU, `copyTextureToTexture` validation for depth-or-stencil formats].
+    fn record(&self, encoder: &mut CommandEncoder) {
+        fn at(texture: &Texture, layer: u32) -> TexelCopyTextureInfo<'_> {
+            TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: Origin3d { x: 0, y: 0, z: layer },
+                aspect: TextureAspect::All,
+            }
+        }
+        encoder.copy_texture_to_texture(
+            at(&self.cache, self.layer),
+            at(&self.sampled, self.layer),
+            Extent3d { width: self.size, height: self.size, depth_or_array_layers: 1 },
+        );
+    }
+}
+
+/// NVForever static shadow cache: on a point light face's shadow view drawn into the static
+/// cache (`after`: its layer is then copied into the sampled texture) or composited from it
+/// (the layer copied in first, then drawn over with `attachment` loading the depth). The
+/// pass draws into `attachment` in place of the [`ShadowView`]'s.
+#[derive(Component, Clone)]
+pub struct NvfStaticShadowFace {
+    pub attachment: DepthStencilViewAttachment,
+    pub copy: NvfLayerCopy,
+    pub after: bool,
+}
+
+/// NVForever static shadow cache: the attachment of one layer of `texture`, kept in
+/// `layers` while the texture is the same; `clear` sets it to clear on its first use each
+/// frame, else it always loads.
+fn nvf_static_layer_attachment(
+    layers: &mut HashMap<u32, DepthStencilViewAttachment>,
+    texture: &Texture,
+    layer: u32,
+    clear: bool,
+) -> DepthStencilViewAttachment {
+    layers
+        .entry(layer)
+        .or_insert_with(|| {
+            nvf_event(NVF_TEXTURE_VIEWS, 1);
+            let view = texture.create_view(&TextureViewDescriptor {
+                label: Some("nvf_point_light_static_shadow_view"),
+                format: None,
+                dimension: Some(TextureViewDimension::D2),
+                usage: None,
+                aspect: TextureAspect::All,
+                base_mip_level: 0,
+                mip_level_count: None,
+                base_array_layer: layer,
+                array_layer_count: Some(1u32),
+            });
+            DepthStencilViewAttachment::new(DepthStencilViews::DepthOnly { depth_view: view }, clear.then_some(0.0), None)
+        })
+        .clone()
 }
 
 /// NVForever held light shadow maps: the largest slot + 1 (point) or layer + 1 (spot) the
@@ -3490,8 +3678,11 @@ pub const NVF_EVENTS: [&str; NVF_EVENT_COUNT] = [
     "new point textures",
     "new directional textures",
     "texture views made",
+    "static cache draws",
+    "static cache composites",
+    "static cache misses",
 ];
-pub const NVF_EVENT_COUNT: usize = 8;
+pub const NVF_EVENT_COUNT: usize = 11;
 const NVF_SPAWNED: usize = 0;
 const NVF_DESPAWNED: usize = 1;
 const NVF_REMADE: usize = 2;
@@ -3500,6 +3691,11 @@ const NVF_PHASES_DROPPED: usize = 4;
 const NVF_NEW_POINT_TEXTURE: usize = 5;
 const NVF_NEW_DIRECTIONAL_TEXTURE: usize = 6;
 const NVF_TEXTURE_VIEWS: usize = 7;
+// NVForever static shadow cache: faces drawn into the cache, composited from it, and
+// composites whose cache layer held no map of the light.
+const NVF_STATIC_DRAWS: usize = 8;
+const NVF_STATIC_COMPOSITES: usize = 9;
+const NVF_STATIC_MISSES: usize = 10;
 
 /// NVForever cached shadow views: off with `NVF_SHADOW_VIEW_CACHE=0` (a measuring aid of
 /// the game's: every view made anew each frame, as upstream).
@@ -3528,6 +3724,11 @@ pub struct NvfShadowViewCache {
     spot_layers: HashMap<u32, DepthStencilViewAttachment>,
     /// A cascade's layer view, by layer of the directional texture.
     cascade_views: HashMap<u32, TextureView>,
+    /// NVForever static shadow cache: the cache texture, its layers' attachments (clearing),
+    /// and the sampled point texture's layers' loading attachments.
+    static_texture: Option<TextureId>,
+    static_layers: HashMap<u32, DepthStencilViewAttachment>,
+    load_layers: HashMap<u32, DepthStencilViewAttachment>,
 }
 
 type NvfAtomic = core::sync::atomic::AtomicU64;
@@ -3615,6 +3816,11 @@ pub struct NvfLightShadowRecord {
     spot: HashMap<u32, (MainEntity, TextureId)>,
     /// The layer (cube or spot layer) and texture each light's views were made for.
     views: EntityHashMap<(usize, TextureId)>,
+    /// NVForever static shadow cache: what each layer of the cache texture was last drawn
+    /// with, and the faces of each light (render entity) whose views carry an
+    /// [`NvfStaticShadowFace`].
+    static_point: HashMap<u32, (MainEntity, TextureId)>,
+    static_faces: EntityHashMap<u8>,
 }
 
 pub fn per_view_shadow_pass<const IS_LATE: bool>(
@@ -3703,6 +3909,8 @@ pub fn per_view_shadow_pass<const IS_LATE: bool>(
             world,
             &shadow_render_phases,
             &mut ctx,
+            // NVForever static shadow cache: the cascades have none.
+            None,
         );
     }
 
@@ -3710,6 +3918,7 @@ pub fn per_view_shadow_pass<const IS_LATE: bool>(
 }
 
 /// A common helper function to render a shadow map.
+#[allow(clippy::too_many_arguments)]
 fn view_shadow_pass<const IS_LATE: bool>(
     view_light_entity: Entity,
     view_light: &ShadowView,
@@ -3718,6 +3927,8 @@ fn view_shadow_pass<const IS_LATE: bool>(
     world: &World,
     shadow_render_phases: &ViewBinnedRenderPhases<Shadow>,
     ctx: &mut RenderContext,
+    // NVForever static shadow cache.
+    nvf_static_face: Option<&NvfStaticShadowFace>,
 ) {
     if IS_LATE && !occlusion_culling {
         return;
@@ -3731,7 +3942,13 @@ fn view_shadow_pass<const IS_LATE: bool>(
     #[cfg(feature = "trace")]
     let _shadow_pass_span = info_span!("", "{}", view_light.pass_name).entered();
 
-    let depth_stencil_attachment = Some(view_light.depth_attachment.get_attachment(StoreOp::Store));
+    // NVForever static shadow cache: a composited face gets the cache's layer copied in before
+    // its first pass (the early one), and is then drawn over it (its attachment loads).
+    if let Some(face) = nvf_static_face.filter(|f| !IS_LATE && !f.after) {
+        face.copy.record(ctx.command_encoder());
+    }
+    let depth_attachment = nvf_static_face.map_or(&view_light.depth_attachment, |f| &f.attachment);
+    let depth_stencil_attachment = Some(depth_attachment.get_attachment(StoreOp::Store));
 
     let mut render_pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some(&view_light.pass_name),
@@ -3744,6 +3961,14 @@ fn view_shadow_pass<const IS_LATE: bool>(
 
     if let Err(err) = shadow_phase.render(&mut render_pass, world, view_light_entity) {
         error!("Error encountered while rendering the shadow phase {err:?}");
+    }
+
+    // NVForever static shadow cache: a face drawn into the cache has its layer copied into
+    // the sampled texture once drawn, after its last pass (the late one only with occlusion
+    // culling, which the light views do not have).
+    if let Some(face) = nvf_static_face.filter(|f| f.after && (IS_LATE || !occlusion_culling)) {
+        drop(render_pass);
+        face.copy.record(ctx.command_encoder());
     }
 }
 
