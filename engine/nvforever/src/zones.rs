@@ -30,28 +30,34 @@ struct ActorListSync {
     session: HashMap<fnv_sim::FormId, fnv_game::nvse_leveled::LevList>,
 }
 
+impl ActorListSync {
+    fn accept(&mut self, g: &fnv_game::Game<'_>, actors: &mut fnv_actor::records::ActorForms) {
+        if self.saved == g.forms.actor_list_additions && self.session == g.other.lev_actors {
+            return;
+        }
+        let keys: std::collections::BTreeSet<_> = self.saved.keys().chain(self.session.keys()).chain(g.forms.actor_list_additions.keys()).chain(g.other.lev_actors.keys()).copied().collect();
+        for id in keys {
+            let Some(list) = g.lev_list(id) else { continue };
+            let list = fnv_actor::records::LeveledNpc {
+                chance_none: list.chance_none,
+                all_levels: list.flags & 1 != 0,
+                entries: list.entries.iter().map(|e| (e.0, e.1)).collect(),
+            };
+            match g.data.sig(id).as_ref() {
+                Some(b"LVLN") => { actors.leveled.insert(id, list); }
+                Some(b"LVLC") => { actors.leveled_creatures.insert(id, list); }
+                _ => {}
+            }
+        }
+        self.saved.clone_from(&g.forms.actor_list_additions);
+        self.session.clone_from(&g.other.lev_actors);
+    }
+}
+
 fn sync_actor_lists(script: Option<Res<ScriptState>>, actor_world: Option<ResMut<ActorWorld>>, mut last: Local<ActorListSync>) {
     let Some(g) = script.as_ref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game) else { return };
     let Some(mut aw) = actor_world else { return };
-    if last.saved == g.forms.actor_list_additions && last.session == g.other.lev_actors {
-        return;
-    }
-    let keys: std::collections::BTreeSet<_> = last.saved.keys().chain(last.session.keys()).chain(g.forms.actor_list_additions.keys()).chain(g.other.lev_actors.keys()).copied().collect();
-    for id in keys {
-        let Some(list) = g.lev_list(id) else { continue };
-        let list = fnv_actor::records::LeveledNpc {
-            chance_none: list.chance_none,
-            all_levels: list.flags & 1 != 0,
-            entries: list.entries.iter().map(|e| (e.0, e.1)).collect(),
-        };
-        match g.data.sig(id).as_ref() {
-            Some(b"LVLN") => { aw.actors.leveled.insert(id, list); }
-            Some(b"LVLC") => { aw.actors.leveled_creatures.insert(id, list); }
-            _ => {}
-        }
-    }
-    last.saved.clone_from(&g.forms.actor_list_additions);
-    last.session.clone_from(&g.other.lev_actors);
+    last.accept(g, &mut aw.actors);
 }
 
 /// What the copy was made from: fixed references, zones entered, the player's level.
@@ -85,3 +91,6 @@ fn sync_levels(script: Option<Res<ScriptState>>, sim: Option<Res<nvf_play::sim::
         *l = levels;
     };
 }
+
+#[cfg(test)]
+mod actor_list_tests;
