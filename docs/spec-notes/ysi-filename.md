@@ -13,38 +13,48 @@ receivers [observed: original mod script workload, not a runtime observation].
 
 The bounded `ySIGetTagTrait "filename" item` / `item.ySIGetTagTrait "filename"`
 mapping evaluates the documented configuration fields through existing record and
-inventory consumers [hypothesis/design]:
+inventory consumers. The call shapes (a trait string, then an explicit item, or an
+item receiver) come from the mod script workload above [observed: mod scripts, not
+a runtime observation]; that the call returns the icon's filename string is a
+[hypothesis] from how those scripts pass the result to their UI writers.
 
 - Explicit `mod` + hexadecimal local `form`, including a list of form strings, and
-  `formType` scalar/list predicates are evaluated. The existing form-type resolver
-  supplies the record type; placed item references resolve to their base, and an
-  existing temporary item base resolves through its original.
+  `formType` scalar/list predicates are evaluated [documented: field names, package
+  author documentation above]. [hypothesis] `form` is the hexadecimal local FormID in
+  the named plugin, and `formType` uses the same numeric codes as the existing
+  form-type resolver. The existing form-type resolver supplies the record type;
+  placed item references resolve to their base, and an existing temporary item base
+  resolves through its original [engine design choice].
 - The package's `questItem` condition reads the existing World quest-item predicate.
-  Integer 0/1 mean false/true in this bounded source mapping; other representations
-  remain unknown. The predicate includes the authored quest-item flag and saved
-  SetQuestObject overrides, including an explicit clear of an authored flag. Rules
-  are cached, while this predicate reads current World state on each query
-  [hypothesis/design: native classification timing after a flag edit is unobserved].
-- Other predicates, including `formlist` and weapon/aid/property conditions, are
-  **unknown**, rather than false. A certainly false supported predicate rejects a
-  rule even if it also has unknown predicates. A possible unknown rule at or above
-  the winning priority refuses the query; an unknown lower rule cannot win.
-- Multiple loose configuration files contribute rules. Equal-priority distinct tags
-  refuse instead of guessing native file order. Identical winning tag outputs agree.
-  Winning icons must have one unambiguous highest-priority filename. Missing tags,
-  missing filenames and conflicting icon ties refuse; no native default is invented.
-- The main `menus/ySI/ySI.json` is required. The existing Data reader selects each
-  loose file/engine overlay, with the existing host reader as fallback for the main
-  file. Additional archive-only JSON enumeration is not supported. A private local
-  reader accepts comments and mapped trailing commas, preserving quoted content.
-  Generic JSON functions and their strict failure behavior are unchanged.
-- Configuration is a snapshot at the first query in each Game session, including a
-  load failure. Restore creates a fresh cache. This mapped timing avoids repeated
-  filesystem/rule parsing during inventory comparisons; it does not establish native
-  hot-reload timing or recover after late file attachment in the same session.
-- Accepted configuration is capped at 32 files, 4 MiB total parsed input and 20,000
-  rules [hypothesis/design resource bounds, not native limits]. The existing reader
-  obtains a file before its accepted-size check; this is not a pre-read allocation cap.
+  [hypothesis] Integer 0/1 mean false/true; other representations remain unknown. The
+  predicate includes the authored quest-item flag and saved SetQuestObject overrides,
+  including an explicit clear of an authored flag. [engine design choice] Rules are
+  cached, while this predicate reads current World state on each query; native
+  classification timing after a flag edit is unobserved.
+- [engine design choice] Other predicates, including `formlist` and
+  weapon/aid/property conditions, are **unknown**, rather than false. A certainly
+  false supported predicate rejects a rule even if it also has unknown predicates. A
+  possible unknown rule at or above the winning priority refuses the query; an
+  unknown lower rule cannot win.
+- Multiple loose configuration files contribute rules [documented: package author
+  documentation above]. [engine design choice] Equal-priority distinct tags refuse
+  instead of guessing native file order. Identical winning tag outputs agree. Winning
+  icons must have one unambiguous highest-priority filename. Missing tags, missing
+  filenames and conflicting icon ties refuse; no native default is invented.
+- [engine design choice] The main `menus/ySI/ySI.json` is required. The existing Data
+  reader selects each loose file/engine overlay, with the existing host reader as
+  fallback for the main file. Additional archive-only JSON enumeration is not
+  supported. A private local reader accepts comments and trailing commas, preserving
+  quoted content [hypothesis: that the original reader accepts them too]. Generic JSON
+  functions and their strict failure behavior are unchanged.
+- [engine design choice] Configuration is a snapshot at the first query in each Game
+  session, including a load failure. Restore creates a fresh cache. This timing avoids
+  repeated filesystem/rule parsing during inventory comparisons; it does not establish
+  native hot-reload timing or recover after late file attachment in the same session.
+- [engine design choice] Accepted configuration is capped at 32 files, 4 MiB total
+  parsed input and 20,000 rules (resource bounds, not native limits). The existing
+  reader obtains a file before its accepted-size check; this is not a pre-read
+  allocation cap.
 
 The literal `string` trait, default/missing outputs, native predicate behavior outside
 this subset, case normalization, provider version and native encoding remain
