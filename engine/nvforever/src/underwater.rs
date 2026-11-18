@@ -22,11 +22,6 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct WaterTypes(HashMap<u32, Option<Water>>);
 
-fn linear(c: Color) -> Vec3 {
-    let l = c.to_linear();
-    Vec3::new(l.red, l.green, l.blue)
-}
-
 /// The water surface the camera is under, with its type: outdoors the camera cell's
 /// water when the camera is below it; indoors the physics' water the camera is in (placed
 /// water volumes), coloured by that volume's own PWAT water type ([`fog_water_type`]).

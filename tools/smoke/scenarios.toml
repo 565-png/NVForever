@@ -6292,11 +6292,11 @@ name = "underwater-colour-by-depth"
 source = "#2916 (docs/spec-notes/world.md section 6, Under-water colour): under water the camera's fog goes from the water type's shallow colour at the surface to its deep colour 1,000 units down and is not lit (engine/nvforever/src/underwater.rs); the original under Lake Mead at noon is (67, 75, 34) with the feet 300 units down, the same whichever way the camera looks"
 areas = ["water", "render"]
 paths = ["engine/nvforever/src/underwater.rs"]
-# The viewer's camera 380 units under Lake Mead's surface (2,600): Potomac's shallow (52, 75, 52) and deep (27, 39, 24) give (43, 61, 41) there.
-args = ["--world", "WastelandNV", "--pos=116736,67584,2100", "--eye-height=120", "--hour", "12", "--weather", "NVWastelandClear"]
+# The viewer's camera 400 units under Lake Mead's surface (2,600): Potomac's shallow (52, 75, 52) and deep (27, 39, 24) give (42, 61, 41) there (a depth where no channel falls on a rounding edge).
+args = ["--world", "WastelandNV", "--pos=116736,67584,2080", "--eye-height=120", "--hour", "12", "--weather", "NVWastelandClear"]
 run_seconds = 8
 expect = [
-  { text = "underwater: the camera is under water (surface 2600.0), the water's under-water fog: colour (43, 61, 41) 380 units down, between shallow (52, 75, 52) and deep (27, 39, 24)", label = "the colour for the depth, from the water type's two colours" },
+  { text = "underwater: the camera is under water (surface 2600.0), the water's under-water fog: colour (42, 61, 41) 400 units down, between shallow (52, 75, 52) and deep (27, 39, 24)", label = "the colour for the depth, from the water type's two colours" },
 ]
 
 [[scenario]]
