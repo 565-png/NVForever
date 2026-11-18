@@ -1772,6 +1772,22 @@ measured in game yet.**
   held no map of its light: drawn with the dynamic casters only; expected 0).
 - **Aid** `NVF_LIGHT_SHADOW_STATIC_CACHE=0`: no cache, every face drawn with every caster,
   as before.
+- **Pre-drawn under the loading screen** (light_shadows.rs `predrawing`, `predraw_busy`;
+  nvf-play `Loading::lamp_shadows_busy`). While a loading screen is up (a travel, a cover,
+  the start) and the renderer has its cells around the camera (the destination's lights are
+  spawned with its cells; the camera is already at the destination, as the cells it waits
+  for are those around it), every chosen lamp the camera sees draws all its marked faces at
+  once: no per-frame budget, no turns, no face culling. Before the cells are in, the lamps
+  draw as in play (each arriving cell would mark them again). The screen waits ("lamp
+  shadows" in its phases line) while lamps drew in the last frame (their composites follow)
+  or seen lamps still have marked faces, at most 3 s from the start of the pre-draw
+  (`PREDRAW_CAP_SECS`) [engineering choice]. A lamp the camera does not see cannot draw
+  (Bevy culls a point light's casters only for lights a camera sees [observed in the code:
+  vendored bevy_light `check_point_light_mesh_visibility`]) and draws in play as before, as a
+  never-drawn light first. When the screen comes down: `light shadows: <n> lights pre-drawn
+  under the loading screen (<f> faces, <s> into the static cache); <c> casting, <u> of them
+  not drawn yet (not in view)`; the performance line ends `loading-screen pre-draw (on) <n>
+  lights`. Aid `NVF_LIGHT_SHADOW_PREDRAW=0`.
 - [hypothesis] Where it should help: a lamp near an idle or walking actor redrew every
   caster of the room on each skeleton mark; now the room is copied (a 1 MB layer copy at
   512²) and the actor alone drawn. Where it costs: a static change now draws the cache and,

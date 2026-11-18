@@ -123,6 +123,20 @@
 //!   that move keep the plain path ([`plain_path`]). The cache costs as much memory as the
 //!   cubes ([`cube_texture_mb`], logged). Aid `NVF_LIGHT_SHADOW_STATIC_CACHE=0`: the plain
 //!   path for all, as before. The 10-s performance line ends with its counts.
+//! - **Pre-drawn under the loading screen** (owner 2026-11-18, with the cache). While a
+//!   loading screen is up (`nvf_play::loading::Loading::active`: a travel, a cover, the start)
+//!   and the renderer has the cells around the camera (`Loading::render_busy` false; the
+//!   destination's lights are spawned with its cells and chosen by distance to the camera,
+//!   which is at the destination by then), every chosen light the camera sees draws all its
+//!   marked faces at once, with no budget, no turns and no face culling ([`predrawing`],
+//!   [`takes_budget`]); the screen waits for it (`Loading::lamp_shadows_busy`, "lamp
+//!   shadows" in its phases line) while lamps drew in the last frame or seen ones still have
+//!   marked faces, at most [`PREDRAW_CAP_SECS`] ([`predraw_busy`]). A light the camera does
+//!   not see cannot draw (Bevy culls a point light's shadow casters only for lights a camera
+//!   sees: vendored bevy_light `check_point_light_mesh_visibility`) and draws in play as
+//!   before. When the screen comes down: `light shadows: <n> lights pre-drawn under the
+//!   loading screen (<f> faces, <s> into the static cache); <c> casting, <u> of them not
+//!   drawn yet (not in view)`. Aid `NVF_LIGHT_SHADOW_PREDRAW=0`.
 
 use bevy::camera::primitives::{Aabb, CubemapFrusta, Frustum, Sphere, CUBE_MAP_FACES};
 use bevy::camera::visibility::{CubemapVisibleEntities, RenderLayers, VisibilitySystems, VisibleMeshEntities};
@@ -387,6 +401,52 @@ pub fn put_back(to_static: u8, dynamic_in: u8) -> u8 {
     to_static & dynamic_in
 }
 
+/// `NVF_LIGHT_SHADOW_PREDRAW=0` (a measuring aid): no pre-draw under loading screens; the
+/// lamps draw on their budget and turns there as in play, and the screen does not wait for
+/// them.
+fn predraw_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let off = std::env::var("NVF_LIGHT_SHADOW_PREDRAW").is_ok_and(|v| v.trim() == "0");
+        if off {
+            info!("light shadows: NVF_LIGHT_SHADOW_PREDRAW=0, no pre-draw under loading screens");
+        }
+        !off
+    })
+}
+
+/// The loading screen waits for the pre-draw this long at most, real seconds from when the
+/// renderer had its cells [engineering choice: a lamp's maps draw in a frame or two once its
+/// light is seen; a shape that kept marking them must not hold the screen for long].
+pub const PREDRAW_CAP_SECS: f32 = 3.0;
+
+/// Whether the lamps pre-draw this frame: a mode on, the aid not set, a loading screen up
+/// and the renderer done with its cells (before that the lamps would draw again for every
+/// cell that comes in).
+pub fn predrawing(mode_on: bool, aid_on: bool, screen_up: bool, render_busy: bool) -> bool {
+    mode_on && aid_on && screen_up && !render_busy
+}
+
+/// Whether the loading screen still waits for the pre-draw: lamps drew this frame (`drew`:
+/// their composites may follow) or seen lamps still have marked faces (`waiting`), within
+/// [`PREDRAW_CAP_SECS`] of its start (`secs`).
+pub fn predraw_busy(drew: bool, waiting: bool, secs: f32) -> bool {
+    (drew || waiting) && secs < PREDRAW_CAP_SECS
+}
+
+/// Whether a light with maps to draw may draw: always without a limit (`unlimited`: the
+/// hold aid, a pre-draw), else while the frame's `budget` lasts, which it takes one from.
+pub fn takes_budget(budget: &mut usize, unlimited: bool) -> bool {
+    if unlimited {
+        return true;
+    }
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    true
+}
+
 /// Whether a light's maps take the plain path: the cache off, every map drawn every frame
 /// (the hold aid), a transient (drawn once), a spot light (one map, few among the lamps:
 /// [engineering choice, left on the old path]), or a light that moved (its cache would be
@@ -483,6 +543,21 @@ struct LampShadowState {
     since: f32,
     /// The performance pass's counts since the last summary ([`Pass`]).
     pass: Pass,
+    /// What the lamps drew under the loading screen that is up ([`predrawing`]).
+    predraw: Predraw,
+}
+
+/// The lamps' pre-draw under one loading screen.
+#[derive(Debug, Default)]
+struct Predraw {
+    /// A loading screen was up last frame.
+    screen: bool,
+    /// Real seconds (`Time<Real>` elapsed) when the pre-draw began under this screen.
+    began: Option<f32>,
+    /// Lights drawn, their faces, and of those the faces drawn into the static cache.
+    lights: EntityHashSet,
+    faces: u64,
+    static_faces: u64,
 }
 
 /// What the performance pass's techniques did since the last summary (its own 10-s line).
@@ -511,6 +586,8 @@ pub struct Pass {
     pub put_back: u64,
     /// Shapes that moved after they were in the static caches and became dynamic.
     pub promoted: u64,
+    /// Lights pre-drawn under loading screens that came down since the last summary.
+    pub predrawn: u64,
 }
 
 /// A light's shadow fades out over this last fraction of the reach it is chosen within (the
@@ -744,7 +821,7 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
     let on = |b: bool| if b { "on" } else { "OFF" };
     let [served, candidates, filed, everywhere] = p.grid;
     format!(
-        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light); distance fade ({}) {:.1} lights fading a frame; face culling ({}) {:.2} marked faces held out of view a frame; static cache ({}) {:.2} static redraws (faces) a frame, {:.2} dynamic recomposites a frame, {:.2} layer copies a frame, {} faces put back after a static redraw, {} shapes became dynamic",
+        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light); distance fade ({}) {:.1} lights fading a frame; face culling ({}) {:.2} marked faces held out of view a frame; static cache ({}) {:.2} static redraws (faces) a frame, {:.2} dynamic recomposites a frame, {:.2} layer copies a frame, {} faces put back after a static redraw, {} shapes became dynamic; loading-screen pre-draw ({}) {} lights",
         per(p.steps[0]),
         per(p.steps[1]),
         per(p.steps[2]),
@@ -765,7 +842,9 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
         // Each face drawn into the cache is copied out after, each composite copied in first.
         per(p.static_faces + p.composited),
         p.put_back,
-        p.promoted
+        p.promoted,
+        on(predraw_on()),
+        p.predrawn
     )
 }
 
@@ -1214,7 +1293,7 @@ fn shadow_lights(
     directional: Option<Res<DirectionalLightShadowMap>>,
     mut cube: ResMut<PointLightShadowMap>,
     mut state: ResMut<LampShadowState>,
-    (mut out, inputs): (ResMut<HoldLightShadowMaps>, Res<MapTextureInputs>),
+    (mut out, inputs, mut loading): (ResMut<HoldLightShadowMaps>, Res<MapTextureInputs>, Option<ResMut<nvf_play::loading::Loading>>),
     camera: Query<(&GlobalTransform, Option<&Frustum>), crate::fly::WorldCamera>,
     mut lights: Query<Placed, Casters>,
     moved: Query<MovedCasters, MovedFilter>,
@@ -1235,6 +1314,14 @@ fn shadow_lights(
     // The static shadow cache: point lamps' faces drawn from the static casters into a cache
     // and the dynamic casters drawn over a copy of it.
     let cache_on = static_cache_on() && tune.is_some();
+    // Under a loading screen, once the renderer has its cells: every seen lamp draws its
+    // marked faces at once, in or out of view, with no budget, so the shadows are whole when
+    // the screen comes down.
+    let screen_up = loading.as_ref().is_some_and(|l| l.active());
+    let predraw = predrawing(tune.is_some(), predraw_on(), screen_up, loading.as_ref().is_some_and(|l| l.render_busy));
+    if predraw && state.predraw.began.is_none() {
+        state.predraw.began = Some(time.elapsed_secs());
+    }
 
     // 1. Which lights cast: the placed ones (with grass fires and attached lights) up to
     // their cap; apart from them, the transients the camera sees, up to theirs within a
@@ -1578,7 +1665,7 @@ fn shadow_lights(
     // The faces of each point light that can show in the camera's view (all for a spot
     // light, one never drawn, a transient, or with face culling off): a marked face out of
     // view stays marked, held, until it comes into view.
-    let cull = face_cull_on() && !hold_all;
+    let cull = face_cull_on() && !hold_all && !predraw;
     let in_view: Vec<u8> = lamps
         .iter()
         .map(|l| {
@@ -1620,7 +1707,7 @@ fn shadow_lights(
             all
         } else if l.transient {
             0
-        } else if s.pending != 0 || its_turn(frame, s.phase, every) {
+        } else if predraw || s.pending != 0 || its_turn(frame, s.phase, every) {
             state.pass.faces_out_of_view += u64::from((s.dirty & !in_view[i]).count_ones());
             s.dirty & in_view[i]
         } else {
@@ -1630,14 +1717,7 @@ fn shadow_lights(
         // Only a light the camera saw last frame (a transient: sees this frame) is drawn by
         // Bevy this frame.
         let budget = if l.transient { &mut transient_draws } else { &mut draws };
-        let draw = if want != 0 && l.seen && (hold_all || *budget > 0) {
-            if !hold_all {
-                *budget -= 1;
-            }
-            want
-        } else {
-            0
-        };
+        let draw = if want != 0 && l.seen && takes_budget(budget, hold_all || predraw) { want } else { 0 };
         if draw != 0 {
             // With the static cache: faces whose cache is out of date drawn into it (then
             // copied out), the others composited from it.
@@ -1651,6 +1731,11 @@ fn shadow_lights(
             }
             state.pass.static_faces += u64::from(to_static.count_ones());
             state.pass.composited += u64::from(composite.count_ones());
+            if predraw && !l.transient {
+                state.predraw.lights.insert(l.entity);
+                state.predraw.faces += u64::from(draw.count_ones());
+                state.predraw.static_faces += u64::from(to_static.count_ones());
+            }
             s.static_dirty &= !draw;
             s.pending &= !draw;
             s.dirty &= !draw;
@@ -1672,6 +1757,36 @@ fn shadow_lights(
             out.held.insert(l.entity, all & !draw);
         }
     }
+
+    // The loading screen waits while the pre-draw draws: lamps drew this frame (their
+    // composites may follow) or seen lamps still have marked faces; at most
+    // PREDRAW_CAP_SECS. When the screen comes down, what was pre-drawn is logged.
+    let busy = predraw && {
+        let drew = lamps.iter().any(|l| !l.transient && drawing.contains_key(&l.entity));
+        let waiting = lamps.iter().any(|l| !l.transient && l.seen && state.lamps.get(&l.entity).is_some_and(|s| s.fresh || s.dirty != 0));
+        predraw_busy(drew, waiting, state.predraw.began.map_or(0.0, |b| time.elapsed_secs() - b))
+    };
+    if let Some(loading) = loading.as_mut() {
+        if loading.lamp_shadows_busy != busy {
+            loading.lamp_shadows_busy = busy;
+        }
+    }
+    if state.predraw.screen && !screen_up {
+        let p = std::mem::take(&mut state.predraw);
+        if p.began.is_some() {
+            let casting: Vec<&LampState> = state.lamps.values().filter(|s| !s.transient && !s.leaving).collect();
+            info!(
+                "light shadows: {} lights pre-drawn under the loading screen ({} faces, {} into the static cache); {} casting, {} of them not drawn yet (not in view)",
+                p.lights.len(),
+                p.faces,
+                p.static_faces,
+                casting.len(),
+                casting.iter().filter(|s| s.fresh).count()
+            );
+            state.pass.predrawn += p.lights.len() as u64;
+        }
+    }
+    state.predraw.screen = screen_up;
 
     // 4. Set the lights up: shadows switched on to draw, the casters' layers, the near plane
     // and biases.
@@ -2315,6 +2430,7 @@ mod tests {
             composited: 40,
             put_back: 5,
             promoted: 2,
+            predrawn: 7,
         };
         let s = pass_summary(&p, 100);
         assert!(s.starts_with("light shadows: performance pass over 100 frames: lights at steps near/mid/far 1.0/0.5/0.5 a frame;"), "{s}");
@@ -2323,9 +2439,10 @@ mod tests {
         assert!(s.contains("distance fade (on) 2.5 lights fading a frame"), "{s}");
         assert!(s.contains("face culling (on) 0.30 marked faces held out of view a frame;"), "{s}");
         assert!(
-            s.ends_with("static cache (on) 0.12 static redraws (faces) a frame, 0.40 dynamic recomposites a frame, 0.52 layer copies a frame, 5 faces put back after a static redraw, 2 shapes became dynamic"),
+            s.contains("static cache (on) 0.12 static redraws (faces) a frame, 0.40 dynamic recomposites a frame, 0.52 layer copies a frame, 5 faces put back after a static redraw, 2 shapes became dynamic;"),
             "{s}"
         );
+        assert!(s.ends_with("loading-screen pre-draw (on) 7 lights"), "{s}");
         assert!(pass_summary(&Pass::default(), 0).contains("over 0 frames"), "no division by zero");
     }
 
@@ -2407,6 +2524,31 @@ mod tests {
         states.insert(e(2), test_state(false, 0));
         mark_sphere(&Sphere { center: Vec3::new(0.0, 0.0, -100.0).into(), radius: 20.0 }, None, false, true, 0..1, &[spot], &[(None, Some(cone))], &mut states);
         assert_eq!((states[&e(2)].dirty, states[&e(2)].static_dirty), (1, 1));
+    }
+
+    #[test]
+    fn under_a_loading_screen_the_lamps_draw_without_a_budget_once_the_cells_are_in() {
+        assert!(predrawing(true, true, true, false));
+        assert!(!predrawing(true, true, true, true), "cells still coming in: as in play");
+        assert!(!predrawing(true, true, false, false), "no screen");
+        assert!(!predrawing(false, true, true, false), "lamp shadows off");
+        assert!(!predrawing(true, false, true, false), "NVF_LIGHT_SHADOW_PREDRAW=0");
+        // The budget: one a light while it lasts; none taken without a limit.
+        let mut budget = 2;
+        assert!(takes_budget(&mut budget, false) && takes_budget(&mut budget, false));
+        assert!(!takes_budget(&mut budget, false), "spent");
+        assert_eq!(budget, 0);
+        assert!((0..40).all(|_| takes_budget(&mut budget, true)), "the pre-draw: every light");
+        assert_eq!(budget, 0, "and takes nothing");
+    }
+
+    #[test]
+    fn the_screen_waits_for_the_pre_draw_until_nothing_is_left_or_the_cap() {
+        assert!(predraw_busy(true, false, 0.5), "lamps drew this frame: their composites may follow");
+        assert!(predraw_busy(false, true, 0.5), "seen lamps with marked faces");
+        assert!(!predraw_busy(false, false, 0.5), "done");
+        assert!(!predraw_busy(true, true, PREDRAW_CAP_SECS), "the cap");
+        assert!(predraw_busy(true, true, PREDRAW_CAP_SECS - 0.01));
     }
 
     #[test]
