@@ -810,6 +810,35 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
     was (117, 111, 106) in the 3 November build and is (98, 96, 109) now. Freeside's near
     the noon sun is (141, 139, 123); ours (110, 111, 103), still darker (the sky near the
     sun, below).
+  - **Sweep of the other worldspaces** [observed 2026-11-17: 112 frames of the original
+    under Tale of Two Wastelands, one worldspace per climate (27), each climate's weather
+    forced, noon and 17:00, level and 45 degrees up; our renders of the 58 noon cameras].
+    Close to the original in colour and look: Sierra Madre (Villa, both towns), Big MT,
+    Zion (clear and rain), the Divide (NVDLC04DivideClimate, LR, HR, the vista), the
+    Citadel, Adams Air Force Base, DC's Mall, Monument top and Mama Dolce's (ours a little
+    lighter), The Pitt's market and uptown (our sky darker than the original's glow),
+    TTW's Lucky 38 climate. Off:
+    - **Point Lookout** (`DLC04PointLookoutBoardwalkWthr`, fog 1 to 14,000 units): the
+      original's sky and distant fog are bright and pale, (214, 227, 202) level; ours
+      (134, 146, 126). Its worldspace's image space is `DefaultImageSpaceExterior`, tint
+      (0.60, 0.54, 0.39) at 0.6; the adapter's tint is (0.02, 1, 1) at 0.078 and its LUM
+      Ramp No Tex 1.5. With the adapter's tint in place of the base's the sky is (166,
+      194, 181): lighter but too blue, and the Mojave's night ground goes from (44, 43,
+      48) to (32, 41, 62) against the original's (48, 47, 51) (mean distance over the
+      Mojave frames 14.6 to 18.1), so the rule above stays. [hypothesis] The sky's
+      colours times 1.5 are past the display range, and the original's grade works on
+      them before they are held to 1: 1.5 x (220, 233, 225) tinted olive at 0.5 gives about
+      (255, 255, 240). Here the sky is held to 1 first and the tint then darkens it. The
+      fog colour gets no such factor here at all.
+    - **Anchorage** (`DLC02AnchWthrClear01`): the original's sky is a bright cyan, (61,
+      104, 120) up and (67, 146, 163) level; ours (57, 75, 79) and (52, 99, 107).
+    - **The Pitt's bridge** (`DLC01PittWthrBridge01`): the original is green fog all
+      round; our frame is black with a pale patch [not looked into: the camera may be
+      under our land there].
+    - **The nuked Divide areas** (`NVDLC04NukedWeather`): our sky is yellow, (253, 238,
+      174) up, where the original's is near white, (255, 255, 232).
+    Not compared: Tranquility Lane and the GNR roof (the original did not travel there
+    with `cow`), and the 17:00 frames (captured, ours not rendered).
   - **Left open.** The Capital Wasteland's ground is still too bright (ours x 0.79 at
     noon and x 0.54 at 16:00 would match). Its 07:00 sky is (213, 199, 147) against (246,
     235, 170). Colours past the display range lose their excess before the grade here
@@ -1140,6 +1169,14 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   default) and off without it (`nvforever/src/eye_adapt.rs`). With the fog changes
   below, the Dead Money frames come out within 1 EV of the original's; the lab's frames
   move by under 0.1 EV.
+  Until #2892 the exposure worked out from the meter was not exactly the lift: Bevy's
+  pass read its curve as one byte entry per 0.086 EV, so every view was darkened by 0 to
+  about 0.15 EV more than the lift says (0.075 on average), by an amount that jumped
+  with the view [observed: noon by the road at WastelandNV (−17, 0), the picture with
+  adaptation on 2.4 to 5.6 levels of 255 darker than with it off, differing by pitch;
+  0.01 to 0.05 with the curve read exactly (`engine/vendor/bevy_post_process`)]. The
+  fitted numbers above were made with that in them; they were not fitted again, the
+  shift being a tenth of the fit's own spread (the frames agree within 0.3 to 1 EV).
   The sky counts 1/16 of a world pixel in the meter, from a mask drawn each frame from
   the depth prepass (`eye_mask.wesl`) [hypothesis, 2026-10-23]: once our night sky was
   as dark as the original's ("Night sky" above), metering it with the world brightened

@@ -30,7 +30,7 @@ const GAME_ATTENUATION: &str = "return saturate(1.0 - distanceSquare * inverseRa
 const PBR_FUNCTIONS: &str = "embedded://bevy_pbr/render/pbr_functions.wesl";
 
 mod display_shader;
-use self::display_shader::display_patched;
+pub(crate) use self::display_shader::display_patched;
 pub use self::display_shader::unix_lines;
 
 /// A light colour of a world view as display values (bytes / 255, or a model's stored
@@ -150,6 +150,15 @@ fn patch_display_sum(mut state: ResMut<FunctionsShader>, mut shaders: ResMut<Ass
     let Some(patched) = display_patched(&source) else {
         error!("{PBR_FUNCTIONS}: apply_pbr_lighting not as expected (Bevy changed?); surfaces keep Bevy's linear lighting sum");
         return;
+    };
+    // The sun visibility's hook goes into the same function, after these edits; it acts
+    // only under its shader def (sun_visibility.rs).
+    let patched = match crate::sun_visibility::hook_patched(&patched) {
+        Some(hooked) => hooked,
+        None => {
+            error!("{PBR_FUNCTIONS}: the sun visibility hook's anchors not found (Bevy changed?); clouds and terrain do not shade the sun");
+            patched
+        }
     };
     let patched = crate::fog::with_source(shader, patched);
     let _ = shaders.insert(&state.handle, patched);

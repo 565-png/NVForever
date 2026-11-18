@@ -329,6 +329,11 @@ confirmed those bounded case results and the false overall flag. The accepted-ma
 bound to its exact executed source, separately from the c264 comparison.
 Contract: [MCM integer RGB consumers](spec-notes/mcm-rgb-integer-consumers.md).
 
+- String game-setting source setter/readback and the existing talk-prompt consumer:
+  prior hosted engine controls failed a layout-test accessor that omits spaces;
+  bound-prompt checks passed before failure. The fixture now checks spaced text
+  and glyph advances. Validation results are recorded in PR #2914; native and
+  installed-mod behavior remain unqualified. See [string-settings](spec-notes/string-settings.md).
 - Regular preactivation rechecks the existing destroyed-target refusal after callback
   mutations; additional core/engine regressions authored; revision-specific validation is recorded in PR #2908.
 
@@ -340,3 +345,15 @@ controls passed exactly once on `1a6103f9` (hosted checkout `779f3bf5`, tree
 `74dbdc12`), with strict checks green. The identical-fixture baseline remains
 unexecuted; original Quick Loot initialization, native defaults and installed
 blank-bar acceptance remain open ([HUD](spec-notes/hud.md)).
+
+
+GetDroppedRefs named source consumer: uses the existing associated world-weapon
+list with selected actor qualification and unchanged VM invalid-receiver refusal.
+The original four controls failed on `2c9574ec`/`f2009ad5` at fixture compiler,
+returned-array lifetime and invalid-receiver expectation boundaries. On
+`5a61bc59`/`ddac1b90`, three cases passed once; the hover query still failed
+compilation before its count/UI/world assertions. A further fixture-only delimiter
+correction preserves its exact text oracles and is unexecuted at correction
+authoring. No downstream hover or baseline success is inferred. Native ordering/null parity,
+actual death/VATS producer coverage and installed JLM acceptance remain open
+([combat rules](spec-notes/combat-rules.md#19-source-queries-for-associated-dropped-weapons)).

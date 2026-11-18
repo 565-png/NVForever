@@ -3234,6 +3234,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
      save has loaded, so a `coc` from the main menu is not enough; TTW's "missing
      dependency" box pauses the game until it is clicked; the game can hang on its quit
      line and has to be closed before the next run.
+     Sweep 2026-11-17 (27 worldspaces, world.md section 6 "Sweep of the other
+     worldspaces"): most match; Point Lookout, Anchorage, The Pitt's bridge and the
+     nuked Divide do not. To run a TTW capture: Mod Organizer 2 must be opened by the
+     owner first (started from a session it cannot launch the game: error 5), the
+     launch then goes through it (`moshortcut://:Tale of Two Wastelands`); the base
+     game's own load order has no add-ons, so their worldspaces need this route too.
      Left to check: the sky level against "LUM Ramp No Tex" in a third worldspace
      (Point Lookout, Zion, The Pitt); the Capital Wasteland's ground level; the sunrise
      sky; the sky near the sun at noon.
@@ -3248,3 +3254,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
      and ResetAI in one script run"). The runtime already does this. A job script cannot
      name a reference, package or quest by Editor ID: build each with `BuildRef 0
      <decimal form ID>`.
+224. **Do Gibson's dogs take up a mole rat's fight against the player?** (P2; #2927;
+     `crates/fnv-game/src/provocation.rs` `call_allies`, `combat_group.rs` `raise_alarms`.)
+     Answered [observed, base game, three runs]: yes. With three mole rats attacking a
+     passive player beside the yard, three of four dogs (run 2) and four of four (run 3)
+     went into combat with the player before any mole rat was harmed and stayed in it
+     after all three were dead; `GetShouldAttack player` stayed 0. In run 1 the mole rats
+     lost the player early and no dog joined. The runtime already does this
+     (combat-groups.md §4). To count placed creatures in a job: walk `GetFirstRef 200 1`
+     and compare `GetBaseObject`.
