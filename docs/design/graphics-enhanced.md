@@ -214,7 +214,10 @@ in closed form, ¼(−cos(2h − γ) + cos γ + 2h sin γ) for each horizon h.
   plane-aware result; no hard switch, which would draw an edge of its own. The same 16 texel
   reads serve both. A pixel no texel takes at all takes the texel nearest its own distance,
   as before. The old estimate keeps its own blur (within 5 % of the pixel's distance), so
-  `NVF_PLAY_DEBUG_AO=old` draws the old picture; its cost is to be measured (both estimates
+  `NVF_PLAY_DEBUG_AO=old` draws the old picture to within rounding [observed, 2026-11-18, main
+  session's runs: against a build of main with the switch on, Doc Mitchell's house at 1920 x 1080,
+  2 % of the pixels differ by one level of 255 and 57 pixels by more, where two runs of main
+  differ in none; the Goodsprings street differs as much as two runs of main do]; its cost is to be measured (both estimates
   sit in one pipeline behind a uniform branch).
 - **Positions under an upscaler's expanded depth** (`NVF_AO_BEFORE_FSR=0` with FSR or DLSS):
   the centre and the horizon samples are taken at the centres of the drawn texels their
