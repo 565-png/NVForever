@@ -53,7 +53,8 @@ mod tests {
     use fnv_ui::MemSource;
 
     /// The mod's window as its file lays the traits out (the formulas cut down to the
-    /// ones read here: `_Render` from `_ForceUpdate` and the picture's offset).
+    /// ones read here: `_Render` from `_ForceUpdate` and the picture's offset), settled
+    /// once as the HUD's tree is every frame before the renderer reads it.
     fn ui(render: &str, plr: [f64; 2]) -> Ui {
         let path = r"menus\main\hud_main_menu.xml";
         let file = format!(
@@ -70,6 +71,7 @@ mod tests {
         let src = MemSource::default().with(path, &file);
         let mut ui = Ui::new();
         ui.load_menu(&src, path).unwrap();
+        ui.update();
         ui
     }
 
