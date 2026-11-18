@@ -25327,6 +25327,36 @@ expect = [
 order = [["scripts: the start menu's MenuMode 1013 blocks ran", "load: restored", "pause menu: mods page", "tiles: MCM's trigger clicked", "tiles: MCM's window is open", "pause menu: mods page closed"]]
 
 [[scenario]]
+name = "pause-mods-added-save"
+source = "issue #2944: the first half: a save written with no MCM in the load order, as the owner's games begun before MCM was added; pause-mods-added-load loads it with MCM and Just Assorted Mods added, so run them together"
+note = "needs only the base game for the save; NVFOREVER_HOME keeps the save off the real saves folder"
+areas = ["ui", "menus", "scripts", "save"]
+paths = ["engine/nvf-play/src/tiles/mods.rs", "engine/nvf-play/src/script.rs", "crates/fnv-game/src/game.rs"]
+env = { NVFOREVER_HOME = "mcm-added-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "12:save smoke-no-mcm;13:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm", "ClassicPack.esm", "MercenaryPack.esm", "TribalPack.esm", "CaravanPack.esm"]
+run_seconds = 16
+expect = [
+  { re = 'save: wrote .*smoke-no-mcm\.nvfsave \(manual', label = "the save is written without MCM" },
+]
+
+[[scenario]]
+name = "pause-mods-added-load"
+source = "issue #2944: the second half: --load the save pause-mods-added-save made, with MCM and Just Assorted Mods added since. MCM's quest is start-game-enabled and the save has no entry for it; the load starts it, as a new game does, so its GameMode and MenuMode blocks run and its window opens on the Mods page (the owner's saves of 2026-11-11 to 13 loaded with MCM's quest stopped and the page empty)"
+note = "needs MCM and Just Assorted Mods in Data, as pause-mods-page-jam; pause_mods.png shows the page"
+areas = ["ui", "menus", "scripts", "save"]
+paths = ["engine/nvf-play/src/tiles/mods.rs", "engine/nvf-play/src/script.rs", "crates/fnv-game/src/game.rs"]
+env = { NVFOREVER_HOME = "mcm-added-home", NVF_PLAY_TEST_PAUSE = "10:24", NVF_PLAY_TEST_PAUSE_MENU = "11:mods,16:shot,18:back", NVF_PLAY_TEST_CONSOLE = "8:PrintC \"nvf mcm running %g\" (GetQuestRunning MCM);8.5:close" }
+args = ["--play", "--load", "smoke-no-mcm", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm", "ClassicPack.esm", "MercenaryPack.esm", "TribalPack.esm", "CaravanPack.esm", "The Mod Configuration Menu.esp", "JustAssortedMods.esp"]
+run_seconds = 26
+expect = [
+  { re = 'load: restored .*smoke-no-mcm\.nvfsave', label = "the save from before MCM is loaded" },
+  { text = "nvf mcm running 1", label = "MCM's start-game-enabled quest runs after the load" },
+  { text = "tiles: MCM's window is open on the Mods page", label = "MCM's window opens on the save from before MCM" },
+  { text = "MCM's window did not open", count = 0, label = "no click is lost" },
+]
+order = [["load: restored", "nvf mcm running 1", "pause menu: mods page", "tiles: MCM's window is open", "pause menu: mods page closed"]]
+
+[[scenario]]
 name = "pause-mods-page-set-value"
 source = "issue #2298 (docs/spec-notes/mcm.md; crates/fnv-ui/src/tree.rs, xml.rs; crates/fnv-game/src/ui_functions.rs; engine/nvf-play/src/tiles/mod.rs, input.rs): on the pause menu's Mods page the pointer chooses a mod in MCM's list and a click on one of its toggle options sets the value through MCM's own round trip (MCM writes _Value and _NewValue, the mod's MenuMode 1013 block takes it and sets _Reset, the page shows it) [documented: MCM Guide v6, New Values]"
 note = "needs MCM and Just Assorted Mods (JustAssortedMods.esp; masters FalloutNV and DLC) in Data, as pause-mods-page-jam. Just Mods is the list's only line, at (338, 188) in interface units; its first option, Enable Dynamic Crosshair, a check box (type 5), at (600, 190), clicked twice: Just Assorted Mods keeps the setting in its INI (SetModINI), so a run starts from whatever the last left, and both values must follow the first click. The mod log's MCM line says the option's _value after each; pause_mods.png shows the page"

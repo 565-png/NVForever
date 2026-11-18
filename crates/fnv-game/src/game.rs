@@ -2789,6 +2789,12 @@ impl<'a> Game<'a> {
         }
     }
 
+    /// The start-game-enabled quests the save `s` has no entry for: those of plugins added
+    /// since it was made ([`Game::restore`], issue #2944).
+    fn quests_added_since(&self, s: &GameSnapshot) -> Vec<FormId> {
+        self.data.quests.values().filter(|q| q.start_enabled() && !s.quests.contains_key(&q.form)).map(|q| q.form).collect()
+    }
+
     /// The New Game menu starts the character-generation quest (the original's INI
     /// `sCharGenQuest`, VCG00 by the original's defaults [documented: Fallout_default.ini
     /// `SCharGenQuest=00102037`]) and the quest's `Begin MenuMode` blocks run once, as
@@ -6515,6 +6521,16 @@ impl<'a> Game<'a> {
         g.nx = s.nx.clone();
         g.quests = s.quests.clone();
         g.instances = s.instances.iter().cloned().collect();
+        // A start-game-enabled quest the save has no entry for came with a plugin added
+        // since the game was saved (every game starts them all, `Game::new_game`, and an
+        // entry is never dropped): it starts with the load, as on a new game [hypothesis:
+        // the original starts a newly added plugin's start-game-enabled quests on a load,
+        // which mods added mid-game rely on; observed: the owner's saves of 2026-11-11 to
+        // 13, from before MCM was added, loaded with MCM's quest stopped and its Mods page
+        // empty, issue #2944].
+        for q in g.quests_added_since(s) {
+            g.start_quest(q);
+        }
         g.extra = s.extra.clone();
         g.stand_everyone_up();
         g.player = s.player.clone();
