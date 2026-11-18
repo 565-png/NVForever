@@ -1598,8 +1598,8 @@ turns it on. Code: `heat_haze.rs`, `heat_haze.wesl`.
     and its fog colour differ [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]. So
     neither the classification nor the layer count can tell it from clear (an earlier
     version that counted layers cut every base weather to 0.64). Cloud cover has to come
-    from the cloud textures' own alpha: the composed cloud cover of #2904 goes in
-    `weather_heat` once it lands.
+    from the cloud textures' own alpha: the composed cloud cover of #2904 (now on main)
+    is to go in `weather_heat`, a follow-up.
   - None indoors. Values outside the base game's ranges (fog far 0 or a million, huge or
     negative near, power 0, wind 255, no cloud textures, values that are not numbers) give
     a strength within 0..1 (tests). With the strength 0 the pass does not run.
@@ -1619,13 +1619,21 @@ turns it on. Code: `heat_haze.rs`, `heat_haze.wesl`.
 - **Smoke.** `heat-haze` (Goodsprings at noon under NVWastelandClear: a strength above 0,
   the pipeline ready and the pass drawn, no shader or rendering error) and
   `heat-haze-interior` (strength 0 indoors).
-- **Not done.** Every constant is a choice by reasoning, not yet by eye: the pictures
-  (noon at Goodsprings, the highway toward Primm, an aerial view, overcast, the dust storm,
-  night, an interior; with MSAA, TAA, FSR and DLSS) decide them. No temperature or ground
+- **Measured** [observed 2026-11-18, PR #2977: Goodsprings start view at 13:00 under
+  NVWastelandClear, 2560x1440, sun shadows on, `--no-actors`; median of five 4-second
+  periods, two rounds, on the contributor's machine]: with the row off the frame time
+  matches main's (3.09-3.10 ms against 3.11-3.13); on at full strength +0.10 ms a frame,
+  the pass 0.09 ms on the GPU. With the row off the pictures match main's to within what
+  two runs of main differ by; the mask-alone pictures show it under the clear weather and
+  none under the hazy weather, the dust storm or at night.
+- **Not done.** The sky band's height above a ridgeline (about 4 degrees at half weight)
+  and the strength are starting values judged by eye in play at half, full and double
+  strength; the other constants are choices by reasoning. No temperature or ground
   material is read (no record holds one); the base game's overcast keeps the clear
-  weather's strength until #2904; the pattern lies on the screen and follows
-  turns, not the world's depth; a mirage (the sky refracted into the ground) is not
-  attempted; the cost is not measured.
+  weather's strength until the composed cloud cover of #2904 (now on main) is read in
+  `weather_heat`, a follow-up; the pattern lies on the screen and follows turns, not the
+  world's depth; a mirage (the sky refracted into the ground) is not attempted. Not
+  measured: a slower GPU, 1920x1080, a weather mod.
 
 ## 4. Tried and dropped
 
