@@ -217,6 +217,12 @@ impl RingCellState {
         RingCellState { entity, level, leaving: false, keep_segment, small, applied: None, shadow: None }
     }
 
+    /// A resting ring cell at `level` for other modules' tests (distant_objects.rs).
+    #[cfg(test)]
+    pub(crate) fn for_test(level: f32) -> RingCellState {
+        RingCellState::new(Entity::PLACEHOLDER, level, false, Vec::new())
+    }
+
     /// Fully drawn and staying.
     pub fn full(&self) -> bool {
         !self.leaving && fade::step(self.level) == fade::STEPS
@@ -293,6 +299,13 @@ impl FullDetailRing {
             s.applied = None;
             s.shadow = None;
         }
+    }
+
+    /// Nothing of the ring is left to read or spawn around `centre` (with `loaded` the
+    /// loaded radius): every ring cell it wants is drawn, or the ring is off. The distant
+    /// objects (distant_objects.rs, #3014) start only then.
+    pub fn idle(&self, centre: Grid, loaded: i32) -> bool {
+        self.radius == 0 || (self.spawning.is_empty() && !self.ahead.busy() && ring_cells(centre, loaded, self.radius).iter().all(|c| self.cells.contains_key(c)))
     }
 
     /// Hide a ring cell and despawn it over the next frames.

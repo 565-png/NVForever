@@ -89,6 +89,7 @@ mod frame_pace;
 mod frame_telemetry;
 mod blit_warm;
 mod handoff;
+mod distant_objects;
 mod full_detail;
 mod furniture;
 mod graphics;
@@ -555,7 +556,8 @@ struct Args {
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
     /// water-reflections, terrain-height-blend, terrain-anti-tiling, cloud-shadows, terrain-shadows, heat-haze, desert-haze, and
     /// mesh-terrain-blend, which no look turns on) and choices (fxaa, smaa or taa instead of --msaa;
-    /// shadow-filter-hardware or shadow-filter-temporal), for comparing them one at a time.
+    /// shadow-filter-hardware or shadow-filter-temporal; full-detail-7x7 or full-detail-9x9;
+    /// distant-objects-8 or distant-objects-12), for comparing them one at a time.
     #[arg(long, value_delimiter = ',', conflicts_with = "graphics")]
     graphics_only: Option<Vec<String>>,
     /// Test aid: log the mean and the slowest frame time every this many seconds (real
@@ -1846,6 +1848,9 @@ fn main() -> AppExit {
     // The full-detail scenery ring (#2701), off unless the settings or --graphics-only turn
     // it on: draw-only cells beyond the loaded ones (full_detail.rs).
     .add_plugins(full_detail::FullDetailPlugin)
+    // Distant objects (#3014), off unless the settings or --graphics-only turn it on:
+    // draw-only scenery beyond the ring the LOD blocks do not hold (distant_objects.rs).
+    .add_plugins(distant_objects::DistantObjectsPlugin)
     .add_systems(Update, (doors::script_drawn, doors::register, doors::open_all.run_if(move || open_doors), doors::pose).chain().after(nvf_play::doors::DoorSystems).after(advance_animations))
     .init_resource::<locomotion::ActorAnimCost>()
     .add_systems(PreUpdate, actors::take_background_work)

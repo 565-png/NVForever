@@ -61,6 +61,10 @@ pub enum DrawClass {
     Item,
     /// Not under a loaded cell (an imposter): drawn as before.
     Unranged,
+    /// Drawn by the distant objects (distant_objects.rs, #3014), which give their meshes
+    /// their own ranges (fades and the reach's distance fade): the sliders leave them alone
+    /// [design; linking them to the Object slider is a follow-up].
+    Distant,
 }
 
 /// The sliders' values (each a part of its full distance, [`MIN`] to 1) and the full
@@ -104,7 +108,7 @@ impl DrawDistances {
             DrawClass::Object => self.objects,
             DrawClass::Actor => self.actors,
             DrawClass::Item => self.items,
-            DrawClass::Unranged => 1.0,
+            DrawClass::Unranged | DrawClass::Distant => 1.0,
         }
     }
 
@@ -150,7 +154,7 @@ fn classify(e: Entity, r: u32, parents: &Query<&ChildOf>, marks: &Query<Marks>, 
     let mut in_cell = false;
     let mut at = e;
     loop {
-        if let Ok((cell, actor, dropped, ring)) = marks.get(at) {
+        if let Ok((cell, actor, dropped, ring, distant)) = marks.get(at) {
             if actor {
                 return DrawClass::Actor;
             }
@@ -160,6 +164,10 @@ fn classify(e: Entity, r: u32, parents: &Query<&ChildOf>, marks: &Query<Marks>, 
             // The full-detail ring draws scenery only (full_detail.rs, #2701).
             if ring {
                 return DrawClass::Object;
+            }
+            // The distant objects keep their own ranges (#3014).
+            if distant {
+                return DrawClass::Distant;
             }
             if cell {
                 in_cell = true;
@@ -188,7 +196,7 @@ fn classify(e: Entity, r: u32, parents: &Query<&ChildOf>, marks: &Query<Marks>, 
 }
 
 /// What [`classify`] looks for on a mesh's ancestors.
-type Marks = (Has<CellEntity>, Has<ActorRig>, Has<DroppedRoot>, Has<crate::full_detail::RingCell>);
+type Marks = (Has<CellEntity>, Has<ActorRig>, Has<DroppedRoot>, Has<crate::full_detail::RingCell>, Has<crate::distant_objects::DistantCell>);
 
 /// Give the meshes of placed references the range of their class's distance: new meshes
 /// and those whose range changed (a fade ended) each frame, every one when a slider
@@ -231,6 +239,10 @@ pub(crate) fn apply_ranges(
                 c
             }
         };
+        // The distant objects give their meshes their ranges themselves (#3014).
+        if class == DrawClass::Distant {
+            continue;
+        }
         let want = distances.distance(class);
         match range {
             // Never had a range (cell fades off): one only when it is to be culled.
@@ -264,7 +276,7 @@ pub fn set_part(world: &mut World, class: DrawClass, v: f32) {
         DrawClass::Object => d.objects = v,
         DrawClass::Actor => d.actors = v,
         DrawClass::Item => d.items = v,
-        DrawClass::Unranged => {}
+        DrawClass::Unranged | DrawClass::Distant => {}
     }
 }
 
@@ -330,6 +342,23 @@ mod tests {
 
     fn distances() -> DrawDistances {
         DrawDistances { objects: 1.0, actors: 0.5, items: 0.25, shadows: 1.0, grass: 1.0, reach: full_reach(2), ring_reach: None, shadow_full: 8000.0, grass_full: (7000.0, 1000.0) }
+    }
+
+    /// #3014: a mesh of a distant cell is classed Distant and keeps the range the distant
+    /// objects gave it (their distance fade), whatever the Object slider says.
+    #[test]
+    fn the_sliders_leave_distant_objects_alone() {
+        let mut app = App::new();
+        let mut d = distances();
+        d.objects = 0.5;
+        app.insert_resource(d).add_systems(Update, apply_ranges);
+        let cell = app.world_mut().spawn(crate::distant_objects::DistantCell { grid: (9, 0) }).id();
+        let edge = crate::distant_objects::edge_range(8);
+        let e = app.world_mut().spawn((RefVisual(42), MeshMaterial3d::<nvf_assets::nif_surface_blend::NifBlendMaterial>(Handle::default()), edge.clone(), ChildOf(cell))).id();
+        app.update();
+        assert_eq!(app.world().get::<DrawClass>(e), Some(&DrawClass::Distant));
+        assert!(app.world().get::<VisibilityRange>(e).unwrap() == &edge);
+        assert_eq!(app.world().resource::<DrawDistances>().part(DrawClass::Distant), 1.0);
     }
 
     /// #2701: with the full-detail ring on, the Object slider's part is of the ring's reach;
