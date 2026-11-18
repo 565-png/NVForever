@@ -733,8 +733,8 @@ impl PhysWorld {
             for &c in b.colliders() {
                 for pair in self.w.contact_pairs_with(c).filter(|p| p.has_any_active_contact()) {
                     // A pair of two of its own bodies is met from both sides: counted once.
-                    let (a, b) = (pair.collider1.into_raw_parts(), pair.collider2.into_raw_parts());
-                    let key = if a < b { (a, b) } else { (b, a) };
+                    let (c1, c2) = (pair.collider1.into_raw_parts(), pair.collider2.into_raw_parts());
+                    let key = if c1 < c2 { (c1, c2) } else { (c2, c1) };
                     if !seen.insert(key) {
                         continue;
                     }

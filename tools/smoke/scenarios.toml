@@ -46,6 +46,7 @@ untimed = [
   "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
   "NVF_PLAY_TEST_MELEE_KNOCKBACK",
   "NVF_PLAY_TEST_RAGDOLL_FAIL",
+  "NVF_PLAY_TEST_RAGDOLL_PROBE",
   "NVF_PLAY_TEST_DEATH_RECOVERY",
 ]
 
@@ -12510,14 +12511,14 @@ source = "#2083 probe (round 1): in the 50-a-side battle most corpses were held 
 note = "the profile campaign's battle-50 layout (tools/profile/campaign.toml, tools/stress battle.py layout): 50 NCR troopers west and 50 Legion raiders east of the Goodsprings road spot, the god-mode, unseen player 1,800 units south looking north, the stress launch's aids; a findings probe: the checks only show the lines are there, the main session reads them"
 areas = ["ragdoll", "physics"]
 paths = ["engine/nvforever/src/ragdoll.rs", "crates/fnv-phys/src/ragdoll.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_STRESS = "1", NVF_PLAY_TEST_BATTLE = "5;LvlNCRTrooper:50:-69875:4800;LvlLegionRaiderMelee:50:-66875:4800" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_STRESS = "1", NVF_PLAY_TEST_RAGDOLL_PROBE = "1", NVF_PLAY_TEST_BATTLE = "5;LvlNCRTrooper:50:-69875:4800;LvlLegionRaiderMelee:50:-66875:4800" }
 args = ["--cell", "Goodsprings", "--pos=-68375,3000,9000", "--heading", "0", "--hour", "12", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 120
 expect = [
   { re = 'stress battle: 2 groups, (?P<n>\d+) fighters', range = [60, 100], label = "the battle is placed" },
   { re = 'ragdoll probe: actor [0-9A-F]{8} (slept|held still|held calm after settling|held moving at its time limit|held calm at its time limit|held calm in slow motion) \(', min = 10, label = "a probe line for each ragdoll set at rest" },
   { re = 'ragdoll probe summary: ', label = "the probe's totals at exit" },
-  { re = 'ragdolls: .* held at their time limit already calm, ', label = "the exit report counts those held calm at their limit apart (#2083)" },
+  { re = 'ragdolls: .* held at their time limit after settling: \d+ still moving, \d+ of them crowded to 3 s, and \d+ calm by then;', label = "the exit report splits the holds at the time limit into still moving and calm by then (#2083)" },
 ]
 
 [[scenario]]
@@ -12526,7 +12527,7 @@ source = "#2083 probe (round 1): corpses falling together with nobody left to sh
 note = "the battle aid places nine NCR troopers in a 3x3 block 140 units apart on the Goodsprings road spot and one Legion raider 3,000 units north (the aid needs two groups); `killall` at 8 s kills them all at once with the town's residents (essential ones knocked out), so no shooter is left to strike a corpse; the block's corpses fall on and beside each other, the residents' alone. A findings probe: the checks only show the lines are there"
 areas = ["ragdoll", "physics"]
 paths = ["engine/nvforever/src/ragdoll.rs", "crates/fnv-phys/src/ragdoll.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_BATTLE = "5;LvlNCRTrooper:9:-68375:4800;LvlLegionRaiderMelee:1:-68375:7800", NVF_PLAY_TEST_CONSOLE = "8:killall;8.5:close" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_RAGDOLL_PROBE = "1", NVF_PLAY_TEST_BATTLE = "5;LvlNCRTrooper:9:-68375:4800;LvlLegionRaiderMelee:1:-68375:7800", NVF_PLAY_TEST_CONSOLE = "8:killall;8.5:close" }
 args = ["--cell", "Goodsprings", "--pos=-68375,4300,9000", "--heading", "0", "--hour", "12", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 30
 expect = [
@@ -12534,7 +12535,7 @@ expect = [
   { re = 'KillAllActors >> (?P<n>\d+) killed', range = [6, 1000], label = "the block and the town die at once" },
   { re = 'ragdoll probe: actor [0-9A-F]{8} (slept|held still|held calm after settling|held moving at its time limit|held calm at its time limit|held calm in slow motion) \(', min = 6, label = "a probe line for each ragdoll set at rest" },
   { re = 'ragdoll probe summary: ', label = "the probe's totals at exit, block" },
-  { re = 'ragdolls: .* held at their time limit already calm, ', label = "the exit report counts those held calm at their limit apart (#2083), block" },
+  { re = 'ragdolls: .* held at their time limit after settling: \d+ still moving, \d+ of them crowded to 3 s, and \d+ calm by then;', label = "the exit report splits the holds at the time limit into still moving and calm by then (#2083), block" },
 ]
 
 [[scenario]]

@@ -176,6 +176,9 @@ pub struct Ragdolls {
     calm: HashMap<u32, Calm>,
     /// #2083's probe: rests by how they came about and what woke the ragdoll.
     probe: std::collections::BTreeMap<(&'static str, &'static str), ProbeRow>,
+    /// The test aid `NVF_PLAY_TEST_RAGDOLL_PROBE=1` turns #2083's probe on ([`probe`], its
+    /// contact queries and its exit summary); off, none of it runs.
+    pub(crate) probe_on: bool,
 }
 
 #[derive(Clone, Default)]
@@ -198,8 +201,10 @@ struct Calm {
 }
 
 /// #2083's probe: rests counted at exit by how the ragdoll came to rest and what woke it
-/// (`ragdoll probe summary`), with how many were hit again while awake (more than the one
-/// hit that woke them, a killing or rousing shove) and how many touched
+/// (`ragdoll probe summary`), with how many were hit again while awake (more than one
+/// hit: the first is taken for the killing or rousing shove, so a corpse killed without one,
+/// by `killall`, a blast or a script, hit once later is not counted: it undercounts) and how
+/// many touched
 /// another actor's ragdoll, or a loose object, when their settle began.
 #[derive(Default)]
 struct ProbeRow {
@@ -445,6 +450,7 @@ impl Plugin for RagdollPlugin {
             .add_systems(PostUpdate, start.after(bevy::transform::TransformSystems::Propagate).run_if(resource_exists::<PhysState>))
             .add_systems(Last, report);
         app.world_mut().resource_mut::<Ragdolls>().fail = forced_failures(std::env::var("NVF_PLAY_TEST_RAGDOLL_FAIL").ok().as_deref());
+        app.world_mut().resource_mut::<Ragdolls>().probe_on = std::env::var("NVF_PLAY_TEST_RAGDOLL_PROBE").is_ok_and(|v| v == "1");
     }
 }
 
@@ -734,6 +740,7 @@ pub(crate) fn pose(
     // Nor does one settle then: none starts, and one settling when the clock slows moves
     // on freely; it settles again once the clock is back.
     let slowed = !virt.is_paused() && virt.relative_speed() < 1.0;
+    let probe_on = ragdolls.probe_on;
     let awake_dt = if slowed { 0.0 } else { dt };
     // The fresh ragdolls moving now, youngest first: the first [`FULL_TIME`] of them get
     // [`MAX_AWAKE`], the rest [`MAX_AWAKE_CROWDED`]. By their reference among equals, so
@@ -798,6 +805,7 @@ pub(crate) fn pose(
             if c.settle.take().is_some() {
                 phys.world.unsettle_ragdoll(id);
             }
+            c.settle_contacts = None;
             (c.calm, c.awake, c.window, c.settled, c.woken) = (0.0, 0.0, 0.0, false, Woken::Fresh);
             c.since.clear();
             // Drawn between its steps, as the camera carrying it is.
@@ -853,8 +861,10 @@ pub(crate) fn pose(
             let spinner = moved.iter().enumerate().max_by(|a, b| a.1 .1.total_cmp(&b.1 .1)).map(|(i, _)| i);
             seen_calm.spinner = spinner.and_then(|i| c.data.bodies.get(i)).and_then(|b| b.object.node.clone()).unwrap_or_default();
             seen_calm.spinner_index = spinner;
-            let mover = moved.iter().enumerate().max_by(|a, b| a.1 .0.total_cmp(&b.1 .0)).map(|(i, _)| i);
-            seen_calm.mover = mover.and_then(|i| c.data.bodies.get(i)).and_then(|b| b.object.node.clone()).unwrap_or_default();
+            if probe_on {
+                let mover = moved.iter().enumerate().max_by(|a, b| a.1 .0.total_cmp(&b.1 .0)).map(|(i, _)| i);
+                seen_calm.mover = mover.and_then(|i| c.data.bodies.get(i)).and_then(|b| b.object.node.clone()).unwrap_or_default();
+            }
             seen_calm.longest = seen_calm.longest.max(c.calm);
             seen_calm.wake_longest = seen_calm.wake_longest.max(c.calm);
             (c.since, c.window) = (now, 0.0);
@@ -882,6 +892,7 @@ pub(crate) fn pose(
             if c.settle.take().is_some() {
                 phys.world.unsettle_ragdoll(id);
             }
+            c.settle_contacts = None;
             if calm_for >= CALM_TIME {
                 rest_how = Some("held calm in slow motion");
             }
@@ -894,14 +905,8 @@ pub(crate) fn pose(
                 // calm ([`CALM_SPEED`], [`CALM_SPIN`]). One that calmed down while it settled
                 // is held as still as a calm one, and is counted apart (#2083: in the
                 // 50-a-side battle 56 of the 90 counted as still moving were calm by then).
-                let moving = last_window.0 >= CALM_SPEED || last_window.1 >= CALM_SPIN;
-                rest_how = Some(if s.calm {
-                    "held calm after settling"
-                } else if moving {
-                    "held moving at its time limit"
-                } else {
-                    "held calm at its time limit"
-                });
+                let moving = still_moving(last_window);
+                rest_how = Some(settle_end(s.calm, last_window));
                 if !s.calm && !moving {
                     ragdolls.held_calm += 1;
                     info!(
@@ -942,12 +947,14 @@ pub(crate) fn pose(
             let length = if calm { MIN_SETTLE } else { settle_time(limit) };
             c.settle = Some(Settle { elapsed: 0.0, length, calm, crowded: !calm && crowded && limit < MAX_AWAKE_IN_WATER, from: last_window });
             // #2083's probe: what it touches as its settle begins.
-            let one = ragdolls.calm.get(&id).and_then(|m| m.spinner_index).map_or_else(|| "no body".to_string(), |i| phys.world.ragdoll_contacts(id, Some(i)).summary());
-            c.settle_contacts = Some((phys.world.ragdoll_contacts(id, None), one));
+            if probe_on {
+                let one = ragdolls.calm.get(&id).and_then(|m| m.spinner_index).map_or_else(|| "no body".to_string(), |i| phys.world.ragdoll_contacts(id, Some(i)).summary());
+                c.settle_contacts = Some((phys.world.ragdoll_contacts(id, None), one));
+            }
             phys.world.settle_ragdoll(id, 0.0);
         }
         if let Some(how) = rest_how {
-            if !phys.world.is_ragdoll_at_rest(id) {
+            if probe_on && !phys.world.is_ragdoll_at_rest(id) {
                 let wake = if limit >= MAX_AWAKE_IN_WATER {
                     "in water"
                 } else {
@@ -960,6 +967,7 @@ pub(crate) fn pose(
                 probe(&phys, &mut ragdolls, &c, id, how, wake, limit);
             }
             phys.world.set_ragdoll_at_rest(id);
+            c.settle_contacts = None;
         }
         let asleep = phys.world.ragdoll_asleep(id);
         if asleep && c.settled {
@@ -994,6 +1002,26 @@ pub(crate) fn pose(
     }
     ragdolls.shoved_at_rest.clear();
     ragdolls.shoved.clear();
+}
+
+/// Whether a ragdoll held at its time limit is still moving: its fastest bone moved or
+/// turned at least [`CALM_SPEED`] or [`CALM_SPIN`] over its last calm window (net speed
+/// in game units a second, spin in radians a second). One under both is held as still as a
+/// calm one and counted apart (`held_calm`) [design, #2083].
+pub(crate) fn still_moving(last_window: (f32, f32)) -> bool {
+    last_window.0 >= CALM_SPEED || last_window.1 >= CALM_SPIN
+}
+
+/// How a ragdoll whose settle has run its length is held: after a settle that its calm
+/// began (`calm`), or at its time limit, still moving or calm by then ([`still_moving`]).
+pub(crate) fn settle_end(calm: bool, last_window: (f32, f32)) -> &'static str {
+    if calm {
+        "held calm after settling"
+    } else if still_moving(last_window) {
+        "held moving at its time limit"
+    } else {
+        "held calm at its time limit"
+    }
 }
 
 /// #2083's probe: one line as a moving ragdoll is set at rest, saying what decides whether a
@@ -1079,10 +1107,11 @@ fn report(mut exit: MessageReader<AppExit>, ragdolls: Res<Ragdolls>, phys: Optio
     }
     let (live, asleep) = phys.as_deref().map_or((0, 0), |p| (p.world.ragdolls().count(), p.world.ragdolls().filter(|&id| p.world.ragdoll_asleep(id)).count()));
     info!(
-        "ragdolls: {} started, {} put back at rest, {} came to rest ({} held at rest still moving at their time limit after settling, {} of them crowded to {MAX_AWAKE_CROWDED} s, {} held at their time limit already calm, {} floating in water), {} shoved by hits ({} roused from rest), {} lifted back above the terrain; {live} in the world at exit ({asleep} at rest); {} laid in the pose their reference stores ({} stored poses did not fit)",
+        "ragdolls: {} started, {} put back at rest, {} came to rest ({} held at their time limit after settling: {} still moving, {} of them crowded to {MAX_AWAKE_CROWDED} s, and {} calm by then; {} floating in water), {} shoved by hits ({} roused from rest), {} lifted back above the terrain; {live} in the world at exit ({asleep} at rest); {} laid in the pose their reference stores ({} stored poses did not fit)",
         ragdolls.started,
         ragdolls.restored,
         ragdolls.rested,
+        ragdolls.held + ragdolls.held_calm,
         ragdolls.held,
         ragdolls.held_crowded,
         ragdolls.held_calm,
@@ -1122,6 +1151,20 @@ fn report(mut exit: MessageReader<AppExit>, ragdolls: Res<Ragdolls>, phys: Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #2083: a ragdoll held at its time limit counts as still moving only when its last
+    /// calm window was not calm; one calm by then (or whose settle its calm began) is held
+    /// the same and logged apart.
+    #[test]
+    fn a_ragdoll_held_at_its_limit_is_still_moving_only_when_its_last_window_was_not_calm() {
+        assert!(!still_moving((1.1, 0.04)), "all but still");
+        assert!(!still_moving((CALM_SPEED - 0.1, CALM_SPIN - 0.01)), "just under both limits");
+        assert!(still_moving((CALM_SPEED, 0.0)), "at the speed limit");
+        assert!(still_moving((7.7, 0.68)), "a foot still turning");
+        assert_eq!(settle_end(false, (61.4, 3.36)), "held moving at its time limit");
+        assert_eq!(settle_end(false, (1.3, 0.29)), "held calm at its time limit");
+        assert_eq!(settle_end(true, (61.4, 3.36)), "held calm after settling", "a settle its calm began stays calm");
+    }
 
     #[test]
     fn poses_survive_the_trip_to_bevy_space_and_back() {
