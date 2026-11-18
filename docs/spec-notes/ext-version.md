@@ -224,6 +224,13 @@ STEWIE_VERSION`; `jg3::stewie_945_gate_passes_with_the_casino_stage_fix_and_high
 | 960 (not reported) | 9.60 "Add Command StewieGetValue (alias StewVal)", xNVSE 6.3.0 | StewieGetValue for some keys only | Pip-Boy UI Tweaks (StewVal of item-stat, critical and weightless-item keys; menu search buttons), Quality of Life ESPless (`bKeepPipboyLightOnCellChange`), MCM Extender requirement lists asking 960 |
 | 970 (not reported) | 9.70 inventory/AddItem refresh and WASD menu changes | no | Barter Categories Icons (also reads `bSynchronizeContainerCategories` and `bPreventSwitchWhenEmptyingCategory` from Stewie's INI) |
 
+[observed: the installed mods' scripts and requirement lists, read locally on
+2026-11-18; only the gate numbers and the function/key names they call are kept] The
+"Mods unblocked" column. [design] The reported number 945 is an engine design choice
+(the engine is not the plugin and has no version of its own). [hypothesis] The mods
+that pass the 945 gate need no Stewie feature from the changelog's 9.42 to 9.44
+entries beyond what is built here; that has not been observed in the original game.
+
 ## 6. Open (to observe)
 
 The version/revision/beta split of 6.4.9; GetPluginVersion's name matching (case,
