@@ -892,7 +892,12 @@ below cover them all.
 - On the page: Enter or a click: bind a new key or mouse button to the control (a control
   that had it gets the old one). Delete clears its key.
 - In full: a key replaces the control's key, a mouse button its mouse button. Kept under the
-  control's name in [Controls] of NVForever.ini.
+  control's name in [Controls] of NVForever.ini. Sprint (NVForever's own, at the end of
+  Movement) is greyed and cannot be rebound while its NVF Features › Advanced Movement switch
+  is off; its note says so. It has no key until the player binds one, and Run keeps Left
+  Shift whether Sprint is on or off; a key bound to Sprint that another control has is
+  swapped as for any two controls (`sprint` under NVF Features › Gameplay below; #3000, the
+  maintainer's decision on #3002).
 
 ### A control (controller)
 
@@ -1302,6 +1307,24 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
 - On the page: On: a shot's kick eases the view up and part of it settles back down, and the view nudges back. Off: the whole kick stays, as in the original.
 - Command-line switches: `--no-advanced-recoil`
 - On by default, the one Advanced Movement part that is.
+- Registered in `engine/nvf-play/src/player.rs`
+
+### `sprint`: Sprint
+
+- On the page: On: hold the Sprint key (set it in Controls) to run faster, spending AP every second; stopping low on AP leaves you out of breath. Off: as in the original.
+- In full: the Sprint control (Controls › Movement) has no key until the player binds one,
+  and is greyed and does nothing while this is off or the Global Toggle is; Run keeps Left
+  Shift whatever this is (#3000, the maintainer's decision on #3002). A full sprint is
+  1.45 times the run speed, walking (Always Run off) too, and costs 10 AP a second (none
+  come back meanwhile; it ends at 0 AP); forward only, half a sprint diagonally; aiming,
+  attacking, reloading, sneaking, lying down,
+  over-encumbered or in water stop it, eased out. Stopping under 20 % AP leaves you out of
+  breath, and sprinting the view sways a little to the sides (both shown by Camera Motion).
+  While sprinting and while the AP comes back after it, a quiet heartbeat beats: slower under
+  40 % AP, faster under 20 % (the low-health heartbeat wins). The speed and AP perks apply to the sprint
+  (docs/design/player-body.md §1.4a.4).
+- Command-line switches: `--sprint`, `--no-sprint`
+- Off by default.
 - Registered in `engine/nvf-play/src/player.rs`
 
 ## NVF Features › Visual Only

@@ -40,7 +40,7 @@ Constraints that decide what fits:
 
 | Candidate | Value | Cost / risk | Decision |
 |---|---|---|---|
-| Ambient occlusion (own pass from the depth prepass) | High: grounds objects, adds depth to interiors | ~1-2 ms; darkens direct light too (post-process) | **Built** (§3.1) |
+| Ambient occlusion (own pass from the depth prepass) | High: grounds objects, adds depth to interiors | ~1-2 ms; first a post-process darkening direct light too, since #2897 stage b inside the lighting on the ambient light and unshadowed lamps | **Built** (§3.1) |
 | Bevy SSAO (GTAO-like) | High | Needs MSAA off + normal prepass in every custom prepass shader | Rejected |
 | Longer sun shadows (reach ×1.5; 4096² maps until #1367) | Medium: shadows further out | About 0.2-0.3 ms at Novac for the longer reach; the 4096² maps cost about 2 ms more and went | **Built** (§3.2) |
 | Contact shadows (Bevy, screen-space ray march) | Low-medium | Tried: speckled self-shadowing on near surfaces and per-frame noise without TAA | Rejected (§4) |
@@ -113,19 +113,23 @@ timing and the two smoke setups remain unverified until run. State tests use syn
 settings and controlled gate samples; smoke scenarios are `settings-resume-pipelines`
 and `settings-resume-unchanged` in `tools/smoke/scenarios.toml`.
 
-Pass order after the main pass (under FSR 3.1 the ambient occlusion comes before FSR, §3.1): tonemapping → ambient occlusion → temporal anti-aliasing, FXAA or
+The ambient occlusion runs between the depth prepass and the main pass, which reads it inside the lighting (§3.1.2; its picture placement, `NVF_PLAY_DEBUG_AO=post`, comes after tonemapping, or before FSR or DLSS under them, §3.1).
+Pass order after the main pass: tonemapping → (the ambient occlusion's picture placement) → temporal anti-aliasing, FXAA or
 SMAA → sun shafts → heat haze (§3.15) → bloom and sharpening → the game's image-space blur and grade (imagespace.rs) → UI. So the game's grade and its modifiers
 (fades, blur, double vision) work on top of the improvements exactly as on the vanilla picture,
 and nothing repeats them.
 
 ### 3.1 Ambient occlusion (`ambient-occlusion`)
 
-**Since #2897 (stage a) the estimate is ground-truth ambient occlusion** (§3.1.1); the older
-estimate described next stays in the code as the fallback until the new one is measured
-(`NVF_PLAY_DEBUG_AO=old`, §6). Both share everything but the estimate and the denoise: the
-inputs, half resolution, the two placements (after tonemapping, or before a temporal
-upscaler), the radius, the screen-radius cap, the far fade and the output (a factor
-multiplied into the picture).
+**Since #2897 (stage a) the estimate is ground-truth ambient occlusion** (§3.1.1), and **since
+stage b it goes into the lighting** (§3.1.2): it scales the ambient light and the lamps that cast
+no shadow, never the sun, the moon or highlights. The placement described below and in §3.1.1,
+a factor multiplied into the picture, is kept as the fallback (`NVF_PLAY_DEBUG_AO=post`, and
+what runs while the lighting hook is not in place). The older estimate described next stays in
+the code as a fallback too (`NVF_PLAY_DEBUG_AO=old`, on the picture, §6). Both share everything
+but the estimate and the denoise: the inputs, half resolution, the picture's two placements
+(after tonemapping, or before a temporal upscaler), the radius, the screen-radius cap, the far
+fade and the output.
 
 The old estimate: from the depth prepass alone (multisampled or not: sample 0 is read): the view-space position
 from the reverse-infinite depth (distance = near / depth), the normal from the neighbouring
@@ -145,7 +149,8 @@ distance. Distances are held to 60,000 units (half floats end at 65,504; the sky
 fog takes over). The sky is left alone: the dome is opaque and in the depth prepass, but at
 175,000 units or more, far beyond the fade (corrected 2026-10-12: not depth 0 as first written).
 
-Known limits: it darkens sunlit creases too (a post-process cannot tell ambient from direct
+Known limits of the picture placement (stage b's lighting placement removes the first two,
+§3.1.2): it darkens sunlit creases too (a post-process cannot tell ambient from direct
 light); water is not in the depth prepass, so the lake bed's occlusion shows faintly through
 the water surface; the first-person arms take a little occlusion from their own folds.
 
@@ -228,8 +233,9 @@ in closed form, ¼(−cos(2h − γ) + cos γ + 2h sin γ) for each horizon h.
   pixels show, as the normal is, not at display-pixel centres with a texel's depth (which lie
   off the surface and occluded themselves); a step that lands in the pixel's own texel
   raises no horizon. Without upscaling the two are the same.
-- **Strength** (`ssao.rs` `GTAO_STRENGTH` = 0.4): factor = 1 − 0.4 (1 − visibility). It
-  still multiplies all light, so it is kept low as the old 0.55 was. Open flat ground has
+- **Strength** (`ssao.rs` `GTAO_STRENGTH` = 0.4, the picture placement's; the lighting's is
+  0.8, §3.1.2): factor = 1 − 0.4 (1 − visibility). It still multiplies all light, so it is kept
+  low as the old 0.55 was. Open flat ground has
   visibility 1 and stays as bright as with the switch off (the old estimate did not
   guarantee that); a floor point at the foot of a wall has 0.5 (the wall hides half the
   cosine-weighted hemisphere) and becomes 0.8, about what the old estimate gave in such a
@@ -247,20 +253,162 @@ in closed form, ¼(−cos(2h − γ) + cos γ + 2h sin γ) for each horizon h.
   DLSS paths, the far fade 4,000–7,000 units, the 60,000-unit distance cap, the main camera
   only (the scope lens and Pip-Boy views carry no `AmbientOcclusion`).
 - **Log**: `ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at
-  half resolution, depth-aware denoise` each time the occlusion turns on on the main camera
-  (`old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)` with the debug switch; smoke
-  scenarios `ambient-occlusion-gtao`, `ambient-occlusion-gtao-fsr`).
+  half resolution, depth-aware denoise` each time the occlusion turns on on the main camera;
+  since stage b the line goes on with what runs (§3.1.2), on the picture `, on the picture
+  (NVF_PLAY_DEBUG_AO=post)` (`old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)` with the
+  old estimate; smoke scenarios `ambient-occlusion-gtao`, `ambient-occlusion-gtao-fsr`, both
+  with `NVF_PLAY_DEBUG_AO=post` since stage b).
 
-**Not done** (in this stage):
+**Not done** (in this stage; stage b, §3.1.2, did the first):
 
 - Applying the occlusion to the ambient term inside the lighting instead of to the finished
-  picture (#2897 stage b): it edits the patched lighting function that open pull requests
-  #2904 and #2920 also edit, so it waits for them. Until then sunlit creases darken too.
+  picture (#2897 stage b): done in stage b (§3.1.2).
 - The paper's multi-bounce fit: it needs the surface colour, which a pass on the finished
   (tonemapped, or HDR before the upscaler) picture does not have.
-- A bent normal for the ambient lookup (needs stage b), a per-frame turn of the pattern
-  accumulated by TAA or the upscalers (left fixed, see above), the paper's thickness
-  heuristic of a slowly sinking horizon (the distance falloff stands in for it).
+- A bent normal for the ambient lookup, a per-frame turn of the pattern accumulated by TAA or
+  the upscalers (left fixed, see above), the paper's thickness heuristic of a slowly sinking
+  horizon (the distance falloff stands in for it; stage b's `thin` remedy lets the horizon
+  sink, §3.1.2).
+
+#### 3.1.2 In the lighting (#2897 stage b)
+
+An engineering choice for the enhanced look, like the rest of this page, and the switch's
+default placement since stage b. Code: `ssao.rs` (the producer, the extraction, the debug
+switch), `ssao_lighting.rs` / `ssao_lighting.wesl` (the uniform, the upsample, the lamps'
+factor), `ssao_lighting/hook.rs` (the text hook in `pbr_functions`), the vendored mesh view
+bindings (engine/vendor/README.md, "NVForever ambient occlusion").
+
+**Why.** On the picture the factor darkens everything a crease receives, the sun included:
+sunlit creases darkened, and the lake bed's occlusion showed through the water. Inside the
+lighting it can be kept to the light that a crease really loses.
+
+**Frame order.** `ao_lighting_pass` runs in `Core3d` after the depth prepass is complete and
+before the main pass (where Bevy's own SSAO runs): the occlusion pass as before, then a
+half-resolution `denoise` pass (`ssao.wesl` `denoise`) that writes, per texel q, the factor of
+full pixel 2q through the apply pass's own filter (`openness_at`, the old estimate and the
+remedies included) with that pixel's distance, into a second two-channel texture. The main
+pass reads it. Under FSR or DLSS the passes run at the render size, the size the main pass
+draws at (`upscaler/prep.rs`), whatever `NVF_AO_BEFORE_FSR` says. Whenever the passes cannot run
+(a pipeline still compiling, the depth's sample count changing for a frame, no uniform) the
+texture is cleared to "open", so the main pass never reads stale or undefined data. Texel q
+stands for the depth prepass's pixel 2q, the same pixel coordinates as a fragment's position
+(no viewport term).
+
+**Bindings.** bevy_pbr's mesh view bind group gains bindings 43 (a uniform) and 44 (the
+denoised texture) through a view component, `NvfAmbientOcclusionBindings`, built as the sun
+visibility's (engine/vendor/README.md). The extraction puts it on the main camera's view while
+the switch is on, the placement asked for is the lighting and the hook is in (`lights.rs`;
+`ssao_lighting.rs` `HookState`), and takes it away otherwise; the view's pipelines then get the
+shader def `NVF_AMBIENT_OCCLUSION`, and `prepare` points the binding at this frame's texture.
+Switching the row rebuilds the world's material pipelines, which the pause menu's resume wait
+covers [observed 2026-11-18, the main session's run: off and on again in play, `pipelines
+waited 0.62 s, capped false`, no white or black frame in 14 screenshots].
+
+**The hook** (`ssao_lighting/hook.rs`, applied after lights.rs's display-value patch and the
+sun visibility's hook): every statement it adds is under `@if(NVF_AMBIENT_OCCLUSION)` and the
+lines it replaces are kept word for word under the def's negation, so without the def the text
+compiled is the one before (unit tests). Bevy's own ambient call and `diffuse_occlusion` are
+left alone: the NIF and terrain shaders subtract exactly that ambient highlight with the
+un-occluded value.
+
+**The upsample** (`nvf_ambient_visibility`): the 2 × 2 half-resolution texels around the
+fragment, each weighted bilinearly and by how near its distance is to the fragment's own (from
+its world position, so the first-person arms' squeezed depth does not matter), within 5 % plus
+one unit; 1 where no texel matches, beyond the fade, for a texel never written. Under
+multisampling each sample's fragment reads with its own distance, so a plant's outline does
+not take the ground's factor nor the ground the plant's, where the picture placement multiplied
+the resolved pixel by one factor [observed 2026-11-18, the player's play test: no halos at plant
+outlines; the main session's `view-lighting` pictures at the Goodsprings bushes: smooth, no rim
+at plant outlines].
+
+**Who reads it.** By bevy_pbr's rule, the pipelines that write depth (Bevy's own SSAO rule):
+NIF objects opaque and alpha-tested, the terrain, grass, trees, the first-person arms, skinned
+actors. Opted in: the landscape's blended texture layers (they lie on the prepass's surface;
+`nvf_assets` `NifSurfaceKey::terrain_layer`). Opted out: water and refracting NIF shapes (in no
+prepass, the texels under them are the bed's or the wall's behind). Grass and leaf cards read
+it unless their constants say otherwise (`grass.rs` `GRASS_READS_AMBIENT_OCCLUSION`, `tree.rs`
+`LEAVES_READ_AMBIENT_OCCLUSION`, both on). Blended shapes, decals and every other view (the
+reflection camera, the scope lens, the Pip-Boy) do not. A compile test composes the materials
+that read it with the def through Bevy's shader cache (`nvf-shader-tests`).
+
+**What it scales.** The display-value sum (lights.rs `DISPLAY_HELPERS`): the ambient term, and
+the light of the point and spot lights that cast no shadow at the surface (where bevy_pbr leaves
+their shadow unread: every placed lamp; the Pip-Boy light casts one). Never the directional
+lights (the sun, the moon, an interior's directional light), never a highlight. #2897 asked for
+the ambient term only; it was widened to the lamps because interiors are lit almost wholly by
+them, and on the ambient alone the occlusion all but vanished indoors: at strength 0.8 and
+exponent 1, Doc Mitchell's house changed 0.7 % of its pixels by more than 2 levels of 255
+against stage one's 9.7 %, with the lamps as well 5.1 %; the Prospector Saloon 5.9 % against
+7.4 % [observed 2026-11-18, the main session's pictures]. A lamp that casts no shadow lights a
+crease as fully as open floor, so nothing else keeps its light out. The lamps' weight is
+`ssao_lighting.rs` `LAMPS` = 1 (`NVF_PLAY_DEBUG_AO_LAMPS`, 0 for the ambient term alone).
+
+**Exponent** (`ssao_lighting.rs` `EXPONENT` = 1): the factor scales the display-value sum, which
+is shown as about itself, so the shown value falls by the factor, as the picture placement
+multiplies the shown picture by it. The first value, 1/2.2, scaled the linear light, so the
+shown value fell by only about f^0.45: the main reason the placement first looked weak. At 1
+the Goodsprings street at noon changes as many pixels as stage one (20.3 % against 20.9 % by
+more than 2 levels at strength 0.8, mean darkening 1.85 against 2.34 levels) [observed
+2026-11-18, the main session's pictures].
+
+**Strength** (`ssao.rs` `LIGHTING_STRENGTH` = 0.8): the reason for keeping the picture
+placement's low (it darkened the sun's light too) is gone. Indoors 0.4 and 0.8 looked about the
+same and neither too dark; outdoors 0.8 with the remedies below "feels about right" [observed
+2026-11-18, the player's play test at exponent 1 and lamps 1] [engineering choice: the
+player's].
+
+**Remedies on plants** (`ssao.rs` `LIGHTING_VARIANT`, `thin+soft`; `NVF_PLAY_DEBUG_AO_VARIANT`).
+The ground-truth estimate shimmers on swaying alpha-tested plants, more than the old one. The
+candidates were measured on the occlusion alone, on the picture, at the Goodsprings street at
+1920 × 1080 with 4x multisampling: 24 screenshots 0.12 s apart, the median over consecutive pairs
+of the mean absolute change per pixel in levels of 255, for two bush crops and the bare road
+[observed 2026-11-18, the main session's pictures]:
+
+| Estimate / remedy | Bush 1 | Bush 2 | Road |
+|---|---|---|---|
+| Ground-truth, plain | 1.96 | 2.87 | 0.23 |
+| Old estimate | 0.67 | 0.92 | 0.24 |
+| `thin` | 1.26 | 1.70 | |
+| `soft` | 1.43 | 1.83 | |
+| `thin+soft` | 0.87 | 1.11 | |
+| `thin+wide+soft` | 0.74 | 0.86 | |
+| `slices4` | 1.82 | 2.48 | |
+| `steps8` | 2.07 | 3.06 | |
+| `nearest` | 1.46 | 2.15 | |
+| `wide` | 1.54 | 2.07 | |
+
+At strength 0.8 with no remedy the player still saw the shimmer; with `thin+soft` neither
+shimmer nor halos [observed 2026-11-18, the player's play test]. `thin+soft` is the lighting's
+default [engineering choice: the player's; `thin+wide+soft` measured a little steadier and was
+not played]; the picture placement keeps none, and `NVF_PLAY_DEBUG_AO_VARIANT=none` gives the
+plain estimate in either. The other remedies stay in the aid for comparisons.
+
+**Debug and log.** `NVF_PLAY_DEBUG_AO=view-lighting` draws the factor each fragment's ambient
+took in place of its colour, at the very end of the material's colour (after the fog); the
+image-space grade and the light glow's eye adaptation still follow (`--no-grade`, light glow
+off, for a plain picture). The start's line says what runs: `ambient occlusion: ground-truth
+estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant
+soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by
+1, exponent 1` (an aid's value is named after it); then `lights: ambient occlusion hook
+installed`, `ambient occlusion: on the ambient light in the lighting (main camera)` when the
+view takes the bindings and `ambient occlusion: off the lighting` when it gives them up; a
+failed hook warns once and names the picture placement that runs instead. Smoke scenarios
+`ambient-occlusion-lighting`, `-interior`, `-taa`, `-fsr` and `-switch`.
+
+**Cost** [observed 2026-11-18, GPU spans in ms, the occlusion's passes / the main opaque pass; Sun shadows on, no actors;
+4x MSAA unless FSR is named; the 2560x1440 figures are single 40 s runs on the final build, the others medians of five
+4 s periods, two rounds, on the build before the lamp factor shared the ambient's read]: Goodsprings at 2560x1440: main's old
+pass 0.24 / 0.86, the first stage 0.40 / 0.87, this placement 0.30 / 0.91 (0.25 / 0.87 with the lamp weight at 0); Doc
+Mitchell's house at 2560x1440: 0.34 / 0.46, 0.45 / 0.40, 0.41 / 0.48; Goodsprings at 1920x1080: 0.13 / 0.66, 0.23 / 0.66,
+0.18 / 0.70; Doc Mitchell's house at 1920x1080: 0.18 / 0.28, 0.29 / 0.28, 0.24 / 0.31; Goodsprings under FSR Quality to
+2560x1440: 0.10 / 0.52, 0.20 / 0.52, 0.08 / 0.51-0.54. The main pass reads four texels per shaded fragment (the lamp factor
+is formed from the ambient's read). Not measured: a slower GPU.
+
+**Not measured yet:** the shimmer with the view moving; the Freeside alley and the gas station exterior pictures #2897 asks for.
+
+**Not done:** the paper's multi-bounce fit (the lighting has the surface colour now; a later
+step), a bent normal (the ambient is a flat colour with no direction), occlusion on decals and
+blended shapes (not in the prepass), on lamps that cast a shadow and on highlights.
 
 ### 3.2 Longer sun shadows (`fine-shadows`)
 
@@ -369,7 +517,7 @@ over the frames instead of by alpha to coverage.
 
 - The projection is shifted every frame by a sub-pixel amount (Halton 2,3, eight steps;
   Bevy's `TemporalJitter`), textures sampled at a mip bias of -0.5.
-- After tonemapping and the ambient occlusion, before the sun shafts, bloom, sharpening and the
+- After tonemapping and the ambient occlusion's picture placement (§3.1), before the sun shafts, bloom, sharpening and the
   game's image space (so the grade, fades and blurs are not smeared over the frames): each
   pixel's point is carried from this frame's camera to the last frame's (the depth and both
   cameras' matrices; the reprojection is worked out on the CPU in double precision, the world
@@ -638,7 +786,7 @@ enhanced "Bloom" (§3.3), when on, stands in for it.
 - What emits light is brighter than white only in this view: unlit shapes are drawn at
   their emissive colour × multiplier (nif.md §6 "Emissive multiplier of unlit shapes"),
   so Gomorrah's neon at multiplier 25 burns; lit shapes' emissive light already is.
-- Every pass after the tonemapper (ambient occlusion, anti-aliasing, sun shafts, Bloom and
+- Every pass after the tonemapper (the ambient occlusion's picture placement, anti-aliasing, sun shafts, Bloom and
   sharpening, the image-space grade) sees the same tonemapped values as before; the
   passes key their pipelines on the view's format.
 
@@ -2217,12 +2365,19 @@ elevation, and the casters each cascade of each light drew; with sun shadows on 
 `--shadow-thin` thinned and the sun's last cascade broken down by angular size (§5.5).
 
 Debug switch `NVF_PLAY_DEBUG_AO` (read once at the start; for before/after pictures and cost
-runs of the ambient occlusion, §3.1.1): `old` runs the old estimate and its blur, `view`
-shows the ground-truth estimate's factor alone as a grey picture, `view-old` the old one's;
-unset, empty, `0`, `off` or `false` run the ground-truth estimate.
+runs of the ambient occlusion, §3.1.1, §3.1.2): unset, empty, `0`, `off` or `false` put the
+ground-truth estimate in the lighting (the default), `view-lighting` does that and draws the
+factor each fragment took; on the picture, `post` runs the ground-truth estimate, `old` the old
+estimate and its blur, `view` the ground-truth estimate's factor alone as a grey picture,
+`view-old` the old one's. Anything else is unknown (a warning; the default runs).
 `NVF_PLAY_DEBUG_AO_STRENGTH=<number>` (read once at the start) replaces the ground-truth
-estimate's strength (`GTAO_STRENGTH`, 0.4), held to 0..1; the old estimate keeps its 0.55; the
-log line then ends `, strength <number> (NVF_PLAY_DEBUG_AO_STRENGTH)`. Before a temporal upscaler
+estimate's strength (0.8 in the lighting, `LIGHTING_STRENGTH`; 0.4 on the picture,
+`GTAO_STRENGTH`), held to 0..1; the old estimate keeps its 0.55; the log line then names it
+`strength <number> (NVF_PLAY_DEBUG_AO_STRENGTH)`. `NVF_PLAY_DEBUG_AO_VARIANT=<names>` picks the
+remedies for the plants' shimmer (unset: `thin+soft` in the lighting, none on the picture;
+`none` the plain estimate), `NVF_PLAY_DEBUG_AO_LAMPS=<0..1>` the lamps' weight in the lighting
+(default 1, 0 the ambient term alone), `NVF_PLAY_DEBUG_AO_EXPONENT=<0.1..2>` its exponent
+(default 1). Before a temporal upscaler
 the grey replaces the HDR picture and still passes through the upscaler and tonemapping;
 `NVF_AO_BEFORE_FSR=0` shows it after tonemapping instead. Its pass's GPU time is the
 `nvf_ambient_occlusion` span of `--log-frame-times`.

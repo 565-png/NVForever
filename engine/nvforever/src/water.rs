@@ -185,6 +185,10 @@ impl Material for WaterMaterial {
     ) -> Result<(), SpecializedMeshPipelineError> {
         // Visible from below as well.
         descriptor.primitive.cull_mode = None;
+        // Not in the depth prepass: the ambient occlusion's texels under the water are the
+        // bed's (and within the lighting's distance tolerance of shallow water), so it does
+        // not read them (ssao_lighting.rs).
+        nvf_assets::ambient_occlusion_opt_out(descriptor);
         Ok(())
     }
 }
