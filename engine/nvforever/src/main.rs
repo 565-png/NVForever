@@ -95,6 +95,7 @@ mod grass_fire_fx;
 mod head_look;
 mod rigid_head_probe;
 mod idles;
+mod light_shadow_casters;
 mod light_shadow_detail;
 mod light_shadows;
 mod lights;

@@ -314,6 +314,33 @@ packed fields above the new bits moved up by three). The meshlet path (feature o
 view key without the bits, so a meshlet view must not get the component. Upstream has no
 way for an application to add bindings to the mesh view bind group.
 
+## bevy_light 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
+
+Vendored 2026-11-18, unchanged but for one patch (shadow caster candidates, for the lamp
+shadows' performance pass: nvforever light_shadow_casters.rs, docs/design/graphics-enhanced.md
+§3.15 "Performance pass"), marked `NVForever shadow caster candidates`, in `src/lib.rs`:
+
+- The resource `NvfShadowCasterCandidates` (`lights`: a list of entities per light).
+  `check_point_light_mesh_visibility` tests, for a shadowed point or spot light listed there,
+  only the entities listed for it (one thread, `iter_many_mut` over the same query) instead
+  of every shadow caster in the world in parallel; `nvf_caster_faces` applies the parallel
+  pass's tests unchanged (inherited visibility, render layers, visibility ranges against
+  the shadow LOD origin, the light's sphere against the caster's box, each face's frustum;
+  no bounds or `NoFrustumCulling`: every face). The lists are sorted and deduplicated as
+  upstream sorts them.
+- The caller must list every caster whose bounds may reach the light's sphere (a superset
+  is fine: what the query does not match is skipped). The game files every mesh in a grid
+  by its bounds' centre (cells of 1,024 units; a sphere over 512 units, no bounds or no
+  culling: listed for every light) and lists the cells a drawing lamp's sphere, grown by
+  512, overlaps.
+
+Bevy inserts no such resource; without it, or for a light not listed (the flashlight, the
+menu scenes' lights), the search is upstream's. [observed 2026-11-18, the main session's
+profile build in Primm at night: `check_point_light_mesh_visibility` 0.4 ms at the median and
+7.6 ms in the worst frames, for at most a few lamps drawing a frame; upstream tests every
+caster for each.] Upstream has no way to hand a light its candidates; drop this if it gains a
+spatial index for light culling.
+
 ## bevy_render 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
 [documented: `src/render_resource/pipeline_cache.rs::create_pipeline_task`, #2317]

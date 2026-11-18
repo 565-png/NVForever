@@ -337,7 +337,15 @@ pub struct Pass {
     pub step_redraws: u64,
     /// Casting lights at each step, summed over the frames.
     pub steps: [u64; 3],
+    /// The caster grid's counts (light_shadow_casters.rs `take_grid_counts`): lamps served,
+    /// candidates over them, meshes filed, those of them listed for every light.
+    pub grid: [u64; 4],
 }
+
+/// The system that chooses the casting lights and switches their maps on to draw
+/// (`shadow_lights`), for ordering against it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ChooseLamps;
 
 pub struct LightShadowsPlugin(pub LightShadowMode);
 
@@ -356,13 +364,15 @@ impl Plugin for LightShadowsPlugin {
                 // After the camera's frustum is updated: a transient draws in its first frame
                 // when its light reaches into this frame's view.
                 shadow_lights
+                    .in_set(ChooseLamps)
                     .after(TransformSystems::Propagate)
                     .after(VisibilitySystems::UpdateFrusta)
                     .before(VisibilitySystems::VisibilityPropagate)
                     .before(SimulationLightSystems::AssignLightsToClusters)
                     .before(SimulationLightSystems::UpdateLightFrusta),
             )
-            .add_systems(PostUpdate, skip_fixtures.after(SimulationLightSystems::CheckLightVisibility));
+            .add_systems(PostUpdate, skip_fixtures.after(SimulationLightSystems::CheckLightVisibility))
+            .add_plugins(crate::light_shadow_casters::LightShadowCastersPlugin);
     }
 }
 
@@ -531,15 +541,19 @@ pub fn systems_summary(ns: &[u64; 4], max: &[u64; 4], frames: u64) -> String {
 pub fn pass_summary(p: &Pass, frames: u64) -> String {
     let per = |n: u64| n as f64 / frames.max(1) as f64;
     let on = |b: bool| if b { "on" } else { "OFF" };
+    let [served, candidates, filed, everywhere] = p.grid;
     format!(
-        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}",
+        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light)",
         per(p.steps[0]),
         per(p.steps[1]),
         per(p.steps[2]),
         on(cutoff_on()),
         per(p.cut_casters),
         per(p.cut_marks),
-        p.step_redraws
+        p.step_redraws,
+        on(crate::light_shadow_casters::grid_on()),
+        per(served),
+        candidates as f64 / served.max(1) as f64
     )
 }
 
@@ -1348,6 +1362,8 @@ fn shadow_lights(
             );
             let (ns, max) = take_system_times();
             info!("{}; {}", renderer_summary(&bevy::pbr::nvf_take_light_view_counts()), systems_summary(&ns, &max, state.frames));
+            let (served, candidates, filed, everywhere) = crate::light_shadow_casters::take_grid_counts();
+            state.pass.grid = [served, candidates, filed, everywhere];
             info!("{}", pass_summary(&state.pass, state.frames));
             state.pass = Pass::default();
             (state.switched, state.drawn, state.frames, state.since, state.causes) = (0, 0, 0, 0.0, [0; 4]);
@@ -1790,10 +1806,11 @@ mod tests {
 
     #[test]
     fn the_performance_pass_line_gives_each_technique_a_frame() {
-        let p = Pass { cut_casters: 300, cut_marks: 20, step_redraws: 3, steps: [100, 50, 50] };
+        let p = Pass { cut_casters: 300, cut_marks: 20, step_redraws: 3, steps: [100, 50, 50], grid: [50, 25_000, 9000, 40] };
         let s = pass_summary(&p, 100);
         assert!(s.starts_with("light shadows: performance pass over 100 frames: lights at steps near/mid/far 1.0/0.5/0.5 a frame;"), "{s}");
         assert!(s.contains("casters cut 3.0 a frame, marks skipped 0.20 a frame, redraws for a finer step 3"), "{s}");
+        assert!(s.contains("0.50 lamps served a frame, 500 candidates each, 9000 meshes filed (40 for every light)"), "{s}");
         assert!(pass_summary(&Pass::default(), 0).contains("over 0 frames"), "no division by zero");
     }
 
