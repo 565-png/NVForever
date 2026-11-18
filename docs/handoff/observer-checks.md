@@ -3377,6 +3377,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
      a person's next melee swing (one-handed, two-handed, fists; with late `a:` keys or
      none) also wait for its clip's key or end, or come on a fixed base? Measure the
      attack-start gaps of NPCs as above; until then people keep the base timer (#2971).
+     **A creature in a lunge's way:** does a dog or other creature standing in front
+     of the player stop a Legion Assault lunge (a forward power attack's clip carrying
+     the player), or does the player pass or push it? Ours: the creature's BBX circle
+     stops the lunge after about 25 of its 332 units [observed: the main session's
+     runs of NVForever, 2026-11-18, smoke `perk-legion-lunge` with fiend dogs rushing
+     the player, 4 runs of 6; on main, with the narrower block, 0 of 6].
      [observed: the main session's runs of NVForever, 2026-11-15, reproduction on
      Searchlight Airport's runway: the Radscorpion + Giant Radscorpion pair against
      a god-mode player who backs away from 16 s to 28 s; pair distance read once
