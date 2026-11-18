@@ -3263,3 +3263,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
      lost the player early and no dog joined. The runtime already does this
      (combat-groups.md §4). To count placed creatures in a job: walk `GetFirstRef 200 1`
      and compare `GetBaseObject`.
+226. **What do SetStage and the objective functions do on a quest already completed or
+     failed?** (P2; #2958; `crates/fnv-game/src/game.rs` `set_stage`, `set_objective`.)
+     Answered [observed, base game, four jobs]: SetStage marks the stage done and runs its
+     script but does not start the quest again; SetObjectiveDisplayed and
+     SetObjectiveCompleted do nothing, even after StartQuest; CompleteAllObjectives (in
+     the stage's script) still completes. A quest stopped without being completed starts
+     again on SetStage and on SetObjectiveDisplayed (layer5-captures.md §5.8). Not
+     separated: whether CompleteAllObjectives or the stage's Complete Quest flag completed
+     the objective; FailAllObjectives; what the Pip-Boy lists for such a quest.
