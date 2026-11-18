@@ -66,15 +66,16 @@ fn other() -> PluginEntry {
 }
 
 /// The saved plugin first, then empty plugins up to a full 255-entry list, so the save has
-/// a plugin at index FE (the lambda index); and the current order with indices 0 and FE
-/// swapped. Only the header carries the extra names: the body is the one-plugin snapshot.
-fn full_and_swapped(saved: &[PluginEntry]) -> (Vec<PluginEntry>, Vec<PluginEntry>) {
+/// a plugin at index FE (the lambda index); and the current order with that last plugin
+/// moved to the front (index FE is also the gone slot, so nothing real is moved into it).
+/// Only the header carries the extra names: the body is the one-plugin snapshot.
+fn full_and_rotated(saved: &[PluginEntry]) -> (Vec<PluginEntry>, Vec<PluginEntry>) {
     let mut full = saved.to_vec();
     full.extend((1..=0xFE).map(|i| PluginEntry { name: format!("OwnedFill{i:03}.esp"), size: 0 }));
     assert_eq!(full.len(), 255);
-    let mut swapped = full.clone();
-    swapped.swap(0, 0xFE);
-    (full, swapped)
+    let mut rotated = full.clone();
+    rotated.rotate_right(1);
+    (full, rotated)
 }
 
 #[test]
@@ -103,13 +104,13 @@ fn a_lambda_save_keeps_tokens_and_handle_when_its_lambda_index_does_not_move() {
 #[test]
 fn a_lambda_save_is_refused_when_its_lambda_index_plugin_moves() {
     let (plugins, body, _) = saved(true);
-    let (full, swapped) = full_and_swapped(&plugins);
+    let (full, rotated) = full_and_rotated(&plugins);
     let mut legacy = body.clone();
     legacy.game.lambdas[0].handle = None;
     for (label, body) in [("explicit", body), ("legacy", legacy)] {
         let (_dir, path) = write(label, &full, &body);
         let bytes = std::fs::read(&path).unwrap();
-        let Err(error) = read_for_load(&path, &swapped) else { panic!("{label}: moving index FE must refuse a lambda save") };
+        let Err(error) = read_for_load(&path, &rotated) else { panic!("{label}: moving index FE must refuse a lambda save") };
         assert!(error.contains("runtime lambda definitions") && error.contains("lambda.nvfsave"), "{label}: {error}");
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         let (_, read, order) = read_for_load(&path, &full).unwrap();
@@ -132,9 +133,9 @@ fn a_lambda_free_save_still_remaps_with_a_reordered_plugin_list() {
     assert!(order.is_some());
     assert!(read.game.lambdas.is_empty());
     assert_eq!(ref_tokens(&read), vec![0x0100_0000 | PLACED_BASE]);
-    let (full, swapped) = full_and_swapped(&plugins);
+    let (full, rotated) = full_and_rotated(&plugins);
     let (_dir, path) = write("plain-full", &full, &body);
-    let (_, read, order) = read_for_load(&path, &swapped).unwrap();
+    let (_, read, order) = read_for_load(&path, &rotated).unwrap();
     assert!(order.is_some());
-    assert_eq!(ref_tokens(&read), vec![0xFE00_0000 | PLACED_BASE]);
+    assert_eq!(ref_tokens(&read), vec![0x0100_0000 | PLACED_BASE]);
 }
