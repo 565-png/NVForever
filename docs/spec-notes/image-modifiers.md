@@ -494,8 +494,9 @@ assigned values. Follow the existing IMAD getter and decoder: 37–38 are satura
 (`0x13`/`0x53` IAD), and 43–44 are brightness. Tint RGBA (47–50) are all 0–255:
 divide each assigned value by 255; the getter reads TNAM alpha ×255 like its RGB
 [observed: the installed radiation controller writes 47–49 as 0–255 and 50 as
-`strength * 255`, default strength 0.3; reading 50 as normalized alpha drew an
-opaque tint, the playtest's whole screen cyan in irradiated water].
+`fEffectControl * fTintStrength * 255`, `fTintStrength` defaulting to 0.3]
+[hypothesis: reading 50 as normalized alpha drew an opaque tint, the playtest's whole
+screen cyan in irradiated water; no isolated in-game comparison confirms it].
 Leave every unassigned component, other effect, sound, duration and track alone.
 Read only bounded fields of active modifiers; do not clone the record cache,
 mutate the load order or scan unrelated forms each frame. Nonfinite values which
