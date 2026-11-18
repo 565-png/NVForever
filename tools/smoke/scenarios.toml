@@ -1834,7 +1834,7 @@ order = [[
 name = "light-shadows"
 source = "[design] docs/design/graphics-enhanced.md §3.15, engine/nvforever/src/light_shadows.rs, engine/vendor/bevy_pbr (held light shadow maps): with --light-shadows=quality in the Prospector Saloon at night the placed lights within the shadow distance take shadow maps and draw them, lights skip their fixtures (lamp models, LightFixture), without a rendering or pipeline error. [observed 2026-11-18, these arguments run by hand: 24 cast, 3 lights skipped a fixture, two 10-s summaries.] Whether walls stop their light, and the acne and near plane, are checked in pictures by hand"
 areas = ["renderer", "graphics"]
-paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/vendor/bevy_pbr/src/render/shadow_sampling.wesl"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/vendor/bevy_pbr/src/render/shadow_sampling.wesl", "engine/vendor/bevy_light/src/lib.rs"]
 args = ["--cell", "GSProspectorSaloonInterior", "--play", "--no-voice", "--no-messages", "--hour", "22", "--light-shadows=quality"]
 env = { NVF_LIGHT_SHADOW_FIXTURES = "1" }
 run_seconds = 24
@@ -1844,6 +1844,8 @@ order = [[
 ]]
 expect = [
   { re = 'light shadows: light \S+ at .* skips [0-9A-F]{8} fixture', label = "a light skipped a lamp model's shapes (NVF_LIGHT_SHADOW_FIXTURES)" },
+  { re = 'light shadows: renderer over [0-9]+ frames: light views a frame [0-9.]+ alive', label = "the renderer's 10-s line (light views, prepare_lights times)" },
+  { re = 'light shadows: performance pass over [0-9]+ frames: .*caster grid \(on\) [0-9.]+ lamps served a frame', label = "the performance pass's 10-s line, the caster grid on" },
 ]
 forbid = [
   { text = "DeviceLost", label = "the GPU device was lost" },

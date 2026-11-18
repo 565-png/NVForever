@@ -1643,6 +1643,92 @@ after loading]:
   the point lights only, the faces drawn include the spot lights' maps, and the lights
   casting leave out those fading out); the transients' are totals over the 10 s.
 
+**Performance pass (2026-11-18).** The owner: "The shadows update at a low rate and cause
+stuttering in object dense areas. Work on optimizations - the quality of the shadow can be
+reduced with distance." The main session's runs in Primm at 22:00 (release, 1280 × 720,
+`--play`, walking): Off 5.7-7.2 ms 2-s means; Quality windows of 10-84 ms with frames of
+99-181 ms, in exactly the seconds a scripted mass toggle disabled and re-enabled about 490
+references (751 fading back in), while the 10-s summary stayed low (0.11-0.9 lights
+switched on a frame). A `profile` build put `prepare_lights` at up to 16 ms,
+`check_point_light_mesh_visibility` 7.6, `specialize_shadows` 3.8, `queue_shadows` 3.1,
+`shadow_lights` 4.1 and `skip_fixtures` 3.4 ms in those frames [observed 2026-11-18, the
+main session]. What was built, each with a test aid that turns it off for comparing; **none
+of it is measured in game yet**:
+
+- **Hidden lights drop their views** (vendored bevy_pbr, the open bevyengine/bevy#26480,
+  fix of #26059): a hidden shadowed light's views are despawned with it. Before, a lamp
+  hidden by a turn of the camera in the frame after it drew left its six views running
+  the Core3d schedule until it was seen again. No aid (a fix); the count below shows how
+  often it happens.
+- **Measuring lines** (no aid; engine/vendor/README.md "light view counts"): every 10 s
+  beside the summary, `light shadows: renderer over <n> frames: light views a frame <a>
+  alive, <r> run, <h> despawned with their light hidden; views spawned …, views despawned …,
+  views remade …, phases new …, phases dropped …, new point textures …, new directional
+  textures …, texture views made …; ms a frame mean/max: extract_lights …, prepare_lights …,
+  uniform writer …, counts and slots …, textures …, gpu lights …, point views …, spot views
+  …, cameras …, sweep …; game systems ms a frame mean/max: shadow_lights …, skip_fixtures …,
+  soften …, contact …`. The `prepare_lights` stretches add up to its total, so the 16 ms can
+  be placed.
+- **Lamps changed only on change** (light_shadow_detail.rs `soften`, light_shadows.rs
+  `skip_fixtures`): `soften` took every lamp's light through `Mut::into_inner`, which marks
+  it changed: every lamp in the world was marked changed every frame, so Bevy made its cube
+  frusta again and extracted it again each frame. `skip_fixtures` touched the lists of
+  casting lights not drawing, with the same effect. Both now change a light only when
+  something changes (`apply_soft`), and only drawing lights are filtered. No aid.
+- **Cheaper marking per moved shape** (`shadow_lights`): a reference toggled or faded in
+  town changes thousands of shapes a frame. Nothing is marked without a lamp; past 32
+  shapes a frame the lamps are found through a grid (`LampGrid`); a lamp drawing in full
+  anyway (fresh, or every face marked) and faces already marked are not tested again; no
+  transform decomposition per shape; the chosen lights are hash sets. No aid (same marks).
+- **Cached shadow views** (vendored bevy_pbr `prepare_lights`, engine/vendor/README.md):
+  the shadow textures' array views and the per-layer views and attachments are kept while
+  the texture is the same, instead of `create_view` every frame (and six for every drawing
+  lamp every frame) [hypothesis: fewer device calls give `prepare_lights` less to wait on
+  while materials are made and dropped on other render threads]. Aid
+  `NVF_SHADOW_VIEW_CACHE=0`.
+- **Steps of detail by distance and the small-caster cut-off** (`STEPS`, `cut_off`): each
+  casting light has a step by the camera's distance to its light's edge (near within 1,500
+  units, mid, far past 3,000; 10 % hysteresis). A caster whose bounding sphere covers fewer
+  than 1, 2 or 4 texels across in the light's map at its distance (by step;
+  `CUTOFF_TEXELS`, `map_scale`: the cube's side, or the sun texture's side over the tangent
+  of a spot light's cone) is taken out of the light's lists (not queued, specialized or
+  drawn) and its moves mark nothing on that light (under the cut-off where it is and where
+  it last marked). A light stepping finer after casters were cut draws its maps again in
+  full. [engineering choice: the thresholds.] Aid `NVF_LIGHT_SHADOW_CUTOFF=0`.
+- **A grid of shadow casters** (light_shadow_casters.rs; vendored bevy_light,
+  engine/vendor/README.md "shadow caster candidates"): Bevy tested every shadow caster in
+  the world against each drawing light. Every mesh is now filed by its bounds' centre in
+  1,024-unit cells (larger than 512 units, unbounded or not culled: listed for every light),
+  kept up to date from what moved or went; each drawing lamp is tested only against the
+  meshes of the cells its sphere (grown by 512) overlaps. The flashlight and the menu
+  scenes' lights keep Bevy's search. Aid `NVF_LIGHT_SHADOW_CASTER_GRID=0`.
+- **Fade by distance** (`distance_fade`, `DISTANCE_FADE` 20 %): a light's shadow weakens over
+  the last fifth of the reach to none at it, times its time fade, instead of ending there.
+  Transients keep full strength. Aid `NVF_LIGHT_SHADOW_DISTANCE_FADE=0`.
+- **Faces out of view held** (`faces_in_view`, `FACE_VIEW_MARGIN` 64 units): of a point
+  light on its turn, only the marked faces whose pyramid (the light and its square at the
+  range) can reach the camera's frustum (side and near planes, moved out by the margin) are
+  drawn; the others stay marked and held until they come into view, and a light with such
+  faces coming into view goes before the others. Not for a light that never drew (the
+  renderer needs all six faces), transients or spot lights. Mirrored water and other
+  cameras could show a held face's stale shadow [hypothesis, not looked at]. Aid
+  `NVF_LIGHT_SHADOW_FACE_CULL=0`.
+- A third 10-s line gives what these did: `light shadows: performance pass over <n> frames:
+  lights at steps near/mid/far …; small-caster cut-off (on) casters cut … a frame, marks
+  skipped …, redraws for a finer step …; caster grid (on) … lamps served a frame, …
+  candidates each, … meshes filed (… for every light); distance fade (on) … lights fading a
+  frame; face culling (on) … marked faces held out of view a frame` (`OFF` for an aid set).
+
+Not built in this pass (designs): **far lights redrawn less** (a third stagger band past
+3,000 units, and marks from skeletons and shapes under 48 units on far lights batched into
+one redraw a second); **a cost budget** instead of a count (a switch-on costing about six
+face-frames on top of its faces, from the measured 1.4 ms switch-on against 0.7 ms a frame
+kept on; at most one never-drawn light a frame; ranked by projected size × fade, waiting
+lights aging up); **resolution tiers** (a second, half-size cube array for far lights, the
+tier in the flags beside the slot, a second binding in `mesh_view_bindings` and
+`shadow_sampling.wesl`, hysteresis on the tier, a full redraw on a change: it touches the
+vendored renderer's bindings and shaders, left for after these are measured).
+
 **Not built yet.**
 - Keeping a held light's specialization caches, so switching it on costs less.
 

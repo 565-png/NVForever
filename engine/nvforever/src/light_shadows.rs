@@ -83,6 +83,26 @@
 //!   menu and preview scenes (creator_view.rs, vigor_view.rs, poker_view.rs) or the sky's.
 //! - Test aid `NVF_PLAY_TEST_LIGHT_SHADOW_HOLD=0`: every casting light draws every face
 //!   every frame, for comparing the picture and the cost.
+//! - **Performance pass** (2026-11-18, owner: "the quality of the shadow can be reduced
+//!   with distance"; graphics-enhanced.md §3.15 "Performance pass"; none measured in game
+//!   yet), each with an aid that turns it off:
+//!   - Steps of detail by the camera's distance to a light's edge ([`STEPS`], hysteresis
+//!     [`STEP_HYSTERESIS`]) and the small-caster cut-off ([`cut_off`],
+//!     [`CUTOFF_TEXELS`]): a caster under a few texels of the light's map is taken out of
+//!     its lists in [`skip_fixtures`] and its moves mark nothing on it; a light stepping
+//!     finer after a cut draws again in full. `NVF_LIGHT_SHADOW_CUTOFF=0`.
+//!   - A grid of shadow casters hands each drawing lamp its candidates for Bevy's culling
+//!     (light_shadow_casters.rs). `NVF_LIGHT_SHADOW_CASTER_GRID=0`.
+//!   - A light's shadow fades out over the last [`DISTANCE_FADE`] of the reach
+//!     ([`distance_fade`]). `NVF_LIGHT_SHADOW_DISTANCE_FADE=0`.
+//!   - Marked faces the camera cannot see stay held until they come into view
+//!     ([`faces_in_view`]). `NVF_LIGHT_SHADOW_FACE_CULL=0`.
+//!   - Moved shapes are marked through a [`LampGrid`], skipping lamps that draw in full
+//!     anyway; lamps are marked changed for Bevy only when their settings change.
+//!   - Log: besides the summary, every 10 s `light shadows: renderer over …` (the patched
+//!     renderer's light views, events and `prepare_lights` times, and these systems'
+//!     times, [`renderer_summary`], [`systems_summary`]) and `light shadows: performance
+//!     pass over …` ([`pass_summary`]).
 
 use bevy::camera::primitives::{Aabb, CubemapFrusta, Frustum, Sphere, CUBE_MAP_FACES};
 use bevy::camera::visibility::{CubemapVisibleEntities, RenderLayers, VisibilitySystems, VisibleMeshEntities};
