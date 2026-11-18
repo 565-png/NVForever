@@ -132,6 +132,8 @@
     {"op": "get_quest", "quest": "VMQHouse5", "fields": ["running", "objective.60.displayed"], "label": "milestone: VMQHouse5 started"},
     {"op": "note", "text": "House5: the player is inside the Hidden Valley bunker (the Brotherhood side chain is walked in brotherhood.actions.json: the password entry at the intercom and Still in the Dark to VMS55 100; here the travel stand-in is move_player) and uses the self-destruct terminal and its confirm sub menu."},
     {"op": "move_player", "to": "placed:HVSelfDestructTerminal"},
+    {"op": "note", "text": "The self-destruct terminal (HVSelfDestructTerminal, TERM 0x001645E2) is Very Hard to hack and nothing in the data unlocks it or gives its password [observed: DNAM, no XLOC, no script names it]: the in-game screen asks for Science 100. Stand-in for a player who has it: Science 100."},
+    {"op": "set_av", "of": "player", "name": "Science", "value": 100},
     {"op": "terminal", "target": "placed:HVSelfDestructTerminal", "item": 0, "label": "self destruct"},
     {"op": "terminal", "target": "placed:HVSelfDestructTerminal", "menu": "HVSelfDestructConfirmTerminal", "item": 0, "label": "confirm"},
     {"op": "get_quest", "quest": "VDialogueHiddenValley", "fields": ["var.GeneratorSetToBlow"], "label": "set to blow"},
