@@ -71,6 +71,7 @@ opt-level = 3
 
 # Patched dependencies (engine/vendor/README.md says what was changed and why).
 [patch.crates-io]
+bevy_winit = { path = "vendor/bevy_winit" }
 gpu-allocator = { path = "vendor/gpu-allocator" }
 bevy_pbr = { path = "vendor/bevy_pbr" }
 bevy_post_process = { path = "vendor/bevy_post_process" }
