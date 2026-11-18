@@ -662,9 +662,9 @@ mod tests {
         assert_eq!(at("cloud-shadows"), "Graphics > Shadows", "after Longer sun shadows (#2670)");
         assert_eq!(at("sound-cover"), "Gameplay > Game", "#2688");
         assert_eq!(l.control_placement("bind:Jump").unwrap().path(), "Controls > Movement");
-        assert_eq!(l.control_placement("bind:Sprint").unwrap().path(), "Controls > Movement", "beside the movement controls (owner 2026-11-18)");
+        assert_eq!(l.control_placement("bind:Sprint").unwrap().path(), "Controls > Movement", "beside the movement controls (#3000)");
         // Sprint is not greyed under the Global Toggle, as its Advanced Movement neighbours
-        // (owner 2026-11-18); only its binding is, while it is off.
+        // (#3000); only its binding is, while it is off.
         assert!(needs("sprint").is_empty());
         // The registry itself is left as it was: its order and each row's group.
         let again = registry(&KNOWN);

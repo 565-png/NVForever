@@ -149,7 +149,7 @@ pub const SECTIONS: &[Section] = &[
             "controls:bind:Run",
             "controls:bind:Always Run",
             "controls:bind:Auto Move",
-            // NVForever's own, greyed while its NVF Features switch is off (owner 2026-11-18).
+            // NVForever's own, greyed while its NVF Features switch is off (#3000).
             "controls:bind:Sprint",
         ],
     ),
@@ -212,7 +212,7 @@ pub const SECTIONS: &[Section] = &[
     section("Graphics", Some("World and Animation"), &["head-tracking", "foot-ik", "sky-clock"]),
     // The owner's own layout of the movement work (tech/movement-inertia, 2026-11-15).
     section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement", "movement-weight"]),
-    // Sprint after Advanced Recoil (owner 2026-11-18).
+    // Sprint after Advanced Recoil (#3000).
     section(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil", "sprint"]),
     section(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     section(NVF_FEATURES_TAB, Some("World Interaction"), &["grass-fire"]),

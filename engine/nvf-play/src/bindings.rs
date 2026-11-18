@@ -33,8 +33,7 @@
 //! be rebound. The controls act on [`Bindings::effective`], worked out each time and never
 //! saved: while Sprint is on and Run is still on its default Left Shift, Run is on X
 //! ([`RUN_SPARE_KEY`]) and Shift is Sprint's; off, Shift is Run's again. Sprint shares Run's
-//! key on purpose, so a rebind never swaps within that pair ([`SHARED_PAIRS`]) [design: the
-//! owner 2026-11-18].
+//! key on purpose, so a rebind never swaps within that pair ([`SHARED_PAIRS`]) [design, #3000].
 //!
 //! **The controller** (`crate::pad`, docs/design/controller.md): `Input Device` in
 //! `[Controls]` (`Keyboard and Mouse` or `Controller`, [`InputDevice`]) says which works
@@ -161,7 +160,7 @@ pub enum Control {
 /// [observed 2026-10-09], then NVForever's own controls (after [`GAME_INI_CONTROLS`],
 /// coded the same way): Lower Weapon on H [design: the owner 2026-10-27, moved off Ready
 /// Item tapped twice so a reload is not held back waiting for a second tap]; Sprint on Left
-/// Shift with no controller button [design: the owner 2026-11-18: while Sprint is on, Shift
+/// Shift with no controller button [design, #3000: while Sprint is on, Shift
 /// is Sprint's and Run moves to X ([`Bindings::effective`])].
 pub const GAME_CONTROLS: [(Control, &str, u32); 58] = [
     (Control::Forward, "Forward", 0x0011FF13),
@@ -436,7 +435,7 @@ pub struct Bindings {
     pub sprint_on: bool,
 }
 
-/// Controls that share a key on purpose [design: the owner 2026-11-18]: Sprint takes Run's
+/// Controls that share a key on purpose [design, #3000]: Sprint takes Run's
 /// Left Shift (while Sprint is on Run moves off it, [`Bindings::effective`]). A rebind never
 /// swaps one of a pair for the other ([`Bindings::rebind`]).
 pub const SHARED_PAIRS: [(Control, Control); 1] = [(Control::Sprint, Control::Run)];
@@ -447,7 +446,7 @@ pub fn shared_pair(a: Control, b: Control) -> bool {
 }
 
 /// The key Run moves to while Sprint holds Left Shift: X (DIK `0x2D`), which no control has
-/// by default [design: the owner 2026-11-18].
+/// by default [design, #3000].
 pub const RUN_SPARE_KEY: KeyCode = KeyCode::KeyX;
 
 /// Control `c`'s binding as the game ships it ([`GAME_CONTROLS`]).
@@ -517,7 +516,7 @@ impl Bindings {
     /// The key and mouse button control `c` acts on now: its own ([`Bindings::get`], what the
     /// INI keeps), but none for Sprint while its switch is off, and Run on
     /// [`RUN_SPARE_KEY`] while Sprint is on with Run still on its default Left Shift and Sprint
-    /// on that key too (none when another control has X) [design: the owner 2026-11-18: "while
+    /// on that key too (none when another control has X) [design, #3000; the request: "while
     /// Sprint is ON, Left Shift belongs to Sprint and Run moves to X, but only if Run is still
     /// on its default"]. Worked out each time, never saved: turning Sprint off gives Run its
     /// Shift back. A player's own Run key is never moved.
@@ -1779,7 +1778,7 @@ mod tests {
         assert_eq!(b.get(Control::Screenshot), Binding { key: Some(KeyCode::F12), mouse: None });
     }
 
-    /// Sprint (owner 2026-11-18): Left Shift by default, nothing while its switch is off; with
+    /// Sprint (#3000): Left Shift by default, nothing while its switch is off; with
     /// Sprint on Run moves to X unless the player moved it; no rebind swaps within the pair.
     #[test]
     fn sprint_takes_shift_from_run_only_while_on() {

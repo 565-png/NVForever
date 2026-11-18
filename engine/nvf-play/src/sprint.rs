@@ -1,4 +1,4 @@
-//! Sprint: NVF Features › Advanced Movement's Sprint switch [design: the owner 2026-11-18].
+//! Sprint: NVF Features › Advanced Movement's Sprint switch [design, #3000].
 //! Holding the Sprint control (Left Shift by default; `crate::stance`, the shared contract)
 //! runs faster for Action Points; off ([`MovementInertia::sprint_on`] false) the player
 //! moves exactly as in the original.
@@ -8,15 +8,14 @@
 //!   (crippled legs, `RunPace`'s two-handed weapon, `PerkSpeed`'s Modify Run Speed perks,
 //!   `ReloadPace`, `StatSpeed`'s Speed Mult and armour, the tweaks' wading and strafe
 //!   paces), so whatever speeds or slows a run speeds or slows a sprint the same. Always
-//!   from the run: walking (Always Run off) a sprint runs too [design: the owner
-//!   2026-11-18]. The velocity goes from the gait's (walk or run) to the sprint's by
+//!   from the run: walking (Always Run off) a sprint runs too [design, #3000]. The velocity goes from the gait's (walk or run) to the sprint's by
 //!   [`StanceMotion::sprint_share`], so it comes and goes smoothly, a walk's change of gait
 //!   with it, also with Movement Inertia off; with it on the ground inertia's own spring
 //!   (`crate::inertia`) carries it as any change of the keys' speed. From
 //!   [`RUN_GAIT_FROM`] of a sprint the body plays the run clips and glides as a run.
 //! - **Direction**: forward only, and less the more the keys go aside
 //!   ([`direction_share`]): straight ahead a full sprint, ahead and aside (W+D) about half
-//!   of one, straight aside or any way back none [design: the owner left it to us; "no
+//!   of one, straight aside or any way back none [design, #3000 left it open; the request: "no
 //!   sprint backwards; strafing reduces or blocks it"].
 //! - **Action Points** ([`SPRINT_AP_PER_SECOND`]): a fixed amount a second, not a share of
 //!   the most, so a character with more AP sprints longer (100 AP: ten seconds; 60 AP: six).
@@ -28,8 +27,7 @@
 //!   for [`StanceMotion::sprinting`]). At 0 the sprint ends and does not start again
 //!   until the control is let go and AP has come back. None is spent in god mode.
 //! - **What stops it** ([`Blocked`]): the control let go, aiming or blocking, the trigger
-//!   (an attack), a reload (`crate::combat::Combat::player_reloading`) [design: the owner
-//!   2026-11-18], sneaking or crouching, over-encumbered (`crate::player::OVERENCUMBERED`), swimming or deeper in water than
+//!   (an attack), a reload (`crate::combat::Combat::player_reloading`) [design, #3000], sneaking or crouching, over-encumbered (`crate::player::OVERENCUMBERED`), swimming or deeper in water than
 //!   [`WATER_DEPTH`], the keys not going ahead, a script's movement lock (it strikes
 //!   `PlayerControl::sprint_held`), no AP. A jump does not: the sprint's speed carries
 //!   into it as the air control takes it. Each ends the sprint eased, never at once
@@ -45,7 +43,7 @@
 //! - **Heartbeat** ([`Sprint::heart`], played by `crate::heartbeat`): while sprinting, and
 //!   after a sprint while the AP comes back, the game's low-health heartbeat loops: the slower
 //!   one with AP under [`HEARTBEAT_SLOW_BELOW`] of the most, the faster one under
-//!   [`HEARTBEAT_FAST_BELOW`] [design: the owner 2026-11-18, "slower heartbeat from 40-20%,
+//!   [`HEARTBEAT_FAST_BELOW`] [design, #3000; the request: "slower heartbeat from 40-20%,
 //!   the faster one from the last 20%"]. AP spent by VATS alone, with no sprint, plays none.
 //!   Sprint's switch (and the Global Toggle) turns it off.
 //!
@@ -63,10 +61,10 @@ use crate::stance::StanceMotion;
 use bevy::prelude::*;
 
 /// A full sprint is this many times the run speed the player has now (after perks, Speed
-/// Mult, armour and the rest) [design: the owner 2026-11-18, "default 1.45x run"].
+/// Mult, armour and the rest) [design, #3000; the request: "default 1.45x run"].
 pub const SPRINT_SPEED: f32 = 1.45;
 /// Action Points a second of sprinting costs, a fixed amount whatever the most AP is
-/// [design: the owner 2026-11-18, "10 AP per second"].
+/// [design, #3000; the request: "10 AP per second"].
 pub const SPRINT_AP_PER_SECOND: f32 = 10.0;
 /// [`StanceMotion::sprint_share`]'s spring: 95% of the way to a full sprint, or back to
 /// none, in this many seconds, the same both ways (one spring constant, so a change of
@@ -83,20 +81,19 @@ pub const LEAST_AHEAD: f32 = 0.4;
 /// swimming does [design].
 pub const WATER_DEPTH: f32 = 30.0;
 /// Stopping a sprint with AP under this share of the most leaves the player out of breath
-/// [design: the owner 2026-11-18, "below 20% of max AP"].
+/// [design, #3000; the request: "below 20% of max AP"].
 pub const WINDED_BELOW: f32 = 0.2;
 /// How winded a stop just under [`WINDED_BELOW`] leaves the player (0–1); at 0 AP fully
-/// (1), straight between: so the least of it is still clearly seen [design: the owner judges
-/// it by eye].
+/// (1), straight between: so the least of it is still clearly seen [design, #3000: judged by eye].
 pub const WINDED_LEAST: f32 = 0.35;
 /// Out of breath comes on through a spring settling (95%) in this many seconds [design].
 pub const WINDED_ONSET_SECONDS: f32 = 0.6;
 /// Out of breath fades over this many seconds along the settling curve, slowly at the end
-/// [design: the owner 2026-11-18, "fades out over a few seconds"].
+/// [design, #3000; the request: "fades out over a few seconds"].
 pub const WINDED_FADE_SECONDS: f32 = 6.0;
 
 /// After a sprint, AP under this share of the most plays the slower heartbeat, and under
-/// [`HEARTBEAT_FAST_BELOW`] the faster one [design: the owner 2026-11-18].
+/// [`HEARTBEAT_FAST_BELOW`] the faster one [design, #3000].
 pub const HEARTBEAT_SLOW_BELOW: f32 = 0.4;
 pub const HEARTBEAT_FAST_BELOW: f32 = 0.2;
 

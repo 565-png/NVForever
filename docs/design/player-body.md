@@ -454,7 +454,7 @@ settings-page.md) [design]:
 | Gameplay | `movement-inertia` | Movement Inertia | The ground speed's springs (starting, gliding to a stop, braking before turning back; the movement clips following a glide); the first-person stance cross-over (1.0 s / 1.1 s) and crouched jumps staying crouched; the view's take-off and landing dip, deeper for a higher fall (`hard_landing`), the longer landing clip (`land_stretch`) and the speed a hard landing takes (`MovementInertia::land`) (`--no-movement-inertia`) |
 | | `weapon-handling` | Weapon Handling | The slower draw and holster (`draw_weight`: 1.5 to 2.4 times the original's) and aim (0.6 s / 0.55 s for a pistol, `aim_weight`), heavier weapons slower still, Agility and Strength by the weapon's class (`attribute_rate`, `aim_rate`); off, the game's own timing with its Agility rate (`--no-weapon-handling`, `MovementInertia::handles`, `equip_rate`, `aim_seconds`) |
 | | `advanced-recoil` | Advanced Recoil | The view's kick eased in and 40 % settling back (`nvf_play::combat`), the view's nudge back from a shot (head bob's springs, so shown only with Camera Motion on too) |
-| | `sprint` | Sprint | Off by default (`--sprint`, `MovementInertia::sprint_on`): the Sprint control (Left Shift) held runs faster for AP, a stop low on AP leaves the player winded; while on, Run acts on X unless the player moved it (`bindings::Bindings::effective`); the shared state and input are `nvf_play::stance`'s (owner, 2026-11-18) |
+| | `sprint` | Sprint | Off by default (`--sprint`, `MovementInertia::sprint_on`): the Sprint control (Left Shift) held runs faster for AP, a stop low on AP leaves the player winded; while on, Run acts on X unless the player moved it (`bindings::Bindings::effective`); the shared state and input are `nvf_play::stance`'s (#3000) |
 | *(an empty line)* | | | |
 | Visual Only | `weapon-inertia` | Weapon Inertia | The arms' lag, steps, bob, jump and landing dip, the muzzle tip in the air, the breathing drift, the gun's recoil springs, the weapon's weight in all of it (§1.4a); `--no-weapon-sway`, a saved `weapon-sway` read as it |
 | | `animation-smoothing` | Animation Smoothing | Every first-person clip fade on the settling curve, the draw and holster played by their motion along it, eased starts and slow returns of attacks, reloads and jams, the aim's cross-over, the true iron sights' and the zoom's curve, the loop seams, the Pip-Boy's ease; at Weapon Handling's pace, else at the game's own (the aim at the true iron sights' 0.35 s / 0.3 s), so it changes the look only |
@@ -604,20 +604,20 @@ stays. At the start and at each change the log says which of the switches kept i
 `MovementInertia` are on (`advanced movement: Global Toggle on, ...`; smoke
 `advanced-movement-defaults`). Until 2026-11-16 all were on by default.
 
-### 1.4a.4 Advanced Movement: Sprint (owner, 2026-11-18)
+### 1.4a.4 Advanced Movement: Sprint (#3000)
 
 NVF Features › Advanced Movement › Gameplay › Sprint (`sprint`, off by default; the shared
 state and input: `nvf_play::stance`). Holding Sprint (Left Shift; Run moves to X while it is
 on) runs faster for Action Points. Off, the player moves exactly as in the original. Code:
 `engine/nvf-play/src/sprint.rs` (the rules, the speed and the AP) and
 `engine/nvforever/src/sprint_view.rs` (the look); every constant named there [design, tuned
-by eye; the speed and the AP rate the owner's].
+by eye; the speed and the AP rate the request's in #3000].
 
 - **Speed**: a full sprint is 1.45 × (`sprint::SPRINT_SPEED`) the speed the player would run
   at, applied in `player::step` after every pace there (crippled legs, `RunPace`, `PerkSpeed`,
   `ReloadPace`, `StatSpeed`, the tweaks' wading and strafe paces), so whatever changes a run
   changes a sprint alike. Always from the run: walking (Always Run off) a sprint is the
-  run's 1.45 too (owner, 2026-11-18). The velocity goes from the gait's (walk or run) to the
+  run's 1.45 too (#3000). The velocity goes from the gait's (walk or run) to the
   sprint's by `StanceMotion::sprint_share` (`sprint::sprint_velocity`), one critically damped
   spring of 0.5 s both ways (`sprint::SHARE_SECONDS`; no change of constant, so a change of
   mind part way never hitches), so the speed, and a walk's change of gait, come and go
@@ -633,8 +633,8 @@ by eye; the speed and the AP rate the owner's].
   #2601). AP does not come back while sprinting (`vats_mode`'s regeneration waits). At 0 the
   sprint ends and starts again only after Sprint is let go and AP came back. God mode spends
   none.
-- **What stops it**: Sprint let go, aiming or blocking, the trigger, a reload (owner,
-  2026-11-18; `Combat::player_reloading`, logged `sprint: ended (reloading)`), sneaking or
+- **What stops it**: Sprint let go, aiming or blocking, the trigger, a reload (#3000;
+  `Combat::player_reloading`, logged `sprint: ended (reloading)`), sneaking or
   crouching (the press stops it at once, eased out), over-encumbered, swimming or more than 30 units deep in water, a script's
   movement lock, no AP. A jump does not: its speed carries into the air. Held on, the sprint
   comes back once the stop is gone. The log: `sprint: started, …`, `sprint: ended (<why>)
@@ -654,7 +654,7 @@ by eye; the speed and the AP rate the owner's].
   0.8 of it, heavy weapons and launchers 0.35, fists 0.5), faded through its own 0.3 s spring
   under the Pip-Boy or an idle. The head bob grows to 1.4 × the run's (Camera Motion) and the
   gun's bob to 1.6 × (Weapon Inertia).
-- **Side sway** (owner, 2026-11-18: "make the camera shake/rotate to the sides also but only
+- **Side sway** (the request in #3000: "make the camera shake/rotate to the sides also but only
   a little"; Camera Motion): the first-person view rolls up to 0.6° each way once a stride,
   in step with the movement clip (the head bob's phase), by the sprint's share
   (`sprint_view::SprintView::roll`, `ROLL`; a 0.12 s spring on the stride curve, a 0.5 s one
@@ -664,7 +664,7 @@ by eye; the speed and the AP rate the owner's].
   shots and the aim use are untouched; the mouse's turn is never smoothed or delayed. No yaw:
   any turn but a roll would move the crosshair's point off the shots' line (the head bob's
   sideways swing is the side's motion).
-- **Heartbeat** (owner, 2026-11-18: "slower heartbeat from 40-20%, the faster one from the last
+- **Heartbeat** (the request in #3000: "slower heartbeat from 40-20%, the faster one from the last
   20%"; `sprint::Sprint::heart`, played by `heartbeat.rs`): while sprinting, and after a sprint
   until the AP is back over 40 %, the game's low-health heartbeat loops: `UIHealthHeartbeatALP`
   (four beats in 2.86 s, about 84 a minute: the slower) with AP under 40 % of the most

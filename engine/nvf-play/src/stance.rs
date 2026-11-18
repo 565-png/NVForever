@@ -1,5 +1,4 @@
-//! Sprint: the shared state of NVF Features › Advanced Movement's Sprint switch [design: the
-//! owner 2026-11-18]. Off by default (`crate::inertia::MovementInertia::sprint`) and acting
+//! Sprint: the shared state of NVF Features › Advanced Movement's Sprint switch [design, #3000]. Off by default (`crate::inertia::MovementInertia::sprint`) and acting
 //! only under the Global Toggle ([`MovementInertia::sprint_on`]). This module holds the
 //! plumbing and the contract; the feature itself (speed, AP, out of breath) is
 //! `crate::sprint`, its look nvforever's `sprint_view.rs`.

@@ -14,7 +14,7 @@
 //! - **The player's Heartbeat Sounds Fade tweak** [design: docs/design/tweaks.md]: the
 //!   heartbeat's volume goes down to nothing over the tweak's seconds and is whole again
 //!   at each loss of health.
-//! - **Sprint's heartbeat** [design: the owner 2026-11-18, "slower heartbeat from 40-20%, the
+//! - **Sprint's heartbeat** [design, #3000; the request: "slower heartbeat from 40-20%, the
 //!   faster one from the last 20%"; `crate::sprint::Sprint::heart`]: A (the slower) or
 //!   [`FAST_SOUND`] (B, the faster), at [`SPRINT_VOLUME`] of their volume, quiet under the
 //!   game. Each comes and goes on a critically damped spring settling in
@@ -39,7 +39,7 @@ pub const FAST_SOUND: &str = "UIHealthHeartbeatBLP";
 /// The share of the maximum health under which it beats [hypothesis: observer check 192].
 pub const LOW: f32 = 0.25;
 /// Sprint's heartbeat at this share of the loop's own volume: under the game's sounds
-/// [design: the owner 2026-11-18, "quiet"].
+/// [design, #3000; the request: "quiet"].
 pub const SPRINT_VOLUME: f32 = 0.45;
 /// Sprint's heartbeat comes, goes and cross-fades through a spring settling (95%) in this
 /// many seconds [design].
