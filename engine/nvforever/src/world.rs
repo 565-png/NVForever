@@ -625,18 +625,21 @@ fn loaded_models(_: &Placement, base: &BaseObject) -> bool {
 /// cells far beyond the ring.
 fn read_ahead(world: &WorldData, streamer: &mut Streamer, centre: (i32, i32), ring: i32, tile: f32, models: &mut ModelCtx) {
     let Streamer { ahead, loaded, spawning, hide, .. } = streamer;
-    let area = AheadArea { centre, inner: 0, ring, start: true };
+    let area = AheadArea { centre, inner: 0, ring, start: true, deadline: None };
     read_ahead_cells(world, ahead, area, |c| loaded.contains_key(c) || spawning.contains_key(c), hide, loaded_models, tile, models);
 }
 
 /// The cells a read-ahead covers: those `inner` to `ring` steps from `centre`; `start`:
-/// new readings may begin (otherwise only finished ones are taken in).
+/// new readings may begin (otherwise only finished ones are taken in); `deadline`: no new
+/// reading begins and no finished one is looked at past it (the rest wait for a later
+/// frame).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AheadArea {
     pub centre: (i32, i32),
     pub inner: i32,
     pub ring: i32,
     pub start: bool,
+    pub deadline: Option<std::time::Instant>,
 }
 
 /// [`read_ahead`] over any [`ReadAhead`]: start reading the cells of `area` that `skip`
@@ -645,7 +648,8 @@ pub(crate) struct AheadArea {
 /// prepared; forget cells far beyond the ring.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn read_ahead_cells(world: &WorldData, ahead: &mut ReadAhead, area: AheadArea, skip: impl Fn(&(i32, i32)) -> bool, hide: &[String], filter: ModelFilter, tile: f32, models: &mut ModelCtx) {
-    let AheadArea { centre, inner, ring, start } = area;
+    let AheadArea { centre, inner, ring, start, deadline } = area;
+    let late = || deadline.is_some_and(|d| std::time::Instant::now() >= d);
     if ahead.world != world.world {
         *ahead = ReadAhead { world: world.world, ..default() };
     }
@@ -656,7 +660,7 @@ pub(crate) fn read_ahead_cells(world: &WorldData, ahead: &mut ReadAhead, area: A
     for dx in (-ring..=ring).filter(|_| start) {
         for dy in -ring..=ring {
             let c = (centre.0 + dx, centre.1 + dy);
-            if steps(&c) < inner || skip(&c) || ahead.listing.contains_key(&c) || ahead.listed.contains_key(&c) {
+            if steps(&c) < inner || skip(&c) || ahead.listing.contains_key(&c) || ahead.listed.contains_key(&c) || late() {
                 continue;
             }
             let Some(cell) = world.grid_cell(c) else { continue };
@@ -677,7 +681,7 @@ pub(crate) fn read_ahead_cells(world: &WorldData, ahead: &mut ReadAhead, area: A
         }
     }
     let mut done = Vec::new();
-    ahead.listing.retain(|c, task| match check_ready(task) {
+    ahead.listing.retain(|c, task| match (!late()).then(|| check_ready(task)).flatten() {
         Some(a) => {
             done.push((*c, a));
             false
@@ -685,7 +689,10 @@ pub(crate) fn read_ahead_cells(world: &WorldData, ahead: &mut ReadAhead, area: A
         None => true,
     });
     for (c, mut a) in done {
-        a.ready = models.models_ready(a.models.iter().map(|(p, s)| (p.as_str(), s.as_slice())));
+        // Past the deadline its models are asked for when the cell is (`cell_ready`).
+        if !late() {
+            a.ready = models.models_ready(a.models.iter().map(|(p, s)| (p.as_str(), s.as_slice())));
+        }
         ahead.listed.insert(c, a);
     }
 }
@@ -1461,8 +1468,9 @@ pub enum SpawnMode {
 
 /// Draw a reference's model as children of `parent`, `rt` being the reference's
 /// transform in the parent's space: an exterior or interior cell, or the world root for
-/// imposters (`imposters.rs`); `mode`: [`SpawnMode`]. Whether any of the model was drawn
-/// (false: no model, hidden, a marker, or a model that did not load).
+/// imposters (`imposters.rs`); `mode`: [`SpawnMode`]. Whether a shape of the model was
+/// spawned (false: no model, hidden, a marker, a model that did not load or has no shape;
+/// the full-detail ring's Scenery mode then spawns nothing at all).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_model(
     commands: &mut Commands,
@@ -1562,10 +1570,12 @@ pub fn spawn_model(
             for e in std::iter::once(root).chain(drawn.iter().copied()) {
                 commands.entity(e).insert(nvf_play::DrawOnly);
             }
+            // Still while its ring cell is hidden (full_detail.rs `fade_ring` wakes it).
+            commands.entity(root).insert(crate::full_detail::RingDormant);
             stats.shapes += drawn.len();
             stats.refs_drawn += 1;
             stats.refs_animated += 1;
-            return true;
+            return !drawn.is_empty();
         }
         // [design] Census while the blend is on (#2661): a rigged STAT's or SCOL's shapes
         // are tracked, never converted.
@@ -1696,7 +1706,8 @@ pub fn spawn_model(
         spawn_emitters(commands, parent, r, &model, &path, rt);
     }
     stats.refs_drawn += 1;
-    true
+    // A model without shapes draws nothing.
+    !model.shapes.is_empty()
 }
 
 /// [design] The mesh terrain blend's census of a STAT or SCOL reference (#2661;

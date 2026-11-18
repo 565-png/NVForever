@@ -74,9 +74,6 @@ pub struct DrawDistances {
     pub grass: f32,
     /// The farthest a loaded cell reaches from the camera (game units).
     pub reach: f32,
-    /// With the full-detail ring on (full_detail.rs, #2701), the farthest a ring cell
-    /// reaches: the Object distance slider's full distance then [design].
-    pub ring_reach: Option<f32>,
     /// `--shadow-distance`.
     pub shadow_full: f32,
     /// `--grass-distance` and `--grass-fade-range`.
@@ -92,7 +89,6 @@ impl DrawDistances {
             shadows: 1.0,
             grass: 1.0,
             reach: full_reach(args.radius),
-            ring_reach: None,
             shadow_full: args.shadow_distance.max(0.0),
             grass_full: (args.grass_distance.max(0.0), args.grass_fade_range.max(0.0)),
         }
@@ -108,15 +104,10 @@ impl DrawDistances {
         }
     }
 
-    /// How far a class is drawn; `None`: as far as its cells (the full slider). Objects
-    /// reach the full-detail ring's edge at 100% while it is on (`ring_reach`).
+    /// How far a class is drawn; `None`: as far as its cells (the full slider).
     pub fn distance(&self, class: DrawClass) -> Option<f32> {
         let part = self.part(class);
-        let full = match class {
-            DrawClass::Object => self.ring_reach.unwrap_or(self.reach),
-            _ => self.reach,
-        };
-        (part < 1.0).then_some(full * part)
+        (part < 1.0).then_some(self.reach * part)
     }
 }
 
@@ -157,9 +148,11 @@ fn classify(e: Entity, r: u32, parents: &Query<&ChildOf>, marks: &Query<Marks>, 
             if dropped {
                 return DrawClass::Item;
             }
-            // The full-detail ring draws scenery only (full_detail.rs, #2701).
+            // The full-detail ring's copies (full_detail.rs, #2701) are never culled by the
+            // sliders: their cell hides its LOD segment, so a culled copy would leave
+            // neither [design].
             if ring {
-                return DrawClass::Object;
+                return DrawClass::Unranged;
             }
             if cell {
                 in_cell = true;
@@ -329,21 +322,28 @@ mod tests {
     }
 
     fn distances() -> DrawDistances {
-        DrawDistances { objects: 1.0, actors: 0.5, items: 0.25, shadows: 1.0, grass: 1.0, reach: full_reach(2), ring_reach: None, shadow_full: 8000.0, grass_full: (7000.0, 1000.0) }
+        DrawDistances { objects: 1.0, actors: 0.5, items: 0.25, shadows: 1.0, grass: 1.0, reach: full_reach(2), shadow_full: 8000.0, grass_full: (7000.0, 1000.0) }
     }
 
-    /// #2701: with the full-detail ring on, the Object slider's part is of the ring's reach;
-    /// actors and items keep the loaded cells' reach.
+    /// #2701: with the Object slider below 100%, a loaded cell's object is culled at the
+    /// slider's part of the loaded cells' reach (ring on, off or indoors alike), and the
+    /// full-detail ring's copy is never culled (its LOD segment is hidden).
     #[test]
-    fn objects_reach_the_rings_edge_while_it_is_on() {
+    fn the_slider_never_culls_ring_copies() {
+        let mut app = App::new();
         let mut d = distances();
         d.objects = 0.5;
-        assert_eq!(d.distance(DrawClass::Object), Some(d.reach * 0.5));
-        d.ring_reach = Some(full_reach(4));
-        assert_eq!(d.distance(DrawClass::Object), Some(full_reach(4) * 0.5));
-        assert_eq!(d.distance(DrawClass::Actor), Some(d.reach * 0.5));
-        d.objects = 1.0;
-        assert_eq!(d.distance(DrawClass::Object), None, "100%: not culled");
+        let reach = d.reach;
+        app.insert_resource(d).add_systems(Update, apply_ranges);
+        let loaded = app.world_mut().spawn((CellEntity, Transform::default())).id();
+        let ring = app.world_mut().spawn((crate::full_detail::RingCell { grid: (3, 0) }, Transform::default())).id();
+        let mesh = |cell| (RefVisual(7), MeshMaterial3d::<NifMaterial>(Handle::default()), fade::drawn(fade::STEPS), ChildOf(cell));
+        let near = app.world_mut().spawn(mesh(loaded)).id();
+        let far = app.world_mut().spawn(mesh(ring)).id();
+        app.update();
+        assert!(app.world().get::<VisibilityRange>(near).unwrap() == &fade::drawn_within(Some(reach * 0.5), FADE));
+        assert_eq!(app.world().get::<DrawClass>(far), Some(&DrawClass::Unranged));
+        assert!(app.world().get::<VisibilityRange>(far).unwrap() == &fade::drawn(fade::STEPS), "never culled");
     }
 
     #[test]
