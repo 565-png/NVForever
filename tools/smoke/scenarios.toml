@@ -1035,8 +1035,8 @@ args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr",
 run_seconds = 16
 order = [
   [
-    "FSR dispatch active: 3.1.4, 853x480 -> 1280x720",
     { text = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1", label = "the default: in the lighting, with the player's strength, remedies, lamps and exponent (FSR)" },
+    { text = "FSR dispatch active: 3.1.4, 853x480 -> 1280x720", label = "FSR draws at the render size after the occlusion said where it runs (the estimate line comes with the camera, FSR's with its first dispatch)" },
   ],
   [
     "lights: ambient occlusion hook installed",
