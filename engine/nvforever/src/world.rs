@@ -216,6 +216,9 @@ pub struct Streamer {
     /// Destroyed references drawn with their destruction stage's replacement model
     /// (`destroyed.rs`): kept here so a cell drawn again draws them so.
     pub model_overrides: HashMap<u32, String>,
+    /// Door travels so far ([`travel`]): what drew the place left must go (the full-detail
+    /// ring, full_detail.rs, clears itself when it changes).
+    pub travels: u64,
 }
 
 /// `base` drawn with the model `path` (a DMDL replacement model) instead of its own.
@@ -1029,6 +1032,7 @@ pub fn travel(
     script: Option<Res<nvf_play::script::ScriptState>>,
 ) {
     let Some(t) = msgs.read().last().copied() else { return };
+    streamer.travels += 1;
     for (_, e) in streamer.loaded.drain() {
         commands.entity(e).despawn();
     }
@@ -1456,7 +1460,8 @@ pub enum SpawnMode {
 
 /// Draw a reference's model as children of `parent`, `rt` being the reference's
 /// transform in the parent's space: an exterior or interior cell, or the world root for
-/// imposters (`imposters.rs`); `mode`: [`SpawnMode`].
+/// imposters (`imposters.rs`); `mode`: [`SpawnMode`]. Whether any of the model was drawn
+/// (false: no model, hidden, a marker, or a model that did not load).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_model(
     commands: &mut Commands,
@@ -1471,29 +1476,29 @@ pub fn spawn_model(
     hide: &[String],
     stats: &mut StreamStats,
     mode: SpawnMode,
-) {
+) -> bool {
     let scenery = mode == SpawnMode::Scenery;
     // Armour only ever worn (Non-Playable, no world model): its biped model would hang in
     // the air at the reference (the Fort's slave backpacks, #2439; `fnv_world::placed::worn_only`).
     if base.worn_only {
         stats.refs_no_model += 1;
         if scenery {
-            return;
+            return false;
         }
         info!("world: 0x{r:08X} {}: armour only ever worn (Non-Playable, no world model), not drawn on its own", base.edid.as_deref().unwrap_or("?"));
-        return;
+        return false;
     }
     let Some(path) = base.world_model_path() else {
         stats.refs_no_model += 1;
-        return;
+        return false;
     };
     if hide.iter().any(|h| path.contains(h.as_str())) {
-        return;
+        return false;
     }
     if script_marker(base.form_id).unwrap_or_else(|| is_marker(&path)) {
         stats.refs_skipped_type += 1;
         *stats.skipped_types.entry("marker".into()).or_default() += 1;
-        return;
+        return false;
     }
     // With the base's alternate textures on the shapes they name (texture-swaps.md §4).
     let Some(model) = models.model_swapped(&path, false, &base.world_alt_textures) else {
@@ -1506,7 +1511,7 @@ pub fn spawn_model(
                 info!("world: 0x{r:08X} {path}: its model did not load; drawn as the error marker (each reference of it)");
             }
         }
-        return;
+        return false;
     };
     // A door that opens in place (no XTEL) and has Open/Close sequences: posed from
     // its state in `nvf_play::doors` (doors.rs). Teleport doors stay static. A container
@@ -1594,7 +1599,7 @@ pub fn spawn_model(
         stats.shapes += drawn.len();
         stats.refs_drawn += 1;
         stats.refs_animated += 1;
-        return;
+        return true;
     }
     // A jointed object left posed by its designer (`XRGD`, `nvf_play::clutter_pose`).
     // Whether it poses is decided by `clutter_pose::drawn` (the matching rule and every
@@ -1674,6 +1679,7 @@ pub fn spawn_model(
         spawn_emitters(commands, parent, r, &model, &path, rt);
     }
     stats.refs_drawn += 1;
+    true
 }
 
 /// [design] The mesh terrain blend's census of a STAT or SCOL reference (#2661;
@@ -2018,6 +2024,12 @@ fn base_type_name(b: Option<&BaseObject>) -> String {
 /// not (true), for the references drawn from then on. Kept here, filled by
 /// [`script_markers`], because every drawing path reads [`spawn_model`]'s marker test.
 static SCRIPT_MARKERS: std::sync::RwLock<std::collections::BTreeMap<u32, bool>> = std::sync::RwLock::new(std::collections::BTreeMap::new());
+
+/// Whether the base `base` with model `path` is an editor marker, not drawn (a script's
+/// SetInternalMarker first): [`spawn_model`]'s test, for callers that decide before it.
+pub(crate) fn is_drawn_marker(base: u32, path: &str) -> bool {
+    script_marker(base).unwrap_or_else(|| is_marker(path))
+}
 
 fn script_marker(base: u32) -> Option<bool> {
     SCRIPT_MARKERS.read().ok()?.get(&base).copied()

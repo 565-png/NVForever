@@ -1781,6 +1781,7 @@ fn main() -> AppExit {
         centre: None,
         waiting: Vec::new(),
         model_overrides: Default::default(),
+        travels: 0,
     })
     .insert_resource(world)
     .init_resource::<nvf_assets::actor::ActorParts>()
