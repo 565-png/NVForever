@@ -276,6 +276,12 @@ pub struct RefVisual(pub u32);
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DrawOnly;
 
+/// On the entity of a cell nvforever's full-detail ring draws (its `full_detail.rs`): no
+/// [`RenderCell`] (nothing of the game draws into it), but the parent of draw-only copies
+/// that [`moved`] moves with their references.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DrawOnlyCell;
+
 /// The drawn parts of references that a ray or a box can pick ([`console::pick_under`],
 /// the crosshair, the outlines): every [`RefVisual`] but the draw-only ones ([`DrawOnly`]).
 pub type PickVisuals<'w, 's> = Query<'w, 's, (&'static RefVisual, &'static bevy::camera::primitives::Aabb, &'static GlobalTransform, &'static InheritedVisibility), Without<DrawOnly>>;

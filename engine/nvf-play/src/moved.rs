@@ -91,7 +91,7 @@ fn follow(
     added: Query<&RefVisual, Added<RefVisual>>,
     mut drawn: Drawn,
     all: Query<(Entity, &RefVisual), With<ChildOf>>,
-    cells: Query<&Transform, (With<RenderCell>, Without<RefVisual>)>,
+    cells: Query<&Transform, (Or<(With<RenderCell>, With<crate::DrawOnlyCell>)>, Without<RefVisual>)>,
     mut found: Local<Found>,
 ) {
     let mut ids: BTreeSet<u32> = phys.moved_now.iter().copied().collect();
