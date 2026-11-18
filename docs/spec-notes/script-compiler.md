@@ -739,10 +739,10 @@ rules; what NVForever decides where they are open is tagged here.
 
 [documented: [IsAnimPlayingEx](https://geckwiki.com/index.php/IsAnimPlayingEx)]
 The command has one required category and two optional integer parameters. The
-catalogue keeps that signature. An installed Script Runner source file inspected
-on 2026-11-17 supplies a fourth operand inside a negated boolean condition. The
-original runtime behavior and any fourth native parameter or byte encoding remain
-unverified.
+catalogue keeps that signature. [observed: an installed B42 Optics Script Runner
+source file, read locally on 2026-11-17; no mod text is copied here] It supplies a
+fourth operand inside a negated boolean condition. The original runtime behavior
+and any fourth native parameter or byte encoding remain unverified.
 
 [implementation evidence: public source 98fb59a9] Standalone extender calls
 already discard surplus operands with a diagnostic, but an unparenthesized
@@ -750,7 +750,8 @@ condition leaves the operand behind and fails syntax checking. A lambda body's
 expression has its own token stream even while the containing handler call is
 parsing an argument.
 
-[design] In mod-source mode only, a bounded-arity call at the current whole
+[design] Engine design choice, not a claim about the original runtime (see the
+`[hypothesis]` below). In mod-source mode only, a bounded-arity call at the current whole
 expression's root applies the existing surplus policy: parse and discard extra
 operands, emit `surplus_arguments`, then leave enclosing operators in place.
 Parsing a discarded operand retains no references, locals, lambda identities or
