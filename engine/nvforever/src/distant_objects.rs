@@ -477,6 +477,8 @@ pub struct CellState {
     pub level: f32,
     /// Fading out, to be retired at 0.
     pub leaving: bool,
+    /// A loaded or ring cell was over it last frame (`full_detail::hand_off`).
+    under: bool,
     /// What it drew of each reference.
     plan: HashMap<u32, Choice>,
     /// What its plan was judged for, and its block's answer then.
@@ -646,6 +648,7 @@ pub struct Budget {
 }
 
 impl Budget {
+    #[cfg(test)]
     pub fn total(self) -> u64 {
         self.retained + self.reserved + self.fading
     }
@@ -754,11 +757,16 @@ pub fn stream(
     let mut gone: Vec<Grid> = Vec::new();
     for (c, s) in &mut st.cells {
         let k = steps(*c, centre);
-        match hand_off(s.level, s.leaving, cover(c).is_some()) {
+        // The ring's rule: held at rest under a loaded or ring cell; a leaving cell already
+        // under one keeps its complement until that cell rests, one first met while
+        // leaving goes at once.
+        let under = cover(c).map(|_| cover_full(c));
+        match hand_off(s.level, s.leaving, under, s.under) {
             None => gone.push(*c),
             Some(_) if covered(k, inner, cover_full(c)) => gone.push(*c),
             Some(level) => {
                 s.level = level;
+                s.under = under.is_some();
                 if fades_out(k, reach, shrank) {
                     if fading {
                         s.leaving = true;
@@ -778,9 +786,12 @@ pub fn stream(
     let rate = if fading { time.delta_secs() / streamer.fade_secs } else { 1.0 };
     let mut rested: Vec<Entity> = Vec::new();
     for (c, s) in &mut st.cells {
-        s.level = (s.level + if s.leaving { -rate } else { rate }).clamp(0.0, 1.0);
-        if s.leaving && s.level <= 0.0 {
-            gone.push(*c);
+        // Held at rest under a cover ([`hand_off`]).
+        if !s.under {
+            s.level = (s.level + if s.leaving { -rate } else { rate }).clamp(0.0, 1.0);
+            if s.leaving && s.level <= 0.0 {
+                gone.push(*c);
+            }
         }
         // A rebuilt cell at rest or under a cover: the one it replaced goes.
         if s.old.is_some() && (s.level >= 1.0 || cover(c).is_some() || s.leaving) {
@@ -1190,6 +1201,7 @@ fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn
         entity: sp.entity,
         level,
         leaving: false,
+        under: false,
         plan: sp.drawn,
         stamp: sp.stamp,
         segment: sp.segment,
@@ -1421,10 +1433,10 @@ mod tests {
         let d = 20_000.0;
         let s = fade::STEPS as i32;
         for kd in 0..=s {
-            for leaving in [false, true] {
+            for (leaving, under) in [(false, false), (false, true), (true, false), (true, true)] {
                 for kc in 0..=s {
                     let cover = kc as f32 / s as f32;
-                    let Some(level) = hand_off(kd as f32 / s as f32, leaving, true) else { continue };
+                    let Some(level) = hand_off(kd as f32 / s as f32, leaving, Some(kc == s), under) else { continue };
                     let mine = distant_range(level, Some(cover)).range(REACH_NEAR);
                     let theirs = fade::drawn(kc as u8);
                     for t in 0..16 {
@@ -1462,8 +1474,9 @@ mod tests {
         assert!(half > 0 && half < 16, "between: dithering out ({half})");
         assert!((edge_range(REACH_FAR).end_margin.end - 12.0 * CELL_SIZE).abs() < 1.0);
         // The hand-off rule is the ring's: held at rest under a cover, dropped when leaving.
-        assert_eq!(hand_off(0.3, false, true), Some(1.0));
-        assert_eq!(hand_off(0.3, true, true), None);
+        assert_eq!(hand_off(0.3, false, Some(false), false), Some(1.0));
+        assert_eq!(hand_off(0.3, true, Some(false), false), None);
+        assert_eq!(hand_off(1.0, true, Some(false), true), Some(1.0), "a leaving cell already under a cover keeps its complement");
         assert_eq!(distant_range(0.5, None), DistantRange::Own(8));
         assert_eq!(distant_range(0.5, Some(0.25)), DistantRange::Under(4));
     }
@@ -1543,6 +1556,7 @@ mod tests {
             entity: Entity::PLACEHOLDER,
             level: 1.0,
             leaving: false,
+            under: false,
             plan: HashMap::new(),
             stamp: Stamp::default(),
             segment: None,

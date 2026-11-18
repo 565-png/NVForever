@@ -354,6 +354,7 @@ impl BlockContents {
     }
 
     /// The masks known (squares).
+    #[cfg(test)]
     pub fn known(&self) -> usize {
         self.squares.len()
     }

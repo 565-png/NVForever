@@ -2686,7 +2686,8 @@ struct AnimCost {
 
 fn advance_animations(
     time: Res<Time>,
-    playing: Query<&mut nvf_assets::anim_play::Playing>,
+    // A full-detail ring copy's idle stays still while its cell is hidden (full_detail.rs).
+    playing: Query<&mut nvf_assets::anim_play::Playing, Without<full_detail::RingDormant>>,
     transforms: Query<&mut Transform>,
     visibility: Query<&mut Visibility>,
     mut cost: ResMut<AnimCost>,

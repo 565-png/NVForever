@@ -99,6 +99,18 @@ pub fn cells_within(p: Vec2, dist: f32) -> Vec<Grid> {
     out.into_iter().map(|(_, g)| g).collect()
 }
 
+/// Whether base `b` is a tree the distant billboards draw (a TREE with a SpeedTree), for a
+/// reference `enabled` at the start ([`distant_tree_enabled`]); the full-detail ring draws
+/// exactly these trees in full (full_detail.rs).
+pub fn distant_tree(b: &fnv_world::placed::BaseObject, enabled: bool) -> bool {
+    &b.sig == b"TREE" && b.is_speedtree() && distant_tree_enabled(enabled)
+}
+
+/// The billboards' enable rule: the state at the start, not the game's now.
+pub fn distant_tree_enabled(enabled_at_start: bool) -> bool {
+    enabled_at_start
+}
+
 /// The TREE references of an exterior cell (its own and the persistent ones standing
 /// in it) that are enabled at the start.
 fn cell_trees(world: &WorldData, g: Grid) -> Vec<Placed> {
@@ -111,8 +123,8 @@ fn cell_trees(world: &WorldData, g: Grid) -> Vec<Placed> {
     for r in refs {
         let Some(p) = placement(world.lo, world.schema, r) else { continue };
         let Some(base) = p.base else { continue };
-        let tree = *is_tree.entry(base).or_insert_with(|| base_object(world.lo, world.schema, base).is_some_and(|b| &b.sig == b"TREE" && b.is_speedtree()));
-        if tree && world.enabled(&p, 0) {
+        let tree = *is_tree.entry(base).or_insert_with(|| base_object(world.lo, world.schema, base).is_some_and(|b| distant_tree(&b, true)));
+        if tree && distant_tree_enabled(world.enabled(&p, 0)) {
             out.push(Placed { base, pos: p.position, scale: p.scale });
         }
     }
