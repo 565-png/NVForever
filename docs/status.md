@@ -233,6 +233,22 @@ contract and limits: [Built-in luck setting getter fallback](spec-notes/builtin-
 | CI | Done | Linux job on pushes to main and on every pull request (#89, #272); a guard against game data in pull requests; PR template with a clean-room checklist; issue forms (bug, crash, differs from the original, build/tool, feature, #273) | `.github/workflows/ci.yml`, `game-data-guard.yml` |
 | Releases | Done, first version | Tag-triggered workflow builds Windows and Linux archives with launchers (`nvforever.cmd`/`.sh`) and the schemas; v0.1.0 pre-release 2026-10-13 (#270), then v0.2.0 (#418), v0.3.0 (#449), v0.4.0 (#573), v0.5.0 (2026-10-28), the v0.5.1 hotfix (2026-10-29, the night stutter, #897), v0.6.0 (2026-11-04, the first with script extender support), v0.7.0 (2026-11-11: FSR 3.1, the settings rebuild, the extender function lists completed, opt-in reports) and v0.8.0 (2026-11-18: the launcher with self-updates, DLSS, the Tweaks tab, smooth terrain, grass fires, the settings menu overhaul) | `.github/workflows/release.yml`, `tools/release/` |
 
+### Actor query and merchant context
+
+Source calls for `GetPlayerGrabbedRef`, `GetPackageTarget` and
+`RemoveMerchantContainer` use existing grab/package/conversation state and an
+explicit saved merchant-container clear. The barter stock selector respects that
+clear, and a later successful setter replaces it. `RemoveFac` aliases the accepted
+faction-removal command. Eight core cases and both barter tests, including
+source clear/setter before and after restore, passed in [hosted Ubuntu CI
+for `b67f44d0`](https://github.com/LootJunkieAzza/NVForever/actions/runs/44218490120)
+(merge `12e5454`: core 3,495 passed, 5 ignored; engine 3,601 passed, 3 ignored;
+no failures). These tests also passed in [hosted Ubuntu CI for
+`543a338`](https://github.com/LootJunkieAzza/NVForever/actions/runs/44298631547)
+(merge `4150beb`). The launcher scenario and baseline comparisons were not run;
+native encoding, original-game edge cases and installed-mod acceptance remain open.
+See [actor query context](spec-notes/actor-query-context.md).
+
 ### Persistent actor-list additions
 
 `AddNPCToLeveledList` and `AddCreatureToLeveledList` have source-name handlers
