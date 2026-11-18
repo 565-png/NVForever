@@ -300,12 +300,14 @@ mod tests {
     /// #2198's upscaler rows, #2169's FSR library row, #2242's upscaling counter row, #2317's
     /// Generated frames row, the field of view rows, the menu scale and Physics rate rows,
     /// #2662's grass fires, #2550's terrain height blending, #2551's terrain anti-tiling,
-    /// #2688's sound cover, #2149's smooth terrain and its Debug row terrain wireframe, the
+    /// #2688's sound cover, #2670's cloud shadows, #2149's smooth terrain and its Debug row terrain wireframe, the
     /// overhaul's menu font, the Advanced Movement rows of tech/movement-inertia, Weapon
     /// Inertia and Camera Motion in place of weapon sway and head bob, #2843's Shadow
-    /// resolution row, and the Quick Loot rows), by the group it registers with.
-    const KNOWN: [(&str, &str); 131] = [
+    /// resolution row, Gore Shake and #2670's Cloud shadows; #2661's mesh terrain blend row, and
+    /// the Quick Loot rows), by the group it registers with.
+    const KNOWN: [(&str, &str); 134] = [
         ("detached-camera", "Gameplay"),
+        ("gore-shake", "Gameplay"),
         ("advanced-movement", "Gameplay"),
         ("movement-weight", "Gameplay"),
         ("movement-inertia", "Gameplay"),
@@ -408,6 +410,7 @@ mod tests {
         ("shadow-resolution", "Graphics"),
         ("ambient-occlusion", "Graphics"),
         ("fine-shadows", "Graphics"),
+        ("cloud-shadows", "Graphics"),
         ("bloom", "Graphics"),
         ("glow", "Graphics"),
         ("eye-adaptation", "Graphics"),
@@ -416,6 +419,7 @@ mod tests {
         ("anisotropic", "Graphics"),
         ("terrain-height-blend", "Graphics"),
         ("terrain-anti-tiling", "Graphics"),
+        ("mesh-terrain-blend", "Graphics"),
         ("smooth-terrain", "Graphics"),
         ("light-shafts", "Graphics"),
         ("water-reflections", "Graphics"),
@@ -650,6 +654,8 @@ mod tests {
         assert_eq!(at("quick-loot"), "NVF Features > Quick Loot");
         assert_eq!(at("button-style"), "Controls > Input");
         assert_eq!(at("terrain-anti-tiling"), "Graphics > Detail and Distance", "beside terrain height blending (#2551)");
+        assert_eq!(at("mesh-terrain-blend"), "Graphics > Detail and Distance", "beside the terrain rows (#2661)");
+        assert_eq!(at("cloud-shadows"), "Graphics > Shadows", "after Longer sun shadows (#2670)");
         assert_eq!(at("sound-cover"), "Gameplay > Game", "#2688");
         assert_eq!(l.control_placement("bind:Jump").unwrap().path(), "Controls > Movement");
         // The registry itself is left as it was: its order and each row's group.
