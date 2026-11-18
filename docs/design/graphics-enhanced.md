@@ -57,6 +57,7 @@ Constraints that decide what fits:
 | Sun shafts (own screen-space pass), tied to the weather's fog | Medium: dusk and dawn, the sun behind roofs and poles | ~0.03 ms here | **Built** (§3.7) |
 | Bevy volumetric fog | Would replace the game's fog look | Tried: darkens the whole picture on the non-HDR view, box edges | Rejected (§4) |
 | Desert haze: exponential height fog in closed form, in the world shaders' fog path, on top of the weather's fog | Medium: far ridges fade in layers, basins haze over, warmer toward the sun | A few arithmetic operations per fragment where the fog runs; no pass | **Built**, off in every preset (§3.16) |
+| Aerial perspective: the weather's fog per colour channel and toward the sky's colours in the ray's direction (Hoffman and Preetham), in the world shaders' fog path | Medium: successive ridges separate, bluer at noon, warmer at dusk, brighter toward the sun | A few arithmetic operations per fragment where the fog runs; no pass; the fog uniform grows by 48 bytes | **Built**, off in every preset (§3.17) |
 | SSR on water | Low: the planar reflection is better where it reaches | Own march in the water shader from the depth prepass | **Built** for where the planar reflection does not reach (§3.8) |
 | Bevy atmosphere | Would replace the game's sky look | | Rejected |
 | Auto exposure, depth of field, motion blur | Change the look; the game's own HDR/eye-adapt values (IMGS DNAM) are not decoded | | Not now (§6) |
@@ -2051,6 +2052,114 @@ longer exists (the settings menu overhaul); the haze is a row of its own, "Deser
   (1920x1080): from the air over Goodsprings at 12:00 looking north-east, at 18:30 west,
   at 06:30 east, under the overcast and the hazy weather, and the street, in the PR. The
   cost is not measured on a slower GPU or at 1920x1080.
+
+### 3.17 Aerial perspective (`aerial-perspective`; off in every preset)
+
+[design, #2993] An addition of NVForever's own, an engineering choice for the enhanced look:
+not a fact about the original game, never a parity item, and never to be used to explain a
+difference from the original's frames. With the weather's distance fog alone every far ridge
+fades to the same flat fog colour, so the Mojave's ranges stack into one band; here far land
+takes on the sky's colours by distance instead: bluer and paler with distance under a blue
+noon sky, warmer under a dusk sky, brighter toward the sun, so successive ridgelines
+separate. The row is "Aerial perspective (experimental)" under Graphics > Lighting and
+Effects, after Desert haze, off by default and in every preset (the `enhanced` row the issue
+text would have used no longer exists since the settings menu overhaul).
+
+- **Technique.** After Hoffman and Preetham, "Rendering Outdoor Light Scattering in Real
+  Time" (GDC 2002) [documented: cited paper]: the light reaching the eye is the surface colour
+  times the extinction plus the in-scattered light times one minus the extinction, the
+  extinction differing per colour channel and the in-scattered light depending on the view
+  ray's direction (a phase function toward the sun). The sun's phase function is the
+  Henyey-Greenstein one (Henyey and Greenstein, "Diffuse radiation in the galaxy",
+  Astrophysical Journal 93, 1941) [documented: cited paper], divided by its value at the sun.
+  Our own code from those descriptions; no code from any other project. The amounts are the
+  weather's, not a physical atmosphere's: Bevy's procedural atmosphere (after Hillaire, EGSR
+  2020) stays rejected (§2); the game's sky dome and the weather's colours stay.
+- **What it changes** (`aerial.rs`, constants at its top, each an engineering choice by eye
+  [design]):
+  - *Per-channel share.* The weather's fog share f (fog.rs `GAME_FOG`'s, with its strength)
+    becomes f_c = 1 - (1 - f)^(w_c) per channel: 0 at 0, 1 at 1, rising with f. The weights
+    come from the chroma of the weather's horizon colour at this hour: rho_c = c_c / Y (Y the
+    Rec. 709 luminance), whose luminance-weighted mean is 1 by construction, then
+    w_c = 1 + k (rho_c - 1) with k = 1 (`CHROMA_GAIN`) or less where that would take a weight
+    out of 0.5..2 (`WEIGHT_LOW`, `WEIGHT_HIGH`): w is linear in k and 1 at k = 0, so the
+    luminance-weighted mean stays exactly 1 and the hue keeps its direction (no clamp). A grey
+    or black sky gives 1, 1, 1 (the weather's own fog). The amount of fog stays the weather's
+    in that sense: the mean optical-depth multiplier is 1; a channel with w below 1 fogs less
+    than f, one above more (the plan review's rule; no floor at f).
+  - *In-scatter colour.* Instead of the one fog colour, the fog colour moved toward the sky
+    colour in the view ray's direction by up to 0.8 (`DOME_MIX`): the horizon colour at and
+    below the horizon, moving to the sky-lower colour by 20° up (`LOWER_SIN`). The dome mixes
+    the same two colours (sky.rs `dome_color`) by atmosphere.nif's own vertex weights, which
+    the fog path does not have, so the elevation curve here is ours. Each is taken times the
+    dome's sky level (`SkyState::sky_scale`, held to at most 1), so a far ridge meets the sky
+    drawn behind it. Then toward the weather's sun colour by the normalised Henyey-Greenstein
+    lobe ((1 - g)^2 / (1 + g^2 - 2 g cos))^1.5 with g = 0.6 (`HG_G`), at most 0.35 at the sun
+    (`LOBE_MOST`), fading in as the sun rises through -2..3° as the sky's disc and glare do
+    (`SkyState::light`): nothing at night. All mixes: the colour stays within the weather's
+    own fog, horizon, sky-lower and sun colours (the sky colours darkened by the sky level at
+    most), never above the display range (#2915: no clamp added, nothing made brighter).
+  - *Weight.* Both scale with the desert haze's weight (§3.16, `haze::weight`, reused): full
+    under a clear weather, none as the weather's own fog gets short or dense, so
+    NVWastelandHazy and HVDustStorm (weight 0 [observed: FalloutNV.esm, fnvtool esm decode,
+    2026-11-17]) are exactly as with the row off: the uniform's vectors are zero there.
+- **Where it sits.** Per fragment in the world shaders' fog path, no pass: everything the
+  weather's fog covers, under every anti-aliasing and upscaler. `nvf_aerial` (aerial.rs,
+  written before Bevy's `apply_fog` in `pbr_functions.wesl`) wraps the desert haze's call of
+  the atmospheric fog: it composes with the haze's replacement of Bevy's call instead of
+  replacing that call again, and its edit is made after the haze's, only once those are in
+  place. It works out the in-scatter colour for the fragment's view ray and hands it, with the
+  three weights, to `GAME_FOG` in a copy of the fog uniform (`nvf_params[0]` the colour with
+  alpha -1, `nvf_params[1].rgb` the weights). `GAME_FOG`'s new first outdoor branch, taken
+  only on that -1, blends **once**, per channel, in the values the fog is blended in outdoors
+  (the pow(1/2.2) encoding: the main view is HDR, but the outdoor fog blend is in that
+  encoding, and the in-scatter colours are encoded on the CPU the same way; `dome_color`
+  mixes in the sRGB curve, a small difference). Interiors (the linear blend) are untouched,
+  and the CPU writes zeros indoors.
+- **With Desert haze also on**: the haze's share and colour stay as they are; the aerial terms
+  apply to the weather's fog part: each channel's total share 1 - (1 - f_c)(1 - h), the
+  colours weighted as the haze seen through the aerial fog (as in §3.16). Tested: alone or
+  together every channel's total is within 0..1, the haze never lowers a share, and the total
+  is at least the haze's. Together, the near and middle distance take the haze's warm dust and
+  the far ranges the sky's colours behind them, the haze's share over them.
+- **Carried** in three vec4s appended to Bevy's fog uniform (`DistanceFog::nvf_params`,
+  `GpuFog`, the shader's `Fog`; a patch of engine/vendor/bevy_pbr, listed in its README): one
+  uniform grows by 48 bytes, the view bind group keeps its bindings. [0] the sun colour
+  (display values) and the lobe's strength, [1] the in-scatter colour at the horizon and the
+  red weight, [2] the one at the sky-lower height and the blue weight; green follows from the
+  mean of 1, in the shader. The haze uses up the uniform's free fields, per-frame values
+  written into shader text are not acceptable and the view bind group is not to grow, hence
+  the patch. The reflection and lens cameras clone the main camera's fog, so they get the same
+  vectors; the reflection camera's rays are the mirrored ones, which see the sky above the
+  reflected land.
+- **Off is as on main.** With the switch off (or a weight of 0) the vectors are zero,
+  `nvf_aerial` makes the call as the haze left it and `GAME_FOG` runs its old lines; the edits
+  are made at the start for every player, with no log line. Both fail safe (one `warn!` line,
+  the shader as it was, the row does nothing).
+- **What follows the weather** (from `SkyState` every frame, through weather fades, scripted
+  SetWeather/ForceWeather and the hour; no weather names, no hour table, no result kept): the
+  weight from the fog numbers, the weights from the horizon colour, the in-scatter colours
+  from the fog, horizon, sky-lower and sun colours and the sky level, the lobe from the sun's
+  height. Values outside the base game's ranges are tested as data (fog far 0 and 1,000,000,
+  power 0, NaN and infinite colours, a black sky, one channel 0): no NaN, nothing negative,
+  no division by zero.
+- **Switching**: the row, `--graphics-only aerial-perspective`, a `--graphics-cycle` set,
+  `NVF_PLAY_TEST_SETTINGS=<t>:aerial-perspective`. Only the uniform changes; nothing compiles.
+  Log lines: `aerial: aerial perspective on: <weather>: weight <w>, channel weights
+  <r>/<g>/<b>, sky share <s>, sun lobe <l>` (or `..., none (the weather's own fog leaves no
+  room)`); the same as `aerial: <weather>: ...` when the weather, the weight (by 0.1) or a
+  channel weight (by 0.1) changes, not during a time-lapse; `aerial: aerial perspective off`
+  (`... off indoors`). Debug aid `NVF_PLAY_DEBUG_AERIAL=<multiplier>`: the weight times that
+  (1 as designed, 0 to 4; the sky share and the lobe are held to 1, the weights to their
+  range), logged once; it does not turn the switch on. Smoke: `aerial-perspective`.
+- **Not done**: no height dependence (the weather's fog has none; the haze has its own); no
+  shadowing of the in-scattered light; the dome's own vertex weights not followed (above); the
+  sun's direction is the view's first directional light, as for the haze (the sun; the
+  first-person arms' shade light points the same way); the cloud cover is not read (the base
+  game's overcast is not told from clear, weather-facts). The cost is not measured yet, and
+  the pictures are owed: far ranges from the air over Goodsprings and along the I-15 toward
+  Primm at noon, 06:30 and 18:30, the hazy weather, the dust storm, an interior, and with the
+  haze.
 
 ## 4. Tried and dropped
 

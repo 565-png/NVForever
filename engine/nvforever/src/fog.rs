@@ -30,10 +30,33 @@ const BEVY_ATMOSPHERIC: &str = "    let extinction_factor = 1.0 - 1.0 / exp(dist
 /// (x its share, y its sun weight; Bevy's own use of the argument needs a directional light
 /// alpha above 0, which is never set): the two are blended once, as transmittances, the
 /// haze seen through the weather's fog. Without haze (`scattering.x` 0) the old two lines
-/// run unchanged [design, #2675].
+/// run unchanged [design, #2675]. The aerial perspective (aerial.rs, an enhanced-look switch)
+/// comes first: only when aerial.rs `nvf_aerial` resolved this fragment's in-scatter colour
+/// into the uniform's copy (`nvf_params[0]`, display values, alpha -1; `nvf_params[1].rgb` the
+/// channel weights) the weather's share becomes one per channel, 1 - (1 - fog)^w, still one
+/// blend with the haze over it; otherwise the lines below run as before [design, #2993].
 const GAME_FOG: &str = "    let fog_t = clamp((distance - fog_params.be.x) / max(fog_params.be.y - fog_params.be.x, 1.0), 0.0, 1.0);
     let fog_share = select(0.0, pow(fog_t, fog_params.be.z), fog_t > 0.0) * fog_color.a;
     if fog_params.bi.x > 0.5 {
+        if fog_params.nvf_params[0].w < 0.0 {
+            // NVForever aerial perspective (aerial.rs): per-channel shares, the in-scatter colour.
+            let kept = 1.0 - clamp(fog_share, 0.0, 1.0);
+            var air_share = vec3<f32>(1.0);
+            if kept > 0.0 {
+                air_share = vec3<f32>(1.0) - pow(vec3<f32>(kept), max(fog_params.nvf_params[1].rgb, vec3<f32>(0.0)));
+            }
+            let air = fog_params.nvf_params[0].rgb;
+            var veil_share = air_share;
+            var veil = air;
+            if scattering.x > 0.0 && fog_params.directional_light_color.a <= 0.0 {
+                let haze_share = clamp(scattering.x, 0.0, 1.0);
+                let haze_colour = mix(fog_color.rgb, fog_params.directional_light_color.rgb, clamp(scattering.y, 0.0, 1.0));
+                veil_share = vec3<f32>(1.0) - (vec3<f32>(1.0) - air_share) * (1.0 - haze_share);
+                veil = (air * air_share + pow(max(haze_colour, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2)) * (haze_share * (vec3<f32>(1.0) - air_share))) / max(veil_share, vec3<f32>(1e-6));
+            }
+            let aerial = mix(pow(max(input_color.rgb, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2)), veil, veil_share);
+            return vec4<f32>(pow(aerial, vec3<f32>(2.2)), input_color.a);
+        }
         if scattering.x > 0.0 && fog_params.directional_light_color.a <= 0.0 {
             // NVForever desert haze (haze.rs): total share 1 - (1 - fog)(1 - haze), one blend.
             let haze_share = clamp(scattering.x, 0.0, 1.0);
