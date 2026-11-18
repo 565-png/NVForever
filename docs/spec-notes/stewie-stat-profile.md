@@ -2,15 +2,21 @@
 
 ## Supported behavior and policy
 
-[documented] The original profile names bCritChanceIgnoresFireRate in Tweaks and
-bScaleCriticalDamage plus fCriticalDamageMult in Critical Hits. The existing
-engine critical-hit rules already implement those choices. StewieGetValue/StewVal
-reads a key:section setting (existing catalogue and
+[documented: Stewie Tweaks v9.87 readme and generated `nvse_stewie_tweaks.ini`, see
+[tweaks](../design/tweaks.md#sources-and-clean-room)] The original profile names
+bCritChanceIgnoresFireRate in Tweaks and bScaleCriticalDamage plus
+fCriticalDamageMult in Critical Hits. The existing engine critical-hit rules already
+implement those choices. StewieGetValue/StewVal reads a key:section setting
+(existing catalogue and
 [behavior page](https://geckwiki.com/index.php?title=StewieGetValue)). [documented] The behavior page identifies StewVal as an alias and describes a
 queried boolean as whether its tweak is enabled; it does not specify a disk-read
 or reload contract.
 
-[hypothesis/design] After application settings are handed to the actual combat
+[hypothesis] fCriticalDamageMult multiplies critical damage the way the engine's
+existing critical-damage scale does, so its value can feed that scale directly. The
+plugin's own formula has not been observed in the original game.
+
+[design] After application settings are handed to the actual combat
 consumer, the recognized bCritChanceIgnoresFireRate and fCriticalDamageMult queries
 read those same current Game settings. This intentional mapped-policy change keeps
 script stat calculations consistent with effective NVForever choices. Unbound
@@ -21,7 +27,11 @@ its enabled-intent/native equivalence is open. Consequently the complete origina
 ItemCards/PipBoy critical-stat initialization is not yet qualified for every
 conflicting scale-switch/profile combination.
 
-[hypothesis/design] An installed original profile now supplies defaults for these
+[hypothesis] In the original, a query returns the plugin's current choice rather than
+re-reading the file, so answering from the live engine setting matches it. Not
+observed in the original game.
+
+[design] An installed original profile now supplies defaults for these
 two existing engine options when their NVForever setting keys are absent. This is
 an intentional compatibility-profile policy change: without an original profile,
 ordinary off/no-change defaults remain. Stored tweak-crit-ignores-fire-rate and
@@ -30,9 +40,10 @@ including explicit off/default-valued keys. Legacy serialized keys cannot be
 classified as user intent from their values alone; their precedence is logged,
 not silently overridden or guessed.
 
-Only boolean0/1 inputs are imported. Scaling enabled by bScaleCriticalDamage uses
-a finite multiplier within the existing engine slider's0..2 range; disabled scaling
-selects1. Missing, malformed and unsupported inputs do not enable new behavior.
+[design] Only boolean 0/1 inputs are imported. Scaling enabled by bScaleCriticalDamage
+uses a finite multiplier within the existing engine slider's 0..2 range (an engine
+bound, not the plugin's); disabled scaling selects 1. Missing, malformed and
+unsupported inputs do not enable new behavior.
 Other original keys are not imported or advertised as supported by this bridge.
 
 ## Startup, restoration and lifetime
@@ -44,7 +55,7 @@ application settings are handed back before Restart files, preserving live
 settings rather than serialized game defaults. Ordinary frame synchronization
 continues through the existing Tweaks consumer.
 
-[hypothesis/design] Import occurs once per application profile. Later NVForever
+[design] Import occurs once per application profile. Later NVForever
 settings changes retain their normal effect. Runtime edits of the original INI
 are not reimported over live settings by this startup-only subset. Recognized
 loaded queries continue to report the real current consumer fields; unrelated

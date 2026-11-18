@@ -62,15 +62,17 @@ game, so nothing here is `[observed]`. Changes last for the session.
 
 ### Live inventory settings
 
-[documented: Stewie's Tweaks readme, `bHardcoreTweaks` and
-`bIndividialItemStats`] Hardcore features can be chosen independently of the
+[documented: Stewie's Tweaks readme and generated `nvse_stewie_tweaks.ini` (see
+[tweaks](../design/tweaks.md#sources-and-clean-room)), `bHardcoreTweaks`, `bAmmoWeight`
+and `bIndividialItemStats`] Hardcore features can be chosen independently of the
 game's Hardcore mode; its ammo option selects whether ammunition has weight.
 Individual item figures show one item's weight and value for a stack.
 
 [design] After the engine hands its authoritative settings to the game,
 `StewieGetValue` and `StewVal` return the existing choices below as numeric 0 or 1.
 Both functions use the same read-only path; names ignore ASCII case and surrounding
-whitespace. No new settings are added.
+whitespace. No new settings are added. [hypothesis] The original plugin matches names
+the same way; not observed.
 
 | Query | Existing choice and consumer |
 |---|---|
@@ -78,7 +80,8 @@ whitespace. No new settings are added.
 | `bAmmoWeight:Hardcore Tweaks` | `Tweaks::hardcore_ammo_weight`; the inventory rules apply this only when the parent choice is enabled |
 | `bIndividialItemStats:Tweaks` | `Tweaks::single_item_figures`; the Pip-Boy item figures choose one item or the stack's count |
 
-The ammo query retains the child choice while its parent is disabled. Its answer
+[hypothesis] The ammo query retains the child choice while its parent is disabled,
+as the plugin's own file keeps both keys; not observed in the original game. Its answer
 does not claim that ammo currently weighs anything: the existing inventory
 consumer also considers the parent and the game's Hardcore mode. The original
 spelling `Individial` is preserved.
