@@ -54,8 +54,10 @@ pub const TWINKLE_MOST: f32 = 0.9;
 pub const TWINKLE_CELL_PIXELS: f32 = 4.0;
 pub const REFERENCE_LINES: f32 = 1080.0;
 pub const REFERENCE_FOV: f32 = 75.0;
-/// Rozenberg's air mass constants (`air_weight`).
+/// Rozenberg's air mass constants (`air_weight`; the shader writes them in).
+#[cfg(test)]
 const AIR_A: f32 = 0.025;
+#[cfg(test)]
 const AIR_B: f32 = 11.0;
 /// The moon glow at its centre (added to the dome's linear colour, as the sun's glare is) at
 /// a full moon in clear air, and what a full fog share adds (× 1 + 0.5 q): at most 0.09.
@@ -123,7 +125,8 @@ pub fn twinkle_amplitude(haze: f32, m: f32) -> f32 {
 
 /// The share of the amplitude at a direction whose height (sine of its elevation) is `up`:
 /// 1 - 1/X, X Rozenberg's air mass; 0 at the zenith, 0.975 at and below the horizon; what
-/// sky.wesl `night_twinkle` computes.
+/// sky.wesl `night_twinkle` computes (the tests' mirror).
+#[cfg(test)]
 pub fn air_weight(up: f32) -> f32 {
     let u = unit(up);
     (1.0 - (u + AIR_A * (-AIR_B * u).exp())).clamp(0.0, 1.0)
@@ -146,11 +149,14 @@ pub fn glow_peak(haze: f32) -> f32 {
 }
 
 /// The Henyey-Greenstein lobe of `g` at the cosine `cos` from its axis over its value on the
-/// axis: (1 - g)³ / (1 + g² - 2 g cos)^1.5, 1 on the axis; what sky.wesl `night_moon` takes.
+/// axis: (1 - g)³ / (1 + g² - 2 g cos)^1.5, 1 on the axis; what sky.wesl `night_moon` takes
+/// (the tests' mirror). The denominator is written (1 - g)² + 2 g (1 - cos), which keeps it
+/// exact on the axis (1 + g² - 2 g cos cancels in f32 there).
+#[cfg(test)]
 pub fn lobe(cos: f32, g: f32) -> f32 {
     let g = if g.is_finite() { g.clamp(0.0, 0.99) } else { 0.0 };
     let cos = if cos.is_finite() { cos.clamp(-1.0, 1.0) } else { 0.0 };
-    let d = (1.0 + g * g - 2.0 * g * cos).max(1e-6);
+    let d = ((1.0 - g) * (1.0 - g) + 2.0 * g * (1.0 - cos)).max(1e-6);
     ((1.0 - g) * (1.0 - g) / d).min(1.0).powf(1.5)
 }
 
@@ -328,7 +334,14 @@ struct DetailState {
     /// The debug multiplier, read once.
     debug: Option<f32>,
     logged: Option<Logged>,
+    /// What the last detail was worked from and the detail: worked again only when one of
+    /// them changed.
+    derived: Option<(Key, Detail)>,
 }
+
+/// What the detail depends on in the sky: climate, weather, the one fading out, the fade,
+/// the hour, the days passed (the phase), `--fog`.
+type Key = (u32, u32, Option<u32>, f32, f32, f32, Option<(f32, f32)>);
 
 /// Every frame after the sky's parts: with the switch on, outdoors, the detail from the sky
 /// as it is now into each part's uniform where it moved; otherwise zero (once).
@@ -347,6 +360,7 @@ fn update_detail(
             if state.active {
                 state.active = false;
                 state.logged = None;
+                state.derived = None;
                 info!("night sky: detail off{}", if wanted && indoors { " indoors" } else { "" });
             }
             if !state.shown {
@@ -366,36 +380,42 @@ fn update_detail(
                     1.0
                 }
             });
-            let has_moon = sky.climate.has_moon();
-            let phase = sky.moon_phase();
-            let inputs = Inputs {
-                has_moon,
-                moon_vis: sky.night_visibility().1,
-                moon_dir: -sky.sun_dir(),
-                phase,
-                fog: sky.fog_override.map(|(n, f)| (n, f, 1.0)).or_else(|| sky.fog()),
-                fog_power: sky.fog_power(),
-                moonlight: sky.color(ColorType::Sunlight),
-                multiplier: m,
-            };
-            let d = detail(&inputs);
-            // The log: on, when the lit share changes, and when the weather or its haze moves
-            // notably (not during a time-lapse).
-            let name = sky.weather.edid.as_deref();
-            let line = if !state.active {
-                state.active = true;
-                Some(format!("night sky: detail on: {}", describe(name, has_moon, phase, &d, m)))
+            let key: Key = (sky.climate.form_id, sky.weather.form_id, sky.prev.as_ref().map(|p| p.form_id), sky.fade, sky.hour, sky.days_passed, sky.fog_override);
+            if let Some((_, d)) = state.derived.filter(|(k, _)| *k == key) {
+                d
             } else {
-                let notable = state.logged.as_ref().is_none_or(|l| {
-                    (has_moon && l.lit != d.lit) || (sky.time_scale <= 0.0 && (l.weather.as_deref() != name || (l.haze - d.haze).abs() >= 0.1))
-                });
-                notable.then(|| format!("night sky: {}", describe(name, has_moon, phase, &d, m)))
-            };
-            if let Some(line) = line {
-                info!("{line}");
-                state.logged = Some(Logged { weather: name.map(str::to_string), haze: d.haze, lit: d.lit });
+                let has_moon = sky.climate.has_moon();
+                let phase = sky.moon_phase();
+                let inputs = Inputs {
+                    has_moon,
+                    moon_vis: sky.night_visibility().1,
+                    moon_dir: -sky.sun_dir(),
+                    phase,
+                    fog: sky.fog_override.map(|(n, f)| (n, f, 1.0)).or_else(|| sky.fog()),
+                    fog_power: sky.fog_power(),
+                    moonlight: sky.color(ColorType::Sunlight),
+                    multiplier: m,
+                };
+                let d = detail(&inputs);
+                // The log: on, when the lit share changes, and when the weather or its haze moves
+                // notably (not during a time-lapse).
+                let name = sky.weather.edid.as_deref();
+                let line = if !state.active {
+                    state.active = true;
+                    Some(format!("night sky: detail on: {}", describe(name, has_moon, phase, &d, m)))
+                } else {
+                    let notable = state.logged.as_ref().is_none_or(|l| {
+                        (has_moon && l.lit != d.lit) || (sky.time_scale <= 0.0 && (l.weather.as_deref() != name || (l.haze - d.haze).abs() >= 0.1))
+                    });
+                    notable.then(|| format!("night sky: {}", describe(name, has_moon, phase, &d, m)))
+                };
+                if let Some(line) = line {
+                    info!("{line}");
+                    state.logged = Some(Logged { weather: name.map(str::to_string), haze: d.haze, lit: d.lit });
+                }
+                state.derived = Some((key, d));
+                d
             }
-            d
         }
     };
     for (m, star, dome) in &parts {
@@ -700,6 +720,7 @@ mod tests {
             "let k2 = f32(3600u + (r >> 16u) % 10801u);",
             "let hour = globals.time / 3600.0;",
             "let air = clamp(1.0 - (up + 0.025 * exp(-11.0 * up)), 0.0, 1.0);",
+            "let d = max((1.0 - g) * (1.0 - g) + 2.0 * g * (1.0 - cos_t), 1e-6);",
             "let lobe = pow(min((1.0 - g) * (1.0 - g) / d, 1.0), 1.5);",
             "moon: vec4<f32>,",
             "night: vec4<f32>,",

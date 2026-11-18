@@ -2078,8 +2078,10 @@ settings page's old `enhanced` row no longer exists (the settings menu overhaul)
   beside them: linear RGB added to the part's colour before `tony_inverse`, which is the
   identity under the game's clipping tonemapper (the main view is HDR; `lights.rs`). The
   twinkle multiplies what a star adds. `night_sky.rs` `update_detail` (after
-  `sky::update_night_sky`) writes the two fields per part from the live `SkyState` every
-  frame, only into a material whose stored value moved by more than 1e-3 (each write remakes
+  `sky::update_night_sky`) writes the two fields per part from the live `SkyState`, worked
+  out again only when the climate, the weather, the one fading out, the fade, the hour, the
+  days passed or `--fog` changed, and only into a material whose stored value moved by more
+  than 1e-3 (each write remakes
   the uniform on the GPU, #897); `update_sky`'s replacement of the uniform keeps them. A new
   sky (a worldspace change) is caught the frame it appears.
 - **Off is as on main.** With the row off the fields stay zero, the system returns at its
@@ -2177,8 +2179,9 @@ settings page's old `enhanced` row no longer exists (the settings menu overhaul)
   it does not turn the switch on. Smoke: `night-sky-detail` (switched on at Goodsprings at
   23:00).
 - **Shader tests**: `engine/nvf-shader-tests/tests/sky.rs` composes the production `sky.wesl`
-  with Bevy's own imports through Bevy's shader cache and validates it with Naga, with and
-  without `PREMULTIPLY_ALPHA`, and checks the uniform's layout; `night_sky.rs` checks that
+  with Bevy's own imports through Bevy's shader cache and validates it with Naga, with no definitions (the dome, clouds and moon) and with
+  the definitions Bevy's mesh pipeline sets for the additive stars (`PREMULTIPLY_ALPHA`,
+  `BLEND_PREMULTIPLIED_ALPHA`), and checks the uniform's layout; `night_sky.rs` checks that
   the shader holds the constants its Rust mirror (`twinkle_factor`, `lobe`, `air_weight`)
   uses. Only a run of the game proves the pipeline.
 - **Not done**: no colour change in the twinkle (chromatic scintillation), no twinkle of the

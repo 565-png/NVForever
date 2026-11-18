@@ -157,7 +157,8 @@ fn night_moon(base: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
     }
     let g = clamp(sky.moon.w, 0.0, 0.99);
     let cos_t = dot(dir, normalize(to_moon));
-    let d = max(1.0 + g * g - 2.0 * g * cos_t, 1e-6);
+    // (1 - g)² + 2 g (1 - cos): 1 + g² - 2 g cos without its cancellation near the axis.
+    let d = max((1.0 - g) * (1.0 - g) + 2.0 * g * (1.0 - cos_t), 1e-6);
     let lobe = pow(min((1.0 - g) * (1.0 - g) / d, 1.0), 1.5);
     var add = base * sky.night.rgb * lobe;
     let most = max(add.r, max(add.g, add.b));

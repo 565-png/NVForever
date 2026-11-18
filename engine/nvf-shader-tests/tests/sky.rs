@@ -1,6 +1,9 @@
 //! The sky parts' shader (nvforever sky.wesl, with the night sky detail of night_sky.rs,
 //! #2995): composed through Bevy's shader cache with Bevy's own imports and validated by
-//! Naga, with and without `PREMULTIPLY_ALPHA` (the additive parts). No render device is
+//! Naga for each alpha mode the sky parts use, with the definitions Bevy's mesh pipeline
+//! sets for it (bevy_pbr render/mesh.rs `specialize`): none for the opaque dome and the
+//! blended clouds and moon (`AlphaMode::Blend`), `PREMULTIPLY_ALPHA` with
+//! `BLEND_PREMULTIPLIED_ALPHA` for the additive stars (`AlphaMode::Add`). No render device is
 //! created; only a run of the game proves the pipeline.
 
 mod support;
@@ -23,7 +26,7 @@ fn sky_light_members(compiled: &Compiled) -> (Vec<String>, u32) {
 #[test]
 fn the_sky_shader_compiles_with_the_night_sky_detail() {
     let mut compiler = Compiler::new(&[]);
-    for extra in [&[][..], &["PREMULTIPLY_ALPHA"][..]] {
+    for extra in [&[][..], &["PREMULTIPLY_ALPHA", "BLEND_PREMULTIPLIED_ALPHA"][..]] {
         let compiled = compiler.compile("nvforever/sky.wesl", extra);
         assert!(
             compiled.module.entry_points.iter().any(|e| e.stage == naga::ShaderStage::Fragment),
