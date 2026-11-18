@@ -53,11 +53,15 @@
 //!   dithers out with distance between `reach - 1` and `reach` cells from the camera.
 //!   Cells leave by fading out past `reach + 1` (or out of a smaller new reach), or once
 //!   the loaded or ring cell over them is fully drawn.
-//! - **Re-judging**: when the loaded grid's centre has moved [`REJUDGE_STEPS`] cells, or a
-//!   block becomes known with an empty segment, a cell whose drawn set changes is built
-//!   again and crossfaded with the old one (the new one's step against the old one's
-//!   complement). A full model already drawn stays while its radius is at least
-//!   [`HYSTERESIS`] of the threshold, so nothing flickers at it.
+//! - **Re-judging** ([`Stamp`]): each cell keeps the centre and the ratio table it was
+//!   judged for. When the loaded grid's centre has moved [`REJUDGE_STEPS`] cells, or the
+//!   budget's fit changes the ratios, or the block of a cell holding flagged references
+//!   answers differently than when it was judged, the cell is judged again as soon as it
+//!   is at rest, alone and not being replaced (a cell fading, covered or replacing then
+//!   catches up later); one whose drawn set changes is built again and crossfaded with the
+//!   old one (the new one's step against the old one's complement). A full model already
+//!   drawn stays while its radius is at least [`HYSTERESIS`] of the threshold, so nothing
+//!   flickers at it.
 //! - **Logs** (only while on): `distant objects: reach N cells (ratio R)` when it comes on;
 //!   at the exit `distant objects summary: <cells> cells, <drawn> drawn (<lod> lod, <full>
 //!   full), <held> held by blocks, <unknown> block unknown, <small> too small, <t> ms on
@@ -445,8 +449,8 @@ pub struct CellState {
     pub leaving: bool,
     /// What it drew of each reference.
     plan: HashMap<u32, Choice>,
-    /// The loaded grid's centre its plan was judged for, and its block's answer then.
-    judged: Grid,
+    /// What its plan was judged for, and its block's answer then.
+    stamp: Stamp,
     segment: Option<bool>,
     /// It holds flagged references (a block becoming known may change it).
     flagged: bool,
@@ -471,7 +475,7 @@ struct CellSpawn {
     /// References whose model was released since the cell's models were found prepared.
     later: Vec<(usize, Choice)>,
     origin: Vec3,
-    judged: Grid,
+    stamp: Stamp,
     segment: Option<bool>,
     /// What was drawn of each reference so far.
     drawn: HashMap<u32, Choice>,
@@ -515,6 +519,9 @@ pub struct DistantState {
     /// The centre the size rule was last judged for, and its ratios per ring.
     judged: Option<Grid>,
     ratios: Vec<f32>,
+    /// Counts the changes of `ratios` (a cell's [`Stamp`] names the table it was judged
+    /// with).
+    ratio_rev: u64,
     /// The centre the budget's raise was last logged for.
     budget_logged: Option<Grid>,
     /// Triangles of each full model drawn so far, by path.
@@ -565,6 +572,15 @@ impl DistantState {
         }
         self.retire(commands, s.entity);
     }
+}
+
+/// What a cell's plan was judged for: the loaded grid's centre and the revision of the
+/// ratio table. A cell whose stamp differs from the current one is judged again once it
+/// is at rest and alone ([`queue_rebuilds`]).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Stamp {
+    pub centre: Grid,
+    pub ratios: u64,
 }
 
 /// The full models' triangles, in three parts (module notes): those of the drawn cells
@@ -750,12 +766,12 @@ pub fn stream(
         fit(st, &want, judge_at, &blocks);
         if rejudge {
             st.judged = Some(centre);
-            queue_rebuilds(st, centre, &blocks, &cover, true);
         }
     }
-    // Blocks that became known with an empty segment change what flagged cells draw.
     let judged = st.judged.unwrap_or(centre);
-    queue_rebuilds(st, judged, &blocks, &cover, false);
+    let now = Stamp { centre: judged, ratios: st.ratio_rev };
+    // Cells judged for another centre or table, or whose block answers otherwise now.
+    queue_rebuilds(st, now, &blocks, &cover, deadline);
 
     let ctx = SpawnCtx { world: &world, streamer: &streamer, simulated: sim.is_some() };
     // The budget as the cells alive leave it; what this frame spawns is added as it goes.
@@ -801,7 +817,7 @@ pub fn stream(
             let same = st.cells.get(&c).is_some_and(|s| drawn_set(&list, &plan) == s.plan.iter().filter(|(_, ch)| ch.drawn()).map(|(r, ch)| (*r, *ch)).collect::<BTreeMap<u32, Choice>>());
             if same {
                 if let Some(s) = st.cells.get_mut(&c) {
-                    s.judged = judged;
+                    s.stamp = now;
                     s.segment = segment;
                 }
                 continue;
@@ -819,7 +835,7 @@ pub fn stream(
         let origin = cell_origin(c);
         let entity = commands.spawn((Name::new(format!("Distant cell {},{}", c.0, c.1)), DistantCell { grid: c }, nvf_play::DrawOnlyCell, Transform::from_translation(origin), Visibility::Hidden)).id();
         commands.entity(root).add_child(entity);
-        let mut sp = CellSpawn { entity, grid: c, replaces, list, plan, next: 0, later: Vec::new(), origin, judged, segment, drawn: HashMap::new(), full_tris: 0 };
+        let mut sp = CellSpawn { entity, grid: c, replaces, list, plan, next: 0, later: Vec::new(), origin, stamp: now, segment, drawn: HashMap::new(), full_tris: 0 };
         spawn_refs(&mut commands, &ctx, st, &mut sp, &mut budget, deadline, &mut models, &mut emittance);
         if sp.done() {
             finish(&mut commands, st, c, sp, fading);
@@ -897,6 +913,9 @@ fn fit(st: &mut DistantState, want: &[Grid], centre: Grid, blocks: &BlockContent
         }
     }
     let (ratios, raised) = fit_budget(&candidates, st.reach, SIZE_RATIO, FULL_TRIANGLE_BUDGET);
+    if ratios != st.ratios {
+        st.ratio_rev += 1;
+    }
     if raised && st.budget_logged != Some(centre) {
         st.budget_logged = Some(centre);
         let from = ratios.iter().position(|&r| r > SIZE_RATIO).unwrap_or(0);
@@ -906,22 +925,34 @@ fn fit(st: &mut DistantState, want: &[Grid], centre: Grid, blocks: &BlockContent
     st.ratios = ratios;
 }
 
-/// Queue drawn cells to build again: with `all`, every cell at rest and alone (the size
-/// rule judged anew, kept only when its drawn set changes, decided when it is built);
-/// otherwise the cells holding flagged references whose block became known with an empty
-/// segment.
-fn queue_rebuilds(st: &mut DistantState, centre: Grid, blocks: &BlockContents, cover: &impl Fn(&Grid) -> Option<f32>, all: bool) {
+/// Queue the drawn cells to judge again ([`Stamp`]): those judged for another centre or
+/// ratio table than `now`, and those holding flagged references whose block answers
+/// otherwise than when they were judged (it became known, empty or not). Only cells at
+/// rest, alone and not being replaced: the others keep their stale stamp and are queued
+/// once they are (whether the cell is built again is decided when it is planned, by its
+/// drawn set). Stops at the deadline; the rest are looked at next frame.
+fn queue_rebuilds(st: &mut DistantState, now: Stamp, blocks: &BlockContents, cover: &impl Fn(&Grid) -> Option<f32>, deadline: Instant) {
     let mut queue = Vec::new();
-    for (c, s) in &st.cells {
-        if s.leaving || s.level < 1.0 || s.old.is_some() || cover(c).is_some() {
+    for (n, (c, s)) in st.cells.iter().enumerate() {
+        if n % 64 == 63 && Instant::now() >= deadline {
+            break;
+        }
+        if st.rebuild.contains(c) || !rejudge_due(s, now, blocks.segment(*c), cover(c).is_some(), st.spawning.contains_key(c)) {
             continue;
         }
-        let newly_empty = s.flagged && s.segment.is_none() && blocks.segment(*c) == Some(false);
-        if (all && s.judged != centre) || newly_empty {
-            queue.push(*c);
-        }
+        queue.push(*c);
     }
     st.rebuild.extend(queue);
+}
+
+/// Whether a drawn cell is to be judged again now ([`queue_rebuilds`]): `segment` is its
+/// block's answer now, `covered` a loaded or ring cell over it, `spawning` a replacement
+/// under way.
+fn rejudge_due(s: &CellState, now: Stamp, segment: Option<bool>, covered: bool, spawning: bool) -> bool {
+    if s.leaving || s.level < 1.0 || s.old.is_some() || covered || spawning {
+        return false;
+    }
+    s.stamp != now || (s.flagged && s.segment != segment)
 }
 
 /// What a distant reference's spawn reads.
@@ -1031,7 +1062,7 @@ fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn
         level,
         leaving: false,
         plan: sp.drawn,
-        judged: sp.judged,
+        stamp: sp.stamp,
         segment: sp.segment,
         flagged,
         full_tris: sp.full_tris,
@@ -1348,7 +1379,7 @@ mod tests {
             level: 1.0,
             leaving: false,
             plan: HashMap::new(),
-            judged: (0, 0),
+            stamp: Stamp::default(),
             segment: None,
             flagged: false,
             full_tris,
@@ -1368,7 +1399,7 @@ mod tests {
             next: 0,
             later: Vec::new(),
             origin: Vec3::ZERO,
-            judged: (0, 0),
+            stamp: Stamp::default(),
             segment: None,
             drawn: HashMap::new(),
             full_tris,
@@ -1435,6 +1466,67 @@ mod tests {
         assert!(!admits(crossfading, 0, 1, cap), "the fading predecessor still counts for other cells");
         assert!(admits(Budget { retained: 3000, reserved: 500, fading: 0 }, 3000, 3500, cap), "reservations count");
         assert!(!admits(Budget { retained: 3000, reserved: 600, fading: 0 }, 3000, 3500, cap));
+    }
+
+    /// A cell skipped when the centre moved (fading, covered, replacing) keeps its stale
+    /// stamp and is judged again once it is at rest and alone; new ratios alone make every
+    /// cell stale; a cell judged for the current stamp is left alone.
+    #[test]
+    fn a_deferred_cell_is_judged_again_later() {
+        let old = Stamp { centre: (0, 0), ratios: 1 };
+        let now = Stamp { centre: (2, 0), ratios: 1 };
+        let mut s = drawn_cell(0, None);
+        s.stamp = old;
+        assert!(rejudge_due(&s, now, None, false, false), "at rest and alone: judged now");
+        s.level = 0.5;
+        assert!(!rejudge_due(&s, now, None, false, false), "fading: later");
+        s.level = 1.0;
+        assert!(!rejudge_due(&s, now, None, true, false), "covered: later");
+        assert!(!rejudge_due(&s, now, None, false, true), "being replaced: later");
+        s.old = Some((Entity::PLACEHOLDER, 0));
+        assert!(!rejudge_due(&s, now, None, false, false), "replacing: later");
+        s.old = None;
+        assert!(rejudge_due(&s, now, None, false, false), "caught up once at rest and alone, with no further move");
+        s.stamp = now;
+        assert!(!rejudge_due(&s, now, None, false, false), "judged for the current stamp");
+        assert!(rejudge_due(&s, Stamp { ratios: 2, ..now }, None, false, false), "the fit changed the ratios alone");
+        s.leaving = true;
+        assert!(!rejudge_due(&s, Stamp { ratios: 2, ..now }, None, false, false), "going: never");
+    }
+
+    /// A block arriving late: a cell holding flagged references judged while its block was
+    /// unknown is judged again when it becomes known, empty (its flagged references are
+    /// then drawn) or holding them (the plan stays and only the answer is recorded); a cell
+    /// without flagged references does not care.
+    #[test]
+    fn a_late_block_rejudges_cells_with_flagged_references() {
+        let now = Stamp::default();
+        let mut s = drawn_cell(0, None);
+        s.flagged = true;
+        assert!(!rejudge_due(&s, now, None, false, false), "still unknown");
+        assert!(rejudge_due(&s, now, Some(false), false, false), "unknown -> empty");
+        assert!(rejudge_due(&s, now, Some(true), false, false), "unknown -> held");
+        s.segment = Some(true);
+        assert!(!rejudge_due(&s, now, Some(true), false, false), "recorded");
+        s.flagged = false;
+        s.segment = None;
+        assert!(!rejudge_due(&s, now, Some(false), false, false), "no flagged reference");
+        // What the plan makes of it (the drawn set decides whether the cell is rebuilt).
+        let base = Arc::new(BaseObject { form_id: 0x200, sig: *b"STAT", edid: None, model: Some("rocks\\rock.nif".into()), world_model: None, world_alt_textures: vec![], worn_only: false, flags: 0x8000, bounds: None });
+        let e = Entry {
+            p: Placement { form_id: 7, sig: *b"REFR", flags: 0, base: Some(0x200), position: [8.5 * CELL_SIZE, 0.5 * CELL_SIZE, 0.0], rotation: [0.0; 3], scale: 1.0, enable_parent: None, open_by_default: false, teleport: false, emittance: None, imposter: false, primitive: false },
+            base,
+            full: "meshes\\rocks\\rock.nif".into(),
+            lod: Some("meshes\\rocks\\rock_lod.nif".into()),
+            flagged: true,
+            radius: 50.0,
+            enabled: true,
+        };
+        let list = CellList { entries: vec![e], small: 0, inner: 2 };
+        let unknown = plan_cell(&list, (8, 0), (0, 0), &[], None, None);
+        assert!(drawn_set(&list, &unknown).is_empty(), "unknown: left to the block");
+        assert_eq!(drawn_set(&list, &plan_cell(&list, (8, 0), (0, 0), &[], Some(false), None)).get(&7), Some(&Choice::Lod), "empty: drawn, so the cell is rebuilt");
+        assert!(drawn_set(&list, &plan_cell(&list, (8, 0), (0, 0), &[], Some(true), None)).is_empty(), "held: the same drawn set, no rebuild");
     }
 
     /// Off in both looks; `--graphics-only distant-objects-8` / `distant-objects-12` turn
