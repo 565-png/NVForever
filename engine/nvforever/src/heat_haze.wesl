@@ -1,4 +1,4 @@
-// Heat haze at distance (heat_haze.rs; docs/design/graphics-enhanced.md §3.14, a prototype):
+// Heat haze at distance (heat_haze.rs; docs/design/graphics-enhanced.md §3.15, a prototype):
 // the far scene near the horizon read again from a slightly displaced place, mostly up and
 // down, by two layers of a rising value noise; nothing near (the depth prepass), the upper
 // sky never. Screen-space refraction with a mask against leaks from the front as Sousa's

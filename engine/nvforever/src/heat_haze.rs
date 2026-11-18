@@ -1,5 +1,5 @@
 //! Heat haze at distance (prototype; `graphics.rs` switch `heat-haze`, off by default and in
-//! no preset; docs/design/graphics-enhanced.md §3.14). An engineering choice for the enhanced
+//! no preset; docs/design/graphics-enhanced.md §3.15). An engineering choice for the enhanced
 //! look, not a fact about the original game, and never used to explain a difference from it.
 //!
 //! The shimmer over hot ground in the distance: the far scene near the horizon is displaced
