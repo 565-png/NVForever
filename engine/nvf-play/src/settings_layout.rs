@@ -304,8 +304,8 @@ mod tests {
     /// overhaul's menu font, the Advanced Movement rows of tech/movement-inertia, Weapon
     /// Inertia and Camera Motion in place of weapon sway and head bob, #2843's Shadow
     /// resolution row, Gore Shake and #2670's Cloud shadows; #2661's mesh terrain blend row, the
-    /// Quick Loot rows, Sprint), by the group it registers with.
-    const KNOWN: [(&str, &str); 135] = [
+    /// Quick Loot rows; #2965's heat haze row; Sprint), by the group it registers with.
+    const KNOWN: [(&str, &str); 136] = [
         ("detached-camera", "Gameplay"),
         ("gore-shake", "Gameplay"),
         ("advanced-movement", "Gameplay"),
@@ -423,6 +423,7 @@ mod tests {
         ("mesh-terrain-blend", "Graphics"),
         ("smooth-terrain", "Graphics"),
         ("light-shafts", "Graphics"),
+        ("heat-haze", "Graphics"),
         ("water-reflections", "Graphics"),
         ("water-mirror", "Graphics"),
         ("quality", "Graphics"),
