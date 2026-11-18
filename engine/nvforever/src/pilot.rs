@@ -894,6 +894,16 @@ impl Pilot {
         } else if !passive {
             self.failed_in_a_row = 0;
         }
+        // Done after all: a way the step found no path for on the way (a locked door's
+        // switch, a trigger's middle) was a detour, not a place a player cannot reach
+        // (Lonesome Road's blast door controls, reached after the silo door's switch was
+        // not [observed]).
+        if error.is_none() {
+            let i = self.i;
+            for f in self.findings.iter_mut().filter(|f| f["kind"] == "unreachable" && f["step"] == json!(i)) {
+                f["kind"] = json!("detour");
+            }
+        }
         if let Some(e) = error {
             s["error"] = json!(e);
         }

@@ -58,6 +58,7 @@ WEIGHTS = {
     "wait_timed_out": 6,
     "step_timed_out": 5,
     "fight_not_won": 3,
+    "detour": 1,
     "run_ended": 10,
     "ai_kill_not_done": 8,
     "stuck": 2,
