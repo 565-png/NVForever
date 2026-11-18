@@ -22,10 +22,13 @@
 //!   exists ([`lod_model`]: `<model>_lod.nif`, else `<model>_lod_0.nif`), else from its
 //!   full model when its scaled bound radius (OBND) is at least [`SIZE_RATIO`] of its
 //!   distance from the centre of the loaded grid's middle cell, else not at all.
-//! - **Triangle budget** ([`fit_budget`]): the full models drawn may sum to at most
-//!   [`FULL_TRIANGLE_BUDGET`] triangles; past it the size ratio is raised for the
+//! - **Triangle budget** ([`fit_budget`], [`Budget`]): the full models drawn may sum to at
+//!   most [`FULL_TRIANGLE_BUDGET`] triangles; past it the size ratio is raised for the
 //!   farthest cells first (by [`RATIO_RAISE`] up to [`RATIO_MAX`]), and a full model that
-//!   would still pass the cap is left out. Logged when it bites.
+//!   would still pass the cap is left out ([`admits`]). Logged when it bites. The sum is
+//!   never kept as a running count: it is read from the cells alive (their retained
+//!   models, the reservations of cells being spawned, the predecessors still fading out),
+//!   so a cell dropped half-spawned or retired gives its share back by leaving.
 //! - **Draw-only**, as the ring's cells: a distant cell's entity carries [`DistantCell`]
 //!   and `nvf_play::DrawOnlyCell`, never `world::CellEntity` or `nvf_play::RenderCell`; its
 //!   models keep `RefVisual` (the simulation's enable state, `activate::sync_visuals` on
@@ -449,8 +452,9 @@ pub struct CellState {
     flagged: bool,
     /// Triangles of its full models.
     full_tris: u64,
-    /// The cell it replaces, drawn as the complement of this one's step until it rests.
-    old: Option<Entity>,
+    /// The cell it replaces, drawn as the complement of this one's step until it rests,
+    /// and the triangles of that cell's full models (still drawn, still counted).
+    old: Option<(Entity, u64)>,
     applied: Option<(DistantRange, i32)>,
     old_applied: Option<u8>,
 }
@@ -458,6 +462,9 @@ pub struct CellState {
 /// A distant cell whose references are being spawned (hidden until all are in).
 struct CellSpawn {
     entity: Entity,
+    grid: Grid,
+    /// It replaces the drawn cell of its square (a re-judgement).
+    replaces: bool,
     list: Arc<CellList>,
     plan: Vec<(usize, Choice)>,
     next: usize,
@@ -512,8 +519,6 @@ pub struct DistantState {
     budget_logged: Option<Grid>,
     /// Triangles of each full model drawn so far, by path.
     tris_of: HashMap<String, u64>,
-    /// Triangles of the full models drawn now.
-    full_tris: u64,
     /// `world::spawn_model`'s counts for the distant models.
     models: StreamStats,
     pub stats: DistantStats,
@@ -528,7 +533,7 @@ impl DistantState {
 
     /// Drop everything now: a travel, another worldspace, an interior, the LOD off.
     fn clear(&mut self, commands: &mut Commands) {
-        let olds: Vec<Entity> = self.cells.values().filter_map(|s| s.old).collect();
+        let olds: Vec<Entity> = self.cells.values().filter_map(|s| s.old.map(|o| o.0)).collect();
         for e in self.cells.drain().map(|(_, s)| s.entity).chain(self.spawning.drain().map(|(_, s)| s.entity)).chain(self.dying.drain(..)).chain(olds) {
             commands.entity(e).try_despawn();
         }
@@ -536,7 +541,15 @@ impl DistantState {
         self.listing.clear();
         self.listed.clear();
         self.judged = None;
-        self.full_tris = 0;
+    }
+
+    /// The triangle budget's parts, read from the cells alive now ([`Budget`]).
+    pub fn budget(&self) -> Budget {
+        Budget {
+            retained: self.cells.values().map(|s| s.full_tris).sum(),
+            reserved: self.spawning.values().map(|s| s.full_tris).sum(),
+            fading: self.cells.values().filter_map(|s| s.old.map(|o| o.1)).sum(),
+        }
     }
 
     /// Hide a cell's entity and despawn it over the next frames.
@@ -547,12 +560,37 @@ impl DistantState {
 
     /// Retire a drawn cell with the one it replaces.
     fn retire_cell(&mut self, commands: &mut Commands, s: CellState) {
-        self.full_tris = self.full_tris.saturating_sub(s.full_tris);
-        if let Some(o) = s.old {
+        if let Some((o, _)) = s.old {
             self.retire(commands, o);
         }
         self.retire(commands, s.entity);
     }
+}
+
+/// The full models' triangles, in three parts (module notes): those of the drawn cells
+/// (`retained`), those cells being spawned have drawn so far (`reserved`) and those of
+/// the cells a rebuilt cell replaces while they fade out (`fading`). Each part is read
+/// from the cells alive, never counted up and down.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Budget {
+    pub retained: u64,
+    pub reserved: u64,
+    pub fading: u64,
+}
+
+impl Budget {
+    pub fn total(self) -> u64 {
+        self.retained + self.reserved + self.fading
+    }
+}
+
+/// Whether a full model of `tris` triangles may be drawn by a spawn within `cap`: against
+/// everything drawn, reserved and fading, except, for a cell rebuilt in place, the
+/// `predecessor`'s retained models (they go once it rests; counting them would drop
+/// models the new cell keeps). While the two crossfade the total can pass the cap by at
+/// most that one cell's models; every other spawn meanwhile counts both [design].
+pub fn admits(b: Budget, predecessor: u64, tris: u64, cap: u64) -> bool {
+    b.retained.saturating_sub(predecessor) + b.reserved + b.fading + tris <= cap
 }
 
 /// The plan of cell `c` from its list: each entry's [`Choice`] (module notes).
@@ -667,7 +705,7 @@ pub fn stream(
         }
         // A rebuilt cell at rest or under a cover: the one it replaced goes.
         if s.old.is_some() && (s.level >= 1.0 || cover(c).is_some() || s.leaving) {
-            rested.extend(s.old.take());
+            rested.extend(s.old.take().map(|o| o.0));
             s.old_applied = None;
         }
     }
@@ -720,6 +758,8 @@ pub fn stream(
     queue_rebuilds(st, judged, &blocks, &cover, false);
 
     let ctx = SpawnCtx { world: &world, streamer: &streamer, simulated: sim.is_some() };
+    // The budget as the cells alive leave it; what this frame spawns is added as it goes.
+    let mut budget = st.budget();
     let mut under_way: Vec<Grid> = st.spawning.keys().copied().collect();
     under_way.sort_by_key(|&c| order_key(c, centre));
     for c in under_way {
@@ -727,7 +767,7 @@ pub fn stream(
             break;
         }
         let Some(mut sp) = st.spawning.remove(&c) else { continue };
-        spawn_refs(&mut commands, &ctx, st, &mut sp, deadline, &mut models, &mut emittance);
+        spawn_refs(&mut commands, &ctx, st, &mut sp, &mut budget, deadline, &mut models, &mut emittance);
         if sp.done() {
             finish(&mut commands, st, c, sp, fading);
         } else {
@@ -779,8 +819,8 @@ pub fn stream(
         let origin = cell_origin(c);
         let entity = commands.spawn((Name::new(format!("Distant cell {},{}", c.0, c.1)), DistantCell { grid: c }, nvf_play::DrawOnlyCell, Transform::from_translation(origin), Visibility::Hidden)).id();
         commands.entity(root).add_child(entity);
-        let mut sp = CellSpawn { entity, list, plan, next: 0, later: Vec::new(), origin, judged, segment, drawn: HashMap::new(), full_tris: 0 };
-        spawn_refs(&mut commands, &ctx, st, &mut sp, deadline, &mut models, &mut emittance);
+        let mut sp = CellSpawn { entity, grid: c, replaces, list, plan, next: 0, later: Vec::new(), origin, judged, segment, drawn: HashMap::new(), full_tris: 0 };
+        spawn_refs(&mut commands, &ctx, st, &mut sp, &mut budget, deadline, &mut models, &mut emittance);
         if sp.done() {
             finish(&mut commands, st, c, sp, fading);
         } else {
@@ -894,11 +934,14 @@ struct SpawnCtx<'a> {
 /// Spawn a distant cell's references until all are in or the deadline has passed; those
 /// whose model was released since go to `later`, tried again once the rest are in. Never
 /// prepares a model on this thread.
-fn spawn_refs(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp: &mut CellSpawn, deadline: Instant, models: &mut ModelCtx, emittance: &mut EmittanceState) {
+#[allow(clippy::too_many_arguments)]
+fn spawn_refs(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp: &mut CellSpawn, budget: &mut Budget, deadline: Instant, models: &mut ModelCtx, emittance: &mut EmittanceState) {
+    // A rebuilt cell's predecessor goes once it rests ([`admits`]).
+    let predecessor = if sp.replaces { st.cells.get(&sp.grid).map_or(0, |s| s.full_tris) } else { 0 };
     while sp.next < sp.plan.len() && Instant::now() < deadline {
         let (i, ch) = sp.plan[sp.next];
         sp.next += 1;
-        if !spawn_one(commands, ctx, st, sp, i, ch, models, emittance) {
+        if !spawn_one(commands, ctx, st, sp, (budget, predecessor), i, ch, models, emittance) {
             sp.later.push((i, ch));
         }
     }
@@ -910,7 +953,7 @@ fn spawn_refs(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp
 
 /// One planned reference; false when its model is not prepared (asked of the workers).
 #[allow(clippy::too_many_arguments)]
-fn spawn_one(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp: &mut CellSpawn, i: usize, ch: Choice, models: &mut ModelCtx, emittance: &mut EmittanceState) -> bool {
+fn spawn_one(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp: &mut CellSpawn, (budget, predecessor): (&mut Budget, u64), i: usize, ch: Choice, models: &mut ModelCtx, emittance: &mut EmittanceState) -> bool {
     let list = sp.list.clone();
     let e = &list.entries[i];
     let r = e.p.form_id;
@@ -929,7 +972,7 @@ fn spawn_one(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp:
         Choice::Full => {
             tris = models.model_swapped(path, false, alt).map_or(0, |m| m.triangles as u64);
             st.tris_of.insert(e.full.clone(), tris);
-            if st.full_tris + tris > FULL_TRIANGLE_BUDGET {
+            if !admits(*budget, predecessor, tris, FULL_TRIANGLE_BUDGET) {
                 sp.drawn.insert(r, Choice::Small);
                 return true;
             }
@@ -939,9 +982,10 @@ fn spawn_one(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp:
     };
     let rt = Affine3A::from_translation(-sp.origin) * world::ref_affine(&e.p);
     let drawn = world::spawn_model(commands, sp.entity, ctx.world, &e.p, r, &base, rt, models, emittance, &ctx.streamer.hide, &mut st.models, SpawnMode::Scenery);
+    // The cell's reservation (read back by [`DistantState::budget`]) and this frame's copy.
     if drawn && ch == Choice::Full {
         sp.full_tris += tris;
-        st.full_tris += tris;
+        budget.reserved += tris;
     }
     sp.drawn.insert(r, if drawn { ch } else { Choice::Small });
     true
@@ -959,12 +1003,11 @@ fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn
             st.cells.insert(c, prev);
             return;
         }
-        st.full_tris = st.full_tris.saturating_sub(prev.full_tris);
-        if let Some(o) = prev.old {
+        if let Some((o, _)) = prev.old {
             st.retire(commands, o);
         }
         if fading {
-            old = Some(prev.entity);
+            old = Some((prev.entity, prev.full_tris));
         } else {
             st.retire(commands, prev.entity);
             level = 1.0;
@@ -1033,7 +1076,7 @@ pub fn fade_distant(
                 }
             }
         }
-        if let Some(old) = s.old {
+        if let Some((old, _)) = s.old {
             let k = want.own_step();
             if s.old_applied != Some(k) {
                 s.old_applied = Some(k);
@@ -1295,6 +1338,103 @@ mod tests {
         assert_eq!(plan_cell(&list, (8, 0), (0, 0), &ratios, Some(true), None)[0].1, Choice::Small);
         let before = HashMap::from([(1u32, Choice::Full)]);
         assert_eq!(plan_cell(&list, (8, 0), (0, 0), &ratios, Some(true), Some(&before))[0].1, Choice::Full, "hysteresis");
+    }
+
+    /// A drawn cell for the lifecycle tests, with its full models' triangles and those of
+    /// the cell it replaces.
+    fn drawn_cell(full_tris: u64, old: Option<u64>) -> CellState {
+        CellState {
+            entity: Entity::PLACEHOLDER,
+            level: 1.0,
+            leaving: false,
+            plan: HashMap::new(),
+            judged: (0, 0),
+            segment: None,
+            flagged: false,
+            full_tris,
+            old: old.map(|t| (Entity::PLACEHOLDER, t)),
+            applied: None,
+            old_applied: None,
+        }
+    }
+
+    fn a_spawn(grid: Grid, replaces: bool, full_tris: u64) -> CellSpawn {
+        CellSpawn {
+            entity: Entity::PLACEHOLDER,
+            grid,
+            replaces,
+            list: Arc::new(CellList::default()),
+            plan: Vec::new(),
+            next: 0,
+            later: Vec::new(),
+            origin: Vec3::ZERO,
+            judged: (0, 0),
+            segment: None,
+            drawn: HashMap::new(),
+            full_tris,
+        }
+    }
+
+    /// The budget equals the sum over the cells alive at every step of a lifecycle: a cell
+    /// spawning reserves, a cancelled one gives its share back by leaving, a finished one
+    /// retains, a rebuilt one's predecessor counts as fading until it rests, a retired one
+    /// counts no more. Nothing is left over once every cell is gone.
+    #[test]
+    fn the_budget_is_the_sum_over_the_cells_alive() {
+        let sum = |st: &DistantState| -> u64 { st.cells.values().map(|s| s.full_tris + s.old.map_or(0, |o| o.1)).sum::<u64>() + st.spawning.values().map(|s| s.full_tris).sum::<u64>() };
+        let world = World::new();
+        let mut queue = bevy::ecs::world::CommandQueue::default();
+        let mut commands = Commands::new(&mut queue, &world);
+        let mut st = DistantState::default();
+        // A half-spawned cell that is then dropped (the centre moved): nothing is left.
+        st.spawning.insert((9, 0), a_spawn((9, 0), false, 1200));
+        assert_eq!(st.budget(), Budget { retained: 0, reserved: 1200, fading: 0 });
+        let sp = st.spawning.remove(&(9, 0)).unwrap();
+        st.retire(&mut commands, sp.entity);
+        assert_eq!(st.budget().total(), 0, "a cancelled cell gives its share back");
+        // A finished cell retains its models.
+        st.spawning.insert((9, 0), a_spawn((9, 0), false, 3000));
+        let sp = st.spawning.remove(&(9, 0)).unwrap();
+        finish(&mut commands, &mut st, (9, 0), sp, true);
+        assert_eq!(st.budget(), Budget { retained: 3000, reserved: 0, fading: 0 });
+        assert_eq!(st.budget().total(), sum(&st));
+        // Rebuilt in place, crossfading: the predecessor counts as fading.
+        st.cells.get_mut(&(9, 0)).unwrap().level = 1.0;
+        let sp = a_spawn((9, 0), true, 2500);
+        finish(&mut commands, &mut st, (9, 0), sp, true);
+        assert_eq!(st.budget(), Budget { retained: 2500, reserved: 0, fading: 3000 });
+        assert_eq!(st.budget().total(), sum(&st));
+        // A rejected rebuild (its cell started leaving) is dropped with its reservation.
+        st.cells.get_mut(&(9, 0)).unwrap().leaving = true;
+        finish(&mut commands, &mut st, (9, 0), a_spawn((9, 0), true, 700), true);
+        assert_eq!(st.budget().total(), 5500, "the leaving cell and its predecessor only");
+        // Retired with its predecessor: nothing left.
+        let s = st.cells.remove(&(9, 0)).unwrap();
+        st.retire_cell(&mut commands, s);
+        assert_eq!(st.budget(), Budget::default());
+        // Cleared with cells and spawns alive: nothing left either.
+        st.cells.insert((10, 0), drawn_cell(400, Some(100)));
+        st.spawning.insert((11, 0), a_spawn((11, 0), false, 50));
+        assert_eq!(st.budget().total(), 550);
+        assert_eq!(st.budget().total(), sum(&st));
+        st.clear(&mut commands);
+        assert_eq!(st.budget(), Budget::default());
+    }
+
+    /// At the cap a cell rebuilt in place may keep the models of its predecessor (whose
+    /// share goes once it rests); a new cell may not pass the cap, and a fading
+    /// predecessor counts against every other spawn.
+    #[test]
+    fn a_replacement_at_the_cap_keeps_its_models() {
+        let cap = 4000;
+        let b = Budget { retained: 3000, reserved: 0, fading: 0 };
+        assert!(admits(b, 3000, 3000, cap), "the rebuilt cell keeps what its predecessor drew");
+        assert!(!admits(b, 0, 3000, cap), "a new cell would pass the cap");
+        assert!(admits(b, 0, 1000, cap));
+        let crossfading = Budget { retained: 3000, reserved: 0, fading: 3000 };
+        assert!(!admits(crossfading, 0, 1, cap), "the fading predecessor still counts for other cells");
+        assert!(admits(Budget { retained: 3000, reserved: 500, fading: 0 }, 3000, 3500, cap), "reservations count");
+        assert!(!admits(Budget { retained: 3000, reserved: 600, fading: 0 }, 3000, 3500, cap));
     }
 
     /// Off in both looks; `--graphics-only distant-objects-8` / `distant-objects-12` turn
