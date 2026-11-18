@@ -283,6 +283,9 @@ struct LampState {
     /// A caster was left out of its maps since the light last stepped to finer detail: a
     /// step finer draws its maps again so that caster comes back.
     cut_any: bool,
+    /// Its shadow's strength by distance, 0..1 ([`distance_fade`]); with [`Self::fade`] it
+    /// makes what the renderer gets.
+    far_fade: f32,
 }
 
 /// The casting lights' slots and states.
@@ -340,6 +343,37 @@ pub struct Pass {
     /// The caster grid's counts (light_shadow_casters.rs `take_grid_counts`): lamps served,
     /// candidates over them, meshes filed, those of them listed for every light.
     pub grid: [u64; 4],
+    /// Casting lights whose shadow was faded by distance, summed over the frames.
+    pub distance_faded: u64,
+}
+
+/// A light's shadow fades out over this last fraction of the reach it is chosen within (the
+/// sun's shadow distance), instead of ending at it [engineering choice: a lamp leaving the
+/// reach or coming into it no longer pops even before its time fade, [`FADE_SECS`]; Godot's
+/// lights fade their shadows out by distance the same way (from a research pass)].
+pub const DISTANCE_FADE: f32 = 0.2;
+
+/// A light's shadow strength by distance: 1 until the last [`DISTANCE_FADE`] of `reach`,
+/// then falling in a straight line to 0 at it; `gap` is the camera's distance to its
+/// light's edge.
+pub fn distance_fade(gap: f32, reach: f32) -> f32 {
+    if reach <= 0.0 {
+        return 1.0;
+    }
+    ((reach - gap) / (DISTANCE_FADE * reach)).clamp(0.0, 1.0)
+}
+
+/// `NVF_LIGHT_SHADOW_DISTANCE_FADE=0` (a measuring aid): no fade by distance, a light's
+/// shadow ends at the reach as before 2026-11-18.
+fn distance_fade_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let off = std::env::var("NVF_LIGHT_SHADOW_DISTANCE_FADE").is_ok_and(|v| v.trim() == "0");
+        if off {
+            info!("light shadows: NVF_LIGHT_SHADOW_DISTANCE_FADE=0, no fade by distance");
+        }
+        !off
+    })
 }
 
 /// The system that chooses the casting lights and switches their maps on to draw
@@ -543,7 +577,7 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
     let on = |b: bool| if b { "on" } else { "OFF" };
     let [served, candidates, filed, everywhere] = p.grid;
     format!(
-        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light)",
+        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light); distance fade ({}) {:.1} lights fading a frame",
         per(p.steps[0]),
         per(p.steps[1]),
         per(p.steps[2]),
@@ -553,7 +587,9 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
         p.step_redraws,
         on(crate::light_shadow_casters::grid_on()),
         per(served),
-        candidates as f64 / served.max(1) as f64
+        candidates as f64 / served.max(1) as f64,
+        on(distance_fade_on()),
+        per(p.distance_faded)
     )
 }
 
@@ -989,7 +1025,14 @@ fn shadow_lights(
             step: stepped(0, gap, 0.0),
             map_scale: scale,
             cut_any: false,
+            far_fade: 1.0,
         });
+        // Its shadow fades out over the last stretch of the reach (not a transient's: it is
+        // chosen within a shorter reach and lasts a moment).
+        entry.far_fade = if transient || !distance_fade_on() { 1.0 } else { distance_fade(gap, reach) };
+        if entry.far_fade < 1.0 {
+            state.pass.distance_faded += 1;
+        }
         if entry.fresh {
             // Its full redraws fall at a time of its own.
             entry.refreshed = frame.saturating_sub(entry.phase % tune.map_or(1, |t| t.refresh).max(1));
@@ -1311,9 +1354,10 @@ fn shadow_lights(
     if out.spot_capacity != state.spot_capacity {
         out.spot_capacity = state.spot_capacity;
     }
-    // The fades below 1 (a light absent casts in full).
+    // The fades below 1 (a light absent casts in full): in and out over time, times by
+    // distance.
     out.fade.clear();
-    out.fade.extend(state.lamps.iter().filter(|(_, s)| s.fade < 1.0).map(|(e, s)| (*e, s.fade)));
+    out.fade.extend(state.lamps.iter().map(|(e, s)| (*e, s.fade * s.far_fade)).filter(|(_, f)| *f < 1.0));
     removed.clear();
 
     let now = (settings.choice, points, spots);
@@ -1733,7 +1777,22 @@ mod tests {
             step: 0,
             map_scale: map_scale(512.0, 1.0),
             cut_any: false,
+            far_fade: 1.0,
         }
+    }
+
+    #[test]
+    fn a_shadow_fades_out_over_the_last_stretch_of_the_reach() {
+        let reach = 8000.0;
+        assert_eq!(distance_fade(0.0, reach), 1.0);
+        assert_eq!(distance_fade(reach * (1.0 - DISTANCE_FADE), reach), 1.0, "full up to the stretch");
+        assert!((distance_fade(reach * (1.0 - DISTANCE_FADE / 2.0), reach) - 0.5).abs() < 1e-5, "half way through it");
+        assert_eq!(distance_fade(reach, reach), 0.0, "none at the reach");
+        assert_eq!(distance_fade(reach + 100.0, reach), 0.0);
+        assert_eq!(distance_fade(100.0, 0.0), 1.0, "no reach: no fade");
+        // Falls steadily as the camera goes away.
+        let fades: Vec<f32> = (0..=20).map(|i| distance_fade(reach * 0.75 + i as f32 * 100.0, reach)).collect();
+        assert!(fades.windows(2).all(|w| w[1] <= w[0]));
     }
 
     #[test]
@@ -1806,11 +1865,12 @@ mod tests {
 
     #[test]
     fn the_performance_pass_line_gives_each_technique_a_frame() {
-        let p = Pass { cut_casters: 300, cut_marks: 20, step_redraws: 3, steps: [100, 50, 50], grid: [50, 25_000, 9000, 40] };
+        let p = Pass { cut_casters: 300, cut_marks: 20, step_redraws: 3, steps: [100, 50, 50], grid: [50, 25_000, 9000, 40], distance_faded: 250 };
         let s = pass_summary(&p, 100);
         assert!(s.starts_with("light shadows: performance pass over 100 frames: lights at steps near/mid/far 1.0/0.5/0.5 a frame;"), "{s}");
         assert!(s.contains("casters cut 3.0 a frame, marks skipped 0.20 a frame, redraws for a finer step 3"), "{s}");
         assert!(s.contains("0.50 lamps served a frame, 500 candidates each, 9000 meshes filed (40 for every light)"), "{s}");
+        assert!(s.ends_with("distance fade (on) 2.5 lights fading a frame"), "{s}");
         assert!(pass_summary(&Pass::default(), 0).contains("over 0 frames"), "no division by zero");
     }
 
