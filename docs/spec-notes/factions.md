@@ -226,20 +226,24 @@ an integer value. These are distinct from
 [GetFactionCombatReaction](https://geckwiki.com/index.php/GetFactionCombatReaction),
 which returns neutral/enemy/ally/friend codes.
 
-[hypothesis/design] The source-only modifier getter reads the existing saved
-SetFactionReaction override first, otherwise the winning record's decoded XNAM
-modifier. Missing pairs read zero. Invalid/non-FACT getter inputs read zero as a
-source mapping; native failure/default semantics are open.
-No new raw record decoder or native numeric opcode is introduced.
+[hypothesis] GetFactionReaction reports a value set by SetFactionReaction or
+ModFactionReaction in place of the record's XNAM modifier, otherwise the winning
+record's XNAM modifier, and a pair with no XNAM entry reads zero. The pages above do
+not state this precedence or the missing-pair value; neither is observed.
 
-[hypothesis/design] ModFactionReaction currently maps only finite integer-valued
-deltas representable in the existing signed 64-bit modifier storage. It adds with
-checked integer arithmetic, refusing invalid factions, fractional/nonfinite/out-of-
-range deltas or overflow before mutation. Zero adds nothing and creates no override.
-This is an explicit partial mapping, not a native range or rounding rule. The
-documented float parameter alone does not settle native fractional storage, result
-precision or rounding; those require a permitted original-game probe. Source void
-calls return the engine's ordinary zero value; native return semantics are open.
+[design] Engine design choice: invalid/non-FACT getter inputs read zero as a source
+mapping; native failure/default semantics are open. No new raw record decoder or
+native numeric opcode is introduced.
+
+[design] Engine design choice: ModFactionReaction currently maps only finite
+integer-valued deltas representable in the existing signed 64-bit modifier storage.
+It adds with checked integer arithmetic, refusing invalid factions, fractional/
+nonfinite/out-of-range deltas or overflow before mutation with an engine error. Zero
+adds nothing and creates no override. This is an explicit partial mapping, not a
+native range or rounding rule. The documented float parameter alone does not settle
+native fractional storage, result precision or rounding; those require a permitted
+original-game probe. Source void calls return the engine's ordinary zero value;
+native return semantics are open.
 
 The existing setter remains authoritative for its pair, and existing JSON snapshot
 and restore carry the same integer map. Reverse directions remain independent.
