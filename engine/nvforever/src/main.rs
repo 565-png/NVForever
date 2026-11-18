@@ -157,6 +157,7 @@ mod iron_sights;
 mod head_bob;
 mod view_sway;
 mod weapon_lower;
+mod sprint_view;
 mod setup;
 mod shadow_anchor;
 mod shadow_probe;
