@@ -2109,12 +2109,14 @@ claimed by authored CPU fixtures.
 
 #### Current-camera underwater fog handoff
 
-[hypothesis, mapped renderer timing] The water fog override is composed after the current camera transform propagates,
-before the reflection camera copies that fog. The weather/interior composition is
-shared with the ordinary sky updater. Leaving water restores its current values
-in the same turn, including weather, lighting, HDR emissive and interior-fog
-preferences changed while submerged; it does not replay a pre-entry snapshot.
-The WATR fog and light conversion remain unchanged. No HUD alpha, breath recovery,
+[design: engine render scheduling] The water fog override is composed after the current
+camera transform propagates, before the reflection camera copies that fog. The
+weather/interior composition is shared with the ordinary sky updater. Leaving water
+restores its current values in the same frame, including weather, lighting, HDR emissive
+and interior-fog preferences changed while submerged; it does not replay a pre-entry
+snapshot [hypothesis: that the original's fog returns in the frame the camera leaves the
+water; not observed in the original game]. The WATR under-water fog colour rule (§6
+"Under-water colour") is unchanged by this handoff. No HUD alpha, breath recovery,
 radiation, image modifier, or water shader policy is changed by this handoff.
 
 The prior Update override read the previous propagated camera and requested a

@@ -487,20 +487,23 @@ ends; `eye adaptation: speed S EV/s (Eye Adapt Speed E)` when the speed changes.
 https://geckwiki.com/index.php/SetImageSpaceModTrait] Traits 37–44 edit the
 cinematic multiply/add pairs; 45–46 edit blur and double vision; 47–50 edit tint RGBA.
 
-[design, mapped] For a nonanimatable modifier actually selected for the screen
-or lens, evaluate its ordinary record and then apply the current session's
+[design, mapped; engine design choice] For a nonanimatable modifier actually selected
+for the screen or lens, evaluate its ordinary record and then apply the current session's
 assigned values. Follow the existing IMAD getter and decoder: 37–38 are saturation,
 39–40 are contrast average luminance (`0x12`/`0x52` IAD), 41–42 are contrast
-(`0x13`/`0x53` IAD), and 43–44 are brightness. Tint RGBA (47–50) are all 0–255:
-divide each assigned value by 255; the getter reads TNAM alpha ×255 like its RGB
-[observed: the installed radiation controller writes 47–49 as 0–255 and 50 as
-`fEffectControl * fTintStrength * 255`, `fTintStrength` defaulting to 0.3]
+(`0x13`/`0x53` IAD), and 43–44 are brightness [hypothesis: this trait-to-field order
+is the existing getter's, not a capture of the original setter]. Tint RGBA (47–50) are
+all 0–255: divide each assigned value by 255; the getter reads TNAM alpha ×255 like its
+RGB [observed, in an installed mod, not the original game: the installed radiation
+controller writes 47–49 as 0–255 and 50 as its effect strength times its tint strength
+(default 0.3) times 255] [hypothesis: that the original getter and setter use 0–255
+for trait 50 too; no capture in the original game confirms it]
 [hypothesis: reading 50 as normalized alpha drew an opaque tint, the playtest's whole
 screen cyan in irradiated water; no isolated in-game comparison confirms it].
 Leave every unassigned component, other effect, sound, duration and track alone.
-Read only bounded fields of active modifiers; do not clone the record cache,
-mutate the load order or scan unrelated forms each frame. Nonfinite values which
-cannot be represented as finite renderer floats are left off the visual override;
+[engine design choice] Read only bounded fields of active modifiers; do not clone the
+record cache, mutate the load order or scan unrelated forms each frame. Nonfinite values
+which cannot be represented as finite renderer floats are left off the visual override;
 the existing core setter/getter state and admission policy are unchanged.
 
 [hypothesis] This maps the installed radiation controller's edit/apply/update/
