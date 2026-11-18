@@ -602,6 +602,29 @@ by eye; the speed and the AP rate the owner's].
   0.8 of it, heavy weapons and launchers 0.35, fists 0.5), faded through its own 0.3 s spring
   under the Pip-Boy or an idle. The head bob grows to 1.4 × the run's (Camera Motion) and the
   gun's bob to 1.6 × (Weapon Inertia).
+- **Side sway** (owner, 2026-11-18: "make the camera shake/rotate to the sides also but only
+  a little"; Camera Motion): the first-person view rolls up to 0.6° each way once a stride,
+  in step with the movement clip (the head bob's phase), by the sprint's share
+  (`sprint_view::SprintView::roll`, `ROLL`; a 0.12 s spring on the stride curve, a 0.5 s one
+  on Camera Motion's gate), set as the view's rotation for the frame (`Player::body_view`,
+  `sprint_view::rolled_view`). A roll about the view's own line only: the middle of the
+  screen, where the crosshair is, stays on the same point, and the heading and pitch the
+  shots and the aim use are untouched; the mouse's turn is never smoothed or delayed. No yaw:
+  any turn but a roll would move the crosshair's point off the shots' line (the head bob's
+  sideways swing is the side's motion).
+- **Heartbeat** (owner, 2026-11-18: "slower heartbeat from 40-20%, the faster one from the last
+  20%"; `sprint::Sprint::heart`, played by `heartbeat.rs`): while sprinting, and after a sprint
+  until the AP is back over 40 %, the game's low-health heartbeat loops: `UIHealthHeartbeatALP`
+  (four beats in 2.86 s, about 84 a minute: the slower) with AP under 40 % of the most
+  (`HEARTBEAT_SLOW_BELOW`), `UIHealthHeartbeatBLP` (four in 1.93 s, about 124) under 20 %
+  (`HEARTBEAT_FAST_BELOW`). AP spent by VATS alone plays none. At 0.45 of the loop's volume
+  (`heartbeat::SPRINT_VOLUME`), under the game; each comes, goes and cross-fades on a spring
+  settling in 1.5 s (`SPRINT_FADE_SECONDS`), and a loop starts at its share (`sfx`'s
+  `LoopScale` read at the start), so none clicks. The low-health heartbeat wins: while it
+  beats the faster loop stops and the slower is the health's (a sprint's slower beat rises to
+  it on the spring; from silence it starts at once, as before); never two at once. Log
+  `sprint: heartbeat slow|fast|off`. Sprint's switch (and the Global Toggle) turns it off: it is
+  a sound, not the camera, so not Camera Motion's.
 - **Third person**: the run clip plays faster by itself (the movement clips play at the body's
   speed over theirs, up to 2.5 ×; no sprint clip exists: upstream closed #2176, the data has
   none) and the body leans 4° forward about its feet (`sprint_view::lean`).
@@ -611,10 +634,12 @@ by eye; the speed and the AP rate the owner's].
   chems such as Jet, the armour's AP effects: base, modifiers and temporary changes of the
   actor value) sets how long a sprint lasts; the Action Point Regen perks (Nerves of Steel and
   the rest, `Game::ap_regen_mult`) speed the AP's return after it.
-- **Switches**: Sprint (and the Global Toggle) for the speed, the AP, the pose and the lean;
-  Camera Motion for the bigger head bob and out of breath; Weapon Inertia for the gun's bigger
+- **Switches**: Sprint (and the Global Toggle) for the speed, the AP, the pose, the lean and
+  the heartbeat; Camera Motion for the bigger head bob, the side sway and out of breath;
+  Weapon Inertia for the gun's bigger
   bob and breath. Test aids `NVF_SPRINT_SPEED` and `NVF_SPRINT_AP_PER_SECOND` replace the two
-  values for a run. Smoke: `sprint-run`, `sprint-off-original`, `sprint-trace` (not yet run).
+  values for a run. Smoke: `sprint-on`, `sprint-greyed-binding`, `sprint-run`,
+  `sprint-off-original`, `sprint-trace` (not yet run).
 
 ### 1.4a.1 The camera's bob: first person yes, third person no (owner, 2026-11-07)
 

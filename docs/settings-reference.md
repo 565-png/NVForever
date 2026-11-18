@@ -1284,7 +1284,9 @@ below cover them all.
   come back meanwhile; it ends at 0 AP); forward only, half a sprint diagonally; aiming,
   attacking, reloading, sneaking, lying down,
   over-encumbered or in water stop it, eased out. Stopping under 20 % AP leaves you out of
-  breath (shown by Camera Motion). The speed and AP perks apply to the sprint
+  breath, and sprinting the view sways a little to the sides (both shown by Camera Motion).
+  While sprinting and while the AP comes back after it, a quiet heartbeat beats: slower under
+  40 % AP, faster under 20 % (the low-health heartbeat wins). The speed and AP perks apply to the sprint
   (docs/design/player-body.md §1.4a.4).
 - Command-line switches: `--sprint`, `--no-sprint`
 - Off by default.

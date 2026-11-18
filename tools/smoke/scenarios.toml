@@ -1539,7 +1539,7 @@ name = "sprint-run"
 source = "owner 2026-11-18 (engine/nvf-play/src/sprint.rs; docs/design/player-body.md §1.4a.4): with Sprint on, Left Shift held while walking ahead sprints for AP until the AP runs out, which ends it and leaves the player fully out of breath; it starts again only after Shift is let go, and letting go ends it"
 note = "NVF_SPRINT_AP_PER_SECOND=40 drains a level-1 character's AP within a few seconds (the shipped rate is 10)"
 areas = ["player-body"]
-paths = ["engine/nvf-play/src/sprint.rs", "engine/nvf-play/src/stance.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/vats_mode.rs", "engine/nvforever/src/sprint_view.rs"]
+paths = ["engine/nvf-play/src/sprint.rs", "engine/nvf-play/src/stance.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/vats_mode.rs", "engine/nvf-play/src/heartbeat.rs", "engine/nvforever/src/sprint_view.rs"]
 env = { NVF_SPRINT_AP_PER_SECOND = "40", NVF_PLAY_TEST_MOVE = "5:1:0,22:0:0", NVF_PLAY_TEST_KEYS = "6:shift:6,18:shift:1.5" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sprint", "--head-bob"]
 run_seconds = 24
@@ -1548,6 +1548,8 @@ expect = [
   { re = 'sprint: started, \d+ of \d+ AP', label = "Shift held while walking ahead sprints" },
   { re = 'sprint: ended \(out of AP\) after [\d.]+ s, [\d.]+ AP spent, 0 of \d+ AP left', label = "the AP runs out, to 0 and not under" },
   { text = "sprint: out of breath, strength 1.00", label = "out of AP: fully out of breath" },
+  { text = "sprint: heartbeat slow", label = "under 40 % AP the slower heartbeat" },
+  { text = "sprint: heartbeat fast", label = "under 20 % AP the faster heartbeat" },
   { re = 'sprint: ended \(the control let go\)', label = "the second, short sprint ends when Shift is let go" },
   { re = 'sprint: started', count = 2, label = "two presses, two sprints: running out does not start one again while Shift stays held" },
 ]
