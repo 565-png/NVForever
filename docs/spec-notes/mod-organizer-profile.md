@@ -32,9 +32,12 @@ Keys [documented: `PathSettings`]:
 - `[Settings] overwrite_directory` — default `%BASE_DIR%/overwrite`.
 
 Values are QSettings strings: `%BASE_DIR%` is substituted, and `\\`, `\"`, `\xHH` and the
-other Qt escapes are read (the engine already had `mo2::ini_value` for this). A relative
-value is joined onto the instance folder [hypothesis: MO2 resolves relative to the same
-folder; no instance on this host sets one].
+other Qt escapes are read (the engine already had `mo2::ini_value` for this). MO2's
+substitution is all `PathSettings::resolve` does — it replaces `%BASE_DIR%` and leaves any
+other value as written [documented: `PathSettings::resolve`, `getConfigurablePath`], so a
+relative value would be relative to MO2's own working directory. NVForever instead joins a
+relative value onto the instance folder, the reading that makes a hand-written INI work
+[hypothesis: no instance on this host sets one].
 
 The profile's files are `<profiles_directory>/<name>/modlist.txt`, `plugins.txt` and
 `loadorder.txt`.

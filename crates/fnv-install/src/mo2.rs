@@ -195,7 +195,8 @@ pub fn ini_game_path(ini: &str) -> Option<PathBuf> {
 /// `%BASE_DIR%` itself defaulting to the instance's folder; the profile is
 /// `selected_profile` under `[General]`. Neither of the owner's instances sets the folders
 /// [observed: F:\Modlists\VNV and F:\Modding\MO2, 2026-11-01: `mods`, `overwrite` and
-/// `profiles` beside the INI]. A relative folder is read from the instance's folder
+/// profiles` beside the INI]. MO2 itself only substitutes `%BASE_DIR%` [documented:
+/// `PathSettings::resolve`]; a relative folder is joined onto the instance's folder here
 /// [hypothesis].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
