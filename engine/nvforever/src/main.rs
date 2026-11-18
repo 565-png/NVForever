@@ -1750,6 +1750,8 @@ fn main() -> AppExit {
     .insert_resource(screen_modifiers)
     .insert_resource(fly::AutoFly(args.auto_fly))
     .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen).with_origin(lod_origin))
+    // What each object block holds by cell (#3014, the distant objects read it).
+    .init_resource::<lod::BlockContents>()
     .insert_resource(TerrainSettings { tile: args.terrain_tile })
     // The terrain wireframe (#2149), off unless asked for: it builds nothing while off.
     .add_plugins(terrain_wireframe::TerrainWireframePlugin { on: args.terrain_wireframe })
