@@ -145,6 +145,8 @@ mod projectile_launch;
 mod projectile_launch_probe;
 #[cfg(test)]
 mod projectile_launch_tests;
+#[cfg(test)]
+mod critical_damage_hit_tests;
 
 /// The shooter's id for projectiles (the player has no hit volume).
 const PLAYER: ActorId = u64::MAX;
@@ -374,6 +376,14 @@ fn sync_condition_penalty(c: &mut Combat, script: Option<&ScriptState>) {
         // tweak's own numbers as its description gives them).
         c.tuning.explosion_inner = if t.explosion_radius_buff { 0.3 } else { 0.0 };
         c.tuning.explosion_inner_edge = 0.2;
+    }
+}
+
+/// ext-last-core.md: the same critical-damage override that scripts read must
+/// reach every direct hit, including NPC weapons and the player's modified copy.
+fn script_weapon_critical_damage(game: Option<&fnv_game::Game<'_>>, weapon: FormId, stats: &mut WeaponStats) {
+    if let Some(damage) = game.and_then(|game| game.weapon_critical_damage_override(weapon)) {
+        stats.crit_damage = damage;
     }
 }
 
@@ -4416,7 +4426,8 @@ fn melee(
         anim.swing = None;
         return;
     }
-    let w = c.player_stats(id).expect("weapon present");
+    let mut w = c.player_stats(id).expect("weapon present");
+    script_weapon_critical_damage(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), id, &mut w);
     // The clip the body timed for the swing playing; a new swing runs on the weapon's
     // own timing until the body has read its clip (the next frame).
     // The Modify Attack Speed perks (Slayer, Melee Hacker …) speed the swing as the
@@ -4977,6 +4988,7 @@ fn actor_attacks(
         // place [design: the Fists' other figures stand in for a creature's].
         let Some(id) = b.weapon.or(c.fists) else { continue };
         let Some(mut w) = c.forms.weapons.get(&id).cloned() else { continue };
+        script_weapon_critical_damage(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), id, &mut w);
         if let Some(d) = b.creature_damage {
             w.base_damage = d.round() as i32;
         }
@@ -5844,6 +5856,7 @@ fn fly(
         // The player's weapon hits with its mods' figures (weapon-mods.md §2).
         let w = if p.by.actor == FormId::PLAYER_REF { c.player_stats(id) } else { c.forms.weapons.get(&id).cloned() };
         let Some(mut w) = w else { continue };
+        script_weapon_critical_damage(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), id, &mut w);
         if let Some(s) = &shot {
             w.base_damage = s.damage.round() as i32;
         }
@@ -6856,6 +6869,29 @@ mod tests {
             assert!(a.is_empty(), "no attacker's perks");
             assert_eq!(t.names(), ["Toughness"]);
             assert!(close(blast_on(&mut g, None, FormId::PLAYER_REF).dealt, 94.0));
+        }
+
+        #[test]
+        fn source_critical_damage_changes_the_existing_hit_calculation() {
+            let f = fixture();
+            let mut g = game(&f, &[]);
+            let source = "Begin Function {}\nSetWeaponCritDamage 37 Rifle\nEnd";
+            g.run_query(source, Default::default()).unwrap();
+            for animation in ["Rifle - Automatic (2 Hand)", "One Hand Sword"] {
+                let mut weapon = WeaponStats { base_damage: 20, crit_damage: 11, crit_mult: 1.0, anim_type: Some(animation.into()), ..Default::default() };
+                let hit = |weapon: &WeaponStats| damage::hit(&Rules::defaults(), &CombatTuning::default(),
+                    &HitInput { weapon, projectiles: 1, condition: 1.0, ammo_effects: &[], part: HitPart::default(), power: 1.0 },
+                    &Attacker { sneaking: true, ..Default::default() }, &Target::default(), &NoPerks, &NoPerks, 0.0);
+                let baseline = hit(&weapon);
+                assert_eq!(baseline.crit_bonus, 11.0);
+                script_weapon_critical_damage(Some(&g), FormId(RIFLE), &mut weapon);
+                let corrected = hit(&weapon);
+                assert_eq!(corrected.crit_bonus, 37.0);
+                assert!(close(corrected.dealt - baseline.dealt, 26.0));
+                let before = weapon.clone();
+                script_weapon_critical_damage(Some(&g), FormId(LAUNCHER), &mut weapon);
+                assert_eq!(weapon.crit_damage, before.crit_damage, "another weapon has no override");
+            }
         }
 
         /// A grenade that strikes an actor deals its weapon's hit and its explosion's blast;
