@@ -1,5 +1,5 @@
 //! Modern Minimap's map picture, as its plugin (ModernMinimap.dll) draws it for the HUD's
-//! `ModernMinimap` window (docs/spec-notes/menu-xml.md §10.3; the tiles' side is
+//! `ModernMinimap` window (docs/spec-notes/menu-xml.md §11; the tiles' side is
 //! `nvf_play::tiles::modern_minimap`). Without it the window's `MapRender` image stayed the
 //! file's placeholder (`Interface\Shared\solid.dds`), a plain square under the icons.
 //!

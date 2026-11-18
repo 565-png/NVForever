@@ -1366,11 +1366,16 @@ _Frustum`) and every icon. The picture spans `_FrustumSize` (`_Frustum` 2048 /
 player. The mod's render-update handler writes `_PlrX`/`_PlrY`/`_PlrZ` and `_PlrDeg`.
 
 NVForever [design] (`nvf_play::tiles::modern_minimap`, `nvforever::minimap_render`): while
-`_Render` reads true, an orthographic camera straight down over `_PlrX`/`_PlrY` (north
-up, the world layer only, no fog, black elsewhere) renders a 1024-texel picture
-[hypothesis: `textureSize=1024`, the plugin INI's default], given to `MapRender` as the
-runtime picture `nvf:modern_minimap`, and the render's centre is written to
-`_MapOriginX`/`_MapOriginY`. The file's own tint (`systemcolor`, `brightness`) colours it.
-Open: the plugin's exact look (classic mode's shading, interiors under a ceiling 10,000
-over the player) and the INI's other settings are not read; the picture is the lit scene
-from above.
+`_Render` reads true, a camera straight down over `_PlrX`/`_PlrY` renders the picture,
+given to `MapRender` as the runtime picture `nvf:modern_minimap`, and the render's
+centre is written to `_MapOriginX`/`_MapOriginY`. The file's own tint (`systemcolor`,
+`brightness`) colours it. Engine design choices: the camera draws the world layer only
+(not the player's body or the water's own layer), without fog, clearing to black, with
+no MSAA; it draws to 20,000 units below its height over the player; when `_CameraOffset`
+does not read, it uses the file's 10,000.
+
+[hypothesis] The plugin's camera is orthographic with north up, and its picture is 1024
+texels square (`textureSize=1024`, taken to be the plugin INI's default). Neither has
+been observed in the original game. Open: the plugin's
+exact look (classic mode's shading, interiors under a ceiling 10,000 over the player)
+and the INI's other settings are not read; the picture is the lit scene from above.

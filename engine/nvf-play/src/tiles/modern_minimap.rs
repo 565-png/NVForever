@@ -1,5 +1,5 @@
 //! What Modern Minimap's map window asks of its plugin (ModernMinimap.dll) and what the
-//! plugin writes back (docs/spec-notes/menu-xml.md §10.3). The renderer
+//! plugin writes back (docs/spec-notes/menu-xml.md §11). The renderer
 //! (`nvforever::minimap_render`) draws the picture; this reads and writes the tiles.
 //!
 //! The mod's menu file names the contract in its comments [observed:
