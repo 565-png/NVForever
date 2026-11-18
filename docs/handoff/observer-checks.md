@@ -2965,6 +2965,30 @@ already talking takes over at once, same topic or another; nothing is queued or 
      whether the subtitle shows at each distance.
 
 
+## Added 2026-11-15 (Use Weapon at objects and markers, #2652)
+
+207. **How does UseWeapon aim at objects and markers?** (P1; #2652, #2715 shooter
+     half; `docs/spec-notes/use-weapon.md` section 6.) [documented: #2652 supplied record
+     facts] The Hopeville silo mainframe's ACTI OnHit ED-E block sets NVDLC04MQ01a
+     55 after its package requests one Always Hit / Do No Damage arc-welder shot;
+     the commissary terminals also wait on ED-E's hit. Capture activation and button
+     1 at the mainframe, then a commissary unlock: does OnHit receive ED-E, and where
+     does the beam land? Capture a finite script use at an XMarker: do its shots fire
+     and does ED-E resume the next package without ResetAI? In G.I. Blues, do the
+     barkers keep firing at VFSPacerBusShelterREF while their Repeat Fire package
+     holds, including during combat? [hypothesis] NVForever aims at placed position
+     plus OBND centre (marker: position alone), counts misses toward finite uses, and
+     dispatches harmless object hits with the shooter. Check that placement on an
+     asymmetric or rotated object as well. [documented: #2652 w4 supplied world refs]
+     The barkers and Pacer stand in FreesideNorthWorld, while the shelter belongs
+     to FreesideWorld; both have parent WastelandNV and share coordinates.
+     [hypothesis, #2652] NVForever treats a non-actor placed Use Weapon / UseWeapon
+     target in a sibling worldspace (same nonempty immediate parent) as coordinates
+     in the shooter's worldspace, with its OBND centre added. Capture whether the
+     barkers turn and shoot at this shelter from the fight markers, and compare an
+     unrelated-worldspace object and a sibling-worldspace actor target (neither
+     receives this projection). Pacer's cover pose is outside this check.
+
 ## Added 2026-11-15 (old-head hair outside the race list, #2714)
 
 210. **Which hair does the original use when an NPC's HAIR is outside its race's
@@ -3263,6 +3287,42 @@ already talking takes over at once, same topic or another; nothing is queued or 
      lost the player early and no dog joined. The runtime already does this
      (combat-groups.md §4). To count placed creatures in a job: walk `GetFirstRef 200 1`
      and compare `GetBaseObject`.
+225. **In a child worldspace with Use Land Data, which landscape is drawn where the child
+     has its own LAND and it differs from the parent's?** (P2; #2345;
+     `crates/fnv-world/src/index.rs` `take_parent_data`.) Tale of Two Wastelands:
+     MegatonWorld squares (-1, -7) and (1, -6), ParadiseFalls (-9, 15) and (-9, 16),
+     GNRroofWorld (flat at about 12,280 over the parent's ground at about 10,700). Stand
+     in each and read the player's z on the ground (`player.GetPos Z`): the child's
+     height or the parent's. NVForever keeps the child's own LAND and takes the parent's
+     only where the child has none. Also: per-cell water in ParadiseFalls (Use Water
+     Data), which NVForever does not take from the parent's cells.
+226. **What do SetStage and the objective functions do on a quest already completed or
+     failed?** (P2; #2958; `crates/fnv-game/src/game.rs` `set_stage`, `set_objective`.)
+     Answered [observed, base game, four jobs]: SetStage marks the stage done and runs its
+     script but does not start the quest again; SetObjectiveDisplayed and
+     SetObjectiveCompleted do nothing, even after StartQuest; CompleteAllObjectives (in
+     the stage's script) still completes. A quest stopped without being completed starts
+     again on SetStage and on SetObjectiveDisplayed (layer5-captures.md §5.8). Not
+     separated: whether CompleteAllObjectives or the stage's Complete Quest flag completed
+     the objective; FailAllObjectives; what the Pip-Boy lists for such a quest.
+
+
+## Added 2026-11-17 (SendAssaultAlarm on a faction with no member present, #2926)
+
+241. **What does `SendAssaultAlarm Player <faction>` do when no member of the faction is
+     present and alive?** (P3; #2926, crime-karma.md §3.5.) The wiki says only that it picks
+     "an NPC in the … faction" in place of the player [documented: GECK wiki
+     SendAssaultAlarm]. Ours: nobody turns and no crime is counted; the calling actor is
+     never the stand-in [hypothesis]. In Techatticup Mine, kill every raider of
+     `CaesarsLegionTechMineFaction` (0x001400F9) with the console, then free an NCR
+     hostage (`TechMineNCRHostage2REF`, button "Untie him."): log
+     `TechMineNCRHostage2REF.GetAlarmed`, `player.IsInCombat` and the hostage's combat
+     target for 10 s, and whether the second hostage's message box still opens. Then once
+     with the raiders alive: which raider turns (the nearest, the first in some order, or
+     all of them) and whether the guards at the entrance join. Ours picks the first member
+     in FormID order: TecLegionaryRaider5REF (0x0011F654) of 17 present and alive
+     [observed: our headless walkthrough techatticup-hostages-2926, #2926 probe].
+
 
 ## Added 2026-11-15 (radscorpion spacing and melee cadence, #2535)
 
