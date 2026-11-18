@@ -517,19 +517,21 @@ A locally placed surface at the same elevation can share the cell's current. Eac
 water type's wind, bounded so its crests travel downstream. Actor ripples keep their
 world position. The current changes surface appearance only.
 
-[observed, 2026-11-18] Fixed-camera captures show the light pattern on the Goodsprings
+[observed, 2026-11-18, the first pattern (two noise octaves) and a current of 40 units a
+second; not repeated since] Fixed-camera captures show the light pattern on the Goodsprings
 Source trough floor and the Boulder Beach bed above and below water at noon. At midnight
 the submerged pass stayed off. At Cottonwood Cove the surface texture travelled south
 in all 40 successive frame pairs measured on a patch projected back onto the water plane.
 
-[observed, 2026-11-18] Two fixed 1920×1080 play views at Cottonwood Cove were
+[observed, 2026-11-18, the first shadow fix (every cascade drawn every frame) and the
+first wave normals; not repeated with the shared cascades] Two fixed 1920×1080 play views at Cottonwood Cove were
 sampled 32 times each, 80 ms apart. In the view facing the opposite bank, the
 largest frame-to-frame brightness change in the water after spatial smoothing
 (Gaussian σ = 16 pixels) fell from 24.3 to 2.6 on a 0–255 scale. The buildings
 at the cove also showed less fine shimmer. Forcing the original build to redraw
 its shadow maps each frame stabilized the bank while retaining sun shadows.
 
-[observed, 2026-11-18] Four 1920×1080 release runs at the opposite-bank view on an
+[observed, 2026-11-18, the first shadow fix, since replaced] Four 1920×1080 release runs at the opposite-bank view on an
 RTX 5070 Ti used Quality sun shadows, mirrored water and Water effects. The original
 and revised binaries ran in A/B/B/A order. Median GPU time reported for the shadow
 pass across warm four-second windows was 0.08–0.09 ms on the original and
