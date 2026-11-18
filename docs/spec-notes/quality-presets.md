@@ -197,11 +197,11 @@ edits each of the nine mapped rows alone, eight seconds apart. Stage 1 required
 the thirteen summary lines, with no frame-time limits or zero-load expectations;
 the fix adds two: each preset's line shows `ini_write_attempts=1`, and 0 cell
 starts, reference attempts, world roots, visual parts and camera spawns.
-It has run on Windows only, on a loaded machine (below); Linux, the reporter's
-system, and a quiet machine before and after the fix are still unmeasured. [hypothesis, #2248] Pipeline
-compilation or presentation behavior may differ by GPU, driver and window backend;
-source inspection alone does not establish the reported Linux hitch or the cover
-becoming invisible. The repeated synchronous INI writes are present in the shared
+It has run on Windows only (below); Linux, the reporter's system, is still
+unmeasured, and so is a quiet machine before the fix. Pipeline compilation or
+presentation behavior may differ by GPU, driver and window backend [hypothesis,
+#2248]; source inspection alone does not establish the reported Linux hitch or the
+cover becoming invisible. The repeated synchronous INI writes are present in the shared
 setters [design: settings.rs `take`, `flip`, `set_slider`, `store`]. No observer
 check or gameplay choice is added.
 
@@ -213,8 +213,21 @@ and `window_changes` were 0 for every preset and row, so the held house was neit
 rebuilt nor respawned. `setter_ms` followed `ini_write_attempts`: Low 297.8 ms with 10
 writes, Medium 279.9 ms / 8, High 217.2 ms / 8, Very High 168.6 ms / 6, each row alone
 25-37 ms / 1, about 27 ms per write of `NVForever.ini` on the main thread. Low also
-asked 57 pipelines and walked 732 meshes (`range_materials` 0 for every edit:
-no material re-marked); `shadow-filter` alone asked 20 pipelines.
+asked 57 pipelines and re-marked 732 materials (`range_materials=732`): Low is the
+first edit to take the distance rows below 100%, so the house meshes that had no
+range yet got one and their pipelines were chosen again with the dither. Every
+other edit, presets and rows alike, shows `range_materials=0` (the meshes already
+had a range). `shadow-filter` alone asked 20 pipelines.
+
+**What the run after the fix measured** [observed: smoke run
+`quality-main-menu-measure` on the branch with the fix and the test-aid gate,
+2026-11-17, Windows, at about 60 fps]. Every edit shows `ini_write_attempts=1`. `setter_ms`: Low 18.5 ms, Medium
+34.4, High 36.1, Very High 36.1; each row alone 29.7-55.1 ms. Low again re-marked 732
+materials and asked 57 pipelines; every other edit 0 re-marked materials;
+`shadow-filter` again 20 pipelines. The house again was not rebuilt (all cell,
+reference, root, part, camera and window counts 0). The two runs were on differently
+loaded machines, so the drop per preset is shown by the writes (10/8/8/6 to 1), not
+by comparing their milliseconds directly.
 
 **The fix: one INI write per change** [design, #2248: settings.rs `StoreHold`]. A
 list choice (`take`, so a preset through `pick` and the test aids' numbers through
@@ -245,4 +258,6 @@ its new pipelines for the house's meshes (and shadow casters) behind the cover: 
 for a picture nobody sees. A distance row walks every house mesh (`apply_ranges`,
 `range_meshes`) but marks a material changed only for a mesh that has no
 `VisibilityRange` yet and is now to be culled (`draw_distance.rs` `apply_ranges`),
-not every mesh; the measured run shows `range_materials=0` for every edit.
+not on every change. What the runs measured is in "What the first run measured" and
+"What the run after the fix measured" above [observed]: the first edit below 100%
+(Low) re-marked 732 materials, every later edit none.
