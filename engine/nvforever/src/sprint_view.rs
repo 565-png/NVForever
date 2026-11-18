@@ -1,5 +1,4 @@
-//! Sprint's look (NVF Features › Advanced Movement › Sprint, `nvf_play::sprint`) [design:
-//! the owner 2026-11-18; every constant an engineering choice, to be judged by eye]. All of
+//! Sprint's look (NVF Features › Advanced Movement › Sprint, `nvf_play::sprint`) [design, #3000; every constant an engineering choice, to be judged by eye]. All of
 //! it follows `nvf_play::stance::StanceMotion::sprint_share`, which comes and goes on a
 //! spring, and `StanceMotion::winded`, so none of it steps.
 //!
@@ -21,7 +20,7 @@
 //!   existing breath: the view's rotation is never touched.
 //! - **Side sway** ([`SprintView::roll`], Camera Motion): the first-person view rolls up to
 //!   [`ROLL`] to each side once a stride, in step with the movement clip (the head bob's
-//!   phase), by the sprint's share [design: the owner 2026-11-18, "make the camera
+//!   phase), by the sprint's share [design, #3000; the request: "make the camera
 //!   shake/rotate to the sides also but only a little"]. A roll about the view's own line
 //!   only: the middle of the screen, where the crosshair is, stays on the same point, and the
 //!   aim and the shots (the heading and pitch) are untouched. An additive oscillation through
@@ -118,6 +117,10 @@ impl SprintView {
     /// (`on`), faded through a spring where they are not.
     pub fn pose_share(&mut self, share: f32, on: bool, dt: f32) -> f32 {
         self.gate.step(f32::from(u8::from(on)), omega_for(POSE_GATE_SECONDS), dt);
+        // Faded out, it ends at nothing, not a hair over it (as `view_sway::GAIN_FLOOR`).
+        if !on && self.gate.value < crate::view_sway::GAIN_FLOOR {
+            self.gate = Spring::REST;
+        }
         share.clamp(0.0, 1.0) * self.gate.value.clamp(0.0, 1.0)
     }
 
@@ -126,6 +129,10 @@ impl SprintView {
     /// Motion, first person, the view the player's). 0 at rest.
     pub fn roll(&mut self, phase: f32, share: f32, on: bool, dt: f32) -> f32 {
         self.roll_gate.step(f32::from(u8::from(on)), omega_for(ROLL_GATE_SECONDS), dt);
+        // Camera Motion off: once faded the view is exactly the heading and pitch's again.
+        if !on && self.roll_gate.value < crate::view_sway::GAIN_FLOOR {
+            self.roll_gate = Spring::REST;
+        }
         let a = std::f32::consts::TAU * (phase - crate::view_sway::FOOTFALL_PHASE);
         let target = ROLL * a.sin() * share.clamp(0.0, 1.0) * self.roll_gate.value.clamp(0.0, 1.0);
         self.roll.step(target, omega_for(ROLL_SETTLE_SECONDS), dt);
@@ -212,7 +219,7 @@ mod tests {
         let on: Vec<f32> = (0..60).map(|_| v.pose_share(1.0, true, DT)).collect();
         assert!(on.windows(2).all(|w| w[1] >= w[0]) && on[59] > 0.99);
         let off: Vec<f32> = (0..60).map(|_| v.pose_share(1.0, false, DT)).collect();
-        assert!(off.windows(2).all(|w| w[1] <= w[0] && w[0] - w[1] < 0.15) && off[59] < 0.01, "fades, never pops");
+        assert!(off.windows(2).all(|w| w[1] <= w[0] && w[0] - w[1] < 0.15) && off[59] == 0.0, "fades to exactly none, never pops: {}", off[59]);
         // The side sway: 0 off and at rest, within its bounds, smooth, about the view's line.
         let mut v = SprintView::default();
         for f in 0..300 {
@@ -229,7 +236,7 @@ mod tests {
         assert!(rolls.windows(2).all(|w| (w[1] - w[0]).abs() < 0.2 * ROLL), "no step: about the stride curve's own speed");
         // Switched off part-way: it fades, no step.
         let off: Vec<f32> = (0..120).map(|f| v.roll((f as f32 / 42.0).fract(), 1.0, false, DT)).collect();
-        assert!(off.windows(2).all(|w| (w[1] - w[0]).abs() < 0.2 * ROLL) && off[119].abs() < 0.01 * ROLL);
+        assert!(off.windows(2).all(|w| (w[1] - w[0]).abs() < 0.2 * ROLL) && off[119] == 0.0, "faded to exactly none: {}", off[119]);
         // The rolled view looks along the same line: the crosshair's point stays.
         for (h, p) in [(0.0, 0.0), (1.2, 0.4), (-2.5, -0.7)] {
             let line = |r: f32| nvf_play::space::view_rotation(rolled_view(h, p, r)) * Vec3::NEG_Z;
