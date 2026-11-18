@@ -113,6 +113,9 @@ https://geckwiki.com/index.php?title=GetWeaponCritDamage].
 hit calculations, for player and NPC attacks alike. The getter and combat read the
 same session override; no second setter store or extra per-frame weapon scan is
 needed. The existing setter's receiver and argument admission are retained.
+[hypothesis] That the original game's hits use the changed value on every one of
+these paths (player and NPC melee, player and NPC projectiles) is inferred from
+the documented base-form change, not observed.
 
 [documented: `schemas/fnv/objects.json`, WEAP CRDT] The accepted data model holds
 critical damage in an unsigned 16-bit field. [design] Preserve the accepted setter's
@@ -128,8 +131,10 @@ function documentation or accepted catalogue. Keep its registration open pending
 an original-game command-identity capture; identity alone will not establish wire
 encoding. This note does not import FOSE opcode numbers into New Vegas.
 
-[design] Overrides retain the existing session lifetime: save/load resets them.
-[hypothesis] Native persistence and temporary-clone inheritance need separate
+[design] Overrides retain this module's existing session lifetime: save/load
+resets them, and a weapon clone without its own override reads its source
+weapon's. [hypothesis] Whether the original saves the change, and whether a
+temporary clone inherits it, need separate
 captures. Core source execution, engine hit calculation, native captures and real
 installed-mod acceptance are separate validation states.
 
@@ -147,10 +152,12 @@ player-zero behavior.
 `DisableHardcoreTracking` (alias `babby`) permanently invalidates the playthrough's
 always-Hardcore eligibility. [design] It sets the existing saved
 `PlayerState::hardcore_was_off` field, consumed by `IsAlwaysHardcore`; repeated calls
-are idempotent. It does not turn off Hardcore mode or toggle needs accumulation.
-The eligibility state survives a serialized snapshot and cannot be restored by
-calling `SetHardcore 1`. This is separate from `ToggleHardcoreTracking` and
-`GetHardcoreTracking`, whose existing needs-tracking switch is unchanged.
+are idempotent. The eligibility state survives a serialized snapshot and cannot be
+restored by calling `SetHardcore 1` (the documented "permanently").
+[hypothesis] It does not turn off Hardcore mode or toggle needs accumulation; the
+documentation describes only the eligibility flag. It returns 0.
+This is separate from `ToggleHardcoreTracking` and `GetHardcoreTracking`, whose
+existing needs-tracking switch is unchanged.
 
 [hypothesis] Receiver quirks, exact native return values and native command/condition
 encoding remain capture work. Source compiler support is exercised independently
