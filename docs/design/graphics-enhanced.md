@@ -382,6 +382,20 @@ Source trough floor and the Boulder Beach bed above and below water at noon. At 
 the submerged pass stayed off. At Cottonwood Cove the surface texture travelled south
 in all 40 successive frame pairs measured on a patch projected back onto the water plane.
 
+[observed, 2026-11-18] Two fixed 1920×1080 play views at Cottonwood Cove were
+sampled 32 times each, 80 ms apart. In the view facing the opposite bank, the
+largest frame-to-frame brightness change in the water after spatial smoothing
+(Gaussian σ = 16 pixels) fell from 24.3 to 2.6 on a 0–255 scale. The buildings
+at the cove also showed less fine shimmer. Forcing the original build to redraw
+its shadow maps each frame stabilized the bank while retaining sun shadows.
+
+[observed, 2026-11-18] Four 1920×1080 release runs at the opposite-bank view on an
+RTX 5070 Ti used Quality sun shadows, mirrored water and Water effects. The original
+and revised binaries ran in A/B/B/A order. Median GPU time reported for the shadow
+pass across warm four-second windows was 0.08–0.09 ms on the original and
+0.22–0.26 ms on the revision. Whole-frame times varied enough that the two pairs
+gave opposite signs for the difference.
+
 [observed, 2026-11-18, initial water effect before the depth and pattern revision] Release explorer, RTX 5070 Ti, Vulkan, 1280x720, desktop streaming
 active. At each fixed camera `--log-frame-times 5 --graphics-cycle
 "vanilla;water-effects;water-effects;vanilla"` alternated five-second periods. After the
