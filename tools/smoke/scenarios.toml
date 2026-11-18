@@ -1450,8 +1450,8 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_P
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 16
 expect = [
-  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, movement-weight, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, sprint, , [NVF Features > Visual Only]", label = "the Global Toggle, Movement Weight, an empty line, Gameplay with Sprint last (owner 2026-11-18), an empty line, Visual Only, in the owner's order (the window shows 11 lines since the menu overhaul, #2804; settings-layout places the rest)" },
-  { re = 'pause menu: inspect: NVF Features, .*lines 1-11 of 17', label = "seventeen lines in the tab: Sprint, then Visual Only, then World Interaction's grass fires (#2804)" },
+  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, movement-weight, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, sprint", label = "the Global Toggle, Movement Weight, an empty line, Gameplay with Sprint last (owner 2026-11-18), in the owner's order (the window shows 11 lines since the menu overhaul, #2804; settings-layout places the rest)" },
+  { re = 'pause menu: inspect: NVF Features, .*lines 1-\d+ of 25', label = "twenty-five lines in the tab (nine drawn at once in the run of 2026-11-18): Sprint, then Visual Only, World Interaction's grass fires (#2804) and Quick Loot's eight (#2935); main has 24" },
 ]
 
 [[scenario]]
@@ -1547,9 +1547,10 @@ expect = [
 [[scenario]]
 name = "sprint-on"
 source = "owner 2026-11-18 (engine/nvf-play/src/stance.rs, engine/nvf-play/src/bindings.rs Bindings::effective; docs/design/player-body.md §1.4a.3): Sprint switched on from the command line is logged on, and while Sprint holds Left Shift Run acts on X (never saved)"
-note = "the switch and the keys only: sprint-run and sprint-trace check the sprint itself"
+note = "the switch and the keys only: sprint-run and sprint-trace check the sprint itself. A test aid (NVF_PLAY_TEST_SCRIPT_MENUS) makes it an unattended run, which reads no INI, so the defaults hold: without one the run read the player's own NVForever.ini (its switches and Run's key) and the expectations could not hold"
 areas = ["player-body", "settings"]
 paths = ["engine/nvf-play/src/stance.rs", "engine/nvf-play/src/bindings.rs", "engine/nvf-play/src/inertia.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--sprint"]
 run_seconds = 8
 expect = [
@@ -1576,10 +1577,10 @@ forbid = [
 [[scenario]]
 name = "sprint-run"
 source = "owner 2026-11-18 (engine/nvf-play/src/sprint.rs; docs/design/player-body.md §1.4a.4): with Sprint on, Left Shift held while walking ahead sprints for AP until the AP runs out, which ends it and leaves the player fully out of breath; it starts again only after Shift is let go, and letting go ends it"
-note = "NVF_SPRINT_AP_PER_SECOND=40 drains a level-1 character's AP within a few seconds (the shipped rate is 10)"
+note = "NVF_SPRINT_AP_PER_SECOND=40 drains a level-1 character's AP within a few seconds (the shipped rate is 10). The second press is half a second (20 AP): about 48 AP have come back by then (the run of 2026-11-18), so a longer one ran out of AP before Shift was let go"
 areas = ["player-body"]
 paths = ["engine/nvf-play/src/sprint.rs", "engine/nvf-play/src/stance.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/vats_mode.rs", "engine/nvf-play/src/heartbeat.rs", "engine/nvforever/src/sprint_view.rs"]
-env = { NVF_SPRINT_AP_PER_SECOND = "40", NVF_PLAY_TEST_MOVE = "5:1:0,22:0:0", NVF_PLAY_TEST_KEYS = "6:shift:6,18:shift:1.5" }
+env = { NVF_SPRINT_AP_PER_SECOND = "40", NVF_PLAY_TEST_MOVE = "5:1:0,22:0:0", NVF_PLAY_TEST_KEYS = "6:shift:6,18:shift:0.5" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sprint", "--head-bob"]
 run_seconds = 24
 expect = [
