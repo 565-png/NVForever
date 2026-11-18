@@ -9,18 +9,20 @@ use fnv_sim::FormId;
 /// bounds (a marker), aim at the position itself [hypothesis: observer check 207].
 /// [hypothesis, #2652] Non-actors in sibling worldspaces share coordinates, as in
 /// `fnv_ai::goal::weapon_target_place`; unrelated-world objects have no aim point.
+/// [design, #2782 review] An actor target has no aim point here: a drawn one comes from
+/// the shooter's `places` (its posed chest), and one not drawn (unloaded cell, another
+/// interior or worldspace) is left to the ordinary attacks, as before #2652, so
+/// `acts_on` never hands the fight to a shooter whose target it can neither face nor see.
 pub(crate) fn target_place(game: &Game, shooter: FormId, target: FormId) -> Option<(V3, V3)> {
     if !game.present(target) || game.extra.get(&target).is_some_and(|e| e.dead) {
         return None;
     }
     let base = fnv_game::functions::base_of(game, target);
-    let at = if base.is_some_and(|b| fnv_game::ai::is_actor_base(game.world.forms, b)) {
-        // [design, #2652] Preserve the existing undrawn-actor fallback.
-        fnv_ai::goal::place_of_ref(game, target)?
-    } else {
-        let space = fnv_ai::goal::place_of_ref(game, shooter)?.space;
-        fnv_ai::goal::weapon_target_place(game, target, space)?
-    };
+    if base.is_some_and(|b| fnv_game::ai::is_actor_base(game.world.forms, b)) {
+        return None;
+    }
+    let space = fnv_ai::goal::place_of_ref(game, shooter)?.space;
+    let at = fnv_ai::goal::weapon_target_place(game, target, space)?;
     let feet = at.pos;
     let mut aim = feet;
     if let Some(bounds) = base.and_then(|b| game.data.object_bounds.get(&b)) {

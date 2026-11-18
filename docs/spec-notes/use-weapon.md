@@ -111,6 +111,8 @@ never attack [documented: catalogue notes on SetRestrained].
   original behavior and aim placement.
 - [design, #2652; `engine/nvforever/src/use_weapon/targets.rs`] NVForever keeps drawn
   actor aim unchanged and resolves other present references from moved/placed positions.
+  An actor target that is not drawn gets no aim point (#2782 review): the use waits and
+  the ordinary attacks keep the actor, as before #2652.
   It adds the base OBND centre when available, otherwise fires toward the position
   itself [hypothesis: aim placement pending observer check 207]. Collision and hit
   dispatch stay on the existing object path; the shot count, rather than collision,

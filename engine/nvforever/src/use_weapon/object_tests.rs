@@ -43,7 +43,7 @@ fn fixture_in_worlds(kind: &[u8; 4], bounds: Option<[i16; 6]>, parents: Option<[
     let bump = set(var(b's', 1), ex(&[var(b's', 1), a("1"), a("+")]));
     let code = unit(0, &script(&[(event::ON_HIT, Some(parameter), bump)]), &[(1, "hits", 1)], &[SHOOTER.0]);
     let shooter = placed(b"ACHR", SHOOTER.0, 0x807, [0.0; 3]);
-    let target = placed(b"REFR", TARGET.0, BASE, [0.0, 500.0, 0.0]);
+    let target = placed(if kind == b"CREA" { b"ACRE" } else { b"REFR" }, TARGET.0, BASE, [0.0, 500.0, 0.0]);
     let cell = |id: u32, refs: &[u8]| [record(b"CELL", 0, id, &[]), group(id.to_le_bytes(), 6, &group(id.to_le_bytes(), 9, refs))].concat();
     let cells = if let Some(parents) = parents {
         let worlds: Vec<u8> = parents.into_iter().enumerate().flat_map(|(i, parent)| {
@@ -216,4 +216,24 @@ fn fallback_tracks_moved_references_and_rejects_dead_disabled_or_missing_targets
     g.world.set_enabled(TARGET, false).unwrap();
     assert!(target_place(g, SHOOTER, TARGET).is_none());
     assert!(target_place(g, SHOOTER, FormId(0xFFFF)).is_none());
+}
+
+/// [design, #2782 review] An actor target that is not drawn has no aim point: the
+/// shooter does not fire, nothing counts as fired, and `acts_on` stays false so the
+/// ordinary attacks keep the actor (#2145 review: never held with neither acting).
+#[test]
+fn undrawn_actor_target_gets_no_shots_and_leaves_the_fight_to_the_ordinary_attacks() {
+    let mut world = fixture(b"CREA", Some([-20, -20, 0, 20, 20, 100]));
+    {
+        let script = world.resource::<ScriptState>();
+        let g = &script.rt.as_ref().unwrap().game;
+        assert!(g.present(TARGET), "the actor is enabled and alive");
+        assert!(target_place(g, SHOOTER, TARGET).is_none(), "no aim point for an actor not drawn");
+    }
+    start(&mut world, true);
+    assert!(fire(&mut world).is_empty());
+    let script = world.resource::<ScriptState>();
+    let use_ = script.rt.as_ref().unwrap().game.weapon_use(SHOOTER).unwrap();
+    assert_eq!(use_.fired, 0);
+    assert!(!acts_on(use_, target_place(&script.rt.as_ref().unwrap().game, SHOOTER, TARGET).is_some()));
 }
