@@ -1,4 +1,4 @@
-//! The desert haze (`desert-haze`, docs/design/graphics-enhanced.md §3.14, #2675): an
+//! The desert haze (`desert-haze`, docs/design/graphics-enhanced.md §3.15, #2675): an
 //! enhanced-look switch, off by default and in every preset, never a parity item. A thin
 //! dust haze is added on top of the weather's own distance fog (fog.rs), thicker with
 //! distance and toward the ground, warmer toward the sun, as far as that weather's fog
@@ -477,7 +477,7 @@ fn update_haze(
     let d = density(near, far, power, strength, wind, multiplier);
     let far_now = effective_far(near, far);
     let up = smoothstep(0.0, SUN_RISE_DEG, sky.sun_elevation());
-    let target = sun_target(sky.fog_color(), sky.color(ColorType::Sunlight), up);
+    let target = sun_target(sky.color(ColorType::Fog), sky.color(ColorType::Sunlight), up);
 
     // The base height: the ground under the camera, smoothed.
     let cam = crate::world::bevy_to_game(cam_t.translation);
