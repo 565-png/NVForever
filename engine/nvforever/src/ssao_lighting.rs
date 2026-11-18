@@ -264,7 +264,8 @@ mod tests {
                 assert!(!lighting.contains("nvf_ao_debug"), "{case}: no debug view in the lighting itself");
                 // The lamps: the factor formed once, then taken by the point and spot lights
                 // without a shadow, never by the directional lights.
-                assert_eq!(lighting.matches("let nvf_ao_lamps = nvf_lamp_visibility(in.frag_coord.xy, -view_z);").count(), usize::from(on), "{case}");
+                assert_eq!(lighting.matches("let nvf_ao_lamps = nvf_lamp_visibility(nvf_ao_ambient);").count(), usize::from(on), "{case}");
+                assert_eq!(lighting.matches("let nvf_ao_ambient = nvf_ambient_visibility(in.frag_coord.xy, -view_z);").count(), usize::from(on), "{case}: the texels are read once a fragment");
                 assert_eq!(lighting.matches("* select(nvf_ao_lamps, 1.0,").count(), if on { 2 } else { 0 }, "{case}");
                 assert_eq!(lighting.matches("if nvf_display { nvf_direct += nvf_point_display(").count(), 1, "{case}: one point line");
                 assert_eq!(lighting.matches("if nvf_display { nvf_direct += nvf_spot_display(").count(), 1, "{case}: one spot line");
@@ -275,8 +276,9 @@ mod tests {
                 assert_eq!(post.matches("if nvf_ao_debug() {").count(), usize::from(on), "{case}: the debug view at the end");
                 if on {
                     let at = |s: &str| lighting.find(s).unwrap_or_else(|| panic!("{case}: {s}"));
-                    assert!(at("let view_z") < at("* nvf_ambient_visibility("), "{case}: view_z before the ambient line");
-                    assert!(at("* nvf_ambient_visibility(") < at("    // Total light\n"), "{case}");
+                    assert!(at("let view_z") < at("= nvf_ambient_visibility("), "{case}: view_z before the factor is read");
+                    assert!(at("= nvf_ambient_visibility(") < at("* nvf_ao_ambient;"), "{case}: the factor is read before the ambient line takes it");
+                    assert!(at("* nvf_ao_ambient;") < at("    // Total light\n"), "{case}");
                     assert!(at("let view_z") < at("let nvf_ao_lamps") && at("let nvf_ao_lamps") < at("    // Point lights (direct)\n"), "{case}: formed after view_z, before the loops");
                     let point = at("nvf_point_display(light_id, in.world_position.xyz, in.N) * shadow * select(");
                     let spot = at("nvf_spot_display(light_id, in.world_position.xyz, in.N) * shadow * select(");
@@ -303,7 +305,7 @@ mod tests {
         }
         assert_eq!(rows(lighting_view_z), rows(debug_view_z));
         let wesl = wesl();
-        for f in ["fn nvf_ambient_visibility(frag: vec2<f32>, dist: f32) -> f32", "fn nvf_ao_debug() -> bool", "fn nvf_lamp_visibility(frag: vec2<f32>, dist: f32) -> f32"] {
+        for f in ["fn nvf_ambient_visibility(frag: vec2<f32>, dist: f32) -> f32", "fn nvf_ao_debug() -> bool", "fn nvf_lamp_visibility(g: f32) -> f32"] {
             assert!(wesl.contains(f), "ssao_lighting.wesl has {f}");
         }
         // The shadow condition the lamps' lines test is bevy_pbr's own for looking the
@@ -520,7 +522,7 @@ mod tests {
     #[test]
     fn the_lamps_take_the_ambient_factor_by_their_weight() {
         let wesl = wesl();
-        assert!(wesl.contains("let w = clamp(nvf_ao.extra.y, 0.0, 1.0);") && wesl.contains("return mix(1.0, nvf_ambient_visibility(frag, dist), w);"));
+        assert!(wesl.contains("let w = clamp(nvf_ao.extra.y, 0.0, 1.0);") && wesl.contains("return mix(1.0, g, w);"));
         let tex = Texels::plane(4, 4, 0.6, 300.0);
         let at = |w: f32| lamps(&tex, Vec2::new(2.5, 2.5), 300.0, &AmbientOcclusionLightingUniform::new(EXPONENT, 7000.0, 0.4, w, false));
         let g = upsample(&tex, Vec2::new(2.5, 2.5), 300.0, &uniform());

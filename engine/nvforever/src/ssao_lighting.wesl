@@ -85,13 +85,14 @@ fn nvf_ambient_visibility(frag: vec2<f32>, dist: f32) -> f32 {
 }
 
 // The factor on the light of lamps (point and spot lights) that cast no shadow at this
-// fragment: mix(1, g, w), g the ambient's factor (`nvf_ambient_visibility`, the same display
-// value scale as the lamps' part of the sum), w the uniform's weight. Exactly 1, with no
-// texture read, while the weight is 0. Never on the directional lights.
-fn nvf_lamp_visibility(frag: vec2<f32>, dist: f32) -> f32 {
+// fragment: mix(1, g, w), g the ambient's factor as the caller already has it from
+// `nvf_ambient_visibility` (so the texels are read once a fragment; the same display value
+// scale as the lamps' part of the sum), w the uniform's weight. Exactly 1 while the weight
+// is 0. Never on the directional lights.
+fn nvf_lamp_visibility(g: f32) -> f32 {
     let w = clamp(nvf_ao.extra.y, 0.0, 1.0);
     if !(w > 0.0) {
         return 1.0;
     }
-    return mix(1.0, nvf_ambient_visibility(frag, dist), w);
+    return mix(1.0, g, w);
 }

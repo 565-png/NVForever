@@ -24,19 +24,22 @@ pub const AMBIENT_LINE_HOOKED: &str = "        // NVForever ambient occlusion (n
         @if(!NVF_AMBIENT_OCCLUSION)
         let nvf_ambient = view_bindings::lights.ambient_color.rgb * view_bindings::view.exposure * diffuse_occlusion;
         @if(NVF_AMBIENT_OCCLUSION)
-        let nvf_ambient = view_bindings::lights.ambient_color.rgb * view_bindings::view.exposure * diffuse_occlusion * nvf_ambient_visibility(in.frag_coord.xy, -view_z);
+        let nvf_ambient = view_bindings::lights.ambient_color.rgb * view_bindings::view.exposure * diffuse_occlusion * nvf_ao_ambient;
 ";
 
 /// The start of `apply_pbr_lighting`'s point light loop, after `view_z` is declared.
 pub const LAMP_ANCHOR: &str = "    // Point lights (direct)\n";
 
-/// Once per fragment, before the light loops: the factor on the light of lamps that cast no
-/// shadow here (`NVF_PLAY_DEBUG_AO_LAMPS`), `mix(1, g, w)` with g the ambient's factor; 1,
-/// with no texture read, while the weight is 0.
-pub const LAMP_TEXT: &str = "    // NVForever ambient occlusion (nvforever ssao_lighting.rs): the factor on the light of
-    // lamps that cast no shadow here (1 while NVF_PLAY_DEBUG_AO_LAMPS is 0).
+/// Once per fragment, before the light loops: the ambient's factor (the one read of the
+/// occlusion texture; the ambient line below uses it) and from it the factor on the light of
+/// lamps that cast no shadow here (`NVF_PLAY_DEBUG_AO_LAMPS`), `mix(1, g, w)`.
+pub const LAMP_TEXT: &str = "    // NVForever ambient occlusion (nvforever ssao_lighting.rs): the ambient's factor, read
+    // once, and from it the factor on the light of lamps that cast no shadow here (1 while
+    // NVF_PLAY_DEBUG_AO_LAMPS is 0).
     @if(NVF_AMBIENT_OCCLUSION)
-    let nvf_ao_lamps = nvf_lamp_visibility(in.frag_coord.xy, -view_z);
+    let nvf_ao_ambient = nvf_ambient_visibility(in.frag_coord.xy, -view_z);
+    @if(NVF_AMBIENT_OCCLUSION)
+    let nvf_ao_lamps = nvf_lamp_visibility(nvf_ao_ambient);
 
 ";
 
