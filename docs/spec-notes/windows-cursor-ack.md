@@ -24,6 +24,9 @@ not switch desktops or infer which requirement failed.
 
 ## Engine transaction
 
+Every `[design]` item in this note is an engine design choice (ownership, bounds,
+timeouts, schedule order), not a claim about the original game or its plugins.
+
 [design] Windows script requests transfer into an entity-owned request/receipt,
 with a new identity for every explicit request, including identical coordinates.
 Submission never changes Window or the backend cache. At the existing main-thread
