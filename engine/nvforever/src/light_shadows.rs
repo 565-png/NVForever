@@ -275,6 +275,14 @@ struct LampState {
     fade: f32,
     /// No longer chosen: held, not drawn, while its fade falls to 0.
     leaving: bool,
+    /// Its step of detail by distance ([`STEPS`]), and its maps' texels across a unit at a
+    /// unit's distance ([`map_scale`]): together the size under which a caster is left out
+    /// of its maps ([`cut_off`]).
+    step: u8,
+    map_scale: f32,
+    /// A caster was left out of its maps since the light last stepped to finer detail: a
+    /// step finer draws its maps again so that caster comes back.
+    cut_any: bool,
 }
 
 /// The casting lights' slots and states.
@@ -314,6 +322,21 @@ struct LampShadowState {
     skeletons_at: EntityHashMap<(Vec3, Vec3, u64)>,
     frames: u64,
     since: f32,
+    /// The performance pass's counts since the last summary ([`Pass`]).
+    pass: Pass,
+}
+
+/// What the performance pass's techniques did since the last summary (its own 10-s line).
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct Pass {
+    /// Casters left out of a drawing light's lists by the small-caster cut-off ([`cut_off`]).
+    pub cut_casters: u64,
+    /// Marks of a moved shape or skeleton on a light it is under the cut-off for, skipped.
+    pub cut_marks: u64,
+    /// Full redraws for a light stepping to finer detail with casters cut before.
+    pub step_redraws: u64,
+    /// Casting lights at each step, summed over the frames.
+    pub steps: [u64; 3],
 }
 
 pub struct LightShadowsPlugin(pub LightShadowMode);
@@ -503,6 +526,23 @@ pub fn systems_summary(ns: &[u64; 4], max: &[u64; 4], frames: u64) -> String {
     format!("game systems ms a frame mean/max: {}", parts.join(", "))
 }
 
+/// The performance pass's line of the 10-s summary: what each technique did, a frame over
+/// `frames` frames, and which are switched off by their test aids.
+pub fn pass_summary(p: &Pass, frames: u64) -> String {
+    let per = |n: u64| n as f64 / frames.max(1) as f64;
+    let on = |b: bool| if b { "on" } else { "OFF" };
+    format!(
+        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}",
+        per(p.steps[0]),
+        per(p.steps[1]),
+        per(p.steps[2]),
+        on(cutoff_on()),
+        per(p.cut_casters),
+        per(p.cut_marks),
+        p.step_redraws
+    )
+}
+
 /// The lowest slot not in `used`.
 pub fn free_slot(used: impl Iterator<Item = u32>) -> u32 {
     let mut taken: Vec<u32> = used.collect();
@@ -533,24 +573,43 @@ fn faces_reached(sphere: &Sphere, cube: Option<&CubemapFrusta>, spot: Option<&Fr
     cube.frusta.iter().enumerate().fold(0, |m, (i, f)| if skip & (1 << i) == 0 && f.intersects_sphere(sphere, true) { m | 1 << i } else { m })
 }
 
+/// What [`mark_sphere`] found: whether the caster reached any lamp's sphere, whether it
+/// marked (or lies in) any face, and on how many lamps it was under the cut-off and marked
+/// nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Marked {
+    pub reached: bool,
+    pub marked: bool,
+    pub cut: u32,
+}
+
 /// Mark the faces of the `candidates` (indices into `lamps`, with `frusta` alongside) a
-/// caster's sphere reaches. Whether it reached any lamp's sphere, and whether it marked (or
-/// lies in) any face. A lamp that draws in full anyway (it never drew, or every face is
-/// marked) is not tested face by face, nor is a face already marked.
+/// caster's sphere reaches. A lamp that draws in full anyway (it never drew, or every face
+/// is marked) is not tested face by face, nor is a face already marked. With `cut` (the
+/// small-caster cut-off on), a caster under a lamp's cut-off where it is now and where it
+/// last marked (`old`; none for one shown, hidden or new) marks nothing on that lamp: it is
+/// not in its maps.
 fn mark_sphere(
     sphere: &Sphere,
+    old: Option<&Sphere>,
+    cut: bool,
     candidates: impl Iterator<Item = usize>,
     lamps: &[Lamp],
     frusta: &[(Option<CubemapFrusta>, Option<Frustum>)],
     states: &mut EntityHashMap<LampState>,
-) -> (bool, bool) {
-    let (mut reached, mut marked) = (false, false);
+) -> Marked {
+    let (mut reached, mut marked, mut cuts) = (false, false, 0);
     for i in candidates {
         let l = &lamps[i];
         if !reaches(l.at, l.range, sphere) {
             continue;
         }
         reached = true;
+        let below = |s: &Sphere| cut_off(s.radius, Vec3::from(s.center).distance(l.at), l.map_scale, l.step);
+        if cut && below(sphere) && old.is_none_or(below) {
+            cuts += 1;
+            continue;
+        }
         let Some(s) = states.get_mut(&l.entity) else { continue };
         let (cube, spot) = (frusta[i].0.as_ref(), frusta[i].1.as_ref());
         if l.spot {
@@ -566,7 +625,59 @@ fn mark_sphere(
             s.dirty |= faces_reached(sphere, cube, spot, s.dirty & ALL_FACES);
         }
     }
-    (reached, marked)
+    Marked { reached, marked, cut: cuts }
+}
+
+/// The camera's distance to a light's edge (game units) where its maps step down in
+/// detail: within the first, step 0 (the room around the player, [`NEAR`]); past it step 1;
+/// past the second, step 2 [engineering choice: the next room or street, and beyond].
+pub const STEPS: [f32; 2] = [NEAR, 2.0 * NEAR];
+
+/// A light moves to a coarser step once it is this fraction beyond the step's distance, and
+/// back to a finer one this fraction within it [engineering choice: walking back and forth
+/// over a step's distance does not switch the step, nor draw the maps again, each time].
+pub const STEP_HYSTERESIS: f32 = 0.1;
+
+/// Per step, the size (across, in texels of the light's map) under which a caster is left
+/// out of a light's map ([`cut_off`]) [engineering choice: at step 0 only what covers less
+/// than a texel, which the map cannot show anyway; a farther light is seen from farther
+/// away, so a texel of its map covers fewer pixels on screen. Unreal's
+/// r.Shadow.RadiusThreshold culls small casters by their projected size too (from a
+/// research pass, not checked against its code)].
+pub const CUTOFF_TEXELS: [f32; 3] = [1.0, 2.0, 4.0];
+
+/// A light's step of detail for `gap` (the camera's distance to its light's edge), starting
+/// from `current`, with hysteresis `h` (a fraction of each step's distance; 0: none).
+pub fn stepped(current: u8, gap: f32, h: f32) -> u8 {
+    let coarser = STEPS.iter().filter(|b| gap > **b * (1.0 + h)).count() as u8;
+    let finer = STEPS.iter().filter(|b| gap > **b * (1.0 - h)).count() as u8;
+    current.clamp(coarser, finer)
+}
+
+/// A map's texels across one unit at one unit's distance: its side over the tangent of half
+/// its field of view (1 for a cube face).
+pub fn map_scale(side: f32, half_fov_tan: f32) -> f32 {
+    side / half_fov_tan.max(1.0e-3)
+}
+
+/// Whether a caster's sphere (`radius`, `distance` from the light) covers less than its
+/// step's [`CUTOFF_TEXELS`] across in a map of `scale` ([`map_scale`]).
+pub fn cut_off(radius: f32, distance: f32, scale: f32, step: u8) -> bool {
+    let texels = radius * scale / distance.max(1.0);
+    texels < CUTOFF_TEXELS[usize::from(step.min(2))]
+}
+
+/// `NVF_LIGHT_SHADOW_CUTOFF=0` (a measuring aid): no small-caster cut-off; every caster
+/// Bevy finds is drawn and marks the maps, as before 2026-11-18.
+fn cutoff_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let off = std::env::var("NVF_LIGHT_SHADOW_CUTOFF").is_ok_and(|v| v.trim() == "0");
+        if off {
+            info!("light shadows: NVF_LIGHT_SHADOW_CUTOFF=0, no small-caster cut-off");
+        }
+        !off
+    })
 }
 
 /// The largest scale along a transform's axes (no decomposition into a rotation).
@@ -748,6 +859,9 @@ struct Lamp {
     seen: bool,
     gap: f32,
     transient: bool,
+    /// Its step of detail and map scale ([`LampState::step`]).
+    step: u8,
+    map_scale: f32,
 }
 
 /// Choose the lights that cast, mark what changed in their maps, choose which draw this
@@ -836,11 +950,18 @@ fn shadow_lights(
             continue;
         }
         let is_point = point.is_some();
+        // A spot light's map spans its cone at the sun's side; a cube face 90 degrees at the
+        // cube's side.
+        let scale = match &spot {
+            Some(s) if !is_point => map_scale(directional.as_ref().map_or(2048, |d| d.size) as f32, s.outer_angle.tan()),
+            _ => map_scale(cube.size as f32, 1.0),
+        };
         let range = point.map(|p| p.range).or(spot.map(|s| s.range)).unwrap_or(0.0);
         let transient = transients.contains(&e);
         if transient && !state.lamps.contains_key(&e) {
             state.transients_cast += 1;
         }
+        let gap = at.map_or(0.0, |a| (t.translation().distance(a) - range).max(0.0));
         let entry = state.lamps.entry(e).or_insert(LampState {
             dirty: 0,
             fresh: true,
@@ -851,6 +972,9 @@ fn shadow_lights(
             spot: !is_point,
             fade: 0.0,
             leaving: false,
+            step: stepped(0, gap, 0.0),
+            map_scale: scale,
+            cut_any: false,
         });
         if entry.fresh {
             // Its full redraws fall at a time of its own.
@@ -861,11 +985,20 @@ fn shadow_lights(
             entry.leaving = false;
             entry.dirty = ALL_FACES;
         }
+        // Its step of detail, with hysteresis; a step finer draws its maps again in full when
+        // a caster was cut from them, so it comes back.
+        let step = stepped(entry.step, gap, STEP_HYSTERESIS);
+        if step < entry.step && entry.cut_any && cutoff_on() {
+            entry.dirty = ALL_FACES;
+            entry.cut_any = false;
+            state.pass.step_redraws += 1;
+        }
+        (entry.step, entry.map_scale) = (step, scale);
+        state.pass.steps[usize::from(step.min(2))] += 1;
         assign_slot(if is_point { &mut state.slots } else { &mut state.spot_slots }, e);
-        let gap = at.map_or(0.0, |a| (t.translation().distance(a) - range).max(0.0));
         // A transient was chosen only if the camera sees it this frame (a new light's
         // `ViewVisibility` is still false).
-        lamps.push(Lamp { entity: e, at: t.translation(), range, spot: !is_point, seen: transient || seen.get(), gap, transient });
+        lamps.push(Lamp { entity: e, at: t.translation(), range, spot: !is_point, seen: transient || seen.get(), gap, transient, step, map_scale: scale });
     }
     // The fades: rising once a light's maps were first drawn (a transient's full at once),
     // falling while it leaves (with a mode on; turned off, every light is dropped at once).
@@ -946,6 +1079,7 @@ fn shadow_lights(
             })
             .collect();
         let spheres: Vec<(Vec3, f32)> = lamps.iter().map(|l| (l.at, l.range)).collect();
+        let cut = cutoff_on();
         let mut grid: Option<LampGrid> = None;
         let mut shapes_seen = 0usize;
         for (e, t, aabb, vis, rl, name, parent) in &moved {
@@ -959,19 +1093,22 @@ fn shadow_lights(
                 continue;
             }
             let sphere = Sphere { center: centre.into(), radius: Vec3::from(aabb.half_extents).length() * max_scale(t) };
+            // Where it last marked, for the cut-off (a shape shown, hidden or new: none).
+            let old = (!vis.is_changed()).then(|| state.shapes_at.get(&e).map(|(c, _)| Sphere { center: (*c).into(), radius: sphere.radius })).flatten();
             shapes_seen += 1;
             if shapes_seen > GRID_AFTER && grid.is_none() {
                 grid = Some(LampGrid::new(&spheres));
             }
-            let (reached, marked) = match &grid {
-                Some(g) => mark_sphere(&sphere, g.candidates(centre, sphere.radius).iter().map(|&i| i as usize), &lamps, &frusta, &mut state.lamps),
-                None => mark_sphere(&sphere, 0..lamps.len(), &lamps, &frusta, &mut state.lamps),
+            let m = match &grid {
+                Some(g) => mark_sphere(&sphere, old.as_ref(), cut, g.candidates(centre, sphere.radius).iter().map(|&i| i as usize), &lamps, &frusta, &mut state.lamps),
+                None => mark_sphere(&sphere, old.as_ref(), cut, 0..lamps.len(), &lamps, &frusta, &mut state.lamps),
             };
+            state.pass.cut_marks += u64::from(m.cut);
             // Where it was is kept only for shapes near a lamp.
-            if reached {
+            if m.reached {
                 state.shapes_at.insert(e, (centre, frame));
             }
-            if marked {
+            if m.marked {
                 state.causes[0] += 1;
                 if state.names.len() < 6 {
                     let parent = parent.and_then(|c| names.get(c.parent()).ok());
@@ -999,17 +1136,18 @@ fn shadow_lights(
             if !changed || lo.x > hi.x {
                 continue;
             }
-            let moved_enough = state
-                .skeletons_at
-                .get(&e)
-                .is_none_or(|(l, h, _)| (*l - lo).abs().max_element() > MOVE_EPS || (*h - hi).abs().max_element() > MOVE_EPS);
+            let last = state.skeletons_at.get(&e).copied();
+            let moved_enough = last.is_none_or(|(l, h, _)| (l - lo).abs().max_element() > MOVE_EPS || (h - hi).abs().max_element() > MOVE_EPS);
             if !moved_enough {
                 continue;
             }
             state.skeletons_at.insert(e, (lo, hi, frame));
             // The joints' box, grown by a limb's thickness [engineering choice].
-            let sphere = Sphere { center: ((lo + hi) * 0.5).into(), radius: (hi - lo).length() * 0.5 + 16.0 };
-            if mark_sphere(&sphere, 0..lamps.len(), &lamps, &frusta, &mut state.lamps).1 {
+            let box_sphere = |lo: Vec3, hi: Vec3| Sphere { center: ((lo + hi) * 0.5).into(), radius: (hi - lo).length() * 0.5 + 16.0 };
+            let old = last.map(|(l, h, _)| box_sphere(l, h));
+            let m = mark_sphere(&box_sphere(lo, hi), old.as_ref(), cut, 0..lamps.len(), &lamps, &frusta, &mut state.lamps);
+            state.pass.cut_marks += u64::from(m.cut);
+            if m.marked {
                 state.causes[1] += 1;
             }
         }
@@ -1210,6 +1348,8 @@ fn shadow_lights(
             );
             let (ns, max) = take_system_times();
             info!("{}; {}", renderer_summary(&bevy::pbr::nvf_take_light_view_counts()), systems_summary(&ns, &max, state.frames));
+            info!("{}", pass_summary(&state.pass, state.frames));
+            state.pass = Pass::default();
             (state.switched, state.drawn, state.frames, state.since, state.causes) = (0, 0, 0, 0.0, [0; 4]);
             (state.transients_cast, state.transients_switched, state.transients_drawn) = (0, 0, 0);
             state.names.clear();
@@ -1237,14 +1377,25 @@ type Shapes<'a> = (&'a GlobalTransform, &'a Aabb, Has<LightFixture>, Option<&'a 
 /// against ([`FIXTURE_MARGIN`], [`FIXTURE_RADIUS`]). Runs after Bevy's culling of the
 /// lights' maps. Only the lights drawing this frame (maps switched on) are filtered: the
 /// others' lists are last draw's, which no one reads, and touching them marked them changed,
-/// so Bevy extracted every casting light again every frame.
-fn skip_fixtures(mut lights: Query<CasterLists, With<CastingLight>>, shapes: Query<Shapes>, mut logged: Local<bevy::ecs::entity::EntityHashSet>) {
+/// so Bevy extracted every casting light again every frame. Also takes out the casters
+/// under the light's small-caster cut-off ([`cut_off`]; `NVF_LIGHT_SHADOW_CUTOFF=0`: none).
+fn skip_fixtures(
+    mut lights: Query<CasterLists, With<CastingLight>>,
+    shapes: Query<Shapes>,
+    mut state: ResMut<LampShadowState>,
+    mut logged: Local<bevy::ecs::entity::EntityHashSet>,
+) {
     let _timed = Timed::start(1);
     let log = log_fixtures();
+    let state = &mut *state;
     for (light, t, cube, spot, point_light, spot_light) in &mut lights {
         if !point_light.is_some_and(|p| p.shadow_maps_enabled) && !spot_light.is_some_and(|s| s.shadow_maps_enabled) {
             continue;
         }
+        // The light's step and map scale, for the cut-off (none for a light not in the
+        // game's states).
+        let cut = state.lamps.get(&light).filter(|_| cutoff_on()).map(|s| (s.step, s.map_scale));
+        let mut cuts = 0u64;
         let at = t.translation();
         let mut lists: Vec<&mut Vec<Entity>> = Vec::with_capacity(6);
         if let Some(cube) = cube {
@@ -1267,8 +1418,22 @@ fn skip_fixtures(mut lights: Query<CasterLists, With<CastingLight>>, shapes: Que
                         kept.push(*e);
                     }
                 }
-                !skip
+                if skip {
+                    return false;
+                }
+                let small = cut.is_some_and(|(step, scale)| {
+                    let radius = Vec3::from(aabb.half_extents).length() * max_scale(st);
+                    cut_off(radius, st.transform_point(Vec3::from(aabb.center)).distance(at), scale, step)
+                });
+                cuts += u64::from(small);
+                !small
             });
+        }
+        if cuts > 0 {
+            state.pass.cut_casters += cuts;
+            if let Some(s) = state.lamps.get_mut(&light) {
+                s.cut_any = true;
+            }
         }
         if log && (!skipped.is_empty() || !kept.is_empty()) && logged.insert(light) {
             // Each by its reference, whether it is marked, its size and its gap to the light.
@@ -1515,8 +1680,31 @@ mod tests {
     #[test]
     fn a_shape_marks_the_faces_it_reaches_and_a_lamp_drawing_in_full_is_left_alone() {
         let e = |n: u32| Entity::from_raw_u32(n).unwrap();
-        let lamp = |n: u32, at: Vec3| Lamp { entity: e(n), at, range: 500.0, spot: false, seen: true, gap: 0.0, transient: false };
-        let state = |fresh: bool, dirty: u8| LampState {
+        let lamps = vec![test_lamp(1, Vec3::ZERO, 0), test_lamp(2, Vec3::new(2000.0, 0.0, 0.0), 0)];
+        let frusta = vec![(None, None), (None, None)];
+        let mut states: EntityHashMap<LampState> = EntityHashMap::default();
+        states.insert(e(1), test_state(false, 0b1));
+        states.insert(e(2), test_state(false, 0));
+        let mark = |s: &Sphere, c: &[usize], states: &mut EntityHashMap<LampState>| mark_sphere(s, None, false, c.iter().copied(), &lamps, &frusta, states);
+        let near = Sphere { center: Vec3::new(300.0, 0.0, 0.0).into(), radius: 20.0 };
+        assert_eq!(mark(&near, &[0, 1], &mut states), Marked { reached: true, marked: true, cut: 0 });
+        assert_eq!(states[&e(1)].dirty, ALL_FACES, "without frusta every face");
+        assert_eq!(states[&e(2)].dirty, 0, "the far lamp is not reached");
+        let far = Sphere { center: Vec3::new(9000.0, 0.0, 0.0).into(), radius: 20.0 };
+        assert_eq!(mark(&far, &[0, 1], &mut states), Marked { reached: false, marked: false, cut: 0 });
+        // A fresh lamp draws in full anyway: reached, nothing added.
+        states.insert(e(2), test_state(true, 0));
+        let by_two = Sphere { center: Vec3::new(2100.0, 0.0, 0.0).into(), radius: 20.0 };
+        assert_eq!(mark(&by_two, &[1], &mut states), Marked { reached: true, marked: true, cut: 0 });
+        assert_eq!(states[&e(2)].dirty, 0);
+    }
+
+    fn test_lamp(n: u32, at: Vec3, step: u8) -> Lamp {
+        Lamp { entity: Entity::from_raw_u32(n).unwrap(), at, range: 500.0, spot: false, seen: true, gap: 0.0, transient: false, step, map_scale: map_scale(512.0, 1.0) }
+    }
+
+    fn test_state(fresh: bool, dirty: u8) -> LampState {
+        LampState {
             dirty,
             fresh,
             refreshed: 0,
@@ -1526,23 +1714,87 @@ mod tests {
             spot: false,
             fade: 1.0,
             leaving: false,
-        };
-        let lamps = vec![lamp(1, Vec3::ZERO), lamp(2, Vec3::new(2000.0, 0.0, 0.0))];
-        let frusta = vec![(None, None), (None, None)];
+            step: 0,
+            map_scale: map_scale(512.0, 1.0),
+            cut_any: false,
+        }
+    }
+
+    #[test]
+    fn a_light_steps_down_in_detail_with_distance_and_hysteresis() {
+        assert_eq!(stepped(0, 0.0, 0.0), 0);
+        assert_eq!(stepped(0, NEAR + 1.0, 0.0), 1);
+        assert_eq!(stepped(0, 2.0 * NEAR + 1.0, 0.0), 2);
+        // Within the hysteresis band it keeps its step, either way.
+        let h = STEP_HYSTERESIS;
+        assert_eq!(stepped(0, NEAR * (1.0 + h * 0.5), h), 0, "a little past the step's distance: still near");
+        assert_eq!(stepped(0, NEAR * (1.0 + h * 1.5), h), 1);
+        assert_eq!(stepped(1, NEAR * (1.0 - h * 0.5), h), 1, "a little within: still mid");
+        assert_eq!(stepped(1, NEAR * (1.0 - h * 1.5), h), 0);
+        assert_eq!(stepped(2, 0.0, h), 0, "came straight in");
+        assert_eq!(stepped(0, 1.0e6, h), 2, "jumped far");
+        // Walking back and forth over the distance by less than the band: one step change.
+        let mut step = 0;
+        let mut changes = 0;
+        for i in 0..40 {
+            let gap = NEAR * (1.0 + if i % 2 == 0 { 0.08 } else { -0.08 }) + if i == 0 { 400.0 } else { 0.0 };
+            let s = stepped(step, gap, h);
+            changes += usize::from(s != step);
+            step = s;
+        }
+        assert_eq!(changes, 1, "only the first, far-out sample stepped it");
+    }
+
+    #[test]
+    fn small_casters_are_cut_by_their_texels_in_the_map_more_for_far_lights() {
+        let cube = map_scale(512.0, 1.0);
+        // A bottle (radius 5) 300 units from the lamp covers 8.5 texels of a 512 face: kept.
+        assert!(!cut_off(5.0, 300.0, cube, 0) && !cut_off(5.0, 300.0, cube, 2));
+        // A coin (radius 0.5) at 400 units: 0.64 texels, cut at every step.
+        assert!(cut_off(0.5, 400.0, cube, 0));
+        // A can (radius 3) at 600 units: 2.56 texels: kept near, cut far.
+        assert!(!cut_off(3.0, 600.0, cube, 0) && !cut_off(3.0, 600.0, cube, 1) && cut_off(3.0, 600.0, cube, 2));
+        // A larger cube map (shadow resolution 4096) shows more.
+        assert!(!cut_off(3.0, 600.0, map_scale(1024.0, 1.0), 2));
+        // A spot light's 2048 map over a 45-degree half cone (tan 1) is a 2048 face.
+        assert_eq!(map_scale(2048.0, 1.0), 2048.0);
+        assert!(map_scale(2048.0, 0.5) > map_scale(2048.0, 1.0), "a narrower cone: more texels a unit");
+        // A caster at the light itself is never cut.
+        assert!(!cut_off(0.5, 0.0, cube, 2));
+    }
+
+    #[test]
+    fn a_caster_under_the_cut_off_marks_nothing_unless_it_was_over_it() {
+        let e = |n: u32| Entity::from_raw_u32(n).unwrap();
+        let lamps = vec![test_lamp(1, Vec3::ZERO, 2)];
+        let frusta = vec![(None, None)];
         let mut states: EntityHashMap<LampState> = EntityHashMap::default();
-        states.insert(e(1), state(false, 0b1));
-        states.insert(e(2), state(false, 0));
-        let near = Sphere { center: Vec3::new(300.0, 0.0, 0.0).into(), radius: 20.0 };
-        assert_eq!(mark_sphere(&near, 0..2, &lamps, &frusta, &mut states), (true, true));
-        assert_eq!(states[&e(1)].dirty, ALL_FACES, "without frusta every face");
-        assert_eq!(states[&e(2)].dirty, 0, "the far lamp is not reached");
-        let far = Sphere { center: Vec3::new(9000.0, 0.0, 0.0).into(), radius: 20.0 };
-        assert_eq!(mark_sphere(&far, 0..2, &lamps, &frusta, &mut states), (false, false));
-        // A fresh lamp draws in full anyway: reached, nothing added.
-        states.insert(e(2), state(true, 0));
-        let by_two = Sphere { center: Vec3::new(2100.0, 0.0, 0.0).into(), radius: 20.0 };
-        assert_eq!(mark_sphere(&by_two, [1].into_iter(), &lamps, &frusta, &mut states), (true, true));
-        assert_eq!(states[&e(2)].dirty, 0);
+        states.insert(e(1), test_state(false, 0));
+        let tiny = |x: f32| Sphere { center: Vec3::new(x, 0.0, 0.0).into(), radius: 1.0 };
+        // 1 unit at 400: 1.3 texels, under step 2's 4: nothing marked, one cut counted.
+        let m = mark_sphere(&tiny(400.0), Some(&tiny(390.0)), true, 0..1, &lamps, &frusta, &mut states);
+        assert_eq!(m, Marked { reached: true, marked: false, cut: 1 });
+        assert_eq!(states[&e(1)].dirty, 0);
+        // Shown, hidden or new (no old place): the same.
+        assert_eq!(mark_sphere(&tiny(400.0), None, true, 0..1, &lamps, &frusta, &mut states).cut, 1);
+        // Moved away from where it was over the cut-off (50 units: 10 texels): it was in the
+        // map, so it marks.
+        let m = mark_sphere(&tiny(400.0), Some(&tiny(50.0)), true, 0..1, &lamps, &frusta, &mut states);
+        assert_eq!((m.marked, m.cut), (true, 0));
+        assert_eq!(states[&e(1)].dirty, ALL_FACES);
+        // The aid off: it marks.
+        states.insert(e(1), test_state(false, 0));
+        assert_eq!(mark_sphere(&tiny(400.0), None, false, 0..1, &lamps, &frusta, &mut states).cut, 0);
+        assert_eq!(states[&e(1)].dirty, ALL_FACES);
+    }
+
+    #[test]
+    fn the_performance_pass_line_gives_each_technique_a_frame() {
+        let p = Pass { cut_casters: 300, cut_marks: 20, step_redraws: 3, steps: [100, 50, 50] };
+        let s = pass_summary(&p, 100);
+        assert!(s.starts_with("light shadows: performance pass over 100 frames: lights at steps near/mid/far 1.0/0.5/0.5 a frame;"), "{s}");
+        assert!(s.contains("casters cut 3.0 a frame, marks skipped 0.20 a frame, redraws for a finer step 3"), "{s}");
+        assert!(pass_summary(&Pass::default(), 0).contains("over 0 frames"), "no division by zero");
     }
 
     #[test]
