@@ -224,6 +224,8 @@
     {"op": "choose", "topic": "VFreeformHooverDamVHDGeneralOliverTopic065", "label": "oliver 065"},
     {"op": "choose", "topic": "VFreeformHooverDamVHDGeneralOliverTopic098", "label": "oliver 098: fight"},
     {"op": "wait_talk", "label": "oliver fight talk over"},
+    {"op": "note", "text": "Oliver's speech is played as a talk: the combat dialogue trigger (VHDOliverCombatDialogTriggerREF, SCPT 0x00140C94) is told it was given (oliverspeechdone 1, as SCPT 0x0014C635 leaves it), or the player walking through it later is held: its OnTrigger runs DisablePlayerControls while the variable is 0."},
+    {"op": "set_ref_var", "ref": "VHDOliverCombatDialogTriggerREF", "var": "oliverspeechdone", "value": 1},
     {"op": "kill", "actor": "vHDGeneralOliverRef2", "killer": "player"},
     {"op": "kill", "actor": "LegateCampRangerOliverGuard01REF", "killer": "player"},
     {"op": "kill", "actor": "LegateCampRangerOliverGuard02REF", "killer": "player"},
