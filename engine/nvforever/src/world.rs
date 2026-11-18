@@ -1453,8 +1453,9 @@ pub enum SpawnMode {
     Full,
     /// Drawn only, for the full-detail ring (full_detail.rs, #2701): the static model's
     /// shapes baked as the file stores them (billboard nodes still turn, damage stages
-    /// still follow the game), every entity marked `nvf_play::DrawOnly`; no rig, pose,
-    /// emitter, census, mine light or error marker, and nothing logged [design].
+    /// still follow the game), a moveable static's idle sequence playing, every entity
+    /// marked `nvf_play::DrawOnly`; no other rig, pose, emitter, census, mine light or
+    /// error marker, and nothing logged [design].
     Scenery,
 }
 
@@ -1539,7 +1540,12 @@ pub fn spawn_model(
     // passes this test too; wrecks.rs lets the parts fall only when the game has the
     // reference destroyed to that model and physics built its collision from it.
     let wreck = model.loose && p.base.and_then(|b| base_object(world.lo, world.schema, b)).and_then(|b| b.world_model_path()).is_some_and(|m| m != path);
-    if let Some(rig) = model.rig.as_ref().filter(|rig| !scenery && ((rig.idle.is_some() && idle.is_some()) || door.is_some() || activator.is_some() || scripted || jointed || wreck)) {
+    // Drawn only (the full-detail ring): a moveable static's idle alone, nothing else rigged.
+    let rigged = |rig: &&nvf_assets::model::Rig| match scenery {
+        true => &base.sig == b"MSTT" && rig.idle.is_some() && idle.is_some(),
+        false => (rig.idle.is_some() && idle.is_some()) || door.is_some() || activator.is_some() || scripted || jointed || wreck,
+    };
+    if let Some(rig) = model.rig.as_ref().filter(rigged) {
         // Animated (Idle sequence): its own node hierarchy per reference.
         // "Random Anim Start" bases start their idle at a phase spread by reference
         // (fnv_actor::anims::random_anim_start; animation.md §8).
@@ -1549,6 +1555,17 @@ pub fn spawn_model(
         commands.entity(root).insert(RefVisual(r));
         for e in &drawn {
             commands.entity(*e).insert(RefVisual(r));
+        }
+        // Drawn only: its idle plays, and that is all (no door, group, emitter, light or
+        // node map; `object_anims::publish_poses` leaves it out).
+        if scenery {
+            for e in std::iter::once(root).chain(drawn.iter().copied()) {
+                commands.entity(e).insert(nvf_play::DrawOnly);
+            }
+            stats.shapes += drawn.len();
+            stats.refs_drawn += 1;
+            stats.refs_animated += 1;
+            return true;
         }
         // [design] Census while the blend is on (#2661): a rigged STAT's or SCOL's shapes
         // are tracked, never converted.
@@ -1961,7 +1978,7 @@ fn spawn_water(
 }
 
 /// Billboard quad mesh and material for a TREE base (cached per base).
-fn billboard(world: &WorldData, tree: u32, models: &mut ModelCtx) -> Option<(Handle<Mesh>, Handle<NifMaterial>)> {
+pub(crate) fn billboard(world: &WorldData, tree: u32, models: &mut ModelCtx) -> Option<(Handle<Mesh>, Handle<NifMaterial>)> {
     if let Some(b) = models.cache.billboard(tree) {
         return b;
     }
