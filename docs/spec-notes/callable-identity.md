@@ -29,14 +29,16 @@ retargeted; this is an engine validation limit, not an original-game observation
 
 [documented: `engine/nvf-play/src/save.rs`, `read_for_load`; `fnv_save::remap_json_with`]
 Load-order remapping rewrites saved script-variable `ref` tokens by plugin index but
-leaves numeric fields, including a saved lambda handle, unchanged; a lambda token and
-a loaded record in the same index are also indistinguishable to it. [decision: engine
-design, conservative] A save carrying any lambda definition, with explicit or legacy
-positional handles, is therefore refused before generic remapping when its plugin list
-is reordered or a plugin is missing. Identical and appended orders keep every token and
-handle unchanged; lambda-free saves keep the existing remapping. Owned reader controls
-cover these three cases at the actual container boundary. Handle-aware remapping is not
-implemented.
+leaves numeric fields, including a saved lambda handle, unchanged. Lambda handles and
+their tokens all have index FE. When the save had no plugin at FE, or that plugin keeps
+index FE, the walker leaves every FE number as it was, so tokens and handles stay
+together. When the save's plugin at FE now sits elsewhere, the walker would move the
+tokens but not the handles, and cannot tell a lambda token from that plugin's record.
+[decision: engine design, conservative] A save carrying any lambda definition, with
+explicit or legacy positional handles, is refused in exactly that case, before generic
+remapping. Identical, appended and other reorderings keep tokens and handles unchanged;
+lambda-free saves keep the existing remapping. Owned reader controls cover these cases
+at the actual container boundary. Handle-aware remapping is not implemented.
 
 [decision: compatibility disposition, open maintainer question] A reader built before
 the optional `handle` field ignores it and reassigns lambda handles from list positions.

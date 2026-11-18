@@ -65,37 +65,56 @@ fn other() -> PluginEntry {
     PluginEntry { name: "OwnedOther.esm".into(), size: 0 }
 }
 
+/// The saved plugin first, then empty plugins up to a full 255-entry list, so the save has
+/// a plugin at index FE (the lambda index); and the current order with indices 0 and FE
+/// swapped. Only the header carries the extra names: the body is the one-plugin snapshot.
+fn full_and_swapped(saved: &[PluginEntry]) -> (Vec<PluginEntry>, Vec<PluginEntry>) {
+    let mut full = saved.to_vec();
+    full.extend((1..=0xFE).map(|i| PluginEntry { name: format!("OwnedFill{i:03}.esp"), size: 0 }));
+    assert_eq!(full.len(), 255);
+    let mut swapped = full.clone();
+    swapped.swap(0, 0xFE);
+    (full, swapped)
+}
+
 #[test]
-fn a_lambda_save_keeps_its_handle_with_identical_or_appended_plugins() {
+fn a_lambda_save_keeps_tokens_and_handle_when_its_lambda_index_does_not_move() {
     let (plugins, body, token) = saved(true);
     let token = token.unwrap();
-    assert!(token >= fnv_game::game::LAMBDA_BASE);
+    assert!((fnv_game::game::LAMBDA_BASE..FormId::FIRST_DYNAMIC.0).contains(&token));
     let (_dir, path) = write("kept", &plugins, &body);
     let mut appended = plugins.clone();
     appended.push(other());
-    for current in [plugins, appended] {
+    for current in [plugins.clone(), appended] {
         let (_, read, order) = read_for_load(&path, &current).unwrap();
         assert!(order.is_none());
         assert_eq!(read.game.lambdas.iter().map(|l| l.handle).collect::<Vec<_>>(), vec![Some(token)]);
         assert_eq!(ref_tokens(&read), vec![PLACED_BASE, token]);
     }
+    // Reordered, but the save had no plugin at FE: records move, lambda numbers do not.
+    let mut moved = vec![other()];
+    moved.extend(plugins);
+    let (_, read, order) = read_for_load(&path, &moved).unwrap();
+    assert!(order.is_some());
+    assert_eq!(read.game.lambdas.iter().map(|l| l.handle).collect::<Vec<_>>(), vec![Some(token)]);
+    assert_eq!(ref_tokens(&read), vec![0x0100_0000 | PLACED_BASE, token]);
 }
 
 #[test]
-fn a_lambda_save_is_refused_with_a_reordered_or_missing_plugin_list() {
+fn a_lambda_save_is_refused_when_its_lambda_index_plugin_moves() {
     let (plugins, body, _) = saved(true);
+    let (full, swapped) = full_and_swapped(&plugins);
     let mut legacy = body.clone();
     legacy.game.lambdas[0].handle = None;
     for (label, body) in [("explicit", body), ("legacy", legacy)] {
-        let (_dir, path) = write(label, &plugins, &body);
+        let (_dir, path) = write(label, &full, &body);
         let bytes = std::fs::read(&path).unwrap();
-        let mut moved = vec![other()];
-        moved.extend(plugins.clone());
-        for current in [moved, Vec::new()] {
-            let Err(error) = read_for_load(&path, &current) else { panic!("{label}: a reordered lambda save must be refused") };
-            assert!(error.contains("runtime lambda definitions") && error.contains("lambda.nvfsave"), "{label}: {error}");
-            assert_eq!(std::fs::read(&path).unwrap(), bytes);
-        }
+        let Err(error) = read_for_load(&path, &swapped) else { panic!("{label}: moving index FE must refuse a lambda save") };
+        assert!(error.contains("runtime lambda definitions") && error.contains("lambda.nvfsave"), "{label}: {error}");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let (_, read, order) = read_for_load(&path, &full).unwrap();
+        assert!(order.is_none(), "{label}: the identical full order still loads");
+        assert_eq!(read.game.lambdas.len(), 1);
     }
 }
 
@@ -108,9 +127,14 @@ fn a_lambda_free_save_still_remaps_with_a_reordered_plugin_list() {
     assert!(order.is_none());
     assert_eq!(ref_tokens(&read), vec![PLACED_BASE]);
     let mut moved = vec![other()];
-    moved.extend(plugins);
+    moved.extend(plugins.clone());
     let (_, read, order) = read_for_load(&path, &moved).unwrap();
     assert!(order.is_some());
     assert!(read.game.lambdas.is_empty());
     assert_eq!(ref_tokens(&read), vec![0x0100_0000 | PLACED_BASE]);
+    let (full, swapped) = full_and_swapped(&plugins);
+    let (_dir, path) = write("plain-full", &full, &body);
+    let (_, read, order) = read_for_load(&path, &swapped).unwrap();
+    assert!(order.is_some());
+    assert_eq!(ref_tokens(&read), vec![0xFE00_0000 | PLACED_BASE]);
 }
