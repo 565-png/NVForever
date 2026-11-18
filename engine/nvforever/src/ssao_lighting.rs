@@ -55,17 +55,18 @@ pub const DISTANCE_TOLERANCE: f32 = 0.05;
 pub struct AmbientOcclusionLightingUniform {
     /// Exponent, debug view (1 on), fade end (game units), distance tolerance.
     pub params: Vec4,
-    /// Strength (for a later multibounce); the rest unused.
+    /// Strength (for a later multibounce), the lamps' weight (0..1); the rest unused.
     pub extra: Vec4,
 }
 
 impl AmbientOcclusionLightingUniform {
     /// The uniform for an occlusion faded out at `fade_end` (game units), made with
-    /// `strength`, with or without the debug view.
-    pub fn new(fade_end: f32, strength: f32, debug: bool) -> Self {
+    /// `strength`, on lamps without a shadow by `lamps` (held to 0..1), with or without the
+    /// debug view.
+    pub fn new(fade_end: f32, strength: f32, lamps: f32, debug: bool) -> Self {
         AmbientOcclusionLightingUniform {
             params: Vec4::new(EXPONENT, if debug { 1.0 } else { 0.0 }, fade_end, DISTANCE_TOLERANCE),
-            extra: Vec4::new(strength, 0.0, 0.0, 0.0),
+            extra: Vec4::new(strength, lamps.clamp(0.0, 1.0), 0.0, 0.0),
         }
     }
 }
@@ -153,7 +154,10 @@ mod tests {
             let code: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("//")).collect();
             assert!(code[0].starts_with("@if(NVF_AMBIENT_OCCLUSION)"), "{text}");
         }
-        assert!(AMBIENT_LINE_HOOKED.contains(&format!("        @if(!NVF_AMBIENT_OCCLUSION)\n{AMBIENT_LINE}")), "the line kept word for word under the negation");
+        for (line, hooked_line) in [(AMBIENT_LINE, AMBIENT_LINE_HOOKED), (POINT_LINE, POINT_LINE_HOOKED), (SPOT_LINE, SPOT_LINE_HOOKED)] {
+            assert!(hooked_line.contains(&format!("        @if(!NVF_AMBIENT_OCCLUSION)\n{line}")), "the line kept word for word under the negation: {line}");
+            assert!(hooked_line.contains("        @if(NVF_AMBIENT_OCCLUSION)\n"), "its twin under the def: {line}");
+        }
         let mut back = hooked.clone();
         for (anchor, text, place) in HOOK_EDITS {
             match place {
@@ -170,7 +174,9 @@ mod tests {
             let want = resolve_known(&input, &known[1..]);
             let got = resolve_known(&hooked, &known);
             assert_eq!(code_lines(&got), code_lines(&want), "sun {sun}");
-            assert!(!code(&got).contains("nvf_ambient_visibility") && !code(&got).contains("nvf_ao_debug"), "sun {sun}");
+            for name in ["nvf_ambient_visibility", "nvf_ao_debug", "nvf_lamp_visibility", "nvf_ao_lamps"] {
+                assert!(!code(&got).contains(name), "sun {sun}: {name}");
+            }
         }
     }
 
@@ -182,6 +188,12 @@ mod tests {
         let (input, _) = hooked();
         assert_eq!(input.matches(HOOK_EDITS[0].0).count(), 1, "the import line");
         assert_eq!(input.matches(AMBIENT_LINE).count(), 1, "the display-value ambient line");
+        assert_eq!(input.matches(LAMP_ANCHOR).count(), 1, "the point light loop");
+        assert_eq!(input.matches(POINT_LINE).count(), 1, "the point lights' display line");
+        assert_eq!(input.matches(SPOT_LINE).count(), 1, "the spot lights' display line");
+        // In the file's order, so each is found after the one before.
+        let order: Vec<usize> = HOOK_EDITS.iter().map(|(a, _, _)| input.find(a).unwrap()).collect();
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "the anchors in the file's order");
         // The debug view's anchor ends main_pass_post_lighting_processing, once in the file.
         assert_eq!(input.matches(DEBUG_ANCHOR).count(), 1, "the debug view's anchor");
         let at = input.find(DEBUG_ANCHOR).unwrap();
@@ -230,6 +242,14 @@ mod tests {
                 assert_eq!(lighting.matches("let nvf_ambient = ").count(), 1, "{case}: one ambient line");
                 assert_eq!(lighting.matches("nvf_ambient_visibility(in.frag_coord.xy, -view_z)").count(), usize::from(on), "{case}: the ambient alone");
                 assert!(!lighting.contains("nvf_ao_debug"), "{case}: no debug view in the lighting itself");
+                // The lamps: the factor formed once, then taken by the point and spot lights
+                // without a shadow, never by the directional lights.
+                assert_eq!(lighting.matches("let nvf_ao_lamps = nvf_lamp_visibility(in.frag_coord.xy, -view_z);").count(), usize::from(on), "{case}");
+                assert_eq!(lighting.matches("* select(nvf_ao_lamps, 1.0,").count(), if on { 2 } else { 0 }, "{case}");
+                assert_eq!(lighting.matches("if nvf_display { nvf_direct += nvf_point_display(").count(), 1, "{case}: one point line");
+                assert_eq!(lighting.matches("if nvf_display { nvf_direct += nvf_spot_display(").count(), 1, "{case}: one spot line");
+                let directional = block_after(lighting, "for (var i: u32 = 0u; i < n_directional_lights; i = i + 1u) {");
+                assert!(!directional.contains("nvf_ao_lamps"), "{case}: the directional lights keep their light");
                 let post = block_after(&r, "fn main_pass_post_lighting_processing(");
                 assert!(!post.contains("\nfn "), "{case}");
                 assert_eq!(post.matches("if nvf_ao_debug() {").count(), usize::from(on), "{case}: the debug view at the end");
@@ -237,12 +257,19 @@ mod tests {
                     let at = |s: &str| lighting.find(s).unwrap_or_else(|| panic!("{case}: {s}"));
                     assert!(at("let view_z") < at("* nvf_ambient_visibility("), "{case}: view_z before the ambient line");
                     assert!(at("* nvf_ambient_visibility(") < at("    // Total light\n"), "{case}");
+                    assert!(at("let view_z") < at("let nvf_ao_lamps") && at("let nvf_ao_lamps") < at("    // Point lights (direct)\n"), "{case}: formed after view_z, before the loops");
+                    let point = at("nvf_point_display(light_id, in.world_position.xyz, in.N) * shadow * select(");
+                    let spot = at("nvf_spot_display(light_id, in.world_position.xyz, in.N) * shadow * select(");
+                    assert!(point < at("    // Spot lights (direct)\n"), "{case}: in the point loop");
+                    assert!(at("    // Spot lights (direct)\n") < spot && spot < at("    // directional lights (direct)\n"), "{case}: in the spot loop");
+                    // Only where bevy_pbr leaves the light's shadow unread.
+                    assert_eq!(lighting.matches("(in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u)").count(), 2, "{case}");
                     let p = |s: &str| post.find(s).unwrap_or_else(|| panic!("{case}: {s}"));
                     // After the fog (and the dither), before the alpha is premultiplied; the
                     // same position and distance as the ambient line's.
                     assert!(p("apply_fog(") < p("if nvf_ao_debug()") && p("if nvf_ao_debug()") < p("premultiply_alpha(pbr_input.material.flags"), "{case}");
                     assert!(post.contains("nvf_ambient_visibility(pbr_input.frag_coord.xy, -nvf_view_z)"));
-                    assert!(r.find("import nvforever::ssao_lighting::{nvf_ambient_visibility, nvf_ao_debug};").expect("import") < r.find("fn nvf_apply_pbr_lighting(").unwrap());
+                    assert!(r.find("import nvforever::ssao_lighting::{nvf_ambient_visibility, nvf_ao_debug, nvf_lamp_visibility};").expect("import") < r.find("fn nvf_apply_pbr_lighting(").unwrap());
                 }
             }
         }
@@ -256,9 +283,14 @@ mod tests {
         }
         assert_eq!(rows(lighting_view_z), rows(debug_view_z));
         let wesl = wesl();
-        for f in ["fn nvf_ambient_visibility(frag: vec2<f32>, dist: f32) -> f32", "fn nvf_ao_debug() -> bool"] {
+        for f in ["fn nvf_ambient_visibility(frag: vec2<f32>, dist: f32) -> f32", "fn nvf_ao_debug() -> bool", "fn nvf_lamp_visibility(frag: vec2<f32>, dist: f32) -> f32"] {
             assert!(wesl.contains(f), "ssao_lighting.wesl has {f}");
         }
+        // The shadow condition the lamps' lines test is bevy_pbr's own for looking the
+        // shadow up (both light loops).
+        let functions = vendored("pbr_functions.wesl");
+        assert_eq!(functions.matches("if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u\n                && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {").count(), 1, "the point loop's");
+        assert_eq!(functions.matches("if ((in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u\n                && (view_bindings::clustered_lights.data[light_id].flags &\n                    mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u) {").count(), 1, "the spot loop's");
     }
 
     /// The WESL's bindings are the vendored layout's (mesh_view_bindings.rs 43-44, nobody
@@ -280,10 +312,12 @@ mod tests {
         let fields: Vec<usize> = ["params: vec4<f32>,", "extra: vec4<f32>,"].iter().map(|f| wesl.find(f).unwrap_or_else(|| panic!("{f}"))).collect();
         assert!(fields.windows(2).all(|w| w[0] < w[1]));
         assert_eq!(AmbientOcclusionLightingUniform::min_size().get(), 32, "two vec4s, as ssao_lighting.wesl's struct");
-        let u = AmbientOcclusionLightingUniform::new(7000.0, 0.4, true);
+        let u = AmbientOcclusionLightingUniform::new(7000.0, 0.4, 0.0, true);
         assert_eq!(u.params, Vec4::new(EXPONENT, 1.0, 7000.0, DISTANCE_TOLERANCE));
         assert_eq!(u.extra, Vec4::new(0.4, 0.0, 0.0, 0.0));
-        assert_eq!(AmbientOcclusionLightingUniform::new(7000.0, 0.4, false).params.y, 0.0);
+        assert_eq!(AmbientOcclusionLightingUniform::new(7000.0, 0.4, 0.0, false).params.y, 0.0);
+        assert_eq!(AmbientOcclusionLightingUniform::new(7000.0, 0.4, 0.5, false).extra, Vec4::new(0.4, 0.5, 0.0, 0.0));
+        assert_eq!(AmbientOcclusionLightingUniform::new(7000.0, 0.4, 3.0, false).extra.y, 1.0, "held to 1");
         assert!(wesl.contains(&format!("const NVF_AO_MIN_WEIGHT: f32 = {MIN_WEIGHT};")), "the WESL's minimum weight is the Rust mirror's");
         // A zeroed uniform (fade end 0) reads as open everywhere.
         assert_eq!(upsample(&Texels::plane(4, 4, 0.5, 100.0), Vec2::new(2.5, 2.5), 100.0, &AmbientOcclusionLightingUniform::default()), 1.0);
@@ -363,7 +397,7 @@ mod tests {
     }
 
     fn uniform() -> AmbientOcclusionLightingUniform {
-        AmbientOcclusionLightingUniform::new(7000.0, 0.4, false)
+        AmbientOcclusionLightingUniform::new(7000.0, 0.4, 0.0, false)
     }
 
     /// On a plane every fragment gets the plane's factor exactly (after the exponent and
@@ -442,5 +476,31 @@ mod tests {
             let f = i as f32 / 20.0;
             assert!((linear(f.powf(EXPONENT)) - f).abs() < 1e-5, "{f}");
         }
+    }
+
+    /// ssao_lighting.wesl `nvf_lamp_visibility`, step for step.
+    fn lamps(tex: &Texels, frag: Vec2, dist: f32, u: &AmbientOcclusionLightingUniform) -> f32 {
+        let w = u.extra.y.clamp(0.0, 1.0);
+        if w.is_nan() || w <= 0.0 {
+            return 1.0;
+        }
+        1.0 + (upsample(tex, frag, dist, u) - 1.0) * w
+    }
+
+    /// The lamps' factor: exactly 1 with weight 0 (today's light, bit for bit), the
+    /// ambient's factor with weight 1, in between linearly; on a lamp-lit crease with weight
+    /// 1 the light scales by the occlusion itself, as the ambient's does.
+    #[test]
+    fn the_lamps_take_the_ambient_factor_by_their_weight() {
+        let wesl = wesl();
+        assert!(wesl.contains("let w = clamp(nvf_ao.extra.y, 0.0, 1.0);") && wesl.contains("return mix(1.0, nvf_ambient_visibility(frag, dist), w);"));
+        let tex = Texels::plane(4, 4, 0.6, 300.0);
+        let at = |w: f32| lamps(&tex, Vec2::new(2.5, 2.5), 300.0, &AmbientOcclusionLightingUniform::new(7000.0, 0.4, w, false));
+        let g = upsample(&tex, Vec2::new(2.5, 2.5), 300.0, &uniform());
+        assert_eq!(at(0.0), 1.0);
+        assert!((at(1.0) - g).abs() < 1e-6);
+        assert!((linear(at(1.0)) - 0.6).abs() < 1e-4, "a lamp-only crease scales by the factor");
+        assert!((at(0.5) - (1.0 + g) * 0.5).abs() < 1e-6);
+        assert!(at(0.0) > at(0.5) && at(0.5) > at(1.0));
     }
 }

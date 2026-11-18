@@ -27,6 +27,45 @@ pub const AMBIENT_LINE_HOOKED: &str = "        // NVForever ambient occlusion (n
         let nvf_ambient = view_bindings::lights.ambient_color.rgb * view_bindings::view.exposure * diffuse_occlusion * nvf_ambient_visibility(in.frag_coord.xy, -view_z);
 ";
 
+/// The start of `apply_pbr_lighting`'s point light loop, after `view_z` is declared.
+pub const LAMP_ANCHOR: &str = "    // Point lights (direct)\n";
+
+/// Once per fragment, before the light loops: the factor on the light of lamps that cast no
+/// shadow here (`NVF_PLAY_DEBUG_AO_LAMPS`), `mix(1, g, w)` with g the ambient's factor; 1,
+/// with no texture read, while the weight is 0.
+pub const LAMP_TEXT: &str = "    // NVForever ambient occlusion (nvforever ssao_lighting.rs): the factor on the light of
+    // lamps that cast no shadow here (1 while NVF_PLAY_DEBUG_AO_LAMPS is 0).
+    @if(NVF_AMBIENT_OCCLUSION)
+    let nvf_ao_lamps = nvf_lamp_visibility(in.frag_coord.xy, -view_z);
+
+";
+
+/// A point light's part of the display-value sum (lights/display_shader.rs `DISPLAY_EDITS`).
+pub const POINT_LINE: &str = "        if nvf_display { nvf_direct += nvf_point_display(light_id, in.world_position.xyz, in.N) * shadow; }\n";
+
+/// The same kept without the def, and its twin taking the lamps' factor where the light's
+/// shadow is not looked up for this fragment (the light casts none, or the surface receives
+/// none: exactly the condition under which bevy_pbr leaves `shadow` at 1 above). Lights with
+/// a shadow (the Pip-Boy light, flashlight.rs) are left as they are: their shadow already
+/// keeps their light out of creases.
+pub const POINT_LINE_HOOKED: &str = "        @if(!NVF_AMBIENT_OCCLUSION)
+        if nvf_display { nvf_direct += nvf_point_display(light_id, in.world_position.xyz, in.N) * shadow; }
+        // NVForever ambient occlusion (nvforever ssao_lighting.rs): lamps without a shadow here.
+        @if(NVF_AMBIENT_OCCLUSION)
+        if nvf_display { nvf_direct += nvf_point_display(light_id, in.world_position.xyz, in.N) * shadow * select(nvf_ao_lamps, 1.0, (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u); }
+";
+
+/// A spot light's part of the display-value sum.
+pub const SPOT_LINE: &str = "        if nvf_display { nvf_direct += nvf_spot_display(light_id, in.world_position.xyz, in.N) * shadow; }\n";
+
+/// As [`POINT_LINE_HOOKED`], for spot lights.
+pub const SPOT_LINE_HOOKED: &str = "        @if(!NVF_AMBIENT_OCCLUSION)
+        if nvf_display { nvf_direct += nvf_spot_display(light_id, in.world_position.xyz, in.N) * shadow; }
+        // NVForever ambient occlusion (nvforever ssao_lighting.rs): lamps without a shadow here.
+        @if(NVF_AMBIENT_OCCLUSION)
+        if nvf_display { nvf_direct += nvf_spot_display(light_id, in.world_position.xyz, in.N) * shadow * select(nvf_ao_lamps, 1.0, (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) != 0u && (view_bindings::clustered_lights.data[light_id].flags & mesh_view_types::POINT_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u); }
+";
+
 /// The end of `main_pass_post_lighting_processing`: after the fog, the tonemapping in the
 /// shader and the dither, before the alpha is premultiplied.
 pub const DEBUG_ANCHOR: &str = "    @if(PREMULTIPLY_ALPHA)\n    output_color = premultiply_alpha(pbr_input.material.flags, output_color);\n";
@@ -61,21 +100,26 @@ pub const DEBUG_TEXT: &str = "    // NVForever ambient occlusion (nvforever ssao
 /// `ambient::ambient_light` call and `let diffuse_occlusion = in.diffuse_occlusion;`, since
 /// the NIF and terrain shaders subtract exactly that ambient highlight using the
 /// un-occluded `diffuse_occlusion` (nvf_assets nif_material.wesl, terrain.wesl), and an
-/// occluded highlight would be over-subtracted there.
-pub const HOOK_EDITS: [(&str, &str, Place); 3] = [
+/// occluded highlight would be over-subtracted there; the directional lights (the sun, the
+/// moon, an interior's directional light) and every light's specular part (Bevy's
+/// `direct_light`).
+pub const HOOK_EDITS: [(&str, &str, Place); 6] = [
     (
         "import bevy_render::maths::{E, powsafe};\n",
         "// NVForever ambient occlusion (nvforever ssao_lighting.rs).
-@if(NVF_AMBIENT_OCCLUSION) import nvforever::ssao_lighting::{nvf_ambient_visibility, nvf_ao_debug};
+@if(NVF_AMBIENT_OCCLUSION) import nvforever::ssao_lighting::{nvf_ambient_visibility, nvf_ao_debug, nvf_lamp_visibility};
 ",
         Place::After,
     ),
+    (LAMP_ANCHOR, LAMP_TEXT, Place::Before),
+    (POINT_LINE, POINT_LINE_HOOKED, Place::Replace),
+    (SPOT_LINE, SPOT_LINE_HOOKED, Place::Replace),
     (AMBIENT_LINE, AMBIENT_LINE_HOOKED, Place::Replace),
     (DEBUG_ANCHOR, DEBUG_TEXT, Place::Before),
 ];
 
 /// The index in [`HOOK_EDITS`] of the debug view's edit.
-pub const DEBUG_EDIT: usize = 2;
+pub const DEBUG_EDIT: usize = 5;
 
 /// `source` (lights.rs's display-value patch, and in the game the sun visibility's hook,
 /// made) with [`HOOK_EDITS`]; `None` when an anchor is missing or the debug view's anchor

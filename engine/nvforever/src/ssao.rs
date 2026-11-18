@@ -177,6 +177,13 @@ pub(crate) static AO_BEFORE_FSR: std::sync::LazyLock<bool> =
 /// ground-truth estimate, held to 0..1, so strengths can be compared by eye from a launcher;
 /// the old estimate keeps its own.
 ///
+/// `NVF_PLAY_DEBUG_AO_LAMPS=<number>` (read once too), in the lighting only: how much of the
+/// factor also reaches the light of lamps (point and spot lights) that cast no shadow at the
+/// surface, held to 0..1; unset or 0, none (ssao_lighting.wesl `nvf_lamp_visibility`).
+/// Interiors are lit mostly by such lamps, so on the ambient light alone the occlusion all but
+/// vanishes there [observed 2026-11-18, the main session's runs: the Prospector Saloon and
+/// Doc Mitchell's house].
+///
 /// `NVF_PLAY_DEBUG_AO_VARIANT=<names>` (read once too) picks candidate remedies for the
 /// ground-truth estimate's shimmer on plants ([`AoVariant`]); the old estimate ignores it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -190,6 +197,8 @@ pub(crate) struct AoDebug {
     lighting: bool,
     /// The ground-truth estimate's strength from `NVF_PLAY_DEBUG_AO_STRENGTH`.
     gtao_strength: Option<f32>,
+    /// The lamps' weight from `NVF_PLAY_DEBUG_AO_LAMPS` (the lighting only).
+    lamps: Option<f32>,
     /// The candidate remedies from `NVF_PLAY_DEBUG_AO_VARIANT`.
     variant: AoVariant,
 }
@@ -329,9 +338,10 @@ impl AoDebug {
     }
 
     /// The lighting's uniform for an occlusion of `settings` (ssao_lighting.rs): its fade
-    /// end and strength, the debug view with `view-lighting`.
+    /// end and strength, the lamps' weight (0 unless asked for), the debug view with
+    /// `view-lighting`.
     fn lighting_uniform(self, settings: &AmbientOcclusion) -> AmbientOcclusionLightingUniform {
-        AmbientOcclusionLightingUniform::new(settings.params.w, settings.params.y, self.view && self.lighting)
+        AmbientOcclusionLightingUniform::new(settings.params.w, settings.params.y, self.lamps.unwrap_or(0.0), self.view && self.lighting)
     }
 
     /// The log line when the occlusion turns on on the main camera.
@@ -355,7 +365,12 @@ impl AoDebug {
             (true, false) => ", asked for on the ambient light in the lighting (NVF_PLAY_DEBUG_AO=lighting)",
             (true, true) => ", asked for on the ambient light in the lighting, the factor each surface took shown alone (NVF_PLAY_DEBUG_AO=view-lighting)",
         };
-        format!("ambient occlusion: {estimate}{view}")
+        let lamps = match (self.lamps, self.lighting) {
+            (Some(w), true) => format!(", on lamps without a shadow by {w} (NVF_PLAY_DEBUG_AO_LAMPS)"),
+            (Some(w), false) => format!(", lamps {w} ignored on the picture (NVF_PLAY_DEBUG_AO_LAMPS)"),
+            (None, _) => String::new(),
+        };
+        format!("ambient occlusion: {estimate}{view}{lamps}")
     }
 }
 
@@ -371,6 +386,13 @@ static AO_DEBUG: std::sync::LazyLock<AoDebug> = std::sync::LazyLock::new(|| {
         Ok(s) => s,
         Err(v) => {
             warn!("debug switch NVF_PLAY_DEBUG_AO_STRENGTH={v}: expected a number from 0 to 1; strength {GTAO_STRENGTH}");
+            None
+        }
+    };
+    debug.lamps = match AoDebug::parse_strength(std::env::var("NVF_PLAY_DEBUG_AO_LAMPS").ok().as_deref()) {
+        Ok(w) => w,
+        Err(v) => {
+            warn!("debug switch NVF_PLAY_DEBUG_AO_LAMPS={v}: expected a number from 0 to 1; the lamps keep their whole light");
             None
         }
     };
@@ -1327,6 +1349,13 @@ mod tests {
         assert_eq!(grey.lighting_uniform(&AmbientOcclusion::with_debug(grey)).params.y, 0.0);
         let strong = AoDebug { gtao_strength: Some(0.8), ..lighting };
         assert_eq!(strong.lighting_uniform(&AmbientOcclusion::with_debug(strong)).extra.x, 0.8);
+        // The lamps' weight: 0 unless NVF_PLAY_DEBUG_AO_LAMPS says otherwise.
+        assert_eq!(u.extra.y, 0.0);
+        let lamps = AoDebug { lamps: Some(0.5), ..lighting };
+        assert_eq!(lamps.lighting_uniform(&AmbientOcclusion::with_debug(lamps)).extra.y, 0.5);
+        assert!(lamps.describe().ends_with("(NVF_PLAY_DEBUG_AO=lighting), on lamps without a shadow by 0.5 (NVF_PLAY_DEBUG_AO_LAMPS)"), "{}", lamps.describe());
+        assert!(AoDebug { lamps: Some(1.0), ..AoDebug::default() }.describe().ends_with(", lamps 1 ignored on the picture (NVF_PLAY_DEBUG_AO_LAMPS)"));
+        assert_eq!(AoDebug::parse_strength(Some("1.5")), Ok(Some(1.0)), "the lamps' aid parses as the strength's");
         // The log line says it is asked for; the estimate's part is unchanged.
         assert_eq!(
             lighting.describe(),

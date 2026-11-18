@@ -21,7 +21,9 @@ struct NvfAmbientOcclusion {
     // the fragment's distance (plus one unit) within which a texel's distance counts as the
     // same surface.
     params: vec4<f32>,
-    // x: the strength the factor was made with, for a later multibounce; y, z, w unused.
+    // x: the strength the factor was made with, for a later multibounce; y: the weight of
+    // the factor on the light of lamps that cast no shadow (0..1, NVF_PLAY_DEBUG_AO_LAMPS;
+    // 0 leaves them whole); z, w unused.
     extra: vec4<f32>,
 }
 
@@ -79,4 +81,16 @@ fn nvf_ambient_visibility(frag: vec2<f32>, dist: f32) -> f32 {
     // Never NaN nor outside 0..1 (comparisons with NaN are false); kept above 0 for pow.
     let safe = select(1.0, clamp(open, 0.0001, 1.0), open >= 0.0);
     return pow(safe, nvf_ao.params.x);
+}
+
+// The factor on the light of lamps (point and spot lights) that cast no shadow at this
+// fragment: mix(1, g, w), g the ambient's factor (`nvf_ambient_visibility`, the same display
+// value scale as the lamps' part of the sum), w the uniform's weight. Exactly 1, with no
+// texture read, while the weight is 0. Never on the directional lights.
+fn nvf_lamp_visibility(frag: vec2<f32>, dist: f32) -> f32 {
+    let w = clamp(nvf_ao.extra.y, 0.0, 1.0);
+    if !(w > 0.0) {
+        return 1.0;
+    }
+    return mix(1.0, nvf_ambient_visibility(frag, dist), w);
 }
