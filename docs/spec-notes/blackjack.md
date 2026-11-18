@@ -109,14 +109,17 @@ and GetCasinoWinningStage supplies the same value to dialogue conditions
 a 9.45 correction so No Casino Bans does not report the banned stage through
 GetCasinoWinningStage. That behavior is distinct from a provider version number.
 
-[hypothesis/design] With NVForever's existing No Casino Bans option enabled, these
-shared readers expose the last reward stage (3) in place of the banned stage (4).
-The original game's exact numeric replacement has not been captured. This is a
-read view: stored levels, earnings, earned chips and rewards remain unchanged.
-Turning the option off exposes the saved stage again, and the existing table
-opening check continues to enforce its earnings and saved-level ban. Stages 0..3
-retain their existing results. The option is applied by the existing settings
-consumer after restore; this change does not add preference persistence.
+[hypothesis] With No Casino Bans enabled, the shared readers report the last reward
+stage (3) in place of the banned stage (4). The changelog above says the banned stage
+is not reported; the replacement number 3 is not documented and the original game's
+exact numeric replacement has not been captured.
+
+[design] Engine design choice: the replacement is a read view. Stored levels,
+earnings, earned chips and rewards remain unchanged. Turning the option off exposes
+the saved stage again, and the existing table opening check continues to enforce its
+earnings and saved-level ban. Stages 0..3 retain their existing results. The option
+is applied by the existing settings consumer after restore; this change does not add
+preference persistence.
 
 [hypothesis] Source-compiled reward/ban branches, the actual condition evaluator,
 table opening and save/restore controls exercise this shared view. Public source
@@ -133,16 +136,20 @@ execution and complete Casino Rewards Fix compatibility remain separate open che
 level, with an integer parameter in 0..4. Source:
 [GECK](https://geckwiki.com/index.php?title=SetCasinoWinningsLevel).
 
-[design] Source-name calls replace the existing saved per-casino level read by
-GetCasinoWinningsLevel and the casino opening/ban consumer. Net earnings remain
-unchanged, so lowering a level does not bypass an earnings-based ban. Subsequent
-rounds retain the existing monotonic advancement rule. Other casinos and the
-no-casino-bans option retain their existing behavior.
+[design] Engine design choice: source-name calls replace the existing saved
+per-casino level read by GetCasinoWinningsLevel and the casino opening/ban consumer,
+and return 0. Subsequent rounds retain the existing monotonic advancement rule.
+Other casinos and the no-casino-bans option retain their existing behavior.
 
-[hypothesis] Invalid casino forms, missing arguments, nonfinite numbers and
-nonintegral/out-of-range levels fail without changing casino state. Native
-invalid-input behavior and interaction with the original game's quest scripts
-remain unobserved. Source-name admission does not admit native numeric encoding.
+[hypothesis] The setter leaves net earnings unchanged, so lowering a level does not
+bypass an earnings-based ban. The documentation does not say whether the original
+setter touches earnings; this is unobserved.
+
+[design] Engine design choice: invalid casino forms, missing arguments, nonfinite
+numbers and nonintegral/out-of-range levels fail with an engine error without
+changing casino state. Native invalid-input behavior and interaction with the
+original game's quest scripts remain unobserved. Source-name admission does not
+admit native numeric encoding.
 
 - The player's earnings at each casino are kept with the game: the net chips won there
   over every round [documented: GECK wiki SetCasinoBan, GetCasinoWinnings].
