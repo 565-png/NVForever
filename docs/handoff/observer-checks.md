@@ -2965,6 +2965,30 @@ already talking takes over at once, same topic or another; nothing is queued or 
      whether the subtitle shows at each distance.
 
 
+## Added 2026-11-15 (Use Weapon at objects and markers, #2652)
+
+207. **How does UseWeapon aim at objects and markers?** (P1; #2652, #2715 shooter
+     half; `docs/spec-notes/use-weapon.md` section 6.) [documented: #2652 supplied record
+     facts] The Hopeville silo mainframe's ACTI OnHit ED-E block sets NVDLC04MQ01a
+     55 after its package requests one Always Hit / Do No Damage arc-welder shot;
+     the commissary terminals also wait on ED-E's hit. Capture activation and button
+     1 at the mainframe, then a commissary unlock: does OnHit receive ED-E, and where
+     does the beam land? Capture a finite script use at an XMarker: do its shots fire
+     and does ED-E resume the next package without ResetAI? In G.I. Blues, do the
+     barkers keep firing at VFSPacerBusShelterREF while their Repeat Fire package
+     holds, including during combat? [hypothesis] NVForever aims at placed position
+     plus OBND centre (marker: position alone), counts misses toward finite uses, and
+     dispatches harmless object hits with the shooter. Check that placement on an
+     asymmetric or rotated object as well. [documented: #2652 w4 supplied world refs]
+     The barkers and Pacer stand in FreesideNorthWorld, while the shelter belongs
+     to FreesideWorld; both have parent WastelandNV and share coordinates.
+     [hypothesis, #2652] NVForever treats a non-actor placed Use Weapon / UseWeapon
+     target in a sibling worldspace (same nonempty immediate parent) as coordinates
+     in the shooter's worldspace, with its OBND centre added. Capture whether the
+     barkers turn and shoot at this shelter from the fight markers, and compare an
+     unrelated-worldspace object and a sibling-worldspace actor target (neither
+     receives this projection). Pacer's cover pose is outside this check.
+
 ## Added 2026-11-15 (old-head hair outside the race list, #2714)
 
 210. **Which hair does the original use when an NPC's HAIR is outside its race's

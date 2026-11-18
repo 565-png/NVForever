@@ -1285,6 +1285,17 @@ pub struct Combat {
 }
 
 impl Combat {
+    /// [design, #2652] Run normal combat initialization over authored plugin tables,
+    /// without the game/render plugins, for downstream engine tests.
+    #[cfg(feature = "test-support")]
+    pub fn over_plugins(play: crate::PlayData) -> Self {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = bevy::prelude::World::new();
+        world.insert_resource(crate::PlayWorld(play));
+        world.run_system_once(init_combat).unwrap();
+        world.remove_resource::<Combat>().unwrap()
+    }
+
     /// Whether the player's flinch (a staggering hit, [`player_flinch`]) still plays: the
     /// player does not walk meanwhile (`crate::player::flinch_holds_walk`).
     pub fn player_flinching(&self) -> bool {
