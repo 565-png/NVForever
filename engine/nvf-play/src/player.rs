@@ -487,7 +487,7 @@ impl Plugin for PlayerPlugin {
 }
 
 /// The Sprint row's note (NVF Features › Advanced Movement › Gameplay).
-pub const SPRINT_NOTE: &str = "On: hold Sprint (Left Shift; Run moves to X) to run faster, spending AP every second; stopping low on AP leaves you out of breath. Off: as in the original.";
+pub const SPRINT_NOTE: &str = "On: hold the Sprint key (set it in Controls) to run faster, spending AP every second; stopping low on AP leaves you out of breath. Off: as in the original.";
 
 /// The Movement Weight dropdown's choice, by its name or its number.
 fn movement_weight_pick(w: &mut World, name: &str) -> bool {

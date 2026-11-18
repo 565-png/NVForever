@@ -454,7 +454,7 @@ settings-page.md) [design]:
 | Gameplay | `movement-inertia` | Movement Inertia | The ground speed's springs (starting, gliding to a stop, braking before turning back; the movement clips following a glide); the first-person stance cross-over (1.0 s / 1.1 s) and crouched jumps staying crouched; the view's take-off and landing dip, deeper for a higher fall (`hard_landing`), the longer landing clip (`land_stretch`) and the speed a hard landing takes (`MovementInertia::land`) (`--no-movement-inertia`) |
 | | `weapon-handling` | Weapon Handling | The slower draw and holster (`draw_weight`: 1.5 to 2.4 times the original's) and aim (0.6 s / 0.55 s for a pistol, `aim_weight`), heavier weapons slower still, Agility and Strength by the weapon's class (`attribute_rate`, `aim_rate`); off, the game's own timing with its Agility rate (`--no-weapon-handling`, `MovementInertia::handles`, `equip_rate`, `aim_seconds`) |
 | | `advanced-recoil` | Advanced Recoil | The view's kick eased in and 40 % settling back (`nvf_play::combat`), the view's nudge back from a shot (head bob's springs, so shown only with Camera Motion on too) |
-| | `sprint` | Sprint | Off by default (`--sprint`, `MovementInertia::sprint_on`): the Sprint control (Left Shift) held runs faster for AP, a stop low on AP leaves the player winded; while on, Run acts on X unless the player moved it (`bindings::Bindings::effective`); the shared state and input are `nvf_play::stance`'s (#3000) |
+| | `sprint` | Sprint | Off by default (`--sprint`, `MovementInertia::sprint_on`): the Sprint control held runs faster for AP, a stop low on AP leaves the player winded; it has no key until the player binds one (Controls › Movement) and Run keeps Left Shift [design, #3000: the maintainer's decision on #3002]; the shared state and input are `nvf_play::stance`'s (#3000) |
 | *(an empty line)* | | | |
 | Visual Only | `weapon-inertia` | Weapon Inertia | The arms' lag, steps, bob, jump and landing dip, the muzzle tip in the air, the breathing drift, the gun's recoil springs, the weapon's weight in all of it (§1.4a); `--no-weapon-sway`, a saved `weapon-sway` read as it |
 | | `animation-smoothing` | Animation Smoothing | Every first-person clip fade on the settling curve, the draw and holster played by their motion along it, eased starts and slow returns of attacks, reloads and jams, the aim's cross-over, the true iron sights' and the zoom's curve, the loop seams, the Pip-Boy's ease; at Weapon Handling's pace, else at the game's own (the aim at the true iron sights' 0.35 s / 0.3 s), so it changes the look only |
@@ -607,8 +607,8 @@ stays. At the start and at each change the log says which of the switches kept i
 ### 1.4a.4 Advanced Movement: Sprint (#3000)
 
 NVF Features › Advanced Movement › Gameplay › Sprint (`sprint`, off by default; the shared
-state and input: `nvf_play::stance`). Holding Sprint (Left Shift; Run moves to X while it is
-on) runs faster for Action Points. Off, the player moves exactly as in the original. Code:
+state and input: `nvf_play::stance`). Holding Sprint (a key the player sets in Controls › Movement; none by default, and Run
+keeps Left Shift [design, #3000: the maintainer's decision on #3002]) runs faster for Action Points. Off, the player moves exactly as in the original. Code:
 `engine/nvf-play/src/sprint.rs` (the rules, the speed and the AP) and
 `engine/nvforever/src/sprint_view.rs` (the look); every constant named there [design, tuned
 by eye; the speed and the AP rate the request's in #3000].

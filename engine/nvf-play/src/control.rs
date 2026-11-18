@@ -19,7 +19,7 @@
 //! - Always Run (Caps Lock) toggles running as the default (on by default:
 //!   `bAlwaysRunByDefault=1`); Run (Left Shift) held does the other; Auto Move (Q) walks
 //!   forward until Forward or Back is pressed (player.rs).
-//! - Sprint (Left Shift; Run moves to X), NVForever's own, only with its NVF Features switch
+//! - Sprint (no key until the player binds one; Run keeps Left Shift), NVForever's own, only with its NVF Features switch
 //!   on: read here into [`PlayerControl::sprint_held`] for the feature (`crate::stance`, the
 //!   contract).
 //! - Toggle POV (F, middle mouse): a tap switches first and third person; held while the
@@ -598,8 +598,7 @@ const NOT_BUILT: [Control; 0] = [];
 type HoldClock<'w> = (Option<Res<'w, Time<Real>>>, Option<Res<'w, crate::tweaks::TweakSettings>>);
 
 /// Sprint's input (`crate::stance`, the contract): [`PlayerControl::sprint_held`] while the
-/// Sprint control is held with Sprint on, read on its effective key
-/// (`crate::bindings::Bindings::effective`).
+/// Sprint control is held with Sprint on (on the key the player bound it to: none by default).
 fn read_stance(input: &ControlInput, stance: Option<&crate::inertia::MovementInertia>, c: &mut PlayerControl) {
     c.sprint_held = stance.is_some_and(crate::inertia::MovementInertia::sprint_on) && input.pressed(Control::Sprint);
 }
@@ -1204,8 +1203,9 @@ mod tests {
         assert_eq!(control(&app).pov, Pov::Third);
     }
 
-    /// Sprint's input (`crate::stance`): nothing with its switch off; held on Shift; the
-    /// movement lock strikes it.
+    /// Sprint's input (`crate::stance`): no key by default, so Shift (Run's) holds none; a key
+    /// the player binds holds it while Sprint is on, nothing with it off; the movement lock
+    /// strikes it.
     #[test]
     fn sprint_input_follows_its_switch_and_key() {
         let mut app = app();
@@ -1218,22 +1218,33 @@ mod tests {
         fn keys(app: &mut App) -> Mut<'_, ButtonInput<KeyCode>> {
             app.world_mut().resource_mut::<ButtonInput<KeyCode>>()
         }
+        // Unbound by default (#3000): Shift, Run's key, holds no sprint, on or off.
         keys(&mut app).press(KeyCode::ShiftLeft);
         for _ in 0..4 {
             step(&mut app, 0.4);
         }
+        assert!(!control(&app).sprint_held, "off and unbound: nothing");
+        app.world_mut().resource_mut::<crate::inertia::MovementInertia>().sprint = true;
+        step(&mut app, 0.1);
+        assert!(!control(&app).sprint_held, "on but unbound: Shift is Run's, no sprint");
+        keys(&mut app).release_all();
+        step(&mut app, 0.1);
+        // A key the player binds holds it while Sprint is on, and Run keeps Shift.
+        app.world_mut().resource_mut::<Bindings>().rebind(Control::Sprint, crate::bindings::Input::Key(KeyCode::KeyG));
+        assert_eq!(app.world().resource::<Bindings>().get(Control::Run).key, Some(KeyCode::ShiftLeft));
+        keys(&mut app).press(KeyCode::KeyG);
+        step(&mut app, 0.1);
+        assert!(control(&app).sprint_held, "the bound key sprints");
+        keys(&mut app).release(KeyCode::KeyG);
+        step(&mut app, 0.1);
+        assert!(!control(&app).sprint_held);
+        // Off again: the bound key holds nothing.
+        app.world_mut().resource_mut::<crate::inertia::MovementInertia>().sprint = false;
+        keys(&mut app).press(KeyCode::KeyG);
+        step(&mut app, 0.1);
         assert!(!control(&app).sprint_held, "off: nothing");
         keys(&mut app).release_all();
         step(&mut app, 0.1);
-        // On (the switch and the bindings kept on it, `crate::stance::sync_bindings`).
-        app.world_mut().resource_mut::<crate::inertia::MovementInertia>().sprint = true;
-        app.world_mut().resource_mut::<Bindings>().sprint_on = true;
-        keys(&mut app).press(KeyCode::ShiftLeft);
-        step(&mut app, 0.1);
-        assert!(control(&app).sprint_held);
-        keys(&mut app).release(KeyCode::ShiftLeft);
-        step(&mut app, 0.1);
-        assert!(!control(&app).sprint_held);
         // The sneaking lock leaves it; the movement lock strikes it.
         let mut i = MoveIntent::default();
         let mut c = PlayerControl { sprint_held: true, ..control(&app) };

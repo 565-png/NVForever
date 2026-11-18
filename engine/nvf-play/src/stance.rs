@@ -11,15 +11,14 @@
 //!
 //! **Input** (`crate::control::read_controls`, `PlaySet::Input`; struck by the scripts'
 //! locks in `crate::control::enforce_locks`, the frame's input already applied):
-//! [`PlayerControl::sprint_held`]: the Sprint control (Left Shift by default) is held and
-//! Sprint is on. Struck by the movement lock.
+//! [`PlayerControl::sprint_held`]: the Sprint control is held and Sprint is on. Struck by the
+//! movement lock.
 //!
-//! **Keys** (`crate::bindings`): Sprint is a binding of its own (Controls › Movement), greyed
-//! and not rebindable while its switch is off ([`binding_greyed`]); off, it acts on nothing.
-//! While Sprint is on, Left Shift is Sprint's and Run acts on X, unless the player moved Run
-//! off its default ([`Bindings::effective`], worked out each time, never saved). A rebind
-//! never swaps Sprint and Run ([`crate::bindings::SHARED_PAIRS`]). [`sync_bindings`] keeps
-//! [`Bindings::sprint_on`] on the switch.
+//! **Keys** (`crate::bindings`): Sprint is a binding of its own (Controls › Movement) with no
+//! key or button until the player binds one, greyed and not rebindable while its switch is
+//! off ([`binding_greyed`]). Run keeps its own key (Left Shift) whatever Sprint's state
+//! [design, #3000: the maintainer's decision on #3002]. [`log_keys`] says both keys whenever
+//! the switch changes.
 //!
 //! **Motion** ([`StanceMotion`], one resource the camera and animation code read): the
 //! Sprint feature writes [`StanceMotion::sprinting`], [`StanceMotion::sprint_share`] and
@@ -34,8 +33,6 @@
 //!
 //! [`MovementInertia::sprint_on`]: crate::inertia::MovementInertia::sprint_on
 //! [`PlayerControl::sprint_held`]: crate::control::PlayerControl::sprint_held
-//! [`Bindings::effective`]: crate::bindings::Bindings::effective
-//! [`Bindings::sprint_on`]: crate::bindings::Bindings::sprint_on
 
 use crate::bindings::{Bindings, Control};
 use crate::inertia::MovementInertia;
@@ -78,26 +75,23 @@ pub fn binding_greyed(world: &World, c: Control) -> Option<&'static str> {
 pub const SPRINT_OFF: &str = "Turn on Sprint in NVF Features > Advanced Movement first.";
 pub const GLOBAL_TOGGLE_OFF: &str = "Turn on the Global Toggle in NVF Features > Advanced Movement first.";
 
-/// Keep [`Bindings::sprint_on`] on the switch, so the controls act on the effective keys
-/// (`crate::bindings::Bindings::effective`) from the next read.
-pub fn sync_bindings(inertia: Option<Res<MovementInertia>>, bindings: Option<ResMut<Bindings>>) {
-    let (Some(m), Some(mut b)) = (inertia, bindings) else { return };
+/// Log Sprint's switch with Sprint's key and Run's at the start and whenever the switch
+/// changes (a smoke check: Run keeps its key, Sprint has none until bound).
+pub fn log_keys(inertia: Option<Res<MovementInertia>>, bindings: Option<Res<Bindings>>, mut last: Local<Option<bool>>) {
+    let (Some(m), Some(b)) = (inertia, bindings) else { return };
     let now = m.sprint_on();
-    if b.sprint_on != now {
-        b.sprint_on = now;
-        let run = b.effective(Control::Run);
-        let moved = if run != b.get(Control::Run) { format!("; Run on {} while Sprint has {}", run.text(), b.get(Control::Run).text()) } else { String::new() };
-        info!("controls: Sprint {}{moved}", if now { "on" } else { "off" });
+    if *last != Some(now) {
+        *last = Some(now);
+        info!("controls: Sprint {}; Sprint's key {}, Run's {}", if now { "on" } else { "off" }, b.get(Control::Sprint).text(), b.get(Control::Run).text());
     }
 }
 
-/// [`StanceMotion`] and the bindings kept on the switch ([`sync_bindings`], before the
-/// frame's input).
+/// [`StanceMotion`] and the keys' log ([`log_keys`]).
 pub struct StancePlugin;
 
 impl Plugin for StancePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<StanceMotion>().add_systems(PreUpdate, sync_bindings);
+        app.init_resource::<StanceMotion>().add_systems(PreUpdate, log_keys);
     }
 }
 
@@ -106,36 +100,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_bindings_follow_the_switch_and_a_greyed_row_says_why() {
+    fn sprint_has_no_key_run_keeps_shift_and_a_greyed_row_says_why() {
         let mut app = App::new();
         app.init_resource::<Bindings>().init_resource::<MovementInertia>().add_plugins(StancePlugin);
         app.update();
         assert_eq!(*app.world().resource::<StanceMotion>(), StanceMotion::default());
-        assert!(!app.world().resource::<Bindings>().sprint_on, "off by default");
         assert_eq!(binding_greyed(app.world(), Control::Sprint), Some(SPRINT_OFF));
         assert_eq!(binding_greyed(app.world(), Control::Run), None);
+        let keys = |app: &App| {
+            let b = app.world().resource::<Bindings>();
+            (b.get(Control::Sprint).key, b.get(Control::Run).key)
+        };
+        assert_eq!(keys(&app), (None, Some(KeyCode::ShiftLeft)), "Sprint unbound by default");
+        // Sprint on: Run keeps Left Shift; Sprint still has none until the player binds it.
         app.world_mut().resource_mut::<MovementInertia>().sprint = true;
         app.update();
-        let b = app.world().resource::<Bindings>();
-        assert!(b.sprint_on);
-        assert_eq!(b.effective(Control::Run).key, Some(crate::bindings::RUN_SPARE_KEY));
+        assert_eq!(keys(&app), (None, Some(KeyCode::ShiftLeft)), "Run does not move");
         assert_eq!(binding_greyed(app.world(), Control::Sprint), None);
-        // The Global Toggle off: Sprint acts on nothing, greyed for it, and keeps its choice.
+        // The Global Toggle off: greyed for it, and Sprint keeps its choice.
         app.world_mut().resource_mut::<MovementInertia>().advanced = false;
         app.update();
-        let b = app.world().resource::<Bindings>();
-        assert!(!b.sprint_on);
-        assert_eq!(b.effective(Control::Run).key, Some(KeyCode::ShiftLeft), "Shift is Run's again");
         assert_eq!(binding_greyed(app.world(), Control::Sprint), Some(GLOBAL_TOGGLE_OFF));
         // A greyed binding is not rebound or cleared.
         app.world_mut().resource_mut::<MovementInertia>().advanced = true;
         app.world_mut().resource_mut::<MovementInertia>().sprint = false;
         crate::bindings::rebind(app.world_mut(), Control::Sprint, crate::bindings::Input::Key(KeyCode::KeyK));
-        assert_eq!(app.world().resource::<Bindings>().get(Control::Sprint).key, Some(KeyCode::ShiftLeft));
-        crate::bindings::clear_key(app.world_mut(), Control::Sprint);
-        assert_eq!(app.world().resource::<Bindings>().get(Control::Sprint).key, Some(KeyCode::ShiftLeft));
+        assert_eq!(keys(&app).0, None);
         app.world_mut().resource_mut::<MovementInertia>().sprint = true;
         crate::bindings::rebind(app.world_mut(), Control::Sprint, crate::bindings::Input::Key(KeyCode::KeyK));
-        assert_eq!(app.world().resource::<Bindings>().get(Control::Sprint).key, Some(KeyCode::KeyK), "Sprint is on: it rebinds");
+        assert_eq!(keys(&app), (Some(KeyCode::KeyK), Some(KeyCode::ShiftLeft)), "Sprint is on: it rebinds, Run untouched");
+        crate::bindings::clear_key(app.world_mut(), Control::Sprint);
+        assert_eq!(keys(&app).0, None, "and clears");
     }
 }

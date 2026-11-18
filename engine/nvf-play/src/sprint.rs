@@ -1,5 +1,5 @@
 //! Sprint: NVF Features › Advanced Movement's Sprint switch [design, #3000].
-//! Holding the Sprint control (Left Shift by default; `crate::stance`, the shared contract)
+//! Holding the Sprint control (a key the player binds, none by default; `crate::stance`, the shared contract)
 //! runs faster for Action Points; off ([`MovementInertia::sprint_on`] false) the player
 //! moves exactly as in the original.
 //!

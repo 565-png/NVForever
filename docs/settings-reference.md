@@ -894,9 +894,10 @@ below cover them all.
 - In full: a key replaces the control's key, a mouse button its mouse button. Kept under the
   control's name in [Controls] of NVForever.ini. Sprint (NVForever's own, at the end of
   Movement) is greyed and cannot be rebound while its NVF Features › Advanced Movement switch
-  is off; its note says so. Sprint shares Run's Left Shift on purpose: a rebind never swaps
-  within that pair, and while Sprint is on the Run row shows X, the key Run acts on then
-  (`sprint` under NVF Features › Gameplay below).
+  is off; its note says so. It has no key until the player binds one, and Run keeps Left
+  Shift whether Sprint is on or off; a key bound to Sprint that another control has is
+  swapped as for any two controls (`sprint` under NVF Features › Gameplay below; #3000, the
+  maintainer's decision on #3002).
 
 ### A control (controller)
 
@@ -1300,11 +1301,10 @@ below cover them all.
 
 ### `sprint`: Sprint
 
-- On the page: On: hold Sprint (Left Shift; Run moves to X) to run faster, spending AP every second; stopping low on AP leaves you out of breath. Off: as in the original.
-- In full: the Sprint control (Controls › Movement, Left Shift by default) is greyed and does
-  nothing while this is off or the Global Toggle is. While it is on, Left Shift is Sprint's
-  and Run acts on X, unless Run was moved off its default Left Shift; the INI keeps Run's own
-  key, so turning Sprint off gives Shift back to Run (#3000). A full sprint is
+- On the page: On: hold the Sprint key (set it in Controls) to run faster, spending AP every second; stopping low on AP leaves you out of breath. Off: as in the original.
+- In full: the Sprint control (Controls › Movement) has no key until the player binds one,
+  and is greyed and does nothing while this is off or the Global Toggle is; Run keeps Left
+  Shift whatever this is (#3000, the maintainer's decision on #3002). A full sprint is
   1.45 times the run speed, walking (Always Run off) too, and costs 10 AP a second (none
   come back meanwhile; it ends at 0 AP); forward only, half a sprint diagonally; aiming,
   attacking, reloading, sneaking, lying down,

@@ -362,8 +362,8 @@ impl MovementInertia {
         self.advanced && self.recoil
     }
 
-    /// The Sprint control acts: Shift runs faster for AP and Run moves off it (Sprint under
-    /// the Global Toggle; `crate::stance`, `crate::bindings::Bindings::effective`).
+    /// The Sprint control acts: its key (the player's; none by default) runs faster for AP
+    /// (Sprint under the Global Toggle; `crate::stance`).
     pub fn sprint_on(&self) -> bool {
         self.advanced && self.sprint
     }

@@ -831,11 +831,11 @@ struct Args {
     /// (nvf_play::inertia); a switch of the settings page (on by default).
     #[arg(long, requires = "play")]
     no_advanced_recoil: bool,
-    /// Sprint: the Sprint control (Left Shift; Run moves to X) runs faster for AP
+    /// Sprint: the Sprint control (a key the player binds; none by default) runs faster for AP
     /// (nvf_play::stance); off unless given; a switch of the settings page.
     #[arg(long, requires = "play", conflicts_with = "no_sprint")]
     sprint: bool,
-    /// No Sprint: Shift is Run as in the original (nvf_play::stance), the default; a switch of
+    /// No Sprint: the Sprint control does nothing (nvf_play::stance), the default; a switch of
     /// the settings page.
     #[arg(long, requires = "play")]
     no_sprint: bool,

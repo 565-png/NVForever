@@ -28,12 +28,11 @@
 //! written again. Esc and the console's key (`` ` ``) cannot be bound [design: they
 //! open the pause menu and the console].
 //!
-//! **Sprint** (NVForever's own, NVF Features › Advanced Movement; `crate::stance`) acts only
-//! while its switch is on: off, it acts on nothing and its Controls row is greyed and cannot
-//! be rebound. The controls act on [`Bindings::effective`], worked out each time and never
-//! saved: while Sprint is on and Run is still on its default Left Shift, Run is on X
-//! ([`RUN_SPARE_KEY`]) and Shift is Sprint's; off, Shift is Run's again. Sprint shares Run's
-//! key on purpose, so a rebind never swaps within that pair ([`SHARED_PAIRS`]) [design, #3000].
+//! **Sprint** (NVForever's own, NVF Features › Advanced Movement; `crate::stance`) has no key
+//! until the player binds one, and acts only while its switch is on: off, its Controls row is
+//! greyed and cannot be rebound. Run keeps Left Shift whatever Sprint's state; a Sprint key
+//! the player sets is handled as any other binding (a swap with the control that had it)
+//! [design, #3000: the maintainer's decision on #3002].
 //!
 //! **The controller** (`crate::pad`, docs/design/controller.md): `Input Device` in
 //! `[Controls]` (`Keyboard and Mouse` or `Controller`, [`InputDevice`]) says which works
@@ -159,9 +158,9 @@ pub enum Control {
 /// `[Controls]` of the owner's `FalloutPrefs.ini`: (control, INI name, value)
 /// [observed 2026-10-09], then NVForever's own controls (after [`GAME_INI_CONTROLS`],
 /// coded the same way): Lower Weapon on H [design: the owner 2026-10-27, moved off Ready
-/// Item tapped twice so a reload is not held back waiting for a second tap]; Sprint on Left
-/// Shift with no controller button [design, #3000: while Sprint is on, Shift
-/// is Sprint's and Run moves to X ([`Bindings::effective`])].
+/// Item tapped twice so a reload is not held back waiting for a second tap]; Sprint unbound,
+/// with no controller button either, until the player binds it [design, #3000: the
+/// maintainer's decision on #3002].
 pub const GAME_CONTROLS: [(Control, &str, u32); 58] = [
     (Control::Forward, "Forward", 0x0011FF13),
     (Control::Back, "Back", 0x001FFF14),
@@ -192,7 +191,7 @@ pub const GAME_CONTROLS: [(Control, &str, u32); 58] = [
     (Control::QuickLoad, "QuickLoad", 0x0043FFFF),
     (Control::Grab, "Grab", 0x002CFF09),
     (Control::LowerWeapon, "Lower Weapon", 0x0023FFFF),
-    (Control::Sprint, "Sprint", 0x002AFFFF),
+    (Control::Sprint, "Sprint", 0xFFFFFFFF),
     (Control::HolsterWeapon, "Holster Weapon", 0xFFFFFFFF),
     (Control::ToggleLight, "Toggle Light", 0xFFFFFFFF),
     (Control::ToggleCrosshair, "Toggle Crosshair", 0xFFFFFFFF),
@@ -429,29 +428,6 @@ pub struct Bindings {
     /// a scope, as a multiple of the unzoomed look's; 1 leaves the look as it is unzoomed
     /// (`crate::player::aim_scale`) [design: owner 2026-11-15].
     pub aim: [f32; 2],
-    /// NVF Features › Advanced Movement's Sprint acts now
-    /// (`crate::inertia::MovementInertia::sprint_on`), kept by `crate::stance::sync_bindings`;
-    /// never saved. It decides [`Bindings::effective`].
-    pub sprint_on: bool,
-}
-
-/// Controls that share a key on purpose [design, #3000]: Sprint takes Run's
-/// Left Shift (while Sprint is on Run moves off it, [`Bindings::effective`]). A rebind never
-/// swaps one of a pair for the other ([`Bindings::rebind`]).
-pub const SHARED_PAIRS: [(Control, Control); 1] = [(Control::Sprint, Control::Run)];
-
-/// Whether `a` and `b` share a key on purpose ([`SHARED_PAIRS`]).
-pub fn shared_pair(a: Control, b: Control) -> bool {
-    SHARED_PAIRS.iter().any(|&(x, y)| (x, y) == (a, b) || (y, x) == (a, b))
-}
-
-/// The key Run moves to while Sprint holds Left Shift: X (DIK `0x2D`), which no control has
-/// by default [design, #3000].
-pub const RUN_SPARE_KEY: KeyCode = KeyCode::KeyX;
-
-/// Control `c`'s binding as the game ships it ([`GAME_CONTROLS`]).
-pub fn default_binding(c: Control) -> Binding {
-    GAME_CONTROLS.iter().find(|(k, _, _)| *k == c).map_or_else(Binding::default, |&(_, _, v)| Binding::from_ini(v))
 }
 
 /// The place of `device` in [`Bindings::vertical`] and [`Bindings::aim`].
@@ -503,47 +479,6 @@ impl Bindings {
             allow_duplicates: false,
             vertical: [1.0, 1.0],
             aim: [1.0, 1.0],
-            sprint_on: false,
-        }
-    }
-
-    /// Whether `c` is Sprint and its switch (under the Global Toggle) is off now: it acts on
-    /// nothing, and its Controls row is greyed (`crate::stance::binding_greyed`).
-    pub fn switched_off(&self, c: Control) -> bool {
-        c == Control::Sprint && !self.sprint_on
-    }
-
-    /// The key and mouse button control `c` acts on now: its own ([`Bindings::get`], what the
-    /// INI keeps), but none for Sprint while its switch is off, and Run on
-    /// [`RUN_SPARE_KEY`] while Sprint is on with Run still on its default Left Shift and Sprint
-    /// on that key too (none when another control has X) [design, #3000; the request: "while
-    /// Sprint is ON, Left Shift belongs to Sprint and Run moves to X, but only if Run is still
-    /// on its default"]. Worked out each time, never saved: turning Sprint off gives Run its
-    /// Shift back. A player's own Run key is never moved.
-    pub fn effective(&self, c: Control) -> Binding {
-        if self.switched_off(c) {
-            return Binding::default();
-        }
-        let b = self.get(c);
-        if c == Control::Run && self.run_gives_way() {
-            let taken = self.map.iter().any(|(k, x)| *k != Control::Run && !self.switched_off(*k) && x.key == Some(RUN_SPARE_KEY));
-            return Binding { key: (!taken).then_some(RUN_SPARE_KEY), ..b };
-        }
-        b
-    }
-
-    /// Sprint is on and holds Run's default key: Run moves off it ([`Bindings::effective`]).
-    fn run_gives_way(&self) -> bool {
-        let run = self.get(Control::Run);
-        self.sprint_on && run == default_binding(Control::Run) && run.key.is_some() && self.get(Control::Sprint).key == run.key
-    }
-
-    /// Control `c`'s controller input now: none for Sprint while its switch is off.
-    pub fn pad_effective(&self, c: Control) -> Option<PadInput> {
-        if self.switched_off(c) {
-            None
-        } else {
-            self.pad(c)
         }
     }
 
@@ -565,7 +500,7 @@ impl Bindings {
         let old = self.pad(c);
         let mut swapped = Vec::new();
         let swaps = !self.allow_duplicates;
-        for (k, x) in self.pad.iter_mut().filter(|(k, x)| swaps && *k != c && !shared_pair(c, *k) && *x == Some(p)) {
+        for (k, x) in self.pad.iter_mut().filter(|(k, x)| swaps && *k != c && *x == Some(p)) {
             *x = old;
             swapped.push(*k);
         }
@@ -577,21 +512,18 @@ impl Bindings {
     /// original writes the key and ")" [observed: "E)" under the crosshair]; with a
     /// controller it shows the button's picture, NVForever its letter].
     pub fn prompt(&self, c: Control) -> String {
-        let b = self.effective(c);
+        let b = self.get(c);
         let name = match self.device {
-            InputDevice::Controller => self.pad_effective(c).map(|p| crate::pad::pad_shown(p).to_string()),
+            InputDevice::Controller => self.pad(c).map(|p| crate::pad::pad_shown(p).to_string()),
             InputDevice::KeyboardMouse => b.key.and_then(key_name).map(String::from).or_else(|| b.mouse.map(mouse_name)),
         };
         format!("{})", name.unwrap_or_else(|| "?".into()))
     }
 
-    /// What the Controls tab shows for the control on the device in use: the input it acts on
-    /// now ([`Bindings::effective`]: Run on X while Sprint has Shift), or its own while it is
-    /// switched off (its row greyed).
+    /// What the Controls tab shows for the control on the device in use.
     pub fn text_on(&self, c: Control) -> String {
         match self.device {
-            InputDevice::KeyboardMouse if self.switched_off(c) => self.get(c).text(),
-            InputDevice::KeyboardMouse => self.effective(c).text(),
+            InputDevice::KeyboardMouse => self.get(c).text(),
             // The button style's names (#1452); the INI keeps the Xbox ones ([`pad_text`]).
             InputDevice::Controller => self.pad(c).map_or_else(|| "None".into(), |p| crate::pad::pad_shown(p).to_string()),
         }
@@ -619,15 +551,13 @@ impl Bindings {
     }
 
     /// Bind `input` to `c`; any other control that had it gets `c`'s old input of that
-    /// kind instead (a swap), but the other of a pair that shares a key on purpose
-    /// ([`SHARED_PAIRS`]: Sprint and Run) keeps its own. The controls
-    /// that gave it up.
+    /// kind instead (a swap). The controls that gave it up.
     pub fn rebind(&mut self, c: Control, input: Input) -> Vec<Control> {
         let old = self.get(c);
         let mut swapped = Vec::new();
         // The player's tweak lets two controls share an input [design: docs/design/tweaks.md].
         let swaps = !self.allow_duplicates;
-        for (k, b) in self.map.iter_mut().filter(|(k, _)| swaps && *k != c && !shared_pair(c, *k)) {
+        for (k, b) in self.map.iter_mut().filter(|(k, _)| swaps && *k != c) {
             match input {
                 Input::Key(key) if b.key == Some(key) => b.key = old.key,
                 Input::Mouse(m) if b.mouse == Some(m) => b.mouse = old.mouse,
@@ -1464,9 +1394,9 @@ impl ControlInput<'_, '_> {
 
     fn pad_is(&self, c: Control, ask: Ask) -> bool {
         if matches!(ask, Ask::Pressed) {
-            return pad_binding_held(self.bindings.pad_effective(c), &self.pads, self.sticks.as_deref());
+            return pad_binding_held(self.bindings.pad(c), &self.pads, self.sticks.as_deref());
         }
-        match self.bindings.pad_effective(c) {
+        match self.bindings.pad(c) {
             Some(PadInput::Button(b)) => self.pads.iter().any(|g| match ask {
                 Ask::Pressed => g.pressed(b),
                 Ask::JustPressed => g.just_pressed(b),
@@ -1499,7 +1429,7 @@ impl ControlInput<'_, '_> {
     }
 
     fn keys_pressed(&self, c: Control) -> bool {
-        let b = self.bindings.effective(c);
+        let b = self.bindings.get(c);
         b.key.is_some_and(|k| self.keys.pressed(k) && self.open_key(k)) || b.mouse.is_some_and(|m| self.mouse.pressed(m) && self.open_button(m))
     }
 
@@ -1515,7 +1445,7 @@ impl ControlInput<'_, '_> {
         if self.suppressed() || self.held(c) {
             return false;
         }
-        let b = self.bindings.effective(c);
+        let b = self.bindings.get(c);
         let keys = || b.key.is_some_and(|k| self.keys.just_pressed(k) && self.open_key(k)) || b.mouse.is_some_and(|m| self.mouse.just_pressed(m) && self.open_button(m));
         if self.controller() {
             return self.pad_is(c, Ask::JustPressed) || (keys_with_pad() && keys());
@@ -1528,7 +1458,7 @@ impl ControlInput<'_, '_> {
         if self.held(c) || self.captured() {
             return false;
         }
-        let b = self.bindings.effective(c);
+        let b = self.bindings.get(c);
         let released = self.pad_is(c, Ask::JustReleased) || b.key.is_some_and(|k| self.keys.just_released(k)) || b.mouse.is_some_and(|m| self.mouse.just_released(m));
         released && !self.pressed(c)
     }
@@ -1766,10 +1696,12 @@ mod tests {
         assert_eq!(Bindings::name(Control::Rest), "Rest");
         // Every control has a key or a button, but the Tweaks tab's, which start unbound;
         // the console and the screenshot at the end on their old keys.
-        for (c, _, _) in &GAME_CONTROLS[..TWEAK_CONTROLS] {
+        // (Sprint, NVForever's own, has none until the player binds it: #3000.)
+        for (c, _, _) in GAME_CONTROLS[..TWEAK_CONTROLS].iter().filter(|(c, _, _)| *c != Control::Sprint) {
             let x = b.get(*c);
             assert!(x.key.is_some() || x.mouse.is_some(), "{c:?}");
         }
+        assert_eq!(b.get(Control::Sprint), Binding::default());
         let extra = GAME_CONTROLS.len() - BOUND_EXTRA_CONTROLS;
         for (c, _, _) in &GAME_CONTROLS[TWEAK_CONTROLS..extra] {
             assert_eq!(b.get(*c), Binding { key: None, mouse: None }, "{c:?}");
@@ -1778,48 +1710,24 @@ mod tests {
         assert_eq!(b.get(Control::Screenshot), Binding { key: Some(KeyCode::F12), mouse: None });
     }
 
-    /// Sprint (#3000): Left Shift by default, nothing while its switch is off; with
-    /// Sprint on Run moves to X unless the player moved it; no rebind swaps within the pair.
+    /// Sprint (#3000, the maintainer's decision on #3002): no key and no button by default, and
+    /// Run keeps Left Shift whatever Sprint's state; a Sprint key the player sets is any
+    /// binding (a swap with the control that had it).
     #[test]
-    fn sprint_takes_shift_from_run_only_while_on() {
+    fn sprint_is_unbound_by_default_and_run_keeps_shift() {
         let mut b = Bindings::game_defaults();
-        assert_eq!(b.get(Control::Sprint), Binding { key: Some(KeyCode::ShiftLeft), mouse: None });
-        assert_eq!(b.pad(Control::Sprint), None);
-        // Off: it acts on nothing, Run keeps Shift.
-        assert_eq!(b.effective(Control::Sprint), Binding::default());
-        assert_eq!(b.pad_effective(Control::Sprint), None);
-        assert_eq!(b.effective(Control::Run).key, Some(KeyCode::ShiftLeft));
-        assert_eq!(b.text_on(Control::Sprint), "Left Shift", "a greyed row shows its own key");
-        // Sprint on: Shift is Sprint's, Run on X; nothing saved changes.
-        b.sprint_on = true;
-        assert_eq!(b.effective(Control::Sprint).key, Some(KeyCode::ShiftLeft));
-        assert_eq!(b.effective(Control::Run).key, Some(RUN_SPARE_KEY));
-        assert_eq!(b.text_on(Control::Run), "X");
+        assert_eq!(b.get(Control::Sprint), Binding::default(), "no key by default");
+        assert_eq!(b.pad(Control::Sprint), None, "no button by default");
         assert_eq!(b.get(Control::Run).key, Some(KeyCode::ShiftLeft));
-        assert!(!with_controls("", &b).contains("Run=X"), "the INI keeps Run's own key");
-        // X taken by another control: Run has none rather than share it.
-        let mut taken = b.clone();
-        taken.set(Control::Grab, Binding { key: Some(KeyCode::KeyX), mouse: None });
-        assert_eq!(taken.effective(Control::Run).key, None);
-        // The player's own Run key is never moved, nor Run when Sprint is off Shift.
-        let mut own = b.clone();
-        own.set(Control::Run, Binding { key: Some(KeyCode::KeyC), mouse: None });
-        assert_eq!(own.effective(Control::Run).key, Some(KeyCode::KeyC));
-        let mut apart = b.clone();
-        apart.set(Control::Sprint, Binding { key: Some(KeyCode::KeyG), mouse: None });
-        assert_eq!(apart.effective(Control::Run).key, Some(KeyCode::ShiftLeft));
-        // Sprint off again: Shift is Run's.
-        b.sprint_on = false;
-        assert_eq!(b.effective(Control::Run).key, Some(KeyCode::ShiftLeft));
-        // A rebind never swaps within the pair: Sprint back to Shift takes nothing from Run.
+        assert_eq!(b.text_on(Control::Sprint), "None");
+        assert!(with_controls("", &b).contains("Sprint="), "kept in the INI as the others are");
+        // Bound to a free key: Run is untouched.
+        assert!(b.rebind(Control::Sprint, Input::Key(KeyCode::KeyG)).is_empty());
+        assert_eq!((b.get(Control::Sprint).key, b.get(Control::Run).key), (Some(KeyCode::KeyG), Some(KeyCode::ShiftLeft)));
+        // Bound to Run's key: the Controls tab's usual swap, no special case.
         let mut b = Bindings::game_defaults();
-        b.rebind(Control::Sprint, Input::Key(KeyCode::KeyG));
-        assert!(b.rebind(Control::Sprint, Input::Key(KeyCode::ShiftLeft)).is_empty());
-        assert_eq!(b.get(Control::Run).key, Some(KeyCode::ShiftLeft), "Run keeps Shift beside Sprint");
-        // Another control taking the shared key takes it from both, which stay together.
-        let mut b = Bindings::game_defaults();
-        assert_eq!(b.rebind(Control::Jump, Input::Key(KeyCode::ShiftLeft)), [Control::Run, Control::Sprint]);
-        assert_eq!((b.get(Control::Run).key, b.get(Control::Sprint).key), (Some(KeyCode::Space), Some(KeyCode::Space)));
+        assert_eq!(b.rebind(Control::Sprint, Input::Key(KeyCode::ShiftLeft)), [Control::Run]);
+        assert_eq!((b.get(Control::Sprint).key, b.get(Control::Run).key), (Some(KeyCode::ShiftLeft), None));
     }
 
     #[test]
