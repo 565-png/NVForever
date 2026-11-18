@@ -31,9 +31,10 @@ NVForever can be installed anywhere outside the game folder.
 
 ## What it does not use
 
-- MO2's profile INIs (`Fallout.ini`, `FalloutPrefs.ini`): NVForever keeps its own settings
-  in `NVForever.ini`.
-- MO2's profile saves: NVForever's saves stay in `Documents\My Games\NVForever\saves`.
+- MO2's profile INIs for NVForever's own settings: controls, LOD and the graphics values stay
+  NVForever's (with `NVForever.ini` over them). The profile's INI text *is* read for the
+  extender's INI functions under `--mo2` (`GetNumericINISetting`, `GetStringIniSetting`), and
+  its `[Archive] SArchiveList` names the archives.
 - NVSE, its plugins (`.dll`) and other programs hooking the original game do not run in
   NVForever. Mods that need NVSE script functions NVForever has not built yet may not
   work.
@@ -50,12 +51,24 @@ sources: `crates/fnv-install/src/mo2.rs`, docs/design/install-layout.md.
 MO2 does not run on Linux, so the native engine can do the merge itself from the profile:
 `nvforever --mo2 "<instance folder>"` (plus `--profile <name>` when not the instance's
 `selected_profile`) reads the active mods' loose files over `Data`, the overwrite folder last,
-and loads the profile's plugins in its order. Nothing is written into the game folder or into
-MO2's folders, and MO2 keeps being where mods are installed and ordered. Mod-held `.bsa`
-archives are mounted too: the profile's archive list (`archives.txt`, or its `fallout.ini`'s
+and loads the profile's plugins in its order. Nothing is written into the game folder; the one
+thing NVForever writes into MO2's folder is a save, and only where the profile asks for it
+(below). MO2 keeps being where mods are installed and ordered. Mod-held `.bsa` archives are
+mounted too: the profile's archive list (`archives.txt`, or its `fallout.ini`'s
 `SArchiveList`) decides which, and each is read from the enabled mod's folder that holds it.
-Profile INIs beyond that key, and the profile's saves, are still for a later phase. Design and
-limits: [mod-folders](design/mod-folders.md).
+
+The profile's `settings.ini` decides the rest, as it does for MO2:
+
+- `LocalSettings=true` — the profile's own `Fallout.ini` and `FalloutPrefs.ini`, with
+  `initweaks.ini` (MO2's merge of the enabled mods' INI tweaks) above them, are the INI text
+  the extender's INI functions read (`GetNumericINISetting`, `GetStringIniSetting` and the
+  setters). NVForever's own settings are not taken from them.
+- `LocalSaves=true` — saves are read and written in `<profile>/saves`, the folder MO2 maps
+  over the game's own, and a bare `--load <name>` looks there. Without it, saves stay in
+  `Documents\My Games\NVForever\saves`.
+
+The start prints which INI files and which saves folder it took. Design and limits:
+[mod-folders](design/mod-folders.md).
 
 ```
 nvforever --data "<game>\Data" --mo2 "<instance>" --profile "<name>"
