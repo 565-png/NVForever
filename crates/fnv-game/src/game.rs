@@ -515,6 +515,9 @@ pub struct RefExtra {
     /// reference's (`Game::merchant_container`).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub merchant_container: Option<FormId>,
+    /// RemoveMerchantContainer explicitly clears even an authored XMRC assignment.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub merchant_container_cleared: bool,
     /// Wait: the Follow or Accompany package the actor waits in, standing where it is,
     /// until StopWaiting (`functions::fo3`; the AI's follow step reads [`Game::waits`]).
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -4545,6 +4548,13 @@ impl<'a> Game<'a> {
     /// observed: the Begin Again list 2026-11-13, MCM listed none of the 23 it loaded].
     /// How many handlers ran.
     pub fn page_menu_event(&mut self, code: u16, open: bool) -> usize {
+        // Input callbacks can run just before the held page's first script tick.
+        // A new request from that same opening belongs to the new page lifetime.
+        let carry_cursor = open && self.other.jip9.cursor_warp.is_some()
+            && self.other.jip9.cursor_warp_start_menu
+            && self.other.jip9.cursor_warp_requested_generation == self.other.jip9.cursor_warp_generation;
+        self.other.jip9.invalidate_cursor_warp();
+        if carry_cursor { self.other.jip9.cursor_warp_requested_generation = self.other.jip9.cursor_warp_generation; }
         let before = self.page_menu.replace(code);
         let ran = self.jip_event(if open { "menuopen" } else { "menuclose" }, None, vec![fnv_script::vm::XVal::Num(f64::from(code))]);
         self.page_menu = before;
@@ -4743,6 +4753,7 @@ impl<'a> Game<'a> {
 
     pub fn close_menu(&mut self) -> Option<u16> {
         let m = self.menu.take()?;
+        self.other.jip9.invalidate_cursor_warp();
         if m == menus::TUTORIAL {
             // The menu under it is the open one again (`Game::show_tutorial`).
             self.tutorial.clear();

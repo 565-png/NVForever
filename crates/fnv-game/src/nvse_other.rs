@@ -317,7 +317,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // (actor-behaviour.md §2.4). Missing/nonactor zero is a selected portable
         // convention matching neighboring queries; native invalid behavior is unknown.
         "isactordetected" => {
-            let target = subject.filter(|&r| matches!(g.data.sig(base(g, r)), Some(sig) if sig == *b"NPC_" || sig == *b"CREA"));
+            let target = subject.filter(|&r| g.def_following(r, |_| false).is_some()
+                || matches!(g.data.sig(base(g, r)), Some(sig) if sig == *b"NPC_" || sig == *b"CREA"));
             yes(target.is_some_and(|target| target != FormId::PLAYER_REF
                 && g.detection.pairs.iter().any(|(&(detector, seen), (d, _))|
                     seen == target && detector != target && detector != FormId::PLAYER_REF

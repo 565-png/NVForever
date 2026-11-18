@@ -174,6 +174,9 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
     if let Some(result) = crate::nvse_faction_modifiers::call(g, name, args) {
         return Some(result);
     }
+    if let Some(result) = crate::nvse_actor_queries::call(g, name, on.or(ctx.self_ref), args) {
+        return Some(result);
+    }
     if name == "setcasinowinningslevel" { return Some(crate::casino::set_winnings_level(g, args)); }
     if let Some(r) = crate::delayed::call(g, ctx, name, on, args) {
         return Some(r);

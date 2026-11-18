@@ -133,6 +133,8 @@ pub mod script;
 pub mod script_input;
 pub mod script_switches;
 mod script_texture_filter;
+#[cfg(target_os = "windows")]
+mod script_cursor;
 pub mod script_draw;
 pub mod script_events;
 pub mod script_hud;

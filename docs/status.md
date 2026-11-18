@@ -232,7 +232,23 @@ contract and limits: [Built-in luck setting getter fallback](spec-notes/builtin-
 | Performance diagnostics and stress comparisons | Partly | [design] Tour, battle and soak retain provenance and serial runs; `compare` adds repeated baseline/candidate ABBA launches, validated early schema-1 captures, per-run values and variation. The existing profile campaign ranks scenarios. Pending: continuous player movement, stationary comparison integration and a duration-controlled long-session memory case; later laps have coarse metrics only. Memory is read on both platforms (#2104): RAM from Win32 or `/proc/meminfo`, the card's VRAM from `VK_EXT_memory_budget` or amdgpu sysfs, this process's share of it from amdgpu's fdinfo, and the stress runner samples memory and CPU from `/proc` off Windows, so the GPU press check works on Linux. | [stress comparisons](design/stress-comparisons.md), #1277; `tools/profile/campaign.py` |
 | Crash reports | Done | A panic writes `Documents\My Games\NVForever\logs\crash-*.txt` with a backtrace; release builds carry line tables for file:line (`engine/Cargo.toml`); the player's home folder is written as `%USERPROFILE%` in run logs, the console and crash reports (#1710) | `engine/nvforever/src/crash.rs` |
 | CI | Done | Linux job on pushes to main and on every pull request (#89, #272); a guard against game data in pull requests; PR template with a clean-room checklist; issue forms (bug, crash, differs from the original, build/tool, feature, #273) | `.github/workflows/ci.yml`, `game-data-guard.yml` |
-| Releases | Done, first version | Tag-triggered workflow builds Windows and Linux archives with launchers (`nvforever.cmd`/`.sh`) and the schemas; v0.1.0 pre-release 2026-10-13 (#270), then v0.2.0 (#418), v0.3.0 (#449), v0.4.0 (#573), v0.5.0 (2026-10-28), the v0.5.1 hotfix (2026-10-29, the night stutter, #897), v0.6.0 (2026-11-04, the first with script extender support) and v0.7.0 (2026-11-11: FSR 3.1, the settings rebuild, the extender function lists completed, opt-in reports) | `.github/workflows/release.yml`, `tools/release/` |
+| Releases | Done, first version | Tag-triggered workflow builds Windows and Linux archives with launchers (`nvforever.cmd`/`.sh`) and the schemas; v0.1.0 pre-release 2026-10-13 (#270), then v0.2.0 (#418), v0.3.0 (#449), v0.4.0 (#573), v0.5.0 (2026-10-28), the v0.5.1 hotfix (2026-10-29, the night stutter, #897), v0.6.0 (2026-11-04, the first with script extender support), v0.7.0 (2026-11-11: FSR 3.1, the settings rebuild, the extender function lists completed, opt-in reports) and v0.8.0 (2026-11-18: the launcher with self-updates, DLSS, the Tweaks tab, smooth terrain, grass fires, the settings menu overhaul) | `.github/workflows/release.yml`, `tools/release/` |
+
+### Actor query and merchant context
+
+Source calls for `GetPlayerGrabbedRef`, `GetPackageTarget` and
+`RemoveMerchantContainer` use existing grab/package/conversation state and an
+explicit saved merchant-container clear. The barter stock selector respects that
+clear, and a later successful setter replaces it. `RemoveFac` aliases the accepted
+faction-removal command. Eight core cases and both barter tests, including
+source clear/setter before and after restore, passed in [hosted Ubuntu CI
+for `b67f44d0`](https://github.com/LootJunkieAzza/NVForever/actions/runs/44218490120)
+(merge `12e5454`: core 3,495 passed, 5 ignored; engine 3,601 passed, 3 ignored;
+no failures). These tests also passed in [hosted Ubuntu CI for
+`543a338`](https://github.com/LootJunkieAzza/NVForever/actions/runs/44298631547)
+(merge `4150beb`). The launcher scenario and baseline comparisons were not run;
+native encoding, original-game edge cases and installed-mod acceptance remain open.
+See [actor query context](spec-notes/actor-query-context.md).
 
 ### Persistent actor-list additions
 
