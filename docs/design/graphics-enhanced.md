@@ -2066,69 +2066,96 @@ small glows. Sprites only: no light entity, no shadow, no game state. Code:
 - **Source.** The exterior cells whose closest point lies within 12 cells of the camera
   (`treelod.rs` `cells_within`, as the distant trees choose theirs). When the camera's cell
   changes, the cells not read yet are listed on the read pool's worker thread (as world.rs
-  reads cells ahead): each one's own references and the persistent ones standing in it
-  whose base is a LIGH, enabled at the start (`world::enabled`: not deleted, the enable
-  parent chain), and not negative, not off by default, with a radius (DATA radius plus the
-  reference's XRDS) and a colour of the record's own (`fnv_world::lighting`; the flag bits
-  as the GECK wiki "GetLightFlag" page lists them [documented]). A light whose colour comes
-  only from its model is left out. The lists are kept per cell. On the main thread the
-  lights the simulation holds disabled or deleted now are left out (`SimState::present`),
-  checked again every 2 s; a cell whose count of present lights changed is merged again.
-- **Hand-over.** A loaded cell draws its own lights, so its glows keep 1 - its fade level
-  (`Streamer::cell_level`, fade.rs): they dim as the cell fades in, are gone once it is fully
-  drawn, and come back as it fades out. The batched mesh is rebuilt when the camera's cell,
-  a loaded cell's fade step (16 steps) or a cell's present lights change: a few hundred
-  cards, a few times a second at most during fades.
+  reads cells ahead), from the references world.rs spawns a loaded cell from
+  (`cell_refs`: the cell's own and the worldspace's persistent ones standing in it): those
+  whose base is a LIGH, not deleted, not negative, not off by default, with a radius (DATA
+  radius plus the reference's XRDS) and a colour of the record's own (`fnv_world::lighting`;
+  the flag bits as the GECK wiki "GetLightFlag" page lists them [documented]). A light whose
+  colour comes only from its model is left out. Lights disabled at the start (their own flag
+  or the enable parent chain, `world::enabled`) are kept with that state, so a script that
+  enables one later shows it. The lists are kept per cell and dropped with the worldspace.
+- **Present state.** Whether a listed light shows is the simulation's present state
+  (`SimState::present`: not deleted, enabled now), or without a simulation its state at the
+  start. Cells listed but not merged yet are checked at once, and every 2 s a pass over all
+  cells starts; both within 2,048 lights a frame (a cell whole once started). A cell is
+  merged again when the set of its present lights changed (a key of their FormIDs, so
+  disabling one lamp and enabling another in the same cell between two checks is seen).
+- **Hand-over.** No glow for a cell inside the loaded grid (the square of `Streamer::radius`
+  steps around the grid's centre that world.rs loads), whether loaded already or still
+  pending: its own lights draw there, or will within moments. A cell outside the grid that
+  is still drawn as it fades out gives its glows 1 - its fade level (`Streamer::cell_level`,
+  fade.rs), so they come back as it goes. The full-detail ring (#2701, another branch) draws
+  more cells as loaded cells, which hand over by their level; `in_loaded_grid` is the hook.
+  The batched mesh is rebuilt when the camera's cell, a cell's share (16 steps) or a cell's
+  set of present lights changes: a few hundred cards, a few times a second at most during
+  fades.
 - **Budget.** Lights of one cell within 192 units of each other are one glow (brightest
-  first; the strength-weighted mean position and colour, the largest radius, the summed
-  strength held to 2). Of all glows the 400 with the most light for their distance
-  (strength x brightest channel x size / (distance^2 + one cell^2)) are drawn.
+  first, each joining the earliest glow in reach; the strength-weighted mean position and
+  colour, the largest radius, the summed strength held to 2), found through a grid of
+  buckets 192 units wide by the glows' current positions (3 x 3 buckets per light, the
+  same result as a search over every glow, tested). Of all glows the 400 with the most light
+  for their distance (strength x brightest channel x size / (distance^2 + one cell^2)) are
+  drawn, taken by a partial selection with only those 400 sorted.
 - **Drawing.** One mesh for all glows under the world root, no frustum culling (one
   draw). Each card faces the camera, spread in the view's plane in the vertex shader (as the
-  leaf cards, tree.wesl). Half size: the light's radius x 0.25, held to 24..160 units, and
-  never under one pixel, so a lamp 12 cells away stays a pixel or two; a card widened to that
-  pixel keeps its own area's share of light per pixel, held to 0.35. Unlit and additive
-  (Bevy's `AlphaMode::Add`, the transparent pass: depth-tested against the world, no depth
-  written, no prepass, no shadows), a soft round spot (e^(-4 r^2) (1 - r^2)). Faded out over
-  the reach's last 2 cells, and by the view's fog: the share of light that passes is what the
-  fog function (`apply_fog`, with the game's curve of fog.rs and the desert haze of §3.16)
-  gives white minus what it gives black, so haze and fog swallow the glows as they do the
-  scenery; outdoors the fog blends in display values, so the glows fade a little faster than
-  the linear share.
-- **Brightness and the HDR path.** Colours are display values, as the world's lit colour
-  (lights.rs): the record's colour bytes / 255 times its fade (held to 2) times the
-  merged strength, peaking at 0.8 at the core. The light glow's HDR view (§3.11) keeps
-  values above 1 until its tonemapper, which shows display values held to 1 per channel
-  (lights.rs `GAME_CLIP`): a core under 1 keeps its colour instead of clipping white, and
-  the light glow's bloom (energy-conserving, no threshold) gives the bright cores a halo
-  against the night. Eye adaptation (eye_adapt.rs) only brightens dark views, so a lifted
-  night view brightens the glows with it; a merged glow (strength 2) or a lift can clip the
-  core's brightest channel. Not yet judged in pictures.
+  leaf cards, tree.wesl). Half size: the light's radius x 0.5, held to 24..320 units, and
+  never under 2 output pixels nor 1 render pixel, so a lamp 12 cells away stays a few pixels
+  wide (fitted by pictures, 2026-11-18); a card widened to that floor keeps its own area's
+  share of light per pixel, held to 0.7. Under an upscaler the floor is in output pixels, so
+  the glows keep their size on screen whatever the render scale (the view uniform has both
+  sizes). Unlit and additive (Bevy's `AlphaMode::Add`, the transparent pass: depth-tested
+  against the world, no depth written, no prepass, no shadows), a soft round spot
+  (e^(-4 r^2) (1 - r^2)), faded out over the reach's last 2 cells.
+- **Colour, fog and the HDR path.** As the NIF materials' additive shapes are drawn
+  (nif.md §6 "Additive blend", "Fog on added light"; nvf_assets `add_display`,
+  `fogged_addition`): the glow's colour is the record's colour bytes / 255 (display
+  values) times its fade (held to 2), the merged strength and 0.8 at the core; it is made
+  linear (raised to 2.2), taken through the view's fog (`apply_fog`, with the game's curve
+  of fog.rs and the desert haze of §3.16) and, in a view without HDR (Light glow off),
+  Bevy's tonemapping, less black through the same, so fog dims the glow and adds no fog
+  colour of its own; then added to the opaque frame behind it in display values (the view
+  transmission texture, which the anchor in nif_material.rs keeps in every view), the sum
+  held to 2. So a glow of the record's colour over a black night shows that colour, and
+  the path is the same with Light glow on (the HDR view, its tonemapper holding display
+  values to 1 per channel, lights.rs `GAME_CLIP`, and its bloom giving bright cores a halo)
+  and off. Eye adaptation (eye_adapt.rs) only brightens dark views, so a lifted night view
+  brightens the glows with it; a merged glow (strength 2) or a lift can clip the core's
+  brightest channel.
 - **Daylight.** The view's exposure never darkens for daylight (eye_adapt.rs brightens
   only), so an additive glow would show as a dot on a sunlit hillside. The glows are scaled
   by the sun's elevation instead: full at -4 degrees and below, gone at 6 degrees and above,
-  smooth between; by day the mesh is hidden. A fitted choice of ours [design], not the
-  original's (which draws no light beyond its loaded cells).
+  smooth between. While the share is 0 the mesh is hidden and nothing is listed, checked or
+  built. A fitted choice of ours [design], not the original's (which draws no light beyond
+  its loaded cells).
 - **Flicker and pulse.** Lights with the flicker flags (flicker, flicker slow) and the pulse
   flags (pulse, pulse slow) get a slow shimmer of up to 15 % (a sine with a phase from the
   reference), slower than the near light's own motion (lights.rs `LightMotion`), which from
   afar would read as noise.
-- **Not done.** No light colour from the model (lights whose LIGH colour is black), no
-  emittance from a region (XEMI), no glows indoors or in other worldspaces than the camera's,
-  no occlusion beyond the depth test (a glow behind the LOD's hills is hidden by them; one
-  behind a building not loaded is not, as the building is not drawn). The lists follow the
-  enabled state at the start and the simulation's present state, not a script's light
-  colour or fade edits (lights.rs session lights).
+- **Accepted limits.** The glows are depthless additive sprites: they write no depth and no
+  motion, so under temporal anti-aliasing, FSR or DLSS they are resolved like other
+  additive shapes (smeared a little while the view moves; a card of a few pixels may
+  shimmer). The fog on them is the fog at the card's own pixels, and outdoors the fog blends
+  in display values, so the subtraction of fogged black is exact only where the fog is
+  linear; a glow fades a little faster with distance than the plain fog share. No light
+  colour from the model (lights whose LIGH colour is black), no emittance from a region
+  (XEMI), no glows indoors or in other worldspaces than the camera's, no occlusion beyond
+  the depth test (a glow behind the LOD's hills is hidden by them; one behind a building not
+  loaded is not, as the building is not drawn). Not a script's light colour or fade edits
+  (lights.rs session lights).
 - **Switching**: the row, `--graphics-only distant-lights`, a `--graphics-cycle` set
   `distant-lights`, `NVF_PLAY_TEST_SETTINGS=<t>:distant-lights`. The first switch-on
-  compiles the glows' pipeline. Log lines, only with the row on: `distant lights: on (reach
-  12 cells, cap 400)` when it turns on, `distant lights: off` when it is turned off again,
-  and at the exit `distant lights summary: <cells> cells listed, <lights> lights, <drawn>
-  drawn at most`. With the row off nothing runs past the switch's check and the log is as
-  on main. The graphics line names it (`..., distant lights`) only when it is on.
+  compiles the glows' pipeline; switching off drops the glows and an outstanding listing.
+  Log lines, only with the row on: `distant lights: on (reach 12 cells, cap 400)` when it
+  turns on, `distant lights: off` when it is turned off again, and at the exit `distant
+  lights summary: <cells> cells listed (<refs> references), <lights> lights (<d> disabled
+  at the start), <drawn> drawn at most, skipped: <a> deleted, <b> no colour, <c>
+  negative/off, <e> no radius`, the reasons counted over the light references read. With
+  the row off nothing runs past the switch's check and the log is as on main. The graphics
+  line names it (`..., distant lights`) only when it is on.
 - **Cost**: not measured yet (to be measured on the Goodsprings to Primm route at night,
-  #3013): one draw of at most 400 cards, the record listing on a worker per cell change, a
-  merge of a cell's lights when it is listed and when its present lights change.
+  #3013): one draw of at most 400 cards, each fragment reading the frame behind once; the
+  record listing on a worker per cell change; at most 2,048 present-state checks a frame
+  and a merge of a cell when its present lights change.
 
 ## 4. Tried and dropped
 
