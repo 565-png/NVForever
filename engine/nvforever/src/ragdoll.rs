@@ -578,9 +578,11 @@ fn start(
         if !phys.ready_at(nodes[0].translation) {
             continue;
         }
-        let nodes = out_of_terrain(&mut phys, rig.reference, &c, nodes);
+        let (nodes, lifted) = out_of_terrain(&mut phys, rig.reference, &c, nodes, stored.is_some());
         let parts = body_parts(rig, &c, limbs);
-        let asleep = stored.is_some();
+        // A saved pose lifted out of the ground starts awake, to come down onto it: held at
+        // rest it would hover where it was lifted to.
+        let asleep = stored.is_some() && !lifted;
         let velocity = std::mem::take(&mut c.velocity);
         let start = RagdollStart { form_id: rig.reference, ragdoll: &c.data, scale, nodes: &nodes, velocity, parts: &parts, asleep };
         // Bad ragdoll data that breaks the physics build (a panic, caught), or the test aid
@@ -614,6 +616,8 @@ fn start(
             continue;
         }
         c.live = true;
+        // Its sinking is logged again for this start (`note_sinking`).
+        ragdolls.sank.remove(&rig.reference);
         c.ragdolled = true;
         c.laid_out = false;
         c.settled = false;
@@ -659,24 +663,27 @@ fn unbuilt_now(ragdolls: &mut Ragdolls, c: &mut Corpse, dying: Option<&mut Dying
 }
 
 /// A ragdoll about to start with a body's centre under the terrain at its own x, y, and
-/// nothing of its own under that body (a floor built below the surface), is lifted whole
-/// until every centre is `START_CLEARANCE` over the surface: started under it, the
-/// two-sided terrain mesh pushed it down and it fell through. Corpses a new game lays out
+/// nothing other than the terrain under that body or its lowest body (a floor built below
+/// the surface), is lifted whole until every such centre is `START_CLEARANCE` over what
+/// stands there (`PhysState::lift_from_under`): started under it, the two-sided terrain
+/// mesh pushed it down and it fell through. Corpses a new game lays out
 /// (`Game::starts_dead`) are drawn at their reference's position, which can lie under the
 /// ground: the leveled spawns' invisible `nvvoid` placeholders (Health 0, scale 0.1) at
 /// the spots players' logs named started 3 and 360 units under it [observed: smoke
 /// sinking-corpse-bighorner-spot, sinking-corpse-radscorpion-spot, 2026-11-18, issue
-/// #2753] [design, #2753: lifted before the start rather than caught after the fall].
-fn out_of_terrain(phys: &mut PhysState, id: u32, c: &Corpse, nodes: Vec<Iso>) -> Vec<Iso> {
-    use nvf_play::phys::sinking::start_lift;
-    let Some((i, up)) = start_lift(nodes.iter().enumerate().map(|(i, n)| (i, n.translation)), |x, y| phys.terrain_z(x, y)) else { return nodes };
-    if phys.supported_below(nodes[i].translation, None) {
-        return nodes;
-    }
+/// #2753] [design, #2753: lifted before the start rather than caught after the fall]. A
+/// saved pose (`stored`: one a designer left, `XRGD`, or where it lay before) is lifted only
+/// when a centre is more than `SANK_NOTE` under: authored against the stored ground, a
+/// joint a few units under the smoothed terrain (#2149) is not a body under the ground.
+/// Returns the pose and whether it was lifted.
+fn out_of_terrain(phys: &mut PhysState, id: u32, c: &Corpse, nodes: Vec<Iso>, stored: bool) -> (Vec<Iso>, bool) {
+    use nvf_play::phys::sinking::SANK_NOTE;
+    let points: Vec<(usize, [f32; 3])> = nodes.iter().enumerate().map(|(i, n)| (i, n.translation)).collect();
+    let Some(lift) = phys.lift_from_under(&points, if stored { SANK_NOTE } else { 0.0 }) else { return (nodes, false) };
+    let i = lift.index;
     let name = c.data.bodies.get(i).and_then(|b| b.object.node.clone()).unwrap_or_else(|| format!("body {i}"));
-    let under = up - nvf_play::phys::sinking::START_CLEARANCE;
-    info!("ragdoll: actor {id:08X} starts with bone {name} {under:.0} under the terrain: lifted {up:.0} units");
-    nodes.into_iter().map(|mut n| { n.translation[2] += up; n }).collect()
+    info!("ragdoll: actor {id:08X} starts with bone {name} {:.0} under the terrain: lifted {:.0} units onto {}", lift.under, lift.up, lift.onto);
+    (nodes.into_iter().map(|mut n| { n.translation[2] += lift.up; n }).collect(), true)
 }
 
 /// Log, once, a moving corpse's bone sunk under the terrain at its own x, y

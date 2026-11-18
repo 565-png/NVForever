@@ -6282,6 +6282,7 @@ expect = [
   { re = 'ragdolls: .* (?P<n>\d+) laid in the pose their reference stores', range = [9, 1000], label = "ragdolls: the village's nine corpses or more in their stored pose" },
   { re = 'ragdolls: .* \(0 stored poses did not fit\)' },
 ]
+forbid = [{ re = 'ragdoll: actor 001578F7 starts with bone', label = "a village corpse in its stored pose is not lifted out of the ground (#2753: saved poses only past 20 units under)" }]
 
 [[scenario]]
 name = "death-pose-held"
@@ -16850,17 +16851,18 @@ expect = [
 
 [[scenario]]
 name = "sinking-drop-varmint-spot"
-source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). Round 1 probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
-note = "probe: the player starts 300 units south of the reported Varmint Rifle spot (-68186, 1595) in WastelandNV [observed: issue #2753]; GoodspringsSettler03Ref (0x00104F0A) is put on the spot at 2 s (MoveTo the player, 300 north, 110 up: the terrain at the spot is about 100 over the player's start, observed: round 1, terrain z 8353 against 8256; MoveTo keeps the player's height and in round 1 the settler stood 87 units inside the slope), given the weapon, made to equip it and set on the player (GOD) so it holds the weapon drawn, and killed at 10 s: it drops the weapon 50 units in front of it, 30 over its feet, as the reports' NPCs did (iDeathDropWeaponChance). The player drops one of the same weapon at 5 s as a control. In round 1 the settler was held with SetRestrained and not in combat, its weapon holstered, so nothing dropped (combat.rs death_drops takes the weapon in the hand)"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). The probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
+note = "probe: the player starts 300 units south of the reported Varmint Rifle spot (-68186, 1595) in WastelandNV [observed: issue #2753]; GoodspringsSettler03Ref (0x00104F0A) is put on the spot at 2 s (MoveTo the player, 300 north, 110 up: the terrain at the spot is about 100 over the player's start, observed: round 1 of the probes, terrain z 8353 against 8256; MoveTo keeps the player's height and in round 1 the settler stood 87 units inside the slope), given the weapon, made to equip it and set on the player (GOD) so it holds the weapon drawn, and killed at 6 s, about 2 s after it is set on the player, so it dies on the spot before it runs off: it drops the weapon 50 units in front of it, 30 over its feet, as the reports' NPCs did (iDeathDropWeaponChance). The player drops one of the same weapon at 5 s as a control. In round 1 the settler was held with SetRestrained and not in combat, its weapon holstered, so nothing dropped (combat.rs death_drops takes the weapon in the hand). The lift line is what would confirm the weapons' cause (round 2)"
 areas = ["physics", "ragdoll"]
 paths = ["engine/nvf-play/src/phys/sinking.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:0x00104F0A:MoveTo:player:0:300:110,3:call:0x00104F0A:AddItem:WeapNVVarmintRifle:1,3.5:call:0x00104F0A:EquipItem:WeapNVVarmintRifle,4:combat:0x00104F0A:player,4.5:call:player:AddItem:WeapNVVarmintRifle:1,5:call:player:Drop:WeapNVVarmintRifle:1,10:call:0x00104F0A:KillActor" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:0x00104F0A:MoveTo:player:0:300:110,3:call:0x00104F0A:AddItem:WeapNVVarmintRifle:1,3.5:call:0x00104F0A:EquipItem:WeapNVVarmintRifle,4:combat:0x00104F0A:player,4.5:call:player:AddItem:WeapNVVarmintRifle:1,5:call:player:Drop:WeapNVVarmintRifle:1,6:call:0x00104F0A:KillActor" }
 args = ["--play", "--world", "WastelandNV", "--pos=-68186,1295,30000", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 40
 expect = [
   { re = 'combat: 0x00104F0A died: it drops its ', label = "the settler drops the Varmint Rifle as it dies" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} added: .*\(dynamic\)', min = 2, label = "the player's Varmint Rifle and the settler's get dynamic collision" },
   { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both Varmint Rifles come to rest" },
+  { re = 'collision of dropped 0xFF[0-9A-F]{6} started with its centre .* under the terrain', label = "the settler's Varmint Rifle would start under the terrain and is lifted onto it", known_failing = "hypothesis, #2753 round 3: whether an NPC's death drop starts under the terrain here (50 units ahead, 30 over its feet) is not shown; a 'now passes' line here confirms the dropped weapons' cause" },
 ]
 forbid = [
   { re = 'dropped 0x[0-9A-F]{8} fell through the world', label = "no Varmint Rifle falls through the ground (#2753)" },
@@ -16870,17 +16872,18 @@ forbid = [
 
 [[scenario]]
 name = "sinking-drop-hunting-spot"
-source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). Round 1 probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
-note = "probe: the player starts 300 units south of the reported Hunting Rifle spot (1276, 15635) in WastelandNV [observed: issue #2753]; GoodspringsSettler03Ref (0x00104F0A) is put on the spot at 2 s (MoveTo the player, 300 north, 0 up: the ground there is level with the start, observed: round 1), given the weapon, made to equip it and set on the player (GOD) so it holds the weapon drawn, and killed at 10 s: it drops the weapon 50 units in front of it, 30 over its feet, as the reports' NPCs did (iDeathDropWeaponChance). The player drops one of the same weapon at 5 s as a control. In round 1 the settler was held with SetRestrained and not in combat, its weapon holstered, so nothing dropped (combat.rs death_drops takes the weapon in the hand)"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). The probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
+note = "probe: the player starts 300 units south of the reported Hunting Rifle spot (1276, 15635) in WastelandNV [observed: issue #2753]; GoodspringsSettler03Ref (0x00104F0A) is put on the spot at 2 s (MoveTo the player, 300 north, 0 up: the ground there is level with the start, observed: round 1), given the weapon, made to equip it and set on the player (GOD) so it holds the weapon drawn, and killed at 6 s, about 2 s after it is set on the player, so it dies on the spot before it runs off: it drops the weapon 50 units in front of it, 30 over its feet, as the reports' NPCs did (iDeathDropWeaponChance). The player drops one of the same weapon at 5 s as a control. In round 1 the settler was held with SetRestrained and not in combat, its weapon holstered, so nothing dropped (combat.rs death_drops takes the weapon in the hand). The lift line is what would confirm the weapons' cause (round 2)"
 areas = ["physics", "ragdoll"]
 paths = ["engine/nvf-play/src/phys/sinking.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:0x00104F0A:MoveTo:player:0:300:0,3:call:0x00104F0A:AddItem:WeapHuntingRifle:1,3.5:call:0x00104F0A:EquipItem:WeapHuntingRifle,4:combat:0x00104F0A:player,4.5:call:player:AddItem:WeapHuntingRifle:1,5:call:player:Drop:WeapHuntingRifle:1,10:call:0x00104F0A:KillActor" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:0x00104F0A:MoveTo:player:0:300:0,3:call:0x00104F0A:AddItem:WeapHuntingRifle:1,3.5:call:0x00104F0A:EquipItem:WeapHuntingRifle,4:combat:0x00104F0A:player,4.5:call:player:AddItem:WeapHuntingRifle:1,5:call:player:Drop:WeapHuntingRifle:1,6:call:0x00104F0A:KillActor" }
 args = ["--play", "--world", "WastelandNV", "--pos=1276,15335,30000", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 40
 expect = [
   { re = 'combat: 0x00104F0A died: it drops its ', label = "the settler drops the Hunting Rifle as it dies" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} added: .*\(dynamic\)', min = 2, label = "the player's Hunting Rifle and the settler's get dynamic collision" },
   { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both Hunting Rifles come to rest" },
+  { re = 'collision of dropped 0xFF[0-9A-F]{6} started with its centre .* under the terrain', label = "the settler's Hunting Rifle would start under the terrain and is lifted onto it", known_failing = "hypothesis, #2753 round 3: whether an NPC's death drop starts under the terrain here (50 units ahead, 30 over its feet) is not shown; a 'now passes' line here confirms the dropped weapons' cause" },
 ]
 forbid = [
   { re = 'dropped 0x[0-9A-F]{8} fell through the world', label = "no Hunting Rifle falls through the ground (#2753)" },
@@ -16890,17 +16893,18 @@ forbid = [
 
 [[scenario]]
 name = "sinking-drop-10mm-spot"
-source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). Round 1 probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
-note = "probe: the player starts 300 units south of the reported 10mm Pistol spot (-42041, -94388) in WastelandNV [observed: issue #2753]; GoodspringsSettler03Ref (0x00104F0A) is put on the spot at 2 s (MoveTo the player, 300 north, 0 up: the ground there is level with the start, observed: round 1), given the weapon, made to equip it and set on the player (GOD) so it holds the weapon drawn, and killed at 10 s: it drops the weapon 50 units in front of it, 30 over its feet, as the reports' NPCs did (iDeathDropWeaponChance). The player drops one of the same weapon at 5 s as a control. In round 1 the settler was held with SetRestrained and not in combat, its weapon holstered, so nothing dropped (combat.rs death_drops takes the weapon in the hand)"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). The probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
+note = "probe: the player starts 300 units south of the reported 10mm Pistol spot (-42041, -94388) in WastelandNV [observed: issue #2753]; GoodspringsSettler03Ref (0x00104F0A) is put on the spot at 2 s (MoveTo the player, 300 north, 0 up: the ground there is level with the start, observed: round 1), given the weapon, made to equip it and set on the player (GOD) so it holds the weapon drawn, and killed at 6 s, about 2 s after it is set on the player, so it dies on the spot before it runs off: it drops the weapon 50 units in front of it, 30 over its feet, as the reports' NPCs did (iDeathDropWeaponChance). The player drops one of the same weapon at 5 s as a control. In round 1 the settler was held with SetRestrained and not in combat, its weapon holstered, so nothing dropped (combat.rs death_drops takes the weapon in the hand). The lift line is what would confirm the weapons' cause (round 2)"
 areas = ["physics", "ragdoll"]
 paths = ["engine/nvf-play/src/phys/sinking.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:0x00104F0A:MoveTo:player:0:300:0,3:call:0x00104F0A:AddItem:0x0000434F:1,3.5:call:0x00104F0A:EquipItem:0x0000434F,4:combat:0x00104F0A:player,4.5:call:player:AddItem:0x0000434F:1,5:call:player:Drop:0x0000434F:1,10:call:0x00104F0A:KillActor" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:0x00104F0A:MoveTo:player:0:300:0,3:call:0x00104F0A:AddItem:0x0000434F:1,3.5:call:0x00104F0A:EquipItem:0x0000434F,4:combat:0x00104F0A:player,4.5:call:player:AddItem:0x0000434F:1,5:call:player:Drop:0x0000434F:1,6:call:0x00104F0A:KillActor" }
 args = ["--play", "--world", "WastelandNV", "--pos=-42041,-94688,30000", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 40
 expect = [
   { re = 'combat: 0x00104F0A died: it drops its ', label = "the settler drops the 10mm Pistol as it dies" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} added: .*\(dynamic\)', min = 2, label = "the player's 10mm Pistol and the settler's get dynamic collision" },
   { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both 10mm Pistols come to rest" },
+  { re = 'collision of dropped 0xFF[0-9A-F]{6} started with its centre .* under the terrain', label = "the settler's 10mm Pistol would start under the terrain and is lifted onto it", known_failing = "hypothesis, #2753 round 3: whether an NPC's death drop starts under the terrain here (50 units ahead, 30 over its feet) is not shown; a 'now passes' line here confirms the dropped weapons' cause" },
 ]
 forbid = [
   { re = 'dropped 0x[0-9A-F]{8} fell through the world', label = "no 10mm Pistol falls through the ground (#2753)" },
@@ -16910,17 +16914,18 @@ forbid = [
 
 [[scenario]]
 name = "sinking-drop-shotgun-spot"
-source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). Round 1 probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
-note = "probe: the player starts 300 units south of the reported Lever-Action Shotgun spot (10798, 17343) in WastelandNVmini [observed: issue #2753]; GoodspringsSettler03Ref (0x00104F0A) is put on the spot at 2 s (MoveTo the player, 300 north, 0 up: the ground there is flat at z 9920, observed: LAND 0x00149DCA; the Hunting Rifle stands in for the shotgun, whose Editor ID was not looked up), given the weapon, made to equip it and set on the player (GOD) so it holds the weapon drawn, and killed at 10 s: it drops the weapon 50 units in front of it, 30 over its feet, as the reports' NPCs did (iDeathDropWeaponChance). The player drops one of the same weapon at 5 s as a control. In round 1 the settler was held with SetRestrained and not in combat, its weapon holstered, so nothing dropped (combat.rs death_drops takes the weapon in the hand)"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). The probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
+note = "probe: the player starts 300 units south of the reported Lever-Action Shotgun spot (10798, 17343) in WastelandNVmini [observed: issue #2753]; GoodspringsSettler03Ref (0x00104F0A) is put on the spot at 2 s (MoveTo the player, 300 north, 0 up: the ground there is flat at z 9920, observed: LAND 0x00149DCA; the Hunting Rifle stands in for the shotgun, whose Editor ID was not looked up), given the weapon, made to equip it and set on the player (GOD) so it holds the weapon drawn, and killed at 6 s, about 2 s after it is set on the player, so it dies on the spot before it runs off: it drops the weapon 50 units in front of it, 30 over its feet, as the reports' NPCs did (iDeathDropWeaponChance). The player drops one of the same weapon at 5 s as a control. In round 1 the settler was held with SetRestrained and not in combat, its weapon holstered, so nothing dropped (combat.rs death_drops takes the weapon in the hand). The lift line is what would confirm the weapons' cause (round 2)"
 areas = ["physics", "ragdoll"]
 paths = ["engine/nvf-play/src/phys/sinking.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:0x00104F0A:MoveTo:player:0:300:0,3:call:0x00104F0A:AddItem:WeapHuntingRifle:1,3.5:call:0x00104F0A:EquipItem:WeapHuntingRifle,4:combat:0x00104F0A:player,4.5:call:player:AddItem:WeapHuntingRifle:1,5:call:player:Drop:WeapHuntingRifle:1,10:call:0x00104F0A:KillActor" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:0x00104F0A:MoveTo:player:0:300:0,3:call:0x00104F0A:AddItem:WeapHuntingRifle:1,3.5:call:0x00104F0A:EquipItem:WeapHuntingRifle,4:combat:0x00104F0A:player,4.5:call:player:AddItem:WeapHuntingRifle:1,5:call:player:Drop:WeapHuntingRifle:1,6:call:0x00104F0A:KillActor" }
 args = ["--play", "--world", "WastelandNVmini", "--pos=10798,17043,30000", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 40
 expect = [
   { re = 'combat: 0x00104F0A died: it drops its ', label = "the settler drops the stand-in Hunting Rifle as it dies" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} added: .*\(dynamic\)', min = 2, label = "the player's stand-in Hunting Rifle and the settler's get dynamic collision" },
   { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both stand-in Hunting Rifles come to rest" },
+  { re = 'collision of dropped 0xFF[0-9A-F]{6} started with its centre .* under the terrain', label = "the settler's stand-in Hunting Rifle would start under the terrain and is lifted onto it", known_failing = "hypothesis, #2753 round 3: whether an NPC's death drop starts under the terrain here (50 units ahead, 30 over its feet) is not shown; a 'now passes' line here confirms the dropped weapons' cause" },
 ]
 forbid = [
   { re = 'dropped 0x[0-9A-F]{8} fell through the world', label = "no stand-in Hunting Rifle falls through the ground (#2753)" },
@@ -16930,7 +16935,7 @@ forbid = [
 
 [[scenario]]
 name = "sinking-corpse-bighorner-spot"
-source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). Round 1 probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). The probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
 note = "probe: the player starts 300 units south of the spot (-9617, -96521) where the Bighorner spawn 0x001710BB's corpse fell through on 9 installs [observed: issue #2753]. A new game lays it out dead where it is placed (an nvvoid placeholder in round 1: its leveled choice; Health 0) and its ragdoll starts when the cell loads, in round 1 under the terrain"
 areas = ["physics", "ragdoll"]
 paths = ["engine/nvf-play/src/phys/sinking.rs", "engine/nvforever/src/ragdoll.rs"]
@@ -16947,7 +16952,7 @@ forbid = [
 
 [[scenario]]
 name = "sinking-corpse-radscorpion-spot"
-source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). Round 1 probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). The probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
 note = "probe: the player starts 300 units south of the spot (-48169, 2481) where the Radscorpion spawn 0x0015A0C4's corpse fell through on 9 installs [observed: issue #2753]. A new game lays it out dead where it is placed (an nvvoid placeholder in round 1: its leveled choice; Health 0) and its ragdoll starts when the cell loads, in round 1 under the terrain"
 areas = ["physics", "ragdoll"]
 paths = ["engine/nvf-play/src/phys/sinking.rs", "engine/nvforever/src/ragdoll.rs"]
@@ -16964,7 +16969,7 @@ forbid = [
 
 [[scenario]]
 name = "sinking-corpse-molerat-spot"
-source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). Round 1 probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
+source = "#2753: weapons dropped by dying NPCs and corpses sank through the terrain in exteriors (players' logs, build 0.7.0). The probes: the reported corpses are leveled spawns' invisible nvvoid placeholders laid out dead, whose ragdolls started 3 to 360 units under the terrain and fell through it; a body started under the two-sided terrain mesh is now lifted over it first (engine/nvforever/src/ragdoll.rs out_of_terrain, engine/nvf-play/src/phys/sinking.rs; docs/spec-notes/physics.md §4.3)"
 note = "probe: the player starts 300 units south of the spot (4576, -80356) where the Mole rat spawn 0x00161732's corpse fell through on 7 installs [observed: issue #2753]. A new game lays it out dead where it is placed (an nvvoid placeholder in round 1: its leveled choice; Health 0) and its ragdoll starts when the cell loads"
 areas = ["physics", "ragdoll"]
 paths = ["engine/nvf-play/src/phys/sinking.rs", "engine/nvforever/src/ragdoll.rs"]
