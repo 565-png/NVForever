@@ -1403,6 +1403,66 @@ forbid = [
 ]
 
 [[scenario]]
+name = "advanced-movement-off-exact-weapon-inertia"
+source = "owner 2026-11-18 (the held weapon \"still shows inertia\" with Weapon Inertia off; engine/nvforever/src/view_sway.rs, player_body.rs; docs/design/player-body.md §1.4a.3, \"Off means the original's exactly\"): every part on, the rifle drawn and walked with, then Weapon Inertia alone switched off on the settings page; afterwards walking, aiming, firing, jumping and crouching: the sway never moves the arms off the clips' pose again once its fade is over (the exit summary's last time, the switch at about 6 s)"
+areas = ["player-body", "settings"]
+paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:weapon-inertia", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 28
+expect = [
+  { text = "settings: weapon-inertia off", label = "Weapon Inertia goes off (Weapon Inertia off)" },
+  { re = 'combat: kick: shot', label = "the rifle fired after the switch (Weapon Inertia off)" },
+  { re = 'player view: landed at', label = "a jump landed (Weapon Inertia off)" },
+  { re = "player body summary: off the clips' pose, the arms last moved by Weapon Inertia at (?P<n>[\\d.]+) s", range = [4, 10], label = "the arms are the clips' own from the end of the switch's fade on (Weapon Inertia off)" },
+]
+forbid = [
+  { re = 'NVF_PLAY_TEST_SETTINGS: ("|no switch|\S+ is a (list|slider):)', label = "the switch step is understood (Weapon Inertia off)" },
+  { re = 'panicked', label = "nothing panics (Weapon Inertia off)" },
+]
+
+[[scenario]]
+name = "advanced-movement-off-exact-global"
+source = "owner 2026-11-18 (the held weapon \"still shows inertia\" with the Global Toggle off; engine/nvforever/src/view_sway.rs, head_bob.rs, player_body.rs; docs/design/player-body.md §1.4a.3): every part on, the rifle drawn and walked with, then the Global Toggle switched off on the settings page; afterwards walking, aiming, firing, jumping and crouching: neither the sway nor the head moves the arms or the view off the clips' pose again once their fades are over (the breath's ends last, about 6 s after the switch)"
+areas = ["player-body", "settings"]
+paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:advanced-movement", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 28
+expect = [
+  { text = "settings: advanced-movement off", label = "the Global Toggle goes off (Global Toggle off)" },
+  { re = 'combat: kick: shot', label = "the rifle fired after the switch (Global Toggle off)" },
+  { re = 'player view: landed at', label = "a jump landed (Global Toggle off)" },
+  { re = "player body summary: off the clips' pose, the arms last moved by Weapon Inertia at (?P<n>[\\d.]+) s", range = [4, 10], label = "the arms are the clips' own from the end of the fade on (Global Toggle off)" },
+  { re = "player body summary: off the clips' pose, .*, the view by the head's springs \\(Camera Motion, Movement Inertia's landing dip\\) at (?P<n>[\\d.]+) s", range = [4, 14], label = "the view is the clips' own from the end of the fades on (Global Toggle off)" },
+]
+forbid = [
+  { re = 'NVF_PLAY_TEST_SETTINGS: ("|no switch|\S+ is a (list|slider):)', label = "the switch step is understood (Global Toggle off)" },
+  { re = 'panicked', label = "nothing panics (Global Toggle off)" },
+]
+
+[[scenario]]
+name = "advanced-movement-off-exact-defaults"
+source = "owner 2026-11-18 (the held weapon \"still shows inertia\" at the defaults; engine/nvforever/src/view_sway.rs, head_bob.rs, player_body.rs; docs/design/player-body.md §1.4a.3): every part on, the rifle drawn and walked with, then the five parts that are off by default switched off on the settings page (the Global Toggle and Advanced Recoil stay on); afterwards walking, aiming, firing, jumping and crouching: Advanced Recoil eases the view's kick, but neither the sway nor the head moves the arms or the view off the clips' pose again once their fades are over"
+areas = ["player-body", "settings"]
+paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:movement-inertia,4.5:weapon-handling,4.6:weapon-inertia,4.7:animation-smoothing,4.8:camera-motion", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 28
+expect = [
+  { text = "settings: camera-motion off", label = "the last of the five parts goes off (at the defaults)" },
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off", label = "the defaults reached on the page (at the defaults)" },
+  { re = 'combat: kick: shot', label = "the rifle fired after the switches (at the defaults)" },
+  { re = 'player view: landed at', label = "a jump landed (at the defaults)" },
+  { re = "player body summary: off the clips' pose, the arms last moved by Weapon Inertia at (?P<n>[\\d.]+) s", range = [4, 10], label = "the arms are the clips' own from the end of the fade on (at the defaults)" },
+  { re = "player body summary: off the clips' pose, .*, the view by the head's springs \\(Camera Motion, Movement Inertia's landing dip\\) at (?P<n>[\\d.]+) s", range = [4, 14], label = "the view is the clips' own from the end of the fades on (at the defaults)" },
+]
+forbid = [
+  { re = 'NVF_PLAY_TEST_SETTINGS: ("|no switch|\S+ is a (list|slider):)', label = "every switch step is understood (at the defaults)" },
+  { re = 'panicked', label = "nothing panics (at the defaults)" },
+]
+
+[[scenario]]
 name = "advanced-movement-menu"
 source = "owner 2026-11-15 (\"simplify the Advanced Movement menu\"; engine/nvf-play/src/settings_layout.rs, settings_view.rs; docs/design/player-body.md §1.4a.3): the NVF Features tab lists the Global Toggle and Movement Weight (owner 2026-11-15) under Advanced Movement, then an empty line, Gameplay's three switches, an empty line and Visual Only's three, in the owner's order"
 areas = ["player-body", "settings"]
