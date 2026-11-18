@@ -1169,6 +1169,14 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   default) and off without it (`nvforever/src/eye_adapt.rs`). With the fog changes
   below, the Dead Money frames come out within 1 EV of the original's; the lab's frames
   move by under 0.1 EV.
+  Until #2892 the exposure worked out from the meter was not exactly the lift: Bevy's
+  pass read its curve as one byte entry per 0.086 EV, so every view was darkened by 0 to
+  about 0.15 EV more than the lift says (0.075 on average), by an amount that jumped
+  with the view [observed: noon by the road at WastelandNV (−17, 0), the picture with
+  adaptation on 2.4 to 5.6 levels of 255 darker than with it off, differing by pitch;
+  0.01 to 0.05 with the curve read exactly (`engine/vendor/bevy_post_process`)]. The
+  fitted numbers above were made with that in them; they were not fitted again, the
+  shift being a tenth of the fit's own spread (the frames agree within 0.3 to 1 EV).
   The sky counts 1/16 of a world pixel in the meter, from a mask drawn each frame from
   the depth prepass (`eye_mask.wesl`) [hypothesis, 2026-10-23]: once our night sky was
   as dark as the original's ("Night sky" above), metering it with the world brightened
