@@ -333,7 +333,7 @@ fn current_camera_enter_exit_and_reentry_restore_current_weather_without_refresh
     assert!(under.color.to_linear().blue > under.color.to_linear().red);
     a.world_mut().resource_mut::<SkyState>().fog_override = Some((91.0, 12345.0));
     let sky = a.world().resource::<SkyState>();
-    let rgb = sky.fog_color();
+    let rgb = sky.color(fnv_world::sky::ColorType::Fog);
     let expected = DistanceFog {
         color: Color::linear_rgba(rgb[0], rgb[1], rgb[2], 1.0),
         falloff: crate::fog::falloff(91.0, 12345.0, sky.fog_power(), true, sky.emissive_scale()),
