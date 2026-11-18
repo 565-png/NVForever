@@ -1923,6 +1923,69 @@ longer exists (the settings menu overhaul); the haze is a row of its own, "Deser
   at 06:30 east, under the overcast and the hazy weather, and the street, in the PR. The
   cost is not measured on a slower GPU or at 1920x1080.
 
+### 3.17 Full-detail scenery (`full-detail`; off in both presets, #2701 stage 1)
+
+Past the loaded cells (5 x 5 around the player's cell, `uGridsToLoad` 5 [observed: the
+owner's `FalloutPrefs.ini`, world.md §7]) only references flagged "visible when distant"
+have a distant form, the object LOD blocks, and everything else appears only when its cell
+loads (world.md §7). The row draws the full models of static scenery a few cells farther,
+draw-only. Every rule below is NVForever's own choice [design], not the original's
+behaviour; the code is `engine/nvforever/src/full_detail.rs`.
+
+- **Sizes**: Off, 7 x 7 (the cells 3 grid steps from the loaded grid's centre) and 9 x 9
+  (3 and 4 steps): 24 and 56 cells beyond the 25 loaded ones. `--graphics-only
+  full-detail-7x7` or `full-detail-9x9`; the row switches at once (the ring is cleared and
+  drawn again). No ring indoors.
+- **Draw-only**: the game loads exactly the cells it loads with the row off. Ring cells
+  are never in the streamer's loaded cells (`Game::loaded_cells`, physics, the AI's
+  process levels, water, rooms and reports are as before) and their entity is no render
+  cell, so nothing of nvf-play draws into it. Its models keep their reference's
+  `RefVisual` (the simulation hides and shows them, deletions and texture swaps reach
+  them) and carry `nvf_play::DrawOnly`: the console's and the editor's picks, the
+  crosshair, the loaded counts and the scripts' NIF functions leave them out. No collider.
+- **Drawn**: STAT and SCOL references, and every other reference with a model flagged
+  visible when distant (REFR record flag 0x8000 [documented: GECK wiki "Reference",
+  GetReferenceFlag]), as plain static scenery: the model's shapes as stored, no rig,
+  light source, emitter, stored pose or collision. A cell's object LOD segment holds the
+  LOD of its flagged references (world.md §7), and the ring hides it as a loaded cell does,
+  so nothing flagged may be left out. The landscape at full resolution (under 4 x 4 near
+  the 2 x 2 drawing the loaded cells start with, which meets their edge without cracks),
+  counted nowhere (the terrain summary is the loaded cells').
+- **Left out** [design]: imposters (drawn by region), primitives, markers, references not
+  enabled at the start (stage 2 follows the game's enable state for them), actors, light
+  sources, sounds, trees (the distant tree billboards stay over ring cells), placed and
+  cell water (distant water keeps covering ring cells), grass, and non-flagged
+  activators, doors, containers, furniture, terminals, items and moveable statics. A
+  cell keeps its LOD segment when a flagged reference in it cannot be drawn here (an actor,
+  placed water, one disabled at the start that the game has enabled since): there the
+  segment and the full models both show, rather than a hole.
+- **LOD hand-off**: lod.rs takes the drawn cells from both (`DrawnCells`): a ring cell's
+  block segment crossfades with its fade and its LOD terrain is cut out once it is fully
+  drawn, exactly as for a loaded cell. When the loaded grid moves onto a ring cell, the
+  ring's meshes draw the complement of the loaded cell's fade step (fade.rs) and the ring
+  cell goes once the loaded one is fully drawn; in the loaded grid's step of hysteresis a
+  ring cell may stand by under a loaded cell (culled), to take over when that one fades
+  out. No doubling at rest.
+- **Streaming**: ring cells are read ahead on the worker threads only while the loaded
+  cells' read-ahead is idle, and spawned nearest first within 1.5 ms of the main thread a
+  frame, only while every loaded cell is in and none is being spawned; a ring cell is
+  drawn once its models are read (nothing is read on the main thread for it). Kept one step
+  beyond the ring, then faded out. A start, a door's travel or a change of worldspace
+  clears the ring and never waits for it.
+- **Size cut**: in the ring's outermost cells a reference not flagged visible when distant
+  is left out when its model's bounding radius is under 0.004 of its distance from the
+  loaded grid's centre (`SIZE_CUT`; about 57 units at 4 cells). Counted in the summary.
+- **Shadows and sliders**: ring meshes cast no sun shadow while the cascades end inside
+  the ring's inner edge (the default 8,000 units against the 8,192 a ring cell is at least
+  from the camera); with longer shadows they cast. They count as objects for the Object
+  distance slider (at 100% they are not culled).
+- **Logs**: `full detail: 9 x 9 ring (radius 4)` when it comes on; at the exit `full
+  detail summary: 9x9, <n> cells, <m> references drawn, <k> skipped by type, <t> ms on
+  the main thread, <s> too small for their distance`; the stress sample adds `ring meshes
+  <n>` while the ring draws any. Nothing while it is off.
+- **Not measured yet**: frame cost and streaming hitches on the traversal routes
+  (Goodsprings to Primm, Novac), ring off against 7 x 7 and 9 x 9.
+
 ## 4. Tried and dropped
 
 - **Bevy `ContactShadows`** on the sun (16 steps, 40 units, thickness 12): the right effect on
