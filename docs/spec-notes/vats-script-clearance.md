@@ -15,6 +15,13 @@ feature execution are unmeasured. No mod setting is changed by this contribution
 
 ## Mapped engine contract
 
+Every `[design]` item in this section is an engine design choice (origin, reach,
+filter, zero policy, catalogue float return), not a claim about the original game.
+
+[hypothesis] The original functions report free space beside the receiver as a
+distance in game units, larger when there is more room. Neither the GECK index nor
+the mod's calls state the result's meaning or unit; no original-game capture exists.
+
 [design] The two named source queries cast sideways from the current qualified
 actor's position/facing through the existing script-tick physics caster, only
 when called. They do not reuse a previous kill-camera measurement, publish a new
@@ -36,7 +43,7 @@ meaning and values. Named queries neither overwrite them nor mutate World,
 VATS state, camera settings, input, physics geometry or game time. They keep no
 persistent result across a save, new scene or missing caster.
 
-[hypothesis] Native origin height, view selection, ray-versus-volume measurement,
+[hypothesis] Native result meaning/unit, origin height, view selection, ray-versus-volume measurement,
 range limit, collision exclusions, nonplayer receiver support and timing relative
 to lean/camera animation remain unverified. Query-only original-game captures are
 needed before any native-parity claim. No opcode adapter is inferred.
