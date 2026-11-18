@@ -726,10 +726,9 @@ impl Runtime {
         let stand_in = World::new(sim.forms, sim.refs, world.config());
         self.game = Game::restore(data, world, cfg, &s)?;
         self.game.put_session(session);
-        // The engine's seat is not saved, so a load stands the player up
-        // (docs/design/save-load.md §3.4); the saved furniture use goes with it, or
-        // GetSitting and its kin go on reading the seat (#1573).
-        self.game.set_furniture_use(FormId::PLAYER_REF, None);
+        // The engine's seats are not saved, so a load stands the player and every NPC up
+        // (docs/design/save-load.md §3.4): `Game::restore` clears each saved furniture use,
+        // or GetSitting and its kin go on reading the seat (#1573, #2797).
         let mut world = std::mem::replace(&mut self.game.world, stand_in);
         // The world's session edits (game settings, leveled lists, base containers changed
         // by script) last for the run, not in the save (`fnv_sim::world::WorldSession`).
@@ -949,7 +948,9 @@ impl Runtime {
         let has_block = g.ref_script(target).and_then(|s| g.data.script(s)).is_some_and(|u| u.has_block(event::ON_ACTIVATE));
         let r = if has_block {
             info!("script: activating {target} runs its OnActivate block instead of the default action");
-            g.activate(player, target, ActMode::Hand).map(|_| ByHand::Script)
+            g.activate(player, target, ActMode::Hand).map(|done| {
+                if matches!(done["result"].as_str(), Some("prevented" | "destroyed")) { ByHand::Refused } else { ByHand::Script }
+            })
         } else {
             // The shared default action; what is this path's own is that `activate.rs`
             // applies the outcome, so these events do not become effects as well.
@@ -1505,8 +1506,36 @@ pub(crate) fn responses(play: &PlayWorld, info: FormId) -> Vec<String> {
 
 // ---- trace log -------------------------------------------------------------------------
 
+struct TraceFile(std::fs::File);
+
+impl std::io::Write for TraceFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl Drop for TraceFile {
+    fn drop(&mut self) {
+        // BufWriter attempts its final flush before dropping this guard. Release
+        // ownership explicitly:
+        // another thread's fork may still hold a duplicate until its child execs.
+        let _ = self.0.unlock();
+    }
+}
+
+#[cfg(test)]
+impl TraceFile {
+    fn try_clone(&self) -> std::io::Result<std::fs::File> {
+        self.0.try_clone()
+    }
+}
+
 struct TraceLog {
-    out: std::io::BufWriter<std::fs::File>,
+    out: std::io::BufWriter<TraceFile>,
     path: PathBuf,
     lines: u64,
 }
@@ -1527,7 +1556,7 @@ impl TraceLog {
         Ok(TraceLog { out, path, lines: 0 })
     }
 
-    fn create_owned(requested: &std::path::Path) -> std::io::Result<(PathBuf, std::fs::File)> {
+    fn create_owned(requested: &std::path::Path) -> std::io::Result<(PathBuf, TraceFile)> {
         for attempt in 0..64 {
             let path = if attempt == 0 {
                 requested.to_path_buf()
@@ -1545,7 +1574,8 @@ impl TraceLog {
             let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path)?;
             match file.try_lock() {
                 Ok(()) => {
-                    file.set_len(0)?;
+                    let file = TraceFile(file);
+                    file.0.set_len(0)?;
                     return Ok((path, file));
                 }
                 Err(std::fs::TryLockError::WouldBlock) => continue,
@@ -1619,6 +1649,35 @@ mod trace_ownership_tests {
     }
 
     #[test]
+    fn dropped_trace_writer_releases_ownership_while_a_duplicate_handle_remains_open() {
+        let root = std::env::temp_dir().join(format!("nvf-duplicate-trace-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let path = root.join("script-trace.jsonl");
+        let mut first = TraceLog::create(&path).unwrap();
+        let duplicate = first.out.get_ref().try_clone().unwrap();
+        first.write(&serde_json::json!({"kind":"finished-owner"}));
+        let overlapping = TraceLog::create(&path).unwrap();
+        assert_ne!(overlapping.path, path, "the trace writer still owns the requested file");
+        drop(overlapping);
+        drop(first);
+
+        // A duplicate models the descriptor retained between another thread's fork
+        // and exec. Its lifetime must not extend the finished trace's ownership.
+        let mut next = TraceLog::create(&path).unwrap();
+        assert_eq!(next.path, path, "a duplicate handle must not retain a finished writer's lock");
+        next.write(&serde_json::json!({"kind":"replacement-owner"}));
+        drop(next);
+        let bytes = std::fs::read_to_string(&path).unwrap();
+        let rows: Vec<serde_json::Value> = bytes.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["format"], "nvforever.play.script_log/1");
+        assert_eq!(rows[0]["processId"], std::process::id());
+        assert_eq!(rows[1]["kind"], "replacement-owner");
+        assert!(!bytes.contains("finished-owner") && !bytes.contains('\0'));
+        drop(duplicate);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn overlapping_trace_processes_hold_locks_until_their_writers_close() {
         const TEST: &str = "script::trace_ownership_tests::overlapping_trace_processes_hold_locks_until_their_writers_close";
         const CHILD: &str = "NVF_OWNED_TRACE_TEST_CHILD";
@@ -1660,7 +1719,7 @@ mod trace_ownership_tests {
         assert!(parent_bytes.contains("parent-before-child") && parent_bytes.contains("parent-after-child"));
         assert!(!parent_bytes.contains("child-only"));
         assert!(child_bytes.contains("child-only") && !child_bytes.contains("parent-before-child"));
-        // OS close releases ownership without a sidecar lock or explicit unlock.
+        // Dropping the writer releases ownership without a sidecar lock.
         let mut next = TraceLog::create(&path).unwrap();
         assert_eq!(next.path, path);
         next.write(&serde_json::json!({"kind":"next-run"}));
@@ -2679,7 +2738,7 @@ pub fn asks_nothing(buttons: usize) -> bool {
     buttons <= 1
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "report-test-support"))]
 impl ScriptState {
     /// A runtime over an empty load order, for tests of what works the open menu: nothing
     /// has run, no menu is open.
@@ -2729,9 +2788,19 @@ impl ScriptState {
     }
 
     /// The player answered the open menu: it closes after this frame's scripts.
+    #[cfg(test)]
     pub(crate) fn answered(&self) -> bool {
         self.rt.as_ref().is_some_and(|rt| rt.closing.is_some())
     }
+}
+
+/// [design, #2403] Empty-load-order runtime for detector regressions only.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_progress_fixture(menu: u16) -> ScriptState {
+    let mut s = ScriptState::over_no_plugins();
+    s.rt.as_mut().unwrap().game.menu = Some(menu);
+    s
 }
 
 #[cfg(test)]
@@ -2808,6 +2877,23 @@ mod restore_tests {
         rt.restore_save(&mut sim, save).unwrap();
         assert_eq!(sim.world.roll_level(), 20);
         assert_eq!(sim.world.config().player_level, 1);
+    }
+
+    /// #2797 (and #1573 for the player): a save made while an NPC and the player sat
+    /// loads with both standing in the game's state; the engine reports a new seat.
+    #[test]
+    fn a_load_stands_every_seated_actor_up() {
+        use fnv_game::game::FurnitureUse;
+        let (mut rt, mut sim, _) = in_fade();
+        let seat = FurnitureUse { reference: MARKER, marker_id: 11, state: 3 };
+        rt.game.set_furniture_use(ACTOR, Some(seat));
+        rt.game.set_furniture_use(FormId::PLAYER_REF, Some(seat));
+        let save = with_world(&mut rt, &mut sim, |rt| rt.game.snapshot());
+        assert_eq!(save.extra[&ACTOR].furniture, Some(seat));
+        rt.restore_save(&mut sim, save).unwrap();
+        assert_eq!(rt.game.furniture_use(ACTOR), None, "the NPC stands");
+        assert_eq!(rt.game.furniture_use(FormId::PLAYER_REF), None, "the player stands");
+        assert!(!rt.game.furniture_used_by_other(FormId::PLAYER_REF, MARKER), "the seat is free");
     }
 }
 

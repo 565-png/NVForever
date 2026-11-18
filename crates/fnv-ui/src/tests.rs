@@ -4,6 +4,84 @@
 use crate::tree::{MemSource, Origin, Source, Ui};
 use crate::value::Value;
 
+fn named_source_menu(rows: usize) -> MemSource {
+    let mut xml = String::from(r#"<menu name="NamedWork"><width>400</width>"#);
+    for i in 0..rows {
+        xml.push_str(&format!(r#"<rect name="Row{i}"><width><copy src="parent" trait="width"/></width><height><copy src="me" trait="width"/></height></rect>"#));
+    }
+    xml.push_str("</menu>");
+    MemSource::default().with("named-work.xml", &xml)
+}
+
+#[test]
+fn named_source_update_keeps_menu_walks_linear() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let rows = 512;
+    let src = named_source_menu(rows);
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "named-work.xml").unwrap();
+    ui.update();
+    let visits = ui.named_source_visits.load(Relaxed);
+    for i in 0..rows {
+        assert_eq!(ui.get_float(&format!("NamedWork/Row{i}/height")), Some(400.0));
+    }
+    assert!(visits <= ui.live_tiles() * 4, "NAMED_SOURCE_WALK_BOUND: {visits} node visits for {} live tiles", ui.live_tiles());
+    ui.named_source_visits.store(0, Relaxed);
+    ui.set_float("NamedWork/width", 401.0);
+    ui.update();
+    assert_eq!(ui.get_float("NamedWork/Row511/height"), Some(401.0));
+    assert_eq!(ui.named_source_visits.load(Relaxed), 0, "value changes must reuse structural name lookup");
+}
+
+#[test]
+fn named_source_precedence_and_first_match_follow_tree_changes() {
+    let src = MemSource::default()
+        .with("names.xml", r#"<menu name="Names"><width>12</width><rect name="Branch"><rect name="Parent"><width>7</width></rect></rect><rect name="parent"><width>8</width></rect><rect name="Reader"><width>10</width><height><copy src="pArEnT" trait="width"/></height><x><copy src="Remote" trait="width"/></x></rect></menu>"#)
+        .with("remote.xml", r#"<menu name="Remote"><width>9</width></menu>"#);
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "names.xml").unwrap();
+    ui.load_menu(&src, "remote.xml").unwrap();
+    ui.update();
+    assert_eq!(ui.get_float("Names/Reader/height"), Some(7.0), "first descendant wins before a later shallow match and builtin");
+    assert_eq!(ui.get_float("Names/Reader/x"), Some(9.0), "another menu remains a fallback");
+    let first = ui.find_tile("Names/Branch/Parent").unwrap();
+    ui.unload_tile(first);
+    ui.set_float("Names/parent/width", 8.5);
+    ui.update();
+    assert_eq!(ui.get_float("Names/Reader/height"), Some(8.5), "unloading selects the next duplicate");
+    let second = ui.find_tile("Names/parent").unwrap();
+    ui.unload_tile(second);
+    ui.set_float("Names/width", 12.5);
+    ui.update();
+    assert_eq!(ui.get_float("Names/Reader/height"), Some(12.5), "no named tile falls back to the actual parent");
+    assert!(ui.inject_file(&MemSource::default().with("insert.xml", r#"<rect name="PARENT"><width>15</width></rect>"#), "Names/Branch", "insert.xml"));
+    ui.update();
+    assert_eq!(ui.get_float("Names/Reader/height"), Some(15.0), "injection and slot reuse invalidate an earlier miss");
+    ui.load_menu(&src, "names.xml").unwrap();
+    ui.update();
+    assert_eq!(ui.get_float("Names/Reader/height"), Some(7.0), "reload drops cached old IDs");
+}
+
+#[test]
+fn named_source_fixed_workload_reports_update_cost() {
+    for rows in [256, 1024, 2048] {
+        let src = named_source_menu(rows);
+        let mut ui = Ui::new();
+        ui.load_menu(&src, "named-work.xml").unwrap();
+        let start = std::time::Instant::now();
+        ui.update();
+        let initial = start.elapsed();
+        let start = std::time::Instant::now();
+        for width in [401.0, 402.0, 403.0] {
+            ui.set_float("NamedWork/width", width);
+            ui.update();
+        }
+        let changes = start.elapsed();
+        assert_eq!(ui.get_float(&format!("NamedWork/Row{}/height", rows - 1)), Some(403.0));
+        eprintln!("NAMED_SOURCE_FIXED_WORKLOAD rows={rows} initial_ms={:.3} three_value_updates_ms={:.3}", initial.as_secs_f64() * 1000.0, changes.as_secs_f64() * 1000.0);
+    }
+}
+
 /// A small menu in the shape of the game's: a gauge prefab included twice, a template,
 /// named traits on the menu that code would set.
 fn files() -> MemSource {
@@ -645,6 +723,111 @@ fn uio_includes_apply_again_in_a_reopened_menu() {
     assert!(!ui.mod_tile_drawn(old_added, None));
     assert_eq!(ui.tile_slots(), slots);
     assert_eq!(ui.uio.decisions[0].applied, 6);
+}
+
+#[test]
+fn structural_childcount_verification_reads_repeated_includes_and_real_uio_injection() {
+    let src = MemSource::default()
+        .with("menus/inspection.xml", r#"<menu name="Inspection">
+            <rect name="Composite">
+                <include src="pair.xml"/><include src="pair.xml"/>
+                <template name="Unused"><rect name="Uninstantiated"/></template>
+            </rect>
+            <_LayoutReady><copy src="child(Composite)" trait="childcount"/><eq>4</eq></_LayoutReady>
+            <_Ready><copy src="me" trait="_LayoutReady"/><and src="child(Addon)" trait="_Registered"/></_Ready>
+            <rect name="Banner"><visible><not src="parent" trait="_Ready"/></visible></rect>
+        </menu>"#)
+        .with("menus/prefabs/pair.xml", r#"<image name="Left"><text name="Nested"/></image><image name="Right"/>"#)
+        .with_loose("menus/prefabs/addon.xml", r#"<rect name="Addon"><_Registered>1.5</_Registered></rect>"#)
+        .with("uio/supported.txt", "addon.xml::Inspection\ntrue");
+    let mut ui = Ui::new();
+    ui.configure_uio(&src, |_| false);
+    ui.load_menu(&src, "menus/inspection.xml").unwrap();
+    ui.update();
+    assert_eq!(ui.uio.applied(), 1, "the configured include really applied");
+    assert_eq!(ui.get_float("Inspection/Addon/_Registered"), Some(1.5));
+    let composite = ui.find_tile("Inspection/Composite").unwrap();
+    assert_eq!(ui.tile(composite).children.len(), 4);
+    assert!(ui.tile(composite).get("childcount").is_none(), "no explicit trait was invented");
+    assert_eq!(ui.get_float("Inspection/_LayoutReady"), Some(1.0), "[childcount-includes] the real expression must see all four direct tiles");
+    assert_eq!(ui.get_float("Inspection/_Ready"), Some(1.0));
+    assert_eq!(ui.get_float("Inspection/Banner/visible"), Some(0.0));
+    // Breaking the structure must still expose the diagnostic. The repair may
+    // not force the registration trait or bypass the verification expression.
+    let removed = ui.find_tile("Inspection/Composite/Right").unwrap();
+    ui.unload_tile(removed);
+    ui.update();
+    assert_eq!(ui.get_float("Inspection/_LayoutReady"), Some(0.0));
+    assert_eq!(ui.get_float("Inspection/Banner/visible"), Some(1.0));
+    assert_eq!(ui.get_float("Inspection/Addon/_Registered"), Some(1.5));
+}
+
+#[test]
+fn structural_childcount_tracks_empty_insertions_removal_templates_and_menu_reload() {
+    let src = MemSource::default().with("menus/count.xml", r#"<menu name="Count">
+        <rect name="Target"><template name="Pair"><rect name="A"/><rect name="B"/></template></rect>
+        <rect name="Neighbor"><_Source>7</_Source></rect>
+        <_Count><copy src="child(Target)" trait="ChIlDcOuNt"/></_Count>
+        <_Twice><copy src="me" trait="_Count"/><mul>2</mul></_Twice>
+        <_Retained><copy src="child(Neighbor)" trait="_Source"/></_Retained>
+    </menu>"#);
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "menus/count.xml").unwrap();
+    ui.update();
+    assert_eq!(ui.get_float("Count/_Count"), Some(0.0));
+    assert!(ui.set_float("Count/_Retained", 99.0));
+    assert!(ui.inject_text(&src, "Count/Target", r#"<rect name="First"/>"#));
+    ui.update();
+    assert_eq!(ui.get_float("Count/_Count"), Some(1.0), "[childcount-empty-insert] an empty child must invalidate its reader");
+    assert_eq!(ui.get_float("Count/_Twice"), Some(2.0));
+    assert_eq!(ui.get_float("Count/_Retained"), Some(99.0), "unrelated external value stays retained");
+    assert!(ui.inject_text(&src, "Count/Target/First", r#"<rect name="Grandchild"/>"#));
+    ui.update();
+    assert_eq!(ui.get_float("Count/_Count"), Some(1.0), "grandchildren do not count twice");
+    let stale = ui.find_tile("Count/Target/First").unwrap();
+    ui.unload_tile(stale);
+    ui.update();
+    assert_eq!(ui.get_float("Count/_Count"), Some(0.0));
+    assert_eq!(ui.get_float("Count/_Twice"), Some(0.0));
+    ui.add_from_template(&src, "Count/Target", "Pair", None).unwrap();
+    ui.update();
+    assert_eq!(ui.get_float("Count/_Count"), Some(2.0));
+    assert_eq!(ui.get_float("Count/_Twice"), Some(4.0));
+    ui.unload_tile(stale);
+    ui.update();
+    assert_eq!(ui.get_float("Count/_Count"), Some(2.0), "stale IDs cannot remove a replacement");
+    assert_eq!(ui.get_float("Count/_Retained"), Some(99.0));
+    ui.load_menu(&src, "menus/count.xml").unwrap();
+    ui.update();
+    assert_eq!(ui.get_float("Count/_Count"), Some(0.0), "reused menu slots start without old children");
+    assert_eq!(ui.get_float("Count/_Retained"), Some(7.0));
+}
+
+#[test]
+fn structural_childcount_preserves_explicit_zero_and_nonzero_overrides() {
+    let src = MemSource::default().with("menus/override.xml", r#"<menu name="Override">
+        <rect name="Target"><childcount>0</childcount><rect name="Initial"/></rect>
+        <_Count><copy src="child(Target)" trait="childcount"/></_Count>
+    </menu>"#);
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "menus/override.xml").unwrap();
+    ui.update();
+    let target = ui.find_tile("Override/Target").unwrap();
+    assert_eq!(ui.get_float("Override/_Count"), Some(0.0), "explicit zero wins over structure");
+    assert!(ui.inject_text(&src, "Override/Target", r#"<rect name="Second"/>"#));
+    ui.update();
+    assert_eq!(ui.get_float("Override/_Count"), Some(0.0));
+    ui.set_trait(target, "childcount", Value::Num(8.0));
+    ui.update();
+    assert_eq!(ui.get_float("Override/_Count"), Some(8.0));
+    assert!(ui.inject_text(&src, "Override/Target", r#"<rect name="Third"/>"#));
+    ui.update();
+    assert_eq!(ui.get_float("Override/_Count"), Some(8.0), "existing list initialization keeps precedence");
+    assert!(ui.remove_trait(target, "childcount"));
+    ui.update();
+    assert!(ui.tile(target).get("childcount").is_none());
+    assert_eq!(ui.get_float("Override/_Count"), Some(3.0), "[childcount-override-release] removal restores the structural expression value");
+    assert!(ui.get_float("Override/Target/childcount").is_none(), "direct trait queries retain absence semantics");
 }
 
 #[test]
@@ -1368,4 +1551,119 @@ fn four_uio_operator_names_are_case_insensitive_and_unknown_tags_stay_unknown() 
     use crate::expr::OpKind;
     for (tag, op) in [("SiN",OpKind::Sin),("COS",OpKind::Cos),("log",OpKind::Log),("pow",OpKind::Pow)] {assert_eq!(OpKind::from_tag(tag),Some(op));}
     for tag in ["sine","cosine","log_base"] {assert_eq!(OpKind::from_tag(tag),None);}
+}
+
+// [documented: ui-bit-test-operator.md] Exercise XML admission and the ordinary
+// deferred/reactive consumer, using authored menus without installed assets.
+#[test]
+fn uio_bt_tests_the_selected_bit_and_composes_with_arithmetic() {
+    let src = MemSource::default().with("bt.xml", r#"<menu name="Bits">
+      <set><copy>13</copy><bt>2</bt></set>
+      <clear><copy>13</copy><bt>1</bt></clear>
+      <index><copy>8</copy><Bt>3</Bt></index>
+      <notmask><copy>8</copy><bt>8</bt></notmask>
+      <zero><copy>0</copy><bt>0</bt></zero>
+      <lowest><copy>1</copy><bt>0</bt></lowest>
+      <nested><copy>8</copy><bt><copy>1</copy><add>2</add></bt><mul>7</mul><add>2</add></nested>
+      <conditional><copy>9</copy><onlyif><copy>8</copy><bt>3</bt></onlyif></conditional>
+    </menu>"#);
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "bt.xml").unwrap();
+    ui.update();
+    for (name, expected) in [("set", 1.0), ("clear", 0.0), ("index", 1.0),
+        ("notmask", 0.0), ("zero", 0.0), ("lowest", 1.0), ("nested", 9.0), ("conditional", 9.0)] {
+        assert_eq!(ui.get_float(&format!("Bits/{name}")), Some(expected), "{name}");
+    }
+    assert!(ui.warnings.is_empty(), "{:?}", ui.warnings);
+}
+
+#[test]
+fn uio_bt_reacts_to_either_operand_and_keeps_override_lifetime() {
+    let src = MemSource::default().with("bt-live.xml", r#"<menu name="Bits">
+      <flags>8</flags><bit>3</bit><rect name="Panel">
+        <visible><copy src="parent()" trait="flags"/><bt src="parent()" trait="bit"/></visible>
+        <width><copy src="me()" trait="visible"/><mul>40</mul><add>10</add></width>
+      </rect></menu>"#);
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "bt-live.xml").unwrap();
+    assert_eq!(ui.get_float("Bits/Panel/visible"), Some(0.0), "loading defers evaluation");
+    ui.update();
+    assert_eq!(ui.get_float("Bits/Panel/visible"), Some(1.0));
+    assert_eq!(ui.get_float("Bits/Panel/width"), Some(50.0));
+    assert!(ui.set_float("Bits/bit", 0.0));
+    ui.update();
+    assert_eq!(ui.get_float("Bits/Panel/visible"), Some(0.0));
+    assert_eq!(ui.get_float("Bits/Panel/width"), Some(10.0));
+    assert!(ui.set_float("Bits/flags", 9.0));
+    ui.update();
+    assert_eq!(ui.get_float("Bits/Panel/visible"), Some(1.0));
+    assert!(ui.set_float("Bits/Panel/visible", 7.0));
+    ui.update();
+    assert_eq!(ui.get_float("Bits/Panel/visible"), Some(7.0));
+    assert_eq!(ui.get_float("Bits/Panel/width"), Some(290.0));
+    assert_eq!(ui.update(), 0);
+    assert!(ui.set_float("Bits/bit", 1.0));
+    ui.update();
+    assert_eq!(ui.get_float("Bits/Panel/visible"), Some(0.0));
+    assert_eq!(ui.get_float("Bits/Panel/width"), Some(10.0));
+    // A separately loaded tree starts from XML, without retained overrides.
+    let mut cold = Ui::new();
+    cold.load_menu(&src, "bt-live.xml").unwrap();
+    cold.update();
+    assert_eq!(cold.get_float("Bits/Panel/visible"), Some(1.0));
+    assert!(ui.warnings.is_empty(), "{:?}", ui.warnings);
+    assert!(cold.warnings.is_empty(), "{:?}", cold.warnings);
+}
+
+#[test]
+fn uio_bt_exact_integer_boundaries_and_explicit_invalid_input_policy() {
+    let src = MemSource::default().with("bt-boundary.xml", r#"<menu name="Bits">
+      <flags>0</flags><bit>0</bit>
+      <result><copy src="me()" trait="flags"/><bt src="me()" trait="bit"/></result>
+    </menu>"#);
+    let mut ui = Ui::new();
+    let root = ui.load_menu(&src, "bt-boundary.xml").unwrap();
+    let cases = [
+        (2_147_483_648.0, 31.0, 1.0), (2_147_483_648.0, 30.0, 0.0),
+        (4_294_967_295.0, 31.0, 1.0), (4_294_967_295.0, 32.0, 0.0),
+        (9_007_199_254_740_991.0, 52.0, 1.0),
+        (9_007_199_254_740_991.0, 53.0, 0.0),
+        (9_007_199_254_740_992.0, 53.0, 1.0),
+        (9_007_199_254_740_992.0, 0.0, 0.0),
+        (1.0, 54.0, 0.0), (1.0, f64::MAX, 0.0),
+        (-1.0, 0.0, 0.0), (1.5, 0.0, 0.0),
+        (1.0, -1.0, 0.0), (1.0, 0.5, 0.0),
+        (9_007_199_254_740_994.0, 1.0, 0.0),
+        (f64::NAN, 0.0, 0.0), (f64::INFINITY, 0.0, 0.0),
+        (f64::NEG_INFINITY, 0.0, 0.0), (1.0, f64::NAN, 0.0),
+        (1.0, f64::INFINITY, 0.0), (1.0, f64::NEG_INFINITY, 0.0),
+    ];
+    for (flags, bit, expected) in cases {
+        ui.set_trait(root, "flags", Value::Num(flags));
+        ui.set_trait(root, "bit", Value::Num(bit));
+        ui.update();
+        assert_eq!(ui.get_float("Bits/result"), Some(expected), "flags={flags}, bit={bit}");
+    }
+    assert!(ui.warnings.is_empty(), "{:?}", ui.warnings);
+}
+
+#[test]
+fn uio_bt_admission_retains_unknown_operator_diagnostics_and_boolean_controls() {
+    let src = MemSource::default().with("bt-control.xml", r#"<menu name="Bits">
+      <result><copy>5</copy><bT>2</bT></result>
+      <unknown><copy>17</copy><bt_typo>2</bt_typo><add>3</add></unknown>
+      <and><copy>8</copy><and>2</and></and>
+      <not><copy>8</copy><not>2</not></not>
+      <arithmetic><copy>8</copy><sub>2</sub><mul>3</mul></arithmetic>
+    </menu>"#);
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "bt-control.xml").unwrap();
+    ui.update();
+    assert_eq!(ui.get_float("Bits/result"), Some(1.0));
+    assert_eq!(ui.get_float("Bits/unknown"), Some(20.0));
+    assert_eq!(ui.get_float("Bits/and"), Some(1.0));
+    assert_eq!(ui.get_float("Bits/not"), Some(0.0));
+    assert_eq!(ui.get_float("Bits/arithmetic"), Some(18.0));
+    assert_eq!(ui.warnings.len(), 1, "{:?}", ui.warnings);
+    assert!(ui.warnings[0].contains("<bt_typo> is no operator; ignored"));
 }
