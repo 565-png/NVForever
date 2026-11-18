@@ -100,7 +100,7 @@ fn thin(
     mut rule: ResMut<ShadowThin>,
     materials: Res<Assets<NifMaterial>>,
     cams: Query<&GlobalTransform, With<FlyCam>>,
-    meshes: Query<(Entity, &RefVisual, &GlobalTransform, Option<&Aabb>, &MeshMaterial3d<NifMaterial>, Has<NotShadowCaster>, Has<FarNoShadow>)>,
+    meshes: Query<(Entity, &RefVisual, &GlobalTransform, Option<&Aabb>, Option<&MeshMaterial3d<NifMaterial>>, Option<&crate::mesh_terrain_blend::BlendShape>, Has<NotShadowCaster>, Has<FarNoShadow>)>,
     ours: Query<Entity, With<FarNoShadow>>,
     mut since: Local<f32>,
     mut last_ratio: Local<f32>,
@@ -129,7 +129,8 @@ fn thin(
     let Some(cam) = cams.iter().next().map(|t| t.translation()) else { return };
     // Each reference's bounds (world space) and whether any of its meshes is ours now.
     by_ref.clear();
-    for (_, r, t, aabb, _, _, mine) in &meshes {
+    for (_, r, t, aabb, material, blend, _, mine) in &meshes {
+        if nvf_assets::nif_surface_blend::source_material(material, blend).is_none() { continue; }
         let Some(aabb) = aabb else { continue };
         let (lo, hi) = world_bounds(t, aabb);
         let b = by_ref.entry(r.0).or_insert((lo, hi, false));
@@ -150,7 +151,8 @@ fn thin(
         .collect();
     rule.sizes = sizes;
     let mut thinned = 0;
-    for (e, r, _, aabb, material, no_shadow, mine) in &meshes {
+    for (e, r, _, aabb, material, blend, no_shadow, mine) in &meshes {
+        let Some(material) = nvf_assets::nif_surface_blend::source_material(material, blend) else { continue };
         if aabb.is_none() {
             continue;
         }
@@ -161,7 +163,7 @@ fn thin(
             } else {
                 thinned += 1;
             }
-        } else if !cast && !no_shadow && materials.get(&material.0).is_some_and(|m| !nvf_assets::nif_material::see_through(m)) {
+        } else if !cast && !no_shadow && materials.get(material).is_some_and(|m| !nvf_assets::nif_material::see_through(m)) {
             commands.entity(e).try_insert((NotShadowCaster, FarNoShadow));
             thinned += 1;
         }

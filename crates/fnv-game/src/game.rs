@@ -7240,7 +7240,7 @@ impl Host for Exec<'_, '_> {
         if let Some(v) = self.game.world.setting_f32(name) {
             return Some(XVal::Num(f64::from(v)));
         }
-        match self.game.world.forms.settings.get(&name.to_ascii_lowercase())? {
+        match self.game.world.setting_value(name)? {
             fnv_sim::settings::Setting::Str(s) => Some(XVal::Str(s.clone())),
             _ => None,
         }
