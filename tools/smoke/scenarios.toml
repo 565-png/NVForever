@@ -25382,6 +25382,35 @@ order = [
 ]
 
 [[scenario]]
+name = "jam-sprint-off"
+source = "issue #2952: Just Assorted Mods' sprint turned off (JVSEnabled 0, as its INI sets it) must not start: its sprint script, told to apply the setting (JVS.iSettingUpdate), removes its key handler with no key (SetOnKeyDownEventHandler JVSOnKeyDownEventHandler 0) and its main loop callback. NVForever removed only a registration with the same key, so Shift still started a sprint the removed main loop could never stop (the owner's run 2026-11-18)"
+note = "needs Just Assorted Mods in Data (and MCM, its master). NVFOREVER_HOME is a home with no JustMods.ini, so the plugin's own values hold until the console sets JVSEnabled 0. W is held from 10 s, Left Shift (JAM's JVSKey 42) from 11 to 14 s"
+areas = ["scripts", "nvse", "input"]
+paths = ["crates/fnv-game/src/jip_events.rs"]
+env = { NVFOREVER_HOME = "jam-sprint-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "4:set JVSEnabled to 0;4.2:set JVS.iSettingUpdate to 1;4.4:close;12.5:PrintC \"nvf jvs sprint %g enabled %g\" JVS.iSprint JVSEnabled;12.7:close;17:PrintC \"nvf jvs sprint %g enabled %g\" JVS.iSprint JVSEnabled;17.2:close", NVF_PLAY_TEST_KEYS = "10:w:9,11:shift:3" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm", "ClassicPack.esm", "MercenaryPack.esm", "TribalPack.esm", "CaravanPack.esm", "The Mod Configuration Menu.esp", "JustAssortedMods.esp"]
+run_seconds = 20
+expect = [
+  { text = "nvf jvs sprint 0 enabled 0", min = 2, label = "with the sprint turned off, Shift starts none (12.5 s) and none is left on (17 s)" },
+  { text = "nvf jvs sprint 1", count = 0, label = "no sprint at all" },
+]
+
+[[scenario]]
+name = "jam-sprint-stops"
+source = "issue #2952: Just Assorted Mods' sprint, on (the plugin's own JVSEnabled 1): holding Left Shift while running starts it, and letting go ends it (its main loop callback, JVSMainLoopEventHandler, sees the key up)"
+note = "needs Just Assorted Mods in Data (and MCM, its master). NVFOREVER_HOME is a home with no JustMods.ini, so the plugin's own values hold. W is held from 10 s, Left Shift (JAM's JVSKey 42) from 11 to 14 s"
+areas = ["scripts", "nvse", "input"]
+paths = ["crates/fnv-game/src/jip_events.rs"]
+env = { NVFOREVER_HOME = "jam-sprint-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "12.5:PrintC \"nvf jvs sprint %g enabled %g\" JVS.iSprint JVSEnabled;12.7:close;17:PrintC \"nvf jvs sprint %g enabled %g\" JVS.iSprint JVSEnabled;17.2:close", NVF_PLAY_TEST_KEYS = "10:w:9,11:shift:3" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm", "ClassicPack.esm", "MercenaryPack.esm", "TribalPack.esm", "CaravanPack.esm", "The Mod Configuration Menu.esp", "JustAssortedMods.esp"]
+run_seconds = 20
+expect = [
+  { text = "nvf jvs sprint 1 enabled 1", label = "Shift held while running starts the sprint" },
+  { text = "nvf jvs sprint 0 enabled 1", label = "letting go of Shift ends it" },
+]
+order = [["nvf jvs sprint 1 enabled 1", "nvf jvs sprint 0 enabled 1"]]
+
+[[scenario]]
 name = "travel-skip-sun-shadows"
 source = "#1732: test aid NVF_PLAY_TEST_TRAVEL_SKIP_SUN_SHADOWS has a travel's screen not wait for the sun's shadow pipelines (engine/nvforever/src/pipeline_gate.rs), to compare both ways by measuring; their label alone cannot tell them from a camera's prepass, so this also checks that the test finds some"
 areas = ["renderer"]
