@@ -78,6 +78,7 @@ mod facegen;
 mod flashlight;
 mod eye_adapt;
 mod fog;
+mod haze;
 mod fly;
 mod foot_ik;
 mod anti_lag;
@@ -145,6 +146,7 @@ mod wrecks;
 mod talk_clips;
 mod readahead;
 mod reflection;
+mod minimap_render;
 mod refraction;
 mod residents;
 mod resurrect;
@@ -163,6 +165,7 @@ mod shadow_probe;
 mod shadow_rate;
 mod shadow_thin;
 mod shafts;
+mod heat_haze;
 mod imagespace;
 mod imposters;
 mod sky;
@@ -545,7 +548,7 @@ struct Args {
     dlss_model: Option<upscaler::DlssModel>,
     /// Instead of --graphics: exactly these improvements on, by the settings page's keys
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
-    /// water-reflections, terrain-height-blend, terrain-anti-tiling, cloud-shadows, and
+    /// water-reflections, terrain-height-blend, terrain-anti-tiling, cloud-shadows, heat-haze, desert-haze, and
     /// mesh-terrain-blend, which no look turns on) and choices (fxaa, smaa or taa instead of --msaa;
     /// shadow-filter-hardware or shadow-filter-temporal), for comparing them one at a time.
     #[arg(long, value_delimiter = ',', conflicts_with = "graphics")]
@@ -1663,8 +1666,8 @@ fn main() -> AppExit {
     )
     .add_plugins((window_icon::WindowIconPlugin, window_mode::WindowModePlugin))
     .add_plugins(nvf_play::audio_out::AudioOutPlugin)
-    .add_plugins((ArchivePlugin(game), lights::LightsPlugin, fog::FogPlugin, eye_adapt::EyeAdaptPlugin, emittance::EmittancePlugin, water::WaterPlugin, tree::TreePlugin, terrain::TerrainPlugin, reflection::ReflectionPlugin, ripples::RipplesPlugin))
-    .add_plugins((imagespace::ImageSpacePlugin, sky::SkyPlugin, cloud_shadows::CloudShadowsPlugin, graphics::GraphicsPlugin(graphics, msaa, frame_times)))
+    .add_plugins((ArchivePlugin(game), lights::LightsPlugin, fog::FogPlugin, haze::HazePlugin, eye_adapt::EyeAdaptPlugin, emittance::EmittancePlugin, water::WaterPlugin, tree::TreePlugin, terrain::TerrainPlugin, reflection::ReflectionPlugin, ripples::RipplesPlugin))
+    .add_plugins((imagespace::ImageSpacePlugin, sky::SkyPlugin, cloud_shadows::CloudShadowsPlugin, graphics::GraphicsPlugin(graphics, msaa, frame_times), minimap_render::MinimapRenderPlugin))
     // The sun visibility factor: cloud and terrain shadows on the sun (off until a producer sets it).
     .add_plugins(sun_visibility::SunVisibilityPlugin)
     .add_plugins(mesh_terrain_blend::MeshTerrainBlendPlugin)

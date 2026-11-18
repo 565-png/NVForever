@@ -1017,6 +1017,31 @@ below cover them all.
 - More: docs/design/graphics-enhanced.md
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `heat-haze`: Heat haze (experimental)
+
+- On the page: On: the far ground near the horizon shimmers slightly on hot, clear days, by
+  the sun and the weather. A prototype. Not in the original.
+- In full: On: beyond about 6,000 units, close to the horizon, the picture is moved a pixel
+  or two up and down by a slowly rising pattern that drifts with the wind; as strong as the
+  sun is high (a little stronger in the afternoon) and the weather's sunlight bright, its
+  air calm and free of haze; none at night, indoors or in rain or snow. The base game's
+  overcast is not told from clear yet. Near things, the weapon and the HUD stay sharp. Off
+  in both presets; not in the original.
+- Command-line switches: `--graphics-only`
+
+### `desert-haze`: Desert haze (experimental)
+
+- On the page: On: a thin dust haze thickens with distance and toward the ground, warmer
+  toward the sun, as far as the weather's fog allows. Not in the original.
+- In full: On: a dust haze is added to the weather's own distance fog, worked out per
+  pixel in the fog itself: thicker with distance and toward the ground under the camera,
+  warmer looking into the sun by day. A clear weather gets all of it, a short or dense fog
+  (a hazy weather, a dust storm) none; a weather with a very far fog a thinner one. Off in
+  every preset; not in the original. Outdoors only.
+- Command-line switches: `--graphics`, `--graphics-only`
+- More: docs/design/graphics-enhanced.md §3.16
+- Registered in `engine/nvforever/src/settings.rs`
+
 ### `bloom`: Bloom
 
 - On the page: On: light brighter than a sunlit white wall (the sun, lamps, windows) glows
@@ -1302,6 +1327,49 @@ below cover them all.
   a short way, burns anyone standing in it and goes out, and the grass grows back once you
   leave the area. Off: fire stays where it hits, as in the original.
 - Registered in `engine/nvf-play/src/grass_fire.rs`
+
+## NVF Features › Quick Loot
+
+### `quick-loot`: Enabled
+
+- On the page: On: a container, body or (sneaking) pocket under the crosshair lists its items
+  without pausing. Activate takes, Ready Item takes all, Wait opens the menu.
+- In full: a Fallout 4 style list beside the crosshair for whatever the crosshair is on that
+  holds items. Activate (E by default) takes the selected stack, Ready Item (R) takes everything
+  (not from a pocket), Wait (T) opens the usual container or pickpocket menu, the mouse wheel
+  moves the selection; the game goes on meanwhile. A pocket lists each item's chance to steal it. Drawn in the HUD colour, at its own
+  scale (Scale), in the Menu Font row's font. Off by default [design, #2933].
+- Registered in `engine/nvf-play/src/quick_loot.rs`
+
+### `quick-loot-scale`: Scale
+
+- On the page: Size of the Quick Loot list, independent of HUD scale.
+- A list: 50% to 100% in steps of 10%; 100% by default. Greyed while Quick Loot is off.
+- Registered in `engine/nvf-play/src/quick_loot.rs`
+
+### `quick-loot-background`: Background opacity
+
+- On the page: How dark the box behind the Quick Loot list's words is.
+- A slider: 0% to 100% in steps of 5%; 70% by default. Greyed while Quick Loot is off.
+- Registered in `engine/nvf-play/src/quick_loot.rs`
+
+### `quick-loot-weight`: Show weight
+
+- On the page: Quick Loot lists each item's weight.
+- Greyed while Quick Loot is off. Off by default.
+- Registered in `engine/nvf-play/src/quick_loot.rs`
+
+### `quick-loot-value`: Show value
+
+- On the page: Quick Loot lists each item's value.
+- Greyed while Quick Loot is off. Off by default.
+- Registered in `engine/nvf-play/src/quick_loot.rs`
+
+### `quick-loot-value-per-weight`: Show value per weight
+
+- On the page: Quick Loot lists each item's value divided by its weight.
+- Greyed while Quick Loot is off. Off by default.
+- Registered in `engine/nvf-play/src/quick_loot.rs`
 
 ## Debug
 
