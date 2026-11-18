@@ -1912,6 +1912,15 @@ fn door_instead(g: &mut Game, gone: u32) -> Option<(u32, Switch)> {
     None
 }
 
+/// Whether a script opens a menu of its own when used (a workbench's ShowRecipeMenu): not a
+/// door's switch. Beside the locked door of Raul's cell at Black Mountain the pilot used a
+/// workbench (SCPT 0x0013E11C) and the recipe menu held the run [observed 2026-11-18].
+fn opens_a_menu(g: &Game, program: &fnv_script::ir::Program) -> bool {
+    let mut calls = std::collections::BTreeMap::new();
+    fnv_game::intro::calls(program, &mut calls);
+    ["ShowRecipeMenu", "ShowBarterMenu", "ShowRepairMenu", "ShowEnchantment"].iter().filter_map(|n| g.data.table.by_name(n)).any(|op| calls.contains_key(&op))
+}
+
 fn door_switch(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<Switch> {
     use fnv_script::unit::RefSlot;
     if used.iter().filter(|(_, d)| *d == door).count() >= SWITCHES {
@@ -1948,7 +1957,7 @@ fn door_switch(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<Switch> {
             found.push((0, away, r, pos, WORKS_DOOR));
         } else if g.is_talking_activator(r) && away < BESIDE_DOOR {
             found.push((1, away, r, pos, "a talking activator beside the door"));
-        } else if unit.is_some() && !actor && away < BESIDE_DOOR {
+        } else if unit.is_some_and(|u| !opens_a_menu(g, &u.program)) && !actor && away < BESIDE_DOOR {
             found.push((2, away, r, pos, "a scripted activator beside the door"));
         }
     }
