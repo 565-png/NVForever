@@ -42,6 +42,13 @@
 //!   (`head_bob.rs`, its existing out-of-breath breathing) shows it, and the gun's breathing
 //!   under Weapon Inertia; both off, nothing shows.
 //!
+//! - **Heartbeat** ([`Sprint::heart`], played by `crate::heartbeat`): while sprinting, and
+//!   after a sprint while the AP comes back, the game's low-health heartbeat loops: the slower
+//!   one with AP under [`HEARTBEAT_SLOW_BELOW`] of the most, the faster one under
+//!   [`HEARTBEAT_FAST_BELOW`] [design: the owner 2026-11-18, "slower heartbeat from 40-20%,
+//!   the faster one from the last 20%"]. AP spent by VATS alone, with no sprint, plays none.
+//!   Sprint's switch (and the Global Toggle) turns it off.
+//!
 //! Test aids: `NVF_SPRINT_AP_PER_SECOND=<n>` and `NVF_SPRINT_SPEED=<x>` replace
 //! [`SPRINT_AP_PER_SECOND`] and [`SPRINT_SPEED`] for the run ([`SprintTuning::from_env`]),
 //! for trying values in game without a build.
@@ -87,6 +94,45 @@ pub const WINDED_ONSET_SECONDS: f32 = 0.6;
 /// Out of breath fades over this many seconds along the settling curve, slowly at the end
 /// [design: the owner 2026-11-18, "fades out over a few seconds"].
 pub const WINDED_FADE_SECONDS: f32 = 6.0;
+
+/// After a sprint, AP under this share of the most plays the slower heartbeat, and under
+/// [`HEARTBEAT_FAST_BELOW`] the faster one [design: the owner 2026-11-18].
+pub const HEARTBEAT_SLOW_BELOW: f32 = 0.4;
+pub const HEARTBEAT_FAST_BELOW: f32 = 0.2;
+
+/// Which heartbeat a sprint asks for ([`Sprint::heart`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeartPace {
+    #[default]
+    Off,
+    /// The slower beat (`crate::heartbeat::SOUND`, about 84 a minute).
+    Slow,
+    /// The faster beat (`crate::heartbeat::FAST_SOUND`, about 124 a minute).
+    Fast,
+}
+
+impl HeartPace {
+    pub fn text(self) -> &'static str {
+        match self {
+            HeartPace::Off => "off",
+            HeartPace::Slow => "slow",
+            HeartPace::Fast => "fast",
+        }
+    }
+}
+
+/// The heartbeat for AP `ap` after a sprint: none from [`HEARTBEAT_SLOW_BELOW`] of the most
+/// up, the slower one under it, the faster one under [`HEARTBEAT_FAST_BELOW`].
+pub fn heart_pace(ap: Ap) -> HeartPace {
+    let share = ap.share();
+    if ap.max <= 0.0 || share >= HEARTBEAT_SLOW_BELOW {
+        HeartPace::Off
+    } else if share >= HEARTBEAT_FAST_BELOW {
+        HeartPace::Slow
+    } else {
+        HeartPace::Fast
+    }
+}
 
 /// The sprint's values for this run: the constants, or the test aids' (module notes).
 #[derive(Resource, Debug, Clone, Copy, PartialEq)]
@@ -301,6 +347,10 @@ pub struct Sprint {
     pub spent: f32,
     /// Sprints started since the start (the exit summary).
     pub count: u32,
+    /// A sprint ran and the AP has not come back over [`HEARTBEAT_SLOW_BELOW`] since.
+    from_sprint: bool,
+    /// The heartbeat the sprint asks for now.
+    heart: HeartPace,
 }
 
 impl Sprint {
@@ -378,6 +428,14 @@ impl Sprint {
             }
         }
         self.sprinting = sprinting;
+        // The heartbeat: while sprinting and after it until the AP is back over the slower
+        // beat's share; none for AP spent without a sprint, or with the switch off.
+        self.from_sprint |= sprinting;
+        let pace = if i.on { ap_after.map_or(HeartPace::Off, heart_pace) } else { HeartPace::Off };
+        if !sprinting && pace == HeartPace::Off {
+            self.from_sprint = false;
+        }
+        self.heart = if self.from_sprint { pace } else { HeartPace::Off };
         let target = if sprinting { direction_share(i.forward, i.right) } else { 0.0 };
         self.share.step(target, omega_for(SHARE_SECONDS), dt);
         self.share.snap(target, 1e-4, 1e-3);
@@ -393,6 +451,11 @@ impl Sprint {
     /// How out of breath now (0–1).
     pub fn winded(&self) -> f32 {
         self.winded.value()
+    }
+
+    /// The heartbeat the sprint asks for now (`crate::heartbeat` plays it).
+    pub fn heart(&self) -> HeartPace {
+        self.heart
     }
 }
 
@@ -439,15 +502,16 @@ pub fn update(
 ) {
     let on = inertia.as_deref().is_some_and(MovementInertia::sprint_on);
     // At rest with the switch off and nothing left to ease out: nothing to read.
-    if !on && !sprint.sprinting && sprint.share() == 0.0 && sprint.winded() == 0.0 {
+    if !on && !sprint.sprinting && sprint.share() == 0.0 && sprint.winded() == 0.0 && sprint.heart() == HeartPace::Off {
         if (stance.sprinting, stance.sprint_share, stance.winded) != (false, 0.0, 0.0) {
             (stance.sprinting, stance.sprint_share, stance.winded) = (false, 0.0, 0.0);
         }
         return;
     }
     let god = crate::combat::god_mode();
-    // Read while the control is held or a sprint runs (its end measures out of breath).
-    let ap = if god || !(control.sprint_held || sprint.sprinting) { None } else { player_ap(script.as_deref_mut(), sim.as_deref_mut()) };
+    // Read while the control is held, a sprint runs (its end measures out of breath) or its
+    // heartbeat may still beat.
+    let ap = if god || !(control.sprint_held || sprint.sprinting || sprint.from_sprint) { None } else { player_ap(script.as_deref_mut(), sim.as_deref_mut()) };
     let in_water = phys.as_deref().and_then(|p| p.player.as_ref().map(|c| (p, c))).is_some_and(|(p, c)| c.swimming || p.world.water_surface_at(c.feet[0], c.feet[1]).is_some_and(|w| w - c.feet[2] > WATER_DEPTH));
     let step = sprint.update(SprintInput {
         dt: time.delta_secs(),
@@ -716,6 +780,56 @@ mod tests {
         assert!(during.iter().all(|st| st.spend == 0.0) && s.share() == 0.0, "eased out, nothing spent");
         let after = run(&mut s, held(ap), 1.0);
         assert!(after[0].started && s.share() > 0.99, "Shift held: the sprint comes back after the reload");
+    }
+
+    #[test]
+    fn the_heartbeat_follows_the_ap_after_a_sprint_and_never_vats_alone() {
+        let at = |share: f32| heart_pace(Ap { now: 100.0 * share, max: 100.0 });
+        assert_eq!(at(1.0), HeartPace::Off);
+        assert_eq!(at(HEARTBEAT_SLOW_BELOW), HeartPace::Off);
+        assert_eq!(at(0.39), HeartPace::Slow);
+        assert_eq!(at(HEARTBEAT_FAST_BELOW), HeartPace::Slow);
+        assert_eq!(at(0.19), HeartPace::Fast);
+        assert_eq!(at(0.0), HeartPace::Fast);
+        // AP low from VATS alone, no sprint: no heartbeat, whatever the AP.
+        let mut s = Sprint::default();
+        run(&mut s, SprintInput { ap: Some(Ap { now: 5.0, max: 100.0 }), ..SprintInput::default() }, 1.0);
+        assert_eq!(s.heart(), HeartPace::Off);
+        // Sprinting down through the thresholds: off, slow, fast; then recovering after it:
+        // fast, slow, off, and off for good once back over 40%.
+        let mut s = Sprint::default();
+        let mut ap = Ap { now: 50.0, max: 100.0 };
+        let mut seen = Vec::new();
+        for _ in 0..(4.0 / DT) as usize {
+            let st = s.update(held(Some(ap)));
+            ap.now -= st.spend;
+            if seen.last() != Some(&s.heart()) {
+                seen.push(s.heart());
+            }
+        }
+        assert_eq!(seen, [HeartPace::Off, HeartPace::Slow, HeartPace::Fast]);
+        let mut seen = Vec::new();
+        for f in 0..600 {
+            // The AP comes back at 10 a second, Shift let go.
+            ap.now = (ap.now + 10.0 * DT).min(100.0);
+            s.update(SprintInput { held: false, ..held(Some(ap)) });
+            if seen.last() != Some(&s.heart()) {
+                seen.push(s.heart());
+            }
+            if f == 599 {
+                assert!(ap.now > 50.0);
+            }
+        }
+        assert_eq!(seen, [HeartPace::Fast, HeartPace::Slow, HeartPace::Off]);
+        // A VATS spend after the recovery: still none.
+        s.update(SprintInput { held: false, ..held(Some(Ap { now: 10.0, max: 100.0 })) });
+        assert_eq!(s.heart(), HeartPace::Off);
+        // The switch off ends it at once.
+        let mut s = Sprint::default();
+        run(&mut s, held(Some(Ap { now: 30.0, max: 100.0 })), 0.2);
+        assert_eq!(s.heart(), HeartPace::Slow);
+        s.update(SprintInput { on: false, ..held(Some(Ap { now: 30.0, max: 100.0 })) });
+        assert_eq!(s.heart(), HeartPace::Off);
     }
 
     #[test]
