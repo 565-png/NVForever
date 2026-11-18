@@ -896,7 +896,7 @@ mod tests {
         assert_eq!(u.cloud_uv, Vec4::new(0.5, 0.25, 3.0, 4.0));
         assert_eq!(u.cloud, Vec4::new(9_000.0, 1.0, CLOUD_FADE_FROM, CLOUD_FADE_TO), "strength held to 1");
         assert_eq!(u.terrain_uv, Vec4::new(2.0, 2.0, -1.0, 1.0));
-        assert_eq!(u.terrain, Vec4::new(7_000.0, 8_000.0, 256.0, 512.0));
+        assert_eq!(u.terrain, Vec4::new(0.0, 0.0, 256.0, 512.0), "xy unused");
         assert_eq!(u.mode, UVec4::new(MASK_CLOUD | MASK_TERRAIN, 2, 0, 0));
         // The WGSL struct names the same fields in the same order.
         let wesl = include_str!("sun_visibility.wesl");
