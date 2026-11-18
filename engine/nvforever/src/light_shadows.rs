@@ -306,6 +306,17 @@ fn log_fixtures() -> bool {
     *LOG.get_or_init(|| std::env::var("NVF_LIGHT_SHADOW_FIXTURES").is_ok_and(|v| v.trim() == "1"))
 }
 
+/// `NVF_LIGHT_SHADOW_REFRESH=<frames>` (a measuring aid): every light is drawn again in
+/// full this often instead of [`Tuning::refresh`], to measure what switching lights on costs.
+fn refresh_override() -> Option<u64> {
+    static REFRESH: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *REFRESH.get_or_init(|| {
+        let v = std::env::var("NVF_LIGHT_SHADOW_REFRESH").ok()?.trim().parse::<u64>().ok().filter(|v| *v > 0)?;
+        info!("light shadows: NVF_LIGHT_SHADOW_REFRESH={v}");
+        Some(v)
+    })
+}
+
 /// The near plane in use: [`NEAR_Z`], or `NVF_LIGHT_SHADOW_NEAR` (game units) for a run.
 fn near_z() -> f32 {
     static NEAR_PLANE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
@@ -405,7 +416,7 @@ fn shadow_lights(
     mut removed: RemovedComponents<Mesh3d>,
     mut logged: Local<Option<(usize, usize, usize)>>,
 ) {
-    let tune = tuning(settings.choice);
+    let tune = tuning(settings.choice).map(|t| Tuning { refresh: refresh_override().unwrap_or(t.refresh), ..t });
     let reach = sky.as_ref().map_or(0.0, |s| s.shadow_distance * s.shadow_reach.max(1.0));
     let at = camera.iter().next().map(|c| c.translation());
     let state = &mut *state;
