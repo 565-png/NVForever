@@ -882,8 +882,8 @@ pub struct PlayerState {
     #[serde(skip_serializing_if = "BTreeSet::is_empty", default)]
     pub enemy_of: BTreeSet<FormId>,
     /// For each faction a crime made the player an enemy of: GameDaysPassed at the last
-    /// such crime. The flag ends iCoolDownTimerSetting game days after it
-    /// (`Game::expire_crimes`). Absent in saves from before #2467 (`Game::date_crimes`).
+    /// such crime. The flag ends `crate::crime::FACTION_FLAG_DAYS` (0.18 game hours) after
+    /// it (`Game::expire_crimes`, #2498). Absent in saves from before #2467 (`Game::date_crimes`).
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub enemy_of_crimes: BTreeMap<FormId, f64>,
     /// Factions a script made the player an enemy of (SetPCEnemyOfFaction 1): kept until
@@ -1053,6 +1053,9 @@ pub mod menus {
     /// `Begin MenuMode 1` block (the crippled-limb tutorial) runs while the Pip-Boy is
     /// open [observed in the masters].
     pub const PIPBOY: u16 = 1;
+    /// Title-screen group, distinct from pause menu 1013 [documented: GECK MenuMode
+    /// block/function pages]. Admitted during the existing startup frames only.
+    pub const TITLE: u16 = 4;
     /// The Pip-Boy's ITEMS page, the inventory [documented: GECK wiki GetSelectedItemRef,
     /// "Inventory Menu (1002)"; GetMenuItemListRefs, "1002 Pip-Boy Inventory Menu"].
     pub const INVENTORY: u16 = 1002;
@@ -1217,10 +1220,13 @@ pub struct Speech {
     /// (`Game::next_conversation_line`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub leads_on: bool,
-    /// The talking activator the speaker says this line of a conversation between
-    /// actors through (`Game::next_conversation_line`): Ramos through Hidden Valley's
-    /// intercom to Veronica (issue #2451). The activator stands for the speaker in the
-    /// world: the next line is said to it.
+    /// The talking activator the speaker says this line through: a line of a
+    /// conversation between actors (`Game::next_conversation_line`), Ramos through Hidden
+    /// Valley's intercom to Veronica (issue #2451), or the activator's Say or SayTo
+    /// (`Game::say`, issue #2768). The activator stands for the speaker in the world
+    /// ([`Speech::place`]): the next line is said to it, the listener looks at it, it must
+    /// be there for the line to go on, and its SayToDone blocks run when a Say or SayTo
+    /// line ends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<FormId>,
 }
@@ -1231,13 +1237,13 @@ pub enum LineLook {
     /// The speaker turns to the listener and the listener looks at the speaker.
     #[default]
     Both,
-    /// The listener is not made to look at the speaker: SayTo's `noTargetLookFlag`
-    /// [documented: GECK wiki SayTo, owner export: with the flag set "Joe is not forced
-    /// to look at the speaker during the SayTo"].
-    Speaker,
     /// Nobody turns: a conversation between actors started with `headTrack` 0
     /// [documented: GECK wiki StartConversation: "Enter 0 to disable" head tracking
-    /// during the conversation].
+    /// during the conversation], and a SayTo line with `noTargetLookFlag` 1
+    /// [hypothesis, observer check 218, #2796] (`functions::misc::say_to`). Until #2796
+    /// that flag only kept the listener still (a variant `Speaker`); a game saved while
+    /// such a line was said reads it as this one.
+    #[serde(alias = "Speaker")]
     Nobody,
 }
 
@@ -1260,6 +1266,12 @@ impl Speech {
     /// a hello (`Game::say_by_script`, #2582).
     pub fn said_by_script(&self) -> bool {
         self.conversation.is_none() && !self.greeting && !self.farewell && !self.hello
+    }
+
+    /// Who says the line in the world: the talking activator it is said through
+    /// ([`Speech::through`]), else its speaker.
+    pub fn place(&self) -> FormId {
+        self.through.unwrap_or(self.speaker)
     }
 }
 
@@ -1329,7 +1341,10 @@ pub struct Game<'a> {
     /// loops/02, valid after the loop, invalid a frame later].
     pub(crate) temp_refs: Vec<(FormId, FormId)>,
     /// Form lists as ListAddForm and the ListRemove… functions left them, for the
-    /// session only [documented: ListAddForm, its changes are not saved].
+    /// session only [documented: ListAddForm, its changes are not saved]: a load keeps
+    /// them ([`Game::take_session`]), as the original keeps the edited form in memory
+    /// until it quits [hypothesis: an MCM mod's item added under the main menu was in
+    /// MCM's list on the first pause after a load, job mcm976e, menu-xml.md §10.1].
     pub(crate) list_edits: std::collections::HashMap<FormId, Vec<FormId>>,
     /// xNVSE's queued delayed calls (`crate::delayed`); not saved [documented].
     pub(crate) delayed: Vec<crate::delayed::Delayed>,
@@ -2362,6 +2377,8 @@ pub struct Session {
     save_files: crate::nvse_sup4::SaveFiles,
     /// SUP's CallFunctionNextFrame calls with removeOnLoad 0 (`crate::delayed`).
     kept_calls: Vec<crate::delayed::Delayed>,
+    /// The form lists' ListAddForm/ListRemove… edits (`Game::list_edits`), issue #2944.
+    list_edits: std::collections::HashMap<FormId, Vec<FormId>>,
 }
 
 /// An event handler: the event (lower case), the function or lambda, the filters by
@@ -2772,6 +2789,12 @@ impl<'a> Game<'a> {
         }
     }
 
+    /// The start-game-enabled quests the save `s` has no entry for: those of plugins added
+    /// since it was made ([`Game::restore`], issue #2944).
+    fn quests_added_since(&self, s: &GameSnapshot) -> Vec<FormId> {
+        self.data.quests.values().filter(|q| q.start_enabled() && !s.quests.contains_key(&q.form)).map(|q| q.form).collect()
+    }
+
     /// The New Game menu starts the character-generation quest (the original's INI
     /// `sCharGenQuest`, VCG00 by the original's defaults [documented: Fallout_default.ini
     /// `SCharGenQuest=00102037`]) and the quest's `Begin MenuMode` blocks run once, as
@@ -2836,7 +2859,12 @@ impl<'a> Game<'a> {
     /// - a stage already done does nothing unless the quest allows repeated stages
     ///   [observed: VMS16 stage 10 and VCG03 stage 10 set again did not rerun their
     ///   scripts; Generic, with the flag, did];
-    /// - the quest starts if it is not running [observed: VMS16];
+    /// - the quest starts if it is not running [observed: VMS16], unless it is already
+    ///   completed or failed: then the stage is still marked done and its entries run,
+    ///   but the quest stays stopped [observed 2026-11-18, #2958, layer5-captures.md §5.8: VMS16
+    ///   failed by its stage 110, then SetStage 50 and 100: GetStageDone 1, GetQuestRunning
+    ///   0; the same after its complete stage 100. A quest stopped without being
+    ///   completed does start: SetStage 10, StopQuest, SetStage 50, GetQuestRunning 1];
     /// - the stage is marked done, then every entry whose conditions pass runs its result
     ///   script immediately, nested in the caller [documented: wiki, "resolves any of the
     ///   attached stage items that pass their conditions"], then applies its Complete /
@@ -2853,7 +2881,9 @@ impl<'a> Game<'a> {
             self.emit(EventKind::StageIgnored { quest: q, stage, reason: "already_done" });
             return false;
         }
-        self.start_quest(q);
+        if !self.quest(q).completed {
+            self.start_quest(q);
+        }
         self.quest(q).stages_done.insert(stage);
         let player = Some(FormId::PLAYER_REF);
         let label = format!("QUST {q} stage {stage}");
@@ -2911,7 +2941,27 @@ impl<'a> Game<'a> {
     /// clears the completed flag [observed: VMS16 objectives 10 and 5, layer5-captures.md
     /// §5.2], displaying one already shown keeps it [observed: o5_00, VMS19 65 and
     /// VFSAtomicPimp 34, observer check 40, issue #1108].
+    ///
+    /// On a quest already completed or failed neither does anything, running or not
+    /// [observed 2026-11-18, #2958, layer5-captures.md §5.8: VMS16 after its fail stage 110,
+    /// `SetObjectiveDisplayed VMS16 50 1` and `SetObjectiveCompleted VMS16 10 1` left
+    /// both as they were; after its complete stage 100, `SetObjectiveDisplayed VMS16 60
+    /// 1` did nothing, stopped and again after StartQuest]. That is why a player who
+    /// fails Ghost Town Gunfight through Joe Cobb sees no new objective when the
+    /// townspeople's lines set its later stages.
     pub fn set_objective(&mut self, q: FormId, index: i32, displayed: Option<bool>, completed: Option<bool>) -> bool {
+        if self.quests.get(&q).is_some_and(|s| s.completed) {
+            return false;
+        }
+        self.set_objective_whatever(q, index, displayed, completed)
+    }
+
+    /// [`Game::set_objective`] without its completed-quest rule: for
+    /// `CompleteAllObjectives`, which does act on a failed quest [observed 2026-11-18,
+    /// #2958: VMS16 failed, then SetStage 100, whose script calls it: objective 10 read
+    /// completed afterwards, where SetObjectiveCompleted had left it open; hypothesis
+    /// that the function, and not the stage's Complete Quest flag, did it].
+    pub fn set_objective_whatever(&mut self, q: FormId, index: i32, displayed: Option<bool>, completed: Option<bool>) -> bool {
         let data = self.data;
         let Some(def) = data.quests.get(&q) else { return false };
         if !def.objectives.contains_key(&index) {
@@ -3685,7 +3735,7 @@ impl<'a> Game<'a> {
             .collect();
         let pp = self.pp_take_session();
         let sr_registered = self.sr.take_registered();
-        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls() }
+        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits) }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -3704,6 +3754,7 @@ impl<'a> Game<'a> {
         self.dialogue_edits = s.dialogue_edits;
         self.save_files = s.save_files;
         self.put_kept_calls(s.kept_calls);
+        self.list_edits = s.list_edits;
     }
 
     /// Run every handler registered for `event` whose filters match, highest priority
@@ -3790,7 +3841,10 @@ impl<'a> Game<'a> {
         };
         // `Begin MenuMode 1` runs for any of the Pip-Boy's menus (`menus::answers`).
         if block.event == event::MENU_MODE && !matches!(params[0], Arg::Ref(_)) {
-            return menus::answers(want.num() as u16, subject.num() as u16);
+            // Group 4 belongs to startup, not every pause page sharing code 1013
+            // (script-language.md, Title-start MenuMode group 4).
+            return (self.start_frames && want.num() == f64::from(menus::TITLE) && subject.num() == f64::from(menus::START))
+                || menus::answers(want.num() as u16, subject.num() as u16);
         }
         match (want.as_form(), subject.as_form()) {
             // A form list as the parameter accepts any of its members [hypothesis, fit
@@ -4043,6 +4097,7 @@ impl<'a> Game<'a> {
         self.small_tick();
         self.vheyes_tick();
         self.knvse_tick();
+        self.advance_first_person_menu_clock();
         // kNVSE's AnimGroupOverride folders: which hold for each actor.
         self.anim_folders_tick();
         // ppNVSE's CallLoop functions due (`crate::nvse_pp`).
@@ -4244,6 +4299,7 @@ impl<'a> Game<'a> {
             return;
         }
         let any = self.start_frames;
+        let title = any && code == menus::START;
         let subject = Some(Value::Num(code as f64));
         let data = self.data;
         let wants = |script: FormId| {
@@ -4261,7 +4317,7 @@ impl<'a> Game<'a> {
                         None | Some([]) if any => return b.event == event::MENU_MODE,
                         _ => return false,
                     };
-                    b.event == event::MENU_MODE && c == code as f64
+                    b.event == event::MENU_MODE && (c == code as f64 || (title && c == f64::from(menus::TITLE)))
                 })
             })
         };
@@ -4326,6 +4382,8 @@ impl<'a> Game<'a> {
     /// no shipped script has a `MenuMode 1013` block [observed: fnvtool script decompile
     /// of the masters]. MenuMode blocks for any menu run in these frames too (side_blocks),
     /// the masters' included. NVForever runs it once when a game starts.
+    /// These frames also admit the title-screen group 4, preserving the existing
+    /// 1013/no-argument blocks. Ordinary held pause pages gain no title context.
     pub fn came_through_start_menu(&mut self, frames: u32, dt: f64) {
         let keep = self.cfg.frame_seconds;
         self.cfg.frame_seconds = dt;
@@ -4437,7 +4495,8 @@ impl<'a> Game<'a> {
 
     pub fn menu_open(&self, code: u16) -> bool {
         let open = |m: Option<u16>| m.is_some_and(|m| menus::answers(code, m));
-        open(self.menu) || open(self.menu_under) || open(self.side_menu()) || (code == menus::DIALOGUE && self.dialogue.is_some())
+        (code == menus::TITLE && self.start_frames && self.page_menu == Some(menus::START))
+            || open(self.menu) || open(self.menu_under) || open(self.side_menu()) || (code == menus::DIALOGUE && self.dialogue.is_some())
     }
 
     /// A menu code that holds beside the open menu: the loading menu (1007) under a
@@ -4457,14 +4516,18 @@ impl<'a> Game<'a> {
     /// menu `code` (the pause menu's Mods page for the start menu, 1013): the `Begin
     /// MenuMode <code>` blocks of the running quests and of the references in loaded
     /// cells run, as under a side menu ([`Game::side_blocks`]), and `MenuMode <code>` is
-    /// true while they do; nothing else of a frame happens (no game time, no queued
-    /// events or OnLoad blocks, no AI) and the open menu is left as it is, so a menu a
+    /// true while they do. Physical key edges reach JIP handlers first (see
+    /// mcm-page-key-events.md); no game time, queued events, OnLoad blocks or AI run.
+    /// The open menu is left as it is, so a menu a
     /// block opens (ShowMessage, ShowTutorialMenu) stays open [design: issue #976 T11].
     pub fn page_tick(&mut self, code: u16) {
         self.frame += 1;
         self.temp_refs.clear();
         self.page_time += self.cfg.frame_seconds;
         let before = self.page_menu.replace(code);
+        // The page holds the world, but its wheel/search handlers still need physical
+        // edges, in the same menu context as its script blocks.
+        self.jip_keys();
         self.side_blocks(code);
         self.page_menu = before;
     }
@@ -4784,45 +4847,80 @@ impl<'a> Game<'a> {
     /// takes over, as o30 saw ([`Game::say_line`]). NVForever's talking state ends with
     /// the line, not about 4.9 s after it as o30 measured in the original.
     pub fn say_by_script(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, say_to: bool) -> Option<FormId> {
-        if let Some(s) = self.speech.iter().find(|s| s.speaker == speaker && s.topic == topic && s.said_by_script()) {
+        // A line said through a talking activator is the activator's here ([`Game::say`]).
+        if let Some(s) = self.speech.iter().find(|s| s.place() == speaker && s.topic == topic && s.said_by_script()) {
             return Some(s.info);
         }
         self.say_with(speaker, target, topic, say_to, true)
     }
 
+    /// The line of [`Game::say`] and [`Game::say_by_script`].
+    ///
+    /// **A talking activator** with a talking actor ([`Game::talker`]: the one
+    /// SetTalkingActivatorActor gave it, else the one its scripts name) says that actor's
+    /// lines: the line is chosen with the actor as the speaker (the conditions on the
+    /// speaker such as GetIsID, faction and voice type, the fixed-speaker check, Say Once),
+    /// with IsActorTalkingThroughActivator 1 on it while choosing, and said by the actor
+    /// through the activator ([`Speech::through`]), as a conversation through one is
+    /// (issue #2451) [hypothesis, issue #2768: Vault 101's intercom given Jonas says
+    /// CG02IntercomConv, whose lines test GetIsID Jonas, and the Pitt's Ashur intercom its
+    /// lines of Ashur's (TTW, observed headless by the maintainer); observer check 219;
+    /// documented: catalogue SetTalkingActivatorActor, "makes a talking activator use the
+    /// dialogue of a given actor"]. When the actor has no line of the topic the activator's
+    /// own lines are tried as before [design, #2768: every line said before is said
+    /// still]. Without a talking actor nothing changes.
     fn say_with(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, say_to: bool, in_stead: bool) -> Option<FormId> {
         let listener = target.or(Some(FormId::PLAYER_REF));
-        // The fallback is decided from the data, not from select_line's result: a topic
-        // with a line the speaker passes the fixed-speaker check for never falls back, so
-        // a spent Say Once line or a false condition leaves the call unsaid as before.
-        let chosen = if in_stead && self.no_line_for_speaker(speaker, topic) {
-            self.select_line_as(speaker, listener, topic, |_| true, crate::dialogue::Says::InStead)
-        } else {
-            self.select_line(speaker, listener, topic)
+        let through = match self.talker(speaker) {
+            (actor, Some(t)) if actor != speaker => {
+                let outer = self.talking_through.replace((actor, t));
+                let info = self.choose_said_line(actor, listener, topic, in_stead);
+                self.talking_through = outer;
+                info.map(|i| (actor, t, i))
+            }
+            _ => None,
         };
-        let Some(info) = chosen else {
+        let kind = if say_to { LineKind::SayTo } else { LineKind::Say };
+        if let Some((actor, t, info)) = through {
+            self.say_line_through(actor, target, topic, info, kind, Some(t));
+            return Some(info);
+        }
+        let Some(info) = self.choose_said_line(speaker, listener, topic, in_stead) else {
             self.emit(EventKind::NoLine { speaker, topic });
             if say_to {
                 self.say_to_unsaid.push((speaker, topic));
             }
             return None;
         };
-        self.say_line(speaker, target, topic, info, if say_to { LineKind::SayTo } else { LineKind::Say });
+        self.say_line(speaker, target, topic, info, kind);
         Some(info)
     }
 
-    /// Say's flags on the line `speaker` is saying ([`Speech::force_subtitles`],
-    /// [`Speech::two_d`]).
+    /// The line of `topic` `speaker` says to `listener` by Say or SayTo ([`Game::say_with`]).
+    fn choose_said_line(&mut self, speaker: FormId, listener: Option<FormId>, topic: FormId, in_stead: bool) -> Option<FormId> {
+        // The fallback is decided from the data, not from select_line's result: a topic
+        // with a line the speaker passes the fixed-speaker check for never falls back, so
+        // a spent Say Once line or a false condition leaves the call unsaid as before.
+        if in_stead && self.no_line_for_speaker(speaker, topic) {
+            self.select_line_as(speaker, listener, topic, |_| true, crate::dialogue::Says::InStead)
+        } else {
+            self.select_line(speaker, listener, topic)
+        }
+    }
+
+    /// Say's flags on the line `speaker` is saying, or saying through the talking
+    /// activator `speaker` ([`Speech::force_subtitles`], [`Speech::two_d`]).
     pub fn set_line_flags(&mut self, speaker: FormId, force_subtitles: bool, two_d: bool) {
-        if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == speaker) {
+        if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == speaker || s.through == Some(speaker)) {
             s.force_subtitles = force_subtitles;
             s.two_d = two_d;
         }
     }
 
-    /// Set who the line `speaker` is saying turns to whom ([`LineLook`]).
+    /// Set who the line `speaker` is saying (or saying through the talking activator
+    /// `speaker`) turns to whom ([`LineLook`]).
     pub fn set_line_look(&mut self, speaker: FormId, look: LineLook) {
-        if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == speaker) {
+        if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == speaker || s.through == Some(speaker)) {
             s.look = look;
         }
     }
@@ -4836,21 +4934,24 @@ impl<'a> Game<'a> {
     ///   "forced to look at the speaker" unless `noTargetLookFlag`]: its head only for a
     ///   SayTo line [design], head and body in a conversation between actors, where it
     ///   speaks next [design, as `fnv_ai` has turned both since it started them];
-    /// - nobody, when the line's [`LineLook`] says so.
+    /// - nobody, when the line's [`LineLook`] says so (StartConversation's `headTrack` 0,
+    ///   SayTo's `noTargetLookFlag` 1).
     ///
     /// A line said to nobody (Say) turns nobody. Whether the engine can turn a body (one
-    /// on furniture or on its way cannot) is the engine's.
+    /// on furniture or on its way cannot) is the engine's. A line said through a talking
+    /// activator ([`Speech::through`]) is said by the activator here: the listener looks
+    /// at it, and the actor, who is not there, does not turn (an activator turns nobody)
+    /// [design, docs/spec-notes/talking-activators.md §2].
     pub fn facings(&self) -> Vec<Facing> {
         let mut out = Vec::new();
         for s in &self.speech {
-            let Some(to) = s.target.filter(|t| *t != s.speaker) else { continue };
+            let speaker = s.place();
+            let Some(to) = s.target.filter(|t| *t != speaker) else { continue };
             if s.look == LineLook::Nobody {
                 continue;
             }
-            out.push(Facing { who: s.speaker, to, body: true, speaking: true, info: s.info });
-            if s.look == LineLook::Both {
-                out.push(Facing { who: to, to: s.speaker, body: s.conversation.is_some(), speaking: false, info: s.info });
-            }
+            out.push(Facing { who: speaker, to, body: true, speaking: true, info: s.info });
+            out.push(Facing { who: to, to: speaker, body: s.conversation.is_some(), speaking: false, info: s.info });
         }
         out
     }
@@ -4861,10 +4962,24 @@ impl<'a> Game<'a> {
     /// 3.6 [design]; [`Game::say`]; [`LineKind`]). A line of a conversation
     /// between actors lasts as long as its first response.
     pub(crate) fn say_line(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, info: FormId, kind: LineKind) {
+        self.say_line_through(speaker, target, topic, info, kind, None)
+    }
+
+    /// [`Game::say_line`] for a line `speaker` says through the talking activator
+    /// `through` ([`Speech::through`], [`Game::say`]), marked before its begin script runs.
+    pub(crate) fn say_line_through(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, info: FormId, kind: LineKind, through: Option<FormId>) {
         let data = self.data;
         let dv = self.dialogue_view();
         let Some(def) = dv.info(&info) else { return };
         self.cut_line(speaker);
+        // One line at a time where it is said: a talking activator's own line and a line
+        // said through it by its talking actor cut each other, whichever starts second
+        // [design, #2768: else both would end, each with its SayToDone].
+        let place = through.unwrap_or(speaker);
+        let others: Vec<FormId> = self.speech.iter().filter(|s| s.speaker != speaker && s.place() == place).map(|s| s.speaker).collect();
+        for o in others {
+            self.cut_line_where(|s| s.speaker == o && s.place() == place);
+        }
         self.mark_said(speaker, info, false);
         let conversation = match kind {
             LineKind::Conversation(n) => Some(n),
@@ -4886,7 +5001,7 @@ impl<'a> Game<'a> {
         let (say_to, greeting, hello) = (kind == LineKind::SayTo, kind == LineKind::Greeting, kind == LineKind::Hello);
         // [design] Mark this line before callbacks can finish it or replace it.
         let immediate = def.has(crate::data::info_flag::RUN_IMMEDIATELY);
-        self.speech.push(Speech { speaker, target, topic, info, remaining: seconds, say_to, greeting, farewell: false, conversation, earlier_topics: Vec::new(), hello, look: LineLook::Both, response: 0, force_subtitles: false, two_d: false, end_ran: immediate, leads_on: false, through: None });
+        self.speech.push(Speech { speaker, target, topic, info, remaining: seconds, say_to, greeting, farewell: false, conversation, earlier_topics: Vec::new(), hello, look: LineLook::Both, response: 0, force_subtitles: false, two_d: false, end_ran: immediate, leads_on: false, through });
         if let Some(&first) = def.response_order().first() {
             self.ask_response_idles(speaker, target, info, first);
         }
@@ -4945,12 +5060,18 @@ impl<'a> Game<'a> {
     /// quest stages and must not be lost; the owner's catch-all statement was about the
     /// greeting].
     pub(crate) fn cut_line(&mut self, speaker: FormId) {
-        if let Some(k) = self.speech.iter().position(|s| s.speaker == speaker) {
+        self.cut_line_where(|s| s.speaker == speaker);
+    }
+
+    /// [`Game::cut_line`] for the first line that `which` picks.
+    fn cut_line_where(&mut self, which: impl Fn(&Speech) -> bool) {
+        if let Some(k) = self.speech.iter().position(which) {
             if self.speech[k].goodbye_at_player() {
                 self.end_line(k);
                 return;
             }
             let s = self.speech.remove(k);
+            let speaker = s.speaker;
             self.emit(EventKind::LineEnded { speaker, info: s.info, cut: true });
             if let (Some(lines), Some(target)) = (s.conversation, s.target) {
                 self.emit(EventKind::ActorConversationEnded { speaker, target, reason: crate::dialogue::ended::CUT, lines });
@@ -4962,8 +5083,9 @@ impl<'a> Game<'a> {
     /// the conversation with the player. While the player chooses, the actor is not
     /// talking [hypothesis]. A SayTo line held by a menu (a conversation included) still
     /// counts, as for the other menus.
+    /// A talking activator a line is said through ([`Speech::through`]) is talking too.
     pub fn is_talking(&self, actor: FormId) -> bool {
-        self.speech.iter().any(|s| s.speaker == actor) || self.dialogue.as_ref().is_some_and(|c| c.actor == actor && c.line.is_some())
+        self.speech.iter().any(|s| s.speaker == actor || s.through == Some(actor)) || self.dialogue.as_ref().is_some_and(|c| c.actor == actor && c.line.is_some())
     }
 
     /// Whether an actor is saying its Goodbye greeting at the player (the player talked
@@ -5000,7 +5122,10 @@ impl<'a> Game<'a> {
         let death = self.data.by_edid("Death");
         for s in self.speech.iter_mut().filter(|s| only.is_none_or(|o| o == s.speaker)) {
             s.remaining -= dt;
-            let here = self.world.peek(s.speaker).is_none_or(|w| !w.deleted()) && self.world.is_enabled(s.speaker).unwrap_or(false);
+            // Through a talking activator the activator must be there, the actor need not
+            // be (`crate::talking_activators`); the actor's death still cuts the line.
+            let place = s.place();
+            let here = self.world.peek(place).is_none_or(|w| !w.deleted()) && self.world.is_enabled(place).unwrap_or(false);
             // A Goodbye greeting at the player whose speaker is drawn into a fight ends at
             // once as if said to the end (`Game::cut_line`, `Game::greets_player`) [owner
             // statement 2026-10-27: "skip to the end of the line as if she finished
@@ -5042,7 +5167,14 @@ impl<'a> Game<'a> {
                 // its speaker's new line ends) neither sees nor clears the outer one's
                 // request, and the outer state comes back afterwards [design].
                 let outer = (std::mem::replace(&mut self.farewell_ending, s.farewell), self.farewell_then.take());
+                // A line said through a talking activator: its speaker still talks through
+                // it while the end script runs (`Game::talking_through`, #2768).
+                let outer_through = match s.through {
+                    Some(t) => self.talking_through.replace((speaker, t)),
+                    None => self.talking_through,
+                };
                 self.run_result(u, RunCtx { self_ref: Some(speaker), action_ref: None, quest: def.quest });
+                self.talking_through = outer_through;
                 then = self.farewell_then.take().filter(|_| s.farewell);
                 (self.farewell_ending, self.farewell_then) = outer;
             }
@@ -5076,8 +5208,10 @@ impl<'a> Game<'a> {
             return;
         }
         // SayToDone follows a line said by Say as well as by SayTo [documented: GECK
-        // tutorials, docs/spec-notes/level-design.md §11.2 D1].
-        self.ref_event(speaker, event::SAY_TO_DONE, Some(Value::Ref(s.topic.0)), None);
+        // tutorials, docs/spec-notes/level-design.md §11.2 D1]. A line said through a
+        // talking activator was the activator's Say or SayTo: its blocks run on it
+        // ([`Game::say`]) [hypothesis, observer check 219].
+        self.ref_event(s.place(), event::SAY_TO_DONE, Some(Value::Ref(s.topic.0)), None);
         // A Dialogue package's Say To line to another actor goes on as a conversation
         // between them (`Game::say_package_line`).
         if s.leads_on {
@@ -5346,6 +5480,14 @@ impl<'a> Game<'a> {
         if !self.activation_goes_on(actor, target) {
             return Ok(serde_json::json!({"result": "destroyed"}));
         }
+        if mode == ActMode::Hand {
+            if !self.pre_activation_allows(actor, target) {
+                return Ok(serde_json::json!({"result": "prevented"}));
+            }
+            if !self.activation_goes_on(actor, target) {
+                return Ok(serde_json::json!({"result": "destroyed"}));
+            }
+        }
         // The player's Disable Character Respec tweak: the activator that offers to remake
         // the character on leaving the start (VCG04ActivatorScript) does nothing
         // [observed: FalloutNV.esm SCPT 0x001164A4 shows the offer, MESG 0x001164A1; design:
@@ -5376,7 +5518,43 @@ impl<'a> Game<'a> {
     /// the target's action reference.
     fn activation_begins(&mut self, actor: FormId, target: FormId) -> bool {
         self.activation_heard(actor, target);
-        self.activation_goes_on(actor, target)
+        self.activation_goes_on(actor, target) && self.pre_activation_allows(actor, target) && self.activation_goes_on(actor, target)
+    }
+
+    /// Regular activation only: after OnActivate observers and before a block or
+    /// default action. An explicit numeric SetFunctionValue 0 prevents activation;
+    /// a void callback keeps the ordinary Call result without becoming a veto.
+    /// See docs/spec-notes/preactivation-events.md.
+    fn pre_activation_allows(&mut self, actor: FormId, target: FormId) -> bool {
+        use fnv_script::vm::XVal;
+        const EVENT: &str = "ShowOff:OnPreActivate";
+        let mut handlers: Vec<_> = self.handlers.iter().filter(|h| h.event.eq_ignore_ascii_case(EVENT)).cloned().collect();
+        if handlers.is_empty() { return true; }
+        handlers.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.seq.cmp(&b.seq)));
+        // A callback may unregister an array-filtered later callback. Keep the
+        // dispatch snapshot's filters alive while its current allowed flag changes.
+        for handler in &handlers {
+            for (_, filter) in &handler.filters { self.ext.retain(filter); }
+        }
+        self.event_names.push(EVENT.into());
+        let door_run = self.npc_door_run.take();
+        let mut allowed = true;
+        for handler in &handlers {
+            let args = vec![XVal::Ref(actor.0), XVal::Num(if allowed { 1.0 } else { 0.0 })];
+            if !self.handler_matches(handler, &args, Some(target)) { continue; }
+            let ctx = RunCtx { self_ref: Some(target), action_ref: Some(actor), ..RunCtx::default() };
+            match self.run_function(&handler.func, Some(Value::Ref(target.0)), args, None, ctx) {
+                Ok(XVal::Num(value)) if self.udf_value_set && value == 0.0 => allowed = false,
+                Ok(_) => {},
+                Err(error) => self.handler_failed(format!("event handler for {EVENT}"), error),
+            }
+        }
+        self.npc_door_run = door_run;
+        self.event_names.pop();
+        for handler in &handlers {
+            for (_, filter) in &handler.filters { self.ext.release(filter); }
+        }
+        allowed
     }
 
     /// The extender's OnActivate handlers hear `actor` activating `target` (the target
@@ -6370,7 +6548,18 @@ impl<'a> Game<'a> {
         g.nx = s.nx.clone();
         g.quests = s.quests.clone();
         g.instances = s.instances.iter().cloned().collect();
+        // A start-game-enabled quest the save has no entry for came with a plugin added
+        // since the game was saved (every game starts them all, `Game::new_game`, and an
+        // entry is never dropped): it starts with the load, as on a new game [hypothesis:
+        // the original starts a newly added plugin's start-game-enabled quests on a load,
+        // which mods added mid-game rely on; observed: the owner's saves of 2026-11-11 to
+        // 13, from before MCM was added, loaded with MCM's quest stopped and its Mods page
+        // empty, issue #2944].
+        for q in g.quests_added_since(s) {
+            g.start_quest(q);
+        }
         g.extra = s.extra.clone();
+        g.stand_everyone_up();
         g.player = s.player.clone();
         // The world does not save the level it rolls at.
         g.sync_player_level();
@@ -7074,6 +7263,11 @@ impl Host for Exec<'_, '_> {
     }
 
     fn ext_call(&mut self, name: &str, on: Option<Value>, args: &[fnv_script::vm::XVal]) -> Option<Result<fnv_script::vm::XVal, String>> {
+        if functions::player_source::handles(name) {
+            let source_ctx = Ctx { unit: self.unit.shared_key().clone(), opcode: 0, on: None, self_ref: self.ctx.self_ref,
+                action_ref: self.ctx.action_ref, quest: self.ctx.quest, inst: None, in_condition: false };
+            return functions::player_source::call(self.game, &source_ctx, on, name, args);
+        }
         let on = on.and_then(|v| v.as_form()).map(FormId);
         let ctx = self.ctx;
         // Who calls: DisablePlayerControlsAlt keeps its locks by plugin, GetNthExplicitRef
@@ -7095,7 +7289,7 @@ impl Host for Exec<'_, '_> {
         if let Some(v) = self.game.world.setting_f32(name) {
             return Some(XVal::Num(f64::from(v)));
         }
-        match self.game.world.forms.settings.get(&name.to_ascii_lowercase())? {
+        match self.game.world.setting_value(name)? {
             fnv_sim::settings::Setting::Str(s) => Some(XVal::Str(s.clone())),
             _ => None,
         }

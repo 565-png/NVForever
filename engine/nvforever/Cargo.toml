@@ -96,7 +96,9 @@ libc = "0.2"
 winresource = "0.1"
 
 [dev-dependencies]
-nvf-play = { workspace = true, features = ["test-support"] }
+# [design, #2403] Exercise the real reports system with synthetic UI navigation states.
+# [design, #2652] Authored-plugin runtimes for the Use Weapon shooter tests.
+nvf-play = { workspace = true, features = ["test-support", "report-test-support"] }
 
 [features]
 default = ["intro-video"]

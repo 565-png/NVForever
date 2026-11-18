@@ -683,9 +683,60 @@ fn quest_targets_are_marked_while_their_conditions_pass() {
     // The subject is the target: disabling it fails its own GetDisabled == 0.
     g.world.set_enabled(FormId(ACT_REF), false).unwrap();
     assert_eq!(shown(&mut g), vec![(0, true), (1, false), (2, false)]);
-    // A completed objective has no targets.
-    g.set_objective(q(), 10, None, Some(true));
+    // A completed objective has no targets. (Stage 20 completed the quest, and a
+    // completed quest's objectives no longer change, #2958: complete it as
+    // CompleteAllObjectives does.)
+    assert!(!g.set_objective(q(), 10, None, Some(true)));
+    assert_eq!(shown(&mut g), vec![(0, true), (1, false), (2, false)]);
+    g.set_objective_whatever(q(), 10, None, Some(true));
     assert!(g.check_quest_targets(q()).is_empty());
+}
+
+/// #2958 (layer5-captures.md §5.8): once a quest is completed or failed, SetStage still marks the
+/// stage and runs its entries but does not start the quest again, and
+/// SetObjectiveDisplayed / SetObjectiveCompleted do nothing, running or not. A quest
+/// stopped without being completed starts again on both.
+#[test]
+fn a_completed_quest_stays_stopped_and_its_objectives_no_longer_change() {
+    let f = fixture();
+    let objective = |g: &mut Game| g.quest(q()).objectives.get(&10).map_or((false, false), |o| (o.displayed, o.completed));
+    // Stopped, not completed: SetStage starts it, and so does displaying an objective.
+    let mut g = game(&f);
+    g.new_game();
+    g.set_stage(q(), 10);
+    g.stop_quest(q());
+    assert!(!g.quest_state(q()).running);
+    g.set_stage(q(), 30);
+    assert!(g.quest_state(q()).running);
+    g.stop_quest(q());
+    assert!(g.set_objective(q(), 10, Some(true), None));
+    assert!(g.quest_state(q()).running);
+    assert_eq!(objective(&mut g), (true, false));
+    // Completed (stage 20 has the Complete Quest flag) and stopped.
+    let mut g = game(&f);
+    g.new_game();
+    g.set_stage(q(), 20);
+    assert!(g.quest_state(q()).completed);
+    g.stop_quest(q());
+    let before = objective(&mut g);
+    g.world.set_global(FormId(GLOBAL), 0.0).unwrap();
+    assert!(g.set_stage(q(), 30));
+    assert!(g.quest_state(q()).stages_done.contains(&30), "the stage is marked done");
+    assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 7.0, "and its entry ran");
+    assert!(!g.quest_state(q()).running, "but the quest is not started again");
+    // Its objectives no longer change, stopped or started again.
+    for running in [false, true] {
+        if running {
+            g.start_quest(q());
+            assert!(g.quest_state(q()).running);
+        }
+        assert!(!g.set_objective(q(), 10, Some(!before.0), None));
+        assert!(!g.set_objective(q(), 10, None, Some(!before.1)));
+        assert_eq!(objective(&mut g), before);
+    }
+    // CompleteAllObjectives' way still completes one.
+    assert!(g.set_objective_whatever(q(), 10, None, Some(true)));
+    assert!(objective(&mut g).1);
 }
 
 /// Displaying an objective already shown keeps its completed flag; showing a hidden one
@@ -1794,6 +1845,65 @@ fn say_to_done_follows_say_as_well_as_say_to() {
     assert_eq!(done(&h), 1.0);
 }
 
+// [documented: #2714, spooknik's 2026-11-15 comment] Roy's plain Say uses a
+// Conversation/Goodbye line without a target or continuation. [design, #2714]
+// Exercise that shape with this file's authored fixture; check engine pause/audio in
+// the roy-say-pause-resume smoke scenario, not by this headless menu-mode test.
+#[test]
+fn plain_say_resumes_after_mid_line_pauses_and_finishes_once() {
+    let mut f = fixture();
+    let line = f.data.infos.get_mut(&FormId(INFO_A)).unwrap();
+    line.info_type = fnv_game::data::topic_type::CONVERSATION;
+    line.flags |= fnv_game::data::info_flag::GOODBYE;
+    line.goodbye = true;
+    assert!(line.choices.is_empty() && line.follow_ups.is_empty());
+    let end = line.end.unwrap();
+    let opcode = f.data.table.by_name("Say").unwrap();
+    let mut g = game(&f);
+    g.new_game();
+    let speaker = FormId(NPC_REF);
+    let ctx = Ctx { unit: "test".into(), opcode, on: Some(speaker), self_ref: Some(speaker), action_ref: None, quest: None, inst: None, in_condition: false };
+    g.call_function(&ctx, &[ArgValue::Value(Value::Ref(TOPIC))]);
+    let done = |g: &Game| g.var(InstKey::Ref { reference: speaker }, 1).num();
+    let ends = |g: &Game| g.events.iter().filter(|e| matches!(e.kind, EventKind::LineEnded { info, .. } if info == FormId(INFO_A))).count();
+    let total = g.speech[0].remaining;
+    g.frames(40);
+    assert!(g.speech[0].remaining > 0.0 && g.speech[0].remaining < total);
+    for _ in 0..2 {
+        let held = g.speech[0].clone();
+        assert_eq!((held.speaker, held.info, held.target, held.conversation), (speaker, FormId(INFO_A), None, None));
+        assert_eq!(held.response, 0);
+        assert!(!held.say_to && !held.leads_on && !held.greeting && !held.farewell);
+        g.open_menu(fnv_game::game::menus::START);
+        g.frames(600);
+        assert!(g.is_talking(speaker));
+        // [design: nvf-play/script_hud.rs::subtitles, voice.rs::speech_response]
+        // Retained INFO/response and remaining time let the HUD keep this subtitle.
+        assert_eq!(g.speech.len(), 1);
+        assert_eq!((g.speech[0].info, g.speech[0].response, g.speech[0].remaining), (held.info, held.response, held.remaining));
+        assert_eq!((ends(&g), done(&g)), (0, 0.0));
+        assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 5.0);
+        assert_eq!(g.close_menu(), Some(fnv_game::game::menus::START));
+        g.frames(10);
+        assert!(g.is_talking(speaker));
+        assert!(g.speech[0].remaining < held.remaining);
+    }
+    let left = g.speech[0].remaining;
+    let frames_left = (left / g.cfg.frame_seconds).ceil() as u64;
+    g.frames(frames_left - 1);
+    assert!(g.is_talking(speaker));
+    assert_eq!((ends(&g), done(&g)), (0, 0.0));
+    g.tick();
+    assert!(!g.is_talking(speaker) && g.speech.is_empty());
+    assert_eq!((ends(&g), done(&g)), (1, 1.0));
+    assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 3.0);
+    g.frames(600);
+    assert_eq!((ends(&g), done(&g)), (1, 1.0));
+    assert_eq!(g.events.iter().filter(|e| matches!(&e.kind, EventKind::ResultScript { unit, on: Some(on) } if *on == speaker && *unit == f.data.unit(end).key())).count(), 1);
+    assert_eq!(g.events.iter().filter(|e| matches!(e.kind, EventKind::LineStarted { .. })).count(), 1);
+    assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::LineEnded { cut: true, .. } | EventKind::ActorConversationStarted { .. })));
+}
+
 #[test]
 fn a_line_lasts_as_long_as_its_voice_file_when_the_game_knows_it() {
     // docs/spec-notes/voice.md §8: the hook gives a response's length; a response it
@@ -2752,6 +2862,40 @@ fn furniture_functions_answer_from_the_use_set_on_the_actor() {
     g.set_furniture_use(npc, None);
     assert_eq!(ask(&mut g, SLEEPING, npc, None), 0.0);
     assert_eq!(g.furniture_use(npc), None);
+}
+
+/// #2948: a teammate brought into another cell forgets the foes left in the one it came
+/// from and, with none left, leaves the fight; a foe in its new cell is kept.
+#[test]
+fn a_teammate_brought_along_leaves_the_foes_of_the_other_cell_behind() {
+    use fnv_game::awareness::{Awareness, State, Target};
+    use fnv_game::detection::Band;
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    let (npc, foe, near) = (FormId(NPC_REF), FormId(PATROL_REF), FormId(OTHER_REF));
+    let target = Target { band: Band::Hidden, value: 10.0, at: [0.0; 3], detected: Some(0.0), hidden_since: Some(0.0) };
+    let mut searching = Awareness { state: State::Alert, ..Default::default() };
+    searching.targets.insert(foe, target);
+    let put = |g: &mut fnv_game::game::Game, r: FormId, cell: u32| g.world.get(r).unwrap().cell = Some(FormId(cell));
+    put(&mut g, npc, OTHER_CELL);
+    put(&mut g, foe, CELL);
+    put(&mut g, near, OTHER_CELL);
+    // The foe is in the same cell: kept.
+    put(&mut g, foe, OTHER_CELL);
+    g.awareness.actors.insert(npc, searching.clone());
+    g.leave_foes_behind(npc);
+    assert_eq!(g.awareness.state(npc), State::Alert);
+    // Left behind in the other cell: forgotten, and the search is over.
+    put(&mut g, foe, CELL);
+    g.leave_foes_behind(npc);
+    assert_eq!(g.awareness.state(npc), State::Normal);
+    // One left behind, one in the new cell: only the first is forgotten.
+    searching.targets.insert(near, target);
+    g.awareness.actors.insert(npc, searching);
+    g.leave_foes_behind(npc);
+    let a = g.awareness.get(npc).expect("still searching for the near one");
+    assert!(a.targets.contains_key(&near) && !a.targets.contains_key(&foe), "{:?}", a.targets.keys());
 }
 
 #[test]
