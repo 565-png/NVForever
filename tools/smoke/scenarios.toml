@@ -1855,6 +1855,41 @@ forbid = [
 ]
 
 [[scenario]]
+name = "desert-haze"
+source = "[design, #2675] engine/nvforever/src/haze.rs, fog.rs GAME_FOG, docs/design/graphics-enhanced.md §3.16: the Desert haze switch (off by default and in every preset) turned on while the game runs outdoors at Goodsprings at noon writes the haze's figures, worked from the shown weather, into the fog and logs them; turned off it logs off; the shader edits it rides on (pbr_functions.wesl apply_fog, fog.wesl) are in place and every world pipeline compiles, without a rendering error"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/haze.rs", "engine/nvforever/src/fog.rs", "engine/vendor/bevy_pbr/src/render/pbr_functions.wesl",
+  "engine/vendor/bevy_pbr/src/render/fog.wesl",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:desert-haze,13:desert-haze" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 18
+expect = [
+  "fog: the game's fog curve installed",
+  { re = 'haze: desert haze on: .*?, (\d+) % at 20,000 units and \d+ % at 60,000 on the base height', range = [3, 25], label = "Goodsprings' weather leaves room for the haze at noon: a thin share at 20,000 units" },
+]
+order = [
+  [
+    "settings: desert-haze on",
+    { text = "haze: desert haze on: ", label = "the haze's line once the switch is on, outdoors" },
+    "settings: desert-haze off",
+    { text = "haze: desert haze off", label = "and off again" },
+  ],
+  [
+    { re = 'graphics: light glow, desert haze$' },
+    { re = 'graphics: light glow$', label = "off again" },
+  ],
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the haze" },
+  { re = '(?i)failed to process shader', label = "a world shader that does not compile with the haze's edits (pbr_functions.wesl nvf_haze, fog.wesl GAME_FOG)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "apply_fog not as expected", label = "the haze's edit of Bevy's fog call not made" },
+  { text = "the desert haze's shader edit is not in place", label = "the switch on without its shader edit" },
+]
+
+[[scenario]]
 name = "terrain-height-blend-local-start"
 source = "[design, #2550] engine/nvforever/src/terrain.rs \"Height blending\": started with local height reference (0.10:4:local) and --graphics-only terrain-height-blend, the folded materials are made with it and their TERRAIN_HEIGHT_BLEND pipeline compiles and is ready, without a rendering or pipeline error"
 areas = ["renderer", "graphics", "terrain"]

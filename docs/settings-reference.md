@@ -1032,7 +1032,18 @@ below cover them all.
   overcast is not told from clear yet. Near things, the weapon and the HUD stay sharp. Off
   in both presets; not in the original.
 - Command-line switches: `--graphics-only`
-- More: docs/design/graphics-enhanced.md §3.15
+
+### `desert-haze`: Desert haze (experimental)
+
+- On the page: On: a thin dust haze thickens with distance and toward the ground, warmer
+  toward the sun, as far as the weather's fog allows. Not in the original.
+- In full: On: a dust haze is added to the weather's own distance fog, worked out per
+  pixel in the fog itself: thicker with distance and toward the ground under the camera,
+  warmer looking into the sun by day. A clear weather gets all of it, a short or dense fog
+  (a hazy weather, a dust storm) none; a weather with a very far fog a thinner one. Off in
+  every preset; not in the original. Outdoors only.
+- Command-line switches: `--graphics`, `--graphics-only`
+- More: docs/design/graphics-enhanced.md §3.16
 - Registered in `engine/nvforever/src/settings.rs`
 
 ### `bloom`: Bloom
