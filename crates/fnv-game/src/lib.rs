@@ -67,6 +67,8 @@ mod combat_style_session_tests;
 #[cfg(test)]
 #[path = "../tests/common/mod.rs"]
 mod common;
+#[cfg(test)]
+mod faction_modifier_tests;
 pub mod companion_wheel;
 pub mod coop;
 pub mod cond;
@@ -97,10 +99,12 @@ pub mod idles;
 pub mod intro;
 pub mod jip_ccc;
 pub mod jip_events;
+mod crosshair_events;
 mod jip_provenance;
 #[cfg(test)]
 mod handler_diagnostics_tests;
 pub mod nvse;
+mod nvse_faction_modifiers;
 pub mod nvse_ttw;
 pub mod nvse_unlisted;
 pub mod nvse_unlisted2;
@@ -190,6 +194,7 @@ pub mod nvse_settings;
 pub mod nvse_tokens;
 pub mod nvse_handler_lists;
 pub mod nvse_debug;
+mod local_time;
 pub mod text_codes;
 pub mod script_input;
 pub mod levelup;

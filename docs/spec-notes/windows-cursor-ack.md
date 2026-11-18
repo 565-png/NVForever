@@ -90,7 +90,7 @@ and touch integration requires separate owner-led adoption and validation.
 
 ## Validation and limits
 
-[authored, UNRUN] Native-result regression cases call the same production backend
+Native-result regression cases call the same production backend
 consumer with injected readiness and native success/failure. They cover cache
 publication, duplicate attempts, ordinary writers, unavailable windows and the
 native attempt budget. Engine cases exercise source requests, repeated values,
@@ -99,7 +99,7 @@ existing MCM consumer case supplies a rejected native result before success and
 then follows Window coordinates into actual menu input and source list routing
 at menu scales 0.5, 0.75 and 1.0.
 
-[authored, UNRUN] Offscreen schedule controls install the actual
+Offscreen schedule controls install the actual
 ScriptSwitchesPlugin and ScriptInputPlugin. Source intent is submitted in the
 Scripts stage and cancelled/replaced in the UI stage; an injected production
 consumer in Last must receive no stale native attempt. A success control then
@@ -107,15 +107,18 @@ queries the actual source API inside the production PreUpdate input set before
 Update receipt retirement. This exercises real schedule/Commands application
 instead of invoking each ownership system manually.
 
-Authored selectors (test discovery and execution UNRUN):
+Windows regression selectors:
 
 - `bevy_winit`: `cursor_position::tests::`
 - `nvf-play`: `script_cursor::tests::`
 - `nvf-play`: `script_input::mcm_page_tests::mcm_page_warp_reaches_window_then_menu_input_and_source_list_routing`
 
-Compiler checks, these regression cases, actual Windows calls, physical OS cursor
-readback, first-click acceptance, startup/load/handoff, keyboard/raw-camera and
-controller neighbors, and Android integration are UNRUN for this source packet.
+The Windows `bevy_winit` cursor-position and `nvf-play` `script_cursor` controls
+passed on `05cd76be` with injected native results. That run does not establish a
+Windows MCM result. See PR #2884 for revision-specific results.
+Actual Windows calls, physical OS cursor readback, first-click acceptance,
+startup/load/handoff, keyboard/raw-camera and controller neighbors, and Android
+integration are not qualified by these controls.
 A successful native API return is not an independent GetCursorPos observation;
 native rounding/clipping and following OS cursor events still require real-window
 validation. No original-game/native-plugin parity or OS6 cure is claimed.
