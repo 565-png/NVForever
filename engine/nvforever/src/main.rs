@@ -1124,8 +1124,8 @@ fn main() -> AppExit {
             nvf_play::script::set_ini_texts(inis.into_iter().map(|(_, t)| t).collect());
         }
         match &saves_dir {
-            Some(d) => eprintln!("saves: the Mod Organizer 2 profile's own folder ({})", d.display()),
-            None => eprintln!("saves: the profile keeps no local saves; NVForever's saves folder is used"),
+            Some(d) => eprintln!("saves: --load reads the Mod Organizer 2 profile's own folder ({}); NVForever's saves go to its own folder", d.display()),
+            None => eprintln!("saves: the profile keeps no local saves; --load uses NVForever's saves folder"),
         }
     }
     if let Some(l) = &mo2 {
@@ -1915,14 +1915,10 @@ fn main() -> AppExit {
         // Streaming follows the camera, which the player systems move: stream after them.
         // The loading screen sends the travel in the Input set and reads in `Last` whether
         // the renderer is done: both this frame.
-        app.add_plugins(nvf_play::PlayPlugin(data));
-        // `--mo2` with the profile's own saves: the profile's `saves` folder is where saves
-        // are written and read, as MO2 maps it over the game's own (#1526 phase 2b).
-        // `SavePlugin` has put the home's folder in already; this replaces it.
-        if let Some(d) = &saves_dir {
-            app.insert_resource(nvf_play::save::SaveConfig::with_dir(Some(d.clone())));
-        }
-        app
+        // `--mo2` does not replace `SaveConfig`: the profile's `saves` folder is read for
+        // `--load` only (`start_from_save`), and every save NVForever makes goes to its own
+        // home folder, never into MO2's (maintainer decision 2026-11-18; #1526 phase 2b).
+        app.add_plugins(nvf_play::PlayPlugin(data))
             .add_systems(Update, (worldspace::switch, world::travel, world::cell_image_space, world::cell_lighting).chain().after(nvf_play::PlaySet::Input).before(world::stream).before(sky::weather_region))
             .add_plugins(pipeline_gate::PipelineGatePlugin)
             .add_systems(Update, world::loading_gate.after(world::stream))
@@ -2290,7 +2286,9 @@ fn main() -> AppExit {
 /// be loaded.
 fn start_from_save(name: &str, opened: &world::OpenedPlugins, args: &mut Args, saves: Option<&std::path::Path>) -> Result<nvf_play::save::PendingLoad, String> {
     // `--mo2` with the profile's own saves: a bare name is looked up in the profile's
-    // folder, as the game would (main, `saves_dir`); a path is used as given.
+    // folder for reading only (main, `saves_dir`); a path is used as given. Writes always
+    // use NVForever's own folder: this config is never put in the app (maintainer decision
+    // 2026-11-18).
     let cfg = match saves {
         Some(d) => nvf_play::save::SaveConfig::with_dir(Some(d.to_path_buf())),
         None => nvf_play::save::SaveConfig::default(),

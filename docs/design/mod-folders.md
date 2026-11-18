@@ -88,7 +88,8 @@ archives its `SArchiveList` names. NVForever mounts them the same way (#1526 pha
 
 MO2's profile folder keeps more than the lists: a `settings.ini` with the profile's own
 switches, copies of the game's INI files when the profile keeps them, MO2's merged INI tweaks,
-and — with local saves — the saves. NVForever reads them read-only.
+and — with local saves — the saves. NVForever reads all of it read-only and writes nothing
+into the profile; a save is only ever written to NVForever's own folder.
 
 - **`settings.ini`** is a QSettings INI; a key outside any group is under `[General]`
   [documented: Qt QSettings]. Two keys matter:
@@ -118,10 +119,11 @@ and — with local saves — the saves. NVForever reads them read-only.
   `NVForever.ini` keeps its place — merging MO2's INIs into NVForever's own settings is a
   separate step, and the profile's `[Archive] SArchiveList` is already read as the archive
   list above.
-- **Saves.** With `LocalSaves` on, `--mo2` writes and reads saves in `<profile>/saves` — the
-  same place MO2's mapping shows the original game — and a bare `--load <name>` is looked up
-  there first. With it off, saves stay in NVForever's home. Nothing else in the profile is
-  written; a save file is the one thing NVForever adds there, as the game adds it under MO2.
+- **Saves.** With `LocalSaves` on, a bare `--load <name>` reads `<profile>/saves`, the place
+  MO2's mapping shows the original game; with it off, `--load` reads NVForever's home. Every
+  save and autosave NVForever makes goes to its own home folder, never into the profile
+  (maintainer decision 2026-11-18): the profile's saves are read-only. Nothing else in the
+  profile is written either.
 
 ## What this does not do (yet)
 
@@ -151,8 +153,9 @@ and — with local saves — the saves. NVForever reads them read-only.
   highest first.
 - `engine/nvforever/src/main.rs`: `--mo2`, `--profile`; the profile's plugins take the place
   of the home `plugins.txt` when `--plugins` is not given, and its archive list the place of
-  `NVForever.ini`'s; with local saves, `SaveConfig` gets the profile's folder (also for
-  `--load`); the INI text goes to `nvf_play::script::set_ini_texts`.
+  `NVForever.ini`'s; with local saves, a bare `--load` reads the profile's `saves` folder
+  (read-only: saves are never written there); the INI text goes to
+  `nvf_play::script::set_ini_texts`.
 - `engine/nvf-play/src/script.rs`: `set_ini_texts`, put into the `GameData` the script VM is
   built on.
 - `crates/fnvtool/src/bsa_cmd.rs`: `vfs mods`, the verification command (`fnv.vfs.mods/3`

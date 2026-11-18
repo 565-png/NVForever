@@ -100,7 +100,8 @@ observed: MO2 2.5 profiles]
 
 - The profile's own QSettings INI. A key outside any group is stored under `[General]`.
 - `LocalSaves` (bool) — the profile's saves live in `<profile>/saves`, which MO2 maps over
-  the game's save folder; off means the player's own folder. When MO2 creates the profile it
+  the game's save folder; off means the player's own folder. NVForever reads this folder for
+  `--load` only and never writes into it (maintainer decision 2026-11-18). When MO2 creates the profile it
   sets the key from its global `profile_local_saves`; an older profile without the key is
   decided by `findProfileSettings`: a `saves` folder means on, a `_saves` folder means off
   (MO2 renames between the two), else the global setting. MO2 also writes

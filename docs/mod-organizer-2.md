@@ -51,9 +51,9 @@ sources: `crates/fnv-install/src/mo2.rs`, docs/design/install-layout.md.
 MO2 does not run on Linux, so the native engine can do the merge itself from the profile:
 `nvforever --mo2 "<instance folder>"` (plus `--profile <name>` when not the instance's
 `selected_profile`) reads the active mods' loose files over `Data`, the overwrite folder last,
-and loads the profile's plugins in its order. Nothing is written into the game folder; the one
-thing NVForever writes into MO2's folder is a save, and only where the profile asks for it
-(below). MO2 keeps being where mods are installed and ordered. Mod-held `.bsa` archives are
+and loads the profile's plugins in its order. Nothing is written into the game folder or into
+MO2's: the profile is read-only, its saves included. MO2 keeps being where mods are installed
+and ordered. Mod-held `.bsa` archives are
 mounted too: the profile's archive list (`archives.txt`, or its `fallout.ini`'s
 `SArchiveList`) decides which, and each is read from the enabled mod's folder that holds it.
 
@@ -63,12 +63,13 @@ The profile's `settings.ini` decides the rest, as it does for MO2:
   `initweaks.ini` (MO2's merge of the enabled mods' INI tweaks) above them, are the INI text
   the extender's INI functions read (`GetNumericINISetting`, `GetStringIniSetting` and the
   setters). NVForever's own settings are not taken from them.
-- `LocalSaves=true` — saves are read and written in `<profile>/saves`, the folder MO2 maps
-  over the game's own, and a bare `--load <name>` looks there. Without it, saves stay in
-  `Documents\My Games\NVForever\saves`.
+- `LocalSaves=true` — a bare `--load <name>` reads the profile's saves in `<profile>/saves`,
+  the folder MO2 maps over the game's own. NVForever never writes there: every save and
+  autosave goes to `Documents\My Games\NVForever\saves`. Without the switch, `--load` reads
+  NVForever's folder.
 
-The start prints which INI files and which saves folder it took. Design and limits:
-[mod-folders](design/mod-folders.md).
+The start prints which INI files and which saves folder was read for `--load`. Design and
+limits: [mod-folders](design/mod-folders.md).
 
 ```
 nvforever --data "<game>\Data" --mo2 "<instance>" --profile "<name>"
