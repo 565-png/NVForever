@@ -1948,13 +1948,19 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   (with their add-on models and particles) leave them out. No collider.
 - **Drawn**: STAT, SCOL and MSTT references (a moveable static with its idle sequence
   playing, nothing else of its rig, its pose never published to physics), SpeedTrees
-  (their generated geometry, else their billboard; a tree base the loaded cells have not
-  built yet is built on the main thread, one per frame, as tree.rs has no worker-thread
-  path), and every other reference with a model flagged visible when distant (REFR record
-  flag 0x8000 [documented: GECK wiki "Reference", GetReferenceFlag]), as plain static
-  scenery: the model's shapes as stored, no rig, light source, emitter, stored pose or
-  collision. The distant tree billboards crossfade with ring cells' trees as with loaded
-  cells' (treelod.rs reads `DrawnCells`). A cell's object LOD segment holds the
+  (their generated geometry, else their billboard), and every other reference with a
+  model flagged visible when distant (REFR record flag 0x8000 [documented: GECK wiki
+  "Reference", GetReferenceFlag]), as plain static scenery: the model's shapes as stored,
+  no rig, light source, emitter, stored pose or collision. A moveable static's idle stands
+  still while its ring cell draws nothing (spawning, standing by fully under a loaded
+  cell). Trees: the ring draws exactly the trees the distant billboards draw (treelod.rs
+  `distant_tree`: a TREE with a SpeedTree, enabled at the start, at its authored place, as
+  the billboards and the loaded cells draw them), and the billboards crossfade with ring
+  cells' trees as with loaded cells' (treelod.rs reads `DrawnCells`); a cell where a tree
+  drew nothing keeps its billboards. A tree base the loaded cells have not built is waited
+  for 3 seconds (`TREE_WAIT_SECS`), then built on the main thread, one per frame (tree.rs
+  has no worker-thread path; one build is not bounded in time). A cell's object LOD
+  segment holds the
   LOD of its flagged references (world.md §7), and the ring hides it as a loaded cell does,
   so nothing flagged may be left out. The landscape at full resolution (under 4 x 4 near
   the 2 x 2 drawing the loaded cells start with, which meets their edge without cracks),
@@ -1965,43 +1971,65 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   script's Enable or Disable of any reference, loaded or not). In the viewer (no
   simulation) only references enabled at the start are drawn. A reference the game moved
   is drawn where it is (nvf-play `moved.rs` finds ring cells by `nvf_play::DrawOnlyCell`);
-  a destroyed reference's ring copy takes its destruction model (destroyed.rs) once that
-  model is prepared on the worker threads, keeping the old one until then.
+  a destroyed reference's ring copy takes its destruction model (destroyed.rs): the
+  reference stays pending until the model is prepared on the worker threads (tried again at
+  each look, every half second or so), and a new model that draws nothing (missing, no
+  shape) leaves the old copy in place.
 - **Left out** [design]: imposters (drawn by region), primitives, markers, deleted
   references, actors, light sources, sounds, placed and cell water (distant water keeps
   covering ring cells), grass, and non-flagged activators, doors, containers, furniture,
   terminals and items.
-- **Kept segments**: a cell keeps its LOD segment when a flagged reference in it is not
-  drawn here: an actor, placed water, one disabled at the start that the game has enabled,
-  or one whose model drew nothing (missing, hidden). There the segment shows beside the
-  full models of the cell's other references, and since a segment holds the LOD of all
-  the cell's flagged references, those show twice (full model and LOD) for as long as the
-  cell is drawn: a doubling rather than a hole. Everywhere else nothing is doubled at rest.
+- **Kept segments**: a cell keeps its LOD segment while a flagged reference in it is not
+  drawn here: an actor, placed water, or one whose model spawned no shape (missing,
+  hidden, empty). The reasons are kept per reference: a later draw of that reference (a
+  destruction model that draws) clears its reason. There the segment shows beside the full
+  models of the cell's other references, and since a segment holds the LOD of all the
+  cell's flagged references, those show twice (full model and LOD) for as long as the
+  cell keeps it: a doubling rather than a hole. Everywhere else nothing is doubled at rest.
 - **LOD hand-off**: lod.rs takes the drawn cells from both (`DrawnCells`): a ring cell's
   block segment crossfades with its fade and its LOD terrain is cut out once it is fully
   drawn, exactly as for a loaded cell. One rule decides how the LOD segment, a ring cell
-  and the loaded cell of the same square share the pixels (`hand_off`, tested at every
-  step): a ring cell under a loaded cell is held at rest and draws the complement of the
-  loaded cell's fade step, so the segment (at level 1) draws nothing; a ring cell fading
-  out when a loaded cell comes is dropped at once, so the loaded cell and the LOD share
-  the pixels as without the ring. A ring cell fading in when its square loads therefore
-  jumps to rest (a visible step, rare: the player must cross a cell within a fade). The
-  ring cell goes once the loaded one is fully drawn inside the loaded radius; in the
-  loaded grid's step of hysteresis it may stand by under a loaded cell (culled), to take
-  over when that one fades out. As for loaded cells, when a cell starts fading the LOD
-  block of its square is rebuilt within the LOD's rebuild budget; until then the part of
-  the block for that cell is missing (lod.rs, as before the ring).
+  and the loaded cell of the same square share the pixels (`hand_off`): a ring cell under
+  a loaded cell is held at rest and draws the complement of the loaded cell's fade step,
+  so the segment (at level 1) draws nothing; a cell finishing its spawn under a loaded
+  cell goes through the same rule before it is drawn; a ring cell already standing by
+  under a loaded cell that is told to leave (the row turned off) keeps that complement
+  until the loaded cell is at rest or gone, then fades out alone; a ring cell fading out
+  when a loaded cell first comes is dropped at once. A ring cell fading in when its square
+  loads therefore jumps to rest (a visible step, rare: the player must cross a cell within
+  a fade). The ring cell goes once the loaded one is fully drawn inside the loaded radius;
+  in the loaded grid's step of hysteresis it may stand by under a loaded cell (culled), to
+  take over when that one fades out. What the tests prove (`full_detail.rs`): by the ideal
+  dither masks of the three, the rule draws each pixel once at every fade step and through
+  scripted frame sequences (a stand-by switched off, a reversal, the six switches of the
+  row, a cell finishing under a fading loaded cell). Not covered by that, and real: the
+  LOD terrain stays under full terrain that is only partly drawn (it is cut out once the
+  cell is fully drawn, and sits behind by its depth bias meanwhile); LOD blocks and
+  terrain are rebuilt within the LOD's rebuild budget, so for some frames after a cell
+  starts or stops fading the old block or cut stays (the block part of a cell that starts
+  fading out is missing until its block is rebuilt, as before the ring); and kept
+  segments double flagged scenery (above).
 - **Streaming**: ring cells are read ahead on the worker threads only while the loaded
-  cells' read-ahead is idle, and spawned nearest first within 1.5 ms of the main thread a
-  frame, the read-ahead's bookkeeping included, only while every loaded cell is in and
-  none is being spawned. A cell's landscape and a single reference are never split, so a
-  frame can pass the budget by one of them. No model or landscape is prepared on the main
-  thread for the ring: a cell waits for its read-ahead, and a reference whose model is not
-  prepared (a destruction stage's or a script's model, a persistent reference in a square
-  with no cell record) is asked of the worker threads and tried again once the cell's
-  other references are in. Kept one step beyond the ring, then faded out. A door's travel
+  cells' read-ahead is idle, and spawned nearest first, only while every loaded cell is in
+  and none is being spawned. No model or landscape is prepared on the main thread for the
+  ring: a cell waits for its read-ahead, and a reference whose model is not prepared (a
+  destruction stage's or a script's model, a persistent reference in a square with no cell
+  record) is asked of the worker threads and tried again once the cell's other references
+  are in. Kept one step beyond the ring, then faded out. A door's travel
   (`Streamer::travels`), a change of worldspace or going indoors drops the ring and its
   readings at once, as the loaded cells go, and never waits for it.
+- **What the 1.5 ms budget bounds, and what it does not**: within a frame's budget the
+  read-ahead starts new readings and takes in finished ones only until the deadline, and
+  references are spawned one at a time until it. Not bounded by it: the one reference or
+  cell landscape under way when the deadline passes; a tree base built after its wait (one
+  a frame, of no fixed length); the fade and shadow walks over a cell's meshes when its
+  fade step or shadow rule changes; retiring and despawning cells (at most 400 children a
+  frame, as the loaded cells); a destroyed reference's ring copies drawn again. The
+  summary's milliseconds are the whole time of the ring's own systems on the main thread
+  (stream, fade, the ring's part of destroyed.rs), these included; the commands they queue
+  are applied by Bevy later and are not measured. Ring copies still cost every frame once
+  drawn: their meshes, the animated materials of their models and the leaf-order sorting of
+  their trees; their moveable statics' idles stand still while the cell draws nothing.
 - **Size cut**: in the ring's outermost cells a reference not flagged visible when distant
   is left out when its model's bounding radius is under 0.004 of its distance from the
   loaded grid's centre (`SIZE_CUT`; about 57 units at 4 cells). The cell keeps the list,
@@ -2010,13 +2038,12 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
 - **Shadows and sliders**: ring meshes cast no sun shadow while the cascades end inside
   the ring's inner edge (the default 8,000 units against the 8,192 a ring cell is at least
   from the camera's cell's edge); with longer shadows they cast. The rule uses that
-  nominal distance, not each mesh's bounds or the sun's direction. They count as objects
-  for the Object distance slider, whose full distance is the ring's reach while the ring
-  is on (`DrawDistances::ring_reach`; actors and items keep the loaded cells'). At 100%
-  nothing is culled. Below 100% the slider culls objects beyond its part of that reach
-  whose LOD segment is hidden, leaving neither: an existing limit for loaded cells
-  (upstream before the ring); the ring widens it to the ring cells beyond the slider's
-  distance.
+  nominal distance, not each mesh's bounds or the sun's direction. The draw-distance
+  sliders never cull ring copies (`DrawClass::Unranged`): their cells hide their LOD
+  segments, so a culled copy would leave neither model nor LOD. The Object slider works on
+  the loaded cells as before the ring, on, off and indoors alike; below 100% it can cull a
+  loaded cell's object whose LOD segment is hidden too (an existing limit, upstream before
+  the ring).
 - **Off**: with the row off nothing of the ring is drawn or logged; the only log
   difference is the settings page's count of rows in its start-up line, as for any new
   row. Three systems still run and return at once (the ring's stream and fade, the exit
@@ -2030,9 +2057,10 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   ring geometry at its edge (visual only); the stress sample counts ring entities in its
   totals and names `ring meshes` apart.
 - **Logs**: `full detail: 9 x 9 ring (radius 4)` when it comes on; at the exit `full
-  detail summary: 9x9, <n> cells, <m> references drawn, <k> skipped by type, <t> ms on
-  the main thread, <s> too small for their distance`; the stress sample adds `ring meshes
-  <n>` while the ring draws any.
+  detail summary: 9x9, <n> cells, <m> references drawn, <k> skipped by type, <t> ms in its
+  systems on the main thread, <s> too small for their distance` (`<t>`: above, the queued
+  commands' application not included); the stress sample adds `ring meshes <n>` while
+  the ring draws any.
 - **Not measured yet**: frame cost and streaming hitches on the traversal routes
   (Goodsprings to Primm, Novac), ring off against 7 x 7 and 9 x 9.
 
