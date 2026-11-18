@@ -314,13 +314,13 @@ fn patch_haze(mut state: ResMut<HazeShader>, mut shaders: ResMut<Assets<Shader>>
     let Some(shader) = shaders.get(&state.handle) else { return };
     state.patched = true;
     let bevy::shader::Source::Wesl(source) = &shader.source else {
-        error!("{PBR_FUNCTIONS}: not WESL; no desert haze");
+        warn!("{PBR_FUNCTIONS}: not WESL; no desert haze");
         PATCH.store(PATCH_FAILED, Ordering::Relaxed);
         return;
     };
     let source = crate::lights::unix_lines(source);
     let Some(patched) = haze_patched(&source) else {
-        error!("{PBR_FUNCTIONS}: apply_fog not as expected (Bevy changed?); no desert haze");
+        warn!("{PBR_FUNCTIONS}: apply_fog not as expected (Bevy changed?); no desert haze");
         PATCH.store(PATCH_FAILED, Ordering::Relaxed);
         return;
     };

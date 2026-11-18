@@ -1513,8 +1513,21 @@ longer exists (the settings menu overhaul); the haze is a row of its own, "Deser
   `haze: desert haze off` (`... off indoors` on going in). Debug aid
   `NVF_PLAY_DEBUG_DESERT_HAZE=<multiplier>`: the density times that (1 as designed; 0 to
   100), logged once when the haze first turns on; it does not turn the switch on. Smoke:
-  `desert-haze` (switched on and off at Goodsprings at noon). Picture and frame-cost
-  evidence: not yet recorded.
+  `desert-haze` (switched on and off at Goodsprings at noon). The fog call is patched
+  into Bevy's `apply_fog` at start for every player, row on or off; if Bevy's text no
+  longer matches, one `warn!` line says so and the row does nothing (the fog stays
+  Bevy's).
+- **Measured** [observed 2026-11-18, PR #2976: Goodsprings start view at 13:00 under
+  NVWastelandClear, 2560x1440, sun shadows on, `--no-actors`; median of five 4-second
+  periods, two rounds, on the contributor's machine]: with the row off the frame time
+  matches main's (3.09-3.10 ms against 3.11-3.13), on +0.03-0.04 ms. With the row off the
+  pictures match main's to within what two runs of main differ by (pixels more than 2
+  levels apart, HUD masked: the street at noon 0.34 % against 0.30 %, at 18:30 0.61 %
+  against 0.41 %, an interior 0.002 % against 0.002 %); with it on, NVWastelandHazy,
+  HVDustStorm and an interior stay as with it off (0.0-0.1 %). Pictures against main
+  (1920x1080): from the air over Goodsprings at 12:00 looking north-east, at 18:30 west,
+  at 06:30 east, under the overcast and the hazy weather, and the street, in the PR. The
+  cost is not measured on a slower GPU or at 1920x1080.
 
 ## 4. Tried and dropped
 
