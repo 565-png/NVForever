@@ -228,7 +228,8 @@ impl HeadBob {
             }
         }
         let (swing, dip) = (self.bob[0].value, self.bob[1].value);
-        self.peak_dip = self.peak_dip.max(-dip);
+        // `+ 0.0` turns a snapped bob's -0.0 into 0.0, so the summary never prints "-0.00".
+        self.peak_dip = self.peak_dip.max(-dip) + 0.0;
         // The head's own weight, pushed by the body's acceleration (below).
         let took_off = i.vertical > 0.0 && self.last_vertical <= 0.0;
         // Only a take-off and a landing push the head: a free fall moves it with the body.

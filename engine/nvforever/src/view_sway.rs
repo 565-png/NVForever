@@ -558,7 +558,7 @@ impl ViewSway {
         let back = -soft_clamp(-self.recoil[0].value, MAX_RECOIL_BACK) * recoil_share;
         let kick_up = soft_clamp(self.recoil[1].value, MAX_RECOIL_UP) * recoil_share;
         let kick_side = soft_clamp(self.recoil[2].value, MAX_RECOIL_UP) * recoil_share;
-        self.peak_recoil = self.peak_recoil.max(-back);
+        self.peak_recoil = self.peak_recoil.max(-back) + 0.0; // -0.0 to 0.0 for the summary
         let lag = self.lag * sway_share;
         let lift = soft_clamp(self.lift.out.value, MAX_LIFT * heft) * sway_share;
         // The raise's lag is the act of aiming itself: not calmed down the sights.
@@ -608,7 +608,7 @@ impl ViewSway {
         let breath = Vec2::new(b.sin(), 0.5 * (2.0 * b).sin()) * BREATH_WIDTH * breath_share;
         let offset = Vec3::new(BOB_SWAY * swing * bob_share + hand.x + breath.x, hand.y + back, dip + lift + aim + breath.y + hand.y.min(0.0) * AHEAD_DROP) + pitch_offset + Vec3::new(-RELOAD_IN * reload, 0.0, -AHEAD_WALK_DROP * walk - RELOAD_DROP * reload);
         self.peak_lag = self.peak_lag.max(lag.abs());
-        self.peak_dip = self.peak_dip.max(-dip);
+        self.peak_dip = self.peak_dip.max(-dip) + 0.0; // -0.0 to 0.0 for the summary
         self.peak_lift_dip = self.peak_lift_dip.max(-lift);
         // The jump's tip turns about the grip: the turn about the eye and a move that puts
         // the grip back.
