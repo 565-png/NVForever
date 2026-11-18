@@ -201,6 +201,22 @@ fn file_sizes_times_and_the_load_order() {
     assert_eq!(s(&mut g, "GetFileTimeSTR \"none.log\" 2 0"), "");
     assert_eq!(n(&mut g, "ar_Size (GetFileTime \"nvac.log\" 2)"), 6.0);
     assert!(n(&mut g, "(GetFileTime \"nvac.log\" 2)[0]") >= 2026.0);
+    // The values, in the computer's time zone: the file is given a written time of
+    // 2026-07-15 12:00:30 UTC. In mid-month the month reads 07 in every time zone, so
+    // the two orders tell apart whatever the zone.
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_784_116_830);
+    std::fs::File::options().write(true).open(game_dir.join("nvac.log")).unwrap().set_modified(at).unwrap();
+    let local = jiff::Timestamp::try_from(at).unwrap().to_zoned_datetime(jiff::tz::TimeZone::system());
+    let fields: Vec<f64> = (0..6).map(|i| n(&mut g, &format!("(GetFileTime \"nvac.log\" 2)[{i}]"))).collect();
+    let want = [local.year(), i16::from(local.month()), i16::from(local.day()), i16::from(local.hour()), i16::from(local.minute()), i16::from(local.second())];
+    assert_eq!(fields, want.map(f64::from).to_vec());
+    let (dmy, mdy) = (s(&mut g, "GetFileTimeSTR \"nvac.log\" 2 0"), s(&mut g, "GetFileTimeSTR \"nvac.log\" 2 1"));
+    assert_eq!(dmy, local.strftime("%d/%m/%y %H:%M").to_string());
+    assert_eq!(mdy, local.strftime("%m/%d/%y %H:%M").to_string());
+    assert_eq!((&dmy[3..5], &mdy[0..2], &dmy[6..8]), ("07", "07", "26"), "{dmy} {mdy}");
+    // A request outside 0-2 gives nothing [hypothesis].
+    assert_eq!(n(&mut g, "ar_Size (GetFileTime \"nvac.log\" 3)"), 0.0);
+    assert_eq!(s(&mut g, "GetFileTimeSTR \"nvac.log\" 3 0"), "");
     // The load order into NVForever's SUPNVSE.log [documented: DumpLoadOrder].
     q(&mut g, "DumpLoadOrder");
     let log = std::fs::read_to_string(layer.join("GameRoot").join("SUPNVSE.log")).unwrap();
@@ -261,94 +277,96 @@ fn screenshots_and_qr_codes() {
     assert_eq!(s(&mut g, "OpenFolderDialogBox MarkRef"), "");
 }
 
+struct TimeFixture(PathBuf);
+
+impl Drop for TimeFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 #[test]
-fn host_local_time_consumers() {
-    // TZ belongs to each child process; other SUP5 tests never see a mutation.
-    let Ok(zone_name) = std::env::var("NVF_TEST_HOST_TIME_ZONE") else {
-        for zone in ["America/New_York", "Asia/Kathmandu"] {
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "host_local_time_consumers", "--nocapture"])
-                .env("NVF_TEST_HOST_TIME_ZONE", zone)
-                .env("TZ", zone)
-                .env_remove("TZDIR")
-                .status().unwrap();
-            assert!(status.success(), "host time consumer in {zone}: {status}");
-        }
+fn failed_zone_discovery_uses_utc_and_warns_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tracing_subscriber::{layer::Context, prelude::*, Layer};
+
+    const CHILD: &str = "NVF_SUP5_FAILED_ZONE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let missing = std::env::temp_dir().join(format!("nvf-missing-zone-{}.tzif", std::process::id()));
+        assert!(!missing.exists());
+        let mut tz = std::ffi::OsString::from(":");
+        tz.push(missing);
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "failed_zone_discovery_uses_utc_and_warns_once"])
+            .env(CHILD, "1")
+            .env("TZ", tz)
+            .env_remove("TZDIR")
+            .status()
+            .unwrap();
+        assert!(status.success(), "invalid-zone child: {status}");
         return;
-    };
+    }
+
+    struct Warnings;
+    static COUNT: AtomicUsize = AtomicUsize::new(0);
+    impl<S: tracing::Subscriber> Layer<S> for Warnings {
+        fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
+            let meta = event.metadata();
+            if meta.target() == "fnv_game::local_time" && *meta.level() == tracing::Level::WARN {
+                COUNT.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    use jiff::{tz::TimeZone, Timestamp};
+    assert!(TimeZone::try_system().is_err(), "the real zone lookup must fail");
+    let _subscriber = tracing::subscriber::set_default(tracing_subscriber::registry().with(Warnings));
+    let file = TimeFixture(folders().0.join("failed-zone-time.log"));
+    let instant: Timestamp = "2024-03-10T07:00:30Z".parse().unwrap();
+    let modified = std::time::SystemTime::try_from(instant).unwrap();
+    std::fs::File::create(&file.0).unwrap().set_modified(modified).unwrap();
+    assert_eq!(std::fs::metadata(&file.0).unwrap().modified().unwrap(), modified);
+
+    let f = fixture();
+    for _ in 0..2 {
+        let mut g = game(&f);
+        let before = Timestamp::now().to_zoned_datetime(TimeZone::UTC).hour();
+        let hour = n(&mut g, "(GetUserTime)[\"Hour\"]");
+        let after = Timestamp::now().to_zoned_datetime(TimeZone::UTC).hour();
+        assert!(hour == f64::from(before) || hour == f64::from(after), "{hour}: expected UTC hour {before} or {after}");
+        let before = Timestamp::now().to_zoned_datetime(TimeZone::UTC).strftime("%H-%M-%S").to_string();
+        let stamp = s(&mut g, "GetTimeStamp");
+        let after = Timestamp::now().to_zoned_datetime(TimeZone::UTC).strftime("%H-%M-%S").to_string();
+        assert!(stamp == before || stamp == after, "{stamp}: expected UTC stamp {before} or {after}");
+        let fields: Vec<_> = (0..6).map(|i| n(&mut g, &format!("(GetFileTime \"failed-zone-time.log\" 2)[{i}]"))).collect();
+        assert_eq!(fields, [2024.0, 3.0, 10.0, 7.0, 0.0, 30.0]);
+        assert_eq!(s(&mut g, "GetFileTimeSTR \"failed-zone-time.log\" 2"), "10/03/24 07:00");
+    }
+    assert_eq!(COUNT.load(Ordering::Relaxed), 1, "one warning per process, not per call or Game");
+}
+
+#[cfg(windows)]
+#[test]
+fn unrepresentable_file_mtime_returns_empty_script_results() {
+    use jiff::Timestamp;
+    use std::time::{Duration, SystemTime};
+
     let f = fixture();
     let mut g = game(&f);
-    let zone = jiff::tz::TimeZone::get(&zone_name).unwrap();
-    assert_eq!(n(&mut g, "ar_Size (GetUserTime)"), 8.0);
-    for key in ["Year", "Month", "DayOfWeek", "Day", "Hour", "Minute", "Second", "Millisecond"] {
-        assert_eq!(n(&mut g, &format!("ar_HasKey (GetUserTime) \"{key}\"")), 1.0, "{key}");
-    }
-    for key in ["Year", "Month", "DayOfWeek", "Day", "Hour", "Minute", "Second"] {
-        let field = |time: jiff::civil::DateTime| match key {
-            "Year" => f64::from(time.year()),
-            "Month" => f64::from(time.month()),
-            "DayOfWeek" => f64::from(time.weekday().to_sunday_zero_offset()),
-            "Day" => f64::from(time.day()),
-            "Hour" => f64::from(time.hour()),
-            "Minute" => f64::from(time.minute()),
-            "Second" => f64::from(time.second()),
-            _ => unreachable!(),
-        };
-        let before = field(zone.to_datetime(jiff::Timestamp::now()));
-        let value = n(&mut g, &format!("(GetUserTime)[\"{key}\"]"));
-        let after = field(zone.to_datetime(jiff::Timestamp::now()));
-        assert!(value == before || value == after, "{zone_name} {key}: {value}, expected {before} or {after}");
-    }
-    let millis = n(&mut g, "(GetUserTime)[\"Millisecond\"]");
-    assert!((0.0..=999.0).contains(&millis) && millis.fract() == 0.0);
-    let before = zone.to_datetime(jiff::Timestamp::now()).strftime("%H-%M-%S").to_string();
-    let stamp = s(&mut g, "GetTimeStamp");
-    let after = zone.to_datetime(jiff::Timestamp::now()).strftime("%H-%M-%S").to_string();
-    assert!(stamp == before || stamp == after, "{stamp}: {before} or {after}");
+    let path = TimeFixture(folders().0.join("unrepresentable-time.log"));
+    let file = std::fs::File::create(&path.0).unwrap();
+    let size = |g: &mut Game| n(g, "ar_Size (GetFileTime \"unrepresentable-time.log\" 2)");
+    let text = |g: &mut Game| s(g, "GetFileTimeSTR \"unrepresentable-time.log\" 2");
+    let outside = SystemTime::try_from(Timestamp::MAX).unwrap() + Duration::from_secs(1);
+    file.set_modified(outside).unwrap();
+    let actual = std::fs::metadata(&path.0).unwrap().modified().unwrap();
+    assert_eq!(actual, outside, "the filesystem must retain the out-of-range value");
+    assert!(Timestamp::try_from(actual).is_err());
+    assert_eq!(size(&mut g), 0.0);
+    assert_eq!(text(&mut g), "");
 
-    let (game_dir, _) = folders();
-    let path = game_dir.join("host-time.log");
-    let instant = |text: &str| std::time::SystemTime::try_from(text.parse::<jiff::Timestamp>().unwrap()).unwrap();
-    let file = std::fs::File::create(&path).unwrap();
-    file.set_times(std::fs::FileTimes::new()
-        .set_accessed(instant("2024-03-10T06:59:59.999Z"))
-        .set_modified(instant("2024-03-10T07:00:00Z"))).unwrap();
-    let metadata = file.metadata().unwrap();
-    let expected = match zone_name.as_str() {
-        "America/New_York" => [(1, 59, 59), (3, 0, 0)],
-        "Asia/Kathmandu" => [(12, 44, 59), (12, 45, 0)],
-        _ => panic!("unexpected child zone: {zone_name}"),
-    };
-    for (request, (hour, minute, second)) in [1, 2].into_iter().zip(expected) {
-        assert_eq!(n(&mut g, &format!("ar_Size (GetFileTime \"host-time.log\" {request})")), 6.0);
-        let fields: Vec<_> = (0..6).map(|i| n(&mut g, &format!("(GetFileTime \"host-time.log\" {request})[{i}]"))).collect();
-        assert_eq!(fields, [2024.0, 3.0, 10.0, f64::from(hour), f64::from(minute), f64::from(second)], "{zone_name} request {request}");
-        let day_first = format!("10/03/24 {hour:02}:{minute:02}");
-        let month_first = format!("03/10/24 {hour:02}:{minute:02}");
-        assert_eq!(s(&mut g, &format!("GetFileTimeSTR \"host-time.log\" {request}")), day_first);
-        assert_eq!(s(&mut g, &format!("GetFileTimeSTR \"host-time.log\" {request} 2")), day_first);
-        // Plugin int parameters refuse fractional literals. Expressions retain
-        // the fractional value and exercise the existing cast in the consumer.
-        assert_eq!(n(&mut g, &format!("{request} + 0.9")), f64::from(request) + 0.9);
-        assert_eq!(n(&mut g, "1 + 0.9"), 1.9);
-        assert_eq!(s(&mut g, &format!("GetFileTimeSTR \"host-time.log\" ({request} + 0.9) (1 + 0.9)")), month_first);
-    }
-    // Creation availability is filesystem-specific; retain its empty result.
-    let created = s(&mut g, "GetFileTimeSTR \"host-time.log\" 0");
-    match metadata.created() {
-        Ok(time) => {
-            let local = zone.to_datetime(jiff::Timestamp::try_from(time).unwrap());
-            assert_eq!(created, local.strftime("%d/%m/%y %H:%M").to_string());
-            assert_eq!(n(&mut g, "ar_Size (GetFileTime \"host-time.log\" 0)"), 6.0);
-        }
-        Err(_) => {
-            assert!(created.is_empty());
-            assert_eq!(n(&mut g, "ar_Size (GetFileTime \"host-time.log\" 0)"), 0.0);
-        }
-    }
-    assert_eq!(s(&mut g, "GetFileTimeSTR \"host-time.log\""), created);
-    for (path, request) in [("none.log", 2), ("../escape", 2), ("host-time.log", -1), ("host-time.log", 3)] {
-        assert_eq!(n(&mut g, &format!("ar_Size (GetFileTime \"{path}\" {request})")), 0.0);
-        assert_eq!(s(&mut g, &format!("GetFileTimeSTR \"{path}\" {request}")), "");
-    }
+    let ordinary: Timestamp = "2024-03-10T07:00:30Z".parse().unwrap();
+    file.set_modified(SystemTime::try_from(ordinary).unwrap()).unwrap();
+    assert_eq!(size(&mut g), 6.0, "the same admitted file has representable metadata");
+    assert!(!text(&mut g).is_empty());
 }
