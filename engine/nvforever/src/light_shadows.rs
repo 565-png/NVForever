@@ -86,7 +86,7 @@
 
 use bevy::camera::primitives::{Aabb, CubemapFrusta, Frustum, Sphere};
 use bevy::camera::visibility::{CubemapVisibleEntities, RenderLayers, VisibilitySystems, VisibleMeshEntities};
-use bevy::ecs::entity::EntityHashMap;
+use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::light::{CascadeShadowConfig, DirectionalLightShadowMap, NotShadowCaster, PointLightShadowMap, SimulationLightSystems};
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::pbr::HoldLightShadowMaps;
@@ -523,13 +523,104 @@ pub fn its_turn(frame: u64, phase: u64, every: u64) -> bool {
     (frame + phase).is_multiple_of(every.max(1))
 }
 
-/// Which of a point light's faces (or a spot light's map, bit 0) a sphere reaches.
-fn faces_reached(sphere: &Sphere, cube: Option<&CubemapFrusta>, spot: Option<&Frustum>) -> u8 {
+/// Which of a point light's faces (or a spot light's map, bit 0) a sphere reaches, leaving
+/// out (not testing) the faces in `skip`.
+fn faces_reached(sphere: &Sphere, cube: Option<&CubemapFrusta>, spot: Option<&Frustum>, skip: u8) -> u8 {
     if let Some(f) = spot {
-        return u8::from(f.intersects_sphere(sphere, true));
+        return u8::from(skip & 1 == 0 && f.intersects_sphere(sphere, true));
     }
-    let Some(cube) = cube else { return ALL_FACES };
-    cube.frusta.iter().enumerate().fold(0, |m, (i, f)| if f.intersects_sphere(sphere, true) { m | 1 << i } else { m })
+    let Some(cube) = cube else { return ALL_FACES & !skip };
+    cube.frusta.iter().enumerate().fold(0, |m, (i, f)| if skip & (1 << i) == 0 && f.intersects_sphere(sphere, true) { m | 1 << i } else { m })
+}
+
+/// Mark the faces of the `candidates` (indices into `lamps`, with `frusta` alongside) a
+/// caster's sphere reaches. Whether it reached any lamp's sphere, and whether it marked (or
+/// lies in) any face. A lamp that draws in full anyway (it never drew, or every face is
+/// marked) is not tested face by face, nor is a face already marked.
+fn mark_sphere(
+    sphere: &Sphere,
+    candidates: impl Iterator<Item = usize>,
+    lamps: &[Lamp],
+    frusta: &[(Option<CubemapFrusta>, Option<Frustum>)],
+    states: &mut EntityHashMap<LampState>,
+) -> (bool, bool) {
+    let (mut reached, mut marked) = (false, false);
+    for i in candidates {
+        let l = &lamps[i];
+        if !reaches(l.at, l.range, sphere) {
+            continue;
+        }
+        reached = true;
+        let Some(s) = states.get_mut(&l.entity) else { continue };
+        let (cube, spot) = (frusta[i].0.as_ref(), frusta[i].1.as_ref());
+        if l.spot {
+            // One map: its cone is tested.
+            let faces = faces_reached(sphere, cube, spot, 0);
+            marked |= faces != 0;
+            s.dirty |= faces;
+            continue;
+        }
+        // A sphere that reaches a point light's lies in one of its faces at least.
+        marked = true;
+        if !s.fresh && s.dirty & ALL_FACES != ALL_FACES {
+            s.dirty |= faces_reached(sphere, cube, spot, s.dirty & ALL_FACES);
+        }
+    }
+    (reached, marked)
+}
+
+/// The largest scale along a transform's axes (no decomposition into a rotation).
+fn max_scale(t: &GlobalTransform) -> f32 {
+    let m = t.affine().matrix3;
+    m.x_axis.length().max(m.y_axis.length()).max(m.z_axis.length())
+}
+
+/// Shapes looked up through a [`LampGrid`] once more than this many moved in a frame (fewer
+/// are tested against every lamp) [engineering choice: the grid costs about as much to
+/// build as a few dozen shapes tested against 34 lamps].
+pub const GRID_AFTER: usize = 32;
+
+/// A caster sphere up to this radius (game units) is looked up in one cell of a
+/// [`LampGrid`]; a larger one is tested against every lamp [engineering choice: nearly every
+/// shape is smaller, a building is not].
+pub const GRID_MARGIN: f32 = 512.0;
+
+/// A broad phase over the casting lights' spheres for marking: a grid whose cells are as
+/// large as the longest reach plus [`GRID_MARGIN`], each lamp listed in every cell its sphere
+/// grown by the margin overlaps (at most 27). A caster sphere within the margin reaches
+/// only lamps listed in the cell its centre lies in.
+pub struct LampGrid {
+    cell: f32,
+    cells: bevy::platform::collections::HashMap<IVec3, Vec<u16>>,
+    all: Vec<u16>,
+}
+
+impl LampGrid {
+    /// The grid of lamps (centre, range), indexed in the order given.
+    pub fn new(lamps: &[(Vec3, f32)]) -> Self {
+        let cell = lamps.iter().map(|l| l.1).fold(0.0, f32::max) + GRID_MARGIN;
+        let mut cells: bevy::platform::collections::HashMap<IVec3, Vec<u16>> = Default::default();
+        for (i, (at, range)) in lamps.iter().enumerate() {
+            let r = range + GRID_MARGIN;
+            let (lo, hi) = (((*at - r) / cell).floor().as_ivec3(), ((*at + r) / cell).floor().as_ivec3());
+            for x in lo.x..=hi.x {
+                for y in lo.y..=hi.y {
+                    for z in lo.z..=hi.z {
+                        cells.entry(IVec3::new(x, y, z)).or_default().push(i as u16);
+                    }
+                }
+            }
+        }
+        Self { cell, cells, all: (0..lamps.len() as u16).collect() }
+    }
+
+    /// The lamps a sphere at `centre` with `radius` may reach (a superset).
+    pub fn candidates(&self, centre: Vec3, radius: f32) -> &[u16] {
+        if radius > GRID_MARGIN {
+            return &self.all;
+        }
+        self.cells.get(&(centre / self.cell).floor().as_ivec3()).map_or(&[], |v| v.as_slice())
+    }
 }
 
 /// Whether the light's sphere at `light` with `range` and a caster's sphere meet.
@@ -691,7 +782,8 @@ fn shadow_lights(
     // 1. Which lights cast: the placed ones (with grass fires and attached lights) up to
     // their cap; apart from them, the transients the camera sees, up to theirs within a
     // shorter reach.
-    let (chosen, transients): (Vec<Entity>, Vec<Entity>) = match (tune, at) {
+    // Sets: every light in the world is looked up in them a few times a frame.
+    let (chosen, transients): (EntityHashSet, EntityHashSet) = match (tune, at) {
         (Some(t), Some(at)) if reach > 0.0 => {
             let mut placed: Vec<(Entity, (f32, f32))> = Vec::new();
             let mut quick: Vec<(Entity, (f32, f32))> = Vec::new();
@@ -719,9 +811,9 @@ fn shadow_lights(
             let transients = pick(&mut quick, transient_reach(reach), t.transients);
             let mut chosen = pick(&mut placed, reach, t.lights);
             chosen.extend_from_slice(&transients);
-            (chosen, transients)
+            (chosen.into_iter().collect(), transients.into_iter().collect())
         }
-        _ => (Vec::new(), Vec::new()),
+        _ => (EntityHashSet::default(), EntityHashSet::default()),
     };
     if tune.is_some() {
         let side = cube_side(directional.as_ref().map_or(2048, |d| d.size));
@@ -732,14 +824,14 @@ fn shadow_lights(
     // Their states and slots. A light no longer chosen is held, its slot kept and nothing
     // drawn, while its shadow fades out; then it loses them, as does a light despawned.
     let mut lamps: Vec<Lamp> = Vec::with_capacity(chosen.len());
-    let mut alive: Vec<Entity> = Vec::new();
+    let mut alive = EntityHashSet::default();
     for (e, t, _, seen, point, spot, ..) in &lights {
         if point.is_none() && spot.is_none() {
             continue;
         }
         if !chosen.contains(&e) {
             if state.lamps.contains_key(&e) {
-                alive.push(e);
+                alive.insert(e);
             }
             continue;
         }
@@ -839,30 +931,23 @@ fn shadow_lights(
         state.spot_slots.retain(|e, _| state.lamps.contains_key(e));
     }
 
-    // 2. What changed in their maps since last frame.
+    // 2. What changed in their maps since last frame. Nothing to mark without a lamp. Per
+    // shape the lamps are found through a grid once more than a few shapes moved
+    // ([`LampGrid`]), and a lamp that draws in full anyway (fresh or every face marked) and
+    // faces already marked are not tested again: a reference toggled or faded in town
+    // changes thousands of shapes in a frame.
     let layers = casting_layers();
-    {
-        let frusta: EntityHashMap<(Option<CubemapFrusta>, Option<Frustum>)> = lights
+    if !lamps.is_empty() {
+        let frusta: Vec<(Option<CubemapFrusta>, Option<Frustum>)> = lamps
             .iter()
-            .filter(|q| chosen.contains(&q.0))
-            .map(|(e, _, _, _, _, spot, _, cube, frustum, ..)|(e, (cube.cloned(), if spot.is_some() { frustum.copied() } else { None })))
+            .map(|l| match lights.get(l.entity) {
+                Ok((_, _, _, _, _, spot, _, cube, frustum, ..)) => (cube.cloned(), if spot.is_some() { frustum.copied() } else { None }),
+                Err(_) => (None, None),
+            })
             .collect();
-        // Marks the faces a sphere reaches; whether it reached any.
-        let mark = |sphere: Sphere, lamps_state: &mut EntityHashMap<LampState>| {
-            let mut any = false;
-            for l in &lamps {
-                if !reaches(l.at, l.range, &sphere) {
-                    continue;
-                }
-                let (cube, spot) = frusta.get(&l.entity).map_or((None, None), |f| (f.0.as_ref(), f.1.as_ref()));
-                if let Some(s) = lamps_state.get_mut(&l.entity) {
-                    let faces = faces_reached(&sphere, cube, spot);
-                    any |= faces != 0;
-                    s.dirty |= faces;
-                }
-            }
-            any
-        };
+        let spheres: Vec<(Vec3, f32)> = lamps.iter().map(|l| (l.at, l.range)).collect();
+        let mut grid: Option<LampGrid> = None;
+        let mut shapes_seen = 0usize;
         for (e, t, aabb, vis, rl, name, parent) in &moved {
             if rl.is_some_and(|l| !l.intersects(&layers)) {
                 continue;
@@ -873,9 +958,20 @@ fn shadow_lights(
             if !vis.is_changed() && !moved_enough {
                 continue;
             }
-            state.shapes_at.insert(e, (centre, frame));
-            let scale = t.compute_transform().scale.abs().max_element();
-            if mark(Sphere { center: centre.into(), radius: Vec3::from(aabb.half_extents).length() * scale }, &mut state.lamps) {
+            let sphere = Sphere { center: centre.into(), radius: Vec3::from(aabb.half_extents).length() * max_scale(t) };
+            shapes_seen += 1;
+            if shapes_seen > GRID_AFTER && grid.is_none() {
+                grid = Some(LampGrid::new(&spheres));
+            }
+            let (reached, marked) = match &grid {
+                Some(g) => mark_sphere(&sphere, g.candidates(centre, sphere.radius).iter().map(|&i| i as usize), &lamps, &frusta, &mut state.lamps),
+                None => mark_sphere(&sphere, 0..lamps.len(), &lamps, &frusta, &mut state.lamps),
+            };
+            // Where it was is kept only for shapes near a lamp.
+            if reached {
+                state.shapes_at.insert(e, (centre, frame));
+            }
+            if marked {
                 state.causes[0] += 1;
                 if state.names.len() < 6 {
                     let parent = parent.and_then(|c| names.get(c.parent()).ok());
@@ -912,7 +1008,8 @@ fn shadow_lights(
             }
             state.skeletons_at.insert(e, (lo, hi, frame));
             // The joints' box, grown by a limb's thickness [engineering choice].
-            if mark(Sphere { center: ((lo + hi) * 0.5).into(), radius: (hi - lo).length() * 0.5 + 16.0 }, &mut state.lamps) {
+            let sphere = Sphere { center: ((lo + hi) * 0.5).into(), radius: (hi - lo).length() * 0.5 + 16.0 };
+            if mark_sphere(&sphere, 0..lamps.len(), &lamps, &frusta, &mut state.lamps).1 {
                 state.causes[1] += 1;
             }
         }
@@ -1124,18 +1221,30 @@ fn shadow_lights(
     }
 }
 
-type CasterLists<'a> = (Entity, &'a GlobalTransform, Option<&'a mut CubemapVisibleEntities>, Option<&'a mut VisibleMeshEntities>);
+type CasterLists<'a> = (
+    Entity,
+    &'a GlobalTransform,
+    Option<&'a mut CubemapVisibleEntities>,
+    Option<&'a mut VisibleMeshEntities>,
+    Option<&'a PointLight>,
+    Option<&'a SpotLight>,
+);
 
 type Shapes<'a> = (&'a GlobalTransform, &'a Aabb, Has<LightFixture>, Option<&'a nvf_play::RefVisual>);
 
 /// Take the light fixtures out of the shapes Bevy found for each casting light's maps this
 /// frame: every shape marked [`LightFixture`], and a small shape the light sits in or
 /// against ([`FIXTURE_MARGIN`], [`FIXTURE_RADIUS`]). Runs after Bevy's culling of the
-/// lights' maps; only the lights drawing this frame have shapes listed.
+/// lights' maps. Only the lights drawing this frame (maps switched on) are filtered: the
+/// others' lists are last draw's, which no one reads, and touching them marked them changed,
+/// so Bevy extracted every casting light again every frame.
 fn skip_fixtures(mut lights: Query<CasterLists, With<CastingLight>>, shapes: Query<Shapes>, mut logged: Local<bevy::ecs::entity::EntityHashSet>) {
     let _timed = Timed::start(1);
     let log = log_fixtures();
-    for (light, t, cube, spot) in &mut lights {
+    for (light, t, cube, spot, point_light, spot_light) in &mut lights {
+        if !point_light.is_some_and(|p| p.shadow_maps_enabled) && !spot_light.is_some_and(|s| s.shadow_maps_enabled) {
+            continue;
+        }
         let at = t.translation();
         let mut lists: Vec<&mut Vec<Entity>> = Vec::with_capacity(6);
         if let Some(cube) = cube {
@@ -1371,7 +1480,76 @@ mod tests {
         assert!(reaches(light, 400.0, &sphere(Vec3::new(450.0, 0.0, 0.0), 60.0)));
         assert!(!reaches(light, 400.0, &sphere(Vec3::new(500.0, 0.0, 0.0), 60.0)));
         // Without frusta (a light that never drew) every face counts.
-        assert_eq!(faces_reached(&sphere(Vec3::X * 100.0, 10.0), None, None), ALL_FACES);
+        assert_eq!(faces_reached(&sphere(Vec3::X * 100.0, 10.0), None, None, 0), ALL_FACES);
+        assert_eq!(faces_reached(&sphere(Vec3::X * 100.0, 10.0), None, None, 0b11), ALL_FACES & !0b11, "faces skipped are not tested");
+    }
+
+    #[test]
+    fn the_lamp_grid_finds_every_lamp_a_small_sphere_reaches() {
+        let lamps = [(Vec3::ZERO, 400.0), (Vec3::new(5000.0, 0.0, 0.0), 800.0), (Vec3::new(-3000.0, 200.0, 2500.0), 300.0), (Vec3::new(900.0, 0.0, 0.0), 600.0)];
+        let grid = LampGrid::new(&lamps);
+        // Against the plain test over a lattice of spheres around them: never one missed.
+        let mut checked = 0;
+        for x in (-4000..=6500).step_by(250) {
+            for z in (-1000..=3500).step_by(250) {
+                for r in [1.0, 60.0, GRID_MARGIN] {
+                    let c = Vec3::new(x as f32, 100.0, z as f32);
+                    let s = Sphere { center: c.into(), radius: r };
+                    let cands = grid.candidates(c, r);
+                    for (i, (at, range)) in lamps.iter().enumerate() {
+                        if reaches(*at, *range, &s) {
+                            assert!(cands.contains(&(i as u16)), "lamp {i} missed at {c} r {r}");
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 100, "{checked} reaches checked");
+        // Far from every lamp: none; a sphere larger than the margin: all.
+        assert!(grid.candidates(Vec3::new(20000.0, 0.0, 0.0), 10.0).is_empty());
+        assert_eq!(grid.candidates(Vec3::ZERO, GRID_MARGIN + 1.0).len(), lamps.len());
+        assert!(LampGrid::new(&[]).candidates(Vec3::ZERO, 1.0).is_empty(), "no lamps");
+    }
+
+    #[test]
+    fn a_shape_marks_the_faces_it_reaches_and_a_lamp_drawing_in_full_is_left_alone() {
+        let e = |n: u32| Entity::from_raw_u32(n).unwrap();
+        let lamp = |n: u32, at: Vec3| Lamp { entity: e(n), at, range: 500.0, spot: false, seen: true, gap: 0.0, transient: false };
+        let state = |fresh: bool, dirty: u8| LampState {
+            dirty,
+            fresh,
+            refreshed: 0,
+            phase: 0,
+            at: Vec3::ZERO,
+            transient: false,
+            spot: false,
+            fade: 1.0,
+            leaving: false,
+        };
+        let lamps = vec![lamp(1, Vec3::ZERO), lamp(2, Vec3::new(2000.0, 0.0, 0.0))];
+        let frusta = vec![(None, None), (None, None)];
+        let mut states: EntityHashMap<LampState> = EntityHashMap::default();
+        states.insert(e(1), state(false, 0b1));
+        states.insert(e(2), state(false, 0));
+        let near = Sphere { center: Vec3::new(300.0, 0.0, 0.0).into(), radius: 20.0 };
+        assert_eq!(mark_sphere(&near, 0..2, &lamps, &frusta, &mut states), (true, true));
+        assert_eq!(states[&e(1)].dirty, ALL_FACES, "without frusta every face");
+        assert_eq!(states[&e(2)].dirty, 0, "the far lamp is not reached");
+        let far = Sphere { center: Vec3::new(9000.0, 0.0, 0.0).into(), radius: 20.0 };
+        assert_eq!(mark_sphere(&far, 0..2, &lamps, &frusta, &mut states), (false, false));
+        // A fresh lamp draws in full anyway: reached, nothing added.
+        states.insert(e(2), state(true, 0));
+        let by_two = Sphere { center: Vec3::new(2100.0, 0.0, 0.0).into(), radius: 20.0 };
+        assert_eq!(mark_sphere(&by_two, [1].into_iter(), &lamps, &frusta, &mut states), (true, true));
+        assert_eq!(states[&e(2)].dirty, 0);
+    }
+
+    #[test]
+    fn the_largest_scale_is_read_off_the_axes() {
+        let t = GlobalTransform::from(Transform::from_scale(Vec3::new(1.0, 3.0, 2.0)).with_rotation(Quat::from_rotation_y(0.7)));
+        assert!((max_scale(&t) - 3.0).abs() < 1e-5);
+        assert!((max_scale(&GlobalTransform::IDENTITY) - 1.0).abs() < 1e-6);
     }
 
     #[test]
