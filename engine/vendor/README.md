@@ -220,6 +220,40 @@ Without the resource nothing changes. Measured before it (2026-11-18, RTX 5090, 
 the Prospector Saloon): every shadowed point light cost about 1 ms of frame time, six
 Core3d schedule runs a frame.
 
+Two more for the lamp shadows' performance pass (2026-11-18, docs/design/graphics-enhanced.md
+§3.15 "Performance pass"):
+
+- **Hidden light views** (`NVForever hidden light views`, `src/render/light.rs`
+  `extract_lights`): a point or spot light that is hidden (its `ViewVisibility` false)
+  loses its `PointAndSpotLightViewEntities` together with its `ExtractedPointLight`, so the
+  observer `remove_point_and_spot_light_view_entities` despawns its shadow views. Upstream
+  removed only `ExtractedPointLight`; `prepare_lights`, the only place that despawns the
+  views of a light no longer shadowed, never saw that light again, and its six (or one)
+  views stayed alive and ran the whole Core3d schedule every frame while it was hidden
+  [documented: bevyengine/bevy#26059; the fix is bevyengine/bevy#26480, the same two lines,
+  still open (not merged) on 2026-11-18, which measured 16 point and 16 spot lights hidden
+  at 7.6 ms before and 1.2 ms after]. The game's lamps switch their maps on for a frame and
+  off again, so a lamp hidden by a turn of the camera in the frame after its maps were drawn
+  left its views running until it was seen again [hypothesis, from the code; the summary's
+  `despawned with their light hidden` count shows how often it happens]. Its regression
+  tests are not ported (the engine workspace does not run the vendored crates' tests). Drop
+  this with the first Bevy release that has #26480.
+- **Light view counts** (`NVForever light view counts`, `src/render/light.rs` and
+  `src/lib.rs`): `nvf_count_light_views` (render world, `RenderSystems::Prepare`, after
+  `prepare_lights`) counts the point and spot light shadow views alive and those with a
+  `RootNonCameraView` (those that run the Core3d schedule); `extract_lights` counts the
+  views a hidden light takes with it. `extract_lights` and `prepare_lights` are timed
+  (`std::time::Instant`, summed and longest a frame): `prepare_lights` whole and in its
+  consecutive stretches (`NVF_SECTIONS`: the light uniforms' writer, counts and slots, the
+  shadow textures and their views, the lights' GPU data, the point lights' views, the spot
+  lights' views, the cameras' cascades, the closing sweep of phases and caches), and its
+  events counted (`NVF_EVENTS`: views spawned, despawned and made again, shadow phases made
+  and dropped, point and directional shadow textures that were not the last frame's). The
+  counts are summed in atomics and read and reset by `nvf_take_light_view_counts()` (the
+  game's 10-s lamp shadow summary, `light shadows: renderer over …`). Bevy reads none of it;
+  the cost is a few clock reads and relaxed atomic adds a frame. Drop it once the counts
+  are not wanted.
+
 Gated materials (#2661, docs/design/graphics-enhanced.md §3.14 "Off"), in `src/material.rs`,
 each part marked `NVForever gated materials`: `MaterialPlugin::gated(MaterialGate)` (a new
 `gate` field, `None` by default). With a gate, the material type's own systems run only

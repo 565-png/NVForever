@@ -442,6 +442,67 @@ pub fn light_moved(drawn_at: Vec3, now: Vec3) -> bool {
     drawn_at.distance_squared(now) > LIGHT_MOVE_EPS * LIGHT_MOVE_EPS
 }
 
+/// The renderer's side of the 10-s summary, from the patched bevy_pbr's counts over its
+/// frames since the last one (engine/vendor/README.md "light view counts"): the point and
+/// spot light shadow views alive and run a frame (the flashlight's spot view among them),
+/// those a hidden light took with it, what `prepare_lights` did, and the wall time of
+/// `extract_lights`, `prepare_lights` and its stretches, mean and longest a frame.
+pub fn renderer_summary(c: &bevy::pbr::NvfLightViewCounts) -> String {
+    let frames = c.frames.max(1) as f64;
+    let ms = |ns: u64| ns as f64 / 1.0e6;
+    let events: Vec<String> = bevy::pbr::NVF_EVENTS.iter().zip(c.events).map(|(name, n)| format!("{name} {n}")).collect();
+    let times: Vec<String> =
+        bevy::pbr::NVF_SECTIONS.iter().enumerate().map(|(i, name)| format!("{name} {:.3}/{:.2}", ms(c.ns[i]) / frames, ms(c.max_ns[i]))).collect();
+    format!(
+        "light shadows: renderer over {} frames: light views a frame {:.2} alive, {:.2} run, {} despawned with their light hidden; {}; ms a frame mean/max: {}",
+        c.frames,
+        c.views as f64 / frames,
+        c.run as f64 / frames,
+        c.hidden,
+        events.join(", "),
+        times.join(", ")
+    )
+}
+
+/// The lamp shadows' own systems whose wall time the 10-s summary gives (a measuring aid),
+/// in the order of [`Timed`]'s index.
+pub const SYSTEMS: [&str; 4] = ["shadow_lights", "skip_fixtures", "soften", "contact"];
+
+static SYSTEM_NS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
+static SYSTEM_MAX_NS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
+
+/// Times a run of one of [`SYSTEMS`] (by index) until it is dropped.
+pub struct Timed(usize, std::time::Instant);
+
+impl Timed {
+    pub fn start(system: usize) -> Self {
+        Self(system, std::time::Instant::now())
+    }
+}
+
+impl Drop for Timed {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let ns = self.1.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+        SYSTEM_NS[self.0].fetch_add(ns, Relaxed);
+        SYSTEM_MAX_NS[self.0].fetch_max(ns, Relaxed);
+    }
+}
+
+/// The [`SYSTEMS`]' times since the last call (summed, longest; nanoseconds), and start
+/// timing anew.
+fn take_system_times() -> ([u64; 4], [u64; 4]) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (std::array::from_fn(|i| SYSTEM_NS[i].swap(0, Relaxed)), std::array::from_fn(|i| SYSTEM_MAX_NS[i].swap(0, Relaxed)))
+}
+
+/// The [`SYSTEMS`]' times over `frames` game frames, mean and longest a frame (ms).
+pub fn systems_summary(ns: &[u64; 4], max: &[u64; 4], frames: u64) -> String {
+    let frames = frames.max(1) as f64;
+    let parts: Vec<String> = SYSTEMS.iter().enumerate().map(|(i, name)| format!("{name} {:.3}/{:.2}", ns[i] as f64 / 1.0e6 / frames, max[i] as f64 / 1.0e6)).collect();
+    format!("game systems ms a frame mean/max: {}", parts.join(", "))
+}
+
 /// The lowest slot not in `used`.
 pub fn free_slot(used: impl Iterator<Item = u32>) -> u32 {
     let mut taken: Vec<u32> = used.collect();
@@ -619,6 +680,7 @@ fn shadow_lights(
     mut removed: RemovedComponents<Mesh3d>,
     mut logged: Local<Option<(usize, usize, usize)>>,
 ) {
+    let _timed = Timed::start(0);
     let tune = tuning(settings.choice).map(|t| Tuning { refresh: refresh_override().unwrap_or(t.refresh), ..t });
     let reach = sky.as_ref().map_or(0.0, |s| s.shadow_distance * s.shadow_reach.max(1.0));
     let (at, view) = camera.iter().next().map_or((None, None), |(c, f)| (Some(c.translation()), f));
@@ -1023,8 +1085,13 @@ fn shadow_lights(
             ),
         }
     }
-    // A summary of what was drawn, every 10 s of real time.
-    if tune.is_some() {
+    // A summary of what was drawn, every 10 s of real time. With the mode off, the renderer's
+    // counts and the systems' times are dropped, so the first summary after it is switched on
+    // counts only its own frames.
+    if tune.is_none() {
+        bevy::pbr::nvf_take_light_view_counts();
+        take_system_times();
+    } else {
         state.frames += 1;
         state.since += time.delta_secs();
         if state.since >= 10.0 {
@@ -1044,6 +1111,8 @@ fn shadow_lights(
                 state.transients_switched,
                 state.transients_drawn
             );
+            let (ns, max) = take_system_times();
+            info!("{}; {}", renderer_summary(&bevy::pbr::nvf_take_light_view_counts()), systems_summary(&ns, &max, state.frames));
             (state.switched, state.drawn, state.frames, state.since, state.causes) = (0, 0, 0, 0.0, [0; 4]);
             (state.transients_cast, state.transients_switched, state.transients_drawn) = (0, 0, 0);
             state.names.clear();
@@ -1064,6 +1133,7 @@ type Shapes<'a> = (&'a GlobalTransform, &'a Aabb, Has<LightFixture>, Option<&'a 
 /// against ([`FIXTURE_MARGIN`], [`FIXTURE_RADIUS`]). Runs after Bevy's culling of the
 /// lights' maps; only the lights drawing this frame have shapes listed.
 fn skip_fixtures(mut lights: Query<CasterLists, With<CastingLight>>, shapes: Query<Shapes>, mut logged: Local<bevy::ecs::entity::EntityHashSet>) {
+    let _timed = Timed::start(1);
     let log = log_fixtures();
     for (light, t, cube, spot) in &mut lights {
         let at = t.translation();
@@ -1189,6 +1259,23 @@ mod tests {
         let path: Vec<Vec3> = (1..=5).map(|i| drawn + Vec3::X * 3.0 * i as f32).collect();
         let first = path.iter().position(|p| light_moved(drawn, *p));
         assert_eq!(first, Some(2), "9 units after three steps of 3");
+    }
+
+    #[test]
+    fn the_renderer_summary_gives_views_events_and_times_a_frame() {
+        let mut c = bevy::pbr::NvfLightViewCounts { frames: 4, views: 30, run: 10, hidden: 6, ..default() };
+        c.ns[1] = 8_000_000; // prepare_lights: 2 ms a frame
+        c.max_ns[1] = 5_000_000;
+        c.events[0] = 12;
+        let s = renderer_summary(&c);
+        assert!(s.starts_with("light shadows: renderer over 4 frames: light views a frame 7.50 alive, 2.50 run, 6 despawned with their light hidden;"), "{s}");
+        assert!(s.contains("views spawned 12, views despawned 0"), "{s}");
+        assert!(s.contains("extract_lights 0.000/0.00, prepare_lights 2.000/5.00, uniform writer"), "{s}");
+        // No frames counted (nothing rendered since): no division by zero.
+        assert!(renderer_summary(&default()).contains("over 0 frames: light views a frame 0.00 alive"));
+        // The game's own systems, mean over the game frames and the longest.
+        let s = systems_summary(&[3_000_000, 0, 0, 0], &[2_500_000, 0, 0, 0], 3);
+        assert_eq!(s, "game systems ms a frame mean/max: shadow_lights 1.000/2.50, skip_fixtures 0.000/0.00, soften 0.000/0.00, contact 0.000/0.00");
     }
 
     #[test]

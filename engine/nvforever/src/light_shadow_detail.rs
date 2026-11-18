@@ -114,6 +114,7 @@ type Cameras<'a> = (Entity, &'a GlobalTransform, Has<ContactShadows>, Has<Tempor
 /// Soft edges on the casting lights on Quality, and on those whose held maps still fade out
 /// (a slot kept, `HoldLightShadowMaps`); off otherwise, each light's own radius given back.
 fn soften(settings: Res<LightShadows>, hold: Res<HoldLightShadowMaps>, mut lights: Query<Lit, Lamps>, mut was: Local<EntityHashMap<f32>>) {
+    let _timed = crate::light_shadows::Timed::start(2);
     let on = detailed(settings.choice);
     for (e, point, spot, casting, source) in &mut lights {
         let size = soft_aid().unwrap_or_else(|| soft_radius(source.map(|s| s.0)));
@@ -160,6 +161,7 @@ fn contact(
     mut lights: Query<Contacted, Lamps>,
     mut logged: Local<Option<(bool, usize)>>,
 ) {
+    let _timed = crate::light_shadows::Timed::start(3);
     let mut on = false;
     let mut at = None;
     for (e, t, has, temporal) in &cameras {

@@ -454,7 +454,11 @@ pub fn extract_lights(
     mut all_lights_found: Local<EntityHashSet>,
     mut rect_light_missing_luts_warning_emitted: Local<bool>,
     system_change_tick: SystemChangeTick,
+    // NVForever hidden light views: the views a hidden light takes with it, counted.
+    nvf_light_views: Query<&PointAndSpotLightViewEntities>,
 ) {
+    // NVForever light view counts: the system's time.
+    let nvf_start = std::time::Instant::now();
     let mapper = &visibility_extraction_system_param.mapper;
 
     // NOTE: These shadow map resources are extracted here as they are used here too so this avoids
@@ -491,7 +495,14 @@ pub fn extract_lights(
     {
         if !view_visibility.get() {
             if let Ok(mut entity_commands) = commands.get_entity(render_entity) {
-                entity_commands.remove::<ExtractedPointLight>();
+                // NVForever hidden light views (bevyengine/bevy#26059, the fix of the open
+                // bevyengine/bevy#26480): its shadow views go with the light, through the
+                // observer `remove_point_and_spot_light_view_entities`. Upstream removed only
+                // `ExtractedPointLight`, so `prepare_lights`, which despawns the views of a
+                // light no longer shadowed, never saw the light again and its views kept
+                // running the Core3d schedule every frame while it was hidden.
+                nvf_count_hidden_views(&nvf_light_views, render_entity);
+                entity_commands.remove::<(ExtractedPointLight, PointAndSpotLightViewEntities)>();
             }
             continue;
         }
@@ -623,7 +634,9 @@ pub fn extract_lights(
     {
         if !view_visibility.get() {
             if let Ok(mut entity_commands) = commands.get_entity(render_entity) {
-                entity_commands.remove::<ExtractedPointLight>();
+                // NVForever hidden light views: as for the point lights above.
+                nvf_count_hidden_views(&nvf_light_views, render_entity);
+                entity_commands.remove::<(ExtractedPointLight, PointAndSpotLightViewEntities)>();
             }
             continue;
         }
@@ -959,6 +972,8 @@ pub fn extract_lights(
             RenderShadowMapVisibleEntities,
         )>();
     }
+    // NVForever light view counts.
+    nvf_time(NVF_EXTRACT, nvf_start.elapsed());
 }
 
 #[derive(Component, Default, Deref, DerefMut)]
@@ -1136,7 +1151,7 @@ pub fn prepare_lights(
     ),
     // NVForever held shadow maps: the hold, and the directional shadow texture of the last
     // frame (see where the texture is taken below).
-    (mut hold_directional, mut last_directional_texture, nvf_outdoor_sun, hold_lights, mut nvf_light_record): (
+    (mut hold_directional, mut last_directional_texture, nvf_outdoor_sun, hold_lights, mut nvf_light_record, mut nvf_last_point_texture): (
         Option<ResMut<HoldDirectionalShadowMaps>>,
         Local<Option<TextureId>>,
         // NVForever sun visibility: the light marked as the outdoor sun.
@@ -1145,8 +1160,13 @@ pub fn prepare_lights(
         // last drawn with.
         Option<Res<HoldLightShadowMaps>>,
         Local<NvfLightShadowRecord>,
+        // NVForever light view counts: the point shadow texture of the last frame.
+        Local<Option<TextureId>>,
     ),
 ) {
+    // NVForever light view counts: the system's time and its stretches.
+    let nvf_start = std::time::Instant::now();
+    let mut nvf_lap = NvfLap::start();
     let views_iter = views.iter();
     let views_count = views_iter.len();
     let Some(mut view_gpu_lights_writer) =
@@ -1156,6 +1176,8 @@ pub fn prepare_lights(
     else {
         return;
     };
+    // NVForever light view counts: the light uniforms' writer (a staging buffer).
+    nvf_lap.lap(NVF_WRITER);
 
     // Pre-calculate for PointLights
     let cube_face_rotations = CUBE_MAP_FACES
@@ -1393,6 +1415,8 @@ pub fn prepare_lights(
             .max(hold.spot_capacity as usize)
             .max(spot_light_shadow_maps_count);
     }
+    // NVForever light view counts.
+    nvf_lap.lap(NVF_SLOTS);
 
     // NVForever held light shadow maps: the cascade count and the directional shadow texture
     // are taken before the lights' GPU data (moved up from below), as a spot light's layer
@@ -1464,6 +1488,8 @@ pub fn prepare_lights(
     // world gave the held ones, which are then what the following frames hold.
     let directional_texture_id = directional_light_depth_texture.texture.id();
     if *last_directional_texture != Some(directional_texture_id) {
+        // NVForever light view counts.
+        nvf_event(NVF_NEW_DIRECTIONAL_TEXTURE, u64::from(last_directional_texture.is_some()));
         if let Some(hold) = hold_directional.as_deref_mut() {
             if last_directional_texture.is_some() {
                 bevy_log::info!(
@@ -1507,6 +1533,12 @@ pub fn prepare_lights(
     );
 
     let nvf_point_texture_id = point_light_depth_texture.texture.id();
+    // NVForever light view counts.
+    if *nvf_last_point_texture != Some(nvf_point_texture_id) {
+        nvf_event(NVF_NEW_POINT_TEXTURE, u64::from(nvf_last_point_texture.is_some()));
+        *nvf_last_point_texture = Some(nvf_point_texture_id);
+    }
+    nvf_lap.lap(NVF_TEXTURES);
 
     for (index, entity) in point_light_entities.iter().enumerate() {
         let light = point_lights.get(*entity).unwrap().2;
@@ -1702,6 +1734,8 @@ pub fn prepare_lights(
     global_clusterable_object_meta
         .gpu_clustered_lights
         .write_buffer(&render_device, &render_queue);
+    // NVForever light view counts.
+    nvf_lap.lap(NVF_GPU_LIGHTS);
 
     live_shadow_mapping_lights.clear();
 
@@ -1764,6 +1798,8 @@ pub fn prepare_lights(
                 array_layer_count: None,
             });
 
+    // NVForever light view counts: the two texture views made above.
+    nvf_lap.lap(NVF_TEXTURES);
     let mut live_views = EntityHashSet::with_capacity(views_count);
 
     // TODO: this should select lights based on relevance to the view instead of the first ones that show up in a query
@@ -1782,6 +1818,8 @@ pub fn prepare_lights(
         ) = point_lights.get_mut(*light_entity).unwrap();
 
         if !light.shadow_maps_enabled {
+            // NVForever light view counts.
+            nvf_event(NVF_DESPAWNED, point_and_spot_light_view_entities.0.len() as u64);
             despawn_entities(
                 &mut commands,
                 mem::take(&mut point_and_spot_light_view_entities.0),
@@ -1798,6 +1836,22 @@ pub fn prepare_lights(
         );
         let nvf_views_stale = hold_lights.is_some()
             && nvf_light_record.views.insert(*light_entity, nvf_view_key) != Some(nvf_view_key);
+
+        // NVForever light view counts.
+        if point_and_spot_light_view_entities.0.is_empty() {
+            nvf_event(NVF_SPAWNED, 6);
+        } else if nvf_views_stale || changed_point_lights.get(*light_entity).is_ok() {
+            nvf_event(NVF_REMADE, 6);
+        }
+        nvf_event(
+            NVF_PHASES_NEW,
+            (0..6)
+                .filter(|face| {
+                    !shadow_render_phases
+                        .contains_key(&RetainedViewEntity::new(*light_main_entity, None, *face))
+                })
+                .count() as u64,
+        );
 
         if point_and_spot_light_view_entities.0.is_empty() {
             // For each face of a cube we spawn a light entity
@@ -1873,6 +1927,8 @@ pub fn prepare_lights(
             live_shadow_mapping_lights.insert(retained_view_entity);
         }
     }
+    // NVForever light view counts.
+    nvf_lap.lap(NVF_POINT_VIEWS);
 
     // spot lights
     for (light_index, light_entity) in point_light_entities
@@ -1891,6 +1947,8 @@ pub fn prepare_lights(
         ) = point_lights.get_mut(*light_entity).unwrap();
 
         if !light.shadow_maps_enabled {
+            // NVForever light view counts.
+            nvf_event(NVF_DESPAWNED, point_and_spot_light_view_entities.0.len() as u64);
             despawn_entities(
                 &mut commands,
                 mem::take(&mut point_and_spot_light_view_entities.0),
@@ -1904,6 +1962,8 @@ pub fn prepare_lights(
         // past the cascades; a layer the texture has no room for draws nothing.
         let light_index = nvf_spot_of.get(light_entity).copied().unwrap_or(light_index);
         if num_directional_cascades_enabled + light_index >= nvf_directional_layers {
+            // NVForever light view counts.
+            nvf_event(NVF_DESPAWNED, point_and_spot_light_view_entities.0.len() as u64);
             despawn_entities(
                 &mut commands,
                 mem::take(&mut point_and_spot_light_view_entities.0),
@@ -1920,6 +1980,14 @@ pub fn prepare_lights(
         let nvf_view_key = (num_directional_cascades_enabled + light_index, directional_texture_id);
         let nvf_views_stale = hold_lights.is_some()
             && nvf_light_record.views.insert(*light_entity, nvf_view_key) != Some(nvf_view_key);
+
+        // NVForever light view counts.
+        if point_and_spot_light_view_entities.0.is_empty() {
+            nvf_event(NVF_SPAWNED, 1);
+        } else if nvf_views_stale || changed_point_lights.get(*light_entity).is_ok() {
+            nvf_event(NVF_REMADE, 1);
+        }
+        nvf_event(NVF_PHASES_NEW, u64::from(!shadow_render_phases.contains_key(&retained_view_entity)));
 
         if point_and_spot_light_view_entities.0.is_empty() {
             let view_light_entity = commands.spawn_empty().id();
@@ -1972,6 +2040,8 @@ pub fn prepare_lights(
         );
         live_shadow_mapping_lights.insert(retained_view_entity);
     }
+    // NVForever light view counts.
+    nvf_lap.lap(NVF_SPOT_VIEWS);
 
     // set up light data for each view
     for (
@@ -2368,6 +2438,9 @@ pub fn prepare_lights(
         ));
     }
 
+    // NVForever light view counts.
+    nvf_lap.lap(NVF_CAMERAS);
+
     // Mark the existing shadow maps as unused this frame so that the first
     // drawcall to them will clear them.
     for existing_shadow_view in &existing_shadow_views {
@@ -2385,10 +2458,16 @@ pub fn prepare_lights(
         }
     }
 
+    // NVForever light view counts: the phases dropped.
+    let nvf_phases = shadow_render_phases.len();
     shadow_render_phases.retain(|entity, _| live_shadow_mapping_lights.contains(entity));
+    nvf_event(NVF_PHASES_DROPPED, (nvf_phases - shadow_render_phases.len()) as u64);
     light_key_cache.retain(|entity, _| live_shadow_mapping_lights.contains(entity));
     specialized_shadow_material_pipeline_cache
         .retain(|entity, _| live_shadow_mapping_lights.contains(entity));
+    // NVForever light view counts.
+    nvf_lap.lap(NVF_SWEEP);
+    nvf_time(NVF_PREPARE, nvf_start.elapsed());
 }
 
 /// Creates six point shadow maps for a `RetainedViewEntity` identified by the `light_main_entity`
@@ -3297,6 +3376,151 @@ impl bevy_render::extract_resource::ExtractResource<RenderApp> for HoldLightShad
     fn extract_resource(source: &Self::Source) -> Self {
         source.clone()
     }
+}
+
+/// NVForever light view counts (2026-11-18, engine/vendor/README.md): what the point and
+/// spot lights' shadow views and `extract_lights` / `prepare_lights` cost, summed over the
+/// render frames since the last [`nvf_take_light_view_counts`], for the game's lamp shadow
+/// summary (nvforever light_shadows.rs). Bevy reads none of it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NvfLightViewCounts {
+    /// Render frames counted.
+    pub frames: u64,
+    /// Point and spot light shadow views alive (a point light's six faces, a spot light's
+    /// one), summed over the frames.
+    pub views: u64,
+    /// Those of them that ran the Core3d schedule (a `RootNonCameraView`; a held face has
+    /// none), summed over the frames.
+    pub run: u64,
+    /// Views despawned with their light because it was hidden (bevyengine/bevy#26059: before
+    /// the fix they stayed alive and ran every frame).
+    pub hidden: u64,
+    /// Wall time of each of [`NVF_SECTIONS`], nanoseconds: summed over the frames, and the
+    /// longest in one frame.
+    pub ns: [u64; NVF_SECTION_COUNT],
+    pub max_ns: [u64; NVF_SECTION_COUNT],
+    /// Each of [`NVF_EVENTS`], counted over the frames.
+    pub events: [u64; NVF_EVENT_COUNT],
+}
+
+/// NVForever light view counts: the parts of `extract_lights` and `prepare_lights` timed, in
+/// the order of [`NvfLightViewCounts::ns`]. `prepare_lights` is the whole system; the parts
+/// after it are its consecutive stretches (they add up to it).
+pub const NVF_SECTIONS: [&str; NVF_SECTION_COUNT] = [
+    "extract_lights",
+    "prepare_lights",
+    "uniform writer",
+    "counts and slots",
+    "textures",
+    "gpu lights",
+    "point views",
+    "spot views",
+    "cameras",
+    "sweep",
+];
+pub const NVF_SECTION_COUNT: usize = 10;
+const NVF_EXTRACT: usize = 0;
+const NVF_PREPARE: usize = 1;
+const NVF_WRITER: usize = 2;
+const NVF_SLOTS: usize = 3;
+const NVF_TEXTURES: usize = 4;
+const NVF_GPU_LIGHTS: usize = 5;
+const NVF_POINT_VIEWS: usize = 6;
+const NVF_SPOT_VIEWS: usize = 7;
+const NVF_CAMERAS: usize = 8;
+const NVF_SWEEP: usize = 9;
+
+/// NVForever light view counts: what `prepare_lights` did, in the order of
+/// [`NvfLightViewCounts::events`]: point and spot shadow views spawned, views despawned
+/// because their light's maps were switched off (or had no room), a light's existing views
+/// made again (its light, slot or texture changed), shadow phases made anew and dropped, and
+/// the point and directional shadow textures that were not last frame's.
+pub const NVF_EVENTS: [&str; NVF_EVENT_COUNT] =
+    ["views spawned", "views despawned", "views remade", "phases new", "phases dropped", "new point textures", "new directional textures"];
+pub const NVF_EVENT_COUNT: usize = 7;
+const NVF_SPAWNED: usize = 0;
+const NVF_DESPAWNED: usize = 1;
+const NVF_REMADE: usize = 2;
+const NVF_PHASES_NEW: usize = 3;
+const NVF_PHASES_DROPPED: usize = 4;
+const NVF_NEW_POINT_TEXTURE: usize = 5;
+const NVF_NEW_DIRECTIONAL_TEXTURE: usize = 6;
+
+type NvfAtomic = core::sync::atomic::AtomicU64;
+static NVF_LIGHT_VIEW_FRAMES: NvfAtomic = NvfAtomic::new(0);
+static NVF_LIGHT_VIEWS: NvfAtomic = NvfAtomic::new(0);
+static NVF_LIGHT_VIEWS_RUN: NvfAtomic = NvfAtomic::new(0);
+static NVF_LIGHT_VIEWS_HIDDEN: NvfAtomic = NvfAtomic::new(0);
+static NVF_NS: [NvfAtomic; NVF_SECTION_COUNT] = [const { NvfAtomic::new(0) }; NVF_SECTION_COUNT];
+static NVF_MAX_NS: [NvfAtomic; NVF_SECTION_COUNT] = [const { NvfAtomic::new(0) }; NVF_SECTION_COUNT];
+static NVF_EVENT: [NvfAtomic; NVF_EVENT_COUNT] = [const { NvfAtomic::new(0) }; NVF_EVENT_COUNT];
+
+/// NVForever light view counts: the counts since the last call, and start counting anew.
+pub fn nvf_take_light_view_counts() -> NvfLightViewCounts {
+    use core::sync::atomic::Ordering::Relaxed;
+    NvfLightViewCounts {
+        frames: NVF_LIGHT_VIEW_FRAMES.swap(0, Relaxed),
+        views: NVF_LIGHT_VIEWS.swap(0, Relaxed),
+        run: NVF_LIGHT_VIEWS_RUN.swap(0, Relaxed),
+        hidden: NVF_LIGHT_VIEWS_HIDDEN.swap(0, Relaxed),
+        ns: core::array::from_fn(|i| NVF_NS[i].swap(0, Relaxed)),
+        max_ns: core::array::from_fn(|i| NVF_MAX_NS[i].swap(0, Relaxed)),
+        events: core::array::from_fn(|i| NVF_EVENT[i].swap(0, Relaxed)),
+    }
+}
+
+/// NVForever light view counts: `n` more of event `event`.
+fn nvf_event(event: usize, n: u64) {
+    if n > 0 {
+        NVF_EVENT[event].fetch_add(n, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// NVForever light view counts: a stopwatch over consecutive sections.
+struct NvfLap(std::time::Instant);
+
+impl NvfLap {
+    fn start() -> Self {
+        Self(std::time::Instant::now())
+    }
+
+    /// Add the time since the last lap (or the start) to `section`.
+    fn lap(&mut self, section: usize) {
+        let now = std::time::Instant::now();
+        nvf_time(section, now - self.0);
+        self.0 = now;
+    }
+}
+
+/// NVForever light view counts: `elapsed` more of `section`.
+fn nvf_time(section: usize, elapsed: core::time::Duration) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let ns = elapsed.as_nanos().min(u64::MAX as u128) as u64;
+    NVF_NS[section].fetch_add(ns, Relaxed);
+    NVF_MAX_NS[section].fetch_max(ns, Relaxed);
+}
+
+/// NVForever light view counts: the views of a light being hidden (extraction).
+fn nvf_count_hidden_views(views: &Query<&PointAndSpotLightViewEntities>, light: Entity) {
+    if let Ok(v) = views.get(light) {
+        NVF_LIGHT_VIEWS_HIDDEN.fetch_add(v.len() as u64, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// NVForever light view counts: count this frame's point and spot light shadow views, and
+/// those that run (render world, once the views of the frame are made: `RenderSystems::Prepare`).
+pub fn nvf_count_light_views(views: Query<(&LightEntity, Has<RootNonCameraView>)>) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let (mut alive, mut run) = (0u64, 0u64);
+    for (light, root) in &views {
+        if matches!(light, LightEntity::Point { .. } | LightEntity::Spot { .. }) {
+            alive += 1;
+            run += u64::from(root);
+        }
+    }
+    NVF_LIGHT_VIEW_FRAMES.fetch_add(1, Relaxed);
+    NVF_LIGHT_VIEWS.fetch_add(alive, Relaxed);
+    NVF_LIGHT_VIEWS_RUN.fetch_add(run, Relaxed);
 }
 
 /// NVForever held light shadow maps: what each layer was last drawn with (the light and the
