@@ -123,6 +123,15 @@ Player script sequence bridge/lifecycle has authored source-request controls and
 
 World-coordinate NIF translation getter has an initial source candidate; current-port checks and rendered consumer qualification remain pending ([node translation](spec-notes/local-node-translation-world.md)).
 
+Inline surplus operands in mod-source conditions are **In progress**: an initial
+parser candidate preserves the documented signature and enclosing operators while
+reporting discarded operands. The initial nine shared-target controls compiled
+in Linux CI: three passed and six failed diagnostic expectations for retained
+legacy information. All nine corrected controls passed in Linux CI for `ae6c1110`.
+Hosted CI for `abb5f67f` (merge `22dc2e5` with Main `5fbad071`, run 44298689511) passed
+all seven checks, with all nine controls passing once. Selected whole-file compilation, the identical-fixture
+baseline and B42 Optics game-load acceptance remain open ([compiler note](spec-notes/script-compiler.md#inline-surplus-operands-in-mod-expressions)).
+
 | System | State | Specifics | Notes |
 |---|---|---|---|
 | JIP main-loop callback elapsed time | In progress | Per-registration quantized game-clock intervals are scoped to callback UDFs and nested Calls; ordinary/result/instance clocks retain their existing paths. Six authored synthetic controls cover timing and restoration; public compilation and execution are pending. Native interval policy remains a hypothesis; no saved-modifier repair or full-mod claim. | [Callback clock](spec-notes/jip-callback-clock.md) |
