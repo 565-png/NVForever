@@ -53,6 +53,8 @@
 //! - **Desert haze** (`desert-haze`, off in every preset): a thin dust haze added to the
 //!   weather's own distance fog, thicker with distance and toward the ground, warmer toward
 //!   the sun, as far as the weather's fog leaves room for it (haze.rs, #2675).
+//! - **Distant lights** (`distant-lights`, off in both presets): at night, placed lights in
+//!   the cells beyond the loaded ones show as small glows (distant_lights.rs, #3013).
 //!
 //! Another switch is off in both looks and not part of `enhanced`: **Blend meshes into
 //! ground** (`mesh-terrain-blend`, `mesh_terrain_blend.rs`), outdoor roads, rocks and
@@ -209,11 +211,14 @@ pub struct Graphics {
     pub heat_haze: bool,
     /// A dust haze in the weather's fog (haze.rs; off in every preset) [design, #2675].
     pub desert_haze: bool,
+    /// Glows of placed lights beyond the loaded cells at night (distant_lights.rs; off in
+    /// both presets) [design, #3013].
+    pub distant_lights: bool,
 }
 
 /// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing and
 /// shadow-filter choices that are not vanilla's, in the order of [`Graphics::describe`].
-pub const KEYS: [&str; 20] = [
+pub const KEYS: [&str; 21] = [
     "ambient-occlusion",
     "fine-shadows",
     "bloom",
@@ -234,6 +239,7 @@ pub const KEYS: [&str; 20] = [
     "terrain-shadows",
     "heat-haze",
     "desert-haze",
+    "distant-lights",
 ];
 
 impl Graphics {
@@ -290,6 +296,8 @@ impl Graphics {
             heat_haze: false,
             // Off in every preset: an addition of our own [design, #2675].
             desert_haze: false,
+            // Off in both looks: an addition of our own [design, #3013].
+            distant_lights: false,
         }
     }
 
@@ -315,6 +323,7 @@ impl Graphics {
             "terrain-shadows" => &mut self.terrain_shadows,
             "heat-haze" => &mut self.heat_haze,
             "desert-haze" => &mut self.desert_haze,
+            "distant-lights" => &mut self.distant_lights,
             _ => return None,
         })
     }
@@ -370,6 +379,7 @@ impl Graphics {
             (self.terrain_shadows, "terrain shadows"),
             (self.heat_haze, "heat haze"),
             (self.desert_haze, "desert haze"),
+            (self.distant_lights, "distant lights"),
         ];
         let mut on: Vec<&str> = names.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
         if self.fsr().is_some() {
