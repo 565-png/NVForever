@@ -1704,11 +1704,12 @@ fn main() -> AppExit {
     .add_systems(Update, world::note_other_cameras.after(world::stream))
     // 4 x 4 near's redraws by distance (#2676): after streaming spawned this frame's cells.
     .add_plugins(terrain_lod::TerrainLodPlugin)
-    // The landscape's height map around the camera for terrain shadows (#2671); off unless
-    // wanted (NVF_PLAY_DEBUG_SUN_HEIGHTFIELD), nothing built while off (sun_heightfield.rs).
+    // The landscape's height map around the camera for terrain shadows (#2671); built only
+    // while the Terrain shadows row (or NVF_PLAY_DEBUG_SUN_HEIGHTFIELD) wants it (sun_heightfield.rs).
     .add_plugins(sun_heightfield::SunHeightfieldPlugin)
-    // Terrain shadow heights from that map, on the GPU (#2671); off unless wanted
-    // (NVF_PLAY_DEBUG_TERRAIN_SHADOWS), nothing allocated or dispatched while off (terrain_shadows.rs).
+    // Terrain shadow heights from that map, on the GPU (#2671); the Terrain shadows row
+    // (terrain_shadows::follow_graphics) or NVF_PLAY_DEBUG_TERRAIN_SHADOWS turns them on,
+    // nothing allocated or dispatched while off (terrain_shadows.rs).
     .add_plugins(terrain_shadows::TerrainShadowsPlugin)
     .add_systems(Update, (cell_buffer::remember, cell_buffer::tell_game).chain().after(world::stream))
     .add_systems(Update, world::script_markers.before(world::stream))

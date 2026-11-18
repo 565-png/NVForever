@@ -88,7 +88,7 @@ use fnv_esm::{LoadOrder, Schema};
 use fnv_world::land::{load_land, LandParts, SIDE as LAND_SIDE, SPACING};
 use fnv_world::{cell_of, WorldIndex, CELL_SIZE};
 use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 /// World units per texel [engineering choice: two LAND vertex steps, 16 texels a cell].
@@ -480,7 +480,7 @@ impl Loader {
                 crate::lodgen::lowest_thread_priority();
                 while let Some(req) = shared.next() {
                     let result = run_request(source.as_ref(), step, req);
-                    shared.state.lock().unwrap().done.push_back(result);
+                    shared.queue().done.push_back(result);
                 }
             });
             if let Err(e) = spawned {
@@ -492,19 +492,19 @@ impl Loader {
 
     /// Make `want` (the first to load first) the waiting requests.
     pub fn schedule(&self, want: Vec<Request>) {
-        self.shared.state.lock().unwrap().waiting = want.into();
+        self.shared.queue().waiting = want.into();
         self.shared.wake.notify_all();
     }
 
     /// A finished request, if any.
     pub fn try_recv(&self) -> Option<CellResult> {
-        self.shared.state.lock().unwrap().done.pop_front()
+        self.shared.queue().done.pop_front()
     }
 }
 
 impl Drop for Loader {
     fn drop(&mut self) {
-        let mut s = self.shared.state.lock().unwrap();
+        let mut s = self.shared.queue();
         s.closed = true;
         s.waiting.clear();
         drop(s);
@@ -513,9 +513,16 @@ impl Drop for Loader {
 }
 
 impl LoaderShared {
+    /// The queue, also after a thread panicked while holding it: the queue is two lists and
+    /// a flag, each left whole by any one statement, so a poisoned lock is taken over instead
+    /// of panicking every other loader thread and the main thread's `schedule`/`try_recv`.
+    fn queue(&self) -> MutexGuard<'_, LoaderQueue> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// The next request, waiting for one; `None` once the loader is dropped.
     fn next(&self) -> Option<Request> {
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.queue();
         loop {
             if s.closed {
                 return None;
@@ -523,13 +530,13 @@ impl LoaderShared {
             if let Some(r) = s.waiting.pop_front() {
                 return Some(r);
             }
-            s = self.wake.wait(s).unwrap();
+            s = self.wake.wait(s).unwrap_or_else(PoisonError::into_inner);
         }
     }
 }
 
-/// Whether the sun heightfield is built (later: the `terrain-shadows` switch). Off by
-/// default; `NVF_PLAY_DEBUG_SUN_HEIGHTFIELD=1` turns it on.
+/// Whether the sun heightfield is built. Off by default; the `terrain-shadows` settings row
+/// turns it on (terrain_shadows.rs `follow_wanted`), as does `NVF_PLAY_DEBUG_SUN_HEIGHTFIELD=1`.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SunHeightfieldWanted(pub bool);
 

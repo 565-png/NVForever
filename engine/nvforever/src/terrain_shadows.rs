@@ -560,7 +560,7 @@ fn feeding_needed(wanted: Res<TerrainShadowsWanted>, sink: Res<crate::sun_visibi
 /// The last complete shadow-height map (module notes, "Notes for T2"). A main-world
 /// resource, extracted to the render world whenever it changes.
 #[derive(Resource, Clone, Debug, Default)]
-#[allow(dead_code)] // the fields T2's receivers read (#2671)
+#[allow(dead_code)] // the receivers read the map and its uv; origin, the light and `steps` describe it (Debug) only
 pub struct TerrainShadows {
     /// The map ([`OUTPUT_FORMAT`], `side` × `side`, row 0 the southernmost); `None`: no
     /// terrain shadow anywhere (`reason` says why).
