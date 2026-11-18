@@ -16,6 +16,7 @@ import bevy_pbr::{
 // sun's highlight, only while the view has the plumbing.
 @if(NVF_SUN_VISIBILITY) import bevy_pbr::render::mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_NVF_OUTDOOR_SUN_BIT;
 @if(NVF_SUN_VISIBILITY) import nvforever::sun_visibility::nvf_sun_visibility;
+import nvforever::caustics::nvf_caustics;
 
 // During temporal upscaling, the main pass occupies only the render-sized region
 // of full-sized attachments. Geometry UVs and texture UVs are distinct.
@@ -56,6 +57,8 @@ struct WaterParams {
     edge: vec4<f32>,
     // x = Bevy y of the water whose drawn pixels are counted, y = 1 while counting
     seen_plane: vec4<f32>,
+    // xyz = direction toward the sun (Bevy world), w = enabled daylight strength.
+    water_sun: vec4<f32>,
 };
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> water: WaterParams;
@@ -275,6 +278,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let size = view.main_pass_viewport.zw;
     let uv0 = frag_coord_to_uv(in.position.xy);
     let behind0 = scene_point(in.position.xy);
+    var receiver = behind0;
     var fog_distance = 1.0e7;
     var fog_depth = 1.0e7;
     if behind0.w > 0.5 {
@@ -291,16 +295,26 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let behind = scene_point(view.main_pass_viewport.xy + uv * size);
         if behind.w > 0.5 && distance(behind.xyz, view.world_position.xyz) < dist {
             uv = uv0;
-        } else if behind.w > 0.5 {
-            fog_distance = distance(behind.xyz, pos);
-            fog_depth = max(pos.y - behind.y, 0.0);
+        } else {
+            receiver = behind;
+            if behind.w > 0.5 {
+                fog_distance = distance(behind.xyz, pos);
+                fog_depth = max(pos.y - behind.y, 0.0);
+            }
         }
     }
     if !above {
         fog_distance = dist;
         fog_depth = dist;
     }
-    let refracted = textureSampleLevel(view_transmission_texture, view_transmission_sampler, transmission_uv(uv), 0.0).rgb;
+    var refracted = textureSampleLevel(view_transmission_texture, view_transmission_sampler, transmission_uv(uv), 0.0).rgb;
+    // Brighten the actual refracted opaque receiver, including non-reflective
+    // water types. The existing body opacity/reflection then attenuates the light.
+    if above && receiver.w > 0.5 && water.water_sun.w > 0.0 && dist < 4096.0 {
+        // Thin ridges become subpixel in the distance. Fade them before they shimmer.
+        let fade = 1.0 - smoothstep(2048.0, 4096.0, dist);
+        refracted *= 1.0 + fade * nvf_caustics(receiver.xyz, pos.y, water.water_sun.xyz, water.water_sun.w, t);
+    }
     let fog = select(water.under_fog, water.above_fog, above);
     // The colour: shallow to deep by the fog depth (#1787). The opacity: by the length of
     // the view ray in the water over the same near to far ramp, at most the above fog's

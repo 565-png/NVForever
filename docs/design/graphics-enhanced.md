@@ -339,6 +339,43 @@ its own set of the sun's cascades (Bevy's renderer needs them for every view the
 emptying their caster lists was tried and saved 0.12 ms of shadow-pass GPU time and nothing of
 the frame, so the reflected world keeps its shadows.
 
+### 3.8.2 Water caustics and river flow (`water-effects`)
+
+[design, #2674] Graphics > Water offers this switch on its own. The enhanced look enables
+it. From above the surface, the water shader reconstructs the position of the opaque
+object visible through refraction. Sunlight projected through the surface creates moving
+ridges of light there, attenuated by the water body's existing opacity. A submerged
+outdoor camera uses its depth prepass to project the same pattern on receivers in nearby
+loaded cells with water at the same level. First-person geometry and the sky are excluded.
+The pattern fades with water depth, the sun's elevation and the weather's sunlight.
+The submerged pass operates on the fogged picture and approximates lighting without
+testing local shadows. Projection through a water surface and attenuation with depth
+are described in [GPU Gems, chapter 2, section 2.2](https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-2-rendering-water-caustics).
+The moving pattern and its tuning are NVForever's.
+
+[design] River currents animate the noise layers on selected exterior reaches. The
+directions follow the Colorado below Hoover Dam through Cottonwood Cove and the western
+channel in Zion Canyon. The table selects cells at the surveyed surface heights (-2300
+and 5000 game units, respectively). Cell coverage was chosen from LAND cross-sections
+below the visible water level; the downstream directions and speed are artistic choices.
+A locally placed surface at the same elevation can share the cell's current. Each noise layer retains a share of its
+water type's wind, bounded so its crests travel downstream. Actor ripples keep their
+world position. The current changes surface appearance only.
+
+[observed, 2026-11-18] Fixed-camera captures show the light pattern on the Goodsprings
+Source trough floor and the Boulder Beach bed above and below water at noon. At midnight
+the submerged pass stayed off. At Cottonwood Cove the surface texture travelled south
+in all 40 successive frame pairs measured on a patch projected back onto the water plane.
+
+[observed, 2026-11-18] Release explorer, RTX 5070 Ti, Vulkan, 1280x720, desktop streaming
+active. At each fixed camera `--log-frame-times 5 --graphics-cycle
+"vanilla;water-effects;water-effects;vanilla"` alternated five-second periods. After the
+first block, the median paired changes in mean frame time over four complete blocks were
+0.00 ms at the Boulder Beach shallows, +0.02 ms submerged and +0.02 ms at Cottonwood
+Cove (the four river differences ranged from -0.02 to +0.11 ms). The submerged pass
+itself measured 0.02 ms GPU. At Cottonwood the transmissive pass measured 0.03 ms off
+and 0.04 ms on.
+
 ### 3.9 Shadow filtering (`shadow-filter`; not part of `enhanced`)
 
 How the sun's shadow maps are sampled at a shadow's edge, Bevy's `ShadowFilteringMethod` on the

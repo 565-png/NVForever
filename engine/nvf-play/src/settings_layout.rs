@@ -304,7 +304,7 @@ mod tests {
     /// overhaul's menu font, the Advanced Movement rows of tech/movement-inertia, Weapon
     /// Inertia and Camera Motion in place of weapon sway and head bob, #2843's Shadow
     /// resolution row, Gore Shake and #2670's Cloud shadows; #2661's mesh terrain blend row), by the group it registers with.
-    const KNOWN: [(&str, &str); 128] = [
+    const KNOWN: [(&str, &str); 129] = [
         ("detached-camera", "Gameplay"),
         ("gore-shake", "Gameplay"),
         ("advanced-movement", "Gameplay"),
@@ -416,6 +416,7 @@ mod tests {
         ("smooth-terrain", "Graphics"),
         ("light-shafts", "Graphics"),
         ("water-reflections", "Graphics"),
+        ("water-effects", "Graphics"),
         ("water-mirror", "Graphics"),
         ("quality", "Graphics"),
         ("volume-master", "Sound"),
