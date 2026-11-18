@@ -26,6 +26,8 @@ use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::render::camera::TemporalJitter;
 use bevy::light::SimulationLightSystems;
 use bevy::pbr::ContactShadows;
+use bevy::ecs::entity::EntityHashMap;
+use bevy::pbr::HoldLightShadowMaps;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
@@ -97,39 +99,50 @@ impl Plugin for LightShadowDetailPlugin {
     }
 }
 
-type Lit<'a> = (Option<&'a mut PointLight>, Option<&'a mut SpotLight>, Has<CastingLight>, Option<&'a ShadowSource>);
+type Lit<'a> = (Entity, Option<&'a mut PointLight>, Option<&'a mut SpotLight>, Has<CastingLight>, Option<&'a ShadowSource>);
 
 /// The lights these settings touch: the placed ones and the other sources.
 type Lamps = Or<(With<SessionLight>, With<ShadowSource>)>;
 
 type Cameras<'a> = (Entity, &'a GlobalTransform, Has<ContactShadows>, Has<TemporalJitter>);
 
-/// Soft edges on the casting lights on Quality; off otherwise (and on lights that stopped
-/// casting).
-fn soften(settings: Res<LightShadows>, mut lights: Query<Lit, Lamps>) {
+/// Soft edges on the casting lights on Quality, and on those whose held maps still fade out
+/// (a slot kept, `HoldLightShadowMaps`); off otherwise, each light's own radius given back.
+fn soften(settings: Res<LightShadows>, hold: Res<HoldLightShadowMaps>, mut lights: Query<Lit, Lamps>, mut was: Local<EntityHashMap<f32>>) {
     let on = detailed(settings.choice);
-    for (point, spot, casting, source) in &mut lights {
+    for (e, point, spot, casting, source) in &mut lights {
         let size = soft_aid().unwrap_or_else(|| soft_radius(source.map(|s| s.0)));
-        let soft = on && casting && size > 0.0;
-        if let Some(mut p) = point {
-            if p.soft_shadows_enabled != soft {
-                p.soft_shadows_enabled = soft;
+        let held = hold.slots.contains_key(&e) || hold.spot_slots.contains_key(&e);
+        let soft = on && (casting || held) && size > 0.0;
+        let (enabled, radius) = match (point, spot) {
+            (Some(p), _) => {
+                let p = p.into_inner();
+                (&mut p.soft_shadows_enabled, &mut p.radius)
             }
-            if soft && p.radius != size {
-                p.radius = size;
+            (None, Some(s)) => {
+                let s = s.into_inner();
+                (&mut s.soft_shadows_enabled, &mut s.radius)
             }
+            _ => continue,
+        };
+        if soft {
+            was.entry(e).or_insert(*radius);
+            if *radius != size {
+                *radius = size;
+            }
+        } else if let Some(r) = was.remove(&e) {
+            *radius = r;
         }
-        if let Some(mut s) = spot {
-            if s.soft_shadows_enabled != soft {
-                s.soft_shadows_enabled = soft;
-            }
-            if soft && s.radius != size {
-                s.radius = size;
-            }
+        if *enabled != soft {
+            *enabled = soft;
         }
     }
+    // Lights gone: nothing to give back.
+    if was.len() > 256 {
+        let alive: Vec<Entity> = lights.iter().map(|q| q.0).collect();
+        was.retain(|e, _| alive.contains(e));
+    }
 }
-
 type Contacted<'a> = (&'a GlobalTransform, Option<&'a mut PointLight>, Option<&'a mut SpotLight>, Option<&'a ShadowSource>);
 
 /// The camera's contact shadows on Quality, and the lights that take them.
