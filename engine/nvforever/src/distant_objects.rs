@@ -51,8 +51,14 @@
 //! - **Fades** ([`distant_range`], [`fade_distant`]): a distant cell in a square drawn by
 //!   a loaded or ring cell draws the complement of that cell's fade step (the same
 //!   references in full) and is held at rest as the ring's cells are (`full_detail::hand_off`),
-//!   so each pixel is drawn once; alone it fades in and out by its own step, and at rest
-//!   dithers out with distance between `reach - 1` and `reach` cells from the camera.
+//!   so each pixel is drawn once; alone it fades in and out by its own step, and always
+//!   dithers out with distance between `reach - 1` and `reach` cells from the camera: the
+//!   temporal step rides on the range's near side and the reach's fade on its far side,
+//!   so nothing beyond the reach shows while a cell fades in or out (within the last cell
+//!   width the distance's dither decides). A rebuilt cell crossfades with the one it
+//!   replaces only where that whole cell lies within `reach - 2` cells of the middle cell's
+//!   centre ([`crossfade_ok`]); nearer the edge it takes over at once, since the old cell's
+//!   complement could not also carry the reach's fade.
 //!   Cells leave by fading out past `reach + 1` (or out of a smaller new reach), or once
 //!   the loaded or ring cell over them is fully drawn.
 //! - **Re-judging** ([`Stamp`]): each cell keeps the centre and the ratio table it was
@@ -398,7 +404,8 @@ pub fn distant_cells(centre: Grid, inner: i32, reach: i32) -> Vec<Grid> {
 /// Which range a distant cell's meshes are drawn with ([`distant_range`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DistantRange {
-    /// Its own fade's step (`fade::drawn`).
+    /// Its own fade's step (`fade::drawn`'s near side) with the reach's distance fade on
+    /// the far side ([`edge_range`]).
     Own(u8),
     /// Under a loaded or ring cell of the same square: the complement of that cell's step.
     Under(u8),
@@ -409,7 +416,7 @@ pub enum DistantRange {
 impl DistantRange {
     pub fn range(self, reach: i32) -> VisibilityRange {
         match self {
-            DistantRange::Own(k) => fade::drawn(k),
+            DistantRange::Own(k) => VisibilityRange { start_margin: fade::drawn(k).start_margin, end_margin: edge_range(reach).end_margin, use_aabb: false },
             DistantRange::Under(k) => fade::complement(k),
             DistantRange::Edge => edge_range(reach),
         }
@@ -442,6 +449,16 @@ pub fn distant_range(own: f32, cover: Option<f32>) -> DistantRange {
 pub fn edge_range(reach: i32) -> VisibilityRange {
     let inner = (reach - 1).max(1) as f32;
     fade::drawn_within(Some(inner * CELL_SIZE), 1.0 / inner)
+}
+
+/// Whether a rebuilt cell `c` may crossfade with the one it replaces: the whole cell lies
+/// within `reach - 2` cell widths of the middle cell's centre, so with the camera anywhere
+/// in its cell the old cell (drawn as a complement, which cannot carry the reach's fade)
+/// is short of the reach's fade band. Otherwise the new cell takes over at once.
+pub fn crossfade_ok(c: Grid, centre: Grid, reach: i32) -> bool {
+    let p = centre_point(centre);
+    let far = [(0, 0), (1, 0), (0, 1), (1, 1)].iter().map(|&(dx, dy)| Vec2::new((c.0 + dx) as f32 * CELL_SIZE, (c.1 + dy) as f32 * CELL_SIZE).distance(p)).fold(0.0, f32::max);
+    far <= (reach - 2).max(0) as f32 * CELL_SIZE
 }
 
 /// One drawn distant cell.
@@ -813,7 +830,7 @@ pub fn stream(
         let Some(mut sp) = st.spawning.remove(&c) else { continue };
         spawn_refs(&mut commands, &ctx, st, &mut sp, &mut budget, deadline, &mut models, &mut emittance);
         if sp.done() {
-            finish(&mut commands, st, c, sp, fading);
+            finish(&mut commands, st, c, sp, fading, crossfade_ok(c, centre, reach));
         } else {
             st.spawning.insert(c, sp);
         }
@@ -869,7 +886,7 @@ pub fn stream(
         let mut sp = CellSpawn { entity, grid: c, replaces, list, plan, next: 0, later: Vec::new(), origin, stamp: now, segment, drawn: HashMap::new(), full_tris: 0, dirty: false };
         spawn_refs(&mut commands, &ctx, st, &mut sp, &mut budget, deadline, &mut models, &mut emittance);
         if sp.done() {
-            finish(&mut commands, st, c, sp, fading);
+            finish(&mut commands, st, c, sp, fading, crossfade_ok(c, centre, reach));
         } else {
             st.spawning.insert(c, sp);
         }
@@ -1080,8 +1097,9 @@ fn spawn_one(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp:
 }
 
 /// A distant cell is all in: shown (its meshes get their range in [`fade_distant`]); a
-/// rebuilt one takes over from the cell it replaces by crossfading.
-fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn, fading: bool) {
+/// rebuilt one takes over from the cell it replaces by crossfading when fades are on and
+/// `crossfade` ([`crossfade_ok`]), else at once.
+fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn, fading: bool, crossfade: bool) {
     let mut old = None;
     let mut level = if fading { 0.0 } else { 1.0 };
     if let Some(prev) = st.cells.remove(&c) {
@@ -1094,7 +1112,7 @@ fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn
         if let Some((o, _)) = prev.old {
             st.retire(commands, o);
         }
-        if fading {
+        if fading && crossfade {
             old = Some((prev.entity, prev.full_tris));
         } else {
             st.retire(commands, prev.entity);
@@ -1397,6 +1415,37 @@ mod tests {
         assert_eq!(distant_range(0.5, Some(0.25)), DistantRange::Under(4));
     }
 
+    /// The reach's fade holds while a cell fades in or out: at every temporal step nothing
+    /// beyond the reach shows, inside `reach - 1` the step alone decides (and the old cell
+    /// of a rebuild draws exactly the rest there), and in the band between the distance's
+    /// dither decides. Rebuilds crossfade only short of that band.
+    #[test]
+    fn the_reach_fade_holds_during_fades() {
+        for reach in [REACH_NEAR, REACH_FAR] {
+            for k in 0..fade::STEPS {
+                let own = DistantRange::Own(k).range(reach);
+                let beyond = reach as f32 * CELL_SIZE + 100.0;
+                assert!((0..16).all(|t| !kept(&own, beyond, t)), "reach {reach}, step {k}: something beyond the reach");
+                let inside = (reach - 1) as f32 * CELL_SIZE - 500.0;
+                let shown = (0..16).filter(|&t| kept(&own, inside, t)).count();
+                let plain = (0..16).filter(|&t| kept(&fade::drawn(k), inside, t)).count();
+                assert_eq!(shown, plain, "reach {reach}, step {k}: inside, the temporal step alone");
+                let old = fade::complement(k);
+                for t in 0..16 {
+                    let n = [&own, &old].iter().filter(|r| kept(r, inside, t)).count();
+                    assert_eq!(n, 1, "reach {reach}, step {k}: a rebuild's pixel {t} drawn {n} times");
+                }
+            }
+        }
+        // Rebuilds: a cell whose far corner is within reach - 2 of the middle cell's centre
+        // crossfades, one nearer the edge swaps at once.
+        assert!(crossfade_ok((4, 0), (0, 0), REACH_NEAR), "far corner 4.5 cells out");
+        assert!(!crossfade_ok((6, 0), (0, 0), REACH_NEAR), "far corner 6.5 cells out");
+        assert!(crossfade_ok((9, 0), (0, 0), REACH_FAR));
+        assert!(!crossfade_ok((10, 0), (0, 0), REACH_FAR));
+        assert!(!crossfade_ok((5, 5), (0, 0), REACH_NEAR), "a diagonal");
+    }
+
     fn ring_state(level: f32) -> full_detail::RingCellState {
         full_detail::RingCellState::for_test(level)
     }
@@ -1491,18 +1540,18 @@ mod tests {
         // A finished cell retains its models.
         st.spawning.insert((9, 0), a_spawn((9, 0), false, 3000));
         let sp = st.spawning.remove(&(9, 0)).unwrap();
-        finish(&mut commands, &mut st, (9, 0), sp, true);
+        finish(&mut commands, &mut st, (9, 0), sp, true, true);
         assert_eq!(st.budget(), Budget { retained: 3000, reserved: 0, fading: 0 });
         assert_eq!(st.budget().total(), sum(&st));
         // Rebuilt in place, crossfading: the predecessor counts as fading.
         st.cells.get_mut(&(9, 0)).unwrap().level = 1.0;
         let sp = a_spawn((9, 0), true, 2500);
-        finish(&mut commands, &mut st, (9, 0), sp, true);
+        finish(&mut commands, &mut st, (9, 0), sp, true, true);
         assert_eq!(st.budget(), Budget { retained: 2500, reserved: 0, fading: 3000 });
         assert_eq!(st.budget().total(), sum(&st));
         // A rejected rebuild (its cell started leaving) is dropped with its reservation.
         st.cells.get_mut(&(9, 0)).unwrap().leaving = true;
-        finish(&mut commands, &mut st, (9, 0), a_spawn((9, 0), true, 700), true);
+        finish(&mut commands, &mut st, (9, 0), a_spawn((9, 0), true, 700), true, true);
         assert_eq!(st.budget().total(), 5500, "the leaving cell and its predecessor only");
         // Retired with its predecessor: nothing left.
         let s = st.cells.remove(&(9, 0)).unwrap();
