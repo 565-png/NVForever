@@ -1442,6 +1442,66 @@ forbid = [
 ]
 
 [[scenario]]
+name = "advanced-movement-off-exact-weapon-inertia"
+source = "owner 2026-11-18 (the held weapon \"still shows inertia\" with Weapon Inertia off; engine/nvforever/src/view_sway.rs, player_body.rs; docs/design/player-body.md §1.4a.3, \"Off means the original's exactly\"): every part on, the rifle drawn and walked with, then Weapon Inertia alone switched off on the settings page; afterwards walking, aiming, firing, jumping and crouching: the sway never moves the arms off the clips' pose again once its fade is over (the exit summary's last time, the switch at about 6 s)"
+areas = ["player-body", "settings"]
+paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:weapon-inertia", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 28
+expect = [
+  { text = "settings: weapon-inertia off", label = "Weapon Inertia goes off (Weapon Inertia off)" },
+  { re = 'combat: kick: shot', label = "the rifle fired after the switch (Weapon Inertia off)" },
+  { re = 'player view: landed at', label = "a jump landed (Weapon Inertia off)" },
+  { re = "player body summary: off the clips' pose, the arms last moved by Weapon Inertia at (?P<n>[\\d.]+) s", range = [4, 10], label = "the arms are the clips' own from the end of the switch's fade on (Weapon Inertia off)" },
+]
+forbid = [
+  { re = 'NVF_PLAY_TEST_SETTINGS: ("|no switch|\S+ is a (list|slider):)', label = "the switch step is understood (Weapon Inertia off)" },
+  { re = 'panicked', label = "nothing panics (Weapon Inertia off)" },
+]
+
+[[scenario]]
+name = "advanced-movement-off-exact-global"
+source = "owner 2026-11-18 (the held weapon \"still shows inertia\" with the Global Toggle off; engine/nvforever/src/view_sway.rs, head_bob.rs, player_body.rs; docs/design/player-body.md §1.4a.3): every part on, the rifle drawn and walked with, then the Global Toggle switched off on the settings page; afterwards walking, aiming, firing, jumping and crouching: neither the sway nor the head moves the arms or the view off the clips' pose again once their fades are over (the breath's ends last, about 6 s after the switch)"
+areas = ["player-body", "settings"]
+paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:advanced-movement", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 28
+expect = [
+  { text = "settings: advanced-movement off", label = "the Global Toggle goes off (Global Toggle off)" },
+  { re = 'combat: kick: shot', label = "the rifle fired after the switch (Global Toggle off)" },
+  { re = 'player view: landed at', label = "a jump landed (Global Toggle off)" },
+  { re = "player body summary: off the clips' pose, the arms last moved by Weapon Inertia at (?P<n>[\\d.]+) s", range = [4, 10], label = "the arms are the clips' own from the end of the fade on (Global Toggle off)" },
+  { re = "player body summary: off the clips' pose, .*, the view by the head's springs \\(Camera Motion, Movement Inertia's landing dip\\) at (?P<n>[\\d.]+) s", range = [4, 14], label = "the view is the clips' own from the end of the fades on (Global Toggle off)" },
+]
+forbid = [
+  { re = 'NVF_PLAY_TEST_SETTINGS: ("|no switch|\S+ is a (list|slider):)', label = "the switch step is understood (Global Toggle off)" },
+  { re = 'panicked', label = "nothing panics (Global Toggle off)" },
+]
+
+[[scenario]]
+name = "advanced-movement-off-exact-defaults"
+source = "owner 2026-11-18 (the held weapon \"still shows inertia\" at the defaults; engine/nvforever/src/view_sway.rs, head_bob.rs, player_body.rs; docs/design/player-body.md §1.4a.3): every part on, the rifle drawn and walked with, then the five parts that are off by default switched off on the settings page (the Global Toggle and Advanced Recoil stay on); afterwards walking, aiming, firing, jumping and crouching: Advanced Recoil eases the view's kick, but neither the sway nor the head moves the arms or the view off the clips' pose again once their fades are over"
+areas = ["player-body", "settings"]
+paths = ["engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-assets/src/anim_blend.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_PAUSE = "4.3:6", NVF_PLAY_TEST_SETTINGS = "4.4:movement-inertia,4.5:weapon-handling,4.6:weapon-inertia,4.7:animation-smoothing,4.8:camera-motion", NVF_PLAY_TEST_CONTROL = "1:weapon,17:aim,18:fire,18.6:fire,19.5:aim,21:jump,24:sneak,25:sneak,26:jump", NVF_PLAY_TEST_MOVE = "2:1:0,3.5:0:0,14:1:0,16:0:0,20:1:0,22:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 28
+expect = [
+  { text = "settings: camera-motion off", label = "the last of the five parts goes off (at the defaults)" },
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off", label = "the defaults reached on the page (at the defaults)" },
+  { re = 'combat: kick: shot', label = "the rifle fired after the switches (at the defaults)" },
+  { re = 'player view: landed at', label = "a jump landed (at the defaults)" },
+  { re = "player body summary: off the clips' pose, the arms last moved by Weapon Inertia at (?P<n>[\\d.]+) s", range = [4, 10], label = "the arms are the clips' own from the end of the fade on (at the defaults)" },
+  { re = "player body summary: off the clips' pose, .*, the view by the head's springs \\(Camera Motion, Movement Inertia's landing dip\\) at (?P<n>[\\d.]+) s", range = [4, 14], label = "the view is the clips' own from the end of the fades on (at the defaults)" },
+]
+forbid = [
+  { re = 'NVF_PLAY_TEST_SETTINGS: ("|no switch|\S+ is a (list|slider):)', label = "every switch step is understood (at the defaults)" },
+  { re = 'panicked', label = "nothing panics (at the defaults)" },
+]
+
+[[scenario]]
 name = "advanced-movement-menu"
 source = "owner 2026-11-15 (\"simplify the Advanced Movement menu\"; engine/nvf-play/src/settings_layout.rs, settings_view.rs; docs/design/player-body.md §1.4a.3): the NVF Features tab lists the Global Toggle and Movement Weight (owner 2026-11-15) under Advanced Movement, then an empty line, Gameplay's three switches, an empty line and Visual Only's three, in the owner's order"
 areas = ["player-body", "settings"]
@@ -6203,6 +6263,25 @@ order = [[
   { text = "terminal: closed (Esc)", label = "and is left" },
 ]]
 forbid = [{ text = "terminal: request for 000FAA48 ignored", label = "the request is not dropped" }]
+
+[[scenario]]
+name = "rhonda-repaired"
+source = "#2925: the Broken Mr. Handy's script (SCPT 0x000E9483) shows BMRhondaBrokenMsg on activation; its GameMode block takes button 1 (\"[Science] Check the robot's circuitry.\"), shows BMRhondaFixMsg (MESG 0x000E9551, no buttons: the box shows OK) and, once GetButtonPressed reads 0 for that OK, resurrects the robot (ResurrectActor, SetActorFullName, MoveTo, health 500) and sets repairedstate to 1. Before the fix a box without buttons had no Game::message_box, so the OK answered nothing and GetButtonPressed read -1 for good: the robot stayed dead on its table"
+note = "Black Mountain treasure room (interior BlackMountainTreasure), REFR 0x000E84A4 (BMRhonda, \"Broken Mr. Handy\", a dead actor) [observed: the player's events file in #2925; FalloutNV.esm records as the issue gives them]. Science set to 60 at 3 s (the box with the Science button, 0x000E9557); script boxes close themselves after 1 s (NVF_PLAY_TEST_SCRIPT_MENUS), so the start-up boxes of a new game with messages on (the four pre-order packs' and the add-ons' load messages, ten boxes from about 5 s) are gone by about 16 s; activated at 20 s by the script aid, as the player's own activation; button 1 at 20.6 s, frames later and before the 1 s close: with 15 s and 15.1 s both steps came in one frame (frames were 0.26 s apart on a loaded machine, 2026-11-17) and the box's answer was logged before its message line, which is logged from the frame's events after the tick. The second box is closed by that auto-close, which answers it through ScriptState::answer(None), the path of the player's OK. At 25 s the console (on the world aids' clock, which delay_late_aids does not move) reads GetDead and the robot's script variables"
+areas = ["scripts"]
+paths = ["crates/fnv-game/src/functions/misc.rs", "engine/nvf-play/src/script.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:set_av:player:Science:60,20:activate:0x000E84A4,20.6:button:1", NVF_PLAY_TEST_CONSOLE = "25:000E84A4.getdead;ShowVars 000E84A4;25.5:close" }
+args = ["--play", "--cell", "BlackMountainTreasure", "--no-voice"]
+messages = true  # its checks read message boxes: no --no-messages added (smoke/scenarios.py)
+run_seconds = 28
+order = [[
+  { re = 'script: message BMRhondaBroken\w* .*buttons', label = "the robot's script shows its first box" },
+  { re = 'script: menu \d+ \(message BMRhondaBroken\w*\) answered \(button 1\)', label = "[Science] Check the robot's circuitry." },
+  { re = 'script: message BMRhondaFixMsg ', label = "the box without buttons: \"the robot jumps to life\"" },
+  { re = 'script: menu \d+ \(message BMRhondaFixMsg\) answered \(OK\)', label = "its OK" },
+  { re = 'console: GetDead on .+ >> 0\.00', label = "the robot is alive (GetDead 0; it stayed 1 before #2925)" },
+  { re = 'console: +(?i:repairedstate) = 1$', label = "its script's repairedstate is 1: the chain after button 0 ran" },
+]]
 
 [[scenario]]
 name = "hacking"
