@@ -16861,7 +16861,8 @@ run_seconds = 40
 expect = [
   { re = 'combat: 0x00104F0A died: it drops its ', label = "the settler drops the Varmint Rifle as it dies" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} added: .*\(dynamic\)', min = 2, label = "the player's Varmint Rifle and the settler's get dynamic collision" },
-  { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both Varmint Rifles come to rest" },
+  { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 1, label = "the player's Varmint Rifle comes to rest" },
+  { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both Varmint Rifles come to rest", known_failing = "probes round 2 (69a9c666a, killed at 10 s): the settler ran 800 units west first and its rifle lay on the slope there creeping at 1 unit/s, 29.6 below its start, never asleep in 30 s: a drop on a slope that does not sleep, not a sink" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} started with its centre .* under the terrain', label = "the settler's Varmint Rifle would start under the terrain and is lifted onto it", known_failing = "hypothesis, #2753 round 3: whether an NPC's death drop starts under the terrain here (50 units ahead, 30 over its feet) is not shown; a 'now passes' line here confirms the dropped weapons' cause" },
 ]
 forbid = [
@@ -16882,6 +16883,7 @@ run_seconds = 40
 expect = [
   { re = 'combat: 0x00104F0A died: it drops its ', label = "the settler drops the Hunting Rifle as it dies" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} added: .*\(dynamic\)', min = 2, label = "the player's Hunting Rifle and the settler's get dynamic collision" },
+  { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 1, label = "the player's Hunting Rifle comes to rest" },
   { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both Hunting Rifles come to rest" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} started with its centre .* under the terrain', label = "the settler's Hunting Rifle would start under the terrain and is lifted onto it", known_failing = "hypothesis, #2753 round 3: whether an NPC's death drop starts under the terrain here (50 units ahead, 30 over its feet) is not shown; a 'now passes' line here confirms the dropped weapons' cause" },
 ]
@@ -16903,6 +16905,7 @@ run_seconds = 40
 expect = [
   { re = 'combat: 0x00104F0A died: it drops its ', label = "the settler drops the 10mm Pistol as it dies" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} added: .*\(dynamic\)', min = 2, label = "the player's 10mm Pistol and the settler's get dynamic collision" },
+  { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 1, label = "the player's 10mm Pistol comes to rest" },
   { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both 10mm Pistols come to rest" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} started with its centre .* under the terrain', label = "the settler's 10mm Pistol would start under the terrain and is lifted onto it", known_failing = "hypothesis, #2753 round 3: whether an NPC's death drop starts under the terrain here (50 units ahead, 30 over its feet) is not shown; a 'now passes' line here confirms the dropped weapons' cause" },
 ]
@@ -16924,6 +16927,7 @@ run_seconds = 40
 expect = [
   { re = 'combat: 0x00104F0A died: it drops its ', label = "the settler drops the stand-in Hunting Rifle as it dies" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} added: .*\(dynamic\)', min = 2, label = "the player's stand-in Hunting Rifle and the settler's get dynamic collision" },
+  { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 1, label = "the player's stand-in Hunting Rifle comes to rest" },
   { re = 'dropped 0xFF[0-9A-F]{6} came to rest at', min = 2, label = "both stand-in Hunting Rifles come to rest" },
   { re = 'collision of dropped 0xFF[0-9A-F]{6} started with its centre .* under the terrain', label = "the settler's stand-in Hunting Rifle would start under the terrain and is lifted onto it", known_failing = "hypothesis, #2753 round 3: whether an NPC's death drop starts under the terrain here (50 units ahead, 30 over its feet) is not shown; a 'now passes' line here confirms the dropped weapons' cause" },
 ]

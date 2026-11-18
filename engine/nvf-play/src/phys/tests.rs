@@ -1241,7 +1241,6 @@ fn feet_a_character_left_are_drawn_as_the_character_was_on(make: fn(&Job) -> Pre
     assert!(!p.left.contains_key(&7));
 }
 
-
 /// A made-up exterior cell with no references and steep terrain: rising 0.4 units a unit
 /// eastwards (about 22 degrees), for the lifts out of the terrain (#2753).
 fn steep_cell(job: &Job) -> Prepared {
@@ -1336,9 +1335,10 @@ fn a_ragdoll_started_under_the_terrain_rises_onto_what_stands_there() {
 #[test]
 fn a_ragdoll_standing_on_a_floor_below_the_terrain_is_not_lifted() {
     let (mut p, t) = steep();
-    // A floor whose top is 350 under the terrain; the feet 5 over it, the head 150 over it
-    // (out of the support ray's reach), both under the terrain.
+    // A floor whose top is 350 under the terrain; the feet 5 over it. The head lies uphill,
+    // about 440 under the terrain there with no floor under it: the body that needs the most
+    // lift, and the one a check under the neediest body alone would have lifted from.
     box_at(&mut p, 0x0900_0012, [2000.0, 2000.0, t - 400.0], LEVEL, object(50.0, Motion::Static));
-    let pose = [(0, [2000.0, 2000.0, t - 200.0]), (1, [2000.0, 2010.0, t - 345.0])];
+    let pose = [(0, [2600.0, 2000.0, t - 200.0]), (1, [2000.0, 2010.0, t - 345.0])];
     assert_eq!(p.lift_from_under(&pose, 0.0), None);
 }

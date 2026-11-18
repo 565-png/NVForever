@@ -99,30 +99,33 @@ impl PhysState {
         hits.iter().take(LISTED).map(|h| format!("{} at z {:.1}", owner_name(Some(h.owner)), h.point[2])).collect::<Vec<_>>().join(", ")
     }
 
-    /// Whether anything other than the terrain lies within [`SUPPORT_BELOW`] under `at`
-    /// (actors, the layers the character passes through and `exclude` left out): a floor a
-    /// body under the terrain's surface stands on.
+    /// Whether anything fixed other than the terrain lies within [`SUPPORT_BELOW`] under `at`
+    /// (actors, loose dynamic bodies, the layers the character passes through and `exclude`
+    /// left out): a floor a body under the terrain's surface stands on.
     pub fn supported_below(&mut self, at: [f32; 3], exclude: Option<Key>) -> bool {
-        let filter = Filter { exclude: exclude.into_iter().collect(), no_actors: true, no_terrain: true, exclude_layers: fnv_phys::layers::character_ignores(), ..Default::default() };
+        let filter = Filter { exclude: exclude.into_iter().collect(), no_actors: true, no_terrain: true, no_dynamic: true, exclude_layers: fnv_phys::layers::character_ignores(), ..Default::default() };
         self.ray(at, [0.0, 0.0, -1.0], SUPPORT_BELOW, filter).is_some()
     }
 
     /// What stands at (x, y) on the terrain height `t`: the first collision a ray finds
     /// coming down from [`LIFT_RAY_UP`] over it (the terrain itself, or a rock or foundation
     /// standing on it), as its surface height, its contact shell and its name; the terrain
-    /// when nothing is found.
+    /// when nothing is found, or when the ray starts inside a solid.
     pub fn surface_over(&mut self, x: f32, y: f32, t: f32, exclude: Option<Key>) -> (f32, f32, String) {
         let filter = Filter { exclude: exclude.into_iter().collect(), no_actors: true, exclude_layers: fnv_phys::layers::character_ignores(), ..Default::default() };
         match self.ray([x, y, t + LIFT_RAY_UP], [0.0, 0.0, -1.0], LIFT_RAY_UP + 1.0, filter) {
-            Some(h) if h.point[2] >= t - 1.0 => (h.point[2], h.shell, owner_name(Some(h.owner))),
+            // A hit at the ray's start is a solid it starts inside (a trunk, a pole taller than
+            // the ray's start): not a surface to stand on.
+            Some(h) if h.distance >= 0.01 && h.point[2] >= t - 1.0 => (h.point[2], h.shell, owner_name(Some(h.owner))),
             _ => (t, fnv_phys::TERRAIN_SHELL, "the terrain".into()),
         }
     }
 
     /// How far a ragdoll about to start in the pose `points` (an index and a body's centre)
     /// must rise: when a centre is more than `min_depth` under the terrain at its own x, y,
-    /// and nothing other than the terrain lies within [`SUPPORT_BELOW`] under any such body
-    /// or under the lowest body (a floor built below the surface, a tunnel), every body rises
+    /// and nothing fixed other than the terrain lies within [`SUPPORT_BELOW`] under any such
+    /// body or under the lowest body when it is under the terrain (a floor built below the
+    /// surface, a tunnel), every body rises
     /// until each such centre is [`START_CLEARANCE`] over what stands there
     /// ([`PhysState::surface_over`]). `None`: it starts as it is.
     pub fn lift_from_under(&mut self, points: &[(usize, [f32; 3])], min_depth: f32) -> Option<Lift> {
@@ -130,7 +133,9 @@ impl PhysState {
         if under.is_empty() {
             return None;
         }
-        let lowest = points.iter().map(|p| p.1).min_by(|a, b| a[2].total_cmp(&b[2]));
+        // The lowest body too, when it is under the terrain at all (a saved pose's under
+        // list counts only past its depth): the feet on a floor under a sloping terrain.
+        let lowest = points.iter().map(|p| p.1).min_by(|a, b| a[2].total_cmp(&b[2])).filter(|p| self.terrain_z(p[0], p[1]).is_some_and(|t| p[2] < t));
         let probes: Vec<[f32; 3]> = under.iter().map(|u| u.1).chain(lowest).collect();
         if probes.into_iter().any(|p| self.supported_below(p, None)) {
             return None;
