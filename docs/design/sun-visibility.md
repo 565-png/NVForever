@@ -25,7 +25,7 @@ Producers write the main-world resource `SunVisibility` (`engine/nvforever/src/s
 | `cloud_enabled` | `bool` | Cloud shadows is switched on: the views take the cloud variant whether or not `cloud` is set; without `cloud` the cloud is neutral (K = 1) |
 | `cloud` | `Option<CloudVisibility { image, uv_scale, uv_offset, plane_height, strength }>` | K: a transmittance texture (red, 1 clear, 0 opaque) on a horizontal plane `plane_height` up, looked up where the ray from the receiver towards the light meets it, at uv = hit.xz × `uv_scale` + `uv_offset` (repeating); K = 1 − `strength` × (1 − texel) |
 | `terrain_enabled` | `bool` | Terrain shadows is switched on: the views take the terrain variant whether or not `terrain` is set; without `terrain` it is neutral (T = 1, Vsolid = C) |
-| `terrain` | `Option<TerrainVisibility { image, uv_scale, uv_offset, fade_band, texel, side }>` | T: the shadow-height map over world xz (#2671, terrain_shadows.rs; `Rgba32Float`, R S, G caster distance, B relief), read at uv = xz × `uv_scale` + `uv_offset`; `fade_band` the last cascade's end band (§2) |
+| `terrain` | `Option<TerrainVisibility { image, uv_scale, uv_offset, texel, side }>` | T: the shadow-height map over world xz (#2671, terrain_shadows.rs; `Rgba32Float`, R S, G caster distance, B relief), read at uv = xz × `uv_scale` + `uv_offset` |
 | `debug` | `DebugMode` (`Off`, `Cloud`, `Terrain`, `Combined`) | the debug view |
 
 Axes are Bevy's world axes (y up), units game units. In the shader
@@ -35,7 +35,7 @@ Axes are Bevy's world axes (y up), units game units. In the shader
   gives V; `nvf_sun_visibility_parts` gives K, T, Vsolid and V together.
 - The resources sit in the mesh view bind group at bindings 39 (uniform
   `NvfSunVisibility`: cloud uv transform, plane height, strength, horizon fade; terrain uv
-  transform, fade band, texel size, side; feature mask, debug mode), 40 (cloud texture,
+  transform, two unused words (0), texel size, side; feature mask, debug mode), 40 (cloud texture,
   filterable), 41 (terrain map, declared unfilterable and read with `textureLoad` only; a
   one-texel stand-in that casts nothing until a map is uploaded, and while it stands in the
   written uniform's terrain bit is cleared, `usable_uniform`, so T = 1 and Vsolid = C
@@ -53,11 +53,11 @@ Axes are Bevy's world axes (y up), units game units. In the shader
 
 ## 2. The composition rule
 
-V = K × Vsolid, with Vsolid = min(C, T) nearer than the band `fade_band` (view distance),
-T beyond it, and a smooth blend across it; C is the cascade shadow as Bevy computes it
-(contact shadows and the mesh's shadow factor included), T the terrain's visibility, K the
-clouds'. Without terrain, Vsolid = C exactly: the band does nothing.
-[engineering choice, from the plan for #2670/#2671]
+V = K × Vsolid, with Vsolid = min(C, T) at every distance; C is the cascade shadow as Bevy
+computes it (contact shadows and the mesh's shadow factor included), T the terrain's
+visibility, K the clouds'. Without terrain, Vsolid = C exactly.
+[engineering choice, from the plan for #2670/#2671; no blend by distance: the maintainer's
+decision on #2920, 2026-11-18]
 
 Why `min` and not C × T [engineering choice]: near the camera the cascades already contain
 the terrain as a caster, so a ridge's shadow is in both C and T. Multiplied, the same
@@ -65,8 +65,8 @@ filtered edge would be squared (darker and harder than either). The minimum coun
 darker of the two once. It is an approximation: two scalar masks cannot rebuild the exact
 union of two different occluders' soft edges; that would need shared samples or separate
 terrain and object shadow maps. Beyond the last cascade C is 1 (Bevy's
-`fetch_directional_shadow` returns lit there), so the band fades object shadows out towards
-T instead of ending at a line. K multiplies, as clouds are a different medium from the
+`fetch_directional_shadow` returns lit there), so T alone shades there, and object shadows
+end at the cascades' cut-off line as with the row off. K multiplies, as clouds are a different medium from the
 solid occluders. With sun shadows off C is 1 and Vsolid = T.
 
 Where it acts (`HOOK_EDITS` in sun_visibility.rs, patched into bevy_pbr's
@@ -165,11 +165,9 @@ never S; each comparison is a smoothstep over a band under S that grows with the
 distance (the sun's size) and with a texel's fall of S; the receiver is lifted by twice the
 ground's relief there plus 16 units against speckle on lit slopes; T fades to 1 over the
 map's last 4 texels and is 1 outside it and over texels with no terrain. With a map
-published the band of §2 is active: Vsolid goes from min(C, T) to T over the last 20 % of the
-last cascade (6,400 to 8,000 units at the default distance), so object shadows fade out
-there instead of ending at a line (the stated design; its measured effect and the
-alternative, `min(C, T)` throughout with the cut-off kept: terrain-shadows.md, "Only
-terrain-scale shadows; the band"), and with Sun shadows off T acts alone. The switch is the
+published Vsolid = min(C, T) (§2): object shadows keep the cascades' cut-off line, past the
+cascades T alone shades (terrain-shadows.md, "Only terrain-scale shadows; the darker of the
+two"), and with Sun shadows off T acts alone. The switch is the
 row Terrain shadows (experimental) (`terrain-shadows`, Graphics › Shadows, after Cloud
 shadows; off by default and in every preset; Continue waits for its pipelines), or
 `NVF_PLAY_DEBUG_TERRAIN_SHADOWS=1`, which wins; `graphics.rs` key `terrain-shadows`. The

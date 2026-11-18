@@ -1,7 +1,7 @@
 // Sun visibility (nvforever sun_visibility.rs, docs/design/sun-visibility.md): a factor
 // V in [0, 1] on the outdoor sun's direct light, V = K * Vsolid, with K the cloud
 // transmittance and Vsolid the solid occluders' visibility: min(C, T) of the cascade
-// shadow C and the terrain visibility T, fading to T over the last cascade's end band.
+// shadow C and the terrain visibility T (the darker of the two, at every distance).
 //
 // Imported by bevy_pbr's `apply_pbr_lighting` (patched in by sun_visibility.rs
 // `HOOK_EDITS`) only with the shader def NVF_SUN_VISIBILITY, which the view's pipelines
@@ -23,8 +23,7 @@ struct NvfSunVisibility {
     cloud: vec4<f32>,
     // World xz to terrain map uv: xy scale, zw offset (uv 0..1 inside the map).
     terrain_uv: vec4<f32>,
-    // x, y: the band of view distance over which Vsolid goes from min(C, T) to T (the last
-    // cascade's end); z: the map's texel size (world units); w: its side (texels).
+    // x, y: unused (0); z: the map's texel size (world units); w: its side (texels).
     terrain: vec4<f32>,
     // x: feature mask (1 cloud, 2 terrain); y: debug view (0 off, 1 cloud K, 2 terrain T,
     // 3 combined V).
@@ -157,34 +156,32 @@ fn nvf_terrain_visibility(P: vec3<f32>, L: vec3<f32>) -> f32 {
     return 1.0;
 }
 
-// Vsolid from the cascade shadow C and the terrain visibility T at view-space depth
-// view_z (negative in front of the camera). Nearer than the band min(C, T): where both
-// see the same ridge the darker one counts once, never C * T (which would square one
-// filtered edge). Beyond it T alone (Bevy's cascades return 1 past the last one, so the
-// object shadows fade out there instead of stopping at a line). Without terrain, or
-// switched on with no map published (mask bit 2 clear), C exactly.
+// Vsolid from the cascade shadow C and the terrain visibility T: min(C, T), the darker of
+// the two [design: the maintainer's decision on #2920, 2026-11-18]. Where both see the same
+// ridge the darker one counts once, never C * T (which would square one filtered edge).
+// Beyond the last cascade Bevy's C is 1, so T alone; object shadows end where the cascades
+// end, as with the row off (no fade-out). Without terrain, or switched on with no map
+// published (mask bit 2 clear), C exactly.
 @if(NVF_TERRAIN_VISIBILITY)
-fn nvf_solid_visibility(cascade: f32, terrain: f32, view_z: f32) -> f32 {
+fn nvf_solid_visibility(cascade: f32, terrain: f32) -> f32 {
     if (nvf_sun.mode.x & 2u) == 0u {
         return cascade;
     }
-    let band = nvf_sun.terrain.xy;
-    let x = saturate((-view_z - band.x) / max(band.y - band.x, 0.001));
-    let w = x * x * (3.0 - 2.0 * x);
-    return mix(min(cascade, terrain), terrain, w);
+    return min(cascade, terrain);
 }
 
 @if(!NVF_TERRAIN_VISIBILITY)
-fn nvf_solid_visibility(cascade: f32, terrain: f32, view_z: f32) -> f32 {
+fn nvf_solid_visibility(cascade: f32, terrain: f32) -> f32 {
     return cascade;
 }
 
-// The parts of the sun's visibility at P (light from L, cascade shadow C, view depth
-// view_z): x K, y T, z Vsolid, w V = K * Vsolid.
+// The parts of the sun's visibility at P (light from L, cascade shadow C; view_z, the view
+// depth, is not read since the combine takes no distance, and stays for the callers' one
+// signature): x K, y T, z Vsolid, w V = K * Vsolid.
 fn nvf_sun_visibility_parts(P: vec3<f32>, L: vec3<f32>, cascade_shadow: f32, view_z: f32) -> vec4<f32> {
     let k = nvf_cloud_transmittance(P, L);
     let t = nvf_terrain_visibility(P, L);
-    let solid = nvf_solid_visibility(cascade_shadow, t, view_z);
+    let solid = nvf_solid_visibility(cascade_shadow, t);
     return vec4<f32>(k, t, solid, k * solid);
 }
 

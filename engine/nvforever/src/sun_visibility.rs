@@ -1,8 +1,8 @@
 //! Sun visibility (#2670 cloud shadows, #2671 terrain shadows; docs/design/sun-visibility.md):
 //! one factor V in [0, 1] on the outdoor sun's direct light, through which other modules
 //! darken it. V = K * Vsolid: K the clouds' transmittance, Vsolid the solid occluders'
-//! visibility, min(C, T) of the cascade shadow C and the terrain's T, fading to T over the
-//! last cascade's end band (sun_visibility.wesl).
+//! visibility, min(C, T) of the cascade shadow C and the terrain's T, the darker of the two
+//! at every distance (sun_visibility.wesl).
 //!
 //! Producers write [`SunVisibility`] (cloud shadows: `cloud_enabled` and `cloud`; terrain
 //! shadows: `terrain_enabled` and `terrain`). Two things are kept apart there: whether a
@@ -145,24 +145,10 @@ pub struct TerrainVisibility {
     /// World xz to map uv (uv = xz * scale + offset); outside 0..1 the map says nothing.
     pub uv_scale: Vec2,
     pub uv_offset: Vec2,
-    /// View distances over which Vsolid goes from min(C, T) to T: the last cascade's end
-    /// ([`cascade_fade_band`]).
-    pub fade_band: Vec2,
     /// World units per texel.
     pub texel: f32,
     /// Texels per side.
     pub side: u32,
-}
-
-/// The view distances over which Vsolid fades from min(C, T) to T: the last part of the
-/// sun's last cascade, as long as Bevy's overlap between cascades
-/// (`overlap_proportion` of its far bound) [engineering choice: the cascades blend into
-/// each other over that share, so the last one blends into T alike]. Without cascades (sun
-/// shadow maps off: C = 1, Vsolid = T whatever the band) zero.
-pub fn cascade_fade_band(cascades: Option<&bevy::light::CascadeShadowConfig>) -> Vec2 {
-    let Some(c) = cascades else { return Vec2::ZERO };
-    let Some(&far) = c.bounds.last() else { return Vec2::ZERO };
-    Vec2::new(far * (1.0 - c.overlap_proportion.clamp(0.0, 1.0)), far)
 }
 
 /// The terrain receiver's constants (sun_visibility.wesl `NVF_TERRAIN_*`, word for word;
@@ -231,14 +217,11 @@ pub fn terrain_visibility(u: &SunVisibilityUniform, load: impl Fn(IVec2) -> Vec4
 /// CPU mirror of sun_visibility.wesl `nvf_solid_visibility` (terrain variant): Vsolid from
 /// the cascade shadow `cascade`, T `terrain` and the view depth `view_z`.
 #[cfg_attr(not(test), allow(dead_code))]
-pub fn solid_visibility(u: &SunVisibilityUniform, cascade: f32, terrain: f32, view_z: f32) -> f32 {
+pub fn solid_visibility(u: &SunVisibilityUniform, cascade: f32, terrain: f32) -> f32 {
     if u.mode.x & MASK_TERRAIN == 0 {
         return cascade;
     }
-    let x = ((-view_z - u.terrain.x) / (u.terrain.y - u.terrain.x).max(0.001)).clamp(0.0, 1.0);
-    let w = smooth(x);
-    let near = cascade.min(terrain);
-    near + (terrain - near) * w
+    cascade.min(terrain)
 }
 
 /// What the debug view draws in place of the lit colour.
@@ -317,7 +300,7 @@ impl SunVisibilityUniform {
         // sun_visibility.wesl reads as T = 1 and Vsolid = C before touching the texture.
         if let Some(t) = v.terrain.as_ref().filter(|t| t.side > 0 && t.texel > 0.0) {
             u.terrain_uv = Vec4::new(t.uv_scale.x, t.uv_scale.y, t.uv_offset.x, t.uv_offset.y);
-            u.terrain = Vec4::new(t.fade_band.x, t.fade_band.y, t.texel, t.side as f32);
+            u.terrain = Vec4::new(0.0, 0.0, t.texel, t.side as f32);
             mask |= MASK_TERRAIN;
         }
         u.mode = UVec4::new(mask, v.debug as u32, 0, 0);
@@ -905,7 +888,7 @@ mod tests {
         let image = Handle::<Image>::default();
         let v = SunVisibility {
             cloud: Some(CloudVisibility { image: image.clone(), uv_scale: Vec2::new(0.5, 0.25), uv_offset: Vec2::new(3.0, 4.0), plane_height: 9_000.0, strength: 1.5 }),
-            terrain: Some(TerrainVisibility { image, uv_scale: Vec2::splat(2.0), uv_offset: Vec2::new(-1.0, 1.0), fade_band: Vec2::new(7_000.0, 8_000.0), texel: 256.0, side: 512 }),
+            terrain: Some(TerrainVisibility { image, uv_scale: Vec2::splat(2.0), uv_offset: Vec2::new(-1.0, 1.0), texel: 256.0, side: 512 }),
             debug: DebugMode::Terrain,
             ..default()
         };
@@ -1326,7 +1309,7 @@ mod tests {
 
         fn from_output(out: Vec<Vec4>, side: usize) -> Self {
             let (uv_scale, uv_offset) = crate::terrain_shadows::TerrainShadows::uv_transform(Vec2::ZERO, TEXEL, side as u32);
-            let terrain = TerrainVisibility { image: Handle::default(), uv_scale, uv_offset, fade_band: Vec2::new(6_400.0, 8_000.0), texel: TEXEL, side: side as u32 };
+            let terrain = TerrainVisibility { image: Handle::default(), uv_scale, uv_offset, texel: TEXEL, side: side as u32 };
             let u = SunVisibilityUniform::pack(&SunVisibility { terrain_enabled: true, terrain: Some(terrain), ..default() });
             Self { out, side, u }
         }
@@ -1475,36 +1458,26 @@ mod tests {
         assert_eq!(terrain_visibility(&neutral, never, Vec3::new(25.0 * TEXEL, 0.0, -25.0 * TEXEL), bevy_axes(light.normalize())), 1.0);
     }
 
-    /// Vsolid with terrain on: min(C, T) near, T beyond the last cascade's end band, blended
-    /// across it; with sun shadows off (C = 1) T alone at every distance; switched on with
-    /// nothing published, C exactly. The band is the last cascade's overlap share.
+    /// Vsolid with terrain on: min(C, T), the darker of the two, with no blend by distance
+    /// (the maintainer's decision on #2920): an object's cascade shadow stays whole up to the
+    /// cascades' end, where Bevy's C is 1 and T alone counts; with sun shadows off (C = 1) T
+    /// alone; switched on with nothing published, C exactly. The uniform's band words are 0.
     #[test]
-    fn terrain_band_blend_is_active() {
+    fn terrain_combine_is_the_darker_of_the_two() {
         let map = TestMap::from_output(vec![Vec4::ZERO; 4], 2);
         let u = map.u;
         assert_eq!(u.mode.x & MASK_TERRAIN, MASK_TERRAIN);
-        // Near: the darker once, never the product.
-        assert_eq!(solid_visibility(&u, 0.5, 0.2, -100.0), 0.2);
-        assert_eq!(solid_visibility(&u, 0.1, 0.2, -100.0), 0.1);
-        // An object's cascade shadow (C 0) on lit terrain fades out across the band.
-        assert_eq!(solid_visibility(&u, 0.0, 1.0, -6_000.0), 0.0);
-        let mid = solid_visibility(&u, 0.0, 1.0, -7_200.0);
-        assert!(mid > 0.2 && mid < 0.8, "{mid}");
-        assert_eq!(solid_visibility(&u, 0.0, 1.0, -8_000.0), 1.0);
-        assert_eq!(solid_visibility(&u, 1.0, 0.3, -20_000.0), 0.3, "beyond: T");
-        // Sun shadows off: C = 1, Vsolid = T everywhere.
-        for z in [-10.0, -7_000.0, -7_900.0, -50_000.0] {
-            assert_eq!(solid_visibility(&u, 1.0, 0.3, z), 0.3, "view z {z}");
-        }
+        assert_eq!((u.terrain.x, u.terrain.y), (0.0, 0.0));
+        // The darker once, never the product.
+        assert_eq!(solid_visibility(&u, 0.5, 0.2), 0.2);
+        assert_eq!(solid_visibility(&u, 0.1, 0.2), 0.1);
+        // An object's cascade shadow (C 0) on lit terrain stays whole: no fade-out.
+        assert_eq!(solid_visibility(&u, 0.0, 1.0), 0.0);
+        // Past the cascades (C 1) or with sun shadows off: T.
+        assert_eq!(solid_visibility(&u, 1.0, 0.3), 0.3);
         // Switched on, nothing published: the cascades as they were.
         let neutral = SunVisibilityUniform::pack(&SunVisibility { terrain_enabled: true, ..default() });
-        for z in [-10.0, -7_200.0, -50_000.0] {
-            assert_eq!(solid_visibility(&neutral, 0.4, 0.0, z), 0.4);
-        }
-        // The band from the sun's cascades (sky.rs): the last 20 % of the last one.
-        let band = cascade_fade_band(Some(&crate::sky::shadow_cascades(8_000.0, 1.0, crate::sky::CascadeLayout::Spaced(3), 2048)));
-        assert!((band - Vec2::new(6_400.0, 8_000.0)).length() < 1.0, "{band}");
-        assert_eq!(cascade_fade_band(None), Vec2::ZERO);
+        assert_eq!(solid_visibility(&neutral, 0.4, 0.0), 0.4);
     }
 
     /// Switched on with nothing published: the plumbing is on and the views take the
@@ -1526,11 +1499,11 @@ mod tests {
     /// Review of f8d532cca, finding 5: a published map whose GPU image is not uploaded this
     /// frame (the one-texel stand-in bound) must not be read as a 512-texel map. The written
     /// uniform's terrain bit is cleared: T = 1 before any load and Vsolid = C at every
-    /// distance (no end-band blend without a usable map); the cloud's part is untouched.
+    /// distance (no terrain without a usable map); the cloud's part is untouched.
     #[test]
     fn terrain_bit_needs_an_uploaded_map() {
         let (uv_scale, uv_offset) = crate::terrain_shadows::TerrainShadows::uv_transform(Vec2::ZERO, TEXEL, 512);
-        let terrain = TerrainVisibility { image: Handle::default(), uv_scale, uv_offset, fade_band: Vec2::new(6_400.0, 8_000.0), texel: TEXEL, side: 512 };
+        let terrain = TerrainVisibility { image: Handle::default(), uv_scale, uv_offset, texel: TEXEL, side: 512 };
         let cloud = checker_cloud(Handle::default());
         let packed = SunVisibilityUniform::pack(&SunVisibility { terrain_enabled: true, terrain: Some(terrain), cloud_enabled: true, cloud: Some(cloud), ..default() });
         assert_eq!(packed.mode.x, MASK_TERRAIN | MASK_CLOUD);
@@ -1543,9 +1516,7 @@ mod tests {
         let never = |c: IVec2| -> Vec4 { panic!("a load without an uploaded map: {c}") };
         let light = bevy_axes(toward_game(0.3, 1.0));
         assert_eq!(terrain_visibility(&u, never, Vec3::new(100.0 * TEXEL, 0.0, -100.0 * TEXEL), light), 1.0);
-        for z in [-100.0, -6_400.0, -7_200.0, -8_000.0, -50_000.0] {
-            assert_eq!(solid_visibility(&u, 0.0, 1.0, z), 0.0, "view z {z}: C kept");
-        }
+        assert_eq!(solid_visibility(&u, 0.0, 1.0), 0.0, "C kept");
         // Nothing published at all: nothing to clear.
         let neutral = SunVisibilityUniform::pack(&SunVisibility { terrain_enabled: true, ..default() });
         assert_eq!(usable_uniform(neutral, false), neutral);

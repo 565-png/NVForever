@@ -518,12 +518,11 @@ pub fn follow_graphics(g: Res<crate::graphics::Graphics>, forced: Res<TerrainSha
 /// (`cascades`: the sun's cascade configuration while its shadow maps are on).
 /// `terrain_enabled` follows the switch alone; `terrain` is set only while switched on with
 /// a map published (module notes, "Into the lighting").
-pub fn terrain_slot(wanted: bool, out: &TerrainShadows, cascades: Option<&bevy::light::CascadeShadowConfig>) -> (bool, Option<crate::sun_visibility::TerrainVisibility>) {
+pub fn terrain_slot(wanted: bool, out: &TerrainShadows) -> (bool, Option<crate::sun_visibility::TerrainVisibility>) {
     let terrain = out.image.as_ref().filter(|_| wanted && out.side > 0 && out.texel > 0.0).map(|image| crate::sun_visibility::TerrainVisibility {
         image: image.clone(),
         uv_scale: out.uv_scale,
         uv_offset: out.uv_offset,
-        fade_band: crate::sun_visibility::cascade_fade_band(cascades),
         texel: out.texel,
         side: out.side,
     });
@@ -539,11 +538,9 @@ pub fn terrain_slot(wanted: bool, out: &TerrainShadows, cascades: Option<&bevy::
 pub fn feed_sun_visibility(
     wanted: Res<TerrainShadowsWanted>,
     out: Res<TerrainShadows>,
-    suns: Query<(&DirectionalLight, Option<&bevy::light::CascadeShadowConfig>), With<crate::sky::Sun>>,
     mut sink: ResMut<crate::sun_visibility::SunVisibility>,
 ) {
-    let cascades = suns.iter().next().and_then(|(light, c)| c.filter(|_| light.shadow_maps_enabled));
-    let (enabled, terrain) = terrain_slot(wanted.0, &out, cascades);
+    let (enabled, terrain) = terrain_slot(wanted.0, &out);
     if sink.terrain_enabled != enabled {
         sink.terrain_enabled = enabled;
     }
@@ -721,9 +718,7 @@ impl Plugin for TerrainShadowsPlugin {
                         stop_terrain_shadows.run_if(|w: Res<TerrainShadowsWanted>| w.is_changed() && !w.0),
                         update_terrain_shadows.run_if(wanted),
                         dump_terrain_shadows.run_if(wanted).run_if(|aid: Res<DumpAid>| aid.path.is_some() && !aid.asked),
-                        // After the sun's cascades are set for the frame, so the end band is
-                        // never one update behind a cascade configuration change.
-                        feed_sun_visibility.run_if(feeding_needed).after(crate::graphics::SunShadowQuality),
+                        feed_sun_visibility.run_if(feeding_needed),
                     )
                         .chain()
                         .after(crate::sun_heightfield::update_heightfield),
@@ -1784,7 +1779,6 @@ mod tests {
         app.update();
         let t = vis(&app).terrain.expect("published");
         assert_eq!((t.image.id(), t.texel, t.side, t.uv_scale, t.uv_offset), (front.id(), TEXEL, 512, uv_scale, uv_offset));
-        assert!((t.fade_band - Vec2::new(6_400.0, 8_000.0)).length() < 1.0, "{}", t.fade_band);
         assert_eq!(SunVisibilityUniform::pack(&vis(&app)).mode.x & MASK_TERRAIN, MASK_TERRAIN);
 
         // The next publication is the other target: the slot follows the handle.
@@ -1799,11 +1793,11 @@ mod tests {
         assert!(v.terrain_enabled && v.terrain.is_none());
         assert!(app.world().get::<SunVisibilityView>(cam).is_some(), "the views keep the terrain variant");
 
-        // Sun shadow maps off: no cascades, the band is 0 (Vsolid = T).
+        // Sun shadow maps off: the map is still fed (C = 1 then, so Vsolid = T).
         *app.world_mut().resource_mut::<TerrainShadows>() = published(front.clone(), 4);
         app.world_mut().get_mut::<DirectionalLight>(sun).unwrap().shadow_maps_enabled = false;
         app.update();
-        assert_eq!(vis(&app).terrain.expect("published").fade_band, Vec2::ZERO);
+        assert_eq!(vis(&app).terrain.expect("published").image.id(), front.id());
 
         // The row off: nothing, even with a map still standing.
         app.world_mut().resource_mut::<Graphics>().terrain_shadows = false;

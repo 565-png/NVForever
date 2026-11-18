@@ -595,7 +595,7 @@ impl Plugin for GraphicsPlugin {
             .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
             .add_plugins((crate::ssao::SsaoPlugin, crate::post::PostPlugin, crate::taa::TaaPlugin, crate::shafts::ShaftsPlugin, crate::heat_haze::HeatHazePlugin, crate::upscaler::prep::PrepPlugin, crate::fsr::FsrPlugin, crate::dlss::DlssPassPlugin))
             .add_systems(Startup, |g: Res<Graphics>| info!("graphics: {}", g.describe()))
-            .add_systems(Update, (crate::upscaler::follow_request, apply, sun_shadow_key.pipe(sun_shadow_quality).after(crate::sky::update_sky).in_set(SunShadowQuality)).chain())
+            .add_systems(Update, (crate::upscaler::follow_request, apply, sun_shadow_key.pipe(sun_shadow_quality).after(crate::sky::update_sky)).chain())
             .add_systems(PostUpdate, log_shadow_map.before(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades));
         if let Some(ft) = self.2.clone().filter(|f| f.every > 0.0) {
             // GPU time per render pass (timestamp queries), logged with the frame time.
@@ -804,12 +804,6 @@ fn shadow_key_of(sky: &SkyState, map: usize) -> SunShadowKey {
     }
 }
 
-/// Where the sun's cascades are set for the update ([`sun_shadow_quality`]): terrain_shadows.rs
-/// `feed_sun_visibility` runs after it, so the terrain end band follows a cascade change in
-/// the same update.
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SunShadowQuality;
-
 /// [`shadow_key_of`] the sky now and the maps' side now.
 fn sun_shadow_key(sky: Res<SkyState>, map: Option<Res<DirectionalLightShadowMap>>) -> SunShadowKey {
     shadow_key_of(&sky, crate::sky::map_side(map.as_deref()))
@@ -822,7 +816,6 @@ fn sun_shadow_key(sky: Res<SkyState>, map: Option<Res<DirectionalLightShadowMap>
 /// a sun is spawned (a worldspace switch makes a new one with the day's cascades) or someone
 /// else puts cascades on it ([`apply`], [`crate::sky::set_shadows`] with an unchanged value).
 /// It writes the cascades in place, so its own writes do not count as someone else's.
-/// It runs in [`SunShadowQuality`].
 #[allow(clippy::type_complexity)]
 fn sun_shadow_quality(
     In(key): In<SunShadowKey>,

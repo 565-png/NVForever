@@ -147,8 +147,8 @@ run, its heightfield and a shaded-ground mask as greyscale PNGs, north up.
 
 **Where.** sun_visibility.wesl `nvf_terrain_visibility` gives T for a receiver at world
 position P lit from L; the sun visibility's composition (docs/design/sun-visibility.md §2)
-uses it: `V = K · Vsolid`, `Vsolid = min(C, T)` nearer than the last cascade's end band,
-T beyond it. It runs in the directional light loop of the patched `apply_pbr_lighting`, on
+uses it: `V = K · Vsolid`, `Vsolid = min(C, T)` at every distance (beyond the last
+cascade Bevy's C is 1, so T alone). It runs in the directional light loop of the patched `apply_pbr_lighting`, on
 the outdoor sun (the moon at night) only, for receivers and non-receivers alike (terrain,
 objects, actors, grass, leaves, tree cards, water). The CPU mirrors in sun_visibility.rs
 (`terrain_visibility`, `terrain_lit`, `solid_visibility`) follow the shader line for line;
@@ -247,28 +247,22 @@ distance to the nearest edge) and is 1 outside the map, before any texture read
 terrain hold S = −1e30 and shade nothing (test `invalid_texels_shade_nothing`); the bilinear
 filter fades a shadow into such a hole over one texel. Test `map_edge_fades_out`.
 
-**Only terrain-scale shadows; the band.** T is the landscape's shadow only (256-unit
-texels): near the camera the cascades shade objects and the terrain alike, and `min(C, T)`
-counts a ridge already in both once. The band over which Vsolid goes from `min(C, T)` to T is
-the last part of the sun's last cascade, as long as Bevy's overlap between cascades
-(`overlap_proportion` 0.2 of the far bound: 6,400 to 8,000 units at the default shadow
-distance; `sun_visibility.rs` `cascade_fade_band`, fed from the `Sun` entity's
-`CascadeShadowConfig` while its shadow maps are on) [engineering choice]. It was inert until
-T2 (no terrain variant drew); with a map published it is active (test
-`terrain_band_blend_is_active`: a cascade shadow on lit terrain fades out across it). With
-Sun shadows off, C = 1 and Vsolid = T at every distance; the band is then 0 and changes
-nothing.
+**Only terrain-scale shadows; the darker of the two.** T is the landscape's shadow only
+(256-unit texels): near the camera the cascades shade objects and the terrain alike, and
+`Vsolid = min(C, T)` counts a ridge already in both once, never `C · T` [design: the
+maintainer's decision on #2920, 2026-11-18: "the plain darker of the two, with no fade-out
+of object shadows beyond the sun shadows' range"]. There is no blend by distance: an
+object's cascade shadow stays whole up to the cascades' cut-off line, exactly as with the
+row off, and past the last cascade Bevy's C is 1, so T alone shades (test
+`terrain_combine_is_the_darker_of_the_two`). With Sun shadows off, C = 1 and Vsolid = T at
+every distance.
 
-What the band does to object shadows is the stated design, not a defect: over the last
-fifth of the last cascade, where the terrain does not shade (T = 1), an object's cascade
-shadow fades to lit (at C = 0, T = 1 and the band's middle, Vsolid = 0.5), so object
-shadows end in a fade instead of at the cascades' cut-off line. The main session measured
-it: with the row on, about 0.3-0.5 % of the pixels were slightly brighter in three aerial
-views (main session run 2026-11-17, fork-notes). The noted alternative, if object shadows
-must be kept to the cascades' end: `min(C, T)` throughout the cascades' range, keeping the
-cut-off line (the band then only matters beyond C's reach, where C = 1 anyway); separate
-object and terrain shadow terms would allow a more selective transition. Not taken
-[engineering choice, open for the maintainer].
+An earlier version of this branch blended Vsolid from `min(C, T)` to T over the last fifth
+of the last cascade, so that object shadows ended in a fade instead of at the cut-off line;
+with the row on, about 0.3-0.5 % of the pixels came out slightly brighter in three aerial
+views [observed: main session run 2026-11-17, fork-notes]. The maintainer chose the plain
+combine instead, so the row changes nothing inside the cascades' range. Separate object and
+terrain shadow terms would allow a more selective transition; not taken.
 
 **Activation** (`terrain_shadows.rs` `feed_sun_visibility`, `follow_graphics`): the settings
 row Terrain shadows (or `NVF_PLAY_DEBUG_TERRAIN_SHADOWS=1`, which wins) sets
@@ -281,7 +275,7 @@ binding 41 holds a one-texel stand-in that casts nothing (S = −1e30; Bevy's wh
 would read S = 1 and shade every receiver below y = 1). A map published but not uploaded
 yet is treated alike: `prepare_sun_visibility` binds the stand-in and clears the written
 uniform's terrain bit (`usable_uniform`), so the shader never reads the stand-in as a
-512-texel map and the end band does not blend towards T without a usable map (test
+512-texel map and Vsolid stays C without a usable map (test
 `terrain_bit_needs_an_uploaded_map`; review of f8d532cca, finding 5). So doors, the sun setting and new
 maps never rebuild pipelines; only the switch does (test `terrain_bindings_follow_the_switch`,
 smoke `terrain-shadows`).
@@ -293,9 +287,8 @@ texture per version: T0's new versions are written into the same GPU texture and
 (the vendored `GpuImage` preparation reuses a texture of the same descriptor with
 `COPY_DST`; earlier notes said every version made a new one, which was wrong), and T1 makes
 a bind group per dispatch; a kept view whose contents change needs nothing rebuilt.
-`feed_sun_visibility` runs after `graphics.rs` `sun_shadow_quality` (its set
-`SunShadowQuality`), so the end band
-follows a cascade change in the same update. Between two publications the
+The combine reads nothing of the cascades' configuration, so a cascade change needs no
+update of the uniform. Between two publications the
 map stands still while the sun moves: the step is accepted, not blended [engineering choice:
 the simple one]. T1's cadence asks for a new map once the predicted shadow-edge movement for
 the map's whole relief (a bound for every blocker on it) exceeds half a texel (128 units),
@@ -341,7 +334,8 @@ those fixes (which change no receiver or march arithmetic). Pictures at Goodspri
 slopes, nothing at noon. With Sun shadows on, ground inside the cascades' range does not
 change with the row (the cascades already shade it) and ground beyond it does; with Sun
 shadows off a shaded flat area darkens. In three aerial views about 0.3-0.5 % of the pixels
-were slightly brighter with the row on (the end band, above).
+were slightly brighter with the row on: that was the end band of an earlier version
+(above), since replaced by the plain `min(C, T)`; the views were not taken again.
 
 **Not run or not shown yet**: the producer's own GPU time, spikes and a lower-end GPU;
 upscalers and MSAA with the row on; how a publication looks while the sun moves (the run
@@ -356,5 +350,4 @@ channels; the bias's limits above); whether the 256-unit grid shows anywhere els
 - the band's place under S (lit at S) against a band centred on S (truer edges, more risk
   of stripes on slopes);
 - the edge fade (4 texels);
-- the fade band (the last cascade's overlap share, 20 %);
 - whether the moon should cast terrain shadows at night at the same strength.
