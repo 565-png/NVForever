@@ -84,7 +84,7 @@
 //! - Test aid `NVF_PLAY_TEST_LIGHT_SHADOW_HOLD=0`: every casting light draws every face
 //!   every frame, for comparing the picture and the cost.
 
-use bevy::camera::primitives::{Aabb, CubemapFrusta, Frustum, Sphere};
+use bevy::camera::primitives::{Aabb, CubemapFrusta, Frustum, Sphere, CUBE_MAP_FACES};
 use bevy::camera::visibility::{CubemapVisibleEntities, RenderLayers, VisibilitySystems, VisibleMeshEntities};
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::light::{CascadeShadowConfig, DirectionalLightShadowMap, NotShadowCaster, PointLightShadowMap, SimulationLightSystems};
@@ -286,6 +286,9 @@ struct LampState {
     /// Its shadow's strength by distance, 0..1 ([`distance_fade`]); with [`Self::fade`] it
     /// makes what the renderer gets.
     far_fade: f32,
+    /// Marked faces held last frame because the camera could not see them
+    /// ([`faces_in_view`]): one coming into view draws before other lights' faces.
+    deferred: u8,
 }
 
 /// The casting lights' slots and states.
@@ -345,6 +348,8 @@ pub struct Pass {
     pub grid: [u64; 4],
     /// Casting lights whose shadow was faded by distance, summed over the frames.
     pub distance_faded: u64,
+    /// Marked faces held on their light's turn because the camera could not see them.
+    pub faces_out_of_view: u64,
 }
 
 /// A light's shadow fades out over this last fraction of the reach it is chosen within (the
@@ -577,7 +582,7 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
     let on = |b: bool| if b { "on" } else { "OFF" };
     let [served, candidates, filed, everywhere] = p.grid;
     format!(
-        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light); distance fade ({}) {:.1} lights fading a frame",
+        "light shadows: performance pass over {frames} frames: lights at steps near/mid/far {:.1}/{:.1}/{:.1} a frame; small-caster cut-off ({}) casters cut {:.1} a frame, marks skipped {:.2} a frame, redraws for a finer step {}; caster grid ({}) {:.2} lamps served a frame, {:.0} candidates each, {filed} meshes filed ({everywhere} for every light); distance fade ({}) {:.1} lights fading a frame; face culling ({}) {:.2} marked faces held out of view a frame",
         per(p.steps[0]),
         per(p.steps[1]),
         per(p.steps[2]),
@@ -589,7 +594,9 @@ pub fn pass_summary(p: &Pass, frames: u64) -> String {
         per(served),
         candidates as f64 / served.max(1) as f64,
         on(distance_fade_on()),
-        per(p.distance_faded)
+        per(p.distance_faded),
+        on(face_cull_on()),
+        per(p.faces_out_of_view)
     )
 }
 
@@ -725,6 +732,47 @@ fn cutoff_on() -> bool {
         let off = std::env::var("NVF_LIGHT_SHADOW_CUTOFF").is_ok_and(|v| v.trim() == "0");
         if off {
             info!("light shadows: NVF_LIGHT_SHADOW_CUTOFF=0, no small-caster cut-off");
+        }
+        !off
+    })
+}
+
+/// A cube face counts as in the camera's view while its pyramid comes within this far of
+/// the view's frustum (game units) [engineering choice: a face at the edge of the screen is
+/// drawn before it shows much, so a turn of the camera rarely finds it stale].
+pub const FACE_VIEW_MARGIN: f32 = 64.0;
+
+/// Which faces of a point light's cube at `light` with `range` can show in a camera's view
+/// (bit `i` for face `i` in Bevy's cube face order, `CUBE_MAP_FACES`). A face is out when
+/// its pyramid (the light's point and the four corners of its square at the range) lies
+/// wholly outside one of the view's side or near planes, moved out by `margin`; the far
+/// plane is left out, as Bevy's culling of lights does. Conservative: a face it keeps may
+/// still be out of view, a face it drops is not in it.
+pub fn faces_in_view(view: &Frustum, light: Vec3, range: f32, margin: f32) -> u8 {
+    let planes = &view.half_spaces[..=bevy::shape::ViewFrustum::NEAR_PLANE_IDX];
+    let mut faces = 0;
+    for (i, face) in CUBE_MAP_FACES.iter().enumerate() {
+        let t = face.target;
+        // Two axes square to the face's.
+        let a = Vec3::new(t.y.abs(), t.z.abs(), t.x.abs());
+        let b = t.cross(a);
+        let points = [light, light + range * (t + a + b), light + range * (t + a - b), light + range * (t - a + b), light + range * (t - a - b)];
+        let out = planes.iter().any(|h| points.iter().all(|p| h.normal_d().dot(p.extend(1.0)) + margin <= 0.0));
+        if !out {
+            faces |= 1 << i;
+        }
+    }
+    faces
+}
+
+/// `NVF_LIGHT_SHADOW_FACE_CULL=0` (a measuring aid): every marked face draws on its turn,
+/// in view or not, as before 2026-11-18.
+fn face_cull_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let off = std::env::var("NVF_LIGHT_SHADOW_FACE_CULL").is_ok_and(|v| v.trim() == "0");
+        if off {
+            info!("light shadows: NVF_LIGHT_SHADOW_FACE_CULL=0, faces out of view drawn too");
         }
         !off
     })
@@ -1026,6 +1074,7 @@ fn shadow_lights(
             map_scale: scale,
             cut_any: false,
             far_fade: 1.0,
+            deferred: 0,
         });
         // Its shadow fades out over the last stretch of the reach (not a transient's: it is
         // chosen within a shorter reach and lasts a moment).
@@ -1238,12 +1287,32 @@ fn shadow_lights(
     // `transient_draws` transient ones.
     lamps.sort_by(|a, b| b.seen.cmp(&a.seen).then(a.gap.total_cmp(&b.gap)));
     let hold_all = !holding();
-    let mut order: Vec<&Lamp> = lamps.iter().collect();
-    order.sort_by_key(|l| !state.lamps.get(&l.entity).is_some_and(|s| s.fresh));
+    // The faces of each point light that can show in the camera's view (all for a spot
+    // light, one never drawn, a transient, or with face culling off): a marked face out of
+    // view stays marked, held, until it comes into view.
+    let cull = face_cull_on() && !hold_all;
+    let in_view: Vec<u8> = lamps
+        .iter()
+        .map(|l| {
+            let fresh = state.lamps.get(&l.entity).is_none_or(|s| s.fresh);
+            match view {
+                Some(v) if cull && !l.spot && !l.transient && !fresh => faces_in_view(v, l.at, l.range, FACE_VIEW_MARGIN),
+                _ => ALL_FACES,
+            }
+        })
+        .collect();
+    // Never drawn first, then those with marked faces that came into view, then the rest
+    // as sorted.
+    let mut order: Vec<usize> = (0..lamps.len()).collect();
+    order.sort_by_key(|&i| {
+        let s = state.lamps.get(&lamps[i].entity);
+        (!s.is_some_and(|s| s.fresh), !s.is_some_and(|s| s.deferred & in_view[i] != 0))
+    });
     let (mut draws, mut transient_draws) = tune.map_or((0, 0), |t| (t.draws, t.transient_draws));
     let mut drawing: EntityHashMap<u8> = EntityHashMap::default();
     out.held.clear();
-    for l in order {
+    for i in order {
+        let l = &lamps[i];
         let Some(s) = state.lamps.get_mut(&l.entity) else { continue };
         let all = if l.spot { 1 } else { ALL_FACES };
         s.dirty &= all;
@@ -1258,10 +1327,12 @@ fn shadow_lights(
         } else if l.transient {
             0
         } else if its_turn(frame, s.phase, every) {
-            s.dirty
+            state.pass.faces_out_of_view += u64::from((s.dirty & !in_view[i]).count_ones());
+            s.dirty & in_view[i]
         } else {
             0
         };
+        s.deferred = s.dirty & !in_view[i];
         // Only a light the camera saw last frame (a transient: sees this frame) is drawn by
         // Bevy this frame.
         let budget = if l.transient { &mut transient_draws } else { &mut draws };
@@ -1778,6 +1849,33 @@ mod tests {
             map_scale: map_scale(512.0, 1.0),
             cut_any: false,
             far_fade: 1.0,
+            deferred: 0,
+        }
+    }
+
+    #[test]
+    fn a_face_the_camera_cannot_see_is_held_and_the_others_drawn() {
+        // A camera at the origin looking down -z, 90 degrees wide, near plane 10.
+        use bevy::camera::CameraProjection;
+        let lens = bevy::camera::PerspectiveProjection { fov: std::f32::consts::FRAC_PI_2, aspect_ratio: 1.0, near: 10.0, ..default() };
+        let view = Frustum(bevy::shape::ViewFrustum::from_clip_from_world(&lens.get_clip_from_view()));
+        // A lamp ahead: every face can show.
+        assert_eq!(faces_in_view(&view, Vec3::new(0.0, 0.0, -1000.0), 400.0, 0.0), ALL_FACES);
+        // A lamp 500 units behind whose light reaches past the camera: the face pointing
+        // further back (+z, index 5) and the side faces lie behind the side planes; the face
+        // towards the camera (-z, index 4) shows.
+        let behind = faces_in_view(&view, Vec3::new(0.0, 0.0, 500.0), 800.0, 0.0);
+        assert_eq!(behind & (1 << 5), 0, "+z, away from the view");
+        assert_ne!(behind & (1 << 4), 0, "-z, into the view");
+        assert_eq!(behind & 0b1111, 0, "the sides: {behind:06b}");
+        // A margin keeps a face just out of view.
+        let side = Vec3::new(1100.0, 0.0, -1000.0);
+        let near_edge = faces_in_view(&view, side, 400.0, 0.0);
+        assert_eq!(near_edge & 1, 0, "+x, out past the right plane");
+        assert_ne!(faces_in_view(&view, side, 400.0, 1000.0) & 1, 0, "within a wide margin");
+        // Each face's own pyramid: the light's point and four far corners.
+        for (i, f) in CUBE_MAP_FACES.iter().enumerate() {
+            assert!(f.target.length() > 0.99, "face {i}");
         }
     }
 
@@ -1865,12 +1963,13 @@ mod tests {
 
     #[test]
     fn the_performance_pass_line_gives_each_technique_a_frame() {
-        let p = Pass { cut_casters: 300, cut_marks: 20, step_redraws: 3, steps: [100, 50, 50], grid: [50, 25_000, 9000, 40], distance_faded: 250 };
+        let p = Pass { cut_casters: 300, cut_marks: 20, step_redraws: 3, steps: [100, 50, 50], grid: [50, 25_000, 9000, 40], distance_faded: 250, faces_out_of_view: 30 };
         let s = pass_summary(&p, 100);
         assert!(s.starts_with("light shadows: performance pass over 100 frames: lights at steps near/mid/far 1.0/0.5/0.5 a frame;"), "{s}");
         assert!(s.contains("casters cut 3.0 a frame, marks skipped 0.20 a frame, redraws for a finer step 3"), "{s}");
         assert!(s.contains("0.50 lamps served a frame, 500 candidates each, 9000 meshes filed (40 for every light)"), "{s}");
-        assert!(s.ends_with("distance fade (on) 2.5 lights fading a frame"), "{s}");
+        assert!(s.contains("distance fade (on) 2.5 lights fading a frame"), "{s}");
+        assert!(s.ends_with("face culling (on) 0.30 marked faces held out of view a frame"), "{s}");
         assert!(pass_summary(&Pass::default(), 0).contains("over 0 frames"), "no division by zero");
     }
 
