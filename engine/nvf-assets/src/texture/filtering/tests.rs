@@ -172,7 +172,7 @@ fn request_is_not_a_held_overlay_and_foreign_sampler_fields_are_not_rewritten() 
         s.anisotropy_clamp = 4;
         s.address_mode_u = ImageAddressMode::ClampToEdge;
     }
-    // A cache read is not a new command and must not restore16 over this equal-handle write.
+    // A cache read is not a new command and must not restore 16 over this equal-handle write.
     assert_eq!(
         cache.get("old.dds", true, &owned.data, &mut images, None),
         Some(h.clone())

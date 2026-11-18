@@ -184,8 +184,8 @@ pub fn is_waiting(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
 /// `value` [documented: GECK wiki SetFactionReaction], the disposition modifier between
 /// the two [documented: GECK wiki GetFactionReaction, "the disposition modifier between
 /// two factions"; xEdit FACT XNAM "Modifier"]. Kept (`FormChanges::faction_modifiers`,
-/// saved); the modifiers are not part of a disposition yet (docs/spec-notes/factions.md),
-/// so nothing reads it. The group combat reaction (SetEnemy, SetAlly) is not changed.
+/// saved); source queries and integer changes read it (`nvse_faction_modifiers`). NPC
+/// disposition aggregation remains open (factions.md §8). Combat reactions are unchanged.
 pub fn set_faction_reaction(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let (f, target) = (a.form(0)?, a.form(1)?);
     let v = a.num(2)?;

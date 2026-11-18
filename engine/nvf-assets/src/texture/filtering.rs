@@ -10,7 +10,7 @@ fn change(image: &mut Image, level: u16) -> bool {
     let ImageSampler::Descriptor(s) = &mut image.sampler else {
         return false;
     };
-    // Anisotropy above1 requires linear sampling. Never rewrite a foreign nearest
+    // Anisotropy above 1 requires linear sampling. Never rewrite a foreign nearest
     // sampler's filters to make it eligible, or invent a descriptor for Default.
     if s.mag_filter != ImageFilterMode::Linear
         || s.min_filter != ImageFilterMode::Linear
