@@ -1923,7 +1923,7 @@ longer exists (the settings menu overhaul); the haze is a row of its own, "Deser
   at 06:30 east, under the overcast and the hazy weather, and the street, in the PR. The
   cost is not measured on a slower GPU or at 1920x1080.
 
-### 3.17 Full-detail scenery (`full-detail`; off in both presets, #2701)
+### 3.17 Full-detail scenery (`full-detail`; off in both presets, #2701 stages 1 and 2)
 
 Past the loaded cells (5 x 5 around the player's cell, `uGridsToLoad` 5 [observed: the
 owner's `FalloutPrefs.ini`, world.md §7]) only references flagged "visible when distant"
@@ -1946,19 +1946,31 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   them) and carry `nvf_play::DrawOnly`: the console's and the editor's picks, the
   crosshair, the loaded counts, the scripts' NIF functions and scripted effect shaders
   (with their add-on models and particles) leave them out. No collider.
-- **Drawn**: STAT and SCOL references, and every other reference with a model flagged
-  visible when distant (REFR record flag 0x8000 [documented: GECK wiki "Reference",
-  GetReferenceFlag]), as plain static scenery: the model's shapes as stored, no rig,
-  light source, emitter, stored pose or collision. A cell's object LOD segment holds the
+- **Drawn**: STAT, SCOL and MSTT references (a moveable static with its idle sequence
+  playing, nothing else of its rig, its pose never published to physics), SpeedTrees
+  (their generated geometry, else their billboard; a tree base the loaded cells have not
+  built yet is built on the main thread, one per frame, as tree.rs has no worker-thread
+  path), and every other reference with a model flagged visible when distant (REFR record
+  flag 0x8000 [documented: GECK wiki "Reference", GetReferenceFlag]), as plain static
+  scenery: the model's shapes as stored, no rig, light source, emitter, stored pose or
+  collision. The distant tree billboards crossfade with ring cells' trees as with loaded
+  cells' (treelod.rs reads `DrawnCells`). A cell's object LOD segment holds the
   LOD of its flagged references (world.md §7), and the ring hides it as a loaded cell does,
   so nothing flagged may be left out. The landscape at full resolution (under 4 x 4 near
   the 2 x 2 drawing the loaded cells start with, which meets their edge without cracks),
   counted nowhere (the terrain summary is the loaded cells').
-- **Left out** [design]: imposters (drawn by region), primitives, markers, references not
-  enabled at the start, actors, light sources, sounds, trees (the distant tree billboards
-  stay over ring cells), placed and cell water (distant water keeps covering ring cells),
-  grass, and non-flagged activators, doors, containers, furniture, terminals, items and
-  moveable statics.
+- **The game's state**: with the game running, references not enabled at the start
+  (not deleted) are drawn too, and the simulation hides and shows every ring copy
+  (`activate::sync_visuals`: on spawn, and on each `RefChanged`, which the game sends for a
+  script's Enable or Disable of any reference, loaded or not). In the viewer (no
+  simulation) only references enabled at the start are drawn. A reference the game moved
+  is drawn where it is (nvf-play `moved.rs` finds ring cells by `nvf_play::DrawOnlyCell`);
+  a destroyed reference's ring copy takes its destruction model (destroyed.rs) once that
+  model is prepared on the worker threads, keeping the old one until then.
+- **Left out** [design]: imposters (drawn by region), primitives, markers, deleted
+  references, actors, light sources, sounds, placed and cell water (distant water keeps
+  covering ring cells), grass, and non-flagged activators, doors, containers, furniture,
+  terminals and items.
 - **Kept segments**: a cell keeps its LOD segment when a flagged reference in it is not
   drawn here: an actor, placed water, one disabled at the start that the game has enabled,
   or one whose model drew nothing (missing, hidden). There the segment shows beside the
@@ -1999,11 +2011,12 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   the ring's inner edge (the default 8,000 units against the 8,192 a ring cell is at least
   from the camera's cell's edge); with longer shadows they cast. The rule uses that
   nominal distance, not each mesh's bounds or the sun's direction. They count as objects
-  for the Object distance slider. Below 100% that slider culls objects of loaded cells
-  whose LOD segment is hidden too, leaving neither (an existing limit, upstream before the
-  ring); the ring makes it larger: every ring cell lies beyond the loaded cells' reach the
-  slider is a part of, so at any value below 100% the ring's objects are culled and their
-  segments stay hidden. Use the ring with the slider at 100%.
+  for the Object distance slider, whose full distance is the ring's reach while the ring
+  is on (`DrawDistances::ring_reach`; actors and items keep the loaded cells'). At 100%
+  nothing is culled. Below 100% the slider culls objects beyond its part of that reach
+  whose LOD segment is hidden, leaving neither: an existing limit for loaded cells
+  (upstream before the ring); the ring widens it to the ring cells beyond the slider's
+  distance.
 - **Off**: with the row off nothing of the ring is drawn or logged; the only log
   difference is the settings page's count of rows in its start-up line, as for any new
   row. Three systems still run and return at once (the ring's stream and fade, the exit
@@ -2011,8 +2024,7 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
 - **Readers left as they are** [design]: occlusion planes of the loaded cells
   (rooms.rs) may cull ring meshes behind them, which is what they are for, and its
   diagnostics count them; damage-stage shapes of ring copies follow the game's stage
-  (destroyed.rs `staged_shapes`), but a model swapped for a destruction stage after a
-  ring cell was drawn shows when the cell is drawn again; activation sync, reference
+  (destroyed.rs `staged_shapes`); activation sync, reference
   fades, texture swaps, draw distance, shadow thinning (a test aid) and billboard facing
   act on ring meshes as on loaded ones (visual only); the Modern minimap's camera can show
   ring geometry at its edge (visual only); the stress sample counts ring entities in its
