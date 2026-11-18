@@ -288,6 +288,10 @@ fn doors_of(refs: &fnv_sim::refs::RefTable, loc: &Location) -> Vec<(u32, [f32; 3
         .collect()
 }
 
+/// What the log last said of the map marker range: the range and the Perception (as `f32`
+/// bits), the markers in range and those on the compass (#2348).
+type RangeLogged = Option<(u32, u32, usize, usize)>;
+
 /// The doors of the place the compass last looked in ([`doors_of`]), by its space.
 type DoorCache = Option<(u32, Vec<(u32, [f32; 3])>)>;
 
@@ -429,7 +433,7 @@ pub(crate) fn markers_near(markers: &[(u32, [f32; 3], bool)], here: [f32; 2], ra
 }
 
 /// Who and what is near, ten times a second.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system: its parameters
 fn gather(
     time: Res<Time>,
     state: Res<State<PlayState>>,
@@ -446,7 +450,7 @@ fn gather(
     mut graph: Local<Option<DoorGraph>>,
     mut logged_quest: Local<Option<(usize, usize)>>,
     tweaks: Option<Res<crate::tweaks::TweakSettings>>,
-    (mut dead_seen, target, mut door_cache, mut logged_places, mut logged_range): (Local<DeadSeen>, Option<Res<crate::activate::Target>>, Local<DoorCache>, Local<PlacesLogged>, Local<Option<(u32, u32, usize, usize)>>),
+    (mut dead_seen, target, mut door_cache, mut logged_places, mut logged_range): (Local<DeadSeen>, Option<Res<crate::activate::Target>>, Local<DoorCache>, Local<PlacesLogged>, Local<RangeLogged>),
 ) {
     // The player's tweak leaves hostile actors off the compass [design: docs/design/tweaks.md].
     let hide_foes = tweaks.as_ref().is_some_and(|t| t.hide_enemy_markers);
