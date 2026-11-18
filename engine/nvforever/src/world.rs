@@ -19,7 +19,7 @@ use nvf_assets::{nif_material, NifMaterial};
 use nvf_play::{RefVisual, RenderCell};
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::FRAC_PI_2;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Base object types drawn as static models. NPCs and creatures are assembled from parts
 /// (`actors.rs`); sounds and idle markers have no model. PROJ: placed mines and charges
@@ -59,13 +59,13 @@ pub struct OpenedPlugins {
 /// load order would refuse: a missing master, a master that loads after it, a second
 /// copy, past the 255th (`fnv_esm::loadorder::drop_unloadable`). The game goes on without
 /// them; a line for each is printed now (the log is not up yet) and kept for the log.
-pub fn open_plugins(data_dir: &Path, mods: Option<&Path>, names: &[String]) -> OpenedPlugins {
+pub fn open_plugins(data_dir: &Path, mods: &[PathBuf], names: &[String]) -> OpenedPlugins {
     let mut dropped = Vec::new();
     let mut plugins = Vec::with_capacity(names.len());
     for n in names {
         // The file whatever its case on disk (a case-sensitive copy may hold
         // `deadmoney.esm`; #995); the plugin keeps the name the load order gives it.
-        let path = fnv_install::plugins::plugin_path(data_dir, mods, n);
+        let path = fnv_install::plugins::plugin_path_in(data_dir, mods, n);
         match EsmPlugin::open(path) {
             Ok(mut p) => {
                 p.name = n.clone();
