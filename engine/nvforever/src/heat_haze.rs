@@ -524,6 +524,7 @@ fn prepare(mut commands: Commands, cache: Res<PipelineCache>, mut pipelines: Res
 }
 
 /// The picture read again from slightly displaced places where the mask allows.
+#[allow(clippy::type_complexity)]
 pub(crate) fn heat_pass(
     view: ViewQuery<(&ViewTarget, &DynamicUniformIndex<HeatHaze>, &HeatHaze, &HazeView, &ViewPrepassTextures, &ExtractedView)>,
     pipelines: Res<HazePipelines>,
