@@ -160,9 +160,22 @@ fn patch_display_sum(mut state: ResMut<FunctionsShader>, mut shaders: ResMut<Ass
             patched
         }
     };
+    // The ambient occlusion's hook goes in after the sun's; it too acts only under its
+    // shader def (ssao_lighting.rs).
+    let (patched, ao_hooked) = match crate::ssao_lighting::hook_patched(&patched) {
+        Some(hooked) => (hooked, true),
+        None => {
+            error!("{PBR_FUNCTIONS}: the ambient occlusion hook's anchors not found (Bevy changed?); the occlusion stays on the picture");
+            (patched, false)
+        }
+    };
     let patched = crate::fog::with_source(shader, patched);
     let _ = shaders.insert(&state.handle, patched);
     info!("lights: display-value lighting sum installed");
+    if ao_hooked {
+        crate::ssao_lighting::set_lighting_hooked();
+        info!("lights: ambient occlusion hook installed");
+    }
 }
 
 /// How a light's brightness moves by itself: LIGH DATA flags 3 "Flicker", 6 "Flicker

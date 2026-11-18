@@ -172,6 +172,7 @@ mod limping;
 mod sneaking;
 mod swimming;
 mod ssao;
+mod ssao_lighting;
 mod taa;
 mod fg_presenter;
 mod ffx_api;
@@ -1603,6 +1604,8 @@ fn main() -> AppExit {
     .add_plugins((imagespace::ImageSpacePlugin, sky::SkyPlugin, cloud_shadows::CloudShadowsPlugin, graphics::GraphicsPlugin(graphics, msaa, frame_times)))
     // The sun visibility factor: cloud and terrain shadows on the sun (off until a producer sets it).
     .add_plugins(sun_visibility::SunVisibilityPlugin)
+    // The ambient occlusion's shader for the lighting (imported only under its def).
+    .add_plugins(ssao_lighting::SsaoLightingPlugin)
     .add_plugins(mesh_terrain_blend::MeshTerrainBlendPlugin)
     // The switches the settings page weighs against the INI (`--play` only), for the
     // frame split's start-time decision (perf_overlay/split.rs).
