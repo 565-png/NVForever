@@ -542,9 +542,10 @@ Switching a part off or on while it acts leaves nothing stuck (smoke
 from where it is, and a placement by the game starts the ground velocity from rest
 however near (`MovementInertia::check_game_placed`).
 
-Off means the original's exactly, not "less" (owner, 2026-11-18: with Weapon Inertia off,
-the Global Toggle off and the defaults the held weapon "still shows inertia"; when a part
-is off "the game must fall back to the original's behaviour exactly"). Every first-person
+Off means the original's exactly, not "less" (the reporter of #3001, 2026-11-18: with
+Weapon Inertia off, the Global Toggle off and the defaults the held weapon "still shows
+inertia"; when a part is off "the game must fall back to the original's behaviour
+exactly"). Every first-person
 motion beyond the clips' own pose has one owner, and off it is nothing at all once its
 fade (at most about a second) is over [design]:
 
