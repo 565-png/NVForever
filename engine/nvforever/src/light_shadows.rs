@@ -142,9 +142,12 @@ pub const NEAR: f32 = 1500.0;
 /// A light already casting keeps its place against one this many times nearer.
 pub const KEEP: f32 = 1.25;
 
-/// Shadow near plane of a placed light, game units (about 23 cm) [engineering choice:
-/// clears the bulbs, shades and fire barrels' rims lights sit in; the flashlight's is 8].
-pub const NEAR_Z: f32 = 16.0;
+/// Shadow near plane of a placed light, game units (about 11 cm, as the flashlight's)
+/// [engineering choice, 2026-11-18: 16 at first, to clear the bulbs and shades lights sit
+/// in; since the fixtures are skipped (`LightFixture`, [`FIXTURE_MARGIN`]) 8 and 4 drew
+/// the same pictures in the General Store and the Prospector Saloon, and a wall nearer
+/// than 16 let the light through].
+pub const NEAR_Z: f32 = 8.0;
 
 /// A shape or a skeleton counts as moved for the lamps' maps once it is this far from where
 /// it last marked them (game units, about 6 cm) [engineering choice, 2026-11-18: in the
@@ -214,7 +217,7 @@ pub fn is_fixture_model(path: &str) -> bool {
 }
 
 /// A shape not named as a fixture is one for a light that lies within this far of its box
-/// (game units, about 23 cm, [`NEAR_Z`]): a bulb or shade of another name the light sits
+/// (game units, about 23 cm): a bulb or shade of another name the light sits
 /// in [engineering choice].
 pub const FIXTURE_MARGIN: f32 = 16.0;
 

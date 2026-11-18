@@ -95,6 +95,7 @@ mod grass_fire_fx;
 mod head_look;
 mod rigid_head_probe;
 mod idles;
+mod light_shadow_detail;
 mod light_shadows;
 mod lights;
 mod limbs;
@@ -1612,6 +1613,7 @@ fn main() -> AppExit {
     .add_plugins(sun_visibility::SunVisibilityPlugin)
     // Shadows of placed lights, the Lamp shadows row (off by default).
     .add_plugins(light_shadows::LightShadowsPlugin(args.light_shadows.unwrap_or(light_shadows::LightShadowMode::Off)))
+    .add_plugins(light_shadow_detail::LightShadowDetailPlugin)
     .add_plugins(mesh_terrain_blend::MeshTerrainBlendPlugin)
     // The switches the settings page weighs against the INI (`--play` only), for the
     // frame split's start-time decision (perf_overlay/split.rs).

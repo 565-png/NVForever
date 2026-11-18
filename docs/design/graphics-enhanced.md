@@ -1516,9 +1516,27 @@ culls, extracts and queues every face view every frame.
       frames a light draws.
     - Test aid `NVF_LIGHT_SHADOW_FIXTURES=1` logs, once a light, the shapes it skips and
       the small ones near it it keeps, by reference, size and distance.
-  - A near plane of 16 units (`NEAR_Z`; the flashlight's is 8) keeps a light's own bulb,
-    shade or flames out of its map. The cost: a wall within 16 units of a light does not
-    stop that light on its own side.
+  - A near plane of 8 units (`NEAR_Z`, as the flashlight's): what lies nearer the light
+    casts nothing from it. It was 16 to keep a light's own bulb or shade out of its map,
+    which let a wall within 16 units through; since the fixtures are skipped, 8 and 4
+    drew the same pictures as 16 in the General Store and the Prospector Saloon
+    [observed 2026-11-18, `NVF_LIGHT_SHADOW_NEAR`, three views each].
+- **Soft edges and contact shadows** (Quality only; light_shadow_detail.rs).
+  - Soft edges: the casting lights take Bevy's percentage-closer soft shadows (the
+    `experimental_pbr_pcss` feature, engine/Cargo.toml) with a light size of 24 units
+    (explosions 48). The edge widens with the distance between a shape and its shadow:
+    a hanging wire's shadow is sharp where the wire touches the ceiling and soft away
+    from it [observed 2026-11-18, General Store pictures at sizes 8, 24, 32: at 8 the edges
+    looked as hard as without]. `NVF_LIGHT_SHADOW_SOFT=<size>` (0: none) for comparing.
+  - Contact shadows: the world camera takes Bevy's `ContactShadows` (8 steps, thickness
+    4, length 24 units) and so a depth prepass, and the placed lights, grass fires and
+    attached lights within the shadow distance take `contact_shadows_enabled`: small
+    shadows where things touch, and the only ones of the lights past the cap. Only while a
+    temporal method (TAA, FSR or DLSS) is on: without one the march's per-pixel noise
+    speckled walls and ceilings in a regular dot pattern, thinner settings worse; with TAA
+    the picture was clean [observed 2026-11-18, General Store pictures].
+    `NVF_LIGHT_SHADOW_CONTACT=0` turns them off, `NVF_LIGHT_SHADOW_CONTACT_MARCH=<steps>,
+    <thickness>,<length>` tries other settings.
 - **The lighting.** Nothing in the lighting shaders changes. The display-value sum
   (`lights/display_shader.rs`) already multiplies each point and spot light's diffuse term
   by Bevy's `shadow`. The cube lookup takes the light's slot (shadow_sampling.wesl
