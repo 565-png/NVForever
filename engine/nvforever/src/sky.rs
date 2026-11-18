@@ -88,6 +88,9 @@ const MOON_SIZE: f32 = 2.4 * SUN_SIZE;
 /// Sun elevations (degrees) over which the stars and the moon fade in [hypothesis].
 const STARS_FADE: (f32, f32) = (0.0, -12.0);
 const MOON_FADE: (f32, f32) = (5.0, -6.0);
+/// The moon disc is hidden while its direction's height (Bevy y) is below this
+/// (`update_night_sky`; night_sky.rs follows the same rule).
+pub(crate) const MOON_HIDDEN_Y: f32 = -0.1;
 /// How far south of the east-west line the sun's path runs, in radians (9°) [hypothesis,
 /// fitted to the original game's sun positions; fnv_world::sky::sun_direction].
 const SUN_SOUTH: f32 = 9.0 * PI / 180.0;
@@ -246,6 +249,14 @@ pub struct SkyLight {
     pub sun: Vec4,
     /// rgb: sun colour × glare strength (linear); w: tan of half the glare's size.
     pub glare: Vec4,
+    /// Night sky detail (night_sky.rs; zero with its switch off, and on every part it does not
+    /// touch): xyz the direction to the moon disc, w the Henyey-Greenstein g of the moon's lobe
+    /// (the dome's glow, the clouds' moonlight).
+    pub moon: Vec4,
+    /// Night sky detail, by part: on the stars x the twinkle's amplitude and y its lattice
+    /// cells per unit of direction; on the dome and clouds rgb the moon term's gain and w its
+    /// cap (0: none).
+    pub night: Vec4,
 }
 
 impl MaterialExtension for SkyDisplay {
@@ -1105,6 +1116,9 @@ impl SkyState {
             sun_dir: dir.extend(0.0),
             sun: (sun_col * SUN_STRENGTH).extend(half_tan(SUN_SIZE_DEG)),
             glare: (sun_col * GLARE_STRENGTH * glare).extend(half_tan(GLARE_SIZE_DEG)),
+            // Written by night_sky.rs alone (update_sky keeps them).
+            moon: Vec4::ZERO,
+            night: Vec4::ZERO,
         }
     }
 
@@ -1984,7 +1998,7 @@ pub fn update_night_sky(
     }
     for (mut t, m, mut disc) in &mut moon {
         let moon_dir = -sun_dir;
-        if indoors || moon_vis <= 0.0 || moon_dir.y < -0.1 {
+        if indoors || moon_vis <= 0.0 || moon_dir.y < MOON_HIDDEN_Y {
             t.scale = Vec3::ZERO;
             continue;
         }
@@ -2177,7 +2191,8 @@ pub fn update_sky(
     for id in ids {
         let Some(m) = materials.get(id) else { continue };
         let old = m.extension.light;
-        let new = SkyLight { params: light.params.with_y(old.params.y).with_z(old.params.z).with_w(old.params.w), ..light };
+        // The night sky detail's fields are night_sky.rs's own: kept as they are.
+        let new = SkyLight { params: light.params.with_y(old.params.y).with_z(old.params.z).with_w(old.params.w), moon: old.moon, night: old.night, ..light };
         let same = |a: Vec4, b: Vec4| a.abs_diff_eq(b, 1e-3);
         if same(old.params, new.params) && same(old.glow, new.glow) && same(old.sun_dir, new.sun_dir) && same(old.sun, new.sun) && same(old.glare, new.glare) {
             continue;
