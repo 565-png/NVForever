@@ -249,6 +249,12 @@ impl WaterCache {
 #[derive(Resource, Default, PartialEq)]
 pub struct WaterRemaps(HashMap<u32, u32>);
 
+impl WaterRemaps {
+    pub fn resolve(&self, wid: u32) -> u32 {
+        self.0.get(&wid).copied().unwrap_or(wid)
+    }
+}
+
 fn sync_remaps(script: Option<Res<nvf_play::script::ScriptState>>, mut remaps: ResMut<WaterRemaps>) {
     let Some(g) = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game) else { return };
     let now = WaterRemaps(g.forms.water_remaps.iter().map(|(a, b)| (a.0, b.0)).collect());
@@ -288,7 +294,7 @@ impl WaterCtx<'_> {
 /// as the cap left the lake bed showing far out in Lake Mead [design, until a far-out
 /// Lake Mead comparison is made, world.md §6].
 pub fn water_material(world: &WorldData, wid: u32, reflects: bool, placed: bool, exterior_position: Option<Vec3>, models: &mut ModelCtx, water: &mut WaterCtx) -> Option<Handle<WaterMaterial>> {
-    let wid = water.remaps.as_ref().and_then(|r| r.0.get(&wid).copied()).unwrap_or(wid);
+    let wid = water.remaps.as_ref().map_or(wid, |r| r.resolve(wid));
     let direction = exterior_position.map_or(FlowDirection::STILL, |pos| {
         surface_flow(world.index.worldspaces[&world.world].edid.as_deref(), pos.truncate(), pos.z)
     });
@@ -568,13 +574,15 @@ pub fn update_water_sky(sky: Res<SkyState>, graphics: Option<Res<crate::graphics
     for h in cache.materials.values() {
         let stale = materials.get(h).is_some_and(|m| {
             let layers = if effects { m.current_layers } else { m.wind_layers };
-            m.params.sky_upper != upper || m.params.sky_horizon != horizon || m.params.water_sun != sun || m.params.layers != layers
+            m.params.sky_upper != upper || m.params.sky_horizon != horizon || m.params.water_sun != sun
+                || m.params.layers != layers || m.params.under_fog.w != f32::from(effects)
         });
         if stale {
             if let Some(mut m) = materials.get_mut(h) {
                 m.params.sky_upper = upper;
                 m.params.sky_horizon = horizon;
                 m.params.water_sun = sun;
+                m.params.under_fog.w = f32::from(effects);
                 m.params.layers = if effects { m.current_layers } else { m.wind_layers };
             }
         }

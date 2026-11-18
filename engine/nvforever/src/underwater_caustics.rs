@@ -2,11 +2,13 @@
 //! One depth-based pass, only while submerged outdoors with Water effects enabled.
 //! A 25-bit mask bounds the loaded cell-water planes; placed water is not included.
 //! Receivers beyond this 5x5 ring are omitted. Opaque depth cannot provide shadowing or
-//! material identity: this is a restrained scene-color gain, including fogged color.
+//! material identity: this is a restrained scene-color gain. Camera fog attenuates
+//! only that added gain; the scene is not fogged a second time.
 
 use bevy::core_pipeline::prepass::ViewPrepassTextures;
 use bevy::core_pipeline::tonemapping::tonemapping;
 use bevy::core_pipeline::{Core3d, Core3dSystems, FullscreenShader};
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RecordDiagnostics;
@@ -27,6 +29,8 @@ struct UnderwaterCaustics {
     sun: Vec4,
     // Surface height, minimum cell x/y, cell size.
     water: Vec4,
+    // Effective camera fog near, far and alpha; written by underwater_fog in Update.
+    fog: Vec4,
     // Matching-height, loaded water planes, one bit per cell (row-major).
     wet: UVec4,
 }
@@ -51,6 +55,8 @@ impl Plugin for UnderwaterCausticsPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "underwater_caustics.wesl");
         app.add_plugins((ExtractComponentPlugin::<UnderwaterCaustics>::default(), UniformComponentPlugin::<UnderwaterCaustics>::default()))
+            // WaterPlugin updates underwater_fog in Update. PostUpdate therefore
+            // captures this frame's effective fog, including the depth-density scale.
             .add_systems(PostUpdate, follow_camera.after(bevy::camera::CameraUpdateSystems).after(bevy::transform::TransformSystems::Propagate));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app.add_systems(RenderStartup, init).add_systems(Render, prepare.in_set(RenderSystems::PrepareResources)).add_systems(
@@ -65,7 +71,7 @@ impl Plugin for UnderwaterCausticsPlugin {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn follow_camera(
     mut commands: Commands,
     graphics: Option<Res<crate::graphics::Graphics>>,
@@ -73,9 +79,9 @@ fn follow_camera(
     streamer: Option<Res<crate::world::Streamer>>,
     sky: Option<Res<crate::sky::SkyState>>,
     time: Res<Time>,
-    cameras: Query<(Entity, &GlobalTransform, &Projection, &Camera, Has<UnderwaterCaustics>), crate::fly::WorldCamera>,
+    cameras: Query<(Entity, &GlobalTransform, &Projection, &Camera, Option<&DistanceFog>, Has<UnderwaterCaustics>), crate::fly::WorldCamera>,
 ) {
-    for (entity, transform, projection, camera_view, active) in &cameras {
+    for (entity, transform, projection, camera_view, camera_fog, active) in &cameras {
         let data = (|| {
             let (graphics, world, streamer, sky) = (graphics.as_deref()?, world.as_deref()?, streamer.as_deref()?, sky.as_deref()?);
             if !graphics.water_effects || streamer.interior.is_some() {
@@ -99,6 +105,11 @@ fn follow_camera(
                 return None;
             };
             let viewport = camera_view.physical_viewport_rect()?;
+            let fog = camera_fog?;
+            // Underwater fog is linear. Decline other fog modes instead of treating
+            // their coefficients as a linear range during a camera transition.
+            let FogFalloff::Linear { start, end } = &fog.falloff else { return None };
+            let fog = Vec4::new(*start, *end, fog.color.to_linear().alpha, 0.0);
             let y = 1.0 / (p.fov * 0.5).tan();
             let origin = (cell.0 - 2, cell.1 - 2);
             // Only index lookups: even on cell boundaries this performs no LAND decode.
@@ -126,6 +137,7 @@ fn follow_camera(
                 viewport: Vec4::new(viewport.min.x as f32, viewport.min.y as f32, viewport.width() as f32, viewport.height() as f32),
                 sun,
                 water: Vec4::new(height, origin.0 as f32, origin.1 as f32, fnv_world::CELL_SIZE),
+                fog,
                 wet: UVec4::new(wet, 0, 0, 0),
             })
         })();

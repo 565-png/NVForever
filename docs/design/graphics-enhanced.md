@@ -343,15 +343,30 @@ the frame, so the reflected world keeps its shadows.
 
 [design, #2674] Graphics > Water offers this switch on its own. The enhanced look enables
 it. From above the surface, the water shader reconstructs the position of the opaque
-object visible through refraction. Sunlight projected through the surface creates moving
-ridges of light there, attenuated by the water body's existing opacity. A submerged
+object visible through refraction. Sunlight projected through the surface creates broad,
+softly shifting patches of light there, attenuated by the water body's opacity. A submerged
 outdoor camera uses its depth prepass to project the same pattern on receivers in nearby
 loaded cells with water at the same level. First-person geometry and the sky are excluded.
 The pattern fades with water depth, the sun's elevation and the weather's sunlight.
-The submerged pass operates on the fogged picture and approximates lighting without
-testing local shadows. Projection through a water surface and attenuation with depth
+The submerged pass attenuates the added light by the camera's remaining visibility.
+Local shadowing is approximate. Projection through a water surface and attenuation with depth
 are described in [GPU Gems, chapter 2, section 2.2](https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-2-rendering-water-caustics).
 The moving pattern and its tuning are NVForever's.
+
+[design] From shore, the water scatters more light as the bed drops through its WATR
+above-fog range. The shallow end, deep colour and placed-water opacity cap remain
+authored by the water type. Underwater, the existing distance fog thickens as the camera
+descends. At one above-fog depth range below the surface its visibility distance is
+halved. The density increase is capped at 2.5 times the surface density. The effect
+works at night and uses the water type's own colour in both views.
+
+[design] Wave normals use a centred height difference across the pixel footprint,
+with a minimum span of four height texels, to limit shimmer as ripples move. When
+both the mirror and the main camera consume directional shadows, each draws its
+cascades before sampling them. The renderer shares shadow-map layers between views.
+Reusing the last frame's maps paired one camera's shadows with the other camera's
+matrices and made whole patches of reflected riverbank flash at Cottonwood Cove.
+The staggered shadow schedule resumes after a single shadowed view draws fresh maps.
 
 [design] River currents animate the noise layers on selected exterior reaches. The
 directions follow the Colorado below Hoover Dam through Cottonwood Cove and the western
@@ -367,7 +382,7 @@ Source trough floor and the Boulder Beach bed above and below water at noon. At 
 the submerged pass stayed off. At Cottonwood Cove the surface texture travelled south
 in all 40 successive frame pairs measured on a patch projected back onto the water plane.
 
-[observed, 2026-11-18] Release explorer, RTX 5070 Ti, Vulkan, 1280x720, desktop streaming
+[observed, 2026-11-18, initial water effect before the depth and pattern revision] Release explorer, RTX 5070 Ti, Vulkan, 1280x720, desktop streaming
 active. At each fixed camera `--log-frame-times 5 --graphics-cycle
 "vanilla;water-effects;water-effects;vanilla"` alternated five-second periods. After the
 first block, the median paired changes in mean frame time over four complete blocks were

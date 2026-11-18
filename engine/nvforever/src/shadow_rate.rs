@@ -39,10 +39,15 @@
 //! made the shadows shimmer, strongest on the frames a held cascade is drawn again
 //! (docs/design/frame-rate-audit.md §11).
 //!
+//! While multiple active 3D views consume directional shadows, all cascades draw
+//! every frame: the renderer reuses view-local shadow array layers between cameras.
+//! Holding the last camera's maps would pair them with another camera's matrices.
+//!
 //! What it costs and saves: docs/design/frame-rate-audit.md §9 and §10.
 
 use crate::fly::FlyCam;
 use crate::sky::{CascadeLayout, SkyState};
+use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::entity::EntityHashMap;
 use bevy::light::{CascadeShadowConfig, Cascades, DirectionalLight, DirectionalLightShadowMap, NotShadowCaster};
 use bevy::pbr::HoldDirectionalShadowMaps;
@@ -270,16 +275,35 @@ fn staggered() -> bool {
 /// was kept and given back like the others; when it cast again with the same layout a held
 /// frame gave it the cascades of the frame its shadows went off, read against maps drawn
 /// before then, or, with a new shadow texture, drawn with those stale matrices.)
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn hold_cascades(
     on: Res<PerformanceShadows>,
     map: Option<Res<DirectionalLightShadowMap>>,
     mut hold: ResMut<HoldDirectionalShadowMaps>,
-    mut all_lights: Query<(Entity, &DirectionalLight, &mut Cascades, Option<&CascadeShadowConfig>)>,
+    mut all_lights: Query<(Entity, &DirectionalLight, &mut Cascades, Option<&CascadeShadowConfig>, Option<&RenderLayers>)>,
+    views: Query<(Entity, &Camera, Option<&RenderLayers>), With<Camera3d>>,
     mut kept: Local<EntityHashMap<Kept>>,
     mut frame: Local<u64>,
     mut said: Local<Option<bool>>,
 ) {
     *frame = frame.wrapping_add(1);
+    // Directional shadow array layers are view-local: each camera redraws the
+    // same layers before consuming them. With multiple shadowed views, the last
+    // camera's maps cannot stand in for another camera next frame. Count the
+    // union across lights, excluding inactive/disjoint cameras and empty lists.
+    let mut shadowed_views = views.iter().filter(|(entity, camera, layers)| {
+        camera.is_active && all_lights.iter().any(|(_, light, cascades, _, light_layers)| {
+            light.shadow_maps_enabled && light_layers.unwrap_or_default().intersects(layers.unwrap_or_default())
+                && cascades.cascades.get(entity).is_some_and(|c| !c.is_empty())
+        })
+    });
+    if shadowed_views.nth(1).is_some() {
+        // Forget matrices as well as the hold mask. On return to one view, draw
+        // fresh maps first, even if its layout still matches the old cache.
+        kept.clear();
+        if hold.0 != 0 { hold.0 = 0; }
+        return;
+    }
     let schedule: &[(u32, u32)] = if on.0 {
         &PERFORMANCE_SCHEDULE
     } else if staggered() {
@@ -287,7 +311,7 @@ pub(crate) fn hold_cascades(
     } else {
         &[]
     };
-    let lights: Vec<Lit> = all_lights.iter().filter(|(_, l, _, _)| l.shadow_maps_enabled).map(|(e, _, c, config)| (e, c, config)).collect();
+    let lights: Vec<Lit> = all_lights.iter().filter(|(_, l, _, _, _)| l.shadow_maps_enabled).map(|(e, _, c, config, _)| (e, c, config)).collect();
     let count = lights.iter().flat_map(|(_, c, _)| c.cascades.values().map(Vec::len)).max().unwrap_or(0);
     // A new map size makes new maps: nothing to keep.
     let same_maps = !map.is_some_and(|m| m.is_changed());
@@ -305,7 +329,7 @@ pub(crate) fn hold_cascades(
         if kept.len() != lights.len() {
             kept.retain(|e, _| lights.iter().any(|(l, _, _)| l == e));
         }
-        for (light, directional, mut cascades, _) in &mut all_lights {
+        for (light, directional, mut cascades, _, _) in &mut all_lights {
             if !directional.shadow_maps_enabled {
                 continue;
             }
@@ -513,6 +537,69 @@ mod tests {
         assert_eq!(run(&mut world, 7, true), (0, vec![7.0, 7.0]));
         assert_eq!(run(&mut world, 8, true), (0, vec![8.0, 8.0]));
         assert_eq!(run(&mut world, 9, true), (0b11, vec![8.0, 8.0]));
+    }
+
+    #[test]
+    fn multiple_shadowed_views_draw_fresh_and_single_view_cache_recovers() {
+        let mut world = World::new();
+        world.insert_resource(PerformanceShadows(true));
+        world.init_resource::<HoldDirectionalShadowMaps>();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(hold_cascades);
+        let main = world.spawn((Camera3d::default(), Camera::default())).id();
+        let second = world.spawn((Camera3d::default(), Camera::default(), RenderLayers::layer(2))).id();
+        let ui = world.spawn(Camera::default()).id(); // A UI-only view has no Camera3d.
+        let empty = world.spawn((Camera3d::default(), Camera::default())).id();
+        let light = world.spawn(DirectionalLight { shadow_maps_enabled: true, ..default() }).id();
+        let mut run = |world: &mut World, k: u32| {
+            let mut built = Cascades::default();
+            for view in [main, second, ui] {
+                built.cascades.insert(view, vec![Cascade { texel_size: k as f32, ..default() }; 2]);
+            }
+            built.cascades.insert(empty, Vec::new());
+            world.entity_mut(light).insert(built);
+            schedule.run(world);
+            let texels: Vec<f32> = world.get::<Cascades>(light).unwrap().cascades[&main].iter().map(|c| c.texel_size).collect();
+            (world.resource::<HoldDirectionalShadowMaps>().0, texels)
+        };
+        // Disjoint layers, a 2D/UI camera, and an empty cascade list do not disable holding.
+        assert_eq!(run(&mut world, 1), (0, vec![1.0; 2]));
+        assert_eq!(run(&mut world, 2), (0, vec![2.0; 2]));
+        assert_eq!(run(&mut world, 3), (0b11, vec![2.0; 2]));
+        // A second shadowed 3D view: no old matrices restored, even on held frames.
+        world.entity_mut(second).insert(RenderLayers::default());
+        for k in 4..=6 {
+            assert_eq!(run(&mut world, k), (0, vec![k as f32; 2]));
+        }
+        // Its old cascades can still be present when the camera switches off.
+        world.get_mut::<Camera>(second).unwrap().is_active = false;
+        assert_eq!(run(&mut world, 7), (0, vec![7.0; 2]), "return on held frame must draw fresh");
+        assert_eq!(run(&mut world, 8), (0, vec![8.0; 2]));
+        assert_eq!(run(&mut world, 9), (0b11, vec![8.0; 2]));
+    }
+
+    #[test]
+    fn shadowed_view_count_is_union_across_directional_lights() {
+        let mut world = World::new();
+        world.insert_resource(PerformanceShadows(true));
+        world.init_resource::<HoldDirectionalShadowMaps>();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(hold_cascades);
+        let main = world.spawn((Camera3d::default(), Camera::default())).id();
+        let other = world.spawn((Camera3d::default(), Camera::default(), RenderLayers::layer(2))).id();
+        world.spawn((DirectionalLight { shadow_maps_enabled: true, ..default() }, cascades(main, 2)));
+        let separate = world.spawn((DirectionalLight { shadow_maps_enabled: true, ..default() }, cascades(other, 2), RenderLayers::layer(2))).id();
+        // Neither light has two views, but their view-local layers still share storage.
+        for _ in 0..2 {
+            schedule.run(&mut world);
+            assert_eq!(world.resource::<HoldDirectionalShadowMaps>().0, 0);
+        }
+        world.get_mut::<DirectionalLight>(separate).unwrap().shadow_maps_enabled = false;
+        schedule.run(&mut world);
+        assert_eq!(world.resource::<HoldDirectionalShadowMaps>().0, 0, "fresh draw before resuming single-view holds");
+        schedule.run(&mut world);
+        schedule.run(&mut world);
+        assert_eq!(world.resource::<HoldDirectionalShadowMaps>().0, 0b11);
     }
 
     #[test]

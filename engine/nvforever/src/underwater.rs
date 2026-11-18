@@ -3,18 +3,20 @@
 //! near / far [documented: xEdit names]) in its deep colour, lit by the current sun and
 //! ambient light like the water body [hypothesis; the light level is tuned to match the
 //! water surface's own shading]. Leaving the water hands the fog back to the weather.
+//! Water effects also increases density with camera depth, capped at 2.5x, using
+//! each type's above-water deep-plane reference [hypothesis; an optional enhancement].
 
 use crate::sky::{SkyState, Sun};
 use crate::water::DistantWater;
-use crate::world::{bevy_to_game, Streamer, WorldData};
-use nvf_play::phys::PhysState;
-use nvf_play::sim::SimState;
-use fnv_sim::FormId;
+use crate::world::{Streamer, WorldData, bevy_to_game};
 use bevy::camera::Exposure;
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
+use fnv_sim::FormId;
 use fnv_world::cell_of;
-use fnv_world::sky::{srgb_to_linear, Water};
+use fnv_world::sky::{Water, srgb_to_linear};
+use nvf_play::phys::PhysState;
+use nvf_play::sim::SimState;
 use std::collections::HashMap;
 
 /// Water types read so far, by FormID.
@@ -35,6 +37,7 @@ fn linear(c: Color) -> Vec3 {
 /// under-water fog (WastelandNV's Potomac, −1,000..700 units) round the camera there
 /// (world.md §8 "Interior XCLW is not water"). Without physics (the viewer, no `--play`)
 /// an interior has no under-water fog.
+#[allow(clippy::too_many_arguments)]
 fn water_above(
     world: &WorldData,
     streamer: &Streamer,
@@ -43,7 +46,27 @@ fn water_above(
     sim: Option<&SimState>,
     placed_types: &mut HashMap<u32, Option<u32>>,
     cam_game: Vec3,
+    enhanced: bool,
 ) -> Option<(f32, u32)> {
+    if enhanced && streamer.interior.is_none() {
+        let ws = world.index.worldspaces.get(&world.world)?;
+        let c = world.grid_cell(cell_of(cam_game.x, cam_game.y));
+        // Match the near-cell plane, including No LOD Water cells. No LAND decode:
+        // the opaque depth hides the part of this plane below the terrain.
+        let cell_water = c.and_then(|c| Some((c.water_surface(ws.default_water_height)?, c.water_type.or(ws.water)?)));
+        // Exterior placed volumes already known to physics can override the cell's
+        // plane, just as indoors. Do not infer a volume from interior XCLW.
+        let placed_water = phys.and_then(|phys| {
+            let p = cam_game.to_array();
+            let placed = phys.world.placed_water().filter(|w| w.holds_below(p)).max_by(|a, b| a.surface.total_cmp(&b.surface))?;
+            let wid = *placed_types.entry(placed.form_id).or_insert_with(|| {
+                let base = sim?.refs.get(FormId(placed.form_id))?.base;
+                fnv_world::sky::placeable_water_type(world.lo, world.schema, base.0)
+            });
+            Some((placed.surface, fog_water_type(wid, c.and_then(|c| c.water_type), ws.water)?))
+        });
+        return highest_submerged(cell_water, placed_water, cam_game.z);
+    }
     let (h, wid) = match streamer.interior {
         Some(id) => {
             let c = world.index.cells.get(&id)?;
@@ -53,22 +76,37 @@ fn water_above(
             let h = pw.water_surface_for(p)?;
             // The placed volume that gave the surface (the highest one holding the
             // camera, as `water_surface_for` picks), and its base PWAT's water type.
-            let placed = pw
-                .placed_water()
-                .filter(|w| w.holds_below(p) && w.surface == h)
-                .map(|w| w.form_id)
-                .next()
-                .and_then(|r| {
-                    *placed_types.entry(r).or_insert_with(|| {
-                        let base = sim?.refs.get(FormId(r))?.base;
-                        fnv_world::sky::placeable_water_type(world.lo, world.schema, base.0)
-                    })
-                });
+            let placed = pw.placed_water().filter(|w| w.holds_below(p) && w.surface == h).map(|w| w.form_id).next().and_then(|r| {
+                *placed_types.entry(r).or_insert_with(|| {
+                    let base = sim?.refs.get(FormId(r))?.base;
+                    fnv_world::sky::placeable_water_type(world.lo, world.schema, base.0)
+                })
+            });
             (h, fog_water_type(placed, c.water_type, ws.water)?)
         }
         None => dw.surface(world, cell_of(cam_game.x, cam_game.y))?,
     };
     (cam_game.z < h).then_some((h, wid))
+}
+
+fn highest_submerged(cell: Option<(f32, u32)>, placed: Option<(f32, u32)>, camera_z: f32) -> Option<(f32, u32)> {
+    cell.into_iter().chain(placed).filter(|(height, _)| camera_z < *height).max_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+/// Enhanced murk [hypothesis]: a camera deeper below the shallow/deep reference
+/// planes sees a denser medium. Scale both under-fog planes, preserving the record's
+/// entry appearance and its zero-distance share even when the near plane is negative.
+/// A 2.5x ceiling keeps very deep views usable; malformed/narrow reference ranges
+/// retain the existing fog rather than turning into an almost opaque medium.
+fn depth_fog_range(above: [f32; 3], under: [f32; 3], depth: f32, enhanced: bool) -> (f32, f32) {
+    let [near, far, _] = under;
+    let far = far.max(near + 1.0);
+    let reference = above[1] - above[0].max(0.0);
+    if !enhanced || !above[0].is_finite() || !above[1].is_finite() || !reference.is_finite() || reference < 1.0 || !depth.is_finite() {
+        return (near, far);
+    }
+    let density = (1.0 + depth.max(0.0) / reference).min(2.5);
+    (near / density, far / density)
 }
 
 /// The water type an interior's under-water fog takes: the placed water's own (its PWAT's
@@ -91,13 +129,18 @@ pub fn underwater_fog(
     mut cam: Query<(&GlobalTransform, &mut DistanceFog, Option<&Exposure>), crate::fly::WorldCamera>,
     phys: Option<Res<PhysState>>,
     sim: Option<Res<SimState>>,
+    graphics: Option<Res<crate::graphics::Graphics>>,
+    remaps: Option<Res<crate::water::WaterRemaps>>,
     mut types: Local<WaterTypes>,
     mut placed_types: Local<HashMap<u32, Option<u32>>>,
     mut was_under: Local<bool>,
 ) {
     let Ok((gt, mut fog, exposure)) = cam.single_mut() else { return };
-    let under = water_above(&world, &streamer, &mut dw, phys.as_deref(), sim.as_deref(), &mut placed_types, bevy_to_game(gt.translation()));
+    let enhanced = graphics.is_some_and(|g| g.water_effects);
+    let camera = bevy_to_game(gt.translation());
+    let under = water_above(&world, &streamer, &mut dw, phys.as_deref(), sim.as_deref(), &mut placed_types, camera, enhanced);
     let water = under.and_then(|(_, wid)| {
+        let wid = if enhanced { remaps.as_ref().map_or(wid, |r| r.resolve(wid)) } else { wid };
         types.0.entry(wid).or_insert_with(|| fnv_world::sky::water(world.lo, world.schema, wid)).clone()
     });
     let Some(w) = water else {
@@ -116,20 +159,50 @@ pub fn underwater_fog(
     // sun and the ambient light (lights.rs `DISPLAY_HELPERS`; light × exposure, Lambert's
     // 1/π for the sun), raised to the display gamma.
     let exposure = exposure.copied().unwrap_or_default().exposure();
-    let light = sun
-        .single()
-        .map(|s| linear(s.color) * s.illuminance / std::f32::consts::PI)
-        .unwrap_or(Vec3::ZERO)
-        + linear(ambient.color) * ambient.brightness;
+    let light = sun.single().map(|s| linear(s.color) * s.illuminance / std::f32::consts::PI).unwrap_or(Vec3::ZERO) + linear(ambient.color) * ambient.brightness;
     let deep = Vec3::from_array(w.deep.map(srgb_to_linear)) * (light * exposure).max(Vec3::ZERO).powf(2.2);
-    let [near, far, _amount] = w.under_fog;
+    let depth = under.map_or(0.0, |(height, _)| height - camera.z);
+    let (near, far) = depth_fog_range(w.above_fog, w.under_fog, depth, enhanced);
     fog.color = Color::LinearRgba(LinearRgba::rgb(deep.x, deep.y, deep.z));
     fog.falloff = FogFalloff::Linear { start: near, end: far.max(near + 1.0) };
 }
 
 #[cfg(test)]
 mod tests {
-    use super::fog_water_type;
+    use super::{depth_fog_range, fog_water_type, highest_submerged};
+
+    #[test]
+    fn murk_keeps_shallow_baseline_and_increases_with_descent() {
+        let above = [-80.0, 850.0, 0.75];
+        let under = [-2500.0, 5500.0, 1.0];
+        assert_eq!(depth_fog_range(above, under, 0.0, true), (-2500.0, 5500.0));
+        assert_eq!(depth_fog_range(above, under, 5000.0, false), (-2500.0, 5500.0));
+        let share = |(near, far): (f32, f32), distance: f32| ((distance - near) / (far - near)).clamp(0.0, 1.0);
+        let mut previous = share((-2500.0, 5500.0), 500.0);
+        for depth in [10.0, 100.0, 500.0, 1000.0, 2000.0, 10000.0] {
+            let range = depth_fog_range(above, under, depth, true);
+            assert!((share(range, 0.0) - 0.3125).abs() < 1e-6);
+            let next = share(range, 500.0);
+            assert!(next >= previous);
+            previous = next;
+        }
+        assert_eq!(depth_fog_range(above, under, 10000.0, true), (-1000.0, 2200.0));
+    }
+
+    #[test]
+    fn malformed_reference_keeps_existing_fog() {
+        for above in [[0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [0.0, 0.001, 1.0], [0.0, f32::NAN, 1.0], [f32::NAN, 100.0, 1.0]] {
+            assert_eq!(depth_fog_range(above, [0.0, 100.0, 1.0], 50.0, true), (0.0, 100.0));
+        }
+    }
+
+    #[test]
+    fn exterior_placed_volume_wins_only_while_submerged() {
+        assert_eq!(highest_submerged(Some((10.0, 1)), Some((30.0, 2)), 20.0), Some((30.0, 2)));
+        assert_eq!(highest_submerged(Some((10.0, 1)), Some((30.0, 2)), 30.0), None);
+        assert_eq!(highest_submerged(Some((40.0, 1)), Some((30.0, 2)), 20.0), Some((40.0, 1)));
+        assert_eq!(highest_submerged(None, Some((30.0, 2)), 20.0), Some((30.0, 2)));
+    }
 
     #[test]
     fn placed_water_fogs_in_its_own_type() {

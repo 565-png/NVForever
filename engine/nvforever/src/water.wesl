@@ -43,6 +43,7 @@ struct WaterParams {
     sky_horizon: vec4<f32>,
     // near, far, amount, 1 when the amount caps the opacity (placed water)
     above_fog: vec4<f32>,
+    // near, far, amount, enhanced depth attenuation enabled.
     under_fog: vec4<f32>,
     // reflectivity, fresnel amount, shininess, wave height (world units)
     surface: vec4<f32>,
@@ -210,12 +211,17 @@ fn ssr(pos: vec3<f32>, R: vec3<f32>) -> vec4<f32> {
 // (0..1) times the layer amplitude times the wave height.
 fn layer_slope(g: vec2<f32>, layer: vec4<f32>, mask: vec4<f32>, t: f32) -> vec2<f32> {
     let uv = g * layer.z + layer.xy * t;
-    let e = 1.0 / vec2<f32>(textureDimensions(noise_texture));
-    let h0 = dot(textureSample(noise_texture, noise_sampler, uv), mask);
-    let hu = dot(textureSample(noise_texture, noise_sampler, uv + vec2(e.x, 0.0)), mask);
-    let hv = dot(textureSample(noise_texture, noise_sampler, uv + vec2(0.0, e.y)), mask);
-    // d(uv)/d(world) = layer.z
-    return vec2(hu - h0, hv - h0) / e * layer.z * layer.w * water.surface.w;
+    // A single texel's height step moves a sharp reflection several pixels when
+    // animated. Take the centred slope across at least a pixel's footprint and
+    // two source texels on each side, preserving resolved, lower-frequency waves.
+    let dx = dpdx(uv);
+    let dy = dpdy(uv);
+    let e = max(2.0 / vec2<f32>(textureDimensions(noise_texture)), 0.5 * (abs(dx) + abs(dy)));
+    let du = vec2(e.x, 0.0);
+    let dv = vec2(0.0, e.y);
+    let u = textureSampleGrad(noise_texture, noise_sampler, uv + du, dx, dy) - textureSampleGrad(noise_texture, noise_sampler, uv - du, dx, dy);
+    let v = textureSampleGrad(noise_texture, noise_sampler, uv + dv, dx, dy) - textureSampleGrad(noise_texture, noise_sampler, uv - dv, dx, dy);
+    return vec2(dot(u, mask), dot(v, mask)) / (2.0 * e) * layer.z * layer.w * water.surface.w;
 }
 
 fn sky_colour(y: f32) -> vec3<f32> {
@@ -290,17 +296,39 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // front of the water (it would bleed into the surface).
     let tilt = (view.view_from_world * vec4(N - up, 0.0)).xy;
     let depth_scale = clamp(min(fog_distance, dist) / REFRACTION_DEPTH, 0.0, 1.0);
-    var uv = clamp(uv0 + vec2(tilt.x, -tilt.y) * REFRACTION_STRENGTH * depth_scale, vec2(0.0), vec2(1.0));
+    let half_pixel = 0.5 / size;
+    var uv = clamp(uv0 + vec2(tilt.x, -tilt.y) * REFRACTION_STRENGTH * depth_scale, half_pixel, 1.0 - half_pixel);
     if above {
-        let behind = scene_point(view.main_pass_viewport.xy + uv * size);
-        if behind.w > 0.5 && distance(behind.xyz, view.world_position.xyz) < dist {
+        var behind = scene_point(view.main_pass_viewport.xy + uv * size);
+        // The offset pixel has its own view ray. Test against the water plane
+        // there. Comparing camera distances on two different rays can refract
+        // a whole patch of dry shore or a building across the surface.
+        if behind.w < 0.5 || behind.y >= pos.y {
+            // Near silhouettes the waves repeatedly carry an offset across the
+            // edge. Keep the last underwater sample along the offset instead of
+            // switching the whole lookup back to its undistorted starting point.
+            var outside = uv;
             uv = uv0;
-        } else {
-            receiver = behind;
-            if behind.w > 0.5 {
-                fog_distance = distance(behind.xyz, pos);
-                fog_depth = max(pos.y - behind.y, 0.0);
+            behind = behind0;
+            if behind0.w > 0.5 && behind0.y < pos.y {
+                for (var i = 0; i < 3; i += 1) {
+                    let mid = 0.5 * (uv + outside);
+                    let hit = scene_point(view.main_pass_viewport.xy + mid * size);
+                    if hit.w > 0.5 && hit.y < pos.y {
+                        uv = mid;
+                        behind = hit;
+                    } else {
+                        outside = mid;
+                    }
+                }
             }
+        }
+        if behind.w > 0.5 && behind.y < pos.y {
+            receiver = behind;
+            // Length below the plane on that ray, from its own entry point.
+            fog_depth = pos.y - behind.y;
+            let to_receiver = behind.xyz - view.world_position.xyz;
+            fog_distance = length(to_receiver) * (fog_depth / max(-to_receiver.y, 1e-3));
         }
     }
     if !above {
@@ -311,7 +339,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Brighten the actual refracted opaque receiver, including non-reflective
     // water types. The existing body opacity/reflection then attenuates the light.
     if above && receiver.w > 0.5 && water.water_sun.w > 0.0 && dist < 4096.0 {
-        // Thin ridges become subpixel in the distance. Fade them before they shimmer.
+        // The projected light loses definition with viewing distance.
         let fade = 1.0 - smoothstep(2048.0, 4096.0, dist);
         refracted *= 1.0 + fade * nvf_caustics(receiver.xyz, pos.y, water.water_sun.xyz, water.water_sun.w, t);
     }
@@ -328,7 +356,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // 14-unit pool under a 36-unit fog showed its floor where the original is opaque.
     let depth01 = clamp((fog_depth - fog.x) / max(fog.y - fog.x, 1.0), 0.0, 1.0);
     let ray01 = clamp((fog_distance - fog.x) / max(fog.y - fog.x, 1.0), 0.0, 1.0);
-    let body_alpha = select(ray01, ray01 * clamp(water.above_fog.z, 0.0, 1.0), above && water.above_fog.w > 0.5);
+    // As the bed descends, scatter more light along the submerged part of the
+    // ray. Preserve the shallow end, the authored far distance and PWAT opacity cap.
+    var opacity = ray01;
+    if above && water.under_fog.w > 0.5 && fog.y > max(fog.x, 0.0) {
+        let column = smoothstep(max(fog.x, 0.0), fog.y, fog_depth);
+        opacity += (1.0 - ray01) * ray01 * column;
+    }
+    let body_alpha = select(opacity, opacity * clamp(water.above_fog.z, 0.0, 1.0), above && water.above_fog.w > 0.5);
     let body_colour = mix(water.shallow.rgb, water.deep.rgb, depth01);
 
     // The water body is lit like a diffuse surface facing up (from either side).

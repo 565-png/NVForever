@@ -8,6 +8,7 @@ struct Caustics {
     viewport: vec4<f32>,
     sun: vec4<f32>,
     water: vec4<f32>,
+    fog: vec4<f32>,
     wet: vec4<u32>,
 }
 @if(MULTISAMPLED) @group(0) @binding(0) var depth: texture_depth_multisampled_2d;
@@ -34,6 +35,12 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let ndc = viewport_uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0);
     let view = vec3(ndc * distance / caustics.projection.xy, -distance);
     let receiver = (caustics.world_from_view * vec4(view, 1.0)).xyz;
+    // Match bevy_pbr::pbr_functions::apply_fog: radial world-space distance,
+    // rather than view-axis depth. Fade added caustic light, not the existing fog.
+    let fog_distance = length(receiver - caustics.world_from_view[3].xyz);
+    let fog_share = clamp((fog_distance - caustics.fog.x) / max(caustics.fog.y - caustics.fog.x, 0.0001), 0.0, 1.0);
+    let visibility = 1.0 - clamp(caustics.fog.z, 0.0, 1.0) * fog_share;
+    if visibility <= 0.0 { return color; }
     if receiver.y >= caustics.water.x { return color; }
     let game_xy = vec2(receiver.x, -receiver.z);
     let cell = vec2<i32>(floor(game_xy / caustics.water.w) - caustics.water.yz);
@@ -42,5 +49,5 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     if (caustics.wet.x & bit) == 0u { return color; }
     let fade = 1.0 - smoothstep(2048.0, 4096.0, distance);
     let gain = nvf_caustics(receiver, caustics.water.x, caustics.sun.xyz, caustics.sun.w, caustics.projection.w);
-    return vec4(color.rgb * (1.0 + gain * fade), color.a);
+    return vec4(color.rgb * (1.0 + gain * fade * visibility), color.a);
 }
