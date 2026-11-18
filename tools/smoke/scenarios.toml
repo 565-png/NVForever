@@ -2388,6 +2388,38 @@ forbid = [
 ]
 
 [[scenario]]
+name = "terrain-shadows"
+source = "[design, #2671] docs/design/terrain-shadows.md, engine/nvforever/src/terrain_shadows.rs, sun_heightfield.rs and sun_visibility.rs: the Terrain shadows row (off by default) switched on while the game runs at Goodsprings 07:00 turns the sun visibility's terrain variant on once, the heightfield is built over the whole footprint, the shadow-height map is computed and published, and the receivers' patched lighting of what this view draws compiles with the unfilterable terrain binding, without a rendering or pipeline error. The receivers combine the cascades and the terrain as min(C, T) with no fade-out of object shadows (the maintainer's decision on #2920, 2026-11-18; engine unit test terrain_combine_is_the_darker_of_the_two). What it cannot show: the logs say a map was computed and published, not what it holds, nor how object shadows end, so the run passes with a uniformly neutral output (no terrain shadow anywhere); it neither enters an interior nor crosses the horizon, so 'on once' does not cover going dark; it does not watch a publication while the sun moves, travel between worldspaces or load a save. Whether valleys darken where they should and slopes stay free of speckle is checked in pictures by hand"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/terrain_shadows.rs", "engine/nvforever/src/terrain_shadows.wesl", "engine/nvforever/src/sun_heightfield.rs",
+  "engine/nvforever/src/sun_visibility.rs", "engine/nvforever/src/sun_visibility.wesl", "engine/vendor/bevy_pbr/src/render/mesh_view_bindings.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:terrain-shadows" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "7", "--sun-shadows"]
+run_seconds = 30
+order = [[
+  "settings: terrain-shadows on",
+  { text = "sun visibility: cloud off terrain on debug off", label = "the switch turned the plumbing's terrain variant on" },
+  { text = "terrain shadows: published", label = "the producer computed a shadow-height map and published it" },
+]]
+expect = [
+  { re = 'graphics: light glow, terrain shadows$', label = "the graphics line names the switch" },
+  { text = "sun visibility: cloud off terrain on debug off", count = 1, label = "on once: no publication or going dark toggles the pipelines (the switch decides, as for the clouds)" },
+  { re = 'sun heightfield: .* valid 100\.0%', label = "the heightfield covers the whole footprint around Goodsprings" },
+]
+forbid = [
+  { text = "anchors not found", label = "the terrain receivers' hook did not apply to bevy_pbr's lighting" },
+  { text = "DeviceLost", label = "the GPU device was lost with terrain shadows on" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the sun visibility's bindings (the unfilterable terrain map)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (a patched lighting shader that does not compile)" },
+  { text = "still being retried after", label = "a pipeline of the terrain variant still retried at the cap" },
+  { text = "sun visibility: cloud off terrain off", label = "the terrain variant went off while the switch stayed on" },
+  { text = "terrain shadows: textures do not fit the job", label = "the producer's textures did not match its job" },
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
+]
+
+[[scenario]]
 name = "sun-shadow-hold-flashlight"
 source = "#2182 review (vendored bevy_pbr light.rs prepare_lights, nvforever shadow_rate.rs): the player's flashlight casts shadows, so switching it on or off gives the sun a new shadow texture; that frame draws every cascade instead of holding one, outdoors at noon with the staggered schedule"
 areas = ["renderer", "flashlight"]
