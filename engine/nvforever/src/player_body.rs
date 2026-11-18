@@ -3824,6 +3824,14 @@ fn drive_body(
             }
         }
     }
+    // Sprint's side sway (`sprint_view.rs`, Camera Motion): a small roll of the first-person
+    // view about its own line, so the crosshair's point and the aim stay.
+    let stride = body.first.as_ref().map_or(0.0, |f| f.animator.phase);
+    let roll_on = advanced && state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none();
+    let roll = m.sprint.roll(stride, sprint_share, roll_on, dt);
+    if roll != 0.0 && player.body_view.is_none() && !third_view {
+        player.body_view = Some(crate::sprint_view::rolled_view(player.heading, player.pitch, roll));
+    }
     m.events = events;
 
     // The eye: the first-person camera node; without that rig, the head's eye, swung

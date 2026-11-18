@@ -19,6 +19,15 @@
 //!   and larger, up to `view_sway::EXERTED_PACE` and `EXERTED_SIZE` times, and on top of that
 //!   [`WINDED_PACE`] and [`WINDED_SIZE`] times for a sprint's panting. Its place only, as the
 //!   existing breath: the view's rotation is never touched.
+//! - **Side sway** ([`SprintView::roll`], Camera Motion): the first-person view rolls up to
+//!   [`ROLL`] to each side once a stride, in step with the movement clip (the head bob's
+//!   phase), by the sprint's share [design: the owner 2026-11-18, "make the camera
+//!   shake/rotate to the sides also but only a little"]. A roll about the view's own line
+//!   only: the middle of the screen, where the crosshair is, stays on the same point, and the
+//!   aim and the shots (the heading and pitch) are untouched. An additive oscillation through
+//!   short springs (no step when the sprint or the switch comes or goes); the mouse's turn is
+//!   never smoothed or delayed. No yaw: any turn but a roll would move the crosshair's point
+//!   off the shots' line; the existing sideways swing of the head bob is the side's motion.
 //! - **Third person** ([`lean`]): the body leans forward up to [`LEAN`] about its feet. The
 //!   run clip plays faster by itself: the movement clips play at the body's real speed over
 //!   theirs (`player_body`, up to 2.5 times); no sprint clip exists (upstream closed #2176:
@@ -50,6 +59,12 @@ pub const FISTS: f32 = 0.5;
 /// The pose's own fade where the arms are not the player's (the Pip-Boy, an idle): a spring
 /// settling in this many seconds.
 pub const POSE_GATE_SECONDS: f32 = 0.3;
+/// The first-person view's roll at a full sprint, each way, radians (0.6°): once a stride.
+pub const ROLL: f32 = 0.6 * std::f32::consts::PI / 180.0;
+/// The roll follows its stride curve through a spring settling (95%) in this long, and comes
+/// and goes with Camera Motion through one of this long (seconds).
+pub const ROLL_SETTLE_SECONDS: f32 = 0.12;
+pub const ROLL_GATE_SECONDS: f32 = 0.5;
 /// The third-person body's forward lean at a full sprint, radians (4°).
 pub const LEAN: f32 = 4.0 * std::f32::consts::PI / 180.0;
 
@@ -93,6 +108,9 @@ pub fn lean(share: f32) -> Quat {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SprintView {
     gate: Spring,
+    /// The side sway: its share shown (Camera Motion's gate) and the roll on its spring.
+    roll_gate: Spring,
+    roll: Spring,
 }
 
 impl SprintView {
@@ -102,6 +120,30 @@ impl SprintView {
         self.gate.step(f32::from(u8::from(on)), omega_for(POSE_GATE_SECONDS), dt);
         share.clamp(0.0, 1.0) * self.gate.value.clamp(0.0, 1.0)
     }
+
+    /// The view's side sway this frame, radians (right side down positive): [`ROLL`] once a
+    /// stride at movement-clip `phase` (0–1), by the sprint's `share`, while `on` (Camera
+    /// Motion, first person, the view the player's). 0 at rest.
+    pub fn roll(&mut self, phase: f32, share: f32, on: bool, dt: f32) -> f32 {
+        self.roll_gate.step(f32::from(u8::from(on)), omega_for(ROLL_GATE_SECONDS), dt);
+        let a = std::f32::consts::TAU * (phase - crate::view_sway::FOOTFALL_PHASE);
+        let target = ROLL * a.sin() * share.clamp(0.0, 1.0) * self.roll_gate.value.clamp(0.0, 1.0);
+        self.roll.step(target, omega_for(ROLL_SETTLE_SECONDS), dt);
+        if target == 0.0 {
+            self.roll.snap(0.0, 1e-6, 1e-5);
+        }
+        self.roll.value.clamp(-ROLL, ROLL)
+    }
+}
+
+/// The first-person view (game space, a node looking along its +Y with +Z up, as
+/// `nvf_play::player::Player::body_view`) for `heading` and `pitch` rolled by `roll` about
+/// its own line: the line, and so the crosshair's point, is the heading and pitch's.
+pub fn rolled_view(heading: f32, pitch: f32, roll: f32) -> Quat {
+    let forward = Vec3::from_array(nvf_play::space::look_dir(heading, pitch));
+    let right = Vec3::new(heading.cos(), -heading.sin(), 0.0);
+    let up = right.cross(forward);
+    Quat::from_mat3(&bevy::math::Mat3::from_cols(right, forward, up)) * Quat::from_rotation_y(roll)
 }
 
 #[cfg(test)]
@@ -171,6 +213,35 @@ mod tests {
         assert!(on.windows(2).all(|w| w[1] >= w[0]) && on[59] > 0.99);
         let off: Vec<f32> = (0..60).map(|_| v.pose_share(1.0, false, DT)).collect();
         assert!(off.windows(2).all(|w| w[1] <= w[0] && w[0] - w[1] < 0.15) && off[59] < 0.01, "fades, never pops");
+        // The side sway: 0 off and at rest, within its bounds, smooth, about the view's line.
+        let mut v = SprintView::default();
+        for f in 0..300 {
+            assert_eq!(v.roll(f as f32 / 40.0 % 1.0, 1.0, false, DT), 0.0, "Camera Motion off: none");
+        }
+        let mut v = SprintView::default();
+        for f in 0..300 {
+            assert_eq!(v.roll(f as f32 / 40.0 % 1.0, 0.0, true, DT), 0.0, "no sprint: none");
+        }
+        let mut v = SprintView::default();
+        let rolls: Vec<f32> = (0..600).map(|f| v.roll((f as f32 / 42.0).fract(), 1.0, true, DT)).collect();
+        let most = rolls.iter().fold(0.0f32, |m, r| m.max(r.abs()));
+        assert!(most <= ROLL && most > 0.5 * ROLL, "{most}");
+        assert!(rolls.windows(2).all(|w| (w[1] - w[0]).abs() < 0.2 * ROLL), "no step: about the stride curve's own speed");
+        // Switched off part-way: it fades, no step.
+        let off: Vec<f32> = (0..120).map(|f| v.roll((f as f32 / 42.0).fract(), 1.0, false, DT)).collect();
+        assert!(off.windows(2).all(|w| (w[1] - w[0]).abs() < 0.2 * ROLL) && off[119].abs() < 0.01 * ROLL);
+        // The rolled view looks along the same line: the crosshair's point stays.
+        for (h, p) in [(0.0, 0.0), (1.2, 0.4), (-2.5, -0.7)] {
+            let line = |r: f32| nvf_play::space::view_rotation(rolled_view(h, p, r)) * Vec3::NEG_Z;
+            let plain = nvf_play::space::look_rotation(h, p);
+            // (Compared by the axes: an angle from a quaternion's dot is coarse near 0.)
+            let up = |q: Quat| q * Vec3::Y;
+            let unrolled = nvf_play::space::view_rotation(rolled_view(h, p, 0.0));
+            assert!((unrolled * Vec3::NEG_Z - plain * Vec3::NEG_Z).length() < 1e-4 && (up(unrolled) - up(plain)).length() < 1e-4, "unrolled: the heading and pitch's view");
+            assert!((line(ROLL) - plain * Vec3::NEG_Z).length() < 1e-4, "rolled about its own line");
+            let tilt = up(nvf_play::space::view_rotation(rolled_view(h, p, ROLL))).angle_between(up(plain));
+            assert!((tilt - ROLL).abs() < 1e-3, "rolled by its angle: {tilt}");
+        }
         // The lean tips the body's up ahead.
         assert!((lean(1.0) * Vec3::Z).y > 0.05 && lean(0.0) == Quat::IDENTITY);
     }
