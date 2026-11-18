@@ -161,7 +161,9 @@ melee fighters (docs/design/combat-ai.md §14.4, §15; `npc_combat`):
   `npc_combat::fight` clears fighter poses and skips actors controlled by the use,
   while `attack_anims::start` requires a fighter pitch or an existing attack pose.
   Clip-bound scripted cadence therefore remains open [design, #2535]. The shared
-  `SwingClip::ready_in` calculation remains available if timing is published, but
+  `SwingClip::ready_in` calculation remains available to a creature's swings if timing
+  is published (a person's keep upstream's base timer, brought forward to an earlier
+  `a:` key: creatures only, the maintainer's decision of 2026-11-18 on #2971), but
   in play the no-clip path uses the base timer and existing Hit delay (fallback
   `DEFAULT_HIT`), without a combo
   [design: `use_weapon::swing`, `Swinger::advance`]. No block or attack-chance roll:

@@ -115,16 +115,19 @@
 //!   Rolled on their own sequence.
 //! - **Melee combos** (docs/design/combat-ai.md §15): a blow's clip with an `a:` text
 //!   key (`a:L` on the `AttackRight` clips, `a:R` on the `AttackLeft` ones; `fnv_combat::
-//!   melee`) sets the next melee decision at that key; a blow decided between
-//!   the key and the clip's end goes on the combo with the group the key names (right,
-//!   left, right…, fists alternating hands), as the player's swings do, cutting the clip
-//!   short. A blow decided later, after a hold, a block or a recoil starts again from the
-//!   weapon's own attack group. Without an `a:` key, the next decision waits for both
-//!   the clip's end and the base [`STRIKE_SECONDS`] pace [observed: capture run15b_b2,
-//!   2026-11-15, radscorpions; hypothesis: the same lower bound for NPC swings, #2535].
-//!   The key, the combo window and the clip's end are divided by the blow's attack
-//!   speed (Attack Mult × the teammate rate), in the manner of the guns' `a:` key
-//!   (#2739, which also takes the Animation Mult) [design, #2535 review].
+//!   melee`) times the next melee decision; a blow decided between the key and the
+//!   clip's end goes on the combo with the group the key names (right, left, right…,
+//!   fists alternating hands), as the player's swings do, cutting the clip short. A blow
+//!   decided later, after a hold, a block or a recoil starts again from the weapon's own
+//!   attack group. **A creature's** next decision waits for its clip: at the `a:` key,
+//!   and without one for both the clip's end and the base [`STRIKE_SECONDS`] pace
+//!   [observed: capture run15b_b2, 2026-11-15, radscorpions; #2535]. **A person's** keeps
+//!   the base pace (over its attack speed), brought forward to an earlier `a:` key at
+//!   the clip's own time, and a power attack's waits for its clip's length [design; owner
+//!   request 2026-10-16]: the maintainer's decision of 2026-11-18 on #2971 keeps people
+//!   on this until their pace is measured in the original (observer check 244). A
+//!   creature's key, combo window and clip end are divided by its blow's attack speed (1
+//!   today), in the manner of the guns' `a:` key (#2739) [design, #2535 review].
 //!
 //! - **Its combat style** (CSTY, `fnv_game::combat_style`; docs/design/combat-ai.md
 //!   §10.4) [documented: GECK wiki Combat Style]: Weapon Restrictions "Melee Only" has
@@ -557,25 +560,54 @@ struct NpcSwing {
     run: u32,
     /// Powers publish timing but do not continue combos [design: existing combo rule].
     power: bool,
-    /// The blow's attack speed (Attack Mult × the teammate rate; 1 for a creature): its
-    /// clip's key and end are divided by it (`attack_anims::SwingClip::ready_in`, #2535
-    /// review).
+    /// The blow's attack speed (Attack Mult × the teammate rate; 1 for a creature): a
+    /// creature's clip key and end are divided by it (`attack_anims::SwingClip::ready_in`,
+    /// #2535 review); a person's clip keeps its own times.
     speed: f32,
+    /// A creature's blow (`Arm::Creature`): the next decision waits for its clip's `a:`
+    /// key or end. A person's keeps the base timing (module notes; the maintainer's
+    /// decision of 2026-11-18 on #2971).
+    creature: bool,
 }
 
 impl NpcSwing {
-    /// Share the clip boundary with scripted melee [design: SwingClip::ready_in].
+    /// The next decision's wait once the clip is known: a creature's waits for the clip
+    /// (`SwingClip::ready_in`, shared with scripted melee); a person's is the base wait,
+    /// brought forward by an earlier `a:` key (`SwingClip::person_ready_in`).
     fn ready_in(&self, base_left: f32) -> f32 {
-        self.clip.map_or(base_left, |c| c.ready_in(self.t, base_left, self.speed))
+        match self.clip {
+            Some(c) if self.creature => c.ready_in(self.t, base_left, self.speed),
+            Some(c) => c.person_ready_in(self.t, base_left),
+            None => base_left,
+        }
+    }
+
+    /// The clock its clip's times are divided by: the attack speed for a creature, 1 (the
+    /// clip's own times) for a person.
+    fn rate(&self) -> f32 {
+        if self.creature { self.speed } else { 1.0 }
+    }
+
+    /// Whether the clip published for this blow is taken: always for a creature; for a
+    /// person not a power attack's (its wait is its clip's length, set at the blow, and it
+    /// lands at its power clip's `Hit` key).
+    fn takes_clip(&self) -> bool {
+        self.creature || !self.power
     }
 
     /// What a blow begun now goes on with: the group its `a:` key named, between that key
-    /// and the clip's end, both at the blow's attack speed (`SwingClip::next_at`).
+    /// and the clip's end, both at the blow's rate (`SwingClip::next_at`).
     fn next(&self) -> Option<fnv_combat::melee::NextAttack> {
         if self.power {
             return None;
         }
-        self.clip?.next_at(self.t, self.speed)
+        self.clip?.next_at(self.t, self.rate())
+    }
+
+    /// Seconds into the swing after which it is over: its clip's end at its rate, or
+    /// twice the base pace before its clip is known.
+    fn ends_at(&self) -> f32 {
+        self.clip.map_or(STRIKE_SECONDS * 2.0, |c| c.end_at(self.rate()))
     }
 }
 
@@ -3007,7 +3039,7 @@ pub(crate) fn fight(
                     // key, and the next decision comes at its `a:` key (module notes).
                     if let Some(sw) = fighter.swing.as_mut() {
                         sw.t += dt;
-                        if let Some(clip) = times.swings.remove(&id).filter(|_| sw.clip.is_none()) {
+                        if let Some(clip) = times.swings.remove(&id).filter(|_| sw.clip.is_none() && sw.takes_clip()) {
                             sw.clip = Some(clip);
                             // (Before this frame's countdown below.)
                             if let Some(b) = fighter.blows.last_mut() {
@@ -3015,7 +3047,7 @@ pub(crate) fn fight(
                             }
                             fighter.strike_in = sw.ready_in(fighter.strike_in);
                         }
-                        if sw.t > sw.clip.map_or(STRIKE_SECONDS * 2.0, |c| c.end_at(sw.speed)) {
+                        if sw.t > sw.ends_at() {
                             fighter.swing = None;
                         }
                     }
@@ -3229,9 +3261,7 @@ pub(crate) fn fight(
                         // A power attack's clip plays out before the next decision (it
                         // is not cut by a combo) [design, as the player's].
                         if let Some(p) = people {
-                            // At the blow's attack speed, as its clip's end once timed
-                            // (`SwingClip::ready_in`, #2535 review).
-                            fighter.strike_in = fighter.strike_in.max(p.len / speed);
+                            fighter.strike_in = fighter.strike_in.max(p.len);
                         }
                         let power = power.or(people.map(|p| (p.power, p.hit)));
                         // The blow lands at its clip's `Hit` key (the last clip's, as the
@@ -3250,7 +3280,8 @@ pub(crate) fn fight(
                         }
                         f.stats.longest_combo = f.stats.longest_combo.max(run);
                         times.swings.remove(&id);
-                        fighter.swing = Some(NpcSwing { t: 0.0, clip: None, run, power: power.is_some(), speed });
+                        let creature = matches!(arm, Arm::Creature(..));
+                        fighter.swing = Some(NpcSwing { t: 0.0, clip: None, run, power: power.is_some(), speed, creature });
                         let swing = SwingPick { next, rolls: [next_unit(&mut f.swing_rng), next_unit(&mut f.swing_rng)] };
                         anims.write(PlayAttack { actor: id, weapon, melee: true, sights: false, kind: Move::Attack, power: power.map(|p| p.0), swing: power.is_none().then_some(swing) });
                         f.stats.strikes += 1;
@@ -3896,58 +3927,112 @@ mod tests {
         use crate::attack_anims::SwingClip;
         use fnv_combat::melee::NextAttack;
         // Synthetic ordinary, power and keyless clips [design, #2535], published at their
-        // own speed as `attack_anims` publishes them; the swing carries the attack speed.
+        // own speed as `attack_anims` publishes them; the swing carries the attack speed
+        // (1 for a creature in `fight`; other speeds exercise the clip's clock).
         for (key, len, earliest) in [(Some(1.3), 1.5, 1.3), (Some(1.55), 1.7, 1.55), (None, 1.3, 1.3), (None, 0.8, STRIKE_SECONDS), (Some(0.6), 1.5, 0.6)] {
             for speed in [0.5, 1.0, 2.0] {
                 let clip = SwingClip { hit: 0.4, chain: key.map(|at| (at, NextAttack::Left)), len };
                 // Clip timing can arrive after a frame or several [design].
                 for elapsed in [0.02, 0.15, 0.35] {
-                    let sw = NpcSwing { t: elapsed, clip: Some(clip), run: 1, power: false, speed };
-                    let left = sw.ready_in((STRIKE_SECONDS / speed - elapsed).max(0.0));
+                    let base_left = (STRIKE_SECONDS / speed - elapsed).max(0.0);
+                    // A creature waits for the clip's key or end.
+                    let sw = NpcSwing { t: elapsed, clip: Some(clip), run: 1, power: false, speed, creature: true };
+                    let left = sw.ready_in(base_left);
                     assert!((left - (earliest / speed - elapsed).max(0.0)).abs() < 1e-5, "{key:?}, {len}, x{speed}, t={elapsed}: {left}");
+                    // A person keeps the base, brought forward only by an earlier key at
+                    // the clip's own time (#2971).
+                    let person = NpcSwing { creature: false, ..sw };
+                    let main = key.map_or(base_left, |at| base_left.min((at - elapsed).max(0.0)));
+                    assert_eq!(person.ready_in(base_left), main, "person {key:?}, {len}, x{speed}, t={elapsed}");
                 }
             }
         }
         assert_eq!(NpcSwing::default().ready_in(0.7), 0.7);
-        let ended = NpcSwing { t: 2.0, clip: Some(SwingClip { hit: 0.4, chain: None, len: 1.5 }), run: 1, power: true, speed: 1.0 };
+        let ended = NpcSwing { t: 2.0, clip: Some(SwingClip { hit: 0.4, chain: None, len: 1.5 }), run: 1, power: true, speed: 1.0, creature: true };
         assert_eq!(ended.ready_in(0.0), 0.0);
     }
 
-    /// #2535 review: a person striking at x2 (Attack Mult × the teammate rate) is not held
-    /// to its clip's unscaled `a:` key: the key and the clip's end are divided by the speed,
-    /// in the manner of the guns' `a:` key (#2739).
+    /// #2535 review: a creature striking at x2 is not held to its clip's unscaled `a:` key:
+    /// the key and the clip's end are divided by the speed, in the manner of the guns' `a:`
+    /// key (#2739). A person keeps the base timing and its clip's own times at every speed
+    /// (the maintainer's decision of 2026-11-18 on #2971).
     #[test]
-    fn melee_cadence_divides_an_unscaled_clip_by_the_attack_speed() {
+    fn melee_cadence_divides_a_creature_clip_by_the_attack_speed_not_a_persons() {
         use crate::attack_anims::SwingClip;
         use fnv_combat::melee::NextAttack;
         // Synthetic clip, published unscaled: Hit 0.30, a:L 0.63, end 1.43 [design].
         let keyed = SwingClip { hit: 0.30, chain: Some((0.63, NextAttack::Left)), len: 1.43 };
         let keyless = SwingClip { chain: None, ..keyed };
         let base = STRIKE_SECONDS / 2.0;
-        let at = |clip, speed, t: f32| NpcSwing { t, clip: Some(clip), run: 1, power: false, speed }.ready_in((STRIKE_SECONDS / speed - t).max(0.0));
-        // At x2 the key comes at 0.315 s, not at 0.63 s (the 1x key).
-        assert!((at(keyed, 2.0, 0.05) - (0.315 - 0.05)).abs() < 1e-5, "{}", at(keyed, 2.0, 0.05));
-        assert!(at(keyed, 2.0, 0.05) < base, "no slower than the speed-scaled base");
+        let swing = |clip, speed, t: f32, creature| NpcSwing { t, clip: Some(clip), run: 1, power: false, speed, creature };
+        let at = |clip, speed, t: f32, creature| swing(clip, speed, t, creature).ready_in((STRIKE_SECONDS / speed - t).max(0.0));
+        // A creature at x2: the key comes at 0.315 s, not at 0.63 s (the 1x key).
+        assert!((at(keyed, 2.0, 0.05, true) - (0.315 - 0.05)).abs() < 1e-5, "{}", at(keyed, 2.0, 0.05, true));
+        assert!(at(keyed, 2.0, 0.05, true) < base, "no slower than the speed-scaled base");
         // Keyless at x2: the base (0.6 s) or the clip's end at x2 (0.715 s), the later.
-        assert!((at(keyless, 2.0, 0.05) - (0.715 - 0.05)).abs() < 1e-5);
-        // At x1 the clip's own times, as before.
-        assert!((at(keyed, 1.0, 0.05) - (0.63 - 0.05)).abs() < 1e-5);
-        assert!((at(keyless, 1.0, 0.05) - (1.43 - 0.05)).abs() < 1e-5);
-        // #2535 review r2: the combo window and the swing's end follow the same speed, so
-        // a decision made at the key goes on the combo at x2, x0.8 and x1.5 (a companion's
-        // teammate rate with the fists), and the window closes at the clip's end ÷ speed.
-        let next = |speed, t| NpcSwing { t, clip: Some(keyed), run: 1, power: false, speed }.next();
+        assert!((at(keyless, 2.0, 0.05, true) - (0.715 - 0.05)).abs() < 1e-5);
+        // At x1 the clip's own times.
+        assert!((at(keyed, 1.0, 0.05, true) - (0.63 - 0.05)).abs() < 1e-5);
+        assert!((at(keyless, 1.0, 0.05, true) - (1.43 - 0.05)).abs() < 1e-5);
+        // A person at x2: the base (0.6 s) comes before the 1x key (0.63 s), keyed or not.
+        assert_eq!(at(keyed, 2.0, 0.05, false), base - 0.05);
+        assert_eq!(at(keyless, 2.0, 0.05, false), base - 0.05);
+        // At x1 the key brings the base (1.2 s) forward; keyless keeps it, not the clip's end.
+        assert_eq!(at(keyed, 1.0, 0.05, false), 0.63_f32 - 0.05);
+        assert_eq!(at(keyless, 1.0, 0.05, false), STRIKE_SECONDS - 0.05);
+        // #2535 review r2: a creature's combo window and swing end follow the same speed, so
+        // a decision made at the key goes on the combo at every speed, and the window
+        // closes at the clip's end ÷ speed.
         for speed in [2.0_f32, 0.8, 1.5, 1.0] {
+            let next = |t| swing(keyed, speed, t, true).next();
             // (The frame that finds the wait spent is at or just past it.)
-            let decided = 0.05 + at(keyed, speed, 0.05) + 1e-4;
-            assert_eq!(next(speed, decided), Some(NextAttack::Left), "x{speed}: decided at {decided}");
-            assert_eq!(next(speed, 0.63 / speed - 0.01), None, "x{speed}: before the key");
-            assert_eq!(next(speed, 1.43 / speed - 0.01), Some(NextAttack::Left), "x{speed}: before the end");
-            assert_eq!(next(speed, 1.43 / speed + 0.01), None, "x{speed}: after the end");
-            assert!((keyed.end_at(speed) - 1.43 / speed).abs() < 1e-6);
+            let decided = 0.05 + at(keyed, speed, 0.05, true) + 1e-4;
+            assert_eq!(next(decided), Some(NextAttack::Left), "x{speed}: decided at {decided}");
+            assert_eq!(next(0.63 / speed - 0.01), None, "x{speed}: before the key");
+            assert_eq!(next(1.43 / speed - 0.01), Some(NextAttack::Left), "x{speed}: before the end");
+            assert_eq!(next(1.43 / speed + 0.01), None, "x{speed}: after the end");
+            assert!((swing(keyed, speed, 0.0, true).ends_at() - 1.43 / speed).abs() < 1e-6);
+            // A person's window and end are the clip's own times at any speed.
+            let person = |t| swing(keyed, speed, t, false).next();
+            assert_eq!(person(0.62), None, "x{speed}");
+            assert_eq!(person(0.63), Some(NextAttack::Left), "x{speed}");
+            assert_eq!(person(1.43), Some(NextAttack::Left), "x{speed}");
+            assert_eq!(person(1.44), None, "x{speed}");
+            assert_eq!(swing(keyed, speed, 0.0, false).ends_at(), 1.43);
         }
         // A power attack never goes on a combo, at any speed.
-        assert_eq!(NpcSwing { t: 0.4, clip: Some(keyed), run: 1, power: true, speed: 2.0 }.next(), None);
+        assert_eq!(NpcSwing { t: 0.4, clip: Some(keyed), run: 1, power: true, speed: 2.0, creature: true }.next(), None);
+    }
+
+    /// The maintainer's decision of 2026-11-18 on #2971: a person's next melee decision
+    /// keeps the 1.2 s base however late its clip's `a:` key, and a person's power attack
+    /// does not take its published clip (its wait is the clip's length, set at the blow).
+    #[test]
+    fn a_persons_late_key_keeps_the_base_pace() {
+        use crate::attack_anims::SwingClip;
+        use fnv_combat::melee::NextAttack;
+        // Synthetic late-key clip: a:L at 1.3 s of 1.5 [design].
+        let late = SwingClip { hit: 0.4, chain: Some((1.3, NextAttack::Left)), len: 1.5 };
+        let mut sw = NpcSwing { t: 0.0, clip: None, run: 1, power: false, speed: 1.0, creature: false };
+        let mut strike_in = STRIKE_SECONDS;
+        // As `fight` does: count down, then apply the clip once it arrives.
+        let dt = 0.05;
+        strike_in = (strike_in - dt).max(0.0);
+        sw.t += dt;
+        assert!(sw.takes_clip());
+        sw.clip = Some(late);
+        strike_in = sw.ready_in(strike_in);
+        assert_eq!(strike_in, STRIKE_SECONDS - dt, "the base, not the key at 1.3 s");
+        // The decision falls at 1.2 s, before the key: a new run, not the combo.
+        sw.t = STRIKE_SECONDS;
+        assert_eq!(sw.next(), None);
+        // A creature with the same clip waits for its key.
+        let creature = NpcSwing { t: dt, creature: true, ..sw };
+        assert!((creature.ready_in(STRIKE_SECONDS - dt) - (1.3 - dt)).abs() < 1e-6);
+        // A person's power attack leaves its clip unused; a creature's takes it.
+        assert!(!NpcSwing { power: true, ..sw }.takes_clip());
+        assert!(NpcSwing { power: true, creature: true, ..sw }.takes_clip());
+        assert_eq!(NpcSwing { power: true, clip: None, ..sw }.ends_at(), STRIKE_SECONDS * 2.0);
     }
 
     #[test]
@@ -3955,15 +4040,18 @@ mod tests {
         use fnv_combat::melee::NextAttack;
         // `h2hattackright_a.kf`: Hit 0.30, a:L 0.63, end 1.43 [observed, fnv_combat::melee].
         let clip = crate::attack_anims::SwingClip { hit: 0.30, chain: Some((0.63, NextAttack::Left)), len: 1.43 };
-        let at = |t| NpcSwing { t, clip: Some(clip), run: 1, power: false, speed: 1.0 }.next();
-        assert_eq!(at(0.5), None);
-        assert_eq!(at(0.63), Some(NextAttack::Left));
-        assert_eq!(at(1.4), Some(NextAttack::Left));
-        assert_eq!(at(1.5), None);
-        // Before its clip started, or a clip without an `a:` key: a new run.
-        assert_eq!(NpcSwing { t: 0.7, clip: None, run: 1, power: false, speed: 1.0 }.next(), None);
-        assert_eq!(NpcSwing { t: 0.7, clip: Some(crate::attack_anims::SwingClip { chain: None, ..clip }), run: 1, power: false, speed: 1.0 }.next(), None);
-        let power = NpcSwing { t: 0.7, clip: Some(clip), run: 1, power: true, speed: 1.0 };
+        // People and creatures alike.
+        for creature in [false, true] {
+            let at = |t| NpcSwing { t, clip: Some(clip), run: 1, power: false, speed: 1.0, creature }.next();
+            assert_eq!(at(0.5), None);
+            assert_eq!(at(0.63), Some(NextAttack::Left));
+            assert_eq!(at(1.4), Some(NextAttack::Left));
+            assert_eq!(at(1.5), None);
+            // Before its clip started, or a clip without an `a:` key: a new run.
+            assert_eq!(NpcSwing { t: 0.7, clip: None, run: 1, power: false, speed: 1.0, creature }.next(), None);
+            assert_eq!(NpcSwing { t: 0.7, clip: Some(crate::attack_anims::SwingClip { chain: None, ..clip }), run: 1, power: false, speed: 1.0, creature }.next(), None);
+        }
+        let power = NpcSwing { t: 0.7, clip: Some(clip), run: 1, power: true, speed: 1.0, creature: true };
         assert_eq!(power.next(), None);
         assert_eq!(power.ready_in(0.5), 0.0);
     }

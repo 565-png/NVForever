@@ -91,8 +91,10 @@ fists (the default draws it holstered).
   settles away over 3 s of firing at the same target (the first shots of a burst miss
   more).
 - **Melee** [design: `npc_combat`]: a base timer of 1.2 s divided by the weapon's
-  attack speed, adjusted to the playing clip's `a:` key or held until its end when
-  keyless, both divided by the same attack speed (#2535; combat-rules.md §10). The target must be within melee reach.
+  attack speed, brought forward to the playing clip's `a:` key when sooner. A creature's
+  waits for the key even when later, or for the clip's end when keyless (#2535; creatures
+  only, the maintainer's decision of 2026-11-18 on #2971; combat-rules.md §10). The
+  target must be within melee reach.
 
 ## 5. Where it stands
 
@@ -1418,9 +1420,11 @@ animation combos". The player's swings already follow the attack clips' `a:` tex
   time is when the clip may be cut for the next swing.
 - **When an NPC goes on** [design]: a blow's clip with an `a:` key brings the fighter's
   next melee decision (§10.4: block, attack by the style's attack chance, or hold)
-  to that key, earlier or later than the base timer. Without a key, it waits for the
-  end as well as the base timer (#2535; combat-rules.md §10: radscorpions observed,
-  NPC extension hypothesis). Attacking between the key and the clip's end goes on the combo: the clip
+  forward to that key when it comes before the base timer. A creature's decision waits
+  for the key even when later, and without a key for the clip's end as well as the base
+  timer (#2535; combat-rules.md §10: radscorpions observed); people keep the base timer
+  until their pace is measured in the original (the maintainer's decision of 2026-11-18
+  on #2971). Attacking between the key and the clip's end goes on the combo: the clip
   of the group named (right → left → right…; fists alternate hands), cut in at once, as
   the player's swing is. The combo ends on a hold, a block, a recoil (its blow was
   blocked), or the target out of reach until the clip ends; the next blow starts again

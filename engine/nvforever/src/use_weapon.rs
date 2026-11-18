@@ -33,8 +33,11 @@
 //! `npc_combat::STRIKE_SECONDS` over the weapon's attack speed. Scripted swings do not
 //! establish an attack pose yet (`attack_anims::start` requires a fighter pitch or an
 //! existing attack), so no clip timing reaches them in play [design, #2535: open].
-//! If a clip is published, `SwingClip::ready_in` supplies its boundary [design, #2535].
-//! Volley pauses also hold the next blow [design: Swinger::advance]. With a published
+//! If a clip is published, a creature's next blow waits for its boundary
+//! (`SwingClip::ready_in`) [design, #2535]; a person's keeps the base wait, brought
+//! forward by an earlier `a:` key (`SwingClip::person_ready_in`; the maintainer's
+//! decision of 2026-11-18 on #2971). Volley pauses also hold the next blow, on their own
+//! clock for a creature [design: Swinger::advance, Swinger::pause]. With a published
 //! clip a combo uses `attack_anims::SwingPick` and its `Hit` key; otherwise the blow
 //! keeps the existing Hit delay (fallback `DEFAULT_HIT`) [design: swing]. It lands while the
 //! target is within reach. No block or attack-chance roll: the script wants the blows
@@ -177,9 +180,11 @@ fn pull_wait(ws: &WeaponStats, mult: (f32, f32), u: f32) -> f32 {
 /// One actor carrying out a melee weapon use (module notes).
 struct Swinger {
     seq: u64,
-    /// Seconds before its next blow may begin.
+    /// Seconds before its next blow may begin (a person's volley pause included, as
+    /// before #2535).
     strike_in: f32,
-    /// Independent of combo keys [design: WeaponUse::shot volley pauses].
+    /// A creature's volley pause, independent of its clip's keys [design:
+    /// WeaponUse::shot volley pauses, #2535]; 0 for a person.
     pause_in: f32,
     /// Blows begun, with the seconds until each lands.
     blows: Vec<(f32, ActorStrike)>,
@@ -192,7 +197,10 @@ struct Swinger {
 
 impl Swinger {
     /// Advance the actual clip and volley clocks, retaining Hit scheduling
-    /// [design: swing, AttackTimes, #2535].
+    /// [design: swing, AttackTimes, #2535]. A creature's next blow waits for its clip
+    /// (`SwingClip::ready_in`); a person's keeps the base wait, brought forward once by an
+    /// earlier `a:` key when the clip arrives (`SwingClip::person_ready_in`; the
+    /// maintainer's decision of 2026-11-18 on #2971).
     fn advance(&mut self, dt: f32, clip: Option<SwingClip>) {
         self.strike_in = (self.strike_in - dt).max(0.0);
         self.pause_in = (self.pause_in - dt).max(0.0);
@@ -203,13 +211,26 @@ impl Swinger {
                 if let Some(b) = self.blows.last_mut() {
                     b.0 = (clip.hit - sg.t + dt).max(0.0);
                 }
+                if !sg.creature {
+                    self.strike_in = clip.person_ready_in(sg.t, self.strike_in);
+                }
             }
-            if let Some(clip) = sg.clip {
+            if let Some(clip) = sg.clip.filter(|_| sg.creature) {
                 self.strike_in = clip.ready_in(sg.t, self.strike_in, sg.speed);
             }
-            if sg.t > sg.clip.map_or(STRIKE_SECONDS * 2.0, |c| c.end_at(sg.speed)) {
+            if sg.t > sg.clip.map_or(STRIKE_SECONDS * 2.0, |c| c.end_at(sg.rate())) {
                 self.swing = None;
             }
+        }
+    }
+
+    /// The volley pause after a blow: its own clock for a creature (its clip's key must not
+    /// cut it), within the base wait for a person (as before #2535).
+    fn pause(&mut self, p: f32, creature: bool) {
+        if creature {
+            self.pause_in = p;
+        } else {
+            self.strike_in = self.strike_in.max(p);
         }
     }
 
@@ -226,17 +247,26 @@ struct Swing {
     t: f32,
     clip: Option<SwingClip>,
     run: u32,
-    /// The blow's attack speed (the weapon's Attack Mult): its clip's key and end are
-    /// divided by it (`SwingClip::ready_in`, #2535 review).
+    /// The blow's attack speed (the weapon's Attack Mult): a creature's clip key and end
+    /// are divided by it (`SwingClip::ready_in`, #2535 review); a person's clip keeps its
+    /// own times.
     speed: f32,
+    /// A creature's own attack (`Arm::Creature`): its next blow waits for its clip.
+    creature: bool,
 }
 
 impl Swing {
+    /// The clock its clip's times are divided by: the attack speed for a creature, 1 for
+    /// a person (as `npc_combat::NpcSwing`).
+    fn rate(&self) -> f32 {
+        if self.creature { self.speed } else { 1.0 }
+    }
+
     /// What a blow begun now goes on with: the group its clip's `a:` key named, between
-    /// that key and the clip's end, both at the blow's attack speed (as `npc_combat`'s
-    /// fighters; `SwingClip::next_at`).
+    /// that key and the clip's end, both at the blow's rate (as `npc_combat`'s fighters;
+    /// `SwingClip::next_at`).
     fn next(&self) -> Option<fnv_combat::melee::NextAttack> {
-        self.clip?.next_at(self.t, self.speed)
+        self.clip?.next_at(self.t, self.rate())
     }
 }
 
@@ -761,7 +791,7 @@ fn swing(
     }
     times.swings.remove(&id);
     let speed = weapon.or(c.fists_id()).and_then(|f| c.forms.weapons.get(&f)).map_or(1.0, |ws| ws.attack_mult.max(0.25));
-    sw.swing = Some(Swing { t: 0.0, clip: None, run, speed });
+    sw.swing = Some(Swing { t: 0.0, clip: None, run, speed, creature: creature_damage.is_some() });
     let delay = times.hit.get(&id).copied().unwrap_or(DEFAULT_HIT);
     let dir = vec::normalize(vec::sub(tchest, x.eyes));
     sw.blows.push((delay, ActorStrike { attacker: me, target: w.target, weapon, creature_damage, point: tchest, dir, anim: None }));
@@ -776,7 +806,7 @@ fn swing(
     info!("use weapon: {} {me} swings at {} from {away:.0} units (blow {}{combo})", x.name, x.target_name, u.fired);
     match after {
         After::More => {}
-        After::Pause(p) => sw.pause_in = p,
+        After::Pause(p) => sw.pause(p, creature_damage.is_some()),
         After::Done => sw.spent = true,
     }
 }
@@ -940,23 +970,93 @@ mod tests {
     #[test]
     fn scripted_melee_without_a_clip_keeps_upstream_timer_and_volley_pauses() {
         // Compare the production gate with upstream 63db0209c's single clock:
-        // max(base interval, volley pause), then decrement [design, #2535].
-        for speed in [0.25, 0.5, 1.0, 2.0, 4.0] {
-            for pause in [0.0_f32, 0.4, 1.2, 3.0, 6.0] {
-                let base = STRIKE_SECONDS / speed;
-                for dt in [0.01, 0.125, 0.7] {
-                    let mut old = base.max(pause);
-                    let mut sw = Swinger {
-                        seq: 1, strike_in: base, pause_in: pause, blows: Vec::new(),
-                        swing: Some(Swing { t: 0.0, clip: None, run: 1, speed }), held: None, spent: false,
-                    };
-                    // Include frames after the no-clip swing's expiry [design].
-                    for _ in 0..(8.0 / dt) as usize {
-                        old = (old - dt).max(0.0);
-                        sw.advance(dt, None);
-                        assert_eq!(sw.ready(), old <= 0.0, "speed={speed}, pause={pause}, dt={dt}");
-                        assert_eq!(sw.strike_in.max(sw.pause_in), old);
-                        assert!(sw.swing.is_none_or(|s| s.clip.is_none() && s.next().is_none()));
+        // max(base interval, volley pause), then decrement [design, #2535]. People and
+        // creatures alike.
+        for creature in [false, true] {
+            for speed in [0.25, 0.5, 1.0, 2.0, 4.0] {
+                for pause in [0.0_f32, 0.4, 1.2, 3.0, 6.0] {
+                    let base = STRIKE_SECONDS / speed;
+                    for dt in [0.01, 0.125, 0.7] {
+                        let mut old = base.max(pause);
+                        let mut sw = Swinger {
+                            seq: 1, strike_in: base, pause_in: 0.0, blows: Vec::new(),
+                            swing: Some(Swing { t: 0.0, clip: None, run: 1, speed, creature }), held: None, spent: false,
+                        };
+                        sw.pause(pause, creature);
+                        // Include frames after the no-clip swing's expiry [design].
+                        for _ in 0..(8.0 / dt) as usize {
+                            old = (old - dt).max(0.0);
+                            sw.advance(dt, None);
+                            assert_eq!(sw.ready(), old <= 0.0, "creature={creature}, speed={speed}, pause={pause}, dt={dt}");
+                            assert_eq!(sw.strike_in.max(sw.pause_in), old);
+                            assert!(sw.swing.is_none_or(|s| s.clip.is_none() && s.next().is_none()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The maintainer's decision of 2026-11-18 on #2971: a person's scripted blows keep
+    /// upstream's timing with a clip too, bit for bit: the base wait over the attack speed
+    /// (with the volley pause in it), brought forward once to an earlier `a:` key when the
+    /// clip arrives; the combo window and the swing's end at the clip's own times.
+    #[test]
+    fn scripted_person_melee_keeps_upstream_timing_with_clips() {
+        use fnv_combat::melee::NextAttack;
+        // Upstream's clock (main before #2535), restated for the comparison [design].
+        #[derive(Clone, Copy)]
+        struct Upstream {
+            strike_in: f32,
+            t: f32,
+            clip: Option<SwingClip>,
+            live: bool,
+        }
+        impl Upstream {
+            fn advance(&mut self, dt: f32, clip: Option<SwingClip>) {
+                self.strike_in = (self.strike_in - dt).max(0.0);
+                if self.live {
+                    self.t += dt;
+                    if let Some(c) = clip.filter(|_| self.clip.is_none()) {
+                        self.clip = Some(c);
+                        if let Some((at, _)) = c.chain {
+                            self.strike_in = self.strike_in.min((at - self.t).max(0.0));
+                        }
+                    }
+                    if self.t > self.clip.map_or(STRIKE_SECONDS * 2.0, |c| c.len) {
+                        self.live = false;
+                    }
+                }
+            }
+            fn next(&self) -> Option<NextAttack> {
+                let c = self.clip.filter(|_| self.live)?;
+                c.chain.filter(|(at, _)| self.t >= *at && self.t <= c.len).map(|(_, n)| n)
+            }
+        }
+        // Synthetic clips: late, early and no keys [design].
+        for (key, len) in [(Some(1.3), 1.5), (Some(1.55), 1.7), (Some(0.6), 1.5), (Some(0.63), 1.43), (None, 1.5), (None, 0.8)] {
+            let clip = SwingClip { hit: 0.4, chain: key.map(|at| (at, NextAttack::Left)), len };
+            for speed in [0.25, 0.5, 1.0, 2.0, 4.0] {
+                for pause in [0.0_f32, 0.4, 2.0] {
+                    for (arrival, dt) in [(1, 0.01), (2, 0.0166), (5, 0.05), (1, 0.125)] {
+                        let base = STRIKE_SECONDS / speed;
+                        let mut up = Upstream { strike_in: base.max(pause), t: 0.0, clip: None, live: true };
+                        let mut sw = Swinger {
+                            seq: 1, strike_in: base, pause_in: 0.0, blows: Vec::new(),
+                            swing: Some(Swing { t: 0.0, clip: None, run: 1, speed, creature: false }), held: None, spent: false,
+                        };
+                        sw.pause(pause, false);
+                        for frame in 0..(6.0 / dt) as usize {
+                            let published = (frame + 1 == arrival).then_some(clip);
+                            up.advance(dt, published);
+                            sw.advance(dt, published);
+                            let at = format!("key={key:?}, len={len}, x{speed}, pause={pause}, dt={dt}, frame={frame}");
+                            assert_eq!(sw.strike_in, up.strike_in, "{at}");
+                            assert_eq!(sw.pause_in, 0.0, "{at}");
+                            assert_eq!(sw.ready(), up.strike_in <= 0.0, "{at}");
+                            assert_eq!(sw.swing.is_some(), up.live, "{at}");
+                            assert_eq!(sw.swing.and_then(|s| s.next()), up.next(), "{at}");
+                        }
                     }
                 }
             }
@@ -966,19 +1066,20 @@ mod tests {
     #[test]
     fn scripted_melee_waits_for_clip_boundaries_and_volley_pauses() {
         use fnv_combat::melee::NextAttack;
-        // Synthetic clips, clocks and pauses [design, #2535], the clips published at their
-        // own speed as `attack_anims` publishes them; the swing carries the attack speed.
-        // Exercise the same advancement and readiness gate used by swing, including late
-        // timing.
+        // A creature's scripted blows (#2971: creatures only). Synthetic clips, clocks and
+        // pauses [design, #2535], the clips published at their own speed as `attack_anims`
+        // publishes them; the swing carries the attack speed. Exercise the same
+        // advancement and readiness gate used by swing, including late timing.
         for (key, len, earliest) in [(Some(1.267), 1.5, 1.267), (Some(1.3), 1.5, 1.3), (None, 1.5, 1.5), (None, 0.8, STRIKE_SECONDS), (Some(0.6), 1.5, 0.6)] {
             for speed in [0.5, 1.0, 2.0] {
                 let clip = SwingClip { hit: 0.4, chain: key.map(|at| (at, NextAttack::Left)), len };
                 for pause in [0.0_f32, 0.4, 2.0] {
                     for arrival in [0.02, 0.1] {
                         let mut sw = Swinger {
-                            seq: 1, strike_in: STRIKE_SECONDS / speed, pause_in: pause / speed,
-                            blows: Vec::new(), swing: Some(Swing { t: 0.0, clip: None, run: 1, speed }), held: None, spent: false,
+                            seq: 1, strike_in: STRIKE_SECONDS / speed, pause_in: 0.0,
+                            blows: Vec::new(), swing: Some(Swing { t: 0.0, clip: None, run: 1, speed, creature: true }), held: None, spent: false,
                         };
+                        sw.pause(pause / speed, true);
                         let expected = earliest.max(pause) / speed;
                         sw.advance(arrival / 2.0, None);
                         assert!(!sw.ready());

@@ -228,17 +228,19 @@ pub struct SwingClip {
 }
 
 impl SwingClip {
-    /// Seconds until the next melee decision: the interrupt key, or the clip's
-    /// end as well as the base wait without a key [documented: GECK
-    /// NiTextKeyExtraData; observed: capture run15b_b2, 2026-11-15, radscorpions;
-    /// hypothesis: NPC swings, #2535]. The clip's key and length are divided by the
-    /// blow's attack speed (Attack Mult × the teammate rate; `elapsed` and `base_left`
-    /// are real seconds, the base already divided), in the manner of the guns' `a:` key
-    /// (`fnv_combat::attack::Timing::of`, #2739, which also takes the Animation Mult;
-    /// melee does not) [documented: GECK wiki Weapons page, Attack Multiplier "speeds up
-    /// or slows down just the attack animation"; design, #2535 review]. The combo window
-    /// ([`SwingClip::next_at`]) and the swing's end ([`SwingClip::end_at`]) use the same
-    /// clock; the `Hit` key stays at the clip's own time [design].
+    /// A **creature's** seconds until its next melee decision: the interrupt key, or the
+    /// clip's end as well as the base wait without a key [documented: GECK
+    /// NiTextKeyExtraData; observed: capture run15b_b2, 2026-11-15, radscorpions]. Creatures
+    /// only (the maintainer's decision of 2026-11-18 on #2971): a person keeps the base
+    /// timing ([`SwingClip::person_ready_in`]) until people's pace is measured in the
+    /// original. The clip's key and length are divided by the blow's attack speed
+    /// (`elapsed` and `base_left` are real seconds, the base already divided), in the
+    /// manner of the guns' `a:` key (`fnv_combat::attack::Timing::of`, #2739, which also
+    /// takes the Animation Mult; melee does not) [documented: GECK wiki Weapons page,
+    /// Attack Multiplier "speeds up or slows down just the attack animation"; design,
+    /// #2535 review]. The combo window ([`SwingClip::next_at`]) and the swing's end
+    /// ([`SwingClip::end_at`]) use the same clock; the `Hit` key stays at the clip's own
+    /// time [design].
     pub(crate) fn ready_in(&self, elapsed: f32, base_left: f32, speed: f32) -> f32 {
         let speed = Self::rate(speed);
         match self.chain {
@@ -247,7 +249,18 @@ impl SwingClip {
         }
     }
 
-    /// The clip's end, real seconds into the swing, at attack speed `speed`.
+    /// A **person's** seconds until its next melee decision, once its clip is known: the
+    /// base wait left (`STRIKE_SECONDS` over the attack speed), brought forward to the
+    /// clip's `a:` key when that comes sooner; the key at the clip's own time, never later
+    /// than the base, and a clip without a key changes nothing [design; owner request
+    /// 2026-10-16; the maintainer's decision of 2026-11-18 on #2971: people keep this until
+    /// their pace is measured in the original]. Applied once, when the clip arrives.
+    pub(crate) fn person_ready_in(&self, elapsed: f32, base_left: f32) -> f32 {
+        self.chain.map_or(base_left, |(at, _)| base_left.min((at - elapsed).max(0.0)))
+    }
+
+    /// The clip's end, real seconds into the swing, at attack speed `speed` (a person's
+    /// swing passes 1: its clip's own times).
     pub(crate) fn end_at(&self, speed: f32) -> f32 {
         self.len / Self::rate(speed)
     }
@@ -300,8 +313,9 @@ pub struct AttackTimes {
     /// The power attacks each fighting person has clips for with the melee weapon (or
     /// fists, `None`) drawn on it (docs/spec-notes/combat-rules.md §10.1).
     pub people_powers: HashMap<u32, (Option<FormId>, Vec<PowerClip>)>,
-    /// The clip each actor's last melee blow started, powers included, until
-    /// `npc_combat` takes it [design, #2535].
+    /// The clip each actor's last melee blow started, powers included (used for a
+    /// creature's; a person's power clip is not), until `npc_combat` takes it [design,
+    /// #2535].
     pub swings: HashMap<u32, SwingClip>,
     /// Each armed actor's reload clips in its own rig, for the weapon drawn on it: their
     /// length and `Hit` key and the opening clip's length (`fnv_combat::attack::
@@ -960,8 +974,9 @@ fn start(
             if a.melee {
                 times.hit.insert(id, hit_time(&clip).unwrap_or(DEFAULT_HIT).min(len));
             }
-            // Powers need the selected clip's timing too [design, #2535]: the next
-            // melee decision uses its interrupt key or end (`NpcSwing::ready_in`).
+            // A creature's powers need the selected clip's timing too [design, #2535]:
+            // its next melee decision uses the interrupt key or end (`NpcSwing::ready_in`).
+            // A person's power clip is left unused there (the base timing, #2971).
             if a.melee && a.kind == Move::Attack {
                 let keys = ClipKeys::parse(&clip.clip.text_keys);
                 let chain = keys.next_attack.and_then(|(t, v)| NextAttack::parse(&v).map(|n| ((t - clip.clip.start).clamp(0.0, len), n)));

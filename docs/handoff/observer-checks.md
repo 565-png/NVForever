@@ -3340,9 +3340,11 @@ already talking takes over at once, same topic or another; nothing is queued or 
      The shortest gaps (1.28, 1.37, 1.39, 1.47) are just past the ordinary clips'
      `a:` keys (1.267/1.300) and the sting's end (1.267).
 
-     [design, #2535] Ours now holds the next melee decision until the playing clip's
-     `a:` key, or its end without one; earlier keys still shorten the base timer.
-     This lower bound for NPC swings is [hypothesis]. Walking creatures use a BBX
+     [design, #2535] Ours now holds a creature's next melee decision until the playing
+     clip's `a:` key, or its end without one; earlier keys still shorten the base timer.
+     Creatures only (the maintainer's decision of 2026-11-18 on #2971): people and NPCs
+     keep the 1.2 s base timer (÷ attack speed), brought forward to an earlier key,
+     until their pace is measured here. Walking creatures use a BBX
      half-width × actor scale circle when larger than their previous block radius
      [hypothesis: fits the observed spacing; the original's shape was not seen].
      The world capsule is unchanged [design: `phys::npc_params`].
@@ -3354,7 +3356,10 @@ already talking takes over at once, same topic or another; nothing is queued or 
      others after 0.1–2.1 s) is not built; what chooses its duration? Against a player
      backing away for 10 s, one creature attacked three times (3.5 s apart), the
      other never [observed: capture run15b_b2, 2026-11-15]. Backing-away cadence
-     parity and the unseen collision shape remain open [design].
+     parity and the unseen collision shape remain open [design]. **People's pace:** does
+     a person's next melee swing (one-handed, two-handed, fists; with late `a:` keys or
+     none) also wait for its clip's key or end, or come on a fixed base? Measure the
+     attack-start gaps of NPCs as above; until then people keep the base timer (#2971).
      [observed: the main session's runs of NVForever, 2026-11-15, reproduction on
      Searchlight Airport's runway: the Radscorpion + Giant Radscorpion pair against
      a god-mode player who backs away from 16 s to 28 s; pair distance read once

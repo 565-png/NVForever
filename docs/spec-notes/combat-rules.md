@@ -730,31 +730,41 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     has passed), playing the group the key names, so the fists alternate right and left.
     A press after the swing has ended starts again from the weapon's own attack group
     (`AttackRight` by default) [design: when the original resets a run is not known].
-  - **Actor melee cadence (#2535).** The next attack decision uses the playing
-    clip's `a:` key, even when later than the 1.2 s base timer; without a key it
-    waits for the clip's end as well as the base timer. An earlier key still brings
-    the decision forward for combos. Clip times use the existing playback clock
+  - **Creature melee cadence (#2535).** **Creatures only** (the maintainer's decision
+    of 2026-11-18 on #2971): a creature's next attack decision waits for its playing
+    clip's `a:` key, even when later than the 1.2 s base timer; without a key it waits
+    for the clip's end as well as the base timer. An earlier key still brings the
+    decision forward for combos. A creature's power attack publishes its clip's timing
+    the same way. Clip times use the existing playback clock
     (`attack_anims::CombatPose::layers`, `attack_anims::SwingClip::ready_in`) [design].
-    The key, the combo window and the clip's end are divided by the blow's attack speed
-    (Attack Mult × the teammate rate, 1 for creatures), in the manner of the
-    semi-automatic guns' `a:` key (§4, §4.1; guns also divide by the Animation Mult,
-    melee does not); the `Hit` key stays at the clip's own time [documented: GECK
-    wiki Weapons page, Attack Multiplier "speeds up or slows down just the attack
-    animation"; design, #2535 review]. As the clip itself still plays at 1x while the
-    cut moves, above about x2.1 (an `a:` key at 0.63 s, `Hit` at 0.30 s) the next blow
-    starts before the last one's `Hit` lands, and at x0.25 the fighter stands idle after
-    the clip until its decision [design]. The follow-up is to play melee attack clips at
-    the attack speed.
+    The key, the combo window and the clip's end are divided by the blow's attack speed,
+    in the manner of the semi-automatic guns' `a:` key (§4, §4.1; guns also divide by
+    the Animation Mult, melee does not); the `Hit` key stays at the clip's own time
+    [documented: GECK wiki Weapons page, Attack Multiplier "speeds up or slows down just
+    the attack animation"; design, #2535 review]. In ordinary combat a creature's
+    attack speed is 1, so its clip's own times hold [design: `npc_combat::fight`].
+    **People and NPCs keep the base timing** until their pace is measured in the
+    original (observer check 244): the next decision after 1.2 s ÷ the attack speed
+    (Attack Mult × the teammate rate), brought forward to the clip's `a:` key at the
+    clip's own time when that is sooner, never held for a later key or a keyless
+    clip's end; the combo window is the clip's own key-to-end span; a power attack
+    waits for its clip's length and lands at its `Hit` key [design; owner request
+    2026-10-16; `attack_anims::SwingClip::person_ready_in`]. A creature here is a
+    fighter striking with its own attack (`npc_combat::Arm::Creature`: a CREA base with
+    no weapon drawn, `Game::creature_attack`), as for creature spacing; a fighter with
+    a melee weapon or fists, a CREA with a weapon drawn included, keeps the base timing
+    [design].
     Ordinary combat uses this boundary calculation. Scripted melee has the shared
     calculation available, but plays no attack clip yet: `attack_anims::start`
     requires a fighter pitch or existing attack pose, and `npc_combat::fight`
     clears poses and skips actors controlled by UseWeapon. Clip-bound scripted
     cadence remains open; without a published clip its base timer and volley
-    pauses retain upstream main's behavior [design: `use_weapon::Swinger::advance`,
+    pauses retain upstream main's behavior, and a person's scripted blows keep it
+    with a clip too [design: `use_weapon::Swinger::advance`,
     docs/design/use-weapon.md §3.1, #2535].
     The key's interrupt meaning is [documented: GECK wiki NiTextKeyExtraData, above];
     the lower bound is [observed: capture run15b_b2, 2026-11-15] for radscorpions,
-    and [hypothesis] for NPC ordinary and power swings. Attack-chance rolls, style
+    and [hypothesis] for other creatures' ordinary and power swings. Attack-chance rolls, style
     hold timers and attacks on the run (#2163) are unchanged [design].
 
     [observed: FalloutNV.esm and Fallout - Meshes.bsa, fnvtool esm decode / nif decode,
@@ -775,8 +785,9 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     [observed: main session's measured Searchlight runway run on 63db0209c,
     2026-11-15] NVForever started each attack 1.20–1.21 s apart; 23 of 39 were
     power attacks. Every clip, including the 1.267 s sting, was cut by the next
-    start. The min-only key adjustment and ordinary-only timing publication are
-    replaced by the common clip boundary above [design: `npc_combat`, `attack_anims`].
+    start. For creatures, the min-only key adjustment and ordinary-only timing
+    publication are replaced by the clip boundary above; people keep the min-only
+    adjustment [design: `npc_combat`, `attack_anims`].
 
     [observed: capture run15b_b2, 2026-11-15; xNVSE 6.4.9, JIP LN 57.30]
     On Searchlight Airport's runway against a standing god-mode player, each of
