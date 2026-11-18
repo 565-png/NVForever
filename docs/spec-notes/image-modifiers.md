@@ -498,8 +498,10 @@ RGB [observed, in an installed mod, not the original game: the installed radiati
 controller writes 47–49 as 0–255 and 50 as its effect strength times its tint strength
 (default 0.3) times 255] [hypothesis: that the original getter and setter use 0–255
 for trait 50 too; no capture in the original game confirms it]
-[hypothesis: reading 50 as normalized alpha drew an opaque tint, the playtest's whole
-screen cyan in irradiated water; no isolated in-game comparison confirms it].
+[observed: owner playtest in NVForever with that mod, 2026-11-18, visually confirmed
+on three builds in irradiated water: before this PR the cyan effect persisted; with
+trait 50 read as 0–1 alpha the whole screen turned cyan; with 47–50 all read as 0–255
+the tint looked correct. This is an NVForever observation, not an original-game capture].
 Leave every unassigned component, other effect, sound, duration and track alone.
 [engine design choice] Read only bounded fields of active modifiers; do not clone the
 record cache, mutate the load order or scan unrelated forms each frame. Nonfinite values
