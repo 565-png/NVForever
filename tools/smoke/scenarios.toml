@@ -4373,7 +4373,7 @@ run_seconds = 15
 order = [[
   "settings: quick-loot on",
   { re = 'language: ru', label = "the language is Russian" },
-  { re = 'quick loot: drawn "Refrigerator" \(.*keys "E\) Взять \| R\) Взять всё \| T\) Поиск"\): no overlaps', label = "the keys in Russian, nothing overlapping" },
+  { re = 'quick loot: drawn "Refrigerator" \(.*keys "E\) Взять \| R\) Взять всё \| T\) Обыскать"\): no overlaps', label = "the keys in Russian, nothing overlapping" },
 ]]
 forbid = [
   { re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" },
