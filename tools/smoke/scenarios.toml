@@ -891,11 +891,11 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hou
 run_seconds = 14
 expect = [
   { re = 'heat haze: (?:on, )?strength (?P<n>\d+\.\d+), at most [\d.]+ px \(sun', range = [0.05, 1.0], label = "at noon in clear weather the heat haze has a strength above 0 and the pass is not skipped" },
+  { re = 'heat haze: pass drawn \(\d+x\d+, multisampled depth (?:yes|no)\)', label = "the pass ran (not only a strength above 0)" },
 ]
 order = [[
   { re = 'graphics: light glow, heat haze$', label = "the switch is on from the start" },
   { re = 'pipeline \d+ ready after \d+ ms: heat_haze_pipeline', label = "heat_haze.wesl compiles: its pipeline is ready" },
-  { re = 'heat haze: pass drawn \(\d+x\d+, multisampled depth (?:yes|no)\)', label = "the pass ran (not only a strength above 0)" },
 ]]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error with the heat haze" },
