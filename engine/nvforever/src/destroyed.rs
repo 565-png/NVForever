@@ -46,7 +46,8 @@ pub struct DestroyedPlugin;
 
 impl Plugin for DestroyedPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (staged_shapes, swap_models).after(crate::world::stream));
+        // Before the full-detail ring gives its cells' new meshes their range.
+        app.add_systems(Update, (staged_shapes, swap_models).after(crate::world::stream).before(crate::full_detail::fade_ring));
     }
 }
 
@@ -79,6 +80,7 @@ fn swap_models(
     mut emittance: ResMut<crate::emittance::EmittanceState>,
     drawn: Query<(Entity, &RefVisual, &ChildOf), crate::lights::NotLightSource>,
     cells: Query<&Transform, With<CellEntity>>,
+    (ring_cells, mut ring): (Query<(&Transform, &crate::full_detail::RingCell)>, Option<ResMut<crate::full_detail::FullDetailRing>>),
 ) {
     *wait -= time.delta_secs();
     if *wait > 0.0 {
@@ -108,11 +110,21 @@ fn swap_models(
     for r in changed {
         // Its entities directly under a cell (a static model's shapes, a rig's root).
         let mine: Vec<(Entity, Entity)> = drawn.iter().filter(|(_, v, c)| v.0 == r && cells.contains(c.parent())).map(|(e, _, c)| (e, c.parent())).collect();
-        let Some(&(_, cell_e)) = mine.first() else { continue };
-        let (Ok(cell), Some(p)) = (cells.get(cell_e), placement(world.lo, world.schema, r)) else { continue };
+        // The full-detail ring's copies (full_detail.rs, #2701), by ring cell.
+        let mut ringed: HashMap<Entity, Vec<Entity>> = HashMap::new();
+        for (e, _, c) in drawn.iter().filter(|(_, v, c)| v.0 == r && ring_cells.contains(c.parent())) {
+            ringed.entry(c.parent()).or_default().push(e);
+        }
+        let loaded = mine.first().and_then(|&(_, cell_e)| Some((cell_e, cells.get(cell_e).ok()?)));
+        if loaded.is_none() && ringed.is_empty() {
+            continue;
+        }
+        let Some(p) = placement(world.lo, world.schema, r) else { continue };
         let Some(base) = p.base.and_then(|b| base_object(world.lo, world.schema, b)) else { continue };
-        for (e, _) in &mine {
-            commands.entity(*e).try_despawn();
+        if loaded.is_some() {
+            for (e, _) in &mine {
+                commands.entity(*e).try_despawn();
+            }
         }
         let base = match want.get(&r) {
             Some(m) => {
@@ -124,8 +136,27 @@ fn swap_models(
                 base
             }
         };
-        let rt = Affine3A::from_translation(-cell.translation) * ref_affine(&p);
         let Streamer { hide, stats, .. } = &mut *streamer;
-        spawn_model(&mut commands, cell_e, &world, &p, r, &base, rt, &mut models, &mut emittance, hide, stats, crate::world::SpawnMode::Full);
+        if let Some((cell_e, cell)) = loaded {
+            let rt = Affine3A::from_translation(-cell.translation) * ref_affine(&p);
+            spawn_model(&mut commands, cell_e, &world, &p, r, &base, rt, &mut models, &mut emittance, hide, stats, crate::world::SpawnMode::Full);
+        }
+        // Ring copies are drawn only and never prepare a model on this thread: one whose
+        // new model is not prepared yet keeps its old one until its cell is drawn again
+        // (the model is asked of the worker threads here).
+        let Some(ring) = ring.as_deref_mut() else { continue };
+        let ready = base.world_model_path().is_none_or(|path| models.models_ready([(path.as_str(), base.world_alt_textures.as_slice())]));
+        if !ready {
+            continue;
+        }
+        for (cell_e, es) in ringed {
+            let Ok((cell, rc)) = ring_cells.get(cell_e) else { continue };
+            for e in es {
+                commands.entity(e).try_despawn();
+            }
+            let rt = Affine3A::from_translation(-cell.translation) * ref_affine(&p);
+            spawn_model(&mut commands, cell_e, &world, &p, r, &base, rt, &mut models, &mut emittance, hide, ring.redraw_stats(), crate::world::SpawnMode::Scenery);
+            ring.redrawn(rc.grid);
+        }
     }
 }
