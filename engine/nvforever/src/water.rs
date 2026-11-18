@@ -522,6 +522,9 @@ pub fn water_params(w: &Water) -> WaterParams {
     }
 }
 
+/// The share of the current each noise layer travels at [design, by eye].
+const LAYER_PACE: [f32; 3] = [1.0, 0.75, 1.3];
+
 /// Bake advection once per material [design]. UVs add velocity over time, so
 /// moving a crest downstream requires subtracting the physical current. Bound
 /// each layer's wind to 40% of its current in UV units; opposing wind therefore
@@ -531,7 +534,13 @@ fn current_layers(wind_layers: [Vec4; 3], current: Vec2) -> [Vec4; 3] {
     if speed == 0.0 {
         return wind_layers;
     }
+    let mut i = 0;
     wind_layers.map(|layer| {
+        // Each layer rides the current at its own pace, so the surface changes shape
+        // as it travels instead of sliding past as one rigid sheet.
+        let current = current * LAYER_PACE[i];
+        i += 1;
+        let speed = current.length();
         let wind = layer.xy();
         let share = (0.4 * speed * layer.z / wind.length().max(1e-6)).min(1.0);
         let velocity = wind * share - current * layer.z;
@@ -601,11 +610,12 @@ mod wet_tests {
             Vec4::new(-300.0, -900.0, 0.0005, 0.3),
         ];
         let current = Vec2::new(0.0, 40.0);
-        for (original, baked) in wind.into_iter().zip(current_layers(wind, current)) {
+        for ((original, baked), pace) in wind.into_iter().zip(current_layers(wind, current)).zip(LAYER_PACE) {
             assert_eq!(baked.z, original.z);
             assert_eq!(baked.w, original.w);
+            let current = current * pace;
             let physical_velocity = -baked.xy() / baked.z;
-            assert!(physical_velocity.dot(current.normalize()) >= 24.0 - 0.001);
+            assert!(physical_velocity.dot(current.normalize()) >= 0.6 * current.length() - 0.001);
             let wind_contribution = baked.xy() + current * baked.z;
             assert!(wind_contribution.length() <= 0.4 * current.length() * baked.z + 1e-6);
         }
@@ -616,8 +626,8 @@ mod wet_tests {
         let wind = [Vec4::new(1.5, -2.5, 0.001, 0.7), Vec4::ZERO, Vec4::ONE];
         assert_eq!(current_layers(wind, Vec2::ZERO), wind);
         let calm = [Vec4::new(0.0, 0.0, 0.01, 0.7); 3];
-        for layer in current_layers(calm, Vec2::new(0.0, 40.0)) {
-            assert!(layer.abs_diff_eq(Vec4::new(0.0, -0.4, 0.01, 0.7), 1e-6));
+        for (layer, pace) in current_layers(calm, Vec2::new(0.0, 40.0)).into_iter().zip(LAYER_PACE) {
+            assert!(layer.abs_diff_eq(Vec4::new(0.0, -0.4 * pace, 0.01, 0.7), 1e-6));
         }
     }
 

@@ -59,11 +59,22 @@ impl Plugin for UnderwaterCausticsPlugin {
             // captures this frame's effective fog, including the depth-density scale.
             .add_systems(PostUpdate, follow_camera.after(bevy::camera::CameraUpdateSystems).after(bevy::transform::TransformSystems::Propagate));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
+        // Ordered against every other pass that flips the view target after tonemapping
+        // (`post_process_write`). Core3d runs on the multi-threaded executor and these
+        // passes conflict in no declared access, so two unordered ones may record on two
+        // threads at once: each flip is taken when its system runs, but the command
+        // buffers are submitted in the schedule's topological order. When the two orders
+        // differ, one pass reads the texture the other has not written yet and the frame
+        // shows a stale picture: the occlusion's `ao_pass` (no upscaler) and `taa_pass`
+        // were unordered with this pass. Before the temporal resolve, so it smooths the
+        // pattern's jitter along with the rest of the picture.
         render_app.add_systems(RenderStartup, init).add_systems(Render, prepare.in_set(RenderSystems::PrepareResources)).add_systems(
             Core3d,
             caustics_pass
                 .in_set(Core3dSystems::PostProcess)
                 .after(tonemapping)
+                .after(crate::ssao::ao_pass)
+                .before(crate::taa::taa_pass)
                 .before(bevy::anti_alias::fxaa::fxaa)
                 .before(bevy::anti_alias::smaa::smaa)
                 .before(crate::imagespace::blur_pass),
@@ -82,33 +93,40 @@ fn follow_camera(
     cameras: Query<(Entity, &GlobalTransform, &Projection, &Camera, Option<&DistanceFog>, Has<UnderwaterCaustics>), crate::fly::WorldCamera>,
 ) {
     for (entity, transform, projection, camera_view, camera_fog, active) in &cameras {
-        let data = (|| {
-            let (graphics, world, streamer, sky) = (graphics.as_deref()?, world.as_deref()?, streamer.as_deref()?, sky.as_deref()?);
-            if !graphics.water_effects || streamer.interior.is_some() {
-                return None;
+        // Err: why the pass is off, said when it goes off (a camera bobbing at the
+        // surface, a cell streaming in or out shows as lines in a row).
+        let data = (|| -> Result<UnderwaterCaustics, &'static str> {
+            let (Some(graphics), Some(world), Some(streamer), Some(sky)) = (graphics.as_deref(), world.as_deref(), streamer.as_deref(), sky.as_deref()) else {
+                return Err("no world");
+            };
+            if !graphics.water_effects {
+                return Err("water effects off");
+            }
+            if streamer.interior.is_some() {
+                return Err("interior");
             }
             let sun = crate::water::caustic_sun(sky);
             if sun.w <= 0.0 {
-                return None;
+                return Err("no sun");
             }
             let camera = crate::world::bevy_to_game(transform.translation());
             let cell = fnv_world::cell_of(camera.x, camera.y);
             if !streamer.loaded.contains_key(&cell) {
-                return None;
+                return Err("the camera's cell is not loaded");
             }
-            let ws = world.index.worldspaces.get(&world.world)?;
-            let height = cell_water_height(world.grid_cell(cell)?, ws.default_water_height, ws.water)?;
+            let ws = world.index.worldspaces.get(&world.world).ok_or("no worldspace")?;
+            let height = world.grid_cell(cell).and_then(|c| cell_water_height(c, ws.default_water_height, ws.water)).ok_or("no cell water")?;
             if camera.z >= height {
-                return None;
+                return Err("above the cell's water");
             }
             let Projection::Perspective(p) = projection else {
-                return None;
+                return Err("not a perspective view");
             };
-            let viewport = camera_view.physical_viewport_rect()?;
-            let fog = camera_fog?;
+            let viewport = camera_view.physical_viewport_rect().ok_or("no viewport")?;
+            let fog = camera_fog.ok_or("no fog")?;
             // Underwater fog is linear. Decline other fog modes instead of treating
             // their coefficients as a linear range during a camera transition.
-            let FogFalloff::Linear { start, end } = &fog.falloff else { return None };
+            let FogFalloff::Linear { start, end } = &fog.falloff else { return Err("the fog is not the under-water fog") };
             let fog = Vec4::new(*start, *end, fog.color.to_linear().alpha, 0.0);
             let y = 1.0 / (p.fov * 0.5).tan();
             let origin = (cell.0 - 2, cell.1 - 2);
@@ -129,7 +147,7 @@ fn follow_camera(
                     wet |= 1u32 << index;
                 }
             }
-            Some(UnderwaterCaustics {
+            Ok(UnderwaterCaustics {
                 world_from_view: transform.to_matrix(),
                 // Exactly the clock used by GlobalsUniform (`prepare_globals_buffer`),
                 // including its wrap period, so surface and submerged patterns agree.
@@ -141,13 +159,18 @@ fn follow_camera(
                 wet: UVec4::new(wet, 0, 0, 0),
             })
         })();
-        if let Some(data) = data {
-            if !active {
-                info!("underwater caustics: active outdoors below the water surface");
+        match data {
+            Ok(data) => {
+                if !active {
+                    info!("underwater caustics: active outdoors below the water surface");
+                }
+                commands.entity(entity).insert(data);
             }
-            commands.entity(entity).insert(data);
-        } else if active {
-            commands.entity(entity).remove::<UnderwaterCaustics>();
+            Err(reason) if active => {
+                info!("underwater caustics: off ({reason})");
+                commands.entity(entity).remove::<UnderwaterCaustics>();
+            }
+            Err(_) => {}
         }
     }
 }

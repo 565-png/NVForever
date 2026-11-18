@@ -1,5 +1,5 @@
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
-import nvforever::caustics::nvf_caustics;
+import nvforever::caustics::nvf_caustics_filtered;
 import nvf_assets::first_person_depth::FIRST_PERSON_DEPTH_SHARE;
 
 struct Caustics {
@@ -16,6 +16,8 @@ struct Caustics {
 @group(0) @binding(1) var<uniform> caustics: Caustics;
 @group(0) @binding(2) var screen: texture_2d<f32>;
 @group(0) @binding(3) var screen_sampler: sampler;
+
+const SUBMERGED_GAIN: f32 = 1.5;
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
@@ -48,6 +50,13 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let bit = 1u << u32(cell.y * 5 + cell.x);
     if (caustics.wet.x & bit) == 0u { return color; }
     let fade = 1.0 - smoothstep(2048.0, 4096.0, distance);
-    let gain = nvf_caustics(receiver, caustics.water.x, caustics.sun.xyz, caustics.sun.w, caustics.projection.w);
-    return vec4(color.rgb * (1.0 + gain * fade * visibility), color.a);
+    // The pixel's size on the receiver, for the pattern's band limit: its width across the
+    // view ray, stretched on a bed seen at a grazing angle (capped at six times).
+    let across = 2.0 * distance / (caustics.projection.y * max(caustics.viewport.w, 1.0));
+    let steepness = abs(receiver.y - caustics.world_from_view[3].y) / max(fog_distance, 0.001);
+    let footprint = across / max(steepness, 1.0 / 6.0);
+    let gain = nvf_caustics_filtered(receiver, caustics.water.x, caustics.sun.xyz, caustics.sun.w, caustics.projection.w, footprint);
+    // The murk between the camera and the receiver already dims the picture this
+    // multiplies, so the light is given more weight here than from above [by eye].
+    return vec4(color.rgb * (1.0 + SUBMERGED_GAIN * gain * fade * visibility), color.a);
 }

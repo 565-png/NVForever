@@ -343,15 +343,22 @@ the frame, so the reflected world keeps its shadows.
 
 [design, #2674] Graphics > Water offers this switch on its own. The enhanced look enables
 it. From above the surface, the water shader reconstructs the position of the opaque
-object visible through refraction. Sunlight projected through the surface creates broad,
-softly shifting patches of light there, attenuated by the water body's opacity. A submerged
+object visible through refraction. Sunlight projected through the surface draws a moving
+network of bright focused lines there, attenuated by the water body's opacity. The surface
+is modelled as eight travelling sine waves (wavelengths 41 to 239 game units, crests
+moving 33 to 81 units/s). The light at a receiver is the inverse of the Jacobian
+determinant of the refraction displacement, evaluated analytically. Shallow water shows
+a fine sharp web and deeper water a broader, softer one. The bright lines add up to
+about 1.1 times the receiver's colour, and the gaps between them lose at most 0.15, so
+the bed's mean brightness barely changes. Waves narrower than a few pixels on the
+receiver fade out in both views. A submerged
 outdoor camera uses its depth prepass to project the same pattern on receivers in nearby
 loaded cells with water at the same level. First-person geometry and the sky are excluded.
 The pattern fades with water depth, the sun's elevation and the weather's sunlight.
 The submerged pass attenuates the added light by the camera's remaining visibility.
 Local shadowing is approximate. Projection through a water surface and attenuation with depth
 are described in [GPU Gems, chapter 2, section 2.2](https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-2-rendering-water-caustics).
-The moving pattern and its tuning are NVForever's.
+The wave set, the focusing model's tuning and the band limit are NVForever's.
 
 [design] From shore, the water scatters more light as the bed drops through its WATR
 above-fog range. The shallow end, deep colour and placed-water opacity cap remain
@@ -360,19 +367,36 @@ descends. At one above-fog depth range below the surface its visibility distance
 halved. The density increase is capped at 2.5 times the surface density. The effect
 works at night and uses the water type's own colour in both views.
 
-[design] Wave normals use a centred height difference across the pixel footprint,
-with a minimum span of four height texels, to limit shimmer as ripples move. When
-both the mirror and the main camera consume directional shadows, each draws its
-cascades before sampling them. The renderer shares shadow-map layers between views.
-Reusing the last frame's maps paired one camera's shadows with the other camera's
-matrices and made whole patches of reflected riverbank flash at Cottonwood Cove.
-The staggered shadow schedule resumes after a single shadowed view draws fresh maps.
+[design] The shallows: by the WATR ramp alone a wading depth of NVCleanWater is under a
+fifth opaque, and at Boulder Beach the near water could not be told from the dry shore.
+With the switch on, the bed seen from above takes the water's shallow hue and darkens to
+0.62 of its brightness over the first 90 units of ray in the water, and the body gathers
+along the same ramp twice as fast at its thin end (the far end is unchanged). `vanilla`
+keeps the ramp as it is.
+
+[design] Wave normals come from three height taps round each point, one texel apart
+near the camera and a pixel's footprint apart beyond, which limits shimmer as the waves
+travel (in every look). A span of two texels each side was tried first: it removed
+4-texel waves and kept 0.64 of 8-texel ones, flattening the surface, and took twelve
+taps a pixel for nine. The water mirror is given the main camera's cascades every frame
+(`shadow_rate.rs`): the renderer numbers each view's shadow-map layers from zero, so a
+held layer holds the main camera's map, and the mirror reading it with matrices of its
+own made whole patches of reflected riverbank flash at Cottonwood Cove. With the same
+matrices in both views the staggered schedule keeps holding near water. Drawing every
+cascade of both views every frame was the first fix and doubled the cascade passes near
+water for every player. Reflected shadows reach as far as the main camera's cascades;
+past that the reflection is sunlit. The submerged pass is ordered after ambient
+occlusion and before temporal anti-aliasing: each of the three swaps the view's two
+pictures, and unordered they could record on two threads, one reading a stale picture
+for a frame [hypothesis for the flicker reported under water, from the code].
 
 [design] River currents animate the noise layers on selected exterior reaches. The
 directions follow the Colorado below Hoover Dam through Cottonwood Cove and the western
 channel in Zion Canyon. The table selects cells at the surveyed surface heights (-2300
 and 5000 game units, respectively). Cell coverage was chosen from LAND cross-sections
-below the visible water level; the downstream directions and speed are artistic choices.
+below the visible water level; the downstream directions and speed (110 units a second, each noise
+layer at 1.0, 0.75 and 1.3 of it so the surface changes shape as it travels; at 40 the
+river moved slower than the wind moves Lake Mead's first layer, 65) are artistic choices.
 A locally placed surface at the same elevation can share the cell's current. Each noise layer retains a share of its
 water type's wind, bounded so its crests travel downstream. Actor ripples keep their
 world position. The current changes surface appearance only.

@@ -10,6 +10,11 @@ use fnv_world::cell_of;
 #[cfg(test)]
 use fnv_world::CELL_SIZE;
 
+/// The current's speed in game units per second, about 1.6 m/s [design, by eye]. At 40
+/// the river drifted slower than Lake Mead's wind moves its still water (NVCleanWater's
+/// first layer: 65 units a second, world.md §6) and did not read as a current.
+pub const FLOW_SPEED: f32 = 110.0;
+
 /// Finite compass key: signed components are clamped to -1, 0 or 1, giving
 /// exactly nine cache entries per water type, including still water [design].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -25,7 +30,7 @@ impl FlowDirection {
     /// Surface advection in game x/y units per second [design]. Cardinal and
     /// diagonal zones have the same speed. This does not move actors or physics.
     pub fn velocity(self) -> Vec2 {
-        Vec2::new(f32::from(self.x), f32::from(self.y)).normalize_or_zero() * 40.0
+        Vec2::new(f32::from(self.x), f32::from(self.y)).normalize_or_zero() * FLOW_SPEED
     }
 }
 
@@ -176,7 +181,7 @@ mod tests {
         for x in -1..=1 {
             for y in -1..=1 {
                 if x != 0 || y != 0 {
-                    assert!((FlowDirection::new(x, y).velocity().length() - 40.0).abs() < 0.001);
+                    assert!((FlowDirection::new(x, y).velocity().length() - FLOW_SPEED).abs() < 0.001);
                 }
             }
         }

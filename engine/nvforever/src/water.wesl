@@ -16,7 +16,7 @@ import bevy_pbr::{
 // sun's highlight, only while the view has the plumbing.
 @if(NVF_SUN_VISIBILITY) import bevy_pbr::render::mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_NVF_OUTDOOR_SUN_BIT;
 @if(NVF_SUN_VISIBILITY) import nvforever::sun_visibility::nvf_sun_visibility;
-import nvforever::caustics::nvf_caustics;
+import nvforever::caustics::nvf_caustics_filtered;
 
 // During temporal upscaling, the main pass occupies only the render-sized region
 // of full-sized attachments. Geometry UVs and texture UVs are distinct.
@@ -129,6 +129,11 @@ const REFLECTION_SAMPLE_DISTANCE: f32 = 500.0;
 const REFRACTION_STRENGTH: f32 = 0.08;
 const REFRACTION_DEPTH: f32 = 200.0;
 
+// Water effects: the bed seen from above takes the water's shallow hue, down to this
+// share of its brightness, over this length of ray in the water [design, by eye].
+const SHALLOW_TINT_LENGTH: f32 = 90.0;
+const SHALLOW_TINT_FLOOR: f32 = 0.62;
+
 // The opaque surface behind screen position `fc` (depth prepass): world position, and
 // w = 1 when there is one (0 for the sky or without a prepass).
 fn scene_point(fc: vec2<f32>) -> vec4<f32> {
@@ -211,17 +216,21 @@ fn ssr(pos: vec3<f32>, R: vec3<f32>) -> vec4<f32> {
 // (0..1) times the layer amplitude times the wave height.
 fn layer_slope(g: vec2<f32>, layer: vec4<f32>, mask: vec4<f32>, t: f32) -> vec2<f32> {
     let uv = g * layer.z + layer.xy * t;
-    // A single texel's height step moves a sharp reflection several pixels when
-    // animated. Take the centred slope across at least a pixel's footprint and
-    // two source texels on each side, preserving resolved, lower-frequency waves.
+    // The slope from three taps round the point, a texel apart near the camera and a
+    // pixel's footprint apart beyond (a single texel's step there moved a sharp
+    // reflection several pixels as the waves travelled). A wider span was tried and
+    // flattened the short waves: two texels each side keeps 0.64 of an 8-texel wave.
     let dx = dpdx(uv);
     let dy = dpdy(uv);
-    let e = max(2.0 / vec2<f32>(textureDimensions(noise_texture)), 0.5 * (abs(dx) + abs(dy)));
-    let du = vec2(e.x, 0.0);
-    let dv = vec2(0.0, e.y);
-    let u = textureSampleGrad(noise_texture, noise_sampler, uv + du, dx, dy) - textureSampleGrad(noise_texture, noise_sampler, uv - du, dx, dy);
-    let v = textureSampleGrad(noise_texture, noise_sampler, uv + dv, dx, dy) - textureSampleGrad(noise_texture, noise_sampler, uv - dv, dx, dy);
-    return vec2(dot(u, mask), dot(v, mask)) / (2.0 * e) * layer.z * layer.w * water.surface.w;
+    let e = max(1.0 / f32(textureDimensions(noise_texture).x), 0.5 * max(length(dx), length(dy)));
+    let a = vec2(1.0, 0.0);
+    let b = vec2(-0.5, 0.8660254);
+    let c = vec2(-0.5, -0.8660254);
+    let ha = dot(textureSampleGrad(noise_texture, noise_sampler, uv + e * a, dx, dy), mask);
+    let hb = dot(textureSampleGrad(noise_texture, noise_sampler, uv + e * b, dx, dy), mask);
+    let hc = dot(textureSampleGrad(noise_texture, noise_sampler, uv + e * c, dx, dy), mask);
+    // d(uv)/d(world) = layer.z
+    return (2.0 / (3.0 * e)) * (ha * a + hb * b + hc * c) * layer.z * layer.w * water.surface.w;
 }
 
 fn sky_colour(y: f32) -> vec3<f32> {
@@ -341,7 +350,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if above && receiver.w > 0.5 && water.water_sun.w > 0.0 && dist < 4096.0 {
         // The projected light loses definition with viewing distance.
         let fade = 1.0 - smoothstep(2048.0, 4096.0, dist);
-        refracted *= 1.0 + fade * nvf_caustics(receiver.xyz, pos.y, water.water_sun.xyz, water.water_sun.w, t);
+        // A pixel's width on the bed, stretched where the bed is seen at a slant (at most
+        // six times): waves finer than that fade out instead of sparkling.
+        let to_bed = receiver.xyz - view.world_position.xyz;
+        let bed_distance = max(length(to_bed), 0.001);
+        let footprint = 2.0 * bed_distance / (view.clip_from_view[1][1] * size.y) / max(abs(to_bed.y) / bed_distance, 1.0 / 6.0);
+        refracted *= 1.0 + fade * nvf_caustics_filtered(receiver.xyz, pos.y, water.water_sun.xyz, water.water_sun.w, t, footprint);
     }
     let fog = select(water.under_fog, water.above_fog, above);
     // The colour: shallow to deep by the fog depth (#1787). The opacity: by the length of
@@ -362,6 +376,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if above && water.under_fog.w > 0.5 && fog.y > max(fog.x, 0.0) {
         let column = smoothstep(max(fog.x, 0.0), fog.y, fog_depth);
         opacity += (1.0 - ray01) * ray01 * column;
+        // The first stretch of water [design, #2674]: by the ramp alone a wading
+        // depth of NVCleanWater is under a fifth opaque and the shallows cannot be
+        // told from the dry shore. The bed seen through the water takes the water's
+        // own shallow hue and darkens over SHALLOW_TINT_LENGTH of ray, and the body
+        // gathers along the ramp twice as fast at its thin end (the same far end).
+        opacity = 1.0 - (1.0 - opacity) * (1.0 - ray01);
+        let hue = water.shallow.rgb / max(max(water.shallow.r, max(water.shallow.g, water.shallow.b)), 1e-3);
+        let through = exp(-max(fog_distance, 0.0) / SHALLOW_TINT_LENGTH);
+        refracted *= mix(hue * SHALLOW_TINT_FLOOR, vec3(1.0), through);
     }
     let body_alpha = select(opacity, opacity * clamp(water.above_fog.z, 0.0, 1.0), above && water.above_fog.w > 0.5);
     let body_colour = mix(water.shallow.rgb, water.deep.rgb, depth01);
