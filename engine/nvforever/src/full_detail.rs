@@ -15,16 +15,22 @@
 //!   texture swaps and fades still reach them) and carry `nvf_play::DrawOnly`, which the
 //!   picks, the crosshair, the loaded counts and the scripts' NIF functions leave out. No
 //!   collider is made anywhere.
-//! - **What it draws** ([`ring_choice`]): STAT and SCOL references, and any other
-//!   model-bearing reference flagged "visible when distant" (REFR record flag 0x8000
-//!   [documented: GECK wiki "Reference": the reference is added to an object or tree LOD;
-//!   GetReferenceFlag 32768]), drawn as plain static scenery (`world::SpawnMode::Scenery`:
-//!   no rig, light, emitter or collision), and the cell's landscape at full resolution
-//!   (under 4 x 4 near the 2 x 2 first drawing the loaded cells start with, which meets the
-//!   loaded edge without cracks). Left out: imposters, primitives, markers, references not
-//!   enabled at the start (deleted or disabled), actors, light sources, sounds, trees (the
-//!   distant tree billboards stay over ring cells, treelod.rs), placed water, water and
-//!   grass, and every non-flagged activator, door, container, item and moveable static.
+//! - **What it draws** ([`ring_choice`]): STAT, SCOL and MSTT references (a moveable
+//!   static with its idle sequence playing), SpeedTrees (their generated models; the
+//!   distant tree billboards crossfade with ring cells as with loaded ones, treelod.rs),
+//!   and any other model-bearing reference flagged "visible when distant" (REFR record flag
+//!   0x8000 [documented: GECK wiki "Reference": the reference is added to an object or
+//!   tree LOD; GetReferenceFlag 32768]), drawn as plain static scenery
+//!   (`world::SpawnMode::Scenery`: no other rig, no light, emitter or collision), and the
+//!   cell's landscape at full resolution (under 4 x 4 near the 2 x 2 first drawing the
+//!   loaded cells start with, which meets the loaded edge without cracks). With the game
+//!   running, references not enabled at the start (but not deleted) are drawn too and the
+//!   simulation shows or hides them (`RefVisual`, `activate::sync_visuals` on every
+//!   `RefChanged`, which the game sends for any reference, loaded or not); moved and
+//!   destroyed references follow the game (nvf-play `moved.rs` through
+//!   `nvf_play::DrawOnlyCell`, destroyed.rs). Left out: imposters, primitives, markers,
+//!   deleted references, actors, light sources, sounds, placed water, water and grass, and
+//!   every non-flagged activator, door, container and item.
 //! - **LOD hand-off** ([`DrawnCells`]): an object LOD block's segment holds the LOD of its
 //!   cell's flagged references (world.md §7), so lod.rs hides the segments of ring cells
 //!   and cuts the LOD terrain out under them exactly as for loaded cells, crossfading with
@@ -274,6 +280,20 @@ impl FullDetailRing {
         self.ahead = ReadAhead::default();
     }
 
+    /// `world::spawn_model`'s counts for a ring copy drawn again (destroyed.rs).
+    pub(crate) fn redraw_stats(&mut self) -> &mut StreamStats {
+        &mut self.models
+    }
+
+    /// Ring cell `grid` got new meshes (destroyed.rs): [`fade_ring`] gives them their range
+    /// and shadow rule.
+    pub(crate) fn redrawn(&mut self, grid: Grid) {
+        if let Some(s) = self.cells.get_mut(&grid) {
+            s.applied = None;
+            s.shadow = None;
+        }
+    }
+
     /// Hide a ring cell and despawn it over the next frames.
     fn retire(&mut self, commands: &mut Commands, e: Entity) {
         commands.entity(e).insert(Visibility::Hidden);
@@ -328,9 +348,6 @@ pub enum RingRef {
     Skip,
     /// Flagged visible when distant but not drawn here: its cell keeps its LOD segment.
     KeepSegment,
-    /// Flagged, and not enabled at the start: its cell keeps its LOD segment when the game
-    /// has enabled it since.
-    DisabledFlagged,
 }
 
 /// The ring's type filter (module notes): `kind` from `world::classify_ref`, `sig` the
@@ -340,13 +357,12 @@ pub fn ring_choice(kind: RefKind, sig: Option<&[u8; 4]>, flagged: bool) -> RingR
     match kind {
         RefKind::Imposter => RingRef::Skip,
         RefKind::Primitive | RefKind::Skipped => RingRef::SkipType,
-        RefKind::Disabled if flagged => RingRef::DisabledFlagged,
+        // Decided before the type (`spawn_ring_ref`: drawn for the simulation to show).
         RefKind::Disabled => RingRef::Skip,
         RefKind::Actor => flag(RingRef::KeepSegment),
-        // The distant tree billboards stay over ring cells (treelod.rs).
-        RefKind::Drawn { how: DrawnAs::Tree, .. } => RingRef::SkipType,
+        RefKind::Drawn { how: DrawnAs::Tree, .. } => RingRef::Draw,
         RefKind::Drawn { how: DrawnAs::PlacedWater, .. } => flag(RingRef::KeepSegment),
-        RefKind::Drawn { how: DrawnAs::Model, .. } if matches!(sig, Some(b"STAT" | b"SCOL")) => RingRef::Draw,
+        RefKind::Drawn { how: DrawnAs::Model, .. } if matches!(sig, Some(b"STAT" | b"SCOL" | b"MSTT")) => RingRef::Draw,
         RefKind::Drawn { how: DrawnAs::Model, .. } => flag(RingRef::Draw),
     }
 }
@@ -356,9 +372,10 @@ pub fn flagged(p: &Placement) -> bool {
     p.flags & ref_flags::VISIBLE_WHEN_DISTANT != 0
 }
 
-/// The models a ring cell's read-ahead prepares (`world::read_ahead_cells`).
+/// The models a ring cell's read-ahead prepares (`world::read_ahead_cells`): SpeedTrees
+/// are not models (tree.rs builds them).
 fn ring_models(p: &Placement, base: &BaseObject) -> bool {
-    ring_choice(classify_ref(p, Some(base), || true), Some(&base.sig), flagged(p)) == RingRef::Draw
+    !base.is_speedtree() && ring_choice(classify_ref(p, Some(base), || true), Some(&base.sig), flagged(p)) == RingRef::Draw
 }
 
 /// Whether ring meshes cast sun shadows: only while the cascades (`reach` units) reach
@@ -383,9 +400,17 @@ pub fn stream(
     mut emittance: ResMut<EmittanceState>,
     (sim, loading): (Option<Res<nvf_play::sim::SimState>>, Option<Res<nvf_play::loading::Loading>>),
     children: Query<&Children>,
+    (mut trees, distances): (crate::tree::TreeCtx, Option<ResMut<crate::draw_distance::DrawDistances>>),
 ) {
     let ring = &mut *ring;
     let choice = graphics.full_detail;
+    // The Object distance slider reaches the ring's edge while it is on (draw_distance.rs).
+    if let Some(mut d) = distances {
+        let reach = (choice.radius() > streamer.radius).then(|| crate::draw_distance::full_reach(choice.radius()));
+        if d.ring_reach != reach {
+            d.ring_reach = reach;
+        }
+    }
     if choice.radius() == 0 && ring.radius == 0 && ring.cells.is_empty() && ring.spawning.is_empty() && ring.dying.is_empty() {
         return;
     }
@@ -480,7 +505,7 @@ pub fn stream(
         return;
     }
     let sim = sim.as_deref();
-    let ctx = RefCtx { world: &world, streamer: &streamer, centre, sim };
+    let ctx = RefCtx { world: &world, streamer: &streamer, centre, sim, tree_builds: std::cell::Cell::new(0) };
     let mut under_way: Vec<Grid> = ring.spawning.keys().copied().collect();
     under_way.sort_by_key(|&c| order_key(c, centre));
     for c in under_way {
@@ -488,7 +513,7 @@ pub fn stream(
             break;
         }
         let Some(mut sp) = ring.spawning.remove(&c) else { continue };
-        spawn_refs(&mut commands, &ctx, &mut sp, deadline, &mut models, &mut emittance, ring);
+        spawn_refs(&mut commands, &ctx, &mut sp, deadline, &mut models, &mut emittance, &mut trees, ring);
         if sp.done() {
             finish(&mut commands, ring, c, sp, fading);
         } else {
@@ -504,7 +529,7 @@ pub fn stream(
         }
         let Some(mut s) = ring.cells.remove(&c) else { continue };
         let mut sp = RingSpawn { entity: s.entity, refs: std::mem::take(&mut s.small), next: 0, later: Vec::new(), origin: cell_origin(c), keep_segment: s.keep_segment, outer: false, small: Vec::new() };
-        spawn_refs(&mut commands, &ctx, &mut sp, deadline, &mut models, &mut emittance, ring);
+        spawn_refs(&mut commands, &ctx, &mut sp, deadline, &mut models, &mut emittance, &mut trees, ring);
         s.small = sp.refs.split_off(sp.next.min(sp.refs.len()));
         s.small.extend(sp.later);
         s.keep_segment = sp.keep_segment;
@@ -523,7 +548,7 @@ pub fn stream(
         }
         let prep = ring.ahead.take_terrain(c);
         let origin = cell_origin(c);
-        let entity = commands.spawn((Name::new(format!("Ring cell {},{}", c.0, c.1)), RingCell { grid: c }, Transform::from_translation(origin), Visibility::Hidden)).id();
+        let entity = commands.spawn((Name::new(format!("Ring cell {},{}", c.0, c.1)), RingCell { grid: c }, nvf_play::DrawOnlyCell, Transform::from_translation(origin), Visibility::Hidden)).id();
         commands.entity(root).add_child(entity);
         let mut refs = Vec::new();
         if let Some(cell) = world.grid_cell(c) {
@@ -535,7 +560,7 @@ pub fn stream(
         }
         refs.extend(world.persistent_by_grid.get(&c).into_iter().flatten());
         let mut sp = RingSpawn { entity, refs, next: 0, later: Vec::new(), origin, keep_segment: false, outer: steps(c, centre) == outer, small: Vec::new() };
-        spawn_refs(&mut commands, &ctx, &mut sp, deadline, &mut models, &mut emittance, ring);
+        spawn_refs(&mut commands, &ctx, &mut sp, deadline, &mut models, &mut emittance, &mut trees, ring);
         if sp.done() {
             finish(&mut commands, ring, c, sp, fading);
         } else {
@@ -556,17 +581,25 @@ struct RefCtx<'a> {
     streamer: &'a Streamer,
     centre: Grid,
     sim: Option<&'a nvf_play::sim::SimState>,
+    /// TREE geometry built on this thread this frame ([`TREE_BUILDS_PER_FRAME`]).
+    tree_builds: std::cell::Cell<u32>,
 }
+
+/// TREE bases whose geometry the ring builds on the main thread in one frame, when the
+/// loaded cells have not built it already: tree.rs has no worker-thread path for a
+/// SpeedTree, so a tree not built yet waits for the next frame beyond this [design].
+pub const TREE_BUILDS_PER_FRAME: u32 = 1;
 
 /// Spawn a ring cell's references until all are in or the deadline has passed; those
 /// whose model is not prepared go to `later`, tried again (on a later frame) once the
 /// rest are in; those the size cut leaves out to `small`.
-fn spawn_refs(commands: &mut Commands, ctx: &RefCtx, sp: &mut RingSpawn, deadline: Instant, models: &mut ModelCtx, emittance: &mut EmittanceState, ring: &mut FullDetailRing) {
+#[allow(clippy::too_many_arguments)]
+fn spawn_refs(commands: &mut Commands, ctx: &RefCtx, sp: &mut RingSpawn, deadline: Instant, models: &mut ModelCtx, emittance: &mut EmittanceState, trees: &mut crate::tree::TreeCtx, ring: &mut FullDetailRing) {
     let target = Target { entity: sp.entity, origin: sp.origin, outer: sp.outer };
     while sp.next < sp.refs.len() && Instant::now() < deadline {
         let r = sp.refs[sp.next];
         sp.next += 1;
-        match spawn_ring_ref(commands, ctx, target, &mut sp.keep_segment, r, models, emittance, ring) {
+        match spawn_ring_ref(commands, ctx, target, &mut sp.keep_segment, r, models, emittance, trees, ring) {
             Spawned::Done => {}
             Spawned::Later => sp.later.push(r),
             Spawned::Small => sp.small.push(r),
@@ -601,12 +634,17 @@ enum Spawned {
 /// its LOD segment. Never prepares a model on this thread: one not prepared yet is asked
 /// of the worker threads and the reference waits ([`Spawned::Later`]).
 #[allow(clippy::too_many_arguments)]
-fn spawn_ring_ref(commands: &mut Commands, ctx: &RefCtx, sp: Target, keep: &mut bool, r: u32, models: &mut ModelCtx, emittance: &mut EmittanceState, ring: &mut FullDetailRing) -> Spawned {
+fn spawn_ring_ref(commands: &mut Commands, ctx: &RefCtx, sp: Target, keep: &mut bool, r: u32, models: &mut ModelCtx, emittance: &mut EmittanceState, trees: &mut crate::tree::TreeCtx, ring: &mut FullDetailRing) -> Spawned {
     let world = ctx.world;
     let Some(p) = placement(world.lo, world.schema, r) else { return Spawned::Done };
+    // Not enabled at the start: drawn when the game runs (its simulation hides it while it
+    // is disabled, `activate::sync_visuals`), else (the viewer) left out; deleted: out.
+    if !drawn_for_enable_state(world.enabled(&p, 0), p.deleted(), ctx.sim.is_some()) {
+        return Spawned::Done;
+    }
     let base = p.base.and_then(|b| base_object(world.lo, world.schema, b));
     let flag = flagged(&p);
-    match ring_choice(classify_ref(&p, base.as_ref(), || world.enabled(&p, 0)), base.as_ref().map(|b| &b.sig), flag) {
+    match ring_choice(classify_ref(&p, base.as_ref(), || true), base.as_ref().map(|b| &b.sig), flag) {
         RingRef::Draw => {}
         RingRef::SkipType => {
             ring.stats.skipped_type += 1;
@@ -617,12 +655,12 @@ fn spawn_ring_ref(commands: &mut Commands, ctx: &RefCtx, sp: Target, keep: &mut 
             *keep = true;
             return Spawned::Done;
         }
-        RingRef::DisabledFlagged => {
-            *keep |= !p.deleted() && ctx.sim.is_some_and(|s| s.present(r));
-            return Spawned::Done;
-        }
     }
     let Some(base) = base else { return Spawned::Done };
+    let rt = Affine3A::from_translation(-sp.origin) * world::ref_affine(&p);
+    if base.is_speedtree() {
+        return spawn_ring_tree(commands, ctx, sp, r, &p, &base, rt, models, trees, ring);
+    }
     // A destroyed reference: its destruction stage's model (destroyed.rs), as the loaded
     // cells draw it at the time.
     let base = match ctx.streamer.model_overrides.get(&r) {
@@ -647,10 +685,40 @@ fn spawn_ring_ref(commands: &mut Commands, ctx: &RefCtx, sp: Target, keep: &mut 
             }
         }
     }
-    let rt = Affine3A::from_translation(-sp.origin) * world::ref_affine(&p);
     let drawn = world::spawn_model(commands, sp.entity, world, &p, r, &base, rt, models, emittance, &ctx.streamer.hide, &mut ring.models, SpawnMode::Scenery);
     // A flagged reference whose model drew nothing keeps its cell's LOD segment.
     *keep |= flag && !drawn;
+    Spawned::Done
+}
+
+/// Whether a reference is drawn in the ring for its enable state: enabled at the start, or
+/// (with the game's simulation to show and hide it) not deleted.
+pub fn drawn_for_enable_state(enabled: bool, deleted: bool, simulated: bool) -> bool {
+    enabled || (simulated && !deleted)
+}
+
+/// A SpeedTree of a ring cell: its generated geometry (tree.rs), else its billboard, as
+/// the loaded cells draw it; drawn only. Its geometry is built on this thread when the
+/// loaded cells have not built it yet, [`TREE_BUILDS_PER_FRAME`] at most.
+#[allow(clippy::too_many_arguments)]
+fn spawn_ring_tree(commands: &mut Commands, ctx: &RefCtx, sp: Target, r: u32, p: &Placement, base: &BaseObject, rt: Affine3A, models: &mut ModelCtx, trees: &mut crate::tree::TreeCtx, ring: &mut FullDetailRing) -> Spawned {
+    if !trees.built(base.form_id) {
+        if ctx.tree_builds.get() >= TREE_BUILDS_PER_FRAME {
+            return Spawned::Later;
+        }
+        ctx.tree_builds.set(ctx.tree_builds.get() + 1);
+    }
+    let tag = (nvf_play::RefVisual(r), nvf_play::DrawOnly);
+    if let Some(v) = trees.visual(ctx.world, base.form_id, models) {
+        ring.models.shapes += crate::tree::spawn(commands, sp.entity, &v, Mat4::from(rt), tag);
+    } else if let Some((mesh, mat)) = world::billboard(ctx.world, base.form_id, models) {
+        let at = Vec3::from_array(p.position) - sp.origin;
+        let t = Transform::from_translation(at).with_scale(Vec3::splat(p.scale));
+        commands.entity(sp.entity).with_child((Mesh3d(mesh), MeshMaterial3d(mat), t, world::TreeBillboard, tag));
+        ring.models.shapes += 1;
+    }
+    ring.models.refs_speedtree += 1;
+    ring.models.refs_drawn += 1;
     Spawned::Done
 }
 
@@ -738,6 +806,17 @@ impl DrawnCells<'_> {
     pub fn block_level(&self, c: Grid) -> f32 {
         block_level(self.streamer.cell_level(c), self.ring(), c)
     }
+
+    /// How much of cell `c`'s trees are drawn in full (loaded or ring), for the distant
+    /// tree billboards' crossfade (treelod.rs): a kept LOD segment does not matter here.
+    pub fn tree_level(&self, c: Grid) -> f32 {
+        tree_level(self.streamer.cell_level(c), self.ring(), c)
+    }
+}
+
+/// [`DrawnCells::tree_level`] from the loaded cell's level.
+pub fn tree_level(loaded: f32, ring: Option<&HashMap<Grid, RingCellState>>, c: Grid) -> f32 {
+    loaded.max(ring.and_then(|r| r.get(&c)).map_or(0.0, |s| s.level))
 }
 
 /// [`DrawnCells::cells`] from the loaded cells (cell, fully drawn) and the ring's.
@@ -890,11 +969,11 @@ mod tests {
     #[test]
     fn the_ring_draws_statics_and_flagged_models_only() {
         let model = RefKind::Drawn { light: false, how: DrawnAs::Model };
-        for sig in [b"STAT", b"SCOL"] {
+        for sig in [b"STAT", b"SCOL", b"MSTT"] {
             assert_eq!(ring_choice(model, Some(sig), false), RingRef::Draw);
             assert_eq!(ring_choice(model, Some(sig), true), RingRef::Draw);
         }
-        for sig in [b"MSTT", b"DOOR", b"ACTI", b"CONT", b"FURN", b"MISC", b"WEAP", b"TERM", b"PROJ"] {
+        for sig in [b"DOOR", b"ACTI", b"CONT", b"FURN", b"MISC", b"WEAP", b"TERM", b"PROJ"] {
             assert_eq!(ring_choice(model, Some(sig), false), RingRef::SkipType, "{}", String::from_utf8_lossy(sig));
             assert_eq!(ring_choice(model, Some(sig), true), RingRef::Draw, "flagged {}", String::from_utf8_lossy(sig));
         }
@@ -902,7 +981,8 @@ mod tests {
         assert_eq!(ring_choice(light, Some(b"LIGH"), false), RingRef::SkipType);
         assert_eq!(ring_choice(light, Some(b"LIGH"), true), RingRef::Draw, "a flagged light's model, no light");
         let tree = RefKind::Drawn { light: false, how: DrawnAs::Tree };
-        assert_eq!(ring_choice(tree, Some(b"TREE"), true), RingRef::SkipType, "billboards stand in");
+        assert_eq!(ring_choice(tree, Some(b"TREE"), false), RingRef::Draw, "stage 2: full SpeedTrees");
+        assert_eq!(ring_choice(model, Some(b"MSTT"), false), RingRef::Draw, "stage 2: moveable statics with their idle");
         let water = RefKind::Drawn { light: false, how: DrawnAs::PlacedWater };
         assert_eq!(ring_choice(water, Some(b"PWAT"), false), RingRef::SkipType);
         assert_eq!(ring_choice(water, Some(b"PWAT"), true), RingRef::KeepSegment);
@@ -911,8 +991,29 @@ mod tests {
         assert_eq!(ring_choice(RefKind::Imposter, Some(b"STAT"), true), RingRef::Skip);
         assert_eq!(ring_choice(RefKind::Primitive, Some(b"ACTI"), true), RingRef::SkipType);
         assert_eq!(ring_choice(RefKind::Skipped, Some(b"SOUN"), true), RingRef::SkipType);
-        assert_eq!(ring_choice(RefKind::Disabled, Some(b"STAT"), false), RingRef::Skip);
-        assert_eq!(ring_choice(RefKind::Disabled, Some(b"STAT"), true), RingRef::DisabledFlagged);
+        assert_eq!(ring_choice(RefKind::Disabled, Some(b"STAT"), true), RingRef::Skip);
+    }
+
+    /// Stage 2: references not enabled at the start are drawn while the game's simulation
+    /// is there to hide and show them; deleted ones never; in the viewer only enabled ones.
+    #[test]
+    fn disabled_references_are_drawn_for_the_simulation() {
+        assert!(drawn_for_enable_state(true, false, false));
+        assert!(drawn_for_enable_state(false, false, true), "the simulation hides or shows it");
+        assert!(!drawn_for_enable_state(false, true, true), "deleted");
+        assert!(!drawn_for_enable_state(false, false, false), "the viewer: nothing enables it");
+    }
+
+    /// Stage 2: the distant tree billboards crossfade against ring cells' trees as against
+    /// loaded cells' (a kept LOD segment does not matter for trees).
+    #[test]
+    fn tree_billboards_follow_the_ring() {
+        let mut ring = HashMap::new();
+        ring.insert((3, 0), state(0.25, false, true));
+        assert_eq!(tree_level(0.0, Some(&ring), (3, 0)), 0.25);
+        assert_eq!(block_level(0.0, Some(&ring), (3, 0)), 0.0, "the kept segment");
+        assert_eq!(tree_level(0.5, Some(&ring), (3, 0)), 0.5);
+        assert_eq!(tree_level(0.0, None, (3, 0)), 0.0, "without the ring: the loaded level as before");
     }
 
     /// classify_ref with the ring's filter, on placements built by hand: imposters,
@@ -930,7 +1031,8 @@ mod tests {
         assert!(ring_models(&p(vwd, false, false), &base(*b"DOOR", "doors\\door01.nif")));
         assert!(!ring_models(&p(vwd, true, false), &base(*b"STAT", "rocks\\rock01.nif")), "an imposter");
         assert!(!ring_models(&p(vwd, false, true), &base(*b"ACTI", "pipes\\pipe.nif")), "a primitive");
-        assert!(!ring_models(&p(vwd, false, false), &base(*b"TREE", "trees\\joshua01.spt")), "a SpeedTree");
+        assert!(!ring_models(&p(vwd, false, false), &base(*b"TREE", "trees\\joshua01.spt")), "a SpeedTree: built by tree.rs, not read ahead");
+        assert!(ring_models(&p(0, false, false), &base(*b"MSTT", "effects\\smoke.nif")));
         assert!(!ring_models(&p(vwd, false, false), &base(*b"NPC_", "")), "an actor");
         assert_eq!(classify_ref(&p(vwd, false, false), Some(&base(*b"STAT", "a.nif")), || false), RefKind::Disabled);
         assert!(flagged(&p(vwd | 0x400, false, false)) && !flagged(&p(0x400, false, false)));
@@ -1027,6 +1129,8 @@ mod tests {
         world.spawn((Name::new("Ring cell 3,0"), RingCell { grid: (3, 0) }, Transform::default(), Visibility::Hidden));
         assert_eq!(world.query::<&nvf_play::RenderCell>().iter(&world).count(), 0);
         assert_eq!(world.query_filtered::<(), With<world::CellEntity>>().iter(&world).count(), 0);
+        world.spawn((RingCell { grid: (4, 0) }, nvf_play::DrawOnlyCell));
+        assert_eq!(world.query_filtered::<(), With<nvf_play::DrawOnlyCell>>().iter(&world).count(), 1, "nvf-play's moved.rs finds ring cells by this mark");
         assert_eq!(world.query::<&RingCell>().iter(&world).count(), 1);
     }
 }

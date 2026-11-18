@@ -18,7 +18,7 @@
 use crate::fade;
 use crate::lod::{square_distance, LodState};
 use crate::tree::{BillboardMaterial, TreeBillboards};
-use crate::world::{bevy_to_game, Streamer, WorldData, WorldRoot};
+use crate::world::{bevy_to_game, WorldData, WorldRoot};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::NoAutoAabb;
@@ -175,7 +175,7 @@ fn board(world: &WorldData, base: u32, models: &mut ModelCtx, materials: &mut As
 #[allow(clippy::too_many_arguments)]
 pub fn update_distant_trees(
     mut commands: Commands,
-    streamer: Res<Streamer>,
+    drawn: crate::full_detail::DrawnCells,
     world: Res<WorldData>,
     mut lod: ResMut<LodState>,
     root: Query<Entity, With<WorldRoot>>,
@@ -186,7 +186,7 @@ pub fn update_distant_trees(
     let dist = lod.settings.trees;
     let lod = &mut *lod;
     let trees = &mut lod.trees;
-    if !lod.enabled || dist <= 0.0 || streamer.interior.is_some() {
+    if !lod.enabled || dist <= 0.0 || drawn.streamer.interior.is_some() {
         if !trees.drawn.is_empty() {
             trees.clear(&mut commands);
         }
@@ -214,7 +214,7 @@ pub fn update_distant_trees(
     }
     // Fade steps of the drawn cells follow their cells (culled when fully drawn).
     for (g, d) in trees.drawn.iter_mut() {
-        let k = fade::step(streamer.cell_level(*g));
+        let k = fade::step(drawn.tree_level(*g));
         if k != d.step {
             d.step = k;
             for &e in &d.entities {
@@ -232,7 +232,7 @@ pub fn update_distant_trees(
         let mut bases: Vec<u32> = by_base.keys().copied().collect();
         bases.sort_unstable();
         let origin = Vec3::new(g.0 as f32 * CELL_SIZE, g.1 as f32 * CELL_SIZE, 0.0);
-        let step = fade::step(streamer.cell_level(g));
+        let step = fade::step(drawn.tree_level(g));
         let mut d = DrawnCell { entities: Vec::new(), trees: 0, step };
         for b in bases {
             let board = trees.bases.entry(b).or_insert_with(|| board(&world, b, &mut models, &mut materials)).clone();
