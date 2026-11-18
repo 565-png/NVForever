@@ -318,7 +318,7 @@ fn failed_zone_discovery_uses_utc_and_warns_once() {
         }
     }
 
-    use jiff::{tz::TimeZone, Timestamp};
+    use jiff::{civil::Time, tz::TimeZone, Timestamp};
     assert!(TimeZone::try_system().is_err(), "the real zone lookup must fail");
     let _subscriber = tracing::subscriber::set_default(tracing_subscriber::registry().with(Warnings));
     let file = TimeFixture(folders().0.join("failed-zone-time.log"));
@@ -327,17 +327,24 @@ fn failed_zone_discovery_uses_utc_and_warns_once() {
     std::fs::File::create(&file.0).unwrap().set_modified(modified).unwrap();
     assert_eq!(std::fs::metadata(&file.0).unwrap().modified().unwrap(), modified);
 
+    // Clock fields wrap at midnight; accept any matching value between samples.
+    let in_window = |before: i64, value: i64, after: i64, cycle: i64| {
+        (value - before.rem_euclid(cycle)).rem_euclid(cycle) <= after - before
+    };
     let f = fixture();
     for _ in 0..2 {
         let mut g = game(&f);
-        let before = Timestamp::now().to_zoned_datetime(TimeZone::UTC).hour();
+        let before = Timestamp::now().as_second().div_euclid(3600);
         let hour = n(&mut g, "(GetUserTime)[\"Hour\"]");
-        let after = Timestamp::now().to_zoned_datetime(TimeZone::UTC).hour();
-        assert!(hour == f64::from(before) || hour == f64::from(after), "{hour}: expected UTC hour {before} or {after}");
-        let before = Timestamp::now().to_zoned_datetime(TimeZone::UTC).strftime("%H-%M-%S").to_string();
+        let after = Timestamp::now().as_second().div_euclid(3600);
+        assert!((0.0..24.0).contains(&hour) && hour.fract() == 0.0);
+        assert!(in_window(before, hour as i64, after, 24), "{hour}: UTC hour outside sampled interval {before}..={after}");
+        let before = Timestamp::now().as_second();
         let stamp = s(&mut g, "GetTimeStamp");
-        let after = Timestamp::now().to_zoned_datetime(TimeZone::UTC).strftime("%H-%M-%S").to_string();
-        assert!(stamp == before || stamp == after, "{stamp}: expected UTC stamp {before} or {after}");
+        let after = Timestamp::now().as_second();
+        let t = Time::strptime("%H-%M-%S", &stamp).unwrap();
+        let seconds = i64::from(t.hour()) * 3600 + i64::from(t.minute()) * 60 + i64::from(t.second());
+        assert!(in_window(before, seconds, after, 86_400), "{stamp}: UTC stamp outside sampled interval {before}..={after}");
         let fields: Vec<_> = (0..6).map(|i| n(&mut g, &format!("(GetFileTime \"failed-zone-time.log\" 2)[{i}]"))).collect();
         assert_eq!(fields, [2024.0, 3.0, 10.0, 7.0, 0.0, 30.0]);
         assert_eq!(s(&mut g, "GetFileTimeSTR \"failed-zone-time.log\" 2"), "10/03/24 07:00");
