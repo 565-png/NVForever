@@ -1533,6 +1533,46 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
     worldspaces (Honest Hearts' archive is a lab holdout), the underwater fog (still
     linear, water.md).
 
+### Under-water colour (#2916, 2026-11-18)
+
+Code: `engine/nvforever/src/underwater.rs` (`fog_bytes`, `DEEP_AT`).
+
+- **The original** [observed: own captures, `tools/capture/capture_frames.py`, god mode,
+  the player set in place under water; mean display colour of the whole 1280×720 frame]:
+  - Lake Mead (WastelandNV cell (28, 16), surface 2,600, bed 1,272; water Potomac
+    0x00030009: shallow (52, 75, 52), deep (27, 39, 24), under fog −1,000..700), clear
+    weather, noon, by the player's feet below the surface:
+
+    | Feet down | 150 | 300 | 500 | 700 | 900 | 1,100 | 1,250 |
+    |---|---|---|---|---|---|---|---|
+    | Frame | 72, 81, 38 | 67, 75, 34 | 60, 68, 31 | 53, 60, 26 | 45, 51, 21 | 37, 43, 16 | 36, 42, 15 |
+
+    At 50 down the camera is above the water. The fall is even (about 3.8 levels of green
+    per 100 units) and stops near 1,100.
+  - The frame is one colour whichever way the camera looks at 300 down: level (67, 76,
+    34), 45° up (67, 75, 35), 45° down (68, 77, 35).
+  - By the hour at 300 down: 06:00 (42, 48, 34), 09:00, 12:00, 15:00 and 18:00 all
+    (67, 75, 34), 20:00 (38, 43, 29), 22:00 and 00:00 (32, 42, 37). Midnight by depth:
+    150 (35, 46, 40), 500 (29, 38, 33), 900 (20, 27, 23), 1,250 (16, 22, 17).
+  - The Pitt's river (Tale of Two Wastelands, DLC01PittWorld cell (0, 1), surface −2,100;
+    water DLC01PittWorldWater: shallow (56, 60, 34), deep (17, 17, 4), the same fog), feet
+    180 down, weather DLC01PittWthrBridge01 at noon: (46, 53, 33).
+- **As built** [hypothesis, fitted to the above]: the camera's fog under water is the
+  water type's shallow colour at the surface and its deep colour 1,000 units down, in
+  proportion between, as display values; it is not lit. The picture's grade then gives
+  the day and night levels. Ours for the same views: Lake Mead at noon 150 / 500 / 900 /
+  1,250 down (74, 83) / (61, 69) / (47, 52) / (37, 42) in red and green, midnight 150
+  (36, 47) and 900 (21, 28); the Pitt (49, 55, 34).
+- **Before**: the deep colour times the light on a sunlit surface, which in the Pitt's
+  dim weather came out nearly black ((15, 20, 10) against the original's (46, 53, 33)):
+  #2916's "The Pitt's bridge is black". The sweep's camera there was under the river.
+- **Left**: (a) looking up from just below the surface the original shows the sky and
+  clouds faintly, near the water's colour ((67, 70, 47) at the top of the Pitt frame);
+  ours shows the sky brightly ((128, 133, 116)): the sky is not fogged by the camera's
+  fog. (b) At 06:00 and 20:00 ours is still on the night's grade ((34, 44, 40)) where
+  the original is part of the way to the day's. (c) Whether 1,000 is the water's under
+  fog near or a constant: both waters measured store −1,000.
+
 ### Sunlight Dimmer (Old World Blues comparison F1, 2026-10-23)
 
 - **Where it is** [documented: xEdit wbDefinitionsFNV.pas IMGS DNAM, IMAD]: the twelfth

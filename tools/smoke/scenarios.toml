@@ -6288,6 +6288,18 @@ expect = [
 ]
 
 [[scenario]]
+name = "underwater-colour-by-depth"
+source = "#2916 (docs/spec-notes/world.md section 6, Under-water colour): under water the camera's fog goes from the water type's shallow colour at the surface to its deep colour 1,000 units down and is not lit (engine/nvforever/src/underwater.rs); the original under Lake Mead at noon is (67, 75, 34) with the feet 300 units down, the same whichever way the camera looks"
+areas = ["water", "render"]
+paths = ["engine/nvforever/src/underwater.rs"]
+# The viewer's camera 400 units under Lake Mead's surface (2,600): Potomac's shallow (52, 75, 52) and deep (27, 39, 24) give (42, 61, 41) there (a depth where no channel falls on a rounding edge).
+args = ["--world", "WastelandNV", "--pos=116736,67584,2080", "--eye-height=120", "--hour", "12", "--weather", "NVWastelandClear"]
+run_seconds = 8
+expect = [
+  { text = "underwater: the camera is under water (surface 2600.0), the water's under-water fog: colour (42, 61, 41) 400 units down, between shallow (52, 75, 52) and deep (27, 39, 24)", label = "the colour for the depth, from the water type's two colours" },
+]
+
+[[scenario]]
 name = "hello-shared-quest-order"
 source = "[hypothesis] #1895: Info Index places shared lines within the listing quest (docs/spec-notes/dialogue.md section 1.2); [design] crates/fnv-game/src/data.rs shared_lines preserves the Powder Ganger Random pool"
 note = "[design] Only issue-listed actor 000F0AF8 is handed to residents. Detection is disabled before approaching; the player alternates between offsets 900 and 100 units from that actor to rearm hellos (crates/fnv-ai/src/social.rs HELLO_DISTANCE / HELLO_REARM), the approaches 65 s apart since #2156: an actor that said an idle line says no other for 60 s (IDLE_LINE_AGAIN). Four approaches must choose eligible Random lines, never the later plain line; a line said in the last 180 s is not said again, so the four are the pool's four lines. Seeded variation is checked in dialogue_data.rs; this scenario does not require distinct picks. The ganger is restrained at 1 s (#2011): it stays where it stands and keeps its package, so each approach finds it standing; before #2011 it stood through a seatless meal from about 12:09, now it goes on wandering, and an actor on its way does not say hello (crates/fnv-ai/src/social.rs)"
