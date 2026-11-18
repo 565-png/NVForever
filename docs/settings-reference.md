@@ -1157,6 +1157,24 @@ below cover them all.
 - More: docs/design/graphics-enhanced.md §3.17
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `distant-objects`: Distant objects
+
+- On the page: Draws distant rocks, shacks, pylons and signs the distant LOD leaves out,
+  from their own low-detail models or, if large, their full models, out to 8 or 12 cells.
+  Costs GPU time. Not in the original.
+- In full: [design, #3014] A list: Off, 8 cells, 12 cells; Off by default and in both
+  presets. Outdoors, beyond the loaded cells and the full-detail scenery, statics and
+  static collections the distant LOD blocks do not hold are drawn out to 8 or 12 grid
+  steps from yours: from their own `_lod` model when the load order has one beside the
+  full model (as LOD resource packs supply), else from the full model when it is large
+  for its distance. References a block may hold (flagged visible when distant) are left
+  to it. Draw-only: no collision, scripts or AI. Greyed while Distant terrain and objects
+  is off. Switches in play. Kept in the INI as `Off`, `8 cells` or `12 cells`.
+- Command-line switches: `--graphics-only` (`--graphics-only distant-objects-8`,
+  `distant-objects-12`)
+- More: docs/design/graphics-enhanced.md §3.18
+- Registered in `engine/nvforever/src/settings.rs`
+
 ### `grass`: Grass
 
 - On the page: On: grass grows on the landscape; the cells around you get theirs over the
