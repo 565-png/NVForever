@@ -858,6 +858,13 @@ fn register_distances(app: &mut App) {
             "How far from you grass is drawn, as a part of the farthest grass distance and its fade range.",
             slider(|w| w.resource::<DrawDistances>().grass, draw_distance::set_grass),
         ),
+        Setting::slider(
+            "tree-distance",
+            GROUP_PICTURE,
+            "Tree distance",
+            "How far from you trees beyond the loaded cells are drawn as flat pictures, as a part of the farthest tree distance.",
+            slider(|w| w.resource::<DrawDistances>().trees, draw_distance::set_trees),
+        ),
     ];
     for s in sliders {
         add_setting(app, s);

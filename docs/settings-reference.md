@@ -1262,6 +1262,13 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
   its fade range.
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `tree-distance`: Tree distance
+
+- On the page: How far from you trees beyond the loaded cells are drawn as flat pictures, as a
+  part of the farthest tree distance.
+- Command line: `--tree-distance` sets the farthest tree distance (40,000 units by default); the slider takes a part of it, as the grass distance does
+- Registered in `engine/nvforever/src/settings.rs`
+
 ## Graphics › World and Animation
 
 ### `head-tracking`: Head tracking

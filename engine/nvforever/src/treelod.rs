@@ -14,7 +14,14 @@
 //! shader (tree.wesl `TREE_BILLBOARD`), so the meshes never change. A loaded cell draws
 //! its own trees; its billboards crossfade with it (fade.rs, the complementary pattern,
 //! culled once the cell is fully drawn). Billboards cast and receive no shadows.
+//!
+//! The reach is `--tree-distance` times the settings page's Tree distance part
+//! ([`DrawDistances::trees`](crate::draw_distance::DrawDistances), #3016), read each frame:
+//! when it changes the wanted cells are chosen again at once, so billboards beyond a shortened
+//! reach go and those within a lengthened one are built over the next frames, not at the next
+//! cell crossing.
 
+use crate::draw_distance::DrawDistances;
 use crate::fade;
 use crate::lod::{square_distance, LodState};
 use crate::tree::{BillboardMaterial, TreeBillboards};
@@ -52,6 +59,8 @@ type Board = Option<(Handle<BillboardMaterial>, [f32; 2])>;
 pub struct DistantTrees {
     /// The camera's cell the cells were chosen for.
     centre: Option<Grid>,
+    /// The reach the cells were chosen for.
+    dist: f32,
     /// Cells wanted, nearest first.
     want: Vec<Grid>,
     /// TREE references per cell (enabled at the start), read once.
@@ -80,6 +89,28 @@ impl DistantTrees {
         self.centre = None;
         self.want.clear();
         self.count = 0;
+    }
+
+    /// Take the reach now wanted: when it differs from the one the cells were chosen for,
+    /// the choice is made again at the next update (even in the same camera cell). Returns
+    /// the earlier reach when it changed.
+    fn follow_reach(&mut self, dist: f32) -> Option<f32> {
+        if self.dist == dist {
+            return None;
+        }
+        let was = std::mem::replace(&mut self.dist, dist);
+        self.centre = None;
+        Some(was)
+    }
+}
+
+/// The reach in game units: `--tree-distance` (`full`) times the slider's `part`; the full
+/// part is exactly the flag's value.
+pub fn reach(full: f32, part: f32) -> f32 {
+    if part >= 1.0 {
+        full
+    } else {
+        full * part.max(0.0)
     }
 }
 
@@ -182,8 +213,9 @@ pub fn update_distant_trees(
     camera: Query<&GlobalTransform, crate::fly::WorldCamera>,
     mut models: ModelCtx,
     mut materials: ResMut<Assets<BillboardMaterial>>,
+    distances: Option<Res<DrawDistances>>,
 ) {
-    let dist = lod.settings.trees;
+    let dist = reach(lod.settings.trees, distances.map_or(1.0, |d| d.trees));
     let lod = &mut *lod;
     let trees = &mut lod.trees;
     if !lod.enabled || dist <= 0.0 || streamer.interior.is_some() {
@@ -195,6 +227,9 @@ pub fn update_distant_trees(
     let (Ok(root), Ok(cam)) = (root.single(), camera.single()) else { return };
     let g = bevy_to_game(cam.translation());
     let c = cell_of(g.x, g.y);
+    if let Some(was) = trees.follow_reach(dist).filter(|was| *was > 0.0) {
+        info!("distant trees: reach {was:.0} -> {dist:.0} units");
+    }
     if trees.centre != Some(c) {
         trees.centre = Some(c);
         trees.want = cells_within(g.truncate(), dist);
@@ -277,6 +312,35 @@ mod tests {
         let d: Vec<f32> = cells.iter().map(|&g| square_distance(p, g, 1)).collect();
         assert!(d.windows(2).all(|w| w[0] <= w[1]));
         assert!(cells_within(p, 0.0).is_empty());
+    }
+
+    #[test]
+    fn the_reach_is_the_flag_times_the_part_and_full_is_the_flag() {
+        assert_eq!(reach(40_000.0, 1.0), 40_000.0, "100%: exactly the flag's value");
+        assert_eq!(reach(40_000.0, 0.5), 20_000.0);
+        assert_eq!(reach(0.0, 0.5), 0.0, "--tree-distance 0 stays off");
+        assert_eq!(reach(40_000.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn a_changed_reach_chooses_the_cells_again_in_the_same_cell() {
+        let mut t = DistantTrees::default();
+        // The first update's choice: the reach before it was none.
+        assert_eq!(t.follow_reach(40_000.0), Some(0.0));
+        t.centre = Some((3, 4));
+        assert_eq!(t.follow_reach(40_000.0), None, "unchanged: the choice stands");
+        assert_eq!(t.centre, Some((3, 4)));
+        // Shortened: chosen again at once, and the cells beyond are no longer wanted.
+        assert_eq!(t.follow_reach(10_000.0), Some(40_000.0));
+        assert_eq!(t.centre, None);
+        let p = Vec2::new(100.0, 100.0);
+        let (long, short) = (cells_within(p, 40_000.0), cells_within(p, 10_000.0));
+        assert!(short.len() < long.len() && short.iter().all(|g| long.contains(g)));
+        assert!(long.iter().any(|g| !short.contains(g)), "billboards of those cells go");
+        // Lengthened again: the nearer cells stay, the farther come back.
+        t.centre = Some((3, 4));
+        assert_eq!(t.follow_reach(40_000.0), Some(10_000.0));
+        assert_eq!(t.centre, None);
     }
 
     #[test]

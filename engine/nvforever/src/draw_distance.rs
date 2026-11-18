@@ -16,6 +16,8 @@
 //! - **Shadows**: `--shadow-distance` (the sun's shadow cascades end at the slider's part
 //!   of it).
 //! - **Grass**: `--grass-distance` and `--grass-fade-range` together.
+//! - **Trees**: the distant tree billboards' reach, `--tree-distance` (`treelod.rs` reads the
+//!   part each frame; #3016).
 //!
 //! How it culls: Bevy's visibility range, which cell fades (`fade.rs`) and door fades
 //! (`door_fade.rs`) already give every streamed mesh. A mesh at rest (fully faded in)
@@ -72,6 +74,8 @@ pub struct DrawDistances {
     pub items: f32,
     pub shadows: f32,
     pub grass: f32,
+    /// The distant tree billboards' part of `--tree-distance` (`treelod.rs`).
+    pub trees: f32,
     /// The farthest a loaded cell reaches from the camera (game units).
     pub reach: f32,
     /// `--shadow-distance`.
@@ -88,6 +92,7 @@ impl DrawDistances {
             items: 1.0,
             shadows: 1.0,
             grass: 1.0,
+            trees: 1.0,
             reach: full_reach(args.radius),
             shadow_full: args.shadow_distance.max(0.0),
             grass_full: (args.grass_distance.max(0.0), args.grass_fade_range.max(0.0)),
@@ -286,6 +291,12 @@ pub fn set_grass(world: &mut World, v: f32) {
     g.fade_range = range * v;
 }
 
+/// The distant tree billboards reach `v` of `--tree-distance` from now (`treelod.rs` reads
+/// the part each frame and removes or adds cells of billboards at once).
+pub fn set_trees(world: &mut World, v: f32) {
+    world.resource_mut::<DrawDistances>().trees = v;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,7 +324,7 @@ mod tests {
     }
 
     fn distances() -> DrawDistances {
-        DrawDistances { objects: 1.0, actors: 0.5, items: 0.25, shadows: 1.0, grass: 1.0, reach: full_reach(2), shadow_full: 8000.0, grass_full: (7000.0, 1000.0) }
+        DrawDistances { objects: 1.0, actors: 0.5, items: 0.25, shadows: 1.0, grass: 1.0, trees: 1.0, reach: full_reach(2), shadow_full: 8000.0, grass_full: (7000.0, 1000.0) }
     }
 
     #[test]
@@ -348,5 +359,16 @@ mod tests {
         assert_eq!((g.fade_start, g.fade_range), (3500.0, 500.0));
         set_part(w, DrawClass::Actor, 0.3);
         assert_eq!(w.resource::<DrawDistances>().actors, 0.3);
+    }
+
+    #[test]
+    fn the_trees_slider_sets_its_part_and_starts_full() {
+        let mut app = App::new();
+        app.insert_resource(distances());
+        let w = app.world_mut();
+        assert_eq!(w.resource::<DrawDistances>().trees, 1.0, "full: the billboards reach as --tree-distance says");
+        set_trees(w, 0.4);
+        assert_eq!(w.resource::<DrawDistances>().trees, 0.4);
+        assert_eq!(w.resource::<DrawDistances>().grass, 1.0, "no other row moves");
     }
 }
