@@ -1,7 +1,8 @@
-// Ambient occlusion on the ambient light, inside the lighting (nvforever ssao_lighting.rs;
-// #2897 stage two, docs/design/graphics-enhanced.md §3.1): the factor the occlusion pass
-// (ssao.rs, ssao.wesl) worked out at half resolution scales the display-value ambient term
-// alone, never the direct lights. An engineering choice, not the original game's.
+// Ambient occlusion inside the lighting (nvforever ssao_lighting.rs; #2897 stage two,
+// docs/design/graphics-enhanced.md §3.1.2): the factor the occlusion pass (ssao.rs,
+// ssao.wesl) worked out at half resolution scales the display-value ambient term and the
+// light of lamps that cast no shadow (`nvf_lamp_visibility`), never the sun, the moon or a
+// highlight. An engineering choice, not the original game's.
 //
 // Imported by bevy_pbr's `apply_pbr_lighting` (patched in by ssao_lighting.rs `HOOK_EDITS`)
 // only with the shader def NVF_AMBIENT_OCCLUSION, which the view's pipelines that write
@@ -13,16 +14,16 @@
 // `with_shade_light`).
 
 struct NvfAmbientOcclusion {
-    // x: the exponent the factor is raised to before it scales the display-value ambient
-    // (1 / 2.2: the display sum is raised to 2.2 afterwards, so a fully shaded pixel's light
-    // is scaled by the factor itself); y: 1 to draw the factor alone in place of the lit
+    // x: the exponent the factor is raised to before it scales the display-value sum (1:
+    // the shown value falls by the factor itself, as on the picture; ssao_lighting.rs
+    // `EXPONENT`); y: 1 to draw the factor alone in place of the lit
     // colour (the debug view); z: the view distance (game units) from which the effect is
     // off (the occlusion pass's fade end, beyond which its texels hold 1); w: the share of
     // the fragment's distance (plus one unit) within which a texel's distance counts as the
     // same surface.
     params: vec4<f32>,
     // x: the strength the factor was made with, for a later multibounce; y: the weight of
-    // the factor on the light of lamps that cast no shadow (0..1, NVF_PLAY_DEBUG_AO_LAMPS;
+    // the factor on the light of lamps that cast no shadow (0..1, ssao_lighting.rs `LAMPS`;
     // 0 leaves them whole); z, w unused.
     extra: vec4<f32>,
 }

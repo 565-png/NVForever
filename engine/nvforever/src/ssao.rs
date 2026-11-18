@@ -21,13 +21,16 @@
 //! (imagespace.rs). It darkens all light, not only the ambient light as the lighting
 //! itself could [engineering choice: the strength is kept low for that]. While a temporal
 //! upscaler (FSR, DLSS) upscales it runs at the render size on the HDR picture before the
-//! upscaler instead ([`ao_before_fsr`]; the names say FSR, the first to use it).
+//! upscaler instead ([`ao_before_fsr`]; the names say FSR, the first to use it). That is the
+//! picture placement, since #2897 stage two the fallback (`NVF_PLAY_DEBUG_AO=post`, and what
+//! runs while the lighting hook is not in place).
 //!
 //! On the main camera only, while it carries [`AmbientOcclusion`].
 //!
-//! In the lighting (#2897 stage two, ssao_lighting.rs; for now only with the debug switch
-//! `NVF_PLAY_DEBUG_AO=lighting` or `view-lighting`, [`AoDebug`]): the factor is not
-//! multiplied into the picture but scales only the ambient light, inside the lighting. The
+//! In the lighting (#2897 stage two, ssao_lighting.rs, docs/design/graphics-enhanced.md
+//! §3.1.2; the default placement, [`AoDebug`]): the factor is not multiplied into the picture
+//! but scales the ambient light and the lamps that cast no shadow, inside the lighting, with
+//! its own strength and plant remedies ([`LIGHTING_STRENGTH`], [`LIGHTING_VARIANT`]). The
 //! extraction ([`extract_lighting`]) gives the main camera's view bevy_pbr's
 //! `NvfAmbientOcclusionBindings` (the view's depth-writing pipelines then read it under the
 //! shader def `NVF_AMBIENT_OCCLUSION`); [`ao_lighting_pass`], between the depth prepass and
