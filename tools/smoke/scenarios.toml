@@ -888,6 +888,45 @@ forbid = [
 ]
 
 [[scenario]]
+name = "heat-haze"
+source = "[design] docs/design/graphics-enhanced.md §3.15 (a prototype), engine/nvforever/src/heat_haze.rs and heat_haze.wesl: started with --graphics-only heat-haze at noon under a pinned clear weather (NVWastelandClear), the heat haze turns on with a strength above 0 from the sun and the weather, its pipeline (heat_haze.wesl) compiles and is ready and the pass draws, without a shader, pipeline or rendering error. The look is checked in pictures by hand"
+areas = ["renderer", "graphics", "weather"]
+paths = ["engine/nvforever/src/heat_haze*", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/tree.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--weather", "NVWastelandClear", "--graphics-only", "heat-haze"]
+run_seconds = 14
+expect = [
+  { re = 'heat haze: (?:on, )?strength (?P<n>\d+\.\d+), at most [\d.]+ px \(sun', range = [0.05, 1.0], label = "at noon in clear weather the heat haze has a strength above 0 and the pass is not skipped" },
+  { re = 'heat haze: pass drawn \(\d+x\d+, multisampled depth (?:yes|no)\)', label = "the pass ran (not only a strength above 0)" },
+]
+order = [[
+  { re = 'graphics: light glow, heat haze$', label = "the switch is on from the start" },
+  { re = 'pipeline \d+ ready after \d+ ms: heat_haze_pipeline', label = "heat_haze.wesl compiles: its pipeline is ready" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the heat haze" },
+  { re = 'pipeline \d+ failed after \d+ ms: heat_haze_pipeline', label = "the heat haze pipeline failed (heat_haze.wesl does not compile, or its bindings do not match)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "failed to process shader", label = "a shader that does not build" },
+]
+
+[[scenario]]
+name = "heat-haze-interior"
+source = "[design] docs/design/graphics-enhanced.md §3.15 (a prototype), engine/nvforever/src/heat_haze.rs: with the heat haze switched on in an interior (OVNorthSewers01) its strength is 0 (indoors), so its pass does not run, without a rendering error"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/heat_haze*", "engine/nvforever/src/graphics.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "OVNorthSewers01", "--play", "--no-voice", "--no-messages", "--graphics-only", "heat-haze"]
+run_seconds = 12
+expect = [
+  { re = 'heat haze: (?:on, )?strength 0\.00, at most 0\.00 px, pass skipped \(indoors\)', label = "indoors the heat haze's strength is 0 and the pass skipped" },
+  { re = 'graphics: light glow, heat haze$', label = "the switch is on" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the heat haze on indoors" },
+]
+
+[[scenario]]
 name = "ambient-occlusion-gtao"
 source = "#2897 stage a, docs/design/graphics-enhanced.md §3.1: the ambient-occlusion switch runs the ground-truth estimate (engine/nvforever/src/ssao.wesl gtao_visibility, its plane-aware denoise) on the multisampled view, says so once, and its pipelines build and draw without a shader, pipeline or rendering error"
 areas = ["renderer", "graphics"]
@@ -1730,6 +1769,41 @@ forbid = [
   { text = "failed and will not be tried again", label = "a pipeline that failed for good (repeat 300)" },
   { text = "still being retried after", label = "a pipeline still retried at the cap (repeat 300)" },
   { text = "anti-tiling needs a texture repeat above 0", label = "repeat 300 places the reads" },
+]
+
+[[scenario]]
+name = "desert-haze"
+source = "[design, #2675] engine/nvforever/src/haze.rs, fog.rs GAME_FOG, docs/design/graphics-enhanced.md §3.16: the Desert haze switch (off by default and in every preset) turned on while the game runs outdoors at Goodsprings at noon writes the haze's figures, worked from the shown weather, into the fog and logs them; turned off it logs off; the shader edits it rides on (pbr_functions.wesl apply_fog, fog.wesl) are in place and every world pipeline compiles, without a rendering error"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/haze.rs", "engine/nvforever/src/fog.rs", "engine/vendor/bevy_pbr/src/render/pbr_functions.wesl",
+  "engine/vendor/bevy_pbr/src/render/fog.wesl",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:desert-haze,13:desert-haze" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 18
+expect = [
+  "fog: the game's fog curve installed",
+  { re = 'haze: desert haze on: .*?, (\d+) % at 20,000 units and \d+ % at 60,000 on the base height', range = [3, 25], label = "Goodsprings' weather leaves room for the haze at noon: a thin share at 20,000 units" },
+]
+order = [
+  [
+    "settings: desert-haze on",
+    { text = "haze: desert haze on: ", label = "the haze's line once the switch is on, outdoors" },
+    "settings: desert-haze off",
+    { text = "haze: desert haze off", label = "and off again" },
+  ],
+  [
+    { re = 'graphics: light glow, desert haze$' },
+    { re = 'graphics: light glow$', label = "off again" },
+  ],
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the haze" },
+  { re = '(?i)failed to process shader', label = "a world shader that does not compile with the haze's edits (pbr_functions.wesl nvf_haze, fog.wesl GAME_FOG)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "apply_fog not as expected", label = "the haze's edit of Bevy's fog call not made" },
+  { text = "the desert haze's shader edit is not in place", label = "the switch on without its shader edit" },
 ]
 
 [[scenario]]
@@ -4400,6 +4474,86 @@ expect = [
   { gap = ['menu: open Container(0x00105658) "Refrigerator"', "menu: close"], range = [2.25, 3.75], label = "menu: close about 3 s after the open" },
 ]
 
+[[scenario]]
+name = "quick-loot-container"
+source = "[design] #2933, docs/design/quick-loot.md: with Quick Loot on, a container under the crosshair lists its items beside it without pausing; the wheel moves the selection, E takes the stack, R takes all; drawn in the game's font (Menu Font Original) with nothing overlapping"
+note = "the Refrigerator of container-e-key; Quick Loot is turned on through the settings page (pause at 10 s, the row flipped at 10.5 s, resumed at 12 s); the player starts looking at it (NEAR); a shot at 13.5 s for a look by eye (quick_loot_original.png)"
+areas = ["activate", "menus", "hud"]
+paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/activate.rs", "engine/nvf-play/src/menu/model.rs", "engine/nvf-play/src/reticle.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12", NVF_PLAY_TEST_SETTINGS = "10.5:quick-loot", NVF_PLAY_TEST_SHOTS = "13.5:quick_loot_original.png", NVF_PLAY_TEST_KEYS = "14:wheel-down,15:e,17:r" }
+args = ["--cell", "GSHouseInterior03", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 20
+order = [[
+  "settings: quick-loot on",
+  { re = 'quick loot: shown on 0x00105658 "Refrigerator" \(Container', label = "the list shows on the refrigerator" },
+  { re = 'quick loot: drawn "Refrigerator" \(\d+ rows, columns Columns \{ weight: false, value: false, per_weight: false, chance: false \}, font Original, .*\): no overlaps', label = "drawn in the game's font, nothing overlapping" },
+  { re = 'quick loot: (Stack|TakeAll) on 0x00105658 "Refrigerator": (Took|Nothing)', label = "E or R takes from it" },
+  { re = 'world sounds: \S+ taken from the container', label = "the take sounds as the container menu's (only a take does, review 2026-11-17)" },
+]]
+forbid = [
+  { re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" },
+  { re = 'menu: open Container\(0x00105658\)', label = "E opened the full menu instead of taking" },
+]
+
+[[scenario]]
+name = "quick-loot-sharp-columns"
+source = "[design] #2933, docs/design/quick-loot.md: in the sharp font (Menu Font Sharp) with the Weight, Value and Value per Weight columns on, the list is laid out by that font with nothing overlapping; T opens the full container menu"
+note = "as quick-loot-container; the four rows, the Menu Font row and the background opacity (90%) set on the settings page at 10.5-11.9 s; a shot at 13.5 s (quick_loot_sharp.png); T at 15 s opens the container menu, E closes it at 17 s and the list shows again"
+areas = ["activate", "menus", "hud"]
+paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/vector_font.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12.5", NVF_PLAY_TEST_SETTINGS = "10.5:quick-loot,10.8:quick-loot-weight,11:quick-loot-value,11.2:quick-loot-value-per-weight,11.6:menu-font=Sharp,11.9:quick-loot-background=0.9", NVF_PLAY_TEST_SHOTS = "13.5:quick_loot_sharp.png", NVF_PLAY_TEST_KEYS = "15:t,17:e" }
+args = ["--cell", "GSHouseInterior03", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 20
+order = [[
+  "settings: quick-loot-value-per-weight on",
+  "settings: quick-loot-background 90%",
+  { re = 'quick loot: drawn "Refrigerator" \(\d+ rows, columns Columns \{ weight: true, value: true, per_weight: true, chance: false \}, font Sharp, .*\): no overlaps', label = "drawn in the sharp font with three columns, nothing overlapping" },
+  'quick loot: the full menu on 0x00105658 "Refrigerator"',
+  'menu: open Container(0x00105658) "Refrigerator"',
+  "menu: close",
+  { re = 'quick loot: shown on 0x00105658 "Refrigerator"', label = "back in play, the list shows again" },
+]]
+forbid = [{ re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" }]
+
+[[scenario]]
+name = "quick-loot-pickpocket"
+source = "[design] #2933, docs/design/quick-loot.md: sneaking, a person's pocket shows in the list with each item's chance to steal it, no Take All; E steals the selected stack, rolling its chance (unseen or caught, as the pickpocket menu)"
+note = "pickpocket-steal's set-up (Chet held, given two Stimpaks, the player sneaking in front of him); Quick Loot on at 5.5 s on the settings page and its scale set to 80% at 6 s, in the game's font; E at 10 s; the rolls seeded (NVF_PLAY_TEST_PICKPOCKET_SEED)"
+areas = ["activate", "menus", "crime", "hud"]
+paths = ["engine/nvf-play/src/quick_loot.rs", "engine/nvf-play/src/pickpocket.rs", "crates/fnv-game/src/pickpocket.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PICKPOCKET_SEED = "7", NVF_PLAY_TEST_NEAR = "00104C79", NVF_PLAY_TEST_FACE = "8:00104C79", NVF_PLAY_TEST_SCRIPT = "0.5:call:GSChetRef:SetRestrained:1,3:call:GSChetRef:AddItem:Stimpak:2", NVF_PLAY_TEST_CONTROL = "4:sneak", NVF_PLAY_TEST_PAUSE = "5:7", NVF_PLAY_TEST_SETTINGS = "5.5:quick-loot,6:quick-loot-scale=80%", NVF_PLAY_TEST_SHOTS = "9.5:quick_loot_pocket.png", NVF_PLAY_TEST_KEYS = "10:e" }
+args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 14
+order = [[
+  { re = 'quick loot: shown on 0x00104C79 ".*" \(Pocket, theft, \d+ rows\)', label = "the list shows on Chet's pocket, as theft" },
+  { re = 'quick loot: drawn ".*" \(\d+ rows, columns Columns \{ weight: false, value: false, per_weight: false, chance: true \}, font Original, scale 80%, .*\): no overlaps', label = "drawn with the chance column at its own 80% scale, nothing overlapping" },
+  { re = 'quick loot: Stack on 0x00104C79 ".*": (Took|Caught!)', label = "E steals the stack or is caught" },
+  { re = 'pickpocket: (took .* from .* unseen|caught by .* with )', label = "judged as the pickpocket menu judges it" },
+]]
+forbid = [
+  { re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" },
+  { re = 'pickpocket: open on 0x00104C79', label = "E opened the full pickpocket menu" },
+]
+
+
+[[scenario]]
+name = "quick-loot-language"
+source = "[design] #2933 (the sixth look): Quick Loot's own words follow the Language row (lang/*.toml): its keys, column heads and Empty"
+note = "as quick-loot-container with the Language row set to ru (the repo's lang folder) at 10.8 s; on an English install the menus are drawn sharp for Cyrillic; a shot at 13.5 s (quick_loot_ru.png)"
+areas = ["activate", "menus", "hud"]
+paths = ["engine/nvf-play/src/quick_loot.rs", "lang/ru.toml", "crates/fnv-util/src/words.rs"]
+env = { NVF_LANG_DIR = "{repo}/lang", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12", NVF_PLAY_TEST_SETTINGS = "10.5:quick-loot,10.8:language=ru", NVF_PLAY_TEST_SHOTS = "13.5:quick_loot_ru.png" }
+args = ["--cell", "GSHouseInterior03", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 15
+order = [[
+  "settings: quick-loot on",
+  { re = 'language: ru', label = "the language is Russian" },
+  { re = 'quick loot: drawn "Refrigerator" \(.*keys "E\) Взять \| R\) Взять всё \| T\) Обыскать"\): no overlaps', label = "the keys in Russian, nothing overlapping" },
+]]
+forbid = [
+  { re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" },
+  { re = 'quick loot: drawn "Refrigerator" .*keys "E\) Take', label = "the keys stayed English after the language changed" },
+]
 [[scenario]]
 name = "tag-reset-clears"
 source = "[observed 2026-11-06] docs/spec-notes/chargen.md §3: Reset clears the tags the menu opened with, and Done is refused until three are tagged again"
@@ -19572,6 +19726,56 @@ expect = [
 manual = "on a failure, the chain's notes say what each step stands for; the stalls and data notes are in the walk4 main-quest/faction group's report (issue #918)"
 
 [[scenario]]
+name = "techatticup-hostage-alarm"
+kind = "tool"
+source = "issue #2926: the headless walkthrough crates/fnv-game/walkthrough/techatticup-hostages-2926.actions.json frees both Techatticup hostages through their message boxes; each one's SendAssaultAlarm Player CaesarsLegionTechMineFaction must not turn the hostage, and the second box must open"
+areas = ["quests", "scripts", "crime"]
+paths = ["crates/fnv-game/walkthrough/techatticup-hostages-2926.actions.json", "crates/fnv-game/src/crime.rs", "crates/fnv-game/src/runner.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/techatticup-hostages-2926.actions.json"]]
+expect = [
+  { json = "observations.?label=hostages: VTechatticup 10.stage", equals = 10, label = "techatticup-hostage-alarm: VTechatticup 10 from Renolds" },
+  { json = "events.?kind=message_shown.message", equals = "0x001231B8", count = 2, label = "techatticup-hostage-alarm: TecMineHostageMSG shown twice: the first hostage's box, then the second's (none skipped by a fight)" },
+  { json = "observations.?label=hostages: first hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm: the first hostage is not alarmed after its alarm on the Legion" },
+  { json = "observations.?label=hostages: player in combat after the first.value", equals = 0.0, label = "techatticup-hostage-alarm: the player is not in combat after the first" },
+  { json = "observations.?label=hostages: raider 5 alarmed before.value", equals = 0.0, label = "techatticup-hostage-alarm: raider 5 is not alarmed before the untie" },
+  { json = "observations.?label=hostages: raider 5 alarmed after the first.value", equals = 1.0, label = "techatticup-hostage-alarm: raider 5 (the faction's first member, 0x0011F654) is alarmed by the first hostage's alarm" },
+  { json = "events.?kind=assault_alarm.victim", equals = "0x0011F654", count = 2, label = "techatticup-hostage-alarm: both alarms pick TecLegionaryRaider5REF as the victim" },
+  { json = "observations.?label=hostages: raider 5 disabled.value", equals = 0.0, label = "techatticup-hostage-alarm: probe: raider 5 is enabled" },
+  { json = "observations.?label=hostages: raider 5 dead.value", equals = 0.0, label = "techatticup-hostage-alarm: probe: raider 5 is alive" },
+  { json = "observations.?label=hostages: raider 5 in the mine's faction.value", equals = 1.0, label = "techatticup-hostage-alarm: probe: raider 5 is in CaesarsLegionTechMineFaction" },
+  { json = "observations.?label=hostages: second hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm: the second hostage is not alarmed" },
+  { json = "observations.?label=hostages: VTechatticup 20.stage", equals = 20, label = "techatticup-hostage-alarm: both freed: stage 20" },
+  { json = "observations.?label=hostages: VTechatticup 20.var.NumHostages", equals = 2.0, label = "techatticup-hostage-alarm: both freed: NumHostages 2" },
+  { json = "steps.*.error", count = 0, label = "techatticup-hostage-alarm: no step fails" },
+  { json = "given_errors.*", count = 0, label = "techatticup-hostage-alarm: no given fails" },
+]
+manual = "#2926 probe: run once by hand with NVFOREVER_LOG=fnv_game::crime=info; each hostage's 'assault alarm: faction 0x001400F9 ...' line gives the victim and the members not present or dead"
+
+[[scenario]]
+name = "techatticup-hostage-alarm-cleared"
+kind = "tool"
+source = "issue #2926, the reporter's case: the headless walkthrough crates/fnv-game/walkthrough/techatticup-hostages-dead-2926.actions.json kills every actor of CaesarsLegionTechMineFaction in the hostages' cell, then frees both hostages; their SendAssaultAlarm Player CaesarsLegionTechMineFaction finds no member alive and must turn nobody (main turned the hostage)"
+areas = ["quests", "scripts", "crime"]
+paths = ["crates/fnv-game/walkthrough/techatticup-hostages-dead-2926.actions.json", "crates/fnv-game/src/crime.rs", "crates/fnv-game/src/runner.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/techatticup-hostages-dead-2926.actions.json"]]
+expect = [
+  { json = "observations.?label=hostages: VTechatticup 10.stage", equals = 10, label = "techatticup-hostage-alarm-cleared: VTechatticup 10 from Renolds" },
+  { json = "observations.?label=hostages: raiders killed.value", range = [1, 17], label = "techatticup-hostage-alarm-cleared: the mine's faction members in the cell killed (17 present in the load order)" },
+  { json = "observations.?label=hostages: raider 5 dead.value", equals = 1.0, label = "techatticup-hostage-alarm-cleared: raider 5 (the pick of the run without kills) is dead" },
+  { json = "events.?kind=assault_alarm.alive", equals = 0, count = 2, label = "techatticup-hostage-alarm-cleared: each alarm finds 0 members of the faction present and alive in the whole load order" },
+  { json = "events.?kind=assault_alarm.victim", null = true, count = 2, label = "techatticup-hostage-alarm-cleared: each alarm picks no victim" },
+  { json = "observations.?label=hostages: first hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm-cleared: the first hostage is not alarmed by its alarm on a faction with no member alive" },
+  { json = "observations.?label=hostages: player in combat after the first.value", equals = 0.0, label = "techatticup-hostage-alarm-cleared: the player is not in combat after the first" },
+  { json = "events.?kind=message_shown.message", equals = "0x001231B8", count = 2, label = "techatticup-hostage-alarm-cleared: TecMineHostageMSG shown twice: the first hostage's box, then the second's (none skipped by a fight)" },
+  { json = "observations.?label=hostages: second hostage alarmed.value", equals = 0.0, label = "techatticup-hostage-alarm-cleared: the second hostage is not alarmed" },
+  { json = "observations.?label=hostages: VTechatticup 20.stage", equals = 20, label = "techatticup-hostage-alarm-cleared: both freed: stage 20" },
+  { json = "observations.?label=hostages: VTechatticup 20.var.NumHostages", equals = 2.0, label = "techatticup-hostage-alarm-cleared: both freed: NumHostages 2" },
+  { json = "steps.*.error", count = 0, label = "techatticup-hostage-alarm-cleared: no step fails" },
+  { json = "given_errors.*", count = 0, label = "techatticup-hostage-alarm-cleared: no given fails" },
+]
+manual = "#2926: run by hand with NVFOREVER_LOG=fnv_game::crime=info; each hostage's 'assault alarm: faction 0x001400F9 ...' line reads victim none, 0 member(s) present and alive, and the members dead"
+
+[[scenario]]
 name = "mq-beggar"
 kind = "tool"
 source = "the headless side-quest walkthrough crates/fnv-game/walkthrough/beggar.actions.json, Don't Make a Beggar of Me (VMS04): Melissa (10), the suitcase (20), Chomps Lewis (30), Tyrone by Speech (40), Melissa (100)"
@@ -32286,6 +32490,38 @@ expect = [
   { re = 'vats mode summary: entered 1 times, 0 marks, 0 shots, 0 AP spent, 1 refused', label = "one stay, one refusal" },
 ]
 
+
+[[scenario]]
+name = "use-weapon-silo-mainframe"
+source = "[design, #2652] Player activation and button 1 give ED-E its mainframe package; its Always Hit / Do No Damage shot must run OnHit ED-E and set NVDLC04MQ01a 55. Record chain: #2652; launch-code preparation: crates/fnv-game/walkthrough/lonesome-road.actions.json."
+note = "[design] Start at quest 50 with the launch-code note and ED-E enabled beside its stand marker; only preparation uses aids. Activation, button choice, package arrival, UseWeapon and the harmless hit perform the unlock. The lonesome-road area skips this launch without LonesomeRoad.esm."
+areas = ["combat", "use-weapon", "lonesome-road"]
+paths = ["engine/nvforever/src/use_weapon.rs", "engine/nvforever/src/use_weapon/**", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "5:start:NVDLC04MQ01a,5:stage:NVDLC04MQ01a:50,6:enable:NVDLC04EDEREF,7:moveto:player:NVDLC04Silo01MainframeREF:0:-200:0,7:moveto:NVDLC04EDEREF:NVDLC04Silo01MainframeMarkerREF,8:call:player:AddNote:NVDLC04Silo02LaunchCode,12:activate:NVDLC04Silo01MainframeREF,13:button:1" }
+args = ["--cell", "NVDLC04Silo01", "--play", "--no-voice", "--npc-packages", "all"]
+run_seconds = 70
+order = [[
+  { re = 'use weapon: NVDLC04EDEREF .* uses NVDLC04WeapEDEArcWelder on (NVDLC04Silo01MainframeREF|Hopeville Silo Mainframe Controls)', label = "ED-E fires at the mainframe through its package" },
+  { re = 'combat: a harmless shot by .* hits 0x[0-9A-F]{2}0075E5: its hit blocks ran, no damage', label = "the harmless zap runs the mainframe hit block" },
+  { text = 'script: NVDLC04MQ01a stage 55 set', label = "the mainframe unlock sets stage 55" },
+]]
+expect = [
+  { re = 'use weapon: NVDLC04EDEREF .* has fired its 1 shots at (NVDLC04Silo01MainframeREF|Hopeville Silo Mainframe Controls)', label = "the finite mainframe use ends" },
+]
+
+[[scenario]]
+name = "use-weapon-gi-blues-shelter"
+source = "[design, #2652, #2715 shooter half] The King's INFO 0x0012931B effect starts the staged NCR fight; VFSNCRBarker01REF's Repeat Fire package targets VFSPacerBusShelterREF (STAT 0x0011BD4E), as supplied in #2652's last comment."
+note = "[design, #2652 w4] MoveTo uses Pacer's cower marker 0x001293EC in FreesideNorthWorld, retaining player coordinates (-3961,4646,1133). The barker at grid (-2,1) is within the default two-cell loaded radius of player grid (-1,1). The King's effect starts the package; expectations are unchanged. Pacer's cover pose belongs to separate work."
+areas = ["combat", "use-weapon", "quests"]
+paths = ["engine/nvforever/src/use_weapon.rs", "engine/nvforever/src/use_weapon/**", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "3:moveto:player:0x001293EC:-98:-588:84,5:start:VMS19,8:info:0x0012931B:VFSTheKingREF" }
+args = ["--world", "FreesideNorthWorld", "--play", "--hour", "12", "--no-voice", "--npc-packages", "all"]
+run_seconds = 70
+expect = [
+  { re = 'use weapon: VFSNCRBarker01REF .* uses .* on VFSPacerBusShelterREF.*on and on', label = "the barker repeats fire at the shelter", known_failing = "main 2026-11-16 (1790ab94a) and this branch: after the King's line 0x0012931B moves them, the barkers and the off-duty troopers choose no package at all in this aid-staged start (ai summary: 0 packages chosen), so the Use Weapon package never runs; the shooter change is covered by the engine tests" },
+  { re = 'use weapon summary: .*? (?P<n>\d+) shots \(', range = [1, 100000], label = "the staged fight fires shots", known_failing = "main 2026-11-16 (1790ab94a) and this branch: after the King's line 0x0012931B moves them, the barkers and the off-duty troopers choose no package at all in this aid-staged start (ai summary: 0 packages chosen), so the Use Weapon package never runs; the shooter change is covered by the engine tests" },
+]
 
 [[scenario]]
 name = "roy-say-pause-resume"

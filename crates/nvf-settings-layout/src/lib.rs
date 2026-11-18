@@ -72,7 +72,7 @@ pub const fn group_section(subgroup: &'static str, heading: &'static str, keys: 
 /// The rows the NVF Features tab may hold: only what the owner named there [design: owner
 /// 2026-11-15]. Adding a key needs the owner's word; a bigger gameplay change is offered to
 /// the owner for this tab, never moved here unasked (docs/design/settings-page.md).
-pub const NVF_FEATURES_KEYS: [&str; 9] = [
+pub const NVF_FEATURES_KEYS: [&str; 15] = [
     "advanced-movement",
     "movement-weight",
     "movement-inertia",
@@ -82,6 +82,13 @@ pub const NVF_FEATURES_KEYS: [&str; 9] = [
     "animation-smoothing",
     "camera-motion",
     "grass-fire",
+    // The Quick Loot menu and its columns [design, #2933].
+    "quick-loot",
+    "quick-loot-scale",
+    "quick-loot-background",
+    "quick-loot-weight",
+    "quick-loot-value",
+    "quick-loot-value-per-weight",
 ];
 
 /// Every named row's tab and category, in the order the page shows them [design: the
@@ -196,7 +203,7 @@ pub const SECTIONS: &[Section] = &[
     // Shadow resolution sizes the flashlight's maps too, so it needs no Sun shadows (no NEEDS
     // line) (#2843).
     section("Graphics", Some("Shadows"), &["sun-shadows", "shadow-filter", "shadow-resolution", "shadow-distance", "fine-shadows", "cloud-shadows"]),
-    section("Graphics", Some("Lighting and Effects"), &["ambient-occlusion", "light-shafts", "bloom", "grade", "glow", "eye-adaptation", "neon-glow"]),
+    section("Graphics", Some("Lighting and Effects"), &["ambient-occlusion", "light-shafts", "heat-haze", "desert-haze", "bloom", "grade", "glow", "eye-adaptation", "neon-glow"]),
     section("Graphics", Some("Water"), &["water-reflections", "water-mirror"]),
     section("Graphics", Some("Detail and Distance"), &["distant-lod", "grass", "anisotropic", "terrain-height-blend", "terrain-anti-tiling", "mesh-terrain-blend", "smooth-terrain", "object-distance", "actor-distance", "item-distance", "grass-distance"]),
     section("Graphics", Some("World and Animation"), &["head-tracking", "foot-ik", "sky-clock"]),
@@ -205,6 +212,8 @@ pub const SECTIONS: &[Section] = &[
     section(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil"]),
     section(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     section(NVF_FEATURES_TAB, Some("World Interaction"), &["grass-fire"]),
+    // The Quick Loot menu (docs/design/quick-loot.md) [design, #2933].
+    section(NVF_FEATURES_TAB, Some("Quick Loot"), &["quick-loot", "quick-loot-scale", "quick-loot-background", "quick-loot-weight", "quick-loot-value", "quick-loot-value-per-weight"]),
     // The Tweaks tab (#1892), placed ahead of it: Stewie's Tweaks' groups, each in its
     // categories (docs/design/settings-tweaks-layout.md) [design: owner 2026-11-15].
     // Tweaks > Gameplay.
@@ -925,6 +934,11 @@ pub const NEEDS: &[(&str, &str, &str)] = &[
     ("volume-music", "music", "Needs Play Music."),
     ("volume-voice", "voice", "Needs Dialogue Voice."),
     ("crosshair-style", "dynamic-crosshair", "Needs Dynamic Crosshair."),
+    ("quick-loot-scale", "quick-loot", "Needs Quick Loot."),
+    ("quick-loot-background", "quick-loot", "Needs Quick Loot."),
+    ("quick-loot-weight", "quick-loot", "Needs Quick Loot."),
+    ("quick-loot-value", "quick-loot", "Needs Quick Loot."),
+    ("quick-loot-value-per-weight", "quick-loot", "Needs Quick Loot."),
     ("aim-slowdown", "aim-assist", "Needs Aim Assist."),
     ("aim-lock", "aim-assist", "Needs Aim Assist."),
     ("shadow-filter", "sun-shadows", "Needs Sun Shadows."),
