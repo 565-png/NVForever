@@ -372,7 +372,14 @@ fn prepare(
     mut textures: ResMut<TextureCache>,
     device: Res<RenderDevice>,
     views: Query<(Entity, &ExtractedView, &Msaa, &AmbientOcclusion)>,
+    stale: Query<Entity, (With<AoView>, Without<AmbientOcclusion>)>,
 ) {
+    // The row switched off while the game runs: the view's extracted settings go, but what
+    // this system and the uniform plugin put on the view stays, and the passes would go on
+    // drawing with an offset into a uniform buffer nothing writes any more.
+    for entity in &stale {
+        commands.entity(entity).remove::<(AoView, DynamicUniformIndex<AmbientOcclusion>)>();
+    }
     for (entity, view, msaa, settings) in &views {
         let before_fsr = settings.runs_before_fsr();
         if before_fsr && pipelines.multiply.is_none() {
