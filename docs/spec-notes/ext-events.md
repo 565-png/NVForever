@@ -288,14 +288,20 @@ The original restart guard requires yUI 140 as one dependency. That requirement
 alone does not establish that every yUI feature is implemented or executed.
 
 [design] The existing activation ray and its activation distance remain the
-source of GetCrosshairRef. A new nonempty reference produces one plain event and
-its corresponding type-qualified event, through existing registration/filter
-machinery. Repeating the same reference does not produce another acquisition;
-leaving to no target updates the getter without inventing an On event. Acquiring
-a reference after that gap produces a new event. The existing JohnnyGuitar
-callback remains before getter publication. The newly added event sees the
-current getter, before the normal Scripts set. Plain then type-qualified delivery
-is a mapped engine ordering; native relative ordering is not measured.
+source of GetCrosshairRef, and the event is delivered through the existing
+registration/filter machinery.
+
+[hypothesis] A new nonempty reference produces one plain event and its
+corresponding type-qualified event. Repeating the same reference does not produce
+another acquisition; leaving to no target updates the getter without an On event;
+acquiring a reference after that gap produces a new event. The callback sees the
+new reference through GetCrosshairRef. None of this per-transition behaviour has
+been observed in the original game; the page only says a new reference raises it.
+
+[design] The existing JohnnyGuitar callback remains before getter publication. The
+newly added event runs before the normal Scripts set. Plain then type-qualified
+delivery is a mapped engine ordering; native relative ordering and timing are not
+measured [hypothesis].
 
 [design] No extra ray, per-frame target cache, replacement HUD, provider version
 change or original mod/configuration edit is introduced. With no relevant
