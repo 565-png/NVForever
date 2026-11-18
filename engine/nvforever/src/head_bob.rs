@@ -188,6 +188,14 @@ impl HeadBob {
         let follow = |t: f32| if dt <= 0.0 { 0.0 } else { 1.0 - (-dt / t).exp() };
         self.gain += (f32::from(u8::from(i.on)) - self.gain) * follow(FOLLOW_SECONDS);
         self.land_gain += (f32::from(u8::from(i.landing)) - self.land_gain) * follow(FOLLOW_SECONDS);
+        // Switched off, each fade ends at nothing, not a hair over it: the view is then where
+        // the clips put it exactly, as in the original.
+        if !i.on && self.gain < crate::view_sway::GAIN_FLOOR {
+            self.gain = 0.0;
+        }
+        if !i.landing && self.land_gain < crate::view_sway::GAIN_FLOOR {
+            self.land_gain = 0.0;
+        }
         // In the air the footfalls stop but the body runs on: the bob's swing fades and its
         // middle stays, so a running jump lands with the view where it was. With the whole
         // bob gone in the air, the view rose by half the dip (2.6 units at a run) over the
@@ -213,8 +221,15 @@ impl HeadBob {
         let w = omega_for(BOB_SETTLE_SECONDS);
         self.bob[0].step(SWING * a.sin() * share, w, dt);
         self.bob[1].step(-DIP * 0.5 * (carried + (2.0 * a).cos() * share), w, dt);
+        if self.gain == 0.0 {
+            // Switched off and faded: the bob's springs end at rest, not a hair off it.
+            for s in &mut self.bob {
+                s.snap(0.0, crate::view_sway::GAIN_FLOOR, 10.0 * crate::view_sway::GAIN_FLOOR);
+            }
+        }
         let (swing, dip) = (self.bob[0].value, self.bob[1].value);
-        self.peak_dip = self.peak_dip.max(-dip);
+        // `+ 0.0` turns a snapped bob's -0.0 into 0.0, so the summary never prints "-0.00".
+        self.peak_dip = self.peak_dip.max(-dip) + 0.0;
         // The head's own weight, pushed by the body's acceleration (below).
         let took_off = i.vertical > 0.0 && self.last_vertical <= 0.0;
         // Only a take-off and a landing push the head: a free fall moves it with the body.
@@ -261,6 +276,9 @@ impl HeadBob {
             (if i.speed < STILL_SPEED { 1.0 } else { BREATH_MOVING.max(self.exertion) }) * if i.sights { 0.5 } else { 1.0 }
         };
         self.breath += (breath_target - self.breath) * follow(BREATH_FADE_SECONDS);
+        if !i.breathing && self.breath < crate::view_sway::GAIN_FLOOR {
+            self.breath = 0.0;
+        }
         // Out of breath: faster and deeper (the phase runs on, so a change of pace is smooth).
         let pace = 1.0 + (crate::view_sway::EXERTED_PACE - 1.0) * self.exertion;
         let size = self.breath * (1.0 + (crate::view_sway::EXERTED_SIZE - 1.0) * self.exertion);
@@ -557,6 +575,48 @@ mod tests {
             o = b.first_person(BobInput { on: false, ..input(300.0, f as f32 / 72.0) });
         }
         assert!(o.length() < 0.01, "{o}");
+    }
+
+    /// Everything that moves the view at once: running with a stride, turning the corner,
+    /// breathing, a shot, a blow and a jump with its landing, frame `f` of a loop.
+    fn busy(f: usize, on: bool, landing: bool) -> BobInput {
+        let t = f as f32 * DT;
+        let jumping = f % 240 >= 200;
+        BobInput {
+            velocity: Vec2::new(150.0 * (t * 0.7).sin(), 300.0),
+            vertical: if jumping { 290.0 - 980.0 * (f % 240 - 200) as f32 * DT } else { 0.0 },
+            airborne: jumping,
+            kick: if f.is_multiple_of(50) { 1.0 } else { 0.0 },
+            punch: if f.is_multiple_of(170) { Vec3::new(0.3, -0.2, -1.0) } else { Vec3::ZERO },
+            breathing: on,
+            out_of_breath: on,
+            landing,
+            on,
+            ..input(320.0, (t / 0.72).fract())
+        }
+    }
+
+    #[test]
+    fn switched_off_the_view_is_exactly_the_clips() {
+        // Camera Motion and Movement Inertia's landing dip off from the start: nothing at all,
+        // whatever the body does (the original's view is the clips' camera node).
+        let mut b = HeadBob::default();
+        for f in 0..1200 {
+            assert_eq!(b.first_person(busy(f, false, false)), Vec3::ZERO, "frame {f}");
+        }
+        // On for a while, then off (the settings page part-way through a game): after the
+        // fade, nothing at all again, not a sliver left of the springs or the breath.
+        let mut b = HeadBob::default();
+        let mut most = 0.0f32;
+        for f in 0..1200 {
+            most = most.max(b.first_person(busy(f, true, true)).length());
+        }
+        assert!(most > 1.0, "it moved while on: {most}");
+        let off: Vec<Vec3> = (1200..3600).map(|f| b.first_person(busy(f, false, false))).collect();
+        let first_exact = off.iter().position(|o| *o == Vec3::ZERO).expect("it ends at nothing");
+        assert!((first_exact as f32 * DT) < 10.0, "it took {} s", first_exact as f32 * DT);
+        assert!(off[first_exact..].iter().all(|o| *o == Vec3::ZERO), "exactly nothing from then on");
+        assert!(first_exact > 0 && off[first_exact - 1].length() < 0.01, "the last of the fade is a sliver, not a jump: {}", off[first_exact - 1]);
     }
 
     #[test]
