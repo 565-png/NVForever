@@ -62,14 +62,16 @@ pub const CAP: usize = 400;
 /// Lights of one cell closer than this (game units) are drawn as one glow [design].
 pub const MERGE_DISTANCE: f32 = 192.0;
 /// A glow's half size per unit of the light's radius, and its bounds (game units) [design].
-pub const SIZE_PER_RADIUS: f32 = 0.25;
+pub const SIZE_PER_RADIUS: f32 = 0.5;
 pub const MIN_HALF: f32 = 24.0;
-pub const MAX_HALF: f32 = 160.0;
-/// The smallest half size on screen, in pixels: a far light stays a pixel or two [design].
-pub const MIN_PIXELS: f32 = 1.0;
+pub const MAX_HALF: f32 = 320.0;
+/// The smallest half size on screen, in pixels: a far light stays a few pixels wide [design:
+/// fitted by pictures, 2026-11-18; at 1 the glows of a town 10 cells off could not be told
+/// from stars].
+pub const MIN_PIXELS: f32 = 2.0;
 /// The least light per pixel a card widened to [`MIN_PIXELS`] keeps (its own area over the
 /// area drawn, held to this) [design].
-pub const FAR_FLOOR: f32 = 0.35;
+pub const FAR_FLOOR: f32 = 0.7;
 /// The reach's last cells, over which the glows fade out [design].
 pub const FADE_CELLS: f32 = 2.0;
 /// The brightest a glow's core is, as a share of its colour (display values, the world's
@@ -644,7 +646,7 @@ mod tests {
 
     #[test]
     fn sizes_and_fades() {
-        assert_eq!(half_size(512.0), 128.0);
+        assert_eq!(half_size(512.0), 256.0);
         assert_eq!(half_size(10.0), MIN_HALF);
         assert_eq!(half_size(4096.0), MAX_HALF);
         let reach = reach_units();
@@ -653,13 +655,13 @@ mod tests {
         assert_eq!(reach_fade(reach, reach), 0.0);
         let mid = reach_fade(reach - CELL_SIZE, reach);
         assert!(mid > 0.4 && mid < 0.6, "{mid}");
-        // Near: the glow's own size and all its light; far: a pixel, less light per pixel.
+        // Near: the glow's own size and all its light; far: two pixels, less light per pixel.
         assert_eq!(drawn_size(128.0, 10.0), (128.0, 1.0));
         let (h, share) = drawn_size(64.0, 128.0);
-        assert_eq!((h, share), (128.0, FAR_FLOOR), "a quarter of the light per pixel, held to the floor");
-        let (h, share) = drawn_size(100.0, 120.0);
-        assert_eq!(h, 120.0);
-        assert!((share - (100.0f32 / 120.0).powi(2)).abs() < 1e-6);
+        assert_eq!((h, share), (256.0, FAR_FLOOR), "a sixteenth of the light per pixel, held to the floor");
+        let (h, share) = drawn_size(100.0, 55.0);
+        assert_eq!(h, 110.0);
+        assert!((share - (100.0f32 / 110.0).powi(2)).abs() < 1e-6);
         assert_eq!(drawn_size(10.0, 1000.0).1, FAR_FLOOR);
         assert_eq!(night_share(-30.0), 1.0);
         assert_eq!(night_share(45.0), 0.0);
