@@ -2864,6 +2864,40 @@ fn furniture_functions_answer_from_the_use_set_on_the_actor() {
     assert_eq!(g.furniture_use(npc), None);
 }
 
+/// #2948: a teammate brought into another cell forgets the foes left in the one it came
+/// from and, with none left, leaves the fight; a foe in its new cell is kept.
+#[test]
+fn a_teammate_brought_along_leaves_the_foes_of_the_other_cell_behind() {
+    use fnv_game::awareness::{Awareness, State, Target};
+    use fnv_game::detection::Band;
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    let (npc, foe, near) = (FormId(NPC_REF), FormId(PATROL_REF), FormId(OTHER_REF));
+    let target = Target { band: Band::Hidden, value: 10.0, at: [0.0; 3], detected: Some(0.0), hidden_since: Some(0.0) };
+    let mut searching = Awareness { state: State::Alert, ..Default::default() };
+    searching.targets.insert(foe, target);
+    let put = |g: &mut fnv_game::game::Game, r: FormId, cell: u32| g.world.get(r).unwrap().cell = Some(FormId(cell));
+    put(&mut g, npc, OTHER_CELL);
+    put(&mut g, foe, CELL);
+    put(&mut g, near, OTHER_CELL);
+    // The foe is in the same cell: kept.
+    put(&mut g, foe, OTHER_CELL);
+    g.awareness.actors.insert(npc, searching.clone());
+    g.leave_foes_behind(npc);
+    assert_eq!(g.awareness.state(npc), State::Alert);
+    // Left behind in the other cell: forgotten, and the search is over.
+    put(&mut g, foe, CELL);
+    g.leave_foes_behind(npc);
+    assert_eq!(g.awareness.state(npc), State::Normal);
+    // One left behind, one in the new cell: only the first is forgotten.
+    searching.targets.insert(near, target);
+    g.awareness.actors.insert(npc, searching);
+    g.leave_foes_behind(npc);
+    let a = g.awareness.get(npc).expect("still searching for the near one");
+    assert!(a.targets.contains_key(&near) && !a.targets.contains_key(&foe), "{:?}", a.targets.keys());
+}
+
 #[test]
 fn a_level_is_earned_by_experience_and_waits_for_no_one_hunting_the_player() {
     use fnv_game::awareness::{Awareness, State, Target};

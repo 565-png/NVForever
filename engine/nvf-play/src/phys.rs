@@ -726,12 +726,12 @@ impl PhysState {
     /// `world` as cells load. Loaded exterior cells belong to the previous worldspace:
     /// [`PhysState::reset`] first.
     ///
-    /// Each worldspace's own records are used. A child worldspace (WRLD `WNAM`) may take
-    /// land, water and other data from its parent by its `PNAM` flags [documented: xEdit
-    /// names, schemas/fnv/world.json]; every child worldspace in the ten masters sets only
-    /// "Use Map Data" and has its own land, `DNAM` and `NAM2` [observed: `fnvtool world
-    /// list`, `esm decode`], so taking the parent's is not implemented (logged when a
-    /// plugin asks for it).
+    /// A child worldspace (WRLD `WNAM`) takes land, water and other data from its parent
+    /// by its `PNAM` flags; the world index has followed them already
+    /// (`fnv_world::WorldIndex::take_parent_data`, #2345: a cell without LAND has its
+    /// parent's, the default heights and water type are the parent's where the child has
+    /// none), so the records read here are the ones to use. Logged once per start of
+    /// play in such a worldspace.
     ///
     /// The first time a worldspace is played its reach index is built
     /// (`fnv_world::reach::ReachIndex`: every placed reference of its exterior cells read
@@ -758,9 +758,18 @@ impl PhysState {
         };
         let ws = d.index.worldspaces.get(&world);
         if let Some(w) = ws.filter(|w| w.parent.is_some() && w.parent_flags & !PNAM_USE_MAP_DATA != 0) {
-            warn!(
-                "worldspace {world:08X} takes data from its parent (PNAM 0x{:X}); NVForever uses its own records only",
-                w.parent_flags
+            let cells = w.grid.values().filter_map(|c| d.index.cells.get(c));
+            let (own, theirs) = cells.fold((0, 0), |(o, t), c| match (c.land, c.land_of_parent) {
+                (Some(_), false) => (o + 1, t),
+                (Some(_), true) => (o, t + 1),
+                _ => (o, t),
+            });
+            info!(
+                "worldspace {world:08X} takes data from its parent {:08X} (PNAM 0x{:X}): land of {theirs} cell(s) from the parent, {own} of its own; default land height {:?}, water height {:?}",
+                w.parent.unwrap_or(0),
+                w.parent_flags,
+                w.default_land_height,
+                w.default_water_height
             );
         }
         if let Some(pc) = ws.and_then(|w| w.persistent_cell).and_then(|c| d.index.cells.get(&c)) {
