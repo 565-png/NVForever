@@ -404,11 +404,30 @@ Mitchell's house at 2560x1440: 0.34 / 0.46, 0.45 / 0.40, 0.41 / 0.48; Goodspring
 2560x1440: 0.10 / 0.52, 0.20 / 0.52, 0.08 / 0.51-0.54. The main pass reads four texels per shaded fragment (the lamp factor
 is formed from the ambient's read). Not measured: a slower GPU.
 
-**Not measured yet:** the shimmer with the view moving; the Freeside alley and the gas station exterior pictures #2897 asks for.
+**Multi-bounce** (2026-11-18): the ambient's factor and the lamps' (those that cast no shadow
+here) take the paper's multi-bounce fit per colour channel from the surface's diffuse colour
+(ssao_lighting.wesl `nvf_ao_multibounce`, ssao_lighting.rs `MULTIBOUNCE`) [documented: Jimenez,
+Wu, Pesce, Jarabo, "Practical Real-Time Strategies for Accurate Indirect Occlusion", SIGGRAPH
+2016 course: the cubic fit of the visibility after several bounces against the one-bounce
+visibility, per albedo]: never below the plain factor, exactly 1 on open surfaces, a light
+surface's crease lifted more than a dark one's. Its effect on the game's dark textures is small
+[observed 2026-11-18, enhanced at 1600 x 900, multi-bounce on against
+`NVF_PLAY_DEBUG_AO_MULTIBOUNCE=0`: Doc Mitchell's house at 12:00, 0.03 % of the pixels lighter
+by more than 2 levels of 255; the Goodsprings street at 12:30, 0.4 % lighter and 0.46 % darker,
+the swaying plants' and actors' level of change; the house's factor is below 0.9 on 6.2 % of
+the pixels and below 0.7 on 2 %, its edges and corners]. Kept on: it only lifts.
 
-**Not done:** the paper's multi-bounce fit (the lighting has the surface colour now; a later
-step), a bent normal (the ambient is a flat colour with no direction), occlusion on decals and
-blended shapes (not in the prepass), on lamps that cast a shadow and on highlights.
+**Shimmer** [observed 2026-11-18, the Goodsprings street at 12:30, standing still, enhanced,
+four pictures 0.05 s apart, pixels changing by more than 8 levels between consecutive pictures]:
+the factor alone (`NVF_PLAY_DEBUG_AO=view-lighting`) 1.65 % with 4x MSAA and 1.70 % with DLSS
+Quality (the camera jittering), the lit picture 1.33 % and 0.84 %; by more than 24 levels
+0.00-0.04 %. The same with and without the jitter: the change is the plants' sway, not the
+occlusion's. Not measured yet: the view moving; the Freeside alley and the gas station
+exterior pictures #2897 asks for.
+
+**Not done:** a bent normal (the ambient is a flat colour with no direction), occlusion on
+decals and blended shapes (not in the prepass), on lamps that cast a shadow and on highlights
+(no environment reflections exist yet for a specular occlusion to act on, §3 gaps).
 
 ### 3.2 Longer sun shadows (`fine-shadows`)
 

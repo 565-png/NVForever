@@ -212,6 +212,9 @@ pub(crate) static AO_BEFORE_FSR: std::sync::LazyLock<bool> =
 /// - `NVF_PLAY_DEBUG_AO_EXPONENT=<number>`, held to 0.1..2, the lighting only: the exponent
 ///   the factor is raised to before it scales the display-value sum (ssao_lighting.rs
 ///   `EXPONENT`).
+/// - `NVF_PLAY_DEBUG_AO_MULTIBOUNCE=0` (or `1`), the lighting only: the ambient's factor
+///   without (with) the multi-bounce fit by the surface's colour (ssao_lighting.rs
+///   `MULTIBOUNCE`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct AoDebug {
     /// The old estimate instead of ground-truth ambient occlusion (always on the picture).
@@ -227,6 +230,8 @@ pub(crate) struct AoDebug {
     lamps: Option<f32>,
     /// The exponent from `NVF_PLAY_DEBUG_AO_EXPONENT` (the lighting only).
     exponent: Option<f32>,
+    /// The multi-bounce fit from `NVF_PLAY_DEBUG_AO_MULTIBOUNCE` (the lighting only).
+    multibounce: Option<bool>,
     /// The candidate remedies from `NVF_PLAY_DEBUG_AO_VARIANT`; `None` when unset or empty
     /// (the placement's default).
     variant: Option<AoVariant>,
@@ -418,6 +423,23 @@ impl AoDebug {
         self.exponent.unwrap_or(crate::ssao_lighting::EXPONENT)
     }
 
+    /// The multi-bounce fit in the lighting.
+    fn multibounce(self) -> bool {
+        self.multibounce.unwrap_or(crate::ssao_lighting::MULTIBOUNCE)
+    }
+
+    /// `NVF_PLAY_DEBUG_AO_MULTIBOUNCE`'s value: none when unset or empty, `0`/`off`/`false`
+    /// or `1`/`on`/`true`, `Err` with the value for anything else.
+    fn parse_switch(value: Option<&str>) -> Result<Option<bool>, String> {
+        let v = value.map(str::trim).unwrap_or("");
+        match v.to_ascii_lowercase().as_str() {
+            "" => Ok(None),
+            "0" | "off" | "false" => Ok(Some(false)),
+            "1" | "on" | "true" => Ok(Some(true)),
+            _ => Err(v.to_string()),
+        }
+    }
+
     /// The uniform's `mode` (ssao.wesl `Ao.mode`).
     fn mode(self) -> Vec4 {
         let on = |b: bool| if b { 1.0 } else { 0.0 };
@@ -428,7 +450,7 @@ impl AoDebug {
     /// exponent, its fade end and strength, the lamps' weight, the debug view with
     /// `view-lighting`.
     fn lighting_uniform(self, settings: &AmbientOcclusion) -> AmbientOcclusionLightingUniform {
-        AmbientOcclusionLightingUniform::new(self.exponent(), settings.params.w, settings.params.y, self.lamps(), self.view && self.lighting())
+        AmbientOcclusionLightingUniform::new(self.exponent(), settings.params.w, settings.params.y, self.lamps(), self.multibounce(), self.view && self.lighting())
     }
 
     /// The log line for the placement that runs (`lighting`): the estimate, the remedies and
@@ -464,11 +486,13 @@ impl AoDebug {
             let lamps = self.lamps();
             let reach = if lamps > 0.0 { format!("on the ambient light and on lamps without a shadow by {lamps}") } else { "on the ambient light alone".to_string() };
             let view = if self.view { ", the factor each surface took shown alone (NVF_PLAY_DEBUG_AO=view-lighting)" } else { "" };
+            let bounce = if self.multibounce() { ", multi-bounce by surface colour" } else { ", no multi-bounce" };
             format!(
-                ", in the lighting: {reach}{}, exponent {}{}{view}",
+                ", in the lighting: {reach}{}, exponent {}{}{bounce}{}{view}",
                 aid(self.lamps.is_some(), "NVF_PLAY_DEBUG_AO_LAMPS"),
                 self.exponent(),
-                aid(self.exponent.is_some(), "NVF_PLAY_DEBUG_AO_EXPONENT")
+                aid(self.exponent.is_some(), "NVF_PLAY_DEBUG_AO_EXPONENT"),
+                aid(self.multibounce.is_some(), "NVF_PLAY_DEBUG_AO_MULTIBOUNCE")
             )
         } else {
             let view = if self.view { ", factor shown alone as grey (NVF_PLAY_DEBUG_AO)" } else { "" };
@@ -509,6 +533,13 @@ static AO_DEBUG: std::sync::LazyLock<AoDebug> = std::sync::LazyLock::new(|| {
         Ok(e) => e,
         Err(v) => {
             warn!("debug switch NVF_PLAY_DEBUG_AO_EXPONENT={v}: expected a number from 0.1 to 2; exponent {}", crate::ssao_lighting::EXPONENT);
+            None
+        }
+    };
+    debug.multibounce = match AoDebug::parse_switch(std::env::var("NVF_PLAY_DEBUG_AO_MULTIBOUNCE").ok().as_deref()) {
+        Ok(m) => m,
+        Err(v) => {
+            warn!("debug switch NVF_PLAY_DEBUG_AO_MULTIBOUNCE={v}: expected 0 or 1; multi-bounce {}", crate::ssao_lighting::MULTIBOUNCE);
             None
         }
     };
@@ -1648,22 +1679,39 @@ mod tests {
     #[test]
     fn the_log_line_names_the_estimate_and_the_placement() {
         let start = "ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise";
-        assert_eq!(AoDebug::default().describe(true), format!("{start}, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1"));
+        assert_eq!(AoDebug::default().describe(true), format!("{start}, variant soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1, multi-bounce by surface colour"));
         let post = AoDebug { post: true, ..AoDebug::default() };
         assert_eq!(post.describe(false), format!("{start}, on the picture (NVF_PLAY_DEBUG_AO=post)"));
         // The default asked for, on the picture while the hook is not in place: stage one's.
         assert_eq!(AoDebug::default().describe(false), start);
         assert_eq!(AoDebug { old: true, post: true, ..AoDebug::default() }.describe(false), "ambient occlusion: old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)");
         assert!(AoDebug { view: true, post: true, ..AoDebug::default() }.describe(false).ends_with("depth-aware denoise, factor shown alone as grey (NVF_PLAY_DEBUG_AO)"));
-        assert!(AoDebug { view: true, ..AoDebug::default() }.describe(true).ends_with(", exponent 1, the factor each surface took shown alone (NVF_PLAY_DEBUG_AO=view-lighting)"));
+        assert!(AoDebug { view: true, ..AoDebug::default() }
+            .describe(true)
+            .ends_with(", exponent 1, multi-bounce by surface colour, the factor each surface took shown alone (NVF_PLAY_DEBUG_AO=view-lighting)"));
         // The aids that were set are named.
-        let aids = AoDebug { lamps: Some(0.5), exponent: Some(0.5), gtao_strength: Some(0.4), ..AoDebug::default() };
+        let aids = AoDebug { lamps: Some(0.5), exponent: Some(0.5), gtao_strength: Some(0.4), multibounce: Some(false), ..AoDebug::default() };
         assert_eq!(
             aids.describe(true),
-            format!("{start}, variant soft+thin, strength 0.4 (NVF_PLAY_DEBUG_AO_STRENGTH), in the lighting: on the ambient light and on lamps without a shadow by 0.5 (NVF_PLAY_DEBUG_AO_LAMPS), exponent 0.5 (NVF_PLAY_DEBUG_AO_EXPONENT)")
+            format!("{start}, variant soft+thin, strength 0.4 (NVF_PLAY_DEBUG_AO_STRENGTH), in the lighting: on the ambient light and on lamps without a shadow by 0.5 (NVF_PLAY_DEBUG_AO_LAMPS), exponent 0.5 (NVF_PLAY_DEBUG_AO_EXPONENT), no multi-bounce (NVF_PLAY_DEBUG_AO_MULTIBOUNCE)")
         );
+        assert!(!post.describe(false).contains("bounce"), "the picture placement has no multi-bounce");
         assert!(AoDebug { lamps: Some(0.0), ..AoDebug::default() }.describe(true).contains("in the lighting: on the ambient light alone (NVF_PLAY_DEBUG_AO_LAMPS), exponent 1"));
         assert!(AoDebug { lamps: Some(1.0), ..post }.describe(false).ends_with(", lamps and exponent ignored on the picture (NVF_PLAY_DEBUG_AO_LAMPS, NVF_PLAY_DEBUG_AO_EXPONENT)"));
+    }
+
+    #[test]
+    fn the_multibounce_aid_reads_on_and_off_and_feeds_the_uniform() {
+        assert_eq!(AoDebug::parse_switch(None), Ok(None));
+        assert_eq!(AoDebug::parse_switch(Some(" ")), Ok(None));
+        assert_eq!(AoDebug::parse_switch(Some("0")), Ok(Some(false)));
+        assert_eq!(AoDebug::parse_switch(Some("OFF")), Ok(Some(false)));
+        assert_eq!(AoDebug::parse_switch(Some("1")), Ok(Some(true)));
+        assert_eq!(AoDebug::parse_switch(Some("maybe")), Err("maybe".to_string()));
+        assert!(AoDebug::default().multibounce(), "on by default");
+        let settings = AmbientOcclusion::default();
+        assert_eq!(AoDebug::default().lighting_uniform(&settings).extra.z, 1.0);
+        assert_eq!(AoDebug { multibounce: Some(false), ..AoDebug::default() }.lighting_uniform(&settings).extra.z, 0.0);
     }
 
     /// ssao.wesl `visible_arc`, the same formula: the integral of cos(t - g) |sin t| from 0 to h.
