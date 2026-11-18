@@ -784,9 +784,10 @@ mod tests {
         assert_eq!(block_level(0.75, None, (9, 9)), 0.75);
         // The masks lod.rs builds from them: bit y * 4 + x of each level-4 square.
         let masks = crate::lod::block_masks(&blocks, (0, 0));
-        assert_eq!(masks[&(0, 0)], (0b1, 0b11), "loaded (0, 0) full, (1, 0) fading");
-        assert_eq!(masks[&(0, 0)].0 & (1 << 3), 0);
-        assert_eq!(masks[&(0, 0)].1 & (1 << 3), 1 << 3, "ring (3, 0) present");
+        // Square (0, 0): loaded (0, 0) full (bit 0), loaded (1, 0) fading (bit 1), ring
+        // (3, 0) at rest (bit 3), ring (3, 1) leaving (bit 1 * 4 + 3 = 7).
+        assert_eq!(masks[&(0, 0)], (0b1001, 0b1000_1011));
+        assert_eq!(masks[&(0, 0)], (9, 139));
         assert_eq!(masks[&(4, 0)], (0, 1), "ring (4, 0) fading in");
         assert!(!masks.contains_key(&(-4, 0)));
     }
