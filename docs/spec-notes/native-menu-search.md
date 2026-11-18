@@ -12,29 +12,36 @@ assets and text are not redistributed.
 
 ## Model mapping
 
-[hypothesis/design] Search is transient state owned by one MenuModel. A query is a
-literal substring of the displayed row name after Unicode lowercasing; whitespace
-is literal. Empty text preserves the ordinary model. Input is bounded to 256 Unicode
-scalar values, a resource policy rather than a native limit.
+[engine design choice] Search is transient state owned by one MenuModel. Empty text
+preserves the ordinary model. Input is bounded to 256 Unicode scalar values, a
+resource policy rather than a native limit. [hypothesis] A query is a literal
+substring of the displayed row name after Unicode lowercasing; whitespace is
+literal (the documented filter's matching rule is not observed).
 
 Canonical inventory, category, folder and barter construction runs first. Search
 then removes nonmatching shown rows on both columns, without changing inventories,
-category-filter counts, prices, offered quantities or balance. The current folder
-is retained; the Back navigation row remains reachable. Searching hidden folder
-contents is outside this mapping. Bulk actions retain their existing rule of acting
-on the rows actually listed; exact native bulk/search interactions are unobserved.
+category-filter counts, prices, offered quantities or balance [hypothesis: that the
+original filter only hides rows; not observed]. The current folder is retained; the
+Back navigation row remains reachable. Searching hidden folder contents is outside
+this mapping [engine design choice]. Bulk actions retain their existing rule of acting
+on the rows actually listed [hypothesis: exact native bulk/search interactions are
+unobserved].
 
-The normal refresh keeps its existing selection policy when search is unused.
-Search changes and active searches retain the selected row's existing RowKey and
-offered/folder/live role when possible; otherwise the existing index clamp applies.
-Clamping never sends Select, because selecting an already-selected row activates it.
-Existing row guards still check the final shown row identity.
+[engine design choice] The normal refresh keeps its existing selection policy when
+search is unused. Search changes and active searches retain the selected row's
+existing RowKey and offered/folder/live role when possible; otherwise the existing
+index clamp applies. Clamping never sends Select, because selecting an
+already-selected row activates it. Existing row guards still check the final shown
+row identity.
 
-A different query is refused while a quantity prompt owns a row index. An identical
-query does nothing. Over-bound input is refused before model/world changes. A World
-refresh error follows the existing refresh error model, rather than claiming an
-atomic rollback of a failed inventory read. Model cloning and refresh preserve its
-query, including the existing refresh boundary after repair; a new menu starts clear.
+[engine design choice] A different query is refused while a quantity prompt owns a
+row index. An identical query does nothing. Over-bound input is refused before
+model/world changes. A World refresh error follows the existing refresh error model,
+rather than claiming an atomic rollback of a failed inventory read. Model cloning and
+refresh preserve its query, including the existing refresh boundary after repair.
+[hypothesis] A new menu starts with a clear query (the readme documents a clear-on-
+reopen option; its default is not observed). The refusal messages are NVForever's own
+wording, not text the game shows.
 
 ## Authored scope
 
