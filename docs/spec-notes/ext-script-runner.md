@@ -135,7 +135,8 @@ Successful compilation reports its returned warnings once, when the Script Runne
 first caches that unit [design: engine design choice for NVForever's own log; not a
 claim about the original extender]. The [compiler notes](script-compiler.md#inline-surplus-operands-in-mod-expressions)
 record the initial fixture failures and all nine corrected controls passing in
-Linux CI for `ae6c1110`. Checks of the later Main integration remain pending.
+Linux CI for `ae6c1110`. The Main integration at `abb5f67f` (hosted merge `22dc2e5`)
+passed all seven hosted checks with all nine controls passing once.
 The candidate preserves the documented function signature; it does not establish
 native parity or full installed-mod acceptance.
 

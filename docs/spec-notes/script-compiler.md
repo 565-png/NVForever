@@ -768,7 +768,8 @@ retains those informational entries explicitly and checks all other diagnostics;
 VM values, reference/local rollback, strict refusal and byte oracles are retained.
 Assertions after the failed checks were not reached in that run. All nine
 corrected controls passed in Linux CI for `ae6c1110` at checkout `50231146`.
-Execution of the later Main integration remains pending.
+The Main integration at `abb5f67f` (hosted merge `22dc2e5` with Main `5fbad071`,
+run 44298689511) passed all seven hosted checks, with all nine controls passing once.
 
 The shared `compile` test target's `inline_surplus_operands::` cases compile an
 independent handler-shaped condition

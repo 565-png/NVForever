@@ -127,7 +127,8 @@ parser candidate preserves the documented signature and enclosing operators whil
 reporting discarded operands. The initial nine shared-target controls compiled
 in Linux CI: three passed and six failed diagnostic expectations for retained
 legacy information. All nine corrected controls passed in Linux CI for `ae6c1110`.
-Fresh checks of the Main integration, selected whole-file compilation, the identical-fixture
+Hosted CI for `abb5f67f` (merge `22dc2e5` with Main `5fbad071`, run 44298689511) passed
+all seven checks, with all nine controls passing once. Selected whole-file compilation, the identical-fixture
 baseline and B42 Optics game-load acceptance remain open ([compiler note](spec-notes/script-compiler.md#inline-surplus-operands-in-mod-expressions)).
 
 | System | State | Specifics | Notes |
