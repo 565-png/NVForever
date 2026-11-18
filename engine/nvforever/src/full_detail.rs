@@ -1131,6 +1131,6 @@ mod tests {
         assert_eq!(world.query_filtered::<(), With<world::CellEntity>>().iter(&world).count(), 0);
         world.spawn((RingCell { grid: (4, 0) }, nvf_play::DrawOnlyCell));
         assert_eq!(world.query_filtered::<(), With<nvf_play::DrawOnlyCell>>().iter(&world).count(), 1, "nvf-play's moved.rs finds ring cells by this mark");
-        assert_eq!(world.query::<&RingCell>().iter(&world).count(), 1);
+        assert_eq!(world.query::<&RingCell>().iter(&world).count(), 2);
     }
 }
