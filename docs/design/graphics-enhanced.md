@@ -549,6 +549,21 @@ the shadow pass's GPU time 0.10 to 0.20 ms against 0.20 to 0.30 ms. At Boulder B
 brightness change after the same smoothing was the same with the schedule holding and
 without (5 to 7 of 255 once the start's fades were over): no flash of the reflected shore.
 
+[observed, 2026-11-18, the mirror sharing the main camera's cascades and caster lists]
+Cottonwood Cove, the player in the river facing the opposite bank (`--play --pos=69300,-90750,-1700`,
+09:00, 1920x1080, `--graphics enhanced`), eleven frames between 10 s and 12.3 s of two runs,
+one with the schedule holding and one with `NVF_PLAY_TEST_SHADOW_STAGGER=0`: frame for
+frame the two runs differ by at most 4 of 255 in any pixel. A held shadow map shows the
+reflected bank what a fresh one does.
+
+[observed, 2026-11-18, the pattern of eight waves and the shallows' tint] Release explorer,
+RTX 5070 Ti, 1920x1080, `--sun-shadows --log-frame-times 5 --graphics-cycle
+"vanilla;water-effects;water-effects;vanilla"`, 86 seconds a view, the first window left
+out. Mean frame time with the switch on against off, over eight five-second windows
+each: 2.90 against 2.86 ms at the Boulder Beach shallows, 2.50 against 2.47 ms submerged
+there, 2.95 against 2.94 ms at Cottonwood Cove. The windows of either state range over
+0.2 ms, so the cost is within the run's noise, under 0.05 ms.
+
 [observed, 2026-11-18, initial water effect before the depth and pattern revision] Release explorer, RTX 5070 Ti, Vulkan, 1280x720, desktop streaming
 active. At each fixed camera `--log-frame-times 5 --graphics-cycle
 "vanilla;water-effects;water-effects;vanilla"` alternated five-second periods. After the
