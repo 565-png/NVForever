@@ -37,6 +37,11 @@
 //! - **What casts**: the sun's layers (`sky::SHADOW_LAYER`, `sky::BODY_LAYER` and the
 //!   world's layer 0), so the player's body casts a lamp's shadow as it casts the sun's;
 //!   the first-person arms do not.
+//! - **Light fixtures cast none** ([`LightFixture`], [`skip_fixtures`]): the shapes of a
+//!   model named as a lamp, and of a light's own model, are taken out of every casting
+//!   light's maps, as is a small shape a light sits in or against. The game hangs its
+//!   lights under their lamps, so a lamp's housing threw its shadow, larger than the lamp,
+//!   onto the ceiling over it (owner 2026-11-18). The sun's shadows keep them.
 //! - **Near plane** [`NEAR_Z`]: what lies nearer the light than that casts nothing from it,
 //!   so the bulb, shade or flames a light sits in do not black out the room
 //!   [engineering choice; `NVF_LIGHT_SHADOW_NEAR` overrides it for a run].
@@ -49,7 +54,7 @@
 //!   every frame, for comparing the picture and the cost.
 
 use bevy::camera::primitives::{Aabb, CubemapFrusta, Frustum, Sphere};
-use bevy::camera::visibility::{RenderLayers, VisibilitySystems};
+use bevy::camera::visibility::{CubemapVisibleEntities, RenderLayers, VisibilitySystems, VisibleMeshEntities};
 use bevy::ecs::entity::EntityHashMap;
 use bevy::light::{DirectionalLightShadowMap, NotShadowCaster, PointLightShadowMap, SimulationLightSystems};
 use bevy::mesh::skinning::SkinnedMesh;
@@ -125,6 +130,39 @@ pub const NEAR_Z: f32 = 16.0;
 /// mouth, hat) marked about 116 times a frame, every lamp near an actor every frame].
 pub const MOVE_EPS: f32 = 4.0;
 
+/// On a shape of a light fixture: a model named as a lamp ([`is_fixture_model`]) or a
+/// light's own model (a LIGH with a model). It casts no lamp shadows; the sun's it still
+/// casts. Owner 2026-11-18: a hanging box lamp threw its housing's shadow, larger than the
+/// lamp, onto the ceiling above it. The game hangs its lights below their fixtures: in the
+/// Goodsprings General Store the light under the box lamp `OffRmLightHanging01` sits 86
+/// units under the lamp's reference; over the masters' interiors 3,909 of the 7,543 LIGH
+/// references without a model of their own have a lamp model's reference within 160 units,
+/// half of them within 89 [observed 2026-11-18: `fnvtool world refs --interiors`].
+#[derive(Component)]
+pub struct LightFixture;
+
+/// The words in a model's file name that make it a light fixture [engineering choice from
+/// the census in [`LightFixture`]: `offrmlight01`, `lightceilingvaultr02on`,
+/// `shackhanginglight02`, `lamplightlamp`, `neoclassicalsconce`, …].
+const FIXTURE_WORDS: [&str; 7] = ["light", "lamp", "lantern", "chandelier", "sconce", "bulb", "candle"];
+
+/// Whether a model (a path under `meshes\`) is a light fixture: its file name holds one of
+/// [`FIXTURE_WORDS`].
+pub fn is_fixture_model(path: &str) -> bool {
+    let file = path.rsplit(['\\', '/']).next().unwrap_or(path).to_ascii_lowercase();
+    FIXTURE_WORDS.iter().any(|w| file.contains(w))
+}
+
+/// A shape not named as a fixture is one for a light that lies within this far of its box
+/// (game units, about 23 cm, [`NEAR_Z`]): a bulb or shade of another name the light sits
+/// in [engineering choice].
+pub const FIXTURE_MARGIN: f32 = 16.0;
+
+/// Such a shape's bounding sphere is no larger than this (game units, about 1.8 m), so a
+/// wall, floor, ceiling or room piece next to a light is never one [engineering choice: the
+/// interior kits' pieces are 256 units and more].
+pub const FIXTURE_RADIUS: f32 = 128.0;
+
 /// The faces of a point light's cube (bit `i` for face `i`).
 const ALL_FACES: u8 = 0b11_1111;
 
@@ -187,7 +225,8 @@ impl Plugin for LightShadowsPlugin {
                     .before(VisibilitySystems::VisibilityPropagate)
                     .before(SimulationLightSystems::AssignLightsToClusters)
                     .before(SimulationLightSystems::UpdateLightFrusta),
-            );
+            )
+            .add_systems(PostUpdate, skip_fixtures.after(SimulationLightSystems::CheckLightVisibility));
     }
 }
 
@@ -237,6 +276,34 @@ fn faces_reached(sphere: &Sphere, cube: Option<&CubemapFrusta>, spot: Option<&Fr
 /// Whether the light's sphere at `light` with `range` and a caster's sphere meet.
 fn reaches(light: Vec3, range: f32, sphere: &Sphere) -> bool {
     Vec3::from(sphere.center).distance_squared(light) <= (range + sphere.radius) * (range + sphere.radius)
+}
+
+/// How far `light` lies outside the box `aabb` placed by `to_world` (game units, 0 inside),
+/// when the box is small enough to be a fixture ([`FIXTURE_RADIUS`]); `None` for a larger one.
+pub fn fixture_gap(light: Vec3, to_world: &bevy::math::Affine3A, aabb: &Aabb) -> Option<f32> {
+    let m = to_world.matrix3;
+    let scale = Vec3::new(m.x_axis.length(), m.y_axis.length(), m.z_axis.length());
+    let half = Vec3::from(aabb.half_extents) * scale;
+    let radius = half.length();
+    if radius > FIXTURE_RADIUS {
+        return None;
+    }
+    let centre = Vec3::from(to_world.transform_point3a(aabb.center));
+    // Far from its sphere: no need for the box.
+    let far = centre.distance(light) - radius;
+    if far > FIXTURE_MARGIN {
+        return Some(far);
+    }
+    let local = Vec3::from(to_world.inverse().transform_point3a(light.into()) - aabb.center);
+    let outside = (local.abs() * scale - half).max(Vec3::ZERO);
+    Some(outside.length())
+}
+
+/// `NVF_LIGHT_SHADOW_FIXTURES=1` (a test aid): log, once for each light when it starts
+/// casting, the shapes taken as its fixture and the small ones near it that are not.
+fn log_fixtures() -> bool {
+    static LOG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *LOG.get_or_init(|| std::env::var("NVF_LIGHT_SHADOW_FIXTURES").is_ok_and(|v| v.trim() == "1"))
 }
 
 /// The near plane in use: [`NEAR_Z`], or `NVF_LIGHT_SHADOW_NEAR` (game units) for a run.
@@ -639,6 +706,60 @@ fn shadow_lights(
     }
 }
 
+type CasterLists<'a> = (Entity, &'a GlobalTransform, Option<&'a mut CubemapVisibleEntities>, Option<&'a mut VisibleMeshEntities>);
+
+type Shapes<'a> = (&'a GlobalTransform, &'a Aabb, Has<LightFixture>, Option<&'a nvf_play::RefVisual>);
+
+/// Take the light fixtures out of the shapes Bevy found for each casting light's maps this
+/// frame: every shape marked [`LightFixture`], and a small shape the light sits in or
+/// against ([`FIXTURE_MARGIN`], [`FIXTURE_RADIUS`]). Runs after Bevy's culling of the
+/// lights' maps; only the lights drawing this frame have shapes listed.
+fn skip_fixtures(mut lights: Query<CasterLists, With<CastingLight>>, shapes: Query<Shapes>, mut logged: Local<bevy::ecs::entity::EntityHashSet>) {
+    let log = log_fixtures();
+    for (light, t, cube, spot) in &mut lights {
+        let at = t.translation();
+        let mut lists: Vec<&mut Vec<Entity>> = Vec::with_capacity(6);
+        if let Some(cube) = cube {
+            lists.extend(cube.into_inner().iter_mut().map(|v| &mut v.entities));
+        }
+        if let Some(spot) = spot {
+            lists.push(&mut spot.into_inner().entities);
+        }
+        // For the test aid: the shapes skipped, and the small ones kept near the light.
+        let (mut skipped, mut kept): (Vec<Entity>, Vec<Entity>) = (Vec::new(), Vec::new());
+        for list in lists {
+            list.retain(|e| {
+                let Ok((st, aabb, marked, _)) = shapes.get(*e) else { return true };
+                let gap = if marked { None } else { fixture_gap(at, &st.affine(), aabb) };
+                let skip = marked || gap.is_some_and(|g| g <= FIXTURE_MARGIN);
+                if log {
+                    if skip && !skipped.contains(e) {
+                        skipped.push(*e);
+                    } else if !skip && gap.is_some_and(|g| g <= 4.0 * FIXTURE_MARGIN) && !kept.contains(e) {
+                        kept.push(*e);
+                    }
+                }
+                !skip
+            });
+        }
+        if log && (!skipped.is_empty() || !kept.is_empty()) && logged.insert(light) {
+            // Each by its reference, whether it is marked, its size and its gap to the light.
+            let shown = |v: &[Entity]| {
+                let all: Vec<String> = v
+                    .iter()
+                    .filter_map(|e| shapes.get(*e).ok())
+                    .map(|(st, aabb, marked, r)| {
+                        let size = Vec3::from(aabb.half_extents) * 2.0 * st.compute_transform().scale.abs();
+                        let gap = fixture_gap(at, &st.affine(), aabb).map_or("large".to_string(), |g| format!("{g:.0}"));
+                        format!("{:08X}{} {:.0}x{:.0}x{:.0} gap {gap}", r.map_or(0, |r| r.0), if marked { " fixture" } else { "" }, size.x, size.y, size.z)
+                    })
+                    .collect();
+                if all.is_empty() { "none".to_string() } else { all.join(", ") }
+            };
+            info!("light shadows: light {light} at {:.0} {:.0} {:.0} skips {}; small shapes near it kept: {}", at.x, -at.z, at.y, shown(&skipped), shown(&kept));
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -697,5 +818,43 @@ mod tests {
         assert!(!reaches(light, 400.0, &sphere(Vec3::new(500.0, 0.0, 0.0), 60.0)));
         // Without frusta (a light that never drew) every face counts.
         assert_eq!(faces_reached(&sphere(Vec3::X * 100.0, 10.0), None, None), ALL_FACES);
+    }
+
+    #[test]
+    fn lamp_models_are_fixtures_by_their_file_name() {
+        for m in [
+            r"meshes\dungeons\office\lights\offrmlighthanging01.nif",
+            r"meshes\architecture\megaton\interior\shackinteriors\shackhanginglight03.nif",
+            r"meshes\clutter\lights\LampLightLamp.nif",
+            r"meshes\architecture\strip\neoclassicalsconce.nif",
+            "meshes/clutter/lantern01.nif",
+        ] {
+            assert!(is_fixture_model(m), "{m}");
+        }
+        for m in [r"meshes\dungeons\office\lights\..\offrmwall01.nif", r"meshes\clutter\office\rubberfloormatlrg01.nif", r"meshes\light\shelf01.nif"] {
+            assert!(!is_fixture_model(m), "{m}: only the file name counts");
+        }
+    }
+
+    #[test]
+    fn a_small_shape_the_light_sits_in_or_against_is_its_fixture_a_wall_never() {
+        use bevy::math::{Affine3A, Quat};
+        let is_fixture = |light: Vec3, to_world: &Affine3A, aabb: &Aabb| fixture_gap(light, to_world, aabb).is_some_and(|g| g <= FIXTURE_MARGIN);
+        // A hanging box lamp 100 x 40 x 20 units, its middle 30 units over the floor point.
+        let lamp = Aabb::from_min_max(Vec3::new(-50.0, -20.0, -10.0), Vec3::new(50.0, 20.0, 10.0));
+        let at = Affine3A::from_translation(Vec3::new(0.0, 0.0, 30.0));
+        assert!(is_fixture(Vec3::new(0.0, 0.0, 30.0), &at, &lamp), "inside");
+        assert!(is_fixture(Vec3::new(0.0, 0.0, 8.0), &at, &lamp), "12 units under it");
+        assert!(!is_fixture(Vec3::new(0.0, 0.0, -10.0), &at, &lamp), "30 units under it");
+        assert!(!is_fixture(Vec3::new(80.0, 0.0, 30.0), &at, &lamp), "30 units beside it");
+        // Turned a quarter about z and scaled 2: its long side runs along y, 200 units.
+        let turned = Affine3A::from_scale_rotation_translation(Vec3::splat(2.0), Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), Vec3::ZERO);
+        let small = Aabb::from_min_max(Vec3::new(-25.0, -10.0, -5.0), Vec3::new(25.0, 10.0, 5.0));
+        assert!(is_fixture(Vec3::new(0.0, 60.0, 0.0), &turned, &small), "along its long side");
+        assert!(!is_fixture(Vec3::new(60.0, 0.0, 0.0), &turned, &small), "beyond its short side");
+        // A wall piece 256 x 256 x 16 with the light 4 units off it: too large to be a fixture.
+        let wall = Aabb::from_min_max(Vec3::new(-128.0, -8.0, -128.0), Vec3::new(128.0, 8.0, 128.0));
+        assert_eq!(fixture_gap(Vec3::new(0.0, 12.0, 0.0), &Affine3A::IDENTITY, &wall), None);
+        assert!(!is_fixture(Vec3::new(0.0, 12.0, 0.0), &Affine3A::IDENTITY, &wall));
     }
 }

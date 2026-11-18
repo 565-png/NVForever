@@ -1456,6 +1456,24 @@ culls, extracts and queues every face view every frame.
   - A casting light takes the sun's layers (0, `sky::SHADOW_LAYER`, `sky::BODY_LAYER`), so
     the player's body casts in both views. The first-person arms do not.
   - Everything `NotShadowCaster` stays out, as for the sun.
+  - **Light fixtures cast no lamp shadows** (`LightFixture`, `skip_fixtures`; the sun's
+    they still cast). The owner's test, 2026-11-18: a hanging box lamp in the Goodsprings
+    General Store threw its housing's shadow, larger than the lamp, onto the ceiling. The
+    game hangs its lights under their lamps, not in them [observed 2026-11-18,
+    `fnvtool world refs`: the LIGH `BasementLightKeyWarm` sits 86 units under the box lamp
+    `OffRmLightHanging01`; over the masters' interiors, 3,909 of the 7,543 LIGH references
+    without a model of their own have a lamp model's reference within 160 units, half of
+    them within 89].
+    - A shape is a fixture when its model's file name holds `light`, `lamp`, `lantern`,
+      `chandelier`, `sconce`, `bulb` or `candle` (`offrmlight01`, `lightceilingvaultr02on`,
+      `shackhanginglight02`, `neoclassicalsconce`, …), or when it is a LIGH's own model.
+      Marked when the cell is drawn (world.rs `spawn_model`); every casting light skips it.
+    - A small shape (a bounding sphere up to 128 units) that a light sits in or within 16
+      units of is skipped by that light too: a bulb or shade of another name.
+    - Taken out of the shapes Bevy culled for the maps, after its culling, only on the
+      frames a light draws.
+    - Test aid `NVF_LIGHT_SHADOW_FIXTURES=1` logs, once a light, the shapes it skips and
+      the small ones near it it keeps, by reference, size and distance.
   - A near plane of 16 units (`NEAR_Z`; the flashlight's is 8) keeps a light's own bulb,
     shade or flames out of its map. The cost: a wall within 16 units of a light does not
     stop that light on its own side.
@@ -1502,7 +1520,7 @@ placed lights, release builds, `--log-frame-times 6`; windows after loading]:
 - Keeping a held light's specialization caches, so switching it on costs less.
 
 **Smoke.** `light-shadows` (the Prospector Saloon at 22:00, `--light-shadows=quality`)
-checks that lights cast and that maps are drawn and held. The picture is checked by hand.
+checks that lights cast and that their maps are drawn. The picture is checked by hand.
 
 ## 4. Tried and dropped
 

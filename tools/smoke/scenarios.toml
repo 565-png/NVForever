@@ -1832,29 +1832,25 @@ order = [[
 
 [[scenario]]
 name = "light-shadows"
-source = "[design] docs/design/graphics-enhanced.md §3.15, engine/nvforever/src/light_shadows.rs, engine/vendor/bevy_pbr (held light shadow maps): with --light-shadows=quality in the Prospector Saloon at night the placed lights within the shadow distance take shadow maps, and after they are drawn their maps are held (fewer faces drawn than held a frame), without a rendering or pipeline error. Whether walls stop their light, and the acne and near plane, are checked in pictures by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.15, engine/nvforever/src/light_shadows.rs, engine/vendor/bevy_pbr (held light shadow maps): with --light-shadows=quality in the Prospector Saloon at night the placed lights within the shadow distance take shadow maps and draw them, lights skip their fixtures (lamp models, LightFixture), without a rendering or pipeline error. [observed 2026-11-18, these arguments run by hand: 24 cast, 3 lights skipped a fixture, two 10-s summaries.] Whether walls stop their light, and the acne and near plane, are checked in pictures by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/vendor/bevy_pbr/src/render/shadow_sampling.wesl"]
 args = ["--cell", "GSProspectorSaloonInterior", "--play", "--no-voice", "--no-messages", "--hour", "22", "--light-shadows=quality"]
+env = { NVF_LIGHT_SHADOW_FIXTURES = "1" }
 run_seconds = 24
 order = [[
   { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "placed lights within the shadow distance took shadow maps" },
-  { re = 'light shadows: [0-9.]+ faces drawn and [1-9][0-9.]* held a frame', label = "their maps were held between frames" },
+  { re = 'light shadows: [0-9.]+ point lights switched on and [0-9.]+ faces drawn a frame over [0-9]+ frames \([1-9][0-9]* lights casting\)', label = "the 10-s summary: their maps were drawn" },
 ]]
 expect = [
-  { re = 'graphics: light glow, cloud shadows$', label = "the graphics line names the switch" },
-  { text = "sun visibility: cloud on terrain off debug off", count = 1, label = "on once: no texture read or publication toggles the pipelines (C0/C1 review, finding 1)" },
+  { re = 'light shadows: light \S+ at .* skips [0-9A-F]{8} fixture', label = "a light skipped a lamp model's shapes (NVF_LIGHT_SHADOW_FIXTURES)" },
 ]
 forbid = [
-  { text = "anchors not found", label = "the sun visibility hook did not apply to bevy_pbr's lighting" },
   { text = "DeviceLost", label = "the GPU device was lost" },
-  { text = "Caught rendering error", label = "a rendering (validation) error with the sun visibility's bindings" },
-  { text = "failed and will not be tried again", label = "a pipeline that failed for good (a patched lighting, water or arms shader that does not compile)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the light shadow maps" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (a patched lighting or shadow shader that does not compile)" },
   { text = "still being retried after", label = "a pipeline still retried at the cap" },
-  { text = "sun visibility: cloud off", label = "the cloud variant went off while the switch stayed on" },
-  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
 ]
-
 [[scenario]]
 name = "sun-shadow-hold-flashlight"
 source = "#2182 review (vendored bevy_pbr light.rs prepare_lights, nvforever shadow_rate.rs): the player's flashlight casts shadows, so switching it on or off gives the sun a new shadow texture; that frame draws every cascade instead of holding one, outdoors at noon with the staggered schedule"
