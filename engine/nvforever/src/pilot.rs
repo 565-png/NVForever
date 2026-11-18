@@ -4438,7 +4438,8 @@ fn drive(
         match step(p, &mut h) {
             Some(error) => p.next(error),
             // No step holds the run up for good, whatever went wrong in it.
-            None if p.now - p.step_from > STEP_SECS && !matches!(p.actions[p.i], Action::CallUntil { .. }) => {
+            // (An escorted package step keeps its own, longer limit: PACKAGE_FOLLOW_SECS.)
+            None if p.now - p.step_from > STEP_SECS && !matches!(p.actions[p.i], Action::CallUntil { .. }) && !(p.campaign && matches!(&p.actions[p.i], Action::Package { event, .. } if event.eq_ignore_ascii_case("end"))) => {
                 p.finding("step_timed_out", format!("the step was not over after {STEP_SECS:.0} s: given up"));
                 h.control.trigger = false;
                 p.next(Some("the step timed out".into()));
